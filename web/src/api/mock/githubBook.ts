@@ -5,7 +5,20 @@
 // repository, an authorisation that ran out). There is no real GitHub behind it.
 
 import { HttpError } from './store.ts'
-import type { AdminGitHub, Connection, GitHubGap, ConnectionLeftover, CursorPage, Provider, GitHubInstallation, GitHubManifestStart, ConnectionOwner, ConnectionRepo, ConnectionVia, PutAdminGitHubInput } from '../types.ts'
+import type {
+  AdminGitHub,
+  Connection,
+  GitHubGap,
+  ConnectionLeftover,
+  CursorPage,
+  Provider,
+  GitHubInstallation,
+  GitHubManifestStart,
+  ConnectionOwner,
+  ConnectionRepo,
+  ConnectionVia,
+  PutAdminGitHubInput,
+} from '../types.ts'
 
 export interface MockGitHubOptions {
   // The App is set up from the start (`npm run dev:mock:accounts`).
@@ -64,13 +77,40 @@ const PAGE = 30
 const PUBLIC_URL = 'https://notes.example.test'
 const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
 
-export const MOCK_GITHUB_APP = { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: 'https://github.com/apps/petalbook-notes' } as const
+export const MOCK_GITHUB_APP = {
+  name: 'PetalBook Notes',
+  slug: 'petalbook-notes',
+  htmlUrl: 'https://github.com/apps/petalbook-notes',
+} as const
 
-export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => number; random: () => number; spacesUsing: (userId: string) => number; spacesOnApp: () => number; tenantOf: (userId: string) => string; tenantExists: (id: string) => boolean }) {
+export function createGitHubBook(
+  opts: MockGitHubOptions,
+  deps: {
+    now: () => number
+    random: () => number
+    spacesUsing: (userId: string) => number
+    spacesOnApp: () => number
+    tenantOf: (userId: string) => string
+    tenantExists: (id: string) => boolean
+  },
+) {
   let app: AppRec | null = opts.configured
-    ? { appId: '1234567', clientId: 'Iv23liMockClientId', clientSecret: true, fingerprint: 'SHA256:mockFingerprint0123456789abcdefghijklmnopqrs', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now(), gaps: [], anyAccount: true }
+    ? {
+        appId: '1234567',
+        clientId: 'Iv23liMockClientId',
+        clientSecret: true,
+        fingerprint: 'SHA256:mockFingerprint0123456789abcdefghijklmnopqrs',
+        permissions: { administration: 'write', contents: 'write', metadata: 'read' },
+        checked: deps.now(),
+        gaps: [],
+        anyAccount: true,
+      }
     : null
-  const side: Side = { permissions: { administration: 'write', contents: 'write', metadata: 'read' }, gaps: [], anyAccount: true }
+  const side: Side = {
+    permissions: { administration: 'write', contents: 'write', metadata: 'read' },
+    gaps: [],
+    anyAccount: true,
+  }
   const manifests = new Map<string, Manifest>()
   // The personal accounts the App is installed on (by GitHub login).
   const installedOn = new Set<string>()
@@ -91,11 +131,18 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     { id: ++repoId, owner: 'petal-team', name: 'docs', private: true },
   ]
   // Mock only: what the next creation or connection finds.
-  const traps = { noPermission: false, notInInstallation: false, pushFails: false, missingPermission: false, personalNeedsInstall: false }
+  const traps = {
+    noPermission: false,
+    notInInstallation: false,
+    pushFails: false,
+    missingPermission: false,
+    personalNeedsInstall: false,
+  }
 
   const key = (s: string) => s.toLowerCase()
   const invalid = (m: string) => new HttpError(400, 'invalid', m)
-  const notConfigured = () => new HttpError(409, 'provider_not_configured', '这台服务器没有设置 GitHub App（管理员在管理页里设置）')
+  const notConfigured = () =>
+    new HttpError(409, 'provider_not_configured', '这台服务器没有设置 GitHub App（管理员在管理页里设置）')
   const notAuthorized = () => new HttpError(409, 'not_connected', '请先连接你的 GitHub 账号')
   const requireApp = () => {
     if (!app) throw notConfigured()
@@ -104,7 +151,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
   const userAuthorization = () => !!app && app.clientId !== '' && app.clientSecret
   // Everyone has a repository of their own to choose.
   const ensureHome = (login: string) => {
-    if (!repos.some((r) => key(r.owner) === key(login))) repos.push({ id: ++repoId, owner: login, name: 'journal', private: true })
+    if (!repos.some((r) => key(r.owner) === key(login)))
+      repos.push({ id: ++repoId, owner: login, name: 'journal', private: true })
   }
   const connection = (userId: string): AuthRec | null => auths.get(userId) ?? null
   const usable = (userId: string): AuthRec | null => {
@@ -112,7 +160,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     return a && a.state === 'ok' ? a : null
   }
   const sharedWith = (i: InstRec, userId: string) => i.tenants.includes(deps.tenantOf(userId))
-  const member = (i: InstRec, login: string | undefined) => !!login && (i.members.includes('*') || i.members.map(key).includes(key(login)))
+  const member = (i: InstRec, login: string | undefined) =>
+    !!login && (i.members.includes('*') || i.members.map(key).includes(key(login)))
 
   const authOf = (userId: string): Connection | null => {
     const a = connection(userId)
@@ -133,7 +182,13 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     host: 'github.com',
     name: 'GitHub',
     owner: 'site',
-    capabilities: { createRepo: true, installations: true, connectAccount: true, storageTarget: true, partialSync: 'yes' },
+    capabilities: {
+      createRepo: true,
+      installations: true,
+      connectAccount: true,
+      storageTarget: true,
+      partialSync: 'yes',
+    },
     configured: app !== null,
     app: app ? { ...MOCK_GITHUB_APP, installUrl: `${MOCK_GITHUB_APP.htmlUrl}/installations/new` } : null,
     userAuthorization: userAuthorization(),
@@ -143,24 +198,37 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
 
   // --- connecting -----------------------------------------------------------------
 
-  const randomState = () => Array.from({ length: 24 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(deps.random() * 36)]).join('')
+  const randomState = () =>
+    Array.from({ length: 24 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(deps.random() * 36)]).join('')
 
   // `install: true` plays the App's installation page, which authorises the person in the same flow.
   const start = (userId: string, body: Record<string, unknown>): { url: string; state: string } => {
     requireApp()
     if (!userAuthorization()) throw notConfigured()
     const state = randomState()
-    attempts.set(state, { userId, ret: typeof body.return === 'string' && body.return.startsWith('/') && !body.return.startsWith('//') ? body.return : '/', created: deps.now() })
+    attempts.set(state, {
+      userId,
+      ret:
+        typeof body.return === 'string' && body.return.startsWith('/') && !body.return.startsWith('//')
+          ? body.return
+          : '/',
+      created: deps.now(),
+    })
     const install = body.install === true ? '&setup_action=install&installation_id=7001' : ''
     return { url: `/api/connections/github/authorization/callback?state=${state}${install}`, state }
   }
 
   // The browser comes back: always a redirect.
-  const callback = (userId: string | null, cookieState: string | undefined, q: URLSearchParams): { to: string; clear: boolean } => {
+  const callback = (
+    userId: string | null,
+    cookieState: string | undefined,
+    q: URLSearchParams,
+  ): { to: string; clear: boolean } => {
     const fail = (c: string) => ({ to: `/settings?provider=github&connection_error=${c}`, clear: true })
     const state = q.get('state') ?? ''
     const at = attempts.get(state)
-    if (!at || cookieState !== state || !userId || at.userId !== userId || deps.now() - at.created > 600_000) return { to: '/settings?provider=github&connection_error=expired', clear: false }
+    if (!at || cookieState !== state || !userId || at.userId !== userId || deps.now() - at.created > 600_000)
+      return { to: '/settings?provider=github&connection_error=expired', clear: false }
     attempts.delete(state)
     if (q.get('error')) return fail('denied')
     if (q.get('setup_action') === 'request') return fail('requested')
@@ -193,7 +261,13 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     const out: ConnectionOwner[] = []
     const seen = new Set<number>()
     if (a) {
-      out.push({ login: a.login, type: 'User', via: 'user', installationId: null, needsInstall: traps.personalNeedsInstall && !installedOn.has(key(a.login)) })
+      out.push({
+        login: a.login,
+        type: 'User',
+        via: 'user',
+        installationId: null,
+        needsInstall: traps.personalNeedsInstall && !installedOn.has(key(a.login)),
+      })
       for (const i of insts) {
         if (i.type === 'Organization' && member(i, a.login)) {
           out.push({ login: i.login, type: 'Organization', via: 'user', installationId: i.id, needsInstall: false })
@@ -201,13 +275,26 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
         }
       }
     }
-    for (const i of insts) if (sharedWith(i, userId) && i.type === 'Organization' && !seen.has(i.id)) out.push({ login: i.login, type: 'Organization', via: 'app', installationId: i.id, needsInstall: false })
+    for (const i of insts)
+      if (sharedWith(i, userId) && i.type === 'Organization' && !seen.has(i.id))
+        out.push({ login: i.login, type: 'Organization', via: 'app', installationId: i.id, needsInstall: false })
     return page(out, cursor)
   }
 
-  const asRepo = (r: RepoRec): ConnectionRepo => ({ id: r.id, fullName: `${r.owner}/${r.name}`, private: r.private, defaultBranch: 'main', htmlUrl: `https://github.com/${r.owner}/${r.name}`, canPush: true })
+  const asRepo = (r: RepoRec): ConnectionRepo => ({
+    id: r.id,
+    fullName: `${r.owner}/${r.name}`,
+    private: r.private,
+    defaultBranch: 'main',
+    htmlUrl: `https://github.com/${r.owner}/${r.name}`,
+    canPush: true,
+  })
 
-  const reposOf = (userId: string, which: { installation: number } | { mine: true }, cursor: string | null): CursorPage<ConnectionRepo> => {
+  const reposOf = (
+    userId: string,
+    which: { installation: number } | { mine: true },
+    cursor: string | null,
+  ): CursorPage<ConnectionRepo> => {
     requireApp()
     if ('mine' in which) {
       const a = usable(userId)
@@ -216,7 +303,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     }
     const i = insts.find((x) => x.id === which.installation)
     const a = usable(userId)
-    if (!i || !(sharedWith(i, userId) || (a && member(i, a.login)))) throw new HttpError(404, 'not_found', '没有这个安装')
+    if (!i || !(sharedWith(i, userId) || (a && member(i, a.login))))
+      throw new HttpError(404, 'not_found', '没有这个安装')
     return page(repos.filter((r) => key(r.owner) === key(i.login)).map(asRepo), cursor)
   }
 
@@ -235,56 +323,102 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     throw new HttpError(403, 'owner_not_allowed', `不能在 ${owner} 下建仓库`)
   }
 
-  const create = (userId: string, input: { owner: string; name: string; private: boolean; spaceName: string }): { repo: RepoRec; via: ConnectionVia; installationId: number } => {
+  const create = (
+    userId: string,
+    input: { owner: string; name: string; private: boolean; spaceName: string },
+  ): { repo: RepoRec; via: ConnectionVia; installationId: number } => {
     const p = plan(userId, input.owner)
-    if (!NAME_RE.test(input.name) || input.name === '.' || input.name === '..' || input.name.toLowerCase().endsWith('.git')) throw invalid('仓库名只能用字母、数字、点、下划线和连字符，最多 100 个字符')
-    if (traps.noPermission) throw new HttpError(403, 'provider_refused', 'GitHub 拒绝建仓库：你在这个组织里没有建仓库的权限')
+    if (
+      !NAME_RE.test(input.name) ||
+      input.name === '.' ||
+      input.name === '..' ||
+      input.name.toLowerCase().endsWith('.git')
+    )
+      throw invalid('仓库名只能用字母、数字、点、下划线和连字符，最多 100 个字符')
+    if (traps.noPermission)
+      throw new HttpError(403, 'provider_refused', 'GitHub 拒绝建仓库：你在这个组织里没有建仓库的权限')
     if (traps.personalNeedsInstall && !p.installation && p.via === 'user' && !installedOn.has(key(p.login))) {
-      throw new HttpError(409, 'app_not_installed', `App 还没有装到你的账号 ${p.login} 上，装好之前 GitHub 不让在里面建仓库`, { installUrl: `${MOCK_GITHUB_APP.htmlUrl}/installations/new` })
+      throw new HttpError(
+        409,
+        'app_not_installed',
+        `App 还没有装到你的账号 ${p.login} 上，装好之前 GitHub 不让在里面建仓库`,
+        { installUrl: `${MOCK_GITHUB_APP.htmlUrl}/installations/new` },
+      )
     }
-    if (traps.missingPermission) throw new HttpError(403, 'app_missing_permission', 'App 或它的安装缺少 administration 权限', { missing: ['administration'] })
-    if (repos.some((r) => key(r.owner) === key(p.login) && key(r.name) === key(input.name))) throw new HttpError(409, 'name_taken', `${p.login} 下已经有同名仓库`)
+    if (traps.missingPermission)
+      throw new HttpError(403, 'app_missing_permission', 'App 或它的安装缺少 administration 权限', {
+        missing: ['administration'],
+      })
+    if (repos.some((r) => key(r.owner) === key(p.login) && key(r.name) === key(input.name)))
+      throw new HttpError(409, 'name_taken', `${p.login} 下已经有同名仓库`)
     const repo: RepoRec = { id: ++repoId, owner: p.login, name: input.name, private: input.private }
     repos.push(repo)
     // From here on the repository stays, and the person is reminded of it.
     const remember = () => {
       const list = (leftovers.get(userId) ?? []).filter((l) => l.repoId !== repo.id)
-      list.unshift({ repoId: repo.id, fullName: `${repo.owner}/${repo.name}`, htmlUrl: `https://github.com/${repo.owner}/${repo.name}`, spaceName: input.spaceName, created: new Date(deps.now()).toISOString().replace(/\.\d+Z$/, 'Z') })
+      list.unshift({
+        repoId: repo.id,
+        fullName: `${repo.owner}/${repo.name}`,
+        htmlUrl: `https://github.com/${repo.owner}/${repo.name}`,
+        spaceName: input.spaceName,
+        created: new Date(deps.now()).toISOString().replace(/\.\d+Z$/, 'Z'),
+      })
       leftovers.set(userId, list.slice(0, 20))
     }
     if (p.installation && p.installation.selection === 'selected' && traps.notInInstallation) {
       remember()
-      throw new HttpError(409, 'repo_not_in_installation', `${p.login} 的安装没有包含新仓库 ${p.login}/${input.name}，也没能加进去`, {
-        repo: { id: repo.id, fullName: `${repo.owner}/${repo.name}`, htmlUrl: `https://github.com/${repo.owner}/${repo.name}` },
-      })
+      throw new HttpError(
+        409,
+        'repo_not_in_installation',
+        `${p.login} 的安装没有包含新仓库 ${p.login}/${input.name}，也没能加进去`,
+        {
+          repo: {
+            id: repo.id,
+            fullName: `${repo.owner}/${repo.name}`,
+            htmlUrl: `https://github.com/${repo.owner}/${repo.name}`,
+          },
+        },
+      )
     }
     if (traps.pushFails) {
       remember()
       // The repository was made and stays, empty: a retry with create: false connects to it.
       throw new HttpError(502, 'push_failed', `仓库 ${p.login}/${input.name} 已经建好，但第一次推送没有成功`, {
-        repo: { id: repo.id, fullName: `${repo.owner}/${repo.name}`, htmlUrl: `https://github.com/${repo.owner}/${repo.name}` },
+        repo: {
+          id: repo.id,
+          fullName: `${repo.owner}/${repo.name}`,
+          htmlUrl: `https://github.com/${repo.owner}/${repo.name}`,
+        },
       })
     }
     return { repo, via: p.installation ? 'app' : 'user', installationId: p.installation?.id ?? 0 }
   }
 
   // A repository that exists: the App when the installation reaches it and the caller may use it, else the caller's own connection.
-  const existing = (userId: string, owner: string, name: string, via: ConnectionVia | ''): { repo: RepoRec; via: ConnectionVia; installationId: number } => {
+  const existing = (
+    userId: string,
+    owner: string,
+    name: string,
+    via: ConnectionVia | '',
+  ): { repo: RepoRec; via: ConnectionVia; installationId: number } => {
     requireApp()
     const repo = repos.find((r) => key(r.owner) === key(owner) && key(r.name) === key(name))
     const a = usable(userId)
     const i = insts.find((x) => key(x.login) === key(owner))
     const tryApp = () => {
-      if (!repo || !i || (i.selection === 'selected' && traps.notInInstallation)) throw new HttpError(409, 'repo_not_in_installation', 'App 没有装在这个仓库上，或者它的安装够不着这个仓库')
+      if (!repo || !i || (i.selection === 'selected' && traps.notInInstallation))
+        throw new HttpError(409, 'repo_not_in_installation', 'App 没有装在这个仓库上，或者它的安装够不着这个仓库')
       if (!sharedWith(i, userId)) {
         if (!a) throw notAuthorized()
-        if (!member(i, a.login)) throw new HttpError(403, 'owner_not_allowed', '这个安装没有共享，而你的 GitHub 连接不能推送到这个仓库')
+        if (!member(i, a.login))
+          throw new HttpError(403, 'owner_not_allowed', '这个安装没有共享，而你的 GitHub 连接不能推送到这个仓库')
       }
       return { repo, via: 'app' as const, installationId: i.id }
     }
     const tryUser = () => {
       if (!a) throw notAuthorized()
-      if (!repo || !(key(a.login) === key(owner) || (i && member(i, a.login)))) throw new HttpError(403, 'owner_not_allowed', '你的 GitHub 连接不能推送到这个仓库')
+      if (!repo || !(key(a.login) === key(owner) || (i && member(i, a.login))))
+        throw new HttpError(403, 'owner_not_allowed', '你的 GitHub 连接不能推送到这个仓库')
       return { repo, via: 'user' as const, installationId: 0 }
     }
     if (via === 'app') return tryApp()
@@ -340,12 +474,17 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
   }
 
   // The manifest flow: the browser posts the manifest to GitHub and comes back with a code.
-  const manifestStart = (userId: string, body: Record<string, unknown>): { start: GitHubManifestStart; state: string } => {
+  const manifestStart = (
+    userId: string,
+    body: Record<string, unknown>,
+  ): { start: GitHubManifestStart; state: string } => {
     const org = typeof body.organization === 'string' ? body.organization.trim() : ''
-    const name = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : 'PetalBook notes.example.test'
+    const name =
+      typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : 'PetalBook notes.example.test'
     if (org !== '' && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(org)) throw invalid('organization 不是 GitHub 账号名')
     if (Array.from(name).length > 34) throw invalid('name 最多 34 个字符')
-    if (app && (deps.spacesOnApp() > 0 || auths.size > 0)) throw new HttpError(409, 'provider_in_use', '还有空间在用这个 App，或有人连着 GitHub：先改掉那些再换 App')
+    if (app && (deps.spacesOnApp() > 0 || auths.size > 0))
+      throw new HttpError(409, 'provider_in_use', '还有空间在用这个 App，或有人连着 GitHub：先改掉那些再换 App')
     const state = randomState()
     manifests.set(state, { userId, created: deps.now() })
     const ret = `${PUBLIC_URL}/api/connections/github/manifest/callback`
@@ -369,15 +508,39 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
   }
 
   // GitHub sends the administrator's browser back: always a redirect.
-  const manifestCallback = (userId: string | null, siteAdmin: boolean, cookieState: string | undefined, q: URLSearchParams): { to: string; clear: boolean } => {
+  const manifestCallback = (
+    userId: string | null,
+    siteAdmin: boolean,
+    cookieState: string | undefined,
+    q: URLSearchParams,
+  ): { to: string; clear: boolean } => {
     const expired = { to: '/admin/storage?connection_app_error=expired', clear: false }
     const state = q.get('state') ?? ''
     const at = manifests.get(state)
-    if (!at || cookieState !== state || !userId || !siteAdmin || at.userId !== userId || deps.now() - at.created > 600_000) return expired
+    if (
+      !at ||
+      cookieState !== state ||
+      !userId ||
+      !siteAdmin ||
+      at.userId !== userId ||
+      deps.now() - at.created > 600_000
+    )
+      return expired
     manifests.delete(state)
-    if (!q.get('code') || q.get('code') === 'bad') return { to: '/admin/storage?connection_app_error=provider_error', clear: true }
-    if (app && (deps.spacesOnApp() > 0 || auths.size > 0)) return { to: '/admin/storage?connection_app_error=app_in_use', clear: true }
-    app = { appId: '7654321', clientId: 'Iv23liMockManifest', clientSecret: true, fingerprint: 'SHA256:mockManifestFingerprint0123456789abcdefghijk', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now(), gaps: [], anyAccount: true }
+    if (!q.get('code') || q.get('code') === 'bad')
+      return { to: '/admin/storage?connection_app_error=provider_error', clear: true }
+    if (app && (deps.spacesOnApp() > 0 || auths.size > 0))
+      return { to: '/admin/storage?connection_app_error=app_in_use', clear: true }
+    app = {
+      appId: '7654321',
+      clientId: 'Iv23liMockManifest',
+      clientSecret: true,
+      fingerprint: 'SHA256:mockManifestFingerprint0123456789abcdefghijk',
+      permissions: { administration: 'write', contents: 'write', metadata: 'read' },
+      checked: deps.now(),
+      gaps: [],
+      anyAccount: true,
+    }
     side.permissions = { ...app.permissions }
     return { to: '/admin/storage?connection_app=created', clear: true }
   }
@@ -386,20 +549,36 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     const appId = (input.appId ?? app?.appId ?? '').trim()
     const first = app === null
     if (first && (appId === '' || !input.privateKey)) throw invalid('第一次保存需要 appId 和 privateKey')
-    if (input.privateKey !== undefined && input.privateKey !== '' && !/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(input.privateKey)) throw new HttpError(400, 'key_invalid', '私钥必须是 PEM 格式的 RSA 密钥')
+    if (
+      input.privateKey !== undefined &&
+      input.privateKey !== '' &&
+      !/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(input.privateKey)
+    )
+      throw new HttpError(400, 'key_invalid', '私钥必须是 PEM 格式的 RSA 密钥')
     if (!/^\d+$/.test(appId)) throw new HttpError(400, 'app_rejected', 'GitHub 不认这个 App 编号')
     const clientId = input.clientId === undefined ? (app?.clientId ?? '') : input.clientId.trim()
     const secretGiven = !!input.clientSecret
-    if (clientId !== '' && !secretGiven && !(app && app.clientSecret && clientId === app.clientId)) throw invalid('clientId 和 clientSecret 要一起给')
-    if (clientId !== '' && secretGiven && input.clientSecret === 'wrong') throw new HttpError(400, 'client_rejected', 'GitHub 不认这对 client id 和 secret')
-    if (app && (appId !== app.appId || (app.clientId !== '' && clientId !== app.clientId)) && (deps.spacesOnApp() > 0 || auths.size > 0)) {
+    if (clientId !== '' && !secretGiven && !(app && app.clientSecret && clientId === app.clientId))
+      throw invalid('clientId 和 clientSecret 要一起给')
+    if (clientId !== '' && secretGiven && input.clientSecret === 'wrong')
+      throw new HttpError(400, 'client_rejected', 'GitHub 不认这对 client id 和 secret')
+    if (
+      app &&
+      (appId !== app.appId || (app.clientId !== '' && clientId !== app.clientId)) &&
+      (deps.spacesOnApp() > 0 || auths.size > 0)
+    ) {
       throw new HttpError(409, 'provider_in_use', '还有空间在用这个 App，或有人连着 GitHub：先改掉那些再换 App')
     }
     app = {
       appId,
       clientId,
       clientSecret: clientId !== '' && (secretGiven || (app?.clientSecret ?? false)),
-      fingerprint: input.privateKey ? `SHA256:${btoa(input.privateKey).replace(/[^A-Za-z0-9]/g, '').slice(-43).padEnd(43, 'x')}` : (app?.fingerprint ?? ''),
+      fingerprint: input.privateKey
+        ? `SHA256:${btoa(input.privateKey)
+            .replace(/[^A-Za-z0-9]/g, '')
+            .slice(-43)
+            .padEnd(43, 'x')}`
+        : (app?.fingerprint ?? ''),
       permissions: app?.permissions ?? { administration: 'write', contents: 'write', metadata: 'read' },
       checked: deps.now(),
       gaps: app?.gaps ?? [],
@@ -410,7 +589,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
 
   const deleteAdmin = () => {
     if (!app) return
-    if (deps.spacesOnApp() > 0) throw new HttpError(409, 'provider_in_use', `还有 ${deps.spacesOnApp()} 个空间在用这个 App：先改掉它们`)
+    if (deps.spacesOnApp() > 0)
+      throw new HttpError(409, 'provider_in_use', `还有 ${deps.spacesOnApp()} 个空间在用这个 App：先改掉它们`)
     app = null
     auths.clear()
     for (const i of insts) i.tenants = []
@@ -434,7 +614,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
 
   const share = (id: number, tenants: unknown): GitHubInstallation => {
     requireApp()
-    if (!Array.isArray(tenants) || tenants.some((x) => typeof x !== 'string')) throw invalid('给 tenants：要共享给的租户 id（不共享就是 []）')
+    if (!Array.isArray(tenants) || tenants.some((x) => typeof x !== 'string'))
+      throw invalid('给 tenants：要共享给的租户 id（不共享就是 []）')
     const i = insts.find((x) => x.id === id)
     if (!i) throw new HttpError(404, 'not_found', 'GitHub 不认识这个安装')
     const set = [...new Set(tenants as string[])].filter((x) => x !== '')
@@ -446,11 +627,18 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
 
   // "I deleted it": forgets the person's reminder; there being none is fine.
   const dismiss = (userId: string, repoId: number) => {
-    leftovers.set(userId, (leftovers.get(userId) ?? []).filter((l) => l.repoId !== repoId))
+    leftovers.set(
+      userId,
+      (leftovers.get(userId) ?? []).filter((l) => l.repoId !== repoId),
+    )
   }
   // A space follows the repository: nobody needs reminding of it any more.
   const repoConnected = (repoId: number) => {
-    for (const [u, list] of leftovers) leftovers.set(u, list.filter((l) => l.repoId !== repoId))
+    for (const [u, list] of leftovers)
+      leftovers.set(
+        u,
+        list.filter((l) => l.repoId !== repoId),
+      )
   }
 
   // A deleted tenant stops being shared with.

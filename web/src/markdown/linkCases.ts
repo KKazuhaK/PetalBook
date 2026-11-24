@@ -3,7 +3,15 @@
 
 import { parser } from './processors'
 
-type Node = { type: string; url?: string; title?: string | null; value?: string; alt?: string; children?: Node[]; identifier?: string }
+type Node = {
+  type: string
+  url?: string
+  title?: string | null
+  value?: string
+  alt?: string
+  children?: Node[]
+  identifier?: string
+}
 export type Found = { text: string; path: string; id: string; anchor: string }
 
 const ID = /^[0-9A-HJKMNP-TV-Z]{10}$/
@@ -56,8 +64,12 @@ export function linksOf(src: string, markdown: string): Found[] {
     const r = resolve(src, def.url)
     if (!r) return
     const title = def.title ?? ''
-    out.push({ text: textOf(n).replace(/\s+/g, ' ').trim(), path: r.path, id: ID.test(title) ? title : '', anchor: r.anchor })
+    out.push({
+      text: textOf(n).replace(/\s+/g, ' ').trim(),
+      path: r.path,
+      id: ID.test(title) ? title : '',
+      anchor: r.anchor,
+    })
   })
   return out
 }
-

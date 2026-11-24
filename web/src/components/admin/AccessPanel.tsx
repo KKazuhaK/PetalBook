@@ -9,7 +9,16 @@ import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
 import { GrantItem } from '@/components/tokens/GrantItem'
 import { TokenItem } from '@/components/tokens/TokenItem'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { t } from '@/i18n'
@@ -33,7 +42,13 @@ function TokenSwitch() {
   const access = useMachineAccess()
   const set = useSetMachineAccess()
   if (access.isPending) return <PageFallback />
-  if (access.isError) return <ErrorState message={t.fmt.labelled(tk.admin.loadFailed, access.error.message)} onRetry={() => void access.refetch()} />
+  if (access.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(tk.admin.loadFailed, access.error.message)}
+        onRetry={() => void access.refetch()}
+      />
+    )
   return (
     <SettingsSection title={tk.admin.title}>
       <SettingsRows>
@@ -42,7 +57,12 @@ function TokenSwitch() {
             aria-label={tk.admin.switchLabel}
             checked={access.data.tokens}
             disabled={set.isPending}
-            onCheckedChange={(on) => set.mutate({ tokens: on }, { onError: (e) => toast.error(e instanceof ApiError ? e.message : tk.admin.switchFailed) })}
+            onCheckedChange={(on) =>
+              set.mutate(
+                { tokens: on },
+                { onError: (e) => toast.error(e instanceof ApiError ? e.message : tk.admin.switchFailed) },
+              )
+            }
           />
         </SettingsRow>
       </SettingsRows>
@@ -76,7 +96,10 @@ function AllTokens() {
       {list.isPending ? (
         <PageFallback />
       ) : list.isError ? (
-        <ErrorState message={t.fmt.labelled(tk.admin.listFailed, list.error.message)} onRetry={() => void list.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(tk.admin.listFailed, list.error.message)}
+          onRetry={() => void list.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="text-sm text-muted-foreground">{tk.admin.empty}</p>
       ) : (
@@ -86,10 +109,21 @@ function AllTokens() {
               <TokenItem
                 key={token.id}
                 token={token}
-                owner={token.owner.name && token.owner.name !== token.owner.username ? `${token.owner.name} (${token.owner.username})` : token.owner.username}
+                owner={
+                  token.owner.name && token.owner.name !== token.owner.username
+                    ? `${token.owner.name} (${token.owner.username})`
+                    : token.owner.username
+                }
                 action={
                   token.state === 'active' ? (
-                    <Button type="button" variant="outline" size="sm" className="max-sm:w-full" aria-label={tk.revokeLabel(token.name)} onClick={() => setRevoking(token)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="max-sm:w-full"
+                      aria-label={tk.revokeLabel(token.name)}
+                      onClick={() => setRevoking(token)}
+                    >
                       {tk.revoke}
                     </Button>
                   ) : undefined
@@ -99,7 +133,13 @@ function AllTokens() {
           </ul>
           {list.hasNextPage && (
             <div>
-              <Button type="button" variant="outline" size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
                 {list.isFetchingNextPage && <Spinner />}
                 {tk.admin.loadMore}
               </Button>
@@ -111,7 +151,9 @@ function AllTokens() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{tk.revokeTitle}</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">{revoking ? tk.revokeHelp(revoking.name) : ''}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">
+              {revoking ? tk.revokeHelp(revoking.name) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tk.cancel}</AlertDialogCancel>
@@ -139,7 +181,12 @@ function McpSwitch() {
             aria-label={oa.admin.mcpLabel}
             checked={access.data.mcp}
             disabled={set.isPending}
-            onCheckedChange={(on) => set.mutate({ mcp: on }, { onError: (e) => toast.error(e instanceof ApiError ? e.message : oa.admin.switchFailed) })}
+            onCheckedChange={(on) =>
+              set.mutate(
+                { mcp: on },
+                { onError: (e) => toast.error(e instanceof ApiError ? e.message : oa.admin.switchFailed) },
+              )
+            }
           />
         </SettingsRow>
       </SettingsRows>
@@ -158,7 +205,8 @@ function AllGrants() {
   const [revoking, setRevoking] = useState<AdminGrant | null>(null)
   const [busy, setBusy] = useState(false)
   // No authorization server on this server (no public address): no list, and the 404 says so.
-  if (access.data === undefined || (list.isError && list.error instanceof ApiError && list.error.status === 404)) return null
+  if (access.data === undefined || (list.isError && list.error instanceof ApiError && list.error.status === 404))
+    return null
 
   const revoke = async () => {
     if (!revoking) return
@@ -180,7 +228,10 @@ function AllGrants() {
       {list.isPending ? (
         <PageFallback />
       ) : list.isError ? (
-        <ErrorState message={t.fmt.labelled(oa.admin.listFailed, list.error.message)} onRetry={() => void list.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(oa.admin.listFailed, list.error.message)}
+          onRetry={() => void list.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="text-sm text-muted-foreground">{oa.admin.empty}</p>
       ) : (
@@ -190,9 +241,20 @@ function AllGrants() {
               <GrantItem
                 key={g.id}
                 grant={g}
-                owner={g.owner.name && g.owner.name !== g.owner.username ? `${g.owner.name} (${g.owner.username})` : g.owner.username}
+                owner={
+                  g.owner.name && g.owner.name !== g.owner.username
+                    ? `${g.owner.name} (${g.owner.username})`
+                    : g.owner.username
+                }
                 action={
-                  <Button type="button" variant="outline" size="sm" className="max-sm:w-full" aria-label={oa.yours.revokeLabel(g.client.name)} onClick={() => setRevoking(g)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="max-sm:w-full"
+                    aria-label={oa.yours.revokeLabel(g.client.name)}
+                    onClick={() => setRevoking(g)}
+                  >
                     {oa.yours.revoke}
                   </Button>
                 }
@@ -201,7 +263,13 @@ function AllGrants() {
           </ul>
           {list.hasNextPage && (
             <div>
-              <Button type="button" variant="outline" size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
                 {list.isFetchingNextPage && <Spinner />}
                 {oa.admin.loadMore}
               </Button>
@@ -213,7 +281,9 @@ function AllGrants() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{oa.yours.revokeTitle}</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">{revoking ? oa.yours.revokeHelp(revoking.client.name) : ''}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">
+              {revoking ? oa.yours.revokeHelp(revoking.client.name) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{oa.yours.cancel}</AlertDialogCancel>

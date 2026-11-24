@@ -13,10 +13,27 @@ import { pageBytes } from './store'
 
 export { DEFAULT_CAP_BYTES } from './sync'
 export { clearAccount, configure, dropCopy, existingStore, hasCopy, storeFor } from './manager'
-export { onOfflineOff, onSynced, pollOnce, startPolling, syncNow, isSyncing, anySyncing, subscribeBusy, POLL_MS } from './poller'
+export {
+  onOfflineOff,
+  onSynced,
+  pollOnce,
+  startPolling,
+  syncNow,
+  isSyncing,
+  anySyncing,
+  subscribeBusy,
+  POLL_MS,
+} from './poller'
 export { isOffline, useOffline } from './status'
 export { useOfflineAllowed } from './allowed'
-export { CopyClosedError, DEFAULT_CONFIG, RECENT_KEPT, type OfflineConfig, type OfflineMode, type SyncState } from './store'
+export {
+  CopyClosedError,
+  DEFAULT_CONFIG,
+  RECENT_KEPT,
+  type OfflineConfig,
+  type OfflineMode,
+  type SyncState,
+} from './store'
 
 // Registers what the API client needs to answer reads from the device and to delete the copies on sign-out.
 export function installOffline() {

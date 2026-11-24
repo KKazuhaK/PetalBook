@@ -9,7 +9,11 @@ import { tagColorClass, tagColorStyle } from '@/lib/tagColors'
 // Exported so a link that is a tag (the sidebar's) can wear the same look.
 export function tagPillClass(color: TagColor | undefined, extra?: string) {
   const cls = tagColorClass(color)
-  return cn('inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-xs leading-tight', cls || 'border bg-secondary/60 text-secondary-foreground', extra)
+  return cn(
+    'inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-xs leading-tight',
+    cls || 'border bg-secondary/60 text-secondary-foreground',
+    extra,
+  )
 }
 
 // The inline style a custom colour needs next to tagPillClass (its hue); none for presets.
@@ -19,7 +23,19 @@ export const tagPillStyle = tagColorStyle
 // colours (the same data the sidebar already loaded, so nothing extra is
 // asked); pass `color` to say it yourself, or `null` to force no colour. The
 // editor's tag input can adopt it as it is.
-export function TagChip({ tag, color, count, className, children }: { tag: string; color?: TagColor | null; count?: number; className?: string; children?: ReactNode }) {
+export function TagChip({
+  tag,
+  color,
+  count,
+  className,
+  children,
+}: {
+  tag: string
+  color?: TagColor | null
+  count?: number
+  className?: string
+  children?: ReactNode
+}) {
   const colors = useTagColors()
   const resolved = color === null ? undefined : (color ?? colors.get(tag))
   return (

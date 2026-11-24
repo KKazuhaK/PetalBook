@@ -3,14 +3,31 @@ import { toast } from 'sonner'
 import { ApiError, isConflict } from '@/api/client'
 import { useCreateFolder } from '@/api/hooks'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { checkFolderName } from '@/lib/folders'
 import { t } from '@/i18n'
 
 // Asks for a name only; the folder is made inside `parent`.
-export function NewFolderDialog({ open, onOpenChange, parent, spaceName }: { open: boolean; onOpenChange: (open: boolean) => void; parent: string; spaceName: string }) {
+export function NewFolderDialog({
+  open,
+  onOpenChange,
+  parent,
+  spaceName,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  parent: string
+  spaceName: string
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Mounted only while open so the field starts empty each time. */}
@@ -49,11 +66,20 @@ function NewFolderForm({ parent, spaceName, onDone }: { parent: string; spaceNam
       >
         <DialogHeader>
           <DialogTitle>{t.folder.dialogTitle}</DialogTitle>
-          <DialogDescription>{t.folder.dialogIn(parent === '' ? spaceName : parent.slice(parent.lastIndexOf('/') + 1))}</DialogDescription>
+          <DialogDescription>
+            {t.folder.dialogIn(parent === '' ? spaceName : parent.slice(parent.lastIndexOf('/') + 1))}
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
           <Label htmlFor="new-folder-name">{t.folder.nameLabel}</Label>
-          <Input id="new-folder-name" autoFocus autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} aria-invalid={error ? true : undefined} />
+          <Input
+            id="new-folder-name"
+            autoFocus
+            autoComplete="off"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            aria-invalid={error ? true : undefined}
+          />
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>

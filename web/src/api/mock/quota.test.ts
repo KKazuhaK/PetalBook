@@ -8,7 +8,13 @@ function world(options: { maxSpaces?: number } = {}) {
   let clock = Date.parse('2026-11-23T08:00:00Z')
   const server = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null, ...options })
   const req = (method: string, path: string, body?: unknown, cookie = '') => {
-    const r = server.handle(method, `/api${path}`, body === undefined ? undefined : JSON.stringify(body), 'application/json', cookie)
+    const r = server.handle(
+      method,
+      `/api${path}`,
+      body === undefined ? undefined : JSON.stringify(body),
+      'application/json',
+      cookie,
+    )
     const set = r.headers?.['Set-Cookie']
     return { status: r.status, body: (r.body ?? {}) as any, cookie: set ? set.split(';')[0] : '' }
   }
@@ -28,7 +34,13 @@ describe('the mock account usage', () => {
     const w = world()
     const kai = w.person('kai')
     const u = w.req('GET', '/account/usage', undefined, kai.cookie).body
-    expect(u).toMatchObject({ spaces: { used: 1, limit: 20 }, bytes: { used: 0, limit: null }, pages: { used: 0, limit: null }, measuredAt: null, notices: [] })
+    expect(u).toMatchObject({
+      spaces: { used: 1, limit: 20 },
+      bytes: { used: 0, limit: null },
+      pages: { used: 0, limit: null },
+      measuredAt: null,
+      notices: [],
+    })
     const sp = w.spaceIdOf(kai.cookie)
     w.req('POST', `/spaces/${sp}/pages`, { folder: '', meta: { title: 'one' }, body: 'text' }, kai.cookie)
     w.req('POST', `/admin/spaces/${sp}/size`, undefined, w.root)
@@ -45,9 +57,19 @@ describe('the mock account usage', () => {
     expect(w.req('PUT', '/admin/settings/quota.spacesPerPerson', { value: 2 }, w.root).status).toBe(200)
     expect(w.req('POST', '/spaces', { name: 'B' }, kai.cookie).status).toBe(201)
     const refused = w.req('POST', '/spaces', { name: 'C' }, kai.cookie)
-    expect([refused.status, refused.body.error, refused.body.quota, refused.body.limit, refused.body.used]).toEqual([403, 'quota_exceeded', 'spaces', 2, 2])
+    expect([refused.status, refused.body.error, refused.body.quota, refused.body.limit, refused.body.used]).toEqual([
+      403,
+      'quota_exceeded',
+      'spaces',
+      2,
+      2,
+    ])
     // The person's own limit goes over the setting; 0 is none; null follows again.
-    expect(w.req('PATCH', `/users/${kai.id}`, { quota: { spaces: 5 } }, w.root).body.user.quota).toEqual({ spaces: 5, bytes: null, pages: null })
+    expect(w.req('PATCH', `/users/${kai.id}`, { quota: { spaces: 5 } }, w.root).body.user.quota).toEqual({
+      spaces: 5,
+      bytes: null,
+      pages: null,
+    })
     expect(w.req('POST', '/spaces', { name: 'C' }, kai.cookie).status).toBe(201)
     w.req('PATCH', `/users/${kai.id}`, { quota: { spaces: 0 } }, w.root)
     expect(w.req('GET', '/account/usage', undefined, kai.cookie).body.spaces.limit).toBeNull()
@@ -60,9 +82,11 @@ describe('the mock account usage', () => {
     expect([total.status, total.body.error, total.body.limit]).toEqual([403, 'quota_exceeded', 4])
   })
 
-  it('--max-spaces is the site\'s value of the setting, read only', () => {
+  it("--max-spaces is the site's value of the setting, read only", () => {
     const w = world({ maxSpaces: 1 })
-    const site = w.req('GET', '/admin/settings', undefined, w.root).body.settings.find((s: any) => s.key === 'quota.spacesPerPerson')
+    const site = w
+      .req('GET', '/admin/settings', undefined, w.root)
+      .body.settings.find((s: any) => s.key === 'quota.spacesPerPerson')
     expect(site.site).toMatchObject({ value: 1, fromFlag: true })
     expect(w.req('PUT', '/admin/settings/quota.spacesPerPerson', { value: 5 }, w.root).body.error).toBe('conflict')
     const kai = w.person('kai')
@@ -73,7 +97,8 @@ describe('the mock account usage', () => {
     const w = world()
     const kai = w.person('kai')
     const sp = w.spaceIdOf(kai.cookie)
-    for (const title of ['one', 'two']) w.req('POST', `/spaces/${sp}/pages`, { folder: '', meta: { title }, body: 'text' }, kai.cookie)
+    for (const title of ['one', 'two'])
+      w.req('POST', `/spaces/${sp}/pages`, { folder: '', meta: { title }, body: 'text' }, kai.cookie)
     w.req('PUT', '/admin/settings/quota.pagesPerPerson', { value: 1 }, w.root)
     w.req('POST', `/admin/spaces/${sp}/size`, undefined, w.root)
     const u = w.req('GET', '/account/usage', undefined, kai.cookie).body
@@ -89,13 +114,18 @@ describe('the mock account usage', () => {
   })
 })
 
-describe('the mock usage list and a person\'s own limits', () => {
+describe("the mock usage list and a person's own limits", () => {
   it('lists people by bytes with a cursor, narrows to the ones over a limit, and checks its parameters', () => {
     const w = world()
     const people = ['amy', 'bob', 'cat'].map((n) => w.person(n))
     // b is the largest: it gets a page of text.
     const big = w.spaceIdOf(people[1].cookie)
-    w.req('POST', `/spaces/${big}/pages`, { folder: '', meta: { title: 'x' }, body: 'y'.repeat(5000) }, people[1].cookie)
+    w.req(
+      'POST',
+      `/spaces/${big}/pages`,
+      { folder: '', meta: { title: 'x' }, body: 'y'.repeat(5000) },
+      people[1].cookie,
+    )
     for (const p of people) w.req('POST', `/admin/spaces/${w.spaceIdOf(p.cookie)}/size`, undefined, w.root)
     const first = w.req('GET', '/admin/usage?limit=2', undefined, w.root).body
     expect(first.items[0].user.username).toBe('bob')
@@ -119,7 +149,16 @@ describe('the mock usage list and a person\'s own limits', () => {
     const boss = w.person('boss', 'admin')
     w.req('PATCH', `/users/${boss.id}`, { siteAdmin: false }, w.root)
     w.req('PUT', '/admin/settings/quota.bytesPerPerson', { value: 1000 }, w.root)
-    for (const bad of ['x', { disk: 1 }, { spaces: -1 }, { spaces: 10001 }, { bytes: 0 }, { pages: 1.5 }, { bytes: '1' }]) expect(w.req('PATCH', `/users/${kai.id}`, { quota: bad }, w.root).body.error, JSON.stringify(bad)).toBe('invalid')
+    for (const bad of [
+      'x',
+      { disk: 1 },
+      { spaces: -1 },
+      { spaces: 10001 },
+      { bytes: 0 },
+      { pages: 1.5 },
+      { bytes: '1' },
+    ])
+      expect(w.req('PATCH', `/users/${kai.id}`, { quota: bad }, w.root).body.error, JSON.stringify(bad)).toBe('invalid')
     const refused = w.req('PATCH', `/users/${kai.id}`, { disabled: true, quota: { bytes: 5000 } }, boss.cookie)
     expect([refused.status, refused.body.error]).toEqual([403, 'forbidden'])
     expect(w.req('GET', '/users', undefined, w.root).body.users.find((u: any) => u.id === kai.id).disabled).toBe(false)
@@ -142,21 +181,45 @@ describe('the mock tenant usage and the prefilled invite', () => {
     expect(w.req('GET', '/admin/audit?kind=quota_exceeded', undefined, w.root).body.items).toHaveLength(1)
   })
 
-  it('makes a real invite for a new tenant\'s first administrator, which the form that accepts it starts with', () => {
+  it("makes a real invite for a new tenant's first administrator, which the form that accepts it starts with", () => {
     const w = world()
     w.req('PUT', '/admin/tenancy', { enabled: true }, w.root)
-    const made = w.req('POST', '/admin/tenants', { slug: 'acme', name: 'Acme', admin: { username: 'wu', name: 'Wu Wei', email: 'wu@acme.example' } }, w.root)
+    const made = w.req(
+      'POST',
+      '/admin/tenants',
+      { slug: 'acme', name: 'Acme', admin: { username: 'wu', name: 'Wu Wei', email: 'wu@acme.example' } },
+      w.root,
+    )
     expect(made.status).toBe(201)
     const inv = made.body.invite
-    expect(inv).toMatchObject({ role: 'admin', username: 'wu', name: 'Wu Wei', email: 'wu@acme.example', siteAdmin: false })
+    expect(inv).toMatchObject({
+      role: 'admin',
+      username: 'wu',
+      name: 'Wu Wei',
+      email: 'wu@acme.example',
+      siteAdmin: false,
+    })
     const check = w.req('POST', '/invites/check', { token: inv.token })
     expect(check.body).toMatchObject({ role: 'admin', username: 'wu', name: 'Wu Wei', email: 'wu@acme.example' })
     const accepted = w.req('POST', '/invites/accept', { token: inv.token, password: 'a-long-password' })
     expect(accepted.status).toBe(201)
-    expect(accepted.body.user).toMatchObject({ username: 'wu', name: 'Wu Wei', email: 'wu@acme.example', emailVerified: false, role: 'admin' })
-    expect(w.req('POST', '/admin/tenants', { slug: 'bad', name: 'Bad', admin: { username: 'x', email: 'nope' } }, w.root).status).toBe(400)
+    expect(accepted.body.user).toMatchObject({
+      username: 'wu',
+      name: 'Wu Wei',
+      email: 'wu@acme.example',
+      emailVerified: false,
+      role: 'admin',
+    })
+    expect(
+      w.req('POST', '/admin/tenants', { slug: 'bad', name: 'Bad', admin: { username: 'x', email: 'nope' } }, w.root)
+        .status,
+    ).toBe(400)
     // An ordinary invite fills in nothing.
     const plain = w.req('POST', '/invites', { role: 'member' }, w.root).body
-    expect(w.req('POST', '/invites/check', { token: plain.token }).body).toMatchObject({ username: '', name: '', email: '' })
+    expect(w.req('POST', '/invites/check', { token: plain.token }).body).toMatchObject({
+      username: '',
+      name: '',
+      email: '',
+    })
   })
 })

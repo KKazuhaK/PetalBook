@@ -28,8 +28,20 @@ export function withNaturalSize(svg: string): string {
   try {
     const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
     const root = doc.documentElement
-    const box = root.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
-    if (root.localName !== 'svg' || !box || box.length !== 4 || box.some((n) => !Number.isFinite(n)) || box[2] <= 0 || box[3] <= 0) return svg
+    const box = root
+      .getAttribute('viewBox')
+      ?.trim()
+      .split(/[\s,]+/)
+      .map(Number)
+    if (
+      root.localName !== 'svg' ||
+      !box ||
+      box.length !== 4 ||
+      box.some((n) => !Number.isFinite(n)) ||
+      box[2] <= 0 ||
+      box[3] <= 0
+    )
+      return svg
     root.setAttribute('width', String(Math.ceil(box[2])))
     root.setAttribute('height', String(Math.ceil(box[3])))
     root.removeAttribute('style')

@@ -70,7 +70,8 @@ export default function ImportPage() {
   }, [blocker])
 
   if (!session || resolving) return <PageFallback />
-  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
+  if (spaces.isError && !spaces.data)
+    return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   if (!current) return <NotFoundPage message={t.editor.spaceMissing} />
   // An import makes pages.
   if (!can(current, 'write')) return <NotFoundPage message={t.permissions.readOnlyNote} />
@@ -100,7 +101,8 @@ export default function ImportPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (busy) return
-    if (picked.kind === 'none' || picked.kind === 'error') return setError(picked.kind === 'error' ? pickError : t.import.noFiles)
+    if (picked.kind === 'none' || picked.kind === 'error')
+      return setError(picked.kind === 'error' ? pickError : t.import.noFiles)
     let target = ''
     // Nothing, or only slashes, is the root.
     if (folder.replace(/[\s/]/g, '') !== '') {
@@ -111,7 +113,8 @@ export default function ImportPage() {
     const send = picked.kind === 'zip' ? [picked.file] : picked.files
     // Checked here so a file the server would refuse is not sent at all.
     const big = maxImport === undefined ? undefined : send.find((f) => f.size > maxImport)
-    if (big && maxImport !== undefined) return setError(t.import.tooLarge(big.name, formatBytes(big.size), formatBytes(maxImport)))
+    if (big && maxImport !== undefined)
+      return setError(t.import.tooLarge(big.name, formatBytes(big.size), formatBytes(maxImport)))
 
     setError('')
     setReport(null)
@@ -123,7 +126,10 @@ export default function ImportPage() {
     try {
       for (const file of send) {
         setRunning({ at: done + 1, of: send.length })
-        total = addReports(total, await spaceApi(space).importMarkdown(file, { folder: target, name: file.name }, ctl.signal))
+        total = addReports(
+          total,
+          await spaceApi(space).importMarkdown(file, { folder: target, name: file.name }, ctl.signal),
+        )
         done++
       }
       setReport({ total, folder: target })
@@ -156,12 +162,19 @@ export default function ImportPage() {
       </TopBar>
       <div className="mx-auto w-full max-w-[640px] flex-1 space-y-6 px-4 py-6 sm:px-5">
         {report ? (
-          <ImportDone report={report.total} onOpen={() => navigate(report.folder ? urls.folder(report.folder) : urls.recent())} folder={report.folder} onAgain={() => setReport(null)} />
+          <ImportDone
+            report={report.total}
+            onOpen={() => navigate(report.folder ? urls.folder(report.folder) : urls.recent())}
+            folder={report.folder}
+            onAgain={() => setReport(null)}
+          />
         ) : (
           <form className="grid gap-5" onSubmit={(e) => void submit(e)} noValidate>
             <p className="text-sm text-muted-foreground">{t.import.intro}</p>
             <div className="grid gap-1.5">
-              <span id="import-files" className="text-sm font-medium">{t.import.filesLabel}</span>
+              <span id="import-files" className="text-sm font-medium">
+                {t.import.filesLabel}
+              </span>
               <div
                 aria-labelledby="import-files"
                 onDragOver={(e) => {
@@ -178,7 +191,12 @@ export default function ImportPage() {
                 ) : (
                   <p className="text-muted-foreground">
                     {t.import.drop}{' '}
-                    <button type="button" disabled={busy} onClick={() => input.current?.click()} className="font-medium text-foreground underline underline-offset-2 disabled:no-underline">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => input.current?.click()}
+                      className="font-medium text-foreground underline underline-offset-2 disabled:no-underline"
+                    >
                       {t.import.choose}
                     </button>
                   </p>
@@ -202,13 +220,21 @@ export default function ImportPage() {
               <div className="grid gap-2">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{t.import.chosen(listed.length)}</span>
-                  <button type="button" disabled={busy} onClick={() => (setFiles([]), setPartial(null))} className="underline underline-offset-2 disabled:no-underline">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => (setFiles([]), setPartial(null))}
+                    className="underline underline-offset-2 disabled:no-underline"
+                  >
                     {t.import.clear}
                   </button>
                 </div>
                 <ul className="max-h-40 divide-y divide-border/60 overflow-y-auto rounded-md border text-sm">
                   {listed.map((f, i) => (
-                    <li key={`${f.name}:${f.size}:${f.lastModified}:${i}`} className="flex items-center gap-2 px-3 py-1.5">
+                    <li
+                      key={`${f.name}:${f.size}:${f.lastModified}:${i}`}
+                      className="flex items-center gap-2 px-3 py-1.5"
+                    >
                       <FileText className="size-4 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">{f.name}</span>
                       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatBytes(f.size)}</span>
@@ -219,7 +245,16 @@ export default function ImportPage() {
               </div>
             )}
 
-            <Field label={t.import.folderLabel} help={t.import.folderHelp} placeholder={t.import.folderPlaceholder} value={folder} onChange={(e) => setFolder(e.target.value)} disabled={busy} autoComplete="off" spellCheck={false} />
+            <Field
+              label={t.import.folderLabel}
+              help={t.import.folderHelp}
+              placeholder={t.import.folderPlaceholder}
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              disabled={busy}
+              autoComplete="off"
+              spellCheck={false}
+            />
 
             <FormMessage>{error || pickError}</FormMessage>
             {partial && (
@@ -262,12 +297,24 @@ function SkippedList({ report }: { report: ImportReport }) {
           </li>
         ))}
       </ul>
-      {report.skippedMore ? <p className="text-xs text-muted-foreground">{t.import.skippedMore(report.skippedMore)}</p> : null}
+      {report.skippedMore ? (
+        <p className="text-xs text-muted-foreground">{t.import.skippedMore(report.skippedMore)}</p>
+      ) : null}
     </div>
   )
 }
 
-function ImportDone({ report, folder, onOpen, onAgain }: { report: ImportReport; folder: string; onOpen: () => void; onAgain: () => void }) {
+function ImportDone({
+  report,
+  folder,
+  onOpen,
+  onAgain,
+}: {
+  report: ImportReport
+  folder: string
+  onOpen: () => void
+  onAgain: () => void
+}) {
   return (
     <div className="grid gap-4">
       <div role="status" className="flex items-start gap-3 rounded-lg border p-4">

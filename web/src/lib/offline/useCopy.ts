@@ -19,7 +19,10 @@ export interface CopyInfo {
 }
 const NONE: CopyInfo = { config: null, state: null, catalog: 0, texts: 0, bytes: 0, deviceBytes: 0, accountBytes: 0 }
 
-export function useCopy(user: string | undefined, space: string): { info: CopyInfo | null; syncing: boolean; reload: () => void; failed: boolean } {
+export function useCopy(
+  user: string | undefined,
+  space: string,
+): { info: CopyInfo | null; syncing: boolean; reload: () => void; failed: boolean } {
   const [info, setInfo] = useState<CopyInfo | null>(null)
   const [failed, setFailed] = useState(false)
   const [rev, setRev] = useState(0)
@@ -30,10 +33,27 @@ export function useCopy(user: string | undefined, space: string): { info: CopyIn
     void (async () => {
       try {
         const store = await existingStore(user, space)
-        if (!store) return alive && (setInfo({ ...NONE, deviceBytes: totalBytes(), accountBytes: bytesOf(user) }), setFailed(false))
-        const [config, state, catalog, texts, bytes] = await Promise.all([store.config(), store.state(), store.catalogCount(), store.textCount(), store.bytes()])
+        if (!store)
+          return (
+            alive && (setInfo({ ...NONE, deviceBytes: totalBytes(), accountBytes: bytesOf(user) }), setFailed(false))
+          )
+        const [config, state, catalog, texts, bytes] = await Promise.all([
+          store.config(),
+          store.state(),
+          store.catalogCount(),
+          store.textCount(),
+          store.bytes(),
+        ])
         if (alive) {
-          setInfo({ config: config ?? null, state, catalog, texts, bytes, deviceBytes: totalBytes(), accountBytes: bytesOf(user) })
+          setInfo({
+            config: config ?? null,
+            state,
+            catalog,
+            texts,
+            bytes,
+            deviceBytes: totalBytes(),
+            accountBytes: bytesOf(user),
+          })
           setFailed(false)
         }
       } catch (e) {
@@ -48,6 +68,10 @@ export function useCopy(user: string | undefined, space: string): { info: CopyIn
     }
   }, [user, space, rev])
   useEffect(() => onSynced((e) => e.space === space && setRev((r) => r + 1)), [space])
-  const syncing = useSyncExternalStore(subscribeBusy, () => isSyncing(space), () => false)
+  const syncing = useSyncExternalStore(
+    subscribeBusy,
+    () => isSyncing(space),
+    () => false,
+  )
   return { info, syncing, reload, failed }
 }

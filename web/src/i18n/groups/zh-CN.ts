@@ -1,7 +1,10 @@
 // 组（3.2）的文字：管理里的「组」页、空间成员里的组、提供方的组映射、账号里的「我的组」。
 export const groupsZhCN = {
   sourceNames: { local: '本地组', synced: '同步组' },
-  sourceHelp: { local: '由管理员在这里手动加人、减人。', synced: '成员只由登录时的同步决定，不能手动改；先在这里建好，再到「安全」页的登录提供方里把组声明的值映射过来。' },
+  sourceHelp: {
+    local: '由管理员在这里手动加人、减人。',
+    synced: '成员只由登录时的同步决定，不能手动改；先在这里建好，再到「安全」页的登录提供方里把组声明的值映射过来。',
+  },
   // 管理里的「组」页
   admin: {
     title: '组',
@@ -66,14 +69,16 @@ export const groupsZhCN = {
     pasteAdd: '按用户名加入',
     addSelected: (n: number) => `加入 ${n} 人`,
     adding: '正在添加…',
-    addedPeople: (added: number, already: number) => (already > 0 ? `已加入 ${added} 人，${already} 人本来就在组里` : `已加入 ${added} 人`),
+    addedPeople: (added: number, already: number) =>
+      already > 0 ? `已加入 ${added} 人，${already} 人本来就在组里` : `已加入 ${added} 人`,
     tooMany: '一次最多加 500 人。',
     rename: '改名',
     delete: '删除…',
     deleteTitle: (name: string) => `删除「${name}」？`,
     deleteHelp: '组里的人、空间和草稿都不会被删除；人们通过这个组得到的访问权会立即失去。',
     deleteConfirm: '删除',
-    deleteInUse: (spaces: number, mappings: number) => `这个组是 ${spaces} 个空间的成员，被 ${mappings} 项登录映射指向。继续删除会把它移出这些空间，并删掉那些映射。`,
+    deleteInUse: (spaces: number, mappings: number) =>
+      `这个组是 ${spaces} 个空间的成员，被 ${mappings} 项登录映射指向。继续删除会把它移出这些空间，并删掉那些映射。`,
     deleteForce: '仍然删除',
     deleted: (name: string) => `已删除「${name}」`,
     errors: {
@@ -150,7 +155,8 @@ export const groupsZhCN = {
     missingClear: '当作空列表，移出所有',
     missingHelp: 'Entra ID 的组太多时只给一个指针而不是列表，也算没有这个声明。',
     map: '映射',
-    mapHelp: '声明里的值（精确匹配，最长 256 字节）对应哪个同步组。一个值只能映射一次；一个组可以被几个值映射。删掉一项会立刻把它带来的成员关系删掉。',
+    mapHelp:
+      '声明里的值（精确匹配，最长 256 字节）对应哪个同步组。一个值只能映射一次；一个组可以被几个值映射。删掉一项会立刻把它带来的成员关系删掉。',
     value: '声明里的值',
     group: '同步组',
     chooseGroup: '选一个同步组',

@@ -6,7 +6,16 @@ import { api, ApiError } from '@/api/client'
 import { applySession, keys, useAuthProviders } from '@/api/hooks'
 import type { AccountInfo, Passkey } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -18,7 +27,15 @@ import { SettingsSection } from './SettingsParts'
 
 // A person's passkeys (docs/api.md, "Account passkeys"): the list, adding one, renaming and deleting. It is also
 // the page a held session is left with, where adding the first one lifts the hold.
-export function PasskeysSection({ account, returnTo = '/settings/security', onAdded }: { account: AccountInfo; returnTo?: string; onAdded?: () => void }) {
+export function PasskeysSection({
+  account,
+  returnTo = '/settings/security',
+  onAdded,
+}: {
+  account: AccountInfo
+  returnTo?: string
+  onAdded?: () => void
+}) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const providers = useAuthProviders()
@@ -31,7 +48,8 @@ export function PasskeysSection({ account, returnTo = '/settings/security', onAd
   const list = account.passkeys ?? []
   const unavailable = providers.data !== undefined && !providers.data.passkey
 
-  const setList = (passkeys: Passkey[]) => qc.setQueryData<AccountInfo>(keys.account, (prev) => prev && { ...prev, passkeys })
+  const setList = (passkeys: Passkey[]) =>
+    qc.setQueryData<AccountInfo>(keys.account, (prev) => prev && { ...prev, passkeys })
 
   const add = async (e: FormEvent) => {
     e.preventDefault()
@@ -57,7 +75,13 @@ export function PasskeysSection({ account, returnTo = '/settings/security', onAd
         else setError(err.message)
       } else {
         const why = passkeyFailure(err)
-        setError(why === 'cancelled' ? ts.passkeys.cancelled : why === 'unsupported' ? ts.passkeys.unsupported : ts.passkeys.failed)
+        setError(
+          why === 'cancelled'
+            ? ts.passkeys.cancelled
+            : why === 'unsupported'
+              ? ts.passkeys.unsupported
+              : ts.passkeys.failed,
+        )
       }
     }
     setBusy(false)
@@ -109,14 +133,30 @@ export function PasskeysSection({ account, returnTo = '/settings/security', onAd
                   )}
                 </div>
                 <div className="text-xs break-words text-muted-foreground">
-                  {ts.passkeys.created(absoluteTime(p.created))} · {p.lastUsed ? ts.passkeys.lastUsed(absoluteTime(p.lastUsed)) : ts.passkeys.neverUsed}
+                  {ts.passkeys.created(absoluteTime(p.created))} ·{' '}
+                  {p.lastUsed ? ts.passkeys.lastUsed(absoluteTime(p.lastUsed)) : ts.passkeys.neverUsed}
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button type="button" variant="outline" size="sm" aria-label={t.fmt.labelled(ts.passkeys.rename, p.name)} onClick={() => setRenaming(p)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={t.fmt.labelled(ts.passkeys.rename, p.name)}
+                  onClick={() => setRenaming(p)}
+                >
                   {ts.passkeys.rename}
                 </Button>
-                <Button type="button" variant="outline" size="sm" aria-label={t.fmt.labelled(ts.passkeys.remove, p.name)} onClick={() => { setError(''); setRemoving(p) }}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={t.fmt.labelled(ts.passkeys.remove, p.name)}
+                  onClick={() => {
+                    setError('')
+                    setRemoving(p)
+                  }}
+                >
                   {ts.passkeys.remove}
                 </Button>
               </div>
@@ -129,7 +169,15 @@ export function PasskeysSection({ account, returnTo = '/settings/security', onAd
       ) : (
         <form className="grid grid-cols-1 gap-3 sm:flex sm:items-end" onSubmit={(e) => void add(e)}>
           <div className="min-w-0 sm:flex-1">
-            <Field label={ts.passkeys.nameLabel} help={ts.passkeys.nameHelp} value={name} onChange={(e) => setName(e.target.value)} maxLength={64} placeholder={ts.passkeys.defaultName} autoComplete="off" />
+            <Field
+              label={ts.passkeys.nameLabel}
+              help={ts.passkeys.nameHelp}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={64}
+              placeholder={ts.passkeys.defaultName}
+              autoComplete="off"
+            />
           </div>
           <Button type="submit" disabled={busy}>
             {busy ? ts.passkeys.adding : ts.passkeys.add}
@@ -145,7 +193,11 @@ export function PasskeysSection({ account, returnTo = '/settings/security', onAd
           </Button>
         </div>
       )}
-      <RenameDialog passkey={renaming} onClose={() => setRenaming(null)} onSaved={(p) => setList(list.map((x) => (x.id === p.id ? p : x)))} />
+      <RenameDialog
+        passkey={renaming}
+        onClose={() => setRenaming(null)}
+        onSaved={(p) => setList(list.map((x) => (x.id === p.id ? p : x)))}
+      />
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -164,7 +216,15 @@ export function PasskeysSection({ account, returnTo = '/settings/security', onAd
   )
 }
 
-function RenameDialog({ passkey, onClose, onSaved }: { passkey: Passkey | null; onClose: () => void; onSaved: (p: Passkey) => void }) {
+function RenameDialog({
+  passkey,
+  onClose,
+  onSaved,
+}: {
+  passkey: Passkey | null
+  onClose: () => void
+  onSaved: (p: Passkey) => void
+}) {
   return (
     <Dialog open={passkey !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
@@ -178,7 +238,15 @@ function RenameDialog({ passkey, onClose, onSaved }: { passkey: Passkey | null; 
   )
 }
 
-function RenameForm({ passkey, onClose, onSaved }: { passkey: Passkey; onClose: () => void; onSaved: (p: Passkey) => void }) {
+function RenameForm({
+  passkey,
+  onClose,
+  onSaved,
+}: {
+  passkey: Passkey
+  onClose: () => void
+  onSaved: (p: Passkey) => void
+}) {
   const [name, setName] = useState(passkey.name)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -199,7 +267,15 @@ function RenameForm({ passkey, onClose, onSaved }: { passkey: Passkey; onClose: 
   }
   return (
     <form className="grid gap-4" onSubmit={(e) => void submit(e)}>
-      <Field label={ts.passkeys.nameLabel} value={name} onChange={(e) => setName(e.target.value)} maxLength={64} autoComplete="off" autoFocus required />
+      <Field
+        label={ts.passkeys.nameLabel}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={64}
+        autoComplete="off"
+        autoFocus
+        required
+      />
       <FormMessage>{error}</FormMessage>
       <div className="flex gap-2">
         <Button type="submit" disabled={busy || !name.trim()}>
@@ -212,4 +288,3 @@ function RenameForm({ passkey, onClose, onSaved }: { passkey: Passkey; onClose: 
     </form>
   )
 }
-

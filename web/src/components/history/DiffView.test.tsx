@@ -19,7 +19,11 @@ describe('DiffView images', () => {
       root.render(<DiffView doc={doc} label="x" onRendered={() => undefined} space="default" folder="notes" />)
     })
     const srcs = Array.from(host.querySelectorAll('img:not(.ProseMirror-separator)')).map((i) => i.getAttribute('src'))
-    expect(srcs).toEqual(['/api/spaces/default/files/assets/01X/a.png', '/api/spaces/default/files/notes/b.png', 'https://example.com/c.png'])
+    expect(srcs).toEqual([
+      '/api/spaces/default/files/assets/01X/a.png',
+      '/api/spaces/default/files/notes/b.png',
+      'https://example.com/c.png',
+    ])
     await act(async () => root.unmount())
     host.remove()
   })
@@ -30,7 +34,10 @@ describe('DiffView code blocks', () => {
     const { diffVersions } = await import('@/diff')
     const { loadHighlighter } = await import('@/components/editor/code/highlighter')
     await loadHighlighter()
-    const result = diffVersions({ meta: {}, body: '正文\n' }, { meta: {}, body: '正文\n\n```js\nconst a = 1\n```\n\n```mermaid\ngraph TD\nA-->B\n```\n' })
+    const result = diffVersions(
+      { meta: {}, body: '正文\n' },
+      { meta: {}, body: '正文\n\n```js\nconst a = 1\n```\n\n```mermaid\ngraph TD\nA-->B\n```\n' },
+    )
     const host = document.createElement('div')
     document.body.appendChild(host)
     const root = createRoot(host)

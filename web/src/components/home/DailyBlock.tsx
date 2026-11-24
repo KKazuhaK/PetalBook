@@ -59,7 +59,11 @@ export function DailyBlock({ now }: { now: Date }) {
     if (asking) return
     setAsking(true)
     try {
-      await qc.fetchQuery({ queryKey: keys.daily(space, date, skip + 1, lang), queryFn: ({ signal }) => spaceApi(space).daily({ date, skip: skip + 1, lang, tz }, signal), staleTime: 5 * 60_000 })
+      await qc.fetchQuery({
+        queryKey: keys.daily(space, date, skip + 1, lang),
+        queryFn: ({ signal }) => spaceApi(space).daily({ date, skip: skip + 1, lang, tz }, signal),
+        staleTime: 5 * 60_000,
+      })
       setSkip((s) => s + 1)
     } catch (e) {
       if (e instanceof ApiError && e.reason?.code === 'skip_too_large') setSkipLimit(true)
@@ -78,7 +82,11 @@ export function DailyBlock({ now }: { now: Date }) {
       return (
         <p className="text-sm text-muted-foreground" data-slot="daily-empty">
           {th.daily.noMatch}{' '}
-          <button type="button" onClick={() => openSettings('home')} className="text-brand underline underline-offset-4">
+          <button
+            type="button"
+            onClick={() => openSettings('home')}
+            className="text-brand underline underline-offset-4"
+          >
             {th.daily.noMatchSettings}
           </button>
         </p>
@@ -91,7 +99,11 @@ export function DailyBlock({ now }: { now: Date }) {
   return (
     <figure className="grid max-w-xl gap-2" data-slot="daily" aria-label={th.daily.label}>
       {data.page ? (
-        <Link to={urls.page(data.page.id)} title={th.daily.open} className="group block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+        <Link
+          to={urls.page(data.page.id)}
+          title={th.daily.open}
+          className="group block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
           <p className="text-sm font-medium text-muted-foreground group-hover:text-foreground">{pageHead(data.page)}</p>
           {data.page.body.trim() !== '' && (
             <blockquote className="mt-1 line-clamp-6 text-base leading-relaxed whitespace-pre-line text-foreground/90">
@@ -105,7 +117,13 @@ export function DailyBlock({ now }: { now: Date }) {
       )}
       <figcaption className="flex items-center gap-2 text-xs text-muted-foreground">
         {more && (
-          <Button variant="ghost" size="xs" onClick={() => void another()} disabled={waiting || skipLimit} data-slot="daily-another">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => void another()}
+            disabled={waiting || skipLimit}
+            data-slot="daily-another"
+          >
             <RefreshCw className={waiting ? 'animate-spin' : ''} />
             {waiting ? th.daily.anotherBusy : th.daily.another}
           </Button>
@@ -128,7 +146,12 @@ function Quote({ quote }: { quote: DailyQuote }) {
           {by && <span>{by}</span>}
           {by && link && ' · '}
           {link && (
-            <a href={link.href} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-4 hover:text-foreground">
+            <a
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="underline underline-offset-4 hover:text-foreground"
+            >
               {th.daily.via(link.host)}
             </a>
           )}

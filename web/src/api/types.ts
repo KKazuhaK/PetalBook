@@ -238,7 +238,8 @@ export interface DraftInput extends SavePageInput {
 
 // --- page types (docs/api.md, "Page types") ----------------------------------------
 
-export type FieldKind = 'text' | 'longtext' | 'select' | 'multiselect' | 'date' | 'number' | 'checkbox' | 'url' | 'other'
+export type FieldKind =
+  'text' | 'longtext' | 'select' | 'multiselect' | 'date' | 'number' | 'checkbox' | 'url' | 'other'
 export interface TypeField {
   key: string
   // "" when the file gives none: show the key.
@@ -284,7 +285,15 @@ export interface PutTemplateInput {
   body: string
 }
 // What the check page lists (docs/api.md, "Checks"), in this order.
-export type ProblemKind = 'no_id' | 'duplicate_id' | 'bad_header' | 'type_mismatch' | 'not_in_type' | 'broken_link' | 'missing_asset' | 'duplicate_title'
+export type ProblemKind =
+  | 'no_id'
+  | 'duplicate_id'
+  | 'bad_header'
+  | 'type_mismatch'
+  | 'not_in_type'
+  | 'broken_link'
+  | 'missing_asset'
+  | 'duplicate_title'
 export type ProblemFix = 'add_id' | 'remove_fields'
 export interface Problem {
   kind: ProblemKind
@@ -457,7 +466,15 @@ export type RemoteCredential =
   | { type: 'token'; username: string }
   // A provider's connection (docs/api.md, "Connections"): no secret is stored for the space or returned.
   | { type: 'connection'; provider: string; via: 'app'; installationId: number; account: string; repoId: number }
-  | { type: 'connection'; provider: string; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
+  | {
+      type: 'connection'
+      provider: string
+      via: 'user'
+      user: { id: string; username: string }
+      login: string
+      account?: string
+      repoId: number
+    }
 
 export interface Remote {
   url: string
@@ -496,7 +513,17 @@ export interface AssetsRemote extends Remote {
 // What `PUT .../remote/assets` takes: a Remote's body, or a repository to make or find on a provider.
 export type ConnectAssetsInput =
   | ConnectRemoteInput
-  | { sync: { provider: string; owner: string; name: string; private?: boolean; description?: string; create?: boolean; via?: ConnectionVia } }
+  | {
+      sync: {
+        provider: string
+        owner: string
+        name: string
+        private?: boolean
+        description?: string
+        create?: boolean
+        via?: ConnectionVia
+      }
+    }
 
 export interface RemoteKey {
   publicKey: string
@@ -507,13 +534,21 @@ export interface ConnectRemoteInput {
   url: string
   branch?: string
   // A token left out while the space already has one keeps it.
-  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'connection'; provider: string; via: ConnectionVia }
+  credential:
+    | { type: 'ssh' }
+    | { type: 'token'; username?: string; token?: string }
+    | { type: 'connection'; provider: string; via: ConnectionVia }
 }
 
 // --- connections (docs/api.md, "Connections") ----------------------------------------------
 
 export type ConnectionVia = 'app' | 'user'
-export type ConnectionErrorCode = 'connection_expired' | 'connection_missing' | 'installation_gone' | 'provider_not_configured' | 'app_missing_permission'
+export type ConnectionErrorCode =
+  | 'connection_expired'
+  | 'connection_missing'
+  | 'installation_gone'
+  | 'provider_not_configured'
+  | 'app_missing_permission'
 
 export interface Connection {
   login: string
@@ -664,7 +699,6 @@ export interface PutAdminGitHubInput {
   clientId?: string
   clientSecret?: string
 }
-
 
 // A refusal of the daily-text endpoints says why with a stable code in `error`, next to `message`, and the
 // thing it is about: header_reenter / header_missing (header), not_json, too_large, path_error /
@@ -959,7 +993,16 @@ export interface MailTestResult {
   ok: boolean
   message?: string
 }
-export type RegisterInfo = { open: false } | { open: true; tenant: { slug: string; name: string }; domains: string[]; termsUrl: string; privacyUrl: string; password: { minLength: number } }
+export type RegisterInfo =
+  | { open: false }
+  | {
+      open: true
+      tenant: { slug: string; name: string }
+      domains: string[]
+      termsUrl: string
+      privacyUrl: string
+      password: { minLength: number }
+    }
 export interface RegisterInput {
   tenant?: string
   username: string
@@ -1150,7 +1193,14 @@ export interface AdminStorage {
   remotes: { require: string | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
   hosts: { allowed: string[]; fromFlag: boolean }
   localSpaces: { maxBytes: number | null }
-  cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null; assetsBytes: number }
+  cache: {
+    partial: boolean
+    evictAfterDays: number | null
+    minIdleHours: number
+    clonesBytes: number | null
+    minFreeBytes: number | null
+    assetsBytes: number
+  }
   assets: { newSpaces: boolean }
   git: { version: string; partialClone: boolean }
   affected: { inGrace: number; overdue: number; exempt: number }
@@ -1324,7 +1374,11 @@ export interface KnownLanguage {
   name: string
   english: string
 }
-export type DailyDefault = null | { kind: 'list' } | { kind: 'space'; space: string; source: DailySettings } | { kind: 'api'; apis: Record<string, string> }
+export type DailyDefault =
+  | null
+  | { kind: 'list' }
+  | { kind: 'space'; space: string; source: DailySettings }
+  | { kind: 'api'; apis: Record<string, string> }
 export interface DailyNotice {
   code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
   id?: string
@@ -1378,11 +1432,28 @@ export interface SecurityNotice {
   field?: string
 }
 export interface SecuritySettings {
-  login: { mode: LoginMode; effectiveMode: LoginMode; ssoOnly: boolean; ssoOnlyInEffect: boolean; ssoAvailable: boolean }
+  login: {
+    mode: LoginMode
+    effectiveMode: LoginMode
+    ssoOnly: boolean
+    ssoOnlyInEffect: boolean
+    ssoAvailable: boolean
+  }
   passkeys: { enabled: boolean; available: boolean; requireRoles: Role[]; required: number; requiredWithout: number }
-  captcha: { provider: CaptchaProvider; siteKey: string; hasSecret: boolean; contexts: Record<CaptchaContext, CaptchaContextSettings> }
+  captcha: {
+    provider: CaptchaProvider
+    siteKey: string
+    hasSecret: boolean
+    contexts: Record<CaptchaContext, CaptchaContextSettings>
+  }
   lockout: { enabled: boolean; minutes: number; scope: LockoutScope }
-  limits: { perMinute: number; maxFailures: number; windowMinutes: number; sessionIdleDays: number; sessionMaxDays: number }
+  limits: {
+    perMinute: number
+    maxFailures: number
+    windowMinutes: number
+    sessionIdleDays: number
+    sessionMaxDays: number
+  }
   passwordAdmins: number
   notices: SecurityNotice[]
 }
@@ -1390,7 +1461,12 @@ export interface SecuritySettings {
 export interface SecurityPatch {
   login?: Partial<{ mode: LoginMode; ssoOnly: boolean }>
   passkeys?: Partial<{ enabled: boolean; requireRoles: Role[] }>
-  captcha?: Partial<{ provider: CaptchaProvider; siteKey: string; secret: string; contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>> }>
+  captcha?: Partial<{
+    provider: CaptchaProvider
+    siteKey: string
+    secret: string
+    contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>>
+  }>
   lockout?: Partial<{ enabled: boolean; minutes: number; scope: LockoutScope }>
   limits?: Partial<SecuritySettings['limits']>
 }
@@ -1454,7 +1530,12 @@ export interface ProviderInput {
   mergeVerifiedEmail?: boolean
   groups?: Partial<GroupsMapping>
   oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes' | 'legacyCallback'>> & { clientSecret?: string }
-  saml?: Partial<Pick<SamlSettings, 'metadataUrl' | 'metadataXml' | 'entityId' | 'attributes' | 'nameIdFormat' | 'signRequests' | 'allowIdpInitiated'>>
+  saml?: Partial<
+    Pick<
+      SamlSettings,
+      'metadataUrl' | 'metadataXml' | 'entityId' | 'attributes' | 'nameIdFormat' | 'signRequests' | 'allowIdpInitiated'
+    >
+  >
   github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId' | 'organizations'>> & { clientSecret?: string }
 }
 

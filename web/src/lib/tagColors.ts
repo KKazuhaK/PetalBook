@@ -7,7 +7,18 @@
 import type { CSSProperties } from 'react'
 import type { TagColor, TagColorName } from '../api/types.ts'
 
-export const TAG_COLORS: readonly TagColorName[] = ['gray', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'purple', 'pink', 'rose']
+export const TAG_COLORS: readonly TagColorName[] = [
+  'gray',
+  'red',
+  'orange',
+  'amber',
+  'green',
+  'teal',
+  'blue',
+  'purple',
+  'pink',
+  'rose',
+]
 
 // The hue of each name. Mid-lightness, so it reads as itself on a swatch. The
 // chip's text stays the page's own foreground and the hue only tints the

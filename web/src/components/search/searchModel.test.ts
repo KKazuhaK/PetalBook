@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { buildSearchParams, dateRange, effectiveSort, emptyFilters, filtersToQuery, groupByTime, hasFilters, paramsFromQuery, presetRange, snippetOf, timeGroupOf, utcDay } from './searchModel'
+import {
+  buildSearchParams,
+  dateRange,
+  effectiveSort,
+  emptyFilters,
+  filtersToQuery,
+  groupByTime,
+  hasFilters,
+  paramsFromQuery,
+  presetRange,
+  snippetOf,
+  timeGroupOf,
+  utcDay,
+} from './searchModel'
 
 // 2026-11-21 10:00 UTC.
 const NOW = new Date(Date.UTC(2026, 10, 21, 10, 0, 0))
@@ -19,7 +32,10 @@ describe('date presets', () => {
     expect(utcDay(new Date(Date.UTC(2026, 10, 21, 23, 30)))).toBe('2026-11-21')
   })
   it('a custom range keeps what was given, either end optional', () => {
-    expect(dateRange({ kind: 'custom', from: '2026-11-01', to: '2026-11-09' }, NOW)).toEqual({ from: '2026-11-01', to: '2026-11-09' })
+    expect(dateRange({ kind: 'custom', from: '2026-11-01', to: '2026-11-09' }, NOW)).toEqual({
+      from: '2026-11-01',
+      to: '2026-11-09',
+    })
     expect(dateRange({ kind: 'custom', to: '2026-11-09' }, NOW)).toEqual({ to: '2026-11-09' })
     expect(dateRange({ kind: 'custom' }, NOW)).toEqual({})
     expect(dateRange(null, NOW)).toEqual({})
@@ -39,33 +55,65 @@ describe('the request', () => {
     expect(effectiveSort('x', 'relevance')).toBe('relevance')
   })
   it('title only is `in=title`, and only with text', () => {
-    expect(buildSearchParams('慢', { ...emptyFilters, titleOnly: true }, 'relevance', NOW)).toEqual({ q: '慢', in: 'title' })
+    expect(buildSearchParams('慢', { ...emptyFilters, titleOnly: true }, 'relevance', NOW)).toEqual({
+      q: '慢',
+      in: 'title',
+    })
     expect(buildSearchParams('', { ...emptyFilters, titleOnly: true }, 'relevance', NOW).in).toBeUndefined()
   })
   it('a folder includes its subfolders, including the top level', () => {
-    expect(buildSearchParams('', { ...emptyFilters, folder: '随笔' }, 'relevance', NOW)).toMatchObject({ folder: '随笔', recursive: true })
-    expect(buildSearchParams('', { ...emptyFilters, folder: '' }, 'relevance', NOW)).toMatchObject({ folder: '', recursive: true })
+    expect(buildSearchParams('', { ...emptyFilters, folder: '随笔' }, 'relevance', NOW)).toMatchObject({
+      folder: '随笔',
+      recursive: true,
+    })
+    expect(buildSearchParams('', { ...emptyFilters, folder: '' }, 'relevance', NOW)).toMatchObject({
+      folder: '',
+      recursive: true,
+    })
   })
   it('tags are all required, ranges become the four date parameters', () => {
     const p = buildSearchParams(
       '',
-      { ...emptyFilters, tags: ['a', 'b'], updated: { kind: 'preset', preset: 'week' }, created: { kind: 'custom', from: '2026-01-01', to: '2026-01-31' } },
+      {
+        ...emptyFilters,
+        tags: ['a', 'b'],
+        updated: { kind: 'preset', preset: 'week' },
+        created: { kind: 'custom', from: '2026-01-01', to: '2026-01-31' },
+      },
       'relevance',
       NOW,
     )
-    expect(p).toEqual({ tag: ['a', 'b'], updatedFrom: '2026-11-14', createdFrom: '2026-01-01', createdTo: '2026-01-31', sort: '-updated' })
+    expect(p).toEqual({
+      tag: ['a', 'b'],
+      updatedFrom: '2026-11-14',
+      createdFrom: '2026-01-01',
+      createdTo: '2026-01-31',
+      sort: '-updated',
+    })
   })
 })
 
 describe('the results page address', () => {
   it('carries the text and the filters, and reads them back', () => {
-    const filters = { ...emptyFilters, titleOnly: true, folder: '随笔', tags: ['a', 'b'], created: { kind: 'custom' as const, from: '2026-01-01' } }
+    const filters = {
+      ...emptyFilters,
+      titleOnly: true,
+      folder: '随笔',
+      tags: ['a', 'b'],
+      created: { kind: 'custom' as const, from: '2026-01-01' },
+    }
     const query = filtersToQuery('慢', filters, NOW)
     expect(query.toString()).toBe('q=%E6%85%A2&in=title&folder=%E9%9A%8F%E7%AC%94&tag=a&tag=b&createdFrom=2026-01-01')
-    expect(paramsFromQuery(query)).toEqual({ text: '慢', extra: { in: 'title', folder: '随笔', recursive: true, tag: ['a', 'b'], createdFrom: '2026-01-01' } })
+    expect(paramsFromQuery(query)).toEqual({
+      text: '慢',
+      extra: { in: 'title', folder: '随笔', recursive: true, tag: ['a', 'b'], createdFrom: '2026-01-01' },
+    })
   })
   it('ignores what it does not understand', () => {
-    expect(paramsFromQuery(new URLSearchParams('q=x&in=body&updatedFrom=yesterday&tag='))).toEqual({ text: 'x', extra: {} })
+    expect(paramsFromQuery(new URLSearchParams('q=x&in=body&updatedFrom=yesterday&tag='))).toEqual({
+      text: 'x',
+      extra: {},
+    })
     expect(paramsFromQuery(new URLSearchParams(''))).toEqual({ text: '', extra: {} })
   })
 })
@@ -85,7 +133,12 @@ describe('grouping by time', () => {
     expect(timeGroupOf('not a time', now)).toBe('older')
   })
   it('keeps the order, drops empty groups and always lists them from the newest', () => {
-    const items = [{ id: 'a', updated: at(0) }, { id: 'b', updated: at(2) }, { id: 'c', updated: at(3) }, { id: 'd', updated: at(90) }]
+    const items = [
+      { id: 'a', updated: at(0) },
+      { id: 'b', updated: at(2) },
+      { id: 'c', updated: at(3) },
+      { id: 'd', updated: at(90) },
+    ]
     const groups = groupByTime(items, now)
     expect(groups.map((g) => g.group)).toEqual(['today', 'week', 'older'])
     expect(groups[1].items.map((i) => i.id)).toEqual(['b', 'c'])

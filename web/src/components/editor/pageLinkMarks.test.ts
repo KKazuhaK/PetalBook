@@ -20,7 +20,10 @@ function linkEditor(markdown: string, links: PageLink[] | undefined, folder = ''
   const editor = trackEditor(
     new Editor({
       element: document.createElement('div'),
-      extensions: [...pageExtensions(), PageLinks.configure({ getFolder: () => folder, getLinks: () => report, open: () => undefined })],
+      extensions: [
+        ...pageExtensions(),
+        PageLinks.configure({ getFolder: () => folder, getLinks: () => report, open: () => undefined }),
+      ],
       content: markdownToDoc(markdown),
     }),
   )
@@ -42,7 +45,13 @@ function setHref(editor: Editor, text: string, href: string) {
   editor.chain().setTextSelection(at).extendMarkRange('link').setLink({ href }).run()
 }
 
-const linked = (path: string, id: string, title = path): PageLink => ({ text: title, path, id, broken: false, target: { id, path, title, untitled: false } })
+const linked = (path: string, id: string, title = path): PageLink => ({
+  text: title,
+  path,
+  id,
+  broken: false,
+  target: { id, path, title, untitled: false },
+})
 
 describe('a new address for a page link', () => {
   it('drops the id of the old page when nothing is known of the new one', () => {
@@ -52,13 +61,18 @@ describe('a new address for a page link', () => {
   })
 
   it('takes the id of the page the new address names, when the report knows it', () => {
-    const { editor } = linkEditor(`[暮雪](Tang/暮雪.md "${MUXUE}") [别的](Other.md "${OTHER}")`, [linked('Tang/暮雪.md', MUXUE), linked('Other.md', OTHER)])
+    const { editor } = linkEditor(`[暮雪](Tang/暮雪.md "${MUXUE}") [别的](Other.md "${OTHER}")`, [
+      linked('Tang/暮雪.md', MUXUE),
+      linked('Other.md', OTHER),
+    ])
     setHref(editor, '暮雪', 'Other.md')
     expect(markdownOf(editor).trim()).toBe(`[暮雪](Other.md "${OTHER}") [别的](Other.md "${OTHER}")`)
   })
 
   it('keeps the id while the address names the same file, and keeps a title that is not an id', () => {
-    const { editor } = linkEditor(`[暮雪](Tang/暮雪.md "${MUXUE}") [网](https://a.example "说明")`, [linked('Tang/暮雪.md', MUXUE)])
+    const { editor } = linkEditor(`[暮雪](Tang/暮雪.md "${MUXUE}") [网](https://a.example "说明")`, [
+      linked('Tang/暮雪.md', MUXUE),
+    ])
     setHref(editor, '暮雪', './Tang/暮雪.md#开头')
     setHref(editor, '网', 'https://b.example')
     expect(markdownOf(editor).trim()).toBe(`[暮雪](./Tang/暮雪.md#开头 "${MUXUE}") [网](https://b.example "说明")`)
@@ -92,7 +106,10 @@ describe('a new address for a page link', () => {
 })
 
 describe('the drawn links', () => {
-  const drawn = (editor: Editor) => [...editor.view.dom.querySelectorAll('.pb-page-link')].map((el) => `${el.textContent}${el.classList.contains('pb-page-link-broken') ? '!' : ''}`)
+  const drawn = (editor: Editor) =>
+    [...editor.view.dom.querySelectorAll('.pb-page-link')].map(
+      (el) => `${el.textContent}${el.classList.contains('pb-page-link-broken') ? '!' : ''}`,
+    )
 
   it('follow the text as it changes, and the report when it changes', async () => {
     const { editor, setLinks } = linkEditor('[甲](a.md) 中间 [乙](b.md)\n\n[丙](c.md)', undefined)
@@ -108,12 +125,20 @@ describe('the drawn links', () => {
     editor.state.doc.descendants((node, pos) => {
       if (at < 0 && node.isText && node.text!.includes('中多间')) at = pos + node.text!.indexOf('中多间')
     })
-    editor.chain().setTextSelection({ from: at, to: at + 3 }).setLink({ href: 'd.md' }).run()
+    editor
+      .chain()
+      .setTextSelection({ from: at, to: at + 3 })
+      .setLink({ href: 'd.md' })
+      .run()
     expect(drawn(editor)).toEqual(['甲', '中多间', '乙!', '丙'])
     editor.chain().setTextSelection(2).extendMarkRange('link').unsetLink().run()
     expect(drawn(editor)).toEqual(['中多间', '乙!', '丙'])
     // Joining two paragraphs keeps both links drawn.
-    editor.chain().setTextSelection(editor.state.doc.child(0).nodeSize + 1).joinBackward().run()
+    editor
+      .chain()
+      .setTextSelection(editor.state.doc.child(0).nodeSize + 1)
+      .joinBackward()
+      .run()
     expect(drawn(editor)).toEqual(['中多间', '乙!', '丙'])
   })
 

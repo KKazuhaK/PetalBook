@@ -71,7 +71,15 @@ describe('writing a link', () => {
   })
 
   it('names the same file when read back, whatever the file is called', () => {
-    const names = ['Tang/暮雪.md', 'My Page.md', 'a/100%.md', 'a/C#.md', 'x/a (1) [2].md', 'q/"quoted" `tick`.md', 'back\\slash.md']
+    const names = [
+      'Tang/暮雪.md',
+      'My Page.md',
+      'a/100%.md',
+      'a/C#.md',
+      'x/a (1) [2].md',
+      'q/"quoted" `tick`.md',
+      'back\\slash.md',
+    ]
     for (const from of ['', 'Notes', 'a/b/c']) {
       for (const to of names) {
         const dest = linkDest(from, to)

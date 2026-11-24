@@ -1,7 +1,8 @@
 import type { HeaderChange, TextPart } from '@/diff'
 import { t } from '@/i18n'
 
-const shown = (v: unknown): string => (v === undefined || v === null || v === '' ? t.history.empty_ : typeof v === 'string' ? v : JSON.stringify(v))
+const shown = (v: unknown): string =>
+  v === undefined || v === null || v === '' ? t.history.empty_ : typeof v === 'string' ? v : JSON.stringify(v)
 
 function Parts({ parts }: { parts: TextPart[] }) {
   return (
@@ -34,7 +35,13 @@ export function HeaderChanges({ changes }: { changes: HeaderChange[] }) {
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
         {changes.map((c, i) => (
           <div key={i} className="contents">
-            <dt className="text-muted-foreground">{c.kind === 'text' ? t.history.headerLabels[c.field] : c.kind === 'tags' ? t.history.headerLabels.tags : t.history.otherKey(c.key)}</dt>
+            <dt className="text-muted-foreground">
+              {c.kind === 'text'
+                ? t.history.headerLabels[c.field]
+                : c.kind === 'tags'
+                  ? t.history.headerLabels.tags
+                  : t.history.otherKey(c.key)}
+            </dt>
             <dd className="pb-diff-sample min-w-0 break-words">
               {c.kind === 'text' && <Parts parts={c.parts} />}
               {c.kind === 'tags' && (

@@ -12,7 +12,13 @@ export interface Wanted {
   recent: string[]
 }
 
-export function wantedText(catalog: CatalogEntry[], cfg: OfflineConfig, inbox: string, favourites: Favourites, opened: Opened[]): Wanted {
+export function wantedText(
+  catalog: CatalogEntry[],
+  cfg: OfflineConfig,
+  inbox: string,
+  favourites: Favourites,
+  opened: Opened[],
+): Wanted {
   if (cfg.mode !== 'text') return { pinned: [], recent: [] }
   const favPages = new Set(favourites.pages)
   const pinned: string[] = []

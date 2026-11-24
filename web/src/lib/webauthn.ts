@@ -21,11 +21,16 @@ export function bytesToB64url(buf: ArrayBuffer | null | undefined): string {
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
-const decodeDescriptors = (list: unknown) => (Array.isArray(list) ? list.map((d) => ({ ...(d as Json), id: b64urlToBytes(str((d as Json).id)) })) : undefined)
+const decodeDescriptors = (list: unknown) =>
+  Array.isArray(list) ? list.map((d) => ({ ...(d as Json), id: b64urlToBytes(str((d as Json).id)) })) : undefined
 
 // `PublicKeyCredentialRequestOptionsJSON` to what `credentials.get` takes.
 export function requestOptionsFromJSON(json: Json): PublicKeyCredentialRequestOptions {
-  const native = (globalThis as { PublicKeyCredential?: { parseRequestOptionsFromJSON?: (j: unknown) => PublicKeyCredentialRequestOptions } }).PublicKeyCredential
+  const native = (
+    globalThis as {
+      PublicKeyCredential?: { parseRequestOptionsFromJSON?: (j: unknown) => PublicKeyCredentialRequestOptions }
+    }
+  ).PublicKeyCredential
   if (typeof native?.parseRequestOptionsFromJSON === 'function') return native.parseRequestOptionsFromJSON(json)
   const out = { ...json, challenge: b64urlToBytes(str(json.challenge)) } as unknown as PublicKeyCredentialRequestOptions
   const allow = decodeDescriptors(json.allowCredentials)
@@ -35,10 +40,18 @@ export function requestOptionsFromJSON(json: Json): PublicKeyCredentialRequestOp
 
 // `PublicKeyCredentialCreationOptionsJSON` to what `credentials.create` takes.
 export function creationOptionsFromJSON(json: Json): PublicKeyCredentialCreationOptions {
-  const native = (globalThis as { PublicKeyCredential?: { parseCreationOptionsFromJSON?: (j: unknown) => PublicKeyCredentialCreationOptions } }).PublicKeyCredential
+  const native = (
+    globalThis as {
+      PublicKeyCredential?: { parseCreationOptionsFromJSON?: (j: unknown) => PublicKeyCredentialCreationOptions }
+    }
+  ).PublicKeyCredential
   if (typeof native?.parseCreationOptionsFromJSON === 'function') return native.parseCreationOptionsFromJSON(json)
   const user = (json.user ?? {}) as Json
-  const out = { ...json, challenge: b64urlToBytes(str(json.challenge)), user: { ...user, id: b64urlToBytes(str(user.id)) } } as unknown as PublicKeyCredentialCreationOptions
+  const out = {
+    ...json,
+    challenge: b64urlToBytes(str(json.challenge)),
+    user: { ...user, id: b64urlToBytes(str(user.id)) },
+  } as unknown as PublicKeyCredentialCreationOptions
   const exclude = decodeDescriptors(json.excludeCredentials)
   if (exclude) (out as { excludeCredentials?: unknown }).excludeCredentials = exclude
   return out
@@ -48,7 +61,8 @@ export function creationOptionsFromJSON(json: Json): PublicKeyCredentialCreation
 export function credentialToJSON(cred: PublicKeyCredential): Json {
   const withJson = cred as unknown as { toJSON?: () => Json }
   if (typeof withJson.toJSON === 'function') return withJson.toJSON()
-  const r = cred.response as AuthenticatorResponse & Partial<AuthenticatorAssertionResponse & AuthenticatorAttestationResponse>
+  const r = cred.response as AuthenticatorResponse &
+    Partial<AuthenticatorAssertionResponse & AuthenticatorAttestationResponse>
   const response: Json = { clientDataJSON: bytesToB64url(r.clientDataJSON) }
   if (r.authenticatorData) response.authenticatorData = bytesToB64url(r.authenticatorData)
   if (r.signature) response.signature = bytesToB64url(r.signature)
@@ -56,12 +70,21 @@ export function credentialToJSON(cred: PublicKeyCredential): Json {
   if (r.attestationObject) response.attestationObject = bytesToB64url(r.attestationObject)
   if (typeof r.getTransports === 'function') response.transports = r.getTransports()
   const ext = typeof cred.getClientExtensionResults === 'function' ? cred.getClientExtensionResults() : {}
-  const out: Json = { id: cred.id, rawId: bytesToB64url(cred.rawId), type: cred.type, response, clientExtensionResults: ext }
+  const out: Json = {
+    id: cred.id,
+    rawId: bytesToB64url(cred.rawId),
+    type: cred.type,
+    response,
+    clientExtensionResults: ext,
+  }
   if (cred.authenticatorAttachment) out.authenticatorAttachment = cred.authenticatorAttachment
   return out
 }
 
-export const passkeysSupported = () => typeof navigator !== 'undefined' && !!navigator.credentials && typeof (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential !== 'undefined'
+export const passkeysSupported = () =>
+  typeof navigator !== 'undefined' &&
+  !!navigator.credentials &&
+  typeof (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential !== 'undefined'
 
 export type PasskeyFailure = 'cancelled' | 'unsupported' | 'failed'
 // What went wrong in the browser's part of a ceremony: the person closing the prompt is not an error.
@@ -72,13 +95,17 @@ export function passkeyFailure(e: unknown): PasskeyFailure {
 }
 
 export async function getCredential(options: Json): Promise<Json> {
-  const cred = await navigator.credentials.get({ publicKey: requestOptionsFromJSON((options.publicKey as Json | undefined) ?? options) })
+  const cred = await navigator.credentials.get({
+    publicKey: requestOptionsFromJSON((options.publicKey as Json | undefined) ?? options),
+  })
   if (!cred) throw new DOMException('no credential', 'NotAllowedError')
   return credentialToJSON(cred as PublicKeyCredential)
 }
 
 export async function createCredential(options: Json): Promise<Json> {
-  const cred = await navigator.credentials.create({ publicKey: creationOptionsFromJSON((options.publicKey as Json | undefined) ?? options) })
+  const cred = await navigator.credentials.create({
+    publicKey: creationOptionsFromJSON((options.publicKey as Json | undefined) ?? options),
+  })
   if (!cred) throw new DOMException('no credential', 'NotAllowedError')
   return credentialToJSON(cred as PublicKeyCredential)
 }

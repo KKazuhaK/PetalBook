@@ -114,7 +114,8 @@ export async function pollOnce(user: string, signal?: AbortSignal, now: () => nu
     const state = await store.state()
     if (space in heads) {
       // Back in the heads: a space that was switched off is on again.
-      if (heads[space] !== state.cursor || state.disabled || !state.complete) await syncNow(user, space, { signal, now })
+      if (heads[space] !== state.cursor || state.disabled || !state.complete)
+        await syncNow(user, space, { signal, now })
     } else if (missing.includes(space) && !state.disabled) {
       // Not readable now: gone for this person (404: the copy is deleted), or switched off (kept, read only).
       await syncNow(user, space, { signal, now })

@@ -17,7 +17,8 @@ import { ts } from '@/i18n/signin'
 import { tm } from '@/i18n/mail'
 
 // The sentence for a `?sso_error=` code. Own keys only: a code like `constructor` is not a message.
-export const ssoErrorMessage = (code: string | null): string => (code ? (Object.hasOwn(ts.ssoErrors, code) ? ts.ssoErrors[code] : ts.ssoErrors.unknown) : '')
+export const ssoErrorMessage = (code: string | null): string =>
+  code ? (Object.hasOwn(ts.ssoErrors, code) ? ts.ssoErrors[code] : ts.ssoErrors.unknown) : ''
 
 export default function LoginPage() {
   const session = useSession()
@@ -28,18 +29,47 @@ export default function LoginPage() {
   const providers = useAuthProviders(needsProviders)
 
   if (session.isPending) return <PageFallback />
-  if (session.isError) return <ErrorState message={t.fmt.labelled(t.auth.loadFailed, session.error.message)} onRetry={() => void session.refetch()} />
+  if (session.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.auth.loadFailed, session.error.message)}
+        onRetry={() => void session.refetch()}
+      />
+    )
   const s = session.data
   // Nothing to sign in to, or already signed in, or nobody exists yet.
   if (s.mode === 'single') return <Navigate to="/" replace />
   if (s.setup) return <Navigate to="/setup" replace />
   if (s.user) return <Navigate to={ret} replace />
   if (providers.isPending) return <PageFallback />
-  if (providers.isError) return <ErrorState message={t.fmt.labelled(ts.login.loadFailed, providers.error.message)} onRetry={() => void providers.refetch()} />
-  return <LoginForm ret={ret} providers={providers.data} ssoError={params.get('sso_error')} local={params.get('local') === '1'} />
+  if (providers.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(ts.login.loadFailed, providers.error.message)}
+        onRetry={() => void providers.refetch()}
+      />
+    )
+  return (
+    <LoginForm
+      ret={ret}
+      providers={providers.data}
+      ssoError={params.get('sso_error')}
+      local={params.get('local') === '1'}
+    />
+  )
 }
 
-function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers: AuthProviders; ssoError: string | null; local: boolean }) {
+function LoginForm({
+  ret,
+  providers,
+  ssoError,
+  local,
+}: {
+  ret: string
+  providers: AuthProviders
+  ssoError: string | null
+  local: boolean
+}) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const list = providers.providers
@@ -102,7 +132,11 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
     setPasskeyOnly(false)
     const sent = captcha.value()
     try {
-      const { user } = await api.login({ username: username.trim(), password: pass, ...(sent ? { captcha: sent } : {}) })
+      const { user } = await api.login({
+        username: username.trim(),
+        password: pass,
+        ...(sent ? { captcha: sent } : {}),
+      })
       await applySignIn(qc, user)
       navigate(ret, { replace: true })
     } catch (err) {
@@ -181,7 +215,11 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
         <>
           {sso}
           {passkey}
-          <button type="button" className="self-start text-sm text-brand underline underline-offset-4" onClick={() => setOpenedByClick(true)}>
+          <button
+            type="button"
+            className="self-start text-sm text-brand underline underline-offset-4"
+            onClick={() => setOpenedByClick(true)}
+          >
             {ts.login.usePassword}
           </button>
         </>
@@ -211,7 +249,14 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
               autoFocus
               required
             />
-            <Field label={t.auth.password} type="password" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="current-password" required />
+            <Field
+              label={t.auth.password}
+              type="password"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
             <CaptchaField captcha={captcha} disabled={busy} />
             <Button type="submit" disabled={busy || waiting || !username || !pass || captcha.missing}>
               {busy ? t.login.submitting : t.login.submit}
@@ -219,8 +264,16 @@ function LoginForm({ ret, providers, ssoError, local }: { ret: string; providers
           </form>
           {(providers.forgot || providers.register) && (
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
-              {providers.forgot && <Link to="/forgot" className="text-brand underline underline-offset-4">{tm.links.forgot}</Link>}
-              {providers.register && <Link to="/register" className="text-brand underline underline-offset-4">{tm.links.register}</Link>}
+              {providers.forgot && (
+                <Link to="/forgot" className="text-brand underline underline-offset-4">
+                  {tm.links.forgot}
+                </Link>
+              )}
+              {providers.register && (
+                <Link to="/register" className="text-brand underline underline-offset-4">
+                  {tm.links.register}
+                </Link>
+              )}
             </div>
           )}
           {!passkeyOnly && passkey && (

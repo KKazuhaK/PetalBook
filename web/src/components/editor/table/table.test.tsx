@@ -2,7 +2,20 @@ import { describe, expect, it } from 'vitest'
 import type { Editor } from '@tiptap/core'
 import { markdownToDoc } from '@/markdown'
 import { cursorIn, markdownOf, pageEditor } from '../pageTestKit'
-import { cellAtSelection, columnAlign, insertColumn, insertRow, insertTable, removeColumn, removeRow, removeTable, setColumnAlign, tableFixes, tableSize, type CellRef } from './tableOps'
+import {
+  cellAtSelection,
+  columnAlign,
+  insertColumn,
+  insertRow,
+  insertTable,
+  removeColumn,
+  removeRow,
+  removeTable,
+  setColumnAlign,
+  tableFixes,
+  tableSize,
+  type CellRef,
+} from './tableOps'
 
 const SOURCE = '| 甲 | 乙 |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n'
 const ref = (row: number, col: number): CellRef => ({ tablePos: 0, row, col })
@@ -19,7 +32,9 @@ function shape(editor: Editor): string[] {
   return rows
 }
 const text = (editor: Editor) =>
-  editor.state.doc.firstChild!.content.content.map((row) => row.content.content.map((cell) => cell.textContent).join('|'))
+  editor.state.doc.firstChild!.content.content.map((row) =>
+    row.content.content.map((cell) => cell.textContent).join('|'),
+  )
 
 describe('inserting a table of a given size', () => {
   it('has that many columns and rows, and the first row is the header', () => {
@@ -181,8 +196,20 @@ describe('the rules of a Markdown table, applied after every edit', () => {
         {
           type: 'table',
           content: [
-            { type: 'tableRow', content: [{ type: 'tableCell', attrs: { align: 'right' }, content: [{ type: 'paragraph' }] }, { type: 'tableHeader', content: [{ type: 'paragraph' }] }] },
-            { type: 'tableRow', content: [{ type: 'tableHeader', content: [{ type: 'paragraph' }] }, { type: 'tableCell', attrs: { align: 'center' }, content: [{ type: 'paragraph' }] }] },
+            {
+              type: 'tableRow',
+              content: [
+                { type: 'tableCell', attrs: { align: 'right' }, content: [{ type: 'paragraph' }] },
+                { type: 'tableHeader', content: [{ type: 'paragraph' }] },
+              ],
+            },
+            {
+              type: 'tableRow',
+              content: [
+                { type: 'tableHeader', content: [{ type: 'paragraph' }] },
+                { type: 'tableCell', attrs: { align: 'center' }, content: [{ type: 'paragraph' }] },
+              ],
+            },
           ],
         },
       ],
@@ -198,9 +225,13 @@ describe('the rules of a Markdown table, applied after every edit', () => {
     const editor = pageEditor(SOURCE)
     // Without the plugin (a bare transaction that skips it is not possible), build the node by hand.
     const schema = editor.schema
-    const cell = (type: 'tableCell' | 'tableHeader', align: string | null = null) => schema.nodes[type].create({ align }, schema.nodes.paragraph.create())
+    const cell = (type: 'tableCell' | 'tableHeader', align: string | null = null) =>
+      schema.nodes[type].create({ align }, schema.nodes.paragraph.create())
     const row = (...cells: ReturnType<typeof cell>[]) => schema.nodes.tableRow.create(null, cells)
-    const table = schema.nodes.table.create(null, [row(cell('tableCell', 'left'), cell('tableHeader')), row(cell('tableHeader'), cell('tableCell', 'right'))])
+    const table = schema.nodes.table.create(null, [
+      row(cell('tableCell', 'left'), cell('tableHeader')),
+      row(cell('tableHeader'), cell('tableCell', 'right')),
+    ])
     const fixes = tableFixes(table, 10)
     expect(fixes.map((f) => [f.type, f.align])).toEqual([
       ['tableHeader', 'left'],
@@ -223,7 +254,8 @@ describe('the rules of a Markdown table, applied after every edit', () => {
 })
 
 describe('Tab in a table', () => {
-  const press = (editor: Editor, key: string, shift = false) => editor.view.someProp('handleKeyDown', (f) => f(editor.view, new KeyboardEvent('keydown', { key, shiftKey: shift })))
+  const press = (editor: Editor, key: string, shift = false) =>
+    editor.view.someProp('handleKeyDown', (f) => f(editor.view, new KeyboardEvent('keydown', { key, shiftKey: shift })))
 
   it('moves to the next cell, and in the last cell adds a row', () => {
     const editor = pageEditor(SOURCE)

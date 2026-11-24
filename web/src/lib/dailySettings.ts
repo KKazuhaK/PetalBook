@@ -28,7 +28,11 @@ export const emptyDraft = (): LangDraft => ({ mode: 'default', kind: 'folder', v
 export function sourceToDraft(src: DailySource): SourceDraft | null {
   const kind = SOURCE_KINDS.find((k) => typeof src[k] === 'string')
   if (!kind) return null
-  return { kind, value: src[kind] as string, filter: (src.filter ?? []).map((f) => ({ ...f, values: f.values ? [...f.values] : undefined })) }
+  return {
+    kind,
+    value: src[kind] as string,
+    filter: (src.filter ?? []).map((f) => ({ ...f, values: f.values ? [...f.values] : undefined })),
+  }
 }
 
 export function draftToSource(d: SourceDraft): DailySource {
@@ -75,7 +79,11 @@ export const baseLang = (code: string) => code.toLowerCase().split('-')[0]
 
 // The tabs of the settings page: "all languages", the server's list, then any language that something already
 // names (a source in the file, an interface), so nothing that is set is out of reach.
-export function tabsOf(languages: readonly string[], settings: DailySettings | null, prefs: DailyPrefs | null): string[] {
+export function tabsOf(
+  languages: readonly string[],
+  settings: DailySettings | null,
+  prefs: DailyPrefs | null,
+): string[] {
   // Tags are canonical as the server writes them (zh-Hans, pt-BR): they are kept as they are, and compared by case.
   const seen = new Set<string>([''])
   const tabs: string[] = ['']
@@ -95,7 +103,11 @@ export function tabsOf(languages: readonly string[], settings: DailySettings | n
 // The interfaces that belong to a tab: those made for that language, or for every language on the first tab.
 export function apisOfTab(prefs: DailyPrefs | null, tab: string) {
   const t = tab.toLowerCase()
-  return (prefs?.available ?? []).filter((a) => (tab === '' ? a.lang === '' : a.lang !== '' && (a.lang.toLowerCase() === t || (baseLang(a.lang) === baseLang(tab) && !tab.includes('-')))))
+  return (prefs?.available ?? []).filter((a) =>
+    tab === ''
+      ? a.lang === ''
+      : a.lang !== '' && (a.lang.toLowerCase() === t || (baseLang(a.lang) === baseLang(tab) && !tab.includes('-'))),
+  )
 }
 
 // A filter's values as typed in one box (separated by commas).

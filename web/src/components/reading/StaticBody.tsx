@@ -40,7 +40,12 @@ function text(node: Node, ctx: Ctx, key: number): ReactNode {
       // A relative address is a file of the space, as it is in the editor.
       const to = /^[a-z][a-z0-9+.-]*:|^\/\/|^#/i.test(href) ? href : addressToUrl(ctx.space, ctx.folder, href)
       out = (
-        <a href={to} title={(link.attrs?.title as string | null) ?? undefined} target="_blank" rel="noopener noreferrer">
+        <a
+          href={to}
+          title={(link.attrs?.title as string | null) ?? undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           {out}
         </a>
       )
@@ -52,7 +57,16 @@ function text(node: Node, ctx: Ctx, key: number): ReactNode {
 function Image({ node, ctx }: { node: Node; ctx: Ctx }) {
   const [broken, setBroken] = useState(false)
   const src = String(node.attrs?.src ?? '')
-  return <img src={addressToUrl(ctx.space, ctx.folder, src)} alt={(node.attrs?.alt as string | null) ?? ''} title={broken ? ts.assets.placeholder : ((node.attrs?.title as string | null) ?? undefined)} loading="lazy" data-broken={broken ? '' : undefined} onError={() => setBroken(true)} />
+  return (
+    <img
+      src={addressToUrl(ctx.space, ctx.folder, src)}
+      alt={(node.attrs?.alt as string | null) ?? ''}
+      title={broken ? ts.assets.placeholder : ((node.attrs?.title as string | null) ?? undefined)}
+      loading="lazy"
+      data-broken={broken ? '' : undefined}
+      onError={() => setBroken(true)}
+    />
+  )
 }
 
 const kids = (node: Node, ctx: Ctx): ReactNode[] => (node.content ?? []).map((c, i) => render(c, ctx, i))
@@ -87,7 +101,10 @@ function useHighlighted(code: string, language: unknown): Root | null {
     }
   }, [wanted, ready])
   const hl = ready ? currentHighlighter() : null
-  return useMemo(() => (wanted && hl && hl.registered(word) ? hl.highlight(word, code) : null), [wanted, hl, word, code])
+  return useMemo(
+    () => (wanted && hl && hl.registered(word) ? hl.highlight(word, code) : null),
+    [wanted, hl, word, code],
+  )
 }
 
 function CodeBlock({ node }: { node: Node }) {
@@ -101,7 +118,11 @@ function CodeBlock({ node }: { node: Node }) {
   const showCode = !diagram || (picture.error !== null && picture.url === null) || code.trim() === ''
   return (
     <div className="pb-code" data-language={languageLabel(language) ?? undefined}>
-      <div className="pb-code-bar">{languageLabel(language) && <span className="px-1.5 text-xs text-muted-foreground">{languageLabel(language)}</span>}</div>
+      <div className="pb-code-bar">
+        {languageLabel(language) && (
+          <span className="px-1.5 text-xs text-muted-foreground">{languageLabel(language)}</span>
+        )}
+      </div>
       {showCode && (
         <pre spellCheck={false}>
           <code style={{ whiteSpace: 'pre' }}>{colours ? hast(colours.children) : code}</code>
@@ -114,7 +135,11 @@ function CodeBlock({ node }: { node: Node }) {
               {picture.error}
             </pre>
           )}
-          {picture.url ? <img src={picture.url} alt={tb.reading.diagram} draggable={false} /> : !picture.error && picture.busy && <p className="pb-diagram-note">…</p>}
+          {picture.url ? (
+            <img src={picture.url} alt={tb.reading.diagram} draggable={false} />
+          ) : (
+            !picture.error && picture.busy && <p className="pb-diagram-note">…</p>
+          )}
         </div>
       )}
     </div>
@@ -134,11 +159,19 @@ function render(node: Node, ctx: Ctx, key: number): ReactNode {
     case 'bulletList':
       return <ul key={key}>{kids(node, ctx)}</ul>
     case 'orderedList':
-      return <ol key={key} start={Number(node.attrs?.start) || 1}>{kids(node, ctx)}</ol>
+      return (
+        <ol key={key} start={Number(node.attrs?.start) || 1}>
+          {kids(node, ctx)}
+        </ol>
+      )
     case 'listItem':
       return <li key={key}>{kids(node, ctx)}</li>
     case 'taskList':
-      return <ul key={key} data-type="taskList">{kids(node, ctx)}</ul>
+      return (
+        <ul key={key} data-type="taskList">
+          {kids(node, ctx)}
+        </ul>
+      )
     case 'taskItem': {
       const checked = node.attrs?.checked === true
       return (
@@ -181,20 +214,44 @@ function render(node: Node, ctx: Ctx, key: number): ReactNode {
       )
     }
     case 'rawBlock':
-      return <pre key={key} data-raw-block="">{String(node.attrs?.value ?? '')}</pre>
+      return (
+        <pre key={key} data-raw-block="">
+          {String(node.attrs?.value ?? '')}
+        </pre>
+      )
     case 'rawInline':
-      return <code key={key} data-raw-inline="">{String(node.attrs?.value ?? '')}</code>
+      return (
+        <code key={key} data-raw-inline="">
+          {String(node.attrs?.value ?? '')}
+        </code>
+      )
     case 'footnoteRef':
-      return <sup key={key} data-footnote-ref={String(node.attrs?.id ?? '')}>{String(node.attrs?.id ?? '')}</sup>
+      return (
+        <sup key={key} data-footnote-ref={String(node.attrs?.id ?? '')}>
+          {String(node.attrs?.id ?? '')}
+        </sup>
+      )
     case 'footnoteDef':
-      return <aside key={key} data-footnote-def={String(node.attrs?.id ?? '')}>{kids(node, ctx)}</aside>
+      return (
+        <aside key={key} data-footnote-def={String(node.attrs?.id ?? '')}>
+          {kids(node, ctx)}
+        </aside>
+      )
     default:
       return null
   }
 }
 
 // `folder` is where the page lives: the addresses of its images and links are relative to it.
-export const StaticBody = memo(function StaticBody({ markdown, space, folder }: { markdown: string; space: string; folder: string }) {
+export const StaticBody = memo(function StaticBody({
+  markdown,
+  space,
+  folder,
+}: {
+  markdown: string
+  space: string
+  folder: string
+}) {
   const doc = useMemo(() => {
     try {
       return markdownToDoc(markdown)

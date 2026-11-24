@@ -34,7 +34,12 @@ export function addReports(a: ImportReport, b: ImportReport): ImportReport {
   const all = [...a.skipped, ...b.skipped]
   const kept = all.slice(0, SKIPPED_SHOWN)
   const more = (a.skippedMore ?? 0) + (b.skippedMore ?? 0) + (all.length - kept.length)
-  return { pages: a.pages + b.pages, files: a.files + b.files, skipped: kept, ...(more > 0 ? { skippedMore: more } : {}) }
+  return {
+    pages: a.pages + b.pages,
+    files: a.files + b.files,
+    skipped: kept,
+    ...(more > 0 ? { skippedMore: more } : {}),
+  }
 }
 
 export const emptyReport = (): ImportReport => ({ pages: 0, files: 0, skipped: [] })
@@ -42,8 +47,12 @@ export const emptyReport = (): ImportReport => ({ pages: 0, files: 0, skipped: [
 // The same file chosen twice (or dropped after being picked) is one entry.
 // "The same" is name, size and time of last change together: two different
 // files that share a name (a README from each of two folders) both stay.
-export function mergeFiles<F extends { name: string; size: number; lastModified?: number }>(current: readonly F[], added: readonly F[]): F[] {
+export function mergeFiles<F extends { name: string; size: number; lastModified?: number }>(
+  current: readonly F[],
+  added: readonly F[],
+): F[] {
   const out = [...current]
-  for (const f of added) if (!out.some((o) => o.name === f.name && o.size === f.size && o.lastModified === f.lastModified)) out.push(f)
+  for (const f of added)
+    if (!out.some((o) => o.name === f.name && o.size === f.size && o.lastModified === f.lastModified)) out.push(f)
   return out
 }

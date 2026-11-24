@@ -147,8 +147,10 @@ export const en: Messages = {
     deleteTitleOne: (name) => `Delete “${name}”?`,
     deleteTitleMany: (n) => `Delete these ${n} items?`,
     deleteFolderEmpty: 'This folder is empty.',
-    deleteFolderPages: (n) => `It holds ${plural(n, 'page', 'pages')} (subfolders included), which will be deleted with it.`,
-    deleteFoldersHold: (n) => `The selected folders hold ${plural(n, 'page', 'pages')} (subfolders included), which will be deleted with them.`,
+    deleteFolderPages: (n) =>
+      `It holds ${plural(n, 'page', 'pages')} (subfolders included), which will be deleted with it.`,
+    deleteFoldersHold: (n) =>
+      `The selected folders hold ${plural(n, 'page', 'pages')} (subfolders included), which will be deleted with them.`,
     deleteKept: 'The files are removed from the workspace but stay in the Git history.',
     deleteConfirm: 'Delete',
     deleted: (n) => `Deleted ${plural(n, 'item', 'items')}`,
@@ -185,19 +187,24 @@ export const en: Messages = {
       signedOut: 'Sign in again',
       retry: 'Retry',
       conflict: 'Conflict, not saved',
-      draftedHint: 'The draft is on the server; the page file has not changed yet. The server writes it to the file when you leave this page, choose “Save version”, or after a short wait.',
+      draftedHint:
+        'The draft is on the server; the page file has not changed yet. The server writes it to the file when you leave this page, choose “Save version”, or after a short wait.',
     },
     saveVersion: 'Save version',
     saveVersionHint: 'Write the draft to the page and update the list (⌘S / Ctrl+S)',
     leaving: 'Saving version…',
-    leaveFailed: 'Could not save to the server. Your text stays in this browser and will be used the next time you open this page on this device.',
-    leaveDrafted: 'The page file has not been updated, but your draft is on the server, which will write it to the file shortly.',
-    leaveSignedOut: 'You have been signed out. Your text stays in this browser and will be used when you sign in again and come back to this page.',
+    leaveFailed:
+      'Could not save to the server. Your text stays in this browser and will be used the next time you open this page on this device.',
+    leaveDrafted:
+      'The page file has not been updated, but your draft is on the server, which will write it to the file shortly.',
+    leaveSignedOut:
+      'You have been signed out. Your text stays in this browser and will be used when you sign in again and come back to this page.',
     loadFailed: 'Could not load the page',
     notFound: 'This page was not found. It may have been deleted.',
     backToList: 'Back to the list',
     recoverTitle: 'Unsaved text from this page is still on this device',
-    recoverHelp: 'The page is no longer on the server, but what you last typed here is still stored in this browser. You can restore it as a new page.',
+    recoverHelp:
+      'The page is no longer on the server, but what you last typed here is still stored in this browser. You can restore it as a new page.',
     recover: 'Restore as a new page',
     recovering: 'Restoring…',
     recovered: 'Restored as a new page',
@@ -210,9 +217,12 @@ export const en: Messages = {
     moveFailed: 'Could not move the page',
     deleted: 'Page deleted',
     deleteFailed: 'Could not delete the page',
-    leaveConflict: 'This page has an unresolved conflict. Your text is not lost: it is kept as a draft, and you choose which copy to keep the next time you open the page. Leave now?',
-    leaveUnsaved: 'The latest changes have not reached the server. They are kept in this browser and will be used the next time you open this page here. Leave now?',
-    leftInConflict: 'This page still has an unresolved conflict. Your text is kept as a draft; you choose which copy to keep the next time you open the page.',
+    leaveConflict:
+      'This page has an unresolved conflict. Your text is not lost: it is kept as a draft, and you choose which copy to keep the next time you open the page. Leave now?',
+    leaveUnsaved:
+      'The latest changes have not reached the server. They are kept in this browser and will be used the next time you open this page here. Leave now?',
+    leftInConflict:
+      'This page still has an unresolved conflict. Your text is kept as a draft; you choose which copy to keep the next time you open the page.',
     spaceMissing: 'This space does not exist, or you are not a member of it.',
   },
   toolbar: {
@@ -332,7 +342,8 @@ export const en: Messages = {
   },
   conflict: {
     title: 'This page was changed elsewhere',
-    description: 'Your draft was written on an older version of the page, and the page file has changed since (another window, another device, or an edit to the file itself). What you wrote is still here. Choose which copy to keep.',
+    description:
+      'Your draft was written on an older version of the page, and the page file has changed since (another window, another device, or an edit to the file itself). What you wrote is still here. Choose which copy to keep.',
     mine: 'My draft',
     theirs: 'Version in the page file',
     keepMine: 'Keep mine',
@@ -340,13 +351,15 @@ export const en: Messages = {
     useTheirs: 'Use the file’s version',
     useTheirsHint: 'Delete my draft and load the file’s version',
     olderTitle: 'There is an older copy of your text here',
-    olderDescription: (when) => `This text you wrote (${when}) was once saved as a draft on the server, but that draft is gone and the page file has a newer version. The copy exists only in this browser and is not lost. The file’s version is suggested; if this copy has something you still want, keep it.`,
+    olderDescription: (when) =>
+      `This text you wrote (${when}) was once saved as a draft on the server, but that draft is gone and the page file has a newer version. The copy exists only in this browser and is not lost. The file’s version is suggested; if this copy has something you still want, keep it.`,
     olderMine: (when) => `Older copy in this browser (${when})`,
     olderTheirs: 'Current version of the page file',
     olderKeepMine: 'Keep the older copy',
     olderKeepMineHint: 'Save this older copy on top of the latest version of the file',
     draftTitle: 'There is another draft on the server',
-    draftDescription: 'This page already has a draft on the server (perhaps from another window or device), and it differs from the text here. Both still exist. Choose which one to keep.',
+    draftDescription:
+      'This page already has a draft on the server (perhaps from another window or device), and it differs from the text here. Both still exist. Choose which one to keep.',
     draftMine: 'Text here',
     draftTheirs: 'Draft on the server',
     draftKeepMine: 'Keep this one',
@@ -367,7 +380,8 @@ export const en: Messages = {
     signedOut: 'You have been signed out. Please sign in again.',
     badResponse: 'The server sent something that could not be read',
     requestFailed: (status) => `Request failed (${status})`,
-    forbidden: (origin) => `The server refused this page’s address (${origin}): it is not among the origins the server allows. Ask for ${origin} to be allowed (start the server with --allow-origin ${origin}), then reload this page.`,
+    forbidden: (origin) =>
+      `The server refused this page’s address (${origin}): it is not among the origins the server allows. Ask for ${origin} to be allowed (start the server with --allow-origin ${origin}), then reload this page.`,
   },
   folderRules: {
     empty: 'The path cannot be empty',
@@ -399,8 +413,10 @@ export const en: Messages = {
     failed: 'Could not do that',
     disabledMark: 'Disabled',
     disabledTitle: 'This space has been disabled by an administrator',
-    disabledHelp: 'While it is disabled its pages cannot be read or changed. Drafts already written are kept. Ask an administrator to enable it again.',
-    disabledAdminHelp: 'While it is disabled nobody can open this space, administrators included. You can enable it again in the administration.',
+    disabledHelp:
+      'While it is disabled its pages cannot be read or changed. Drafts already written are kept. Ask an administrator to enable it again.',
+    disabledAdminHelp:
+      'While it is disabled nobody can open this space, administrators included. You can enable it again in the administration.',
     disabledAdminLink: 'Go to administration',
     disabledBack: 'Back to my spaces',
   },
@@ -431,15 +447,19 @@ export const en: Messages = {
     deleteConfirm: 'Delete',
     cancel: 'Cancel',
     saved: 'View saved',
-    conflict: 'Someone just changed the views here, so they were read again. Your change was not saved; you can make it again on the new views.',
-    lost: (name: string) => `Your unsaved changes to "${name}" could not be kept, because someone else changed the views.`,
+    conflict:
+      'Someone just changed the views here, so they were read again. Your change was not saved; you can make it again on the new views.',
+    lost: (name: string) =>
+      `Your unsaved changes to "${name}" could not be kept, because someone else changed the views.`,
     lostUnnamed: 'Your unsaved changes here could not be kept, because someone else changed the views.',
     linkGone: 'The sort in this link was not applied: the view it belongs to is no longer here.',
     failed: (message: string) => `The view was not saved: ${message}`,
-    unknown: 'The server did not answer in time, so it is not known whether the views were saved. The views here are read again from the server: check that they are what you wanted.',
+    unknown:
+      'The server did not answer in time, so it is not known whether the views were saved. The views here are read again from the server: check that they are what you wanted.',
     readLate: 'The views were saved, but could not be read again here; they will be read again shortly.',
     tooMany: (n: number) => `At most ${n} views`,
-    readOnly: 'You can only look: you can switch views and change the sort and filters for yourself, but not save them.',
+    readOnly:
+      'You can only look: you can switch views and change the sort and filters for yourself, but not save them.',
     loadFailed: 'Could not read the views here.',
     customSort: (key: string) => `By "${key}"`,
   },
@@ -485,7 +505,22 @@ export const en: Messages = {
     close: 'Close settings',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
-    sections: { profile: 'Profile', preferences: 'Preferences', security: 'Security', tokens: 'API tokens', connections: 'Connected accounts', usage: 'Usage', general: 'General', types: 'Types', templates: 'Templates', home: 'Home', members: 'Members', sync: 'Sync', offline: 'Offline', import: 'Import' },
+    sections: {
+      profile: 'Profile',
+      preferences: 'Preferences',
+      security: 'Security',
+      tokens: 'API tokens',
+      connections: 'Connected accounts',
+      usage: 'Usage',
+      general: 'General',
+      types: 'Types',
+      templates: 'Templates',
+      home: 'Home',
+      members: 'Members',
+      sync: 'Sync',
+      offline: 'Offline',
+      import: 'Import',
+    },
   },
   prefs: {
     appearance: 'Appearance',
@@ -504,7 +539,8 @@ export const en: Messages = {
     editModeHelp: 'How a page opens for editing; changing the mode in the editor is remembered too.',
     homeTitle: 'Home',
     variety: 'Varied greetings',
-    varietyHelp: 'The greeting on the home page changes with the time, the festivals and how you have been using it; switched off, it only says good morning, good afternoon or good evening. Kept in this browser only.',
+    varietyHelp:
+      'The greeting on the home page changes with the time, the festivals and how you have been using it; switched off, it only says good morning, good afternoon or good evening. Kept in this browser only.',
   },
   general: {
     nameTitle: 'Name',
@@ -512,7 +548,8 @@ export const en: Messages = {
     nameReadOnly: 'In single-user mode the space name cannot be changed here.',
     noManage: 'Only an owner can change the name and the inbox of the space.',
     checkTitle: 'Check',
-    checkHelp: 'Files with a problem: no or repeated ids, headers that cannot be read, fields that do not fit, broken links, missing attachments and titles that repeat.',
+    checkHelp:
+      'Files with a problem: no or repeated ids, headers that cannot be read, fields that do not fit, broken links, missing attachments and titles that repeat.',
     checkLink: 'Open the check page…',
   },
   // The search dialog (⌘K) and the tag colour menu.
@@ -568,7 +605,18 @@ export const en: Messages = {
     hex: 'Hex colour',
     hexInvalid: 'Use six hex digits, like #3b82f6',
     apply: 'Apply',
-    names: { gray: 'Gray', red: 'Red', orange: 'Orange', amber: 'Amber', green: 'Green', teal: 'Teal', blue: 'Blue', purple: 'Purple', pink: 'Pink', rose: 'Rose' },
+    names: {
+      gray: 'Gray',
+      red: 'Red',
+      orange: 'Orange',
+      amber: 'Amber',
+      green: 'Green',
+      teal: 'Teal',
+      blue: 'Blue',
+      purple: 'Purple',
+      pink: 'Pink',
+      rose: 'Rose',
+    },
   },
   userMenu: { label: 'Account menu', settings: 'Settings', admin: 'Administration', signOut: 'Sign out' },
   roles: { admin: 'Administrator', member: 'Member', owner: 'Owner', editor: 'Editor', viewer: 'Viewer' },
@@ -584,7 +632,8 @@ export const en: Messages = {
     tooShort: 'The password needs at least 8 characters',
     or: 'or',
     failed: 'That did not work',
-    wait: (seconds) => (seconds < 60 ? plural(seconds, 'second', 'seconds') : plural(Math.ceil(seconds / 60), 'minute', 'minutes')),
+    wait: (seconds) =>
+      seconds < 60 ? plural(seconds, 'second', 'seconds') : plural(Math.ceil(seconds / 60), 'minute', 'minutes'),
     loadFailed: 'Could not read the sign-in state',
   },
   login: {
@@ -598,7 +647,8 @@ export const en: Messages = {
     title: 'Create the administrator',
     intro: 'This is the first start: create the first administrator account.',
     tokenLabel: 'Setup token',
-    tokenHelp: 'The token is printed in the server’s log at startup, along with a link ending in …/setup#token. Open that link and you do not need to paste it.',
+    tokenHelp:
+      'The token is printed in the server’s log at startup, along with a link ending in …/setup#token. Open that link and you do not need to paste it.',
     tokenRequired: 'Enter the setup token',
     submit: 'Create administrator',
     submitting: 'Creating…',
@@ -631,7 +681,8 @@ export const en: Messages = {
     password: 'Password',
     changePassword: 'Change password',
     setPassword: 'Set password',
-    setHelp: 'This account can only sign in with single sign-on. After you set a password you can also sign in with your username and password.',
+    setHelp:
+      'This account can only sign in with single sign-on. After you set a password you can also sign in with your username and password.',
     passwordIsSet: 'A password is set for this account.',
     current: 'Current password',
     newPassword: 'New password',
@@ -672,7 +723,8 @@ export const en: Messages = {
     createInvite: 'Create invite',
     creating: 'Creating…',
     linkTitle: 'Invite link',
-    linkHelp: 'This link is shown only once, so copy it now. After you close this it cannot be found again; revoke the invite and create a new one.',
+    linkHelp:
+      'This link is shown only once, so copy it now. After you close this it cannot be found again; revoke the invite and create a new one.',
     copy: 'Copy link',
     copied: 'Copied',
     copyFailed: 'Could not copy. Select the link and copy it yourself.',
@@ -693,10 +745,12 @@ export const en: Messages = {
   offline: {
     banner: 'Offline: this is what is saved on this device. You can read and search; changes are not possible for now.',
     readOnly: 'Offline, read only',
-    readOnlyNote: 'The server cannot be reached: pages can be read but not changed. You can edit again once you are back online.',
+    readOnlyNote:
+      'The server cannot be reached: pages can be read but not changed. You can edit again once you are back online.',
     notDownloaded: 'The text of this page is not downloaded to this device, so it cannot be opened offline.',
     notHere: 'This page is not on this device.',
-    searchNote: 'Offline, only what is downloaded is searched: titles everywhere, text only in pages whose text is saved.',
+    searchNote:
+      'Offline, only what is downloaded is searched: titles everywhere, text only in pages whose text is saved.',
   },
   // The members section of the space settings.
   members: {
@@ -705,7 +759,11 @@ export const en: Messages = {
     loadFailed: 'Could not load the members',
     you: '(you)',
     role: 'Role',
-    roleHelp: { owner: 'Everything: manage members, change settings and sync, read and edit pages', editor: 'Read and edit pages', viewer: 'Read only' },
+    roleHelp: {
+      owner: 'Everything: manage members, change settings and sync, read and edit pages',
+      editor: 'Read and edit pages',
+      viewer: 'Read only',
+    },
     changed: 'Role changed',
     remove: 'Remove',
     removeTitle: 'Remove this member?',
@@ -714,13 +772,16 @@ export const en: Messages = {
     removed: (name: string) => `Removed ${name}`,
     leave: 'Leave space',
     leaveTitle: 'Leave this space?',
-    leaveHelp: (space: string) => `After this you cannot open "${space}" any more; an owner can add you again if you need it.`,
+    leaveHelp: (space: string) =>
+      `After this you cannot open "${space}" any more; an owner can add you again if you need it.`,
     leaveConfirm: 'Leave',
     left: 'You left the space',
     demoteTitle: 'Give up ownership?',
-    demoteHelp: (space: string, role: string) => `You will be ${role} of "${space}" and can no longer manage its members or settings. Only another owner can give ownership back.`,
+    demoteHelp: (space: string, role: string) =>
+      `You will be ${role} of "${space}" and can no longer manage its members or settings. Only another owner can give ownership back.`,
     demoteConfirm: 'Change my role',
-    disabledLeaveHelp: 'An administrator has disabled this space, so its members cannot be shown. You can still leave it.',
+    disabledLeaveHelp:
+      'An administrator has disabled this space, so its members cannot be shown. You can still leave it.',
     cancel: 'Cancel',
     addTitle: 'Add a member',
     addHelp: 'Enter their username and pick a role. They need to have an account already.',
@@ -747,7 +808,8 @@ export const en: Messages = {
     loading: 'Loading history…',
     loadFailed: 'Could not load the history',
     refresh: 'Refresh',
-    refreshHint: 'Read the list of versions again. A version just saved may take a few seconds to show up on the server.',
+    refreshHint:
+      'Read the list of versions again. A version just saved may take a few seconds to show up on the server.',
     empty: 'This page has no earlier versions yet.',
     emptyHint: 'Versions appear here once the page has been saved as a version.',
     list: 'Versions',
@@ -807,7 +869,8 @@ export const en: Messages = {
       taskDone: 'completed task',
       taskOpen: 'open task',
     },
-    counts: (n, ins, del) => `${plural(n, 'change', 'changes')}, ${plural(ins, 'character', 'characters')} added, ${plural(del, 'character', 'characters')} removed`,
+    counts: (n, ins, del) =>
+      `${plural(n, 'change', 'changes')}, ${plural(ins, 'character', 'characters')} added, ${plural(del, 'character', 'characters')} removed`,
     countsShort: (ins, del) => `+${ins} −${del} characters`,
     changes: (n) => plural(n, 'change', 'changes'),
     formatChanges: (n) => `${plural(n, 'character', 'characters')} reformatted`,
@@ -829,12 +892,15 @@ export const en: Messages = {
     restore: 'Restore this version',
     restoreAt: (when) => `Restore the version from ${when}`,
     restoreTitle: 'Restore this version?',
-    restoreDescription: (when, who) => `The title, subtitle, source, tags and body will be replaced with what ${who} saved on ${when}. They go into the editor as if you had just typed them: saved as a draft first like any edit, then becoming a new version when saved. All existing versions stay; nothing is lost.`,
+    restoreDescription: (when, who) =>
+      `The title, subtitle, source, tags and body will be replaced with what ${who} saved on ${when}. They go into the editor as if you had just typed them: saved as a draft first like any edit, then becoming a new version when saved. All existing versions stay; nothing is lost.`,
     restoreSame: 'This version is the same as what is in the editor, so there is nothing to restore.',
-    restoreConflict: 'This page has an unresolved conflict. Go back to the editor and resolve it before restoring a version.',
+    restoreConflict:
+      'This page has an unresolved conflict. Go back to the editor and resolve it before restoring a version.',
     restoreUnsaved: 'The editor has changes that have not been saved as a version. Restoring will replace them.',
     restoreSaveFirst: 'Save the current content first, then restore',
-    restoreSaveFirstHint: 'Save what is there now as a version and then restore, so the current content stays in the history too.',
+    restoreSaveFirstHint:
+      'Save what is there now as a version and then restore, so the current content stays in the history too.',
     restoreDiscard: 'Replace without saving',
     restoreConfirm: 'Restore',
     restoreCancel: 'Cancel',
@@ -842,7 +908,8 @@ export const en: Messages = {
     restoreSaveFailed: 'The current content could not be saved first, so nothing was restored.',
     restored: (when) => `Restored the version from ${when}. It becomes a new version when saved.`,
     undoRestore: 'Undo',
-    undoTooLate: 'The content changed after the restore, so it was not undone. The earlier content is still in the history.',
+    undoTooLate:
+      'The content changed after the restore, so it was not undone. The earlier content is still in the history.',
     undone: 'Restore undone',
   },
   sync: {
@@ -859,12 +926,15 @@ export const en: Messages = {
     spaceSettings: 'Space settings',
     title: 'Remote repository',
     pageTitle: (space) => `${space} · Space settings`,
-    intro: 'By default the Git repository of this space lives only on the server. It can also follow a remote repository (on GitHub, for example): the remote branch is the truth, the server fetches from it every minute, and each change you make is pushed to it first.',
-    singleUser: 'There are no remote repository settings in single-user mode (--space). Start in accounts mode with --data to get them.',
+    intro:
+      'By default the Git repository of this space lives only on the server. It can also follow a remote repository (on GitHub, for example): the remote branch is the truth, the server fetches from it every minute, and each change you make is pushed to it first.',
+    singleUser:
+      'There are no remote repository settings in single-user mode (--space). Start in accounts mode with --data to get them.',
     ownerOnly: 'Only the owner of this space can change the remote repository settings.',
     loadFailed: 'Could not read the remote settings',
     url: 'Repository address',
-    urlHelp: 'Only https://host/path, or an SSH address (git@host:path, ssh://host/path), is accepted. The address cannot contain a password, and the administrator may allow only some hosts.',
+    urlHelp:
+      'Only https://host/path, or an SSH address (git@host:path, ssh://host/path), is accepted. The address cannot contain a password, and the administrator may allow only some hosts.',
     urlPlaceholder: 'git@github.com:your-name/notes.git',
     urlRequired: 'Enter the repository address',
     branch: 'Branch',
@@ -874,12 +944,14 @@ export const en: Messages = {
     token: 'HTTPS token',
     mismatchSsh: 'An SSH deploy key needs an SSH address (git@… or ssh://…).',
     mismatchToken: 'An HTTPS token needs an https:// address.',
-    sshHelp: 'The server makes a key for this space; the private key never leaves the server. Add the public key below to the repository’s deploy keys.',
+    sshHelp:
+      'The server makes a key for this space; the private key never leaves the server. Add the public key below to the repository’s deploy keys.',
     makeKey: 'Generate deploy key',
     makingKey: 'Generating…',
     rotateKey: 'Generate again',
     rotateTitle: 'Generate the deploy key again?',
-    rotateDescription: 'The old public key stops working. After generating a new one, add the new public key to the repository.',
+    rotateDescription:
+      'The old public key stops working. After generating a new one, add the new public key to the repository.',
     rotateConfirm: 'Generate again',
     keyFailed: 'Could not generate the key',
     publicKey: 'Public key',
@@ -888,7 +960,8 @@ export const en: Messages = {
     copyFailed: 'Could not copy. Select it and copy it yourself.',
     fingerprint: 'Fingerprint',
     addKeyTitle: 'Add this public key to the repository',
-    addKeyHow: 'In the repository’s settings find “Deploy keys”, add the public key above, and tick “Allow write access”. Without write access, changes cannot be pushed.',
+    addKeyHow:
+      'In the repository’s settings find “Deploy keys”, add the public key above, and tick “Allow write access”. Without write access, changes cannot be pushed.',
     keyNeeded: 'Generate a deploy key and add its public key to the repository first, then connect.',
     username: 'Username',
     usernameHelp: 'Leave empty for x-access-token (use this for GitHub tokens).',
@@ -904,10 +977,13 @@ export const en: Messages = {
     connected: 'Connected. This space now follows the remote.',
     updated: 'Connection settings updated',
     conflictTitle: 'This space and the remote repository each have their own content, so they cannot be connected',
-    conflictBody: 'The space already has pages or folders, and the remote branch has content of its own; neither history contains the other. PetalBook will not merge the two histories, and nothing was changed.',
-    conflictAdvice: 'What to do: create a new space and connect that one to this repository. It will get the repository’s content directly.',
+    conflictBody:
+      'The space already has pages or folders, and the remote branch has content of its own; neither history contains the other. PetalBook will not merge the two histories, and nothing was changed.',
+    conflictAdvice:
+      'What to do: create a new space and connect that one to this repository. It will get the repository’s content directly.',
     unreachableTitle: 'The remote could not be reached, so nothing was connected',
-    unreachableAdvice: 'Nothing was changed. Check the address, the network, and whether the token or deploy key has permission, then try again.',
+    unreachableAdvice:
+      'Nothing was changed. Check the address, the network, and whether the token or deploy key has permission, then try again.',
     forbiddenTitle: 'The administrator does not allow connecting to this host',
     failed: 'Could not connect',
     state: { ok: 'OK', offline: 'Unreachable', rewritten: 'Paused', error: 'Problem' },
@@ -918,43 +994,54 @@ export const en: Messages = {
     lastSync: 'Last sync',
     never: 'Not synced yet',
     hostKey: 'Host key fingerprint',
-    hostKeyHelp: 'The host key the server trusted on first connection. Compare it with the fingerprint the host publishes to be sure you did not connect somewhere else.',
+    hostKeyHelp:
+      'The host key the server trusted on first connection. Compare it with the fingerprint the host publishes to be sure you did not connect somewhere else.',
     syncNow: 'Sync now',
     syncing: 'Syncing…',
     synced: 'Synced',
     syncFailed: 'Could not sync',
     disconnect: 'Disconnect',
     disconnectTitle: 'Disconnect the remote repository?',
-    disconnectDescription: 'The space goes back to living only on this server. Existing pages and history are kept. The saved token or key is deleted. Nothing on the remote repository is touched.',
+    disconnectDescription:
+      'The space goes back to living only on this server. Existing pages and history are kept. The saved token or key is deleted. Nothing on the remote repository is touched.',
     disconnectConfirm: 'Disconnect',
     disconnectCancel: 'Cancel',
     disconnected: 'Disconnected. This space is now only on the server.',
     disconnectFailed: 'Could not disconnect',
     offlineTitle: 'The remote cannot be reached right now',
-    offlineBody: 'Your changes are saved as drafts on the server and are not lost. When the remote is back, the server writes them to the pages and pushes them. Until then, saving versions, creating, moving and deleting will fail.',
+    offlineBody:
+      'Your changes are saved as drafts on the server and are not lost. When the remote is back, the server writes them to the pages and pushes them. Until then, saving versions, creating, moving and deleting will fail.',
     errorTitle: 'Needs attention',
-    errorBody: 'Common causes: the token expired or lacks permission, the deploy key was deleted, or the host key changed. After fixing it, choose “Sync now”.',
+    errorBody:
+      'Common causes: the token expired or lacks permission, the deploy key was deleted, or the host key changed. After fixing it, choose “Sync now”.',
     rewrittenTitle: 'The remote’s history was rewritten, and this space is paused',
-    rewrittenBody: 'The remote branch no longer contains the commit the server last synced to (for example someone force-pushed, or the branch was recreated). So that nothing gets overwritten, this space is read-only for now and cannot save changes; drafts are still kept as usual.',
+    rewrittenBody:
+      'The remote branch no longer contains the commit the server last synced to (for example someone force-pushed, or the branch was recreated). So that nothing gets overwritten, this space is read-only for now and cannot save changes; drafts are still kept as usual.',
     rewrittenLastGood: 'Commit the server last synced to',
     rewrittenRemote: 'Commit the remote is at now',
-    rewrittenChoices: 'You can: put the history back on the remote and choose “Sync now”; or accept the remote’s new history, which moves the space to the commit the remote is at now.',
+    rewrittenChoices:
+      'You can: put the history back on the remote and choose “Sync now”; or accept the remote’s new history, which moves the space to the commit the remote is at now.',
     accept: 'Accept the remote’s history',
     acceptTitle: 'Accept the remote’s history?',
-    acceptDescription: 'The space moves to the commit the remote is at now, and later changes build on it. Drafts are all kept; if a page changed on the remote, its drafts show as out of date, and you choose which copy to keep when you open the page. Commits that were on the server but not on the remote will no longer appear in the space.',
+    acceptDescription:
+      'The space moves to the commit the remote is at now, and later changes build on it. Drafts are all kept; if a page changed on the remote, its drafts show as out of date, and you choose which copy to keep when you open the page. Commits that were on the server but not on the remote will no longer appear in the space.',
     acceptConfirm: 'Accept',
     acceptCancel: 'Cancel',
     accepted: 'Accepted the remote’s history. The space is back to normal.',
     acceptFailed: 'Could not accept it',
-    acceptStale: 'The remote changed again and is no longer at that commit. It has been read again; please look before you decide.',
+    acceptStale:
+      'The remote changed again and is no longer at that commit. It has been read again; please look before you decide.',
     unavailable: {
       title: 'The remote repository is unreachable or paused',
-      write: 'The remote repository is unreachable, or writing to this space is paused. This action was not carried out, and nothing existing was lost. Try again later; if it keeps happening, ask the owner of the space to check the sync status in “Space settings”.',
+      write:
+        'The remote repository is unreachable, or writing to this space is paused. This action was not carried out, and nothing existing was lost. Try again later; if it keeps happening, ask the owner of the space to check the sync status in “Space settings”.',
       commit: 'Remote unreachable, nothing lost',
       commitDraft: 'Remote unreachable, draft kept on the server',
-      commitDraftHint: 'Your content is on the server as a draft and is not lost. When the remote is back, the server writes it to the page. Until then “Save version” will not succeed. Click to try again.',
+      commitDraftHint:
+        'Your content is on the server as a draft and is not lost. When the remote is back, the server writes it to the page. Until then “Save version” will not succeed. Click to try again.',
       commitLocal: 'Remote unreachable, content kept on this device',
-      commitLocalHint: 'The latest content has not reached the server yet. It is kept in this browser and is not lost. Click to try again.',
+      commitLocalHint:
+        'The latest content has not reached the server yet. It is kept in this browser and is not lost. Click to try again.',
     },
   },
   modes: {
@@ -964,15 +1051,20 @@ export const en: Messages = {
     split: 'Side by side',
     sourceLabel: 'Source of the page file',
     problemAt: (line) => `Problem on line ${line} of the header`,
-    problemHelp: 'Until it is fixed, changes to the header are not saved and you cannot switch back to the visual editor; the body is saved as usual.',
+    problemHelp:
+      'Until it is fixed, changes to the header are not saved and you cannot switch back to the visual editor; the body is saved as usual.',
     cannotLeave: 'The header has a problem. Fix it before switching',
     discardBroken: 'Discard these changes',
-    staleRaw: 'There is unfinished source for this page (the header had a problem and it was not saved). If you continue, that source is used, and changes made to the page since then are overwritten by it.',
+    staleRaw:
+      'There is unfinished source for this page (the header had a problem and it was not saved). If you continue, that source is used, and changes made to the page since then are overwritten by it.',
     staleRawResume: 'Continue editing it',
     staleRawDrop: 'Discard it',
-    changedUnderBroken: 'This page was just updated elsewhere. Your unfinished source is still here (the browser has no room to set it aside). Once the header is fixed, it is used and overwrites the changes made there.',
-    leaveBroken: 'The source with the unfixed header is not saved, and the browser has no room to keep it. If you leave now this text is gone. Leave anyway?',
-    cannotSetAside: 'The browser’s storage is full, so this unfinished source cannot be set aside now. Fix it or discard it first, then continue with the other one.',
+    changedUnderBroken:
+      'This page was just updated elsewhere. Your unfinished source is still here (the browser has no room to set it aside). Once the header is fixed, it is used and overwrites the changes made there.',
+    leaveBroken:
+      'The source with the unfixed header is not saved, and the browser has no room to keep it. If you leave now this text is gone. Leave anyway?',
+    cannotSetAside:
+      'The browser’s storage is full, so this unfinished source cannot be set aside now. Fix it or discard it first, then continue with the other one.',
     problem: {
       no_header: 'The first line must be ---',
       unterminated: 'The header starts with --- but does not end with ---',
@@ -987,7 +1079,8 @@ export const en: Messages = {
     settingsTitle: 'Import',
     settingsHelp: 'Bring existing Markdown files (single files, or one .zip) in as pages.',
     settingsLink: 'Import Markdown…',
-    intro: 'Pick one or more .md or .markdown files, or one .zip (Markdown files and folders inside). Pages that already exist are not replaced.',
+    intro:
+      'Pick one or more .md or .markdown files, or one .zip (Markdown files and folders inside). Pages that already exist are not replaced.',
     filesLabel: 'Files to import',
     drop: 'Drop files here, or',
     choose: 'choose files',
@@ -1007,8 +1100,10 @@ export const en: Messages = {
     oneZip: 'Only one .zip can be imported at a time.',
     tooLarge: (name, size, limit) => `“${name}” is ${size}, over the import limit of ${limit}. It was not sent.`,
     failed: 'Could not import',
-    leaveWhileRunning: 'The import is not finished. If you leave now, the remaining files will not be imported. Leave anyway?',
-    failedAfter: (done, total) => `The first ${plural(done, 'file', 'files')} of ${total} ${done === 1 ? 'was' : 'were'} imported; the rest were not.`,
+    leaveWhileRunning:
+      'The import is not finished. If you leave now, the remaining files will not be imported. Leave anyway?',
+    failedAfter: (done, total) =>
+      `The first ${plural(done, 'file', 'files')} of ${total} ${done === 1 ? 'was' : 'were'} imported; the rest were not.`,
     doneTitle: 'Import finished',
     totals: (pages, files) => `${plural(pages, 'page', 'pages')}, ${plural(files, 'attachment', 'attachments')}`,
     skippedTitle: (n) => `Not imported (${n})`,

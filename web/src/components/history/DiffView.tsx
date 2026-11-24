@@ -20,7 +20,14 @@ class Where {
     this.folder = folder
   }
 }
-const pageExtensions = (where: Where) => [...createExtensions({ linkOpensOnClick: false, resolveImageSrc: (src) => addressToUrl(where.space, where.folder, src), codeBlock: CodeBlockWithView }), ...diffExtensions]
+const pageExtensions = (where: Where) => [
+  ...createExtensions({
+    linkOpensOnClick: false,
+    resolveImageSrc: (src) => addressToUrl(where.space, where.folder, src),
+    codeBlock: CodeBlockWithView,
+  }),
+  ...diffExtensions,
+]
 
 // A run of changes next to each other (a deletion and the insertion that
 // replaces it) is one place to jump to.
@@ -38,7 +45,19 @@ export function changeStops(root: HTMLElement): HTMLElement[][] {
 // The merged document of a comparison, shown like the page itself but not
 // editable. `doc` is replaced as a whole when the comparison changes; the
 // editor itself lives as long as the view.
-export function DiffView({ doc, label, onRendered, space = '', folder = '' }: { doc: DocJSON; label: string; onRendered: (root: HTMLElement | null) => void; space?: string; folder?: string }) {
+export function DiffView({
+  doc,
+  label,
+  onRendered,
+  space = '',
+  folder = '',
+}: {
+  doc: DocJSON
+  label: string
+  onRendered: (root: HTMLElement | null) => void
+  space?: string
+  folder?: string
+}) {
   // Read when a picture is drawn, so the one editor of the view follows the page.
   const [where] = useState(() => new Where(space, folder))
   useEffect(() => where.set(space, folder), [where, space, folder])
@@ -49,7 +68,9 @@ export function DiffView({ doc, label, onRendered, space = '', folder = '' }: { 
     extensions,
     content: doc,
     editable: false,
-    editorProps: { attributes: { class: 'pb-prose pb-diff', role: 'document', 'aria-label': label, 'aria-readonly': 'true' } },
+    editorProps: {
+      attributes: { class: 'pb-prose pb-diff', role: 'document', 'aria-label': label, 'aria-readonly': 'true' },
+    },
   })
 
   useEffect(() => {

@@ -2,7 +2,16 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import type { SavedView, ViewList } from '@/api/types'
 import { loadViewId, saveViewId, type ViewState } from '@/lib/savedViews'
-import { catchUp, initialWorkingCopy, reduceWorkingCopy, type Patch, type Tabs, type WorkingCopy, type WorkingEvent, type Written } from '@/lib/workingCopy'
+import {
+  catchUp,
+  initialWorkingCopy,
+  reduceWorkingCopy,
+  type Patch,
+  type Tabs,
+  type WorkingCopy,
+  type WorkingEvent,
+  type Written,
+} from '@/lib/workingCopy'
 import { t } from '@/i18n'
 
 // The views of a folder or a tag as the tabs show them, and the working copy of the one shown, kept together: every
@@ -29,7 +38,14 @@ export interface Address {
 
 const addressKey = (a: Address) => JSON.stringify([a.view, a.sort])
 
-export function useWorkingCopy(on: boolean, idKey: string, data: ViewList | undefined, address: Address, mutating: boolean, baseOf: (views: readonly SavedView[], wc: WorkingCopy) => ViewState) {
+export function useWorkingCopy(
+  on: boolean,
+  idKey: string,
+  data: ViewList | undefined,
+  address: Address,
+  mutating: boolean,
+  baseOf: (views: readonly SavedView[], wc: WorkingCopy) => ViewState,
+) {
   const [stored, setBox] = useState<Box>(() => ({
     list: null,
     wc: initialWorkingCopy(loadViewId(idKey), address),
@@ -60,14 +76,30 @@ export function useWorkingCopy(on: boolean, idKey: string, data: ViewList | unde
   // The address too waits for the write: the page writes it back from the working copy meanwhile (back and forward
   // within the listing are off like the tabs).
   const key = addressKey(address)
-  if (on && !busy && key !== box.address) box = { ...step(box, { kind: 'address', view: address.view ?? '', sort: address.sort, base: baseOf(box.list?.views ?? [], box.wc) }), address: key }
+  if (on && !busy && key !== box.address)
+    box = {
+      ...step(box, {
+        kind: 'address',
+        view: address.view ?? '',
+        sort: address.sort,
+        base: baseOf(box.list?.views ?? [], box.wc),
+      }),
+      address: key,
+    }
   if (box !== stored) setBox(box)
 
   useEffect(() => {
     if (stored.remember) saveViewId(idKey, stored.remember.id)
   }, [idKey, stored.remember])
   useEffect(() => {
-    if (stored.notice) toast.error(stored.notice.link ? t.views.linkGone : stored.notice.name ? t.views.lost(stored.notice.name) : t.views.lostUnnamed)
+    if (stored.notice)
+      toast.error(
+        stored.notice.link
+          ? t.views.linkGone
+          : stored.notice.name
+            ? t.views.lost(stored.notice.name)
+            : t.views.lostUnnamed,
+      )
   }, [stored.notice])
 
   // Nothing the person does to the view shown is taken while a write is on its way (the page has it all off too).

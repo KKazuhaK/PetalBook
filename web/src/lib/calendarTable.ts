@@ -17,4 +17,3 @@ export const CALENDAR_YEARS: Readonly<Record<number, string>> = {
   2035: '0105=xiaohan 0116=laba 0120=dahan 0204=lichun 0207=newYearsEve 0208=springFestival 0219=yushui 0222=lantern 0306=jingzhe 0321=chunfen 0405=qingming 0420=guyu 0505=lixia 0521=xiaoman 0606=mangzhong 0610=dragonBoat 0621=xiazhi 0707=xiaoshu 0723=dashu 0807=liqiu 0810=qixi 0823=chushu 0908=bailu 0916=midAutumn 0923=qiufen 1008=hanlu 1009=doubleNinth 1023=shuangjiang 1107=lidong 1122=xiaoxue 1207=daxue 1222=dongzhi',
   2036: '0105=laba 0106=xiaohan 0120=dahan 0127=newYearsEve 0128=springFestival 0204=lichun 0211=lantern 0219=yushui 0305=jingzhe 0320=chunfen 0404=qingming 0419=guyu 0505=lixia 0520=xiaoman 0530=dragonBoat 0605=mangzhong 0621=xiazhi 0706=xiaoshu 0722=dashu 0807=liqiu 0822=chushu 0828=qixi 0907=bailu 0922=qiufen 1004=midAutumn 1008=hanlu 1023=shuangjiang 1027=doubleNinth 1107=lidong 1122=xiaoxue 1206=daxue 1221=dongzhi',
 }
-

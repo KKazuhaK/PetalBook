@@ -17,7 +17,17 @@ import { tp } from '@/i18n/props'
 // - A value that does not fit its field is kept and shown as wrong.
 // - A key of the header that the type does not list is in a collapsed group at
 //   the end, each with a button that clears it.
-export default function PropertyPanel({ typeName, values, onChange, readOnly }: { typeName: string; values: PageMeta; onChange: (next: PageMeta) => void; readOnly: boolean }) {
+export default function PropertyPanel({
+  typeName,
+  values,
+  onChange,
+  readOnly,
+}: {
+  typeName: string
+  values: PageMeta
+  onChange: (next: PageMeta) => void
+  readOnly: boolean
+}) {
   const types = useTypes()
   const idBase = useId()
   const type = types.data?.types.find((x) => x.name === typeName)
@@ -40,7 +50,11 @@ export default function PropertyPanel({ typeName, values, onChange, readOnly }: 
   else if (type?.error) notice = type.error
 
   return (
-    <section aria-label={tp.panel.label(name)} data-slot="property-panel" className="rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
+    <section
+      aria-label={tp.panel.label(name)}
+      data-slot="property-panel"
+      className="rounded-lg border bg-muted/20 px-3 py-2.5 text-sm"
+    >
       <h2 className="mb-1.5 text-xs font-medium text-muted-foreground">{tp.panel.heading(name)}</h2>
       {types.isPending ? (
         <div aria-busy="true" className="grid gap-1.5">
@@ -58,11 +72,22 @@ export default function PropertyPanel({ typeName, values, onChange, readOnly }: 
                 const wrong = isWrong(f, values[f.key])
                 return (
                   <div key={f.key} data-field={f.key} data-kind={f.kind} className="contents">
-                    <label htmlFor={id} className="truncate pt-1.5 text-xs text-muted-foreground max-sm:pt-0" title={label}>
+                    <label
+                      htmlFor={id}
+                      className="truncate pt-1.5 text-xs text-muted-foreground max-sm:pt-0"
+                      title={label}
+                    >
                       {label}
                     </label>
                     <div className="min-w-0">
-                      <FieldControl field={f} value={values[f.key]} onChange={(v) => set(f.key, v)} readOnly={readOnly} id={id} label={label} />
+                      <FieldControl
+                        field={f}
+                        value={values[f.key]}
+                        onChange={(v) => set(f.key, v)}
+                        readOnly={readOnly}
+                        id={id}
+                        label={label}
+                      />
                       {wrong && f.kind !== 'date' && f.kind !== 'checkbox' && f.kind !== 'other' && <WrongNote />}
                     </div>
                   </div>
@@ -86,7 +111,13 @@ export default function PropertyPanel({ typeName, values, onChange, readOnly }: 
                       {showValue(values[k])}
                     </span>
                     {!readOnly && (
-                      <button type="button" aria-label={tp.panel.clearKey(k)} title={tp.panel.clear} onClick={() => set(k, undefined)} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
+                      <button
+                        type="button"
+                        aria-label={tp.panel.clearKey(k)}
+                        title={tp.panel.clear}
+                        onClick={() => set(k, undefined)}
+                        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                      >
                         <X className="size-3.5" />
                       </button>
                     )}

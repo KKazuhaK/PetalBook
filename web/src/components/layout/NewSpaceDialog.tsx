@@ -6,7 +6,14 @@ import type { ConnectionOwner, NewSync, SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
@@ -27,7 +34,8 @@ export function repoNameFrom(name: string): string {
   return s.toLowerCase().endsWith('.git') ? s.slice(0, -4) : s
 }
 
-const repoNameOk = (n: string) => /^[A-Za-z0-9._-]{1,100}$/.test(n) && n !== '.' && n !== '..' && !n.toLowerCase().endsWith('.git')
+const repoNameOk = (n: string) =>
+  /^[A-Za-z0-9._-]{1,100}$/.test(n) && n !== '.' && n !== '..' && !n.toLowerCase().endsWith('.git')
 
 // What follows a new space: "by address" has no place made yet, so the sync settings open for the address to be given.
 export interface NewSpaceThen {
@@ -45,7 +53,15 @@ interface Left {
 // Makes a space: its name and where it is stored: on this server, or synced with a platform the server connects
 // to (the owner, name, privacy and description of the place made there for it).
 // Mounted only while open, so the form starts empty each time.
-export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (space: SpaceInfo, then?: NewSpaceThen) => void }) {
+export function NewSpaceDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: (space: SpaceInfo, then?: NewSpaceThen) => void
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && <NewSpaceForm onClose={() => onOpenChange(false)} onCreated={onCreated} />}
@@ -53,7 +69,13 @@ export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolea
   )
 }
 
-function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: (space: SpaceInfo, then?: NewSpaceThen) => void }) {
+function NewSpaceForm({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: (space: SpaceInfo, then?: NewSpaceThen) => void
+}) {
   const create = useCreateSpace()
   const connections = useConnections()
   // The platforms a space can be synced to: set up, and able to make a place for it.
@@ -96,9 +118,21 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       const repoName = existing?.name ?? repo.trim()
       const ownerLogin = existing?.owner ?? chosen?.login ?? ''
       if (!repoNameOk(repoName)) problems.repo = tg.newSpace.repoInvalid
-      if (Array.from(description).length > 350 || Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) problems.description = tg.newSpace.descriptionInvalid
+      if (
+        Array.from(description).length > 350 ||
+        Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)
+      )
+        problems.description = tg.newSpace.descriptionInvalid
       if (ownerLogin === '') problems.repo ??= tg.newSpace.ownerNone
-      gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined, assets: withAssets }
+      gh = {
+        provider: where,
+        owner: ownerLogin,
+        name: repoName,
+        private: priv,
+        ...(description.trim() ? { description: description.trim() } : {}),
+        create: existing === undefined,
+        assets: withAssets,
+      }
     }
     setFieldError(problems)
     if (Object.keys(problems).length > 0) return
@@ -129,14 +163,22 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       case 'repo_not_in_installation':
       case 'internal':
         if (body?.repo?.fullName) setLeft({ fullName: body.repo.fullName, htmlUrl: body.repo.htmlUrl ?? '' })
-        return setError(code === 'repo_not_in_installation' ? tg.newSpace.errors.notInInstallation : code === 'push_failed' ? tg.newSpace.errors.pushFailed : t.spaces.failed)
+        return setError(
+          code === 'repo_not_in_installation'
+            ? tg.newSpace.errors.notInInstallation
+            : code === 'push_failed'
+              ? tg.newSpace.errors.pushFailed
+              : t.spaces.failed,
+        )
       case 'provider_refused':
         return setError(tg.newSpace.errors.noPermission(err.message))
       case 'app_not_installed':
         return setError(tg.newSpace.errors.notInstalled(chosen?.login ?? ''))
       case 'app_missing_permission':
         if (body?.repo?.fullName) setLeft({ fullName: body.repo.fullName, htmlUrl: body.repo.htmlUrl ?? '' })
-        return setError(tg.newSpace.errors.missingPermission((err.body as { missing?: string[] } | undefined)?.missing ?? []))
+        return setError(
+          tg.newSpace.errors.missingPermission((err.body as { missing?: string[] } | undefined)?.missing ?? []),
+        )
       case 'owner_not_allowed':
         return setError(tg.newSpace.errors.ownerNotAllowed)
       case 'not_connected':
@@ -188,7 +230,13 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <fieldset className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border p-3">
             <legend className="px-1 text-xs text-muted-foreground">{tg.newSpace.legend}</legend>
             <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input type="radio" name="new-space-where" className="mt-1 accent-[var(--brand)]" checked={where === ''} onChange={() => setWhere('')} />
+              <input
+                type="radio"
+                name="new-space-where"
+                className="mt-1 accent-[var(--brand)]"
+                checked={where === ''}
+                onChange={() => setWhere('')}
+              />
               <span className="min-w-0">
                 <span className="block font-medium">{tg.newSpace.whereServer}</span>
                 <span className="block text-xs text-muted-foreground">{tg.newSpace.whereServerHelp}</span>
@@ -196,7 +244,13 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             </label>
             {providers.map((p) => (
               <label key={p.id} className="flex cursor-pointer items-start gap-2 text-sm">
-                <input type="radio" name="new-space-where" className="mt-1 accent-[var(--brand)]" checked={where === p.id} onChange={() => setWhere(p.id)} />
+                <input
+                  type="radio"
+                  name="new-space-where"
+                  className="mt-1 accent-[var(--brand)]"
+                  checked={where === p.id}
+                  onChange={() => setWhere(p.id)}
+                />
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5 font-medium">
                     <BrandIcon type={p.type} className="size-4" />
@@ -207,7 +261,13 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
               </label>
             ))}
             <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input type="radio" name="new-space-where" className="mt-1 accent-[var(--brand)]" checked={where === OTHER} onChange={() => setWhere(OTHER)} />
+              <input
+                type="radio"
+                name="new-space-where"
+                className="mt-1 accent-[var(--brand)]"
+                checked={where === OTHER}
+                onChange={() => setWhere(OTHER)}
+              />
               <span className="min-w-0">
                 <span className="block font-medium">{tg.newSpace.whereOther}</span>
                 <span className="block text-xs text-muted-foreground">{tg.newSpace.whereOtherHelp}</span>
@@ -217,7 +277,12 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
             {useRepo && (
               <div className="grid min-w-0 grid-cols-1 gap-3">
                 <label className="flex cursor-pointer items-start gap-2 text-sm">
-                  <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={withAssets} onChange={(e) => setWithAssets(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    className="mt-1 accent-[var(--brand)]"
+                    checked={withAssets}
+                    onChange={(e) => setWithAssets(e.target.checked)}
+                  />
                   <span className="min-w-0">
                     <span className="block font-medium">{ts.assets.newSpace}</span>
                     <span className="block text-xs text-muted-foreground">{ts.assets.newSpaceHelp}</span>
@@ -246,7 +311,11 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 ) : (
                   <div className="grid min-w-0 grid-cols-1 gap-1.5">
                     <Label htmlFor="new-space-owner">{tg.newSpace.owner}</Label>
-                    <NativeSelect id="new-space-owner" value={chosen?.login ?? ''} onChange={(e) => setOwner(e.target.value)}>
+                    <NativeSelect
+                      id="new-space-owner"
+                      value={chosen?.login ?? ''}
+                      onChange={(e) => setOwner(e.target.value)}
+                    >
                       {list.map((o) => (
                         <option key={o.login} value={o.login}>
                           {o.login}
@@ -257,13 +326,21 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                     </NativeSelect>
                     {owners.hasNextPage && (
                       <div>
-                        <Button type="button" variant="ghost" size="sm" disabled={owners.isFetchingNextPage} onClick={() => void owners.fetchNextPage()}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={owners.isFetchingNextPage}
+                          onClick={() => void owners.fetchNextPage()}
+                        >
                           {owners.isFetchingNextPage ? <Spinner /> : null}
                           {tg.newSpace.moreOwners}
                         </Button>
                       </div>
                     )}
-                    <p className="text-xs text-muted-foreground">{chosen?.via === 'app' ? tg.newSpace.viaApp : tg.newSpace.viaUser}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {chosen?.via === 'app' ? tg.newSpace.viaApp : tg.newSpace.viaUser}
+                    </p>
                     {chosen?.needsInstall && (
                       <div className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
                         <p className="break-words">{tg.newSpace.needsInstallHelp(chosen.login)}</p>
@@ -271,11 +348,21 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                           <Button type="button" variant="outline" size="sm" onClick={() => void connect()}>
                             {tg.newSpace.installOnMine}
                           </Button>{' '}
-                          <Button type="button" variant="ghost" size="sm" disabled={recheck.isPending} onClick={() => recheck.mutate()}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={recheck.isPending}
+                            onClick={() => recheck.mutate()}
+                          >
                             {recheck.isPending ? <Spinner /> : null}
                             {recheck.isPending ? tg.newSpace.checkingAgain : tg.newSpace.checkAgain}
                           </Button>
-                          {recheck.isError && <span role="alert" className="ml-2 text-xs text-destructive">{tg.newSpace.checkFailed}</span>}
+                          {recheck.isError && (
+                            <span role="alert" className="ml-2 text-xs text-destructive">
+                              {tg.newSpace.checkFailed}
+                            </span>
+                          )}
                         </div>
                       </div>
                     )}
@@ -297,7 +384,12 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                   className="w-full min-w-0"
                 />
                 <label className="flex cursor-pointer items-start gap-2 text-sm">
-                  <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={priv} onChange={(e) => setPriv(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    className="mt-1 accent-[var(--brand)]"
+                    checked={priv}
+                    onChange={(e) => setPriv(e.target.checked)}
+                  />
                   <span className="min-w-0">
                     <span className="block font-medium">{tg.newSpace.private}</span>
                     <span className="block text-xs text-muted-foreground">{tg.newSpace.privateHelp}</span>
@@ -305,14 +397,28 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 </label>
                 <div className="grid min-w-0 grid-cols-1 gap-1.5">
                   <Label htmlFor="new-space-description">{tg.newSpace.description}</Label>
-                  <Textarea id="new-space-description" rows={2} maxLength={350} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full min-w-0" aria-invalid={fieldError.description ? true : undefined} />
+                  <Textarea
+                    id="new-space-description"
+                    rows={2}
+                    maxLength={350}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full min-w-0"
+                    aria-invalid={fieldError.description ? true : undefined}
+                  />
                   {fieldError.description && <p className="text-xs text-destructive">{fieldError.description}</p>}
                 </div>
                 {taken && chosen && (
                   <div className="grid grid-cols-1 gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
                     <p className="break-words">{tg.newSpace.takenAsk(`${chosen.login}/${repo.trim()}`)}</p>
                     <div>
-                      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={(e) => void submit(e, { owner: chosen.login, name: repo.trim() })}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={(e) => void submit(e, { owner: chosen.login, name: repo.trim() })}
+                      >
                         {tg.newSpace.useExisting}
                       </Button>
                     </div>
@@ -324,15 +430,28 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         )}
 
         {left && (
-          <div role="alert" className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+          <div
+            role="alert"
+            className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm"
+          >
             <p className="break-words">{tg.newSpace.leftBehind(left.fullName)}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" disabled={busy} onClick={(e) => void submit(e, { owner: leftOwner, name: leftName })}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                onClick={(e) => void submit(e, { owner: leftOwner, name: leftName })}
+              >
                 {busy && <Spinner />}
                 {tg.newSpace.useLeft}
               </Button>
               {left.htmlUrl && /^https?:\/\//.test(left.htmlUrl) && (
-                <a className="inline-flex items-center gap-1 text-xs break-all underline underline-offset-4" href={left.htmlUrl} target="_blank" rel="noreferrer noopener">
+                <a
+                  className="inline-flex items-center gap-1 text-xs break-all underline underline-offset-4"
+                  href={left.htmlUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
                   {tg.newSpace.openOnGitHub}
                   <ExternalLink className="size-3 shrink-0" />
                 </a>
@@ -341,7 +460,10 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
           </div>
         )}
         {error && (
-          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm break-words text-destructive">
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm break-words text-destructive"
+          >
             {error}
           </p>
         )}

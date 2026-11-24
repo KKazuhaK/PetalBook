@@ -5,13 +5,38 @@ import { ApiError } from '@/api/client'
 import { useSaveViews } from '@/api/hooks'
 import type { PutViewsInput, SavedView, ViewScope } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/common'
 import { StarButton } from '@/components/favorites/StarButton'
 import { viewTarget } from '@/lib/favorites'
-import { cutBytes, freshName, MAX_NAME_BYTES, MAX_VIEWS, moveView, nameBytes, withState, type ViewState } from '@/lib/savedViews'
+import {
+  cutBytes,
+  freshName,
+  MAX_NAME_BYTES,
+  MAX_VIEWS,
+  moveView,
+  nameBytes,
+  withState,
+  type ViewState,
+} from '@/lib/savedViews'
 import type { ViewOp, Written } from '@/lib/workingCopy'
 import { t } from '@/i18n'
 
@@ -40,7 +65,20 @@ interface Props {
   onRevert: () => void
 }
 
-export function ViewBar({ scope, views, rev, active, working, modified, write, busy, onPick, onBegin, onEnd, onRevert }: Props) {
+export function ViewBar({
+  scope,
+  views,
+  rev,
+  active,
+  working,
+  modified,
+  write,
+  busy,
+  onPick,
+  onBegin,
+  onEnd,
+  onRevert,
+}: Props) {
   const save = useSaveViews(scope)
   const [dialog, setDialog] = useState<null | { kind: 'create' } | { kind: 'rename'; view: SavedView }>(null)
   const [removing, setRemoving] = useState<SavedView | null>(null)
@@ -71,7 +109,14 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
   const shown = active?.id ?? ''
   const saveWorking = async () => {
     if (!active) return
-    if (await run('save', active.id, views.map((v) => (v.id === active.id ? withState(v, working) : v)))) toast.success(t.views.saved)
+    if (
+      await run(
+        'save',
+        active.id,
+        views.map((v) => (v.id === active.id ? withState(v, working) : v)),
+      )
+    )
+      toast.success(t.views.saved)
   }
 
   const create = async (name: string) => {
@@ -79,14 +124,27 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
     if (!(await run('create', shown, [...views, withState({ name } as Draft, working)]))) throw new Error('not saved')
   }
   const rename = async (view: SavedView, name: string) => {
-    if (!(await run('rename', view.id, views.map((v) => (v.id === view.id ? { ...v, name } : v))))) throw new Error('not saved')
+    if (
+      !(await run(
+        'rename',
+        view.id,
+        views.map((v) => (v.id === view.id ? { ...v, name } : v)),
+      ))
+    )
+      throw new Error('not saved')
   }
   const duplicate = async (view: SavedView) => {
     const { id, ...rest } = view
     void id
     // The name of the copy has to fit the server's limit too: the long name is cut, not the words around it (room is left for " 20").
     const room = MAX_NAME_BYTES - nameBytes(t.views.copyName('')) - 3
-    const copy: Draft = { ...rest, name: freshName(views.map((v) => v.name), t.views.copyName(cutBytes(view.name, room))) }
+    const copy: Draft = {
+      ...rest,
+      name: freshName(
+        views.map((v) => v.name),
+        t.views.copyName(cutBytes(view.name, room)),
+      ),
+    }
     // The copy of the view being shown is made from what is shown.
     await run('duplicate', view.id, [...views, view.id === active?.id ? withState(copy, working) : copy])
   }
@@ -96,16 +154,29 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
     await run('reorder', id, next)
   }
   const remove = async (view: SavedView) => {
-    await run('delete', view.id, views.filter((v) => v.id !== view.id))
+    await run(
+      'delete',
+      view.id,
+      views.filter((v) => v.id !== view.id),
+    )
   }
 
   if (views.length === 0 && !write) return null
   const index = active ? views.findIndex((v) => v.id === active.id) : -1
 
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2" data-slot="view-bar" aria-busy={busy || undefined}>
+    <div
+      className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2"
+      data-slot="view-bar"
+      aria-busy={busy || undefined}
+    >
       {views.length > 0 && (
-        <div role="tablist" aria-label={t.views.label} aria-busy={busy || undefined} className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto">
+        <div
+          role="tablist"
+          aria-label={t.views.label}
+          aria-busy={busy || undefined}
+          className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto"
+        >
           {views.map((v) => {
             const on = v.id === active?.id
             return (
@@ -133,14 +204,20 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
                   drag.current = null
                   if (!id || id === v.id || busy) return
                   e.preventDefault()
-                  void reorder(id, views.findIndex((x) => x.id === v.id))
+                  void reorder(
+                    id,
+                    views.findIndex((x) => x.id === v.id),
+                  )
                 }}
                 onDragEnd={() => (drag.current = null)}
                 className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default disabled:opacity-60 ${on ? 'border-transparent bg-muted font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
               >
                 {v.name}
                 {on && modified && (
-                  <span data-slot="modified" className="rounded-full bg-amber-500/15 px-1.5 text-[0.7rem] text-amber-700 dark:text-amber-300">
+                  <span
+                    data-slot="modified"
+                    className="rounded-full bg-amber-500/15 px-1.5 text-[0.7rem] text-amber-700 dark:text-amber-300"
+                  >
                     {t.views.modified}
                   </span>
                 )}
@@ -150,25 +227,50 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
         </div>
       )}
 
-      {active && <StarButton target={{ kind: 'view', target: viewTarget(scope, active.id) }} labels={{ add: t.fav.addView, remove: t.fav.removeView }} />}
+      {active && (
+        <StarButton
+          target={{ kind: 'view', target: viewTarget(scope, active.id) }}
+          labels={{ add: t.fav.addView, remove: t.fav.removeView }}
+        />
+      )}
 
       {write && (
         <div role="group" aria-label={t.views.actions} className="flex items-center gap-0.5">
-          <IconButton label={full ? t.views.tooMany(MAX_VIEWS) : t.views.add} disabled={busy || full} onClick={() => setDialog({ kind: 'create' })}>
+          <IconButton
+            label={full ? t.views.tooMany(MAX_VIEWS) : t.views.add}
+            disabled={busy || full}
+            onClick={() => setDialog({ kind: 'create' })}
+          >
             <Plus />
           </IconButton>
           {active && (
             <>
-              <IconButton label={t.views.rename} disabled={busy} onClick={() => setDialog({ kind: 'rename', view: active })}>
+              <IconButton
+                label={t.views.rename}
+                disabled={busy}
+                onClick={() => setDialog({ kind: 'rename', view: active })}
+              >
                 <PenLine />
               </IconButton>
-              <IconButton label={full ? t.views.tooMany(MAX_VIEWS) : t.views.duplicate} disabled={busy || full} onClick={() => void duplicate(active)}>
+              <IconButton
+                label={full ? t.views.tooMany(MAX_VIEWS) : t.views.duplicate}
+                disabled={busy || full}
+                onClick={() => void duplicate(active)}
+              >
                 <Copy />
               </IconButton>
-              <IconButton label={t.views.moveLeft} disabled={busy || index <= 0} onClick={() => void reorder(active.id, index - 1)}>
+              <IconButton
+                label={t.views.moveLeft}
+                disabled={busy || index <= 0}
+                onClick={() => void reorder(active.id, index - 1)}
+              >
                 <ArrowLeft />
               </IconButton>
-              <IconButton label={t.views.moveRight} disabled={busy || index < 0 || index >= views.length - 1} onClick={() => void reorder(active.id, index + 1)}>
+              <IconButton
+                label={t.views.moveRight}
+                disabled={busy || index < 0 || index >= views.length - 1}
+                onClick={() => void reorder(active.id, index + 1)}
+              >
                 <ArrowRight />
               </IconButton>
               <IconButton label={t.views.remove} disabled={busy} onClick={() => setRemoving(active)}>
@@ -199,7 +301,14 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
         <NameDialog
           title={dialog.kind === 'create' ? t.views.createTitle : t.views.renameTitle}
           help={dialog.kind === 'create' ? t.views.createHelp : undefined}
-          initial={dialog.kind === 'create' ? freshName(views.map((v) => v.name), t.views.defaultName) : dialog.view.name}
+          initial={
+            dialog.kind === 'create'
+              ? freshName(
+                  views.map((v) => v.name),
+                  t.views.defaultName,
+                )
+              : dialog.view.name
+          }
           submit={dialog.kind === 'create' ? t.views.create : t.views.rename}
           onSubmit={(name) => (dialog.kind === 'create' ? create(name) : rename(dialog.view, name))}
           onClose={() => setDialog(null)}
@@ -232,7 +341,17 @@ export function ViewBar({ scope, views, rev, active, working, modified, write, b
   )
 }
 
-function IconButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+function IconButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string
+  disabled?: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
   return (
     <Button variant="ghost" size="icon-sm" aria-label={label} title={label} disabled={disabled} onClick={onClick}>
       {children}
@@ -241,7 +360,21 @@ function IconButton({ label, disabled, onClick, children }: { label: string; dis
 }
 
 // Asks for a name. Mounted only while open, so the field starts from `initial` each time.
-function NameDialog({ title, help, initial, submit, onSubmit, onClose }: { title: string; help?: string; initial: string; submit: string; onSubmit: (name: string) => Promise<void>; onClose: () => void }) {
+function NameDialog({
+  title,
+  help,
+  initial,
+  submit,
+  onSubmit,
+  onClose,
+}: {
+  title: string
+  help?: string
+  initial: string
+  submit: string
+  onSubmit: (name: string) => Promise<void>
+  onClose: () => void
+}) {
   const [value, setValue] = useState(initial)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -267,7 +400,13 @@ function NameDialog({ title, help, initial, submit, onSubmit, onClose }: { title
             {help && <DialogDescription>{help}</DialogDescription>}
           </DialogHeader>
           <div className="grid gap-1.5">
-            <Input aria-label={t.views.name} autoFocus value={value} onChange={(e) => setValue(e.target.value)} aria-invalid={error !== ''} />
+            <Input
+              aria-label={t.views.name}
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              aria-invalid={error !== ''}
+            />
             {error && (
               <p role="alert" className="text-xs text-destructive">
                 {error}
@@ -288,4 +427,3 @@ function NameDialog({ title, help, initial, submit, onSubmit, onClose }: { title
     </Dialog>
   )
 }
-

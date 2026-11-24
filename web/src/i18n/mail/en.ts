@@ -4,7 +4,8 @@ export const mailEn: MailMessages = {
   links: { register: 'Create an account', forgot: 'Forgot your password?', backToLogin: 'Back to sign in' },
   register: {
     title: 'Register',
-    intro: (tenant: string) => `Create an account in “${tenant}”. We send a confirmation message to your address; the account is made when you follow the link in it.`,
+    intro: (tenant: string) =>
+      `Create an account in “${tenant}”. We send a confirmation message to your address; the account is made when you follow the link in it.`,
     closed: 'Registration is not open here right now.',
     closedHelp: 'If you have an invite link, open it instead.',
     loadFailed: 'Could not load the registration settings',
@@ -29,7 +30,8 @@ export const mailEn: MailMessages = {
     closedNow: 'Registration has just been closed.',
     rateLimited: (wait: string) => `Too many requests. Try again in ${wait}.`,
     sentTitle: 'Check your email',
-    sentBody: (email: string) => `If all went well, a confirmation message is on its way to ${email}. Follow the link in it to make the account; it works for 24 hours. If nothing comes, look in your spam folder or try again later.`,
+    sentBody: (email: string) =>
+      `If all went well, a confirmation message is on its way to ${email}. Follow the link in it to make the account; it works for 24 hours. If nothing comes, look in your spam folder or try again later.`,
     sentAgain: 'Start over',
   },
   confirm: {
@@ -47,7 +49,8 @@ export const mailEn: MailMessages = {
     title: 'Confirm your email',
     working: 'Confirming your address…',
     done: 'Your email address is confirmed.',
-    invalid: 'This link is not valid, or it has expired or been used, or the address changed since. Sign in and ask for a new one on the account page.',
+    invalid:
+      'This link is not valid, or it has expired or been used, or the address changed since. Sign in and ask for a new one on the account page.',
     noToken: 'There is no token in the address. Open the link from the message itself.',
     failed: 'Could not confirm the address',
     toApp: 'Go to the home page',
@@ -59,7 +62,8 @@ export const mailEn: MailMessages = {
     unverified: 'Not verified',
     verify: 'Send a verification message',
     sending: 'Sending…',
-    sent: (email: string) => `A verification message is on its way to ${email}. Follow the link in it (it works for 24 hours).`,
+    sent: (email: string) =>
+      `A verification message is on its way to ${email}. Follow the link in it (it works for 24 hours).`,
     notConfigured: 'This server cannot send mail yet, so the address cannot be verified.',
     rateLimited: (wait: string) => `Too many messages. Try again in ${wait}.`,
     failed: 'Could not send the message',
@@ -67,12 +71,14 @@ export const mailEn: MailMessages = {
   },
   forgot: {
     title: 'Reset your password',
-    intro: 'Type your username or email address. If it belongs to an account with a verified address, we send a message to reset the password.',
+    intro:
+      'Type your username or email address. If it belongs to an account with a verified address, we send a message to reset the password.',
     login: 'Username or email',
     submit: 'Send the message',
     submitting: 'Sending…',
     sentTitle: 'Check your email',
-    sentBody: 'If there is such an account, a message is on its way; its link works for one hour. This answer is the same whether or not there is one.',
+    sentBody:
+      'If there is such an account, a message is on its way; its link works for one hour. This answer is the same whether or not there is one.',
     off: 'This server has no password reset. Ask an administrator.',
     rateLimited: (wait: string) => `Too many requests. Try again in ${wait}.`,
     failed: 'Could not send the request',
@@ -99,12 +105,18 @@ export const mailEn: MailMessages = {
     loadFailed: 'Could not load the mail settings',
     saveFailed: 'Could not save the mail settings',
     enabled: 'Enable mail',
-    enabledHelp: 'Enabling needs a host, a sender address, and a server started with --public-url (the links point to it).',
+    enabledHelp:
+      'Enabling needs a host, a sender address, and a server started with --public-url (the links point to it).',
     host: 'SMTP host',
     port: 'Port',
     security: 'Encryption',
-    securityOptions: { starttls: 'STARTTLS (usually port 587)', tls: 'TLS (usually port 465)', none: 'None (a relay on this machine only)' },
-    securityHelp: 'The certificate is always verified; there is no way to skip that. “None” is only allowed when the host is a loopback address such as 127.0.0.1.',
+    securityOptions: {
+      starttls: 'STARTTLS (usually port 587)',
+      tls: 'TLS (usually port 465)',
+      none: 'None (a relay on this machine only)',
+    },
+    securityHelp:
+      'The certificate is always verified; there is no way to skip that. “None” is only allowed when the host is a loopback address such as 127.0.0.1.',
     username: 'Username',
     password: 'Password',
     passwordSet: 'Set; leave empty to keep it',
@@ -120,8 +132,10 @@ export const mailEn: MailMessages = {
     statusNever: 'Nothing sent yet',
     statusOk: (when: string) => `Worked (${when})`,
     statusFailed: (when: string, message: string) => `Failed (${when}): ${message}`,
-    queue: (waiting: number, sent: number, failed: number) => `${waiting} waiting; in the last hour ${sent} sent and ${failed} failed`,
-    queueHelp: 'The queue is in memory: a restart loses what waits, and every message is a link its person can ask for again.',
+    queue: (waiting: number, sent: number, failed: number) =>
+      `${waiting} waiting; in the last hour ${sent} sent and ${failed} failed`,
+    queueHelp:
+      'The queue is in memory: a restart loses what waits, and every message is a link its person can ask for again.',
     test: 'Send a test message',
     testTo: 'Send it to',
     testHelp: 'It goes to the address you type, and works while mail is off.',

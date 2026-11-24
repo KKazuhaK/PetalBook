@@ -5,7 +5,14 @@ import { docToMarkdown, markdownToDoc } from '@/markdown'
 import type { UploadedAsset } from '@/api/types'
 import { ApiError } from '@/api/client'
 import { createPageExtensions } from './pageExtensions'
-import { clipboardMeansFiles, isImageFile, resolveAddressIn, stemOf, uploadFiles, type PageFilesOptions } from './pageFiles'
+import {
+  clipboardMeansFiles,
+  isImageFile,
+  resolveAddressIn,
+  stemOf,
+  uploadFiles,
+  type PageFilesOptions,
+} from './pageFiles'
 
 let editor: Editor
 afterEach(() => editor?.destroy())
@@ -22,7 +29,10 @@ interface Harness {
 function setup(over: Partial<PageFilesOptions> = {}, content?: Parameters<typeof makeEditor>[0]): Harness {
   const h: Harness = { uploads: [], errors: [], finish: () => undefined, fail: () => undefined }
   const waiting: { resolve: (a: UploadedAsset) => void; reject: (e: unknown) => void }[] = []
-  h.finish = (i, asset) => waiting[i].resolve(asset ?? { path: `/assets/01TESTPAGE/${h.uploads[i].name}`, name: h.uploads[i].name, size: h.uploads[i].size })
+  h.finish = (i, asset) =>
+    waiting[i].resolve(
+      asset ?? { path: `/assets/01TESTPAGE/${h.uploads[i].name}`, name: h.uploads[i].name, size: h.uploads[i].size },
+    )
   h.fail = (i, e = new Error('boom')) => waiting[i].reject(e)
   const options: PageFilesOptions = {
     space: 'default',
@@ -43,7 +53,8 @@ function setup(over: Partial<PageFilesOptions> = {}, content?: Parameters<typeof
   return h
 }
 const tick = () => new Promise((r) => setTimeout(r, 0))
-const placeholders = () => Array.from(editor.view.dom.querySelectorAll('.pb-upload-placeholder')).map((e) => e.textContent)
+const placeholders = () =>
+  Array.from(editor.view.dom.querySelectorAll('.pb-upload-placeholder')).map((e) => e.textContent)
 const md = () => docToMarkdown(editor.getJSON()).trim()
 const p = (...content: object[]) => ({ type: 'paragraph', content })
 const t0 = (text: string) => ({ type: 'text', text })
@@ -91,7 +102,15 @@ describe('upload flow', () => {
     await tick()
     h.finish(0, { path: '/assets/01TESTPAGE/合同 终版-91be02aa.pdf', name: '合同 终版-91be02aa.pdf', size: 10 })
     await tick()
-    expect(editor.getJSON().content![0].content).toEqual([{ type: 'text', text: '合同 终版.pdf', marks: [{ type: 'link', attrs: expect.objectContaining({ href: '/assets/01TESTPAGE/合同 终版-91be02aa.pdf' }) }] }])
+    expect(editor.getJSON().content![0].content).toEqual([
+      {
+        type: 'text',
+        text: '合同 终版.pdf',
+        marks: [
+          { type: 'link', attrs: expect.objectContaining({ href: '/assets/01TESTPAGE/合同 终版-91be02aa.pdf' }) },
+        ],
+      },
+    ])
     expect(md()).toContain('[合同 终版.pdf](</assets/01TESTPAGE/合同 终版-91be02aa.pdf>)')
   })
   it('several files go up one after another and are inserted in order, one per line', async () => {
@@ -111,7 +130,9 @@ describe('upload flow', () => {
     h.finish(2)
     await tick()
     expect(placeholders()).toEqual([])
-    expect(md()).toBe('![a](/assets/01TESTPAGE/a.png)\\\n![b](/assets/01TESTPAGE/b.png)\\\n[c.pdf](/assets/01TESTPAGE/c.pdf)')
+    expect(md()).toBe(
+      '![a](/assets/01TESTPAGE/a.png)\\\n![b](/assets/01TESTPAGE/b.png)\\\n[c.pdf](/assets/01TESTPAGE/c.pdf)',
+    )
   })
   it('a failure removes its placeholder, says why, and the others carry on', async () => {
     const h = setup()
@@ -205,7 +226,9 @@ describe('paste and drop', () => {
     const h = setup({}, { type: 'doc', content: [p(t0('一二三'))] })
     editor.view.posAtCoords = () => ({ pos: 3, inside: -1 })
     const event = new Event('drop', { bubbles: true, cancelable: true })
-    Object.defineProperty(event, 'dataTransfer', { value: { files: [file('a.png', 'image/png')], getData: () => '', types: ['Files'] } })
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { files: [file('a.png', 'image/png')], getData: () => '', types: ['Files'] },
+    })
     editor.view.dom.dispatchEvent(event)
     expect(event.defaultPrevented).toBe(true)
     await tick()
@@ -225,9 +248,18 @@ describe('paste and drop', () => {
 
 describe('addresses', () => {
   it('the page keeps the address as written; only the drawn image is mapped', () => {
-    setup({ getFolder: () => 'notes/2026' }, markdownToDoc('![x](/assets/01TESTPAGE/x.jpg)\n\n![y](pic/y.png)\n\n![z](https://example.com/z.png)\n'))
-    const srcs = Array.from(editor.view.dom.querySelectorAll('img:not(.ProseMirror-separator)')).map((i) => i.getAttribute('src'))
-    expect(srcs).toEqual(['/api/spaces/default/files/assets/01TESTPAGE/x.jpg', '/api/spaces/default/files/notes/2026/pic/y.png', 'https://example.com/z.png'])
+    setup(
+      { getFolder: () => 'notes/2026' },
+      markdownToDoc('![x](/assets/01TESTPAGE/x.jpg)\n\n![y](pic/y.png)\n\n![z](https://example.com/z.png)\n'),
+    )
+    const srcs = Array.from(editor.view.dom.querySelectorAll('img:not(.ProseMirror-separator)')).map((i) =>
+      i.getAttribute('src'),
+    )
+    expect(srcs).toEqual([
+      '/api/spaces/default/files/assets/01TESTPAGE/x.jpg',
+      '/api/spaces/default/files/notes/2026/pic/y.png',
+      'https://example.com/z.png',
+    ])
     expect(md()).toBe('![x](/assets/01TESTPAGE/x.jpg)\n\n![y](pic/y.png)\n\n![z](https://example.com/z.png)')
     // What a copy would carry is the stored address too.
     expect(editor.getHTML()).toContain('src="/assets/01TESTPAGE/x.jpg"')

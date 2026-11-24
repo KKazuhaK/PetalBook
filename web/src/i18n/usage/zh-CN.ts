@@ -13,13 +13,16 @@ export const usageZhCN = {
     used: (used: string, limit: string) => `${used} / ${limit}`,
     of: (used: string) => `已用 ${used}`,
     barLabel: (what: string, used: string, limit: string) => `${what}：${used}，上限 ${limit}`,
-    createRefused: (limit: number) => `空间数已经到了上限（${limit} 个），不能再建新的。可以删掉不用的空间，或者请管理员调高上限。`,
+    createRefused: (limit: number) =>
+      `空间数已经到了上限（${limit} 个），不能再建新的。可以删掉不用的空间，或者请管理员调高上限。`,
     overHelp: '超出后不会拒绝你，只是提醒你和管理员。',
     spacesHelp: '到了上限就不能再建新空间。',
     notices: {
       title: '提醒',
-      person: (what: string, used: string, limit: string) => `你的${what}用了 ${used}，超过了你的上限 ${limit}。你还可以继续用，但请和管理员说一声，或者清理一下。`,
-      tenant: (what: string, used: string, limit: string) => `你所在的租户的${what}用了 ${used}，超过了租户的总额 ${limit}。你还可以继续用，管理员已经看得到。`,
+      person: (what: string, used: string, limit: string) =>
+        `你的${what}用了 ${used}，超过了你的上限 ${limit}。你还可以继续用，但请和管理员说一声，或者清理一下。`,
+      tenant: (what: string, used: string, limit: string) =>
+        `你所在的租户的${what}用了 ${used}，超过了租户的总额 ${limit}。你还可以继续用，管理员已经看得到。`,
     },
   },
   admin: {

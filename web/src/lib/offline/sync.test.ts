@@ -139,7 +139,7 @@ describe('the text', () => {
     expect((await s.state()).favourites.pages).toEqual([fav.id])
   })
 
-  it('carries the caller\'s draft, so it can be shown offline', async () => {
+  it("carries the caller's draft, so it can be shown offline", async () => {
     const p = await make('Inbox', '写到一半', '原文\n')
     await S().putDraft(p.id, { baseRev: p.rev, meta: p.meta, body: '原文，续写\n', prev: '' })
     const s = await open(textCfg())
@@ -195,7 +195,12 @@ describe('the text', () => {
     await syncSpace(s)
     globalThis.fetch = real
     expect(await s.textCount()).toBe(230)
-    expect(net.requests.filter((r) => /sync\/pages/.test(r)).map((r) => r.split('ids=')[1].split(',').length).sort((a, b) => b - a)).toEqual([100, 100, 30])
+    expect(
+      net.requests
+        .filter((r) => /sync\/pages/.test(r))
+        .map((r) => r.split('ids=')[1].split(',').length)
+        .sort((a, b) => b - a),
+    ).toEqual([100, 100, 30])
     expect(peak).toBeGreaterThan(1)
     expect(peak).toBeLessThanOrEqual(4)
   })
@@ -236,7 +241,9 @@ describe('the room on the device', () => {
     const a = await make('Inbox', '甲', 'a'.repeat(3000))
     // Another account has used most of the room already.
     const other = await configure('someone-else', 'default', textCfg())
-    await other!.putPages([{ id: 'X', path: 'X.md', folder: '', rev: 'r', updated: '', meta: {}, body: 'z'.repeat(6000) }])
+    await other!.putPages([
+      { id: 'X', path: 'X.md', folder: '', rev: 'r', updated: '', meta: {}, body: 'z'.repeat(6000) },
+    ])
     const s = await open(textCfg())
     await syncSpace(s, { cap: 8000 })
     expect(await s.page(a.id)).toBeUndefined()
@@ -251,7 +258,11 @@ describe('what the server says about the space', () => {
     await syncSpace(s)
     const real = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (/\/changes/.test(String(input))) return new Response(JSON.stringify({ error: 'not_found', message: 'no such space' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+      if (/\/changes/.test(String(input)))
+        return new Response(JSON.stringify({ error: 'not_found', message: 'no such space' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
       return real(input, init)
     }) as typeof fetch
     const r = await syncSpace(s)
@@ -267,7 +278,11 @@ describe('what the server says about the space', () => {
     await syncSpace(s)
     const real = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (/\/changes/.test(String(input))) return new Response(JSON.stringify({ error: 'space_disabled', message: 'off' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+      if (/\/changes/.test(String(input)))
+        return new Response(JSON.stringify({ error: 'space_disabled', message: 'off' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        })
       return real(input, init)
     }) as typeof fetch
     const r = await syncSpace(s)
@@ -296,7 +311,11 @@ describe('what the server says about the space', () => {
     await syncSpace(s)
     const real = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (/\/changes/.test(String(input))) return new Response(JSON.stringify({ error: 'internal', message: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+      if (/\/changes/.test(String(input)))
+        return new Response(JSON.stringify({ error: 'internal', message: 'boom' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
       return real(input, init)
     }) as typeof fetch
     const r = await syncSpace(s)
@@ -331,20 +350,32 @@ describe('what the server says about the space', () => {
     // One batch was left: the walk asks for it with the cursor it had, not from the first page again.
     expect(walked).toHaveLength(1)
     expect(walked[0]).toContain('cursor=')
-    expect(await ids(s)).toEqual(pages.slice(0, 5).map((p) => p.id).sort())
+    expect(await ids(s)).toEqual(
+      pages
+        .slice(0, 5)
+        .map((p) => p.id)
+        .sort(),
+    )
     expect((await s.state()).cursor).toBe((await S().syncCatalog({})).changes)
     // A later walk starts from the first batch again.
     await S().reindex()
     const again = net.requests.length
     await syncSpace(s, { catalogBatch: 2 })
     expect(net.requests.slice(again).filter((q) => /sync\/catalog/.test(q))[0]).not.toContain('cursor=')
-    expect(await ids(s)).toEqual(pages.slice(0, 5).map((p) => p.id).sort())
+    expect(await ids(s)).toEqual(
+      pages
+        .slice(0, 5)
+        .map((p) => p.id)
+        .sort(),
+    )
   })
 
   it('is told a 410 only through the client: ApiError carries the code', async () => {
     const s = await open()
     await syncSpace(s)
     await S().reindex()
-    await expect(S().changes((await s.state()).cursor)).rejects.toSatisfy((e) => e instanceof ApiError && e.status === 410 && e.code === 'changes_expired')
+    await expect(S().changes((await s.state()).cursor)).rejects.toSatisfy(
+      (e) => e instanceof ApiError && e.status === 410 && e.code === 'changes_expired',
+    )
   })
 })

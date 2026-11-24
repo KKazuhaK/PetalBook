@@ -84,7 +84,12 @@ describe('polling the heads', () => {
   it('a space switched off is kept, read only, not asked about again, and syncs again when it is back', async () => {
     const { a, b } = await twoSpaces()
     await api.updateSpace(a, {}).catch(() => undefined)
-    const adm = (path: string) => fetch(`/api/admin/spaces/${b}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    const adm = (path: string) =>
+      fetch(`/api/admin/spaces/${b}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
     expect((await adm('disable')).status).toBe(204)
     await pollOnce(me)
     const st = await (await existingStore(me, b))!.state()
@@ -105,8 +110,16 @@ describe('polling the heads', () => {
     const real = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes('/sync/heads')) return new Response(JSON.stringify({ heads: {}, missing: [b] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      if (url.includes(`/spaces/${b}/changes`)) return new Response(JSON.stringify({ error: 'not_found', message: 'no such space' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+      if (url.includes('/sync/heads'))
+        return new Response(JSON.stringify({ heads: {}, missing: [b] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      if (url.includes(`/spaces/${b}/changes`))
+        return new Response(JSON.stringify({ error: 'not_found', message: 'no such space' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
       return real(input, init)
     }) as typeof fetch
     await pollOnce(me)
@@ -122,7 +135,11 @@ describe('polling the heads', () => {
     let tries = 0
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes(`/spaces/${b}/changes`)) tries++
-      if (broken && String(input).includes(`/spaces/${b}/changes`)) return new Response(JSON.stringify({ error: 'internal', message: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+      if (broken && String(input).includes(`/spaces/${b}/changes`))
+        return new Response(JSON.stringify({ error: 'internal', message: 'boom' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
       return real(input, init)
     }) as typeof fetch
     try {
@@ -226,7 +243,7 @@ describe('when the administrators turn offline copies off', () => {
     expect(net.requests.length).toBe(before)
   })
 
-  it('a sync that is refused does the same, and keeps nobody else\'s copy', async () => {
+  it("a sync that is refused does the same, and keeps nobody else's copy", async () => {
     const { a } = await twoSpaces()
     const other = (await configure('another-person', a, { ...DEFAULT_CONFIG }))!
     expect(other).toBeDefined()

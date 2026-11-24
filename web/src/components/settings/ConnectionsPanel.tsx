@@ -4,10 +4,27 @@ import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
 import type { ConnectionLeftover, Provider } from '@/api/types'
-import { useConnectionOwners, useConnections, useCreateSpace, useDisconnect, useDismissLeftover, useProvider, useSession } from '@/api/hooks'
+import {
+  useConnectionOwners,
+  useConnections,
+  useCreateSpace,
+  useDisconnect,
+  useDismissLeftover,
+  useProvider,
+  useSession,
+} from '@/api/hooks'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { BrandIcon } from '@/components/brand/BrandIcon'
 import { Button } from '@/components/ui/button'
@@ -22,7 +39,13 @@ export function ConnectionsPanel() {
   const session = useSession()
   const info = useConnections(session.data?.mode === 'accounts' && !!session.data.user)
   if (info.isPending || !session.data) return <PageFallback />
-  if (info.isError) return <ErrorState message={t.fmt.labelled(t.settings.loadFailed, info.error.message)} onRetry={() => void info.refetch()} />
+  if (info.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.settings.loadFailed, info.error.message)}
+        onRetry={() => void info.refetch()}
+      />
+    )
   const admin = session.data.user?.role === 'admin'
   // Only the platforms a person can connect an account to, and that the server has set up.
   const rows = info.data.providers.filter((p) => p.capabilities.connectAccount && p.configured)
@@ -47,7 +70,12 @@ function ProviderRow({ provider, admin }: { provider: Provider; admin: boolean }
   return (
     <div className="space-y-6" data-provider={provider.id}>
       {leftovers.length > 0 && <Leftovers provider={provider.id} items={leftovers} />}
-      <SettingsSection title={provider.name} id={`connection-${provider.id}-title`} description={tg.account.intro} icon={<BrandIcon type={provider.type} className="size-4" />}>
+      <SettingsSection
+        title={provider.name}
+        id={`connection-${provider.id}-title`}
+        description={tg.account.intro}
+        icon={<BrandIcon type={provider.type} className="size-4" />}
+      >
         {connection === null ? (
           <Connect provider={provider.id} enabled={userAuthorization} admin={admin} label={tg.account.connect} />
         ) : (
@@ -55,7 +83,12 @@ function ProviderRow({ provider, admin }: { provider: Provider; admin: boolean }
         )}
         {app && (
           <p className="text-xs text-muted-foreground">
-            <a className="inline-flex items-center gap-1 underline underline-offset-4" href={app.installUrl} target="_blank" rel="noreferrer noopener">
+            <a
+              className="inline-flex items-center gap-1 underline underline-offset-4"
+              href={app.installUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
               {tg.account.install(app.name)}
               <ExternalLink className="size-3 shrink-0" />
             </a>
@@ -88,14 +121,26 @@ function Failure() {
   }, [])
   if (!code) return null
   // Own keys only: a code like `constructor` is not a message.
-  const message = Object.hasOwn(tg.account.errors, code) ? tg.account.errors[code as keyof typeof tg.account.errors] : tg.account.errors.unknown
+  const message = Object.hasOwn(tg.account.errors, code)
+    ? tg.account.errors[code as keyof typeof tg.account.errors]
+    : tg.account.errors.unknown
   return <FormMessage focusRef={ref}>{t.fmt.labelled(tg.account.failed, message)}</FormMessage>
 }
 
 // Connect goes to the App's installation page, which authorises the person in the same flow (so installing on
 // their own account and connecting it are one step); `install` false goes to the authorisation page alone, for a
 // person who has the App installed already.
-function Connect({ provider, enabled, admin, label }: { provider: string; enabled: boolean; admin: boolean; label: string }) {
+function Connect({
+  provider,
+  enabled,
+  admin,
+  label,
+}: {
+  provider: string
+  enabled: boolean
+  admin: boolean
+  label: string
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   if (!enabled)
@@ -158,7 +203,9 @@ function Connected({ provider }: { provider: string }) {
         <SettingsRow title={tg.account.account} help={tg.account.accountHelp}>
           <span className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium break-all">
             {a.login}
-            <Badge variant={expired ? 'destructive' : 'secondary'}>{expired ? tg.account.stateExpired : tg.account.stateOk}</Badge>
+            <Badge variant={expired ? 'destructive' : 'secondary'}>
+              {expired ? tg.account.stateExpired : tg.account.stateOk}
+            </Badge>
           </span>
         </SettingsRow>
         <SettingsRow title={tg.account.connectedAt}>
@@ -179,7 +226,10 @@ function Connected({ provider }: { provider: string }) {
       </SettingsRows>
       {!expired && <NeedsInstall provider={provider} login={a.login} />}
       {expired && (
-        <div role="alert" className="grid grid-cols-1 gap-1 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+        <div
+          role="alert"
+          className="grid grid-cols-1 gap-1 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm"
+        >
           <p className="font-medium">{tg.account.expiredTitle}</p>
           <p className="text-muted-foreground">{tg.account.expiredBody}</p>
         </div>
@@ -194,11 +244,17 @@ function Connected({ provider }: { provider: string }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{tg.account.disconnectTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{a.spaces > 0 ? tg.account.disconnectWarn(a.spaces) : tg.account.disconnectNone}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {a.spaces > 0 ? tg.account.disconnectWarn(a.spaces) : tg.account.disconnectNone}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tg.account.cancel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={disconnect.isPending} onClick={() => void doDisconnect()}>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={disconnect.isPending}
+              onClick={() => void doDisconnect()}
+            >
               {tg.account.disconnectConfirm}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -246,7 +302,11 @@ function NeedsInstall({ provider, login }: { provider: string; login: string }) 
 // the person syncs a space to one and tries again, or says they deleted it.
 function Leftovers({ provider, items }: { provider: string; items: ConnectionLeftover[] }) {
   return (
-    <SettingsSection title={tg.account.leftoverTitle} id={`connection-${provider}-leftovers-title`} description={tg.account.leftoverHelp}>
+    <SettingsSection
+      title={tg.account.leftoverTitle}
+      id={`connection-${provider}-leftovers-title`}
+      description={tg.account.leftoverHelp}
+    >
       <ul className="divide-y rounded-lg border">
         {items.map((l) => (
           <Leftover key={l.repoId} provider={provider} item={l} />
@@ -275,7 +335,9 @@ function Leftover({ provider, item: l }: { provider: string; item: ConnectionLef
     try {
       await dismiss.mutateAsync({ provider, repoId: l.repoId })
     } catch (e) {
-      setError(t.fmt.labelled(tg.account.leftoverDismissFailed, e instanceof ApiError ? e.message : tg.account.errors.unknown))
+      setError(
+        t.fmt.labelled(tg.account.leftoverDismissFailed, e instanceof ApiError ? e.message : tg.account.errors.unknown),
+      )
     }
   }
   const busy = create.isPending || dismiss.isPending
@@ -284,7 +346,12 @@ function Leftover({ provider, item: l }: { provider: string; item: ConnectionLef
       <div className="min-w-0">
         <p className="text-sm font-medium break-all">
           {/^https?:\/\//.test(l.htmlUrl) ? (
-            <a className="inline-flex items-center gap-1 underline underline-offset-4" href={l.htmlUrl} target="_blank" rel="noreferrer noopener">
+            <a
+              className="inline-flex items-center gap-1 underline underline-offset-4"
+              href={l.htmlUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
               {l.fullName}
               <ExternalLink className="size-3 shrink-0" />
             </a>
@@ -292,7 +359,9 @@ function Leftover({ provider, item: l }: { provider: string; item: ConnectionLef
             l.fullName
           )}
         </p>
-        <p className="text-xs text-muted-foreground break-words">{tg.account.leftoverFor(l.spaceName, relativeTime(l.created))}</p>
+        <p className="text-xs text-muted-foreground break-words">
+          {tg.account.leftoverFor(l.spaceName, relativeTime(l.created))}
+        </p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" disabled={busy} onClick={() => void retry()}>

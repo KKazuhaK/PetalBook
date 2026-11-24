@@ -7,7 +7,16 @@ import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatBytes } from '@/lib/bytes'
 import { ol } from '@/i18n/offline'
-import { DEFAULT_CAP_BYTES, DEFAULT_CONFIG, RECENT_KEPT, configure, dropCopy, syncNow, type OfflineConfig, type OfflineMode } from '@/lib/offline'
+import {
+  DEFAULT_CAP_BYTES,
+  DEFAULT_CONFIG,
+  RECENT_KEPT,
+  configure,
+  dropCopy,
+  syncNow,
+  type OfflineConfig,
+  type OfflineMode,
+} from '@/lib/offline'
 import { useOfflineAllowed } from '@/lib/offline/allowed'
 import { useOffline } from '@/lib/offline/status'
 import { useCopy } from '@/lib/offline/useCopy'
@@ -63,7 +72,9 @@ export default function OfflinePanel({ space }: { space: string }) {
   }
   const change = (patch: Partial<OfflineConfig>) => void choose({ ...cfg, ...patch })
 
-  const folderChoices = (tree.data?.folders ?? []).map((f) => f.path).filter((p) => p !== '' && !cfg.folders.includes(p))
+  const folderChoices = (tree.data?.folders ?? [])
+    .map((f) => f.path)
+    .filter((p) => p !== '' && !cfg.folders.includes(p))
   const tagChoices = (tags.data?.tags ?? []).map((x) => x.tag).filter((x) => !cfg.tags.includes(x))
   const state = info.state
   const when = state && state.syncedAt > 0 ? new Date(state.syncedAt).toLocaleString() : ''
@@ -98,20 +109,49 @@ export default function OfflinePanel({ space }: { space: string }) {
         <SettingsSection title={ol.scopeTitle} description={ol.scopeHelp(formatBytes(DEFAULT_CAP_BYTES))}>
           <div className="grid gap-2 rounded-lg border p-4">
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={cfg.favourites} disabled={busy} onChange={(e) => change({ favourites: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={cfg.favourites}
+                disabled={busy}
+                onChange={(e) => change({ favourites: e.target.checked })}
+              />
               {ol.favourites}
             </label>
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={cfg.inbox} disabled={busy} onChange={(e) => change({ inbox: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={cfg.inbox}
+                disabled={busy}
+                onChange={(e) => change({ inbox: e.target.checked })}
+              />
               {inbox ? ol.inboxNamed(inbox) : ol.inbox}
             </label>
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={cfg.recent} disabled={busy} onChange={(e) => change({ recent: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={cfg.recent}
+                disabled={busy}
+                onChange={(e) => change({ recent: e.target.checked })}
+              />
               {ol.recent(RECENT_KEPT)}
             </label>
           </div>
-          <Chosen title={ol.folders} items={cfg.folders} choices={folderChoices} addLabel={ol.addFolder} disabled={busy} onChange={(folders) => change({ folders })} />
-          <Chosen title={ol.tags} items={cfg.tags} choices={tagChoices} addLabel={ol.addTag} disabled={busy} onChange={(t) => change({ tags: t })} />
+          <Chosen
+            title={ol.folders}
+            items={cfg.folders}
+            choices={folderChoices}
+            addLabel={ol.addFolder}
+            disabled={busy}
+            onChange={(folders) => change({ folders })}
+          />
+          <Chosen
+            title={ol.tags}
+            items={cfg.tags}
+            choices={tagChoices}
+            addLabel={ol.addTag}
+            disabled={busy}
+            onChange={(t) => change({ tags: t })}
+          />
         </SettingsSection>
       )}
 
@@ -123,8 +163,18 @@ export default function OfflinePanel({ space }: { space: string }) {
             {mode === 'text' && <p>{ol.textCount(info.texts)}</p>}
             <p>{ol.usedHere(formatBytes(info.bytes))}</p>
             <p>{ol.usedDevice(formatBytes(info.deviceBytes), formatBytes(DEFAULT_CAP_BYTES))}</p>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuemin={0} aria-valuemax={DEFAULT_CAP_BYTES} aria-valuenow={Math.min(info.deviceBytes, DEFAULT_CAP_BYTES)} aria-label={ol.usedDevice(formatBytes(info.deviceBytes), formatBytes(DEFAULT_CAP_BYTES))}>
-              <div className="h-full bg-brand" style={{ width: `${Math.min(100, (info.deviceBytes / DEFAULT_CAP_BYTES) * 100)}%` }} />
+            <div
+              className="h-1.5 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={DEFAULT_CAP_BYTES}
+              aria-valuenow={Math.min(info.deviceBytes, DEFAULT_CAP_BYTES)}
+              aria-label={ol.usedDevice(formatBytes(info.deviceBytes), formatBytes(DEFAULT_CAP_BYTES))}
+            >
+              <div
+                className="h-full bg-brand"
+                style={{ width: `${Math.min(100, (info.deviceBytes / DEFAULT_CAP_BYTES) * 100)}%` }}
+              />
             </div>
             {state.overCap && <p className="text-amber-600 dark:text-amber-400">{ol.overCap}</p>}
             {state.disabled && <p className="text-amber-600 dark:text-amber-400">{ol.disabled}</p>}
@@ -132,10 +182,20 @@ export default function OfflinePanel({ space }: { space: string }) {
             {offline && <p className="text-muted-foreground">{ol.offlineNow}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" disabled={syncing || busy || offline} onClick={() => void syncNow(user, space).finally(reload)}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={syncing || busy || offline}
+              onClick={() => void syncNow(user, space).finally(reload)}
+            >
               {syncing ? ol.syncing : ol.syncNow}
             </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => void dropCopy(user, space).then(() => (reload(), toast.success(ol.cleared)))}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => void dropCopy(user, space).then(() => (reload(), toast.success(ol.cleared)))}
+            >
               {ol.clear}
             </Button>
           </div>
@@ -146,7 +206,21 @@ export default function OfflinePanel({ space }: { space: string }) {
 }
 
 // A list of chosen folders or tags, each with a button to take it out, and a box to add another.
-function Chosen({ title, items, choices, addLabel, disabled, onChange }: { title: string; items: string[]; choices: string[]; addLabel: string; disabled: boolean; onChange: (items: string[]) => void }) {
+function Chosen({
+  title,
+  items,
+  choices,
+  addLabel,
+  disabled,
+  onChange,
+}: {
+  title: string
+  items: string[]
+  choices: string[]
+  addLabel: string
+  disabled: boolean
+  onChange: (items: string[]) => void
+}) {
   return (
     <div className="grid gap-2 rounded-lg border p-4">
       <div className="text-sm font-medium">{title}</div>
@@ -155,9 +229,18 @@ function Chosen({ title, items, choices, addLabel, disabled, onChange }: { title
       ) : (
         <ul className="flex flex-wrap gap-1.5">
           {items.map((it) => (
-            <li key={it} className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2 text-xs">
+            <li
+              key={it}
+              className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2 text-xs"
+            >
               <span className="truncate">{it}</span>
-              <button type="button" disabled={disabled} aria-label={ol.remove(it)} onClick={() => onChange(items.filter((x) => x !== it))} className="inline-flex size-5 items-center justify-center rounded hover:bg-muted">
+              <button
+                type="button"
+                disabled={disabled}
+                aria-label={ol.remove(it)}
+                onClick={() => onChange(items.filter((x) => x !== it))}
+                className="inline-flex size-5 items-center justify-center rounded hover:bg-muted"
+              >
                 <X className="size-3" />
               </button>
             </li>

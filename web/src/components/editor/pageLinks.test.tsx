@@ -9,7 +9,18 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
 import { t } from '@/i18n'
-import { byLabel, click, installDomShims, locationText, mount, press, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  byLabel,
+  click,
+  installDomShims,
+  locationText,
+  mount,
+  press,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 
 // Links between pages in the page editor: the picker after `[[`, what a link looks like and where it leads,
 // the panel of backlinks, and what someone who cannot write has of it. The whole page is mounted over the mock
@@ -63,8 +74,16 @@ async function openPage(role: Role, build: (c: Ctx) => string | void, expectText
       }
       const remove = (id: string) => void owner.request('DELETE', `/api/spaces/${space}/pages/${id}`)
       const rename = (id: string, title: string) => {
-        const page = owner.request('GET', `/api/spaces/${space}/pages/${id}`).body as { rev: string; meta: Record<string, unknown>; body: string }
-        owner.request('PUT', `/api/spaces/${space}/pages/${id}`, { baseRev: page.rev, meta: { ...page.meta, title }, body: page.body })
+        const page = owner.request('GET', `/api/spaces/${space}/pages/${id}`).body as {
+          rev: string
+          meta: Record<string, unknown>
+          body: string
+        }
+        owner.request('PUT', `/api/spaces/${space}/pages/${id}`, {
+          baseRev: page.rev,
+          meta: { ...page.meta, title },
+          body: page.body,
+        })
       }
       const current = make('当前页', 'Notes', '正文')
       const chosen = build({ space, make, remove, rename })
@@ -86,7 +105,12 @@ async function openPage(role: Role, build: (c: Ctx) => string | void, expectText
       },
     ],
   })
-  await settle(() => document.querySelector('.pb-prose') !== null && (expectText ? document.body.textContent?.includes(expectText) === true : true), 'the editor')
+  await settle(
+    () =>
+      document.querySelector('.pb-prose') !== null &&
+      (expectText ? document.body.textContent?.includes(expectText) === true : true),
+    'the editor',
+  )
   return scene
 }
 
@@ -146,7 +170,10 @@ describe('the page picker', () => {
     await typeAtEnd('[[暮')
     await settle(() => optionTexts().join() === '暮雪', 'only the matching title')
     await typeAtEnd('雪不存在')
-    await settle(() => options().length === 0 && picker()!.textContent!.includes(t.pageLinks.pickerEmpty), 'the empty note')
+    await settle(
+      () => options().length === 0 && picker()!.textContent!.includes(t.pageLinks.pickerEmpty),
+      'the empty note',
+    )
   })
 
   it('moves with the arrow keys (round and round) and inserts the chosen page with Enter', async () => {
@@ -336,10 +363,10 @@ describe('the path of an inserted link', () => {
   })
 })
 
-
 const links = () => [...body().querySelectorAll<HTMLAnchorElement>('a')]
 const linkNamed = (text: string) => links().find((a) => a.textContent === text)!
-const pageLink = (text: string) => linkNamed(text).querySelector<HTMLElement>('.pb-page-link') ?? linkNamed(text).closest<HTMLElement>('.pb-page-link')
+const pageLink = (text: string) =>
+  linkNamed(text).querySelector<HTMLElement>('.pb-page-link') ?? linkNamed(text).closest<HTMLElement>('.pb-page-link')
 
 describe('how links look and where they lead', () => {
   let ids = { live: '', gone: '', home: '' }
@@ -350,7 +377,11 @@ describe('how links look and where they lead', () => {
       ({ make, remove, rename }) => {
         const live = make('旧名字', 'Tang')
         const gone = make('将被删除', 'Tang')
-        const page = make('主页', 'Notes', `见[旧名字](../Tang/旧名字.md "${live.id}")、[没了](../Tang/将被删除.md "${gone.id}")和[外链](https://example.com/a.md)。`)
+        const page = make(
+          '主页',
+          'Notes',
+          `见[旧名字](../Tang/旧名字.md "${live.id}")、[没了](../Tang/将被删除.md "${gone.id}")和[外链](https://example.com/a.md)。`,
+        )
         rename(live.id, '现在的名字')
         remove(gone.id)
         ids = { live: live.id, gone: gone.id, home: page.id }
@@ -443,13 +474,17 @@ describe('the backlinks panel', () => {
 
   it('asks for nothing before it is opened, then lists who links here with the paragraph and the total', async () => {
     let target = { id: '' }
-    await openPage('viewer', ({ make }) => {
-      target = make('被链到', 'Tang')
-      make('甲', 'Notes', `前面。\n\n这里提到[被链到](../Tang/被链到.md "${target.id}")的内容。\n\n后面。`)
-      make('乙', 'Notes/sub', `[别名](../../Tang/被链到.md "${target.id}")`)
-      make('无关', 'Notes', '没有链接')
-      return target.id
-    }, '正文')
+    await openPage(
+      'viewer',
+      ({ make }) => {
+        target = make('被链到', 'Tang')
+        make('甲', 'Notes', `前面。\n\n这里提到[被链到](../Tang/被链到.md "${target.id}")的内容。\n\n后面。`)
+        make('乙', 'Notes/sub', `[别名](../../Tang/被链到.md "${target.id}")`)
+        make('无关', 'Notes', '没有链接')
+        return target.id
+      },
+      '正文',
+    )
     expect(backlinkRequests()).toEqual([])
     expect(panel()).toBeNull()
     await openPanel()
@@ -471,17 +506,22 @@ describe('the backlinks panel', () => {
     await openPanel()
     expect(panel()!.textContent).toContain(t.pageLinks.backlinksEmpty)
     expect(panel()!.querySelector('[data-testid="backlinks-total"]')).toBeNull()
-    await click(byLabel(t.pageLinks.backlinksClose, ))
+    await click(byLabel(t.pageLinks.backlinksClose))
     expect(panel()).toBeNull()
     expect(localStorage.getItem('pb.backlinks')).toBe('0')
   })
 
   it('shows 20, and the rest on request, each page once', async () => {
-    await openPage('editor', ({ make }) => {
-      const target = make('热门', 'Tang')
-      for (let i = 0; i < 23; i++) make(`引用${String(i).padStart(2, '0')}`, 'Notes', `见[热门](../Tang/热门.md "${target.id}")`)
-      return target.id
-    }, '正文')
+    await openPage(
+      'editor',
+      ({ make }) => {
+        const target = make('热门', 'Tang')
+        for (let i = 0; i < 23; i++)
+          make(`引用${String(i).padStart(2, '0')}`, 'Notes', `见[热门](../Tang/热门.md "${target.id}")`)
+        return target.id
+      },
+      '正文',
+    )
     await openPanel()
     expect(panel()!.querySelectorAll('li')).toHaveLength(20)
     expect(panel()!.querySelector('[data-testid="backlinks-total"]')!.textContent).toBe(t.pageLinks.backlinksTotal(23))
@@ -489,16 +529,26 @@ describe('the backlinks panel', () => {
     await click(more)
     await settle(() => panel()!.querySelectorAll('li').length === 23, 'the rest')
     expect(new Set([...panel()!.querySelectorAll('li a')].map((a) => a.getAttribute('href'))).size).toBe(23)
-    expect([...panel()!.querySelectorAll('button')].some((b) => b.textContent === t.pageLinks.backlinksMore)).toBe(false)
-    expect(backlinkRequests().map((r) => r.url).filter((u) => u.includes('cursor='))).toHaveLength(1)
+    expect([...panel()!.querySelectorAll('button')].some((b) => b.textContent === t.pageLinks.backlinksMore)).toBe(
+      false,
+    )
+    expect(
+      backlinkRequests()
+        .map((r) => r.url)
+        .filter((u) => u.includes('cursor=')),
+    ).toHaveLength(1)
   })
 
   it('a reader has it too', async () => {
-    await openPage('viewer', ({ make }) => {
-      const target = make('被链到', 'Tang')
-      make('甲', 'Notes', `见[被链到](../Tang/被链到.md "${target.id}")`)
-      return target.id
-    }, '正文')
+    await openPage(
+      'viewer',
+      ({ make }) => {
+        const target = make('被链到', 'Tang')
+        make('甲', 'Notes', `见[被链到](../Tang/被链到.md "${target.id}")`)
+        return target.id
+      },
+      '正文',
+    )
     await openPanel()
     expect(panel()!.querySelectorAll('li')).toHaveLength(1)
   })
@@ -527,12 +577,16 @@ describe('someone who cannot write', () => {
   })
 
   it('sees the broken marks and the hover text of a reader of the links', async () => {
-    await openPage('viewer', ({ make, remove }) => {
-      const gone = make('没了', 'Tang')
-      const page = make('主页', 'Notes', `[没了](../Tang/没了.md "${gone.id}")`)
-      remove(gone.id)
-      return page.id
-    }, '没了')
+    await openPage(
+      'viewer',
+      ({ make, remove }) => {
+        const gone = make('没了', 'Tang')
+        const page = make('主页', 'Notes', `[没了](../Tang/没了.md "${gone.id}")`)
+        remove(gone.id)
+        return page.id
+      },
+      '没了',
+    )
     await settle(() => body().querySelector('.pb-page-link-broken') !== null, 'the broken link')
   })
 })
@@ -601,7 +655,11 @@ describe('a link changed or typed by hand', () => {
     )
     await settle(() => m!.requests.some((r) => r.url.includes('/links')), 'the links report')
     await act(async () => {
-      editorOf().chain().focus('end').insertContent({ type: 'text', text: '暮雪', marks: [{ type: 'link', attrs: { href: '../Tang/暮雪.md' } }] }).run()
+      editorOf()
+        .chain()
+        .focus('end')
+        .insertContent({ type: 'text', text: '暮雪', marks: [{ type: 'link', attrs: { href: '../Tang/暮雪.md' } }] })
+        .run()
     })
     await settle(() => pageLink('暮雪') !== null, 'the page link')
     await act(async () => {
@@ -613,7 +671,15 @@ describe('a link changed or typed by hand', () => {
   it('Ctrl-click on a typed link to a file that is not there says it is broken', async () => {
     const scene = await openPage('editor', () => undefined)
     await act(async () => {
-      editorOf().chain().focus('end').insertContent({ type: 'text', text: '无此页', marks: [{ type: 'link', attrs: { href: '../Tang/无此页.md' } }] }).run()
+      editorOf()
+        .chain()
+        .focus('end')
+        .insertContent({
+          type: 'text',
+          text: '无此页',
+          marks: [{ type: 'link', attrs: { href: '../Tang/无此页.md' } }],
+        })
+        .run()
     })
     await act(async () => {
       linkNamed('无此页').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }))
@@ -631,7 +697,10 @@ describe('the backlinks panel on a narrow screen', () => {
   beforeEach(() => {
     shim = window.matchMedia
     wide = false
-    window.matchMedia = ((query: string) => ({ ...shim(query), matches: query === '(min-width: 1024px)' ? wide : shim(query).matches })) as typeof window.matchMedia
+    window.matchMedia = ((query: string) => ({
+      ...shim(query),
+      matches: query === '(min-width: 1024px)' ? wide : shim(query).matches,
+    })) as typeof window.matchMedia
   })
   afterEach(() => {
     window.matchMedia = shim

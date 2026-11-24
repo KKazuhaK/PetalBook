@@ -14,7 +14,15 @@ import { tp } from '@/i18n/props'
 // Binds a folder to a type, or takes the binding away. A folder with no binding
 // of its own has the type of the nearest folder above it, which is said here.
 // Loaded when it is first opened.
-export default function SetTypeDialog({ path, spaceName, onClose }: { path: string; spaceName: string; onClose: () => void }) {
+export default function SetTypeDialog({
+  path,
+  spaceName,
+  onClose,
+}: {
+  path: string
+  spaceName: string
+  onClose: () => void
+}) {
   const types = useTypes()
   const bind = useBindFolder()
   const own = types.data?.bindings.find((b) => b.folder === path)?.type ?? ''
@@ -53,7 +61,12 @@ export default function SetTypeDialog({ path, spaceName, onClose }: { path: stri
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="set-type">{tp.setType.label}</Label>
-            <NativeSelect id="set-type" value={value} disabled={types.isPending} onChange={(e) => setPicked(e.target.value)}>
+            <NativeSelect
+              id="set-type"
+              value={value}
+              disabled={types.isPending}
+              onChange={(e) => setPicked(e.target.value)}
+            >
               <option value="">{tp.setType.none}</option>
               {(types.data?.types ?? [])
                 .filter((x) => !x.error)
@@ -64,8 +77,14 @@ export default function SetTypeDialog({ path, spaceName, onClose }: { path: stri
                 ))}
             </NativeSelect>
             {types.isError && <p className="text-xs text-destructive">{tp.types.loadFailed}</p>}
-            {types.isSuccess && types.data.types.length === 0 && <p className="text-xs text-muted-foreground">{tp.setType.noTypes}</p>}
-            {inherited !== '' && picked === null && <p className="text-xs text-muted-foreground">{tp.setType.inherited(titleOf(inherited), from === '' || from === null ? spaceName : baseName(from))}</p>}
+            {types.isSuccess && types.data.types.length === 0 && (
+              <p className="text-xs text-muted-foreground">{tp.setType.noTypes}</p>
+            )}
+            {inherited !== '' && picked === null && (
+              <p className="text-xs text-muted-foreground">
+                {tp.setType.inherited(titleOf(inherited), from === '' || from === null ? spaceName : baseName(from))}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">{tp.setType.help}</p>
           </div>
           <DialogFooter>

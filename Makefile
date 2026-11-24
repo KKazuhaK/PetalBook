@@ -19,7 +19,7 @@ endif
 
 .PHONY: build web release test test-postgres test-casefold vet run clean \
 	contract contract-postgres fmt-check tidy-check actionlint vuln secrets lint hooks check-go check-web check check-full \
-	cross-compile web-typecheck web-lint web-test
+	cross-compile web-typecheck web-lint web-format-check web-test
 
 # Go binary only, no Node needed: it serves the API, and the web app is run
 # with its dev server. "make release" builds the one-program version.
@@ -45,8 +45,10 @@ GOTEST_TIMEOUT ?= 30m
 
 # All the Go tests, under the race detector. A few stress and model tests use a
 # smaller size there (see raceDetector in internal/index and internal/space).
+# PKGS narrows the run; CI's go job splits the packages into three groups.
+PKGS ?= ./cmd/... ./internal/...
 test:
-	go test -race -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
+	go test -race -timeout $(GOTEST_TIMEOUT) $(PKGS)
 
 # The full-size stress tests: index and space use a smaller size under -race
 # (raceDetector), so this runs them without it. Main runs it in the compat job.
@@ -130,9 +132,9 @@ secrets:
 	go run $(GITLEAKS) git --no-banner --redact=100 "$$@" .
 
 # Everything that only reads the code: the "lint" job of CI.
-lint: fmt-check tidy-check vet web-typecheck web-lint actionlint vuln secrets
+lint: fmt-check tidy-check vet web-typecheck web-lint web-format-check actionlint vuln secrets
 
-# Use the hooks in .githooks (gofmt and eslint --fix on what is staged).
+# Use the hooks in .githooks (gofmt, prettier and eslint --fix on what is staged).
 hooks:
 	git config core.hooksPath .githooks
 
@@ -140,17 +142,20 @@ hooks:
 # which is also what a release re-runs on every platform.
 check-go: fmt-check tidy-check vet test
 
-# The web app's typecheck, lint and tests.
+# The web app's typecheck, lint, format check and tests.
 web-typecheck: web/node_modules/.package-lock.json
 	npm --prefix web run typecheck
 
 web-lint: web/node_modules/.package-lock.json
 	npm --prefix web run lint
 
+web-format-check: web/node_modules/.package-lock.json
+	npm --prefix web run format:check
+
 web-test: web/node_modules/.package-lock.json
 	npm --prefix web test
 
-check-web: web-typecheck web-lint web-test
+check-web: web-typecheck web-lint web-format-check web-test
 
 # The presubmit: what a pull request must pass, and what to run before
 # pushing: "make lint", "make test" and "make web-test" in one run. No
@@ -158,7 +163,7 @@ check-web: web-typecheck web-lint web-test
 # each target's output comes whole when it ends, and a table of how long each
 # took closes the run.
 check:
-	@bash scripts/lanes.sh go:$(HALF)='fmt-check tidy-check vet test' web:$(HALF)='web-typecheck web-lint web-test' static='vuln actionlint secrets'
+	@bash scripts/lanes.sh go:$(HALF)='fmt-check tidy-check vet test' web:$(HALF)='web-typecheck web-lint web-format-check web-test' static='vuln actionlint secrets'
 
 # The tests on a case-folding tmpfs, the way macOS and Windows treat file
 # names (Linux only, needs a kernel with tmpfs casefold and user namespaces).
@@ -187,6 +192,6 @@ cross-compile:
 # with the contract tests that use its binary.
 check-full:
 	@bash scripts/lanes.sh \
-	  go:$(THIRD)='fmt-check tidy-check vet test' web:$(QUARTER)='web-typecheck web-lint web-test' static='vuln actionlint secrets' \
+	  go:$(THIRD)='fmt-check tidy-check vet test' web:$(QUARTER)='web-typecheck web-lint web-format-check web-test' static='vuln actionlint secrets' \
 	  postgres:$(QUARTER)=test-postgres compat:$(THIRD)='test-casefold cross-compile test-fullsize' \
 	  -- release='release contract contract-postgres'

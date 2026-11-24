@@ -16,7 +16,14 @@ const cut = (s: string) => Array.from(s).slice(0, 300).join('')
 // scalar, one per element of a list; blank text, null and nested things are none.
 export function valuesOf(meta: PageMeta, key: string): (string | number | boolean)[] {
   const v = meta[key]
-  const one = (x: unknown): (string | number | boolean)[] => (typeof x === 'string' ? (x.trim() === '' ? [] : [cut(x)]) : typeof x === 'number' || typeof x === 'boolean' ? [x] : [])
+  const one = (x: unknown): (string | number | boolean)[] =>
+    typeof x === 'string'
+      ? x.trim() === ''
+        ? []
+        : [cut(x)]
+      : typeof x === 'number' || typeof x === 'boolean'
+        ? [x]
+        : []
   if (Array.isArray(v)) return v.flatMap(one)
   return one(v)
 }
@@ -36,7 +43,8 @@ export function parseFilter(raw: string, max = MAX_VIEW_FILTERS + 1): PropFilter
   return json.map((item): PropFilter => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) throw invalid('filter 的每一项要是对象')
     const o = item as Record<string, unknown>
-    for (const k of Object.keys(o)) if (k !== 'key' && k !== 'op' && k !== 'values') throw invalid(`filter 里没有 ${k} 这个成员`)
+    for (const k of Object.keys(o))
+      if (k !== 'key' && k !== 'op' && k !== 'values') throw invalid(`filter 里没有 ${k} 这个成员`)
     if (typeof o.key !== 'string' || o.key === '') throw invalid('filter 的 key 不能空')
     if (typeof o.op !== 'string' || !OPS.includes(o.op)) throw invalid('filter 的 op 不认识')
     const op = o.op as PropFilter['op']
@@ -51,7 +59,12 @@ export function parseFilter(raw: string, max = MAX_VIEW_FILTERS + 1): PropFilter
       if (values.length !== 1 || typeof values[0] !== 'string') throw invalid('contains 要一段文字')
     } else {
       const ends = values.map((x) => (x === '' ? null : x))
-      if (ends.length !== 2 || ends.every((x) => x === null) || !ends.every((x) => x === null || typeof x === 'number' || typeof x === 'string')) throw invalid('range 要 [从, 到]')
+      if (
+        ends.length !== 2 ||
+        ends.every((x) => x === null) ||
+        !ends.every((x) => x === null || typeof x === 'number' || typeof x === 'string')
+      )
+        throw invalid('range 要 [从, 到]')
       const kinds = new Set(ends.filter((x) => x !== null).map((x) => typeof x))
       if (kinds.size > 1) throw invalid('range 的两端要是同一种')
     }
@@ -78,7 +91,11 @@ export function matches(meta: PageMeta, f: PropFilter): boolean {
     }
     case 'range': {
       const [from, to] = (f.values ?? []).map((x) => (x === '' ? null : x))
-      return vals.some((v) => (from === null || from === undefined || (typeof v === typeof from && v >= from)) && (to === null || to === undefined || (typeof v === typeof to && v <= to)))
+      return vals.some(
+        (v) =>
+          (from === null || from === undefined || (typeof v === typeof from && v >= from)) &&
+          (to === null || to === undefined || (typeof v === typeof to && v <= to)),
+      )
     }
   }
 }

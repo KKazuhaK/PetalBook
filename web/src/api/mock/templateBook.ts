@@ -62,19 +62,36 @@ const fillValue = (v: unknown, fill: (s: string) => string): unknown => {
 }
 
 // Whether a header value says nothing: null, blank text, an empty list.
-const empty = (v: unknown) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0)
+const empty = (v: unknown) =>
+  v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0)
 
-export function createTemplateBook(opts: { now: () => number; spelledFolder: (path: string) => string | null; validFolder: (path: string) => boolean }) {
+export function createTemplateBook(opts: {
+  now: () => number
+  spelledFolder: (path: string) => string | null
+  validFolder: (path: string) => boolean
+}) {
   const templates = new Map<string, Stored>()
   let defaults: Defaults = { folders: {}, quickNote: '' }
 
-  const view = (t: Stored, withBody: boolean) => ({ name: t.name, path: `.petalbook/templates/${t.name}.md`, rev: t.rev, meta: structuredClone(t.meta), ...(withBody ? { body: t.body } : {}) })
+  const view = (t: Stored, withBody: boolean) => ({
+    name: t.name,
+    path: `.petalbook/templates/${t.name}.md`,
+    rev: t.rev,
+    meta: structuredClone(t.meta),
+    ...(withBody ? { body: t.body } : {}),
+  })
   const defaultsView = () => ({ folders: { ...defaults.folders }, quickNote: defaults.quickNote })
-  const conflict = (cur: Stored | undefined) => new HttpError(409, 'conflict', '模板已被修改', cur ? { current: view(cur, true) } : undefined)
+  const conflict = (cur: Stored | undefined) =>
+    new HttpError(409, 'conflict', '模板已被修改', cur ? { current: view(cur, true) } : undefined)
   const notFound = (name: string) => invalid(`没有叫 ${name} 的模板`, 'template_not_found')
 
   return {
-    list: () => ({ templates: [...templates.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map((t) => view(t, false)), defaults: defaultsView() }),
+    list: () => ({
+      templates: [...templates.values()]
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        .map((t) => view(t, false)),
+      defaults: defaultsView(),
+    }),
     get: (name: string) => {
       const t = templates.get(name)
       if (!t) throw new HttpError(404, 'not_found', '找不到这个模板')
@@ -91,7 +108,8 @@ export function createTemplateBook(opts: { now: () => number; spelledFolder: (pa
       const file = fileOf(meta as PageMeta, body)
       if (bytes(file) > MAX_FILE) throw invalid('模板最大 256 KiB', 'template_too_large')
       const cur = templates.get(name)
-      if ([...templates.keys()].some((n) => n !== name && n.toLowerCase() === name.toLowerCase())) throw new HttpError(409, 'exists', '已经有这个名字')
+      if ([...templates.keys()].some((n) => n !== name && n.toLowerCase() === name.toLowerCase()))
+        throw new HttpError(409, 'exists', '已经有这个名字')
       if ((cur?.rev ?? '') !== baseRev || (!cur && baseRev !== '')) throw conflict(cur)
       if (!cur && templates.size >= MAX_TEMPLATES) throw invalid('一个空间最多 200 个模板', 'template_limit')
       const rev = gitBlobId(file)
@@ -106,12 +124,20 @@ export function createTemplateBook(opts: { now: () => number; spelledFolder: (pa
       if (!cur && !named) throw new HttpError(404, 'not_found', '找不到这个模板')
       if ((cur?.rev ?? '') !== baseRev) throw conflict(cur)
       templates.delete(name)
-      defaults = { folders: Object.fromEntries(Object.entries(defaults.folders).filter(([, t]) => t !== name)), quickNote: defaults.quickNote === name ? '' : defaults.quickNote }
+      defaults = {
+        folders: Object.fromEntries(Object.entries(defaults.folders).filter(([, t]) => t !== name)),
+        quickNote: defaults.quickNote === name ? '' : defaults.quickNote,
+      }
     },
     setDefault: (body: Record<string, unknown>) => {
       const hasFolder = body.folder !== undefined
       const hasQuick = body.quickNote !== undefined
-      if (hasFolder === hasQuick || (hasFolder && typeof body.template !== 'string') || (hasQuick && (body.template !== undefined || typeof body.quickNote !== 'string')) || (hasFolder && typeof body.folder !== 'string')) {
+      if (
+        hasFolder === hasQuick ||
+        (hasFolder && typeof body.template !== 'string') ||
+        (hasQuick && (body.template !== undefined || typeof body.quickNote !== 'string')) ||
+        (hasFolder && typeof body.folder !== 'string')
+      ) {
         throw invalid('给 {"folder", "template"} 或 {"quickNote"}')
       }
       const name = (hasFolder ? body.template : body.quickNote) as string
@@ -143,20 +169,30 @@ export function createTemplateBook(opts: { now: () => number; spelledFolder: (pa
       defaults = { ...defaults, folders: next }
     },
     folderRemoved(path: string) {
-      defaults = { ...defaults, folders: Object.fromEntries(Object.entries(defaults.folders).filter(([k]) => !isUnder(k, path))) }
+      defaults = {
+        ...defaults,
+        folders: Object.fromEntries(Object.entries(defaults.folders).filter(([k]) => !isUnder(k, path))),
+      }
     },
     // The header and body a new page starts from (docs/api.md, "Creating a page
     // from a template"). `quick` says the page is made in the inbox.
-    apply(input: { folder: string; template: unknown; tz: unknown; meta: PageMeta; body: unknown }, quick: boolean): { meta: PageMeta; body: unknown } {
+    apply(
+      input: { folder: string; template: unknown; tz: unknown; meta: PageMeta; body: unknown },
+      quick: boolean,
+    ): { meta: PageMeta; body: unknown } {
       let tz = 0
       if (input.tz !== undefined && input.tz !== null) {
-        if (typeof input.tz !== 'number' || !Number.isInteger(input.tz) || input.tz < -840 || input.tz > 840) throw invalid('tz 是东偏 UTC 的分钟数，-840 到 840')
+        if (typeof input.tz !== 'number' || !Number.isInteger(input.tz) || input.tz < -840 || input.tz > 840)
+          throw invalid('tz 是东偏 UTC 的分钟数，-840 到 840')
         tz = input.tz
       }
-      if (input.template !== undefined && input.template !== null && typeof input.template !== 'string') throw invalid('template 要是字符串')
+      if (input.template !== undefined && input.template !== null && typeof input.template !== 'string')
+        throw invalid('template 要是字符串')
       let pick = input.template as string | undefined | null
       const explicit = typeof pick === 'string'
-      if (!explicit) pick = (quick ? defaults.quickNote : '') || defaults.folders[opts.spelledFolder(input.folder) ?? input.folder] || ''
+      if (!explicit)
+        pick =
+          (quick ? defaults.quickNote : '') || defaults.folders[opts.spelledFolder(input.folder) ?? input.folder] || ''
       if (!pick) return { meta: input.meta, body: input.body }
       const t = templates.get(pick)
       if (!t) {

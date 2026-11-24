@@ -52,7 +52,11 @@ describe('the small theme toggle', () => {
     m = await mount(<ThemeToggle />)
     await click(document.querySelector(`[aria-label="${t.theme.toggle}"]`))
     await settle(() => document.querySelectorAll('[role="menuitemradio"]').length === 3, 'menu')
-    expect([...document.querySelectorAll('[role="menuitemradio"]')].map((e) => e.textContent?.trim())).toEqual([t.theme.light, t.theme.dark, t.theme.system])
+    expect([...document.querySelectorAll('[role="menuitemradio"]')].map((e) => e.textContent?.trim())).toEqual([
+      t.theme.light,
+      t.theme.dark,
+      t.theme.system,
+    ])
     await click([...document.querySelectorAll('[role="menuitemradio"]')][1])
     expect(localStorage.getItem('theme')).toBe('dark')
   })

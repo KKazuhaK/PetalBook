@@ -9,7 +9,21 @@ import type { DraftReceipt, Page, PageDraft, SavePageInput } from '@/api/types'
 import type { DocJSON } from '@/markdown'
 import { oursOf } from './reconcile'
 import { planRestore, type RestorePlan } from './draftRestore'
-import { clearDraft, DRAFT_MAX_AGE_MS, draftRef, draftRefFor, draftStoreFor, loadDraft, parseSavedMarker, pruneExpired, saveDraft, savedMarkerKey, type DraftContent, type KeyValueStorage, type StoredDraft } from './draftStore'
+import {
+  clearDraft,
+  DRAFT_MAX_AGE_MS,
+  draftRef,
+  draftRefFor,
+  draftStoreFor,
+  loadDraft,
+  parseSavedMarker,
+  pruneExpired,
+  saveDraft,
+  savedMarkerKey,
+  type DraftContent,
+  type KeyValueStorage,
+  type StoredDraft,
+} from './draftStore'
 import { draftToCreateInput, recoverDraft } from './recoverDraft'
 import { LiveDraft } from './liveDraft'
 import { SaveController, type ConflictInfo, type Fields } from './saveController'
@@ -53,10 +67,21 @@ const page = (over: Partial<Page> = {}): Page => ({
   body: '原文\n',
   ...over,
 })
-const serverDraft = (over: Partial<PageDraft> = {}): PageDraft => ({ version: 'v1', baseRev: 'rev1', meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: '服务器草稿\n', updated: 'u1', stale: false, ...over })
+const serverDraft = (over: Partial<PageDraft> = {}): PageDraft => ({
+  version: 'v1',
+  baseRev: 'rev1',
+  meta: { id: ID, title: '原标题', created: '2026-01-01' },
+  body: '服务器草稿\n',
+  updated: 'u1',
+  stale: false,
+  ...over,
+})
 // What a local draft records of the server draft it was typed on top of.
 const sentOf = (d: PageDraft) => [oursOf(d.baseRev, d)]
-const doc = (text: string): DocJSON => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] })
+const doc = (text: string): DocJSON => ({
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+})
 // A stand-in for the editor's Markdown conversion: one paragraph per document.
 const toMd = (d: DocJSON) => (d.content?.[0]?.content?.[0]?.text ?? '') + '\n'
 const fromMdNorm = (md: string) => md
@@ -70,10 +95,22 @@ interface Typed {
 function session(opts: { page?: Page; draft?: PageDraft; storage: FakeStorage; onExternalChange?: (p: Page) => void }) {
   const start = opts.page ?? page()
   const live = new LiveDraft({ title: String(start.meta.title ?? ''), subtitle: '', tags: [] }, toMd)
-  const editor = { isDestroyed: false, current: doc(''), getJSON() { return this.current } }
+  const editor = {
+    isDestroyed: false,
+    current: doc(''),
+    getJSON() {
+      return this.current
+    },
+  }
   live.attachEditor(editor)
   const puts: SavePageInput[] = []
-  const pending: { put: ((r: DraftReceipt) => void)[]; putFail: ((e: unknown) => void)[]; commit: ((p: Page) => void)[]; commitFail: ((e: unknown) => void)[]; get: ((p: Page) => void)[] } = { put: [], putFail: [], commit: [], commitFail: [], get: [] }
+  const pending: {
+    put: ((r: DraftReceipt) => void)[]
+    putFail: ((e: unknown) => void)[]
+    commit: ((p: Page) => void)[]
+    commitFail: ((e: unknown) => void)[]
+    get: ((p: Page) => void)[]
+  } = { put: [], putFail: [], commit: [], commitFail: [], get: [] }
   const onConflict = vi.fn<(info: ConflictInfo) => void>()
   let n = 0
   const controller = new SaveController({
@@ -187,7 +224,11 @@ describe('local draft writing', () => {
     s.type({ title: '原标题', body: 'AB' })
     s.answerPut({ version: 'vA' })
     await vi.advanceTimersByTimeAsync(0)
-    expect(loadDraft(ID, storage)).toMatchObject({ baseRev: 'rev1', bodyJson: doc('AB'), sent: [oursOf('rev1', { meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: 'A\n' })] })
+    expect(loadDraft(ID, storage)).toMatchObject({
+      baseRev: 'rev1',
+      bodyJson: doc('AB'),
+      sent: [oursOf('rev1', { meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: 'A\n' })],
+    })
   })
 
   it('records the server draft it was typed on top of', async () => {
@@ -213,7 +254,10 @@ describe('local draft writing', () => {
     const s = session({ storage })
     s.type({ title: '改', body: 'x' })
     s.controller.persistNow()
-    s.controller.enterConflict({ kind: 'file', theirs: page({ rev: 'revX' }), mine: { title: '改', subtitle: '', tags: [], body: 'x\n' } }, true)
+    s.controller.enterConflict(
+      { kind: 'file', theirs: page({ rev: 'revX' }), mine: { title: '改', subtitle: '', tags: [], body: 'x\n' } },
+      true,
+    )
     s.controller.useTheirs()
     expect(loadDraft(ID, storage)).toBeNull()
     s.type({ title: '再改' })
@@ -361,7 +405,8 @@ describe('on opening a page: file, server draft and local draft', () => {
     token: 'old',
     ...over,
   })
-  const withDraft = (over: Partial<PageDraft> = {}, pageOver: Partial<Page> = {}) => page({ draft: serverDraft(over), ...pageOver })
+  const withDraft = (over: Partial<PageDraft> = {}, pageOver: Partial<Page> = {}) =>
+    page({ draft: serverDraft(over), ...pageOver })
 
   it('nothing at all: the file', () => {
     expect(plan(page(), null)).toMatchObject({ kind: 'file', dropLocal: false })
@@ -369,16 +414,26 @@ describe('on opening a page: file, server draft and local draft', () => {
 
   it('a local draft equal to the file is discarded silently, whatever its rev', () => {
     expect(plan(page(), stored({ bodyJson: doc('原文') }))).toMatchObject({ kind: 'file', dropLocal: true })
-    expect(plan(page({ rev: 'rev9' }), stored({ bodyJson: doc('原文') }))).toMatchObject({ kind: 'file', dropLocal: true })
+    expect(plan(page({ rev: 'rev9' }), stored({ bodyJson: doc('原文') }))).toMatchObject({
+      kind: 'file',
+      dropLocal: true,
+    })
   })
 
   it('a local fields-only draft on the same file is applied without touching the body', () => {
     const p = plan(page(), stored({ fields: { title: '新标题', subtitle: '', tags: [] } }))
-    expect(p).toMatchObject({ kind: 'local', content: { fields: { title: '新标题', subtitle: '', tags: [] }, markdown: '原文\n' }, token: 'old' })
+    expect(p).toMatchObject({
+      kind: 'local',
+      content: { fields: { title: '新标题', subtitle: '', tags: [] }, markdown: '原文\n' },
+      token: 'old',
+    })
   })
 
   it('a local draft on an older file is a conflict, with the draft as "mine" and the server body when only fields were edited', () => {
-    const p = plan(page({ rev: 'rev2', body: '别人改的\n' }), stored({ fields: { title: '我的标题', subtitle: '', tags: [] } }))
+    const p = plan(
+      page({ rev: 'rev2', body: '别人改的\n' }),
+      stored({ fields: { title: '我的标题', subtitle: '', tags: [] } }),
+    )
     expect(p.kind).toBe('conflict')
     if (p.kind !== 'conflict') return
     expect(p.info.kind).toBe('file')
@@ -409,7 +464,11 @@ describe('on opening a page: file, server draft and local draft', () => {
 
   it('a server draft alone is shown, already stored', () => {
     const p = plan(withDraft(), null)
-    expect(p).toMatchObject({ kind: 'server', content: { fields: { title: '原标题', subtitle: '', tags: [] }, markdown: '服务器草稿\n' }, dropLocal: false })
+    expect(p).toMatchObject({
+      kind: 'server',
+      content: { fields: { title: '原标题', subtitle: '', tags: [] }, markdown: '服务器草稿\n' },
+      dropLocal: false,
+    })
   })
 
   it('a stale server draft alone is a conflict between the draft and the file', () => {
@@ -429,18 +488,27 @@ describe('on opening a page: file, server draft and local draft', () => {
   })
 
   it('a local draft written on top of the server draft it knows is newer, and is pushed', () => {
-    const p = plan(withDraft({ version: 'v5' }), stored({ bodyJson: doc('服务器草稿，后来又写的'), sent: sentOf(serverDraft()) }))
+    const p = plan(
+      withDraft({ version: 'v5' }),
+      stored({ bodyJson: doc('服务器草稿，后来又写的'), sent: sentOf(serverDraft()) }),
+    )
     expect(p).toMatchObject({ kind: 'local', token: 'old' })
     expect(p.kind === 'local' && p.content.doc).toEqual(doc('服务器草稿，后来又写的'))
   })
 
   it('a local fields-only draft following the server draft keeps the server draft body', () => {
-    const p = plan(withDraft({ version: 'v5' }), stored({ fields: { title: '只改标题', subtitle: '', tags: [] }, sent: sentOf(serverDraft()) }))
+    const p = plan(
+      withDraft({ version: 'v5' }),
+      stored({ fields: { title: '只改标题', subtitle: '', tags: [] }, sent: sentOf(serverDraft()) }),
+    )
     expect(p).toMatchObject({ kind: 'local', content: { fields: { title: '只改标题' }, markdown: '服务器草稿\n' } })
   })
 
   it('a local draft that does not follow the server draft and differs from it is shown next to it, both kept', () => {
-    const p = plan(withDraft({ version: 'v5' }), stored({ bodyJson: doc('另一台机器上的字'), sent: sentOf(serverDraft({ body: '更早的服务器草稿\n' })) }))
+    const p = plan(
+      withDraft({ version: 'v5' }),
+      stored({ bodyJson: doc('另一台机器上的字'), sent: sentOf(serverDraft({ body: '更早的服务器草稿\n' })) }),
+    )
     expect(p.kind).toBe('conflict')
     if (p.kind !== 'conflict') return
     expect(p.info.kind).toBe('draft')
@@ -461,7 +529,10 @@ describe('on opening a page: file, server draft and local draft', () => {
 
   it('a local draft following a stale server draft is "mine" against the file', () => {
     const file = withDraft({ baseRev: 'revOld', stale: true, version: 'v5' }, { rev: 'rev2', body: '文件现在的\n' })
-    const p = plan(file, stored({ baseRev: 'revOld', bodyJson: doc('本地继续写的'), sent: sentOf(serverDraft({ baseRev: 'revOld' })) }))
+    const p = plan(
+      file,
+      stored({ baseRev: 'revOld', bodyJson: doc('本地继续写的'), sent: sentOf(serverDraft({ baseRev: 'revOld' })) }),
+    )
     expect(p.kind).toBe('conflict')
     if (p.kind !== 'conflict') return
     expect(p.info.kind).toBe('file')
@@ -480,8 +551,11 @@ describe('on opening a page: file, server draft and local draft', () => {
     ]
     for (const [p, d] of cases) {
       const r = plan(p, d)
-      expect(r.kind === 'file' || r.kind === 'server' ? r.dropLocal === true : true).toBe(r.kind === 'file' || r.kind === 'server' ? true : true)
-      if (r.kind === 'conflict') expect(JSON.stringify(r.info.mine)).toContain(String(d.bodyJson?.content?.[0]?.content?.[0]?.text))
+      expect(r.kind === 'file' || r.kind === 'server' ? r.dropLocal === true : true).toBe(
+        r.kind === 'file' || r.kind === 'server' ? true : true,
+      )
+      if (r.kind === 'conflict')
+        expect(JSON.stringify(r.info.mine)).toContain(String(d.bodyJson?.content?.[0]?.content?.[0]?.text))
       if (r.kind === 'local') expect(r.content.doc).toEqual(d.bodyJson)
     }
   })
@@ -515,20 +589,33 @@ describe('on opening a page: file, server draft and local draft', () => {
 })
 
 describe('a browser copy of text the server had confirmed as its draft decides nothing on opening', () => {
-  const confirmedCopy = (version: string): StoredDraft => ({ v: 1, id: ID, baseRev: 'rev1', fields: { title: '原标题', subtitle: '', tags: [] }, bodyJson: doc('昨天写的'), savedAt: 1, token: 'tok', sent: [], confirmed: version })
+  const confirmedCopy = (version: string): StoredDraft => ({
+    v: 1,
+    id: ID,
+    baseRev: 'rev1',
+    fields: { title: '原标题', subtitle: '', tags: [] },
+    bodyJson: doc('昨天写的'),
+    savedAt: 1,
+    token: 'tok',
+    sent: [],
+    confirmed: version,
+  })
 
   it('the draft was committed and the page edited elsewhere since: the file is shown, no question, the copy goes', () => {
     const p = plan(page({ rev: 'rev3', body: '后来在手机上改的\n' }), confirmedCopy('v1'))
     expect(p).toMatchObject({ kind: 'file', dropLocal: true })
   })
 
-  it('that draft is still the server\'s: it is shown, and the copy stays with it', () => {
+  it("that draft is still the server's: it is shown, and the copy stays with it", () => {
     const p = plan(page({ draft: serverDraft({ version: 'v1', body: '昨天写的\n' }) }), confirmedCopy('v1'))
     expect(p).toMatchObject({ kind: 'server', dropLocal: false, token: 'tok' })
   })
 
   it('another draft replaced it (typed on top of it elsewhere): that one is shown, the copy goes', () => {
-    const p = plan(page({ draft: serverDraft({ version: 'v9', body: '昨天写的，手机上又补了\n' }) }), confirmedCopy('v1'))
+    const p = plan(
+      page({ draft: serverDraft({ version: 'v9', body: '昨天写的，手机上又补了\n' }) }),
+      confirmedCopy('v1'),
+    )
     expect(p).toMatchObject({ kind: 'server', dropLocal: true })
     expect('token' in p && p.token).toBeFalsy()
   })
@@ -599,7 +686,11 @@ describe('a refresh replaces the editor text only when nothing is unsaved', () =
     await vi.advanceTimersByTimeAsync(0)
     // The server keeps a draft when the page is saved directly: it is stale now.
     const mine = s.puts[0]
-    const fresh = page({ rev: 'rev2', body: '别人保存的\n', draft: { version: 'v2', baseRev: 'rev1', meta: mine.meta, body: mine.body, updated: 'u2', stale: true } })
+    const fresh = page({
+      rev: 'rev2',
+      body: '别人保存的\n',
+      draft: { version: 'v2', baseRev: 'rev1', meta: mine.meta, body: mine.body, updated: 'u2', stale: true },
+    })
     s.pending.get[0](fresh)
     await vi.advanceTimersByTimeAsync(0)
     expect(changed).toHaveBeenCalledWith(fresh)
@@ -630,7 +721,7 @@ describe('a refresh replaces the editor text only when nothing is unsaved', () =
     expect(s.puts.length).toBe(2)
   })
 
-  it('with a confirmed draft gone from the server (committed, or replaced or deleted by a request naming it) the server\'s page is shown', async () => {
+  it("with a confirmed draft gone from the server (committed, or replaced or deleted by a request naming it) the server's page is shown", async () => {
     const storage = new FakeStorage()
     const changed = vi.fn()
     const s = session({ storage, onExternalChange: changed })
@@ -680,7 +771,13 @@ describe('a refresh replaces the editor text only when nothing is unsaved', () =
 })
 
 describe('storage that misbehaves', () => {
-  const content: DraftContent = { baseRev: 'rev1', fields: { title: 't', subtitle: '', tags: [] }, savedAt: Date.now(), token: 'tk', bodyJson: doc('x') }
+  const content: DraftContent = {
+    baseRev: 'rev1',
+    fields: { title: 't', subtitle: '', tags: [] },
+    savedAt: Date.now(),
+    token: 'tk',
+    bodyJson: doc('x'),
+  }
   const fields: Fields = { title: 't', subtitle: '', tags: [] }
 
   it('reading that throws is the same as no draft', () => {
@@ -763,7 +860,13 @@ describe('LiveDraft.readStorable', () => {
 })
 
 describe('old drafts', () => {
-  const content = (savedAt: number): DraftContent => ({ baseRev: 'r', fields: { title: 't', subtitle: '', tags: [] }, savedAt, token: 'tk', bodyJson: doc('x') })
+  const content = (savedAt: number): DraftContent => ({
+    baseRev: 'r',
+    fields: { title: 't', subtitle: '', tags: [] },
+    savedAt,
+    token: 'tk',
+    bodyJson: doc('x'),
+  })
 
   it('a draft older than 30 days is not offered and is removed', () => {
     const storage = new FakeStorage()
@@ -789,11 +892,25 @@ describe('old drafts', () => {
 })
 
 describe('a page that is gone', () => {
-  const draft = { v: 1 as const, id: ID, baseRev: 'r', fields: { title: '写了一半', subtitle: '副', tags: ['x'] }, savedAt: Date.now(), token: 'tk', bodyJson: doc('没存上的话') }
+  const draft = {
+    v: 1 as const,
+    id: ID,
+    baseRev: 'r',
+    fields: { title: '写了一半', subtitle: '副', tags: ['x'] },
+    savedAt: Date.now(),
+    token: 'tk',
+    bodyJson: doc('没存上的话'),
+  }
 
   it('the draft becomes the fields and body of a new page, in the root folder', () => {
-    expect(draftToCreateInput(draft, toMd)).toEqual({ folder: '', meta: { title: '写了一半', subtitle: '副', tags: ['x'] }, body: '没存上的话\n' })
-    expect(draftToCreateInput({ ...draft, fields: { title: '', subtitle: '', tags: [] }, bodyJson: undefined }, toMd)).toEqual({ folder: '', meta: {}, body: '' })
+    expect(draftToCreateInput(draft, toMd)).toEqual({
+      folder: '',
+      meta: { title: '写了一半', subtitle: '副', tags: ['x'] },
+      body: '没存上的话\n',
+    })
+    expect(
+      draftToCreateInput({ ...draft, fields: { title: '', subtitle: '', tags: [] }, bodyJson: undefined }, toMd),
+    ).toEqual({ folder: '', meta: {}, body: '' })
   })
 
   it('recovering creates the page first and removes the draft only afterwards', async () => {
@@ -805,11 +922,14 @@ describe('a page that is gone', () => {
     const create = vi.fn(async (input) => ({ ...page({ id: '01NEW00000' }), body: input.body }))
     const made = await recoverDraft(ID, draft, { create, toMarkdown: toMd, storage })
     expect(made.id).toBe('01NEW00000')
-    expect(create).toHaveBeenCalledWith({ folder: '', meta: { title: '写了一半', subtitle: '副', tags: ['x'] }, body: '没存上的话\n' })
+    expect(create).toHaveBeenCalledWith({
+      folder: '',
+      meta: { title: '写了一半', subtitle: '副', tags: ['x'] },
+      body: '没存上的话\n',
+    })
     expect(loadDraft(ID, storage)).toBeNull()
   })
 })
-
 
 describe('two tabs on one page', () => {
   it("storing in one tab does not remove the other tab's newer local draft", async () => {
@@ -917,7 +1037,14 @@ describe('after the page is left', () => {
     await vi.advanceTimersByTimeAsync(0)
     // The queued store is out; the local draft follows the draft just stored.
     expect(s.puts[1].baseRev).toBe('rev1')
-    expect(loadDraft(ID, storage)).toMatchObject({ baseRev: 'rev1', bodyJson: doc('AB'), sent: expect.arrayContaining([oursOf('rev1', { meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: 'A\n' }), oursOf('rev1', { meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: 'AB\n' })]) })
+    expect(loadDraft(ID, storage)).toMatchObject({
+      baseRev: 'rev1',
+      bodyJson: doc('AB'),
+      sent: expect.arrayContaining([
+        oursOf('rev1', { meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: 'A\n' }),
+        oursOf('rev1', { meta: { id: ID, title: '原标题', created: '2026-01-01' }, body: 'AB\n' }),
+      ]),
+    })
     // It fails: next visit the local draft is pushed on top of the server draft, not mistaken for an unrelated one.
     s.pending.putFail[1](new ApiError(0, 'network', ''))
     await done
@@ -948,9 +1075,15 @@ describe('a store refused because another device replaced the draft', () => {
 })
 
 describe('local drafts of a person, a space and a page', () => {
-  const draft = (): DraftContent => ({ baseRev: 'r', fields: { title: 't', subtitle: '', tags: [] }, savedAt: Date.now(), token: 'tk', bodyJson: doc('x') })
+  const draft = (): DraftContent => ({
+    baseRev: 'r',
+    fields: { title: 't', subtitle: '', tags: [] },
+    savedAt: Date.now(),
+    token: 'tk',
+    bodyJson: doc('x'),
+  })
 
-  it('a second user of the same browser is never offered the first one\'s text, nor another space\'s', () => {
+  it("a second user of the same browser is never offered the first one's text, nor another space's", () => {
     const storage = new FakeStorage()
     const mine = draftRef('userA', 'spaceA', ID)
     saveDraft(mine, draft(), storage)
@@ -986,21 +1119,48 @@ describe('local drafts of a person, a space and a page', () => {
   })
 
   it('a draft of the same content on another base, or with other content, is not ours even when everything else looks alike', () => {
-    const d: StoredDraft = { v: 1, id: ID, baseRev: 'rev1', fields: { title: '原标题', subtitle: '', tags: [] }, bodyJson: doc('我的'), savedAt: Date.now(), token: 'old', sent: sentOf(serverDraft({ body: '我发过的\n' })) }
+    const d: StoredDraft = {
+      v: 1,
+      id: ID,
+      baseRev: 'rev1',
+      fields: { title: '原标题', subtitle: '', tags: [] },
+      bodyJson: doc('我的'),
+      savedAt: Date.now(),
+      token: 'old',
+      sent: sentOf(serverDraft({ body: '我发过的\n' })),
+    }
     expect(plan(page({ draft: serverDraft({ body: '别人发的\n' }) }), d).kind).toBe('conflict')
     expect(plan(page({ draft: serverDraft({ body: '我发过的\n', baseRev: 'revElse' }) }), d).kind).toBe('conflict')
   })
 
   it('the file is the text this local draft followed, committed by the server: not a conflict, the text goes up on the new file', () => {
     const followed = serverDraft({ body: '我发过的\n' })
-    const d: StoredDraft = { v: 1, id: ID, baseRev: 'rev1', fields: { title: '原标题', subtitle: '', tags: [] }, bodyJson: doc('我后来又写的'), savedAt: Date.now(), token: 'old', sent: sentOf(followed) }
+    const d: StoredDraft = {
+      v: 1,
+      id: ID,
+      baseRev: 'rev1',
+      fields: { title: '原标题', subtitle: '', tags: [] },
+      bodyJson: doc('我后来又写的'),
+      savedAt: Date.now(),
+      token: 'old',
+      sent: sentOf(followed),
+    }
     const p = plan(page({ rev: 'revCommitted', meta: followed.meta, body: followed.body }), d)
     expect(p.kind).toBe('local')
   })
 
   it('the file moved and is not the text this local draft followed: a conflict', () => {
     const followed = serverDraft({ body: '我发过的\n' })
-    const d: StoredDraft = { v: 1, id: ID, baseRev: 'rev1', fields: { title: '原标题', subtitle: '', tags: [] }, bodyJson: doc('我后来又写的'), savedAt: Date.now(), token: 'old', sent: sentOf(followed) }
+    const d: StoredDraft = {
+      v: 1,
+      id: ID,
+      baseRev: 'rev1',
+      fields: { title: '原标题', subtitle: '', tags: [] },
+      bodyJson: doc('我后来又写的'),
+      savedAt: Date.now(),
+      token: 'old',
+      sent: sentOf(followed),
+    }
     expect(plan(page({ rev: 'revElse', body: '别人写的\n' }), d).kind).toBe('conflict')
   })
 })

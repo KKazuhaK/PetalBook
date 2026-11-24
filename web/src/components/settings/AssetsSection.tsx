@@ -5,7 +5,16 @@ import { useAssetsRemote, useConnectAssets, useDisconnectAssets, useMoveAssets, 
 import type { AssetMove, AssetsRemote, RemoteState } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatBytes } from '@/lib/bytes'
@@ -13,7 +22,12 @@ import { t } from '@/i18n'
 import { ts } from '@/i18n/storage'
 import { SettingsSection } from './SettingsParts'
 
-const STATE_ICON: Record<RemoteState, typeof Cloud> = { ok: Cloud, offline: CloudOff, rewritten: CirclePause, error: CircleAlert }
+const STATE_ICON: Record<RemoteState, typeof Cloud> = {
+  ok: Cloud,
+  offline: CloudOff,
+  rewritten: CirclePause,
+  error: CircleAlert,
+}
 
 // The attachment repository of a space (docs/api.md, "Server storage"): a second
 // repository for the files of assets/, with the move of the attachments that are
@@ -28,7 +42,10 @@ export function AssetsSection({ space }: { space: string }) {
       {assets.isPending ? (
         <PageFallback />
       ) : assets.isError ? (
-        <ErrorState message={t.fmt.labelled(a.connectFailed, assets.error.message)} onRetry={() => void assets.refetch()} />
+        <ErrorState
+          message={t.fmt.labelled(a.connectFailed, assets.error.message)}
+          onRetry={() => void assets.refetch()}
+        />
       ) : assets.data === null ? (
         <>
           <p className="text-sm text-muted-foreground">{a.intro}</p>
@@ -62,8 +79,21 @@ function ConnectAssets({ space }: { space: string }) {
   }
   return (
     <form className="grid max-w-xl gap-3" onSubmit={(e) => void submit(e)} noValidate>
-      <Field label={a.address} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/notes-assets.git" autoComplete="off" spellCheck={false} />
-      <Field label={a.token} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
+      <Field
+        label={a.address}
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://github.com/owner/notes-assets.git"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <Field
+        label={a.token}
+        type="password"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+        autoComplete="off"
+      />
       <FormMessage>{error}</FormMessage>
       <div>
         <Button type="submit" disabled={connect.isPending}>
@@ -124,7 +154,11 @@ function Connected({ space, v }: { space: string; v: AssetsRemote }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t.remote.disconnectCancel}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={disconnect.isPending} onClick={() => void doDisconnect()}>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={disconnect.isPending}
+              onClick={() => void doDisconnect()}
+            >
               {a.disconnect}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -136,7 +170,12 @@ function Connected({ space, v }: { space: string; v: AssetsRemote }) {
 
 function Progress({ move }: { move: AssetMove }) {
   const a = ts.assets
-  const pct = move.bytes > 0 ? Math.min(100, Math.round((move.bytesDone / move.bytes) * 100)) : move.files > 0 ? Math.round((move.filesDone / move.files) * 100) : 0
+  const pct =
+    move.bytes > 0
+      ? Math.min(100, Math.round((move.bytesDone / move.bytes) * 100))
+      : move.files > 0
+        ? Math.round((move.filesDone / move.files) * 100)
+        : 0
   return (
     <div className="grid gap-1" data-slot="assets-progress">
       <div className="text-sm">{a.states[move.state]}</div>

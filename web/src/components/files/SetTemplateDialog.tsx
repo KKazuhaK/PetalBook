@@ -14,7 +14,15 @@ import { tt } from '@/i18n/templates'
 
 // Sets the template a page made in a folder starts with, or takes it away (needs `manage`). Loaded when it is first
 // opened.
-export default function SetTemplateDialog({ path, spaceName, onClose }: { path: string; spaceName: string; onClose: () => void }) {
+export default function SetTemplateDialog({
+  path,
+  spaceName,
+  onClose,
+}: {
+  path: string
+  spaceName: string
+  onClose: () => void
+}) {
   const templates = useTemplates()
   const set = useSetFolderTemplate()
   const own = templates.data?.defaults.folders[path] ?? ''
@@ -50,7 +58,12 @@ export default function SetTemplateDialog({ path, spaceName, onClose }: { path: 
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="set-template">{tt.setDefault.label}</Label>
-            <NativeSelect id="set-template" value={value} disabled={templates.isPending} onChange={(e) => setPicked(e.target.value)}>
+            <NativeSelect
+              id="set-template"
+              value={value}
+              disabled={templates.isPending}
+              onChange={(e) => setPicked(e.target.value)}
+            >
               <option value="">{tt.setDefault.none}</option>
               {list.map((x) => (
                 <option key={x.name} value={x.name}>
@@ -58,7 +71,9 @@ export default function SetTemplateDialog({ path, spaceName, onClose }: { path: 
                 </option>
               ))}
             </NativeSelect>
-            {templates.isSuccess && list.length === 0 && <p className="text-xs text-muted-foreground">{tt.setDefault.noTemplates}</p>}
+            {templates.isSuccess && list.length === 0 && (
+              <p className="text-xs text-muted-foreground">{tt.setDefault.noTemplates}</p>
+            )}
             <p className="text-xs text-muted-foreground">{tt.setDefault.help}</p>
           </div>
           <DialogFooter>

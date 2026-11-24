@@ -52,7 +52,19 @@ describe('folders', () => {
   it('tidies slashes and spaces, and applies the server rules with a message', () => {
     expect(checkFolderPath(' /随笔/ 2027/ ')).toEqual({ path: '随笔/2027' })
     expect(checkFolderPath('a\\b')).toEqual({ path: 'a/b' })
-    for (const bad of ['', '  ', '.hidden', 'a/.b', '../x', 'a/..', 'a./b', 'assets', 'assets/x', 'a//b', '长'.repeat(86)]) {
+    for (const bad of [
+      '',
+      '  ',
+      '.hidden',
+      'a/.b',
+      '../x',
+      'a/..',
+      'a./b',
+      'assets',
+      'assets/x',
+      'a//b',
+      '长'.repeat(86),
+    ]) {
       const r = checkFolderPath(bad)
       expect(r, bad).toHaveProperty('error')
       expect((r as { error: string }).error).toMatch(/[\u4e00-\u9fa5]/)
@@ -90,7 +102,22 @@ describe('sign-in return paths', () => {
   it('accepts only a plain path inside the app', () => {
     expect(safeReturn('/s/01JD3K8Q7Z/p/01JD3K8Q7Z?x=1#y')).toBe('/s/01JD3K8Q7Z/p/01JD3K8Q7Z?x=1#y')
     expect(safeReturn('/')).toBe('/')
-    for (const bad of [null, undefined, '', 'relative', '//evil.example', 'https://evil.example', '/a\\b', 'javascript:alert(1)', '/ok\nbad', '/login', '/login?return=%2F', '/setup', '/invite#x']) expect(safeReturn(bad as string | null), String(bad)).toBe('/')
+    for (const bad of [
+      null,
+      undefined,
+      '',
+      'relative',
+      '//evil.example',
+      'https://evil.example',
+      '/a\\b',
+      'javascript:alert(1)',
+      '/ok\nbad',
+      '/login',
+      '/login?return=%2F',
+      '/setup',
+      '/invite#x',
+    ])
+      expect(safeReturn(bad as string | null), String(bad)).toBe('/')
   })
   it('makes the sign-in address with the path to come back to', () => {
     expect(loginUrl('/s/x/p/y')).toBe('/login?return=%2Fs%2Fx%2Fp%2Fy')
@@ -144,8 +171,20 @@ describe('importFiles', () => {
   })
   it('adds reports up, cutting the skipped list at 200 and counting the rest', () => {
     const one = { pages: 2, files: 1, skipped: [{ path: 'a', reason: 'r' }] }
-    expect(addReports(one, one)).toEqual({ pages: 4, files: 2, skipped: [{ path: 'a', reason: 'r' }, { path: 'a', reason: 'r' }] })
-    const many = { pages: 1, files: 0, skipped: Array.from({ length: 150 }, (_, i) => ({ path: String(i), reason: 'r' })), skippedMore: 5 }
+    expect(addReports(one, one)).toEqual({
+      pages: 4,
+      files: 2,
+      skipped: [
+        { path: 'a', reason: 'r' },
+        { path: 'a', reason: 'r' },
+      ],
+    })
+    const many = {
+      pages: 1,
+      files: 0,
+      skipped: Array.from({ length: 150 }, (_, i) => ({ path: String(i), reason: 'r' })),
+      skippedMore: 5,
+    }
     const sum = addReports(many, many)
     expect(sum.skipped).toHaveLength(200)
     expect(sum.skippedMore).toBe(5 + 5 + 100)
@@ -153,6 +192,14 @@ describe('importFiles', () => {
   })
   it('does not add the same file twice', () => {
     const a = { name: 'a.md', size: 3 }
-    expect(mergeFiles([a], [{ name: 'a.md', size: 3 }, { name: 'a.md', size: 4 }])).toHaveLength(2)
+    expect(
+      mergeFiles(
+        [a],
+        [
+          { name: 'a.md', size: 3 },
+          { name: 'a.md', size: 4 },
+        ],
+      ),
+    ).toHaveLength(2)
   })
 })

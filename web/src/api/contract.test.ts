@@ -44,7 +44,20 @@ import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
-import type { AdminSpace, CatalogBatch, CatalogEntry, ChangeItem, ListParams, Member, Page, PageSummary, Problem, ProblemKind, SpaceInfo, User } from './types'
+import type {
+  AdminSpace,
+  CatalogBatch,
+  CatalogEntry,
+  ChangeItem,
+  ListParams,
+  Member,
+  Page,
+  PageSummary,
+  Problem,
+  ProblemKind,
+  SpaceInfo,
+  User,
+} from './types'
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
@@ -58,7 +71,12 @@ interface Target {
   mode: 'single' | 'accounts'
 }
 const targets: Target[] = REAL
-  ? [{ name: CONTRACT_USER && CONTRACT_PASSWORD ? 'real server, accounts mode' : 'real server, single-user mode', mode: CONTRACT_USER && CONTRACT_PASSWORD ? 'accounts' : 'single' }]
+  ? [
+      {
+        name: CONTRACT_USER && CONTRACT_PASSWORD ? 'real server, accounts mode' : 'real server, single-user mode',
+        mode: CONTRACT_USER && CONTRACT_PASSWORD ? 'accounts' : 'single',
+      },
+    ]
   : [
       { name: 'mock, single-user mode', mode: 'single' },
       { name: 'mock, accounts mode', mode: 'accounts' },
@@ -123,7 +141,7 @@ function suite(target: Target) {
 
   const browser = () => newBrowser(base)
   // Run `fn` as another browser (the client reads `globalThis.fetch`).
-  const as = async <T,>(b: Browser, fn: () => Promise<T>): Promise<T> => {
+  const as = async <T>(b: Browser, fn: () => Promise<T>): Promise<T> => {
     const prev = globalThis.fetch
     globalThis.fetch = b.fetch
     try {
@@ -144,12 +162,18 @@ function suite(target: Target) {
     headers: Record<string, string> = JSON_HEADERS,
     opts: { expect429?: boolean } = {},
   ): Promise<{ status: number; json: any; headers: Headers; res: Response }> => {
-    const res = await b.fetch(path, { method, headers, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body), redirect: 'manual' })
+    const res = await b.fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+      redirect: 'manual',
+    })
     if (res.status === 429 && !opts.expect429 && REAL) {
       const wait = Number(res.headers.get('Retry-After')) || 1
       // A wait longer than a test may take is a cap the run has used up, not a
       // per-minute pause: say so at once instead of retrying until the timeout.
-      if (wait > 20) throw new Error(`${method} ${path}: 429 with Retry-After ${wait}s; the run has reached a failure cap`)
+      if (wait > 20)
+        throw new Error(`${method} ${path}: 429 with Retry-After ${wait}s; the run has reached a failure cap`)
       await new Promise((r) => setTimeout(r, wait * 1000 + 100))
       return call(b, method, path, body, headers, opts)
     }
@@ -183,11 +207,19 @@ function suite(target: Target) {
         // accept included, answers 429 for the rest of the window, so both
         // limits are raised for the run and put back afterwards.
         const got = await fetch('/api/admin/security')
-        if (got.status !== 200) throw new Error(`could not read the security settings: ${got.status} ${await got.text()}`)
-        const { perMinute, maxFailures } = ((await got.json()) as { limits: { perMinute: number; maxFailures: number } }).limits
+        if (got.status !== 200)
+          throw new Error(`could not read the security settings: ${got.status} ${await got.text()}`)
+        const { perMinute, maxFailures } = (
+          (await got.json()) as { limits: { perMinute: number; maxFailures: number } }
+        ).limits
         savedLimits = { perMinute, maxFailures }
-        const r = await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 1000, maxFailures: 1000 } }) })
-        if (r.status !== 200) throw new Error(`could not raise the sign-in limits for the run: ${r.status} ${await r.text()}`)
+        const r = await fetch('/api/admin/security', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limits: { perMinute: 1000, maxFailures: 1000 } }),
+        })
+        if (r.status !== 200)
+          throw new Error(`could not raise the sign-in limits for the run: ${r.status} ${await r.text()}`)
       }
       spaceId = (await api.spaces()).spaces[0].id
     }
@@ -198,7 +230,11 @@ function suite(target: Target) {
     globalThis.fetch = admin.fetch
     for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
     if (REAL && accounts && savedLimits) {
-      await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: savedLimits }) }).catch(() => undefined)
+      await fetch('/api/admin/security', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limits: savedLimits }),
+      }).catch(() => undefined)
     }
     globalThis.fetch = realFetch
     markSignedIn()
@@ -261,7 +297,7 @@ function suite(target: Target) {
       }
     })
 
-    it('every space carries the caller\'s role and permissions, and whether it is disabled; meta and the list say the same', async () => {
+    it("every space carries the caller's role and permissions, and whether it is disabled; meta and the list say the same", async () => {
       const m = await api.meta()
       const { spaces } = await api.spaces()
       const mine = spaces.find((s) => s.id === spaceId)!
@@ -277,7 +313,7 @@ function suite(target: Target) {
       }
     })
 
-    it('spaces lists the caller\'s spaces, the personal one first', async () => {
+    it("spaces lists the caller's spaces, the personal one first", async () => {
       const { spaces } = await api.spaces()
       expect(spaces.length).toBeGreaterThanOrEqual(1)
       expect(spaces.map((s) => s.id)).toContain(spaceId)
@@ -338,7 +374,11 @@ function suite(target: Target) {
     })
 
     it('the remote repository endpoints answer 404', async () => {
-      for (const [method, path] of [['GET', `/api/spaces/${spaceId}/remote`], ['POST', `/api/spaces/${spaceId}/remote/key`], ['POST', `/api/spaces/${spaceId}/remote/sync`]] as const) {
+      for (const [method, path] of [
+        ['GET', `/api/spaces/${spaceId}/remote`],
+        ['POST', `/api/spaces/${spaceId}/remote/key`],
+        ['POST', `/api/spaces/${spaceId}/remote/sync`],
+      ] as const) {
         const r = await call(admin, method, path, method === 'GET' ? undefined : {})
         expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
       }
@@ -350,1714 +390,2439 @@ function suite(target: Target) {
     })
   })
 
-  describe.skipIf(!accounts)('accounts server only (skipped on a single-user server, where these answer 404): signing in', () => {
-    const uniq = (p: string) => `${p}${run}`.slice(0, 30)
-    // A member made through an invite, signed in in its own browser.
-    const newMember = async (name: string, password = 'a-long-password') => {
-      const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
-      const b = browser()
-      const r = await call(b, 'POST', '/api/invites/accept', { token: invite.token, username: name, name: `名 ${name}`, password })
-      expect(r.status).toBe(201)
-      created.users.push(r.json.user.id)
-      return { browser: b, user: r.json.user as User, password }
-    }
-
-    it('without a session everything but meta, session and the sign-in endpoints is 401 unauthenticated', async () => {
-      const b = browser()
-      for (const [method, path] of [
-        ['GET', '/api/spaces'],
-        ['GET', `${SP_PAGES}`],
-        ['GET', `${SP_PAGES}/01ZZZZZZZZ`],
-        ['GET', `/api/spaces/${spaceId}/tree`],
-        ['GET', '/api/account'],
-        ['GET', '/api/users'],
-        ['GET', '/api/invites'],
-      ]) {
-        const r = await call(b, method, path)
-        expect([r.status, r.json?.error], `${method} ${path}`).toEqual([401, 'unauthenticated'])
-      }
-      const meta = await call(b, 'GET', '/api/meta')
-      expect(meta.status).toBe(200)
-      expect(meta.json.spaces).toEqual([])
-      const session = await call(b, 'GET', '/api/session')
-      expect(session.status).toBe(200)
-      expect(session.json.user).toBeNull()
-      expect(session.json.setup).toBe(false)
-    })
-
-    it('login: wrong credentials are 401 with the same message whether or not the user exists', async () => {
-      const m = await newMember(uniq('lg'))
-      const b = browser()
-      const unknown = await call(b, 'POST', '/api/login', { username: uniq('nobody'), password: 'whatever-it-is' })
-      const wrong = await call(b, 'POST', '/api/login', { username: m.user.username, password: 'not-the-password' })
-      expect([unknown.status, unknown.json.error]).toEqual([401, 'unauthenticated'])
-      expect([wrong.status, wrong.json.error]).toEqual([401, 'unauthenticated'])
-      expect(wrong.json.message).toBe(unknown.json.message)
-      expect(wrong.headers.get('Set-Cookie')).toBeNull()
-    })
-
-    it('login with the right password: 200 with the user and a session cookie (HttpOnly, SameSite=Lax); upper case in the username is folded', async () => {
-      const m = await newMember(uniq('up'))
-      const b = browser()
-      const r = await call(b, 'POST', '/api/login', { username: m.user.username.toUpperCase(), password: m.password })
-      expect(r.status).toBe(200)
-      expect(r.json.user).toMatchObject({ id: m.user.id, username: m.user.username, role: 'member', disabled: false })
-      const cookie = r.res.headers.getSetCookie().join('\n')
-      expect(cookie).toMatch(/HttpOnly/i)
-      expect(cookie).toMatch(/SameSite=Lax/i)
-      expect((await call(b, 'GET', '/api/session')).json.user.id).toBe(m.user.id)
-    })
-
-    it('logout is 204 and ends the session; with no session it is 204 as well', async () => {
-      const m = await newMember(uniq('lo'))
-      expect((await call(m.browser, 'POST', '/api/logout')).status).toBe(204)
-      expect((await call(m.browser, 'GET', '/api/session')).json.user).toBeNull()
-      expect((await call(m.browser, 'GET', '/api/spaces')).status).toBe(401)
-      expect((await call(browser(), 'POST', '/api/logout')).status).toBe(204)
-    })
-
-    it('first-run setup is closed once there is a user: 409 exists, whatever the token', async () => {
-      const r = await call(browser(), 'POST', '/api/setup', { token: 'not-the-token', username: uniq('late'), password: 'a-long-password' })
-      expect([r.status, r.json.error]).toEqual([409, 'exists'])
-    })
-
-    it('every request that changes something must say it is JSON, here too', async () => {
-      const r = await call(admin, 'POST', '/api/logout', '', { 'Content-Type': 'text/plain' })
-      expect([400, 415]).toContain(r.status)
-    })
-
-    describe('account', () => {
-      it('GET shows the user, whether there is a password, and the linked sign-ins', async () => {
-        const m = await newMember(uniq('ac'))
-        const r = await call(m.browser, 'GET', '/api/account')
-        expect(r.status).toBe(200)
-        expect(r.json.user.id).toBe(m.user.id)
-        expect(r.json.hasPassword).toBe(true)
-        expect(r.json.identities).toEqual([])
-      })
-
-      it('PATCH changes the name and the email, each optional', async () => {
-        const m = await newMember(uniq('pa'))
-        const a = await call(m.browser, 'PATCH', '/api/account', { name: '新名字' })
-        expect(a.status).toBe(200)
-        expect(a.json.user).toMatchObject({ name: '新名字', email: '' })
-        const b = await call(m.browser, 'PATCH', '/api/account', { email: 'x@example.com' })
-        expect(b.json.user).toMatchObject({ name: '新名字', email: 'x@example.com' })
-        expect((await call(m.browser, 'GET', '/api/account')).json.user.email).toBe('x@example.com')
-      })
-
-      it('changing the password: wrong current is 403 forbidden, a short new one 400, the right one 204 and ends the other sessions', async () => {
-        const m = await newMember(uniq('pw'))
-        const other = browser()
-        expect((await call(other, 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(200)
-        const wrong = await call(m.browser, 'POST', '/api/account/password', { current: 'not-the-one', new: 'another-password' })
-        expect([wrong.status, wrong.json.error]).toEqual([403, 'forbidden'])
-        const short = await call(m.browser, 'POST', '/api/account/password', { current: m.password, new: 'short' })
-        expect([short.status, short.json.error]).toEqual([400, 'invalid'])
-        const ok = await call(m.browser, 'POST', '/api/account/password', { current: m.password, new: 'another-password' })
-        expect(ok.status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/account')).status).toBe(200)
-        expect((await call(other, 'GET', '/api/account')).status).toBe(401)
-        const fresh = browser()
-        expect((await call(fresh, 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(401)
-        expect((await call(fresh, 'POST', '/api/login', { username: m.user.username, password: 'another-password' })).status).toBe(200)
-      })
-    })
-
-    describe('OAuth consent and grants', () => {
-      // A real server needs an MCP client to start a request, and --public-url: the mock plays both.
-      const start = (username: string, o?: Parameters<MockServer['startAuthorization']>[1]) => server!.startAuthorization(username, o)
-
-      it.skipIf(!!REAL)('mock only: a person approves a request with the spaces they pick, and the grant is theirs to see and to revoke', async () => {
-        const m = await newMember(uniq('oa1'))
-        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
-        const req = start(m.user.username, { clientName: 'Notes helper' })
-        const info = await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)
-        expect(info.status).toBe(200)
-        expect(info.json).toMatchObject({ client: { name: 'Notes helper', id: 'pbc_mock' }, redirectHost: 'localhost:7777', punycode: false, scopes: ['read', 'write'], user: { id: m.user.id } })
-        expect(info.json.spaces.find((s: { id: string }) => s.id === mine.id)).toMatchObject({ personal: true })
-        const done = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine.id], access: 'write' })
-        expect(done.status).toBe(200)
-        const back = new URL(done.json.redirect)
-        expect([back.origin + back.pathname, back.searchParams.get('state')]).toEqual(['http://localhost:7777/callback', 'st4te'])
-        expect(back.searchParams.get('code')).toBeTruthy()
-        expect(back.searchParams.get('iss')).toBeTruthy()
-        // Decided once.
-        expect((await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine.id] })).json.error).toBe('not_found')
-        const list = (await call(m.browser, 'GET', '/api/account/grants')).json.grants
-        expect(list).toHaveLength(1)
-        expect(list[0]).toMatchObject({ client: { name: 'Notes helper', id: 'pbc_mock' }, access: 'write', spaces: [{ id: mine.id, name: mine.name }] })
-        expect(typeof list[0].created).toBe('string')
-        const other = await newMember(uniq('oa2'))
-        expect((await call(other.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
-        expect((await call(other.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).json.error).toBe('not_found')
-        expect((await call(m.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
-      })
-
-      it.skipIf(!!REAL)('mock only: a request is the one person\'s, and a bad answer is 400 and keeps it', async () => {
-        const m = await newMember(uniq('oa3'))
-        const other = await newMember(uniq('oa4'))
-        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        const theirs = (await call(other.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        const req = start(m.user.username, { scopes: ['read'] })
-        expect((await call(other.browser, 'GET', `/api/oauth/consent?req=${req}`)).json.error).toBe('not_found')
-        expect((await call(other.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [theirs] })).json.error).toBe('not_found')
-        for (const bad of [{ spaces: [] }, { spaces: [theirs] }, { spaces: [mine], access: 'write' }, { spaces: [mine], access: 'root' }]) {
-          const r = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, ...bad })
-          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
-        }
-        expect((await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)).status).toBe(200)
-        const denied = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: false })
-        expect(denied.status).toBe(200)
-        expect(new URL(denied.json.redirect).searchParams.get('error')).toBe('access_denied')
-        expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
-      })
-
-      it.skipIf(!!REAL)('mock only: an administrator lists everyone\'s grants a page at a time and revokes one; others are refused', async () => {
-        const m = await newMember(uniq('oa5'))
-        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        for (let i = 0; i < 3; i++) {
-          const req = start(m.user.username, { clientName: `app ${i}` })
-          await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine] })
-          clock += 1000
-        }
-        const first = await call(admin, 'GET', `/api/admin/grants?user=${m.user.id}&limit=2`)
-        expect(first.status).toBe(200)
-        expect(first.json.items).toHaveLength(2)
-        expect(first.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
-        expect(first.json.next).not.toBe('')
-        const rest = await call(admin, 'GET', `/api/admin/grants?user=${m.user.id}&limit=2&cursor=${first.json.next}`)
-        expect(rest.json.items).toHaveLength(1)
-        expect(rest.json.next).toBe('')
-        expect((await call(m.browser, 'GET', '/api/admin/grants')).json.error).toBe('forbidden')
-        expect((await call(admin, 'GET', '/api/admin/grants?limit=0')).status).toBe(400)
-        expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(204)
-        expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(404)
-        expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(2)
-      })
-
-      it.skipIf(!!REAL)('mock only: with MCP off the consent endpoints are 404, the grants are kept and listed, and oauth reads false', async () => {
-        const m = await newMember(uniq('oa6'))
-        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        await call(m.browser, 'POST', '/api/oauth/consent', { req: start(m.user.username), approve: true, spaces: [mine] })
-        const before = (await call(admin, 'GET', '/api/admin/access')).json
-        expect(before).toMatchObject({ mcp: true, oauth: true })
-        try {
-          await call(admin, 'PUT', '/api/admin/access', { mcp: false })
-          expect((await call(admin, 'GET', '/api/admin/access')).json).toMatchObject({ mcp: false, oauth: false })
-          expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('not_found')
-          expect((await call(m.browser, 'POST', '/api/oauth/consent', { req: 'x', approve: false })).status).toBe(404)
-          expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(1)
-        } finally {
-          await call(admin, 'PUT', '/api/admin/access', { mcp: before.mcp })
-        }
-      })
-    })
-
-    describe('API tokens', () => {
-      it('a person makes one, sees it without its secret, and revokes it', async () => {
-        const m = await newMember(uniq('apk1'))
-        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
-        const made = await call(m.browser, 'POST', '/api/account/tokens', { name: '  Desktop notes ', access: 'write', spaces: [mine.id] })
-        expect(made.status).toBe(201)
-        expect(made.json.secret).toMatch(/^pbk_[0-9A-Za-z]{43}$/)
-        expect(made.json.token).toMatchObject({ name: 'Desktop notes', access: 'write', prefix: made.json.secret.slice(0, 12), state: 'active', lastUsed: null, revoked: null })
-        expect(made.json.token.spaces).toEqual([{ id: mine.id, name: mine.name }])
-        expect(typeof made.json.token.expires).toBe('string')
-        const list = await call(m.browser, 'GET', '/api/account/tokens')
-        expect(list.status).toBe(200)
-        expect(list.json.tokens.map((t: { id: string }) => t.id)).toEqual([made.json.token.id])
-        expect(JSON.stringify(list.json)).not.toContain(made.json.secret)
-        expect((await call(m.browser, 'DELETE', `/api/account/tokens/${made.json.token.id}`)).status).toBe(204)
-        expect((await call(m.browser, 'DELETE', `/api/account/tokens/${made.json.token.id}`)).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0]).toMatchObject({ state: 'revoked' })
-      })
-
-      it('read is the default, 0 days is never, and a bad request is 400 or 404', async () => {
-        const m = await newMember(uniq('apk2'))
-        const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        const forever = await call(m.browser, 'POST', '/api/account/tokens', { name: 'forever', spaces: [mine], expiresInDays: 0 })
-        expect(forever.status).toBe(201)
-        expect(forever.json.token).toMatchObject({ access: 'read', expires: null })
-        for (const bad of [{ name: ' ', spaces: [mine] }, { name: 'n', spaces: [] }, { name: 'n', spaces: [mine], access: 'admin' }, { name: 'n', spaces: [mine], expiresInDays: 366 }]) {
-          const r = await call(m.browser, 'POST', '/api/account/tokens', bad)
-          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
-        }
-        const elsewhere = await call(m.browser, 'POST', '/api/account/tokens', { name: 'n', spaces: ['01JD3K8Q7Z'] })
-        expect([elsewhere.status, elsewhere.json.error]).toEqual([404, 'not_found'])
-      })
-
-      it("someone else's token is not theirs to revoke or to see", async () => {
-        const a = await newMember(uniq('apk3'))
-        const b = await newMember(uniq('apk4'))
-        const space = (await call(a.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        const t = (await call(a.browser, 'POST', '/api/account/tokens', { name: 'mine', spaces: [space] })).json.token.id
-        expect((await call(b.browser, 'GET', '/api/account/tokens')).json.tokens).toEqual([])
-        const r = await call(b.browser, 'DELETE', `/api/account/tokens/${t}`)
-        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
-      })
-
-      it('an administrator lists everyone\'s tokens and revokes one; others are refused', async () => {
-        const m = await newMember(uniq('apk5'))
-        const space = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-        const t = (await call(m.browser, 'POST', '/api/account/tokens', { name: 'theirs', spaces: [space] })).json.token.id
-        const all = await call(admin, 'GET', `/api/admin/tokens?user=${m.user.id}`)
-        expect(all.status).toBe(200)
-        expect(all.json.items.map((i: { id: string }) => i.id)).toEqual([t])
-        expect(all.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
-        expect(all.json.next).toBe('')
-        expect((await call(m.browser, 'GET', '/api/admin/tokens')).json.error).toBe('forbidden')
-        expect((await call(m.browser, 'GET', '/api/admin/access')).json.error).toBe('forbidden')
-        expect((await call(admin, 'DELETE', `/api/admin/tokens/${t}`)).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0].state).toBe('revoked')
-        expect((await call(admin, 'DELETE', '/api/admin/tokens/NOSUCHTOKN')).status).toBe(404)
-        expect((await call(admin, 'GET', '/api/admin/tokens?limit=0')).status).toBe(400)
-      })
-
-      it('the machine access switches are on, may be changed, and are put back', async () => {
-        const before = await call(admin, 'GET', '/api/admin/access')
-        expect(before.status).toBe(200)
-        expect(Object.keys(before.json).sort()).toEqual(['mcp', 'oauth', 'tokens'])
-        try {
-          const off = await call(admin, 'PUT', '/api/admin/access', { tokens: false })
-          expect(off.json).toMatchObject({ tokens: false, mcp: before.json.mcp })
-          expect((await call(admin, 'GET', '/api/admin/access')).json.tokens).toBe(false)
-        } finally {
-          await call(admin, 'PUT', '/api/admin/access', { tokens: before.json.tokens, mcp: before.json.mcp })
-        }
-        expect((await call(admin, 'GET', '/api/admin/access')).json).toEqual(before.json)
-      })
-    })
-
-    describe('users', () => {
-      it('finds users by part of a username or name, ignoring case, and caps the count; no parameters is everyone', async () => {
-        const m = await newMember(uniq('fu'))
-        const all = (await as(admin, () => adminApi.users())).users
-        const upper = m.user.username.toUpperCase()
-        const hit = (await as(admin, () => adminApi.users({ q: upper }))).users
-        expect(hit.map((u) => u.id)).toContain(m.user.id)
-        for (const u of hit) expect((u.username + '\n' + u.name).toLowerCase()).toContain(m.user.username)
-        expect((await as(admin, () => adminApi.users({ q: m.user.name }))).users.map((u) => u.id)).toContain(m.user.id)
-        expect((await as(admin, () => adminApi.users({ q: 'zzz-no-such-user-zzz' }))).users).toEqual([])
-        const one = (await as(admin, () => adminApi.users({ limit: 1 }))).users
-        expect(one.map((u) => u.id)).toEqual([all[0].id])
-        for (const bad of ['0', '201', 'x']) {
-          const r = await call(admin, 'GET', `/api/users?limit=${bad}`)
-          expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
-        }
-      })
-
-      it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
-        const m = await newMember(uniq('us'))
-        const { users } = await as(admin, () => adminApi.users())
-        expect(users.find((u) => u.id === m.user.id)).toMatchObject({ username: m.user.username, role: 'member', disabled: false })
-        for (let i = 1; i < users.length; i++) expect(users[i - 1].created <= users[i].created).toBe(true)
-        for (const [method, path] of [
-          ['GET', '/api/users'],
-          ['PATCH', `/api/users/${m.user.id}`],
-          ['GET', '/api/invites'],
-          ['POST', '/api/invites'],
-        ]) {
-          const r = await call(m.browser, method, path, method === 'GET' ? undefined : {})
-          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
-        }
-      })
-
-      it('changes a role and disables and enables a user; disabling ends every session and blocks signing in', async () => {
-        const m = await newMember(uniq('ro'))
-        const promoted = await as(admin, () => adminApi.updateUser(m.user.id, { role: 'admin' }))
-        expect(promoted.user.role).toBe('admin')
-        expect((await call(m.browser, 'GET', '/api/users')).status).toBe(200)
-        await as(admin, () => adminApi.updateUser(m.user.id, { role: 'member' }))
-        expect((await call(m.browser, 'GET', '/api/users')).status).toBe(403)
-
-        const off = await as(admin, () => adminApi.updateUser(m.user.id, { disabled: true }))
-        expect(off.user.disabled).toBe(true)
-        expect((await call(m.browser, 'GET', '/api/account')).status).toBe(401)
-        const again = await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })
-        expect([again.status, again.json.error]).toEqual([401, 'unauthenticated'])
-        await as(admin, () => adminApi.updateUser(m.user.id, { disabled: false }))
-        expect((await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })).status).toBe(200)
-      })
-
-      it('an administrator cannot disable themself (409), nor leave the server with no enabled administrator (409)', async () => {
-        const me = (await call(admin, 'GET', '/api/session')).json.user as User
-        const self = await call(admin, 'PATCH', `/api/users/${me.id}`, { disabled: true })
-        expect([self.status, self.json.error]).toEqual([409, 'conflict'])
-        const { users } = await as(admin, () => adminApi.users())
-        if (users.filter((u) => u.role === 'admin' && !u.disabled).length === 1) {
-          const demote = await call(admin, 'PATCH', `/api/users/${me.id}`, { role: 'member' })
-          expect([demote.status, demote.json.error]).toEqual([409, 'conflict'])
-        }
-        expect((await call(admin, 'GET', '/api/session')).json.user).toMatchObject({ id: me.id, role: 'admin', disabled: false })
-      })
-
-      it('an unknown user is 404', async () => {
-        const r = await call(admin, 'PATCH', '/api/users/01ZZZZZZZZ', { disabled: true })
-        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
-      })
-    })
-
-    describe('invites', () => {
-      it('create: 201 with the token once; the list shows the open ones without it', async () => {
-        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 3 }))
-        expect(inv.token.length).toBeGreaterThanOrEqual(16)
-        expect(inv).toMatchObject({ role: 'member' })
-        expect(Date.parse(inv.expires)).toBeGreaterThan(Date.parse(inv.created))
-        const { invites } = await as(admin, () => adminApi.invites())
-        const row = invites.find((i) => i.id === inv.id)!
-        expect(row).toMatchObject({ role: 'member', expires: inv.expires })
-        expect(typeof row.createdBy).toBe('string')
-        expect(JSON.stringify(invites)).not.toContain(inv.token)
-      })
-
-      it('days outside 1 to 30 and an unknown role are 400', async () => {
-        // (`days: 0` is not tried: a server may read it as "not given".)
-        for (const body of [{ days: -1 }, { days: 31 }, { days: 1.5 }, { role: 'owner' }]) {
-          const r = await call(admin, 'POST', '/api/invites', body)
-          expect([r.status, r.json.error], JSON.stringify(body)).toEqual([400, 'invalid'])
-        }
-      })
-
-      it('check is public: 200 with role and expiry for a good token, 404 for anything else', async () => {
-        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
-        const anon = browser()
-        const ok = await call(anon, 'POST', '/api/invites/check', { token: inv.token })
-        expect(ok.status).toBe(200)
-        expect(ok.json).toEqual({ role: 'member', expires: inv.expires, username: '', name: '', email: '' })
-        const bad = await call(anon, 'POST', '/api/invites/check', { token: 'not-a-token' })
-        expect([bad.status, bad.json.error]).toEqual([404, 'not_found'])
-      })
-
-      it('accept is public: 201 with the user and a session, a personal space of their own; the invite works once', async () => {
-        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
-        const name = uniq('ac2')
+  describe.skipIf(!accounts)(
+    'accounts server only (skipped on a single-user server, where these answer 404): signing in',
+    () => {
+      const uniq = (p: string) => `${p}${run}`.slice(0, 30)
+      // A member made through an invite, signed in in its own browser.
+      const newMember = async (name: string, password = 'a-long-password') => {
+        const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
         const b = browser()
-        const r = await call(b, 'POST', '/api/invites/accept', { token: inv.token, username: name.toUpperCase(), name: '新人', password: 'a-long-password' })
+        const r = await call(b, 'POST', '/api/invites/accept', {
+          token: invite.token,
+          username: name,
+          name: `名 ${name}`,
+          password,
+        })
         expect(r.status).toBe(201)
         created.users.push(r.json.user.id)
-        expect(r.json.user).toMatchObject({ username: name, name: '新人', role: 'member', disabled: false })
-        expect(r.res.headers.getSetCookie().length).toBeGreaterThan(0)
-        const { spaces } = (await call(b, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
-        expect(spaces[0]).toMatchObject({ personal: true, role: 'owner' })
-        expect(spaces.map((s) => s.id)).not.toContain(spaceId)
-        // Used: gone from the list, and a 404 to check. (Accepting it again is not
-        // tried: a real server counts every bad token against the client address.)
-        expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
-        expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
-      })
-
-      it('a taken username is 409 exists and the invite stays usable; a short password is 400', async () => {
-        const m = await newMember(uniq('tk'))
-        const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
-        const taken = await call(browser(), 'POST', '/api/invites/accept', { token: inv.token, username: m.user.username, password: 'a-long-password' })
-        expect([taken.status, taken.json.error]).toEqual([409, 'exists'])
-        const short = await call(browser(), 'POST', '/api/invites/accept', { token: inv.token, username: uniq('sh'), password: 'short' })
-        expect([short.status, short.json.error]).toEqual([400, 'invalid'])
-        expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(200)
-      })
-
-      it('revoke is 204 and the token stops working', async () => {
-        const inv = await as(admin, () => adminApi.createInvite({}))
-        await as(admin, () => adminApi.revokeInvite(inv.id))
-        expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
-        expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
-      })
-    })
-
-    describe('spaces', () => {
-      it('creates a space (201, the caller owns it), renames it, and lists personal first, then by name', async () => {
-        const m = await newMember(uniq('sp'))
-        const made = await call(m.browser, 'POST', '/api/spaces', { name: 'Beta' })
-        expect(made.status).toBe(201)
-        expect(made.json).toMatchObject({ name: 'Beta', role: 'owner', personal: false })
-        const renamed = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { name: 'Gamma' })
-        expect(renamed.status).toBe(200)
-        expect(renamed.json).toMatchObject({ id: made.json.id, name: 'Gamma' })
-        await call(m.browser, 'POST', '/api/spaces', { name: 'Alpha' })
-        const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
-        expect(spaces[0].personal).toBe(true)
-        expect(spaces.slice(1).map((s) => s.name)).toEqual(['Alpha', 'Gamma'])
-        expect((await call(m.browser, 'GET', '/api/meta')).json.spaces.map((s: SpaceInfo) => s.id)).toEqual(spaces.map((s) => s.id))
-        // The new space is a working space.
-        const page = await call(m.browser, 'POST', `/api/spaces/${made.json.id}/pages`, { meta: { title: '新空间里的页面' }, body: 'x\n' })
-        expect(page.status).toBe(201)
-      })
-
-      it('a name of 0 or more than 80 characters is 400', async () => {
-        for (const name of ['', '   ', '字'.repeat(81)]) {
-          const r = await call(admin, 'POST', '/api/spaces', { name })
-          expect([r.status, r.json.error], name.length.toString()).toEqual([400, 'invalid'])
-        }
-        expect((await call(admin, 'POST', '/api/spaces', { name: '字'.repeat(80) })).status).toBe(201)
-      })
-
-      it('inbox: Inbox unless given; set on creation, changed with PATCH alone or with the name; a PATCH with neither is 400', async () => {
-        const m = await newMember(uniq('ib1'))
-        const plain = await call(m.browser, 'POST', '/api/spaces', { name: 'Plain' })
-        expect(plain.status).toBe(201)
-        expect(plain.json.inbox).toBe('Inbox')
-        const own = await call(m.browser, 'POST', '/api/spaces', { name: 'Own', inbox: '收件箱' })
-        expect(own.status).toBe(201)
-        expect(own.json.inbox).toBe('收件箱')
-        const path = `/api/spaces/${own.json.id}`
-        const moved = await call(m.browser, 'PATCH', path, { inbox: '随记/待整理' })
-        expect(moved.status).toBe(200)
-        expect(moved.json).toMatchObject({ id: own.json.id, name: 'Own', inbox: '随记/待整理' })
-        const renamed = await call(m.browser, 'PATCH', path, { name: 'Renamed' })
-        expect(renamed.json).toMatchObject({ name: 'Renamed', inbox: '随记/待整理' })
-        const both = await call(m.browser, 'PATCH', path, { name: 'Both', inbox: 'Notes' })
-        expect(both.json).toMatchObject({ name: 'Both', inbox: 'Notes' })
-        const none = await call(m.browser, 'PATCH', path, {})
-        expect([none.status, none.json.error]).toEqual([400, 'invalid'])
-        const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
-        expect(spaces.find((s) => s.id === own.json.id)).toMatchObject({ name: 'Both', inbox: 'Notes' })
-        expect(spaces.find((s) => s.id === plain.json.id)!.inbox).toBe('Inbox')
-      })
-
-      it('an invalid inbox path is 400 on create and on PATCH, and the space is left as it was', async () => {
-        const m = await newMember(uniq('ib2'))
-        for (const inbox of ['.hidden', 'assets']) {
-          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Bad', inbox })
-          expect([r.status, r.json.error], inbox).toEqual([400, 'invalid'])
-        }
-        const made = await call(m.browser, 'POST', '/api/spaces', { name: 'Good', inbox: 'Keep' })
-        for (const inbox of ['.hidden', 'assets']) {
-          const r = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { inbox })
-          expect([r.status, r.json.error], inbox).toEqual([400, 'invalid'])
-        }
-        // A bad inbox does not let the name through either.
-        const mixed = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { name: 'Changed', inbox: '.hidden' })
-        expect(mixed.status).toBe(400)
-        const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
-        expect(spaces.find((s) => s.id === made.json.id)).toMatchObject({ name: 'Good', inbox: 'Keep' })
-      })
-
-      it('the inbox is only a name: no folder until a page is made in it, and changing it moves nothing', async () => {
-        const m = await newMember(uniq('ib3'))
-        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Quick', inbox: '收件箱' })
-        const base = `/api/spaces/${sp.json.id}`
-        expect(((await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string }[]).map((f) => f.path)).not.toContain('收件箱')
-        // What quick capture sends: the inbox folder and a body, no title.
-        const note = await call(m.browser, 'POST', `${base}/pages`, { folder: sp.json.inbox, body: '一句话\n' })
-        expect(note.status).toBe(201)
-        expect(note.json.folder).toBe('收件箱')
-        expect('title' in note.json.meta).toBe(false)
-        const tree = (await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string; pages: number }[]
-        expect(tree.find((f) => f.path === '收件箱')).toEqual({ path: '收件箱', pages: 1 })
-        await call(m.browser, 'PATCH', base, { inbox: '别处' })
-        const after = await call(m.browser, 'GET', `${base}/pages/${note.json.id}`)
-        expect(after.json.folder).toBe('收件箱')
-        const listed = (await call(m.browser, 'GET', `${base}/pages?folder=${encodeURIComponent('收件箱')}`)).json.items as PageSummary[]
-        expect(listed.map((i) => i.id)).toEqual([note.json.id])
-      })
-
-      it('a space of someone else is 404 not_found, the same as one that does not exist: pages, folders, drafts, rename', async () => {
-        const m = await newMember(uniq('is'))
-        const mine = ((await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0]
-        const own = await call(m.browser, 'POST', `/api/spaces/${mine.id}/pages`, { meta: { title: '只有我能看' }, body: '秘密\n' })
-        expect(own.status).toBe(201)
-        const mineSpace = `/api/spaces/${mine.id}`
-        const theirs = `/api/spaces/${spaceId}`
-        const absent = await call(admin, 'GET', `/api/spaces/01ZZZZZZZZ/pages`)
-        expect([absent.status, absent.json.error]).toEqual([404, 'not_found'])
-        for (const [b, method, path, body] of [
-          [m.browser, 'GET', `${theirs}/pages`, undefined],
-          [m.browser, 'POST', `${theirs}/pages`, { body: 'x' }],
-          [m.browser, 'PATCH', theirs, { name: '抢走' }],
-          [m.browser, 'GET', `${theirs}/members`, undefined],
-        ] as [Browser, string, string, unknown][]) {
-          const r = await call(b, method, path, body ?? (method === 'GET' ? undefined : {}))
-          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
-        }
-        // An administrator is no member, but may open any space; it is not in their own list.
-        for (const path of [`${mineSpace}/pages`, `${mineSpace}/pages/${own.json.id}`, `${mineSpace}/tree`]) {
-          expect((await call(admin, 'GET', path)).status, path).toBe(200)
-        }
-        expect(((await call(admin, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).map((s) => s.id)).not.toContain(mine.id)
-        // Nothing of theirs shows in their lists, either way.
-        expect((await walk({ q: '只有我能看', recursive: true, folder: '' })).length).toBe(0)
-      })
-    })
-
-    // A space owned by a member, so the contract user (an administrator) is no member of it.
-    const ownedSpace = async (owner: { browser: Browser }, name: string): Promise<SpaceInfo> => {
-      const r = await call(owner.browser, 'POST', '/api/spaces', { name })
-      expect(r.status).toBe(201)
-      return r.json as SpaceInfo
-    }
-    const addMember = async (owner: { browser: Browser }, space: string, username: string, role: string) => {
-      const r = await call(owner.browser, 'POST', `/api/spaces/${space}/members`, { username, role })
-      expect(r.status, `${username} as ${role}`).toBe(201)
-      return r.json as Member
-    }
-    const roleOf = async (b: Browser, space: string) => ((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.id === space)
-
-    describe('groups', () => {
-      const mkGroup = async (name: string, source = 'local') => {
-        const r = await call(admin, 'POST', '/api/admin/groups', { name, source })
-        expect(r.status, name).toBe(201)
-        return r.json as { id: string; name: string; source: string; people: number; spaces: number; mappedFrom: unknown[] }
+        return { browser: b, user: r.json.user as User, password }
       }
 
-      it('an administrator makes, renames, lists and deletes groups; names are unique ignoring case; only administrators may', async () => {
-        const name = uniq('Group')
-        const g = await mkGroup(name)
-        expect(g).toMatchObject({ name, source: 'local', people: 0, spaces: 0, mappedFrom: [] })
-        const clash = await call(admin, 'POST', '/api/admin/groups', { name: name.toUpperCase(), source: 'local' })
-        expect([clash.status, clash.json.error]).toEqual([409, 'exists'])
-        const bad = await call(admin, 'POST', '/api/admin/groups', { name: ' ', source: 'local' })
-        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
-        const renamed = await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { name: `${name} 2`, description: 'd' })
-        expect(renamed.json).toMatchObject({ name: `${name} 2`, description: 'd' })
-        expect((await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { source: 'synced' })).status).toBe(400)
-        const list = await call(admin, 'GET', `/api/admin/groups?q=${encodeURIComponent(name.toLowerCase())}`)
-        expect((list.json.items as { id: string }[]).map((x) => x.id)).toEqual([g.id])
-        expect(list.json.next).toBe('')
-        const m = await newMember(uniq('gm'))
-        expect((await call(m.browser, 'GET', '/api/admin/groups')).status).toBe(403)
-        expect((await call(admin, 'GET', '/api/admin/groups/01ZZZZZZZZ')).json.error).toBe('not_found')
-        expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
-        expect((await call(admin, 'GET', `/api/admin/groups/${g.id}`)).status).toBe(404)
-      })
-
-      it('people: local groups only, all or nothing; synced groups refuse; anyone signed in finds a group by name and sees theirs in the account', async () => {
-        const local = await mkGroup(uniq('Local'))
-        const synced = await mkGroup(uniq('Synced'), 'synced')
-        const m = await newMember(uniq('gp'))
-        const refused = await call(admin, 'POST', `/api/admin/groups/${synced.id}/members`, { userIds: [m.user.id] })
-        expect([refused.status, refused.json.error]).toEqual([409, 'group_synced'])
-        const missing = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, { userIds: [m.user.id, '01ZZZZZZZZ'] })
-        expect([missing.status, missing.json.error, missing.json.missing]).toEqual([404, 'user_not_found', ['01ZZZZZZZZ']])
-        expect((await call(admin, 'GET', `/api/admin/groups/${local.id}`)).json.people).toBe(0)
-        const added = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, { userIds: [m.user.id, m.user.id] })
-        expect(added.json).toEqual({ added: 1, already: 0 })
-        const people = (await call(admin, 'GET', `/api/admin/groups/${local.id}/members`)).json.items as { userId: string; from: unknown[] }[]
-        expect(people.map((p) => [p.userId, p.from])).toEqual([[m.user.id, []]])
-        expect(((await call(m.browser, 'GET', '/api/account')).json.groups as { id: string }[]).map((x) => x.id)).toEqual([local.id])
-        const found = await call(m.browser, 'GET', `/api/groups?q=${encodeURIComponent(local.name.slice(1, 8))}`)
-        expect(found.json.groups).toEqual([{ id: local.id, name: local.name, source: 'local' }])
-        expect((await call(m.browser, 'GET', '/api/groups')).status).toBe(400)
-        expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(204)
-        expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(404)
-        await call(admin, 'DELETE', `/api/admin/groups/${local.id}`)
-        await call(admin, 'DELETE', `/api/admin/groups/${synced.id}`)
-      })
-
-      it('a group in a space gives its people the role; the union with their own; leaving through a group is refused; removal ends it', async () => {
-        const owner = await newMember(uniq('go'))
-        const person = await newMember(uniq('gq'))
-        const sp = await ownedSpace(owner, 'Shared')
-        const g = await mkGroup(uniq('Team'))
-        await call(admin, 'POST', `/api/admin/groups/${g.id}/members`, { userIds: [person.user.id] })
-        const base = `/api/spaces/${sp.id}`
-        expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
-        const refusals: [unknown, number, string][] = [
-          [{ groupId: '01ZZZZZZZZ', role: 'viewer' }, 404, 'group_not_found'],
-          [{ groupId: g.id, role: 'boss' }, 400, 'invalid'],
-        ]
-        for (const [body, status, code] of refusals) {
-          const r = await call(owner.browser, 'POST', `${base}/groups`, body)
-          expect([r.status, r.json.error], JSON.stringify(body)).toEqual([status, code])
-        }
-        const mine = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
-        expect((await call(owner.browser, 'POST', `/api/spaces/${mine.id}/groups`, { groupId: g.id, role: 'viewer' })).json.error).toBe('personal_space')
-        const added = await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'editor' })
-        expect(added.status).toBe(201)
-        expect(added.json).toEqual({ groupId: g.id, name: g.name, source: 'local', role: 'editor', people: 1, yours: false })
-        expect((await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'viewer' })).json.error).toBe('exists')
-        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '', viaGroups: true, permissions: ['read', 'write'] })
-        // Members and groups of the space, and everyone who can reach it.
-        const listed = (await call(person.browser, 'GET', `${base}/members`)).json as { members: Member[]; groups: { groupId: string; yours: boolean }[] }
-        expect(listed.members.map((x) => x.userId)).toEqual([owner.user.id])
-        expect(listed.groups.map((x) => [x.groupId, x.yours])).toEqual([[g.id, true]])
-        const eff = (await call(person.browser, 'GET', `${base}/members/effective`)).json.items as { userId: string; role: string; directRole: string }[]
-        expect(eff.map((x) => [x.userId, x.role, x.directRole]).sort()).toEqual([[owner.user.id, 'owner', 'owner'], [person.user.id, 'editor', '']].sort())
-        // Cannot leave: not a member of one's own.
-        const leave = await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)
-        expect([leave.status, leave.json.error]).toEqual([409, 'member_via_group'])
-        // Direct viewer and editor through the group: the union, then the direct membership goes and the group's role stays.
-        await addMember(owner, sp.id, person.user.username, 'viewer')
-        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: 'viewer', viaGroups: true })
-        expect((await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)).status).toBe(204)
-        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '' })
-        // The role of the group changes; the group leaves the space.
-        expect((await call(owner.browser, 'PATCH', `${base}/groups/${g.id}`, { role: 'viewer' })).json.role).toBe('viewer')
-        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'viewer', permissions: ['read'] })
-        expect((await call(owner.browser, 'PATCH', `${base}/groups/01ZZZZZZZZ`, { role: 'viewer' })).status).toBe(404)
-        // Deleting a group that is in a space needs force.
-        const inUse = await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)
-        expect([inUse.status, inUse.json.error, inUse.json.spaces]).toEqual([409, 'group_in_use', 1])
-        expect((await call(owner.browser, 'DELETE', `${base}/groups/${g.id}`)).status).toBe(204)
-        expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
-        expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
-      })
-    })
-
-    describe('tenants and layered settings (3.3)', () => {
-      const slugOf = (p: string) => `${p}${run}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)
-
-      it('the user object says whether a person is a site administrator and which tenant they are in', async () => {
-        const me = (await call(admin, 'GET', '/api/session')).json.user as User
-        expect(me.siteAdmin).toBe(true)
-        expect(me.tenant?.slug).toBe('default')
-        const m = await newMember(uniq('tm'))
-        expect(m.user.siteAdmin).toBe(false)
-        expect(m.user.tenant?.id).toBe('0000000000')
-        // Only site administrators reach the server's own settings and the tenants.
-        for (const path of ['/api/admin/tenancy', '/api/admin/tenants', '/api/admin/settings']) expect((await call(m.browser, 'GET', path)).status, path).toBe(403)
-        expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
-      })
-
-      it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {
-        const mail = (await call(admin, 'GET', '/api/admin/mail')).json
-        // A server this suite runs against has not been given SMTP.
-        expect(mail.enabled).toBe(false)
-        expect(mail).toMatchObject({ security: 'starttls', hasPassword: false })
-        const anon = browser()
-        expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false })
-        const pr = (await call(anon, 'GET', '/api/auth/providers')).json
-        expect([pr.register, pr.forgot]).toEqual([false, false])
-        expect((await call(anon, 'POST', '/api/password/forgot', { login: 'nobody' })).json.error).toBe('password_reset_off')
-        expect((await call(anon, 'POST', '/api/register', { username: 'x1', name: 'x', email: 'x@example.test', password: 'a-long-password' })).json.error).toBe('registration_closed')
-        expect((await call(anon, 'POST', '/api/email/confirm', { token: 'nope' })).json.error).toBe('not_found')
-        expect((await call(admin, 'PUT', '/api/admin/settings/registration.open', { value: true })).json.error).toBe('mail_not_configured')
-        expect((await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error).toBe('mail_insecure')
-        const m = await newMember(uniq('ml'))
-        for (const [method, path] of [['GET', '/api/admin/mail'], ['PUT', '/api/admin/mail'], ['POST', '/api/admin/mail/test']] as const) expect((await call(m.browser, method, path, method === 'GET' ? undefined : {})).status, path).toBe(403)
-      })
-
-      it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
-        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
-        try {
-          expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: false })).status).toBe(200)
-          const slug = slugOf('tn')
-          expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })).json.error).toBe('tenants_off')
-          expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })).json.enabled).toBe(true)
-          const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: 'A', name: 'x' })
-          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
-          const made = await call(admin, 'POST', '/api/admin/tenants', { slug, name: ' Acme ' })
-          expect(made.status).toBe(201)
-          const t = made.json as { id: string; slug: string; name: string; default: boolean; disabled: boolean }
-          expect([t.slug, t.name, t.default, t.disabled]).toEqual([slug, 'Acme', false, false])
-          expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Again' })).json.error).toBe('exists')
-          const list = (await call(admin, 'GET', '/api/admin/tenants?limit=200')).json as { items: { id: string; default: boolean }[] }
-          expect(list.items[0].default).toBe(true)
-          expect(list.items.some((x) => x.id === t.id)).toBe(true)
-          const renamed = await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { name: 'Acme Two', disabled: true })
-          expect([renamed.json.name, renamed.json.disabled]).toEqual(['Acme Two', true])
-          expect((await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { mood: 1 })).status).toBe(400)
-          expect((await call(admin, 'GET', '/api/admin/tenants/01ZZZZZZZZ')).json.error).toBe('not_found')
-          for (const body of [{ disabled: true }]) expect((await call(admin, 'PATCH', '/api/admin/tenants/0000000000', body)).json.error).toBe('default_tenant')
-          expect((await call(admin, 'DELETE', '/api/admin/tenants/0000000000')).json.error).toBe('default_tenant')
-          expect((await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)).status).toBe(204)
-          expect((await call(admin, 'GET', `/api/admin/tenants/${t.id}`)).status).toBe(404)
-        } finally {
-          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
-        }
-      })
-
-      it('settings by layer: values are checked, a lock refuses the tenant, a restriction caps it, and what a lock hides is kept', async () => {
-        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
-        await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
-        const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('ts'), name: 'Settings' })).json as { id: string }
-        const site = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/settings/${key}`, body)
-        const mine = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/${key}`, body)
-        const view = async () => ((await call(admin, 'GET', `/api/admin/tenants/${t.id}/settings`)).json.settings as { key: string; effective: unknown; tenant: { value: unknown; inEffect: boolean }; site: { lower: { mode: string } } }[]).find((x) => x.key === 'registration.perHour')!
-        try {
-          expect((await site('registration.perHour', { value: 0 })).json.error).toBe('invalid')
-          expect((await site('no.such.setting', { value: 1 })).status).toBe(404)
-          // Registration cannot be opened while mail is not enabled; a tenant cannot touch what the site locks.
-          expect((await site('registration.open', { value: true })).json.error).toBe('mail_not_configured')
-          expect((await mine('registration.open', { value: true })).json.error).toBe('setting_locked')
-          // The site's rule for perHour: at most 50. A tenant above it is refused, below it is in effect.
-          expect((await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })).status).toBe(200)
-          expect((await mine('registration.perHour', { value: 80 })).json.error).toBe('setting_restricted')
-          expect((await mine('registration.perHour', { value: 30 })).status).toBe(200)
-          expect((await view()).effective).toBe(30)
-          // Tightened to 10: the tenant's 30 is kept, not in effect, and the answer counts the tenants.
-          const tight = await site('registration.perHour', { lower: { mode: 'restrict', max: 10 } })
-          expect(tight.json.affected).toBeGreaterThanOrEqual(1)
-          const v = await view()
-          expect([v.tenant.value, v.tenant.inEffect]).toEqual([30, false])
-          // Loosened again: it counts again.
-          await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })
-          expect((await view()).tenant.inEffect).toBe(true)
-          expect((await mine('registration.perHour', { value: null })).status).toBe(200)
-          expect((await mine('registration.perHour', { lower: { mode: 'restrict', max: 60 } })).json.error).toBe('setting_restricted')
-        } finally {
-          await site('registration.perHour', { lower: null })
-          await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
-          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
-        }
-      })
-
-      it("the daily text's switches are the layered settings daily.own and daily.api; GET /api/settings says who keeps them off", async () => {
-        const m = await newMember(uniq('ts'))
-        const read = async (key: string) => (((await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; site: { value: unknown } }[]).find((x) => x.key === key))!.site.value
-        const was = await read('daily.own')
-        try {
-          expect((await call(admin, 'PUT', '/api/admin/daily', { allow: { own: false } })).status).toBe(200)
-          expect(await read('daily.own')).toBe(false)
-          const mineAll = (await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string; effective: unknown; space?: { canChange: boolean; inEffect: boolean; source?: string } }[]
-          const own = mineAll.find((x) => x.key === 'daily.own')!
-          expect([own.effective, own.space?.canChange, own.space?.inEffect, own.space?.source]).toEqual([false, false, false, 'site'])
-          expect((await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: true })).status).toBe(200)
-          const back = (await call(admin, 'GET', '/api/admin/daily')).json as { allow: { own: boolean } }
-          expect(back.allow.own).toBe(true)
-        } finally {
-          await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: was })
-        }
-      })
-    })
-
-    describe('quotas and usage (3.3)', () => {
-      const slugOf = (p: string) => `${p}${run}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)
-      type Row = { used: number; limit: number | null }
-
-      it('GET /api/account/usage is the caller\'s own spaces, bytes and pages against their limits', async () => {
-        const m = await newMember(uniq('qa'))
-        const r = await call(m.browser, 'GET', '/api/account/usage')
-        expect(r.status).toBe(200)
-        const u = r.json as unknown as { spaces: Row; bytes: Row; pages: Row; measuredAt: string | null; notices: unknown[] }
-        // The personal space is one; nothing is measured on the request path, and nothing is limited unless an administrator said so.
-        expect(u.spaces.used).toBe(1)
-        expect(typeof u.spaces.limit === 'number' || u.spaces.limit === null).toBe(true)
-        expect(u.bytes.used).toBeGreaterThanOrEqual(0)
-        expect(u.pages.used).toBeGreaterThanOrEqual(0)
-        expect(u.notices).toEqual([])
-        expect(typeof u.measuredAt === 'string' || u.measuredAt === null).toBe(true)
-        // Signed in only.
-        expect((await call(browser(), 'GET', '/api/account/usage')).status).toBe(401)
-      })
-
-      it('GET /api/admin/usage lists people with their numbers, limits and own limits; it is checked, and for administrators only', async () => {
-        const m = await newMember(uniq('qb'))
-        const list = await call(admin, 'GET', '/api/admin/usage?limit=200')
-        expect(list.status).toBe(200)
-        const items = list.json.items as { user: { id: string; username: string; name: string }; tenant: string; spaces: number; bytes: number; pages: number; limits: Record<string, number | null>; own: Record<string, number | null>; over: string[]; measuredAt: string | null }[]
-        expect(items.length).toBeGreaterThan(0)
-        for (let i = 1; i < items.length; i++) expect(items[i].bytes).toBeLessThanOrEqual(items[i - 1].bytes)
-        const mine = items.find((x) => x.user.id === m.user.id)
-        // Found on the first page unless the server has more than 200 people with more bytes than this one.
-        if (mine) {
-          expect(mine.spaces).toBe(1)
-          expect(Object.keys(mine.limits).sort()).toEqual(['bytes', 'pages', 'spaces'])
-          expect(mine.own).toEqual({ spaces: null, bytes: null, pages: null })
-          expect(mine.over).toEqual([])
-        }
-        expect(typeof list.json.next).toBe('string')
-        expect((await call(admin, 'GET', '/api/admin/usage?limit=0')).status).toBe(400)
-        expect((await call(admin, 'GET', '/api/admin/usage?over=yes')).status).toBe(400)
-        expect((await call(admin, 'GET', '/api/admin/usage?tenant=01ZZZZZZZZ')).json.error).toBe('not_found')
-        expect((await call(m.browser, 'GET', '/api/admin/usage')).status).toBe(403)
-      })
-
-      it('quota on PATCH /api/users/{id} sets a person\'s own limits; the number of spaces is the one refused, with what ran out', async () => {
-        const m = await newMember(uniq('qc'))
-        const path = `/api/users/${m.user.id}`
-        expect((await call(m.browser, 'PATCH', path, { quota: { spaces: 5 } })).status).toBe(403)
-        for (const bad of ['x', { disk: 1 }, { spaces: -1 }, { spaces: 10001 }, { bytes: 0 }, { pages: 1.5 }, { bytes: '1' }]) {
-          const r = await call(admin, 'PATCH', path, { quota: bad })
-          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
-        }
-        const set = await call(admin, 'PATCH', path, { quota: { spaces: 1 } })
-        expect(set.status).toBe(200)
-        expect((set.json.user as User).quota).toEqual({ spaces: 1, bytes: null, pages: null })
-        try {
-          // The personal space is the one they may have.
-          const refused = await call(m.browser, 'POST', '/api/spaces', { name: 'One too many' })
-          expect([refused.status, refused.json.error, refused.json.quota, refused.json.limit, refused.json.used]).toEqual([403, 'quota_exceeded', 'spaces', 1, 1])
-          expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toEqual({ used: 1, limit: 1 })
-          const raised = await call(admin, 'PATCH', path, { quota: { spaces: 3, pages: 100000 } })
-          expect((raised.json.user as User).quota).toEqual({ spaces: 3, bytes: null, pages: 100000 })
-          expect((await call(m.browser, 'POST', '/api/spaces', { name: 'Allowed now' })).status).toBe(201)
-          // 0 is no limit; null follows the tenant and the site again.
-          expect((await call(admin, 'PATCH', path, { quota: { spaces: 0 } })).status).toBe(200)
-          expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toMatchObject({ used: 2, limit: null })
-        } finally {
-          const cleared = await call(admin, 'PATCH', path, { quota: { spaces: null, bytes: null, pages: null } })
-          expect((cleared.json.user as User).quota).toEqual({ spaces: null, bytes: null, pages: null })
-        }
-        const listed = ((await call(admin, 'GET', '/api/users')).json.users as User[]).find((x) => x.id === m.user.id)
-        expect(listed?.quota).toEqual({ spaces: null, bytes: null, pages: null })
-      })
-
-      it('the quotas are layered settings with a person layer, checked like the others; a tenant says what it uses', async () => {
-        const settings = (await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; kind: string; layers: string[]; site: { value: unknown } }[]
-        for (const key of ['quota.spacesPerPerson', 'quota.bytesPerPerson', 'quota.pagesPerPerson']) {
-          const d = settings.find((x) => x.key === key)
-          expect([d?.kind, d?.layers]).toEqual(['limit', ['site', 'tenant', 'person']])
-        }
-        expect((await call(admin, 'PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 0 })).json.error).toBe('invalid')
-        expect((await call(admin, 'PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 10001 })).json.error).toBe('invalid')
-        // A person has no use for the layer: it is not among what GET /api/settings offers.
-        const m = await newMember(uniq('qd'))
-        expect(((await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string }[]).some((x) => x.key.startsWith('quota.'))).toBe(false)
-        const tenant = (await call(admin, 'GET', '/api/admin/tenants/0000000000')).json as unknown as { usage: { people: number; spaces: number; bytes: number; pages: number; measuredAt: string | null; over: string[] } }
-        expect(tenant.usage.people).toBeGreaterThanOrEqual(1)
-        expect(tenant.usage.spaces).toBeGreaterThanOrEqual(1)
-        expect(Array.isArray(tenant.usage.over)).toBe(true)
-        expect('measuredAt' in tenant.usage).toBe(true)
-      })
-
-      it('a new tenant\'s first administrator\'s invite fills in the form that accepts it; nothing is mailed', async () => {
-        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
-        await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
-        const username = uniq('qa')
-        const made = await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('qi'), name: 'Invite', admin: { username, name: 'First Admin', email: 'first@example.test' } })
-        expect(made.status).toBe(201)
-        const tenantId = made.json.id as string
-        const inv = made.json.invite as { id: string; token: string; role: string; username: string; name: string; email: string }
-        try {
-          expect([inv.role, inv.username, inv.name, inv.email]).toEqual(['admin', username, 'First Admin', 'first@example.test'])
-          const check = await call(browser(), 'POST', '/api/invites/check', { token: inv.token })
-          expect(check.status).toBe(200)
-          expect([check.json.role, check.json.username, check.json.name, check.json.email]).toEqual(['admin', username, 'First Admin', 'first@example.test'])
-          // An invite without a fill has nothing in them.
-          const plain = (await call(admin, 'POST', '/api/invites', { role: 'member' })).json as { id: string; token: string }
-          const empty = await call(browser(), 'POST', '/api/invites/check', { token: plain.token })
-          expect([empty.json.username ?? '', empty.json.name ?? '', empty.json.email ?? '']).toEqual(['', '', ''])
-          await call(admin, 'DELETE', `/api/invites/${plain.id}`)
-          const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('qj'), name: 'Bad', admin: { username, email: 'not-an-address' } })
-          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
-        } finally {
-          await call(admin, 'DELETE', `/api/invites/${inv.id}`)
-          await call(admin, 'DELETE', `/api/admin/tenants/${tenantId}`)
-          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
-        }
-      })
-    })
-
-    describe('members and permissions', () => {
-      it('adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member\'s own list', async () => {
-        const owner = await newMember(uniq('mo'))
-        const guest = await newMember(uniq('mg'))
-        const sp = await ownedSpace(owner, 'Shared')
-        expect(sp).toMatchObject({ role: 'owner', permissions: ['read', 'write', 'members', 'manage'], disabled: false })
-        // Not a member yet: not even found.
-        expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
-        const added = await addMember(owner, sp.id, guest.user.username.toUpperCase(), 'viewer')
-        expect(added).toEqual({ userId: guest.user.id, username: guest.user.username, name: guest.user.name, role: 'viewer', you: false })
-        const list = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
-        expect(list.map((m) => [m.userId, m.role, m.you])).toEqual([
-          [owner.user.id, 'owner', true],
-          [guest.user.id, 'viewer', false],
-        ])
-        expect(await roleOf(guest.browser, sp.id)).toMatchObject({ role: 'viewer', permissions: ['read'], disabled: false })
-        // The role changes at the member's very next request.
-        const changed = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, { role: 'editor' })
-        expect(changed.status).toBe(200)
-        expect(changed.json).toMatchObject({ userId: guest.user.id, role: 'editor', you: false })
-        expect(await roleOf(guest.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
-        // Removed: the space is gone for them, at once.
-        expect((await call(owner.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(204)
-        expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
-        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
-      })
-
-      it('refuses what it should: an unknown user 404 user_not_found, a member already 409 exists, a role that is none 400 invalid, a personal space 409 personal_space', async () => {
-        const owner = await newMember(uniq('me'))
-        const guest = await newMember(uniq('mf'))
-        const sp = await ownedSpace(owner, 'Rules')
-        const add = (username: string, role: string, space = sp.id) => call(owner.browser, 'POST', `/api/spaces/${space}/members`, { username, role })
-        const unknown = await add(uniq('nobody'), 'viewer')
-        expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
-        await addMember(owner, sp.id, guest.user.username, 'viewer')
-        const twice = await add(guest.user.username, 'editor')
-        expect([twice.status, twice.json.error]).toEqual([409, 'exists'])
-        const own = await add(owner.user.username, 'editor')
-        expect([own.status, own.json.error]).toEqual([409, 'exists'])
-        const bad = await add(guest.user.username, 'boss', (await ownedSpace(owner, 'Rules 2')).id)
-        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
-        const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
-        const shared = await add(guest.user.username, 'viewer', personal.id)
-        expect([shared.status, shared.json.error]).toEqual([409, 'personal_space'])
-        const notMember = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/01ZZZZZZZZ`, { role: 'viewer' })
-        expect([notMember.status, notMember.json.error]).toEqual([404, 'not_found'])
-        const badRole = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, { role: 'boss' })
-        expect([badRole.status, badRole.json.error]).toEqual([400, 'invalid'])
-      })
-
-      it('a space keeps an owner: the only owner can neither be demoted nor removed (409 last_owner), until there is another', async () => {
-        const owner = await newMember(uniq('lx'))
-        const second = await newMember(uniq('lw'))
-        const sp = await ownedSpace(owner, 'Owners')
-        const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
-        const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
-        expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
-        const leave = await call(owner.browser, 'DELETE', self)
-        expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
-        expect((await roleOf(owner.browser, sp.id))!.role).toBe('owner')
-        await addMember(owner, sp.id, second.user.username, 'owner')
-        expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
-        // The new owner is the last one now.
-        const last = await call(second.browser, 'DELETE', `/api/spaces/${sp.id}/members/${second.user.id}`)
-        expect([last.status, last.json.error]).toEqual([409, 'last_owner'])
-      })
-
-      it('any member may leave a space, a viewer too; someone else\'s removal needs the members permission', async () => {
-        const owner = await newMember(uniq('lv'))
-        const viewer = await newMember(uniq('vw'))
-        const editor = await newMember(uniq('ed'))
-        const sp = await ownedSpace(owner, 'Leaving')
-        await addMember(owner, sp.id, viewer.user.username, 'viewer')
-        await addMember(owner, sp.id, editor.user.username, 'editor')
-        const other = await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)
-        expect([other.status, other.json.error]).toEqual([403, 'no_permission'])
-        expect((await call(viewer.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)).status).toBe(204)
-        expect((await call(viewer.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
-        expect((await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${editor.user.id}`)).status).toBe(204)
-        const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
-        expect(left.map((m) => m.userId)).toEqual([owner.user.id])
-      })
-
-      it('a viewer reads but is refused every write with 403 no_permission; an editor writes but cannot manage or add members', async () => {
-        const owner = await newMember(uniq('wo'))
-        const viewer = await newMember(uniq('wv'))
-        const editor = await newMember(uniq('we'))
-        const sp = await ownedSpace(owner, 'Writes')
-        await addMember(owner, sp.id, viewer.user.username, 'viewer')
-        await addMember(owner, sp.id, editor.user.username, 'editor')
-        const base = `/api/spaces/${sp.id}`
-        const page = await call(owner.browser, 'POST', `${base}/pages`, { meta: { title: '读得到' }, body: '正文\n' })
-        expect(page.status).toBe(201)
-        for (const path of [`${base}/pages`, `${base}/pages/${page.json.id}`, `${base}/tree`, `${base}/tags`, `${base}/members`, `${base}/views?folder=`, `${base}/pages/groups?folder=&key=status`, `${base}/templates`]) {
-          expect((await call(viewer.browser, 'GET', path)).status, `viewer GET ${path}`).toBe(200)
-        }
-        const writes: [string, string, unknown][] = [
-          ['POST', `${base}/pages`, { body: 'x' }],
-          ['PUT', `${base}/pages/${page.json.id}`, { baseRev: page.json.rev, meta: page.json.meta, body: '改\n' }],
-          ['PUT', `${base}/pages/${page.json.id}/draft`, { baseRev: page.json.rev, meta: page.json.meta, body: '改\n', prev: '' }],
-          ['POST', `${base}/pages/${page.json.id}/move`, { folder: 'x' }],
-          ['DELETE', `${base}/pages/${page.json.id}`, undefined],
-          ['POST', `${base}/pages/batch`, { op: 'delete', ids: [page.json.id] }],
-          ['POST', `${base}/folders`, { path: 'x' }],
-          ['PUT', `${base}/tags/blue`, { color: 'red' }],
-          ['PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } }],
-          ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
-          ['DELETE', `${base}/types/task`, undefined],
-          ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
-          ['PUT', `${base}/views`, { folder: '', baseRev: '0'.repeat(40), views: [] }],
-          ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
-          ['DELETE', `${base}/templates/日记?baseRev=x`, undefined],
-          ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
-          ['PATCH', base, { name: '改名' }],
-          ['POST', `${base}/reindex`, undefined],
-          ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
-        ]
-        for (const [method, path, body] of writes) {
-          const r = await call(viewer.browser, method, path, body ?? {})
-          expect([r.status, r.json?.error], `viewer ${method} ${path}`).toEqual([403, 'no_permission'])
-        }
-        // The page is as it was.
-        const still = await call(owner.browser, 'GET', `${base}/pages/${page.json.id}`)
-        expect(still.json).toMatchObject({ rev: page.json.rev, body: '正文\n' })
-
-        const made = await call(editor.browser, 'POST', `${base}/pages`, { meta: { title: '编辑者写的' }, body: 'x\n' })
-        expect(made.status).toBe(201)
-        expect((await call(editor.browser, 'PUT', `${base}/tags/blue`, { color: 'red' })).status).toBe(200)
-        // An editor writes properties of a page, and reads the types; making one needs `manage`.
-        const patched = await call(editor.browser, 'PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } })
-        expect([patched.status, patched.json.meta.status]).toEqual([200, 'x'])
-        expect((await call(editor.browser, 'GET', `${base}/types`)).status).toBe(200)
-        // Templates are made by those who manage; whoever writes pages makes pages from them.
-        const tpl = await call(owner.browser, 'PUT', `${base}/templates/日记`, { baseRev: '', meta: { title: '日记 {{date}}' }, body: '今天\n' })
-        expect(tpl.status).toBe(200)
-        expect((await call(viewer.browser, 'GET', `${base}/templates/日记`)).json.rev).toBe(tpl.json.rev)
-        const fromTemplate = await call(editor.browser, 'POST', `${base}/pages`, { template: '日记', tz: 0 })
-        expect([fromTemplate.status, fromTemplate.json.body]).toEqual([201, '今天\n'])
-        // Views are a shared arrangement of pages: whoever may write pages may save them.
-        const noViews = await call(editor.browser, 'GET', `${base}/views?folder=`)
-        const savedViews = await call(editor.browser, 'PUT', `${base}/views`, { folder: '', baseRev: noViews.json.rev, views: [{ name: '全部', layout: 'cards' }] })
-        expect([savedViews.status, savedViews.json.views[0].name]).toEqual([200, '全部'])
-        expect((await call(viewer.browser, 'GET', `${base}/views?folder=`)).json).toEqual(savedViews.json)
-        for (const [method, path, body] of [
-          ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
-          ['DELETE', `${base}/types/task`, {}],
-          ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
-          ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
-          ['DELETE', `${base}/templates/日记?baseRev=x`, {}],
-          ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
-          ['PATCH', base, { name: '改名' }],
-          ['POST', `${base}/reindex`, {}],
-          ['POST', `${base}/members`, { username: viewer.user.username, role: 'editor' }],
-          ['PATCH', `${base}/members/${viewer.user.id}`, { role: 'editor' }],
-        ] as [string, string, unknown][]) {
-          const r = await call(editor.browser, method, path, body)
-          expect([r.status, r.json?.error], `editor ${method} ${path}`).toEqual([403, 'no_permission'])
-        }
-      })
-    })
-
-    describe('administration', () => {
-      const adminPaths: [string, string, unknown?][] = [
-        ['GET', '/api/admin/spaces'],
-        ['GET', '/api/admin/status'],
-        ['GET', '/api/admin/security'],
-        ['PUT', '/api/admin/security', {}],
-        ['GET', '/api/admin/auth/providers'],
-        ['POST', '/api/admin/auth/providers', {}],
-        ['GET', '/api/admin/audit'],
-        ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
-        ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
-        ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
-        ['POST', '/api/admin/spaces/01ZZZZZZZZ/disable'],
-        ['POST', '/api/admin/spaces/01ZZZZZZZZ/enable'],
-        ['DELETE', '/api/admin/spaces/01ZZZZZZZZ'],
-      ]
-      const listAll = async (query = '', limit = 3) => {
-        const items: AdminSpace[] = []
-        let cursor = ''
-        for (let guard = 0; guard < 500; guard++) {
-          const r = await as(admin, () => adminApi.adminSpaces({ q: query || undefined, cursor: cursor || undefined, limit }))
-          items.push(...r.items)
-          cursor = r.next
-          if (!cursor) return items
-        }
-        throw new Error('cursor never ended')
-      }
-
-      it('is for administrators only: a member gets 403 forbidden from every endpoint, and nothing changes', async () => {
-        const m = await newMember(uniq('na'))
-        const own = await ownedSpace(m, 'Mine')
-        for (const [method, path, body] of adminPaths) {
-          const r = await call(m.browser, method, path, body ?? (method === 'GET' ? undefined : {}))
-          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
-        }
-        const real = await call(m.browser, 'POST', `/api/admin/spaces/${own.id}/disable`, {})
-        expect(real.status).toBe(403)
-        expect((await roleOf(m.browser, own.id))!.disabled).toBe(false)
-      })
-
-      it('an unknown space is 404 not_found', async () => {
-        for (const [method, path, body] of adminPaths.filter(([, p]) => p.includes('01ZZZZZZZZ'))) {
-          const r = await call(admin, method, path, body ?? (method === 'GET' ? undefined : {}))
-          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
-        }
-      })
-
-      it('lists every space in a page at a time, with its owner, members, size, sync and whether it is disabled', async () => {
-        const owner = await newMember(uniq('ls1'))
-        const guest = await newMember(uniq('ls2'))
-        const name = `Listed ${run}`
-        const sp = await ownedSpace(owner, name)
-        await addMember(owner, sp.id, guest.user.username, 'viewer')
-        const found = (await listAll(name.toLowerCase()))
-        expect(found.map((s) => s.id)).toEqual([sp.id])
-        expect(found[0]).toMatchObject({ id: sp.id, name, personal: false, disabled: false, members: 2, sync: 'local', owner: { id: owner.user.id, username: owner.user.username, name: owner.user.name } })
-        expect(typeof found[0].created).toBe('string')
-        // Not measured yet, or measured: both are shaped alike.
-        expect(found[0].sizeBytes === null ? found[0].sizeAt : typeof found[0].sizeAt).toEqual(found[0].sizeBytes === null ? null : 'string')
-        const first = await as(admin, () => adminApi.adminSpaces({ limit: 1 }))
-        expect(first.items.length).toBe(1)
-        expect(typeof first.next).toBe('string')
-        // Walking the pages meets each space once, the personal ones included.
-        const all = await listAll('', 2)
-        expect(new Set(all.map((s) => s.id)).size).toBe(all.length)
-        expect(all.map((s) => s.id)).toContain(sp.id)
-        expect(all.some((s) => s.personal)).toBe(true)
-        expect((await listAll('no-such-space-' + run)).length).toBe(0)
-        const bad = await call(admin, 'GET', '/api/admin/spaces?limit=0')
-        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
-      })
-
-      it('finds one space by its id: the same object as its item of the list, 404 for an unknown id', async () => {
-        const owner = await newMember(uniq('g1'))
-        const guest = await newMember(uniq('g2'))
-        const name = `Single ${run}`
-        const sp = await ownedSpace(owner, name)
-        await addMember(owner, sp.id, guest.user.username, 'editor')
-        const listed = (await listAll(name.toLowerCase())).find((s) => s.id === sp.id)
-        expect(listed).toBeTruthy()
-        expect(await as(admin, () => api.adminSpace(sp.id))).toEqual(listed)
-        const missing = await call(admin, 'GET', '/api/admin/spaces/01ZZZZZZZZ')
-        expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
-      })
-
-      it('measures a space on request and stores the size', async () => {
-        const owner = await newMember(uniq('sz'))
-        const sp = await ownedSpace(owner, `Sized ${run}`)
-        await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, { meta: { title: '占地方' }, body: '一些字\n' })
-        const size = await as(admin, () => adminApi.adminResizeSpace(sp.id))
-        expect(size.sizeBytes).toBeGreaterThan(0)
-        expect(typeof size.sizeAt).toBe('string')
-        const row = (await listAll(`sized ${run}`)).find((s) => s.id === sp.id)!
-        expect(row.sizeBytes).toBe(size.sizeBytes)
-        expect(row.sizeAt).toBe(size.sizeAt)
-      })
-
-      it('a member may leave a space that is switched off, though nothing else in it opens', async () => {
-        const owner = await newMember(uniq('dfo'))
-        const guest = await newMember(uniq('dfg'))
-        const sp = await ownedSpace(owner, 'Left switched off')
-        await addMember(owner, sp.id, guest.user.username, 'editor')
-        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
-        const members = await call(guest.browser, 'GET', `/api/spaces/${sp.id}/members`)
-        expect([members.status, members.json.error]).toEqual([403, 'space_disabled'])
-        expect((await call(guest.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(204)
-        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
-        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
-        const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
-        expect(left.map((m) => m.userId)).toEqual([owner.user.id])
-      })
-
-      it('the owner who must stay is one who can sign in: with the other owner disabled, the only enabled owner can neither be demoted nor leave', async () => {
-        const owner = await newMember(uniq('efo'))
-        const second = await newMember(uniq('efs'))
-        const sp = await ownedSpace(owner, 'Enabled owners')
-        await addMember(owner, sp.id, second.user.username, 'owner')
-        const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
-        await as(admin, () => adminApi.updateUser(second.user.id, { disabled: true }))
-        const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
-        expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
-        const leave = await call(owner.browser, 'DELETE', self)
-        expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
-        // Enabled again, the other owner counts: the first may step down.
-        await as(admin, () => adminApi.updateUser(second.user.id, { disabled: false }))
-        expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
-      })
-
-      it('transfers ownership: the user becomes the owner and the owners before become editors; a personal space, an unknown or a disabled user is refused', async () => {
-        const owner = await newMember(uniq('to'))
-        const heir = await newMember(uniq('th'))
-        const gone = await newMember(uniq('tg'))
-        const sp = await ownedSpace(owner, 'Handed over')
-        const transfer = (userId: string, space = sp.id) => call(admin, 'POST', `/api/admin/spaces/${space}/transfer`, { userId })
-        const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
-        const p = await transfer(heir.user.id, personal.id)
-        expect([p.status, p.json.error]).toEqual([409, 'personal_space'])
-        const unknown = await transfer('01ZZZZZZZZ')
-        expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
-        await as(admin, () => adminApi.updateUser(gone.user.id, { disabled: true }))
-        const off = await transfer(gone.user.id)
-        expect([off.status, off.json.error]).toEqual([409, 'user_disabled'])
-        expect((await transfer(heir.user.id)).status).toBe(204)
-        const list = (await call(heir.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
-        expect(list.map((m) => [m.userId, m.role])).toEqual([
-          [heir.user.id, 'owner'],
-          [owner.user.id, 'editor'],
-        ])
-        expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
-        expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.owner!.id).toBe(heir.user.id)
-      })
-
-      it('disables a space: it stays in its members\' lists, marked, and nothing opens it for anyone, an administrator included; enabling undoes it', async () => {
-        const owner = await newMember(uniq('do'))
-        const sp = await ownedSpace(owner, 'Switched off')
-        const page = await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, { meta: { title: '还在' }, body: 'x\n' })
-        expect(page.status).toBe(201)
-        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
-        expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'owner', disabled: true })
-        expect((await call(owner.browser, 'GET', '/api/meta')).json.spaces.find((s: SpaceInfo) => s.id === sp.id).disabled).toBe(true)
-        for (const [b, method, path] of [
-          [owner.browser, 'GET', `/api/spaces/${sp.id}/pages`],
-          [owner.browser, 'GET', `/api/spaces/${sp.id}/tree`],
-          [owner.browser, 'POST', `/api/spaces/${sp.id}/pages`],
-          [admin, 'GET', `/api/spaces/${sp.id}/pages`],
-        ] as [Browser, string, string][]) {
-          const r = await call(b, method, path, method === 'GET' ? undefined : { body: 'x' })
-          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'space_disabled'])
-        }
-        // The administration itself still reaches it.
-        expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.disabled).toBe(true)
-        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/size`, {})).status).toBe(200)
-        expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
-        expect((await roleOf(owner.browser, sp.id))!.disabled).toBe(false)
-        const again = await call(owner.browser, 'GET', `/api/spaces/${sp.id}/pages/${page.json.id}`)
-        expect(again.status).toBe(200)
-        expect(again.json.meta.title).toBe('还在')
-      })
-
-      it('deletes a space (the files go to the trash, not away); a personal space cannot be deleted', async () => {
-        const owner = await newMember(uniq('de'))
-        const guest = await newMember(uniq('dg'))
-        const sp = await ownedSpace(owner, 'To be deleted')
-        await addMember(owner, sp.id, guest.user.username, 'viewer')
-        const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
-        const refused = await call(admin, 'DELETE', `/api/admin/spaces/${personal.id}`)
-        expect([refused.status, refused.json.error]).toEqual([409, 'personal_space'])
-        const done = await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)
-        expect(done.status).toBe(200)
-        expect(done.json.trashed).toMatch(/^trash\//)
-        expect(done.json.trashed).toContain(sp.id)
-        expect(typeof done.json.cacheTrashed).toBe('string')
-        expect(done.json.warnings).toEqual([])
-        for (const b of [owner.browser, guest.browser, admin]) expect((await call(b, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
-        expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
-        expect((await listAll('to be deleted')).some((s) => s.id === sp.id)).toBe(false)
-        expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(404)
-      })
-
-      it('reports the server\'s status', async () => {
-        const st = await as(admin, () => adminApi.adminStatus())
-        expect(typeof st.version).toBe('string')
-        expect(Number.isNaN(Date.parse(st.startedAt))).toBe(false)
-        expect(st.uptimeSeconds).toBeGreaterThanOrEqual(0)
-        expect(['sqlite', 'postgres']).toContain(st.database)
-        expect(st.spaces).toBeGreaterThanOrEqual(1)
-        expect(st.users).toBeGreaterThanOrEqual(1)
-        expect(st.openSpaces).toBeGreaterThanOrEqual(0)
-        expect(typeof st.goVersion).toBe('string')
-        if (st.diskFreeBytes !== undefined) expect(st.diskFreeBytes).toBeGreaterThanOrEqual(0)
-      })
-    })
-
-    // The administrators' re-check and one-click App creation are site-only, on a real server and in the mock alike;
-    // without an App there is nothing to check (what they do with one is below, against the mock's GitHub).
-    describe('the App re-check and creation endpoints', () => {
-      it('are for site administrators, and a re-check needs an App', async () => {
-        const m = await newMember(uniq('ghc'))
-        for (const [path, body] of [
-          ['/api/admin/connections/github/check', {}],
-          ['/api/admin/connections/github/manifest', {}],
-        ] as const) {
-          const r = await call(m.browser, 'POST', path, body)
-          expect([r.status, r.json?.error], path).toEqual([403, 'forbidden'])
-        }
-        const none = await call(admin, 'POST', '/api/admin/connections/github/check', {})
-        expect([none.status, none.json?.error]).toEqual([409, 'provider_not_configured'])
-      })
-    })
-
-    // GitHub (docs/api.md, "GitHub"). There is no GitHub behind a real server in this setup: the mock plays it.
-    describe.skipIf(!!REAL)('GitHub (mock only)', () => {
-      const KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
-      const CLIENT = 'Iv23liMockClientId'
-      const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/connections/github', body)
-      const mockHook = (body: unknown) => call(admin, 'POST', '/api/_mock/github', body)
-      const codeOf = (r: { json: any }) => r.json?.error
-      // The GitHub provider's entry in GET /api/connections.
-      const ghProvider = async (b: Browser) => ((await call(b, 'GET', '/api/connections')).json.providers as { id: string }[]).find((p) => p.id === 'github') as any
-
-      // Plays the browser through connecting a GitHub account.
-      const connectAccount = async (b: Browser, ret = '/settings/connections') => {
-        const start = await call(b, 'POST', '/api/connections/github/authorization/start', { return: ret })
-        expect(start.status).toBe(200)
-        const cb = await call(b, 'GET', start.json.url, undefined, {})
-        return cb
-      }
-
-      it('starts with no App: everyone is told so, and every other endpoint answers 409 provider_not_configured', async () => {
-        const m = await newMember(uniq('gh0'))
-        const info = { json: await ghProvider(m.browser) }
-        expect(info.json).toMatchObject({ id: 'github', configured: false, app: null, userAuthorization: false, connection: null, leftovers: [] })
-        const off = await call(admin, 'GET', '/api/admin/connections/github')
-        expect(off.json).toMatchObject({ configured: false })
-        expect(off.json.callbackUrl).toMatch(/\/api\/connections\/github\/authorization\/callback$/)
-        for (const [method, path, body] of [
-          ['POST', '/api/connections/github/authorization/start', {}],
-          ['GET', '/api/connections/github/owners'],
-          ['GET', '/api/connections/github/repos?mine=true'],
-          ['GET', '/api/admin/connections/github/installations'],
-          ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
-        ] as const) {
-          const r = await call(method.startsWith('P') && path.startsWith('/api/admin') ? admin : path.startsWith('/api/admin') ? admin : m.browser, method, path, body)
-          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'provider_not_configured'])
-        }
-        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Gh', storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'x' } } })
-        expect([sp.status, codeOf(sp)]).toEqual([409, 'provider_not_configured'])
-      })
-
-      it('is for administrators to set up: a member gets 403, a refused check saves nothing, and no secret is ever returned', async () => {
-        const m = await newMember(uniq('gh1'))
-        for (const [method, path, body] of [
-          ['GET', '/api/admin/connections/github'],
-          ['PUT', '/api/admin/connections/github', {}],
-          ['DELETE', '/api/admin/connections/github'],
-          ['GET', '/api/admin/connections/github/installations'],
-        ] as const) {
-          const r = await call(m.browser, method, path, body)
-          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([403, 'forbidden'])
-        }
-        expect(codeOf(await putApp(admin, { appId: '1234567' }))).toBe('invalid')
-        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('key_invalid')
-        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' }))).toBe('client_rejected')
-        expect(((await call(admin, 'GET', '/api/admin/connections/github')).json as any).configured).toBe(false)
-        const saved = await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'a-secret' })
-        expect(saved.status).toBe(200)
-        expect(saved.json).toMatchObject({ configured: true, appId: '1234567', clientId: CLIENT, slug: 'petalbook-notes', privateKey: { set: true }, clientSecret: { set: true }, userAuthorization: true, missing: [], spaces: 0 })
-        expect(saved.json.privateKey.fingerprint).toMatch(/^SHA256:/)
-        expect(JSON.stringify(saved.json)).not.toContain('a-secret')
-        expect(JSON.stringify(saved.json)).not.toContain('PRIVATE KEY')
-        // Saving again with the key and the secret left out keeps them.
-        const again = await putApp(admin, { appId: '1234567' })
-        expect(again.json).toMatchObject({ privateKey: { set: true }, clientSecret: { set: true } })
-        const seen = { json: await ghProvider(m.browser) }
-        expect(seen.json).toMatchObject({ app: { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: expect.any(String), installUrl: expect.stringContaining('/installations/new') }, userAuthorization: true, connection: null })
-      })
-
-      it('connects an account only from the browser that started it, once, and disconnects', async () => {
-        const m = await newMember(uniq('gh2'))
-        const other = await newMember(uniq('gh3'))
-        const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections' })
-        expect(start.json.url).toContain('/api/connections/github/authorization/callback')
-        // Another browser, or no session: expired, nothing is connected.
-        const stray = await call(other.browser, 'GET', start.json.url, undefined, {})
-        expect([stray.status, stray.headers.get('Location')]).toEqual([303, '/settings?provider=github&connection_error=expired'])
-        const ok = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/connections'])
-        const replay = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect(replay.headers.get('Location')).toBe('/settings?provider=github&connection_error=expired')
-        const info = { json: await ghProvider(m.browser) }
-        expect(info.json.connection).toMatchObject({ state: 'ok', spaces: 0 })
-        expect(typeof info.json.connection.login).toBe('string')
-        expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
-        expect((await ghProvider(m.browser)).connection).toBeNull()
-        expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
-      })
-
-      it('lists the accounts to create in and the repositories to connect, a page at a time', async () => {
-        const m = await newMember(uniq('gh4'))
-        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos?mine=true'))).toBe('not_connected')
-        await connectAccount(m.browser)
-        const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
-        expect(owners.status).toBe(200)
-        expect(owners.json.items[0]).toMatchObject({ type: 'User', via: 'user', installationId: null })
-        const org = owners.json.items.find((o: any) => o.login === 'kazuhahub')
-        expect(org).toMatchObject({ type: 'Organization', via: 'user', installationId: expect.any(Number) })
-        expect(typeof owners.json.next).toBe('string')
-        const repos = await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}`)
-        expect(repos.status).toBe(200)
-        expect(repos.json.items[0]).toMatchObject({ id: expect.any(Number), fullName: expect.stringContaining('kazuhahub/'), private: expect.any(Boolean), defaultBranch: 'main', canPush: true })
-        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos'))).toBe('invalid')
-        expect(codeOf(await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}&mine=true`))).toBe('invalid')
-        expect((await call(m.browser, 'GET', '/api/connections/github/repos?installation=99')).status).toBe(404)
-        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/owners?cursor=zzz'))).toBe('invalid')
-      })
-
-      it('shares an organisation\'s installation with a tenant, and a member without a GitHub account there can then use it', async () => {
-        const list = await call(admin, 'GET', '/api/admin/connections/github/installations')
-        expect(list.status).toBe(200)
-        const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
-        expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, tenants: [], spaces: 0 })
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {}))).toBe('invalid')
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { shared: true }))).toBe('invalid')
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: ['01ZZZZZZZZ'] }))).toBe('invalid')
-        expect((await call(admin, 'PUT', '/api/admin/connections/github/installations/424242', { tenants: [] })).status).toBe(404)
-        const put = await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: ['0000000000'] })
-        expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
-        const m = await newMember(uniq('gh5'))
-        const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
-        expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id, needsInstall: false }])
-        const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, storage: { sync: { provider: 'github', owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } } })
-        expect(made.status).toBe(201)
-        const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-        expect(remote.json).toMatchObject({ state: 'ok', errorCode: '', credential: { type: 'connection', provider: 'github', via: 'app', installationId: item.id, account: 'petal-team' } })
-        // The App cannot be removed while a space syncs through it.
-        expect(codeOf(await call(admin, 'DELETE', '/api/admin/connections/github'))).toBe('provider_in_use')
-        await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
-        expect((await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: [] })).json.tenants).toEqual([])
-      })
-
-      it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {
-        const m = await newMember(uniq('gh6'))
-        await connectAccount(m.browser)
-        const body = (extra: Record<string, unknown>) => ({ name: `Repo ${run}`, storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `notes-${run}`, ...extra } } })
-        const made = await call(m.browser, 'POST', '/api/spaces', body({ private: true, description: 'Notes' }))
-        expect(made.status).toBe(201)
-        expect(made.headers.get('Location')).toBe(`/api/spaces/${made.json.id}`)
-        expect(made.json.sync).toBe('ok')
-        const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-        expect(remote.json).toMatchObject({ url: `https://github.com/kazuhahub/notes-${run}.git`, branch: 'main', state: 'ok', errorCode: '', credential: { type: 'connection', provider: 'github', via: 'app', account: 'kazuhahub', repoId: expect.any(Number) } })
-        expect(JSON.stringify(remote.json)).not.toMatch(/token|secret/i)
-        // The same name again: taken; create: false uses it.
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('name_taken')
-        expect((await call(m.browser, 'POST', '/api/spaces', body({ create: false }))).status).toBe(201)
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', { name: 'x', storage: { sync: { provider: 'github', owner: 'nobody-here', name: 'x' } } }))).toBe('owner_not_allowed')
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({ name: 'bad name' })))).toBe('invalid')
-        expect((await mockHook({ trap: 'noPermission' })).status).toBe(200)
-        const refused = await call(m.browser, 'POST', '/api/spaces', body({ name: `other-${run}` }))
-        expect([refused.status, codeOf(refused)]).toEqual([403, 'provider_refused'])
-        await mockHook({ trap: 'noPermission', on: false })
-        const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
-        expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
-      })
-
-      it('reminds a person of an empty repository a failed space left, until a space connects to it or they dismiss it', async () => {
-        const m = await newMember(uniq('gh6b'))
-        const other = await newMember(uniq('gh6c'))
-        await connectAccount(m.browser)
-        expect((await ghProvider(m.browser)).leftovers).toEqual([])
-        const body = (name: string, create = true) => ({ name: 'Kept', storage: { sync: { provider: 'github', owner: 'kazuhahub', name, create } } })
-        await mockHook({ trap: 'pushFails' })
-        const failed = await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`))
-        expect([failed.status, codeOf(failed)]).toEqual([502, 'push_failed'])
-        const second = await call(m.browser, 'POST', '/api/spaces', body(`left2-${run}`))
-        await mockHook({ trap: 'pushFails', on: false })
-        const list = (await ghProvider(m.browser)).leftovers
-        expect(list).toHaveLength(2)
-        expect(list[1]).toMatchObject({ repoId: failed.json.repo.id, fullName: `kazuhahub/left-${run}`, htmlUrl: failed.json.repo.htmlUrl, spaceName: 'Kept', created: expect.stringMatching(/Z$/) })
-        // Newest first, and only the person's own.
-        expect(list[0].repoId).toBe(second.json.repo.id)
-        expect((await ghProvider(other.browser)).leftovers).toEqual([])
-        // A connection that is refused (a branch name that cannot be used) leaves the reminder.
-        const sp = await ownedSpace(m, 'Refused')
-        const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: `https://github.com/kazuhahub/left2-${run}.git`, branch: 'bad branch', credential: { type: 'connection', provider: 'github', via: 'user' } })
-        expect([refused.status, codeOf(refused)]).toEqual([400, 'invalid'])
-        expect((await ghProvider(m.browser)).leftovers).toHaveLength(2)
-        // A space connecting to the repository (here by create: false) answers its reminder.
-        expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
-        expect((await ghProvider(m.browser)).leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
-        // Dismissing is the person's own, and fine when it is gone already.
-        expect((await call(other.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
-        expect((await ghProvider(m.browser)).leftovers).toHaveLength(1)
-        expect((await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
-        expect((await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
-        expect((await ghProvider(m.browser)).leftovers).toEqual([])
-        expect((await call(m.browser, 'DELETE', '/api/connections/github/leftovers/nope')).status).toBe(404)
-      })
-
-      it('switches a space to the App or to the user\'s connection with PUT .../remote', async () => {
-        const m = await newMember(uniq('gh7'))
-        await connectAccount(m.browser)
-        const sp = await ownedSpace(m, 'Switch')
-        const put = (credential: unknown, url = 'https://github.com/kazuhahub/wiki.git') => call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url, credential })
-        expect(codeOf(await put({ type: 'connection', provider: 'github' }))).toBe('invalid')
-        expect(codeOf(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://example.com/a/b.git'))).toBe('invalid')
-        const app = await put({ type: 'connection', provider: 'github', via: 'app' }, 'git@github.com:kazuhahub/wiki.git')
-        expect(app.status).toBe(200)
-        expect(app.json).toMatchObject({ url: 'https://github.com/kazuhahub/wiki.git', credential: { type: 'connection', provider: 'github', via: 'app' } })
-        const mine = { json: await ghProvider(m.browser) }
-        expect(mine.json.connection.spaces).toBe(0)
-        const user = await put({ type: 'connection', provider: 'github', via: 'user' }, 'https://github.com/kazuhahub/notes.git')
-        expect(user.json).toMatchObject({ credential: { type: 'connection', provider: 'github', via: 'user', user: { id: m.user.id, username: m.user.username }, login: expect.any(String) } })
-        expect((await ghProvider(m.browser)).connection.spaces).toBe(1)
-        expect([(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://github.com/none/x.git')).status]).toEqual([409])
-        // An expired connection puts the space in error with a code that says why; connecting again and syncing fixes it.
-        await mockHook({ expire: true, user: m.user.id })
-        const bad = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
-        expect(bad.json).toMatchObject({ state: 'error', errorCode: 'connection_expired' })
-        expect((await ghProvider(m.browser)).connection.state).toBe('expired')
-        await connectAccount(m.browser)
-        const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
-        expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
-      })
-
-      it('connects through the installation page in one flow, and tells the personal account that needs the App', async () => {
-        const m = await newMember(uniq('gh10'))
-        const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections', install: true })
-        expect(start.status).toBe(200)
-        expect(start.json.url).toContain('setup_action=install')
-        const cb = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/connections'])
-        expect((await ghProvider(m.browser)).connection).toMatchObject({ state: 'ok' })
-        // An organisation that has to approve the installation first.
-        const asked = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections', install: true })
-        const pending = await call(m.browser, 'GET', asked.json.url.replace('setup_action=install', 'setup_action=request'), undefined, {})
-        expect(pending.headers.get('Location')).toBe('/settings?provider=github&connection_error=requested')
-        // The own account of someone the App is not installed on: marked, and refused with the way out.
-        const other = await newMember(uniq('gh11'))
-        await connectAccount(other.browser)
-        await mockHook({ trap: 'personalNeedsInstall' })
-        try {
-          const owners = await call(other.browser, 'GET', '/api/connections/github/owners')
-          expect(owners.json.items[0]).toMatchObject({ type: 'User', needsInstall: true })
-          expect(owners.json.items.filter((o: any) => o.needsInstall)).toHaveLength(1)
-          const login = owners.json.items[0].login
-          const refused = await call(other.browser, 'POST', '/api/spaces', { name: 'Own', storage: { sync: { provider: 'github', owner: login, name: `own-${run}` } } })
-          expect([refused.status, codeOf(refused)]).toEqual([409, 'app_not_installed'])
-          expect(refused.json.installUrl).toContain('/installations/new')
-        } finally {
-          await mockHook({ trap: 'personalNeedsInstall', on: false })
-        }
-        expect((await call(m.browser, 'GET', '/api/connections/github/owners')).json.items[0].needsInstall).toBe(false)
-      })
-
-      it('names the permission an App lacks, and the re-check shows what GitHub says now', async () => {
-        const m = await newMember(uniq('gh12'))
-        await connectAccount(m.browser)
-        await mockHook({ trap: 'missingPermission' })
-        try {
-          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Perm', storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `perm-${run}` } } })
-          expect([r.status, codeOf(r)]).toEqual([403, 'app_missing_permission'])
-          expect(r.json.missing).toEqual(['administration'])
-        } finally {
-          await mockHook({ trap: 'missingPermission', on: false })
-        }
-        // GitHub's side changes; the view keeps the last check until it is asked again.
-        const before = (await call(admin, 'GET', '/api/admin/connections/github')).json
-        expect(before).toMatchObject({ missing: [], gaps: [], anyAccount: true })
-        await mockHook({ side: { permissions: { administration: 'write', metadata: 'read' }, gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false } })
-        expect((await call(admin, 'GET', '/api/admin/connections/github')).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
-        const checked = await call(admin, 'POST', '/api/admin/connections/github/check', {})
-        expect(checked.status).toBe(200)
-        expect(checked.json).toMatchObject({ missing: ['contents'], gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false })
-        expect((await call(admin, 'GET', '/api/admin/connections/github')).json.missing).toEqual(['contents'])
-        await mockHook({ side: { permissions: { administration: 'write', contents: 'write', metadata: 'read' }, gaps: [], anyAccount: true } })
-        expect((await call(admin, 'POST', '/api/admin/connections/github/check', {})).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
-      })
-
-      it('checks the organisation and name before making the App, and does not replace one that is in use', async () => {
-        const m = await newMember(uniq('gh13'))
-        await connectAccount(m.browser)
-        expect(codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'a/b' }))).toBe('invalid')
-        expect(codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { name: 'x'.repeat(35) }))).toBe('invalid')
-        const used = await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'kazuhahub' })
-        expect([used.status, codeOf(used)]).toEqual([409, 'provider_in_use'])
-      })
-
-      it('puts other remotes\' error states under errorCode too', async () => {
-        // A member of their own, so the administrator's spaces stay under the default quota of 20 for the rest of the run.
-        const m = await newMember(uniq('gh9'))
-        const sp = await ownedSpace(m, 'Plain')
-        await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
-        const r = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
-        expect(r.json.errorCode).toBe('')
-      })
-    })
-
-    describe('server storage (the site\'s policy, the pin and the exemption, the requirement of a remote)', () => {
-      const settings = () => call(admin, 'GET', '/api/admin/storage')
-      // The policy is the site's: whatever a test changes is put back, also on a real server that is used again.
-      const reset = () =>
-        call(admin, 'PUT', '/api/admin/storage', {
-          remotes: { require: null, scope: 'new', graceDays: 30 },
-          localSpaces: { maxBytes: null },
-          cache: { evictAfterDays: 14, minIdleHours: 24, clonesBytes: null, minFreeBytes: 10 * 1024 ** 3 },
-        })
-      afterAll(async () => {
-        await reset()
-      })
-
-      it('has the settings an administrator reads and writes, partly, and refuses a value outside its range', async () => {
-        await reset()
-        const g = await settings()
-        expect(g.status).toBe(200)
-        expect(g.json).toMatchObject({
-          remotes: { require: null, scope: 'new', graceDays: 30, since: null },
-          hosts: { allowed: expect.any(Array), fromFlag: expect.any(Boolean) },
-          localSpaces: { maxBytes: null },
-          cache: { partial: expect.any(Boolean), evictAfterDays: 14, minIdleHours: 24, clonesBytes: null, minFreeBytes: 10 * 1024 ** 3 },
-          git: { version: expect.any(String), partialClone: expect.any(Boolean) },
-          affected: { inGrace: expect.any(Number), overdue: expect.any(Number), exempt: expect.any(Number) },
-        })
-        const put = await call(admin, 'PUT', '/api/admin/storage', { cache: { minIdleHours: 48 }, localSpaces: { maxBytes: 5 * 1024 ** 2 } })
-        expect(put.status).toBe(200)
-        expect(put.json.cache).toMatchObject({ minIdleHours: 48, evictAfterDays: 14 })
-        expect(put.json.localSpaces.maxBytes).toBe(5 * 1024 ** 2)
-        expect((await settings()).json).toEqual(put.json)
-        for (const bad of [
-          { remotes: { graceDays: 400 } },
-          { remotes: { require: 'gitlab' } },
-          { remotes: { scope: 'most' } },
-          { localSpaces: { maxBytes: 1000 } },
-          { cache: { evictAfterDays: 0 } },
-          { cache: { minIdleHours: 0 } },
-          { cache: { clonesBytes: 1024 ** 2 } },
+      it('without a session everything but meta, session and the sign-in endpoints is 401 unauthenticated', async () => {
+        const b = browser()
+        for (const [method, path] of [
+          ['GET', '/api/spaces'],
+          ['GET', `${SP_PAGES}`],
+          ['GET', `${SP_PAGES}/01ZZZZZZZZ`],
+          ['GET', `/api/spaces/${spaceId}/tree`],
+          ['GET', '/api/account'],
+          ['GET', '/api/users'],
+          ['GET', '/api/invites'],
         ]) {
-          const r = await call(admin, 'PUT', '/api/admin/storage', bad)
-          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+          const r = await call(b, method, path)
+          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([401, 'unauthenticated'])
         }
+        const meta = await call(b, 'GET', '/api/meta')
+        expect(meta.status).toBe(200)
+        expect(meta.json.spaces).toEqual([])
+        const session = await call(b, 'GET', '/api/session')
+        expect(session.status).toBe(200)
+        expect(session.json.user).toBeNull()
+        expect(session.json.setup).toBe(false)
       })
 
-      it('has the attachment cache and the default for new spaces among the settings', async () => {
-        await reset()
-        const g = await settings()
-        expect(g.json).toMatchObject({ cache: { assetsBytes: expect.any(Number) }, assets: { newSpaces: expect.any(Boolean) } })
-        const put = await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 64 * 1024 ** 2 }, assets: { newSpaces: true } })
-        expect(put.status).toBe(200)
-        expect(put.json).toMatchObject({ cache: { assetsBytes: 64 * 1024 ** 2 }, assets: { newSpaces: true } })
-        for (const bad of [{ cache: { assetsBytes: 1024 ** 2 } }, { assets: { newSpaces: 'yes' } }, { assets: { other: true } }]) {
-          const r = await call(admin, 'PUT', '/api/admin/storage', bad)
-          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+      it('login: wrong credentials are 401 with the same message whether or not the user exists', async () => {
+        const m = await newMember(uniq('lg'))
+        const b = browser()
+        const unknown = await call(b, 'POST', '/api/login', { username: uniq('nobody'), password: 'whatever-it-is' })
+        const wrong = await call(b, 'POST', '/api/login', { username: m.user.username, password: 'not-the-password' })
+        expect([unknown.status, unknown.json.error]).toEqual([401, 'unauthenticated'])
+        expect([wrong.status, wrong.json.error]).toEqual([401, 'unauthenticated'])
+        expect(wrong.json.message).toBe(unknown.json.message)
+        expect(wrong.headers.get('Set-Cookie')).toBeNull()
+      })
+
+      it('login with the right password: 200 with the user and a session cookie (HttpOnly, SameSite=Lax); upper case in the username is folded', async () => {
+        const m = await newMember(uniq('up'))
+        const b = browser()
+        const r = await call(b, 'POST', '/api/login', { username: m.user.username.toUpperCase(), password: m.password })
+        expect(r.status).toBe(200)
+        expect(r.json.user).toMatchObject({ id: m.user.id, username: m.user.username, role: 'member', disabled: false })
+        const cookie = r.res.headers.getSetCookie().join('\n')
+        expect(cookie).toMatch(/HttpOnly/i)
+        expect(cookie).toMatch(/SameSite=Lax/i)
+        expect((await call(b, 'GET', '/api/session')).json.user.id).toBe(m.user.id)
+      })
+
+      it('logout is 204 and ends the session; with no session it is 204 as well', async () => {
+        const m = await newMember(uniq('lo'))
+        expect((await call(m.browser, 'POST', '/api/logout')).status).toBe(204)
+        expect((await call(m.browser, 'GET', '/api/session')).json.user).toBeNull()
+        expect((await call(m.browser, 'GET', '/api/spaces')).status).toBe(401)
+        expect((await call(browser(), 'POST', '/api/logout')).status).toBe(204)
+      })
+
+      it('first-run setup is closed once there is a user: 409 exists, whatever the token', async () => {
+        const r = await call(browser(), 'POST', '/api/setup', {
+          token: 'not-the-token',
+          username: uniq('late'),
+          password: 'a-long-password',
+        })
+        expect([r.status, r.json.error]).toEqual([409, 'exists'])
+      })
+
+      it('every request that changes something must say it is JSON, here too', async () => {
+        const r = await call(admin, 'POST', '/api/logout', '', { 'Content-Type': 'text/plain' })
+        expect([400, 415]).toContain(r.status)
+      })
+
+      describe('account', () => {
+        it('GET shows the user, whether there is a password, and the linked sign-ins', async () => {
+          const m = await newMember(uniq('ac'))
+          const r = await call(m.browser, 'GET', '/api/account')
+          expect(r.status).toBe(200)
+          expect(r.json.user.id).toBe(m.user.id)
+          expect(r.json.hasPassword).toBe(true)
+          expect(r.json.identities).toEqual([])
+        })
+
+        it('PATCH changes the name and the email, each optional', async () => {
+          const m = await newMember(uniq('pa'))
+          const a = await call(m.browser, 'PATCH', '/api/account', { name: '新名字' })
+          expect(a.status).toBe(200)
+          expect(a.json.user).toMatchObject({ name: '新名字', email: '' })
+          const b = await call(m.browser, 'PATCH', '/api/account', { email: 'x@example.com' })
+          expect(b.json.user).toMatchObject({ name: '新名字', email: 'x@example.com' })
+          expect((await call(m.browser, 'GET', '/api/account')).json.user.email).toBe('x@example.com')
+        })
+
+        it('changing the password: wrong current is 403 forbidden, a short new one 400, the right one 204 and ends the other sessions', async () => {
+          const m = await newMember(uniq('pw'))
+          const other = browser()
+          expect(
+            (await call(other, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+          ).toBe(200)
+          const wrong = await call(m.browser, 'POST', '/api/account/password', {
+            current: 'not-the-one',
+            new: 'another-password',
+          })
+          expect([wrong.status, wrong.json.error]).toEqual([403, 'forbidden'])
+          const short = await call(m.browser, 'POST', '/api/account/password', { current: m.password, new: 'short' })
+          expect([short.status, short.json.error]).toEqual([400, 'invalid'])
+          const ok = await call(m.browser, 'POST', '/api/account/password', {
+            current: m.password,
+            new: 'another-password',
+          })
+          expect(ok.status).toBe(204)
+          expect((await call(m.browser, 'GET', '/api/account')).status).toBe(200)
+          expect((await call(other, 'GET', '/api/account')).status).toBe(401)
+          const fresh = browser()
+          expect(
+            (await call(fresh, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+          ).toBe(401)
+          expect(
+            (await call(fresh, 'POST', '/api/login', { username: m.user.username, password: 'another-password' }))
+              .status,
+          ).toBe(200)
+        })
+      })
+
+      describe('OAuth consent and grants', () => {
+        // A real server needs an MCP client to start a request, and --public-url: the mock plays both.
+        const start = (username: string, o?: Parameters<MockServer['startAuthorization']>[1]) =>
+          server!.startAuthorization(username, o)
+
+        it.skipIf(!!REAL)(
+          'mock only: a person approves a request with the spaces they pick, and the grant is theirs to see and to revoke',
+          async () => {
+            const m = await newMember(uniq('oa1'))
+            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
+            const req = start(m.user.username, { clientName: 'Notes helper' })
+            const info = await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)
+            expect(info.status).toBe(200)
+            expect(info.json).toMatchObject({
+              client: { name: 'Notes helper', id: 'pbc_mock' },
+              redirectHost: 'localhost:7777',
+              punycode: false,
+              scopes: ['read', 'write'],
+              user: { id: m.user.id },
+            })
+            expect(info.json.spaces.find((s: { id: string }) => s.id === mine.id)).toMatchObject({ personal: true })
+            const done = await call(m.browser, 'POST', '/api/oauth/consent', {
+              req,
+              approve: true,
+              spaces: [mine.id],
+              access: 'write',
+            })
+            expect(done.status).toBe(200)
+            const back = new URL(done.json.redirect)
+            expect([back.origin + back.pathname, back.searchParams.get('state')]).toEqual([
+              'http://localhost:7777/callback',
+              'st4te',
+            ])
+            expect(back.searchParams.get('code')).toBeTruthy()
+            expect(back.searchParams.get('iss')).toBeTruthy()
+            // Decided once.
+            expect(
+              (await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine.id] })).json
+                .error,
+            ).toBe('not_found')
+            const list = (await call(m.browser, 'GET', '/api/account/grants')).json.grants
+            expect(list).toHaveLength(1)
+            expect(list[0]).toMatchObject({
+              client: { name: 'Notes helper', id: 'pbc_mock' },
+              access: 'write',
+              spaces: [{ id: mine.id, name: mine.name }],
+            })
+            expect(typeof list[0].created).toBe('string')
+            const other = await newMember(uniq('oa2'))
+            expect((await call(other.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
+            expect((await call(other.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).json.error).toBe(
+              'not_found',
+            )
+            expect((await call(m.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).status).toBe(204)
+            expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
+          },
+        )
+
+        it.skipIf(!!REAL)(
+          "mock only: a request is the one person's, and a bad answer is 400 and keeps it",
+          async () => {
+            const m = await newMember(uniq('oa3'))
+            const other = await newMember(uniq('oa4'))
+            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+            const theirs = (await call(other.browser, 'GET', '/api/spaces')).json.spaces[0].id
+            const req = start(m.user.username, { scopes: ['read'] })
+            expect((await call(other.browser, 'GET', `/api/oauth/consent?req=${req}`)).json.error).toBe('not_found')
+            expect(
+              (await call(other.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [theirs] })).json
+                .error,
+            ).toBe('not_found')
+            for (const bad of [
+              { spaces: [] },
+              { spaces: [theirs] },
+              { spaces: [mine], access: 'write' },
+              { spaces: [mine], access: 'root' },
+            ]) {
+              const r = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, ...bad })
+              expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+            }
+            expect((await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)).status).toBe(200)
+            const denied = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: false })
+            expect(denied.status).toBe(200)
+            expect(new URL(denied.json.redirect).searchParams.get('error')).toBe('access_denied')
+            expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
+          },
+        )
+
+        it.skipIf(!!REAL)(
+          "mock only: an administrator lists everyone's grants a page at a time and revokes one; others are refused",
+          async () => {
+            const m = await newMember(uniq('oa5'))
+            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+            for (let i = 0; i < 3; i++) {
+              const req = start(m.user.username, { clientName: `app ${i}` })
+              await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine] })
+              clock += 1000
+            }
+            const first = await call(admin, 'GET', `/api/admin/grants?user=${m.user.id}&limit=2`)
+            expect(first.status).toBe(200)
+            expect(first.json.items).toHaveLength(2)
+            expect(first.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
+            expect(first.json.next).not.toBe('')
+            const rest = await call(
+              admin,
+              'GET',
+              `/api/admin/grants?user=${m.user.id}&limit=2&cursor=${first.json.next}`,
+            )
+            expect(rest.json.items).toHaveLength(1)
+            expect(rest.json.next).toBe('')
+            expect((await call(m.browser, 'GET', '/api/admin/grants')).json.error).toBe('forbidden')
+            expect((await call(admin, 'GET', '/api/admin/grants?limit=0')).status).toBe(400)
+            expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(204)
+            expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(404)
+            expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(2)
+          },
+        )
+
+        it.skipIf(!!REAL)(
+          'mock only: with MCP off the consent endpoints are 404, the grants are kept and listed, and oauth reads false',
+          async () => {
+            const m = await newMember(uniq('oa6'))
+            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+            await call(m.browser, 'POST', '/api/oauth/consent', {
+              req: start(m.user.username),
+              approve: true,
+              spaces: [mine],
+            })
+            const before = (await call(admin, 'GET', '/api/admin/access')).json
+            expect(before).toMatchObject({ mcp: true, oauth: true })
+            try {
+              await call(admin, 'PUT', '/api/admin/access', { mcp: false })
+              expect((await call(admin, 'GET', '/api/admin/access')).json).toMatchObject({ mcp: false, oauth: false })
+              expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('not_found')
+              expect((await call(m.browser, 'POST', '/api/oauth/consent', { req: 'x', approve: false })).status).toBe(
+                404,
+              )
+              expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(1)
+            } finally {
+              await call(admin, 'PUT', '/api/admin/access', { mcp: before.mcp })
+            }
+          },
+        )
+      })
+
+      describe('API tokens', () => {
+        it('a person makes one, sees it without its secret, and revokes it', async () => {
+          const m = await newMember(uniq('apk1'))
+          const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
+          const made = await call(m.browser, 'POST', '/api/account/tokens', {
+            name: '  Desktop notes ',
+            access: 'write',
+            spaces: [mine.id],
+          })
+          expect(made.status).toBe(201)
+          expect(made.json.secret).toMatch(/^pbk_[0-9A-Za-z]{43}$/)
+          expect(made.json.token).toMatchObject({
+            name: 'Desktop notes',
+            access: 'write',
+            prefix: made.json.secret.slice(0, 12),
+            state: 'active',
+            lastUsed: null,
+            revoked: null,
+          })
+          expect(made.json.token.spaces).toEqual([{ id: mine.id, name: mine.name }])
+          expect(typeof made.json.token.expires).toBe('string')
+          const list = await call(m.browser, 'GET', '/api/account/tokens')
+          expect(list.status).toBe(200)
+          expect(list.json.tokens.map((t: { id: string }) => t.id)).toEqual([made.json.token.id])
+          expect(JSON.stringify(list.json)).not.toContain(made.json.secret)
+          expect((await call(m.browser, 'DELETE', `/api/account/tokens/${made.json.token.id}`)).status).toBe(204)
+          expect((await call(m.browser, 'DELETE', `/api/account/tokens/${made.json.token.id}`)).status).toBe(204)
+          expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0]).toMatchObject({
+            state: 'revoked',
+          })
+        })
+
+        it('read is the default, 0 days is never, and a bad request is 400 or 404', async () => {
+          const m = await newMember(uniq('apk2'))
+          const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+          const forever = await call(m.browser, 'POST', '/api/account/tokens', {
+            name: 'forever',
+            spaces: [mine],
+            expiresInDays: 0,
+          })
+          expect(forever.status).toBe(201)
+          expect(forever.json.token).toMatchObject({ access: 'read', expires: null })
+          for (const bad of [
+            { name: ' ', spaces: [mine] },
+            { name: 'n', spaces: [] },
+            { name: 'n', spaces: [mine], access: 'admin' },
+            { name: 'n', spaces: [mine], expiresInDays: 366 },
+          ]) {
+            const r = await call(m.browser, 'POST', '/api/account/tokens', bad)
+            expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+          }
+          const elsewhere = await call(m.browser, 'POST', '/api/account/tokens', { name: 'n', spaces: ['01JD3K8Q7Z'] })
+          expect([elsewhere.status, elsewhere.json.error]).toEqual([404, 'not_found'])
+        })
+
+        it("someone else's token is not theirs to revoke or to see", async () => {
+          const a = await newMember(uniq('apk3'))
+          const b = await newMember(uniq('apk4'))
+          const space = (await call(a.browser, 'GET', '/api/spaces')).json.spaces[0].id
+          const t = (await call(a.browser, 'POST', '/api/account/tokens', { name: 'mine', spaces: [space] })).json.token
+            .id
+          expect((await call(b.browser, 'GET', '/api/account/tokens')).json.tokens).toEqual([])
+          const r = await call(b.browser, 'DELETE', `/api/account/tokens/${t}`)
+          expect([r.status, r.json.error]).toEqual([404, 'not_found'])
+        })
+
+        it("an administrator lists everyone's tokens and revokes one; others are refused", async () => {
+          const m = await newMember(uniq('apk5'))
+          const space = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
+          const t = (await call(m.browser, 'POST', '/api/account/tokens', { name: 'theirs', spaces: [space] })).json
+            .token.id
+          const all = await call(admin, 'GET', `/api/admin/tokens?user=${m.user.id}`)
+          expect(all.status).toBe(200)
+          expect(all.json.items.map((i: { id: string }) => i.id)).toEqual([t])
+          expect(all.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
+          expect(all.json.next).toBe('')
+          expect((await call(m.browser, 'GET', '/api/admin/tokens')).json.error).toBe('forbidden')
+          expect((await call(m.browser, 'GET', '/api/admin/access')).json.error).toBe('forbidden')
+          expect((await call(admin, 'DELETE', `/api/admin/tokens/${t}`)).status).toBe(204)
+          expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0].state).toBe('revoked')
+          expect((await call(admin, 'DELETE', '/api/admin/tokens/NOSUCHTOKN')).status).toBe(404)
+          expect((await call(admin, 'GET', '/api/admin/tokens?limit=0')).status).toBe(400)
+        })
+
+        it('the machine access switches are on, may be changed, and are put back', async () => {
+          const before = await call(admin, 'GET', '/api/admin/access')
+          expect(before.status).toBe(200)
+          expect(Object.keys(before.json).sort()).toEqual(['mcp', 'oauth', 'tokens'])
+          try {
+            const off = await call(admin, 'PUT', '/api/admin/access', { tokens: false })
+            expect(off.json).toMatchObject({ tokens: false, mcp: before.json.mcp })
+            expect((await call(admin, 'GET', '/api/admin/access')).json.tokens).toBe(false)
+          } finally {
+            await call(admin, 'PUT', '/api/admin/access', { tokens: before.json.tokens, mcp: before.json.mcp })
+          }
+          expect((await call(admin, 'GET', '/api/admin/access')).json).toEqual(before.json)
+        })
+      })
+
+      describe('users', () => {
+        it('finds users by part of a username or name, ignoring case, and caps the count; no parameters is everyone', async () => {
+          const m = await newMember(uniq('fu'))
+          const all = (await as(admin, () => adminApi.users())).users
+          const upper = m.user.username.toUpperCase()
+          const hit = (await as(admin, () => adminApi.users({ q: upper }))).users
+          expect(hit.map((u) => u.id)).toContain(m.user.id)
+          for (const u of hit) expect((u.username + '\n' + u.name).toLowerCase()).toContain(m.user.username)
+          expect((await as(admin, () => adminApi.users({ q: m.user.name }))).users.map((u) => u.id)).toContain(
+            m.user.id,
+          )
+          expect((await as(admin, () => adminApi.users({ q: 'zzz-no-such-user-zzz' }))).users).toEqual([])
+          const one = (await as(admin, () => adminApi.users({ limit: 1 }))).users
+          expect(one.map((u) => u.id)).toEqual([all[0].id])
+          for (const bad of ['0', '201', 'x']) {
+            const r = await call(admin, 'GET', `/api/users?limit=${bad}`)
+            expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+          }
+        })
+
+        it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
+          const m = await newMember(uniq('us'))
+          const { users } = await as(admin, () => adminApi.users())
+          expect(users.find((u) => u.id === m.user.id)).toMatchObject({
+            username: m.user.username,
+            role: 'member',
+            disabled: false,
+          })
+          for (let i = 1; i < users.length; i++) expect(users[i - 1].created <= users[i].created).toBe(true)
+          for (const [method, path] of [
+            ['GET', '/api/users'],
+            ['PATCH', `/api/users/${m.user.id}`],
+            ['GET', '/api/invites'],
+            ['POST', '/api/invites'],
+          ]) {
+            const r = await call(m.browser, method, path, method === 'GET' ? undefined : {})
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+          }
+        })
+
+        it('changes a role and disables and enables a user; disabling ends every session and blocks signing in', async () => {
+          const m = await newMember(uniq('ro'))
+          const promoted = await as(admin, () => adminApi.updateUser(m.user.id, { role: 'admin' }))
+          expect(promoted.user.role).toBe('admin')
+          expect((await call(m.browser, 'GET', '/api/users')).status).toBe(200)
+          await as(admin, () => adminApi.updateUser(m.user.id, { role: 'member' }))
+          expect((await call(m.browser, 'GET', '/api/users')).status).toBe(403)
+
+          const off = await as(admin, () => adminApi.updateUser(m.user.id, { disabled: true }))
+          expect(off.user.disabled).toBe(true)
+          expect((await call(m.browser, 'GET', '/api/account')).status).toBe(401)
+          const again = await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })
+          expect([again.status, again.json.error]).toEqual([401, 'unauthenticated'])
+          await as(admin, () => adminApi.updateUser(m.user.id, { disabled: false }))
+          expect(
+            (await call(browser(), 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+          ).toBe(200)
+        })
+
+        it('an administrator cannot disable themself (409), nor leave the server with no enabled administrator (409)', async () => {
+          const me = (await call(admin, 'GET', '/api/session')).json.user as User
+          const self = await call(admin, 'PATCH', `/api/users/${me.id}`, { disabled: true })
+          expect([self.status, self.json.error]).toEqual([409, 'conflict'])
+          const { users } = await as(admin, () => adminApi.users())
+          if (users.filter((u) => u.role === 'admin' && !u.disabled).length === 1) {
+            const demote = await call(admin, 'PATCH', `/api/users/${me.id}`, { role: 'member' })
+            expect([demote.status, demote.json.error]).toEqual([409, 'conflict'])
+          }
+          expect((await call(admin, 'GET', '/api/session')).json.user).toMatchObject({
+            id: me.id,
+            role: 'admin',
+            disabled: false,
+          })
+        })
+
+        it('an unknown user is 404', async () => {
+          const r = await call(admin, 'PATCH', '/api/users/01ZZZZZZZZ', { disabled: true })
+          expect([r.status, r.json.error]).toEqual([404, 'not_found'])
+        })
+      })
+
+      describe('invites', () => {
+        it('create: 201 with the token once; the list shows the open ones without it', async () => {
+          const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 3 }))
+          expect(inv.token.length).toBeGreaterThanOrEqual(16)
+          expect(inv).toMatchObject({ role: 'member' })
+          expect(Date.parse(inv.expires)).toBeGreaterThan(Date.parse(inv.created))
+          const { invites } = await as(admin, () => adminApi.invites())
+          const row = invites.find((i) => i.id === inv.id)!
+          expect(row).toMatchObject({ role: 'member', expires: inv.expires })
+          expect(typeof row.createdBy).toBe('string')
+          expect(JSON.stringify(invites)).not.toContain(inv.token)
+        })
+
+        it('days outside 1 to 30 and an unknown role are 400', async () => {
+          // (`days: 0` is not tried: a server may read it as "not given".)
+          for (const body of [{ days: -1 }, { days: 31 }, { days: 1.5 }, { role: 'owner' }]) {
+            const r = await call(admin, 'POST', '/api/invites', body)
+            expect([r.status, r.json.error], JSON.stringify(body)).toEqual([400, 'invalid'])
+          }
+        })
+
+        it('check is public: 200 with role and expiry for a good token, 404 for anything else', async () => {
+          const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
+          const anon = browser()
+          const ok = await call(anon, 'POST', '/api/invites/check', { token: inv.token })
+          expect(ok.status).toBe(200)
+          expect(ok.json).toEqual({ role: 'member', expires: inv.expires, username: '', name: '', email: '' })
+          const bad = await call(anon, 'POST', '/api/invites/check', { token: 'not-a-token' })
+          expect([bad.status, bad.json.error]).toEqual([404, 'not_found'])
+        })
+
+        it('accept is public: 201 with the user and a session, a personal space of their own; the invite works once', async () => {
+          const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
+          const name = uniq('ac2')
+          const b = browser()
+          const r = await call(b, 'POST', '/api/invites/accept', {
+            token: inv.token,
+            username: name.toUpperCase(),
+            name: '新人',
+            password: 'a-long-password',
+          })
+          expect(r.status).toBe(201)
+          created.users.push(r.json.user.id)
+          expect(r.json.user).toMatchObject({ username: name, name: '新人', role: 'member', disabled: false })
+          expect(r.res.headers.getSetCookie().length).toBeGreaterThan(0)
+          const { spaces } = (await call(b, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
+          expect(spaces[0]).toMatchObject({ personal: true, role: 'owner' })
+          expect(spaces.map((s) => s.id)).not.toContain(spaceId)
+          // Used: gone from the list, and a 404 to check. (Accepting it again is not
+          // tried: a real server counts every bad token against the client address.)
+          expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
+          expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        })
+
+        it('a taken username is 409 exists and the invite stays usable; a short password is 400', async () => {
+          const m = await newMember(uniq('tk'))
+          const inv = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
+          const taken = await call(browser(), 'POST', '/api/invites/accept', {
+            token: inv.token,
+            username: m.user.username,
+            password: 'a-long-password',
+          })
+          expect([taken.status, taken.json.error]).toEqual([409, 'exists'])
+          const short = await call(browser(), 'POST', '/api/invites/accept', {
+            token: inv.token,
+            username: uniq('sh'),
+            password: 'short',
+          })
+          expect([short.status, short.json.error]).toEqual([400, 'invalid'])
+          expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(200)
+        })
+
+        it('revoke is 204 and the token stops working', async () => {
+          const inv = await as(admin, () => adminApi.createInvite({}))
+          await as(admin, () => adminApi.revokeInvite(inv.id))
+          expect((await call(browser(), 'POST', '/api/invites/check', { token: inv.token })).status).toBe(404)
+          expect((await as(admin, () => adminApi.invites())).invites.map((i) => i.id)).not.toContain(inv.id)
+        })
+      })
+
+      describe('spaces', () => {
+        it('creates a space (201, the caller owns it), renames it, and lists personal first, then by name', async () => {
+          const m = await newMember(uniq('sp'))
+          const made = await call(m.browser, 'POST', '/api/spaces', { name: 'Beta' })
+          expect(made.status).toBe(201)
+          expect(made.json).toMatchObject({ name: 'Beta', role: 'owner', personal: false })
+          const renamed = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { name: 'Gamma' })
+          expect(renamed.status).toBe(200)
+          expect(renamed.json).toMatchObject({ id: made.json.id, name: 'Gamma' })
+          await call(m.browser, 'POST', '/api/spaces', { name: 'Alpha' })
+          const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
+          expect(spaces[0].personal).toBe(true)
+          expect(spaces.slice(1).map((s) => s.name)).toEqual(['Alpha', 'Gamma'])
+          expect((await call(m.browser, 'GET', '/api/meta')).json.spaces.map((s: SpaceInfo) => s.id)).toEqual(
+            spaces.map((s) => s.id),
+          )
+          // The new space is a working space.
+          const page = await call(m.browser, 'POST', `/api/spaces/${made.json.id}/pages`, {
+            meta: { title: '新空间里的页面' },
+            body: 'x\n',
+          })
+          expect(page.status).toBe(201)
+        })
+
+        it('a name of 0 or more than 80 characters is 400', async () => {
+          for (const name of ['', '   ', '字'.repeat(81)]) {
+            const r = await call(admin, 'POST', '/api/spaces', { name })
+            expect([r.status, r.json.error], name.length.toString()).toEqual([400, 'invalid'])
+          }
+          expect((await call(admin, 'POST', '/api/spaces', { name: '字'.repeat(80) })).status).toBe(201)
+        })
+
+        it('inbox: Inbox unless given; set on creation, changed with PATCH alone or with the name; a PATCH with neither is 400', async () => {
+          const m = await newMember(uniq('ib1'))
+          const plain = await call(m.browser, 'POST', '/api/spaces', { name: 'Plain' })
+          expect(plain.status).toBe(201)
+          expect(plain.json.inbox).toBe('Inbox')
+          const own = await call(m.browser, 'POST', '/api/spaces', { name: 'Own', inbox: '收件箱' })
+          expect(own.status).toBe(201)
+          expect(own.json.inbox).toBe('收件箱')
+          const path = `/api/spaces/${own.json.id}`
+          const moved = await call(m.browser, 'PATCH', path, { inbox: '随记/待整理' })
+          expect(moved.status).toBe(200)
+          expect(moved.json).toMatchObject({ id: own.json.id, name: 'Own', inbox: '随记/待整理' })
+          const renamed = await call(m.browser, 'PATCH', path, { name: 'Renamed' })
+          expect(renamed.json).toMatchObject({ name: 'Renamed', inbox: '随记/待整理' })
+          const both = await call(m.browser, 'PATCH', path, { name: 'Both', inbox: 'Notes' })
+          expect(both.json).toMatchObject({ name: 'Both', inbox: 'Notes' })
+          const none = await call(m.browser, 'PATCH', path, {})
+          expect([none.status, none.json.error]).toEqual([400, 'invalid'])
+          const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
+          expect(spaces.find((s) => s.id === own.json.id)).toMatchObject({ name: 'Both', inbox: 'Notes' })
+          expect(spaces.find((s) => s.id === plain.json.id)!.inbox).toBe('Inbox')
+        })
+
+        it('an invalid inbox path is 400 on create and on PATCH, and the space is left as it was', async () => {
+          const m = await newMember(uniq('ib2'))
+          for (const inbox of ['.hidden', 'assets']) {
+            const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Bad', inbox })
+            expect([r.status, r.json.error], inbox).toEqual([400, 'invalid'])
+          }
+          const made = await call(m.browser, 'POST', '/api/spaces', { name: 'Good', inbox: 'Keep' })
+          for (const inbox of ['.hidden', 'assets']) {
+            const r = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, { inbox })
+            expect([r.status, r.json.error], inbox).toEqual([400, 'invalid'])
+          }
+          // A bad inbox does not let the name through either.
+          const mixed = await call(m.browser, 'PATCH', `/api/spaces/${made.json.id}`, {
+            name: 'Changed',
+            inbox: '.hidden',
+          })
+          expect(mixed.status).toBe(400)
+          const { spaces } = (await call(m.browser, 'GET', '/api/spaces')).json as { spaces: SpaceInfo[] }
+          expect(spaces.find((s) => s.id === made.json.id)).toMatchObject({ name: 'Good', inbox: 'Keep' })
+        })
+
+        it('the inbox is only a name: no folder until a page is made in it, and changing it moves nothing', async () => {
+          const m = await newMember(uniq('ib3'))
+          const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Quick', inbox: '收件箱' })
+          const base = `/api/spaces/${sp.json.id}`
+          expect(
+            ((await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string }[]).map((f) => f.path),
+          ).not.toContain('收件箱')
+          // What quick capture sends: the inbox folder and a body, no title.
+          const note = await call(m.browser, 'POST', `${base}/pages`, { folder: sp.json.inbox, body: '一句话\n' })
+          expect(note.status).toBe(201)
+          expect(note.json.folder).toBe('收件箱')
+          expect('title' in note.json.meta).toBe(false)
+          const tree = (await call(m.browser, 'GET', `${base}/tree`)).json.folders as { path: string; pages: number }[]
+          expect(tree.find((f) => f.path === '收件箱')).toEqual({ path: '收件箱', pages: 1 })
+          await call(m.browser, 'PATCH', base, { inbox: '别处' })
+          const after = await call(m.browser, 'GET', `${base}/pages/${note.json.id}`)
+          expect(after.json.folder).toBe('收件箱')
+          const listed = (await call(m.browser, 'GET', `${base}/pages?folder=${encodeURIComponent('收件箱')}`)).json
+            .items as PageSummary[]
+          expect(listed.map((i) => i.id)).toEqual([note.json.id])
+        })
+
+        it('a space of someone else is 404 not_found, the same as one that does not exist: pages, folders, drafts, rename', async () => {
+          const m = await newMember(uniq('is'))
+          const mine = ((await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0]
+          const own = await call(m.browser, 'POST', `/api/spaces/${mine.id}/pages`, {
+            meta: { title: '只有我能看' },
+            body: '秘密\n',
+          })
+          expect(own.status).toBe(201)
+          const mineSpace = `/api/spaces/${mine.id}`
+          const theirs = `/api/spaces/${spaceId}`
+          const absent = await call(admin, 'GET', `/api/spaces/01ZZZZZZZZ/pages`)
+          expect([absent.status, absent.json.error]).toEqual([404, 'not_found'])
+          for (const [b, method, path, body] of [
+            [m.browser, 'GET', `${theirs}/pages`, undefined],
+            [m.browser, 'POST', `${theirs}/pages`, { body: 'x' }],
+            [m.browser, 'PATCH', theirs, { name: '抢走' }],
+            [m.browser, 'GET', `${theirs}/members`, undefined],
+          ] as [Browser, string, string, unknown][]) {
+            const r = await call(b, method, path, body ?? (method === 'GET' ? undefined : {}))
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
+          }
+          // An administrator is no member, but may open any space; it is not in their own list.
+          for (const path of [`${mineSpace}/pages`, `${mineSpace}/pages/${own.json.id}`, `${mineSpace}/tree`]) {
+            expect((await call(admin, 'GET', path)).status, path).toBe(200)
+          }
+          expect(((await call(admin, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).map((s) => s.id)).not.toContain(
+            mine.id,
+          )
+          // Nothing of theirs shows in their lists, either way.
+          expect((await walk({ q: '只有我能看', recursive: true, folder: '' })).length).toBe(0)
+        })
+      })
+
+      // A space owned by a member, so the contract user (an administrator) is no member of it.
+      const ownedSpace = async (owner: { browser: Browser }, name: string): Promise<SpaceInfo> => {
+        const r = await call(owner.browser, 'POST', '/api/spaces', { name })
+        expect(r.status).toBe(201)
+        return r.json as SpaceInfo
+      }
+      const addMember = async (owner: { browser: Browser }, space: string, username: string, role: string) => {
+        const r = await call(owner.browser, 'POST', `/api/spaces/${space}/members`, { username, role })
+        expect(r.status, `${username} as ${role}`).toBe(201)
+        return r.json as Member
+      }
+      const roleOf = async (b: Browser, space: string) =>
+        ((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.id === space)
+
+      describe('groups', () => {
+        const mkGroup = async (name: string, source = 'local') => {
+          const r = await call(admin, 'POST', '/api/admin/groups', { name, source })
+          expect(r.status, name).toBe(201)
+          return r.json as {
+            id: string
+            name: string
+            source: string
+            people: number
+            spaces: number
+            mappedFrom: unknown[]
+          }
         }
-        await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 5 * 1024 ** 3 }, assets: { newSpaces: false } })
+
+        it('an administrator makes, renames, lists and deletes groups; names are unique ignoring case; only administrators may', async () => {
+          const name = uniq('Group')
+          const g = await mkGroup(name)
+          expect(g).toMatchObject({ name, source: 'local', people: 0, spaces: 0, mappedFrom: [] })
+          const clash = await call(admin, 'POST', '/api/admin/groups', { name: name.toUpperCase(), source: 'local' })
+          expect([clash.status, clash.json.error]).toEqual([409, 'exists'])
+          const bad = await call(admin, 'POST', '/api/admin/groups', { name: ' ', source: 'local' })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          const renamed = await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, {
+            name: `${name} 2`,
+            description: 'd',
+          })
+          expect(renamed.json).toMatchObject({ name: `${name} 2`, description: 'd' })
+          expect((await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { source: 'synced' })).status).toBe(400)
+          const list = await call(admin, 'GET', `/api/admin/groups?q=${encodeURIComponent(name.toLowerCase())}`)
+          expect((list.json.items as { id: string }[]).map((x) => x.id)).toEqual([g.id])
+          expect(list.json.next).toBe('')
+          const m = await newMember(uniq('gm'))
+          expect((await call(m.browser, 'GET', '/api/admin/groups')).status).toBe(403)
+          expect((await call(admin, 'GET', '/api/admin/groups/01ZZZZZZZZ')).json.error).toBe('not_found')
+          expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
+          expect((await call(admin, 'GET', `/api/admin/groups/${g.id}`)).status).toBe(404)
+        })
+
+        it('people: local groups only, all or nothing; synced groups refuse; anyone signed in finds a group by name and sees theirs in the account', async () => {
+          const local = await mkGroup(uniq('Local'))
+          const synced = await mkGroup(uniq('Synced'), 'synced')
+          const m = await newMember(uniq('gp'))
+          const refused = await call(admin, 'POST', `/api/admin/groups/${synced.id}/members`, { userIds: [m.user.id] })
+          expect([refused.status, refused.json.error]).toEqual([409, 'group_synced'])
+          const missing = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, {
+            userIds: [m.user.id, '01ZZZZZZZZ'],
+          })
+          expect([missing.status, missing.json.error, missing.json.missing]).toEqual([
+            404,
+            'user_not_found',
+            ['01ZZZZZZZZ'],
+          ])
+          expect((await call(admin, 'GET', `/api/admin/groups/${local.id}`)).json.people).toBe(0)
+          const added = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, {
+            userIds: [m.user.id, m.user.id],
+          })
+          expect(added.json).toEqual({ added: 1, already: 0 })
+          const people = (await call(admin, 'GET', `/api/admin/groups/${local.id}/members`)).json.items as {
+            userId: string
+            from: unknown[]
+          }[]
+          expect(people.map((p) => [p.userId, p.from])).toEqual([[m.user.id, []]])
+          expect(
+            ((await call(m.browser, 'GET', '/api/account')).json.groups as { id: string }[]).map((x) => x.id),
+          ).toEqual([local.id])
+          const found = await call(m.browser, 'GET', `/api/groups?q=${encodeURIComponent(local.name.slice(1, 8))}`)
+          expect(found.json.groups).toEqual([{ id: local.id, name: local.name, source: 'local' }])
+          expect((await call(m.browser, 'GET', '/api/groups')).status).toBe(400)
+          expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(204)
+          expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(404)
+          await call(admin, 'DELETE', `/api/admin/groups/${local.id}`)
+          await call(admin, 'DELETE', `/api/admin/groups/${synced.id}`)
+        })
+
+        it('a group in a space gives its people the role; the union with their own; leaving through a group is refused; removal ends it', async () => {
+          const owner = await newMember(uniq('go'))
+          const person = await newMember(uniq('gq'))
+          const sp = await ownedSpace(owner, 'Shared')
+          const g = await mkGroup(uniq('Team'))
+          await call(admin, 'POST', `/api/admin/groups/${g.id}/members`, { userIds: [person.user.id] })
+          const base = `/api/spaces/${sp.id}`
+          expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
+          const refusals: [unknown, number, string][] = [
+            [{ groupId: '01ZZZZZZZZ', role: 'viewer' }, 404, 'group_not_found'],
+            [{ groupId: g.id, role: 'boss' }, 400, 'invalid'],
+          ]
+          for (const [body, status, code] of refusals) {
+            const r = await call(owner.browser, 'POST', `${base}/groups`, body)
+            expect([r.status, r.json.error], JSON.stringify(body)).toEqual([status, code])
+          }
+          const mine = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find(
+            (s) => s.personal,
+          )!
+          expect(
+            (await call(owner.browser, 'POST', `/api/spaces/${mine.id}/groups`, { groupId: g.id, role: 'viewer' })).json
+              .error,
+          ).toBe('personal_space')
+          const added = await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'editor' })
+          expect(added.status).toBe(201)
+          expect(added.json).toEqual({
+            groupId: g.id,
+            name: g.name,
+            source: 'local',
+            role: 'editor',
+            people: 1,
+            yours: false,
+          })
+          expect(
+            (await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'viewer' })).json.error,
+          ).toBe('exists')
+          expect(await roleOf(person.browser, sp.id)).toMatchObject({
+            role: 'editor',
+            directRole: '',
+            viaGroups: true,
+            permissions: ['read', 'write'],
+          })
+          // Members and groups of the space, and everyone who can reach it.
+          const listed = (await call(person.browser, 'GET', `${base}/members`)).json as {
+            members: Member[]
+            groups: { groupId: string; yours: boolean }[]
+          }
+          expect(listed.members.map((x) => x.userId)).toEqual([owner.user.id])
+          expect(listed.groups.map((x) => [x.groupId, x.yours])).toEqual([[g.id, true]])
+          const eff = (await call(person.browser, 'GET', `${base}/members/effective`)).json.items as {
+            userId: string
+            role: string
+            directRole: string
+          }[]
+          expect(eff.map((x) => [x.userId, x.role, x.directRole]).sort()).toEqual(
+            [
+              [owner.user.id, 'owner', 'owner'],
+              [person.user.id, 'editor', ''],
+            ].sort(),
+          )
+          // Cannot leave: not a member of one's own.
+          const leave = await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)
+          expect([leave.status, leave.json.error]).toEqual([409, 'member_via_group'])
+          // Direct viewer and editor through the group: the union, then the direct membership goes and the group's role stays.
+          await addMember(owner, sp.id, person.user.username, 'viewer')
+          expect(await roleOf(person.browser, sp.id)).toMatchObject({
+            role: 'editor',
+            directRole: 'viewer',
+            viaGroups: true,
+          })
+          expect((await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)).status).toBe(204)
+          expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '' })
+          // The role of the group changes; the group leaves the space.
+          expect((await call(owner.browser, 'PATCH', `${base}/groups/${g.id}`, { role: 'viewer' })).json.role).toBe(
+            'viewer',
+          )
+          expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'viewer', permissions: ['read'] })
+          expect((await call(owner.browser, 'PATCH', `${base}/groups/01ZZZZZZZZ`, { role: 'viewer' })).status).toBe(404)
+          // Deleting a group that is in a space needs force.
+          const inUse = await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)
+          expect([inUse.status, inUse.json.error, inUse.json.spaces]).toEqual([409, 'group_in_use', 1])
+          expect((await call(owner.browser, 'DELETE', `${base}/groups/${g.id}`)).status).toBe(204)
+          expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
+          expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
+        })
       })
 
-      it('has an attachment repository only for a space that follows a remote', async () => {
-        const sp = await ownedSpace({ browser: admin }, 'Plain')
-        const base = `/api/spaces/${sp.id}/remote/assets`
-        expect((await call(admin, 'GET', base)).status).toBe(404)
-        const put = await call(admin, 'PUT', base, { url: 'https://github.com/a/b-assets.git', credential: { type: 'token', token: 'x' } })
-        expect([put.status, put.json.error]).toEqual([409, 'remote_required'])
-        expect((await call(admin, 'POST', base + '/move')).status).toBe(404)
-        expect((await call(admin, 'DELETE', base)).status).toBe(404)
-        // The administrator's spaces count against their quota (3.3), which the later tests need.
-        expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
+      describe('tenants and layered settings (3.3)', () => {
+        const slugOf = (p: string) =>
+          `${p}${run}`
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 24)
+
+        it('the user object says whether a person is a site administrator and which tenant they are in', async () => {
+          const me = (await call(admin, 'GET', '/api/session')).json.user as User
+          expect(me.siteAdmin).toBe(true)
+          expect(me.tenant?.slug).toBe('default')
+          const m = await newMember(uniq('tm'))
+          expect(m.user.siteAdmin).toBe(false)
+          expect(m.user.tenant?.id).toBe('0000000000')
+          // Only site administrators reach the server's own settings and the tenants.
+          for (const path of ['/api/admin/tenancy', '/api/admin/tenants', '/api/admin/settings'])
+            expect((await call(m.browser, 'GET', path)).status, path).toBe(403)
+          expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
+        })
+
+        it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {
+          const mail = (await call(admin, 'GET', '/api/admin/mail')).json
+          // A server this suite runs against has not been given SMTP.
+          expect(mail.enabled).toBe(false)
+          expect(mail).toMatchObject({ security: 'starttls', hasPassword: false })
+          const anon = browser()
+          expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false })
+          const pr = (await call(anon, 'GET', '/api/auth/providers')).json
+          expect([pr.register, pr.forgot]).toEqual([false, false])
+          expect((await call(anon, 'POST', '/api/password/forgot', { login: 'nobody' })).json.error).toBe(
+            'password_reset_off',
+          )
+          expect(
+            (
+              await call(anon, 'POST', '/api/register', {
+                username: 'x1',
+                name: 'x',
+                email: 'x@example.test',
+                password: 'a-long-password',
+              })
+            ).json.error,
+          ).toBe('registration_closed')
+          expect((await call(anon, 'POST', '/api/email/confirm', { token: 'nope' })).json.error).toBe('not_found')
+          expect((await call(admin, 'PUT', '/api/admin/settings/registration.open', { value: true })).json.error).toBe(
+            'mail_not_configured',
+          )
+          expect(
+            (await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error,
+          ).toBe('mail_insecure')
+          const m = await newMember(uniq('ml'))
+          for (const [method, path] of [
+            ['GET', '/api/admin/mail'],
+            ['PUT', '/api/admin/mail'],
+            ['POST', '/api/admin/mail/test'],
+          ] as const)
+            expect((await call(m.browser, method, path, method === 'GET' ? undefined : {})).status, path).toBe(403)
+        })
+
+        it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
+          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+          try {
+            expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: false })).status).toBe(200)
+            const slug = slugOf('tn')
+            expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })).json.error).toBe(
+              'tenants_off',
+            )
+            expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })).json.enabled).toBe(true)
+            const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: 'A', name: 'x' })
+            expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+            const made = await call(admin, 'POST', '/api/admin/tenants', { slug, name: ' Acme ' })
+            expect(made.status).toBe(201)
+            const t = made.json as { id: string; slug: string; name: string; default: boolean; disabled: boolean }
+            expect([t.slug, t.name, t.default, t.disabled]).toEqual([slug, 'Acme', false, false])
+            expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Again' })).json.error).toBe('exists')
+            const list = (await call(admin, 'GET', '/api/admin/tenants?limit=200')).json as {
+              items: { id: string; default: boolean }[]
+            }
+            expect(list.items[0].default).toBe(true)
+            expect(list.items.some((x) => x.id === t.id)).toBe(true)
+            const renamed = await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, {
+              name: 'Acme Two',
+              disabled: true,
+            })
+            expect([renamed.json.name, renamed.json.disabled]).toEqual(['Acme Two', true])
+            expect((await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { mood: 1 })).status).toBe(400)
+            expect((await call(admin, 'GET', '/api/admin/tenants/01ZZZZZZZZ')).json.error).toBe('not_found')
+            for (const body of [{ disabled: true }])
+              expect((await call(admin, 'PATCH', '/api/admin/tenants/0000000000', body)).json.error).toBe(
+                'default_tenant',
+              )
+            expect((await call(admin, 'DELETE', '/api/admin/tenants/0000000000')).json.error).toBe('default_tenant')
+            expect((await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)).status).toBe(204)
+            expect((await call(admin, 'GET', `/api/admin/tenants/${t.id}`)).status).toBe(404)
+          } finally {
+            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+          }
+        })
+
+        it('settings by layer: values are checked, a lock refuses the tenant, a restriction caps it, and what a lock hides is kept', async () => {
+          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+          const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('ts'), name: 'Settings' }))
+            .json as { id: string }
+          const site = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/settings/${key}`, body)
+          const mine = (key: string, body: unknown) =>
+            call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/${key}`, body)
+          const view = async () =>
+            (
+              (await call(admin, 'GET', `/api/admin/tenants/${t.id}/settings`)).json.settings as {
+                key: string
+                effective: unknown
+                tenant: { value: unknown; inEffect: boolean }
+                site: { lower: { mode: string } }
+              }[]
+            ).find((x) => x.key === 'registration.perHour')!
+          try {
+            expect((await site('registration.perHour', { value: 0 })).json.error).toBe('invalid')
+            expect((await site('no.such.setting', { value: 1 })).status).toBe(404)
+            // Registration cannot be opened while mail is not enabled; a tenant cannot touch what the site locks.
+            expect((await site('registration.open', { value: true })).json.error).toBe('mail_not_configured')
+            expect((await mine('registration.open', { value: true })).json.error).toBe('setting_locked')
+            // The site's rule for perHour: at most 50. A tenant above it is refused, below it is in effect.
+            expect((await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })).status).toBe(200)
+            expect((await mine('registration.perHour', { value: 80 })).json.error).toBe('setting_restricted')
+            expect((await mine('registration.perHour', { value: 30 })).status).toBe(200)
+            expect((await view()).effective).toBe(30)
+            // Tightened to 10: the tenant's 30 is kept, not in effect, and the answer counts the tenants.
+            const tight = await site('registration.perHour', { lower: { mode: 'restrict', max: 10 } })
+            expect(tight.json.affected).toBeGreaterThanOrEqual(1)
+            const v = await view()
+            expect([v.tenant.value, v.tenant.inEffect]).toEqual([30, false])
+            // Loosened again: it counts again.
+            await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })
+            expect((await view()).tenant.inEffect).toBe(true)
+            expect((await mine('registration.perHour', { value: null })).status).toBe(200)
+            expect((await mine('registration.perHour', { lower: { mode: 'restrict', max: 60 } })).json.error).toBe(
+              'setting_restricted',
+            )
+          } finally {
+            await site('registration.perHour', { lower: null })
+            await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+          }
+        })
+
+        it("the daily text's switches are the layered settings daily.own and daily.api; GET /api/settings says who keeps them off", async () => {
+          const m = await newMember(uniq('ts'))
+          const read = async (key: string) =>
+            (
+              (await call(admin, 'GET', '/api/admin/settings')).json.settings as {
+                key: string
+                site: { value: unknown }
+              }[]
+            ).find((x) => x.key === key)!.site.value
+          const was = await read('daily.own')
+          try {
+            expect((await call(admin, 'PUT', '/api/admin/daily', { allow: { own: false } })).status).toBe(200)
+            expect(await read('daily.own')).toBe(false)
+            const mineAll = (await call(m.browser, 'GET', '/api/settings')).json.settings as {
+              key: string
+              effective: unknown
+              space?: { canChange: boolean; inEffect: boolean; source?: string }
+            }[]
+            const own = mineAll.find((x) => x.key === 'daily.own')!
+            expect([own.effective, own.space?.canChange, own.space?.inEffect, own.space?.source]).toEqual([
+              false,
+              false,
+              false,
+              'site',
+            ])
+            expect((await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: true })).status).toBe(200)
+            const back = (await call(admin, 'GET', '/api/admin/daily')).json as { allow: { own: boolean } }
+            expect(back.allow.own).toBe(true)
+          } finally {
+            await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: was })
+          }
+        })
       })
 
-      it.skipIf(!!REAL)('mock only: connects one, moves the attachments with progress, and cannot take it away after', async () => {
-        const sp = await ownedSpace({ browser: admin }, 'Followed')
-        await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
-        const base = `/api/spaces/${sp.id}/remote/assets`
-        const put = await call(admin, 'PUT', base, { url: 'https://github.com/a/b-assets.git', credential: { type: 'token', token: 'x' } })
-        expect(put.status).toBe(200)
-        expect(put.json).toMatchObject({ url: 'https://github.com/a/b-assets.git', state: 'ok', move: null })
-        const listed = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((x: SpaceInfo) => x.id === sp.id)
-        expect(listed.storage.assets).toBe('repository')
-        // Nothing in assets/: nothing to move.
-        expect((await call(admin, 'POST', base + '/move')).status).toBe(200)
-        const page = (await call(admin, 'POST', `/api/spaces/${sp.id}/pages`, { title: 'P' })).json
-        await spaceApi(sp.id).uploadAsset(page.id, new Blob(['PNG']), 'a.png')
-        const mv = await call(admin, 'POST', base + '/move')
-        expect(mv.status).toBe(202)
-        expect(mv.json.move).toMatchObject({ state: 'copying', files: 1, filesDone: 0, error: '' })
-        expect((await call(admin, 'POST', base + '/move')).status).toBe(409)
-        let state = 'copying'
-        for (let i = 0; i < 6 && state !== 'done'; i++) state = (await call(admin, 'GET', base)).json.move.state
-        expect(state).toBe('done')
-        const del = await call(admin, 'DELETE', base)
-        expect([del.status, del.json.error]).toEqual([409, 'conflict'])
-        expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
+      describe('quotas and usage (3.3)', () => {
+        const slugOf = (p: string) =>
+          `${p}${run}`
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 24)
+        type Row = { used: number; limit: number | null }
+
+        it("GET /api/account/usage is the caller's own spaces, bytes and pages against their limits", async () => {
+          const m = await newMember(uniq('qa'))
+          const r = await call(m.browser, 'GET', '/api/account/usage')
+          expect(r.status).toBe(200)
+          const u = r.json as unknown as {
+            spaces: Row
+            bytes: Row
+            pages: Row
+            measuredAt: string | null
+            notices: unknown[]
+          }
+          // The personal space is one; nothing is measured on the request path, and nothing is limited unless an administrator said so.
+          expect(u.spaces.used).toBe(1)
+          expect(typeof u.spaces.limit === 'number' || u.spaces.limit === null).toBe(true)
+          expect(u.bytes.used).toBeGreaterThanOrEqual(0)
+          expect(u.pages.used).toBeGreaterThanOrEqual(0)
+          expect(u.notices).toEqual([])
+          expect(typeof u.measuredAt === 'string' || u.measuredAt === null).toBe(true)
+          // Signed in only.
+          expect((await call(browser(), 'GET', '/api/account/usage')).status).toBe(401)
+        })
+
+        it('GET /api/admin/usage lists people with their numbers, limits and own limits; it is checked, and for administrators only', async () => {
+          const m = await newMember(uniq('qb'))
+          const list = await call(admin, 'GET', '/api/admin/usage?limit=200')
+          expect(list.status).toBe(200)
+          const items = list.json.items as {
+            user: { id: string; username: string; name: string }
+            tenant: string
+            spaces: number
+            bytes: number
+            pages: number
+            limits: Record<string, number | null>
+            own: Record<string, number | null>
+            over: string[]
+            measuredAt: string | null
+          }[]
+          expect(items.length).toBeGreaterThan(0)
+          for (let i = 1; i < items.length; i++) expect(items[i].bytes).toBeLessThanOrEqual(items[i - 1].bytes)
+          const mine = items.find((x) => x.user.id === m.user.id)
+          // Found on the first page unless the server has more than 200 people with more bytes than this one.
+          if (mine) {
+            expect(mine.spaces).toBe(1)
+            expect(Object.keys(mine.limits).sort()).toEqual(['bytes', 'pages', 'spaces'])
+            expect(mine.own).toEqual({ spaces: null, bytes: null, pages: null })
+            expect(mine.over).toEqual([])
+          }
+          expect(typeof list.json.next).toBe('string')
+          expect((await call(admin, 'GET', '/api/admin/usage?limit=0')).status).toBe(400)
+          expect((await call(admin, 'GET', '/api/admin/usage?over=yes')).status).toBe(400)
+          expect((await call(admin, 'GET', '/api/admin/usage?tenant=01ZZZZZZZZ')).json.error).toBe('not_found')
+          expect((await call(m.browser, 'GET', '/api/admin/usage')).status).toBe(403)
+        })
+
+        it("quota on PATCH /api/users/{id} sets a person's own limits; the number of spaces is the one refused, with what ran out", async () => {
+          const m = await newMember(uniq('qc'))
+          const path = `/api/users/${m.user.id}`
+          expect((await call(m.browser, 'PATCH', path, { quota: { spaces: 5 } })).status).toBe(403)
+          for (const bad of [
+            'x',
+            { disk: 1 },
+            { spaces: -1 },
+            { spaces: 10001 },
+            { bytes: 0 },
+            { pages: 1.5 },
+            { bytes: '1' },
+          ]) {
+            const r = await call(admin, 'PATCH', path, { quota: bad })
+            expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+          }
+          const set = await call(admin, 'PATCH', path, { quota: { spaces: 1 } })
+          expect(set.status).toBe(200)
+          expect((set.json.user as User).quota).toEqual({ spaces: 1, bytes: null, pages: null })
+          try {
+            // The personal space is the one they may have.
+            const refused = await call(m.browser, 'POST', '/api/spaces', { name: 'One too many' })
+            expect([
+              refused.status,
+              refused.json.error,
+              refused.json.quota,
+              refused.json.limit,
+              refused.json.used,
+            ]).toEqual([403, 'quota_exceeded', 'spaces', 1, 1])
+            expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toEqual({ used: 1, limit: 1 })
+            const raised = await call(admin, 'PATCH', path, { quota: { spaces: 3, pages: 100000 } })
+            expect((raised.json.user as User).quota).toEqual({ spaces: 3, bytes: null, pages: 100000 })
+            expect((await call(m.browser, 'POST', '/api/spaces', { name: 'Allowed now' })).status).toBe(201)
+            // 0 is no limit; null follows the tenant and the site again.
+            expect((await call(admin, 'PATCH', path, { quota: { spaces: 0 } })).status).toBe(200)
+            expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toMatchObject({
+              used: 2,
+              limit: null,
+            })
+          } finally {
+            const cleared = await call(admin, 'PATCH', path, { quota: { spaces: null, bytes: null, pages: null } })
+            expect((cleared.json.user as User).quota).toEqual({ spaces: null, bytes: null, pages: null })
+          }
+          const listed = ((await call(admin, 'GET', '/api/users')).json.users as User[]).find((x) => x.id === m.user.id)
+          expect(listed?.quota).toEqual({ spaces: null, bytes: null, pages: null })
+        })
+
+        it('the quotas are layered settings with a person layer, checked like the others; a tenant says what it uses', async () => {
+          const settings = (await call(admin, 'GET', '/api/admin/settings')).json.settings as {
+            key: string
+            kind: string
+            layers: string[]
+            site: { value: unknown }
+          }[]
+          for (const key of ['quota.spacesPerPerson', 'quota.bytesPerPerson', 'quota.pagesPerPerson']) {
+            const d = settings.find((x) => x.key === key)
+            expect([d?.kind, d?.layers]).toEqual(['limit', ['site', 'tenant', 'person']])
+          }
+          expect((await call(admin, 'PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 0 })).json.error).toBe(
+            'invalid',
+          )
+          expect(
+            (await call(admin, 'PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 10001 })).json.error,
+          ).toBe('invalid')
+          // A person has no use for the layer: it is not among what GET /api/settings offers.
+          const m = await newMember(uniq('qd'))
+          expect(
+            ((await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string }[]).some((x) =>
+              x.key.startsWith('quota.'),
+            ),
+          ).toBe(false)
+          const tenant = (await call(admin, 'GET', '/api/admin/tenants/0000000000')).json as unknown as {
+            usage: {
+              people: number
+              spaces: number
+              bytes: number
+              pages: number
+              measuredAt: string | null
+              over: string[]
+            }
+          }
+          expect(tenant.usage.people).toBeGreaterThanOrEqual(1)
+          expect(tenant.usage.spaces).toBeGreaterThanOrEqual(1)
+          expect(Array.isArray(tenant.usage.over)).toBe(true)
+          expect('measuredAt' in tenant.usage).toBe(true)
+        })
+
+        it("a new tenant's first administrator's invite fills in the form that accepts it; nothing is mailed", async () => {
+          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+          const username = uniq('qa')
+          const made = await call(admin, 'POST', '/api/admin/tenants', {
+            slug: slugOf('qi'),
+            name: 'Invite',
+            admin: { username, name: 'First Admin', email: 'first@example.test' },
+          })
+          expect(made.status).toBe(201)
+          const tenantId = made.json.id as string
+          const inv = made.json.invite as {
+            id: string
+            token: string
+            role: string
+            username: string
+            name: string
+            email: string
+          }
+          try {
+            expect([inv.role, inv.username, inv.name, inv.email]).toEqual([
+              'admin',
+              username,
+              'First Admin',
+              'first@example.test',
+            ])
+            const check = await call(browser(), 'POST', '/api/invites/check', { token: inv.token })
+            expect(check.status).toBe(200)
+            expect([check.json.role, check.json.username, check.json.name, check.json.email]).toEqual([
+              'admin',
+              username,
+              'First Admin',
+              'first@example.test',
+            ])
+            // An invite without a fill has nothing in them.
+            const plain = (await call(admin, 'POST', '/api/invites', { role: 'member' })).json as {
+              id: string
+              token: string
+            }
+            const empty = await call(browser(), 'POST', '/api/invites/check', { token: plain.token })
+            expect([empty.json.username ?? '', empty.json.name ?? '', empty.json.email ?? '']).toEqual(['', '', ''])
+            await call(admin, 'DELETE', `/api/invites/${plain.id}`)
+            const bad = await call(admin, 'POST', '/api/admin/tenants', {
+              slug: slugOf('qj'),
+              name: 'Bad',
+              admin: { username, email: 'not-an-address' },
+            })
+            expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          } finally {
+            await call(admin, 'DELETE', `/api/invites/${inv.id}`)
+            await call(admin, 'DELETE', `/api/admin/tenants/${tenantId}`)
+            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+          }
+        })
       })
 
-      it('is for administrators only', async () => {
-        const m = await newMember(uniq('stad'))
-        for (const [method, path, body] of [
-          ['GET', '/api/admin/storage', undefined],
-          ['PUT', '/api/admin/storage', {}],
-          ['PUT', '/api/admin/spaces/01ZZZZZZZZ/storage', {}],
-          ['POST', '/api/admin/spaces/01ZZZZZZZZ/evict', {}],
-        ] as [string, string, unknown][]) {
-          const r = await call(m.browser, method, path, body)
-          expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+      describe('members and permissions', () => {
+        it("adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member's own list", async () => {
+          const owner = await newMember(uniq('mo'))
+          const guest = await newMember(uniq('mg'))
+          const sp = await ownedSpace(owner, 'Shared')
+          expect(sp).toMatchObject({
+            role: 'owner',
+            permissions: ['read', 'write', 'members', 'manage'],
+            disabled: false,
+          })
+          // Not a member yet: not even found.
+          expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+          const added = await addMember(owner, sp.id, guest.user.username.toUpperCase(), 'viewer')
+          expect(added).toEqual({
+            userId: guest.user.id,
+            username: guest.user.username,
+            name: guest.user.name,
+            role: 'viewer',
+            you: false,
+          })
+          const list = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+          expect(list.map((m) => [m.userId, m.role, m.you])).toEqual([
+            [owner.user.id, 'owner', true],
+            [guest.user.id, 'viewer', false],
+          ])
+          expect(await roleOf(guest.browser, sp.id)).toMatchObject({
+            role: 'viewer',
+            permissions: ['read'],
+            disabled: false,
+          })
+          // The role changes at the member's very next request.
+          const changed = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, {
+            role: 'editor',
+          })
+          expect(changed.status).toBe(200)
+          expect(changed.json).toMatchObject({ userId: guest.user.id, role: 'editor', you: false })
+          expect(await roleOf(guest.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
+          // Removed: the space is gone for them, at once.
+          expect((await call(owner.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(
+            204,
+          )
+          expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+          expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+        })
+
+        it('refuses what it should: an unknown user 404 user_not_found, a member already 409 exists, a role that is none 400 invalid, a personal space 409 personal_space', async () => {
+          const owner = await newMember(uniq('me'))
+          const guest = await newMember(uniq('mf'))
+          const sp = await ownedSpace(owner, 'Rules')
+          const add = (username: string, role: string, space = sp.id) =>
+            call(owner.browser, 'POST', `/api/spaces/${space}/members`, { username, role })
+          const unknown = await add(uniq('nobody'), 'viewer')
+          expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
+          await addMember(owner, sp.id, guest.user.username, 'viewer')
+          const twice = await add(guest.user.username, 'editor')
+          expect([twice.status, twice.json.error]).toEqual([409, 'exists'])
+          const own = await add(owner.user.username, 'editor')
+          expect([own.status, own.json.error]).toEqual([409, 'exists'])
+          const bad = await add(guest.user.username, 'boss', (await ownedSpace(owner, 'Rules 2')).id)
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find(
+            (s) => s.personal,
+          )!
+          const shared = await add(guest.user.username, 'viewer', personal.id)
+          expect([shared.status, shared.json.error]).toEqual([409, 'personal_space'])
+          const notMember = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/01ZZZZZZZZ`, {
+            role: 'viewer',
+          })
+          expect([notMember.status, notMember.json.error]).toEqual([404, 'not_found'])
+          const badRole = await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, {
+            role: 'boss',
+          })
+          expect([badRole.status, badRole.json.error]).toEqual([400, 'invalid'])
+        })
+
+        it('a space keeps an owner: the only owner can neither be demoted nor removed (409 last_owner), until there is another', async () => {
+          const owner = await newMember(uniq('lx'))
+          const second = await newMember(uniq('lw'))
+          const sp = await ownedSpace(owner, 'Owners')
+          const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
+          const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
+          expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
+          const leave = await call(owner.browser, 'DELETE', self)
+          expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
+          expect((await roleOf(owner.browser, sp.id))!.role).toBe('owner')
+          await addMember(owner, sp.id, second.user.username, 'owner')
+          expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
+          // The new owner is the last one now.
+          const last = await call(second.browser, 'DELETE', `/api/spaces/${sp.id}/members/${second.user.id}`)
+          expect([last.status, last.json.error]).toEqual([409, 'last_owner'])
+        })
+
+        it("any member may leave a space, a viewer too; someone else's removal needs the members permission", async () => {
+          const owner = await newMember(uniq('lv'))
+          const viewer = await newMember(uniq('vw'))
+          const editor = await newMember(uniq('ed'))
+          const sp = await ownedSpace(owner, 'Leaving')
+          await addMember(owner, sp.id, viewer.user.username, 'viewer')
+          await addMember(owner, sp.id, editor.user.username, 'editor')
+          const other = await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)
+          expect([other.status, other.json.error]).toEqual([403, 'no_permission'])
+          expect((await call(viewer.browser, 'DELETE', `/api/spaces/${sp.id}/members/${viewer.user.id}`)).status).toBe(
+            204,
+          )
+          expect((await call(viewer.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+          expect((await call(editor.browser, 'DELETE', `/api/spaces/${sp.id}/members/${editor.user.id}`)).status).toBe(
+            204,
+          )
+          const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+          expect(left.map((m) => m.userId)).toEqual([owner.user.id])
+        })
+
+        it('a viewer reads but is refused every write with 403 no_permission; an editor writes but cannot manage or add members', async () => {
+          const owner = await newMember(uniq('wo'))
+          const viewer = await newMember(uniq('wv'))
+          const editor = await newMember(uniq('we'))
+          const sp = await ownedSpace(owner, 'Writes')
+          await addMember(owner, sp.id, viewer.user.username, 'viewer')
+          await addMember(owner, sp.id, editor.user.username, 'editor')
+          const base = `/api/spaces/${sp.id}`
+          const page = await call(owner.browser, 'POST', `${base}/pages`, { meta: { title: '读得到' }, body: '正文\n' })
+          expect(page.status).toBe(201)
+          for (const path of [
+            `${base}/pages`,
+            `${base}/pages/${page.json.id}`,
+            `${base}/tree`,
+            `${base}/tags`,
+            `${base}/members`,
+            `${base}/views?folder=`,
+            `${base}/pages/groups?folder=&key=status`,
+            `${base}/templates`,
+          ]) {
+            expect((await call(viewer.browser, 'GET', path)).status, `viewer GET ${path}`).toBe(200)
+          }
+          const writes: [string, string, unknown][] = [
+            ['POST', `${base}/pages`, { body: 'x' }],
+            ['PUT', `${base}/pages/${page.json.id}`, { baseRev: page.json.rev, meta: page.json.meta, body: '改\n' }],
+            [
+              'PUT',
+              `${base}/pages/${page.json.id}/draft`,
+              { baseRev: page.json.rev, meta: page.json.meta, body: '改\n', prev: '' },
+            ],
+            ['POST', `${base}/pages/${page.json.id}/move`, { folder: 'x' }],
+            ['DELETE', `${base}/pages/${page.json.id}`, undefined],
+            ['POST', `${base}/pages/batch`, { op: 'delete', ids: [page.json.id] }],
+            ['POST', `${base}/folders`, { path: 'x' }],
+            ['PUT', `${base}/tags/blue`, { color: 'red' }],
+            ['PATCH', `${base}/pages/${page.json.id}/props`, { baseRev: page.json.rev, set: { status: 'x' } }],
+            ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
+            ['DELETE', `${base}/types/task`, undefined],
+            ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
+            ['PUT', `${base}/views`, { folder: '', baseRev: '0'.repeat(40), views: [] }],
+            ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
+            ['DELETE', `${base}/templates/日记?baseRev=x`, undefined],
+            ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
+            ['PATCH', base, { name: '改名' }],
+            ['POST', `${base}/reindex`, undefined],
+            ['POST', `${base}/members`, { username: owner.user.username, role: 'viewer' }],
+          ]
+          for (const [method, path, body] of writes) {
+            const r = await call(viewer.browser, method, path, body ?? {})
+            expect([r.status, r.json?.error], `viewer ${method} ${path}`).toEqual([403, 'no_permission'])
+          }
+          // The page is as it was.
+          const still = await call(owner.browser, 'GET', `${base}/pages/${page.json.id}`)
+          expect(still.json).toMatchObject({ rev: page.json.rev, body: '正文\n' })
+
+          const made = await call(editor.browser, 'POST', `${base}/pages`, {
+            meta: { title: '编辑者写的' },
+            body: 'x\n',
+          })
+          expect(made.status).toBe(201)
+          expect((await call(editor.browser, 'PUT', `${base}/tags/blue`, { color: 'red' })).status).toBe(200)
+          // An editor writes properties of a page, and reads the types; making one needs `manage`.
+          const patched = await call(editor.browser, 'PATCH', `${base}/pages/${page.json.id}/props`, {
+            baseRev: page.json.rev,
+            set: { status: 'x' },
+          })
+          expect([patched.status, patched.json.meta.status]).toEqual([200, 'x'])
+          expect((await call(editor.browser, 'GET', `${base}/types`)).status).toBe(200)
+          // Templates are made by those who manage; whoever writes pages makes pages from them.
+          const tpl = await call(owner.browser, 'PUT', `${base}/templates/日记`, {
+            baseRev: '',
+            meta: { title: '日记 {{date}}' },
+            body: '今天\n',
+          })
+          expect(tpl.status).toBe(200)
+          expect((await call(viewer.browser, 'GET', `${base}/templates/日记`)).json.rev).toBe(tpl.json.rev)
+          const fromTemplate = await call(editor.browser, 'POST', `${base}/pages`, { template: '日记', tz: 0 })
+          expect([fromTemplate.status, fromTemplate.json.body]).toEqual([201, '今天\n'])
+          // Views are a shared arrangement of pages: whoever may write pages may save them.
+          const noViews = await call(editor.browser, 'GET', `${base}/views?folder=`)
+          const savedViews = await call(editor.browser, 'PUT', `${base}/views`, {
+            folder: '',
+            baseRev: noViews.json.rev,
+            views: [{ name: '全部', layout: 'cards' }],
+          })
+          expect([savedViews.status, savedViews.json.views[0].name]).toEqual([200, '全部'])
+          expect((await call(viewer.browser, 'GET', `${base}/views?folder=`)).json).toEqual(savedViews.json)
+          for (const [method, path, body] of [
+            ['PUT', `${base}/types/task`, { title: '任务', fields: [] }],
+            ['DELETE', `${base}/types/task`, {}],
+            ['PUT', `${base}/folders/type`, { folder: '', type: '' }],
+            ['PUT', `${base}/templates/日记`, { baseRev: '', meta: {}, body: '' }],
+            ['DELETE', `${base}/templates/日记?baseRev=x`, {}],
+            ['PUT', `${base}/templates/defaults`, { quickNote: '' }],
+            ['PATCH', base, { name: '改名' }],
+            ['POST', `${base}/reindex`, {}],
+            ['POST', `${base}/members`, { username: viewer.user.username, role: 'editor' }],
+            ['PATCH', `${base}/members/${viewer.user.id}`, { role: 'editor' }],
+          ] as [string, string, unknown][]) {
+            const r = await call(editor.browser, method, path, body)
+            expect([r.status, r.json?.error], `editor ${method} ${path}`).toEqual([403, 'no_permission'])
+          }
+        })
+      })
+
+      describe('administration', () => {
+        const adminPaths: [string, string, unknown?][] = [
+          ['GET', '/api/admin/spaces'],
+          ['GET', '/api/admin/status'],
+          ['GET', '/api/admin/security'],
+          ['PUT', '/api/admin/security', {}],
+          ['GET', '/api/admin/auth/providers'],
+          ['POST', '/api/admin/auth/providers', {}],
+          ['GET', '/api/admin/audit'],
+          ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
+          ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
+          ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
+          ['POST', '/api/admin/spaces/01ZZZZZZZZ/disable'],
+          ['POST', '/api/admin/spaces/01ZZZZZZZZ/enable'],
+          ['DELETE', '/api/admin/spaces/01ZZZZZZZZ'],
+        ]
+        const listAll = async (query = '', limit = 3) => {
+          const items: AdminSpace[] = []
+          let cursor = ''
+          for (let guard = 0; guard < 500; guard++) {
+            const r = await as(admin, () =>
+              adminApi.adminSpaces({ q: query || undefined, cursor: cursor || undefined, limit }),
+            )
+            items.push(...r.items)
+            cursor = r.next
+            if (!cursor) return items
+          }
+          throw new Error('cursor never ended')
         }
+
+        it('is for administrators only: a member gets 403 forbidden from every endpoint, and nothing changes', async () => {
+          const m = await newMember(uniq('na'))
+          const own = await ownedSpace(m, 'Mine')
+          for (const [method, path, body] of adminPaths) {
+            const r = await call(m.browser, method, path, body ?? (method === 'GET' ? undefined : {}))
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+          }
+          const real = await call(m.browser, 'POST', `/api/admin/spaces/${own.id}/disable`, {})
+          expect(real.status).toBe(403)
+          expect((await roleOf(m.browser, own.id))!.disabled).toBe(false)
+        })
+
+        it('an unknown space is 404 not_found', async () => {
+          for (const [method, path, body] of adminPaths.filter(([, p]) => p.includes('01ZZZZZZZZ'))) {
+            const r = await call(admin, method, path, body ?? (method === 'GET' ? undefined : {}))
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([404, 'not_found'])
+          }
+        })
+
+        it('lists every space in a page at a time, with its owner, members, size, sync and whether it is disabled', async () => {
+          const owner = await newMember(uniq('ls1'))
+          const guest = await newMember(uniq('ls2'))
+          const name = `Listed ${run}`
+          const sp = await ownedSpace(owner, name)
+          await addMember(owner, sp.id, guest.user.username, 'viewer')
+          const found = await listAll(name.toLowerCase())
+          expect(found.map((s) => s.id)).toEqual([sp.id])
+          expect(found[0]).toMatchObject({
+            id: sp.id,
+            name,
+            personal: false,
+            disabled: false,
+            members: 2,
+            sync: 'local',
+            owner: { id: owner.user.id, username: owner.user.username, name: owner.user.name },
+          })
+          expect(typeof found[0].created).toBe('string')
+          // Not measured yet, or measured: both are shaped alike.
+          expect(found[0].sizeBytes === null ? found[0].sizeAt : typeof found[0].sizeAt).toEqual(
+            found[0].sizeBytes === null ? null : 'string',
+          )
+          const first = await as(admin, () => adminApi.adminSpaces({ limit: 1 }))
+          expect(first.items.length).toBe(1)
+          expect(typeof first.next).toBe('string')
+          // Walking the pages meets each space once, the personal ones included.
+          const all = await listAll('', 2)
+          expect(new Set(all.map((s) => s.id)).size).toBe(all.length)
+          expect(all.map((s) => s.id)).toContain(sp.id)
+          expect(all.some((s) => s.personal)).toBe(true)
+          expect((await listAll('no-such-space-' + run)).length).toBe(0)
+          const bad = await call(admin, 'GET', '/api/admin/spaces?limit=0')
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+        })
+
+        it('finds one space by its id: the same object as its item of the list, 404 for an unknown id', async () => {
+          const owner = await newMember(uniq('g1'))
+          const guest = await newMember(uniq('g2'))
+          const name = `Single ${run}`
+          const sp = await ownedSpace(owner, name)
+          await addMember(owner, sp.id, guest.user.username, 'editor')
+          const listed = (await listAll(name.toLowerCase())).find((s) => s.id === sp.id)
+          expect(listed).toBeTruthy()
+          expect(await as(admin, () => api.adminSpace(sp.id))).toEqual(listed)
+          const missing = await call(admin, 'GET', '/api/admin/spaces/01ZZZZZZZZ')
+          expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
+        })
+
+        it('measures a space on request and stores the size', async () => {
+          const owner = await newMember(uniq('sz'))
+          const sp = await ownedSpace(owner, `Sized ${run}`)
+          await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, {
+            meta: { title: '占地方' },
+            body: '一些字\n',
+          })
+          const size = await as(admin, () => adminApi.adminResizeSpace(sp.id))
+          expect(size.sizeBytes).toBeGreaterThan(0)
+          expect(typeof size.sizeAt).toBe('string')
+          const row = (await listAll(`sized ${run}`)).find((s) => s.id === sp.id)!
+          expect(row.sizeBytes).toBe(size.sizeBytes)
+          expect(row.sizeAt).toBe(size.sizeAt)
+        })
+
+        it('a member may leave a space that is switched off, though nothing else in it opens', async () => {
+          const owner = await newMember(uniq('dfo'))
+          const guest = await newMember(uniq('dfg'))
+          const sp = await ownedSpace(owner, 'Left switched off')
+          await addMember(owner, sp.id, guest.user.username, 'editor')
+          expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
+          const members = await call(guest.browser, 'GET', `/api/spaces/${sp.id}/members`)
+          expect([members.status, members.json.error]).toEqual([403, 'space_disabled'])
+          expect((await call(guest.browser, 'DELETE', `/api/spaces/${sp.id}/members/${guest.user.id}`)).status).toBe(
+            204,
+          )
+          expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+          expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
+          const left = (await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+          expect(left.map((m) => m.userId)).toEqual([owner.user.id])
+        })
+
+        it('the owner who must stay is one who can sign in: with the other owner disabled, the only enabled owner can neither be demoted nor leave', async () => {
+          const owner = await newMember(uniq('efo'))
+          const second = await newMember(uniq('efs'))
+          const sp = await ownedSpace(owner, 'Enabled owners')
+          await addMember(owner, sp.id, second.user.username, 'owner')
+          const self = `/api/spaces/${sp.id}/members/${owner.user.id}`
+          await as(admin, () => adminApi.updateUser(second.user.id, { disabled: true }))
+          const demote = await call(owner.browser, 'PATCH', self, { role: 'editor' })
+          expect([demote.status, demote.json.error]).toEqual([409, 'last_owner'])
+          const leave = await call(owner.browser, 'DELETE', self)
+          expect([leave.status, leave.json.error]).toEqual([409, 'last_owner'])
+          // Enabled again, the other owner counts: the first may step down.
+          await as(admin, () => adminApi.updateUser(second.user.id, { disabled: false }))
+          expect((await call(owner.browser, 'PATCH', self, { role: 'editor' })).status).toBe(200)
+        })
+
+        it('transfers ownership: the user becomes the owner and the owners before become editors; a personal space, an unknown or a disabled user is refused', async () => {
+          const owner = await newMember(uniq('to'))
+          const heir = await newMember(uniq('th'))
+          const gone = await newMember(uniq('tg'))
+          const sp = await ownedSpace(owner, 'Handed over')
+          const transfer = (userId: string, space = sp.id) =>
+            call(admin, 'POST', `/api/admin/spaces/${space}/transfer`, { userId })
+          const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find(
+            (s) => s.personal,
+          )!
+          const p = await transfer(heir.user.id, personal.id)
+          expect([p.status, p.json.error]).toEqual([409, 'personal_space'])
+          const unknown = await transfer('01ZZZZZZZZ')
+          expect([unknown.status, unknown.json.error]).toEqual([404, 'user_not_found'])
+          await as(admin, () => adminApi.updateUser(gone.user.id, { disabled: true }))
+          const off = await transfer(gone.user.id)
+          expect([off.status, off.json.error]).toEqual([409, 'user_disabled'])
+          expect((await transfer(heir.user.id)).status).toBe(204)
+          const list = (await call(heir.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members as Member[]
+          expect(list.map((m) => [m.userId, m.role])).toEqual([
+            [heir.user.id, 'owner'],
+            [owner.user.id, 'editor'],
+          ])
+          expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'editor', permissions: ['read', 'write'] })
+          expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.owner!.id).toBe(heir.user.id)
+        })
+
+        it("disables a space: it stays in its members' lists, marked, and nothing opens it for anyone, an administrator included; enabling undoes it", async () => {
+          const owner = await newMember(uniq('do'))
+          const sp = await ownedSpace(owner, 'Switched off')
+          const page = await call(owner.browser, 'POST', `/api/spaces/${sp.id}/pages`, {
+            meta: { title: '还在' },
+            body: 'x\n',
+          })
+          expect(page.status).toBe(201)
+          expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/disable`, {})).status).toBe(204)
+          expect(await roleOf(owner.browser, sp.id)).toMatchObject({ role: 'owner', disabled: true })
+          expect(
+            (await call(owner.browser, 'GET', '/api/meta')).json.spaces.find((s: SpaceInfo) => s.id === sp.id).disabled,
+          ).toBe(true)
+          for (const [b, method, path] of [
+            [owner.browser, 'GET', `/api/spaces/${sp.id}/pages`],
+            [owner.browser, 'GET', `/api/spaces/${sp.id}/tree`],
+            [owner.browser, 'POST', `/api/spaces/${sp.id}/pages`],
+            [admin, 'GET', `/api/spaces/${sp.id}/pages`],
+          ] as [Browser, string, string][]) {
+            const r = await call(b, method, path, method === 'GET' ? undefined : { body: 'x' })
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'space_disabled'])
+          }
+          // The administration itself still reaches it.
+          expect((await listAll(sp.name.toLowerCase())).find((s) => s.id === sp.id)!.disabled).toBe(true)
+          expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/size`, {})).status).toBe(200)
+          expect((await call(admin, 'POST', `/api/admin/spaces/${sp.id}/enable`, {})).status).toBe(204)
+          expect((await roleOf(owner.browser, sp.id))!.disabled).toBe(false)
+          const again = await call(owner.browser, 'GET', `/api/spaces/${sp.id}/pages/${page.json.id}`)
+          expect(again.status).toBe(200)
+          expect(again.json.meta.title).toBe('还在')
+        })
+
+        it('deletes a space (the files go to the trash, not away); a personal space cannot be deleted', async () => {
+          const owner = await newMember(uniq('de'))
+          const guest = await newMember(uniq('dg'))
+          const sp = await ownedSpace(owner, 'To be deleted')
+          await addMember(owner, sp.id, guest.user.username, 'viewer')
+          const personal = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find(
+            (s) => s.personal,
+          )!
+          const refused = await call(admin, 'DELETE', `/api/admin/spaces/${personal.id}`)
+          expect([refused.status, refused.json.error]).toEqual([409, 'personal_space'])
+          const done = await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)
+          expect(done.status).toBe(200)
+          expect(done.json.trashed).toMatch(/^trash\//)
+          expect(done.json.trashed).toContain(sp.id)
+          expect(typeof done.json.cacheTrashed).toBe('string')
+          expect(done.json.warnings).toEqual([])
+          for (const b of [owner.browser, guest.browser, admin])
+            expect((await call(b, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
+          expect(await roleOf(guest.browser, sp.id)).toBeUndefined()
+          expect((await listAll('to be deleted')).some((s) => s.id === sp.id)).toBe(false)
+          expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(404)
+        })
+
+        it("reports the server's status", async () => {
+          const st = await as(admin, () => adminApi.adminStatus())
+          expect(typeof st.version).toBe('string')
+          expect(Number.isNaN(Date.parse(st.startedAt))).toBe(false)
+          expect(st.uptimeSeconds).toBeGreaterThanOrEqual(0)
+          expect(['sqlite', 'postgres']).toContain(st.database)
+          expect(st.spaces).toBeGreaterThanOrEqual(1)
+          expect(st.users).toBeGreaterThanOrEqual(1)
+          expect(st.openSpaces).toBeGreaterThanOrEqual(0)
+          expect(typeof st.goVersion).toBe('string')
+          if (st.diskFreeBytes !== undefined) expect(st.diskFreeBytes).toBeGreaterThanOrEqual(0)
+        })
       })
 
-      it('a space says what its copy is; a local space is never evicted; pinning and the exemption are an administrator\'s', async () => {
-        const owner = await newMember(uniq('stsp'))
-        const sp = await ownedSpace(owner, `Stored ${run}`)
-        const item = (await call(admin, 'GET', `/api/admin/spaces/${sp.id}`)).json as AdminSpace
-        expect(item.storage).toMatchObject({ cache: 'local', pinned: false, exempt: false, remote: null, assets: 'space' })
-        const mine = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.find((s: SpaceInfo) => s.id === sp.id)
-        expect(mine.storage).toMatchObject({ cache: 'local', remote: null })
-        const evict = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/evict`)
-        expect([evict.status, evict.json.error]).toEqual([409, 'conflict'])
-        const pinned = await call(admin, 'PUT', `/api/admin/spaces/${sp.id}/storage`, { pin: true, exempt: true })
-        expect(pinned.status).toBe(200)
-        expect(pinned.json.storage).toMatchObject({ pinned: true, exempt: true })
-        expect((await call(admin, 'PUT', `/api/admin/spaces/${sp.id}/storage`, { pin: false, exempt: false })).json.storage).toMatchObject({ pinned: false, exempt: false })
-        const filtered = (await call(admin, 'GET', '/api/admin/spaces?cache=evicted&limit=200')).json.items as AdminSpace[]
-        expect(filtered.every((s) => s.storage.cache === 'evicted')).toBe(true)
-        const status = (await call(admin, 'GET', '/api/admin/status')).json
-        expect(status.storage).toMatchObject({ spaces: { local: expect.any(Number), full: expect.any(Number), partial: expect.any(Number), evicted: expect.any(Number), restoring: expect.any(Number) }, remotes: { inGrace: expect.any(Number), overdue: expect.any(Number) } })
+      // The administrators' re-check and one-click App creation are site-only, on a real server and in the mock alike;
+      // without an App there is nothing to check (what they do with one is below, against the mock's GitHub).
+      describe('the App re-check and creation endpoints', () => {
+        it('are for site administrators, and a re-check needs an App', async () => {
+          const m = await newMember(uniq('ghc'))
+          for (const [path, body] of [
+            ['/api/admin/connections/github/check', {}],
+            ['/api/admin/connections/github/manifest', {}],
+          ] as const) {
+            const r = await call(m.browser, 'POST', path, body)
+            expect([r.status, r.json?.error], path).toEqual([403, 'forbidden'])
+          }
+          const none = await call(admin, 'POST', '/api/admin/connections/github/check', {})
+          expect([none.status, none.json?.error]).toEqual([409, 'provider_not_configured'])
+        })
       })
 
-      it('requires a remote of new spaces before anything is made, and relaxing it takes the requirement away', async () => {
-        const owner = await newMember(uniq('strq'))
-        const before = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length
-        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
-        const refused = await call(owner.browser, 'POST', '/api/spaces', { name: `Needs a remote ${run}` })
-        expect([refused.status, refused.json.error, refused.json.require]).toEqual([409, 'remote_required', 'any'])
-        expect((await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length).toBe(before)
-        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
-        expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Free ${run}` })).status).toBe(201)
+      // GitHub (docs/api.md, "GitHub"). There is no GitHub behind a real server in this setup: the mock plays it.
+      describe.skipIf(!!REAL)('GitHub (mock only)', () => {
+        const KEY =
+          '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
+        const CLIENT = 'Iv23liMockClientId'
+        const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/connections/github', body)
+        const mockHook = (body: unknown) => call(admin, 'POST', '/api/_mock/github', body)
+        const codeOf = (r: { json: any }) => r.json?.error
+        // The GitHub provider's entry in GET /api/connections.
+        const ghProvider = async (b: Browser) =>
+          ((await call(b, 'GET', '/api/connections')).json.providers as { id: string }[]).find(
+            (p) => p.id === 'github',
+          ) as any
+
+        // Plays the browser through connecting a GitHub account.
+        const connectAccount = async (b: Browser, ret = '/settings/connections') => {
+          const start = await call(b, 'POST', '/api/connections/github/authorization/start', { return: ret })
+          expect(start.status).toBe(200)
+          const cb = await call(b, 'GET', start.json.url, undefined, {})
+          return cb
+        }
+
+        it('starts with no App: everyone is told so, and every other endpoint answers 409 provider_not_configured', async () => {
+          const m = await newMember(uniq('gh0'))
+          const info = { json: await ghProvider(m.browser) }
+          expect(info.json).toMatchObject({
+            id: 'github',
+            configured: false,
+            app: null,
+            userAuthorization: false,
+            connection: null,
+            leftovers: [],
+          })
+          const off = await call(admin, 'GET', '/api/admin/connections/github')
+          expect(off.json).toMatchObject({ configured: false })
+          expect(off.json.callbackUrl).toMatch(/\/api\/connections\/github\/authorization\/callback$/)
+          for (const [method, path, body] of [
+            ['POST', '/api/connections/github/authorization/start', {}],
+            ['GET', '/api/connections/github/owners'],
+            ['GET', '/api/connections/github/repos?mine=true'],
+            ['GET', '/api/admin/connections/github/installations'],
+            ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
+          ] as const) {
+            const r = await call(
+              method.startsWith('P') && path.startsWith('/api/admin')
+                ? admin
+                : path.startsWith('/api/admin')
+                  ? admin
+                  : m.browser,
+              method,
+              path,
+              body,
+            )
+            expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'provider_not_configured'])
+          }
+          const sp = await call(m.browser, 'POST', '/api/spaces', {
+            name: 'Gh',
+            storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'x' } },
+          })
+          expect([sp.status, codeOf(sp)]).toEqual([409, 'provider_not_configured'])
+        })
+
+        it('is for administrators to set up: a member gets 403, a refused check saves nothing, and no secret is ever returned', async () => {
+          const m = await newMember(uniq('gh1'))
+          for (const [method, path, body] of [
+            ['GET', '/api/admin/connections/github'],
+            ['PUT', '/api/admin/connections/github', {}],
+            ['DELETE', '/api/admin/connections/github'],
+            ['GET', '/api/admin/connections/github/installations'],
+          ] as const) {
+            const r = await call(m.browser, method, path, body)
+            expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([403, 'forbidden'])
+          }
+          expect(codeOf(await putApp(admin, { appId: '1234567' }))).toBe('invalid')
+          expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('key_invalid')
+          expect(
+            codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' })),
+          ).toBe('client_rejected')
+          expect(((await call(admin, 'GET', '/api/admin/connections/github')).json as any).configured).toBe(false)
+          const saved = await putApp(admin, {
+            appId: '1234567',
+            privateKey: KEY,
+            clientId: CLIENT,
+            clientSecret: 'a-secret',
+          })
+          expect(saved.status).toBe(200)
+          expect(saved.json).toMatchObject({
+            configured: true,
+            appId: '1234567',
+            clientId: CLIENT,
+            slug: 'petalbook-notes',
+            privateKey: { set: true },
+            clientSecret: { set: true },
+            userAuthorization: true,
+            missing: [],
+            spaces: 0,
+          })
+          expect(saved.json.privateKey.fingerprint).toMatch(/^SHA256:/)
+          expect(JSON.stringify(saved.json)).not.toContain('a-secret')
+          expect(JSON.stringify(saved.json)).not.toContain('PRIVATE KEY')
+          // Saving again with the key and the secret left out keeps them.
+          const again = await putApp(admin, { appId: '1234567' })
+          expect(again.json).toMatchObject({ privateKey: { set: true }, clientSecret: { set: true } })
+          const seen = { json: await ghProvider(m.browser) }
+          expect(seen.json).toMatchObject({
+            app: {
+              name: 'PetalBook Notes',
+              slug: 'petalbook-notes',
+              htmlUrl: expect.any(String),
+              installUrl: expect.stringContaining('/installations/new'),
+            },
+            userAuthorization: true,
+            connection: null,
+          })
+        })
+
+        it('connects an account only from the browser that started it, once, and disconnects', async () => {
+          const m = await newMember(uniq('gh2'))
+          const other = await newMember(uniq('gh3'))
+          const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', {
+            return: '/settings/connections',
+          })
+          expect(start.json.url).toContain('/api/connections/github/authorization/callback')
+          // Another browser, or no session: expired, nothing is connected.
+          const stray = await call(other.browser, 'GET', start.json.url, undefined, {})
+          expect([stray.status, stray.headers.get('Location')]).toEqual([
+            303,
+            '/settings?provider=github&connection_error=expired',
+          ])
+          const ok = await call(m.browser, 'GET', start.json.url, undefined, {})
+          expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/connections'])
+          const replay = await call(m.browser, 'GET', start.json.url, undefined, {})
+          expect(replay.headers.get('Location')).toBe('/settings?provider=github&connection_error=expired')
+          const info = { json: await ghProvider(m.browser) }
+          expect(info.json.connection).toMatchObject({ state: 'ok', spaces: 0 })
+          expect(typeof info.json.connection.login).toBe('string')
+          expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
+          expect((await ghProvider(m.browser)).connection).toBeNull()
+          expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
+        })
+
+        it('lists the accounts to create in and the repositories to connect, a page at a time', async () => {
+          const m = await newMember(uniq('gh4'))
+          expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos?mine=true'))).toBe('not_connected')
+          await connectAccount(m.browser)
+          const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
+          expect(owners.status).toBe(200)
+          expect(owners.json.items[0]).toMatchObject({ type: 'User', via: 'user', installationId: null })
+          const org = owners.json.items.find((o: any) => o.login === 'kazuhahub')
+          expect(org).toMatchObject({ type: 'Organization', via: 'user', installationId: expect.any(Number) })
+          expect(typeof owners.json.next).toBe('string')
+          const repos = await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}`)
+          expect(repos.status).toBe(200)
+          expect(repos.json.items[0]).toMatchObject({
+            id: expect.any(Number),
+            fullName: expect.stringContaining('kazuhahub/'),
+            private: expect.any(Boolean),
+            defaultBranch: 'main',
+            canPush: true,
+          })
+          expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos'))).toBe('invalid')
+          expect(
+            codeOf(
+              await call(
+                m.browser,
+                'GET',
+                `/api/connections/github/repos?installation=${org.installationId}&mine=true`,
+              ),
+            ),
+          ).toBe('invalid')
+          expect((await call(m.browser, 'GET', '/api/connections/github/repos?installation=99')).status).toBe(404)
+          expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/owners?cursor=zzz'))).toBe('invalid')
+        })
+
+        it("shares an organisation's installation with a tenant, and a member without a GitHub account there can then use it", async () => {
+          const list = await call(admin, 'GET', '/api/admin/connections/github/installations')
+          expect(list.status).toBe(200)
+          const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
+          expect(item).toMatchObject({
+            account: { type: 'Organization' },
+            repositorySelection: 'selected',
+            suspended: false,
+            tenants: [],
+            spaces: 0,
+          })
+          expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {}))).toBe(
+            'invalid',
+          )
+          expect(
+            codeOf(
+              await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { shared: true }),
+            ),
+          ).toBe('invalid')
+          expect(
+            codeOf(
+              await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {
+                tenants: ['01ZZZZZZZZ'],
+              }),
+            ),
+          ).toBe('invalid')
+          expect(
+            (await call(admin, 'PUT', '/api/admin/connections/github/installations/424242', { tenants: [] })).status,
+          ).toBe(404)
+          const put = await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {
+            tenants: ['0000000000'],
+          })
+          expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
+          const m = await newMember(uniq('gh5'))
+          const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
+          expect(owners.json.items).toEqual([
+            { login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id, needsInstall: false },
+          ])
+          const made = await call(m.browser, 'POST', '/api/spaces', {
+            name: `Shared ${run}`,
+            storage: {
+              sync: {
+                provider: 'github',
+                owner: 'petal-team',
+                name: `shared-${run}`,
+                private: false,
+                description: 'd',
+              },
+            },
+          })
+          expect(made.status).toBe(201)
+          const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
+          expect(remote.json).toMatchObject({
+            state: 'ok',
+            errorCode: '',
+            credential: {
+              type: 'connection',
+              provider: 'github',
+              via: 'app',
+              installationId: item.id,
+              account: 'petal-team',
+            },
+          })
+          // The App cannot be removed while a space syncs through it.
+          expect(codeOf(await call(admin, 'DELETE', '/api/admin/connections/github'))).toBe('provider_in_use')
+          await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
+          expect(
+            (await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: [] })).json
+              .tenants,
+          ).toEqual([])
+        })
+
+        it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {
+          const m = await newMember(uniq('gh6'))
+          await connectAccount(m.browser)
+          const body = (extra: Record<string, unknown>) => ({
+            name: `Repo ${run}`,
+            storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `notes-${run}`, ...extra } },
+          })
+          const made = await call(m.browser, 'POST', '/api/spaces', body({ private: true, description: 'Notes' }))
+          expect(made.status).toBe(201)
+          expect(made.headers.get('Location')).toBe(`/api/spaces/${made.json.id}`)
+          expect(made.json.sync).toBe('ok')
+          const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
+          expect(remote.json).toMatchObject({
+            url: `https://github.com/kazuhahub/notes-${run}.git`,
+            branch: 'main',
+            state: 'ok',
+            errorCode: '',
+            credential: {
+              type: 'connection',
+              provider: 'github',
+              via: 'app',
+              account: 'kazuhahub',
+              repoId: expect.any(Number),
+            },
+          })
+          expect(JSON.stringify(remote.json)).not.toMatch(/token|secret/i)
+          // The same name again: taken; create: false uses it.
+          expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('name_taken')
+          expect((await call(m.browser, 'POST', '/api/spaces', body({ create: false }))).status).toBe(201)
+          expect(
+            codeOf(
+              await call(m.browser, 'POST', '/api/spaces', {
+                name: 'x',
+                storage: { sync: { provider: 'github', owner: 'nobody-here', name: 'x' } },
+              }),
+            ),
+          ).toBe('owner_not_allowed')
+          expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({ name: 'bad name' })))).toBe('invalid')
+          expect((await mockHook({ trap: 'noPermission' })).status).toBe(200)
+          const refused = await call(m.browser, 'POST', '/api/spaces', body({ name: `other-${run}` }))
+          expect([refused.status, codeOf(refused)]).toEqual([403, 'provider_refused'])
+          await mockHook({ trap: 'noPermission', on: false })
+          const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
+          expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
+        })
+
+        it('reminds a person of an empty repository a failed space left, until a space connects to it or they dismiss it', async () => {
+          const m = await newMember(uniq('gh6b'))
+          const other = await newMember(uniq('gh6c'))
+          await connectAccount(m.browser)
+          expect((await ghProvider(m.browser)).leftovers).toEqual([])
+          const body = (name: string, create = true) => ({
+            name: 'Kept',
+            storage: { sync: { provider: 'github', owner: 'kazuhahub', name, create } },
+          })
+          await mockHook({ trap: 'pushFails' })
+          const failed = await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`))
+          expect([failed.status, codeOf(failed)]).toEqual([502, 'push_failed'])
+          const second = await call(m.browser, 'POST', '/api/spaces', body(`left2-${run}`))
+          await mockHook({ trap: 'pushFails', on: false })
+          const list = (await ghProvider(m.browser)).leftovers
+          expect(list).toHaveLength(2)
+          expect(list[1]).toMatchObject({
+            repoId: failed.json.repo.id,
+            fullName: `kazuhahub/left-${run}`,
+            htmlUrl: failed.json.repo.htmlUrl,
+            spaceName: 'Kept',
+            created: expect.stringMatching(/Z$/),
+          })
+          // Newest first, and only the person's own.
+          expect(list[0].repoId).toBe(second.json.repo.id)
+          expect((await ghProvider(other.browser)).leftovers).toEqual([])
+          // A connection that is refused (a branch name that cannot be used) leaves the reminder.
+          const sp = await ownedSpace(m, 'Refused')
+          const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, {
+            url: `https://github.com/kazuhahub/left2-${run}.git`,
+            branch: 'bad branch',
+            credential: { type: 'connection', provider: 'github', via: 'user' },
+          })
+          expect([refused.status, codeOf(refused)]).toEqual([400, 'invalid'])
+          expect((await ghProvider(m.browser)).leftovers).toHaveLength(2)
+          // A space connecting to the repository (here by create: false) answers its reminder.
+          expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
+          expect((await ghProvider(m.browser)).leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
+          // Dismissing is the person's own, and fine when it is gone already.
+          expect(
+            (await call(other.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status,
+          ).toBe(204)
+          expect((await ghProvider(m.browser)).leftovers).toHaveLength(1)
+          expect(
+            (await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status,
+          ).toBe(204)
+          expect(
+            (await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status,
+          ).toBe(204)
+          expect((await ghProvider(m.browser)).leftovers).toEqual([])
+          expect((await call(m.browser, 'DELETE', '/api/connections/github/leftovers/nope')).status).toBe(404)
+        })
+
+        it("switches a space to the App or to the user's connection with PUT .../remote", async () => {
+          const m = await newMember(uniq('gh7'))
+          await connectAccount(m.browser)
+          const sp = await ownedSpace(m, 'Switch')
+          const put = (credential: unknown, url = 'https://github.com/kazuhahub/wiki.git') =>
+            call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url, credential })
+          expect(codeOf(await put({ type: 'connection', provider: 'github' }))).toBe('invalid')
+          expect(
+            codeOf(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://example.com/a/b.git')),
+          ).toBe('invalid')
+          const app = await put(
+            { type: 'connection', provider: 'github', via: 'app' },
+            'git@github.com:kazuhahub/wiki.git',
+          )
+          expect(app.status).toBe(200)
+          expect(app.json).toMatchObject({
+            url: 'https://github.com/kazuhahub/wiki.git',
+            credential: { type: 'connection', provider: 'github', via: 'app' },
+          })
+          const mine = { json: await ghProvider(m.browser) }
+          expect(mine.json.connection.spaces).toBe(0)
+          const user = await put(
+            { type: 'connection', provider: 'github', via: 'user' },
+            'https://github.com/kazuhahub/notes.git',
+          )
+          expect(user.json).toMatchObject({
+            credential: {
+              type: 'connection',
+              provider: 'github',
+              via: 'user',
+              user: { id: m.user.id, username: m.user.username },
+              login: expect.any(String),
+            },
+          })
+          expect((await ghProvider(m.browser)).connection.spaces).toBe(1)
+          expect([
+            (await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://github.com/none/x.git')).status,
+          ]).toEqual([409])
+          // An expired connection puts the space in error with a code that says why; connecting again and syncing fixes it.
+          await mockHook({ expire: true, user: m.user.id })
+          const bad = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
+          expect(bad.json).toMatchObject({ state: 'error', errorCode: 'connection_expired' })
+          expect((await ghProvider(m.browser)).connection.state).toBe('expired')
+          await connectAccount(m.browser)
+          const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
+          expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
+        })
+
+        it('connects through the installation page in one flow, and tells the personal account that needs the App', async () => {
+          const m = await newMember(uniq('gh10'))
+          const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', {
+            return: '/settings/connections',
+            install: true,
+          })
+          expect(start.status).toBe(200)
+          expect(start.json.url).toContain('setup_action=install')
+          const cb = await call(m.browser, 'GET', start.json.url, undefined, {})
+          expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/connections'])
+          expect((await ghProvider(m.browser)).connection).toMatchObject({ state: 'ok' })
+          // An organisation that has to approve the installation first.
+          const asked = await call(m.browser, 'POST', '/api/connections/github/authorization/start', {
+            return: '/settings/connections',
+            install: true,
+          })
+          const pending = await call(
+            m.browser,
+            'GET',
+            asked.json.url.replace('setup_action=install', 'setup_action=request'),
+            undefined,
+            {},
+          )
+          expect(pending.headers.get('Location')).toBe('/settings?provider=github&connection_error=requested')
+          // The own account of someone the App is not installed on: marked, and refused with the way out.
+          const other = await newMember(uniq('gh11'))
+          await connectAccount(other.browser)
+          await mockHook({ trap: 'personalNeedsInstall' })
+          try {
+            const owners = await call(other.browser, 'GET', '/api/connections/github/owners')
+            expect(owners.json.items[0]).toMatchObject({ type: 'User', needsInstall: true })
+            expect(owners.json.items.filter((o: any) => o.needsInstall)).toHaveLength(1)
+            const login = owners.json.items[0].login
+            const refused = await call(other.browser, 'POST', '/api/spaces', {
+              name: 'Own',
+              storage: { sync: { provider: 'github', owner: login, name: `own-${run}` } },
+            })
+            expect([refused.status, codeOf(refused)]).toEqual([409, 'app_not_installed'])
+            expect(refused.json.installUrl).toContain('/installations/new')
+          } finally {
+            await mockHook({ trap: 'personalNeedsInstall', on: false })
+          }
+          expect((await call(m.browser, 'GET', '/api/connections/github/owners')).json.items[0].needsInstall).toBe(
+            false,
+          )
+        })
+
+        it('names the permission an App lacks, and the re-check shows what GitHub says now', async () => {
+          const m = await newMember(uniq('gh12'))
+          await connectAccount(m.browser)
+          await mockHook({ trap: 'missingPermission' })
+          try {
+            const r = await call(m.browser, 'POST', '/api/spaces', {
+              name: 'Perm',
+              storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `perm-${run}` } },
+            })
+            expect([r.status, codeOf(r)]).toEqual([403, 'app_missing_permission'])
+            expect(r.json.missing).toEqual(['administration'])
+          } finally {
+            await mockHook({ trap: 'missingPermission', on: false })
+          }
+          // GitHub's side changes; the view keeps the last check until it is asked again.
+          const before = (await call(admin, 'GET', '/api/admin/connections/github')).json
+          expect(before).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+          await mockHook({
+            side: {
+              permissions: { administration: 'write', metadata: 'read' },
+              gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }],
+              anyAccount: false,
+            },
+          })
+          expect((await call(admin, 'GET', '/api/admin/connections/github')).json).toMatchObject({
+            missing: [],
+            gaps: [],
+            anyAccount: true,
+          })
+          const checked = await call(admin, 'POST', '/api/admin/connections/github/check', {})
+          expect(checked.status).toBe(200)
+          expect(checked.json).toMatchObject({
+            missing: ['contents'],
+            gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }],
+            anyAccount: false,
+          })
+          expect((await call(admin, 'GET', '/api/admin/connections/github')).json.missing).toEqual(['contents'])
+          await mockHook({
+            side: {
+              permissions: { administration: 'write', contents: 'write', metadata: 'read' },
+              gaps: [],
+              anyAccount: true,
+            },
+          })
+          expect((await call(admin, 'POST', '/api/admin/connections/github/check', {})).json).toMatchObject({
+            missing: [],
+            gaps: [],
+            anyAccount: true,
+          })
+        })
+
+        it('checks the organisation and name before making the App, and does not replace one that is in use', async () => {
+          const m = await newMember(uniq('gh13'))
+          await connectAccount(m.browser)
+          expect(
+            codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'a/b' })),
+          ).toBe('invalid')
+          expect(
+            codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { name: 'x'.repeat(35) })),
+          ).toBe('invalid')
+          const used = await call(admin, 'POST', '/api/admin/connections/github/manifest', {
+            organization: 'kazuhahub',
+          })
+          expect([used.status, codeOf(used)]).toEqual([409, 'provider_in_use'])
+        })
+
+        it("puts other remotes' error states under errorCode too", async () => {
+          // A member of their own, so the administrator's spaces stay under the default quota of 20 for the rest of the run.
+          const m = await newMember(uniq('gh9'))
+          const sp = await ownedSpace(m, 'Plain')
+          await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, {
+            url: 'https://github.com/a/b.git',
+            credential: { type: 'token', token: 'x' },
+          })
+          const r = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
+          expect(r.json.errorCode).toBe('')
+        })
       })
 
-      it('exempts a user: the spaces they own are not asked for a remote', async () => {
-        const owner = await newMember(uniq('stex'))
-        const r = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: true })
-        expect(r.json.user.remoteExempt).toBe(true)
-        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
-        expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Exempt ${run}` })).status).toBe(201)
-        await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
-        const back = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: false })
-        expect(back.json.user.remoteExempt).toBeUndefined()
+      describe("server storage (the site's policy, the pin and the exemption, the requirement of a remote)", () => {
+        const settings = () => call(admin, 'GET', '/api/admin/storage')
+        // The policy is the site's: whatever a test changes is put back, also on a real server that is used again.
+        const reset = () =>
+          call(admin, 'PUT', '/api/admin/storage', {
+            remotes: { require: null, scope: 'new', graceDays: 30 },
+            localSpaces: { maxBytes: null },
+            cache: { evictAfterDays: 14, minIdleHours: 24, clonesBytes: null, minFreeBytes: 10 * 1024 ** 3 },
+          })
+        afterAll(async () => {
+          await reset()
+        })
+
+        it('has the settings an administrator reads and writes, partly, and refuses a value outside its range', async () => {
+          await reset()
+          const g = await settings()
+          expect(g.status).toBe(200)
+          expect(g.json).toMatchObject({
+            remotes: { require: null, scope: 'new', graceDays: 30, since: null },
+            hosts: { allowed: expect.any(Array), fromFlag: expect.any(Boolean) },
+            localSpaces: { maxBytes: null },
+            cache: {
+              partial: expect.any(Boolean),
+              evictAfterDays: 14,
+              minIdleHours: 24,
+              clonesBytes: null,
+              minFreeBytes: 10 * 1024 ** 3,
+            },
+            git: { version: expect.any(String), partialClone: expect.any(Boolean) },
+            affected: { inGrace: expect.any(Number), overdue: expect.any(Number), exempt: expect.any(Number) },
+          })
+          const put = await call(admin, 'PUT', '/api/admin/storage', {
+            cache: { minIdleHours: 48 },
+            localSpaces: { maxBytes: 5 * 1024 ** 2 },
+          })
+          expect(put.status).toBe(200)
+          expect(put.json.cache).toMatchObject({ minIdleHours: 48, evictAfterDays: 14 })
+          expect(put.json.localSpaces.maxBytes).toBe(5 * 1024 ** 2)
+          expect((await settings()).json).toEqual(put.json)
+          for (const bad of [
+            { remotes: { graceDays: 400 } },
+            { remotes: { require: 'gitlab' } },
+            { remotes: { scope: 'most' } },
+            { localSpaces: { maxBytes: 1000 } },
+            { cache: { evictAfterDays: 0 } },
+            { cache: { minIdleHours: 0 } },
+            { cache: { clonesBytes: 1024 ** 2 } },
+          ]) {
+            const r = await call(admin, 'PUT', '/api/admin/storage', bad)
+            expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+          }
+        })
+
+        it('has the attachment cache and the default for new spaces among the settings', async () => {
+          await reset()
+          const g = await settings()
+          expect(g.json).toMatchObject({
+            cache: { assetsBytes: expect.any(Number) },
+            assets: { newSpaces: expect.any(Boolean) },
+          })
+          const put = await call(admin, 'PUT', '/api/admin/storage', {
+            cache: { assetsBytes: 64 * 1024 ** 2 },
+            assets: { newSpaces: true },
+          })
+          expect(put.status).toBe(200)
+          expect(put.json).toMatchObject({ cache: { assetsBytes: 64 * 1024 ** 2 }, assets: { newSpaces: true } })
+          for (const bad of [
+            { cache: { assetsBytes: 1024 ** 2 } },
+            { assets: { newSpaces: 'yes' } },
+            { assets: { other: true } },
+          ]) {
+            const r = await call(admin, 'PUT', '/api/admin/storage', bad)
+            expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+          }
+          await call(admin, 'PUT', '/api/admin/storage', {
+            cache: { assetsBytes: 5 * 1024 ** 3 },
+            assets: { newSpaces: false },
+          })
+        })
+
+        it('has an attachment repository only for a space that follows a remote', async () => {
+          const sp = await ownedSpace({ browser: admin }, 'Plain')
+          const base = `/api/spaces/${sp.id}/remote/assets`
+          expect((await call(admin, 'GET', base)).status).toBe(404)
+          const put = await call(admin, 'PUT', base, {
+            url: 'https://github.com/a/b-assets.git',
+            credential: { type: 'token', token: 'x' },
+          })
+          expect([put.status, put.json.error]).toEqual([409, 'remote_required'])
+          expect((await call(admin, 'POST', base + '/move')).status).toBe(404)
+          expect((await call(admin, 'DELETE', base)).status).toBe(404)
+          // The administrator's spaces count against their quota (3.3), which the later tests need.
+          expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
+        })
+
+        it.skipIf(!!REAL)(
+          'mock only: connects one, moves the attachments with progress, and cannot take it away after',
+          async () => {
+            const sp = await ownedSpace({ browser: admin }, 'Followed')
+            await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, {
+              url: 'https://github.com/a/b.git',
+              credential: { type: 'token', token: 'x' },
+            })
+            const base = `/api/spaces/${sp.id}/remote/assets`
+            const put = await call(admin, 'PUT', base, {
+              url: 'https://github.com/a/b-assets.git',
+              credential: { type: 'token', token: 'x' },
+            })
+            expect(put.status).toBe(200)
+            expect(put.json).toMatchObject({ url: 'https://github.com/a/b-assets.git', state: 'ok', move: null })
+            const listed = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((x: SpaceInfo) => x.id === sp.id)
+            expect(listed.storage.assets).toBe('repository')
+            // Nothing in assets/: nothing to move.
+            expect((await call(admin, 'POST', base + '/move')).status).toBe(200)
+            const page = (await call(admin, 'POST', `/api/spaces/${sp.id}/pages`, { title: 'P' })).json
+            await spaceApi(sp.id).uploadAsset(page.id, new Blob(['PNG']), 'a.png')
+            const mv = await call(admin, 'POST', base + '/move')
+            expect(mv.status).toBe(202)
+            expect(mv.json.move).toMatchObject({ state: 'copying', files: 1, filesDone: 0, error: '' })
+            expect((await call(admin, 'POST', base + '/move')).status).toBe(409)
+            let state = 'copying'
+            for (let i = 0; i < 6 && state !== 'done'; i++) state = (await call(admin, 'GET', base)).json.move.state
+            expect(state).toBe('done')
+            const del = await call(admin, 'DELETE', base)
+            expect([del.status, del.json.error]).toEqual([409, 'conflict'])
+            expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
+          },
+        )
+
+        it('is for administrators only', async () => {
+          const m = await newMember(uniq('stad'))
+          for (const [method, path, body] of [
+            ['GET', '/api/admin/storage', undefined],
+            ['PUT', '/api/admin/storage', {}],
+            ['PUT', '/api/admin/spaces/01ZZZZZZZZ/storage', {}],
+            ['POST', '/api/admin/spaces/01ZZZZZZZZ/evict', {}],
+          ] as [string, string, unknown][]) {
+            const r = await call(m.browser, method, path, body)
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+          }
+        })
+
+        it("a space says what its copy is; a local space is never evicted; pinning and the exemption are an administrator's", async () => {
+          const owner = await newMember(uniq('stsp'))
+          const sp = await ownedSpace(owner, `Stored ${run}`)
+          const item = (await call(admin, 'GET', `/api/admin/spaces/${sp.id}`)).json as AdminSpace
+          expect(item.storage).toMatchObject({
+            cache: 'local',
+            pinned: false,
+            exempt: false,
+            remote: null,
+            assets: 'space',
+          })
+          const mine = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.find(
+            (s: SpaceInfo) => s.id === sp.id,
+          )
+          expect(mine.storage).toMatchObject({ cache: 'local', remote: null })
+          const evict = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/evict`)
+          expect([evict.status, evict.json.error]).toEqual([409, 'conflict'])
+          const pinned = await call(admin, 'PUT', `/api/admin/spaces/${sp.id}/storage`, { pin: true, exempt: true })
+          expect(pinned.status).toBe(200)
+          expect(pinned.json.storage).toMatchObject({ pinned: true, exempt: true })
+          expect(
+            (await call(admin, 'PUT', `/api/admin/spaces/${sp.id}/storage`, { pin: false, exempt: false })).json
+              .storage,
+          ).toMatchObject({ pinned: false, exempt: false })
+          const filtered = (await call(admin, 'GET', '/api/admin/spaces?cache=evicted&limit=200')).json
+            .items as AdminSpace[]
+          expect(filtered.every((s) => s.storage.cache === 'evicted')).toBe(true)
+          const status = (await call(admin, 'GET', '/api/admin/status')).json
+          expect(status.storage).toMatchObject({
+            spaces: {
+              local: expect.any(Number),
+              full: expect.any(Number),
+              partial: expect.any(Number),
+              evicted: expect.any(Number),
+              restoring: expect.any(Number),
+            },
+            remotes: { inGrace: expect.any(Number), overdue: expect.any(Number) },
+          })
+        })
+
+        it('requires a remote of new spaces before anything is made, and relaxing it takes the requirement away', async () => {
+          const owner = await newMember(uniq('strq'))
+          const before = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length
+          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
+          const refused = await call(owner.browser, 'POST', '/api/spaces', { name: `Needs a remote ${run}` })
+          expect([refused.status, refused.json.error, refused.json.require]).toEqual([409, 'remote_required', 'any'])
+          expect((await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length).toBe(before)
+          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
+          expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Free ${run}` })).status).toBe(201)
+        })
+
+        it('exempts a user: the spaces they own are not asked for a remote', async () => {
+          const owner = await newMember(uniq('stex'))
+          const r = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: true })
+          expect(r.json.user.remoteExempt).toBe(true)
+          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
+          expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Exempt ${run}` })).status).toBe(201)
+          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
+          const back = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: false })
+          expect(back.json.user.remoteExempt).toBeUndefined()
+        })
       })
-    })
-  })
+    },
+  )
 
   describe('the daily text and favourites', () => {
     const enc = encodeURIComponent
@@ -2065,8 +2830,10 @@ function suite(target: Target) {
     const folder = `${root}/home`
     const daily = (query: string) => call(admin, 'GET', `${base()}/daily?${query}`)
     const setDaily = (value: unknown) => call(admin, 'PUT', `${base()}/daily/settings`, { daily: value })
-    const favs = async () => (await call(admin, 'GET', `${base()}/favorites`)).json as { items: Record<string, any>[]; limit: number }
-    const favLine = (items: Record<string, any>[]) => items.map((i) => `${i.kind}:${i.name}${i.missing ? '!' : ''}`).join(' ')
+    const favs = async () =>
+      (await call(admin, 'GET', `${base()}/favorites`)).json as { items: Record<string, any>[]; limit: number }
+    const favLine = (items: Record<string, any>[]) =>
+      items.map((i) => `${i.kind}:${i.name}${i.missing ? '!' : ''}`).join(' ')
     const DAYS = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, '0')}`)
     const pageIds: Record<string, string> = {}
     afterAll(async () => {
@@ -2084,10 +2851,24 @@ function suite(target: Target) {
     })
 
     it('picks one page of a folder, the same for a whole day, another by skip, and cuts a long body at 2000 characters', async () => {
-      for (const [name, status] of [['甲', '定稿'], ['乙', '草稿'], ['丙', '定稿'], ['丁', '草稿'], ['戊', '定稿']]) {
-        pageIds[name] = (await mk(`${folder}/poems`, { title: `${name}${run}`, status, tags: [`t${run}`] }, `《${name}》｜正文\n`)).id
+      for (const [name, status] of [
+        ['甲', '定稿'],
+        ['乙', '草稿'],
+        ['丙', '定稿'],
+        ['丁', '草稿'],
+        ['戊', '定稿'],
+      ]) {
+        pageIds[name] = (
+          await mk(`${folder}/poems`, { title: `${name}${run}`, status, tags: [`t${run}`] }, `《${name}》｜正文\n`)
+        ).id
       }
-      pageIds.long = (await mk(`${folder}/long`, { title: `长${run}`, tags: [`long${run}`] }, '长'.repeat(1999) + 'AB' + 'x'.repeat(500) + '\n')).id
+      pageIds.long = (
+        await mk(
+          `${folder}/long`,
+          { title: `长${run}`, tags: [`long${run}`] },
+          '长'.repeat(1999) + 'AB' + 'x'.repeat(500) + '\n',
+        )
+      ).id
       const set = await setDaily({ folder: `${folder}/poems` })
       expect(set.status).toBe(200)
       expect(set.json).toEqual({ daily: { folder: `${folder}/poems`, filter: [] }, inEffect: true })
@@ -2131,7 +2912,14 @@ function suite(target: Target) {
       expect((await daily('date=2026-11-23')).json).toEqual({ page: null, reason: 'no_match' })
       // A type: the header's, and the folder's.
       const type = `daily${run}`
-      expect((await S.putType(type, { title: '文案', fields: [{ key: 'status', kind: 'select', options: ['草稿', '定稿'] }] })).name).toBe(type)
+      expect(
+        (
+          await S.putType(type, {
+            title: '文案',
+            fields: [{ key: 'status', kind: 'select', options: ['草稿', '定稿'] }],
+          })
+        ).name,
+      ).toBe(type)
       await S.bindFolder(`${folder}/poems`, type)
       const own = await mk(`${folder}/elsewhere`, { title: `自带${run}`, type }, 'x\n')
       expect((await setDaily({ type })).status).toBe(200)
@@ -2147,9 +2935,17 @@ function suite(target: Target) {
       const en = await mk(`${folder}/en`, { title: `English${run}` }, 'x\n')
       const set = await setDaily({ zh: { folder: `${folder}/zh` }, 'en-US': { folder: `${folder}/en` } })
       expect(set.status).toBe(200)
-      expect(set.json.daily).toEqual({ 'zh-Hans': { folder: `${folder}/zh`, filter: [] }, 'en-US': { folder: `${folder}/en`, filter: [] } })
+      expect(set.json.daily).toEqual({
+        'zh-Hans': { folder: `${folder}/zh`, filter: [] },
+        'en-US': { folder: `${folder}/en`, filter: [] },
+      })
       const title = async (lang: string) => (await daily(`date=2026-11-23&lang=${lang}`)).json.page.id
-      expect([await title('zh'), await title('zh-CN'), await title('en-US'), await title('en')]).toEqual([zh.id, zh.id, en.id, en.id])
+      expect([await title('zh'), await title('zh-CN'), await title('en-US'), await title('en')]).toEqual([
+        zh.id,
+        zh.id,
+        en.id,
+        en.id,
+      ])
       // A language with no source of its own gets one of them, always the same.
       expect(await title('fr')).toBe(await title('de'))
       expect(await title('')).toBe(await title('fr'))
@@ -2165,8 +2961,19 @@ function suite(target: Target) {
         ['an empty tag', { tag: '' }, 400],
         ['no such type', { type: `nothing${run}` }, 400],
         ['an unknown key', { folder: `${folder}/poems`, recursive: true }, 400],
-        ['a filter that is none', { folder: `${folder}/poems`, filter: [{ key: 'a', op: 'like', values: ['x'] }] }, 400],
-        ['11 filters', { folder: `${folder}/poems`, filter: Array.from({ length: 11 }, (_, i) => ({ key: `k${i}`, op: 'notEmpty', values: [] })) }, 400],
+        [
+          'a filter that is none',
+          { folder: `${folder}/poems`, filter: [{ key: 'a', op: 'like', values: ['x'] }] },
+          400,
+        ],
+        [
+          '11 filters',
+          {
+            folder: `${folder}/poems`,
+            filter: Array.from({ length: 11 }, (_, i) => ({ key: `k${i}`, op: 'notEmpty', values: [] })),
+          },
+          400,
+        ],
         ['a bad language', { 'chinese!': { tag: 'x' } }, 400],
         ['a language that is none', { cn: { tag: 'x' } }, 400],
         ['a language source that is none', { zh: 'folder' }, 400],
@@ -2179,11 +2986,23 @@ function suite(target: Target) {
       expect((await call(admin, 'PUT', `${base()}/daily/settings`, {})).status).toBe(400)
       expect((await call(admin, 'PUT', `${base()}/daily/settings`, { daily: {}, extra: 1 })).status).toBe(400)
       expect((await setDaily({ folder: `${folder}/poems` })).status).toBe(200)
-      for (const q of ['date=tomorrow', 'date=2026-13-01', 'date=1969-12-31', 'date=2026-11-23&skip=-1', 'date=2026-11-23&skip=x']) {
+      for (const q of [
+        'date=tomorrow',
+        'date=2026-13-01',
+        'date=1969-12-31',
+        'date=2026-11-23&skip=-1',
+        'date=2026-11-23&skip=x',
+      ]) {
         const r = await daily(q)
         expect([q, r.status, r.json.error]).toEqual([q, 400, 'invalid'])
       }
-      for (const q of ['date=2026-11-23&lang=%E4%B8%AD%E6%96%87', 'date=2026-11-23&lang=x', 'date=2026-11-23&lang=cn', 'date=2026-11-23&lang=english', 'date=2026-11-23&lang=zh_CN']) {
+      for (const q of [
+        'date=2026-11-23&lang=%E4%B8%AD%E6%96%87',
+        'date=2026-11-23&lang=x',
+        'date=2026-11-23&lang=cn',
+        'date=2026-11-23&lang=english',
+        'date=2026-11-23&lang=zh_CN',
+      ]) {
         const r = await daily(q)
         expect([q, r.status, r.json.error]).toEqual([q, 400, 'bad_language'])
       }
@@ -2195,9 +3014,15 @@ function suite(target: Target) {
 
     it('a folder that is moved takes the source with it, and taking the source off puts the block back to nothing', async () => {
       expect((await setDaily({ zh: { folder: `${folder}/zh` }, en: { folder: `${folder}/poems` } })).status).toBe(200)
-      const moved = await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/poems`, to: `${folder}/verse` })
+      const moved = await call(admin, 'POST', `${base()}/folders/move`, {
+        from: `${folder}/poems`,
+        to: `${folder}/verse`,
+      })
       expect(moved.status).toBe(200)
-      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily).toEqual({ 'zh-Hans': { folder: `${folder}/zh`, filter: [] }, en: { folder: `${folder}/verse`, filter: [] } })
+      expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily).toEqual({
+        'zh-Hans': { folder: `${folder}/zh`, filter: [] },
+        en: { folder: `${folder}/verse`, filter: [] },
+      })
       expect((await daily('date=2026-11-23&lang=en')).json.page.folder).toBe(`${folder}/verse`)
       expect((await setDaily(null)).json).toEqual({ daily: null, inEffect: true })
       expect((await setDaily(null)).json).toEqual({ daily: null, inEffect: true })
@@ -2209,15 +3034,24 @@ function suite(target: Target) {
       const any = await mk(`${folder}/mixall`, { title: `全${run}` }, 'x\n')
       const set = await setDaily({ folder: `${folder}/mixall`, zh: { folder: `${folder}/mixzh` } })
       expect(set.status).toBe(200)
-      expect(set.json.daily).toEqual({ folder: `${folder}/mixall`, filter: [], 'zh-Hans': { folder: `${folder}/mixzh`, filter: [] } })
+      expect(set.json.daily).toEqual({
+        folder: `${folder}/mixall`,
+        filter: [],
+        'zh-Hans': { folder: `${folder}/mixzh`, filter: [] },
+      })
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json).toEqual(set.json)
       const id = async (lang: string) => (await daily(`date=2026-11-23&lang=${lang}`)).json.page.id
       expect([await id('zh'), await id('zh-TW'), await id('en'), await id('')]).toEqual([zh.id, zh.id, any.id, any.id])
       // A move carries both.
-      expect((await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mixall`, to: `${folder}/mixmoved` })).status).toBe(200)
+      expect(
+        (await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mixall`, to: `${folder}/mixmoved` }))
+          .status,
+      ).toBe(200)
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily.folder).toBe(`${folder}/mixmoved`)
       // Without all languages, only the ones that have a source are asked for: another language gets one of them.
-      expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({ 'zh-Hans': { folder: `${folder}/mixzh`, filter: [] } })
+      expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({
+        'zh-Hans': { folder: `${folder}/mixzh`, filter: [] },
+      })
       expect(await id('fr')).toBe(zh.id)
     })
 
@@ -2233,25 +3067,35 @@ function suite(target: Target) {
       expect(age).toBeLessThanOrEqual(86400)
       // A day long past: the shortest.
       expect((await daily('date=2001-01-01&tz=0')).headers.get('Cache-Control')).toBe('private, max-age=60')
-      for (const tz of ['9999', 'x', '-841']) expect([tz, (await daily(`date=2026-11-23&tz=${tz}`)).status]).toEqual([tz, 400])
+      for (const tz of ['9999', 'x', '-841'])
+        expect([tz, (await daily(`date=2026-11-23&tz=${tz}`)).status]).toEqual([tz, 400])
       expect((await setDaily({ tag: `nothing${run}` })).status).toBe(200)
       expect((await daily('date=2026-11-23&tz=0')).headers.get('Cache-Control')).toBe('private, max-age=60')
       await setDaily(null)
     })
 
-    it('keeps a person\'s favourites: pages, folders and views, in order, with their names, each once', async () => {
+    it("keeps a person's favourites: pages, folders and views, in order, with their names, each once", async () => {
       const a = (await mk(`${folder}/fav`, { title: `暮雪${run}` }, 'x\n')).id
       const b = (await mk(`${folder}/fav`, { title: `春晓${run}` }, 'x\n')).id
       await S.createFolder(`${folder}/fav/sub`)
       const views = (await call(admin, 'GET', `${base()}/views?folder=${enc(`${folder}/fav`)}`)).json
-      const saved = await call(admin, 'PUT', `${base()}/views`, { folder: `${folder}/fav`, baseRev: views.rev, views: [{ name: '按作者', layout: 'table' }] })
+      const saved = await call(admin, 'PUT', `${base()}/views`, {
+        folder: `${folder}/fav`,
+        baseRev: views.rev,
+        views: [{ name: '按作者', layout: 'table' }],
+      })
       const viewT = `folder:${folder}/fav#${saved.json.views[0].id}`
       const post = (kind: string, target: string) => call(admin, 'POST', `${base()}/favorites`, { kind, target })
       expect((await favs()).items.filter((i) => i.target === a)).toEqual([])
       const r1 = await post('page', a)
       expect(r1.status).toBe(200)
       expect(r1.json.limit).toBe(200)
-      for (const [k, t] of [['folder', `${folder}/fav/sub`], ['view', viewT], ['page', b]]) expect((await post(k, t)).status).toBe(200)
+      for (const [k, t] of [
+        ['folder', `${folder}/fav/sub`],
+        ['view', viewT],
+        ['page', b],
+      ])
+        expect((await post(k, t)).status).toBe(200)
       const again = await post('page', a)
       const mine = again.json.items.filter((i: any) => [a, b, `${folder}/fav/sub`, viewT].includes(i.target))
       expect(favLine(mine)).toBe(`page:暮雪${run} folder:sub view:按作者 page:春晓${run}`)
@@ -2260,9 +3104,15 @@ function suite(target: Target) {
       expect(mine[2]).toMatchObject({ of: `${folder}/fav`, ofKind: 'folder', target: viewT, missing: false })
       expect(typeof mine[0].created).toBe('string')
       // The order: those named first, the rest after; names that are no favourite are ignored.
-      const order = (items: [string, string][]) => call(admin, 'PUT', `${base()}/favorites/order`, { items: items.map(([kind, target]) => ({ kind, target })) })
+      const order = (items: [string, string][]) =>
+        call(admin, 'PUT', `${base()}/favorites/order`, { items: items.map(([kind, target]) => ({ kind, target })) })
       const full = (await favs()).items.map((i) => [i.kind, i.target] as [string, string])
-      const named: [string, string][] = [['page', b], ['view', viewT], ['page', '01JD3K8Q7Z'], ['page', a]]
+      const named: [string, string][] = [
+        ['page', b],
+        ['view', viewT],
+        ['page', '01JD3K8Q7Z'],
+        ['page', a],
+      ]
       const ordered = await order(named)
       expect(ordered.status).toBe(200)
       const mine2 = ordered.json.items.filter((i: any) => [a, b, `${folder}/fav/sub`, viewT].includes(i.target))
@@ -2282,39 +3132,68 @@ function suite(target: Target) {
       for (const [k, t, status] of refused) expect([k, t, (await post(k, t)).status]).toEqual([k, t, status])
       expect((await call(admin, 'POST', `${base()}/favorites`, { kind: 'page' })).status).toBe(400)
       expect((await call(admin, 'PUT', `${base()}/favorites/order`, {})).status).toBe(400)
-      expect((await call(admin, 'PUT', `${base()}/favorites/order`, { items: [{ kind: 'star', target: 'x' }] })).status).toBe(400)
+      expect(
+        (await call(admin, 'PUT', `${base()}/favorites/order`, { items: [{ kind: 'star', target: 'x' }] })).status,
+      ).toBe(400)
       // Gone: shown as missing, and taken off; taking off what is not there is fine.
       expect((await call(admin, 'DELETE', `${SP_PAGES}/${b}`)).status).toBe(204)
       expect((await call(admin, 'DELETE', `${base()}/folders?path=${enc(`${folder}/fav/sub`)}`)).status).toBe(204)
       const gone = (await favs()).items.filter((i) => [a, b, `${folder}/fav/sub`, viewT].includes(i.target))
       expect(favLine(gone)).toBe(`page:! view:按作者 page:暮雪${run} folder:sub!`)
       expect(gone.find((i) => i.target === b)!.missing).toBe(true)
-      const del = (kind: string, target: string) => call(admin, 'DELETE', `${base()}/favorites?kind=${kind}&target=${enc(target)}`)
-      for (const [k, t] of [['page', b], ['folder', `${folder}/fav/sub`], ['view', viewT], ['page', a]]) expect([k, (await del(k, t)).status]).toEqual([k, 200])
+      const del = (kind: string, target: string) =>
+        call(admin, 'DELETE', `${base()}/favorites?kind=${kind}&target=${enc(target)}`)
+      for (const [k, t] of [
+        ['page', b],
+        ['folder', `${folder}/fav/sub`],
+        ['view', viewT],
+        ['page', a],
+      ])
+        expect([k, (await del(k, t)).status]).toEqual([k, 200])
       expect((await del('page', a)).status).toBe(200)
       expect((await favs()).items.filter((i) => [a, b, viewT].includes(i.target))).toEqual([])
-      for (const q of ['', '?kind=page', '?target=x', '?kind=star&target=x']) expect([q, (await call(admin, 'DELETE', `${base()}/favorites${q}`)).status]).toEqual([q, 400])
+      for (const q of ['', '?kind=page', '?target=x', '?kind=star&target=x'])
+        expect([q, (await call(admin, 'DELETE', `${base()}/favorites${q}`)).status]).toEqual([q, 400])
     })
 
     it('favourites follow a folder that is moved, with its views, and nothing else', async () => {
       await S.createFolder(`${folder}/mv/inner`)
       const views = (await call(admin, 'GET', `${base()}/views?folder=${enc(`${folder}/mv/inner`)}`)).json
-      const saved = await call(admin, 'PUT', `${base()}/views`, { folder: `${folder}/mv/inner`, baseRev: views.rev, views: [{ name: 'wide', layout: 'cards' }] })
+      const saved = await call(admin, 'PUT', `${base()}/views`, {
+        folder: `${folder}/mv/inner`,
+        baseRev: views.rev,
+        views: [{ name: 'wide', layout: 'cards' }],
+      })
       const vid = saved.json.views[0].id
       const post = (kind: string, target: string) => call(admin, 'POST', `${base()}/favorites`, { kind, target })
       await S.createFolder(`${folder}/mvx`)
-      for (const [k, t] of [['folder', `${folder}/mv`], ['folder', `${folder}/mv/inner`], ['folder', `${folder}/mvx`], ['view', `folder:${folder}/mv/inner#${vid}`]]) expect((await post(k, t)).status).toBe(200)
-      expect((await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mv`, to: `${folder}/moved` })).status).toBe(200)
+      for (const [k, t] of [
+        ['folder', `${folder}/mv`],
+        ['folder', `${folder}/mv/inner`],
+        ['folder', `${folder}/mvx`],
+        ['view', `folder:${folder}/mv/inner#${vid}`],
+      ])
+        expect((await post(k, t)).status).toBe(200)
+      expect(
+        (await call(admin, 'POST', `${base()}/folders/move`, { from: `${folder}/mv`, to: `${folder}/moved` })).status,
+      ).toBe(200)
       const mine = (await favs()).items.filter((i) => i.kind !== 'page')
-      const line = mine.filter((i) => [`${folder}/moved`, `${folder}/moved/inner`, `${folder}/mvx`].includes(i.target) || i.target.endsWith(`#${vid}`))
-      expect(line.map((i) => i.target).sort()).toEqual([`${folder}/moved`, `${folder}/moved/inner`, `${folder}/mvx`, `folder:${folder}/moved/inner#${vid}`].sort())
+      const line = mine.filter(
+        (i) =>
+          [`${folder}/moved`, `${folder}/moved/inner`, `${folder}/mvx`].includes(i.target) ||
+          i.target.endsWith(`#${vid}`),
+      )
+      expect(line.map((i) => i.target).sort()).toEqual(
+        [`${folder}/moved`, `${folder}/moved/inner`, `${folder}/mvx`, `folder:${folder}/moved/inner#${vid}`].sort(),
+      )
       expect(line.every((i) => !i.missing)).toBe(true)
       for (const i of line) await call(admin, 'DELETE', `${base()}/favorites?kind=${i.kind}&target=${enc(i.target)}`)
     })
 
     if (accounts) {
       it('the administrators give a default for spaces with no source: lines by language, a choice per space, and the settings are theirs alone', async () => {
-        const adm = (method: string, path: string, body?: unknown) => call(admin, method, `/api/admin/daily${path}`, body)
+        const adm = (method: string, path: string, body?: unknown) =>
+          call(admin, method, `/api/admin/daily${path}`, body)
         const cleanup = async () => {
           await adm('DELETE', '/lines?lang=zh')
           await adm('DELETE', '/lines?lang=en')
@@ -2325,7 +3204,12 @@ function suite(target: Target) {
           const empty = await adm('GET', '')
           expect(empty.status).toBe(200)
           expect(empty.json.hosts).toBeUndefined()
-          expect(empty.json).toMatchObject({ providers: expect.any(Array), knownLanguages: expect.any(Array), apis: expect.any(Array), lines: { total: expect.any(Number), max: 5000 } })
+          expect(empty.json).toMatchObject({
+            providers: expect.any(Array),
+            knownLanguages: expect.any(Array),
+            apis: expect.any(Array),
+            lines: { total: expect.any(Number), max: 5000 },
+          })
           // Bad requests.
           for (const [what, method, path, body] of [
             ['an unknown key', 'PUT', '', { extra: 1 }],
@@ -2333,14 +3217,18 @@ function suite(target: Target) {
             ['a bad language', 'PUT', '/lines', { lang: 'chinese!', text: 'x' }],
             ['no text', 'PUT', '/lines', { lang: 'en', text: ' \n ' }],
             ['a bad format', 'PUT', '/lines', { lang: 'en', text: 'x', format: 'html' }],
-          ] as const) expect([what, (await adm(method, path, body)).status]).toEqual([what, 400])
+          ] as const)
+            expect([what, (await adm(method, path, body)).status]).toEqual([what, 400])
           expect((await call(admin, 'DELETE', '/api/admin/daily/lines?lang=chinese!')).status).toBe(400)
           const set = await adm('PUT', '', { default: { kind: 'list' } })
           expect(set.status).toBe(200)
           expect(set.json.default).toEqual({ kind: 'list' })
           const put = (lang: string, text: string, format = 'lines') => adm('PUT', '/lines', { lang, text, format })
           expect((await put('zh', '山色空蒙雨亦奇\t苏轼\n\n行到水穷处\n')).status).toBe(200)
-          expect((await put('en', 'Stay hungry\tJobs\nStay foolish\nBe kind')).json.lines.byLang).toMatchObject({ 'zh-Hans': 2, en: 3 })
+          expect((await put('en', 'Stay hungry\tJobs\nStay foolish\nBe kind')).json.lines.byLang).toMatchObject({
+            'zh-Hans': 2,
+            en: 3,
+          })
           const any = await put('', 'For any language')
           expect(any.json.lines.byLang['']).toBe(1)
           expect(any.json.lines.total).toBeGreaterThanOrEqual(6)
@@ -2358,7 +3246,10 @@ function suite(target: Target) {
             seen.add(r.json.quote.text)
           }
           expect(seen.size).toBe(2)
-          expect((await dq('date=2026-11-23&lang=zh')).json.quote.source === '苏轼' || (await dq('date=2026-11-23&lang=zh')).json.quote.source === undefined).toBe(true)
+          expect(
+            (await dq('date=2026-11-23&lang=zh')).json.quote.source === '苏轼' ||
+              (await dq('date=2026-11-23&lang=zh')).json.quote.source === undefined,
+          ).toBe(true)
           expect((await dq('date=2026-11-23&lang=zh-CN')).json.quote.text).toBeTruthy()
           expect((await dq('date=2026-11-23&lang=fr')).json.quote.text).toBe('For any language')
           const enSeen = new Set<string>()
@@ -2368,16 +3259,29 @@ function suite(target: Target) {
           expect((await put('en', 'First\nsecond line\n---\nSecond\n---\n\n', 'markdown')).json.lines.byLang.en).toBe(2)
           // The owner of the space leaves the default, or takes it back.
           const prefs = await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)
-          expect(prefs.json).toMatchObject({ inherit: true, apis: [], available: expect.any(Array), default: { kind: 'list' } })
+          expect(prefs.json).toMatchObject({
+            inherit: true,
+            apis: [],
+            available: expect.any(Array),
+            default: { kind: 'list' },
+          })
           expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: false })).status).toBe(400)
-          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: ['nope'] })).status).toBe(400)
+          expect(
+            (await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: ['nope'] })).status,
+          ).toBe(400)
           const off = await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: false, apis: [] })
           expect([off.status, off.json.inherit]).toEqual([200, false])
           expect((await dq('date=2026-11-23&lang=zh')).json).toEqual({ page: null, reason: 'no_source' })
           await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: [] })
           // The space's own source comes first.
-          await call(admin, 'POST', `/api/spaces/${sp}/pages`, { folder: 'Own', meta: { title: 'Mine' }, body: 'mine\n' })
-          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/settings`, { daily: { folder: 'Own' } })).status).toBe(200)
+          await call(admin, 'POST', `/api/spaces/${sp}/pages`, {
+            folder: 'Own',
+            meta: { title: 'Mine' },
+            body: 'mine\n',
+          })
+          expect(
+            (await call(admin, 'PUT', `/api/spaces/${sp}/daily/settings`, { daily: { folder: 'Own' } })).status,
+          ).toBe(200)
           const mine = await dq('date=2026-11-23&lang=zh')
           expect([mine.json.origin, mine.json.page.title, mine.json.quote]).toEqual(['space', 'Mine', undefined])
           // The administrators can lock the space's own source and its choice of an interface: what the space
@@ -2387,11 +3291,18 @@ function suite(target: Target) {
           expect((await dq('date=2026-11-23&lang=zh')).json.origin).toBe('site')
           const kept = await call(admin, 'GET', `/api/spaces/${sp}/daily/settings`)
           expect([kept.json.inEffect, kept.json.daily.folder]).toEqual([false, 'Own'])
-          expect((await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)).json.allowed).toEqual({ own: false, api: true })
+          expect((await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)).json.allowed).toEqual({
+            own: false,
+            api: true,
+          })
           expect(await locks({ own: true, api: false })).toEqual({ own: true, api: false })
-          expect((await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)).json.allowed).toEqual({ own: true, api: false })
+          expect((await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)).json.allowed).toEqual({
+            own: true,
+            api: false,
+          })
           expect((await dq('date=2026-11-23&lang=zh')).json.origin).toBe('space')
-          for (const bad of [{}, 'no', { own: 'no' }, null]) expect((await adm('PUT', '', { allow: bad })).status).toBe(400)
+          for (const bad of [{}, 'no', { own: 'no' }, null])
+            expect((await adm('PUT', '', { allow: bad })).status).toBe(400)
           expect(await locks({ api: true })).toEqual({ own: true, api: true })
           // Taking the lines away.
           expect((await adm('DELETE', '/lines?lang=zh')).json.lines.byLang['zh-Hans']).toBeUndefined()
@@ -2403,31 +3314,68 @@ function suite(target: Target) {
         }
       })
       it('the administrators configure external interfaces themselves: any number, headers kept secret, a list of languages, built-in interfaces only offered', async () => {
-        const adm = (method: string, path: string, body?: unknown) => call(admin, method, `/api/admin/daily${path}`, body)
-        const iface = (over: Record<string, unknown> = {}) => ({ name: `Quotes ${run}`, lang: 'en', url: 'https://quotes.example.org/api/{lang}/{date}', text: '[0].q', source: '[0].s', author: '[0].a', link: 'https://quotes.example.org/q/{[0].id}', refresh: 'hourly', skipNew: true, rps: 5, headers: [{ name: 'X-Api-Key', value: `secret-${run}` }], ...over })
+        const adm = (method: string, path: string, body?: unknown) =>
+          call(admin, method, `/api/admin/daily${path}`, body)
+        const iface = (over: Record<string, unknown> = {}) => ({
+          name: `Quotes ${run}`,
+          lang: 'en',
+          url: 'https://quotes.example.org/api/{lang}/{date}',
+          text: '[0].q',
+          source: '[0].s',
+          author: '[0].a',
+          link: 'https://quotes.example.org/q/{[0].id}',
+          refresh: 'hourly',
+          skipNew: true,
+          rps: 5,
+          headers: [{ name: 'X-Api-Key', value: `secret-${run}` }],
+          ...over,
+        })
         const ids = [`c${run}a`, `c${run}b`]
         try {
           const start = await adm('GET', '')
           expect(start.json.languages).toEqual(expect.any(Array))
           expect(start.json.presets).toBeUndefined()
-          expect(start.json.providers.map((p: any) => [p.id, p.languages, p.rps])).toEqual([['hitokoto', ['zh-Hans', 'zh-Hant'], 20], ['quotable', ['en'], 3]])
+          expect(start.json.providers.map((p: any) => [p.id, p.languages, p.rps])).toEqual([
+            ['hitokoto', ['zh-Hans', 'zh-Hant'], 20],
+            ['quotable', ['en'], 3],
+          ])
           expect(start.json.apis.some((a: any) => a.builtin)).toBe(false)
           // Making one: the value of a header is kept and never given back.
           const made = await adm('PUT', `/apis/${ids[0]}`, iface())
           expect(made.status).toBe(200)
           const got = made.json.apis.find((a: any) => a.id === ids[0])
-          expect(got).toMatchObject({ id: ids[0], lang: 'en', refresh: 'hourly', skipNew: true, rps: 5, enabled: true, text: '[0].q', link: 'https://quotes.example.org/q/{[0].id}', headers: [{ name: 'X-Api-Key', set: true }] })
+          expect(got).toMatchObject({
+            id: ids[0],
+            lang: 'en',
+            refresh: 'hourly',
+            skipNew: true,
+            rps: 5,
+            enabled: true,
+            text: '[0].q',
+            link: 'https://quotes.example.org/q/{[0].id}',
+            headers: [{ name: 'X-Api-Key', set: true }],
+          })
           expect(JSON.stringify(made.json)).not.toContain(`secret-${run}`)
           expect(made.json.hosts).toBeUndefined()
           // A header that comes without a value keeps what it has; one that is left out goes.
           const kept = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', headers: [{ name: 'x-api-key' }] }))
-          expect(kept.json.apis.find((a: any) => a.id === ids[0])).toMatchObject({ name: 'Renamed', headers: [{ name: 'x-api-key', set: true }] })
+          expect(kept.json.apis.find((a: any) => a.id === ids[0])).toMatchObject({
+            name: 'Renamed',
+            headers: [{ name: 'x-api-key', set: true }],
+          })
           const bare = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', headers: [] }))
           expect(bare.json.apis.find((a: any) => a.id === ids[0]).headers).toEqual([])
           // Any number of them, by language or for all of them.
-          const second = await adm('PUT', `/apis/${ids[1]}`, iface({ lang: '', refresh: 'minutes', refreshMinutes: 20, headers: [] }))
+          const second = await adm(
+            'PUT',
+            `/apis/${ids[1]}`,
+            iface({ lang: '', refresh: 'minutes', refreshMinutes: 20, headers: [] }),
+          )
           expect(second.json.apis.filter((a: any) => ids.includes(a.id)).map((a: any) => a.lang)).toEqual(['en', ''])
-          expect(second.json.apis.find((a: any) => a.id === ids[1])).toMatchObject({ refresh: 'minutes', refreshMinutes: 20 })
+          expect(second.json.apis.find((a: any) => a.id === ids[1])).toMatchObject({
+            refresh: 'minutes',
+            refreshMinutes: 20,
+          })
           // What the rules refuse.
           const refuse: [string, string, Record<string, unknown>][] = [
             ['http', 'http://quotes.example.org/', { url: 'http://quotes.example.org/' }],
@@ -2445,7 +3393,8 @@ function suite(target: Target) {
             ['a lang that is no language', 'x', { lang: 'cn' }],
             ['a language mapping from no language', 'x', { langMap: { chinese: 'zh' } }],
           ]
-          for (const [what, , over] of refuse) expect([what, (await adm('PUT', `/apis/${ids[1]}`, iface(over))).status]).toEqual([what, 400])
+          for (const [what, , over] of refuse)
+            expect([what, (await adm('PUT', `/apis/${ids[1]}`, iface(over))).status]).toEqual([what, 400])
           expect((await adm('PUT', '/apis/BAD ID', iface())).status).toBe(400)
           expect((await adm('PUT', `/apis/${ids[1]}`, iface({ id: 'another' }))).status).toBe(400)
           // Spaces may choose the enabled ones, not enter addresses.
@@ -2456,11 +3405,14 @@ function suite(target: Target) {
           expect(prefs.json.languages).toEqual(start.json.languages)
           const off = await adm('PUT', `/apis/${ids[0]}`, iface({ name: 'Renamed', enabled: false, headers: [] }))
           expect(off.json.apis.find((a: any) => a.id === ids[0]).enabled).toBe(false)
-          expect((await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: [ids[0]] })).status).toBe(400)
+          expect(
+            (await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: [ids[0]] })).status,
+          ).toBe(400)
           const none = await call(admin, 'GET', `/api/spaces/${sp}/daily/prefs`)
           expect(none.json.available.some((a: any) => a.id === ids[0])).toBe(false)
           // A trial: a refusal with a code is a 400 with what the trial showed in `result`; a failure with none is a 200 with ok false.
-          const trial = (url: string) => adm('POST', '/try', { api: iface({ id: ids[1], url, headers: [] }), lang: 'en', date: '2026-11-23' })
+          const trial = (url: string) =>
+            adm('POST', '/try', { api: iface({ id: ids[1], url, headers: [] }), lang: 'en', date: '2026-11-23' })
           // There is no list of hosts: another address is not refused for its host.
           const elsewhere = await trial(`https://elsewhere-${run}.example.net/q`)
           expect(elsewhere.json.error).not.toBe('host_not_allowed')
@@ -2474,8 +3426,16 @@ function suite(target: Target) {
           // The languages are a list of the administrators' own.
           const langs = await adm('PUT', '', { languages: ['zh', 'en', 'ja', 'JA', 'pt-br'] })
           expect(langs.json.languages).toEqual(['zh-Hans', 'en', 'ja', 'pt-BR'])
-          expect(langs.json.knownLanguages[0]).toEqual({ tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' })
-          for (const bad of [['chinese!'], ['cn'], ['zh_CN'], 'zh', null]) expect([JSON.stringify(bad), (await adm('PUT', '', { languages: bad })).status]).toEqual([JSON.stringify(bad), 400])
+          expect(langs.json.knownLanguages[0]).toEqual({
+            tag: 'zh-Hans',
+            name: '中文（简体）',
+            english: 'Chinese (Simplified)',
+          })
+          for (const bad of [['chinese!'], ['cn'], ['zh_CN'], 'zh', null])
+            expect([JSON.stringify(bad), (await adm('PUT', '', { languages: bad })).status]).toEqual([
+              JSON.stringify(bad),
+              400,
+            ])
           expect((await adm('PUT', '', { languages: ['cn'] })).json.error).toBe('bad_language')
           await adm('PUT', '', { languages: start.json.languages })
           expect((await call(browser(), 'PUT', `/api/admin/daily/apis/${ids[1]}`, iface())).status).toBe(401)
@@ -2485,7 +3445,13 @@ function suite(target: Target) {
       })
     } else {
       it('has no settings of administrators or choices of spaces in single-user mode', async () => {
-        for (const [method, path] of [['GET', '/api/admin/daily'], ['PUT', '/api/admin/daily'], ['PUT', '/api/admin/daily/lines'], ['GET', `${base()}/daily/prefs`], ['PUT', `${base()}/daily/prefs`]]) {
+        for (const [method, path] of [
+          ['GET', '/api/admin/daily'],
+          ['PUT', '/api/admin/daily'],
+          ['PUT', '/api/admin/daily/lines'],
+          ['GET', `${base()}/daily/prefs`],
+          ['PUT', `${base()}/daily/prefs`],
+        ]) {
           const r = await call(admin, method, path, method === 'GET' ? undefined : {})
           expect([method, path, r.status, r.json?.error]).toEqual([method, path, 404, 'not_found'])
         }
@@ -2507,7 +3473,11 @@ function suite(target: Target) {
       expect((await S.getPage(p.id)).header).toBe(saved.header)
     })
     it('creates a titled page: assigned id and created, file named from the title, missing folders made', async () => {
-      const p = await mk(`${root}/titled/deep`, { id: 'CLIENTSENT', created: '1999-01-01', title: `暮雪${run}`, subtitle: '副', tags: [`tg${run}`] }, '正文\n')
+      const p = await mk(
+        `${root}/titled/deep`,
+        { id: 'CLIENTSENT', created: '1999-01-01', title: `暮雪${run}`, subtitle: '副', tags: [`tg${run}`] },
+        '正文\n',
+      )
       expect(p.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/)
       expect(p.id).not.toBe('CLIENTSENT')
       expect(p.rev).toMatch(/^[0-9a-f]{40}$/)
@@ -2519,9 +3489,11 @@ function suite(target: Target) {
       expect(p.path).toBe(`${root}/titled/deep/暮雪${run}.md`)
       expect(p.body).toBe('正文\n')
       const { folders } = await S.tree()
-      expect(folders.map((f) => f.path)).toEqual(expect.arrayContaining([`${root}`, `${root}/titled`, `${root}/titled/deep`]))
+      expect(folders.map((f) => f.path)).toEqual(
+        expect.arrayContaining([`${root}`, `${root}/titled`, `${root}/titled/deep`]),
+      )
     })
-  it('creates an untitled page: no title key, file named from date and id', async () => {
+    it('creates an untitled page: no title key, file named from date and id', async () => {
       const p = await mk(`${root}/untitled`, {}, '没有标题的一句话\n')
       expect('title' in p.meta).toBe(false)
       expect(p.path).toMatch(/\/\d{4}-\d{2}-\d{2}-[^/]+\.md$/)
@@ -2595,8 +3567,14 @@ function suite(target: Target) {
     it('a request without meta, body or baseRev is 400 invalid; an id mismatch too', async () => {
       const p = await mk(`${root}/partial`, { title: `残缺${run}` }, 'x\n')
       const url = `${SP_PAGES}/${p.id}`
-      const put = (payload: unknown) => fetch(url, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(payload) })
-      for (const payload of [{ baseRev: p.rev, meta: p.meta }, { baseRev: p.rev, body: 'y\n' }, { meta: p.meta, body: 'y\n' }, {}]) {
+      const put = (payload: unknown) =>
+        fetch(url, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(payload) })
+      for (const payload of [
+        { baseRev: p.rev, meta: p.meta },
+        { baseRev: p.rev, body: 'y\n' },
+        { meta: p.meta, body: 'y\n' },
+        {},
+      ]) {
         const r = await put(payload)
         expect(r.status).toBe(400)
         expect(((await r.json()) as { error: string }).error).toBe('invalid')
@@ -2609,7 +3587,11 @@ function suite(target: Target) {
 
     it('refuses a write that does not say it is JSON', async () => {
       const p = await mk(`${root}/ctype`, { title: `类型${run}` })
-      const r = await fetch(`${SP_PAGES}/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ baseRev: p.rev, meta: p.meta, body: 'z\n' }) })
+      const r = await fetch(`${SP_PAGES}/${p.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ baseRev: p.rev, meta: p.meta, body: 'z\n' }),
+      })
       expect([400, 415]).toContain(r.status)
       expect(((await r.json()) as { error: string }).error).toBe('invalid')
     })
@@ -2618,7 +3600,11 @@ function suite(target: Target) {
       const p = await mk(`${root}/header`, { title: `头部${run}` }, 'x\n')
       const created = p.meta.created
       const weird = { nested: { a: [1, 2, { b: null }] }, 数字: 42, flag: true, 空: '' }
-      const a = await S.savePage(p.id, { baseRev: p.rev, meta: { title: `头部${run}`, series: '冬季', ...weird }, body: 'x\n' })
+      const a = await S.savePage(p.id, {
+        baseRev: p.rev,
+        meta: { title: `头部${run}`, series: '冬季', ...weird },
+        body: 'x\n',
+      })
       expect(a.meta.id).toBe(p.id)
       expect(a.meta.created).toBe(created)
       expect(a.meta.series).toBe('冬季')
@@ -2690,7 +3676,21 @@ function suite(target: Target) {
   })
 
   describe('folders and tree', () => {
-    const bad = ['.hidden', 'a/.b', '..', 'a/..', 'name.', 'name ', 'a/name.', 'assets', 'assets/inside', '长'.repeat(86), 'a//b', '/lead', 'trail/']
+    const bad = [
+      '.hidden',
+      'a/.b',
+      '..',
+      'a/..',
+      'name.',
+      'name ',
+      'a/name.',
+      'assets',
+      'assets/inside',
+      '长'.repeat(86),
+      'a//b',
+      '/lead',
+      'trail/',
+    ]
 
     it('lists empty folders and counts only pages directly inside', async () => {
       await S.createFolder(`${root}/tree/empty`)
@@ -2714,7 +3714,15 @@ function suite(target: Target) {
 
     it('refuses folder names the server does not allow, with 400 invalid', async () => {
       for (const name of bad) {
-        const path = name.startsWith('/') || name.startsWith('.') || ['assets', 'assets/inside'].includes(name) || name === '..' || name === 'a/..' || name === 'a//b' ? name : `${root}/${name}`
+        const path =
+          name.startsWith('/') ||
+          name.startsWith('.') ||
+          ['assets', 'assets/inside'].includes(name) ||
+          name === '..' ||
+          name === 'a/..' ||
+          name === 'a//b'
+            ? name
+            : `${root}/${name}`
         const e = await failure(S.createFolder(path))
         expect(e.status, name).toBe(400)
         expect(e.code, name).toBe('invalid')
@@ -2815,7 +3823,9 @@ function suite(target: Target) {
       expect(tree[`${root}/fm2/made/new/emptyinside`]).toBe(0)
       expect(tree[`${root}/fm/old`]).toBeUndefined()
       expect(tree[`${root}/fm/old/inner/deep`]).toBeUndefined()
-      expect(ids(await walk({ folder: `${root}/fm2/made/new`, recursive: true }))).toEqual(expect.arrayContaining([top.id, deep.id]))
+      expect(ids(await walk({ folder: `${root}/fm2/made/new`, recursive: true }))).toEqual(
+        expect.arrayContaining([top.id, deep.id]),
+      )
       expect(await walk({ folder: `${root}/fm/old`, recursive: true })).toEqual([])
     })
 
@@ -2998,7 +4008,17 @@ function suite(target: Target) {
 
     beforeAll(async () => {
       created = []
-      for (let i = 0; i < 7; i++) created.push(await mk(folder, { title: `列${String(i).padStart(2, '0')}${run}`, tags: i % 2 ? [`odd${run}`, `all${run}`] : [`all${run}`] }, `正文${i}\n`))
+      for (let i = 0; i < 7; i++)
+        created.push(
+          await mk(
+            folder,
+            {
+              title: `列${String(i).padStart(2, '0')}${run}`,
+              tags: i % 2 ? [`odd${run}`, `all${run}`] : [`all${run}`],
+            },
+            `正文${i}\n`,
+          ),
+        )
       await mk(`${folder}/inner`, { title: `内层${run}`, tags: [`all${run}`] })
     })
 
@@ -3033,7 +4053,7 @@ function suite(target: Target) {
     })
 
     it('tag filters combine with AND', async () => {
-      expect((await walk({ tag: [`all${run}`] }))).toHaveLength(8)
+      expect(await walk({ tag: [`all${run}`] })).toHaveLength(8)
       const both = await walk({ tag: [`all${run}`, `odd${run}`] })
       expect(both).toHaveLength(3)
       expect(both.every((p) => p.tags?.includes(`odd${run}`))).toBe(true)
@@ -3059,13 +4079,21 @@ function suite(target: Target) {
       const asc = await walk({ folder, sort: 'updated' })
       for (let i = 1; i < asc.length; i++) expect(asc[i - 1].updated <= asc[i].updated).toBe(true)
       const byCreated = await walk({ folder, sort: '-created' })
-      for (let i = 1; i < byCreated.length; i++) expect((byCreated[i - 1].created ?? '') >= (byCreated[i].created ?? '')).toBe(true)
+      for (let i = 1; i < byCreated.length; i++)
+        expect((byCreated[i - 1].created ?? '') >= (byCreated[i].created ?? '')).toBe(true)
       expect(ids(await walk({ folder, sort: 'created' })).sort()).toEqual(ids(items).sort())
     })
 
     it('summaries carry the documented fields', async () => {
       const s = (await walk({ folder })).find((p) => p.id === created[1].id)!
-      expect(s).toMatchObject({ id: created[1].id, folder, untitled: false, title: `列01${run}`, label: `列01${run}`, tags: [`odd${run}`, `all${run}`] })
+      expect(s).toMatchObject({
+        id: created[1].id,
+        folder,
+        untitled: false,
+        title: `列01${run}`,
+        label: `列01${run}`,
+        tags: [`odd${run}`, `all${run}`],
+      })
       expect(s.path).toBe(`${folder}/列01${run}.md`)
       expect(s.updated).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
       expect(s.created).toMatch(/^\d{4}-\d{2}-\d{2}$/)
@@ -3161,24 +4189,32 @@ function suite(target: Target) {
       expect(await walk({ folder: f, updatedFrom: shift(day, 2) })).toEqual([])
       expect(ids(await walk({ folder: f, updatedTo: day }))).toEqual(expect.arrayContaining([titled.id, bodied.id]))
       expect(await walk({ folder: f, updatedTo: shift(day, -2) })).toEqual([])
-      expect(ids(await walk({ folder: f, updatedFrom: day, updatedTo: day }))).toEqual(expect.arrayContaining([titled.id]))
+      expect(ids(await walk({ folder: f, updatedFrom: day, updatedTo: day }))).toEqual(
+        expect.arrayContaining([titled.id]),
+      )
       // An empty range is an empty list, not an error.
       expect(await walk({ folder: f, updatedFrom: shift(day, 1), updatedTo: shift(day, -1) })).toEqual([])
     })
 
-    it('createdFrom and createdTo use the header\'s created day', async () => {
+    it("createdFrom and createdTo use the header's created day", async () => {
       const day = String(titled.meta.created)
       expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-      expect(ids(await walk({ folder: f, createdFrom: day, createdTo: day }))).toEqual(expect.arrayContaining([titled.id, bodied.id]))
+      expect(ids(await walk({ folder: f, createdFrom: day, createdTo: day }))).toEqual(
+        expect.arrayContaining([titled.id, bodied.id]),
+      )
       expect(await walk({ folder: f, createdFrom: shift(day, 2) })).toEqual([])
       expect(await walk({ folder: f, createdTo: shift(day, -2) })).toEqual([])
     })
 
     it('ranges combine with the text, the folder and the tag filters, and with the cursor', async () => {
       const day = dayOf(titled.updated)
-      expect(ids(await walk({ q: word, folder: f, updatedFrom: day, updatedTo: day }, 1)).sort()).toEqual([titled.id, bodied.id].sort())
+      expect(ids(await walk({ q: word, folder: f, updatedFrom: day, updatedTo: day }, 1)).sort()).toEqual(
+        [titled.id, bodied.id].sort(),
+      )
       expect(await walk({ q: word, folder: f, updatedFrom: shift(day, 2) })).toEqual([])
-      expect(await walk({ q: word, in: 'title', folder: f, createdTo: shift(String(titled.meta.created), -2) })).toEqual([])
+      expect(
+        await walk({ q: word, in: 'title', folder: f, createdTo: shift(String(titled.meta.created), -2) }),
+      ).toEqual([])
     })
 
     it('a date that is not a day is 400 invalid', async () => {
@@ -3190,12 +4226,18 @@ function suite(target: Target) {
 
     it.skipIf(!!REAL)('mock only: a created range picks pages by their own created day (set with a save)', async () => {
       const older = await mk(f, { title: `旧${run}` })
-      const saved = await S.savePage(older.id, { baseRev: older.rev, meta: { ...older.meta, created: '2020-03-15' }, body: older.body })
+      const saved = await S.savePage(older.id, {
+        baseRev: older.rev,
+        meta: { ...older.meta, created: '2020-03-15' },
+        body: older.body,
+      })
       expect(saved.meta.created).toBe('2020-03-15')
       expect(ids(await walk({ folder: f, createdFrom: '2020-03-15', createdTo: '2020-03-15' }))).toEqual([older.id])
       expect(ids(await walk({ folder: f, createdTo: '2020-03-14' }))).toEqual([])
       expect(ids(await walk({ folder: f, createdTo: '2020-03-16' }))).toEqual([older.id])
-      expect(ids(await walk({ folder: f, createdFrom: '2020-03-16', updatedFrom: dayOf(saved.updated) }))).toEqual(expect.arrayContaining([titled.id]))
+      expect(ids(await walk({ folder: f, createdFrom: '2020-03-16', updatedFrom: dayOf(saved.updated) }))).toEqual(
+        expect.arrayContaining([titled.id]),
+      )
     })
   })
 
@@ -3241,8 +4283,12 @@ function suite(target: Target) {
       expect(listed.types.find((x) => x.name === typeName)?.fields).toHaveLength(4)
       expect(Array.isArray(listed.bindings)).toBe(true)
       expect((await failure(S.putType(`bad:${run}`, spec))).code).toBe('invalid')
-      expect((await failure(S.putType(`x${run}`, { title: '', fields: [{ key: 'tags', kind: 'text' }] }))).code).toBe('invalid')
-      expect((await failure(S.putType(`x${run}`, { title: '', fields: [{ key: 'a', kind: 'select', options: [] }] }))).code).toBe('invalid')
+      expect((await failure(S.putType(`x${run}`, { title: '', fields: [{ key: 'tags', kind: 'text' }] }))).code).toBe(
+        'invalid',
+      )
+      expect(
+        (await failure(S.putType(`x${run}`, { title: '', fields: [{ key: 'a', kind: 'select', options: [] }] }))).code,
+      ).toBe('invalid')
     })
 
     it('binds a folder, which a page made there takes as its effective type without a type in its header; unbinding takes it away', async () => {
@@ -3256,7 +4302,12 @@ function suite(target: Target) {
       const C = await mk(`${folder}/sub`, { title: 'C', status: 'doing', points: 7.5 })
       const D = await mk(folder, { title: 'D', type: `memo${run}` })
       const E = await mk(`${root}/untyped`, { title: 'E', status: 'todo' })
-      expect([A.effectiveType, C.effectiveType, D.effectiveType, E.effectiveType]).toEqual([typeName, typeName, `memo${run}`, ''])
+      expect([A.effectiveType, C.effectiveType, D.effectiveType, E.effectiveType]).toEqual([
+        typeName,
+        typeName,
+        `memo${run}`,
+        '',
+      ])
       expect('type' in A.meta).toBe(false)
       expect((await S.getPage(A.id)).effectiveType).toBe(typeName)
       const folderItems = await walk({ folder, recursive: true })
@@ -3269,13 +4320,23 @@ function suite(target: Target) {
       expect(plain.items[0].props).toBeUndefined()
       expect(plain.items[0].rev).toBeUndefined()
       const withProps = await S.listPages({ folder, sort: 'title', props: true })
-      expect(withProps.items[0]).toMatchObject({ title: 'A', rev: A.rev, props: { status: 'done', points: 5, due: '2026-03-01', labels: ['a'] } })
+      expect(withProps.items[0]).toMatchObject({
+        title: 'A',
+        rev: A.rev,
+        props: { status: 'done', points: 5, due: '2026-03-01', labels: ['a'] },
+      })
       expect(withProps.items[2].props).toEqual({})
     })
 
     it('props=1 says which properties it holds only in part: cut text, an object, a list that lost an element', async () => {
       const whole = await mk(`${root}/partialprops`, { title: 'Whole', status: 'done', labels: ['a'] })
-      const cut = await mk(`${root}/partialprops`, { title: 'Cut', note: '字'.repeat(301), obj: { a: 1 }, list: ['a', { x: 1 }], fine: 'ok' })
+      const cut = await mk(`${root}/partialprops`, {
+        title: 'Cut',
+        note: '字'.repeat(301),
+        obj: { a: 1 },
+        list: ['a', { x: 1 }],
+        fine: 'ok',
+      })
       const items = (await S.listPages({ folder: `${root}/partialprops`, sort: 'title', props: true })).items
       const of = (id: string) => items.find((i) => i.id === id)!
       expect(of(cut.id).partialProps).toEqual(['note', 'obj', 'list'])
@@ -3288,7 +4349,8 @@ function suite(target: Target) {
     })
 
     it('sorts by a property both ways, pages without it last, and the cursor walks the whole order', async () => {
-      const order = async (sort: ListParams['sort']) => titles(await walk({ folder, recursive: true, sort, props: true }, 1))
+      const order = async (sort: ListParams['sort']) =>
+        titles(await walk({ folder, recursive: true, sort, props: true }, 1))
       expect(await order('prop:points')).toBe('A C B D')
       expect(await order('-prop:points')).toBe('B C A D')
       expect(await order('prop:due')).toBe('B A C D')
@@ -3300,7 +4362,8 @@ function suite(target: Target) {
     })
 
     it('filters by in, range, empty, notEmpty and contains; several conditions all hold; a bad filter is 400', async () => {
-      const q = async (f: ListParams['filter'], sort: ListParams['sort'] = 'title') => titles(await walk({ folder, recursive: true, sort, filter: f }))
+      const q = async (f: ListParams['filter'], sort: ListParams['sort'] = 'title') =>
+        titles(await walk({ folder, recursive: true, sort, filter: f }))
       expect(await q([{ key: 'status', op: 'in', values: ['todo', 'doing'] }])).toBe('B C')
       expect(await q([{ key: 'labels', op: 'in', values: ['b'] }])).toBe('B')
       expect(await q([{ key: 'points', op: 'range', values: [6, null] }])).toBe('B C')
@@ -3308,22 +4371,43 @@ function suite(target: Target) {
       expect(await q([{ key: 'due', op: 'empty' }])).toBe('C D')
       expect(await q([{ key: 'due', op: 'notEmpty' }])).toBe('A B')
       expect(await q([{ key: 'status', op: 'contains', values: ['DO'] }])).toBe('A B C')
-      expect(await q([{ key: 'status', op: 'in', values: ['todo', 'done'] }, { key: 'due', op: 'notEmpty' }], '-prop:points')).toBe('B A')
-      for (const bad of [filter([{ key: 'a', op: 'like', values: ['x'] }]), filter([{ key: 'a', op: 'range', values: [1] }]), 'nope']) {
-        const r = await call(admin, 'GET', `${SP_PAGES}?folder=${encodeURIComponent(folder)}&filter=${encodeURIComponent(bad)}`)
+      expect(
+        await q(
+          [
+            { key: 'status', op: 'in', values: ['todo', 'done'] },
+            { key: 'due', op: 'notEmpty' },
+          ],
+          '-prop:points',
+        ),
+      ).toBe('B A')
+      for (const bad of [
+        filter([{ key: 'a', op: 'like', values: ['x'] }]),
+        filter([{ key: 'a', op: 'range', values: [1] }]),
+        'nope',
+      ]) {
+        const r = await call(
+          admin,
+          'GET',
+          `${SP_PAGES}?folder=${encodeURIComponent(folder)}&filter=${encodeURIComponent(bad)}`,
+        )
         expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
       }
       expect((await call(admin, 'GET', `${SP_PAGES}?props=maybe`)).status).toBe(400)
     })
 
     it('changes properties of the header only: body and other keys stay, a list is replaced, unset and blank values remove, the listing sees it at once', async () => {
-      const p = await S.patchProps(A.id, { baseRev: A.rev, set: { status: 'doing', owner: 'Ann', labels: ['b'] }, unset: ['due'] })
+      const p = await S.patchProps(A.id, {
+        baseRev: A.rev,
+        set: { status: 'doing', owner: 'Ann', labels: ['b'] },
+        unset: ['due'],
+      })
       expect(p.rev).not.toBe(A.rev)
       expect(p.body).toBe(A.body)
       expect(p.meta).toMatchObject({ status: 'doing', owner: 'Ann', labels: ['b'], title: 'A', points: 5 })
       expect('due' in p.meta).toBe(false)
       expect(p.effectiveType).toBe(typeName)
-      const seen = (await S.listPages({ folder, props: true, filter: [{ key: 'owner', op: 'in', values: ['Ann'] }] })).items
+      const seen = (await S.listPages({ folder, props: true, filter: [{ key: 'owner', op: 'in', values: ['Ann'] }] }))
+        .items
       expect(seen).toHaveLength(1)
       expect(seen[0]).toMatchObject({ rev: p.rev, props: { status: 'doing' } })
       // Blank text removes the key, as unset does; a change to nothing keeps the rev.
@@ -3353,7 +4437,7 @@ function suite(target: Target) {
       expect((await S.getPage(A.id)).rev).toBe(A.rev)
     })
 
-    it('keeps the caller\'s draft when properties change', async () => {
+    it("keeps the caller's draft when properties change", async () => {
       const page = await S.getPage(A.id)
       await S.putDraft(A.id, { baseRev: page.rev, meta: page.meta, body: '打了一半\n', prev: '' })
       const p = await S.patchProps(A.id, { baseRev: page.rev, set: { status: 'done' } })
@@ -3364,7 +4448,14 @@ function suite(target: Target) {
     })
 
     it('changes a type by its keys: the order, titles and options follow the request, a field left out goes, pages keep their values', async () => {
-      const t = await S.putType(typeName, { baseRev: typeRev, title: '任务单', fields: [{ key: 'points', title: '点数' }, { key: 'status', title: '状态', options: ['todo', 'doing', 'done', 'dropped'] }] })
+      const t = await S.putType(typeName, {
+        baseRev: typeRev,
+        title: '任务单',
+        fields: [
+          { key: 'points', title: '点数' },
+          { key: 'status', title: '状态', options: ['todo', 'doing', 'done', 'dropped'] },
+        ],
+      })
       expect(t.title).toBe('任务单')
       expect(t.rev).not.toBe(typeRev)
       // The old rev is stale now, for a change and for a delete.
@@ -3408,7 +4499,8 @@ function suite(target: Target) {
     const typeName = `board${run}`
     const enc = encodeURIComponent
     const viewsUrl = (scope: string) => `/api/spaces/${spaceId}/views?${scope}`
-    const getViews = async (scope: string) => (await call(admin, 'GET', viewsUrl(scope))).json as { views: Record<string, any>[]; rev: string }
+    const getViews = async (scope: string) =>
+      (await call(admin, 'GET', viewsUrl(scope))).json as { views: Record<string, any>[]; rev: string }
     const putViews = (body: Record<string, unknown>) => call(admin, 'PUT', `/api/spaces/${spaceId}/views`, body)
     const titles = (items: PageSummary[]) => items.map((i) => i.title).join(' ')
     const listUrl = (query: string) => `${SP_PAGES}?folder=${enc(folder)}&${query}`
@@ -3417,20 +4509,47 @@ function suite(target: Target) {
     let typeRev = ''
 
     it('has no views until some are saved; a save makes the ids and the rev, and reads back the same', async () => {
-      const t = await S.putType(typeName, { title: '文案', fields: [{ key: 'status', kind: 'select', options }, { key: 'points', kind: 'number' }] })
+      const t = await S.putType(typeName, {
+        title: '文案',
+        fields: [
+          { key: 'status', kind: 'select', options },
+          { key: 'points', kind: 'number' },
+        ],
+      })
       typeRev = t.rev
       await S.createFolder(folder)
       await S.bindFolder(folder, typeName)
       const empty = await getViews(`folder=${enc(folder)}`)
       expect(empty.views).toEqual([])
       expect(empty.rev).toMatch(/^[0-9a-f]{40}$/)
-      const board = { name: '按状态', layout: 'board', group: 'status', sort: '-prop:points', filter: [{ key: 'points', op: 'range', values: [1, null] }] }
+      const board = {
+        name: '按状态',
+        layout: 'board',
+        group: 'status',
+        sort: '-prop:points',
+        filter: [{ key: 'points', op: 'range', values: [1, null] }],
+      }
       const table = { name: '表格', layout: 'table', hidden: ['points'], color: 'teal' }
       const saved = await putViews({ folder, baseRev: empty.rev, views: [board, table] })
       expect(saved.status).toBe(200)
       const [a, b] = saved.json.views
-      expect(a).toMatchObject({ name: '按状态', layout: 'board', group: 'status', sort: '-prop:points', hidden: [], filter: [{ key: 'points', op: 'range', values: [1, null] }] })
-      expect(b).toMatchObject({ name: '表格', layout: 'table', group: '', sort: '', filter: [], hidden: ['points'], color: 'teal' })
+      expect(a).toMatchObject({
+        name: '按状态',
+        layout: 'board',
+        group: 'status',
+        sort: '-prop:points',
+        hidden: [],
+        filter: [{ key: 'points', op: 'range', values: [1, null] }],
+      })
+      expect(b).toMatchObject({
+        name: '表格',
+        layout: 'table',
+        group: '',
+        sort: '',
+        filter: [],
+        hidden: ['points'],
+        color: 'teal',
+      })
       expect(a.id).toMatch(/^[a-z0-9]{4,}$/)
       expect(a.id).not.toBe(b.id)
       expect(saved.json.rev).not.toBe(empty.rev)
@@ -3444,7 +4563,11 @@ function suite(target: Target) {
       expect([stale.status, stale.json.error]).toEqual([409, 'conflict'])
       expect(stale.json.current).toEqual(cur)
       const [a, b] = cur.views
-      const next = await putViews({ folder, baseRev: cur.rev, views: [b, { ...a, name: '看板' }, { name: '连读', layout: 'read' }] })
+      const next = await putViews({
+        folder,
+        baseRev: cur.rev,
+        views: [b, { ...a, name: '看板' }, { name: '连读', layout: 'read' }],
+      })
       expect(next.status).toBe(200)
       expect(next.json.views.map((v: any) => v.name)).toEqual(['表格', '看板', '连读'])
       expect([next.json.views[0].id, next.json.views[1].id]).toEqual([b.id, a.id])
@@ -3474,7 +4597,12 @@ function suite(target: Target) {
         ['no name', { folder, baseRev: cur.rev, views: [{ layout: 'list' }] }, 400, 'invalid'],
         ['a layout that is none', { folder, baseRev: cur.rev, views: [{ ...ok, layout: 'gantt' }] }, 400, 'invalid'],
         ['a sort that is none', { folder, baseRev: cur.rev, views: [{ ...ok, sort: 'size' }] }, 400, 'invalid'],
-        ['a filter that is none', { folder, baseRev: cur.rev, views: [{ ...ok, filter: [{ key: 'a', op: 'like' }] }] }, 400, 'invalid'],
+        [
+          'a filter that is none',
+          { folder, baseRev: cur.rev, views: [{ ...ok, filter: [{ key: 'a', op: 'like' }] }] },
+          400,
+          'invalid',
+        ],
         ['hidden twice', { folder, baseRev: cur.rev, views: [{ ...ok, hidden: ['a', 'a'] }] }, 400, 'invalid'],
         ['an id nobody has', { folder, baseRev: cur.rev, views: [{ ...ok, id: 'zzzzzz' }] }, 400, 'invalid'],
         ['21 views', { folder, baseRev: cur.rev, views: many(21) }, 400, 'invalid'],
@@ -3485,7 +4613,9 @@ function suite(target: Target) {
         expect([r.status, r.json?.error], what).toEqual([status, error])
       }
       expect((await putViews({ folder, baseRev: cur.rev, views: many(20) })).json.views).toHaveLength(20)
-      expect((await putViews({ folder, baseRev: (await getViews(`folder=${enc(folder)}`)).rev, views: [ok] })).status).toBe(200)
+      expect(
+        (await putViews({ folder, baseRev: (await getViews(`folder=${enc(folder)}`)).rev, views: [ok] })).status,
+      ).toBe(200)
       for (const q of ['', 'folder=a&tag=b']) expect((await call(admin, 'GET', viewsUrl(q))).status, q).toBe(400)
     })
 
@@ -3507,11 +4637,23 @@ function suite(target: Target) {
     it('views follow their folder when it is renamed, and go when it is deleted', async () => {
       const from = `${root}/vmove`
       await S.createFolder(`${from}/sub`)
-      const top = await putViews({ folder: from, baseRev: (await getViews(`folder=${enc(from)}`)).rev, views: [{ name: '上', layout: 'list' }] })
-      const low = await putViews({ folder: `${from}/sub`, baseRev: (await getViews(`folder=${enc(`${from}/sub`)}`)).rev, views: [{ name: '下', layout: 'board', group: 'status' }] })
+      const top = await putViews({
+        folder: from,
+        baseRev: (await getViews(`folder=${enc(from)}`)).rev,
+        views: [{ name: '上', layout: 'list' }],
+      })
+      const low = await putViews({
+        folder: `${from}/sub`,
+        baseRev: (await getViews(`folder=${enc(`${from}/sub`)}`)).rev,
+        views: [{ name: '下', layout: 'board', group: 'status' }],
+      })
       await S.moveFolder(from, `${root}/vmoved`)
       expect(await getViews(`folder=${enc(`${root}/vmoved`)}`)).toEqual(top.json)
-      expect((await getViews(`folder=${enc(`${root}/vmoved/sub`)}`)).views[0]).toMatchObject({ id: low.json.views[0].id, name: '下', group: 'status' })
+      expect((await getViews(`folder=${enc(`${root}/vmoved/sub`)}`)).views[0]).toMatchObject({
+        id: low.json.views[0].id,
+        name: '下',
+        group: 'status',
+      })
       expect((await getViews(`folder=${enc(from)}`)).views).toEqual([])
       await S.deleteFolder(`${root}/vmoved`, true)
       expect((await getViews(`folder=${enc(`${root}/vmoved`)}`)).views).toEqual([])
@@ -3523,24 +4665,58 @@ function suite(target: Target) {
       await S.createFolder(place)
       const none = await S.views({ folder: place })
       expect(none.views).toEqual([])
-      const saved = await S.putViews({ folder: place }, { baseRev: none.rev, views: [{ name: '一', layout: 'list', sort: '', group: '', filter: [], hidden: [] }, { name: '二', layout: 'board', sort: '', group: 'status', filter: [{ key: 'status', op: 'notIn', values: ['draft'] }], hidden: [], cardFields: ['points'] }] })
+      const saved = await S.putViews(
+        { folder: place },
+        {
+          baseRev: none.rev,
+          views: [
+            { name: '一', layout: 'list', sort: '', group: '', filter: [], hidden: [] },
+            {
+              name: '二',
+              layout: 'board',
+              sort: '',
+              group: 'status',
+              filter: [{ key: 'status', op: 'notIn', values: ['draft'] }],
+              hidden: [],
+              cardFields: ['points'],
+            },
+          ],
+        },
+      )
       expect(saved.views.map((v) => v.name)).toEqual(['一', '二'])
-      expect(saved.views[1]).toMatchObject({ group: 'status', cardFields: ['points'], filter: [{ key: 'status', op: 'notIn', values: ['draft'] }] })
+      expect(saved.views[1]).toMatchObject({
+        group: 'status',
+        cardFields: ['points'],
+        filter: [{ key: 'status', op: 'notIn', values: ['draft'] }],
+      })
       expect(await S.views({ folder: place })).toEqual(saved)
       // A save from the rev before is refused, and the error carries the views as they are.
-      const stale = await S.putViews({ folder: place }, { baseRev: none.rev, views: [] }).then(() => null, (e: unknown) => e as ApiError)
+      const stale = await S.putViews({ folder: place }, { baseRev: none.rev, views: [] }).then(
+        () => null,
+        (e: unknown) => e as ApiError,
+      )
       expect([stale?.status, stale?.code]).toEqual([409, 'conflict'])
       expect((stale?.current as unknown as { views: unknown[]; rev: string }).rev).toBe(saved.rev)
       expect((stale?.current as unknown as { views: unknown[] }).views).toHaveLength(2)
       // A view of a tag is kept under the tag.
       const tag = `typedtag${run}`
-      const tagViews = await S.putViews({ tag }, { baseRev: (await S.views({ tag })).rev, views: [{ name: '读', layout: 'read', sort: '', group: '', filter: [], hidden: [] }] })
+      const tagViews = await S.putViews(
+        { tag },
+        {
+          baseRev: (await S.views({ tag })).rev,
+          views: [{ name: '读', layout: 'read', sort: '', group: '', filter: [], hidden: [] }],
+        },
+      )
       expect((await S.views({ tag })).views[0].id).toBe(tagViews.views[0].id)
       // The groups of a folder: how many pages hold each value.
       await mk(place, { title: 'g1', status: 'draft' }, '')
       await mk(place, { title: 'g2', status: 'draft' }, '')
       await mk(place, { title: 'g3' }, '')
-      expect(await S.groups({ folder: place, key: 'status' })).toEqual({ groups: [{ value: 'draft', count: 2 }], empty: 1, truncated: false })
+      expect(await S.groups({ folder: place, key: 'status' })).toEqual({
+        groups: [{ value: 'draft', count: 2 }],
+        empty: 1,
+        truncated: false,
+      })
       expect((await S.groups({ tag: [tag], key: 'status' })).groups).toEqual([])
     })
 
@@ -3548,10 +4724,19 @@ function suite(target: Target) {
       const pages: Record<string, Page> = {}
       const filter = (f: unknown[]) => `filter=${enc(JSON.stringify(f))}`
       it('lists each column on its own: the options, the other values, the empty', async () => {
-        for (const [title, meta] of [['甲', { status: 'final', points: 3 }], ['乙', { status: 'draft', points: 9 }], ['丙', { status: 'review' }], ['丁', { status: 'legacy' }], ['戊', {}], ['己', { status: 'draft' }], ['庚', { status: ['draft', 'x'] }]] as [string, Record<string, unknown>][]) {
+        for (const [title, meta] of [
+          ['甲', { status: 'final', points: 3 }],
+          ['乙', { status: 'draft', points: 9 }],
+          ['丙', { status: 'review' }],
+          ['丁', { status: 'legacy' }],
+          ['戊', {}],
+          ['己', { status: 'draft' }],
+          ['庚', { status: ['draft', 'x'] }],
+        ] as [string, Record<string, unknown>][]) {
           pages[title] = await mk(folder, { title, ...meta }, `正文 ${title}\n`)
         }
-        const col = async (f: unknown[]) => titles((await call(admin, 'GET', listUrl(`${filter(f)}&sort=title&limit=20`))).json.items)
+        const col = async (f: unknown[]) =>
+          titles((await call(admin, 'GET', listUrl(`${filter(f)}&sort=title&limit=20`))).json.items)
         expect(await col([{ key: 'status', op: 'in', values: ['draft'] }])).toBe('乙 己 庚')
         expect(await col([{ key: 'status', op: 'in', values: ['review'] }])).toBe('丙')
         // Not empty and not an option: a page that holds one of the options (a list) is in that column.
@@ -3572,18 +4757,36 @@ function suite(target: Target) {
           { value: 'x', count: 1 },
         ])
         expect([g.empty, g.truncated]).toEqual([1, false])
-        const some = (await call(admin, 'GET', groupsUrl(`folder=${enc(folder)}&key=status&${filter([{ key: 'points', op: 'notEmpty' }])}`))).json
-        expect(some.groups).toEqual([{ value: 'draft', count: 1 }, { value: 'final', count: 1 }])
+        const some = (
+          await call(
+            admin,
+            'GET',
+            groupsUrl(`folder=${enc(folder)}&key=status&${filter([{ key: 'points', op: 'notEmpty' }])}`),
+          )
+        ).json
+        expect(some.groups).toEqual([
+          { value: 'draft', count: 1 },
+          { value: 'final', count: 1 },
+        ])
         expect(some.empty).toBe(0)
-        expect((await call(admin, 'GET', groupsUrl(`folder=${enc(folder)}&key=nothing${run}`))).json).toMatchObject({ groups: [], empty: 7 })
-        for (const q of ['folder=a', 'key=status', `folder=${enc(folder)}&key=s&recursive=maybe`, `folder=${enc(folder)}&key=s&filter=nope`]) {
+        expect((await call(admin, 'GET', groupsUrl(`folder=${enc(folder)}&key=nothing${run}`))).json).toMatchObject({
+          groups: [],
+          empty: 7,
+        })
+        for (const q of [
+          'folder=a',
+          'key=status',
+          `folder=${enc(folder)}&key=s&recursive=maybe`,
+          `folder=${enc(folder)}&key=s&filter=nope`,
+        ]) {
           const r = await call(admin, 'GET', groupsUrl(q))
           expect([r.status, r.json.error], q).toEqual([400, 'invalid'])
         }
       })
 
       it('sorts by the options of the field when the folder has it as a select: options, other values, none; both ways, by cursor', async () => {
-        const walkTitles = async (sort: string, limit: number) => titles(await walk({ folder, sort: sort as never }, limit))
+        const walkTitles = async (sort: string, limit: number) =>
+          titles(await walk({ folder, sort: sort as never }, limit))
         // draft: 乙 己 庚 (a list sorts by its first value); review; final; legacy; none.
         for (const limit of [1, 2, 20]) {
           expect(await walkTitles('prop:status', limit)).toBe('乙 己 庚 丙 甲 丁 戊')
@@ -3591,7 +4794,13 @@ function suite(target: Target) {
         }
         // A field the type does not give as a select sorts by its text; so does a listing without the folder.
         expect(await walkTitles('prop:points', 20)).toBe('甲 乙 丙 丁 戊 己 庚')
-        const noFolder = (await call(admin, 'GET', `${SP_PAGES}?${filter([{ key: 'status', op: 'in', values: options }])}&sort=prop:status&limit=50`)).json.items as PageSummary[]
+        const noFolder = (
+          await call(
+            admin,
+            'GET',
+            `${SP_PAGES}?${filter([{ key: 'status', op: 'in', values: options }])}&sort=prop:status&limit=50`,
+          )
+        ).json.items as PageSummary[]
         expect(titles(noFolder.filter((i) => i.folder === folder))).toBe('乙 己 庚 甲 丙')
         // A cursor of the order of the options is no cursor of another sort.
         const first = (await call(admin, 'GET', listUrl('sort=prop:status&limit=1'))).json
@@ -3600,7 +4809,11 @@ function suite(target: Target) {
       })
 
       it('an option reordered in the type changes the order at once', async () => {
-        const t = await S.putType(typeName, { baseRev: typeRev, title: '文案', fields: [{ key: 'status', options: ['final', 'review', 'draft'] }, { key: 'points' }] })
+        const t = await S.putType(typeName, {
+          baseRev: typeRev,
+          title: '文案',
+          fields: [{ key: 'status', options: ['final', 'review', 'draft'] }, { key: 'points' }],
+        })
         typeRev = t.rev
         expect(titles(await walk({ folder, sort: 'prop:status' }, 20))).toBe('甲 丙 乙 己 庚 丁 戊')
       })
@@ -3622,10 +4835,17 @@ function suite(target: Target) {
         expect([bad.status, bad.json.error], q).toEqual([400, 'invalid'])
       }
       // The next 20 by cursor.
-      for (let i = 0; i < 22; i++) await mk(`${folder}/long`, { title: `长${String(i).padStart(2, '0')}` }, `第 ${i} 篇\n`)
+      for (let i = 0; i < 22; i++)
+        await mk(`${folder}/long`, { title: `长${String(i).padStart(2, '0')}` }, `第 ${i} 篇\n`)
       const first = (await call(admin, 'GET', `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1`)).json
       expect(first.items).toHaveLength(20)
-      const rest = (await call(admin, 'GET', `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1&cursor=${enc(first.next)}`)).json
+      const rest = (
+        await call(
+          admin,
+          'GET',
+          `${SP_PAGES}?folder=${enc(`${folder}/long`)}&sort=title&body=1&cursor=${enc(first.next)}`,
+        )
+      ).json
       expect(rest.items.map((i: any) => i.body)).toEqual(['第 20 篇\n', '第 21 篇\n'])
       expect(rest.next).toBe('')
     })
@@ -3636,8 +4856,13 @@ function suite(target: Target) {
     const folder = `${root}/tpl`
     const names = { diary: `日记${run}`, quick: `随记${run}`, tiny: `小${run}` }
     const url = (name = '') => `/api/spaces/${spaceId}/templates${name ? '/' + enc(name) : ''}`
-    const put = (name: string, baseRev: string, meta: Record<string, unknown>, body: string) => call(admin, 'PUT', url(name), { baseRev, meta, body })
-    const list = async () => (await call(admin, 'GET', url())).json as { templates: Record<string, any>[]; defaults: { folders: Record<string, string>; quickNote: string } }
+    const put = (name: string, baseRev: string, meta: Record<string, unknown>, body: string) =>
+      call(admin, 'PUT', url(name), { baseRev, meta, body })
+    const list = async () =>
+      (await call(admin, 'GET', url())).json as {
+        templates: Record<string, any>[]
+        defaults: { folders: Record<string, string>; quickNote: string }
+      }
     const defaults = (body: Record<string, unknown>) => call(admin, 'PUT', url('defaults'), body)
     const day = (tz: number) => new Date(Date.now() + tz * 60_000).toISOString().slice(0, 10)
     let rev = ''
@@ -3708,7 +4933,8 @@ function suite(target: Target) {
       expect([(await defaults({ quickNote: `没有${run}` })).json.error]).toEqual(['template_not_found'])
       const noFolder = await defaults({ folder: `${root}/nowhere`, template: names.diary })
       expect(noFolder.status).toBe(404)
-      for (const body of [{}, { folder }, { folder, template: names.diary, quickNote: names.diary }]) expect((await defaults(body)).json.error).toBe('invalid')
+      for (const body of [{}, { folder }, { folder, template: names.diary, quickNote: names.diary }])
+        expect((await defaults(body)).json.error).toBe('invalid')
       const set = await defaults({ folder, template: names.diary })
       expect(set.status).toBe(200)
       expect(set.json.folders[folder]).toBe(names.diary)
@@ -3740,7 +4966,12 @@ function suite(target: Target) {
     })
 
     it('the request wins field by field and the template\'s type is kept; a folder\'s default applies unless "" is sent; quick notes use the quick-note default', async () => {
-      const mine = await S.createPage({ folder: `${folder}/p`, template: names.diary, meta: { title: '我的', type: 'other', extra: 1, tags: [] }, body: '自己的\n' })
+      const mine = await S.createPage({
+        folder: `${folder}/p`,
+        template: names.diary,
+        meta: { title: '我的', type: 'other', extra: 1, tags: [] },
+        body: '自己的\n',
+      })
       expect(mine.meta).toMatchObject({ title: '我的', type: `diary${run}`, extra: 1 })
       expect(mine.meta.tags).toHaveLength(2)
       expect(mine.body).toBe('自己的\n')
@@ -3751,7 +4982,8 @@ function suite(target: Target) {
       expect(byDefault.meta.type).toBe(`diary${run}`)
       const blank = await S.createPage({ folder, template: '' })
       expect([blank.meta.type, blank.body]).toEqual([undefined, ''])
-      const inbox = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((s: SpaceInfo) => s.id === spaceId).inbox as string
+      const inbox = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((s: SpaceInfo) => s.id === spaceId)
+        .inbox as string
       const note = await S.createPage({ folder: inbox, body: '想到的\n' })
       expect(String(note.meta.title)).toMatch(/^随记 \d\d:\d\d$/)
       expect(note.body).toBe('想到的\n')
@@ -3766,11 +4998,15 @@ function suite(target: Target) {
       await defaults({ folder: a, template: names.diary })
       await defaults({ folder: `${a}/in`, template: names.quick })
       const moved = `${root}/tplmoved`
-      expect((await call(admin, 'POST', `/api/spaces/${spaceId}/folders/move`, { from: a, to: moved })).status).toBe(200)
+      expect((await call(admin, 'POST', `/api/spaces/${spaceId}/folders/move`, { from: a, to: moved })).status).toBe(
+        200,
+      )
       const d = (await list()).defaults.folders
       expect([d[a], d[`${a}/in`], d[moved], d[`${moved}/in`]]).toEqual([undefined, undefined, names.diary, names.quick])
       expect((await S.createPage({ folder: moved })).meta.type).toBe(`diary${run}`)
-      expect((await call(admin, 'DELETE', `/api/spaces/${spaceId}/folders?path=${enc(moved)}&recursive=true`)).status).toBe(204)
+      expect(
+        (await call(admin, 'DELETE', `/api/spaces/${spaceId}/folders?path=${enc(moved)}&recursive=true`)).status,
+      ).toBe(204)
       const after = (await list()).defaults.folders
       expect([after[moved], after[`${moved}/in`]]).toEqual([undefined, undefined])
     })
@@ -3810,22 +5046,50 @@ function suite(target: Target) {
       throw new Error('cursor never ended')
     }
     const of = (items: Problem[], kind: ProblemKind) => mine(items).filter((p) => p.kind === kind)
-    const at = (items: Problem[], kind: ProblemKind, path: string) => mine(items).find((p) => p.kind === kind && p.path === path)
+    const at = (items: Problem[], kind: ProblemKind, path: string) =>
+      mine(items).find((p) => p.kind === kind && p.path === path)
     let rev = ''
     let strayId = ''
 
     it('counts every kind, listed or not, and lists in the order of the kinds, then paths', async () => {
       await S.createFolder(folder)
-      const t = await S.putType(typeName, { title: '检查', fields: [{ key: 'status', kind: 'select', options: ['todo', 'done'] }, { key: 'points', kind: 'number' }] })
+      const t = await S.putType(typeName, {
+        title: '检查',
+        fields: [
+          { key: 'status', kind: 'select', options: ['todo', 'done'] },
+          { key: 'points', kind: 'number' },
+        ],
+      })
       expect(t.rev).toMatch(/^[0-9a-f]{40}$/)
       await S.bindFolder(folder, typeName)
       const r = await S.checks()
-      expect(Object.keys(r.counts).sort()).toEqual(['bad_header', 'broken_link', 'duplicate_id', 'duplicate_title', 'missing_asset', 'no_id', 'not_in_type', 'type_mismatch'])
+      expect(Object.keys(r.counts).sort()).toEqual([
+        'bad_header',
+        'broken_link',
+        'duplicate_id',
+        'duplicate_title',
+        'missing_asset',
+        'no_id',
+        'not_in_type',
+        'type_mismatch',
+      ])
       for (const n of Object.values(r.counts)) expect(Number.isInteger(n)).toBe(true)
-      const order = ['no_id', 'duplicate_id', 'bad_header', 'type_mismatch', 'not_in_type', 'broken_link', 'missing_asset', 'duplicate_title']
+      const order = [
+        'no_id',
+        'duplicate_id',
+        'bad_header',
+        'type_mismatch',
+        'not_in_type',
+        'broken_link',
+        'missing_asset',
+        'duplicate_title',
+      ]
       const items = await walkChecks()
       const keys = items.map((p) => [order.indexOf(p.kind), p.path] as const)
-      for (let i = 1; i < keys.length; i++) expect(keys[i - 1][0] < keys[i][0] || (keys[i - 1][0] === keys[i][0] && keys[i - 1][1] <= keys[i][1])).toBe(true)
+      for (let i = 1; i < keys.length; i++)
+        expect(keys[i - 1][0] < keys[i][0] || (keys[i - 1][0] === keys[i][0] && keys[i - 1][1] <= keys[i][1])).toBe(
+          true,
+        )
       for (const p of items) {
         expect(typeof p.message).toBe('string')
         expect(p.fix === null || p.fix === 'add_id' || p.fix === 'remove_fields').toBe(true)
@@ -3857,7 +5121,11 @@ function suite(target: Target) {
       expect(after.not_in_type - before.not_in_type).toBe(2)
       expect(after.type_mismatch - before.type_mismatch).toBe(2)
       // A save that repairs one page and breaks another moves the counts at once.
-      const repaired = await S.savePage(bad.id, { baseRev: bad.rev, meta: { ...bad.meta, status: 'done', points: 4 }, body: bad.body })
+      const repaired = await S.savePage(bad.id, {
+        baseRev: bad.rev,
+        meta: { ...bad.meta, status: 'done', points: 4 },
+        body: bad.body,
+      })
       await S.savePage(fine.id, { baseRev: fine.rev, meta: { ...fine.meta, odd: true }, body: fine.body })
       const next = await walkChecks()
       expect(at(next, 'type_mismatch', repaired.path)).toBeUndefined()
@@ -3885,9 +5153,16 @@ function suite(target: Target) {
 
     it('finds an image or attachment of assets/ that is not there, and forgets it when the page stops pointing at it', async () => {
       const before = (await S.checks()).counts.missing_asset
-      const p = await mk(folder, { title: `图${run}` }, '![x](/assets/NOSUCHPAGE/gone.png) [f](/assets/NOSUCHPAGE/gone.pdf) [web](https://example.test/assets/a/b.png)\n')
+      const p = await mk(
+        folder,
+        { title: `图${run}` },
+        '![x](/assets/NOSUCHPAGE/gone.png) [f](/assets/NOSUCHPAGE/gone.pdf) [web](https://example.test/assets/a/b.png)\n',
+      )
       const items = of(await walkChecks('missing_asset'), 'missing_asset')
-      expect(items.map((x) => x.detail)).toEqual([{ target: '/assets/NOSUCHPAGE/gone.png' }, { target: '/assets/NOSUCHPAGE/gone.pdf' }])
+      expect(items.map((x) => x.detail)).toEqual([
+        { target: '/assets/NOSUCHPAGE/gone.png' },
+        { target: '/assets/NOSUCHPAGE/gone.pdf' },
+      ])
       expect(items.every((x) => x.id === p.id && x.path === p.path && x.fix === null)).toBe(true)
       expect((await S.checks()).counts.missing_asset - before).toBe(2)
       await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'no pictures\n' })
@@ -3915,14 +5190,19 @@ function suite(target: Target) {
     it('pages 50 at a time with a cursor, one kind or all of them; a kind or cursor it does not know is 400', async () => {
       const before = (await S.checks()).counts.not_in_type
       const made: string[] = []
-      for (let i = 0; i < 55; i++) made.push((await mk(`${folder}/many`, { title: `多${i}-${run}`, stray: i + 1 }, 'x\n')).path)
+      for (let i = 0; i < 55; i++)
+        made.push((await mk(`${folder}/many`, { title: `多${i}-${run}`, stray: i + 1 }, 'x\n')).path)
       const first = await S.checks({ kind: 'not_in_type' })
       expect(first.items).toHaveLength(50)
       expect(first.next).not.toBe('')
       expect(first.counts.not_in_type - before).toBe(55)
       const all = await walkChecks('not_in_type')
       expect(all.length).toBe(first.counts.not_in_type)
-      expect(of(all, 'not_in_type').filter((p) => p.path.startsWith(`${folder}/many/`)).map((p) => p.path)).toEqual([...made].sort())
+      expect(
+        of(all, 'not_in_type')
+          .filter((p) => p.path.startsWith(`${folder}/many/`))
+          .map((p) => p.path),
+      ).toEqual([...made].sort())
       const every = await walkChecks()
       expect(every.length).toBe(Object.values((await S.checks()).counts).reduce((a, b) => a + b, 0))
       for (const query of ['?kind=nope', '?cursor=nope']) {
@@ -3937,7 +5217,15 @@ function suite(target: Target) {
       const stale = await failure(S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: '0'.repeat(40) }))
       expect([stale.status, stale.code]).toEqual([409, 'conflict'])
       expect(stale.current).toMatchObject({ id: strayId, rev })
-      for (const kind of ['type_mismatch', 'duplicate_id', 'bad_header', 'broken_link', 'missing_asset', 'duplicate_title', 'nope']) {
+      for (const kind of [
+        'type_mismatch',
+        'duplicate_id',
+        'bad_header',
+        'broken_link',
+        'missing_asset',
+        'duplicate_title',
+        'nope',
+      ]) {
         const e = await failure(S.fixCheck({ kind: kind as 'no_id', path: cur.path, baseRev: cur.rev }))
         expect([e.status, e.code], kind).toEqual([400, 'not_fixable'])
       }
@@ -3960,7 +5248,12 @@ function suite(target: Target) {
     it('mock only: a file without an id, with a broken header or with an id that is taken; no_id is fixed with the rev it lists', async () => {
       if (REAL) return
       const taken = await mk(folder, { title: `占了${run}` }, 'x\n')
-      server!.addOrphan(spaceId, { path: `${folder}/noid.md`, kind: 'no_id', meta: { title: `无id${run}`, custom: 1 }, body: 'orphan\n' })
+      server!.addOrphan(spaceId, {
+        path: `${folder}/noid.md`,
+        kind: 'no_id',
+        meta: { title: `无id${run}`, custom: 1 },
+        body: 'orphan\n',
+      })
       server!.addOrphan(spaceId, { path: `${folder}/broken.md`, kind: 'bad_header', line: 3 })
       server!.addOrphan(spaceId, { path: `${folder}/twin.md`, kind: 'duplicate_id', id: taken.id })
       const items = await walkChecks()
@@ -3970,7 +5263,11 @@ function suite(target: Target) {
       expect(n.rev).toMatch(/^[0-9a-f]{40}$/)
       expect(n.detail).toBeUndefined()
       expect(at(items, 'bad_header', `${folder}/broken.md`)).toMatchObject({ fix: null, detail: { line: 3 } })
-      expect(at(items, 'duplicate_id', `${folder}/twin.md`)).toMatchObject({ id: taken.id, fix: null, detail: { paths: [taken.path, `${folder}/twin.md`] } })
+      expect(at(items, 'duplicate_id', `${folder}/twin.md`)).toMatchObject({
+        id: taken.id,
+        fix: null,
+        detail: { paths: [taken.path, `${folder}/twin.md`] },
+      })
       const stale = await failure(S.fixCheck({ kind: 'no_id', path: n.path, baseRev: '0'.repeat(40) }))
       expect([stale.status, stale.code]).toEqual([409, 'conflict'])
       const made = await S.fixCheck({ kind: 'no_id', path: n.path, baseRev: n.rev })
@@ -4003,11 +5300,20 @@ function suite(target: Target) {
 
     it('lists the links of a page in the order of the text, with where they lead now', async () => {
       const target = await mk(`${f}/a/目标`, { title: `被链到${run}` }, '正文\n')
-      const src = await mk(`${f}/a`, { title: `出链${run}` }, `先看 ${linkTo(`${f}/a`, target, '甲')}，再看[无](没有这一篇.md)，还有[外](https://example.com/x.md)。\n`)
+      const src = await mk(
+        `${f}/a`,
+        { title: `出链${run}` },
+        `先看 ${linkTo(`${f}/a`, target, '甲')}，再看[无](没有这一篇.md)，还有[外](https://example.com/x.md)。\n`,
+      )
       const r = await S.links(src.id)
       expect(r.items.map((l) => l.text)).toEqual(['甲', '无'])
       expect(r.items[0]).toMatchObject({ text: '甲', id: target.id, path: target.path, broken: false })
-      expect(r.items[0].target).toMatchObject({ id: target.id, path: target.path, title: `被链到${run}`, untitled: false })
+      expect(r.items[0].target).toMatchObject({
+        id: target.id,
+        path: target.path,
+        title: `被链到${run}`,
+        untitled: false,
+      })
       expect(r.items[1]).toMatchObject({ text: '无', path: `${f}/a/没有这一篇.md`, broken: true })
       expect(r.items[1].target).toBeUndefined()
     })
@@ -4022,7 +5328,11 @@ function suite(target: Target) {
     it('a link follows the page by its id; its title is the page as it is now', async () => {
       const target = await mk(f, { title: `旧名${run}` }, 'x\n')
       const src = await mk(f, {}, `${linkTo(f, target)}\n`)
-      await S.savePage(target.id, { baseRev: target.rev, meta: { ...target.meta, title: `新名${run}` }, body: target.body })
+      await S.savePage(target.id, {
+        baseRev: target.rev,
+        meta: { ...target.meta, title: `新名${run}` },
+        body: target.body,
+      })
       const l = (await S.links(src.id)).items[0]
       expect(l.broken).toBe(false)
       expect(l.target?.title).toBe(`新名${run}`)
@@ -4030,8 +5340,16 @@ function suite(target: Target) {
 
     it('says which pages link here, with the paragraph and the total, never the page itself', async () => {
       const made = await mk(`${f}/back`, { title: `被引用${run}` }, 'x\n')
-      const target = await S.savePage(made.id, { baseRev: made.rev, meta: made.meta, body: `自己链自己：${linkTo(`${f}/back`, made, '我')}\n` })
-      const one = await mk(`${f}/back/甲`, { title: `引用甲${run}` }, `前一段。\n\n这一段链到${linkTo(`${f}/back/甲`, target, '目标')}，写了两次${linkTo(`${f}/back/甲`, target, '又一次')}。\n\n后一段。\n`)
+      const target = await S.savePage(made.id, {
+        baseRev: made.rev,
+        meta: made.meta,
+        body: `自己链自己：${linkTo(`${f}/back`, made, '我')}\n`,
+      })
+      const one = await mk(
+        `${f}/back/甲`,
+        { title: `引用甲${run}` },
+        `前一段。\n\n这一段链到${linkTo(`${f}/back/甲`, target, '目标')}，写了两次${linkTo(`${f}/back/甲`, target, '又一次')}。\n\n后一段。\n`,
+      )
       const r = await S.backlinks(target.id)
       expect(r.total).toBe(1)
       expect(r.next).toBe('')
@@ -4045,7 +5363,16 @@ function suite(target: Target) {
     it('pages the backlinks 20 at a time, each page once, with a cursor that ends', async () => {
       const target = await mk(`${f}/many`, { title: `热门${run}` }, 'x\n')
       const made: string[] = []
-      for (let i = 0; i < 22; i++) made.push((await mk(`${f}/many`, { title: `引用${String(i).padStart(2, '0')}${run}` }, `见${linkTo(`${f}/many`, target)}\n`)).id)
+      for (let i = 0; i < 22; i++)
+        made.push(
+          (
+            await mk(
+              `${f}/many`,
+              { title: `引用${String(i).padStart(2, '0')}${run}` },
+              `见${linkTo(`${f}/many`, target)}\n`,
+            )
+          ).id,
+        )
       const first = await S.backlinks(target.id)
       expect(first.items).toHaveLength(20)
       expect(first.total).toBe(22)
@@ -4086,7 +5413,6 @@ function suite(target: Target) {
       expect((await S.getPage(p.id)).body).toBe('重建前\n')
     })
   })
-
 
   describe('offline sync: the catalogue, the changes, several pages and the heads', () => {
     const folder = `${root}/offline`
@@ -4129,21 +5455,45 @@ function suite(target: Target) {
       expect(first.tree).toBeTruthy()
       expect(first.settings).toBeTruthy()
       const got = items.find((e) => e.id === a.id)!
-      expect(got).toMatchObject({ id: a.id, path: a.path, folder: `${folder}/a`, title: `甲${run}`, label: `甲${run}`, untitled: false, tags: ['同步'], type: '' })
+      expect(got).toMatchObject({
+        id: a.id,
+        path: a.path,
+        folder: `${folder}/a`,
+        title: `甲${run}`,
+        label: `甲${run}`,
+        untitled: false,
+        tags: ['同步'],
+        type: '',
+      })
       expect(got.rev).toBe((await S.getPage(a.id)).rev)
       expect(got.updated).toMatch(/^\d{4}-\d\d-\d\dT/)
       expect(got).not.toHaveProperty('excerpt')
       expect(items.find((e) => e.untitled)).toBeDefined()
       // A folder and below; two folders; the root names everything.
-      expect((await walkCatalog([`${folder}/a`], 1)).items.map((e) => e.id).sort()).toEqual(items.filter((e) => e.folder.startsWith(`${folder}/a`)).map((e) => e.id).sort())
+      expect((await walkCatalog([`${folder}/a`], 1)).items.map((e) => e.id).sort()).toEqual(
+        items
+          .filter((e) => e.folder.startsWith(`${folder}/a`))
+          .map((e) => e.id)
+          .sort(),
+      )
       expect((await walkCatalog([`${folder}/a/sub`, `${folder}/b`], 5)).items).toHaveLength(3)
       expect((await walkCatalog([''], 1000)).items.length).toBeGreaterThanOrEqual(4)
       // Refusals.
-      for (const q of ['limit=0', 'limit=5001', 'limit=x', 'cursor=nope']) expect((await call(admin, 'GET', syncUrl(`/sync/catalog?${q}`))).status, q).toBe(400)
+      for (const q of ['limit=0', 'limit=5001', 'limit=x', 'cursor=nope'])
+        expect((await call(admin, 'GET', syncUrl(`/sync/catalog?${q}`))).status, q).toBe(400)
       const many = Array.from({ length: 51 }, (_, i) => `folder=f${i}`).join('&')
       expect((await call(admin, 'GET', syncUrl(`/sync/catalog?${many}`))).status).toBe(400)
       const cur = (await S.syncCatalog({ folders: [`${folder}/b`], limit: 1 })).next
-      expect((await call(admin, 'GET', syncUrl(`/sync/catalog?folder=${encodeURIComponent(folder + '/a')}&cursor=${encodeURIComponent(cur)}`))).status, 'a cursor of other folders').toBe(400)
+      expect(
+        (
+          await call(
+            admin,
+            'GET',
+            syncUrl(`/sync/catalog?folder=${encodeURIComponent(folder + '/a')}&cursor=${encodeURIComponent(cur)}`),
+          )
+        ).status,
+        'a cursor of other folders',
+      ).toBe(400)
     })
 
     it('changes after the cursor of the first batch: the pages that were added, changed and moved, and the removals, each once', async () => {
@@ -4159,7 +5509,11 @@ function suite(target: Target) {
       expect(none.next).toBe(since)
       expect(none.tree).toBe(first.tree)
 
-      const x2 = await S.savePage(x.id, { baseRev: x.rev, meta: { ...x.meta, title: `一改${run}` }, body: '一，改了\n' })
+      const x2 = await S.savePage(x.id, {
+        baseRev: x.rev,
+        meta: { ...x.meta, title: `一改${run}` },
+        body: '一，改了\n',
+      })
       await S.savePage(x.id, { baseRev: x2.rev, meta: x2.meta, body: '一，又改了\n' })
       await S.movePage(y.id, `${folder}/d`)
       await S.deletePage(z.id)
@@ -4180,7 +5534,10 @@ function suite(target: Target) {
       expect((await api.syncHeads([spaceId])).heads[spaceId]).toBe(next)
       // A page removed and made again with the same id (here: not possible through the API) is out of scope; a
       // limit that is too big or too small is refused.
-      for (const q of ['limit=0', 'limit=5001']) expect((await call(admin, 'GET', syncUrl(`/changes?since=${encodeURIComponent(next)}&${q}`))).status, q).toBe(400)
+      for (const q of ['limit=0', 'limit=5001'])
+        expect((await call(admin, 'GET', syncUrl(`/changes?since=${encodeURIComponent(next)}&${q}`))).status, q).toBe(
+          400,
+        )
     })
 
     it('a change cursor that is missing or not ours is 400; one from before a reindex is 410 changes_expired, so is a catalogue cursor', async () => {
@@ -4203,7 +5560,7 @@ function suite(target: Target) {
       expect((await S.changes(fresh.first.changes!)).items).toEqual([])
     })
 
-    it('several pages at once, as the single-page read gives them, with the caller\'s draft; unknown ids are missing', async () => {
+    it("several pages at once, as the single-page read gives them, with the caller's draft; unknown ids are missing", async () => {
       const p = await mk(`${folder}/f`, { title: `页${run}` }, '正文一\n')
       const q = await mk(`${folder}/f`, { title: `页二${run}` }, '正文二\n')
       const receipt = await S.putDraft(p.id, { baseRev: p.rev, meta: p.meta, body: '正文一，写到一半\n', prev: '' })
@@ -4221,7 +5578,9 @@ function suite(target: Target) {
       expect((await call(admin, 'GET', syncUrl('/sync/pages'))).status).toBe(400)
       expect((await call(admin, 'GET', syncUrl(`/sync/pages?ids=${p.id},${p.id}`))).status).toBe(400)
       expect((await call(admin, 'GET', syncUrl(`/sync/pages?ids=${p.id},x`))).status).toBe(400)
-      expect((await call(admin, 'GET', syncUrl(`/sync/pages?ids=${[...hundred, 'XXXXXXXXXX'].join(',')}`))).status).toBe(400)
+      expect(
+        (await call(admin, 'GET', syncUrl(`/sync/pages?ids=${[...hundred, 'XXXXXXXXXX'].join(',')}`))).status,
+      ).toBe(400)
     })
 
     it('heads: the change cursor of each space asked for; a space that cannot be read is missing', async () => {
@@ -4242,56 +5601,94 @@ function suite(target: Target) {
       expect((await call(admin, 'GET', `/api/sync/heads?${hundredOne}`)).status).toBe(400)
     })
 
-    it.skipIf(!accounts)('offline.copies: when the site locks it off, the four sync endpoints answer 403 offline_off; it is a setting a person only reads', async () => {
-      const routes = [syncUrl('/sync/catalog'), syncUrl('/changes?since=x'), syncUrl('/sync/pages?ids=01ZZZZZZZZ'), `/api/sync/heads?space=${spaceId}`]
-      const mineOf = async (c: typeof admin) => ((await call(c, 'GET', '/api/settings')).json.settings as { key: string; effective: unknown; space?: unknown; person?: unknown }[]).find((x) => x.key === 'offline.copies')
-      const def = ((await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; kind: string; layers: string[]; site: { value: unknown } }[]).find((x) => x.key === 'offline.copies')!
-      expect([def.kind, def.layers, def.site.value]).toEqual(['boolean', ['site', 'tenant'], true])
-      expect(await mineOf(admin)).toEqual({ key: 'offline.copies', effective: true })
-      try {
-        expect((await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } })).status).toBe(200)
-        expect((await mineOf(admin))?.effective).toBe(false)
-        for (const path of routes) {
-          const got = await call(admin, 'GET', path)
-          expect([got.status, got.json.error], path).toEqual([403, 'offline_off'])
+    it.skipIf(!accounts)(
+      'offline.copies: when the site locks it off, the four sync endpoints answer 403 offline_off; it is a setting a person only reads',
+      async () => {
+        const routes = [
+          syncUrl('/sync/catalog'),
+          syncUrl('/changes?since=x'),
+          syncUrl('/sync/pages?ids=01ZZZZZZZZ'),
+          `/api/sync/heads?space=${spaceId}`,
+        ]
+        const mineOf = async (c: typeof admin) =>
+          (
+            (await call(c, 'GET', '/api/settings')).json.settings as {
+              key: string
+              effective: unknown
+              space?: unknown
+              person?: unknown
+            }[]
+          ).find((x) => x.key === 'offline.copies')
+        const def = (
+          (await call(admin, 'GET', '/api/admin/settings')).json.settings as {
+            key: string
+            kind: string
+            layers: string[]
+            site: { value: unknown }
+          }[]
+        ).find((x) => x.key === 'offline.copies')!
+        expect([def.kind, def.layers, def.site.value]).toEqual(['boolean', ['site', 'tenant'], true])
+        expect(await mineOf(admin)).toEqual({ key: 'offline.copies', effective: true })
+        try {
+          expect(
+            (await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } }))
+              .status,
+          ).toBe(200)
+          expect((await mineOf(admin))?.effective).toBe(false)
+          for (const path of routes) {
+            const got = await call(admin, 'GET', path)
+            expect([got.status, got.json.error], path).toEqual([403, 'offline_off'])
+          }
+          // Nothing else is refused.
+          expect((await call(admin, 'GET', `/api/spaces/${spaceId}/pages`)).status).toBe(200)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: true, lower: { mode: 'allow' } })
         }
-        // Nothing else is refused.
-        expect((await call(admin, 'GET', `/api/spaces/${spaceId}/pages`)).status).toBe(200)
-      } finally {
-        await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: true, lower: { mode: 'allow' } })
-      }
-      expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
-      expect((await call(admin, 'GET', syncUrl('/sync/catalog'))).status).toBe(200)
-      // A tenant may turn it off for itself (the one tenant of this server).
-      const t = ((await call(admin, 'GET', '/api/admin/tenants')).json.items as { id: string; default: boolean }[]).find((x) => x.default)!
-      try {
-        expect((await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: false })).status).toBe(200)
-        expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).json.error).toBe('offline_off')
-      } finally {
-        await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: true })
-      }
-      expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
-    })
+        expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
+        expect((await call(admin, 'GET', syncUrl('/sync/catalog'))).status).toBe(200)
+        // A tenant may turn it off for itself (the one tenant of this server).
+        const t = (
+          (await call(admin, 'GET', '/api/admin/tenants')).json.items as { id: string; default: boolean }[]
+        ).find((x) => x.default)!
+        try {
+          expect(
+            (await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: false })).status,
+          ).toBe(200)
+          expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).json.error).toBe('offline_off')
+        } finally {
+          await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: true })
+        }
+        expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
+      },
+    )
 
-    it.skipIf(!accounts)('somebody who is not a member of the space is told there is no such space, and has no head for it', async () => {
-      const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
-      const b = browser()
-      const name = `os${run}`.slice(0, 20)
-      const r = await call(b, 'POST', '/api/invites/accept', { token: invite.token, username: name, name: `外 ${name}`, password: 'a-long-password' })
-      expect(r.status).toBe(201)
-      created.users.push(r.json.user.id)
-      for (const path of ['/sync/catalog', '/changes?since=x', '/sync/pages?ids=01ZZZZZZZZ']) {
-        const got = await call(b, 'GET', syncUrl(path))
-        expect([got.status, got.json.error], path).toEqual([404, 'not_found'])
-      }
-      const h = await call(b, 'GET', `/api/sync/heads?space=${spaceId}`)
-      expect(h.status).toBe(200)
-      expect(h.json.heads).toEqual({})
-      expect(h.json.missing).toEqual([spaceId])
-      // Nor with no session at all.
-      expect((await call(browser(), 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(401)
-      expect((await call(browser(), 'GET', syncUrl('/sync/catalog'))).status).toBe(401)
-    })
+    it.skipIf(!accounts)(
+      'somebody who is not a member of the space is told there is no such space, and has no head for it',
+      async () => {
+        const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
+        const b = browser()
+        const name = `os${run}`.slice(0, 20)
+        const r = await call(b, 'POST', '/api/invites/accept', {
+          token: invite.token,
+          username: name,
+          name: `外 ${name}`,
+          password: 'a-long-password',
+        })
+        expect(r.status).toBe(201)
+        created.users.push(r.json.user.id)
+        for (const path of ['/sync/catalog', '/changes?since=x', '/sync/pages?ids=01ZZZZZZZZ']) {
+          const got = await call(b, 'GET', syncUrl(path))
+          expect([got.status, got.json.error], path).toEqual([404, 'not_found'])
+        }
+        const h = await call(b, 'GET', `/api/sync/heads?space=${spaceId}`)
+        expect(h.status).toBe(200)
+        expect(h.json.heads).toEqual({})
+        expect(h.json.missing).toEqual([spaceId])
+        // Nor with no session at all.
+        expect((await call(browser(), 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(401)
+        expect((await call(browser(), 'GET', syncUrl('/sync/catalog'))).status).toBe(401)
+      },
+    )
   })
 
   describe('drafts', () => {
@@ -4301,7 +5698,8 @@ function suite(target: Target) {
       body: over.body ?? p.body,
     })
     // Store a draft, replacing version `prev` ("" when there is none).
-    const store = (p: Page, over: Parameters<typeof draftOf>[1] = {}, prev = '') => S.putDraft(p.id, { ...draftOf(p, over), prev })
+    const store = (p: Page, over: Parameters<typeof draftOf>[1] = {}, prev = '') =>
+      S.putDraft(p.id, { ...draftOf(p, over), prev })
 
     it('a stored draft leaves the file, the lists and search alone; GET carries it, with its version', async () => {
       const p = await mk(`${root}/dr1`, { title: `草稿${run}`, tags: [`dt${run}`] }, '原文\n')
@@ -4315,7 +5713,14 @@ function suite(target: Target) {
       expect(got.rev).toBe(p.rev)
       expect(got.body).toBe('原文\n')
       expect(got.meta.title).toBe(`草稿${run}`)
-      expect(got.draft).toEqual({ version: receipt.version, baseRev: p.rev, meta: { ...p.meta, title: `草稿新题${run}` }, body: `仅在草稿里的${run}\n`, updated: receipt.updated, stale: false })
+      expect(got.draft).toEqual({
+        version: receipt.version,
+        baseRev: p.rev,
+        meta: { ...p.meta, title: `草稿新题${run}` },
+        body: `仅在草稿里的${run}\n`,
+        updated: receipt.updated,
+        stale: false,
+      })
       const item = (await walk({ folder: `${root}/dr1` }))[0]
       expect(item.title).toBe(`草稿${run}`)
       expect(item.updated).toBe(p.updated)
@@ -4341,7 +5746,11 @@ function suite(target: Target) {
       expect(got.draft?.version).toBe(three.version)
       expect(got.body).toBe('a\n')
       const q = await mk(`${root}/dr3b`, { title: `无prev${run}` }, 'a\n')
-      const noPrev = await fetch(`${SP_PAGES}/${q.id}/draft`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(draftOf(q, { body: 'x\n' })) })
+      const noPrev = await fetch(`${SP_PAGES}/${q.id}/draft`, {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(draftOf(q, { body: 'x\n' })),
+      })
       expect(noPrev.status).toBe(200)
     })
 
@@ -4376,16 +5785,27 @@ function suite(target: Target) {
     it('is refused like a save: 400 for a missing field or another id, 404 for a page that is not there, 415 without JSON', async () => {
       const p = await mk(`${root}/dr5`, { title: `校验${run}` }, 'x\n')
       const url = `${SP_PAGES}/${p.id}/draft`
-      for (const payload of [{ baseRev: p.rev, meta: p.meta }, { baseRev: p.rev, body: 'y\n' }, { meta: p.meta, body: 'y\n' }, {}]) {
+      for (const payload of [
+        { baseRev: p.rev, meta: p.meta },
+        { baseRev: p.rev, body: 'y\n' },
+        { meta: p.meta, body: 'y\n' },
+        {},
+      ]) {
         const r = await fetch(url, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(payload) })
         expect(r.status, JSON.stringify(payload)).toBe(400)
         expect(((await r.json()) as { error: string }).error).toBe('invalid')
       }
-      const mismatch = await failure(S.putDraft(p.id, { baseRev: p.rev, meta: { ...p.meta, id: '01AAAAAAAA' }, body: 'y\n', prev: '' }))
+      const mismatch = await failure(
+        S.putDraft(p.id, { baseRev: p.rev, meta: { ...p.meta, id: '01AAAAAAAA' }, body: 'y\n', prev: '' }),
+      )
       expect([mismatch.status, mismatch.code]).toEqual([400, 'invalid'])
       const missing = await failure(S.putDraft('01ZZZZZZZZ', { baseRev: p.rev, meta: {}, body: '', prev: '' }))
       expect([missing.status, missing.code]).toEqual([404, 'not_found'])
-      const plain = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ...draftOf(p), prev: '' }) })
+      const plain = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ ...draftOf(p), prev: '' }),
+      })
       expect([400, 415]).toContain(plain.status)
       expect('draft' in (await S.getPage(p.id))).toBe(false)
     })
@@ -4403,7 +5823,9 @@ function suite(target: Target) {
       expect(committed.body).toBe('新\n')
       expect(committed.path).toBe(`${root}/dr6a/提交后${run}.md`)
       expect(committed.meta.nested).toEqual(weird.nested)
-      expect(Object.keys(committed.meta).filter((k) => k !== 'id' && k !== 'created')).toEqual(Object.keys(saved.meta).filter((k) => k !== 'id' && k !== 'created'))
+      expect(Object.keys(committed.meta).filter((k) => k !== 'id' && k !== 'created')).toEqual(
+        Object.keys(saved.meta).filter((k) => k !== 'id' && k !== 'created'),
+      )
       expect(committed.body).toBe(saved.body)
       const got = await S.getPage(a.id)
       expect(got).toEqual(committed)
@@ -4536,7 +5958,12 @@ function suite(target: Target) {
       const p = await mk(`${root}/dr13`, { title: `两条路${run}` }, '起点\n')
       const moved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '别处改的\n' })
       const stale = await store(p, { body: '我的草稿\n' })
-      const again = await S.putDraft(p.id, { baseRev: moved.rev, meta: moved.meta, body: '我的草稿\n', prev: stale.version })
+      const again = await S.putDraft(p.id, {
+        baseRev: moved.rev,
+        meta: moved.meta,
+        body: '我的草稿\n',
+        prev: stale.version,
+      })
       expect(again.stale).toBe(false)
       expect((await S.commitPage(p.id, again.version)).body).toBe('我的草稿\n')
 
@@ -4567,55 +5994,64 @@ function suite(target: Target) {
       expect(got.draft).toMatchObject({ version: r.version, body: 'y\n' })
     })
 
-    it.skipIf(!!REAL)('mock only: the server commits a draft that has been quiet for 2 minutes, but not before; a stale one is left alone; then the old version is refused', async () => {
-      const p = await mk(`${root}/dr16`, { title: `自动提交${run}` }, 'x\n')
-      const r = await store(p, { body: 'auto\n' })
-      clock += 119_000
-      expect((await S.getPage(p.id)).body).toBe('x\n')
-      clock += 2_000
-      const got = await S.getPage(p.id)
-      expect(got.body).toBe('auto\n')
-      expect(got.rev).not.toBe(p.rev)
-      expect('draft' in got).toBe(false)
-      // The next store still carries the old version: refused, with the file as it is now.
-      const e = await failure(S.putDraft(p.id, { ...draftOf(p, { body: 'more\n' }), prev: r.version }))
-      expect(e.draft).toBeNull()
-      expect(e.current?.body).toBe('auto\n')
+    it.skipIf(!!REAL)(
+      'mock only: the server commits a draft that has been quiet for 2 minutes, but not before; a stale one is left alone; then the old version is refused',
+      async () => {
+        const p = await mk(`${root}/dr16`, { title: `自动提交${run}` }, 'x\n')
+        const r = await store(p, { body: 'auto\n' })
+        clock += 119_000
+        expect((await S.getPage(p.id)).body).toBe('x\n')
+        clock += 2_000
+        const got = await S.getPage(p.id)
+        expect(got.body).toBe('auto\n')
+        expect(got.rev).not.toBe(p.rev)
+        expect('draft' in got).toBe(false)
+        // The next store still carries the old version: refused, with the file as it is now.
+        const e = await failure(S.putDraft(p.id, { ...draftOf(p, { body: 'more\n' }), prev: r.version }))
+        expect(e.draft).toBeNull()
+        expect(e.current?.body).toBe('auto\n')
 
-      const q = await mk(`${root}/dr16b`, { title: `过期不提交${run}` }, 'x\n')
-      const moved = await S.savePage(q.id, { baseRev: q.rev, meta: q.meta, body: 'else\n' })
-      await store(q, { body: 'mine\n' })
-      clock += 30 * 60_000
-      const stale = await S.getPage(q.id)
-      expect(stale.body).toBe('else\n')
-      expect(stale.rev).toBe(moved.rev)
-      expect(stale.draft).toMatchObject({ body: 'mine\n', stale: true })
-    })
+        const q = await mk(`${root}/dr16b`, { title: `过期不提交${run}` }, 'x\n')
+        const moved = await S.savePage(q.id, { baseRev: q.rev, meta: q.meta, body: 'else\n' })
+        await store(q, { body: 'mine\n' })
+        clock += 30 * 60_000
+        const stale = await S.getPage(q.id)
+        expect(stale.body).toBe('else\n')
+        expect(stale.rev).toBe(moved.rev)
+        expect(stale.draft).toMatchObject({ body: 'mine\n', stale: true })
+      },
+    )
 
-    it.skipIf(!!REAL)('mock only: the server removes a stale draft that says what the file says (a leftover), and leaves a stale one that differs', async () => {
-      const p = await mk(`${root}/dr16c`, { title: `留存${run}` }, '起点\n')
-      const moved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '一样的字\n' })
-      const same = await store(p, { body: '一样的字\n' })
-      expect(same.stale).toBe(true)
-      const q = await mk(`${root}/dr16d`, { title: `不同${run}` }, '起点\n')
-      await S.savePage(q.id, { baseRev: q.rev, meta: q.meta, body: '别处的字\n' })
-      await store(q, { body: '我的字\n' })
-      clock += 30 * 60_000
-      expect('draft' in (await S.getPage(p.id))).toBe(false)
-      expect((await S.getPage(p.id)).rev).toBe(moved.rev)
-      expect((await S.getPage(q.id)).draft).toMatchObject({ body: '我的字\n', stale: true })
-    })
+    it.skipIf(!!REAL)(
+      'mock only: the server removes a stale draft that says what the file says (a leftover), and leaves a stale one that differs',
+      async () => {
+        const p = await mk(`${root}/dr16c`, { title: `留存${run}` }, '起点\n')
+        const moved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '一样的字\n' })
+        const same = await store(p, { body: '一样的字\n' })
+        expect(same.stale).toBe(true)
+        const q = await mk(`${root}/dr16d`, { title: `不同${run}` }, '起点\n')
+        await S.savePage(q.id, { baseRev: q.rev, meta: q.meta, body: '别处的字\n' })
+        await store(q, { body: '我的字\n' })
+        clock += 30 * 60_000
+        expect('draft' in (await S.getPage(p.id))).toBe(false)
+        expect((await S.getPage(p.id)).rev).toBe(moved.rev)
+        expect((await S.getPage(q.id)).draft).toMatchObject({ body: '我的字\n', stale: true })
+      },
+    )
 
-    it.skipIf(!!REAL)('mock only: a draft stored again and again is committed 10 minutes after it was first stored', async () => {
-      const p = await mk(`${root}/dr17`, { title: `十分钟${run}` }, 'x\n')
-      let prev = ''
-      for (let i = 0; i < 6; i++) {
-        prev = (await store(p, { body: `v${i}\n` }, prev)).version
-        clock += 100_000
-      }
-      // Never quiet for 2 minutes, yet 10 have passed.
-      expect((await S.getPage(p.id)).body).toBe('v5\n')
-    })
+    it.skipIf(!!REAL)(
+      'mock only: a draft stored again and again is committed 10 minutes after it was first stored',
+      async () => {
+        const p = await mk(`${root}/dr17`, { title: `十分钟${run}` }, 'x\n')
+        let prev = ''
+        for (let i = 0; i < 6; i++) {
+          prev = (await store(p, { body: `v${i}\n` }, prev)).version
+          clock += 100_000
+        }
+        // Never quiet for 2 minutes, yet 10 have passed.
+        expect((await S.getPage(p.id)).body).toBe('v5\n')
+      },
+    )
   })
 
   describe('files', () => {
@@ -4625,7 +6061,11 @@ function suite(target: Target) {
     // Built by Node's own Response, not by jsdom: a real `fetch` only knows how to send its own kind of Blob.
     const blobOf = (data: Uint8Array) => new Response(data as BodyInit).blob()
     const post = (pageId: string, name: string | null, data: Uint8Array, type = 'application/octet-stream') =>
-      admin.fetch(`/api/spaces/${spaceId}/pages/${pageId}/assets${name === null ? '' : `?name=${enc(name)}`}`, { method: 'POST', headers: { 'Content-Type': type }, body: data as BodyInit })
+      admin.fetch(`/api/spaces/${spaceId}/pages/${pageId}/assets${name === null ? '' : `?name=${enc(name)}`}`, {
+        method: 'POST',
+        headers: { 'Content-Type': type },
+        body: data as BodyInit,
+      })
     const get = (path: string) => admin.fetch(fileUrl(spaceId, path))
     let page: Page
     beforeAll(async () => {
@@ -4651,7 +6091,11 @@ function suite(target: Target) {
     it('the client uploads a Blob and returns the same shape', async () => {
       const data = bytesOf(`client-${run}`)
       const a = await S.uploadAsset(page.id, await blobOf(data), `合同${run}.pdf`)
-      expect(a).toEqual({ path: `/assets/${page.id}/合同${run}-${hash8(data)}.pdf`, name: `合同${run}-${hash8(data)}.pdf`, size: data.length })
+      expect(a).toEqual({
+        path: `/assets/${page.id}/合同${run}-${hash8(data)}.pdf`,
+        name: `合同${run}-${hash8(data)}.pdf`,
+        size: data.length,
+      })
     })
 
     it('the same bytes under the same name again is 200 with the same body', async () => {
@@ -4737,7 +6181,13 @@ function suite(target: Target) {
     })
 
     it('404 not_found for a file that is not there, a page, and a segment starting with a dot', async () => {
-      for (const path of [`/assets/${page.id}/missing${run}.png`, `/${page.path}`, '/.git/config', `/assets/.hidden${run}/x.png`, `/assets/${page.id}/.x${run}.png`]) {
+      for (const path of [
+        `/assets/${page.id}/missing${run}.png`,
+        `/${page.path}`,
+        '/.git/config',
+        `/assets/.hidden${run}/x.png`,
+        `/assets/${page.id}/.x${run}.png`,
+      ]) {
         const r = await get(path)
         expect([path, r.status, (await r.json()).error]).toEqual([path, 404, 'not_found'])
       }
@@ -4763,7 +6213,10 @@ function suite(target: Target) {
 
     it('a single Markdown file becomes a page: the title is its heading, which leaves the body', async () => {
       const folder = fresh()
-      const report = await S.importMarkdown(await blobOf('# Imported heading\n\nFirst paragraph.\n'), { folder, name: 'notes.md' })
+      const report = await S.importMarkdown(await blobOf('# Imported heading\n\nFirst paragraph.\n'), {
+        folder,
+        name: 'notes.md',
+      })
       expect(report.pages).toBe(1)
       expect(Array.isArray(report.skipped)).toBe(true)
       const items = await pagesIn(folder)
@@ -4783,7 +6236,10 @@ function suite(target: Target) {
 
     it('a header is kept key by key and the page gets a new id', async () => {
       const folder = fresh()
-      await S.importMarkdown(await blobOf('---\nid: not-my-id\ntitle: From the header\nauthor: Ada\n---\n\nBody text.\n'), { folder, name: 'h.md' })
+      await S.importMarkdown(
+        await blobOf('---\nid: not-my-id\ntitle: From the header\nauthor: Ada\n---\n\nBody text.\n'),
+        { folder, name: 'h.md' },
+      )
       const [item] = await pagesIn(folder)
       const page = await S.getPage(item.id)
       expect(page.id).not.toBe('not-my-id')
@@ -4831,7 +6287,7 @@ function suite(target: Target) {
     const HEX40 = /^[0-9a-f]{40}$/
     const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
     // Against a real server the commit comes a few seconds after the write.
-    const eventually = async <T,>(fn: () => Promise<T>, done: (v: T) => boolean, ms = 25_000): Promise<T> => {
+    const eventually = async <T>(fn: () => Promise<T>, done: (v: T) => boolean, ms = 25_000): Promise<T> => {
       const end = Date.now() + (REAL ? ms : 0)
       for (;;) {
         const v = await fn()
@@ -4854,7 +6310,11 @@ function suite(target: Target) {
     const twice = async (folder: string, title: string) => {
       const p = await mk(`${root}/${folder}`, { title, tags: [`h${run}`] }, '第一版的文字。\n')
       const saved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '第二版的文字，多了一些。\n' })
-      const items = (await eventually(() => allHistory(p.id, 50), (l) => l[0]?.rev === saved.rev)) ?? []
+      const items =
+        (await eventually(
+          () => allHistory(p.id, 50),
+          (l) => l[0]?.rev === saved.rev,
+        )) ?? []
       return { p, saved, items }
     }
 
@@ -4873,7 +6333,8 @@ function suite(target: Target) {
       // The newest is what the file is now; the oldest is where the page began.
       expect(items[0]).toMatchObject({ rev: saved.rev, path: saved.path })
       expect(items[items.length - 1].change).toBe('add')
-      for (let i = 1; i < items.length; i++) expect(Date.parse(items[i - 1].time)).toBeGreaterThanOrEqual(Date.parse(items[i].time))
+      for (let i = 1; i < items.length; i++)
+        expect(Date.parse(items[i - 1].time)).toBeGreaterThanOrEqual(Date.parse(items[i].time))
       expect(new Set(items.map((i) => i.commit)).size).toBe(items.length)
       expect((await S.history(p.id)).items.length).toBe(items.length)
     })
@@ -4881,7 +6342,12 @@ function suite(target: Target) {
     it('a version is the page as it was: header and body, with the rev of that file', async () => {
       const { p, saved, items } = await twice('h2', `版本内容${run}`)
       const newest = await S.version(p.id, items[0].commit)
-      expect(newest).toMatchObject({ commit: items[0].commit, rev: saved.rev, path: saved.path, author: items[0].author })
+      expect(newest).toMatchObject({
+        commit: items[0].commit,
+        rev: saved.rev,
+        path: saved.path,
+        author: items[0].author,
+      })
       expect(newest.time).toMatch(RFC3339)
       expect(newest.body).toBe('第二版的文字，多了一些。\n')
       expect(newest.meta).toMatchObject({ id: p.id, title: `版本内容${run}`, tags: [`h${run}`] })
@@ -4931,11 +6397,17 @@ function suite(target: Target) {
 
     it('a draft is not a version; the version appears when the draft is committed', async () => {
       const p = await mk(`${root}/h6`, { title: `草稿版本${run}` }, '甲\n')
-      const before = await eventually(() => allHistory(p.id, 50), (l) => l.length >= 1)
+      const before = await eventually(
+        () => allHistory(p.id, 50),
+        (l) => l.length >= 1,
+      )
       const r = await S.putDraft(p.id, { prev: '', baseRev: p.rev, meta: p.meta, body: '乙\n' })
       expect((await allHistory(p.id, 50)).map((i) => i.commit)).toEqual(before.map((i) => i.commit))
       const committed = await S.commitPage(p.id, r.version)
-      const after = await eventually(() => allHistory(p.id, 50), (l) => l[0]?.rev === committed.rev)
+      const after = await eventually(
+        () => allHistory(p.id, 50),
+        (l) => l[0]?.rev === committed.rev,
+      )
       expect(after[0].rev).toBe(committed.rev)
       expect((await S.version(p.id, after[0].commit)).body).toBe('乙\n')
     })
@@ -4943,7 +6415,10 @@ function suite(target: Target) {
     it('renaming through the title keeps the history of the page, with the new path on the newest version', async () => {
       const p = await mk(`${root}/h7`, { title: `旧名${run}` }, '内容\n')
       const saved = await S.savePage(p.id, { baseRev: p.rev, meta: { ...p.meta, title: `新名${run}` }, body: '内容\n' })
-      const items = await eventually(() => allHistory(p.id, 50), (l) => l[0]?.path === saved.path)
+      const items = await eventually(
+        () => allHistory(p.id, 50),
+        (l) => l[0]?.path === saved.path,
+      )
       expect(items[0].path).toBe(`${root}/h7/新名${run}.md`)
       expect(items[items.length - 1].change).toBe('add')
       expect(items.length).toBeGreaterThanOrEqual(1)
@@ -4952,653 +6427,955 @@ function suite(target: Target) {
 
   const url = (host: string, tail = 'notes.git') => `https://${host}/${tail}`
 
-  describe.skipIf(!accounts)('remote repository (accounts server only: a space is made for it; on a real server only what needs no remote is asserted)', () => {
-    let rid = ''
-    let R: SpaceApi
-    beforeAll(async () => {
-      rid = (await api.createSpace(`远端${run}`.slice(0, 40))).id
-      R = spaceApi(rid)
-    })
-    it('a new space is local: `sync` says so and there is no remote', async () => {
-      const mine = (await api.spaces()).spaces.find((x) => x.id === rid)
-      expect(mine?.sync).toBe('local')
-      const e = await failure(R.getRemote())
-      expect([e.status, e.code]).toEqual([404, 'not_found'])
-    })
+  describe.skipIf(!accounts)(
+    'remote repository (accounts server only: a space is made for it; on a real server only what needs no remote is asserted)',
+    () => {
+      let rid = ''
+      let R: SpaceApi
+      beforeAll(async () => {
+        rid = (await api.createSpace(`远端${run}`.slice(0, 40))).id
+        R = spaceApi(rid)
+      })
+      it('a new space is local: `sync` says so and there is no remote', async () => {
+        const mine = (await api.spaces()).spaces.find((x) => x.id === rid)
+        expect(mine?.sync).toBe('local')
+        const e = await failure(R.getRemote())
+        expect([e.status, e.code]).toEqual([404, 'not_found'])
+      })
 
-    it('the SSH key is made once and returned again; rotating makes another while the space is local', async () => {
-      const k = await R.remoteKey()
-      expect(k.publicKey).toMatch(/^ssh-\S+ \S+/)
-      expect(k.fingerprint).toMatch(/^SHA256:\S+/)
-      expect(await R.remoteKey()).toEqual(k)
-      const rotated = await R.remoteKey(true)
-      expect(rotated.publicKey).not.toBe(k.publicKey)
-      expect(rotated.fingerprint).not.toBe(k.fingerprint)
-      expect(await R.remoteKey()).toEqual(rotated)
-    })
+      it('the SSH key is made once and returned again; rotating makes another while the space is local', async () => {
+        const k = await R.remoteKey()
+        expect(k.publicKey).toMatch(/^ssh-\S+ \S+/)
+        expect(k.fingerprint).toMatch(/^SHA256:\S+/)
+        expect(await R.remoteKey()).toEqual(k)
+        const rotated = await R.remoteKey(true)
+        expect(rotated.publicKey).not.toBe(k.publicKey)
+        expect(rotated.fingerprint).not.toBe(k.fingerprint)
+        expect(await R.remoteKey()).toEqual(rotated)
+      })
 
-    it('an address that is not https or SSH, or carries a password, is 400 invalid', async () => {
-      const cred = { type: 'token' as const, token: 'x' }
-      for (const bad of ['ftp://github.com/a/b.git', 'github.com/a/b.git', 'https://user:secret@github.com/a/b.git', 'https://github.com', '', 'git@github.com', 'file:///tmp/x']) {
-        const e = await failure(R.connectRemote({ url: bad, credential: cred }))
-        expect([e.status, e.code], bad).toEqual([400, 'invalid'])
+      it('an address that is not https or SSH, or carries a password, is 400 invalid', async () => {
+        const cred = { type: 'token' as const, token: 'x' }
+        for (const bad of [
+          'ftp://github.com/a/b.git',
+          'github.com/a/b.git',
+          'https://user:secret@github.com/a/b.git',
+          'https://github.com',
+          '',
+          'git@github.com',
+          'file:///tmp/x',
+        ]) {
+          const e = await failure(R.connectRemote({ url: bad, credential: cred }))
+          expect([e.status, e.code], bad).toEqual([400, 'invalid'])
+        }
+        // Still local.
+        expect((await failure(R.getRemote())).status).toBe(404)
+      })
+
+      it.skipIf(HOSTS_OPEN)(
+        'a host the administrator did not allow is 403 forbidden, and is not taken for a refused origin',
+        async () => {
+          const e = await failure(
+            R.connectRemote({ url: url('git.not-allowed.example'), credential: { type: 'token', token: 'x' } }),
+          )
+          expect([e.status, e.code]).toEqual([403, 'forbidden'])
+          expect(e.message).not.toMatch(/allow-origin/)
+          const ssh = await failure(
+            R.connectRemote({ url: 'git@git.not-allowed.example:a/b.git', credential: { type: 'ssh' } }),
+          )
+          expect([ssh.status, ssh.code]).toEqual([403, 'forbidden'])
+        },
+      )
+    },
+  )
+
+  describe.skipIf(!accounts || !!REAL)(
+    'mock only (a real server has no remote to talk to): connecting, states and unavailable writes',
+    () => {
+      const fresh = async (name: string) => {
+        const sp = await api.createSpace(`${name}${run}`.slice(0, 40))
+        const R = spaceApi(sp.id)
+        ids.set(R, sp.id)
+        return { id: sp.id, R }
       }
-      // Still local.
-      expect((await failure(R.getRemote())).status).toBe(404)
-    })
+      const token = { type: 'token' as const, username: 'u', token: 'secret-token-1' }
+      const list = async (id: string) => (await api.spaces()).spaces.find((x) => x.id === id)!
+      const ids = new Map<SpaceApi, string>()
+      const spaceIdOf = (R: SpaceApi) => ids.get(R)!
+      const titles = async (R: SpaceApi) =>
+        (await R.listPages({ recursive: true, folder: '' })).items.map((i) => i.title)
 
-    it.skipIf(HOSTS_OPEN)('a host the administrator did not allow is 403 forbidden, and is not taken for a refused origin', async () => {
-      const e = await failure(R.connectRemote({ url: url('git.not-allowed.example'), credential: { type: 'token', token: 'x' } }))
-      expect([e.status, e.code]).toEqual([403, 'forbidden'])
-      expect(e.message).not.toMatch(/allow-origin/)
-      const ssh = await failure(R.connectRemote({ url: 'git@git.not-allowed.example:a/b.git', credential: { type: 'ssh' } }))
-      expect([ssh.status, ssh.code]).toEqual([403, 'forbidden'])
-    })
-  })
+      it('connecting to a remote with no such branch pushes the space: 200 with the remote, state ok, a sync time, and the token never comes back', async () => {
+        const { id, R } = await fresh('推送')
+        const r = await R.connectRemote({ url: url('github.com'), credential: token })
+        expect(r).toMatchObject({
+          url: url('github.com'),
+          branch: 'main',
+          state: 'ok',
+          error: '',
+          rewritten: null,
+          credential: { type: 'token', username: 'u' },
+        })
+        expect(r.lastSync).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+        expect(JSON.stringify(r)).not.toContain('secret-token-1')
+        expect(await R.getRemote()).toEqual(r)
+        expect((await list(id)).sync).toBe('ok')
+      })
 
-  describe.skipIf(!accounts || !!REAL)('mock only (a real server has no remote to talk to): connecting, states and unavailable writes', () => {
-    const fresh = async (name: string) => {
-      const sp = await api.createSpace(`${name}${run}`.slice(0, 40))
-      const R = spaceApi(sp.id)
-      ids.set(R, sp.id)
-      return { id: sp.id, R }
-    }
-    const token = { type: 'token' as const, username: 'u', token: 'secret-token-1' }
-    const list = async (id: string) => (await api.spaces()).spaces.find((x) => x.id === id)!
-    const ids = new Map<SpaceApi, string>()
-    const spaceIdOf = (R: SpaceApi) => ids.get(R)!
-    const titles = async (R: SpaceApi) => (await R.listPages({ recursive: true, folder: '' })).items.map((i) => i.title)
+      it('the branch defaults to main and can be named', async () => {
+        const { R } = await fresh('分支')
+        expect((await R.connectRemote({ url: url('github.com'), branch: 'notes', credential: token })).branch).toBe(
+          'notes',
+        )
+        expect((await R.connectRemote({ url: url('gitlab.com'), credential: token })).branch).toBe('main')
+      })
 
-    it('connecting to a remote with no such branch pushes the space: 200 with the remote, state ok, a sync time, and the token never comes back', async () => {
-      const { id, R } = await fresh('推送')
-      const r = await R.connectRemote({ url: url('github.com'), credential: token })
-      expect(r).toMatchObject({ url: url('github.com'), branch: 'main', state: 'ok', error: '', rewritten: null, credential: { type: 'token', username: 'u' } })
-      expect(r.lastSync).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-      expect(JSON.stringify(r)).not.toContain('secret-token-1')
-      expect(await R.getRemote()).toEqual(r)
-      expect((await list(id)).sync).toBe('ok')
-    })
+      it("a pristine space takes the remote's content", async () => {
+        const { R } = await fresh('接收')
+        expect(await titles(R)).toEqual([])
+        await R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
+        expect((await titles(R)).length).toBeGreaterThan(0)
+      })
 
-    it('the branch defaults to main and can be named', async () => {
-      const { R } = await fresh('分支')
-      expect((await R.connectRemote({ url: url('github.com'), branch: 'notes', credential: token })).branch).toBe('notes')
-      expect((await R.connectRemote({ url: url('gitlab.com'), credential: token })).branch).toBe('main')
-    })
+      it('a space with pages: a remote that is ahead moves it forward, one that is behind changes nothing here', async () => {
+        const a = await fresh('前进')
+        await a.R.createPage({ meta: { title: '本地页面' } })
+        await a.R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
+        expect(await titles(a.R)).toContain('本地页面')
+        expect((await titles(a.R)).length).toBeGreaterThan(1)
+        const b = await fresh('落后')
+        await b.R.createPage({ meta: { title: '本地页面' } })
+        await b.R.connectRemote({ url: url('github.com', 'behind.git'), credential: token })
+        expect(await titles(b.R)).toEqual(['本地页面'])
+      })
 
-    it('a pristine space takes the remote\'s content', async () => {
-      const { R } = await fresh('接收')
-      expect(await titles(R)).toEqual([])
-      await R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
-      expect((await titles(R)).length).toBeGreaterThan(0)
-    })
-
-    it('a space with pages: a remote that is ahead moves it forward, one that is behind changes nothing here', async () => {
-      const a = await fresh('前进')
-      await a.R.createPage({ meta: { title: '本地页面' } })
-      await a.R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
-      expect(await titles(a.R)).toContain('本地页面')
-      expect((await titles(a.R)).length).toBeGreaterThan(1)
-      const b = await fresh('落后')
-      await b.R.createPage({ meta: { title: '本地页面' } })
-      await b.R.connectRemote({ url: url('github.com', 'behind.git'), credential: token })
-      expect(await titles(b.R)).toEqual(['本地页面'])
-    })
-
-    it('both sides with content of their own is 409 conflict, and the space stays local', async () => {
-      const { id, R } = await fresh('分叉')
-      await R.createPage({ meta: { title: '我的' } })
-      const e = await failure(R.connectRemote({ url: url('github.com', 'diverged.git'), credential: token }))
-      expect([e.status, e.code]).toEqual([409, 'conflict'])
-      expect(e.message).not.toBe('')
-      expect((await failure(R.getRemote())).status).toBe(404)
-      expect((await list(id)).sync).toBe('local')
-    })
-
-    it('a remote that cannot be reached, or refuses the credential, is 503 unavailable with a message, and nothing changes', async () => {
-      const { id, R } = await fresh('连不上')
-      for (const word of ['unreachable', 'refused']) {
-        const e = await failure(R.connectRemote({ url: url('github.com', `${word}.git`), credential: token }))
-        expect([e.status, e.code], word).toEqual([503, 'unavailable'])
+      it('both sides with content of their own is 409 conflict, and the space stays local', async () => {
+        const { id, R } = await fresh('分叉')
+        await R.createPage({ meta: { title: '我的' } })
+        const e = await failure(R.connectRemote({ url: url('github.com', 'diverged.git'), credential: token }))
+        expect([e.status, e.code]).toEqual([409, 'conflict'])
         expect(e.message).not.toBe('')
-      }
-      expect((await failure(R.getRemote())).status).toBe(404)
-      expect((await list(id)).sync).toBe('local')
-    })
+        expect((await failure(R.getRemote())).status).toBe(404)
+        expect((await list(id)).sync).toBe('local')
+      })
 
-    it('a token left out keeps the stored one; with none stored it is 400; the user name defaults', async () => {
-      const { R } = await fresh('令牌')
-      const none = await failure(R.connectRemote({ url: url('github.com'), credential: { type: 'token', username: 'u' } }))
-      expect([none.status, none.code]).toEqual([400, 'invalid'])
-      const first = await R.connectRemote({ url: url('github.com'), credential: { type: 'token', token: 'tok-1' } })
-      expect(first.credential).toEqual({ type: 'token', username: 'x-access-token' })
-      expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
-      const again = await R.connectRemote({ url: url('github.com', 'other.git'), credential: { type: 'token', username: 'me' } })
-      expect(again.credential).toEqual({ type: 'token', username: 'me' })
-      expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
-      await R.connectRemote({ url: url('github.com', 'other.git'), credential: { type: 'token', token: 'tok-2' } })
-      expect(server!.storedToken(spaceIdOf(R))).toBe('tok-2')
-    })
+      it('a remote that cannot be reached, or refuses the credential, is 503 unavailable with a message, and nothing changes', async () => {
+        const { id, R } = await fresh('连不上')
+        for (const word of ['unreachable', 'refused']) {
+          const e = await failure(R.connectRemote({ url: url('github.com', `${word}.git`), credential: token }))
+          expect([e.status, e.code], word).toEqual([503, 'unavailable'])
+          expect(e.message).not.toBe('')
+        }
+        expect((await failure(R.getRemote())).status).toBe(404)
+        expect((await list(id)).sync).toBe('local')
+      })
 
-    it('SSH: the key from /remote/key is the credential, the host key is shown, and the address must be an SSH one', async () => {
-      const { R } = await fresh('密钥')
-      const key = await R.remoteKey()
-      const r = await R.connectRemote({ url: 'git@github.com:me/notes.git', credential: { type: 'ssh' } })
-      expect(r.credential).toEqual({ type: 'ssh', publicKey: key.publicKey, fingerprint: key.fingerprint })
-      expect(r.hostKey).toMatch(/^SHA256:/)
-      for (const [u, c] of [[url('github.com'), { type: 'ssh' }], ['git@github.com:me/x.git', token]] as const) {
-        const e = await failure(R.connectRemote({ url: u, credential: c }))
-        expect([e.status, e.code]).toEqual([400, 'invalid'])
-      }
-      const e = await failure(R.remoteKey(true))
-      expect([e.status, e.code]).toEqual([409, 'conflict'])
-      expect((await R.connectRemote({ url: 'ssh://git@gitlab.com:2222/me/notes.git', credential: { type: 'ssh' } })).state).toBe('ok')
-    })
+      it('a token left out keeps the stored one; with none stored it is 400; the user name defaults', async () => {
+        const { R } = await fresh('令牌')
+        const none = await failure(
+          R.connectRemote({ url: url('github.com'), credential: { type: 'token', username: 'u' } }),
+        )
+        expect([none.status, none.code]).toEqual([400, 'invalid'])
+        const first = await R.connectRemote({ url: url('github.com'), credential: { type: 'token', token: 'tok-1' } })
+        expect(first.credential).toEqual({ type: 'token', username: 'x-access-token' })
+        expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
+        const again = await R.connectRemote({
+          url: url('github.com', 'other.git'),
+          credential: { type: 'token', username: 'me' },
+        })
+        expect(again.credential).toEqual({ type: 'token', username: 'me' })
+        expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
+        await R.connectRemote({ url: url('github.com', 'other.git'), credential: { type: 'token', token: 'tok-2' } })
+        expect(server!.storedToken(spaceIdOf(R))).toBe('tok-2')
+      })
 
-    it('a space connected without making a key first still gets one', async () => {
-      const { R } = await fresh('自动密钥')
-      const r = await R.connectRemote({ url: 'git@codeberg.org:me/notes.git', credential: { type: 'ssh' } })
-      expect(r.credential.type === 'ssh' && r.credential.publicKey).toMatch(/^ssh-/)
-    })
+      it('SSH: the key from /remote/key is the credential, the host key is shown, and the address must be an SSH one', async () => {
+        const { R } = await fresh('密钥')
+        const key = await R.remoteKey()
+        const r = await R.connectRemote({ url: 'git@github.com:me/notes.git', credential: { type: 'ssh' } })
+        expect(r.credential).toEqual({ type: 'ssh', publicKey: key.publicKey, fingerprint: key.fingerprint })
+        expect(r.hostKey).toMatch(/^SHA256:/)
+        for (const [u, c] of [
+          [url('github.com'), { type: 'ssh' }],
+          ['git@github.com:me/x.git', token],
+        ] as const) {
+          const e = await failure(R.connectRemote({ url: u, credential: c }))
+          expect([e.status, e.code]).toEqual([400, 'invalid'])
+        }
+        const e = await failure(R.remoteKey(true))
+        expect([e.status, e.code]).toEqual([409, 'conflict'])
+        expect(
+          (await R.connectRemote({ url: 'ssh://git@gitlab.com:2222/me/notes.git', credential: { type: 'ssh' } })).state,
+        ).toBe('ok')
+      })
 
-    it('while the remote is unreachable, writes are 503 unavailable and change nothing; reads and drafts go on; the draft is written once it is back', async () => {
-      const { id, R } = await fresh('离线')
-      const p = await R.createPage({ meta: { title: '页' }, body: '旧\n' })
-      await R.connectRemote({ url: url('github.com'), credential: token })
-      server!.setRemote(id, 'offline', { error: '连接超时' })
-      const remote = await R.getRemote()
-      expect(remote).toMatchObject({ state: 'offline', error: '连接超时' })
-      expect((await list(id)).sync).toBe('offline')
-      const refused = async (fn: () => Promise<unknown>) => {
-        const e = await failure(fn())
+      it('a space connected without making a key first still gets one', async () => {
+        const { R } = await fresh('自动密钥')
+        const r = await R.connectRemote({ url: 'git@codeberg.org:me/notes.git', credential: { type: 'ssh' } })
+        expect(r.credential.type === 'ssh' && r.credential.publicKey).toMatch(/^ssh-/)
+      })
+
+      it('while the remote is unreachable, writes are 503 unavailable and change nothing; reads and drafts go on; the draft is written once it is back', async () => {
+        const { id, R } = await fresh('离线')
+        const p = await R.createPage({ meta: { title: '页' }, body: '旧\n' })
+        await R.connectRemote({ url: url('github.com'), credential: token })
+        server!.setRemote(id, 'offline', { error: '连接超时' })
+        const remote = await R.getRemote()
+        expect(remote).toMatchObject({ state: 'offline', error: '连接超时' })
+        expect((await list(id)).sync).toBe('offline')
+        const refused = async (fn: () => Promise<unknown>) => {
+          const e = await failure(fn())
+          expect([e.status, e.code]).toEqual([503, 'unavailable'])
+          expect(e.message).not.toBe('')
+        }
+        await refused(() => R.createPage({ meta: { title: '新' } }))
+        await refused(() => R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '改\n' }))
+        await refused(() => R.movePage(p.id, '别处'))
+        // A draft is stored; a commit is refused and keeps it.
+        const d = await R.putDraft(p.id, { prev: '', baseRev: p.rev, meta: p.meta, body: '草稿里的\n' })
+        await refused(() => R.commitPage(p.id, d.version))
+        expect((await R.getPage(p.id)).draft?.version).toBe(d.version)
+        await refused(() => R.deletePage(p.id))
+        expect((await R.getPage(p.id)).body).toBe('旧\n')
+        expect(await titles(R)).toEqual(['页'])
+        // The server's own commit waits for the remote.
+        clock += 20 * 60_000
+        server!.sweep()
+        expect((await R.getPage(p.id)).body).toBe('旧\n')
+        server!.remoteReachable(id, true)
+        const back = await R.syncRemote()
+        expect(back).toMatchObject({ state: 'ok', error: '' })
+        expect((await list(id)).sync).toBe('ok')
+        server!.sweep()
+        expect((await R.getPage(p.id)).body).toBe('草稿里的\n')
+      })
+
+      it('a sync while the remote is still out of reach answers 200 with state offline', async () => {
+        const { id, R } = await fresh('仍离线')
+        await R.connectRemote({ url: url('github.com'), credential: token })
+        server!.setRemote(id, 'offline')
+        expect((await R.syncRemote()).state).toBe('offline')
+      })
+
+      it('a rewritten remote pauses writes until its new history is accepted with the commit shown; a wrong commit is 409', async () => {
+        const { id, R } = await fresh('改写')
+        const p = await R.createPage({ meta: { title: '页' } })
+        await R.connectRemote({ url: url('github.com'), credential: token })
+        const e0 = await failure(R.acceptRemote('a'.repeat(40)))
+        expect([e0.status, e0.code]).toEqual([409, 'conflict'])
+        server!.setRemote(id, 'rewritten')
+        const r = await R.getRemote()
+        expect(r.state).toBe('rewritten')
+        expect(r.rewritten).toEqual({
+          lastGood: expect.stringMatching(/^[0-9a-f]{40}$/),
+          remote: expect.stringMatching(/^[0-9a-f]{40}$/),
+        })
+        expect((await list(id)).sync).toBe('rewritten')
+        expect((await R.getPage(p.id)).id).toBe(p.id)
+        const e = await failure(R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' }))
         expect([e.status, e.code]).toEqual([503, 'unavailable'])
-        expect(e.message).not.toBe('')
-      }
-      await refused(() => R.createPage({ meta: { title: '新' } }))
-      await refused(() => R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '改\n' }))
-      await refused(() => R.movePage(p.id, '别处'))
-      // A draft is stored; a commit is refused and keeps it.
-      const d = await R.putDraft(p.id, { prev: '', baseRev: p.rev, meta: p.meta, body: '草稿里的\n' })
-      await refused(() => R.commitPage(p.id, d.version))
-      expect((await R.getPage(p.id)).draft?.version).toBe(d.version)
-      await refused(() => R.deletePage(p.id))
-      expect((await R.getPage(p.id)).body).toBe('旧\n')
-      expect(await titles(R)).toEqual(['页'])
-      // The server's own commit waits for the remote.
-      clock += 20 * 60_000
-      server!.sweep()
-      expect((await R.getPage(p.id)).body).toBe('旧\n')
-      server!.remoteReachable(id, true)
-      const back = await R.syncRemote()
-      expect(back).toMatchObject({ state: 'ok', error: '' })
-      expect((await list(id)).sync).toBe('ok')
-      server!.sweep()
-      expect((await R.getPage(p.id)).body).toBe('草稿里的\n')
-    })
-
-    it('a sync while the remote is still out of reach answers 200 with state offline', async () => {
-      const { id, R } = await fresh('仍离线')
-      await R.connectRemote({ url: url('github.com'), credential: token })
-      server!.setRemote(id, 'offline')
-      expect((await R.syncRemote()).state).toBe('offline')
-    })
-
-    it('a rewritten remote pauses writes until its new history is accepted with the commit shown; a wrong commit is 409', async () => {
-      const { id, R } = await fresh('改写')
-      const p = await R.createPage({ meta: { title: '页' } })
-      await R.connectRemote({ url: url('github.com'), credential: token })
-      const e0 = await failure(R.acceptRemote('a'.repeat(40)))
-      expect([e0.status, e0.code]).toEqual([409, 'conflict'])
-      server!.setRemote(id, 'rewritten')
-      const r = await R.getRemote()
-      expect(r.state).toBe('rewritten')
-      expect(r.rewritten).toEqual({ lastGood: expect.stringMatching(/^[0-9a-f]{40}$/), remote: expect.stringMatching(/^[0-9a-f]{40}$/) })
-      expect((await list(id)).sync).toBe('rewritten')
-      expect((await R.getPage(p.id)).id).toBe(p.id)
-      const e = await failure(R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' }))
-      expect([e.status, e.code]).toEqual([503, 'unavailable'])
-      // Syncing does not clear it.
-      expect((await R.syncRemote()).state).toBe('rewritten')
-      const wrong = await failure(R.acceptRemote('b'.repeat(40)))
-      expect([wrong.status, wrong.code]).toEqual([409, 'conflict'])
-      const accepted = await R.acceptRemote(r.rewritten!.remote)
-      expect(accepted).toMatchObject({ state: 'ok', rewritten: null, error: '' })
-      expect((await R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' })).body).toBe('x\n')
-    })
-
-    it('state `error` carries the text to show', async () => {
-      const { id, R } = await fresh('出错')
-      await R.connectRemote({ url: url('github.com'), credential: token })
-      server!.setRemote(id, 'error', { error: '凭据被拒绝' })
-      expect(await R.getRemote()).toMatchObject({ state: 'error', error: '凭据被拒绝' })
-      expect((await list(id)).sync).toBe('error')
-    })
-
-    it('disconnecting is 204: the space is local again with all its pages, and the stored token is gone', async () => {
-      const { id, R } = await fresh('断开')
-      await R.createPage({ meta: { title: '留着' } })
-      await R.connectRemote({ url: url('github.com'), credential: token })
-      await R.disconnectRemote()
-      expect((await failure(R.getRemote())).status).toBe(404)
-      expect((await list(id)).sync).toBe('local')
-      expect(await titles(R)).toEqual(['留着'])
-      expect(server!.storedToken(id)).toBeUndefined()
-      expect((await failure(R.disconnectRemote())).status).toBe(404)
-      expect((await failure(R.syncRemote())).status).toBe(404)
-    })
-
-    it('a space of someone else is 404 for the remote endpoints too', async () => {
-      const r = await call(admin, 'GET', '/api/spaces/01ZZZZZZZZ/remote')
-      expect([r.status, r.json.error]).toEqual([404, 'not_found'])
-    })
-
-    it('a host the administrator allows with `*` takes any', async () => {
-      const open = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null, remote: { hosts: ['*'] } })
-      const b = newBrowser(mockFetch(open, { jar: false }))
-      await as(b, async () => {
-        await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
-        const sp = await api.createSpace('任意主机')
-        expect((await spaceApi(sp.id).connectRemote({ url: url('git.anywhere.example'), credential: token })).state).toBe('ok')
+        // Syncing does not clear it.
+        expect((await R.syncRemote()).state).toBe('rewritten')
+        const wrong = await failure(R.acceptRemote('b'.repeat(40)))
+        expect([wrong.status, wrong.code]).toEqual([409, 'conflict'])
+        const accepted = await R.acceptRemote(r.rewritten!.remote)
+        expect(accepted).toMatchObject({ state: 'ok', rewritten: null, error: '' })
+        expect((await R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' })).body).toBe('x\n')
       })
-    })
 
-    it('the mock can start a space in a state (for the app to be seen by hand)', async () => {
-      const m = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null, remote: { start: 'offline' } })
-      const b = newBrowser(mockFetch(m, { jar: false }))
-      await as(b, async () => {
-        await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
-        const first = (await api.spaces()).spaces[0]
-        expect(first.sync).toBe('offline')
-        expect(await spaceApi(first.id).getRemote()).toMatchObject({ state: 'offline' })
+      it('state `error` carries the text to show', async () => {
+        const { id, R } = await fresh('出错')
+        await R.connectRemote({ url: url('github.com'), credential: token })
+        server!.setRemote(id, 'error', { error: '凭据被拒绝' })
+        expect(await R.getRemote()).toMatchObject({ state: 'error', error: '凭据被拒绝' })
+        expect((await list(id)).sync).toBe('error')
       })
-    })
-  })
 
-  describe.skipIf(!accounts || !!REAL)('mock only (skipped on a real server: no provider, no clean first run, and the rate limiter would lock us out): single sign-on, setup, rate limits', () => {
-    let sso: MockServer
-    let ssoFetch: typeof fetch
-    const ssoBrowser = () => newBrowser(ssoFetch)
-    const start = async (b: Browser, body: Record<string, unknown>) => (await call(b, 'POST', '/api/auth/oidc/start', body)).json as { url: string }
-    // What the provider's redirect does: the browser follows the url.
-    const callback = (b: Browser, url: string) => call(b, 'GET', url)
+      it('disconnecting is 204: the space is local again with all its pages, and the stored token is gone', async () => {
+        const { id, R } = await fresh('断开')
+        await R.createPage({ meta: { title: '留着' } })
+        await R.connectRemote({ url: url('github.com'), credential: token })
+        await R.disconnectRemote()
+        expect((await failure(R.getRemote())).status).toBe(404)
+        expect((await list(id)).sync).toBe('local')
+        expect(await titles(R)).toEqual(['留着'])
+        expect(server!.storedToken(id)).toBeUndefined()
+        expect((await failure(R.disconnectRemote())).status).toBe(404)
+        expect((await failure(R.syncRemote())).status).toBe(404)
+      })
 
-    beforeAll(() => {
-      sso = createMockServer({ empty: true, mode: 'accounts', admin: false, now: () => clock, oidc: { name: 'Company SSO', sub: 'sub-1' }, setupToken: 'tok' })
-      ssoFetch = mockFetch(sso, { jar: false })
-    })
+      it('a space of someone else is 404 for the remote endpoints too', async () => {
+        const r = await call(admin, 'GET', '/api/spaces/01ZZZZZZZZ/remote')
+        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
+      })
 
-    it('without a provider, start is 404', async () => {
-      const r = await call(admin, 'POST', '/api/auth/oidc/start', { intent: 'login' })
-      expect([r.status, r.json.error]).toEqual([404, 'not_found'])
-    })
+      it('a host the administrator allows with `*` takes any', async () => {
+        const open = createMockServer({
+          empty: true,
+          mode: 'accounts',
+          now: () => clock,
+          oidc: null,
+          remote: { hosts: ['*'] },
+        })
+        const b = newBrowser(mockFetch(open, { jar: false }))
+        await as(b, async () => {
+          await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+          const sp = await api.createSpace('任意主机')
+          expect(
+            (await spaceApi(sp.id).connectRemote({ url: url('git.anywhere.example'), credential: token })).state,
+          ).toBe('ok')
+        })
+      })
 
-    it('session is `setup: true` while there is no user, and names the provider', async () => {
-      const s = (await call(ssoBrowser(), 'GET', '/api/session')).json
-      expect(s).toMatchObject({ mode: 'accounts', user: null, setup: true, methods: { password: true, oidc: { name: 'Company SSO' } } })
-    })
+      it('the mock can start a space in a state (for the app to be seen by hand)', async () => {
+        const m = createMockServer({
+          empty: true,
+          mode: 'accounts',
+          now: () => clock,
+          oidc: null,
+          remote: { start: 'offline' },
+        })
+        const b = newBrowser(mockFetch(m, { jar: false }))
+        await as(b, async () => {
+          await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+          const first = (await api.spaces()).spaces[0]
+          expect(first.sync).toBe('offline')
+          expect(await spaceApi(first.id).getRemote()).toMatchObject({ state: 'offline' })
+        })
+      })
+    },
+  )
 
-    it('setup: a wrong token is 403 forbidden, a bad username or password 400; then 201 with a session and a personal space; after that 409 exists', async () => {
-      const b = ssoBrowser()
-      const wrong = await call(b, 'POST', '/api/setup', { token: 'nope', username: 'boss', password: 'a-long-password' })
-      expect([wrong.status, wrong.json.error]).toEqual([403, 'forbidden'])
-      expect((await call(b, 'POST', '/api/setup', { token: 'tok', username: 'B', password: 'a-long-password' })).status).toBe(400)
-      expect((await call(b, 'POST', '/api/setup', { token: 'tok', username: 'boss', password: 'short' })).status).toBe(400)
-      const ok = await call(b, 'POST', '/api/setup', { token: 'tok', username: 'Boss', password: 'a-long-password' })
-      expect(ok.status).toBe(201)
-      expect(ok.json.user).toMatchObject({ username: 'boss', name: 'boss', role: 'admin' })
-      expect(((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0].personal).toBe(true)
-      expect((await call(ssoBrowser(), 'GET', '/api/session')).json.setup).toBe(false)
-      const again = await call(ssoBrowser(), 'POST', '/api/setup', { token: 'tok', username: 'second', password: 'a-long-password' })
-      expect([again.status, again.json.error]).toEqual([409, 'exists'])
-    })
+  describe.skipIf(!accounts || !!REAL)(
+    'mock only (skipped on a real server: no provider, no clean first run, and the rate limiter would lock us out): single sign-on, setup, rate limits',
+    () => {
+      let sso: MockServer
+      let ssoFetch: typeof fetch
+      const ssoBrowser = () => newBrowser(ssoFetch)
+      const start = async (b: Browser, body: Record<string, unknown>) =>
+        (await call(b, 'POST', '/api/auth/oidc/start', body)).json as { url: string }
+      // What the provider's redirect does: the browser follows the url.
+      const callback = (b: Browser, url: string) => call(b, 'GET', url)
 
-    it('login through the provider: an identity nobody has is redirected to /login?sso_error=no_account; a linked one signs in and goes to the return path', async () => {
-      const b = ssoBrowser()
-      const first = await start(b, { intent: 'login', return: '/s/abc' })
-      const denied = await callback(b, first.url)
-      expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?sso_error=no_account'])
+      beforeAll(() => {
+        sso = createMockServer({
+          empty: true,
+          mode: 'accounts',
+          admin: false,
+          now: () => clock,
+          oidc: { name: 'Company SSO', sub: 'sub-1' },
+          setupToken: 'tok',
+        })
+        ssoFetch = mockFetch(sso, { jar: false })
+      })
 
-      // Link it from a signed-in account, then sign in with it.
-      const me = ssoBrowser()
-      expect((await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(200)
-      const link = await start(me, { intent: 'link', return: '/settings' })
-      const linked = await callback(me, link.url)
-      expect([linked.status, linked.headers.get('Location')]).toEqual([303, '/settings'])
-      const acct = (await call(me, 'GET', '/api/account')).json
-      expect(acct.identities).toEqual([expect.objectContaining({ provider: 'Company SSO', label: expect.any(String) })])
+      it('without a provider, start is 404', async () => {
+        const r = await call(admin, 'POST', '/api/auth/oidc/start', { intent: 'login' })
+        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
+      })
 
-      const b2 = ssoBrowser()
-      const again = await start(b2, { intent: 'login', return: '/s/abc' })
-      const ok = await callback(b2, again.url)
-      expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/s/abc'])
-      expect((await call(b2, 'GET', '/api/session')).json.user.username).toBe('boss')
-    })
+      it('session is `setup: true` while there is no user, and names the provider', async () => {
+        const s = (await call(ssoBrowser(), 'GET', '/api/session')).json
+        expect(s).toMatchObject({
+          mode: 'accounts',
+          user: null,
+          setup: true,
+          methods: { password: true, oidc: { name: 'Company SSO' } },
+        })
+      })
 
-    it('the return path must be a plain path inside the app: anything else becomes /', async () => {
-      const me = ssoBrowser()
-      await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-      for (const bad of ['//evil.example', 'https://evil.example/x', '/a\\b', '', 'relative']) {
+      it('setup: a wrong token is 403 forbidden, a bad username or password 400; then 201 with a session and a personal space; after that 409 exists', async () => {
         const b = ssoBrowser()
-        const s = await start(b, { intent: 'login', return: bad })
-        const r = await callback(b, s.url)
-        expect(r.headers.get('Location'), bad).toBe('/')
-      }
-    })
+        const wrong = await call(b, 'POST', '/api/setup', {
+          token: 'nope',
+          username: 'boss',
+          password: 'a-long-password',
+        })
+        expect([wrong.status, wrong.json.error]).toEqual([403, 'forbidden'])
+        expect(
+          (await call(b, 'POST', '/api/setup', { token: 'tok', username: 'B', password: 'a-long-password' })).status,
+        ).toBe(400)
+        expect(
+          (await call(b, 'POST', '/api/setup', { token: 'tok', username: 'boss', password: 'short' })).status,
+        ).toBe(400)
+        const ok = await call(b, 'POST', '/api/setup', { token: 'tok', username: 'Boss', password: 'a-long-password' })
+        expect(ok.status).toBe(201)
+        expect(ok.json.user).toMatchObject({ username: 'boss', name: 'boss', role: 'admin' })
+        expect(((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0].personal).toBe(true)
+        expect((await call(ssoBrowser(), 'GET', '/api/session')).json.setup).toBe(false)
+        const again = await call(ssoBrowser(), 'POST', '/api/setup', {
+          token: 'tok',
+          username: 'second',
+          password: 'a-long-password',
+        })
+        expect([again.status, again.json.error]).toEqual([409, 'exists'])
+      })
 
-    it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?sso_error=expired', async () => {
-      const b = ssoBrowser()
-      const s = await start(b, { intent: 'login' })
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/')
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=expired')
-      const other = ssoBrowser()
-      const s2 = await start(b, { intent: 'login' })
-      expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?sso_error=expired')
-      const s3 = await start(b, { intent: 'login' })
-      clock += 11 * 60_000
-      expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?sso_error=expired')
-    })
+      it('login through the provider: an identity nobody has is redirected to /login?sso_error=no_account; a linked one signs in and goes to the return path', async () => {
+        const b = ssoBrowser()
+        const first = await start(b, { intent: 'login', return: '/s/abc' })
+        const denied = await callback(b, first.url)
+        expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?sso_error=no_account'])
 
-    it('the provider refusing is idp_error; link failures go to /settings?sso_error=', async () => {
-      const b = ssoBrowser()
-      const s = await start(b, { intent: 'login' })
-      expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe('/login?sso_error=idp_error')
-      const me = ssoBrowser()
-      await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-      const l = await start(me, { intent: 'link' })
-      expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe('/settings?sso_error=idp_error')
-    })
+        // Link it from a signed-in account, then sign in with it.
+        const me = ssoBrowser()
+        expect((await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(
+          200,
+        )
+        const link = await start(me, { intent: 'link', return: '/settings' })
+        const linked = await callback(me, link.url)
+        expect([linked.status, linked.headers.get('Location')]).toEqual([303, '/settings'])
+        const acct = (await call(me, 'GET', '/api/account')).json
+        expect(acct.identities).toEqual([
+          expect.objectContaining({ provider: 'Company SSO', label: expect.any(String) }),
+        ])
 
-    it('link needs a session; an identity another user has is identity_in_use; invite and setup tokens are checked', async () => {
-      const anon = ssoBrowser()
-      const noSession = await call(anon, 'POST', '/api/auth/oidc/start', { intent: 'link' })
-      expect(noSession.status).toBe(401)
+        const b2 = ssoBrowser()
+        const again = await start(b2, { intent: 'login', return: '/s/abc' })
+        const ok = await callback(b2, again.url)
+        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/s/abc'])
+        expect((await call(b2, 'GET', '/api/session')).json.user.username).toBe('boss')
+      })
 
-      const boss = ssoBrowser()
-      await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-      const inv = (await call(boss, 'POST', '/api/invites', { role: 'member' })).json
-      // `boss` already has sub-1, so an invite through the same identity cannot create a second account.
-      const b = ssoBrowser()
-      const s = await start(b, { intent: 'invite', token: inv.token })
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=identity_in_use')
-      const bad = await start(ssoBrowser(), { intent: 'invite', token: 'nope' })
-      expect(bad.url).toContain('/api/auth/oidc/callback')
-      const b2 = ssoBrowser()
-      const s2 = await start(b2, { intent: 'invite', token: 'nope' })
-      expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?sso_error=invite_invalid')
-      const b3 = ssoBrowser()
-      const s3 = await start(b3, { intent: 'setup', token: 'tok' })
-      expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?sso_error=setup_invalid')
-    })
+      it('the return path must be a plain path inside the app: anything else becomes /', async () => {
+        const me = ssoBrowser()
+        await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
+        for (const bad of ['//evil.example', 'https://evil.example/x', '/a\\b', '', 'relative']) {
+          const b = ssoBrowser()
+          const s = await start(b, { intent: 'login', return: bad })
+          const r = await callback(b, s.url)
+          expect(r.headers.get('Location'), bad).toBe('/')
+        }
+      })
 
-    it('a disabled user signing in through the provider is /login?sso_error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
-      const boss = ssoBrowser()
-      await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-      const sso2 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: { name: 'Company SSO', autoCreate: true, sub: 'sub-9' }, admin: { username: 'root', password: 'a-long-password' } })
-      const f2 = mockFetch(sso2, { jar: false })
-      const mine = newBrowser(f2)
-      const s = (await call(mine, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
-      // autoCreate: a member account appears and is signed in.
-      expect((await callback(mine, s.url)).headers.get('Location')).toBe('/')
-      const acct = (await call(mine, 'GET', '/api/account')).json
-      expect(acct.hasPassword).toBe(false)
-      expect(acct.user.role).toBe('member')
-      const only = acct.identities[0].id
-      const refused = await call(mine, 'DELETE', `/api/account/identities/${only}`)
-      expect([refused.status, refused.json.error]).toEqual([409, 'conflict'])
-      // Set a password (no `current`), after which it can go.
-      expect((await call(mine, 'POST', '/api/account/password', { new: 'a-long-password' })).status).toBe(204)
-      expect((await call(mine, 'DELETE', `/api/account/identities/${only}`)).status).toBe(204)
-      expect((await call(mine, 'GET', '/api/account')).json.identities).toEqual([])
+      it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?sso_error=expired', async () => {
+        const b = ssoBrowser()
+        const s = await start(b, { intent: 'login' })
+        expect((await callback(b, s.url)).headers.get('Location')).toBe('/')
+        expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=expired')
+        const other = ssoBrowser()
+        const s2 = await start(b, { intent: 'login' })
+        expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?sso_error=expired')
+        const s3 = await start(b, { intent: 'login' })
+        clock += 11 * 60_000
+        expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?sso_error=expired')
+      })
 
-      const rootB = newBrowser(f2)
-      await call(rootB, 'POST', '/api/login', { username: 'root', password: 'a-long-password' })
-      const users = (await call(rootB, 'GET', '/api/users')).json.users as User[]
-      const member = users.find((u) => u.role === 'member')!
-      // Re-link, disable, and sign in through the provider.
-      const l = (await call(mine, 'POST', '/api/auth/oidc/start', { intent: 'link' })).json
-      await callback(mine, l.url)
-      await call(rootB, 'PATCH', `/api/users/${member.id}`, { disabled: true })
-      const again = newBrowser(f2)
-      const s2 = (await call(again, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
-      expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?sso_error=disabled')
-    })
+      it('the provider refusing is idp_error; link failures go to /settings?sso_error=', async () => {
+        const b = ssoBrowser()
+        const s = await start(b, { intent: 'login' })
+        expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe(
+          '/login?sso_error=idp_error',
+        )
+        const me = ssoBrowser()
+        await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
+        const l = await start(me, { intent: 'link' })
+        expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe(
+          '/settings?sso_error=idp_error',
+        )
+      })
 
-    it('too many wrong passwords against one name is 429 rate_limited with Retry-After, even for the right password, until the wait is over', async () => {
-      const b = ssoBrowser()
-      for (let i = 0; i < 5; i++) expect((await call(b, 'POST', '/api/login', { username: 'boss', password: 'wrong-wrong' }, JSON_HEADERS, { expect429: true })).status).toBe(401)
-      const r = await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' }, JSON_HEADERS, { expect429: true })
-      expect([r.status, r.json.error]).toEqual([429, 'rate_limited'])
-      expect(Number(r.headers.get('Retry-After'))).toBeGreaterThan(0)
-      const e = await as(b, () => failure(api.login({ username: 'boss', password: 'a-long-password' })))
-      expect(e.retryAfter).toBeGreaterThan(0)
-      clock += 61_000
-      expect((await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(200)
-    })
-  })
+      it('link needs a session; an identity another user has is identity_in_use; invite and setup tokens are checked', async () => {
+        const anon = ssoBrowser()
+        const noSession = await call(anon, 'POST', '/api/auth/oidc/start', { intent: 'link' })
+        expect(noSession.status).toBe(401)
+
+        const boss = ssoBrowser()
+        await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
+        const inv = (await call(boss, 'POST', '/api/invites', { role: 'member' })).json
+        // `boss` already has sub-1, so an invite through the same identity cannot create a second account.
+        const b = ssoBrowser()
+        const s = await start(b, { intent: 'invite', token: inv.token })
+        expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=identity_in_use')
+        const bad = await start(ssoBrowser(), { intent: 'invite', token: 'nope' })
+        expect(bad.url).toContain('/api/auth/oidc/callback')
+        const b2 = ssoBrowser()
+        const s2 = await start(b2, { intent: 'invite', token: 'nope' })
+        expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?sso_error=invite_invalid')
+        const b3 = ssoBrowser()
+        const s3 = await start(b3, { intent: 'setup', token: 'tok' })
+        expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?sso_error=setup_invalid')
+      })
+
+      it('a disabled user signing in through the provider is /login?sso_error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
+        const boss = ssoBrowser()
+        await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
+        const sso2 = createMockServer({
+          empty: true,
+          mode: 'accounts',
+          now: () => clock,
+          oidc: { name: 'Company SSO', autoCreate: true, sub: 'sub-9' },
+          admin: { username: 'root', password: 'a-long-password' },
+        })
+        const f2 = mockFetch(sso2, { jar: false })
+        const mine = newBrowser(f2)
+        const s = (await call(mine, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
+        // autoCreate: a member account appears and is signed in.
+        expect((await callback(mine, s.url)).headers.get('Location')).toBe('/')
+        const acct = (await call(mine, 'GET', '/api/account')).json
+        expect(acct.hasPassword).toBe(false)
+        expect(acct.user.role).toBe('member')
+        const only = acct.identities[0].id
+        const refused = await call(mine, 'DELETE', `/api/account/identities/${only}`)
+        expect([refused.status, refused.json.error]).toEqual([409, 'conflict'])
+        // Set a password (no `current`), after which it can go.
+        expect((await call(mine, 'POST', '/api/account/password', { new: 'a-long-password' })).status).toBe(204)
+        expect((await call(mine, 'DELETE', `/api/account/identities/${only}`)).status).toBe(204)
+        expect((await call(mine, 'GET', '/api/account')).json.identities).toEqual([])
+
+        const rootB = newBrowser(f2)
+        await call(rootB, 'POST', '/api/login', { username: 'root', password: 'a-long-password' })
+        const users = (await call(rootB, 'GET', '/api/users')).json.users as User[]
+        const member = users.find((u) => u.role === 'member')!
+        // Re-link, disable, and sign in through the provider.
+        const l = (await call(mine, 'POST', '/api/auth/oidc/start', { intent: 'link' })).json
+        await callback(mine, l.url)
+        await call(rootB, 'PATCH', `/api/users/${member.id}`, { disabled: true })
+        const again = newBrowser(f2)
+        const s2 = (await call(again, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
+        expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?sso_error=disabled')
+      })
+
+      it('too many wrong passwords against one name is 429 rate_limited with Retry-After, even for the right password, until the wait is over', async () => {
+        const b = ssoBrowser()
+        for (let i = 0; i < 5; i++)
+          expect(
+            (
+              await call(b, 'POST', '/api/login', { username: 'boss', password: 'wrong-wrong' }, JSON_HEADERS, {
+                expect429: true,
+              })
+            ).status,
+          ).toBe(401)
+        const r = await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' }, JSON_HEADERS, {
+          expect429: true,
+        })
+        expect([r.status, r.json.error]).toEqual([429, 'rate_limited'])
+        expect(Number(r.headers.get('Retry-After'))).toBeGreaterThan(0)
+        const e = await as(b, () => failure(api.login({ username: 'boss', password: 'a-long-password' })))
+        expect(e.retryAfter).toBeGreaterThan(0)
+        clock += 61_000
+        expect((await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(
+          200,
+        )
+      })
+    },
+  )
   // The sign-in providers, passkeys, captcha, security settings and audit log (milestone 2.8).
-  describe.skipIf(!accounts || !!REAL)('mock only (skipped on a real server: it starts from known settings): providers, passkeys, captcha, security settings and the audit log', () => {
-    let s28: MockServer
-    let f28: typeof fetch
-    const b28 = () => newBrowser(f28)
-    const inAs = async (user = MOCK_ADMIN.username, password = MOCK_ADMIN.password) => {
-      const b = b28()
-      expect((await call(b, 'POST', '/api/login', { username: user, password })).status).toBe(200)
-      return b
-    }
-    const company = { slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft', oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' } }
-
-    beforeAll(() => {
-      s28 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null })
-      f28 = mockFetch(s28, { jar: false })
-    })
-
-    it('the sign-in page\'s providers: none at first (local_only), then the enabled ones in order with their icon, and what the mode says', async () => {
-      const root = await inAs()
-      const none = await call(b28(), 'GET', '/api/auth/providers')
-      expect(none.headers.get('Cache-Control')).toBe('no-store')
-      expect(none.json).toEqual({ providers: [], loginMode: 'local_only', local: true, sso: false, passkey: true, register: false, forgot: false })
-      const made = await call(root, 'POST', '/api/admin/auth/providers', company)
-      expect(made.status).toBe(201)
-      expect(made.json).toMatchObject({ slug: 'company', kind: 'oidc', enabled: true, people: 0, status: { ok: true }, oidc: { hasSecret: true, redirectUrl: 'https://notes.example.com/api/auth/oidc/company/callback' } })
-      expect(made.json.oidc).not.toHaveProperty('clientSecret')
-      const list = (await call(b28(), 'GET', '/api/auth/providers')).json
-      expect(list).toEqual({ providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }], loginMode: 'dual', local: true, sso: true, passkey: true, register: false, forgot: false })
-      await call(root, 'PUT', '/api/admin/security', { login: { mode: 'sso_redirect' } })
-      expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({ loginMode: 'sso_redirect', local: false, sso: true })
-      await call(root, 'PUT', '/api/admin/security', { login: { mode: 'dual' } })
-    })
-
-    it('a provider\'s start: GET is a 303 to the provider, a disabled or unknown one goes to /login?sso_error=provider_unavailable, POST gives {url}', async () => {
-      const go = await call(b28(), 'GET', '/api/auth/oidc/company/start?return=%2Fs%2Fabc')
-      expect(go.status).toBe(303)
-      expect(go.headers.get('Location')).toContain('/api/auth/oidc/company/callback')
-      expect(go.headers.get('Set-Cookie')).toBeTruthy()
-      const unknown = await call(b28(), 'GET', '/api/auth/oidc/nobody/start')
-      expect([unknown.status, unknown.headers.get('Location')]).toEqual([303, '/login?sso_error=provider_unavailable'])
-      expect((await call(b28(), 'POST', '/api/auth/oidc/nobody/start', { intent: 'login' })).status).toBe(404)
-      expect((await call(b28(), 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json.url).toContain('/api/auth/oidc/company/callback?state=')
-    })
-
-    it('the provider refusals have their own codes', async () => {
-      const root = await inAs()
-      const refused = async (body: Record<string, unknown>) => {
-        const r = await call(root, 'POST', '/api/admin/auth/providers', body)
-        return [r.status, r.json.error]
+  describe.skipIf(!accounts || !!REAL)(
+    'mock only (skipped on a real server: it starts from known settings): providers, passkeys, captcha, security settings and the audit log',
+    () => {
+      let s28: MockServer
+      let f28: typeof fetch
+      const b28 = () => newBrowser(f28)
+      const inAs = async (user = MOCK_ADMIN.username, password = MOCK_ADMIN.password) => {
+        const b = b28()
+        expect((await call(b, 'POST', '/api/login', { username: user, password })).status).toBe(200)
+        return b
       }
-      expect(await refused({ ...company })).toEqual([409, 'exists'])
-      expect(await refused({ ...company, slug: 'second' })).toEqual([409, 'provider_issuer_in_use'])
-      expect(await refused({ ...company, slug: 'http', oidc: { issuer: 'http://x.example', clientId: 'c' } })).toEqual([400, 'oidc_issuer_invalid'])
-      expect(await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } })).toEqual([400, 'auto_create_needs_org'])
-      expect(await refused({ slug: 'saml', kind: 'saml', name: 'S', saml: { metadataUrl: 'https://x.example/bad-metadata' } })).toEqual([400, 'saml_metadata_invalid'])
-      expect(await refused({ slug: 'Bad Slug', kind: 'oidc', name: 'S', oidc: { issuer: 'https://y.example', clientId: 'c' } })).toEqual([400, 'invalid'])
-    })
-
-    it('an unreachable provider is stored switched off with status.ok false; refresh looks again', async () => {
-      const root = await inAs()
-      const r = await call(root, 'POST', '/api/admin/auth/providers', { slug: 'dead', kind: 'oidc', name: 'Dead', oidc: { issuer: 'https://unreachable.example', clientId: 'c' } })
-      expect([r.status, r.json.enabled, r.json.status.ok]).toEqual([201, false, false])
-      const again = await call(root, 'POST', '/api/admin/auth/providers/dead/refresh')
-      expect([again.status, again.json.status.ok]).toEqual([200, false])
-      expect((await call(root, 'DELETE', '/api/admin/auth/providers/dead')).status).toBe(204)
-    })
-
-    it('deleting a provider that is somebody\'s only way in is 409 provider_in_use with the count, until force=1', async () => {
-      const root = await inAs()
-      await call(root, 'PATCH', '/api/admin/auth/providers/company', { autoCreate: true })
-      const b = b28()
-      const st = (await call(b, 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json
-      const cb = await call(b, 'GET', st.url)
-      expect(cb.status).toBe(303)
-      const refused = await call(root, 'DELETE', '/api/admin/auth/providers/company')
-      expect([refused.status, refused.json.error, refused.json.accounts]).toEqual([409, 'provider_in_use', 1])
-      const acct = (await call(b, 'GET', '/api/account')).json
-      expect(acct.identities).toEqual([expect.objectContaining({ provider: 'Company SSO', providerSlug: 'company', kind: 'oidc' })])
-      expect((await call(root, 'DELETE', '/api/admin/auth/providers/company?force=1')).status).toBe(204)
-      // The identity stays, with no provider.
-      expect((await call(b, 'GET', '/api/account')).json.identities[0]).toMatchObject({ providerSlug: '', kind: '' })
-    })
-
-    it('security: the defaults, a change that is kept, and each refusal; nothing is half saved', async () => {
-      const root = await inAs()
-      const got = (await call(root, 'GET', '/api/admin/security')).json
-      expect(got).toMatchObject({ login: { mode: 'dual', ssoOnly: false }, passkeys: { enabled: true, available: true, requireRoles: [] }, captcha: { provider: 'image', hasSecret: false }, lockout: { enabled: false, minutes: 15, scope: 'ip_account' }, limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 }, notices: [] })
-      const bad = async (body: unknown) => {
-        const r = await call(root, 'PUT', '/api/admin/security', body)
-        return [r.status, r.json.error]
+      const company = {
+        slug: 'company',
+        kind: 'oidc',
+        name: 'Company SSO',
+        icon: 'preset:microsoft',
+        oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' },
       }
-      expect(await bad({ login: { mode: 'nope' } })).toEqual([400, 'invalid'])
-      expect(await bad({ limits: { sessionIdleDays: 400 } })).toEqual([400, 'invalid'])
-      expect(await bad({ limits: { sessionIdleDays: 50, sessionMaxDays: 40 } })).toEqual([400, 'invalid'])
-      expect(await bad({ captcha: { provider: 'turnstile', contexts: { login: { on: true } } } })).toEqual([400, 'captcha_site_key_required'])
-      expect(await bad({ captcha: { provider: 'turnstile', siteKey: 'k', contexts: { login: { on: true } } } })).toEqual([400, 'captcha_secret_required'])
-      // Refused as a whole: the valid part of the last one was not stored.
-      expect(await bad({ lockout: { minutes: 20 }, limits: { perMinute: 0 } })).toEqual([400, 'invalid'])
-      expect((await call(root, 'GET', '/api/admin/security')).json.lockout.minutes).toBe(15)
-      const ok = await call(root, 'PUT', '/api/admin/security', { lockout: { enabled: true, minutes: 20, scope: 'ip' }, captcha: { provider: 'turnstile', siteKey: 'k', secret: 's', contexts: { login: { on: true, when: 'always' } } } })
-      expect(ok.status).toBe(200)
-      expect(ok.json).toMatchObject({ lockout: { enabled: true, minutes: 20, scope: 'ip' }, captcha: { provider: 'turnstile', siteKey: 'k', hasSecret: true } })
-      expect(JSON.stringify(ok.json)).not.toContain('"s"')
-      // A secret stored for another provider does not count.
-      expect(await bad({ captcha: { provider: 'hcaptcha', siteKey: 'k2', contexts: { invite: { on: true } } } })).toEqual([400, 'captcha_secret_required'])
-      // Clearing the secret while a context needs it is refused; with the context off it works.
-      expect(await bad({ captcha: { secret: '' } })).toEqual([400, 'captcha_secret_required'])
-      expect((await call(root, 'PUT', '/api/admin/security', { captcha: { secret: '', contexts: { login: { on: false } } } })).json.captcha.hasSecret).toBe(false)
-      expect((await call(root, 'PUT', '/api/admin/security', { captcha: { provider: 'image', contexts: { login: { on: false } } }, lockout: { enabled: false, minutes: 15, scope: 'ip_account' } })).status).toBe(200)
-    })
 
-    it('ssoOnly: in effect only while a provider is enabled; then a member\'s password is refused after it was checked, an administrator\'s is not', async () => {
-      const root = await inAs()
-      // With no provider the page offers no button, so refusing passwords would lock the door.
-      expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).json.login).toMatchObject({ ssoOnly: true, ssoOnlyInEffect: false, effectiveMode: 'local_only', ssoAvailable: false })
-      await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
-      expect((await call(root, 'POST', '/api/admin/auth/providers', { ...company, slug: 'acme', oidc: { issuer: 'https://acme.example', clientId: 'c' } })).status).toBe(201)
-      const member = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
-      const joined = await call(b28(), 'POST', '/api/invites/accept', { token: member.token, username: 'sso-m', password: 'a-long-password' })
-      expect(joined.status).toBe(201)
-      expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).status).toBe(200)
-      const refused = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
-      expect([refused.status, refused.json.error]).toEqual([403, 'local_login_refused'])
-      // A wrong password still gets the ordinary answer: the code says nothing to someone who does not know it.
-      expect((await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })).status).toBe(401)
-      expect((await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).status).toBe(200)
-      // No invite for a member can be accepted with a password.
-      const inv2 = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
-      expect((await call(b28(), 'POST', '/api/invites/accept', { token: inv2.token, username: 'sso-m2', password: 'a-long-password' })).json.error).toBe('local_login_refused')
-      await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
-    })
+      beforeAll(() => {
+        s28 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null })
+        f28 = mockFetch(s28, { jar: false })
+      })
 
-    it('captcha: asked for by the context, an image is answered once, a wrong or missing answer is 400 captcha_failed; unknown contexts are 400', async () => {
-      const root = await inAs()
-      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: true, when: 'always' } } } })
-      expect((await call(b28(), 'GET', '/api/captcha?ctx=invite')).json).toEqual({ required: false })
-      expect((await call(b28(), 'GET', '/api/captcha?ctx=forgot')).json).toEqual({ required: false })
-      expect((await call(b28(), 'GET', '/api/captcha?ctx=nope')).status).toBe(400)
-      const c = (await call(b28(), 'GET', '/api/captcha?ctx=login&account=x')).json
-      expect(c).toMatchObject({ required: true, provider: 'image', id: expect.any(String), image: expect.stringMatching(/^data:image\//) })
-      const missing = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
-      expect([missing.status, missing.json.error]).toEqual([400, 'captcha_failed'])
-      const wrong = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: c.id, answer: 'zzzz' } })
-      expect([wrong.status, wrong.json.error]).toEqual([400, 'captcha_failed'])
-      // Used once, right or wrong: the same challenge cannot be answered again.
-      const reused = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: c.id, answer: '4821' } })
-      expect(reused.json.error).toBe('captcha_failed')
-      const fresh = (await call(b28(), 'GET', '/api/captcha?ctx=login')).json
-      expect((await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: fresh.id, answer: '4821' } })).status).toBe(200)
-      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
-    })
+      it("the sign-in page's providers: none at first (local_only), then the enabled ones in order with their icon, and what the mode says", async () => {
+        const root = await inAs()
+        const none = await call(b28(), 'GET', '/api/auth/providers')
+        expect(none.headers.get('Cache-Control')).toBe('no-store')
+        expect(none.json).toEqual({
+          providers: [],
+          loginMode: 'local_only',
+          local: true,
+          sso: false,
+          passkey: true,
+          register: false,
+          forgot: false,
+        })
+        const made = await call(root, 'POST', '/api/admin/auth/providers', company)
+        expect(made.status).toBe(201)
+        expect(made.json).toMatchObject({
+          slug: 'company',
+          kind: 'oidc',
+          enabled: true,
+          people: 0,
+          status: { ok: true },
+          oidc: { hasSecret: true, redirectUrl: 'https://notes.example.com/api/auth/oidc/company/callback' },
+        })
+        expect(made.json.oidc).not.toHaveProperty('clientSecret')
+        const list = (await call(b28(), 'GET', '/api/auth/providers')).json
+        expect(list).toEqual({
+          providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }],
+          loginMode: 'dual',
+          local: true,
+          sso: true,
+          passkey: true,
+          register: false,
+          forgot: false,
+        })
+        await call(root, 'PUT', '/api/admin/security', { login: { mode: 'sso_redirect' } })
+        expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({
+          loginMode: 'sso_redirect',
+          local: false,
+          sso: true,
+        })
+        await call(root, 'PUT', '/api/admin/security', { login: { mode: 'dual' } })
+      })
 
-    it('after_failures: a name that failed enough asks for a captcha, others do not', async () => {
-      const root = await inAs()
-      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: true, when: 'after_failures', failures: 2 } } } })
-      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(false)
-      for (let i = 0; i < 2; i++) await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })
-      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(true)
-      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=someone-else')).json.required).toBe(false)
-      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
-    })
+      it("a provider's start: GET is a 303 to the provider, a disabled or unknown one goes to /login?sso_error=provider_unavailable, POST gives {url}", async () => {
+        const go = await call(b28(), 'GET', '/api/auth/oidc/company/start?return=%2Fs%2Fabc')
+        expect(go.status).toBe(303)
+        expect(go.headers.get('Location')).toContain('/api/auth/oidc/company/callback')
+        expect(go.headers.get('Set-Cookie')).toBeTruthy()
+        const unknown = await call(b28(), 'GET', '/api/auth/oidc/nobody/start')
+        expect([unknown.status, unknown.headers.get('Location')]).toEqual([
+          303,
+          '/login?sso_error=provider_unavailable',
+        ])
+        expect((await call(b28(), 'POST', '/api/auth/oidc/nobody/start', { intent: 'login' })).status).toBe(404)
+        expect((await call(b28(), 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json.url).toContain(
+          '/api/auth/oidc/company/callback?state=',
+        )
+      })
 
-    it('passkeys: register (named, a credential once), sign in with it, rename, delete; a ceremony is used once; a required person is held until they have one', async () => {
-      const root = await inAs()
-      const me = await inAs('sso-m', 'a-long-password')
-      const begin = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'MacBook' })
-      expect(begin.status).toBe(200)
-      expect(begin.json.options).toMatchObject({ challenge: expect.any(String), user: { name: 'sso-m' }, excludeCredentials: [] })
-      const done = await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m', type: 'public-key', response: {} })
-      expect(done.status).toBe(201)
-      expect(done.json.passkeys).toEqual([expect.objectContaining({ name: 'MacBook', synced: false })])
-      expect((await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m2' })).json.error).toBe('passkey_failed')
-      const again = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'Again' })
-      expect(again.json.options.excludeCredentials).toHaveLength(1)
-      expect((await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${again.json.ceremony}`, { id: 'cred-m' })).json.error).toBe('exists')
-      // Sign in with it: discoverable, then by name.
-      const lg = await call(b28(), 'POST', '/api/auth/passkey/begin', {})
-      const ok = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}&return=%2Fs%2Fx`, { id: 'cred-m' })
-      expect([ok.status, ok.json.return, ok.json.user.username]).toEqual([200, '/s/x', 'sso-m'])
-      const bad = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}`, { id: 'cred-m' })
-      expect([bad.status, bad.json.error]).toEqual([401, 'passkey_failed'])
-      const named = await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'sso-m' })
-      expect(named.json.options.allowCredentials).toEqual([{ type: 'public-key', id: 'cred-m' }])
-      // A name nobody has looks the same: one made-up credential.
-      expect((await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'nobody-here' })).json.options.allowCredentials).toHaveLength(1)
-      // Required of this person: the password is right, so the answer says passkey_required.
-      const uid = (await call(me, 'GET', '/api/account')).json.user.id
-      expect((await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: true })).json.user.passkeyRequired).toBe(true)
-      const must = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
-      expect([must.status, must.json.error]).toEqual([403, 'passkey_required'])
-      // Rename and delete; the admin sees them and can delete one.
-      const id = done.json.passkeys[0].id
-      expect((await call(me, 'PATCH', `/api/account/passkeys/${id}`, { name: 'Phone' })).json.name).toBe('Phone')
-      const list = (await call(root, 'GET', `/api/users/${uid}/passkeys`)).json.passkeys
-      expect(list.map((p: { name: string }) => p.name)).toEqual(['Phone'])
-      expect((await call(root, 'GET', '/api/users')).json.users.find((u: { id: string }) => u.id === uid)).toMatchObject({ passkeys: 1, sso: 0 })
-      expect((await call(root, 'DELETE', `/api/users/${uid}/passkeys/${id}`)).status).toBe(204)
-      // With none left and one required, the next password sign-in is held: only the passkey endpoints and sign-out work.
-      const held = b28()
-      expect((await call(held, 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })).status).toBe(200)
-      expect((await call(held, 'GET', '/api/session')).json.hold).toBe('passkey')
-      expect((await call(held, 'GET', '/api/spaces')).json.error).toBe('passkey_required')
-      expect((await call(held, 'GET', '/api/account')).status).toBe(200)
-      const hb = await call(held, 'POST', '/api/account/passkeys/begin', { name: 'New' })
-      expect((await call(held, 'POST', `/api/account/passkeys/finish?ceremony=${hb.json.ceremony}`, { id: 'cred-new' })).status).toBe(201)
-      expect((await call(held, 'GET', '/api/session')).json.hold).toBe(null)
-      expect((await call(held, 'GET', '/api/spaces')).status).toBe(200)
-      await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: false })
-    })
+      it('the provider refusals have their own codes', async () => {
+        const root = await inAs()
+        const refused = async (body: Record<string, unknown>) => {
+          const r = await call(root, 'POST', '/api/admin/auth/providers', body)
+          return [r.status, r.json.error]
+        }
+        expect(await refused({ ...company })).toEqual([409, 'exists'])
+        expect(await refused({ ...company, slug: 'second' })).toEqual([409, 'provider_issuer_in_use'])
+        expect(
+          await refused({ ...company, slug: 'http', oidc: { issuer: 'http://x.example', clientId: 'c' } }),
+        ).toEqual([400, 'oidc_issuer_invalid'])
+        expect(
+          await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } }),
+        ).toEqual([400, 'auto_create_needs_org'])
+        expect(
+          await refused({
+            slug: 'saml',
+            kind: 'saml',
+            name: 'S',
+            saml: { metadataUrl: 'https://x.example/bad-metadata' },
+          }),
+        ).toEqual([400, 'saml_metadata_invalid'])
+        expect(
+          await refused({
+            slug: 'Bad Slug',
+            kind: 'oidc',
+            name: 'S',
+            oidc: { issuer: 'https://y.example', clientId: 'c' },
+          }),
+        ).toEqual([400, 'invalid'])
+      })
 
-    it('the audit log: newest first, filtered by kind and user, with a cursor', async () => {
-      const root = await inAs()
-      const all = (await call(root, 'GET', '/api/admin/audit?limit=5')).json
-      expect(all.items).toHaveLength(5)
-      expect(all.next).toBeTruthy()
-      for (let i = 1; i < all.items.length; i++) expect(all.items[i - 1].id > all.items[i].id).toBe(true)
-      const more = (await call(root, 'GET', `/api/admin/audit?limit=5&cursor=${all.next}`)).json
-      expect(more.items[0].id).toBe(all.next)
-      const kinds = (await call(root, 'GET', '/api/admin/audit?kind=security_changed&limit=200')).json.items
-      expect(kinds.length).toBeGreaterThan(0)
-      expect(kinds.every((r: { kind: string }) => r.kind === 'security_changed')).toBe(true)
-      expect(kinds[0]).toMatchObject({ actor: expect.any(String), detail: { from: expect.any(Object), to: expect.any(Object) } })
-      // A secret is never in it.
-      expect(JSON.stringify(kinds)).not.toContain('"s"')
-      expect((await call(root, 'GET', '/api/admin/audit?limit=0')).status).toBe(400)
-    })
-  })
+      it('an unreachable provider is stored switched off with status.ok false; refresh looks again', async () => {
+        const root = await inAs()
+        const r = await call(root, 'POST', '/api/admin/auth/providers', {
+          slug: 'dead',
+          kind: 'oidc',
+          name: 'Dead',
+          oidc: { issuer: 'https://unreachable.example', clientId: 'c' },
+        })
+        expect([r.status, r.json.enabled, r.json.status.ok]).toEqual([201, false, false])
+        const again = await call(root, 'POST', '/api/admin/auth/providers/dead/refresh')
+        expect([again.status, again.json.status.ok]).toEqual([200, false])
+        expect((await call(root, 'DELETE', '/api/admin/auth/providers/dead')).status).toBe(204)
+      })
+
+      it("deleting a provider that is somebody's only way in is 409 provider_in_use with the count, until force=1", async () => {
+        const root = await inAs()
+        await call(root, 'PATCH', '/api/admin/auth/providers/company', { autoCreate: true })
+        const b = b28()
+        const st = (await call(b, 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json
+        const cb = await call(b, 'GET', st.url)
+        expect(cb.status).toBe(303)
+        const refused = await call(root, 'DELETE', '/api/admin/auth/providers/company')
+        expect([refused.status, refused.json.error, refused.json.accounts]).toEqual([409, 'provider_in_use', 1])
+        const acct = (await call(b, 'GET', '/api/account')).json
+        expect(acct.identities).toEqual([
+          expect.objectContaining({ provider: 'Company SSO', providerSlug: 'company', kind: 'oidc' }),
+        ])
+        expect((await call(root, 'DELETE', '/api/admin/auth/providers/company?force=1')).status).toBe(204)
+        // The identity stays, with no provider.
+        expect((await call(b, 'GET', '/api/account')).json.identities[0]).toMatchObject({ providerSlug: '', kind: '' })
+      })
+
+      it('security: the defaults, a change that is kept, and each refusal; nothing is half saved', async () => {
+        const root = await inAs()
+        const got = (await call(root, 'GET', '/api/admin/security')).json
+        expect(got).toMatchObject({
+          login: { mode: 'dual', ssoOnly: false },
+          passkeys: { enabled: true, available: true, requireRoles: [] },
+          captcha: { provider: 'image', hasSecret: false },
+          lockout: { enabled: false, minutes: 15, scope: 'ip_account' },
+          limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 },
+          notices: [],
+        })
+        const bad = async (body: unknown) => {
+          const r = await call(root, 'PUT', '/api/admin/security', body)
+          return [r.status, r.json.error]
+        }
+        expect(await bad({ login: { mode: 'nope' } })).toEqual([400, 'invalid'])
+        expect(await bad({ limits: { sessionIdleDays: 400 } })).toEqual([400, 'invalid'])
+        expect(await bad({ limits: { sessionIdleDays: 50, sessionMaxDays: 40 } })).toEqual([400, 'invalid'])
+        expect(await bad({ captcha: { provider: 'turnstile', contexts: { login: { on: true } } } })).toEqual([
+          400,
+          'captcha_site_key_required',
+        ])
+        expect(
+          await bad({ captcha: { provider: 'turnstile', siteKey: 'k', contexts: { login: { on: true } } } }),
+        ).toEqual([400, 'captcha_secret_required'])
+        // Refused as a whole: the valid part of the last one was not stored.
+        expect(await bad({ lockout: { minutes: 20 }, limits: { perMinute: 0 } })).toEqual([400, 'invalid'])
+        expect((await call(root, 'GET', '/api/admin/security')).json.lockout.minutes).toBe(15)
+        const ok = await call(root, 'PUT', '/api/admin/security', {
+          lockout: { enabled: true, minutes: 20, scope: 'ip' },
+          captcha: {
+            provider: 'turnstile',
+            siteKey: 'k',
+            secret: 's',
+            contexts: { login: { on: true, when: 'always' } },
+          },
+        })
+        expect(ok.status).toBe(200)
+        expect(ok.json).toMatchObject({
+          lockout: { enabled: true, minutes: 20, scope: 'ip' },
+          captcha: { provider: 'turnstile', siteKey: 'k', hasSecret: true },
+        })
+        expect(JSON.stringify(ok.json)).not.toContain('"s"')
+        // A secret stored for another provider does not count.
+        expect(
+          await bad({ captcha: { provider: 'hcaptcha', siteKey: 'k2', contexts: { invite: { on: true } } } }),
+        ).toEqual([400, 'captcha_secret_required'])
+        // Clearing the secret while a context needs it is refused; with the context off it works.
+        expect(await bad({ captcha: { secret: '' } })).toEqual([400, 'captcha_secret_required'])
+        expect(
+          (
+            await call(root, 'PUT', '/api/admin/security', {
+              captcha: { secret: '', contexts: { login: { on: false } } },
+            })
+          ).json.captcha.hasSecret,
+        ).toBe(false)
+        expect(
+          (
+            await call(root, 'PUT', '/api/admin/security', {
+              captcha: { provider: 'image', contexts: { login: { on: false } } },
+              lockout: { enabled: false, minutes: 15, scope: 'ip_account' },
+            })
+          ).status,
+        ).toBe(200)
+      })
+
+      it("ssoOnly: in effect only while a provider is enabled; then a member's password is refused after it was checked, an administrator's is not", async () => {
+        const root = await inAs()
+        // With no provider the page offers no button, so refusing passwords would lock the door.
+        expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).json.login).toMatchObject(
+          { ssoOnly: true, ssoOnlyInEffect: false, effectiveMode: 'local_only', ssoAvailable: false },
+        )
+        await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+        expect(
+          (
+            await call(root, 'POST', '/api/admin/auth/providers', {
+              ...company,
+              slug: 'acme',
+              oidc: { issuer: 'https://acme.example', clientId: 'c' },
+            })
+          ).status,
+        ).toBe(201)
+        const member = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
+        const joined = await call(b28(), 'POST', '/api/invites/accept', {
+          token: member.token,
+          username: 'sso-m',
+          password: 'a-long-password',
+        })
+        expect(joined.status).toBe(201)
+        expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).status).toBe(200)
+        const refused = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
+        expect([refused.status, refused.json.error]).toEqual([403, 'local_login_refused'])
+        // A wrong password still gets the ordinary answer: the code says nothing to someone who does not know it.
+        expect((await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })).status).toBe(
+          401,
+        )
+        expect(
+          (await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }))
+            .status,
+        ).toBe(200)
+        // No invite for a member can be accepted with a password.
+        const inv2 = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
+        expect(
+          (
+            await call(b28(), 'POST', '/api/invites/accept', {
+              token: inv2.token,
+              username: 'sso-m2',
+              password: 'a-long-password',
+            })
+          ).json.error,
+        ).toBe('local_login_refused')
+        await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+      })
+
+      it('captcha: asked for by the context, an image is answered once, a wrong or missing answer is 400 captcha_failed; unknown contexts are 400', async () => {
+        const root = await inAs()
+        await call(root, 'PUT', '/api/admin/security', {
+          captcha: { contexts: { login: { on: true, when: 'always' } } },
+        })
+        expect((await call(b28(), 'GET', '/api/captcha?ctx=invite')).json).toEqual({ required: false })
+        expect((await call(b28(), 'GET', '/api/captcha?ctx=forgot')).json).toEqual({ required: false })
+        expect((await call(b28(), 'GET', '/api/captcha?ctx=nope')).status).toBe(400)
+        const c = (await call(b28(), 'GET', '/api/captcha?ctx=login&account=x')).json
+        expect(c).toMatchObject({
+          required: true,
+          provider: 'image',
+          id: expect.any(String),
+          image: expect.stringMatching(/^data:image\//),
+        })
+        const missing = await call(b28(), 'POST', '/api/login', {
+          username: MOCK_ADMIN.username,
+          password: MOCK_ADMIN.password,
+        })
+        expect([missing.status, missing.json.error]).toEqual([400, 'captcha_failed'])
+        const wrong = await call(b28(), 'POST', '/api/login', {
+          username: MOCK_ADMIN.username,
+          password: MOCK_ADMIN.password,
+          captcha: { id: c.id, answer: 'zzzz' },
+        })
+        expect([wrong.status, wrong.json.error]).toEqual([400, 'captcha_failed'])
+        // Used once, right or wrong: the same challenge cannot be answered again.
+        const reused = await call(b28(), 'POST', '/api/login', {
+          username: MOCK_ADMIN.username,
+          password: MOCK_ADMIN.password,
+          captcha: { id: c.id, answer: '4821' },
+        })
+        expect(reused.json.error).toBe('captcha_failed')
+        const fresh = (await call(b28(), 'GET', '/api/captcha?ctx=login')).json
+        expect(
+          (
+            await call(b28(), 'POST', '/api/login', {
+              username: MOCK_ADMIN.username,
+              password: MOCK_ADMIN.password,
+              captcha: { id: fresh.id, answer: '4821' },
+            })
+          ).status,
+        ).toBe(200)
+        await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+      })
+
+      it('after_failures: a name that failed enough asks for a captcha, others do not', async () => {
+        const root = await inAs()
+        await call(root, 'PUT', '/api/admin/security', {
+          captcha: { contexts: { login: { on: true, when: 'after_failures', failures: 2 } } },
+        })
+        expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(false)
+        for (let i = 0; i < 2; i++)
+          await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })
+        expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(true)
+        expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=someone-else')).json.required).toBe(false)
+        await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+      })
+
+      it('passkeys: register (named, a credential once), sign in with it, rename, delete; a ceremony is used once; a required person is held until they have one', async () => {
+        const root = await inAs()
+        const me = await inAs('sso-m', 'a-long-password')
+        const begin = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'MacBook' })
+        expect(begin.status).toBe(200)
+        expect(begin.json.options).toMatchObject({
+          challenge: expect.any(String),
+          user: { name: 'sso-m' },
+          excludeCredentials: [],
+        })
+        const done = await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, {
+          id: 'cred-m',
+          type: 'public-key',
+          response: {},
+        })
+        expect(done.status).toBe(201)
+        expect(done.json.passkeys).toEqual([expect.objectContaining({ name: 'MacBook', synced: false })])
+        expect(
+          (await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m2' }))
+            .json.error,
+        ).toBe('passkey_failed')
+        const again = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'Again' })
+        expect(again.json.options.excludeCredentials).toHaveLength(1)
+        expect(
+          (await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${again.json.ceremony}`, { id: 'cred-m' }))
+            .json.error,
+        ).toBe('exists')
+        // Sign in with it: discoverable, then by name.
+        const lg = await call(b28(), 'POST', '/api/auth/passkey/begin', {})
+        const ok = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}&return=%2Fs%2Fx`, {
+          id: 'cred-m',
+        })
+        expect([ok.status, ok.json.return, ok.json.user.username]).toEqual([200, '/s/x', 'sso-m'])
+        const bad = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}`, { id: 'cred-m' })
+        expect([bad.status, bad.json.error]).toEqual([401, 'passkey_failed'])
+        const named = await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'sso-m' })
+        expect(named.json.options.allowCredentials).toEqual([{ type: 'public-key', id: 'cred-m' }])
+        // A name nobody has looks the same: one made-up credential.
+        expect(
+          (await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'nobody-here' })).json.options
+            .allowCredentials,
+        ).toHaveLength(1)
+        // Required of this person: the password is right, so the answer says passkey_required.
+        const uid = (await call(me, 'GET', '/api/account')).json.user.id
+        expect(
+          (await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: true })).json.user.passkeyRequired,
+        ).toBe(true)
+        const must = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
+        expect([must.status, must.json.error]).toEqual([403, 'passkey_required'])
+        // Rename and delete; the admin sees them and can delete one.
+        const id = done.json.passkeys[0].id
+        expect((await call(me, 'PATCH', `/api/account/passkeys/${id}`, { name: 'Phone' })).json.name).toBe('Phone')
+        const list = (await call(root, 'GET', `/api/users/${uid}/passkeys`)).json.passkeys
+        expect(list.map((p: { name: string }) => p.name)).toEqual(['Phone'])
+        expect(
+          (await call(root, 'GET', '/api/users')).json.users.find((u: { id: string }) => u.id === uid),
+        ).toMatchObject({ passkeys: 1, sso: 0 })
+        expect((await call(root, 'DELETE', `/api/users/${uid}/passkeys/${id}`)).status).toBe(204)
+        // With none left and one required, the next password sign-in is held: only the passkey endpoints and sign-out work.
+        const held = b28()
+        expect(
+          (await call(held, 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })).status,
+        ).toBe(200)
+        expect((await call(held, 'GET', '/api/session')).json.hold).toBe('passkey')
+        expect((await call(held, 'GET', '/api/spaces')).json.error).toBe('passkey_required')
+        expect((await call(held, 'GET', '/api/account')).status).toBe(200)
+        const hb = await call(held, 'POST', '/api/account/passkeys/begin', { name: 'New' })
+        expect(
+          (await call(held, 'POST', `/api/account/passkeys/finish?ceremony=${hb.json.ceremony}`, { id: 'cred-new' }))
+            .status,
+        ).toBe(201)
+        expect((await call(held, 'GET', '/api/session')).json.hold).toBe(null)
+        expect((await call(held, 'GET', '/api/spaces')).status).toBe(200)
+        await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: false })
+      })
+
+      it('the audit log: newest first, filtered by kind and user, with a cursor', async () => {
+        const root = await inAs()
+        const all = (await call(root, 'GET', '/api/admin/audit?limit=5')).json
+        expect(all.items).toHaveLength(5)
+        expect(all.next).toBeTruthy()
+        for (let i = 1; i < all.items.length; i++) expect(all.items[i - 1].id > all.items[i].id).toBe(true)
+        const more = (await call(root, 'GET', `/api/admin/audit?limit=5&cursor=${all.next}`)).json
+        expect(more.items[0].id).toBe(all.next)
+        const kinds = (await call(root, 'GET', '/api/admin/audit?kind=security_changed&limit=200')).json.items
+        expect(kinds.length).toBeGreaterThan(0)
+        expect(kinds.every((r: { kind: string }) => r.kind === 'security_changed')).toBe(true)
+        expect(kinds[0]).toMatchObject({
+          actor: expect.any(String),
+          detail: { from: expect.any(Object), to: expect.any(Object) },
+        })
+        // A secret is never in it.
+        expect(JSON.stringify(kinds)).not.toContain('"s"')
+        expect((await call(root, 'GET', '/api/admin/audit?limit=0')).status).toBe(400)
+      })
+    },
+  )
 }

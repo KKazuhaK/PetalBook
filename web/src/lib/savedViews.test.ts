@@ -1,14 +1,56 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PageType, SavedView } from '../api/types.ts'
-import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, MAX_COLUMNS, DEFAULT_STATE, freshName, groupFieldsOf, loadViewId, moveView, sameState, viewAtMark, saveViewId, stateOfView, viewIdKey, withState } from './savedViews.ts'
+import {
+  boardColumns,
+  cardFieldsOf,
+  cardMovable,
+  columnDroppable,
+  columnFilter,
+  MAX_COLUMNS,
+  DEFAULT_STATE,
+  freshName,
+  groupFieldsOf,
+  loadViewId,
+  moveView,
+  sameState,
+  viewAtMark,
+  saveViewId,
+  stateOfView,
+  viewIdKey,
+  withState,
+} from './savedViews.ts'
 
-const view = (id: string, extra: Partial<SavedView> = {}): SavedView => ({ id, name: id, layout: 'list', sort: '', group: '', filter: [], hidden: [], ...extra })
+const view = (id: string, extra: Partial<SavedView> = {}): SavedView => ({
+  id,
+  name: id,
+  layout: 'list',
+  sort: '',
+  group: '',
+  filter: [],
+  hidden: [],
+  ...extra,
+})
 
 describe('the state of a view', () => {
   it('is what the view says apart from its name, and writes back over a view without losing what the app does not know', () => {
-    const v = view('a', { layout: 'board', group: 'status', sort: '-prop:written', filter: [{ key: 'series', op: 'in', values: ['冬季'] }], hidden: ['note'], color: 'teal', cardFields: ['due'] })
+    const v = view('a', {
+      layout: 'board',
+      group: 'status',
+      sort: '-prop:written',
+      filter: [{ key: 'series', op: 'in', values: ['冬季'] }],
+      hidden: ['note'],
+      color: 'teal',
+      cardFields: ['due'],
+    })
     const s = stateOfView(v)
-    expect(s).toEqual({ layout: 'board', group: 'status', sort: '-prop:written', filter: [{ key: 'series', op: 'in', values: ['冬季'] }], hidden: ['note'], cardFields: ['due'] })
+    expect(s).toEqual({
+      layout: 'board',
+      group: 'status',
+      sort: '-prop:written',
+      filter: [{ key: 'series', op: 'in', values: ['冬季'] }],
+      hidden: ['note'],
+      cardFields: ['due'],
+    })
     const written = withState(v, { ...s, layout: 'table', cardFields: undefined })
     expect(written).toMatchObject({ id: 'a', name: 'a', layout: 'table', color: 'teal' })
     // The server cannot forget a key it does not know; the default is said as null.
@@ -104,18 +146,59 @@ const TYPE: PageType = {
 describe('the columns of a board', () => {
   it('are the options in order, "other values" only when some page has one, and "empty"', () => {
     const options = ['todo', 'doing', 'done']
-    const cols = boardColumns(options, [{ value: 'done', count: 3 }, { value: 'todo', count: 1 }], 2)
-    expect(cols.map((c) => [c.id, c.count])).toEqual([['o:todo', 1], ['o:doing', 0], ['o:done', 3], ['empty', 2]])
-    const withOther = boardColumns(options, [{ value: 'dropped', count: 2 }, { value: 'old', count: 1 }, { value: 'todo', count: 1 }], 0)
-    expect(withOther.map((c) => [c.kind, c.count])).toEqual([['option', 1], ['option', 0], ['option', 0], ['other', 3], ['empty', 0]])
+    const cols = boardColumns(
+      options,
+      [
+        { value: 'done', count: 3 },
+        { value: 'todo', count: 1 },
+      ],
+      2,
+    )
+    expect(cols.map((c) => [c.id, c.count])).toEqual([
+      ['o:todo', 1],
+      ['o:doing', 0],
+      ['o:done', 3],
+      ['empty', 2],
+    ])
+    const withOther = boardColumns(
+      options,
+      [
+        { value: 'dropped', count: 2 },
+        { value: 'old', count: 1 },
+        { value: 'todo', count: 1 },
+      ],
+      0,
+    )
+    expect(withOther.map((c) => [c.kind, c.count])).toEqual([
+      ['option', 1],
+      ['option', 0],
+      ['option', 0],
+      ['other', 3],
+      ['empty', 0],
+    ])
   })
   it('have no counts until the groups are known, and then "other values" is shown rather than hidden', () => {
     const cols = boardColumns(['a'], undefined, undefined)
-    expect(cols.map((c) => [c.kind, c.count])).toEqual([['option', undefined], ['other', undefined], ['empty', undefined]])
+    expect(cols.map((c) => [c.kind, c.count])).toEqual([
+      ['option', undefined],
+      ['other', undefined],
+      ['empty', undefined],
+    ])
   })
   it('are the values the pages have, most first, when there are no options (a tag board)', () => {
-    const cols = boardColumns(null, [{ value: '草稿', count: 5 }, { value: '定稿', count: 2 }], 1)
-    expect(cols.map((c) => [c.id, c.count])).toEqual([['o:草稿', 5], ['o:定稿', 2], ['empty', 1]])
+    const cols = boardColumns(
+      null,
+      [
+        { value: '草稿', count: 5 },
+        { value: '定稿', count: 2 },
+      ],
+      1,
+    )
+    expect(cols.map((c) => [c.id, c.count])).toEqual([
+      ['o:草稿', 5],
+      ['o:定稿', 2],
+      ['empty', 1],
+    ])
     expect(boardColumns(null, [], 0).map((c) => c.kind)).toEqual(['empty'])
   })
   it('made of values are the first MAX_COLUMNS of them and one "other values" for the rest, which leaves out the ones shown', () => {
@@ -129,12 +212,34 @@ describe('the columns of a board', () => {
     expect(f.op).toBe('notIn')
     expect(f.values).toEqual(groups.slice(0, MAX_COLUMNS).map((g) => g.value))
     // The index cut the list of values short: there are more than are known.
-    expect(boardColumns(null, groups.slice(0, 3), 0, true).map((c) => c.kind)).toEqual(['option', 'option', 'option', 'other', 'empty'])
-    expect(boardColumns(null, groups.slice(0, 3), 0).map((c) => c.kind)).toEqual(['option', 'option', 'option', 'empty'])
+    expect(boardColumns(null, groups.slice(0, 3), 0, true).map((c) => c.kind)).toEqual([
+      'option',
+      'option',
+      'option',
+      'other',
+      'empty',
+    ])
+    expect(boardColumns(null, groups.slice(0, 3), 0).map((c) => c.kind)).toEqual([
+      'option',
+      'option',
+      'option',
+      'empty',
+    ])
   })
   it('of a select with more than MAX_COLUMNS options are those that have pages', () => {
     const options = Array.from({ length: 120 }, (_, i) => `o${i}`)
-    expect(boardColumns(options, [{ value: 'o7', count: 2 }, { value: 'o99', count: 1 }], 0).filter((c) => c.kind === 'option').map((c) => c.value)).toEqual(['o7', 'o99'])
+    expect(
+      boardColumns(
+        options,
+        [
+          { value: 'o7', count: 2 },
+          { value: 'o99', count: 1 },
+        ],
+        0,
+      )
+        .filter((c) => c.kind === 'option')
+        .map((c) => c.value),
+    ).toEqual(['o7', 'o99'])
     // The "other values" column leaves out every option, up to what the server takes (500).
     const other = boardColumns(options, [{ value: 'x', count: 1 }], 0).find((c) => c.kind === 'other')!
     expect(columnFilter(other, 'k', options).values).toHaveLength(120)

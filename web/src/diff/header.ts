@@ -13,19 +13,25 @@ const TEXT_FIELDS = ['title', 'subtitle', 'source'] as const
 // The id never changes, and tags and the text fields are shown on their own.
 const OWN = new Set<string>(['id', 'tags', ...TEXT_FIELDS])
 
-const text = (v: unknown): string => (v === undefined || v === null ? '' : typeof v === 'string' ? v : JSON.stringify(v))
+const text = (v: unknown): string =>
+  v === undefined || v === null ? '' : typeof v === 'string' ? v : JSON.stringify(v)
 
 function sortKeys(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(sortKeys)
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>
-    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, sortKeys(o[k])]))
+    return Object.fromEntries(
+      Object.keys(o)
+        .sort()
+        .map((k) => [k, sortKeys(o[k])]),
+    )
   }
   return v
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
 
-const tagsOf = (m: Meta): string[] => (Array.isArray(m.tags) ? m.tags.filter((t): t is string => typeof t === 'string') : [])
+const tagsOf = (m: Meta): string[] =>
+  Array.isArray(m.tags) ? m.tags.filter((t): t is string => typeof t === 'string') : []
 
 export function diffHeader(a: Meta, b: Meta): HeaderChange[] {
   const out: HeaderChange[] = []

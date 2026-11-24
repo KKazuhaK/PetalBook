@@ -5,7 +5,16 @@ import { useAddGroup, useEffectiveMembers, useGroupSearch, useRemoveGroup, useSe
 import type { GroupMember, GroupRef, SpaceInfo, SpaceRole } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -78,7 +87,11 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
       ) : (
         <ul className="divide-y rounded-lg border" data-slot="space-groups">
           {groups.map((g) => (
-            <li key={g.groupId} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5" data-group={g.groupId}>
+            <li
+              key={g.groupId}
+              className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5"
+              data-group={g.groupId}
+            >
               <div className="min-w-0 flex-1 basis-48">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-sm font-medium">{g.name}</span>
@@ -89,7 +102,13 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
               </div>
               <div className="w-32">
                 {manage ? (
-                  <NativeSelect className="h-8" aria-label={t.fmt.labelled(g.name, tgs.role)} value={g.role} disabled={setRole.isPending} onChange={(e) => void change(g, e.target.value as SpaceRole)}>
+                  <NativeSelect
+                    className="h-8"
+                    aria-label={t.fmt.labelled(g.name, tgs.role)}
+                    value={g.role}
+                    disabled={setRole.isPending}
+                    onChange={(e) => void change(g, e.target.value as SpaceRole)}
+                  >
                     {ROLES.map((r) => (
                       <option key={r} value={r}>
                         {t.roles[r]}
@@ -101,7 +120,13 @@ export function GroupMembers({ space, groups, manage }: { space: SpaceInfo; grou
                 )}
               </div>
               {manage && (
-                <Button type="button" variant="outline" size="sm" aria-label={t.fmt.labelled(tgs.remove, g.name)} onClick={() => setAsking(g)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={t.fmt.labelled(tgs.remove, g.name)}
+                  onClick={() => setAsking(g)}
+                >
                   {tgs.remove}
                 </Button>
               )}
@@ -154,14 +179,28 @@ function AddGroup({ space, taken }: { space: string; taken: string[] }) {
   }
 
   return (
-    <form className="grid gap-3 rounded-lg border p-3" onSubmit={(e) => void submit(e)} noValidate aria-label={tgs.addTitle}>
+    <form
+      className="grid gap-3 rounded-lg border p-3"
+      onSubmit={(e) => void submit(e)}
+      noValidate
+      aria-label={tgs.addTitle}
+    >
       <div>
         <h3 className="text-sm font-semibold">{tgs.addTitle}</h3>
         <p className="text-xs text-muted-foreground">{tgs.addHelp}</p>
       </div>
       <div className="grid gap-1.5">
         <Label htmlFor="space-group-search">{tgs.search}</Label>
-        <Input id="space-group-search" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder={tgs.searchPlaceholder} autoComplete="off" spellCheck={false} className="max-w-xs" />
+        <Input
+          id="space-group-search"
+          type="search"
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder={tgs.searchPlaceholder}
+          autoComplete="off"
+          spellCheck={false}
+          className="max-w-xs"
+        />
         {term.trim() === '' ? (
           <p className="text-xs text-muted-foreground">{tgs.searchHint}</p>
         ) : found.isSuccess && matches.length === 0 ? (
@@ -175,7 +214,14 @@ function AddGroup({ space, taken }: { space: string; taken: string[] }) {
               <span className="min-w-0 truncate">
                 {g.name} <span className="text-xs text-muted-foreground">{tg.sourceNames[g.source]}</span>
               </span>
-              <Button type="button" variant={chosen?.id === g.id ? 'secondary' : 'outline'} size="sm" aria-pressed={chosen?.id === g.id} aria-label={t.fmt.labelled(tgs.choose, g.name)} onClick={() => setChosen(g)}>
+              <Button
+                type="button"
+                variant={chosen?.id === g.id ? 'secondary' : 'outline'}
+                size="sm"
+                aria-pressed={chosen?.id === g.id}
+                aria-label={t.fmt.labelled(tgs.choose, g.name)}
+                onClick={() => setChosen(g)}
+              >
                 {chosen?.id === g.id ? tgs.chosen : tgs.choose}
               </Button>
             </li>
@@ -221,17 +267,32 @@ export function EffectiveMembers({ space }: { space: string }) {
       </div>
       {shown && (
         <div className="grid gap-3">
-          <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder={tgs.effectiveSearchPlaceholder} aria-label={tgs.effectiveSearch} className="max-w-xs" autoComplete="off" />
+          <Input
+            type="search"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={tgs.effectiveSearchPlaceholder}
+            aria-label={tgs.effectiveSearch}
+            className="max-w-xs"
+            autoComplete="off"
+          />
           {list.isPending ? (
             <PageFallback />
           ) : list.isError && !list.data ? (
-            <ErrorState message={t.fmt.labelled(tgs.effectiveLoadFailed, list.error.message)} onRetry={() => void list.refetch()} />
+            <ErrorState
+              message={t.fmt.labelled(tgs.effectiveLoadFailed, list.error.message)}
+              onRetry={() => void list.refetch()}
+            />
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground">{q ? tgs.effectiveNoMatch(q) : tgs.effectiveNone}</p>
           ) : (
             <ul className="divide-y rounded-lg border" data-slot="effective-members">
               {items.map((m) => (
-                <li key={m.userId} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2" data-user={m.userId}>
+                <li
+                  key={m.userId}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2"
+                  data-user={m.userId}
+                >
                   <div className="min-w-0 flex-1 basis-48">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium">{m.name}</span>
@@ -256,7 +317,13 @@ export function EffectiveMembers({ space }: { space: string }) {
           )}
           {list.hasNextPage && (
             <div>
-              <Button type="button" variant="outline" size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
                 {list.isFetchingNextPage ? tgs.loadingMore : tgs.loadMore}
               </Button>
             </div>

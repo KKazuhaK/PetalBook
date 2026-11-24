@@ -32,7 +32,15 @@ const TYPE = {
   ],
 }
 
-function Harness({ initial, readOnly = false, typeName = 'task' }: { initial: PageMeta; readOnly?: boolean; typeName?: string }) {
+function Harness({
+  initial,
+  readOnly = false,
+  typeName = 'task',
+}: {
+  initial: PageMeta
+  readOnly?: boolean
+  typeName?: string
+}) {
   const [values, setValues] = useState(initial)
   return (
     <>
@@ -45,7 +53,8 @@ function Harness({ initial, readOnly = false, typeName = 'task' }: { initial: Pa
 async function open(initial: PageMeta, opts: { readOnly?: boolean; type?: unknown; typeName?: string } = {}) {
   m = await mount(<Harness initial={initial} readOnly={opts.readOnly} typeName={opts.typeName} />, {
     entries: (server) => {
-      if (opts.type !== null) server.handle('PUT', '/api/spaces/default/types/task', JSON.stringify(opts.type ?? TYPE), 'application/json')
+      if (opts.type !== null)
+        server.handle('PUT', '/api/spaces/default/types/task', JSON.stringify(opts.type ?? TYPE), 'application/json')
       return ['/']
     },
   })
@@ -57,13 +66,18 @@ const control = (label: string) => document.querySelector<HTMLElement>(`[aria-la
 const rowKeys = () => [...document.querySelectorAll('[data-field]')].map((e) => e.getAttribute('data-field'))
 
 describe('the property panel', () => {
-  it('has one control per field, in the type\'s order, of the kind the field asks for', async () => {
+  it("has one control per field, in the type's order, of the kind the field asks for", async () => {
     await open({ home: 'https://example.com' })
     expect(rowKeys()).toEqual(['name', 'note', 'status', 'labels', 'due', 'points', 'done', 'home'])
     expect(control('名称').tagName).toBe('INPUT')
     expect(control('备注').tagName).toBe('TEXTAREA')
     expect(control('状态').tagName).toBe('SELECT')
-    expect([...control('状态').querySelectorAll('option')].map((o) => o.textContent)).toEqual([tp.panel.none, 'todo', 'doing', 'done'])
+    expect([...control('状态').querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+      tp.panel.none,
+      'todo',
+      'doing',
+      'done',
+    ])
     expect(control('标签组').getAttribute('role')).toBe('group')
     expect([...control('标签组').querySelectorAll('button')].map((b) => b.textContent)).toEqual(['a', 'b', 'c'])
     expect(control('截止').getAttribute('type')).toBe('date')
@@ -85,13 +99,30 @@ describe('the property panel', () => {
     await type(control('点数') as HTMLInputElement, '2.5')
     await click(control('完成'))
     await type(control('备注') as HTMLTextAreaElement, '一行\n两行')
-    expect(values()).toEqual({ created: '2026-01-01', owner: 'Ann', name: '写报告', status: 'doing', labels: ['b', 'c'], due: '2026-12-01', points: 2.5, done: true, note: '一行\n两行' })
+    expect(values()).toEqual({
+      created: '2026-01-01',
+      owner: 'Ann',
+      name: '写报告',
+      status: 'doing',
+      labels: ['b', 'c'],
+      due: '2026-12-01',
+      points: 2.5,
+      done: true,
+      note: '一行\n两行',
+    })
     // Taking a choice back, and emptying a box, remove the key rather than leave an empty value.
     await click([...control('标签组').querySelectorAll('button')].find((b) => b.textContent === 'b'))
     await click([...control('标签组').querySelectorAll('button')].find((b) => b.textContent === 'c'))
     await type(control('名称') as HTMLInputElement, '')
     await type(control('状态') as HTMLSelectElement, '')
-    expect(values()).toEqual({ created: '2026-01-01', owner: 'Ann', due: '2026-12-01', points: 2.5, done: true, note: '一行\n两行' })
+    expect(values()).toEqual({
+      created: '2026-01-01',
+      owner: 'Ann',
+      due: '2026-12-01',
+      points: 2.5,
+      done: true,
+      note: '一行\n两行',
+    })
   })
 
   it('a number that is not one yet is kept as typed, and only a number reaches the header', async () => {
@@ -107,7 +138,15 @@ describe('the property panel', () => {
   })
 
   it('a value that does not fit is shown flagged and kept, and stays when something else changes', async () => {
-    const odd = { status: 'dropped', points: 'many', due: 'tomorrow', labels: ['a', 'q'], done: 'yes', name: 5, home: 'example' }
+    const odd = {
+      status: 'dropped',
+      points: 'many',
+      due: 'tomorrow',
+      labels: ['a', 'q'],
+      done: 'yes',
+      name: 5,
+      home: 'example',
+    }
     await open(odd)
     for (const label of ['状态', '点数', '截止', '标签组', '完成', '名称', '主页']) {
       expect(control(label).getAttribute('aria-invalid'), label).toBe('true')
@@ -130,14 +169,35 @@ describe('the property panel', () => {
   })
 
   it('lists header keys that are not in the type in a collapsed group, each with a button that clears it', async () => {
-    await open({ id: 'X', title: 'T', tags: ['a'], created: '2026-01-01', type: 'task', publish: true, slug: 's', status: 'todo', owner: 'Ann', 估计: 3 })
+    await open({
+      id: 'X',
+      title: 'T',
+      tags: ['a'],
+      created: '2026-01-01',
+      type: 'task',
+      publish: true,
+      slug: 's',
+      status: 'todo',
+      owner: 'Ann',
+      估计: 3,
+    })
     const group = document.querySelector<HTMLDetailsElement>('[data-slot="not-in-type"]')!
     expect(group.open).toBe(false)
     expect(group.querySelector('summary')!.textContent).toContain(tp.panel.notInType(2))
     // Built-in keys and the two the server keeps back are not properties.
     expect([...group.querySelectorAll('li')].map((li) => li.getAttribute('data-key'))).toEqual(['owner', '估计'])
     await click(group.querySelector(`button[aria-label="${tp.panel.clearKey('owner')}"]`))
-    expect(values()).toEqual({ id: 'X', title: 'T', tags: ['a'], created: '2026-01-01', type: 'task', publish: true, slug: 's', status: 'todo', 估计: 3 })
+    expect(values()).toEqual({
+      id: 'X',
+      title: 'T',
+      tags: ['a'],
+      created: '2026-01-01',
+      type: 'task',
+      publish: true,
+      slug: 's',
+      status: 'todo',
+      估计: 3,
+    })
     expect(document.querySelector('[data-slot="not-in-type"]')!.textContent).not.toContain('owner')
     await click(document.querySelector(`button[aria-label="${tp.panel.clearKey('估计')}"]`))
     // Nothing left to list: no group.
@@ -172,7 +232,7 @@ describe('the property panel', () => {
     expect(document.querySelector('[data-slot="not-in-type"]')!.textContent).toContain('Ann')
   })
 
-  it('says so when the type is not there, and still lists the page\'s own keys', async () => {
+  it("says so when the type is not there, and still lists the page's own keys", async () => {
     await open({ status: 'todo' }, { typeName: 'ghost' })
     expect(document.querySelector('[data-slot="property-panel"]')!.textContent).toContain(tp.panel.missingType('ghost'))
     expect(document.querySelector('[data-slot="not-in-type"]')!.textContent).toContain('status')
@@ -189,7 +249,12 @@ describe('the property panel', () => {
 async function mountOther(damaged = false) {
   m = await mount(<Harness initial={{ extra: { a: 1, list: ['x', 'y'] }, status: 'todo' }} />, {
     entries: (server) => {
-      server.handle('PUT', '/api/spaces/default/types/task', JSON.stringify({ title: '', fields: [{ key: 'extra', title: '杂项', kind: 'text' }] }), 'application/json')
+      server.handle(
+        'PUT',
+        '/api/spaces/default/types/task',
+        JSON.stringify({ title: '', fields: [{ key: 'extra', title: '杂项', kind: 'text' }] }),
+        'application/json',
+      )
       if (damaged) server.damageType('default', 'task', '损坏的文件')
       else server.forceKind('default', 'task', 'extra', 'other')
       return ['/']

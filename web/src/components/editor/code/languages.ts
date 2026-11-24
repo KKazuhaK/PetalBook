@@ -56,7 +56,9 @@ export const LANGUAGES: readonly CodeLanguage[] = [
 // Diagrams are drawn instead of coloured; the picker offers them as a language.
 export const DIAGRAM: CodeLanguage = { id: 'mermaid', name: 'Mermaid', aliases: ['mmd'] }
 
-export const PICKER_LANGUAGES: readonly CodeLanguage[] = [...LANGUAGES, DIAGRAM].sort((a, b) => a.name.localeCompare(b.name, 'en'))
+export const PICKER_LANGUAGES: readonly CodeLanguage[] = [...LANGUAGES, DIAGRAM].sort((a, b) =>
+  a.name.localeCompare(b.name, 'en'),
+)
 
 const byWord = new Map<string, CodeLanguage>()
 for (const lang of [...LANGUAGES, DIAGRAM]) {

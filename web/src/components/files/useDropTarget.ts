@@ -9,7 +9,12 @@ const OPEN_AFTER_MS = 700
 // Makes an element a place to drop files and folders onto the folder `path`.
 // It lights up only while what is being dragged could really go there, and
 // does not accept anything else, so the pointer shows "not allowed".
-export function useDropTarget(path: string, index: FolderIndex | undefined, onDrop: (items: FileItem[], target: string) => void, onHover?: () => void) {
+export function useDropTarget(
+  path: string,
+  index: FolderIndex | undefined,
+  onDrop: (items: FileItem[], target: string) => void,
+  onHover?: () => void,
+) {
   const [over, setOver] = useState(false)
   const { write } = useSpacePermissions()
   // dragenter/dragleave fire for every child element crossed; count them.

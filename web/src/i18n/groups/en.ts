@@ -2,10 +2,14 @@ import type { GroupsMessages } from '../groupsTypes.ts'
 
 export const groupsEn: GroupsMessages = {
   sourceNames: { local: 'Local group', synced: 'Synced group' },
-  sourceHelp: { local: 'An administrator adds and removes its people here.', synced: 'Its people come only from sign-in and cannot be changed by hand. Make it here, then map a value of the groups claim to it in a sign-in provider on the Security page.' },
+  sourceHelp: {
+    local: 'An administrator adds and removes its people here.',
+    synced:
+      'Its people come only from sign-in and cannot be changed by hand. Make it here, then map a value of the groups claim to it in a sign-in provider on the Security page.',
+  },
   admin: {
     title: 'Groups',
-    help: 'A group is a set of people that can be made a member of a shared space with a role, like one person. A local group is kept by an administrator; a synced group gets its people from a sign-in provider\'s groups claim.',
+    help: "A group is a set of people that can be made a member of a shared space with a role, like one person. A local group is kept by an administrator; a synced group gets its people from a sign-in provider's groups claim.",
     search: 'Search by name',
     searchPlaceholder: 'Search group names',
     source: 'Source',
@@ -66,14 +70,16 @@ export const groupsEn: GroupsMessages = {
     pasteAdd: 'Add by username',
     addSelected: (n: number) => `Add ${n}`,
     adding: 'Adding…',
-    addedPeople: (added: number, already: number) => (already > 0 ? `Added ${added}; ${already} were in the group already` : `Added ${added}`),
+    addedPeople: (added: number, already: number) =>
+      already > 0 ? `Added ${added}; ${already} were in the group already` : `Added ${added}`,
     tooMany: 'At most 500 people at a time.',
     rename: 'Rename',
     delete: 'Delete…',
     deleteTitle: (name: string) => `Delete "${name}"?`,
     deleteHelp: 'People, spaces and drafts are not deleted; what people reach through this group is gone at once.',
     deleteConfirm: 'Delete',
-    deleteInUse: (spaces: number, mappings: number) => `This group is a member of ${spaces} space(s) and ${mappings} sign-in mapping entries point to it. Deleting it anyway removes it from those spaces and removes the entries.`,
+    deleteInUse: (spaces: number, mappings: number) =>
+      `This group is a member of ${spaces} space(s) and ${mappings} sign-in mapping entries point to it. Deleting it anyway removes it from those spaces and removes the entries.`,
     deleteForce: 'Delete anyway',
     deleted: (name: string) => `Deleted "${name}"`,
     errors: {
@@ -88,17 +94,18 @@ export const groupsEn: GroupsMessages = {
   },
   space: {
     title: 'Groups',
-    help: 'Everyone in a group that is added here gets the group\'s role; what a person may do is their own role and their groups\' roles together.',
+    help: "Everyone in a group that is added here gets the group's role; what a person may do is their own role and their groups' roles together.",
     none: 'No group is a member of this space yet.',
     people: (n: number) => (n === 1 ? '1 person' : `${n} people`),
     yours: '(you are in it)',
     role: 'Role',
     remove: 'Remove',
     removeTitle: 'Remove this group from the space?',
-    removeHelp: (name: string) => `People of "${name}" who are not direct members can no longer open this space; their drafts are kept.`,
+    removeHelp: (name: string) =>
+      `People of "${name}" who are not direct members can no longer open this space; their drafts are kept.`,
     removeConfirm: 'Remove',
     removed: (name: string) => `Removed "${name}"`,
-    changed: 'The group\'s role was changed',
+    changed: "The group's role was changed",
     addTitle: 'Add a group',
     addHelp: 'Find a group by name and choose a role. A personal space cannot have groups.',
     search: 'Find a group',
@@ -114,7 +121,8 @@ export const groupsEn: GroupsMessages = {
     viaGroups: 'Also through a group',
     effective: (role: string) => `Effective role: ${role}`,
     effectiveTitle: 'Who can reach this space',
-    effectiveHelp: 'Everyone who can reach the space and how: their own role and which groups. Disabled people are left out.',
+    effectiveHelp:
+      'Everyone who can reach the space and how: their own role and which groups. Disabled people are left out.',
     effectiveShow: 'Show everyone',
     effectiveHide: 'Hide',
     effectiveSearch: 'Search',
@@ -137,18 +145,21 @@ export const groupsEn: GroupsMessages = {
   },
   provider: {
     title: 'Groups',
-    help: 'Map the values of the groups claim at sign-in to synced groups; after each sign-in the person\'s memberships from this provider are brought up to date. Values with no entry are ignored: no group is made from a claim.',
+    help: "Map the values of the groups claim at sign-in to synced groups; after each sign-in the person's memberships from this provider are brought up to date. Values with no entry are ignored: no group is made from a claim.",
     enabled: 'Sync groups at sign-in',
     claim: 'Groups claim',
-    claimOidcHelp: 'The field of the ID token that holds the groups, groups by default; a string or an array of strings.',
+    claimOidcHelp:
+      'The field of the ID token that holds the groups, groups by default; a string or an array of strings.',
     claimSamlHelp: 'The SAML attribute name; every value of it is read, for example memberOf.',
-    claimGithubHelp: 'GitHub\'s groups are the organisations the person belongs to; nothing to set here.',
+    claimGithubHelp: "GitHub's groups are the organisations the person belongs to; nothing to set here.",
     missing: 'When the claim is not there',
     missingKeep: 'Leave the groups as they are (and record an audit row)',
     missingClear: 'Treat it as an empty list and remove them all',
-    missingHelp: 'Entra ID sends a pointer instead of the list when a person is in too many groups; that counts as missing too.',
+    missingHelp:
+      'Entra ID sends a pointer instead of the list when a person is in too many groups; that counts as missing too.',
     map: 'Mapping',
-    mapHelp: 'Which synced group each claim value maps to (compared exactly, at most 256 bytes). A value can appear once; a group may be fed by several values. Removing an entry removes the memberships it brought at once.',
+    mapHelp:
+      'Which synced group each claim value maps to (compared exactly, at most 256 bytes). A value can appear once; a group may be fed by several values. Removing an entry removes the memberships it brought at once.',
     value: 'Claim value',
     group: 'Synced group',
     chooseGroup: 'Choose a synced group',
@@ -168,7 +179,7 @@ export const groupsEn: GroupsMessages = {
   },
   account: {
     title: 'My groups',
-    help: 'The groups you are in. When a group is a member of a space, you reach it with the group\'s role.',
+    help: "The groups you are in. When a group is a member of a space, you reach it with the group's role.",
     none: 'You are not in any group.',
     source: { local: 'local', synced: 'synced' },
   },

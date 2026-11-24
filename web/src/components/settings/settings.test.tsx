@@ -10,7 +10,18 @@ import { FileOpsProvider } from '@/components/files/FileOps'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
-import { byLabel, click, installDomShims, locationState, locationText, mount, press, settle, type, type Mounted } from '@/testing/harness'
+import {
+  byLabel,
+  click,
+  installDomShims,
+  locationState,
+  locationText,
+  mount,
+  press,
+  settle,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 import { SpaceSettingsRedirect } from './SpaceSettingsRedirect'
 
@@ -45,13 +56,32 @@ const panelText = () => dialog()?.textContent ?? ''
 
 describe('the settings dialog, accounts mode, administrator', () => {
   const open = async (path: string) => {
-    m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', oidc: { name: 'Company SSO' } } })
+    m = await mount(routes, {
+      entries: [path],
+      signIn: true,
+      server: { mode: 'accounts', oidc: { name: 'Company SSO' } },
+    })
     await settle(() => dialog() !== null && navLinks().length > 0, 'dialog')
   }
 
   it('lists the sections in groups', async () => {
     await open('/settings/profile')
-    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.tokens, t.settingsUi.sections.connections, t.settingsUi.sections.usage, t.settingsUi.sections.general, t.settingsUi.sections.types, t.settingsUi.sections.templates, t.settingsUi.sections.home, t.settingsUi.sections.members, t.settingsUi.sections.sync, t.settingsUi.sections.offline, t.settingsUi.sections.import])
+    expect(navLinks()).toEqual([
+      t.settingsUi.sections.profile,
+      t.settingsUi.sections.preferences,
+      t.settingsUi.sections.security,
+      t.settingsUi.sections.tokens,
+      t.settingsUi.sections.connections,
+      t.settingsUi.sections.usage,
+      t.settingsUi.sections.general,
+      t.settingsUi.sections.types,
+      t.settingsUi.sections.templates,
+      t.settingsUi.sections.home,
+      t.settingsUi.sections.members,
+      t.settingsUi.sections.sync,
+      t.settingsUi.sections.offline,
+      t.settingsUi.sections.import,
+    ])
     const groups = [...dialog()!.querySelectorAll('nav [role="group"]')].map((g) => g.getAttribute('aria-label'))
     expect(groups).toEqual([t.settingsUi.groups.account, t.settingsUi.groups.space])
   })
@@ -112,7 +142,10 @@ describe('the settings dialog, accounts mode, administrator', () => {
     const name = dialog()!.querySelector<HTMLInputElement>('input')!
     await type(name, '新名字')
     await click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === t.spaces.save))
-    await settle(() => m!.requests.some((r) => r.method === 'PATCH' && r.url.startsWith('/api/spaces/')), 'rename request')
+    await settle(
+      () => m!.requests.some((r) => r.method === 'PATCH' && r.url.startsWith('/api/spaces/')),
+      'rename request',
+    )
     expect(JSON.parse(m!.requests.find((r) => r.method === 'PATCH')!.body!)).toEqual({ name: '新名字' })
   })
 
@@ -153,15 +186,22 @@ describe('the settings dialog, accounts mode, administrator', () => {
     await settle(() => locationText() === '/settings/profile', 'redirected')
   })
 
-  it('the old address of a space\'s settings lands on the right section (users and invites moved to /admin, see admin.test.tsx)', async () => {
+  it("the old address of a space's settings lands on the right section (users and invites moved to /admin, see admin.test.tsx)", async () => {
     await open('/s/default/settings')
     await settle(() => locationText() === '/settings/sync', '/s/default/settings')
   })
 
   it('moving between sections replaces the entry, so one Close leaves settings', async () => {
-    m = await mount(routes, { entries: ['/s/default/recent', { pathname: '/settings/profile', state: { from: '/s/default/recent' } }], index: 1, signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, {
+      entries: ['/s/default/recent', { pathname: '/settings/profile', state: { from: '/s/default/recent' } }],
+      index: 1,
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
     await settle(() => navLinks().length > 0, 'dialog')
-    await click([...dialog()!.querySelectorAll('nav a')].find((a) => a.textContent === t.settingsUi.sections.preferences))
+    await click(
+      [...dialog()!.querySelectorAll('nav a')].find((a) => a.textContent === t.settingsUi.sections.preferences),
+    )
     await settle(() => locationText() === '/settings/preferences', 'navigated')
     // The place to return to travels along.
     expect(locationState()).toEqual({ from: '/s/default/recent' })
@@ -186,7 +226,15 @@ describe('the settings dialog, single-user mode', () => {
 
   it('shows only what applies', async () => {
     await open('/settings/preferences')
-    expect(navLinks()).toEqual([t.settingsUi.sections.preferences, t.settingsUi.sections.general, t.settingsUi.sections.types, t.settingsUi.sections.templates, t.settingsUi.sections.home, t.settingsUi.sections.offline, t.settingsUi.sections.import])
+    expect(navLinks()).toEqual([
+      t.settingsUi.sections.preferences,
+      t.settingsUi.sections.general,
+      t.settingsUi.sections.types,
+      t.settingsUi.sections.templates,
+      t.settingsUi.sections.home,
+      t.settingsUi.sections.offline,
+      t.settingsUi.sections.import,
+    ])
   })
 
   it('/settings opens the preferences; the account, sync and users sections are not there', async () => {
@@ -235,7 +283,8 @@ describe('the preferences', () => {
 
   it('light, dark and system', async () => {
     await open()
-    const radio = (label: string) => [...dialog()!.querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => b.textContent === label)!
+    const radio = (label: string) =>
+      [...dialog()!.querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => b.textContent === label)!
     await click(radio(t.theme.dark))
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(localStorage.getItem('theme')).toBe('dark')
@@ -257,7 +306,9 @@ describe('the preferences', () => {
 
   it('the language is a select with each language under its own name', async () => {
     await open()
-    const options = [...dialog()!.querySelectorAll<HTMLOptionElement>('#pref-language option')].map((o) => o.textContent)
+    const options = [...dialog()!.querySelectorAll<HTMLOptionElement>('#pref-language option')].map(
+      (o) => o.textContent,
+    )
     expect(options).toEqual(['中文', 'English'])
   })
 
@@ -285,7 +336,9 @@ describe('where settings are opened from', () => {
     await settle(() => trigger() !== null, 'user menu')
     await click(trigger())
     await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'menu open')
-    const items = [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].map((e) => e.textContent?.trim())
+    const items = [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].map((e) =>
+      e.textContent?.trim(),
+    )
     expect(items).toEqual([t.userMenu.settings, t.userMenu.admin, t.userMenu.signOut])
     await click(byLabelText(t.userMenu.admin))
     await settle(() => locationText() === '/admin', 'administration')

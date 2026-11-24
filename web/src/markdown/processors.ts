@@ -14,7 +14,8 @@ import { gfmTaskListItemToMarkdown } from 'mdast-util-gfm-task-list-item'
 // The unified plugin API hands plugins a Processor as `this`; the data bag it
 // exposes is typed per extension, so the extension lists are reached untyped.
 type ToMarkdownData = { toMarkdownExtensions?: unknown[] }
-const toMarkdownExtensions = (processor: Processor) => ((processor.data() as ToMarkdownData).toMarkdownExtensions ??= [])
+const toMarkdownExtensions = (processor: Processor) =>
+  ((processor.data() as ToMarkdownData).toMarkdownExtensions ??= [])
 
 export const parser = unified()
   .use(remarkParse)

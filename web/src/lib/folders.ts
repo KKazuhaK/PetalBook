@@ -17,7 +17,10 @@ export interface FolderNode {
 
 // The API lists every folder, parents included. Missing parents are tolerated
 // so a partial list still nests correctly.
-export function buildFolderTree(folders: { path: string; pages: number }[]): { rootPages: number; nodes: FolderNode[] } {
+export function buildFolderTree(folders: { path: string; pages: number }[]): {
+  rootPages: number
+  nodes: FolderNode[]
+} {
   const byPath = new Map<string, FolderNode>()
   const roots: FolderNode[] = []
   let rootPages = 0
@@ -92,7 +95,8 @@ export const parentOf = (path: string): string => path.slice(0, Math.max(0, path
 export const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 export const joinPath = (parent: string, name: string): string => (parent === '' ? name : `${parent}/${name}`)
 // Whether `path` is `ancestor` or lies inside it. Everything is inside the root.
-export const isSameOrUnder = (path: string, ancestor: string): boolean => ancestor === '' || path === ancestor || path.startsWith(ancestor + '/')
+export const isSameOrUnder = (path: string, ancestor: string): boolean =>
+  ancestor === '' || path === ancestor || path.startsWith(ancestor + '/')
 
 // A single folder name (one level), as typed in the new-folder and rename
 // dialogs: no slashes, and the server's rules for the path it would make.
@@ -177,10 +181,19 @@ export function crumbsOf(folder: string, rootName: string): Crumb[] {
 // Shortens a long trail by folding the middle into one "…": the first
 // `keepStart` and the last `keepEnd` stay. Folding fewer than `minHidden`
 // entries would save nothing, so then the trail is left whole.
-export function collapseCrumbs<T>(items: T[], keepStart: number, keepEnd: number, minHidden = 2): { start: T[]; hidden: T[]; end: T[] } {
+export function collapseCrumbs<T>(
+  items: T[],
+  keepStart: number,
+  keepEnd: number,
+  minHidden = 2,
+): { start: T[]; hidden: T[]; end: T[] } {
   const hiddenCount = items.length - keepStart - keepEnd
   if (hiddenCount < Math.max(minHidden, 1)) return { start: items, hidden: [], end: [] }
-  return { start: items.slice(0, keepStart), hidden: items.slice(keepStart, items.length - keepEnd), end: items.slice(items.length - keepEnd) }
+  return {
+    start: items.slice(0, keepStart),
+    hidden: items.slice(keepStart, items.length - keepEnd),
+    end: items.slice(items.length - keepEnd),
+  }
 }
 
 // --- dragging and moving -----------------------------------------------------------
@@ -192,8 +205,11 @@ export const itemKey = (i: FileItem): string => (i.kind === 'page' ? `p:${i.id}`
 export const itemName = (i: FileItem): string => (i.kind === 'page' ? i.label : baseName(i.path))
 
 export type DropPlan =
-  | { ok: true; moving: FileItem[]; // Folders that would land on a folder of the same name.
-      conflicts: FileItem[] }
+  | {
+      ok: true
+      moving: FileItem[] // Folders that would land on a folder of the same name.
+      conflicts: FileItem[]
+    }
   // 'self': a folder onto itself or something inside it; 'nothing': all of it is there already;
   // 'exists': every folder would meet a folder of its name.
   | { ok: false; reason: 'self' | 'nothing' | 'exists' }
@@ -220,7 +236,8 @@ export function planDrop(items: FileItem[], target: string, index?: FolderIndex)
 }
 
 // Folders a set of items cannot be moved into: each folder and everything inside it.
-export const isForbiddenDestination = (items: FileItem[], target: string): boolean => items.some((i) => i.kind === 'folder' && isSameOrUnder(target, i.path))
+export const isForbiddenDestination = (items: FileItem[], target: string): boolean =>
+  items.some((i) => i.kind === 'folder' && isSameOrUnder(target, i.path))
 
 // Items to act on after a menu or a drag starts on `item`: the whole
 // selection when the item is part of it, else only the item.
@@ -233,5 +250,7 @@ export function actingOn(item: FileItem, selected: FileItem[]): FileItem[] {
 // another selected one is already part of it.
 export function pagesInside(items: FileItem[], index: FolderIndex): number {
   const folders = items.filter((i): i is Extract<FileItem, { kind: 'folder' }> => i.kind === 'folder')
-  return folders.filter((f) => !folders.some((o) => o !== f && isSameOrUnder(f.path, o.path))).reduce((n, f) => n + (index.byPath.get(f.path)?.total ?? 0), 0)
+  return folders
+    .filter((f) => !folders.some((o) => o !== f && isSameOrUnder(f.path, o.path)))
+    .reduce((n, f) => n + (index.byPath.get(f.path)?.total ?? 0), 0)
 }

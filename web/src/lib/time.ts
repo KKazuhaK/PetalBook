@@ -18,10 +18,16 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
 
 // "11月21日" / "November 21"; the year only when it is not the current one.
 export const shortDate = (d: Date, now: Date = new Date()) =>
-  d.toLocaleDateString(lang, d.getFullYear() === now.getFullYear() ? { month: 'long', day: 'numeric' } : { year: 'numeric', month: 'long', day: 'numeric' })
+  d.toLocaleDateString(
+    lang,
+    d.getFullYear() === now.getFullYear()
+      ? { month: 'long', day: 'numeric' }
+      : { year: 'numeric', month: 'long', day: 'numeric' },
+  )
 
 // 24-hour clock in both languages ("h23": plain `hour12: false` shows 24:05 in some English locales).
-export const clockTime = (d: Date) => d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+export const clockTime = (d: Date) =>
+  d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 export const absoluteTime = (iso: string) => {
   const d = new Date(iso)

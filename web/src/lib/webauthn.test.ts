@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { b64urlToBytes, bytesToB64url, createCredential, credentialToJSON, creationOptionsFromJSON, getCredential, passkeyFailure, requestOptionsFromJSON } from './webauthn'
+import {
+  b64urlToBytes,
+  bytesToB64url,
+  createCredential,
+  credentialToJSON,
+  creationOptionsFromJSON,
+  getCredential,
+  passkeyFailure,
+  requestOptionsFromJSON,
+} from './webauthn'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -16,13 +25,21 @@ describe('base64url', () => {
 
 describe('options from JSON, by hand when the browser has no converter', () => {
   it('decodes the challenge and the allowed credentials of a sign-in', () => {
-    const o = requestOptionsFromJSON({ challenge: 'AQID', rpId: 'x.test', allowCredentials: [{ type: 'public-key', id: 'BAUG' }] })
+    const o = requestOptionsFromJSON({
+      challenge: 'AQID',
+      rpId: 'x.test',
+      allowCredentials: [{ type: 'public-key', id: 'BAUG' }],
+    })
     expect([...new Uint8Array(o.challenge as ArrayBuffer)]).toEqual([1, 2, 3])
     expect([...new Uint8Array(o.allowCredentials![0].id as ArrayBuffer)]).toEqual([4, 5, 6])
     expect(o.rpId).toBe('x.test')
   })
   it('decodes the user handle and the excluded credentials of a registration', () => {
-    const o = creationOptionsFromJSON({ challenge: 'AQID', user: { id: 'BAUG', name: 'a', displayName: 'A' }, excludeCredentials: [{ type: 'public-key', id: 'BwgJ' }] })
+    const o = creationOptionsFromJSON({
+      challenge: 'AQID',
+      user: { id: 'BAUG', name: 'a', displayName: 'A' },
+      excludeCredentials: [{ type: 'public-key', id: 'BwgJ' }],
+    })
     expect([...new Uint8Array(o.user.id as ArrayBuffer)]).toEqual([4, 5, 6])
     expect([...new Uint8Array(o.excludeCredentials![0].id as ArrayBuffer)]).toEqual([7, 8, 9])
     expect(o.user.name).toBe('a')
@@ -41,10 +58,25 @@ describe('credentials to JSON', () => {
   })
   it('builds the same shape by hand otherwise', () => {
     const buf = (...b: number[]) => new Uint8Array(b).buffer
-    const cred = { id: 'abc', rawId: buf(1, 2, 3), type: 'public-key', response: { clientDataJSON: buf(1), authenticatorData: buf(2), signature: buf(3), userHandle: buf(4) }, getClientExtensionResults: () => ({}) }
-    const j = credentialToJSON(cred as unknown as PublicKeyCredential) as { id: string; rawId: string; response: Record<string, string> }
+    const cred = {
+      id: 'abc',
+      rawId: buf(1, 2, 3),
+      type: 'public-key',
+      response: { clientDataJSON: buf(1), authenticatorData: buf(2), signature: buf(3), userHandle: buf(4) },
+      getClientExtensionResults: () => ({}),
+    }
+    const j = credentialToJSON(cred as unknown as PublicKeyCredential) as {
+      id: string
+      rawId: string
+      response: Record<string, string>
+    }
     expect(j.rawId).toBe('AQID')
-    expect(j.response).toMatchObject({ clientDataJSON: 'AQ', authenticatorData: 'Ag', signature: 'Aw', userHandle: 'BA' })
+    expect(j.response).toMatchObject({
+      clientDataJSON: 'AQ',
+      authenticatorData: 'Ag',
+      signature: 'Aw',
+      userHandle: 'BA',
+    })
   })
 })
 

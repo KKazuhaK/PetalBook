@@ -74,7 +74,10 @@ class MemStorage implements KeyValueStorage {
   }
 }
 
-const doc = (text: string): DocJSON => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] })
+const doc = (text: string): DocJSON => ({
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+})
 const toMd = (d: DocJSON) => (d.content?.[0]?.content?.[0]?.text ?? '') + '\n'
 const norm = (s: string) => s
 
@@ -95,9 +98,15 @@ class Violation extends Error {}
 
 // `copy` makes the second device mostly copy what the person once sent or gave up, and
 // move the file around, which is what makes "ours" and "someone else's" look alike.
-export async function runSequence(seed: number, opts: { steps?: number; profile?: 'mixed' | 'copy' | 'offline' | 'giveup' | 'macro' | 'longoffline' | 'swept' | 'stores' } = {}): Promise<void> {
+export async function runSequence(
+  seed: number,
+  opts: {
+    steps?: number
+    profile?: 'mixed' | 'copy' | 'offline' | 'giveup' | 'macro' | 'longoffline' | 'swept' | 'stores'
+  } = {},
+): Promise<void> {
   const rnd = mulberry32(seed)
-  const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)]
+  const pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)]
   const log: string[] = []
   // A violation found inside a callback of the controller (where it would vanish as an
   // unhandled rejection) is kept and raised by the next check.
@@ -111,16 +120,29 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
   let clock = Date.parse('2026-11-21T08:30:00Z')
   const server: MockServer = createMockServer({ now: () => clock, empty: true })
   const ID = (() => {
-    const r = server.handle('POST', '/api/spaces/default/pages', JSON.stringify({ meta: { title: 'T' }, body: 'F0\n' }), 'application/json')
+    const r = server.handle(
+      'POST',
+      '/api/spaces/default/pages',
+      JSON.stringify({ meta: { title: 'T' }, body: 'F0\n' }),
+      'application/json',
+    )
     return (r.body as Page).id
   })()
   const call = (method: string, path: string, body?: unknown) => {
-    const r = server.handle(method, `/api/spaces/default/pages/${ID}${path}`, body === undefined ? undefined : JSON.stringify(body), method === 'GET' ? null : 'application/json')
-    if (TRACE && method !== 'GET') log.push(`      ${method} ${path} ${JSON.stringify(body)?.slice(0, 120)} -> ${r.status}`)
+    const r = server.handle(
+      method,
+      `/api/spaces/default/pages/${ID}${path}`,
+      body === undefined ? undefined : JSON.stringify(body),
+      method === 'GET' ? null : 'application/json',
+    )
+    if (TRACE && method !== 'GET')
+      log.push(`      ${method} ${path} ${JSON.stringify(body)?.slice(0, 120)} -> ${r.status}`)
     // Every text the file has had: going back to one, or finding it replaced, is not a loss of typed text.
-    if (r.status === 200 && method !== 'GET' && typeof (r.body as Page | undefined)?.rev === 'string') fileTextsEver.add(((r.body as Page).body ?? '').replace(/\n$/, ''))
+    if (r.status === 200 && method !== 'GET' && typeof (r.body as Page | undefined)?.rev === 'string')
+      fileTextsEver.add(((r.body as Page).body ?? '').replace(/\n$/, ''))
     // Every text the server has held as this person's draft, with an answer of 200.
-    if (r.status === 200 && method === 'PUT' && path === '/draft') draftTextsEver.add(String((body as { body?: string }).body ?? '').replace(/\n$/, ''))
+    if (r.status === 200 && method === 'PUT' && path === '/draft')
+      draftTextsEver.add(String((body as { body?: string }).body ?? '').replace(/\n$/, ''))
     return r
   }
   const fileTextsEver = new Set<string>(['F0'])
@@ -177,7 +199,12 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
   let keptMine = false // the person chose to keep their text over a draft they were shown
   // A text A once typed, for B to copy: often an early one, which is what is stale after A adopts
   // a new rev or gives a text up.
-  const copyText = () => (rnd() < 0.45 ? aTexts[Math.floor(rnd() * Math.min(3, aTexts.length))] : rnd() < 0.5 ? aTexts[aTexts.length - 1] : pick(aTexts))
+  const copyText = () =>
+    rnd() < 0.45
+      ? aTexts[Math.floor(rnd() * Math.min(3, aTexts.length))]
+      : rnd() < 0.5
+        ? aTexts[aTexts.length - 1]
+        : pick(aTexts)
   let fault: Fault = null
   let faultBeforeLeft = 0
   // A request held in flight: it reaches the server before or after the interleaved steps, and
@@ -210,20 +237,35 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
   }
   // `ep` is the second device's epoch when the server executed the request (a held request is
   // answered later, but what it saw is what it saw then).
-  const conv = <T,>(r: { status: number; body?: unknown }, ep: number = bEpoch): T => {
+  const conv = <T>(r: { status: number; body?: unknown }, ep: number = bEpoch): T => {
     lastReqEpoch = ep
     if (r.status === 204) return undefined as T
     const b = r.body as { error?: string; message?: string; current?: Page; draft?: PageDraft | null }
     if (r.status === 200 || r.status === 201) return r.body as T
-    throw new ApiError(r.status, (b.error as never) ?? 'unknown', b.message ?? '', b.current, undefined, 'draft' in b ? b.draft : undefined)
+    throw new ApiError(
+      r.status,
+      (b.error as never) ?? 'unknown',
+      b.message ?? '',
+      b.current,
+      undefined,
+      'draft' in b ? b.draft : undefined,
+    )
   }
 
   // A file rev changed from `before` to `after`; whose content is it, and did A just replace B's?
   const fileChanged = (before: Page, after: Page, owner: 'A' | 'B', why: string) => {
     // Replacing B's file is silent only when the file's text is something A itself sent
     // since adopting the rev it holds (the server committed A's own draft, in B's name).
-    if (ownerOfRev.get(before.rev) === 'B' && owner === 'A' && !personSeen.has(before.rev) && !shownBodies.has(before.body) && !refOurs.has(keyOf(before.meta, before.body))) {
-      fail(`I2: the second device's file (${JSON.stringify(before.body)}, rev ${before.rev.slice(0, 6)}) was replaced by A's content ${JSON.stringify(after.body)} without the person having been shown it (${why})`)
+    if (
+      ownerOfRev.get(before.rev) === 'B' &&
+      owner === 'A' &&
+      !personSeen.has(before.rev) &&
+      !shownBodies.has(before.body) &&
+      !refOurs.has(keyOf(before.meta, before.body))
+    ) {
+      fail(
+        `I2: the second device's file (${JSON.stringify(before.body)}, rev ${before.rev.slice(0, 6)}) was replaced by A's content ${JSON.stringify(after.body)} without the person having been shown it (${why})`,
+      )
     }
     ownerOfRev.set(after.rev, owner)
     if (revHistory[revHistory.length - 1] !== after.rev) revHistory.push(after.rev)
@@ -234,8 +276,17 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     if (!v || authorOfVersion.get(v) !== 'B') return
     const d = getPage().draft
     if (!d || d.version !== v) return
-    if (allowReplaceB || aSent.has(`${d.baseRev}|${d.body}`) || d.body === gaveUpBody || keptBodies.has(d.body) || resolvedDrafts.has(d.version)) return
-    fail(`I5: A ${what} the second device's draft ${JSON.stringify(d.body)} (base ${d.baseRev.slice(0, 6)}) without having chosen to keep its own text, and it is not something A sent`)
+    if (
+      allowReplaceB ||
+      aSent.has(`${d.baseRev}|${d.body}`) ||
+      d.body === gaveUpBody ||
+      keptBodies.has(d.body) ||
+      resolvedDrafts.has(d.version)
+    )
+      return
+    fail(
+      `I5: A ${what} the second device's draft ${JSON.stringify(d.body)} (base ${d.baseRev.slice(0, 6)}) without having chosen to keep its own text, and it is not something A sent`,
+    )
   }
 
   const gate = (): Fault => {
@@ -340,7 +391,10 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       debounceMs: 1e9,
       draftDebounceMs: 1e9,
       onConflict: (info) => {
-        if (TRACE) log.push(`      conflict raised: ${info.kind} mine ${JSON.stringify(info.mine.body)} theirs ${JSON.stringify(info.theirs.body)}${info.draft ? ' draft ' + JSON.stringify(info.draft.body) + ' base ' + info.draft.baseRev.slice(0, 6) : ''}${info.after ? ' after' : ''}`)
+        if (TRACE)
+          log.push(
+            `      conflict raised: ${info.kind} mine ${JSON.stringify(info.mine.body)} theirs ${JSON.stringify(info.theirs.body)}${info.draft ? ' draft ' + JSON.stringify(info.draft.body) + ' base ' + info.draft.baseRev.slice(0, 6) : ''}${info.after ? ' after' : ''}`,
+          )
         conflict = info
         conflictRaised = true
         shownBodies.add(info.theirs.body)
@@ -358,7 +412,10 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       },
       onExternalChange: (fresh) => {
         // I8
-        if (novel(text) && !draftTextsEver.has(text) && fileBody() !== bodyOf(text) && draftBody() !== bodyOf(text)) fail(`I8: the editor's text ${text} exists nowhere on the server and the controller replaced it by a reset to file ${JSON.stringify(fresh.body)} (draft ${JSON.stringify(fresh.draft?.body)})`)
+        if (novel(text) && !draftTextsEver.has(text) && fileBody() !== bodyOf(text) && draftBody() !== bodyOf(text))
+          fail(
+            `I8: the editor's text ${text} exists nowhere on the server and the controller replaced it by a reset to file ${JSON.stringify(fresh.body)} (draft ${JSON.stringify(fresh.draft?.body)})`,
+          )
         const p = planRestore(fresh, null, toMd, norm)
         showPlan(p, fresh)
         // The controller was reset to this page: what it holds is what the editor shows.
@@ -406,7 +463,10 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     }
     const page = getPage()
     const plan = planRestore(page, loadDraft(ref, storage), toMd, norm)
-    if (TRACE) log.push(`      open: file rev ${page.rev.slice(0, 6)} body ${JSON.stringify(page.body)} draft ${JSON.stringify(page.draft && { b: page.draft.body, base: page.draft.baseRev.slice(0, 6), stale: page.draft.stale })} local ${JSON.stringify(loadDraft(ref, storage) && { base: loadDraft(ref, storage)!.baseRev.slice(0, 6), sent: loadDraft(ref, storage)!.sent?.length })} -> ${plan.kind}${plan.kind === 'conflict' ? '/' + plan.info.kind : ''}`)
+    if (TRACE)
+      log.push(
+        `      open: file rev ${page.rev.slice(0, 6)} body ${JSON.stringify(page.body)} draft ${JSON.stringify(page.draft && { b: page.draft.body, base: page.draft.baseRev.slice(0, 6), stale: page.draft.stale })} local ${JSON.stringify(loadDraft(ref, storage) && { base: loadDraft(ref, storage)!.baseRev.slice(0, 6), sent: loadDraft(ref, storage)!.sent?.length })} -> ${plan.kind}${plan.kind === 'conflict' ? '/' + plan.info.kind : ''}`,
+      )
     // A file that is exactly something A sent is A's own text (the server committed it): A can build on it.
     if (refOurs.has(keyOf(page.meta, page.body))) personSeen.add(page.rev)
     // ... and so is a file equal to something A sent on the base the browser's copy is on (the
@@ -458,15 +518,26 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     if (gone) return
     const page = getPage()
     // I4
-    if (!bActed && (conflictRaised || controller?.state === 'conflict')) fail(`I4: a conflict with no second device (${what})`)
+    if (!bActed && (conflictRaised || controller?.state === 'conflict'))
+      fail(`I4: a conflict with no second device (${what})`)
     // The editor shows exactly the file the controller holds, with nothing unsaved: the
     // person has that version's text in front of them. (A rev is the hash of the file's
     // bytes, so the same text written again later, by anyone, is the same rev.)
-    if (open && controller.state === 'saved' && !controller.hasUnsaved() && bodyOf(text) === controller.page.body) personSeen.add(controller.page.rev)
+    if (open && controller.state === 'saved' && !controller.hasUnsaved() && bodyOf(text) === controller.page.body)
+      personSeen.add(controller.page.rev)
     // I7
     if (open) {
-      const held = (controller as unknown as { serverDraft: { version: string; baseRev: string; body: string } | null }).serverDraft
-      if (held && authorOfVersion.get(held.version) === 'B' && !shownDrafts.has(held.version) && !aSent.has(`${held.baseRev}|${held.body}`)) fail(`I7: the controller holds the second device's draft ${JSON.stringify(held.body)} (base ${held.baseRev.slice(0, 6)}) as its own, but the editor never displayed it and it is not something A sent (${what})`)
+      const held = (controller as unknown as { serverDraft: { version: string; baseRev: string; body: string } | null })
+        .serverDraft
+      if (
+        held &&
+        authorOfVersion.get(held.version) === 'B' &&
+        !shownDrafts.has(held.version) &&
+        !aSent.has(`${held.baseRev}|${held.body}`)
+      )
+        fail(
+          `I7: the controller holds the second device's draft ${JSON.stringify(held.body)} (base ${held.baseRev.slice(0, 6)}) as its own, but the editor never displayed it and it is not something A sent (${what})`,
+        )
     }
     // The list of own drafts stays small: one store outstanding at most, reduced when observed.
     if (open) {
@@ -478,8 +549,14 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     if (open) {
       const st = controller.state
       const synced = !bActed || lastReqEpoch === bEpoch
-      if (synced && st === 'saved' && page.body !== bodyOf(text) && draftBody() !== bodyOf(text)) fail(`I1: "saved" (internals ${JSON.stringify({ ours: (controller as any).ours.length, unc: (controller as any).uncertain, sd: (controller as any).serverDraft?.version, frev: controller.page.rev.slice(0, 6), unsaved: controller.hasUnsaved(), running: (controller as any).running, q: (controller as any).queued })}) but the server has file ${JSON.stringify(page.body)} draft ${JSON.stringify(draftBody())}, editor ${text}`)
-      if (synced && st === 'drafted' && draftBody() !== bodyOf(text) && page.body !== bodyOf(text)) fail(`I1: "drafted" but the server has file ${JSON.stringify(page.body)} draft ${JSON.stringify(draftBody())}, editor ${text}`)
+      if (synced && st === 'saved' && page.body !== bodyOf(text) && draftBody() !== bodyOf(text))
+        fail(
+          `I1: "saved" (internals ${JSON.stringify({ ours: (controller as any).ours.length, unc: (controller as any).uncertain, sd: (controller as any).serverDraft?.version, frev: controller.page.rev.slice(0, 6), unsaved: controller.hasUnsaved(), running: (controller as any).running, q: (controller as any).queued })}) but the server has file ${JSON.stringify(page.body)} draft ${JSON.stringify(draftBody())}, editor ${text}`,
+        )
+      if (synced && st === 'drafted' && draftBody() !== bodyOf(text) && page.body !== bodyOf(text))
+        fail(
+          `I1: "drafted" but the server has file ${JSON.stringify(page.body)} draft ${JSON.stringify(draftBody())}, editor ${text}`,
+        )
     }
     if (page.rev !== revHistory[revHistory.length - 1]) {
       // Written by the server's own commit (the sweeper) or by something not seen above: the author is the draft's.
@@ -536,7 +613,13 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       server.sweep()
       const after = getPage()
       fileTextsEver.add(after.body.replace(/\n$/, ''))
-      if (after.rev !== before.rev) fileChanged(before, after, before.draft ? (authorOfVersion.get(before.draft.version) ?? 'A') : 'A', 'the server committed a draft')
+      if (after.rev !== before.rev)
+        fileChanged(
+          before,
+          after,
+          before.draft ? (authorOfVersion.get(before.draft.version) ?? 'A') : 'A',
+          'the server committed a draft',
+        )
     },
     bStore: async () => {
       if (gone) return
@@ -555,7 +638,12 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       // On the file's rev, or on an older one (a stale copy of text A sent on a newer base).
       const older = revHistory.filter((r) => r !== p.rev)
       const base = rnd() < 0.5 || older.length === 0 ? p.rev : pick(older)
-      const r = call('PUT', '/draft', { prev: p.draft?.version ?? '', baseRev: base, meta: p.meta, body: bodyOf(copyText()) })
+      const r = call('PUT', '/draft', {
+        prev: p.draft?.version ?? '',
+        baseRev: base,
+        meta: p.meta,
+        body: bodyOf(copyText()),
+      })
       if (r.status !== 200) return
       authorOfVersion.set((r.body as DraftReceipt).version, 'B')
       bActed = true
@@ -575,7 +663,12 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     bCopyCommit: async () => {
       if (gone || aTexts.length === 0) return
       const p = getPage()
-      const r1 = call('PUT', '/draft', { prev: p.draft?.version ?? '', baseRev: p.rev, meta: p.meta, body: bodyOf(copyText()) })
+      const r1 = call('PUT', '/draft', {
+        prev: p.draft?.version ?? '',
+        baseRev: p.rev,
+        meta: p.meta,
+        body: bodyOf(copyText()),
+      })
       if (r1.status !== 200) return
       const v = (r1.body as DraftReceipt).version
       authorOfVersion.set(v, 'B')
@@ -599,7 +692,11 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       if (gone) return
       const p = getPage()
       const t = `B${++n}`
-      const r = call('PUT', '', { baseRev: p.rev, meta: { ...p.meta, title: rnd() < 0.5 ? 'T2' : 'T' }, body: bodyOf(t) })
+      const r = call('PUT', '', {
+        baseRev: p.rev,
+        meta: { ...p.meta, title: rnd() < 0.5 ? 'T2' : 'T' },
+        body: bodyOf(t),
+      })
       if (r.status !== 200) return
       fileChanged(p, r.body as Page, 'B', 'B renamed')
       bActed = true
@@ -661,7 +758,8 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       if (!open || gone) return
       await controller.commit()
       if (controller.state === 'conflict' || controller.state === 'error') return
-      for (let i = Math.floor(rnd() * 3); i > 0; i--) await sub(pick(['type', 'bStore', 'bSave', 'bCopyStore', 'bSavePage']))
+      for (let i = Math.floor(rnd() * 3); i > 0; i--)
+        await sub(pick(['type', 'bStore', 'bSave', 'bCopyStore', 'bSavePage']))
       if (gone) return
       const r = call('POST', '/move', { folder: pick(['', 'x', 'y/z']) })
       if (r.status === 200) controller.adopt(r.body as Page)
@@ -780,14 +878,21 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       const st = controller.state
       if (!novel(t)) return
       if (gone) {
-        if (localText() !== t) fail(`I6: the page was deleted by the second device and the typed text ${t} is no longer in the browser`)
+        if (localText() !== t)
+          fail(`I6: the page was deleted by the second device and the typed text ${t} is no longer in the browser`)
       } else if (st === 'error' || st === 'conflict') {
-        if (!exists(t)) fail(`I3: after leaving in state ${st} the text ${t} is nowhere (file ${JSON.stringify(fileBody())}, draft ${JSON.stringify(draftBody())}, local ${localText()})`)
+        if (!exists(t))
+          fail(
+            `I3: after leaving in state ${st} the text ${t} is nowhere (file ${JSON.stringify(fileBody())}, draft ${JSON.stringify(draftBody())}, local ${localText()})`,
+          )
       } else if (fileBody() !== bodyOf(t) && draftBody() !== bodyOf(t)) {
         // Quiet, yet the server holds neither: only if the second device changed things after the text was stored.
         // A copy in the browser alone is accepted only if the second device acted after the
         // controller last heard from the server (it cannot have known).
-        if (lastReqEpoch === bEpoch) fail(`I3: left quietly with nothing newer from the second device, but the server holds neither the file nor a draft equal to ${t} (local ${localText()})`)
+        if (lastReqEpoch === bEpoch)
+          fail(
+            `I3: left quietly with nothing newer from the second device, but the server holds neither the file nor a draft equal to ${t} (local ${localText()})`,
+          )
         else if (!exists(t)) fail(`I3: left, the text ${t} is nowhere`)
       }
     },
@@ -803,7 +908,10 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       }
       await openEditor()
       // I3 across the reload: the earlier text is shown, or is in a conflict's two sides, or still in a store.
-      if (wasOpen && novel(t) && text !== t && !exists(t) && !(conflict && JSON.stringify(conflict.mine).includes(t))) fail(`I3: the text ${t} was lost across a reload (editor now ${text}; file ${JSON.stringify(fileBody())} draft ${JSON.stringify(draftBody())} local ${localText()}; conflict ${JSON.stringify(conflict)})`)
+      if (wasOpen && novel(t) && text !== t && !exists(t) && !(conflict && JSON.stringify(conflict.mine).includes(t)))
+        fail(
+          `I3: the text ${t} was lost across a reload (editor now ${text}; file ${JSON.stringify(fileBody())} draft ${JSON.stringify(draftBody())} local ${localText()}; conflict ${JSON.stringify(conflict)})`,
+        )
     },
     resolve: async () => resolveWith(rnd() < 0.5 ? 'keep' : 'take'),
   }
@@ -919,30 +1027,120 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     ['adoptThenCopy', 0.3],
   ]
   if (opts.profile === 'copy') {
-    const boost: Record<string, number> = { bCopyStore: 3, bCopyCommit: 4, bSave: 2, bStore: 2, bCommit: 2, sweep: 3, loseNext: 2, autosave: 6, type: 5, resolve: 4, bDeletePage: 0, bRename: 0.3, reload: 2, move: 1 }
+    const boost: Record<string, number> = {
+      bCopyStore: 3,
+      bCopyCommit: 4,
+      bSave: 2,
+      bStore: 2,
+      bCommit: 2,
+      sweep: 3,
+      loseNext: 2,
+      autosave: 6,
+      type: 5,
+      resolve: 4,
+      bDeletePage: 0,
+      bRename: 0.3,
+      reload: 2,
+      move: 1,
+    }
     for (const w of weights) if (w[0] in boost) w[1] = boost[w[0]]
   }
   if (opts.profile === 'offline') {
     // Long offline stretches (several different texts failing) with reloads in between.
-    const boost: Record<string, number> = { burst: 3, reload: 3, loseNext: 3, type: 4, autosave: 4, sweep: 1, bCopyStore: 1, bCopyCommit: 1, bDeletePage: 0 }
+    const boost: Record<string, number> = {
+      burst: 3,
+      reload: 3,
+      loseNext: 3,
+      type: 4,
+      autosave: 4,
+      sweep: 1,
+      bCopyStore: 1,
+      bCopyCommit: 1,
+      bDeletePage: 0,
+    }
     for (const w of weights) if (w[0] in boost) w[1] = boost[w[0]]
   }
   if (opts.profile === 'giveup') {
     // The person stores a text, the page changes under them, they take the other side; then the
     // second device commits a copy of the text they gave up.
-    for (const w of weights) w[1] = ({ type: 3, autosave: 3, bSave: 1, bCopyCommit: 1, resolve: 2, sweep: 1, loseNext: 1, saveVersion: 1, reload: 0.5, giveUp: 4, adoptThenCopy: 4 } as Record<string, number>)[w[0]] ?? 0
+    for (const w of weights)
+      w[1] =
+        (
+          {
+            type: 3,
+            autosave: 3,
+            bSave: 1,
+            bCopyCommit: 1,
+            resolve: 2,
+            sweep: 1,
+            loseNext: 1,
+            saveVersion: 1,
+            reload: 0.5,
+            giveUp: 4,
+            adoptThenCopy: 4,
+          } as Record<string, number>
+        )[w[0]] ?? 0
   }
   if (opts.profile === 'macro') {
-    for (const w of weights) w[1] = ({ type: 2, autosave: 2, sweptReopen: 2, sweptDirty: 3, manyStores: 1, offlineReload: 2, lostThenB: 3, slow: 3, moveSlow: 2, notice: 2, bStore: 1, bSavePage: 1, bCopyCommit: 1, reload: 1, saveVersion: 1, sweep: 1, resolve: 1 } as Record<string, number>)[w[0]] ?? 0
+    for (const w of weights)
+      w[1] =
+        (
+          {
+            type: 2,
+            autosave: 2,
+            sweptReopen: 2,
+            sweptDirty: 3,
+            manyStores: 1,
+            offlineReload: 2,
+            lostThenB: 3,
+            slow: 3,
+            moveSlow: 2,
+            notice: 2,
+            bStore: 1,
+            bSavePage: 1,
+            bCopyCommit: 1,
+            reload: 1,
+            saveVersion: 1,
+            sweep: 1,
+            resolve: 1,
+          } as Record<string, number>
+        )[w[0]] ?? 0
   }
   if (opts.profile === 'swept') {
-    for (const w of weights) w[1] = ({ sweptDirty: 4, sweptReopen: 3, offlineReload: 1, type: 1, autosave: 1, sweep: 1, reload: 1, saveVersion: 1 } as Record<string, number>)[w[0]] ?? 0
+    for (const w of weights)
+      w[1] =
+        (
+          {
+            sweptDirty: 4,
+            sweptReopen: 3,
+            offlineReload: 1,
+            type: 1,
+            autosave: 1,
+            sweep: 1,
+            reload: 1,
+            saveVersion: 1,
+          } as Record<string, number>
+        )[w[0]] ?? 0
   }
   if (opts.profile === 'stores') {
-    for (const w of weights) w[1] = ({ manyStores: 4, type: 1, autosave: 1, saveVersion: 1, sweep: 1, reload: 1, lostThenB: 1 } as Record<string, number>)[w[0]] ?? 0
+    for (const w of weights)
+      w[1] =
+        (
+          { manyStores: 4, type: 1, autosave: 1, saveVersion: 1, sweep: 1, reload: 1, lostThenB: 1 } as Record<
+            string,
+            number
+          >
+        )[w[0]] ?? 0
   }
   if (opts.profile === 'longoffline') {
-    for (const w of weights) w[1] = ({ type: 2, autosave: 2, longOffline: 3, reload: 1, sweep: 1, bStore: 0.3, saveVersion: 1 } as Record<string, number>)[w[0]] ?? 0
+    for (const w of weights)
+      w[1] =
+        (
+          { type: 2, autosave: 2, longOffline: 3, reload: 1, sweep: 1, bStore: 0.3, saveVersion: 1 } as Record<
+            string,
+            number
+          >
+        )[w[0]] ?? 0
   }
   const total = weights.reduce((a, [, w]) => a + w, 0)
   const choose = () => {
@@ -960,7 +1158,10 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
       log.push(name)
       await ops[name]()
       await settle()
-      if (TRACE) log.push(`      -> ${open ? controller.state + (controller.state === 'error' ? ' (' + String(controller.getSnapshot().error?.message) + ')' : '') + ' text ' + text + ' ctrlRev ' + controller.page.rev.slice(0, 6) : 'closed'} server ${gone ? 'gone' : getPage().rev.slice(0, 6) + ' ' + JSON.stringify(getPage().body)}`)
+      if (TRACE)
+        log.push(
+          `      -> ${open ? controller.state + (controller.state === 'error' ? ' (' + String(controller.getSnapshot().error?.message) + ')' : '') + ' text ' + text + ' ctrlRev ' + controller.page.rev.slice(0, 6) : 'closed'} server ${gone ? 'gone' : getPage().rev.slice(0, 6) + ' ' + JSON.stringify(getPage().body)}`,
+        )
       known()
       check(name)
     }
@@ -974,12 +1175,14 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
         const t = text
         await controller.detach()
         open = false
-        if (novel(t) && localText() !== t) fail(`I6: after the page was deleted the typed text ${t} is not in the browser`)
+        if (novel(t) && localText() !== t)
+          fail(`I6: after the page was deleted the typed text ${t} is not in the browser`)
       }
       return
     }
     for (let i = 0; i < 4 && (conflict || controller.state === 'conflict'); i++) {
-      if (!conflict) await openEditor() // a conflict that arose while detached: shown again
+      if (!conflict)
+        await openEditor() // a conflict that arose while detached: shown again
       else {
         conflict = null
         log.push('keepMine')
@@ -999,7 +1202,10 @@ export async function runSequence(seed: number, opts: { steps?: number; profile?
     check('quiesce')
     if (!novel(t)) return
     if (controller.state !== 'conflict' && controller.state !== 'error') {
-      if (fileBody() !== bodyOf(t) && draftBody() !== bodyOf(t)) fail(`I3: after quiescence neither the file nor the server draft holds ${t} (file ${JSON.stringify(fileBody())}, draft ${JSON.stringify(draftBody())}, state ${controller.state})`)
+      if (fileBody() !== bodyOf(t) && draftBody() !== bodyOf(t))
+        fail(
+          `I3: after quiescence neither the file nor the server draft holds ${t} (file ${JSON.stringify(fileBody())}, draft ${JSON.stringify(draftBody())}, state ${controller.state})`,
+        )
     } else if (!exists(t)) fail(`I3: quiescent in ${controller.state}, text ${t} is nowhere`)
   }
   await run()

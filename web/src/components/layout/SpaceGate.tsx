@@ -21,7 +21,8 @@ export function SpaceGate() {
     if (current && !current.disabled) rememberSpace(space)
   }, [current, space])
   if (spaces.isPending || resolving) return <PageFallback />
-  if (spaces.isError && !spaces.data) return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
+  if (spaces.isError && !spaces.data)
+    return <ErrorState message={spaces.error.message} onRetry={() => void spaces.refetch()} />
   if (!current) return <NotFoundPage message={t.editor.spaceMissing} />
   if (current.disabled) return <SpaceDisabled space={current} />
   // A new key per space: nothing of the old one stays mounted.

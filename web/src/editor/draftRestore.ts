@@ -47,9 +47,22 @@ export type RestorePlan =
   // Two versions of the person's text, or the text and the file. The editor
   // shows `content` (mine); the dialog offers the other side. `unsaved` says
   // whether mine exists only in this browser; `token` is the local draft.
-  | { kind: 'conflict'; info: ConflictInfo; content: Content; unsaved: boolean; token?: string; dropLocal: boolean; seed: Seed }
+  | {
+      kind: 'conflict'
+      info: ConflictInfo
+      content: Content
+      unsaved: boolean
+      token?: string
+      dropLocal: boolean
+      seed: Seed
+    }
 
-export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (doc: DocJSON) => string, normalizeBody: (md: string) => string): RestorePlan {
+export function planRestore(
+  page: Page,
+  local: StoredDraft | null,
+  toMarkdown: (doc: DocJSON) => string,
+  normalizeBody: (md: string) => string,
+): RestorePlan {
   const server = page.draft
   const norm = (body: string) => () => normalizeBody(body)
   const serverContent = (): Content => ({ fields: fieldsOf(server!.meta, page.meta), markdown: server!.body })
@@ -57,7 +70,13 @@ export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (
   // The draft the controller holds when the editor shows it.
   const held = (): Ours[] => (server ? [oursOf(server.baseRev, server)] : [])
   const serverShown = () => draftAsPage(page, server!)
-  const serverDraft = () => ({ version: server!.version, baseRev: server!.baseRev, meta: server!.meta, body: server!.body, updated: server!.updated })
+  const serverDraft = () => ({
+    version: server!.version,
+    baseRev: server!.baseRev,
+    meta: server!.meta,
+    body: server!.body,
+    updated: server!.updated,
+  })
 
   // A copy the server had confirmed as its draft decides nothing: that draft is
   // still there (the plan is the server's, and the copy stays with it), or it was
@@ -67,23 +86,47 @@ export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (
     const plan = planRestore(page, null, toMarkdown, normalizeBody)
     const same = server?.version === local.confirmed
     if (plan.kind === 'local') return plan
-    return same && plan.kind !== 'file' ? { ...plan, token: local.token, dropLocal: false } : { ...plan, dropLocal: !same }
+    return same && plan.kind !== 'file'
+      ? { ...plan, token: local.token, dropLocal: false }
+      : { ...plan, dropLocal: !same }
   }
 
   if (!local) {
     if (!server) return { kind: 'file', dropLocal: false, seed: { lineage: page.rev, ours: [] } }
     // A draft the file has moved on from: the draft is "mine", the file "theirs"
     // (unless the draft says what the file says: a leftover, nothing to choose).
-    if (server.stale && buildSave(page, serverAsDraft(), norm(page.body)) === null) return { kind: 'file', dropLocal: false, seed: { lineage: page.rev, ours: held() } }
-    if (server.stale) return { kind: 'conflict', info: { kind: 'file', theirs: page, mine: serverAsDraft() }, content: serverContent(), unsaved: false, dropLocal: false, seed: { lineage: server.baseRev, ours: held() } }
-    return { kind: 'server', content: serverContent(), dropLocal: false, seed: { lineage: server.baseRev, ours: held() } }
+    if (server.stale && buildSave(page, serverAsDraft(), norm(page.body)) === null)
+      return { kind: 'file', dropLocal: false, seed: { lineage: page.rev, ours: held() } }
+    if (server.stale)
+      return {
+        kind: 'conflict',
+        info: { kind: 'file', theirs: page, mine: serverAsDraft() },
+        content: serverContent(),
+        unsaved: false,
+        dropLocal: false,
+        seed: { lineage: server.baseRev, ours: held() },
+      }
+    return {
+      kind: 'server',
+      content: serverContent(),
+      dropLocal: false,
+      seed: { lineage: server.baseRev, ours: held() },
+    }
   }
 
   // The local text as a draft, its body filled in from what it was typed on.
-  const typed: Draft = { ...local.fields, body: local.bodyText ?? (local.bodyJson ? toMarkdown(local.bodyJson) : undefined), ...(local.bodyText !== undefined ? { bodyTyped: true } : {}) }
+  const typed: Draft = {
+    ...local.fields,
+    body: local.bodyText ?? (local.bodyJson ? toMarkdown(local.bodyJson) : undefined),
+    ...(local.bodyText !== undefined ? { bodyTyped: true } : {}),
+  }
   const localContent = (basisBody: string): Content => ({
     fields: local.fields,
-    ...(local.bodyText !== undefined ? { markdown: local.bodyText, typed: true as const } : local.bodyJson ? { doc: local.bodyJson } : { markdown: basisBody }),
+    ...(local.bodyText !== undefined
+      ? { markdown: local.bodyText, typed: true as const }
+      : local.bodyJson
+        ? { doc: local.bodyJson }
+        : { markdown: basisBody }),
   })
   // What the page was when the text was typed, and what had been sent from it.
   const known = { fileRev: local.baseRev, ours: local.sent ?? [] }
@@ -100,20 +143,41 @@ export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (
       // A text that was stored on the server as a draft (it has sent digests) whose draft
       // is gone, with the page moved on, is an older copy: say so, and when it was written.
       const older = local.sent && local.sent.length > 0 ? { older: { savedAt: local.savedAt } } : {}
-      return { kind: 'conflict', info: { kind: 'file', theirs: page, mine, ...older }, content: localContent(page.body), unsaved: true, token: local.token, dropLocal: false, seed: { lineage: local.baseRev, ours: [] } }
+      return {
+        kind: 'conflict',
+        info: { kind: 'file', theirs: page, mine, ...older },
+        content: localContent(page.body),
+        unsaved: true,
+        token: local.token,
+        dropLocal: false,
+        seed: { lineage: local.baseRev, ours: [] },
+      }
     }
     // Our own text was committed and the file moved to it: build on that file, as adopting it does.
     const adopted = d.kind === 'proceed' && d.adoptFile
-    return { kind: 'local', content: localContent(page.body), token: local.token, seed: adopted ? { lineage: page.rev, ours: [] } : { lineage: local.baseRev, ours: known.ours } }
+    return {
+      kind: 'local',
+      content: localContent(page.body),
+      token: local.token,
+      seed: adopted ? { lineage: page.rev, ours: [] } : { lineage: local.baseRev, ours: known.ours },
+    }
   }
 
   const mine: Draft = { ...typed, body: typed.body ?? server.body }
   const equalsDraft = buildSave(serverShown(), mine, norm(server.body)) === null
   // The server has all of it, and the draft can be committed as it is. The copy
   // stays with it (the controller marks it confirmed at its next store).
-  if (equalsDraft && !server.stale) return { kind: 'server', content: serverContent(), dropLocal: false, token: local.token, seed: { lineage: server.baseRev, ours: held() } }
+  if (equalsDraft && !server.stale)
+    return {
+      kind: 'server',
+      content: serverContent(),
+      dropLocal: false,
+      token: local.token,
+      seed: { lineage: server.baseRev, ours: held() },
+    }
   // A stale draft that says what the file says is a leftover, nothing to choose.
-  if (equalsDraft && buildSave(page, serverAsDraft(), norm(page.body)) === null) return { kind: 'file', dropLocal: true, seed: { lineage: page.rev, ours: held() } }
+  if (equalsDraft && buildSave(page, serverAsDraft(), norm(page.body)) === null)
+    return { kind: 'file', dropLocal: true, seed: { lineage: page.rev, ours: held() } }
   const equalsFile = buildSave(page, mine, norm(page.body)) === null
   const d = reconcile(known, { file: page, draft: server }, { equalsFile, equalsDraft })
   if (d.kind === 'conflict-draft') {
@@ -121,7 +185,13 @@ export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (
     // When the server's is also stale, the file is weighed against the winner afterwards.
     return {
       kind: 'conflict',
-      info: { kind: 'draft', theirs: serverShown(), mine, draft: serverDraft(), ...(d.afterFile ? { after: page } : {}) },
+      info: {
+        kind: 'draft',
+        theirs: serverShown(),
+        mine,
+        draft: serverDraft(),
+        ...(d.afterFile ? { after: page } : {}),
+      },
       content: localContent(server.body),
       unsaved: true,
       token: local.token,
@@ -129,8 +199,22 @@ export function planRestore(page: Page, local: StoredDraft | null, toMarkdown: (
       seed: { lineage: local.baseRev, ours: [] },
     }
   }
-  if (d.kind === 'conflict-file') return { kind: 'conflict', info: { kind: 'file', theirs: page, mine }, content: localContent(server.body), unsaved: true, token: local.token, dropLocal: false, seed: { lineage: local.baseRev, ours: [] } }
+  if (d.kind === 'conflict-file')
+    return {
+      kind: 'conflict',
+      info: { kind: 'file', theirs: page, mine },
+      content: localContent(server.body),
+      unsaved: true,
+      token: local.token,
+      dropLocal: false,
+      seed: { lineage: local.baseRev, ours: [] },
+    }
   // Typed on top of the server draft that is there: newer, so it goes up.
   const adopted = d.kind === 'proceed' && d.adoptFile
-  return { kind: 'local', content: localContent(server.body), token: local.token, seed: adopted ? { lineage: page.rev, ours: [] } : { lineage: local.baseRev, ours: known.ours } }
+  return {
+    kind: 'local',
+    content: localContent(server.body),
+    token: local.token,
+    seed: adopted ? { lineage: page.rev, ours: [] } : { lineage: local.baseRev, ours: known.ours },
+  }
 }

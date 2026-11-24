@@ -8,9 +8,9 @@ make check
 ```
 
 `make hooks` 打开 `.githooks/pre-commit`：提交时对暂存的 Go 文件跑 `gofmt -w`，
-对暂存的网页端文件跑 `eslint --fix`，并把结果重新暂存（只暂存了一部分的文件只检查，不改写）。
+对暂存的网页端文件先跑 `prettier --write` 再跑 `eslint --fix`，并把结果重新暂存（只暂存了一部分的文件只检查，不改写）。
 `make hooks` turns on `.githooks/pre-commit`: on commit it runs `gofmt -w` on the staged Go
-files and `eslint --fix` on the staged web files, and stages the result (a file that is
+files, and `prettier --write` then `eslint --fix` on the staged web files, and stages the result (a file that is
 staged in part is only checked, never rewritten).
 
 `make check` 跑拉取请求（PR）会跑的全部检查：gofmt、`go mod tidy` 是否干净、`go vet`、

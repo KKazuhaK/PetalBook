@@ -37,7 +37,8 @@ export function OfflineSync() {
           void qc.invalidateQueries({ queryKey: keys.pages(space) })
         }
         // The person cannot read the space any more, or it was switched off: the list of spaces says so.
-        if (result.outcome === 'gone' || result.outcome === 'disabled') void qc.invalidateQueries({ queryKey: keys.spaces })
+        if (result.outcome === 'gone' || result.outcome === 'disabled')
+          void qc.invalidateQueries({ queryKey: keys.spaces })
       }),
     [qc],
   )
@@ -49,7 +50,11 @@ export function OfflineBanner() {
   const offline = useOffline()
   if (!offline) return null
   return (
-    <div role="status" data-offline-banner="" className="flex items-start gap-2 border-b bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+    <div
+      role="status"
+      data-offline-banner=""
+      className="flex items-start gap-2 border-b bg-muted px-3 py-1.5 text-xs text-muted-foreground"
+    >
       <CloudOff className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
       <span>{t.offline.banner}</span>
     </div>

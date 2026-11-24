@@ -11,13 +11,14 @@ describe('canonicalTag', () => {
     expect(canonicalTag('en-GB')).toBe('en-GB')
   })
   it('refuses what is not a tag, or whose language is not a registered one', () => {
-    for (const bad of ['', 'cn', 'english', 'zh_CN', 'und', 'x-foo', 'en-', '中文', 'zh Hans', 'a'.repeat(40)]) expect(canonicalTag(bad), bad).toBeNull()
+    for (const bad of ['', 'cn', 'english', 'zh_CN', 'und', 'x-foo', 'en-', '中文', 'zh Hans', 'a'.repeat(40)])
+      expect(canonicalTag(bad), bad).toBeNull()
   })
 })
 
 describe('matchTag', () => {
   const have = ['zh-Hans', 'zh-Hant', 'en', 'pt-BR']
-  it('matches a reader\'s language the BCP 47 way', () => {
+  it("matches a reader's language the BCP 47 way", () => {
     expect(matchTag('zh-CN', have)).toBe('zh-Hans')
     expect(matchTag('zh-SG', have)).toBe('zh-Hans')
     expect(matchTag('zh-TW', have)).toBe('zh-Hant')

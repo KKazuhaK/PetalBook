@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { common, createLowlight } from 'lowlight'
 import { isDiagramLanguage } from './diagrams'
-import { filterLanguages, highlightWord, LANGUAGES, languageLabel, languageWord, PICKER_LANGUAGES, resolveLanguage, withLanguage } from './languages'
+import {
+  filterLanguages,
+  highlightWord,
+  LANGUAGES,
+  languageLabel,
+  languageWord,
+  PICKER_LANGUAGES,
+  resolveLanguage,
+  withLanguage,
+} from './languages'
 
 describe('the language list', () => {
   const lowlight = createLowlight(common)
 
   it('only promises colours the highlighter has: every id and alias is registered', () => {
     for (const lang of LANGUAGES) {
-      for (const word of [lang.id, ...(lang.aliases ?? [])]) expect(lowlight.registered(word), `${lang.id}: ${word}`).toBe(true)
+      for (const word of [lang.id, ...(lang.aliases ?? [])])
+        expect(lowlight.registered(word), `${lang.id}: ${word}`).toBe(true)
     }
   })
 

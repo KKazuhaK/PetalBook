@@ -21,7 +21,8 @@ export const TableTools = Extension.create({
             if (!tr.docChanged) return
             const later = new Mapping()
             transactions.slice(i + 1).forEach((next) => later.appendMapping(next.mapping))
-            for (const { newRange } of getChangedRanges(tr)) spans.push([later.map(newRange.from, -1), later.map(newRange.to, 1)])
+            for (const { newRange } of getChangedRanges(tr))
+              spans.push([later.map(newRange.from, -1), later.map(newRange.to, 1)])
           })
           const seen = new Set<number>()
           const tr = state.tr

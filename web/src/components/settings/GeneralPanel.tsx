@@ -53,14 +53,26 @@ function NameSection({ space, readOnly, why }: { space: SpaceInfo; readOnly: boo
       setValue(saved.name)
       toast.success(t.general.nameSaved)
     } catch (err) {
-      setError(err instanceof ApiError && err.code === 'invalid' ? err.message : t.fmt.labelled(t.spaces.failed, err instanceof Error ? err.message : ''))
+      setError(
+        err instanceof ApiError && err.code === 'invalid'
+          ? err.message
+          : t.fmt.labelled(t.spaces.failed, err instanceof Error ? err.message : ''),
+      )
     }
   }
 
   return (
     <SettingsSection title={t.general.nameTitle} id="space-name-title">
       <form className="grid gap-3" onSubmit={(e) => void submit(e)} noValidate>
-        <Field label={t.spaces.nameLabel} help={readOnly ? (why ?? t.general.nameReadOnly) : t.spaces.nameHelp} value={readOnly ? space.name : value} onChange={(e) => setValue(e.target.value)} readOnly={readOnly} error={error} autoComplete="off" />
+        <Field
+          label={t.spaces.nameLabel}
+          help={readOnly ? (why ?? t.general.nameReadOnly) : t.spaces.nameHelp}
+          value={readOnly ? space.name : value}
+          onChange={(e) => setValue(e.target.value)}
+          readOnly={readOnly}
+          error={error}
+          autoComplete="off"
+        />
         {!readOnly && (
           <div>
             <Button type="submit" disabled={update.isPending || value.trim() === space.name}>

@@ -6,7 +6,18 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { Code, Columns2, History, Link2, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
-import { invalidateListings, keys, useActiveSpace, usePage, usePageLinks, useSession, useSpacePermissions, useTags, useTree, useUrls } from '@/api/hooks'
+import {
+  invalidateListings,
+  keys,
+  useActiveSpace,
+  usePage,
+  usePageLinks,
+  useSession,
+  useSpacePermissions,
+  useTags,
+  useTree,
+  useUrls,
+} from '@/api/hooks'
 import type { Page, PageMeta } from '@/api/types'
 import type { VersionContent } from '@/diff'
 import { docToMarkdown, markdownToDoc } from '@/markdown'
@@ -15,12 +26,45 @@ import { draftRefFor, draftStoreFor, loadDraft, parseSavedMarker, savedMarkerKey
 import { LateBound } from '@/editor/lateBound'
 import { recoverDraft } from '@/editor/recoverDraft'
 import { LiveDraft } from '@/editor/liveDraft'
-import { buildSave, fieldsOf, othersOf, SaveController, waitForSaves, type ConflictInfo, type Fields } from '@/editor/saveController'
+import {
+  buildSave,
+  fieldsOf,
+  othersOf,
+  SaveController,
+  waitForSaves,
+  type ConflictInfo,
+  type Fields,
+} from '@/editor/saveController'
 import type { SourceHandle } from '@/source/SourceEditor'
-import { dropOldSource, loadMode, saveMode, saveRawSource, setAsideSource, takeOldSource, useSourceView, type EditMode, type RawSource } from '@/source/useSourceView'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  dropOldSource,
+  loadMode,
+  saveMode,
+  saveRawSource,
+  setAsideSource,
+  takeOldSource,
+  useSourceView,
+  type EditMode,
+  type RawSource,
+} from '@/source/useSourceView'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { ErrorState, PageFallback } from '@/components/common'
 import { setEditableQuietly } from '@/components/editor/editable'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
@@ -159,7 +203,10 @@ export default function PageEditor() {
       <>
         <TopBar />
         <div className="py-24 text-center">
-          <ErrorState message={t.fmt.labelled(t.editor.loadFailed, error?.message ?? '')} onRetry={() => void refetch()} />
+          <ErrorState
+            message={t.fmt.labelled(t.editor.loadFailed, error?.message ?? '')}
+            onRetry={() => void refetch()}
+          />
           <Link to={urls.recent()} className="text-sm text-brand underline underline-offset-4">
             {t.editor.backToList}
           </Link>
@@ -173,7 +220,15 @@ export default function PageEditor() {
   const reopen = () => void qc.resetQueries({ queryKey: keys.page(space, id) }).then(() => setGained((n) => n + 1))
   // One session per page id. It reads `data` once: later cache updates must
   // never reset what the person is typing.
-  return <EditorSession key={`${userId}/${space}/${data.id}/${gained}`} space={space} userId={userId} initial={data} onBackOnline={reopen} />
+  return (
+    <EditorSession
+      key={`${userId}/${space}/${data.id}/${gained}`}
+      space={space}
+      userId={userId}
+      initial={data}
+      onBackOnline={reopen}
+    />
+  )
 }
 
 function MissingPage({ space, id, userId }: { space: string; id: string; userId: string }) {
@@ -199,7 +254,10 @@ function MissingPage({ space, id, userId }: { space: string; id: string; userId:
     if (!draft) return
     setBusy(true)
     try {
-      const page = await recoverDraft(ref, draft, { create: (input) => spaceApi(space).createPage(input), toMarkdown: docToMarkdown })
+      const page = await recoverDraft(ref, draft, {
+        create: (input) => spaceApi(space).createPage(input),
+        toMarkdown: docToMarkdown,
+      })
       void invalidateListings(qc, space)
       toast.success(t.editor.recovered)
       navigate(urls.page(page.id), { replace: true })
@@ -252,13 +310,24 @@ function watchLeave(done: Promise<void>, c: SaveController, id: string) {
     if (c.state === 'error') {
       // Text that never reached the server is in this browser; a draft that did
       // is the server's to write to the file.
-      if (c.hasUnsaved()) toast.error(isUnauthenticated(err) ? t.editor.leaveSignedOut : t.editor.leaveFailed, { duration: 8000 })
+      if (c.hasUnsaved())
+        toast.error(isUnauthenticated(err) ? t.editor.leaveSignedOut : t.editor.leaveFailed, { duration: 8000 })
       else if (!isUnauthenticated(err)) toast.warning(t.editor.leaveDrafted, { duration: 8000 })
     } else if (c.state === 'conflict') toast.warning(t.editor.leftInConflict, { duration: 8000 })
   })
 }
 
-function EditorSession({ space, userId, initial, onBackOnline }: { space: string; userId: string; initial: Page; onBackOnline: () => void }) {
+function EditorSession({
+  space,
+  userId,
+  initial,
+  onBackOnline,
+}: {
+  space: string
+  userId: string
+  initial: Page
+  onBackOnline: () => void
+}) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const urls = useUrls()
@@ -300,11 +369,17 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
   // What this browser kept is the text of someone who could write; it is not offered back.
   // Being offline only stops typing: the drafts are weighed as on any open.
   const [local] = useState(() => (write ? loadDraft(ref) : null))
-  const [restore] = useState(() => planRestore(write ? initial : file, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))))
+  const [restore] = useState(() =>
+    planRestore(write ? initial : file, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))),
+  )
   const content: Content | null = restore.kind === 'file' ? null : restore.content
   // A local copy from before the source field existed carries none: the box then shows
   // what the server has, so the person never types over a value they were not shown.
-  const [fields, setFields] = useState<Fields>(() => (content ? { ...content.fields, source: content.fields.source ?? fieldsOf((initial.draft ?? initial).meta).source } : fieldsOf(initial.meta)))
+  const [fields, setFields] = useState<Fields>(() =>
+    content
+      ? { ...content.fields, source: content.fields.source ?? fieldsOf((initial.draft ?? initial).meta).source }
+      : fieldsOf(initial.meta),
+  )
   // What has been typed, readable when a request runs (see LiveDraft).
   const [live] = useState(() => new LiveDraft(fields, docToMarkdown))
   const [conflict, setConflict] = useState<ConflictInfo | null>(null)
@@ -315,7 +390,9 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
   const subtitleRef = useRef<HTMLTextAreaElement>(null)
 
   // Computed once: a brand-new blank page puts the cursor in the body.
-  const [startInBody] = useState(() => !fields.title && !content?.doc && (content?.markdown ?? initial.body).trim() === '')
+  const [startInBody] = useState(
+    () => !fields.title && !content?.doc && (content?.markdown ?? initial.body).trim() === '',
+  )
   const [initialDoc] = useState(() => content?.doc ?? markdownToDoc(content?.markdown ?? initial.body))
 
   // Called when another tab or device changed the server's copy and this one has
@@ -328,7 +405,10 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
         page: file,
         draft: initial.draft,
         seed: restore.seed,
-        draftToken: restore.kind === 'local' || restore.kind === 'conflict' || restore.kind === 'server' ? restore.token : undefined,
+        draftToken:
+          restore.kind === 'local' || restore.kind === 'conflict' || restore.kind === 'server'
+            ? restore.token
+            : undefined,
         onExternalChange: reload.call,
         read: live.read,
         api: {
@@ -554,7 +634,11 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
   })
   useEffect(() => {
     if (blocker.state !== 'blocked') return
-    const message = lostOnLeave.current ? t.modes.leaveBroken : controller.state === 'conflict' ? t.editor.leaveConflict : t.editor.leaveUnsaved
+    const message = lostOnLeave.current
+      ? t.modes.leaveBroken
+      : controller.state === 'conflict'
+        ? t.editor.leaveConflict
+        : t.editor.leaveUnsaved
     if (window.confirm(message)) blocker.proceed()
     else blocker.reset()
   }, [blocker, controller])
@@ -596,8 +680,19 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
   // Side by side on a screen too narrow for it shows one side: the editor,
   // unless the source text has a problem that only the source view can fix.
   const mode: EditMode = chosenMode === 'split' && !wide ? narrowTo : chosenMode
-  const sv = useSourceView({ id: initial.id, mode, live, controller, editor, setFields, richScroller, source: sourceRef, draftRef: ref })
-  if (narrowTo !== (sv.broken ? 'source' : 'rich') && (sv.broken || mode !== 'source')) setNarrowTo(sv.broken ? 'source' : 'rich')
+  const sv = useSourceView({
+    id: initial.id,
+    mode,
+    live,
+    controller,
+    editor,
+    setFields,
+    richScroller,
+    source: sourceRef,
+    draftRef: ref,
+  })
+  if (narrowTo !== (sv.broken ? 'source' : 'rich') && (sv.broken || mode !== 'source'))
+    setNarrowTo(sv.broken ? 'source' : 'rich')
   const { noteRichChange, settle, hasProblem, landed, brokenText } = sv
   useEffect(() => {
     brokenNow.current = brokenText
@@ -783,7 +878,9 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
     const f = live.fields
     // Header keys written in the source view are part of it.
     const base = controller.page
-    const meta: Record<string, unknown> = { ...(buildSave(base, { ...f, body: undefined }, () => base.body)?.meta ?? base.meta) }
+    const meta: Record<string, unknown> = {
+      ...(buildSave(base, { ...f, body: undefined }, () => base.body)?.meta ?? base.meta),
+    }
     for (const k of ['title', 'subtitle', 'source'] as const) {
       const v = f[k] ?? ''
       if (v === '') delete meta[k]
@@ -848,7 +945,10 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
 
   // "Save version" has something to do when there is text or a draft that is
   // not the file yet, and the request is not already out.
-  const canSave = snapshot.state === 'dirty' || snapshot.state === 'drafted' || (snapshot.state === 'error' && !isUnauthenticated(snapshot.error))
+  const canSave =
+    snapshot.state === 'dirty' ||
+    snapshot.state === 'drafted' ||
+    (snapshot.state === 'error' && !isUnauthenticated(snapshot.error))
 
   return (
     <>
@@ -856,27 +956,61 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
         actions={
           <>
             {readOnly ? (
-              <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground" title={offline ? t.offline.readOnlyNote : t.permissions.readOnlyNote}>
+              <span
+                className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground"
+                title={offline ? t.offline.readOnlyNote : t.permissions.readOnlyNote}
+              >
                 {offline ? t.offline.readOnly : t.permissions.readOnly}
               </span>
             ) : (
-              <SaveIndicator snapshot={snapshot} draftSafe={!controller.hasUnsaved()} onRetry={() => void controller.retry()} onOpenConflict={() => setConflictOpen(true)} />
+              <SaveIndicator
+                snapshot={snapshot}
+                draftSafe={!controller.hasUnsaved()}
+                onRetry={() => void controller.retry()}
+                onOpenConflict={() => setConflictOpen(true)}
+              />
             )}
-            <StarButton target={{ kind: 'page', target: page.id }} labels={{ add: t.fav.addPage, remove: t.fav.removePage }} />
+            <StarButton
+              target={{ kind: 'page', target: page.id }}
+              labels={{ add: t.fav.addPage, remove: t.fav.removePage }}
+            />
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
-              <Button variant="ghost" size="icon-sm" aria-pressed={backlinksOpen} onClick={toggleBacklinks} title={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen} aria-label={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen} className={backlinksOpen ? 'bg-muted' : undefined}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-pressed={backlinksOpen}
+                onClick={toggleBacklinks}
+                title={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
+                aria-label={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
+                className={backlinksOpen ? 'bg-muted' : undefined}
+              >
                 <Link2 />
               </Button>
             )}
             {!historyOpen && (
-              <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} onPointerEnter={() => void loadHistory()} onFocus={() => void loadHistory()} title={t.history.openHint} aria-label={t.history.open}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setHistoryOpen(true)}
+                onPointerEnter={() => void loadHistory()}
+                onFocus={() => void loadHistory()}
+                title={t.history.openHint}
+                aria-label={t.history.open}
+              >
                 <History />
                 <span className="hidden sm:inline">{t.history.open}</span>
               </Button>
             )}
             {!historyOpen && !readOnly && (
-              <Button variant="ghost" size="sm" disabled={!canSave} onClick={() => void controller.commit()} title={t.editor.saveVersionHint} aria-label={t.editor.saveVersion}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!canSave}
+                onClick={() => void controller.commit()}
+                title={t.editor.saveVersionHint}
+                aria-label={t.editor.saveVersion}
+              >
                 <Save />
                 <span className="hidden sm:inline">{t.editor.saveVersion}</span>
               </Button>
@@ -915,133 +1049,177 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
 
       {/* On a wide screen the backlinks stand to the right of the page and make room for themselves. */}
       <div className={backlinksOpen && !historyOpen ? 'lg:pr-80' : undefined}>
-      {historyOpen && (
-        <Suspense fallback={<PageFallback />}>
-          <HistoryMode space={space} pageId={page.id} folder={page.folder} getCurrent={currentContent} saveState={snapshot.state} onClose={() => setHistoryOpen(false)} onRestore={restoreVersion} readOnly={readOnly} />
-        </Suspense>
-      )}
-
-      {/* Under the history view the editor stays as it is (so does everything typed
-          in it), hidden and out of reach of the keyboard. */}
-      <div className={historyOpen ? 'hidden' : mode === 'rich' ? 'flex flex-1 flex-col' : 'flex h-[calc(100dvh-3rem)] flex-col'} inert={historyOpen}>
-      {mode !== 'rich' && sv.problem && (
-        <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
-          <span className="font-medium text-destructive">
-            {t.fmt.labelled(t.modes.problemAt(sv.problem.line), t.modes.problem[sv.problem.code])}
-          </span>
-          {sv.problem.code === 'bad_yaml' && <span className="ml-2 font-mono text-xs text-muted-foreground">{sv.problem.message}</span>}
-          <span className="ml-2 text-muted-foreground">{t.modes.problemHelp}</span>
-          <button type="button" className="ml-2 underline underline-offset-4" onClick={sv.discardBroken}>
-            {t.modes.discardBroken}
-          </button>
-        </div>
-      )}
-      {staleRaw && (
-        <div role="status" className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm">
-          <span>{t.modes.staleRaw}</span>
-          <button type="button" className="ml-2 underline underline-offset-4" onClick={resumeRaw}>
-            {t.modes.staleRawResume}
-          </button>
-          <button type="button" className="ml-2 underline underline-offset-4" onClick={dropRaw}>
-            {t.modes.staleRawDrop}
-          </button>
-        </div>
-      )}
-      <div className={mode === 'rich' ? 'flex flex-1 flex-col' : `grid min-h-0 flex-1 ${mode === 'split' ? 'grid-cols-2 divide-x' : 'grid-cols-1'}`}>
-      {mode !== 'rich' && (
-        <div className="min-h-0 min-w-0" onPointerDownCapture={() => sv.settle('source')} onFocusCapture={() => sv.settle('source')}>
+        {historyOpen && (
           <Suspense fallback={<PageFallback />}>
-            <SourceEditor
-              key={sourceKey}
-              ref={sourceRef}
-              getInitialText={sv.currentText}
-              onChange={sv.onSourceChange}
-              onScroll={sv.onSourceScroll}
-              problemLine={sv.problem?.line ?? null}
-              label={t.modes.sourceLabel}
-              className="h-full"
+            <HistoryMode
+              space={space}
+              pageId={page.id}
+              folder={page.folder}
+              getCurrent={currentContent}
+              saveState={snapshot.state}
+              onClose={() => setHistoryOpen(false)}
+              onRestore={restoreVersion}
               readOnly={readOnly}
             />
           </Suspense>
-        </div>
-      )}
-      <div
-        ref={richScroller}
-        onScroll={mode === 'split' ? sv.onRichScroll : undefined}
-        onPointerDownCapture={mode === 'split' ? () => sv.settle('rich') : undefined}
-        onFocusCapture={mode === 'split' ? () => sv.settle('rich') : undefined}
-        // While the source text does not read as a page the editor side cannot
-        // follow it, so it is out of reach: an edit there would be on old text.
-        inert={mode === 'split' && sv.broken}
-        className={mode === 'source' ? 'hidden' : mode === 'split' ? `min-h-0 min-w-0 overflow-y-auto ${sv.broken ? 'opacity-50' : ''}` : 'flex flex-1 flex-col'}
-      >
-      {editor && !readOnly && (
-        <div className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-12'}`}>
-          <div className="mx-auto max-w-[720px] px-3">
-            <EditorToolbar editor={editor} />
+        )}
+
+        {/* Under the history view the editor stays as it is (so does everything typed
+          in it), hidden and out of reach of the keyboard. */}
+        <div
+          className={
+            historyOpen ? 'hidden' : mode === 'rich' ? 'flex flex-1 flex-col' : 'flex h-[calc(100dvh-3rem)] flex-col'
+          }
+          inert={historyOpen}
+        >
+          {mode !== 'rich' && sv.problem && (
+            <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
+              <span className="font-medium text-destructive">
+                {t.fmt.labelled(t.modes.problemAt(sv.problem.line), t.modes.problem[sv.problem.code])}
+              </span>
+              {sv.problem.code === 'bad_yaml' && (
+                <span className="ml-2 font-mono text-xs text-muted-foreground">{sv.problem.message}</span>
+              )}
+              <span className="ml-2 text-muted-foreground">{t.modes.problemHelp}</span>
+              <button type="button" className="ml-2 underline underline-offset-4" onClick={sv.discardBroken}>
+                {t.modes.discardBroken}
+              </button>
+            </div>
+          )}
+          {staleRaw && (
+            <div role="status" className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm">
+              <span>{t.modes.staleRaw}</span>
+              <button type="button" className="ml-2 underline underline-offset-4" onClick={resumeRaw}>
+                {t.modes.staleRawResume}
+              </button>
+              <button type="button" className="ml-2 underline underline-offset-4" onClick={dropRaw}>
+                {t.modes.staleRawDrop}
+              </button>
+            </div>
+          )}
+          <div
+            className={
+              mode === 'rich'
+                ? 'flex flex-1 flex-col'
+                : `grid min-h-0 flex-1 ${mode === 'split' ? 'grid-cols-2 divide-x' : 'grid-cols-1'}`
+            }
+          >
+            {mode !== 'rich' && (
+              <div
+                className="min-h-0 min-w-0"
+                onPointerDownCapture={() => sv.settle('source')}
+                onFocusCapture={() => sv.settle('source')}
+              >
+                <Suspense fallback={<PageFallback />}>
+                  <SourceEditor
+                    key={sourceKey}
+                    ref={sourceRef}
+                    getInitialText={sv.currentText}
+                    onChange={sv.onSourceChange}
+                    onScroll={sv.onSourceScroll}
+                    problemLine={sv.problem?.line ?? null}
+                    label={t.modes.sourceLabel}
+                    className="h-full"
+                    readOnly={readOnly}
+                  />
+                </Suspense>
+              </div>
+            )}
+            <div
+              ref={richScroller}
+              onScroll={mode === 'split' ? sv.onRichScroll : undefined}
+              onPointerDownCapture={mode === 'split' ? () => sv.settle('rich') : undefined}
+              onFocusCapture={mode === 'split' ? () => sv.settle('rich') : undefined}
+              // While the source text does not read as a page the editor side cannot
+              // follow it, so it is out of reach: an edit there would be on old text.
+              inert={mode === 'split' && sv.broken}
+              className={
+                mode === 'source'
+                  ? 'hidden'
+                  : mode === 'split'
+                    ? `min-h-0 min-w-0 overflow-y-auto ${sv.broken ? 'opacity-50' : ''}`
+                    : 'flex flex-1 flex-col'
+              }
+            >
+              {editor && !readOnly && (
+                <div
+                  className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-12'}`}
+                >
+                  <div className="mx-auto max-w-[720px] px-3">
+                    <EditorToolbar editor={editor} />
+                  </div>
+                </div>
+              )}
+
+              <div className="mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
+                <AutoTextarea
+                  value={fields.title}
+                  readOnly={readOnly}
+                  onChange={(v) => setField('title', v)}
+                  onEnter={() => subtitleRef.current?.focus()}
+                  placeholder={t.editor.titlePlaceholder}
+                  label={t.editor.titlePlaceholder}
+                  className="pb-title"
+                />
+                {(!readOnly || fields.subtitle !== '') && (
+                  <AutoTextarea
+                    ref={subtitleRef}
+                    value={fields.subtitle}
+                    readOnly={readOnly}
+                    onChange={(v) => setField('subtitle', v)}
+                    onEnter={() => editor?.commands.focus('start')}
+                    placeholder={t.editor.subtitlePlaceholder}
+                    label={t.editor.subtitlePlaceholder}
+                    className="pb-subtitle mt-1"
+                  />
+                )}
+                <div className="mt-4 mb-6 flex flex-col gap-2">
+                  <TagsEditor
+                    tags={fields.tags}
+                    onChange={setTags}
+                    suggestions={tags.data?.tags ?? []}
+                    readOnly={readOnly}
+                  />
+                  {(!readOnly || (fields.source ?? '') !== '') && (
+                    <AutoTextarea
+                      readOnly={readOnly}
+                      value={fields.source ?? ''}
+                      onChange={(v) => setField('source', v)}
+                      onEnter={() => editor?.commands.focus('start')}
+                      placeholder={t.editor.sourcePlaceholder}
+                      label={t.editor.sourceLabel}
+                      className="pb-source"
+                    />
+                  )}
+                  {typeName !== '' && (
+                    <Suspense fallback={null}>
+                      <PropertyPanel typeName={typeName} values={propValues} onChange={setProps} readOnly={readOnly} />
+                    </Suspense>
+                  )}
+                </div>
+                {editor && (
+                  <>
+                    <EditorContent editor={editor} />
+                    {!readOnly && (
+                      <>
+                        <SelectionBubble editor={editor} />
+                        <PageLinkPicker
+                          editor={editor}
+                          space={space}
+                          pageId={initial.id}
+                          getFolder={() => controller.page.folder}
+                        />
+                        <LinkPopover editor={editor} />
+                        <ImagePopover editor={editor} />
+                        <TableControls editor={editor} />
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-      )}
-
-      <div className="mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
-        <AutoTextarea
-          value={fields.title}
-          readOnly={readOnly}
-          onChange={(v) => setField('title', v)}
-          onEnter={() => subtitleRef.current?.focus()}
-          placeholder={t.editor.titlePlaceholder}
-          label={t.editor.titlePlaceholder}
-          className="pb-title"
-        />
-        {(!readOnly || fields.subtitle !== '') && (
-        <AutoTextarea
-          ref={subtitleRef}
-          value={fields.subtitle}
-          readOnly={readOnly}
-          onChange={(v) => setField('subtitle', v)}
-          onEnter={() => editor?.commands.focus('start')}
-          placeholder={t.editor.subtitlePlaceholder}
-          label={t.editor.subtitlePlaceholder}
-          className="pb-subtitle mt-1"
-        />
-        )}
-        <div className="mt-4 mb-6 flex flex-col gap-2">
-          <TagsEditor tags={fields.tags} onChange={setTags} suggestions={tags.data?.tags ?? []} readOnly={readOnly} />
-          {(!readOnly || (fields.source ?? '') !== '') && (
-          <AutoTextarea
-            readOnly={readOnly}
-            value={fields.source ?? ''}
-            onChange={(v) => setField('source', v)}
-            onEnter={() => editor?.commands.focus('start')}
-            placeholder={t.editor.sourcePlaceholder}
-            label={t.editor.sourceLabel}
-            className="pb-source"
-          />
-          )}
-          {typeName !== '' && (
-            <Suspense fallback={null}>
-              <PropertyPanel typeName={typeName} values={propValues} onChange={setProps} readOnly={readOnly} />
-            </Suspense>
-          )}
-        </div>
-        {editor && (
-          <>
-            <EditorContent editor={editor} />
-            {!readOnly && (
-              <>
-                <SelectionBubble editor={editor} />
-                <PageLinkPicker editor={editor} space={space} pageId={initial.id} getFolder={() => controller.page.folder} />
-                <LinkPopover editor={editor} />
-                <ImagePopover editor={editor} />
-                <TableControls editor={editor} />
-              </>
-            )}
-          </>
-        )}
-      </div>
-      </div>
-      </div>
-      </div>
       </div>
 
       {backlinksOpen && !historyOpen && (
@@ -1050,8 +1228,24 @@ function EditorSession({ space, userId, initial, onBackOnline }: { space: string
         </Suspense>
       )}
 
-      {conflict && <ConflictDialog open={conflictOpen} onOpenChange={setConflictOpen} info={conflict} onKeepMine={keepMine} onUseTheirs={useTheirs} />}
-      {!readOnly && <MovePageDialog open={moveOpen} onOpenChange={setMoveOpen} current={page.folder} folders={(tree.data?.folders ?? []).map((f) => f.path)} onMove={move} />}
+      {conflict && (
+        <ConflictDialog
+          open={conflictOpen}
+          onOpenChange={setConflictOpen}
+          info={conflict}
+          onKeepMine={keepMine}
+          onUseTheirs={useTheirs}
+        />
+      )}
+      {!readOnly && (
+        <MovePageDialog
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+          current={page.folder}
+          folders={(tree.data?.folders ?? []).map((f) => f.path)}
+          onMove={move}
+        />
+      )}
       <AlertDialog open={deleteOpen && !readOnly} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

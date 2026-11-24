@@ -4,18 +4,22 @@ export const oauthEn: OAuthMessages = {
   consent: {
     title: 'Allow a connection',
     titleFor: (name: string) => `Allow “${name}” to connect?`,
-    intro: 'This app wants to read and write your spaces as you. It gets only the spaces and the access you choose below, and it can never manage members or a space’s settings.',
+    intro:
+      'This app wants to read and write your spaces as you. It gets only the spaces and the access you choose below, and it can never manage members or a space’s settings.',
     signedInAs: (name: string) => `Signed in as ${name}`,
     loading: 'Reading the request…',
     loadFailed: 'Could not read this request',
-    expired: 'This request has expired, was decided already, or is not yours. Go back to the app and start connecting again.',
+    expired:
+      'This request has expired, was decided already, or is not yours. Go back to the app and start connecting again.',
     asking: 'The app asking',
     nameLabel: 'The name it gives itself',
     nameNote: 'The app says this itself and it is not checked; the address below is what to go by.',
     clientLabel: 'The app’s address',
     redirectLabel: 'After you decide, you go back to',
-    redirectHelp: (host: string) => `Your browser is sent to ${host}, and the authorization code with it. If you do not know this address, do not allow.`,
-    punycode: 'Part of this address starts with xn--, which a browser may show as letters that look like another site’s. Be extra careful.',
+    redirectHelp: (host: string) =>
+      `Your browser is sent to ${host}, and the authorization code with it. If you do not know this address, do not allow.`,
+    punycode:
+      'Part of this address starts with xn--, which a browser may show as letters that look like another site’s. Be extra careful.',
     access: 'Access',
     accessNames: { read: 'Read only', write: 'Read and write' },
     accessHelp: 'Read only can look; read and write can also create, change and move pages.',
@@ -43,7 +47,8 @@ export const oauthEn: OAuthMessages = {
     revoke: 'Disconnect',
     revokeLabel: (name: string) => `Disconnect "${name}"`,
     revokeTitle: 'Disconnect this app?',
-    revokeHelp: (name: string) => `"${name}" loses its access at once; to connect it again you approve it again. This cannot be undone.`,
+    revokeHelp: (name: string) =>
+      `"${name}" loses its access at once; to connect it again you approve it again. This cannot be undone.`,
     revokeConfirm: 'Disconnect',
     revokeFailed: 'Could not disconnect it',
     revoked: 'Disconnected',
@@ -52,10 +57,12 @@ export const oauthEn: OAuthMessages = {
   },
   admin: {
     mcpTitle: 'MCP and OAuth',
-    mcpHelp: 'Off, /mcp and the whole authorization server (discovery, authorization, tokens, registration) answer 404; grants are kept and can still be listed and disconnected, and come back when it is on.',
+    mcpHelp:
+      'Off, /mcp and the whole authorization server (discovery, authorization, tokens, registration) answer 404; grants are kept and can still be listed and disconnected, and come back when it is on.',
     mcpLabel: 'Serve MCP and OAuth',
     oauthOn: 'The authorization server is running.',
-    oauthOff: 'The authorization server is not running: it needs the server started with --public-url, and the switch above on.',
+    oauthOff:
+      'The authorization server is not running: it needs the server started with --public-url, and the switch above on.',
     switchFailed: 'Could not change the switch',
     all: 'Everyone’s connected apps',
     allHelp: 'Each is one app approved by one person. Disconnecting takes effect at once.',

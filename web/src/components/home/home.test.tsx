@@ -3,7 +3,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { th } from '@/i18n/home'
-import { adminRequests, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  locationText,
+  mount,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { sender, type Send } from '@/testing/listKit'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { tzOffset } from '@/lib/templates'
@@ -33,14 +43,32 @@ const home = () => document.querySelector<HTMLElement>('[data-slot="home"]')
 const greeting = () => document.querySelector('[data-slot="greeting"]')?.textContent ?? ''
 const daily = () => document.querySelector<HTMLElement>('[data-slot="daily"]')
 const another = () => document.querySelector<HTMLButtonElement>('[data-slot="daily-another"]')
-const section = (title: string) => [...document.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent === title) ?? null
-const spaceRequests = () => m!.requests.filter((r) => r.url.startsWith('/api/spaces/')).map((r) => `${r.method} ${r.url.replace(/^\/api\/spaces\/[^/]+/, '')}`)
-const ready = () => settle(() => home() !== null && greeting() !== '' && document.querySelector('[aria-busy="true"]') === null, 'the home page')
+const section = (title: string) =>
+  [...document.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent === title) ?? null
+const spaceRequests = () =>
+  m!.requests
+    .filter((r) => r.url.startsWith('/api/spaces/'))
+    .map((r) => `${r.method} ${r.url.replace(/^\/api\/spaces\/[^/]+/, '')}`)
+const ready = () =>
+  settle(
+    () => home() !== null && greeting() !== '' && document.querySelector('[aria-busy="true"]') === null,
+    'the home page',
+  )
 
 // A folder of texts, pages in it, and the space's daily text coming from it.
 function seedTexts(send: Send, count = 3) {
   send('POST', '/folders', { path: '文案' })
-  const ids = Array.from({ length: count }, (_, i) => (send('POST', '/pages', { folder: '文案', meta: { title: `暮雪${i}`, subtitle: `副${i}` }, body: `第 ${i} 条文案\n` }).body as { id: string }).id)
+  const ids = Array.from(
+    { length: count },
+    (_, i) =>
+      (
+        send('POST', '/pages', {
+          folder: '文案',
+          meta: { title: `暮雪${i}`, subtitle: `副${i}` },
+          body: `第 ${i} 条文案\n`,
+        }).body as { id: string }
+      ).id,
+  )
   expect(send('PUT', '/daily/settings', { daily: { folder: '文案' } }).status).toBe(200)
   return ids
 }
@@ -55,7 +83,12 @@ describe('the home page, single-user mode', () => {
       server: { mode: 'single' },
     })
     await ready()
-    await settle(() => section(th.favorites.title)?.textContent?.includes(th.favorites.empty) === true && section(th.inbox.title)?.querySelector('.animate-pulse') === null, 'the blocks')
+    await settle(
+      () =>
+        section(th.favorites.title)?.textContent?.includes(th.favorites.empty) === true &&
+        section(th.inbox.title)?.querySelector('.animate-pulse') === null,
+      'the blocks',
+    )
     expect(section(th.quick.title)?.querySelector('textarea')).not.toBeNull()
     const recent = section(th.cont.title)!
     expect(recent.querySelectorAll('li').length).toBe(8)
@@ -67,7 +100,9 @@ describe('the home page, single-user mode', () => {
     expect(daily()).toBeNull()
     const asked = spaceRequests()
     expect(asked.length).toBeLessThanOrEqual(5)
-    expect(asked).toEqual(expect.arrayContaining(['GET /pages?folder=&recursive=true&limit=8', 'GET /favorites', 'GET /tree']))
+    expect(asked).toEqual(
+      expect.arrayContaining(['GET /pages?folder=&recursive=true&limit=8', 'GET /favorites', 'GET /tree']),
+    )
     expect(asked.filter((r) => r.includes('/daily?'))).toHaveLength(1)
     expect(asked.filter((r) => r.startsWith('GET /pages?'))).toHaveLength(2)
   })
@@ -90,7 +125,10 @@ describe('the home page, single-user mode', () => {
     const before = m.requests.filter((r) => r.url.includes('/pages?folder=Inbox')).length
     await type(box, '路上想到的一句')
     await click([...section(th.quick.title)!.querySelectorAll('button')].find((b) => b.textContent === th.quick.save))
-    await settle(() => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/spaces/default/pages'), 'the note is sent')
+    await settle(
+      () => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/spaces/default/pages'),
+      'the note is sent',
+    )
     const post = m.requests.find((r) => r.method === 'POST' && r.url === '/api/spaces/default/pages')!
     expect(JSON.parse(post.body!)).toEqual({ folder: 'Inbox', body: '路上想到的一句\n', tz: tzOffset() })
     await settle(() => box.value === '', 'the box is empty')
@@ -164,7 +202,9 @@ describe('the text of the day', () => {
     const server = m.server as { handle: (...a: any[]) => unknown }
     const real = server.handle.bind(server)
     server.handle = (method: string, url: string, ...rest: unknown[]) =>
-      url.includes('skip=1') ? { status: 400, body: { error: 'skip_too_large', message: 'skip is too large' } } : real(method, url, ...rest)
+      url.includes('skip=1')
+        ? { status: 400, body: { error: 'skip_too_large', message: 'skip is too large' } }
+        : real(method, url, ...rest)
     await ready()
     await settle(() => daily() !== null && another() !== null, 'the text and the button')
     const first = daily()!.textContent
@@ -207,7 +247,10 @@ describe('the text of the day', () => {
   })
 
   describe('in accounts mode', () => {
-    const open = (scene: (admin: ReturnType<typeof adminRequests>, space: string) => void, options: { entries?: string } = {}) =>
+    const open = (
+      scene: (admin: ReturnType<typeof adminRequests>, space: string) => void,
+      options: { entries?: string } = {},
+    ) =>
       mount(routes, {
         signIn: true,
         server: { mode: 'accounts' },
@@ -233,7 +276,19 @@ describe('the text of the day', () => {
     })
 
     const withApi = (id: string) => (admin: ReturnType<typeof adminRequests>, space: string) => {
-      admin('PUT', `/api/admin/daily/apis/${id}`, { id, name: '一言', lang: 'zh', url: 'https://example.org/q', text: 'hitokoto', source: 'from', author: 'from_who', link: 'https://hitokoto.cn?uuid={uuid}', refresh: 'daily', rps: 5, enabled: true })
+      admin('PUT', `/api/admin/daily/apis/${id}`, {
+        id,
+        name: '一言',
+        lang: 'zh',
+        url: 'https://example.org/q',
+        text: 'hitokoto',
+        source: 'from',
+        author: 'from_who',
+        link: 'https://hitokoto.cn?uuid={uuid}',
+        refresh: 'daily',
+        rps: 5,
+        enabled: true,
+      })
       admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: false, apis: [id] })
     }
 
@@ -269,7 +324,11 @@ describe('the text of the day', () => {
       m = await open(() => undefined)
       await ready()
       await settle(() => m!.requests.some((r) => r.url.includes('/daily?')), 'asked')
-      await settle(() => document.querySelector('[data-slot="daily"]') === null && document.querySelector('.animate-pulse') === null, 'settled')
+      await settle(
+        () =>
+          document.querySelector('[data-slot="daily"]') === null && document.querySelector('.animate-pulse') === null,
+        'settled',
+      )
       expect(daily()).toBeNull()
       expect(greeting()).not.toBe('')
     })
@@ -326,12 +385,20 @@ describe('the greeting', () => {
   })
 
   it('a long absence is noticed on the first visit of the day, and the first visit is remembered for the day', async () => {
-    localStorage.setItem('pb.home.visit.local.default', JSON.stringify({ date: '2026-10-01', first: true, absentDays: 0 }))
+    localStorage.setItem(
+      'pb.home.visit.local.default',
+      JSON.stringify({ date: '2026-10-01', first: true, absentDays: 0 }),
+    )
     fixed(2026, 11, 25, 15)
     m = await opens()
     await ready()
     expect(greeting()).toMatch(/55 天|好久不见|你回来啦/)
-    expect(JSON.parse(localStorage.getItem('pb.home.visit.local.default')!)).toMatchObject({ date: '2026-11-25', first: true, absentDays: 55, seen: true })
+    expect(JSON.parse(localStorage.getItem('pb.home.visit.local.default')!)).toMatchObject({
+      date: '2026-11-25',
+      first: true,
+      absentDays: 55,
+      seen: true,
+    })
     const first = greeting()
     await m.unmount()
     fixed(2026, 11, 25, 16)
@@ -351,10 +418,16 @@ describe('the greeting', () => {
     expect(greeting()).toMatch(/刚写完|写得不错/)
   })
 
-  it('does not take another person\'s save for the person\'s own', async () => {
+  it("does not take another person's save for the person's own", async () => {
     fixed(2026, 11, 25, 15)
     // Pages written just now by someone else in the space; this browser wrote nothing.
-    m = await mount(routes, { entries: (s) => { for (let i = 0; i < 4; i++) sender(s)('POST', '/pages', { folder: '', body: `别人写的${i}\n` }); return ['/s/default'] }, server: { mode: 'single', empty: true } })
+    m = await mount(routes, {
+      entries: (s) => {
+        for (let i = 0; i < 4; i++) sender(s)('POST', '/pages', { folder: '', body: `别人写的${i}\n` })
+        return ['/s/default']
+      },
+      server: { mode: 'single', empty: true },
+    })
     await ready()
     expect(greeting()).not.toMatch(/刚写完|写得不错|今天写了/)
   })
@@ -374,7 +447,7 @@ describe('the greeting', () => {
       signIn: true,
       server: { mode: 'accounts' },
       entries: (server) => {
-        const space = ((adminRequests(server)('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0]).id
+        const space = (adminRequests(server)('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
         localStorage.setItem('pb.space', space)
         return [`/s/${space}`]
       },

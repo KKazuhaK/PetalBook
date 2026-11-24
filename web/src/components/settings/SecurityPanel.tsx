@@ -9,7 +9,16 @@ import { ProviderIcon } from '@/components/auth/ProviderIcon'
 import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { absoluteTime } from '@/lib/time'
@@ -25,7 +34,13 @@ export function SecurityPanel() {
   const session = useSession()
   const account = useAccount(session.data?.mode === 'accounts' && !!session.data.user)
   if (account.isPending || !session.data) return <PageFallback />
-  if (account.isError) return <ErrorState message={t.fmt.labelled(t.settings.loadFailed, account.error.message)} onRetry={() => void account.refetch()} />
+  if (account.isError)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(t.settings.loadFailed, account.error.message)}
+        onRetry={() => void account.refetch()}
+      />
+    )
   return (
     <div className="space-y-8">
       <Sections account={account.data} />
@@ -56,7 +71,9 @@ function Sections({ account }: { account: AccountInfo }) {
   }, [linkError])
   return (
     <>
-      {linkError && <FormMessage focusRef={messageRef}>{t.fmt.labelled(ts.identities.linkFailed, linkError)}</FormMessage>}
+      {linkError && (
+        <FormMessage focusRef={messageRef}>{t.fmt.labelled(ts.identities.linkFailed, linkError)}</FormMessage>
+      )}
       <PasswordSection account={account} />
       <PasskeysSection account={account} />
       <Identities account={account} />
@@ -80,7 +97,9 @@ function PasswordSection({ account }: { account: AccountInfo }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{has ? t.settings.changePassword : t.settings.setPassword}</DialogTitle>
-            <DialogDescription className="sr-only">{has ? t.settings.passwordIsSet : t.settings.setHelp}</DialogDescription>
+            <DialogDescription className="sr-only">
+              {has ? t.settings.passwordIsSet : t.settings.setHelp}
+            </DialogDescription>
           </DialogHeader>
           <PasswordForm
             account={account}
@@ -135,9 +154,35 @@ function PasswordForm({ account, onDone }: { account: AccountInfo; onDone: (mess
     <form className="grid gap-4" onSubmit={(e) => void submit(e)} noValidate>
       {/* Lets a password manager tie the new password to this account. */}
       <input type="text" name="username" autoComplete="username" value={account.user.username} readOnly hidden />
-      {has && <Field label={t.settings.current} error={fieldError.current} type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" required />}
-      <Field label={t.settings.newPassword} help={t.auth.passwordHelp} error={fieldError.password} type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" required />
-      <Field label={t.auth.confirmPassword} type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" required />
+      {has && (
+        <Field
+          label={t.settings.current}
+          error={fieldError.current}
+          type="password"
+          value={current}
+          onChange={(e) => setCurrent(e.target.value)}
+          autoComplete="current-password"
+          required
+        />
+      )}
+      <Field
+        label={t.settings.newPassword}
+        help={t.auth.passwordHelp}
+        error={fieldError.password}
+        type="password"
+        value={next}
+        onChange={(e) => setNext(e.target.value)}
+        autoComplete="new-password"
+        required
+      />
+      <Field
+        label={t.auth.confirmPassword}
+        type="password"
+        value={again}
+        onChange={(e) => setAgain(e.target.value)}
+        autoComplete="new-password"
+        required
+      />
       <FormMessage>{error}</FormMessage>
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={busy}>
@@ -173,7 +218,10 @@ function Identities({ account }: { account: AccountInfo }) {
     setBusy(true)
     try {
       await api.removeIdentity(removing.id)
-      qc.setQueryData<AccountInfo>(keys.account, (prev) => prev && { ...prev, identities: prev.identities.filter((i) => i.id !== removing.id) })
+      qc.setQueryData<AccountInfo>(
+        keys.account,
+        (prev) => prev && { ...prev, identities: prev.identities.filter((i) => i.id !== removing.id) },
+      )
       setRemoving(null)
     } catch (err) {
       setRemoving(null)
@@ -190,10 +238,19 @@ function Identities({ account }: { account: AccountInfo }) {
     <SettingsSection title={t.settings.identities}>
       <SettingsRows>
         {linkable.length > 0 && (
-          <SettingsRow title={ts.identities.linkTo} help={account.identities.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}>
+          <SettingsRow
+            title={ts.identities.linkTo}
+            help={account.identities.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}
+          >
             <div className="grid grid-cols-1 gap-2">
               {linkable.map((p) => (
-                <Button key={`${p.kind}/${p.slug}`} type="button" variant="outline" className="w-full min-w-0 justify-start gap-2" onClick={() => void link(p)}>
+                <Button
+                  key={`${p.kind}/${p.slug}`}
+                  type="button"
+                  variant="outline"
+                  className="w-full min-w-0 justify-start gap-2"
+                  onClick={() => void link(p)}
+                >
                   <ProviderIcon icon={p.icon} />
                   <span className="min-w-0 truncate">{ts.identities.link(p.name)}</span>
                 </Button>
@@ -202,8 +259,20 @@ function Identities({ account }: { account: AccountInfo }) {
           </SettingsRow>
         )}
         {account.identities.map((i) => (
-          <SettingsRow key={i.id} title={i.providerSlug ? i.provider : `${ts.identities.deleted}: ${i.provider}`} help={`${i.label} · ${t.settings.linkedOn(absoluteTime(i.created))}`}>
-            <Button type="button" variant="outline" size="sm" onClick={() => { setError(''); setRemoving(i) }}>
+          <SettingsRow
+            key={i.id}
+            title={i.providerSlug ? i.provider : `${ts.identities.deleted}: ${i.provider}`}
+            help={`${i.label} · ${t.settings.linkedOn(absoluteTime(i.created))}`}
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setError('')
+                setRemoving(i)
+              }}
+            >
               {t.settings.remove}
             </Button>
           </SettingsRow>
@@ -214,7 +283,9 @@ function Identities({ account }: { account: AccountInfo }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t.settings.removeTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{removing ? t.settings.removeHelp(removing.label || removing.provider) : ''}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {removing ? t.settings.removeHelp(removing.label || removing.provider) : ''}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t.settings.cancel}</AlertDialogCancel>

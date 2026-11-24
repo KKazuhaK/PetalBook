@@ -18,33 +18,40 @@ export interface HeaderProblem {
   code: 'no_header' | 'unterminated' | 'bad_yaml' | 'not_mapping' | 'id'
 }
 
-export const composeFile = (header: string, body: string) => `---\n${header}${header === '' || header.endsWith('\n') ? '' : '\n'}---\n${body}`
+export const composeFile = (header: string, body: string) =>
+  `---\n${header}${header === '' || header.endsWith('\n') ? '' : '\n'}---\n${body}`
 
 const isFence = (line: string, closing: boolean) => {
   const t = line.replace(/[ \t]+$/, '')
   return t === '---' || (closing && t === '...')
 }
 
-export type SplitFile = { ok: true; header: string; body: string; bodyLine: number } | { ok: false; problem: HeaderProblem }
+export type SplitFile =
+  { ok: true; header: string; body: string; bodyLine: number } | { ok: false; problem: HeaderProblem }
 
 // `bodyLine` is the 1-based line of the file on which the body starts.
 export function splitFile(text: string): SplitFile {
   const s = text.replace(/\r\n/g, '\n')
   const firstEnd = s.indexOf('\n')
   const first = firstEnd < 0 ? s : s.slice(0, firstEnd)
-  if (!isFence(first, false)) return { ok: false, problem: { line: 1, code: 'no_header', message: 'the first line must be ---' } }
+  if (!isFence(first, false))
+    return { ok: false, problem: { line: 1, code: 'no_header', message: 'the first line must be ---' } }
   let pos = firstEnd < 0 ? s.length : firstEnd + 1
   const start = pos
   let line = 2
   while (pos < s.length) {
     const end = s.indexOf('\n', pos)
     const l = end < 0 ? s.slice(pos) : s.slice(pos, end)
-    if (isFence(l, true)) return { ok: true, header: s.slice(start, pos), body: end < 0 ? '' : s.slice(end + 1), bodyLine: line + 1 }
+    if (isFence(l, true))
+      return { ok: true, header: s.slice(start, pos), body: end < 0 ? '' : s.slice(end + 1), bodyLine: line + 1 }
     if (end < 0) break
     pos = end + 1
     line++
   }
-  return { ok: false, problem: { line: 1, code: 'unterminated', message: 'the header is opened with --- but never closed' } }
+  return {
+    ok: false,
+    problem: { line: 1, code: 'unterminated', message: 'the header is opened with --- but never closed' },
+  }
 }
 
 export type ParsedHeader = { ok: true; fields: Fields; meta: PageMeta } | { ok: false; problem: HeaderProblem }
@@ -60,19 +67,44 @@ export function parseHeader(header: string, id: string, firstLine = 2): ParsedHe
     const e = doc.errors[0]
     return { ok: false, problem: { line: at(e.pos?.[0]), code: 'bad_yaml', message: e.message.split('\n')[0] } }
   }
-  if (doc.contents !== null && !isMap(doc.contents)) return { ok: false, problem: { line: firstLine, code: 'not_mapping', message: 'the header must be a list of `key: value` lines' } }
+  if (doc.contents !== null && !isMap(doc.contents))
+    return {
+      ok: false,
+      problem: { line: firstLine, code: 'not_mapping', message: 'the header must be a list of `key: value` lines' },
+    }
   // The id is compared as written: ten digits would otherwise read as a number.
   const idNode = isMap(doc.contents) ? doc.contents.get('id', true) : undefined
-  const idText = isScalar(idNode) ? (typeof idNode.source === 'string' ? idNode.source : String(idNode.value)) : undefined
+  const idText = isScalar(idNode)
+    ? typeof idNode.source === 'string'
+      ? idNode.source
+      : String(idNode.value)
+    : undefined
   if (idText !== id) {
     const range = (idNode as { range?: [number, number, number] } | undefined)?.range
-    return { ok: false, problem: { line: at(range?.[0]), code: 'id', message: idText === undefined ? `the header must keep \`id: ${id}\`` : `the id cannot be changed; it must stay \`${id}\`` } }
+    return {
+      ok: false,
+      problem: {
+        line: at(range?.[0]),
+        code: 'id',
+        message:
+          idText === undefined
+            ? `the header must keep \`id: ${id}\``
+            : `the id cannot be changed; it must stay \`${id}\``,
+      },
+    }
   }
   let js: unknown
   try {
     js = doc.toJS({ maxAliasCount: 50 })
   } catch (e) {
-    return { ok: false, problem: { line: firstLine, code: 'bad_yaml', message: e instanceof Error ? e.message : 'the header cannot be read' } }
+    return {
+      ok: false,
+      problem: {
+        line: firstLine,
+        code: 'bad_yaml',
+        message: e instanceof Error ? e.message : 'the header cannot be read',
+      },
+    }
   }
   const meta: PageMeta = { ...(js as PageMeta), id }
   for (const [k, v] of Object.entries(meta)) {

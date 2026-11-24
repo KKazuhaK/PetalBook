@@ -4,7 +4,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 import type { RemoteState } from '../src/api/types.ts'
-import { createMockServer, MOCK_ADMIN, MOCK_INVITE_TOKEN, MOCK_SETUP_TOKEN, type MockOptions } from '../src/api/mock/server.ts'
+import {
+  createMockServer,
+  MOCK_ADMIN,
+  MOCK_INVITE_TOKEN,
+  MOCK_SETUP_TOKEN,
+  type MockOptions,
+} from '../src/api/mock/server.ts'
 
 // The body as bytes: an uploaded file must reach the mock unchanged. JSON
 // requests read the same bytes as text.
@@ -34,15 +40,37 @@ function optionsFromEnv(): MockOptions {
   const oidc = { name: '示例单点登录' }
   // A few providers to look at: the first (`sso`) answers the pre-2.8 endpoints, the others are of the other kinds.
   const providers: MockOptions['providers'] = [
-    { slug: 'campus', kind: 'saml', name: 'Campus login', order: 1, saml: { metadataUrl: 'https://idp.example/metadata' } },
-    { slug: 'github', kind: 'github', name: 'GitHub', icon: 'preset:github', order: 2, github: { clientId: 'dev', organizations: ['KazuhaHub'] } },
+    {
+      slug: 'campus',
+      kind: 'saml',
+      name: 'Campus login',
+      order: 1,
+      saml: { metadataUrl: 'https://idp.example/metadata' },
+    },
+    {
+      slug: 'github',
+      kind: 'github',
+      name: 'GitHub',
+      icon: 'preset:github',
+      order: 2,
+      github: { clientId: 'dev', organizations: ['KazuhaHub'] },
+    },
   ]
   if (mode === 'setup') return { mode: 'accounts', admin: false, oidc, providers }
   if (mode !== 'accounts') throw new Error(`MOCK_MODE must be single, accounts or setup, not ${mode}`)
   const start = process.env.MOCK_REMOTE
-  if (start && !['ok', 'offline', 'rewritten', 'error'].includes(start)) throw new Error(`MOCK_REMOTE must be ok, offline, rewritten or error, not ${start}`)
+  if (start && !['ok', 'offline', 'rewritten', 'error'].includes(start))
+    throw new Error(`MOCK_REMOTE must be ok, offline, rewritten or error, not ${start}`)
   // MOCK_OAUTH=1 plays a server with an authorization server: /api/_mock/oauth opens the consent page.
-  return { mode: 'accounts', oidc, providers, oauth: process.env.MOCK_OAUTH === '1', invite: { token: MOCK_INVITE_TOKEN }, github: { configured: true }, ...(start ? { remote: { start: start as RemoteState } } : {}) }
+  return {
+    mode: 'accounts',
+    oidc,
+    providers,
+    oauth: process.env.MOCK_OAUTH === '1',
+    invite: { token: MOCK_INVITE_TOKEN },
+    github: { configured: true },
+    ...(start ? { remote: { start: start as RemoteState } } : {}),
+  }
 }
 
 export function mockApi(): Plugin {
@@ -57,13 +85,23 @@ export function mockApi(): Plugin {
         const origin = vite.resolvedUrls?.local[0]?.replace(/\/$/, '') ?? ''
         if (options.mode !== 'accounts') return
         if (options.admin === false) console.log(`[mock] first run: ${origin}/setup#${MOCK_SETUP_TOKEN}`)
-        else console.log(`[mock] sign in as ${MOCK_ADMIN.username} / ${MOCK_ADMIN.password}; invite link: ${origin}/invite#${MOCK_INVITE_TOKEN}`)
+        else
+          console.log(
+            `[mock] sign in as ${MOCK_ADMIN.username} / ${MOCK_ADMIN.password}; invite link: ${origin}/invite#${MOCK_INVITE_TOKEN}`,
+          )
       })
       vite.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
         if (!req.url?.startsWith('/api/')) return next()
         const body = await readBody(req)
         if (delay > 0) await new Promise((r) => setTimeout(r, delay))
-        const out = server.handle(req.method ?? 'GET', req.url, body.toString('utf8'), req.headers['content-type'], req.headers.cookie, new Uint8Array(body))
+        const out = server.handle(
+          req.method ?? 'GET',
+          req.url,
+          body.toString('utf8'),
+          req.headers['content-type'],
+          req.headers.cookie,
+          new Uint8Array(body),
+        )
         res.statusCode = out.status
         for (const [k, v] of Object.entries(out.headers ?? {})) res.setHeader(k, v)
         if (out.bytes) return res.end(Buffer.from(out.bytes))

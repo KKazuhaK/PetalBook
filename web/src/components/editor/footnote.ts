@@ -18,7 +18,11 @@ export function nextFootnoteId(used: Iterable<string>): string {
 // A reference needs a line of text to sit in, which is not code.
 export function canInsertFootnote(state: EditorState): boolean {
   const { $to } = state.selection
-  return $to.parent.inlineContent && !$to.parent.type.spec.code && Boolean($to.parent.type.contentMatch.matchType(state.schema.nodes.footnoteRef))
+  return (
+    $to.parent.inlineContent &&
+    !$to.parent.type.spec.code &&
+    Boolean($to.parent.type.contentMatch.matchType(state.schema.nodes.footnoteRef))
+  )
 }
 
 export function insertFootnote(editor: Editor): boolean {

@@ -18,7 +18,11 @@ export function createPageExtensions(files: PageFilesOptions, links?: PageLinksO
   return [
     // A link click edits instead of navigating; images are drawn from the
     // address the page keeps, mapped to where the browser can load it.
-    ...createExtensions({ linkOpensOnClick: false, resolveImageSrc: (src) => addressToUrl(files.space, files.getFolder(), src), codeBlock: CodeBlockWithView }),
+    ...createExtensions({
+      linkOpensOnClick: false,
+      resolveImageSrc: (src) => addressToUrl(files.space, files.getFolder(), src),
+      codeBlock: CodeBlockWithView,
+    }),
     // Keeps tables writable as Markdown while they are edited (header row, column alignment).
     TableTools,
     PlainTextPaste,

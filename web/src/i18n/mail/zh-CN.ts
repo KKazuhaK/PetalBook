@@ -30,7 +30,8 @@ export const mailZhCN = {
     closedNow: '注册刚刚关闭了。',
     rateLimited: (wait: string) => `请求太多，请 ${wait} 后再试。`,
     sentTitle: '请查收邮件',
-    sentBody: (email: string) => `如果一切顺利，确认信已经发到 ${email}。点开信里的链接，账号就建好了，链接 24 小时内有效。收不到的话，看看垃圾邮件，或者稍后再试。`,
+    sentBody: (email: string) =>
+      `如果一切顺利，确认信已经发到 ${email}。点开信里的链接，账号就建好了，链接 24 小时内有效。收不到的话，看看垃圾邮件，或者稍后再试。`,
     sentAgain: '重新填写',
   },
   confirm: {
@@ -104,7 +105,11 @@ export const mailZhCN = {
     host: 'SMTP 主机',
     port: '端口',
     security: '加密',
-    securityOptions: { starttls: 'STARTTLS（587 端口常用）', tls: 'TLS（465 端口常用）', none: '不加密（只允许本机上的中继）' },
+    securityOptions: {
+      starttls: 'STARTTLS（587 端口常用）',
+      tls: 'TLS（465 端口常用）',
+      none: '不加密（只允许本机上的中继）',
+    },
     securityHelp: '证书总是会校验，没有跳过的选项。「不加密」只在主机是回环地址（比如 127.0.0.1）时可用。',
     username: '用户名',
     password: '密码',
@@ -121,7 +126,8 @@ export const mailZhCN = {
     statusNever: '还没有发过',
     statusOk: (when: string) => `成功（${when}）`,
     statusFailed: (when: string, message: string) => `失败（${when}）：${message}`,
-    queue: (waiting: number, sent: number, failed: number) => `排队 ${waiting} 封；过去一小时发出 ${sent} 封，失败 ${failed} 封`,
+    queue: (waiting: number, sent: number, failed: number) =>
+      `排队 ${waiting} 封；过去一小时发出 ${sent} 封，失败 ${failed} 封`,
     queueHelp: '队列放在内存里，重启会丢掉还没发的；每封都是本人可以再要一次的链接。',
     test: '发测试邮件',
     testTo: '发到哪个地址',

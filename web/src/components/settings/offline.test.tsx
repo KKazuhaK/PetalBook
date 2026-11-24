@@ -25,11 +25,18 @@ const routes = (
   </Routes>
 )
 const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-dialog"]')!
-const radio = (label: string) => [...dialog().querySelectorAll<HTMLInputElement>('input[name="offline-mode"]')].find((r) => r.parentElement?.textContent?.includes(label))!
-const check = (label: string) => [...dialog().querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((c) => c.parentElement?.textContent?.includes(label))!
+const radio = (label: string) =>
+  [...dialog().querySelectorAll<HTMLInputElement>('input[name="offline-mode"]')].find((r) =>
+    r.parentElement?.textContent?.includes(label),
+  )!
+const check = (label: string) =>
+  [...dialog().querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((c) =>
+    c.parentElement?.textContent?.includes(label),
+  )!
 const status = () => dialog().querySelector<HTMLElement>('[data-slot="offline-status"]')?.textContent ?? ''
 const select = (label: string) => dialog().querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)
-const button = (text: string) => [...dialog().querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement
+const button = (text: string) =>
+  [...dialog().querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement
 
 async function open(scene?: (s: ReturnType<typeof sender>) => void) {
   m = await mount(routes, {
@@ -46,7 +53,9 @@ describe('the Offline section', () => {
   it('is a section of the space, says the data is not encrypted, and starts with nothing kept', async () => {
     await open()
     expect([...dialog().querySelectorAll('nav a')].map((a) => a.textContent)).toContain(t.settingsUi.sections.offline)
-    expect([...dialog().querySelectorAll('input[name="offline-mode"]')].map((r) => r.parentElement?.textContent)).toEqual([
+    expect(
+      [...dialog().querySelectorAll('input[name="offline-mode"]')].map((r) => r.parentElement?.textContent),
+    ).toEqual([
       `${ol.modes.off}${ol.modeHelp.off}`,
       `${ol.modes.catalog}${ol.modeHelp.catalog}`,
       `${ol.modes.text}${ol.modeHelp.text}`,
@@ -79,7 +88,14 @@ describe('the Offline section', () => {
   })
 
   it('chooses catalogue and text: the scope appears with the defaults, and what is kept is counted in bytes', async () => {
-    await open((s) => void s('POST', '/pages', { folder: 'Inbox', meta: { title: '收件箱里的页' }, body: '这页的正文在收件箱里。\n' }))
+    await open(
+      (s) =>
+        void s('POST', '/pages', {
+          folder: 'Inbox',
+          meta: { title: '收件箱里的页' },
+          body: '这页的正文在收件箱里。\n',
+        }),
+    )
     await click(radio(ol.modes.text))
     await settle(() => dialog().textContent!.includes(ol.scopeTitle), 'the scope')
     expect(check(ol.favourites).checked).toBe(true)
@@ -102,18 +118,31 @@ describe('the Offline section', () => {
     await click(radio(ol.modes.text))
     await settle(() => select(ol.addFolder) !== null, 'the folder box')
     await type(select(ol.addFolder)!, '选定')
-    await settle(() => dialog().textContent!.includes(ol.remove('选定').replace(/^.* /, '')) && [...dialog().querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ol.remove('选定')), 'the folder chosen')
+    await settle(
+      () =>
+        dialog().textContent!.includes(ol.remove('选定').replace(/^.* /, '')) &&
+        [...dialog().querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ol.remove('选定')),
+      'the folder chosen',
+    )
     const store = (await existingStore('local', 'default'))!
     await settle(() => status().includes(ol.textCount(1)), 'the page in the folder')
     expect((await store.config())!.folders).toEqual(['选定'])
     // It is not offered again; the tag is.
     expect(select(ol.addFolder)!.textContent).not.toContain('选定')
     await type(select(ol.addTag)!, '留着')
-    await settle(() => [...dialog().querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ol.remove('留着')), 'the tag chosen')
+    await settle(
+      () => [...dialog().querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ol.remove('留着')),
+      'the tag chosen',
+    )
     expect((await store.config())!.tags).toEqual(['留着'])
     // Take the folder out: its page is only kept while the tag holds it.
-    await click([...dialog().querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === ol.remove('选定')))
-    await settle(() => ![...dialog().querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ol.remove('选定')), 'the folder taken out')
+    await click(
+      [...dialog().querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === ol.remove('选定')),
+    )
+    await settle(
+      () => ![...dialog().querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ol.remove('选定')),
+      'the folder taken out',
+    )
     expect((await store.config())!.folders).toEqual([])
     expect((await store.textMetas()).length).toBe(1)
     // Turn the favourites and the recent ones off: the inbox and the tag stay.
@@ -154,7 +183,13 @@ describe('the Offline section', () => {
 
   it('shows what went wrong, that the space was switched off and that the room ran out, from the state of the copy', async () => {
     const store = (await configure('local', 'default', { ...DEFAULT_CONFIG, mode: 'text' }))!
-    await store.setState({ complete: true, syncedAt: Date.UTC(2026, 10, 23, 8, 0), overCap: true, error: 'boom', disabled: true })
+    await store.setState({
+      complete: true,
+      syncedAt: Date.UTC(2026, 10, 23, 8, 0),
+      overCap: true,
+      error: 'boom',
+      disabled: true,
+    })
     await open()
     await settle(() => status().includes(ol.neverSynced) === false, 'the status')
     expect(status()).toContain(ol.syncedAt(new Date(Date.UTC(2026, 10, 23, 8, 0)).toLocaleString()))

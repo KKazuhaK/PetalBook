@@ -1,6 +1,7 @@
 #!/bin/bash
 # Keeps what is committed formatted: gofmt on the staged Go files, and
-# eslint --fix on the staged web files. Turn it on once with "make hooks".
+# prettier --write then eslint --fix on the staged web files. Turn it on once
+# with "make hooks".
 # A file that is staged in part is only checked, never rewritten, so changes
 # you did not stage are not pulled into the commit.
 set -euo pipefail
@@ -37,15 +38,32 @@ while IFS= read -r -d '' f; do
         echo "pre-commit: gofmt formatted $f"
       fi
       ;;
-    web/src/*.ts | web/src/*.tsx)
+    # The files "npm run format" covers: web/src, web/dev, and the web config files.
+    web/src/*.ts | web/src/*.tsx | web/src/*.css | web/src/*.json | web/dev/*.ts | web/*.ts | web/*.json | web/*.html)
+      case "$f" in web/src/markdown/__fixtures__/*) continue ;; esac
       if ! "$have_web"; then
         if ! "$web_warned"; then
-          echo "pre-commit: web/node_modules is missing (make web), web files not linted" >&2
+          echo "pre-commit: web/node_modules is missing (make web), web files not formatted or linted" >&2
           web_warned=true
         fi
         continue
       fi
       rel="${f#web/}"
+      if partial "$f"; then
+        # Check what is staged, not the working copy.
+        if ! git show ":$f" | (cd web && npx --no-install prettier --stdin-filepath "$rel") | cmp -s - <(git show ":$f"); then
+          echo "pre-commit: $f is not Prettier-formatted and also has changes that are not staged, so it is left alone; run npm --prefix web run format on it and stage it again" >&2
+          status=1
+        fi
+      else
+        (cd web && npx --no-install prettier --write --log-level warn -- "$rel") || status=1
+        git add -- "$f"
+      fi
+      # ESLint only reads TypeScript.
+      case "$f" in
+        *.ts | *.tsx) ;;
+        *) continue ;;
+      esac
       if partial "$f"; then
         # Lint what is staged, not the working copy.
         git show ":$f" | (cd web && npx --no-install eslint --stdin --stdin-filename "$rel") || status=1

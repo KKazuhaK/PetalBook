@@ -26,7 +26,13 @@ function joinText(nodes: Node[]): Node[] {
   const out: Node[] = []
   for (const n of nodes) {
     const last = out[out.length - 1]
-    if (last && last.type === 'text' && n.type === 'text' && JSON.stringify(last.marks ?? []) === JSON.stringify(n.marks ?? [])) out[out.length - 1] = { ...last, text: (last.text ?? '') + (n.text ?? '') }
+    if (
+      last &&
+      last.type === 'text' &&
+      n.type === 'text' &&
+      JSON.stringify(last.marks ?? []) === JSON.stringify(n.marks ?? [])
+    )
+      out[out.length - 1] = { ...last, text: (last.text ?? '') + (n.text ?? '') }
     else out.push(n)
   }
   return out
@@ -38,7 +44,9 @@ function projectBlock(n: Node, side: Side): Node | null {
   if (diff === 'ins' && side === 'old') return null
   if (diff === 'del' && side === 'new') return null
   let type = n.type
-  let attrs: Record<string, unknown> = Object.fromEntries(Object.entries(n.attrs ?? {}).filter(([k]) => k !== 'diff' && k !== 'diffOld' && k !== 'diffMove'))
+  let attrs: Record<string, unknown> = Object.fromEntries(
+    Object.entries(n.attrs ?? {}).filter(([k]) => k !== 'diff' && k !== 'diffOld' && k !== 'diffMove'),
+  )
   if (side === 'old' && typeof n.attrs?.diffOld === 'string') {
     const old = JSON.parse(n.attrs.diffOld) as { type: string; attrs: Record<string, unknown> }
     type = old.type

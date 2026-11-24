@@ -29,7 +29,12 @@ const HAS_OBSERVER = () => typeof IntersectionObserver !== 'undefined'
 // `watch` is anything whose change means the element is to be looked at afresh: it was put into the page, or
 // something around it moved. The observer starts again, which also answers with where the element is now (a browser
 // only says when it crosses the margin, which an element that stays inside it never does).
-export function useNear(ref: React.RefObject<Element | null>, margin: number, fallback: boolean, watch: unknown = true): boolean {
+export function useNear(
+  ref: React.RefObject<Element | null>,
+  margin: number,
+  fallback: boolean,
+  watch: unknown = true,
+): boolean {
   const [near, setNear] = useState(fallback)
   useEffect(() => {
     const el = ref.current
@@ -71,7 +76,13 @@ export default function ReadingView({ params }: { params: Params }) {
         <Skeleton className="h-40 w-full" />
       </div>
     )
-  if (query.isError && items.length === 0) return <ErrorState message={t.fmt.labelled(tb.reading.loadFailed, query.error.message)} onRetry={() => void query.refetch()} />
+  if (query.isError && items.length === 0)
+    return (
+      <ErrorState
+        message={t.fmt.labelled(tb.reading.loadFailed, query.error.message)}
+        onRetry={() => void query.refetch()}
+      />
+    )
   if (items.length === 0) return <p className="py-16 text-center text-sm text-muted-foreground">{tb.reading.empty}</p>
 
   return (
@@ -122,7 +133,16 @@ function ReadingItem({ page, index }: { page: PageSummary; index: number }) {
     return () => ro.disconnect()
   }, [near])
 
-  if (!near) return <article ref={box} data-reading-id={page.id} data-drawn="false" aria-hidden style={{ height: height || GUESS_HEIGHT }} />
+  if (!near)
+    return (
+      <article
+        ref={box}
+        data-reading-id={page.id}
+        data-drawn="false"
+        aria-hidden
+        style={{ height: height || GUESS_HEIGHT }}
+      />
+    )
 
   const line = cardTitleLine(page)
   const name = page.title || page.label || t.editor.untitled
@@ -130,17 +150,30 @@ function ReadingItem({ page, index }: { page: PageSummary; index: number }) {
     <article ref={box} data-reading-id={page.id} data-drawn="true" className="relative py-8 first:pt-2">
       {line ? (
         <h2 className="mb-4 text-xl leading-snug font-semibold">
-          <Link to={urls.page(page.id)} aria-label={tb.reading.edit(name)} className="outline-none hover:underline focus-visible:underline">
+          <Link
+            to={urls.page(page.id)}
+            aria-label={tb.reading.edit(name)}
+            className="outline-none hover:underline focus-visible:underline"
+          >
             {line}
           </Link>
         </h2>
       ) : (
         // An untitled page is its text; the way into the editor is a small mark.
-        <Link to={urls.page(page.id)} aria-label={tb.reading.edit(name)} title={tb.reading.edit(name)} className="absolute top-8 right-0 rounded-md p-1 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
+        <Link
+          to={urls.page(page.id)}
+          aria-label={tb.reading.edit(name)}
+          title={tb.reading.edit(name)}
+          className="absolute top-8 right-0 rounded-md p-1 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+        >
           <PenLine className="size-4" />
         </Link>
       )}
-      {page.body && page.body.trim() !== '' ? <StaticBody markdown={page.body} space={space} folder={page.folder} /> : <p className="text-sm text-muted-foreground">{tb.reading.emptyBody}</p>}
+      {page.body && page.body.trim() !== '' ? (
+        <StaticBody markdown={page.body} space={space} folder={page.folder} />
+      ) : (
+        <p className="text-sm text-muted-foreground">{tb.reading.emptyBody}</p>
+      )}
     </article>
   )
 }

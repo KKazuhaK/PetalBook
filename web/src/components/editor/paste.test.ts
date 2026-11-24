@@ -13,7 +13,11 @@ const fresh = (content?: Parameters<typeof makeEditor>[0]) => {
 afterEach(() => editor?.destroy())
 
 const br = { type: 'hardBreak' }
-const t = (text: string, marks?: { type: string; attrs?: object }[]) => ({ type: 'text', text, ...(marks ? { marks } : {}) })
+const t = (text: string, marks?: { type: string; attrs?: object }[]) => ({
+  type: 'text',
+  text,
+  ...(marks ? { marks } : {}),
+})
 const p = (...content: object[]) => ({ type: 'paragraph', content })
 const body = () => editor.getJSON().content
 
@@ -69,7 +73,7 @@ describe('plain text paste', () => {
     paste(editor, { text: 'x\ny' })
     expect(body()).toEqual([p(t('x'), br, t('yc'))])
   })
-  it('text and HTML together is the browser\'s own HTML paste', () => {
+  it("text and HTML together is the browser's own HTML paste", () => {
     fresh()
     paste(editor, { text: 'a\nb', html: '<p>rich</p>' })
     expect(body()).toEqual([p(t('rich'))])
@@ -83,9 +87,30 @@ describe('Markdown source paste', () => {
     paste(editor, { text: source })
     expect(body()).toEqual([
       { type: 'heading', attrs: { level: 1 }, content: [t('标题')] },
-      { type: 'bulletList', content: [{ type: 'listItem', content: [p(t('一'))] }, { type: 'listItem', content: [p(t('二'))] }] },
+      {
+        type: 'bulletList',
+        content: [
+          { type: 'listItem', content: [p(t('一'))] },
+          { type: 'listItem', content: [p(t('二'))] },
+        ],
+      },
       p(t('正文一行'), br, t('正文二行')),
-      p(t('粗', [{ type: 'bold' }]), t('和'), t('链接', [{ type: 'link', attrs: { href: 'https://example.com', target: '_blank', rel: 'noopener noreferrer nofollow', class: null, title: null } }])),
+      p(
+        t('粗', [{ type: 'bold' }]),
+        t('和'),
+        t('链接', [
+          {
+            type: 'link',
+            attrs: {
+              href: 'https://example.com',
+              target: '_blank',
+              rel: 'noopener noreferrer nofollow',
+              class: null,
+              title: null,
+            },
+          },
+        ]),
+      ),
     ])
   })
   it('a fenced block keeps its text and language', () => {
@@ -120,7 +145,10 @@ describe('Markdown source paste', () => {
     expect(body()).toEqual([p(t('# 标题'), br, t('- 一'), br, t('- 二'))])
   })
   it('not into a table cell', () => {
-    fresh({ type: 'doc', content: [{ type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableHeader', content: [p()] }] }] }] })
+    fresh({
+      type: 'doc',
+      content: [{ type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableHeader', content: [p()] }] }] }],
+    })
     editor.commands.focus('start')
     paste(editor, { text: '# x\n- a\n- b' })
     expect(JSON.stringify(body())).not.toContain('"heading"')
@@ -135,10 +163,24 @@ describe('Markdown source paste', () => {
 
 describe('hardBreaksInParagraphs', () => {
   it('splits newlines in paragraph text, not in code', () => {
-    const doc = { type: 'doc', content: [p(t('a\nb', [{ type: 'bold' }]), t('c\nd', [{ type: 'code' }])), { type: 'codeBlock', content: [t('x\ny')] }] }
+    const doc = {
+      type: 'doc',
+      content: [
+        p(t('a\nb', [{ type: 'bold' }]), t('c\nd', [{ type: 'code' }])),
+        { type: 'codeBlock', content: [t('x\ny')] },
+      ],
+    }
     expect(hardBreaksInParagraphs(doc)).toEqual({
       type: 'doc',
-      content: [p(t('a', [{ type: 'bold' }]), { type: 'hardBreak', marks: [{ type: 'bold' }] }, t('b', [{ type: 'bold' }]), t('c\nd', [{ type: 'code' }])), { type: 'codeBlock', content: [t('x\ny')] }],
+      content: [
+        p(
+          t('a', [{ type: 'bold' }]),
+          { type: 'hardBreak', marks: [{ type: 'bold' }] },
+          t('b', [{ type: 'bold' }]),
+          t('c\nd', [{ type: 'code' }]),
+        ),
+        { type: 'codeBlock', content: [t('x\ny')] },
+      ],
     })
   })
 })

@@ -7,7 +7,19 @@ import { applySession } from '@/api/hooks'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
-import { adminRequests, byLabel, click, installDomShims, locationText, makePerson, mount, PERSON_PASSWORD, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  byLabel,
+  click,
+  installDomShims,
+  locationText,
+  makePerson,
+  mount,
+  PERSON_PASSWORD,
+  settle,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // The administration pages, against the mock server.
@@ -34,7 +46,8 @@ const heading = () => document.querySelector('h1')?.textContent
 const navLinks = () => [...document.querySelectorAll(`nav[aria-label="${ta.nav}"] a`)].map((a) => a.textContent)
 const rows = () => [...document.querySelectorAll<HTMLElement>('tbody tr[data-space]')]
 const rowOf = (name: string) => rows().find((r) => r.querySelector('th')?.textContent?.includes(name))!
-const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((e) => e.textContent?.trim() === label)!
+const menuItem = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((e) => e.textContent?.trim() === label)!
 const adminCalls = () => m!.requests.filter((r) => r.url.startsWith('/api/admin') || r.url.startsWith('/api/users'))
 
 async function openMenu(name: string) {
@@ -47,7 +60,20 @@ describe('who can reach the administration', () => {
     m = await mount(routes, { entries: ['/admin'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => locationText() === '/admin/users' && text().includes(t.users.createInvite), 'users and invites')
     expect(heading()).toBe(ta.title)
-    expect(navLinks()).toEqual([ta.sections.users, ta.sections.groups, ta.sections.spaces, ta.sections.daily, ta.sections.access, ta.sections.storage, ta.sections.security, ta.sections.mail, ta.sections.settings, ta.sections.tenants, ta.sections.usage, ta.sections.status])
+    expect(navLinks()).toEqual([
+      ta.sections.users,
+      ta.sections.groups,
+      ta.sections.spaces,
+      ta.sections.daily,
+      ta.sections.access,
+      ta.sections.storage,
+      ta.sections.security,
+      ta.sections.mail,
+      ta.sections.settings,
+      ta.sections.tenants,
+      ta.sections.usage,
+      ta.sections.status,
+    ])
     expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.users)
   })
 
@@ -117,7 +143,11 @@ describe('all spaces', () => {
     await settle(() => rows().length === 1, 'the personal space')
     const row = rows()[0]
     expect(row.textContent).toContain(ta.spaces.notMeasured)
-    await click(row.querySelector(`button[aria-label="${t.fmt.labelled(ta.spaces.measure, row.querySelector('th')!.textContent!.replace(ta.spaces.personal, ''))}"]`))
+    await click(
+      row.querySelector(
+        `button[aria-label="${t.fmt.labelled(ta.spaces.measure, row.querySelector('th')!.textContent!.replace(ta.spaces.personal, ''))}"]`,
+      ),
+    )
     await settle(() => /\d+(\.\d)? (KB|MB)/.test(rowOf('').textContent ?? ''), 'a size')
     expect(m.requests.some((r) => r.method === 'POST' && /\/api\/admin\/spaces\/[^/]+\/size$/.test(r.url))).toBe(true)
     expect(rows()[0].textContent).not.toContain(ta.spaces.notMeasured)
@@ -136,7 +166,9 @@ describe('all spaces', () => {
     await settle(() => rows().length === 56, 'the rest')
     expect(more()).toBeUndefined()
     expect(text()).toContain(ta.spaces.allLoaded(56))
-    const listed = m.requests.filter((r) => r.url.startsWith('/api/admin/spaces?')).map((r) => new URL(r.url, 'http://x').searchParams)
+    const listed = m.requests
+      .filter((r) => r.url.startsWith('/api/admin/spaces?'))
+      .map((r) => new URL(r.url, 'http://x').searchParams)
     expect(listed[0].get('limit')).toBe('50')
     expect(listed[0].get('cursor')).toBeNull()
     expect(listed[1].get('cursor')).toBeTruthy()
@@ -170,7 +202,10 @@ describe('all spaces', () => {
     await settle(() => pick.options.length > 1, 'the users')
     // The current owner is not offered; the button waits for a choice.
     expect([...pick.options].map((o) => o.textContent)).toEqual([ta.spaces.transferChoose, '名 tang (tang)'])
-    const confirm = () => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === ta.spaces.transferConfirm) as HTMLButtonElement
+    const confirm = () =>
+      [...document.querySelectorAll('[role="dialog"] button')].find(
+        (b) => b.textContent === ta.spaces.transferConfirm,
+      ) as HTMLButtonElement
     expect(confirm().disabled).toBe(true)
     await type(pick, [...pick.options][1].value)
     await click(confirm())
@@ -191,9 +226,16 @@ describe('all spaces', () => {
     const pick = document.querySelector<HTMLSelectElement>('#transfer-to')!
     await settle(() => pick.options.length > 1, 'the first users')
     await type(document.querySelector<HTMLInputElement>('#transfer-search')!, 'tang')
-    await settle(() => [...pick.options].map((o) => o.textContent).join() === [ta.spaces.transferChoose, '名 tang (tang)', '名 tangerine (tangerine)'].join(), 'the matches')
+    await settle(
+      () =>
+        [...pick.options].map((o) => o.textContent).join() ===
+        [ta.spaces.transferChoose, '名 tang (tang)', '名 tangerine (tangerine)'].join(),
+      'the matches',
+    )
     // Every request for users says what it wants and how many: none asks for the lot.
-    const asked = m.requests.filter((r) => new URL(r.url, 'http://x').pathname === '/api/users').map((r) => new URL(r.url, 'http://x').search)
+    const asked = m.requests
+      .filter((r) => new URL(r.url, 'http://x').pathname === '/api/users')
+      .map((r) => new URL(r.url, 'http://x').search)
     expect(asked.length).toBeGreaterThan(0)
     for (const q of asked) expect(q).toContain('limit=20')
     expect(asked.some((q) => q.includes('q=tang'))).toBe(true)
@@ -215,7 +257,11 @@ describe('all spaces', () => {
     await click(menuItem(ta.spaces.disable))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(ta.spaces.disableTitle('停用我'))
-    await click([...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === ta.spaces.disableConfirm))
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find(
+        (b) => b.textContent === ta.spaces.disableConfirm,
+      ),
+    )
     await settle(() => rowOf('停用我').textContent!.includes(ta.spaces.disabled), 'marked disabled')
     await openMenu('停用我')
     expect(document.body.textContent).not.toContain(ta.spaces.disable)
@@ -232,7 +278,10 @@ describe('all spaces', () => {
     await openMenu('删掉我')
     await click(menuItem(ta.spaces.delete))
     await settle(() => document.querySelector('#delete-confirm') !== null, 'the dialog')
-    const confirm = () => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === ta.spaces.deleteConfirm) as HTMLButtonElement
+    const confirm = () =>
+      [...document.querySelectorAll('[role="dialog"] button')].find(
+        (b) => b.textContent === ta.spaces.deleteConfirm,
+      ) as HTMLButtonElement
     expect(confirm().disabled).toBe(true)
     await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, '删掉')
     expect(confirm().disabled).toBe(true)
@@ -253,7 +302,10 @@ describe('all spaces', () => {
     await click(menuItem(ta.spaces.delete))
     await settle(() => document.querySelector('#delete-confirm') !== null, 'the dialog')
     expect([...document.querySelectorAll('[role="dialog"] code')].map((c) => c.textContent)).toContain(name)
-    const confirm = () => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === ta.spaces.deleteConfirm) as HTMLButtonElement
+    const confirm = () =>
+      [...document.querySelectorAll('[role="dialog"] button')].find(
+        (b) => b.textContent === ta.spaces.deleteConfirm,
+      ) as HTMLButtonElement
     // The same letters, composed the other way, with spaces around.
     await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, ' Cafe\u0301  ')
     expect(confirm().disabled).toBe(false)
@@ -276,7 +328,12 @@ describe('server status and users', () => {
   it('shows what the server says about itself', async () => {
     m = await mount(routes, { entries: ['/admin/status'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => text().includes(ta.status.goVersion), 'the status')
-    const rows = Object.fromEntries([...document.querySelectorAll('dl > div')].map((r) => [r.querySelector('dt')!.firstChild!.textContent, r.querySelector('dd')!.textContent]))
+    const rows = Object.fromEntries(
+      [...document.querySelectorAll('dl > div')].map((r) => [
+        r.querySelector('dt')!.firstChild!.textContent,
+        r.querySelector('dd')!.textContent,
+      ]),
+    )
     expect(rows[ta.status.version]).toBe('mock')
     expect(rows[ta.status.database]).toBe('sqlite')
     expect(rows[ta.status.spaces]).toBe('1')

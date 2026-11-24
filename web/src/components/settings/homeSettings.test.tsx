@@ -6,7 +6,17 @@ import { keys } from '@/api/hooks'
 import type { DailyPrefs } from '@/api/types'
 import { t } from '@/i18n'
 import { th } from '@/i18n/home'
-import { adminRequests, click, installDomShims, locationText, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  locationText,
+  mount,
+  settle,
+  shareSpace,
+  type,
+  type Mounted,
+} from '@/testing/harness'
 import { sender } from '@/testing/listKit'
 import SettingsRoute from './SettingsRoute'
 
@@ -28,10 +38,19 @@ const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-d
 const navLinks = () => [...(dialog()?.querySelectorAll('nav a') ?? [])].map((a) => a.textContent)
 const panel = () => dialog()?.querySelector<HTMLElement>('[role="tabpanel"]') ?? null
 const tab = (lang: string) => dialog()!.querySelector<HTMLElement>(`[role="tab"][data-lang="${lang}"]`)!
-const mode = (label: string) => [...dialog()!.querySelectorAll<HTMLInputElement>('input[name="daily-mode"]')].find((r) => r.parentElement?.textContent?.includes(label))!
-const select = (label: string) => [...dialog()!.querySelectorAll<HTMLSelectElement>('select')].find((s) => s.parentElement?.parentElement?.querySelector('label')?.textContent?.replace(/\*$/, '') === label)!
+const mode = (label: string) =>
+  [...dialog()!.querySelectorAll<HTMLInputElement>('input[name="daily-mode"]')].find((r) =>
+    r.parentElement?.textContent?.includes(label),
+  )!
+const select = (label: string) =>
+  [...dialog()!.querySelectorAll<HTMLSelectElement>('select')].find(
+    (s) => s.parentElement?.parentElement?.querySelector('label')?.textContent?.replace(/\*$/, '') === label,
+  )!
 const save = () => [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === th.settings.save)!
-const writes = () => m!.requests.filter((r) => r.method === 'PUT' && r.url.includes('/daily/')).map((r) => ({ url: r.url.replace(/^\/api\/spaces\/[^/]+/, ''), body: JSON.parse(r.body!) }))
+const writes = () =>
+  m!.requests
+    .filter((r) => r.method === 'PUT' && r.url.includes('/daily/'))
+    .map((r) => ({ url: r.url.replace(/^\/api\/spaces\/[^/]+/, ''), body: JSON.parse(r.body!) }))
 const loaded = () => settle(() => panel() !== null, 'the home settings')
 
 describe('the Home section, single-user mode', () => {
@@ -49,7 +68,11 @@ describe('the Home section, single-user mode', () => {
   it('is a section of the space, with a tab for all languages and one for each language of the list', async () => {
     await open()
     expect(navLinks()).toContain(t.settingsUi.sections.home)
-    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([th.settings.all, 'zh-Hans', 'en'])
+    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([
+      th.settings.all,
+      'zh-Hans',
+      'en',
+    ])
     // Nothing of an interface or the server's default in a server with one user.
     expect(dialog()!.querySelector('input[name="daily-mode"][type="radio"]:nth-of-type(3)')).toBeNull()
     expect(dialog()!.textContent).not.toContain(th.settings.inheritTitle)
@@ -70,7 +93,10 @@ describe('the Home section, single-user mode', () => {
     await type(inputs()[1], '定稿, 终稿')
     await click(save())
     await settle(() => writes().length === 1, 'saved')
-    expect(writes()[0]).toEqual({ url: '/daily/settings', body: { daily: { folder: '文案', filter: [{ key: 'status', op: 'in', values: ['定稿', '终稿'] }] } } })
+    expect(writes()[0]).toEqual({
+      url: '/daily/settings',
+      body: { daily: { folder: '文案', filter: [{ key: 'status', op: 'in', values: ['定稿', '终稿'] }] } },
+    })
     // The server has it: the page starts again from it.
     await settle(() => (mode(th.settings.modes.own) as HTMLInputElement).checked, 'shown as saved')
     expect(sender(m!.server)('GET', '/daily/settings').body.daily.folder).toBe('文案')
@@ -118,7 +144,12 @@ describe('the Home section, single-user mode', () => {
       s('POST', '/folders', { path: 'A' })
       s('PUT', '/daily/settings', { daily: { 'pt-br': { folder: 'A' } } })
     })
-    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([th.settings.all, 'zh-Hans', 'en', 'pt-BR'])
+    expect([...dialog()!.querySelectorAll('[role="tab"]')].map((x) => x.textContent)).toEqual([
+      th.settings.all,
+      'zh-Hans',
+      'en',
+      'pt-BR',
+    ])
   })
 
   it('the choices follow the kind: folders, tags or the types of the space', async () => {
@@ -150,9 +181,18 @@ describe('the Home section, accounts mode', () => {
     await loaded()
     return space
   }
-  const API = (id: string, lang: string) => ({ id, name: `接口${id}`, lang, url: 'https://example.org/q', text: 't', refresh: 'daily', rps: 1, enabled: true })
+  const API = (id: string, lang: string) => ({
+    id,
+    name: `接口${id}`,
+    lang,
+    url: 'https://example.org/q',
+    text: 't',
+    refresh: 'daily',
+    rps: 1,
+    enabled: true,
+  })
 
-  it('the interfaces made for a language are on its tab; choosing them is saved as the space\'s choice', async () => {
+  it("the interfaces made for a language are on its tab; choosing them is saved as the space's choice", async () => {
     await asOwner((admin) => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
       admin('PUT', '/api/admin/daily/apis/enone', API('enone', 'en'))
@@ -160,7 +200,9 @@ describe('the Home section, accounts mode', () => {
     })
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
-    const boxes = () => [...dialog()!.querySelectorAll<HTMLInputElement>('[data-slot="daily-apis"] input[type="checkbox"]')]
+    const boxes = () => [
+      ...dialog()!.querySelectorAll<HTMLInputElement>('[data-slot="daily-apis"] input[type="checkbox"]'),
+    ]
     expect(boxes()).toHaveLength(1)
     expect(boxes()[0].parentElement!.textContent).toBe(th.settings.apiFor('接口zhone', 'zh-Hans'))
     await click(boxes()[0])
@@ -200,7 +242,10 @@ describe('the Home section, accounts mode', () => {
     const real = globalThis.fetch
     globalThis.fetch = async (input, init) => {
       if (init?.method === 'PUT' && String(input instanceof Request ? input.url : input).includes('/daily/prefs')) {
-        return new Response(JSON.stringify({ error: { code: 'internal', message: 'boom' } }), { status: 500, headers: { 'content-type': 'application/json' } })
+        return new Response(JSON.stringify({ error: { code: 'internal', message: 'boom' } }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        })
       }
       return real(input, init)
     }
@@ -216,7 +261,7 @@ describe('the Home section, accounts mode', () => {
     expect(dialog()!.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
   })
 
-  it('the server\'s default is the last resort, a switch the owner may turn off', async () => {
+  it("the server's default is the last resort, a switch the owner may turn off", async () => {
     await asOwner((admin) => admin('PUT', '/api/admin/daily', { default: { kind: 'list' } }))
     expect(dialog()!.textContent).toContain(th.settings.inheritHelp)
     const toggle = dialog()!.querySelector<HTMLElement>('[role="switch"]')!
@@ -232,14 +277,18 @@ describe('the Home section, accounts mode', () => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
     })
     const prefs = m!.qc.getQueryData<DailyPrefs | null>(keys.dailyPrefs(space))!
-    await act(async () => void m!.qc.setQueryData(keys.dailyPrefs(space), { ...prefs, allowed: { own: false, api: false } }))
+    await act(
+      async () => void m!.qc.setQueryData(keys.dailyPrefs(space), { ...prefs, allowed: { own: false, api: false } }),
+    )
     await settle(() => mode(th.settings.modes.own).disabled, 'own is locked')
     expect(mode(th.settings.modes.api).disabled).toBe(true)
     expect(mode(th.settings.modes.default).disabled).toBe(false)
     expect(mode(th.settings.modes.own).parentElement!.textContent).toContain('由管理员统一设置')
     expect(mode(th.settings.modes.api).parentElement!.textContent).toContain('由管理员统一设置')
     // One alone.
-    await act(async () => void m!.qc.setQueryData(keys.dailyPrefs(space), { ...prefs, allowed: { own: true, api: false } }))
+    await act(
+      async () => void m!.qc.setQueryData(keys.dailyPrefs(space), { ...prefs, allowed: { own: true, api: false } }),
+    )
     await settle(() => !mode(th.settings.modes.own).disabled, 'own is free again')
     expect(mode(th.settings.modes.api).disabled).toBe(true)
   })

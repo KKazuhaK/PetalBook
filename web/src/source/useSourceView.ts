@@ -71,7 +71,9 @@ const OLD_MAX = 20
 function readOld(ref: string): RawSource[] {
   try {
     const d = JSON.parse(window.localStorage.getItem(OLD_PREFIX + ref) ?? '[]') as unknown
-    return Array.isArray(d) ? d.filter((x): x is RawSource => !!x && typeof x.rev === 'string' && typeof x.text === 'string') : []
+    return Array.isArray(d)
+      ? d.filter((x): x is RawSource => !!x && typeof x.rev === 'string' && typeof x.text === 'string')
+      : []
   } catch {
     return []
   }
@@ -104,7 +106,8 @@ export function takeOldSource(ref: string): RawSource[] {
 export function setAsideSource(ref: string, raw: RawSource): { stored: boolean; list: RawSource[] } {
   const list = readOld(ref)
   if (!list.some((x) => x.text === raw.text)) list.push(raw)
-  if (!writeOld(ref, list) || !readOld(ref).some((x) => x.text === raw.text)) return { stored: false, list: readOld(ref) }
+  if (!writeOld(ref, list) || !readOld(ref).some((x) => x.text === raw.text))
+    return { stored: false, list: readOld(ref) }
   if (loadRawSource(ref)?.text === raw.text) saveRawSource(ref, null)
   return { stored: true, list: readOld(ref) }
 }
@@ -421,7 +424,8 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
   }
   // The side being moved by the other one, so its scroll event is not answered.
   const driven = useRef<{ side: 'source' | 'rich'; until: number } | null>(null)
-  const isDriven = (side: 'source' | 'rich') => driven.current?.side === side && performance.now() < driven.current.until
+  const isDriven = (side: 'source' | 'rich') =>
+    driven.current?.side === side && performance.now() < driven.current.until
   const drive = (side: 'source' | 'rich') => {
     driven.current = { side, until: performance.now() + 120 }
   }
@@ -441,7 +445,16 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
     const s = source.current
     const sc = richScroller.current
     const scroller = s?.scroller()
-    if (modeRef.current !== 'split' || !s || !sc || !scroller || !body.current || isDriven('source') || richStale.current) return
+    if (
+      modeRef.current !== 'split' ||
+      !s ||
+      !sc ||
+      !scroller ||
+      !body.current ||
+      isDriven('source') ||
+      richStale.current
+    )
+      return
     drive('rich')
     const info = linesOf(body.current.text)
     const tops = blockTops()
@@ -461,7 +474,8 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
     const s = source.current
     const sc = richScroller.current
     const scroller = s?.scroller()
-    if (modeRef.current !== 'split' || !s || !sc || !scroller || !body.current || isDriven('rich') || richStale.current) return
+    if (modeRef.current !== 'split' || !s || !sc || !scroller || !body.current || isDriven('rich') || richStale.current)
+      return
     drive('source')
     const info = linesOf(body.current.text)
     const tops = blockTops()
@@ -485,5 +499,21 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
     const s = source.current
     return problemNow.current && s ? { rev: rawRev.current ?? controller.page.rev, text: s.getText() } : null
   }, [controller, source])
-  return { problem, broken, hasProblem, brokenText, discardBroken, landed, resumeStale, parkBroken, currentText, onSourceChange, noteRichChange, canLeaveSource, settle, onSourceScroll, onRichScroll }
+  return {
+    problem,
+    broken,
+    hasProblem,
+    brokenText,
+    discardBroken,
+    landed,
+    resumeStale,
+    parkBroken,
+    currentText,
+    onSourceChange,
+    noteRichChange,
+    canLeaveSource,
+    settle,
+    onSourceScroll,
+    onRichScroll,
+  }
 }

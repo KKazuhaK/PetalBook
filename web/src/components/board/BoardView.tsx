@@ -11,7 +11,14 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cardTitleLine } from '@/lib/listView'
-import { boardColumns, cardFieldsOf, cardMovable, columnDroppable, columnFilter, type BoardColumn } from '@/lib/savedViews'
+import {
+  boardColumns,
+  cardFieldsOf,
+  cardMovable,
+  columnDroppable,
+  columnFilter,
+  type BoardColumn,
+} from '@/lib/savedViews'
 import { hasValue, showValue } from '@/lib/pageTypes'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
@@ -69,7 +76,10 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
   const options = useMemo(() => (field?.kind === 'select' ? (field.options ?? []) : null), [field])
   const where = useMemo(() => ('folder' in scope ? { folder: scope.folder } : { tag: [scope.tag] }), [scope])
   const groups = useGroups({ key: group, ...where, ...(filters.length ? { filter: filters } : {}) })
-  const columns = useMemo(() => boardColumns(options, groups.data?.groups, groups.data?.empty, groups.data?.truncated), [options, groups.data])
+  const columns = useMemo(
+    () => boardColumns(options, groups.data?.groups, groups.data?.empty, groups.data?.truncated),
+    [options, groups.data],
+  )
   const scroller = useRef<HTMLDivElement>(null)
   const shown = cardFieldsOf(type, cardFields, group)
 
@@ -81,7 +91,13 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
 
   // `said`: the move was asked for without a mouse, and the column it went to is told when it is done.
   const move = (row: PageSummary, from: string, to: BoardColumn, said?: string) => {
-    if (!row.rev || from === to.id || !columnDroppable(to, options !== null) || !cardMovable(row.props, row.partialProps, group)) return
+    if (
+      !row.rev ||
+      from === to.id ||
+      !columnDroppable(to, options !== null) ||
+      !cardMovable(row.props, row.partialProps, group)
+    )
+      return
     const name = row.title || row.label || tb.board.untitled
     const mark = (on: boolean) =>
       setBusy((prev) => {
@@ -94,26 +110,41 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
     // Not the callbacks of mutate(): the observer keeps only those of its latest call, so a card whose move was
     // overtaken by another would stay marked as busy, and its failure would not be told.
     patch
-      .mutateAsync({ id: row.id, baseRev: row.rev, ...(to.kind === 'empty' ? { unset: [group] } : { set: { [group]: to.value } }) })
-      .then(() => {
-        if (said) toast.success(tb.board.moved(name, said))
-      }, (e: unknown) => {
-        // The hook has read the card again; nothing of the move was kept.
-        if (e instanceof ApiError && e.code === 'conflict') toast.error(tb.board.conflict(name))
-        else toast.error(tb.board.moveFailed(name, e instanceof Error ? e.message : ''))
+      .mutateAsync({
+        id: row.id,
+        baseRev: row.rev,
+        ...(to.kind === 'empty' ? { unset: [group] } : { set: { [group]: to.value } }),
       })
+      .then(
+        () => {
+          if (said) toast.success(tb.board.moved(name, said))
+        },
+        (e: unknown) => {
+          // The hook has read the card again; nothing of the move was kept.
+          if (e instanceof ApiError && e.code === 'conflict') toast.error(tb.board.conflict(name))
+          else toast.error(tb.board.moveFailed(name, e instanceof Error ? e.message : ''))
+        },
+      )
       .finally(() => mark(false))
   }
 
   if (group === '') return <p className="py-16 text-center text-sm text-muted-foreground">{tb.board.needsGroup}</p>
 
-  const label = (c: BoardColumn) => (c.kind === 'other' ? tb.board.other : c.kind === 'empty' ? tb.board.empty : (c.value as string))
+  const label = (c: BoardColumn) =>
+    c.kind === 'other' ? tb.board.other : c.kind === 'empty' ? tb.board.empty : (c.value as string)
   // Where a card can go from the keyboard: the columns a drop is taken on.
-  const targets = columns.filter((c) => columnDroppable(c, options !== null)).map((c) => ({ column: c, title: label(c) }))
+  const targets = columns
+    .filter((c) => columnDroppable(c, options !== null))
+    .map((c) => ({ column: c, title: label(c) }))
   return (
     <div data-slot="board-view" data-group={group} className="grid gap-2">
       {groups.isError && <p className="text-xs text-destructive">{tb.board.groupsFailed}</p>}
-      <div ref={scroller} className="flex items-start gap-3 overflow-x-auto pb-3" role="group" aria-label={tb.board.label}>
+      <div
+        ref={scroller}
+        className="flex items-start gap-3 overflow-x-auto pb-3"
+        role="group"
+        aria-label={tb.board.label}
+      >
         {columns.map((c) => (
           <Column
             key={c.id}
@@ -122,7 +153,11 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
             title={label(c)}
             // Asked for once the counts say there is something in it (or they could not be had).
             enabled={groups.isError || (c.count !== undefined && c.count > 0)}
-            params={{ ...where, ...(sort ? { sort: sort as ListParams['sort'] } : {}), filter: [...filters, columnFilter(c, group, options)] }}
+            params={{
+              ...where,
+              ...(sort ? { sort: sort as ListParams['sort'] } : {}),
+              filter: [...filters, columnFilter(c, group, options)],
+            }}
             group={group}
             shown={shown.map((f) => ({ key: f.key, label: f.title || f.key }))}
             write={write}
@@ -226,7 +261,10 @@ function Column({
     >
       <header className="flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium">
         <span className={`truncate ${column.kind !== 'option' ? 'text-muted-foreground' : ''}`}>{title}</span>
-        <span className="rounded-full bg-secondary px-2 text-xs tabular-nums text-muted-foreground" data-slot="column-count">
+        <span
+          className="rounded-full bg-secondary px-2 text-xs tabular-nums text-muted-foreground"
+          data-slot="column-count"
+        >
           {column.count ?? '…'}
         </span>
       </header>
@@ -234,24 +272,51 @@ function Column({
         className="max-h-[calc(100dvh-17rem)] min-h-16 space-y-2 overflow-y-auto px-2 pb-2"
         onScroll={(e) => {
           const el = e.currentTarget
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < AHEAD_PX && hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage()
+          if (
+            el.scrollHeight - el.scrollTop - el.clientHeight < AHEAD_PX &&
+            hasNextPage &&
+            !isFetchingNextPage &&
+            !isFetchNextPageError
+          )
+            void fetchNextPage()
         }}
       >
         {query.isPending && asked ? (
           <Skeleton className="h-20 w-full" aria-busy="true" />
         ) : query.isError && rows.length === 0 ? (
-          <ErrorState message={t.fmt.labelled(tb.board.loadFailed, query.error.message)} onRetry={() => void query.refetch()} />
+          <ErrorState
+            message={t.fmt.labelled(tb.board.loadFailed, query.error.message)}
+            onRetry={() => void query.refetch()}
+          />
         ) : rows.length === 0 && !asked && enabled ? (
           <Skeleton className="h-20 w-full" aria-hidden="true" />
         ) : rows.length === 0 ? (
           <p className="px-1 py-3 text-center text-xs text-muted-foreground">{tb.board.noCards}</p>
         ) : (
           rows.map((row) => (
-            <Card key={row.id} row={row} group={group} shown={shown} write={write} busy={busy.has(row.id)} columnId={column.id} onDragStart={onDragStart} onDragEnd={onDragEnd} targets={targets.filter((x) => x.column.id !== column.id)} onMove={(to) => onMove(row, to)} />
+            <Card
+              key={row.id}
+              row={row}
+              group={group}
+              shown={shown}
+              write={write}
+              busy={busy.has(row.id)}
+              columnId={column.id}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              targets={targets.filter((x) => x.column.id !== column.id)}
+              onMove={(to) => onMove(row, to)}
+            />
           ))
         )}
         {hasNextPage && (
-          <Button variant="ghost" size="sm" className="w-full" onClick={() => void fetchNextPage()} disabled={isFetchingNextPage}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
             {isFetchingNextPage ? <Spinner /> : null}
             {isFetchingNextPage ? tb.board.loadingMore : tb.board.loadMore}
           </Button>
@@ -289,7 +354,29 @@ function focusNear(e: KeyboardEvent<HTMLElement>) {
   next.focus()
 }
 
-function Card({ row, group, shown, write, busy, columnId, onDragStart, onDragEnd, targets, onMove }: { row: PageSummary; group: string; shown: { key: string; label: string }[]; write: boolean; busy: boolean; columnId: string; onDragStart: (row: PageSummary) => void; onDragEnd: () => void; targets: { column: BoardColumn; title: string }[]; onMove: (to: BoardColumn) => void }) {
+function Card({
+  row,
+  group,
+  shown,
+  write,
+  busy,
+  columnId,
+  onDragStart,
+  onDragEnd,
+  targets,
+  onMove,
+}: {
+  row: PageSummary
+  group: string
+  shown: { key: string; label: string }[]
+  write: boolean
+  busy: boolean
+  columnId: string
+  onDragStart: (row: PageSummary) => void
+  onDragEnd: () => void
+  targets: { column: BoardColumn; title: string }[]
+  onMove: (to: BoardColumn) => void
+}) {
   const urls = useUrls()
   const line = cardTitleLine(row)
   const partial = row.partialProps?.includes(group) === true
@@ -322,7 +409,14 @@ function Card({ row, group, shown, write, busy, columnId, onDragStart, onDragEnd
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={busy}
-            render={<button type="button" aria-label={tb.board.moveTo(name)} title={tb.board.moveTo(name)} className="float-right -mt-1 -mr-1 ml-1 flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50" />}
+            render={
+              <button
+                type="button"
+                aria-label={tb.board.moveTo(name)}
+                title={tb.board.moveTo(name)}
+                className="float-right -mt-1 -mr-1 ml-1 flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50"
+              />
+            }
           >
             <MoveRight className="size-3.5" />
           </DropdownMenuTrigger>
@@ -339,11 +433,17 @@ function Card({ row, group, shown, write, busy, columnId, onDragStart, onDragEnd
         {line ? (
           <>
             <div className="font-medium leading-snug break-words">{line}</div>
-            {row.excerpt && <div className="mt-1 line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">{row.excerpt}</div>}
+            {row.excerpt && (
+              <div className="mt-1 line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
+                {row.excerpt}
+              </div>
+            )}
           </>
         ) : (
           // Without a title the start of the text stands in for it.
-          <div className="line-clamp-2 leading-snug break-words">{row.excerpt || <span className="text-muted-foreground">{tb.board.untitled}</span>}</div>
+          <div className="line-clamp-2 leading-snug break-words">
+            {row.excerpt || <span className="text-muted-foreground">{tb.board.untitled}</span>}
+          </div>
         )}
       </Link>
       {(row.tags?.length || values.length > 0) && (

@@ -17,7 +17,8 @@ export interface FoundLink {
   to: number
 }
 
-const LINK = /(!?)\[((?:[^[\]\\]|\\.)*)\]\(\s*(<[^>\n]*>|(?:[^\s()\\]|\\.|\([^\s()]*\))*)(?:\s+(?:"([^"]*)"|'([^']*)'))?\s*\)/g
+const LINK =
+  /(!?)\[((?:[^[\]\\]|\\.)*)\]\(\s*(<[^>\n]*>|(?:[^\s()\\]|\\.|\([^\s()]*\))*)(?:\s+(?:"([^"]*)"|'([^']*)'))?\s*\)/g
 
 // Code is blanked out (same length) so its brackets are not links.
 function withoutCode(body: string): string {
@@ -39,7 +40,15 @@ export function linksOf(srcFolder: string, body: string): FoundLink[] {
     const from = text.lastIndexOf('\n\n', at) + 1
     const end = text.indexOf('\n\n', at)
     const title = m[4] ?? m[5] ?? ''
-    out.push({ text: m[2].replace(/\\(.)/g, '$1').replace(/\s+/g, ' ').trim(), path: r.path, id: isPageId(title) ? title : '', anchor: r.anchor, at, from, to: end < 0 ? body.length : end })
+    out.push({
+      text: m[2].replace(/\\(.)/g, '$1').replace(/\s+/g, ' ').trim(),
+      path: r.path,
+      id: isPageId(title) ? title : '',
+      anchor: r.anchor,
+      at,
+      from,
+      to: end < 0 ? body.length : end,
+    })
   }
   return out
 }
@@ -55,5 +64,7 @@ export function excerptAround(body: string, link: FoundLink): string {
   const chars = Array.from(plain)
   if (chars.length <= 240) return plain
   const at = Math.max(0, Array.from(plain.slice(0, plain.indexOf(link.text))).length - 100)
-  return Array.from(plain).slice(at, at + 240).join('')
+  return Array.from(plain)
+    .slice(at, at + 240)
+    .join('')
 }

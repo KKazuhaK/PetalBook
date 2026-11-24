@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 import type { Page } from '@/api/types'
 import { buildSave, fieldsOf } from './saveController'
 
-const base: Page = { id: 'P', path: 'a.md', folder: '', rev: 'r1', updated: '', meta: { id: 'P', title: '暮雪', source: '《雪国》' }, body: 'x\n' }
+const base: Page = {
+  id: 'P',
+  path: 'a.md',
+  folder: '',
+  rev: 'r1',
+  updated: '',
+  meta: { id: 'P', title: '暮雪', source: '《雪国》' },
+  body: 'x\n',
+}
 const same = () => base.body
 
 describe('the source field', () => {

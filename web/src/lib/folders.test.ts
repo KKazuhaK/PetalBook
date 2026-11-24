@@ -182,7 +182,15 @@ describe('acting on a selection', () => {
   it('counts the pages under selected folders once', () => {
     const index = buildFolderIndex(list)
     expect(pagesInside([{ kind: 'folder', path: 'a' }], index)).toBe(4)
-    expect(pagesInside([{ kind: 'folder', path: 'a' }, { kind: 'folder', path: 'a/b' }], index)).toBe(4)
+    expect(
+      pagesInside(
+        [
+          { kind: 'folder', path: 'a' },
+          { kind: 'folder', path: 'a/b' },
+        ],
+        index,
+      ),
+    ).toBe(4)
     expect(pagesInside([{ kind: 'folder', path: 'a/b' }, { kind: 'folder', path: 'z' }, p('x')], index)).toBe(7)
     expect(pagesInside([p('x')], index)).toBe(0)
   })

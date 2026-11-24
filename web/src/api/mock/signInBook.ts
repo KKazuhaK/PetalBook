@@ -2,7 +2,21 @@
 // the sign-in providers, the captcha and the audit log. The flows that need a session (signing in, the
 // passkeys) are in server.ts; this holds the state and the checks of what an administrator may set.
 
-import type { AuditItem, AuthProvider, CaptchaContext, CaptchaContextSettings, CaptchaProvider, LoginMode, ProviderInput, ProviderKind, PublicProvider, Role, SecurityNotice, SecurityPatch, SecuritySettings } from '../types.ts'
+import type {
+  AuditItem,
+  AuthProvider,
+  CaptchaContext,
+  CaptchaContextSettings,
+  CaptchaProvider,
+  LoginMode,
+  ProviderInput,
+  ProviderKind,
+  PublicProvider,
+  Role,
+  SecurityNotice,
+  SecurityPatch,
+  SecuritySettings,
+} from '../types.ts'
 import { HttpError, isRecord } from './store.ts'
 
 export interface PasskeyRec {
@@ -38,7 +52,12 @@ export interface ProviderRec {
 export interface MockSecurity {
   login?: Partial<{ mode: LoginMode; ssoOnly: boolean }>
   passkeys?: Partial<{ enabled: boolean; requireRoles: Role[] }>
-  captcha?: Partial<{ provider: CaptchaProvider; siteKey: string; hasSecret: boolean; contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>> }>
+  captcha?: Partial<{
+    provider: CaptchaProvider
+    siteKey: string
+    hasSecret: boolean
+    contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>>
+  }>
   lockout?: Partial<SecuritySettings['lockout']>
   limits?: Partial<SecuritySettings['limits']>
 }
@@ -59,7 +78,13 @@ export interface SignInBookOptions {
   // 3.3: whether any tenant's registration is open (ssoOnly cannot be switched on then).
   registrationOpen?: () => boolean
   security?: MockSecurity
-  providers?: (ProviderInput & { slug: string; kind: ProviderKind; name: string; sub?: string; status?: AuthProvider['status'] })[]
+  providers?: (ProviderInput & {
+    slug: string
+    kind: ProviderKind
+    name: string
+    sub?: string
+    status?: AuthProvider['status']
+  })[]
   notices?: SecurityNotice[]
 }
 
@@ -74,11 +99,13 @@ function bad(message: string, code = 'invalid'): never {
   throw new HttpError(400, code, message)
 }
 const int = (v: unknown, lo: number, hi: number, field: string): number => {
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi) return bad(`${field} 要是 ${lo} 到 ${hi} 的整数`)
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi)
+    return bad(`${field} 要是 ${lo} 到 ${hi} 的整数`)
   return v
 }
 const bool = (v: unknown, field: string): boolean => (typeof v === 'boolean' ? v : bad(`${field} 要是布尔值`))
-const oneOf = <T extends string>(v: unknown, list: readonly T[], field: string): T => (typeof v === 'string' && (list as readonly string[]).includes(v) ? (v as T) : bad(`${field} 不对`))
+const oneOf = <T extends string>(v: unknown, list: readonly T[], field: string): T =>
+  typeof v === 'string' && (list as readonly string[]).includes(v) ? (v as T) : bad(`${field} 不对`)
 
 export function createSignInBook(o: SignInBookOptions) {
   const iso = () => new Date(o.now()).toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -86,11 +113,36 @@ export function createSignInBook(o: SignInBookOptions) {
 
   // --- audit ---
   const audit: AuditItem[] = []
-  const record = (kind: string, row: { actor?: string | null; user?: string | null; username?: string | null; ip?: string; detail?: Record<string, unknown> } = {}) => {
-    audit.push({ id: o.newAuditId(), at: iso(), kind, actor: row.actor ?? null, user: row.user ?? null, username: row.username ?? null, ip: row.ip ?? '203.0.113.7', detail: row.detail ?? {} })
+  const record = (
+    kind: string,
+    row: {
+      actor?: string | null
+      user?: string | null
+      username?: string | null
+      ip?: string
+      detail?: Record<string, unknown>
+    } = {},
+  ) => {
+    audit.push({
+      id: o.newAuditId(),
+      at: iso(),
+      kind,
+      actor: row.actor ?? null,
+      user: row.user ?? null,
+      username: row.username ?? null,
+      ip: row.ip ?? '203.0.113.7',
+      detail: row.detail ?? {},
+    })
   }
-  const auditList = (kind: string | null, user: string | null, cursor: string | null, limit: number): { items: AuditItem[]; next: string } => {
-    const all = audit.filter((a) => (!kind || a.kind === kind) && (!user || a.user === user || a.actor === user)).reverse()
+  const auditList = (
+    kind: string | null,
+    user: string | null,
+    cursor: string | null,
+    limit: number,
+  ): { items: AuditItem[]; next: string } => {
+    const all = audit
+      .filter((a) => (!kind || a.kind === kind) && (!user || a.user === user || a.actor === user))
+      .reverse()
     const start = cursor ? all.findIndex((a) => a.id === cursor) : 0
     if (cursor && start < 0) throw new HttpError(400, 'invalid', 'cursor 不对')
     const items = all.slice(start, start + limit)
@@ -105,7 +157,13 @@ export function createSignInBook(o: SignInBookOptions) {
       provider: 'image' as CaptchaProvider,
       siteKey: '',
       secretFor: '' as CaptchaProvider | '',
-      contexts: { login: { on: false, when: 'after_failures', failures: 3 }, invite: { on: false, when: 'after_failures', failures: 3 }, setup: { on: false, when: 'after_failures', failures: 3 }, forgot: { on: false, when: 'after_failures', failures: 3 }, register: { on: false, when: 'after_failures', failures: 3 } } as SecuritySettings['captcha']['contexts'],
+      contexts: {
+        login: { on: false, when: 'after_failures', failures: 3 },
+        invite: { on: false, when: 'after_failures', failures: 3 },
+        setup: { on: false, when: 'after_failures', failures: 3 },
+        forgot: { on: false, when: 'after_failures', failures: 3 },
+        register: { on: false, when: 'after_failures', failures: 3 },
+      } as SecuritySettings['captcha']['contexts'],
     },
     lockout: { enabled: false, minutes: 15, scope: 'ip_account' as SecuritySettings['lockout']['scope'] },
     limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 },
@@ -124,10 +182,15 @@ export function createSignInBook(o: SignInBookOptions) {
 
   // --- providers ---
   const providers = new Map<string, ProviderRec>()
-  const callbackOf = (kind: ProviderKind, slug: string, legacy = false) => `${base}/api/auth/${kind}/${legacy ? '' : `${slug}/`}callback`.replace(/\/\/callback$/, '/callback')
+  const callbackOf = (kind: ProviderKind, slug: string, legacy = false) =>
+    `${base}/api/auth/${kind}/${legacy ? '' : `${slug}/`}callback`.replace(/\/\/callback$/, '/callback')
 
-  const enabledProviders = () => [...providers.values()].filter((p) => p.view.enabled).sort((a, b) => a.view.order - b.view.order || a.view.name.localeCompare(b.view.name))
-  const publicProviders = (): PublicProvider[] => enabledProviders().map((p) => ({ slug: p.view.slug, kind: p.view.kind, name: p.view.name, icon: p.view.icon }))
+  const enabledProviders = () =>
+    [...providers.values()]
+      .filter((p) => p.view.enabled)
+      .sort((a, b) => a.view.order - b.view.order || a.view.name.localeCompare(b.view.name))
+  const publicProviders = (): PublicProvider[] =>
+    enabledProviders().map((p) => ({ slug: p.view.slug, kind: p.view.kind, name: p.view.name, icon: p.view.icon }))
   const effectiveMode = (): LoginMode => (enabledProviders().length === 0 ? 'local_only' : security.login.mode)
   const ssoOnlyInEffect = () => security.login.ssoOnly && effectiveMode() !== 'local_only'
   const passkeyOn = () => security.passkeys.enabled && o.passkeysAvailable
@@ -139,10 +202,19 @@ export function createSignInBook(o: SignInBookOptions) {
   }
   const withDerived = (rec: ProviderRec): AuthProvider => {
     const v = rec.view
-    return { ...v, people: people(v.slug), ...(v.oidc ? { oidc: { ...v.oidc, hasSecret: rec.secret } } : {}), ...(v.github ? { github: { ...v.github, hasSecret: rec.secret } } : {}) }
+    return {
+      ...v,
+      people: people(v.slug),
+      ...(v.oidc ? { oidc: { ...v.oidc, hasSecret: rec.secret } } : {}),
+      ...(v.github ? { github: { ...v.github, hasSecret: rec.secret } } : {}),
+    }
   }
 
-  const fresh = (input: ProviderInput & { slug: string; kind: ProviderKind; name: string }, sub?: string, legacy = false): ProviderRec => {
+  const fresh = (
+    input: ProviderInput & { slug: string; kind: ProviderKind; name: string },
+    sub?: string,
+    legacy = false,
+  ): ProviderRec => {
     const at = iso()
     const view: AuthProvider = {
       slug: input.slug,
@@ -169,7 +241,13 @@ export function createSignInBook(o: SignInBookOptions) {
         redirectUrl: callbackOf('oidc', input.slug, legacy || input.oidc?.legacyCallback === true),
       }
     } else if (input.kind === 'github') {
-      view.github = { baseUrl: input.github?.baseUrl ?? 'https://github.com', clientId: input.github?.clientId ?? '', hasSecret: false, organizations: input.github?.organizations ?? [], redirectUrl: callbackOf('github', input.slug) }
+      view.github = {
+        baseUrl: input.github?.baseUrl ?? 'https://github.com',
+        clientId: input.github?.clientId ?? '',
+        hasSecret: false,
+        organizations: input.github?.organizations ?? [],
+        redirectUrl: callbackOf('github', input.slug),
+      }
     } else {
       const s = input.saml
       view.saml = {
@@ -196,7 +274,11 @@ export function createSignInBook(o: SignInBookOptions) {
   }
   // A provider made from the command line before 2.8 (the `oidc` option of the mock).
   const addLegacy = (name: string, autoCreate: boolean, sub: string) => {
-    const rec = fresh({ slug: 'sso', kind: 'oidc', name, autoCreate, oidc: { issuer: 'https://sso.example', clientId: 'petalbook' } }, sub, true)
+    const rec = fresh(
+      { slug: 'sso', kind: 'oidc', name, autoCreate, oidc: { issuer: 'https://sso.example', clientId: 'petalbook' } },
+      sub,
+      true,
+    )
     rec.secret = true
     providers.set('sso', rec)
   }
@@ -204,10 +286,15 @@ export function createSignInBook(o: SignInBookOptions) {
   const issuerOf = (v: AuthProvider) => v.oidc?.issuer ?? v.saml?.idpEntityId ?? v.github?.baseUrl ?? ''
   const checkProvider = (input: ProviderInput, kind: ProviderKind, slug: string, existing?: AuthProvider) => {
     if (!o.publicUrl) bad('服务器没有公开地址（--public-url）', 'public_url_required')
-    if (input.name !== undefined && (typeof input.name !== 'string' || input.name.trim() === '' || Array.from(input.name).length > 60)) bad('名称需要 1 到 60 个字符')
+    if (
+      input.name !== undefined &&
+      (typeof input.name !== 'string' || input.name.trim() === '' || Array.from(input.name).length > 60)
+    )
+      bad('名称需要 1 到 60 个字符')
     if (input.icon !== undefined && input.icon !== '' && !/^preset:[a-z]+$/.test(input.icon)) bad('icon 不对')
     if (input.order !== undefined) int(input.order, 0, 10_000, 'order')
-    for (const f of ['enabled', 'autoCreate', 'mergeVerifiedEmail'] as const) if (input[f] !== undefined) bool(input[f], f)
+    for (const f of ['enabled', 'autoCreate', 'mergeVerifiedEmail'] as const)
+      if (input[f] !== undefined) bool(input[f], f)
     const merged = { ...(existing ?? {}), ...input } as ProviderInput
     if (kind === 'oidc') {
       const issuer = input.oidc?.issuer ?? existing?.oidc?.issuer ?? ''
@@ -215,23 +302,35 @@ export function createSignInBook(o: SignInBookOptions) {
       if (!/^https:\/\//.test(issuer)) bad('issuer 要是 https 地址', 'oidc_issuer_invalid')
       if (!(input.oidc?.clientId ?? existing?.oidc?.clientId)) bad('缺少 clientId')
       if (input.oidc?.legacyCallback) {
-        for (const p of providers.values()) if (p.view.slug !== slug && p.view.oidc?.legacyCallback) throw new HttpError(409, 'legacy_callback_in_use', '另一个提供方已经在用旧的回调地址')
+        for (const p of providers.values())
+          if (p.view.slug !== slug && p.view.oidc?.legacyCallback)
+            throw new HttpError(409, 'legacy_callback_in_use', '另一个提供方已经在用旧的回调地址')
       }
     } else if (kind === 'github') {
       if (!(input.github?.clientId ?? existing?.github?.clientId)) bad('缺少 clientId')
       const orgs = input.github?.organizations ?? existing?.github?.organizations ?? []
-      if ((merged.autoCreate ?? existing?.autoCreate) && orgs.length === 0) bad('GitHub 自动建号必须指定组织', 'auto_create_needs_org')
+      if ((merged.autoCreate ?? existing?.autoCreate) && orgs.length === 0)
+        bad('GitHub 自动建号必须指定组织', 'auto_create_needs_org')
     } else {
       if (!/^https:\/\//.test(o.publicUrl ?? '')) bad('SAML 需要 https 的公开地址', 'saml_needs_https')
       const url = input.saml?.metadataUrl ?? existing?.saml?.metadataUrl ?? ''
       const xml = input.saml?.metadataXml ?? existing?.saml?.metadataXml ?? ''
       if (!url && !xml) bad('缺少元数据（地址或 XML）')
       if (url && !/^https:\/\//.test(url)) bad('元数据地址要是 https')
-      if ((xml && !xml.includes('EntityDescriptor')) || url.includes('bad-metadata')) bad('元数据解析不了', 'saml_metadata_invalid')
+      if ((xml && !xml.includes('EntityDescriptor')) || url.includes('bad-metadata'))
+        bad('元数据解析不了', 'saml_metadata_invalid')
     }
     // The identity provider's own address may not be shared.
-    const issuer = kind === 'oidc' ? (input.oidc?.issuer ?? existing?.oidc?.issuer) : kind === 'github' ? (input.github?.baseUrl ?? existing?.github?.baseUrl ?? 'https://github.com') : undefined
-    if (issuer) for (const p of providers.values()) if (p.view.slug !== slug && p.view.kind === kind && issuerOf(p.view) === issuer) throw new HttpError(409, 'provider_issuer_in_use', '另一个提供方已经用了这个签发方')
+    const issuer =
+      kind === 'oidc'
+        ? (input.oidc?.issuer ?? existing?.oidc?.issuer)
+        : kind === 'github'
+          ? (input.github?.baseUrl ?? existing?.github?.baseUrl ?? 'https://github.com')
+          : undefined
+    if (issuer)
+      for (const p of providers.values())
+        if (p.view.slug !== slug && p.view.kind === kind && issuerOf(p.view) === issuer)
+          throw new HttpError(409, 'provider_issuer_in_use', '另一个提供方已经用了这个签发方')
   }
 
   // The groups setting: what is refused, in the order the server refuses it.
@@ -240,7 +339,8 @@ export function createSignInBook(o: SignInBookOptions) {
     if (!isRecord(g)) bad('groups 要是一个对象')
     if (g.enabled !== undefined) bool(g.enabled, 'groups.enabled')
     if (g.claim !== undefined) {
-      if (typeof g.claim !== 'string' || new TextEncoder().encode(g.claim).length > 256) bad('groups.claim 最多 256 字节')
+      if (typeof g.claim !== 'string' || new TextEncoder().encode(g.claim).length > 256)
+        bad('groups.claim 最多 256 字节')
       if (kind === 'github' && g.claim.trim() !== '') bad('GitHub 的组就是组织，不能设置 groups.claim')
     }
     if (g.missing !== undefined && g.missing !== 'keep' && g.missing !== 'clear') bad('groups.missing 是 keep 或 clear')
@@ -248,14 +348,22 @@ export function createSignInBook(o: SignInBookOptions) {
       if (!Array.isArray(g.map) || g.map.length > 1000) bad('groups.map 最多 1000 项')
       const seen = new Set<string>()
       for (const e of g.map as unknown[]) {
-        if (!isRecord(e) || typeof e.value !== 'string' || e.value === '' || new TextEncoder().encode(e.value).length > 256) bad('groups.map 的值是 1 到 256 个字节')
-        if (typeof e.groupId !== 'string' || o.groupSource?.(e.groupId) === undefined) throw new HttpError(404, 'group_not_found', '映射里有不存在的组')
+        if (
+          !isRecord(e) ||
+          typeof e.value !== 'string' ||
+          e.value === '' ||
+          new TextEncoder().encode(e.value).length > 256
+        )
+          bad('groups.map 的值是 1 到 256 个字节')
+        if (typeof e.groupId !== 'string' || o.groupSource?.(e.groupId) === undefined)
+          throw new HttpError(404, 'group_not_found', '映射里有不存在的组')
       }
       for (const e of g.map as { value: string }[]) {
         if (seen.has(e.value)) throw new HttpError(409, 'exists', `值 ${e.value} 映射了两次`)
         seen.add(e.value)
       }
-      for (const e of g.map as { groupId: string }[]) if (o.groupSource?.(e.groupId) !== 'synced') throw new HttpError(409, 'group_not_synced', '只能映射到同步组')
+      for (const e of g.map as { groupId: string }[])
+        if (o.groupSource?.(e.groupId) !== 'synced') throw new HttpError(409, 'group_not_synced', '只能映射到同步组')
     }
   }
   const applyGroups = (v: AuthProvider, g: ProviderInput['groups'], slug: string, changed: Record<string, unknown>) => {
@@ -266,7 +374,8 @@ export function createSignInBook(o: SignInBookOptions) {
     if (g.missing !== undefined && g.missing !== cur.missing) changed['groups.missing'] = cur.missing = g.missing
     if (g.map !== undefined) {
       const next = new Map(g.map.map((e) => [e.value, e.groupId]))
-      for (const old of cur.map) if (next.get(old.value) !== old.groupId) o.onMappingRemoved?.(slug, old.value, next.get(old.value) ?? '')
+      for (const old of cur.map)
+        if (next.get(old.value) !== old.groupId) o.onMappingRemoved?.(slug, old.value, next.get(old.value) ?? '')
       if (JSON.stringify(cur.map) !== JSON.stringify(g.map)) changed['groups.map'] = g.map.length
       cur.map = g.map.map((e) => ({ ...e }))
     }
@@ -343,7 +452,8 @@ export function createSignInBook(o: SignInBookOptions) {
     let n = 0
     for (const u of o.users()) {
       if (!u.identities.some((i) => i.providerSlug === slug)) continue
-      if (u.passwordHash === undefined && u.passkeys.length === 0 && !u.identities.some((i) => i.providerSlug !== slug)) n++
+      if (u.passwordHash === undefined && u.passkeys.length === 0 && !u.identities.some((i) => i.providerSlug !== slug))
+        n++
     }
     return n
   }
@@ -362,7 +472,9 @@ export function createSignInBook(o: SignInBookOptions) {
     const rec = providers.get(slug)
     if (!rec) throw new HttpError(404, 'not_found', '没有这个提供方')
     const probe = `${rec.view.oidc?.issuer ?? ''}${rec.view.saml?.metadataUrl ?? ''}${rec.view.github?.baseUrl ?? ''}`
-    rec.view.status = probe.includes('unreachable') ? { ok: false, checked: iso(), message: '连不上这个地址' } : { ok: true, checked: iso(), message: '' }
+    rec.view.status = probe.includes('unreachable')
+      ? { ok: false, checked: iso(), message: '连不上这个地址' }
+      : { ok: true, checked: iso(), message: '' }
     return withDerived(rec)
   }
 
@@ -382,13 +494,31 @@ export function createSignInBook(o: SignInBookOptions) {
       if (u.passkeys.length === 0) without++
     }
     return {
-      login: { mode: security.login.mode, effectiveMode: effectiveMode(), ssoOnly: security.login.ssoOnly, ssoOnlyInEffect: ssoOnlyInEffect(), ssoAvailable: enabledProviders().length > 0 },
-      passkeys: { enabled: security.passkeys.enabled, available: o.passkeysAvailable, requireRoles: [...security.passkeys.requireRoles], required, requiredWithout: without },
+      login: {
+        mode: security.login.mode,
+        effectiveMode: effectiveMode(),
+        ssoOnly: security.login.ssoOnly,
+        ssoOnlyInEffect: ssoOnlyInEffect(),
+        ssoAvailable: enabledProviders().length > 0,
+      },
+      passkeys: {
+        enabled: security.passkeys.enabled,
+        available: o.passkeysAvailable,
+        requireRoles: [...security.passkeys.requireRoles],
+        required,
+        requiredWithout: without,
+      },
       captcha: {
         provider: security.captcha.provider,
         siteKey: security.captcha.siteKey,
         hasSecret: (security.captcha.secretFor as string) === security.captcha.provider,
-        contexts: { login: { ...security.captcha.contexts.login }, invite: { ...security.captcha.contexts.invite }, setup: { ...security.captcha.contexts.setup }, forgot: { ...security.captcha.contexts.forgot }, register: { ...security.captcha.contexts.register } },
+        contexts: {
+          login: { ...security.captcha.contexts.login },
+          invite: { ...security.captcha.contexts.invite },
+          setup: { ...security.captcha.contexts.setup },
+          forgot: { ...security.captcha.contexts.forgot },
+          register: { ...security.captcha.contexts.register },
+        },
       },
       lockout: { ...security.lockout },
       limits: { ...security.limits },
@@ -405,7 +535,7 @@ export function createSignInBook(o: SignInBookOptions) {
     const next = structuredClone(security)
     const from: Record<string, unknown> = {}
     const to: Record<string, unknown> = {}
-    const set = <T,>(block: string, field: string, current: T, value: T) => {
+    const set = <T>(block: string, field: string, current: T, value: T) => {
       if (JSON.stringify(current) !== JSON.stringify(value)) {
         from[`${block}.${field}`] = current
         to[`${block}.${field}`] = value
@@ -419,15 +549,23 @@ export function createSignInBook(o: SignInBookOptions) {
     }
     if (patch.login !== undefined) {
       const b = only(patch.login, 'login', ['mode', 'ssoOnly'])
-      if (b.mode !== undefined) next.login.mode = set('login', 'mode', security.login.mode, oneOf(b.mode, MODES, 'login.mode'))
+      if (b.mode !== undefined)
+        next.login.mode = set('login', 'mode', security.login.mode, oneOf(b.mode, MODES, 'login.mode'))
       if (b.ssoOnly !== undefined) {
-        if (b.ssoOnly === true && !security.login.ssoOnly && o.registrationOpen?.()) throw new HttpError(400, 'sso_only_with_registration', '有租户开着注册时不能只允许单点登录')
+        if (b.ssoOnly === true && !security.login.ssoOnly && o.registrationOpen?.())
+          throw new HttpError(400, 'sso_only_with_registration', '有租户开着注册时不能只允许单点登录')
         next.login.ssoOnly = set('login', 'ssoOnly', security.login.ssoOnly, bool(b.ssoOnly, 'login.ssoOnly'))
       }
     }
     if (patch.passkeys !== undefined) {
       const b = only(patch.passkeys, 'passkeys', ['enabled', 'requireRoles'])
-      if (b.enabled !== undefined) next.passkeys.enabled = set('passkeys', 'enabled', security.passkeys.enabled, bool(b.enabled, 'passkeys.enabled'))
+      if (b.enabled !== undefined)
+        next.passkeys.enabled = set(
+          'passkeys',
+          'enabled',
+          security.passkeys.enabled,
+          bool(b.enabled, 'passkeys.enabled'),
+        )
       if (b.requireRoles !== undefined) {
         // Only the sets the contract allows: none, the administrators, or everyone.
         const r = b.requireRoles
@@ -439,22 +577,60 @@ export function createSignInBook(o: SignInBookOptions) {
     }
     if (patch.lockout !== undefined) {
       const b = only(patch.lockout, 'lockout', ['enabled', 'minutes', 'scope'])
-      if (b.enabled !== undefined) next.lockout.enabled = set('lockout', 'enabled', security.lockout.enabled, bool(b.enabled, 'lockout.enabled'))
-      if (b.minutes !== undefined) next.lockout.minutes = set('lockout', 'minutes', security.lockout.minutes, int(b.minutes, 1, 10_080, 'lockout.minutes'))
-      if (b.scope !== undefined) next.lockout.scope = set('lockout', 'scope', security.lockout.scope, oneOf(b.scope, SCOPES as SecuritySettings['lockout']['scope'][], 'lockout.scope'))
+      if (b.enabled !== undefined)
+        next.lockout.enabled = set('lockout', 'enabled', security.lockout.enabled, bool(b.enabled, 'lockout.enabled'))
+      if (b.minutes !== undefined)
+        next.lockout.minutes = set(
+          'lockout',
+          'minutes',
+          security.lockout.minutes,
+          int(b.minutes, 1, 10_080, 'lockout.minutes'),
+        )
+      if (b.scope !== undefined)
+        next.lockout.scope = set(
+          'lockout',
+          'scope',
+          security.lockout.scope,
+          oneOf(b.scope, SCOPES as SecuritySettings['lockout']['scope'][], 'lockout.scope'),
+        )
     }
     if (patch.limits !== undefined) {
-      const b = only(patch.limits, 'limits', ['perMinute', 'maxFailures', 'windowMinutes', 'sessionIdleDays', 'sessionMaxDays'])
-      const ranges: Record<string, [number, number]> = { perMinute: [1, 10_000], maxFailures: [1, 1000], windowMinutes: [1, 1440], sessionIdleDays: [1, 365], sessionMaxDays: [1, 3650] }
-      for (const [k, [lo, hi]] of Object.entries(ranges)) {
-        if (b[k] !== undefined) (next.limits as Record<string, number>)[k] = set('limits', k, (security.limits as Record<string, number>)[k], int(b[k], lo, hi, `limits.${k}`))
+      const b = only(patch.limits, 'limits', [
+        'perMinute',
+        'maxFailures',
+        'windowMinutes',
+        'sessionIdleDays',
+        'sessionMaxDays',
+      ])
+      const ranges: Record<string, [number, number]> = {
+        perMinute: [1, 10_000],
+        maxFailures: [1, 1000],
+        windowMinutes: [1, 1440],
+        sessionIdleDays: [1, 365],
+        sessionMaxDays: [1, 3650],
       }
-      if (next.limits.sessionMaxDays < next.limits.sessionIdleDays) bad('limits.sessionMaxDays 不能小于 sessionIdleDays')
+      for (const [k, [lo, hi]] of Object.entries(ranges)) {
+        if (b[k] !== undefined)
+          (next.limits as Record<string, number>)[k] = set(
+            'limits',
+            k,
+            (security.limits as Record<string, number>)[k],
+            int(b[k], lo, hi, `limits.${k}`),
+          )
+      }
+      if (next.limits.sessionMaxDays < next.limits.sessionIdleDays)
+        bad('limits.sessionMaxDays 不能小于 sessionIdleDays')
     }
     let secretGiven: string | undefined
     if (patch.captcha !== undefined) {
       const b = only(patch.captcha, 'captcha', ['provider', 'siteKey', 'secret', 'contexts'])
-      if (b.provider !== undefined) next.captcha.provider = set('captcha', 'provider', security.captcha.provider, oneOf(b.provider, CAPTCHAS, 'captcha.provider'))
+      if (b.provider !== undefined)
+        next.captcha.provider = set(
+          'captcha',
+          'provider',
+          security.captcha.provider,
+          oneOf(b.provider, CAPTCHAS, 'captcha.provider'),
+        )
       if (b.siteKey !== undefined) {
         if (typeof b.siteKey !== 'string' || b.siteKey.length > 200) bad('captcha.siteKey 不对')
         next.captcha.siteKey = set('captcha', 'siteKey', security.captcha.siteKey, b.siteKey)
@@ -473,26 +649,51 @@ export function createSignInBook(o: SignInBookOptions) {
           const x = only(cs[c], `captcha.contexts.${c}`, ['on', 'when', 'failures'])
           const cur = security.captcha.contexts[c]
           if (x.on !== undefined) next.captcha.contexts[c].on = set(`captcha.${c}`, 'on', cur.on, bool(x.on, `${c}.on`))
-          if (x.when !== undefined) next.captcha.contexts[c].when = set(`captcha.${c}`, 'when', cur.when, oneOf(x.when, ['always', 'after_failures'] as const, `${c}.when`))
-          if (x.failures !== undefined) next.captcha.contexts[c].failures = set(`captcha.${c}`, 'failures', cur.failures, int(x.failures, 1, 100, `${c}.failures`))
+          if (x.when !== undefined)
+            next.captcha.contexts[c].when = set(
+              `captcha.${c}`,
+              'when',
+              cur.when,
+              oneOf(x.when, ['always', 'after_failures'] as const, `${c}.when`),
+            )
+          if (x.failures !== undefined)
+            next.captcha.contexts[c].failures = set(
+              `captcha.${c}`,
+              'failures',
+              cur.failures,
+              int(x.failures, 1, 100, `${c}.failures`),
+            )
         }
       }
     }
     // What the stored secret is for changes with the provider: one for another provider does not count.
-    if (secretGiven === undefined && next.captcha.provider !== security.captcha.provider && next.captcha.secretFor !== next.captcha.provider) next.captcha.secretFor = ''
-    if (next.login.ssoOnly && !security.login.ssoOnly && passwordAdmins() === 0) bad('没有带密码的启用管理员，不能开启「只许单点登录」', 'local_admin_required')
+    if (
+      secretGiven === undefined &&
+      next.captcha.provider !== security.captcha.provider &&
+      next.captcha.secretFor !== next.captcha.provider
+    )
+      next.captcha.secretFor = ''
+    if (next.login.ssoOnly && !security.login.ssoOnly && passwordAdmins() === 0)
+      bad('没有带密码的启用管理员，不能开启「只许单点登录」', 'local_admin_required')
     const third = next.captcha.provider !== 'image'
     if (third && CONTEXTS.some((c) => next.captcha.contexts[c].on)) {
       if (!next.captcha.siteKey) bad('第三方验证码需要站点密钥', 'captcha_site_key_required')
-      if (next.captcha.secretFor !== next.captcha.provider) bad('第三方验证码需要密钥（换提供方要在同一次请求里给新的）', 'captcha_secret_required')
+      if (next.captcha.secretFor !== next.captcha.provider)
+        bad('第三方验证码需要密钥（换提供方要在同一次请求里给新的）', 'captcha_secret_required')
       if (!o.publicUrl) bad('第三方验证码需要公开地址（--public-url）', 'captcha_needs_public_url')
     }
     let required = 0
-    for (const u of o.users()) if (!u.disabled && (u.passkeyRequired || next.passkeys.requireRoles.includes(u.role))) required++
-    if (patch.passkeys !== undefined && !o.passkeysAvailable && (next.passkeys.requireRoles.length > 0 || (next.passkeys.enabled && required > 0))) {
+    for (const u of o.users())
+      if (!u.disabled && (u.passkeyRequired || next.passkeys.requireRoles.includes(u.role))) required++
+    if (
+      patch.passkeys !== undefined &&
+      !o.passkeysAvailable &&
+      (next.passkeys.requireRoles.length > 0 || (next.passkeys.enabled && required > 0))
+    ) {
       bad('现在不能使用 passkey（需要合适的公开地址）', 'passkey_unavailable')
     }
-    if (!next.passkeys.enabled && required > 0) bad('还有人被要求使用 passkey，请先取消要求', 'passkey_requirement_unsatisfiable')
+    if (!next.passkeys.enabled && required > 0)
+      bad('还有人被要求使用 passkey，请先取消要求', 'passkey_requirement_unsatisfiable')
     Object.assign(security, next)
     record('security_changed', { actor, detail: { from, to } })
     return view()
@@ -514,7 +715,9 @@ export function createSignInBook(o: SignInBookOptions) {
     if (typeof id !== 'string') return false
     const c = challenges.get(id)
     challenges.delete(id)
-    return !!c && o.now() - c.at <= CHALLENGE_MS && typeof answer === 'string' && answer.trim().toLowerCase() === c.answer
+    return (
+      !!c && o.now() - c.at <= CHALLENGE_MS && typeof answer === 'string' && answer.trim().toLowerCase() === c.answer
+    )
   }
 
   return {
@@ -538,7 +741,10 @@ export function createSignInBook(o: SignInBookOptions) {
     refreshProvider,
     withDerived,
     // How many entries of the providers map to a group, and which; and taking them out.
-    mappingsOf: (groupId: string) => [...providers.values()].flatMap((p) => p.view.groups.map.filter((e) => e.groupId === groupId).map((e) => ({ provider: p.view.slug, value: e.value }))),
+    mappingsOf: (groupId: string) =>
+      [...providers.values()].flatMap((p) =>
+        p.view.groups.map.filter((e) => e.groupId === groupId).map((e) => ({ provider: p.view.slug, value: e.value })),
+      ),
     unmap: (groupId: string) => {
       for (const p of providers.values()) p.view.groups.map = p.view.groups.map.filter((e) => e.groupId !== groupId)
     },

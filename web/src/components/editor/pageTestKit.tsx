@@ -19,10 +19,19 @@ if (!Range.prototype.getClientRects) {
   Range.prototype.getBoundingClientRect = () => new DOMRect()
 }
 
-export const pageExtensions = () => [...createExtensions({ linkOpensOnClick: false, codeBlock: CodeBlockWithView }), TableTools]
+export const pageExtensions = () => [
+  ...createExtensions({ linkOpensOnClick: false, codeBlock: CodeBlockWithView }),
+  TableTools,
+]
 
 export function pageEditor(markdown = ''): Editor {
-  return trackEditor(new Editor({ element: document.createElement('div'), extensions: pageExtensions(), content: markdown ? markdownToDoc(markdown) : undefined }))
+  return trackEditor(
+    new Editor({
+      element: document.createElement('div'),
+      extensions: pageExtensions(),
+      content: markdown ? markdownToDoc(markdown) : undefined,
+    }),
+  )
 }
 
 export const markdownOf = (editor: Editor) => docToMarkdown(editor.getJSON() as DocJSON)
@@ -74,7 +83,9 @@ export async function mount(editor: Editor, extra?: React.ReactNode) {
 // that closed the menu): and opened it again.
 export async function click(el: Element) {
   const pointer = (type: string) =>
-    typeof PointerEvent === 'function' ? new PointerEvent(type, { bubbles: true, pointerType: 'mouse', button: 0, isPrimary: true }) : new MouseEvent(type, { bubbles: true })
+    typeof PointerEvent === 'function'
+      ? new PointerEvent(type, { bubbles: true, pointerType: 'mouse', button: 0, isPrimary: true })
+      : new MouseEvent(type, { bubbles: true })
   await act(async () => {
     el.dispatchEvent(pointer('pointerdown'))
     el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
