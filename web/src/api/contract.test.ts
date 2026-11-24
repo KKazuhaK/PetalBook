@@ -3325,22 +3325,20 @@ function suite(target: Target) {
       expect((await daily('date=2026-11-23&lang=fr')).json.page).toBeNull()
     })
 
-    it('tells a browser how long it may keep the daily text, and gives it a validator', async () => {
+    it('tells a browser to ask again each time, with a validator', async () => {
       expect((await setDaily({ folder: `${folder}/mixzh` })).status).toBe(200)
-      const noTz = await daily('date=2026-11-23')
-      expect(noTz.headers.get('Cache-Control')).toBe('private, max-age=300')
-      expect(noTz.headers.get('ETag')).toMatch(/^"[0-9a-f]{8,}"$/)
-      const withTz = await daily('date=2100-01-01&tz=-480')
-      const age = Number(/max-age=(\d+)/.exec(withTz.headers.get('Cache-Control') ?? '')?.[1])
-      expect(withTz.headers.get('Cache-Control')).toMatch(/^private, max-age=\d+$/)
-      expect(age).toBeGreaterThanOrEqual(60)
-      expect(age).toBeLessThanOrEqual(86400)
-      // A day long past: the shortest.
-      expect((await daily('date=2001-01-01&tz=0')).headers.get('Cache-Control')).toBe('private, max-age=60')
+      const first = await daily('date=2026-11-23')
+      expect(first.headers.get('Cache-Control')).toBe('private, no-cache')
+      const etag = first.headers.get('ETag') ?? ''
+      expect(etag).toMatch(/^"[0-9a-f]{8,}"$/)
+      expect((await daily('date=2100-01-01&tz=-480')).headers.get('Cache-Control')).toBe('private, no-cache')
       for (const tz of ['9999', 'x', '-841'])
         expect([tz, (await daily(`date=2026-11-23&tz=${tz}`)).status]).toEqual([tz, 400])
+      // A change of what the administrators chose is seen at once: the old validator no longer matches.
       expect((await setDaily({ tag: `nothing${run}` })).status).toBe(200)
-      expect((await daily('date=2026-11-23&tz=0')).headers.get('Cache-Control')).toBe('private, max-age=60')
+      const after = await daily('date=2026-11-23')
+      expect(after.headers.get('Cache-Control')).toBe('private, no-cache')
+      expect(after.headers.get('ETag')).not.toBe(etag)
       await setDaily(null)
     })
 
