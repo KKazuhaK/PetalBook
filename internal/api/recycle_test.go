@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -99,7 +101,8 @@ func TestPurgingEarlyNeedsASiteAdministratorAndAFreshConfirmation(t *testing.T) 
 			t.Fatalf("an item that is not there was confirmed: %d %s", r.code, r.raw)
 		}
 		// It works once.
-		f.root.do("DELETE", "/api/admin/recycle/"+one+"?confirm="+tok, nil).want(t, 204, "")
+		f.root.do("DELETE", "/api/admin/recycle/"+one+"?confirm="+tok, nil).want(t, 202, "")
+		a.mgr.WaitPurges()
 		f.root.do("DELETE", "/api/admin/recycle/"+one+"?confirm="+tok, nil).want(t, 404, "not_found")
 		if n := f.countOf(`SELECT COUNT(*) FROM recycle_items WHERE id = '` + one + `'`); n != 0 {
 			t.Fatalf("the item is still there")
@@ -116,7 +119,8 @@ func TestPurgingEarlyNeedsASiteAdministratorAndAFreshConfirmation(t *testing.T) 
 		f.root.do("DELETE", "/api/admin/recycle/"+two+"?confirm="+tok, nil).want(t, 409, "confirm_stale")
 		// And a stale token is spent: asking again works.
 		tok = confirmFor(t, f.root, "purge", "items", two)
-		f.root.do("DELETE", "/api/admin/recycle/"+two+"?confirm="+tok, nil).want(t, 204, "")
+		f.root.do("DELETE", "/api/admin/recycle/"+two+"?confirm="+tok, nil).want(t, 202, "")
+		a.mgr.WaitPurges()
 		// Purging deletes the directory too, and is audited.
 		a.auth.FlushAudit(context.Background())
 		if rows := f.root.audit(t, "space_purged"); len(rows) != 2 {
@@ -538,5 +542,52 @@ func TestAnExportOfTheSiteIsNeverSeenByATenantAdministrator(t *testing.T) {
 		f.admA.do("GET", "/api/admin/exports/"+mine+"/download", nil).want(t, 200, "")
 		f.root.do("GET", "/api/admin/exports/"+mine, nil).want(t, 200, "")
 		f.admB.do("GET", "/api/admin/exports/"+mine, nil).want(t, 404, "not_found")
+	})
+}
+
+// An early purge is long paced work: the request starts it and answers 202 with
+// the item at once; the item is purging (a restore of it is busy) until it is
+// gone, and the purge is audited when it is over.
+func TestAnEarlyPurgeRunsInTheBackground(t *testing.T) {
+	t.Parallel()
+	held, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	opts := accOpts{spaces: func(o *spaces.Options) {
+		o.RecycleHook = func(s string) error {
+			if s == "purge:marked" {
+				once.Do(func() { close(held); <-release })
+			}
+			return nil
+		}
+	}}
+	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Big"}).want(t, 201, "").body["id"].(string)
+		item := admin.do("DELETE", "/api/admin/spaces/"+sid, nil).want(t, 200, "").body["id"].(string)
+		tok := confirmFor(t, admin, "purge", "items", item)
+		answered := make(chan result, 1)
+		go func() { answered <- admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil) }()
+		<-held
+		var r result
+		select {
+		case r = <-answered:
+		case <-time.After(10 * time.Second):
+			close(release)
+			t.Fatal("the request waited for the purge")
+		}
+		r.want(t, 202, "")
+		if r.body["id"] != item {
+			t.Fatalf("%s", r.raw)
+		}
+		admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 409, "busy")
+		close(release)
+		a.mgr.WaitPurges()
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`'`); n != 0 {
+			t.Fatal("the purge did not finish")
+		}
+		a.auth.FlushAudit(context.Background())
+		if rows := admin.audit(t, "space_purged"); len(rows) != 1 || rows[0]["detail"].(map[string]any)["item"] != item {
+			t.Fatalf("%v", rows)
+		}
 	})
 }

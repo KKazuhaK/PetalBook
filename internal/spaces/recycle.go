@@ -37,6 +37,13 @@ package spaces
 // Purging: state purging (so that a restore cannot start), delete the
 // directory, delete the item. A crash leaves state purging and the start
 // finishes it.
+//
+// An action holds its item in memory while it runs (holdItem): the hourly look
+// at the items that are not at rest skips one this process is working on,
+// however long it takes, so it only ever finishes what a crash or a failure
+// left. A restore's last transaction deletes the item only if it is still
+// restoring, and puts nothing back otherwise. A move across filesystems is a
+// copy and a delete (movedir.go).
 
 import (
 	"context"
@@ -88,32 +95,78 @@ func (m *Manager) RecycleDir(item string) string { return filepath.Join(m.recycl
 
 // SetRecycleDays gives the manager the number of days items are kept, read
 // when the job runs and when an item is listed (the server binds it to the
-// setting recycle.days).
-func (m *Manager) SetRecycleDays(f func(context.Context) int) {
+// setting recycle.days). An error says the setting could not be read: the
+// purge job then purges nothing (see purgeDays).
+func (m *Manager) SetRecycleDays(f func(context.Context) (int, error)) {
 	m.recycle.mu.Lock()
 	m.recycle.days = f
 	m.recycle.mu.Unlock()
 }
 
-// RecycleDays is how many days an item is kept now.
+// RecycleDays is how many days an item is kept now, as an item's date shows
+// it: the default when the setting cannot be read (only a date is shown on it;
+// nothing is purged on it, see purgeDays).
 func (m *Manager) RecycleDays(ctx context.Context) int {
+	if n, err := m.purgeDays(ctx); err == nil {
+		return n
+	}
+	return DefaultRecycleDays
+}
+
+// purgeDays is recycle.days for the purge job: an error when the setting
+// cannot be read, so that a round is skipped rather than run on a default that
+// may be shorter than what the site set.
+func (m *Manager) purgeDays(ctx context.Context) (int, error) {
 	m.recycle.mu.Lock()
 	f := m.recycle.days
 	m.recycle.mu.Unlock()
-	if f != nil {
-		if n := f(ctx); n > 0 {
-			return n
-		}
+	if f == nil {
+		return DefaultRecycleDays, nil
 	}
-	return DefaultRecycleDays
+	n, err := f(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("recycle.days cannot be read: %w", err)
+	}
+	if n <= 0 {
+		return DefaultRecycleDays, nil
+	}
+	return n, nil
 }
 
 // recycleState is the manager's part of the recycle bin.
 type recycleState struct {
 	mu   sync.Mutex
-	days func(context.Context) int
+	days func(context.Context) (int, error)
 	// swept is when the tombstones were last looked at (guarded by mu).
 	swept time.Time
+	// held are the items an action of this process is working on (guarded by
+	// mu; see holdItem).
+	held map[string]bool
+	// wg counts the purges started by a request (StartPurge).
+	wg sync.WaitGroup
+}
+
+// holdItem marks an item as worked on by an action of this process; false when
+// another action holds it. The hourly look skips held items, so it never takes
+// over an action that is still running, however long it takes; a crash ends
+// every hold, and the start finishes what it left.
+func (m *Manager) holdItem(id string) bool {
+	m.recycle.mu.Lock()
+	defer m.recycle.mu.Unlock()
+	if m.recycle.held[id] {
+		return false
+	}
+	if m.recycle.held == nil {
+		m.recycle.held = map[string]bool{}
+	}
+	m.recycle.held[id] = true
+	return true
+}
+
+func (m *Manager) letItem(id string) {
+	m.recycle.mu.Lock()
+	delete(m.recycle.held, id)
+	m.recycle.mu.Unlock()
 }
 
 // RecycleOptions say who deletes a space and why.
@@ -152,7 +205,16 @@ func (m *Manager) recycleLocked(ctx context.Context, sc store.Scope, id string, 
 	// delete so a request that was already on its way cannot reopen the
 	// directory while it is being moved.
 	was := m.markDisabled(id, true)
+	// A restore of its clone from the remote (3.1) is stopped and waited for,
+	// and its index-only handle closed, so nothing is written at its live place
+	// after the move.
+	if err := m.stopRestores(ctx, id); err != nil {
+		m.allowRestores(id)
+		m.markDisabled(id, was)
+		return nil, err
+	}
 	if err := m.evict(ctx, id); err != nil {
+		m.allowRestores(id)
 		m.markDisabled(id, was)
 		return nil, err
 	}
@@ -165,14 +227,18 @@ func (m *Manager) recycleLocked(ctx context.Context, sc store.Scope, id string, 
 		dirs = append(dirs, "cache")
 	}
 	now := m.opt.Now()
+	itemID := page.NewID(now)
+	m.holdItem(itemID) // a new id: nobody else holds it
+	defer m.letItem(itemID)
 	var res store.RecycledSpace
 	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
 		var err error
-		res, err = store.RecycleSpaceRows(ctx, q, sc, store.RecycleSpaceIn{ItemID: page.NewID(now), SpaceID: id, By: o.By, ByName: o.ByName,
+		res, err = store.RecycleSpaceRows(ctx, q, sc, store.RecycleSpaceIn{ItemID: itemID, SpaceID: id, By: o.By, ByName: o.ByName,
 			Reason: o.Reason, Parent: o.Parent, Dirs: dirs, Now: now})
 		return err
 	})
 	if err != nil {
+		m.allowRestores(id)
 		m.markDisabled(id, was)
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrNotFound
@@ -236,12 +302,20 @@ func (m *Manager) moveToRecycle(ctx context.Context, it *store.RecycleItem) erro
 		dst := filepath.Join(base, d)
 		src := m.livePath(it.SpaceID, d)
 		switch {
+		case pathExists(dst) && pathExists(src):
+			// A copy across filesystems that finished (a destination is only
+			// ever there whole) before its source was deleted: the space is
+			// deleted and not restorable while it moves, so the source is the
+			// copy's leftover.
+			if err := os.RemoveAll(src); err != nil {
+				return err
+			}
 		case pathExists(dst):
-			// moved already; whatever is at src is another space's business
+			// moved already
 		case !pathExists(src):
 			m.log.Error("a deleted space has no directory to move to the recycle bin", "space", it.SpaceID, "item", it.ID, "dir", d)
 		default:
-			if err := os.Rename(src, dst); err != nil {
+			if err := m.moveDir(src, dst); err != nil {
 				return err
 			}
 		}
@@ -305,6 +379,10 @@ func (m *Manager) restoreSpaceItem(ctx context.Context, it *store.RecycleItem, o
 	if err := m.loadDisabled(ctx); err != nil {
 		return nil, err
 	}
+	if !m.holdItem(it.ID) {
+		return nil, ErrBusyItem
+	}
+	defer m.letItem(it.ID)
 	m.adminMu.Lock()
 	defer m.adminMu.Unlock()
 	if p := m.Problems(it); len(p) > 0 {
@@ -329,7 +407,7 @@ func (m *Manager) restoreSpaceItem(ctx context.Context, it *store.RecycleItem, o
 		return nil, err
 	}
 	for _, d := range it.Dirs {
-		if err := os.Rename(filepath.Join(m.RecycleDir(it.ID), d), m.livePath(it.SpaceID, d)); err != nil {
+		if err := m.moveDir(filepath.Join(m.RecycleDir(it.ID), d), m.livePath(it.SpaceID, d)); err != nil {
 			undo()
 			return nil, err
 		}
@@ -351,6 +429,7 @@ func (m *Manager) restoreSpaceItem(ctx context.Context, it *store.RecycleItem, o
 		return nil, err
 	}
 	os.RemoveAll(m.RecycleDir(it.ID))
+	m.allowRestores(it.SpaceID)
 	m.markDisabled(it.SpaceID, out.Disabled)
 	m.MembershipChanged(out.Members...)
 	m.spaceChanged(it.SpaceID)
@@ -369,8 +448,16 @@ func (m *Manager) moveBack(it *store.RecycleItem) {
 	os.MkdirAll(base, 0o755)
 	for _, d := range it.Dirs {
 		src, dst := m.livePath(it.SpaceID, d), filepath.Join(base, d)
-		if pathExists(src) && !pathExists(dst) {
-			if err := os.Rename(src, dst); err != nil {
+		os.RemoveAll(src + partialSuffix) // a copy to the live place cut short
+		switch {
+		case pathExists(src) && pathExists(dst):
+			// A copy to the live place that finished before the bin's was
+			// deleted: the bin's is whole, the live one goes.
+			if err := os.RemoveAll(src); err != nil {
+				m.log.Error("could not remove a copy of a directory the restore did not finish", "item", it.ID, "dir", d, "error", err)
+			}
+		case pathExists(src):
+			if err := m.moveDir(src, dst); err != nil {
 				m.log.Error("could not put a directory back in the recycle bin", "item", it.ID, "dir", d, "error", err)
 			}
 		}
@@ -416,16 +503,61 @@ func (m *Manager) restoreCacheState(id, state string) {
 // item at rest is purged (ErrBusyItem otherwise), and the state purging keeps a
 // restore from starting meanwhile.
 func (m *Manager) PurgeItem(ctx context.Context, sc store.Scope, itemID string) (*store.RecycleItem, error) {
+	it, err := m.markPurging(ctx, sc, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer m.letItem(it.ID)
+	if err := m.finishPurge(ctx, it); err != nil {
+		return it, err
+	}
+	return it, nil
+}
+
+// markPurging finds an item at rest, holds it and marks it purging; the caller
+// lets it go when the purge is over.
+func (m *Manager) markPurging(ctx context.Context, sc store.Scope, itemID string) (*store.RecycleItem, error) {
 	it, err := store.GetRecycleItem(ctx, m.opt.Store.Q(), sc, itemID, false)
 	if err != nil {
 		return nil, mapItemErr(err)
 	}
+	if !m.holdItem(it.ID) {
+		return nil, ErrBusyItem
+	}
 	if err := store.SetRecycleState(ctx, m.opt.Store.Q(), it.ID, store.RecycleReady, store.RecyclePurging, m.opt.Now()); err != nil {
+		m.letItem(it.ID)
 		return nil, mapItemErr(err)
 	}
-	if err := m.finishPurge(ctx, it); err != nil {
-		return it, err
+	it.State = store.RecyclePurging
+	return it, nil
+}
+
+// WaitPurges waits for the purges StartPurge started (tests, and a caller that
+// wants them over).
+func (m *Manager) WaitPurges() { m.recycle.wg.Wait() }
+
+// StartPurge marks an item purging (so nothing else starts on it) and purges it
+// in the background, on the manager's own time: a purge is paced and may take
+// long, longer than a request. done is called when it is over, with what went
+// wrong; a purge that fails or is cut short stays purging and the hourly job (or
+// the next start) finishes it.
+func (m *Manager) StartPurge(ctx context.Context, sc store.Scope, itemID string, done func(*store.RecycleItem, error)) (*store.RecycleItem, error) {
+	it, err := m.markPurging(ctx, sc, itemID)
+	if err != nil {
+		return nil, err
 	}
+	m.recycle.wg.Add(1)
+	go func() {
+		defer m.recycle.wg.Done()
+		defer m.letItem(it.ID)
+		err := m.finishPurge(m.closedCtx(), it)
+		if err != nil {
+			m.log.Warn("a purge did not finish; it is finished by the hourly job", "item", it.ID, "error", err)
+		}
+		if done != nil {
+			done(it, err)
+		}
+	}()
 	return it, nil
 }
 
@@ -504,7 +636,11 @@ func isSymlink(e os.DirEntry) bool { return e.Type()&os.ModeSymlink != 0 }
 func (m *Manager) PurgeExpired(ctx context.Context) (int, error) {
 	n := 0
 	for ctx.Err() == nil {
-		before := m.opt.Now().Add(-time.Duration(m.RecycleDays(ctx)) * 24 * time.Hour)
+		days, err := m.purgeDays(ctx)
+		if err != nil {
+			return n, err // never purge on a default
+		}
+		before := m.opt.Now().Add(-time.Duration(days) * 24 * time.Hour)
 		it, ok, err := store.NextExpiredRecycle(ctx, m.opt.Store.Q(), before)
 		if err != nil {
 			return n, err
@@ -512,13 +648,19 @@ func (m *Manager) PurgeExpired(ctx context.Context) (int, error) {
 		if !ok {
 			return n, nil
 		}
+		if !m.holdItem(it.ID) {
+			return n, nil // an action of this process has it: the next round
+		}
 		if err := store.SetRecycleState(ctx, m.opt.Store.Q(), it.ID, store.RecycleReady, store.RecyclePurging, m.opt.Now()); err != nil {
+			m.letItem(it.ID)
 			if errors.Is(err, store.ErrBusyItem) || errors.Is(err, store.ErrNotFound) {
 				continue // somebody else has it: the next one
 			}
 			return n, err
 		}
-		if err := m.finishPurge(ctx, it); err != nil {
+		err = m.finishPurge(ctx, it)
+		m.letItem(it.ID)
+		if err != nil {
 			return n, err
 		}
 		n++
@@ -577,26 +719,41 @@ func (m *Manager) recoverRecycle(ctx context.Context, older time.Duration) error
 		if older > 0 && m.opt.Now().Sub(it.StateAt) < older {
 			continue
 		}
-		switch it.State {
-		case store.RecycleMoving:
-			if err := m.moveToRecycle(ctx, it); err != nil {
-				m.log.Warn("could not finish moving a recycled space", "item", it.ID, "error", err)
-				continue
-			}
-			m.log.Warn("a deletion was cut short; its directories are in the recycle bin now", "item", it.ID)
-		case store.RecycleRestoring:
-			m.moveBack(it)
-			if err := store.SetRecycleState(ctx, m.opt.Store.Q(), it.ID, store.RecycleRestoring, store.RecycleReady, m.opt.Now()); err != nil {
-				return err
-			}
-			m.log.Warn("a restore was cut short; the item is in the recycle bin again", "item", it.ID)
-		case store.RecyclePurging:
-			if err := m.finishPurge(ctx, it); err != nil {
-				m.log.Warn("could not finish a purge", "item", it.ID, "error", err)
-				continue
-			}
-			m.log.Warn("a purge was cut short; it is finished", "item", it.ID)
+		// An action of this process that is still running holds its item: it is
+		// not taken over, however long it has been at it.
+		if !m.holdItem(it.ID) {
+			continue
 		}
+		if err := m.recoverItem(ctx, it); err != nil {
+			m.letItem(it.ID)
+			return err
+		}
+		m.letItem(it.ID)
+	}
+	return nil
+}
+
+// recoverItem finishes what a crash or a failure left of one item.
+func (m *Manager) recoverItem(ctx context.Context, it *store.RecycleItem) error {
+	switch it.State {
+	case store.RecycleMoving:
+		if err := m.moveToRecycle(ctx, it); err != nil {
+			m.log.Warn("could not finish moving a recycled space", "item", it.ID, "error", err)
+			return nil
+		}
+		m.log.Warn("a deletion was cut short; its directories are in the recycle bin now", "item", it.ID)
+	case store.RecycleRestoring:
+		m.moveBack(it)
+		if err := store.SetRecycleState(ctx, m.opt.Store.Q(), it.ID, store.RecycleRestoring, store.RecycleReady, m.opt.Now()); err != nil {
+			return err
+		}
+		m.log.Warn("a restore was cut short; the item is in the recycle bin again", "item", it.ID)
+	case store.RecyclePurging:
+		if err := m.finishPurge(ctx, it); err != nil {
+			m.log.Warn("could not finish a purge", "item", it.ID, "error", err)
+			return nil
+		}
+		m.log.Warn("a purge was cut short; it is finished", "item", it.ID)
 	}
 	return nil
 }

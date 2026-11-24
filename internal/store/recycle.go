@@ -706,8 +706,15 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 		return out, err
 	}
 	out.AssetsRemote = ar > 0
-	if _, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND state = 'restoring'`, item.ID); err != nil {
+	// The item must still be this restore's: one that is not restoring any more
+	// was taken from it (its directories may be back in the bin), and nothing
+	// is put back (the transaction rolls back).
+	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND state = 'restoring'`, item.ID)
+	if err != nil {
 		return out, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return out, ErrBusyItem
 	}
 	return out, nil
 }

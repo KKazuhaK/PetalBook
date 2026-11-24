@@ -106,6 +106,10 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 	if it.Kind != store.RecycleUser {
 		return nil, ErrNotFound
 	}
+	if !m.holdItem(it.ID) {
+		return nil, ErrBusyItem
+	}
+	defer m.letItem(it.ID)
 	if err := store.SetRecycleState(ctx, m.opt.Store.Q(), it.ID, store.RecycleReady, store.RecycleRestoring, m.opt.Now()); err != nil {
 		return nil, mapItemErr(err)
 	}
@@ -181,15 +185,21 @@ func (m *Manager) purgeUserItem(ctx context.Context, it *store.RecycleItem) erro
 	}
 	for i := range children {
 		c := &children[i]
-		if err := store.SetRecycleState(ctx, m.opt.Store.Q(), c.ID, store.RecycleReady, store.RecyclePurging, m.opt.Now()); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			if c.State != store.RecyclePurging {
-				return err
-			}
+		if !m.holdItem(c.ID) {
+			return ErrBusyItem // an action of this process has it; the purge is finished later
 		}
-		if err := m.finishPurge(ctx, c); err != nil {
+		err := store.SetRecycleState(ctx, m.opt.Store.Q(), c.ID, store.RecycleReady, store.RecyclePurging, m.opt.Now())
+		if errors.Is(err, store.ErrNotFound) {
+			m.letItem(c.ID)
+			continue
+		}
+		if err != nil && c.State != store.RecyclePurging {
+			m.letItem(c.ID)
+			return err
+		}
+		err = m.finishPurge(ctx, c)
+		m.letItem(c.ID)
+		if err != nil {
 			return err
 		}
 	}

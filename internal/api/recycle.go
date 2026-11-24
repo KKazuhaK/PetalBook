@@ -194,22 +194,34 @@ func (s *server) adminPurgeItem(c *call) {
 	if !s.useConfirm(c, c.r.URL.Query().Get("confirm"), confirmRequest{Action: "purge", Items: []string{it.ID}}) {
 		return
 	}
-	done, err := s.spaces.PurgeItem(c.r.Context(), store.AdminScopeOf(c.user()), it.ID)
+	// A purge is paced and may take long: it runs in the background and is
+	// audited when it is over. The item is purging meanwhile (a restore of it
+	// is busy); one that fails stays purging and the hourly job finishes it.
+	actor, ip := c.user().ID, s.auth.ClientAddr(c.r)
+	started, err := s.spaces.StartPurge(c.r.Context(), store.AdminScopeOf(c.user()), it.ID, func(done *store.RecycleItem, err error) {
+		if err == nil {
+			s.auditPurged(actor, ip, done, "")
+		}
+	})
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditPurged(c, done, "")
-	c.w.WriteHeader(http.StatusNoContent)
+	days := s.recycleDays(c)
+	writeJSON(c.w, http.StatusAccepted, s.recycleItemOf(*started, days, nil))
 }
 
 // auditPurged records that an item was purged.
-func (s *server) auditPurged(c *call, it *store.RecycleItem, bulk string) {
-	if it.Kind == store.RecycleUser {
-		s.auditRow(c, "user_purged", it.TenantID, map[string]any{"item": it.ID, "user": it.UserID, "username": it.Name, "bulk": bulk})
+func (s *server) auditPurged(actor, ip string, it *store.RecycleItem, bulk string) {
+	if s.auth == nil {
 		return
 	}
-	s.auditRow(c, "space_purged", it.TenantID, map[string]any{"item": it.ID, "space": it.SpaceID, "name": it.Name, "bytes": it.Bytes, "reason": it.Reason, "bulk": bulk})
+	ev := auth.AuditEvent{Kind: "space_purged", Actor: actor, Tenant: it.TenantID, IP: ip,
+		Detail: map[string]any{"item": it.ID, "space": it.SpaceID, "name": it.Name, "bytes": it.Bytes, "reason": it.Reason, "bulk": bulk}}
+	if it.Kind == store.RecycleUser {
+		ev.Kind, ev.Detail = "user_purged", map[string]any{"item": it.ID, "user": it.UserID, "username": it.Name, "bulk": bulk}
+	}
+	s.auth.Audit(ev)
 }
 
 // auditRow records what an administrator did, on the row of the tenant it was in.

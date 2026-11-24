@@ -10,9 +10,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
 	"github.com/KKazuhaK/PetalBook/internal/space"
@@ -28,6 +30,11 @@ type rbFix struct {
 	now  time.Time
 	mu   sync.Mutex
 	stop string // the step the hook "crashes" at
+	// pause, when set, is called at each step (outside mu): a test holds an
+	// action there.
+	pause func(step string)
+	// rename, when set, replaces os.Rename for the moves of the recycle bin.
+	rename func(oldpath, newpath string) error
 }
 
 func (f *rbFix) clock() time.Time {
@@ -63,11 +70,24 @@ func newRbFix(t *testing.T, st *store.Store) *rbFix {
 		CommitIdle: time.Hour, CommitMax: time.Hour, Now: f.clock, PurgePause: -1, RecycleEvery: -1,
 		RecycleHook: func(step string) error {
 			f.mu.Lock()
-			defer f.mu.Unlock()
-			if f.stop == step {
+			stop, pause := f.stop, f.pause
+			f.mu.Unlock()
+			if pause != nil {
+				pause(step)
+			}
+			if stop == step {
 				return errRecycleCrash
 			}
 			return nil
+		},
+		Rename: func(oldpath, newpath string) error {
+			f.mu.Lock()
+			r := f.rename
+			f.mu.Unlock()
+			if r != nil {
+				return r(oldpath, newpath)
+			}
+			return os.Rename(oldpath, newpath)
 		}})
 	if err != nil {
 		t.Fatal(err)
@@ -560,7 +580,7 @@ func TestPurgeDeletesOnlyAfterTheDaysAndFinishesAfterACrash(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		days := 30
-		f.m.SetRecycleDays(func(context.Context) int { return days })
+		f.m.SetRecycleDays(func(context.Context) (int, error) { return days, nil })
 		a := f.fullSpace("olive", "edith", "mia")
 		item, err := f.m.RecycleSpace(ctx, store.AllTenants(), a.ID, RecycleOptions{})
 		if err != nil {
@@ -607,6 +627,37 @@ func TestPurgeDeletesOnlyAfterTheDaysAndFinishesAfterACrash(t *testing.T) {
 		if pathExists(f.m.RecycleDir(ib.ID)) || pathExists(f.m.RecycleDir(ic.ID)) {
 			t.Fatal("directories are left in the bin")
 		}
+	})
+}
+
+// When recycle.days cannot be read, the purge round is skipped: an item is
+// never purged on a default that may be shorter than what the site set.
+func TestAPurgeIsSkippedWhenRecycleDaysCannotBeRead(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newRbFix(t, st)
+		var readErr error = errors.New("the settings cannot be read")
+		f.m.SetRecycleDays(func(context.Context) (int, error) { return 0, readErr })
+		a := f.fullSpace("olive", "edith", "mia")
+		item, err := f.m.RecycleSpace(ctx, store.AllTenants(), a.ID, RecycleOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Past the default of 30 days, short of what the site may have set.
+		f.advance(31 * 24 * time.Hour)
+		if n, err := f.m.PurgeExpired(ctx); err == nil || n != 0 {
+			t.Fatalf("a purge ran on a default: %d %v", n, err)
+		}
+		f.m.recycleRound(ctx)
+		if it := f.item(item.ID); it.State != store.RecycleReady || !pathExists(f.m.RecycleDir(item.ID)) {
+			t.Fatalf("the item was touched: %+v", it)
+		}
+		// Read again, the setting decides.
+		readErr = nil
+		f.m.SetRecycleDays(func(context.Context) (int, error) { return 30, nil })
+		if n, err := f.m.PurgeExpired(ctx); err != nil || n != 1 {
+			t.Fatalf("%d %v", n, err)
+		}
+		f.noItem(item.ID)
 	})
 }
 
@@ -699,4 +750,267 @@ func TestRemovePacedRemovesTheTree(t *testing.T) {
 	if !pathExists(filepath.Join(outside, "keep.txt")) {
 		t.Fatal("a symbolic link was followed")
 	}
+}
+
+// The hourly look at items that are not at rest never takes over an action this
+// process is still running, however long it takes: a restore stalled for more
+// than a minute keeps its directories and finishes, and a purge is never run
+// twice at once.
+func TestTheHourlyJobNeverTakesOverAnActionThatIsRunning(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newRbFix(t, st)
+		info := f.fullSpace("olive", "edith", "mia")
+		item, err := f.m.RecycleSpace(ctx, store.AllTenants(), info.ID, RecycleOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		held, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		pauseAt := func(at string) {
+			f.mu.Lock()
+			f.pause = func(step string) {
+				if step == at {
+					once.Do(func() { close(held); <-release })
+				}
+			}
+			f.mu.Unlock()
+		}
+		pauseAt("restore:moved-space")
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.m.RestoreSpace(ctx, store.AllTenants(), item.ID, "")
+			done <- err
+		}()
+		<-held
+		f.advance(2 * time.Minute)
+		f.m.recycleRound(ctx)
+		close(release)
+		if err := <-done; err != nil {
+			t.Fatalf("the restore failed: %v", err)
+		}
+		root, state := f.m.paths(info.ID)
+		if !pathExists(root) || !pathExists(state) {
+			t.Fatal("the restored space lost its directories")
+		}
+		f.noItem(item.ID)
+		if len(f.rowsOf("spaces", "id", info.ID)) != 1 {
+			t.Fatal("the rows did not come back")
+		}
+
+		// A purge that takes longer than a minute is not run a second time.
+		item, err = f.m.RecycleSpace(ctx, store.AllTenants(), info.ID, RecycleOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var dirs sync.WaitGroup
+		var purged int32
+		held, release, once = make(chan struct{}), make(chan struct{}), sync.Once{}
+		f.mu.Lock()
+		f.pause = func(step string) {
+			switch step {
+			case "purge:marked":
+				once.Do(func() { close(held); <-release })
+			case "purge:dirs":
+				f.mu.Lock()
+				purged++
+				f.mu.Unlock()
+			}
+		}
+		f.mu.Unlock()
+		dirs.Add(1)
+		go func() {
+			defer dirs.Done()
+			if _, err := f.m.PurgeItem(ctx, store.AllTenants(), item.ID); err != nil {
+				t.Error(err)
+			}
+		}()
+		<-held
+		f.advance(2 * time.Minute)
+		f.m.recycleRound(ctx)
+		close(release)
+		dirs.Wait()
+		f.mu.Lock()
+		n := purged
+		f.mu.Unlock()
+		if n != 1 {
+			t.Fatalf("the purge ran %d times", n)
+		}
+		f.noItem(item.ID)
+	})
+}
+
+// A restore whose item was taken from it (its final delete finds no row in the
+// state restoring) puts nothing back: its rows are rolled back and its
+// directories go back to the bin.
+func TestARestoreWhoseItemWasTakenPutsNothingBack(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newRbFix(t, st)
+		info := f.fullSpace("olive", "edith", "mia")
+		item, err := f.m.RecycleSpace(ctx, store.AllTenants(), info.ID, RecycleOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.mu.Lock()
+		f.pause = func(step string) {
+			if step == "restore:moved-cache" {
+				// What another holder would do: the item is ready again.
+				if _, err := st.Q().Exec(ctx, `UPDATE recycle_items SET state = 'ready' WHERE id = ?`, item.ID); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		f.mu.Unlock()
+		if _, err := f.m.RestoreSpace(ctx, store.AllTenants(), item.ID, ""); !errors.Is(err, ErrBusyItem) {
+			t.Fatalf("%v", err)
+		}
+		f.mu.Lock()
+		f.pause = nil
+		f.mu.Unlock()
+		if len(f.rowsOf("spaces", "id", info.ID)) != 0 {
+			t.Fatal("the rows were put back")
+		}
+		if it := f.item(item.ID); len(f.m.Problems(it)) != 0 {
+			t.Fatalf("%v", f.m.Problems(it))
+		}
+	})
+}
+
+// A move across filesystems (rename answers EXDEV) is made by a copy and a
+// delete: the item is never stuck in moving, and it comes back the same way.
+func TestRecycleMovesAcrossFilesystems(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newRbFix(t, st)
+		info := f.fullSpace("olive", "edith", "mia")
+		before := f.snapshot(info.ID)
+		f.mu.Lock()
+		f.rename = func(oldpath, newpath string) error {
+			return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+		}
+		f.mu.Unlock()
+		item, err := f.m.RecycleSpace(ctx, store.AllTenants(), info.ID, RecycleOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		it := f.item(item.ID)
+		if it.State != store.RecycleReady || len(f.m.Problems(it)) != 0 {
+			t.Fatalf("stuck: %+v %v", it, f.m.Problems(it))
+		}
+		root, state := f.m.paths(info.ID)
+		if pathExists(root) || pathExists(state) {
+			t.Fatal("the copy left the directories at their live place")
+		}
+		if _, err := f.m.RestoreSpace(ctx, store.AllTenants(), item.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(f.m.RecycleDir(item.ID)) {
+			t.Fatal("the bin still holds the restored space")
+		}
+		for tbl, rows := range before {
+			if strings.Join(rows, "\n") != strings.Join(f.snapshot(info.ID)[tbl], "\n") {
+				t.Errorf("%s came back different", tbl)
+			}
+		}
+		sp, release, err := f.m.Acquire(ctx, info.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if l, err := sp.List(index.Query{Recursive: true}); err != nil || len(l.Items) != 1 {
+			t.Fatalf("the pages after a copy there and back: %v %v", l, err)
+		}
+	})
+}
+
+// A copy cut short is started again and finished by the next look; one that
+// was finished but whose source was not deleted yet is finished too.
+func TestACopyAcrossFilesystemsCutShortIsFinished(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newRbFix(t, st)
+		info := f.fullSpace("olive", "edith", "mia")
+		f.mu.Lock()
+		f.rename = func(oldpath, newpath string) error {
+			return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+		}
+		f.mu.Unlock()
+		f.crashAt("recycle:copied")
+		if _, err := f.m.RecycleSpace(ctx, store.AllTenants(), info.ID, RecycleOptions{}); err != nil && !errors.Is(err, errRecycleCrash) {
+			t.Fatal(err)
+		}
+		item := f.itemOfSpace(info.ID)
+		f.crashAt("")
+		if err := f.m.recoverRecycle(ctx, 0); err != nil {
+			t.Fatal(err)
+		}
+		it := f.item(item.ID)
+		root, state := f.m.paths(info.ID)
+		if it.State != store.RecycleReady || len(f.m.Problems(it)) != 0 || pathExists(root) || pathExists(state) {
+			t.Fatalf("%+v %v %v %v", it, f.m.Problems(it), pathExists(root), pathExists(state))
+		}
+	})
+}
+
+// Deleting a space whose clone is being restored from its remote (3.1) waits for
+// that restore, which then writes nothing at the space's live place, and closes
+// the index-only handle (4.1): no orphan clone is left in DATA/spaces after the
+// move, and the bin holds what the space had.
+func TestDeletingASpaceThatIsBeingRestoredLeavesNoOrphanClone(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 1)
+		in, root := f.evictable(remote)
+		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		// An index-only handle is open, and a restore is fetching (held).
+		ih, err := f.m.OpenIndex(ctx, f.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ih.Release()
+		f.m.opt.RestoreWait = 50 * time.Millisecond
+		f.r.mu.Lock()
+		f.r.hold = make(chan struct{})
+		hold := f.r.hold
+		f.r.mu.Unlock()
+		var rs *RestoringError
+		if _, err := f.m.Open(ctx, f.user, in.ID); !errors.As(err, &rs) {
+			t.Fatalf("want a restore under way, got %v", err)
+		}
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			close(hold)
+		}()
+		item, err := f.m.RecycleSpace(ctx, store.AllTenants(), in.ID, RecycleOptions{})
+		f.r.mu.Lock()
+		f.r.hold = nil
+		f.r.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Whatever the restore was doing is over by now; wait for good measure.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			f.m.ev.mu.Lock()
+			n := len(f.m.ev.restores)
+			f.m.ev.mu.Unlock()
+			if n == 0 || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if pathExists(root) {
+			t.Fatal("a restore wrote a clone at the live place of a deleted space")
+		}
+		f.m.ev.mu.Lock()
+		e := f.m.ev.idx[in.ID]
+		f.m.ev.mu.Unlock()
+		if e != nil {
+			t.Fatal("the index-only handle of the deleted space is still open")
+		}
+		it, err := store.GetRecycleItem(ctx, st.Q(), store.AllTenants(), item.ID, false)
+		if err != nil || it.State != store.RecycleReady || len(f.m.Problems(it)) != 0 {
+			t.Fatalf("%+v %v", it, err)
+		}
+	})
 }

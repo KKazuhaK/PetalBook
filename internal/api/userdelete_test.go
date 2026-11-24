@@ -372,7 +372,8 @@ func TestPurgingAPersonDeletesTheirDataLeavesATombstoneAndRetiresTheName(t *test
 		}
 		binDirs := a.dir + "/recycle"
 		tok := confirmFor(t, f.admin, "purge", "items", item)
-		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 204, "")
+		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
+		a.mgr.WaitPurges()
 		// Their personal data is gone; the row stays as a tombstone.
 		for _, q := range []string{
 			`SELECT COUNT(*) FROM passwords WHERE user_id = '` + f.ownerID + `'`,
@@ -434,7 +435,8 @@ func TestAPurgedUsernameIsFreeByDefaultAndNeverWhenTheSiteSaysSo(t *testing.T) {
 		purge := func(id string) {
 			item := f.admin.do("DELETE", "/api/users/"+id, map[string]any{"heir": f.editorID}).want(t, 200, "").body["id"].(string)
 			tok := confirmFor(t, f.admin, "purge", "items", item)
-			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 204, "")
+			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
+			a.mgr.WaitPurges()
 		}
 		take := func(username string) result {
 			inv := f.admin.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "")
@@ -716,7 +718,8 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		}
 		// Purging the item of a person who is not deleted must not touch their data.
 		tok := confirmFor(t, f.admin, "purge", "items", item)
-		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 204, "")
+		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
+		a.mgr.WaitPurges()
 		if n := a.countRows(t, `SELECT COUNT(*) FROM passwords WHERE user_id = '`+f.ownerID+`'`); n != 1 {
 			t.Fatal("a purge of an item whose person is not deleted deleted their data")
 		}
@@ -728,7 +731,8 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		item = f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
 		stop.Store("purge-user:spaces")
 		tok = confirmFor(t, f.admin, "purge", "items", item)
-		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 500, "")
+		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
+		a.mgr.WaitPurges()
 		stop.Store("")
 		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`' AND state = 'purging'`); n != 1 {
 			t.Fatal("the item is not left purging")
@@ -801,7 +805,8 @@ func TestPurgingAStaleItemOfAPersonLeavesALaterDeletionWhole(t *testing.T) {
 		purge := func(item string) {
 			t.Helper()
 			tok := confirmFor(t, f.admin, "purge", "items", item)
-			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 204, "")
+			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
+			a.mgr.WaitPurges()
 			if err := a.mgr.FinishRecycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}

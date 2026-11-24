@@ -189,6 +189,9 @@ type Options struct {
 	RecycleEvery time.Duration
 	PurgePause   time.Duration
 	RecycleHook  func(step string) error
+	// Rename replaces os.Rename for the moves of the recycle bin (tests: a
+	// rename that answers EXDEV, as one across filesystems does).
+	Rename func(oldpath, newpath string) error
 
 	// AssetsHook is called at each step of moving a space's attachments into
 	// its attachment repository; an error ends the move there, without
@@ -1172,8 +1175,9 @@ func (m *Manager) Close() error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	m.exp.wg.Wait() // exports end when the manager is closed
-	m.as.wg.Wait()  // moves of attachments end when the manager is closed
+	m.exp.wg.Wait()     // exports end when the manager is closed
+	m.recycle.wg.Wait() // so do purges started by a request
+	m.as.wg.Wait()      // moves of attachments end when the manager is closed
 	m.mu.Lock()
 	open := m.open
 	m.open = map[string]*opening{}
