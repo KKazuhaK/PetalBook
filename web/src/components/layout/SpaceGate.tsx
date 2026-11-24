@@ -3,6 +3,7 @@ import { Outlet, useLocation, useParams } from 'react-router'
 import { rememberSpace, useActiveSpace, useSpaces } from '@/api/hooks'
 import { ErrorState, PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
+import { inOpenView } from '@/lib/adminView'
 import { t } from '@/i18n'
 import { SettingsNoticeBanner } from './SettingsNoticeBanner'
 import { StorageNoticeBanner } from './StorageNoticeBanner'
@@ -35,7 +36,7 @@ export function SpaceGate() {
   // A new key per space: nothing of the old one stays mounted.
   return (
     <>
-      {outsider && <AdminViewBanner key={`view:${space}`} space={current} />}
+      {inOpenView(current) && <AdminViewBanner key={`view:${space}`} space={current} />}
       <StorageNoticeBanner key={`storage:${space}`} />
       <SettingsNoticeBanner key={`notice:${space}`} />
       <Outlet key={space} />
