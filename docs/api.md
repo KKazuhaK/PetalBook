@@ -1529,14 +1529,29 @@ Any signed-in user. What the client needs to show GitHub choices:
 
 ### `POST /api/github/authorization/start`
 
-`{"return": "/s/01JD3K8Q7Z/settings"}`, with `return` treated as in
-`POST /api/auth/oidc/start`. `200` with
-`{"url": "https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256"}`
-and a short-lived cookie that ties the attempt to this browser; the client
-navigates to `url`. `redirect_uri` is
+`{"return": "/s/01JD3K8Q7Z/settings", "install": true}`, with `return` treated as
+in `POST /api/auth/oidc/start`. `200` with `{"url": "…"}` and a short-lived
+cookie that ties the attempt to this browser; the client navigates to `url`.
+
+- **`install: true`** (what "Connect GitHub" uses): `url` is the App's
+  installation page,
+  `https://github.com/apps/<slug>/installations/new?state=…`. The App asks for
+  user authorisation during installation (`request_oauth_on_install`), so a
+  person installs the App on their own account (or an organisation) and
+  authorises it in one GitHub flow, and GitHub sends the browser to the callback
+  below with `code`, `state`, `installation_id` and `setup_action=install`. An
+  App entered by hand needs "Request user authorization (OAuth) during
+  installation" ticked in its settings (the one made by the manifest button has
+  it). The code of such a flow has no PKCE challenge, so none is sent back.
+  A person who already has the App installed everywhere can still authorise
+  alone with:
+- **`install` false or left out**: `url` is
+  `https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
+
+`redirect_uri` is `redirect_uri` is
 `<public-url>/api/github/authorization/callback`. `state` is 32 random
 bytes; the PKCE verifier is 64 random characters and its S256 challenge is
-sent. Both are held in memory only, for 10 minutes, used once, bound to the
+sent (not for `install`). Both are held in memory only, for 10 minutes, used once, bound to the
 cookie and to the signed-in user (at most 10 000 attempts at a time: the
 oldest goes first). When reconnecting, `login=<the current login>` is sent so
 GitHub suggests the same account. `409 github_not_configured` when
@@ -1547,12 +1562,20 @@ GitHub suggests the same account. `409 github_not_configured` when
 GitHub redirects here. The server answers with a redirect (`303`), never JSON:
 to the `return` path on success, to `/settings?github_error=<code>` on failure.
 It needs the session of the user who started the attempt; another session or
-none is `expired`. The server exchanges the code
+none is `expired`. The same callback serves both starts: a plain authorisation
+(`code` and `state`) and an installation (`code`, `state`, `installation_id`,
+`setup_action=install`). The server exchanges the code
 (`POST https://github.com/login/oauth/access_token` with the client id and
-secret, the code, `redirect_uri` and the PKCE verifier), then reads the
-account with `GET /user`.
+secret, the code, `redirect_uri` and, for a plain authorisation, the PKCE
+verifier), then reads the account with `GET /user`. An installation that
+brought no `code` (the App does not ask for authorisation during installation)
+is `installed`; one an organisation still has to approve
+(`setup_action=request`) is `requested`.
 
-Codes: `denied` (the user cancelled on GitHub), `expired` (the attempt is
+Codes: `installed` (the App was installed but GitHub sent no code: authorise
+once more with `install` false; the App needs "Request user authorization
+(OAuth) during installation"), `requested` (the organisation's owners must
+approve the installation first), `denied` (the user cancelled on GitHub), `expired` (the attempt is
 unknown, used, older than 10 minutes, or of another user), `github_error`
 (GitHub refused the exchange or could not be reached), `account_in_use`
 (another PetalBook user has connected this GitHub account, in any tenant: the
@@ -1607,9 +1630,9 @@ The accounts the caller can create a repository in, one page at a time:
 
 ```json
 {"items": [
-  {"login": "tang-gh", "type": "User", "via": "user", "installationId": null},
-  {"login": "kazuhahub", "type": "Organization", "via": "user", "installationId": 51234567},
-  {"login": "petal-team", "type": "Organization", "via": "app", "installationId": 51239999}],
+  {"login": "tang-gh", "type": "User", "via": "user", "installationId": null, "needsInstall": false},
+  {"login": "kazuhahub", "type": "Organization", "via": "user", "installationId": 51234567, "needsInstall": false},
+  {"login": "petal-team", "type": "Organization", "via": "app", "installationId": 51239999, "needsInstall": false}],
  "next": "…"}
 ```
 
@@ -1617,8 +1640,14 @@ In this order: the caller's own GitHub account, when connected; the
 organisations among the installations GitHub lists for the caller's
 connection (`GET /user/installations`, 30 to a page); the organisations whose
 installation a site administrator shared with the caller's tenant and that are not
-already listed. `via`
-says which token creates the repository there. Each page is at most one call
+already listed. `needsInstall` is `true` on the caller's own account when the
+App is not installed there: GitHub lets a user token create repositories only
+in accounts the App is installed on, so a repository in that account is refused
+with `409 github_app_not_installed` until the person installs it (the web app
+offers "Install on my account": `installUrl` of `GET /api/github`, or the
+`install` start above). It is found with one call to GitHub on the first page
+(`GET /users/{login}/installation`, remembered while the App is there).
+`via` says which token creates the repository there. Each page is at most one call
 to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
 connection only the installations shared with the caller's tenant are listed. A repository is created with
 the caller's own token wherever it can be, so GitHub's rules for that person
@@ -1841,6 +1870,7 @@ fixed (a user connects again, an administrator saves the App).
 | `github_name_taken` | 409 | the owner has a repository of that name |
 | `github_no_permission` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
 | `github_app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
+| `github_app_not_installed` | 409 | the owner is the caller's own account and the App is not installed there; `installUrl` is where to install it (instead of GitHub's raw `403 Resource not accessible by integration`). Installed, but without Administration, it is `github_app_missing_permission` |
 | `github_repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
 | `github_push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
 | `invalid` | 400 | a field breaks a rule above, or GitHub refused one |
@@ -6042,8 +6072,11 @@ details here.
 The App needs these permissions on GitHub: Contents read and write (Git),
 Metadata read, and Administration read and write (creating repositories;
 without it, spaces can only be connected to repositories that exist).
-"Request user authorization (OAuth) during installation" is not needed. Its
-callback URL is the `callbackUrl` below.
+"Request user authorization (OAuth) during installation" should be ticked, so
+that installing on one's own account and authorising it are one step, and the
+App must be installable on **any account** (public), or a person cannot install
+it on their own account: `anyAccount` below says which it is. Its callback URL
+is the `callbackUrl` below.
 
 #### `GET /api/admin/github`
 

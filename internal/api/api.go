@@ -468,6 +468,8 @@ type errorBody struct {
 	Current any    `json:"current,omitempty"`
 	// Repo is the empty repository a failed space creation left on GitHub.
 	Repo *githubRepoResp `json:"repo,omitempty"`
+	// InstallURL is where the App is installed (github_app_not_installed).
+	InstallURL string `json:"installUrl,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
@@ -702,6 +704,7 @@ func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
 	if len(e.Missing) > 0 {
 		body.Missing = e.Missing
 	}
+	body.InstallURL = e.InstallURL
 	if e.Code == github.CodeRateLimited {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))

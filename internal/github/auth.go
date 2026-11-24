@@ -139,12 +139,9 @@ func safeReturn(s string) string {
 // address to send the browser to and the value of the cookie that ties the
 // attempt to that browser.
 func (s *Service) StartAuthorization(ctx context.Context, userID, ret string) (authURL, binding string, err error) {
-	st, err := s.need(ctx)
+	st, err := s.needUserAuth(ctx)
 	if err != nil {
 		return "", "", err
-	}
-	if !st.userAuth(s.opt.PublicURL) {
-		return "", "", errf(http.StatusConflict, CodeNotConfigured, "users cannot connect GitHub accounts: the App's client id and secret and the server's --public-url are needed")
 	}
 	login := ""
 	if a, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil {
@@ -156,13 +153,49 @@ func (s *Service) StartAuthorization(ctx context.Context, userID, ret string) (a
 	return s.c.AuthorizeURL(st.rec.ClientID, s.CallbackURL(), state, challenge, login), binding, nil
 }
 
+func (s *Service) needUserAuth(ctx context.Context) (*appState, error) {
+	st, err := s.need(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !st.userAuth(s.opt.PublicURL) {
+		return nil, errf(http.StatusConflict, CodeNotConfigured, "users cannot connect GitHub accounts: the App's client id and secret and the server's --public-url are needed")
+	}
+	return st, nil
+}
+
+// StartInstall begins connecting a user's GitHub account through the App's
+// installation page: with "request user authorization during installation"
+// GitHub authorises the person in the same flow, so installing on their own
+// account and connecting it are one step. The attempt is bound as for
+// StartAuthorization; its code carries no PKCE challenge, as GitHub gives
+// none to an installation, so none is sent back.
+func (s *Service) StartInstall(ctx context.Context, userID, ret string) (installPage, binding string, err error) {
+	st, err := s.needUserAuth(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	page := installURL(st.rec.HTMLURL)
+	if page == "" {
+		return "", "", errf(http.StatusConflict, CodeNotConfigured, "GitHub did not say where the App is installed")
+	}
+	state := githubapp.RandomState()
+	binding = s.attempts.put(attempt{state: state, userID: userID, ret: safeReturn(ret)})
+	return page + "?state=" + url.QueryEscape(state), binding, nil
+}
+
 // Callback failure codes (the github_error of /settings).
 const (
-	cbDenied     = "denied"
-	cbExpired    = "expired"
-	cbError      = "github_error"
-	cbInUse      = "account_in_use"
-	cbDifferent  = "different_account"
+	cbDenied    = "denied"
+	cbExpired   = "expired"
+	cbError     = "github_error"
+	cbInUse     = "account_in_use"
+	cbDifferent = "different_account"
+	// cbInstalled: GitHub installed the App but sent no code (the App does not
+	// ask for authorisation during installation). cbRequested: an organisation
+	// has to approve the installation first.
+	cbInstalled  = "installed"
+	cbRequested  = "requested"
 	failRedirect = "/settings?github_error="
 )
 
@@ -196,6 +229,12 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		return fail(cbDenied)
 	}
 	if code == "" {
+		switch action, _ := one("setup_action"); action {
+		case "request":
+			return fail(cbRequested)
+		case "install", "update":
+			return fail(cbInstalled)
+		}
 		return fail(cbError)
 	}
 	st, err := s.state(ctx)

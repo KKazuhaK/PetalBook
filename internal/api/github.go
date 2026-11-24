@@ -93,11 +93,20 @@ func (s *server) githubAuthStart(c *call) {
 	}
 	var req struct {
 		Return string `json:"return"`
+		// Install sends the person to the App's installation page, which
+		// authorises them as well; false goes to the authorisation page alone.
+		Install bool `json:"install"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	authURL, binding, err := gh.StartAuthorization(c.r.Context(), c.user().ID, req.Return)
+	var authURL, binding string
+	var err error
+	if req.Install {
+		authURL, binding, err = gh.StartInstall(c.r.Context(), c.user().ID, req.Return)
+	} else {
+		authURL, binding, err = gh.StartAuthorization(c.r.Context(), c.user().ID, req.Return)
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -178,10 +187,11 @@ func (s *server) githubOwners(c *call) {
 		Type           string `json:"type"`
 		Via            string `json:"via"`
 		InstallationID *int64 `json:"installationId"`
+		NeedsInstall   bool   `json:"needsInstall"`
 	}
 	out := make([]ownerResp, len(items))
 	for i, o := range items {
-		out[i] = ownerResp{Login: o.Login, Type: o.Type, Via: o.Via}
+		out[i] = ownerResp{Login: o.Login, Type: o.Type, Via: o.Via, NeedsInstall: o.NeedsInstall}
 		if o.InstallationID > 0 {
 			id := o.InstallationID
 			out[i].InstallationID = &id

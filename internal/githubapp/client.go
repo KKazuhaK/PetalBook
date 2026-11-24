@@ -406,13 +406,19 @@ func (c *Client) logRefusal(r request, se *StatusError) {
 }
 
 // IsPermissionRefusal reports whether err is GitHub saying the App, or its
-// installation, lacks a permission for what was asked (a 403 or 422 that talks
-// about permissions), as opposed to a repository that is not reachable.
+// installation, lacks a permission for what was asked (a 403 or 422 about the
+// App's permissions), as opposed to a repository that is not reachable or a
+// person who may not do something ("You don't have permission to ...").
 func IsPermissionRefusal(err error) bool {
 	var se *StatusError
 	if !errors.As(err, &se) || se.RateLimited || (se.Status != http.StatusForbidden && se.Status != http.StatusUnprocessableEntity) {
 		return false
 	}
 	m := strings.ToLower(se.Message)
-	return strings.Contains(m, "permission") || strings.Contains(m, "not accessible by integration")
+	for _, w := range []string{"not accessible by integration", "permissions requested", "not granted to this installation", "permissions that are not granted"} {
+		if strings.Contains(m, w) {
+			return true
+		}
+	}
+	return false
 }

@@ -201,6 +201,10 @@ type Fake struct {
 	// Public is whether the App can be installed on any account, as GET /app
 	// says; nil leaves it out (GitHub does not always say).
 	Public *bool
+	// PersonalNeedsInstall makes GitHub refuse a user's token a repository in the
+	// user's own account unless the App is installed there (403 "Resource not
+	// accessible by integration"), as the real one does.
+	PersonalNeedsInstall bool
 	// PermissionRefusal403 makes a token that asks for a permission the
 	// installation lacks answer 403 "Resource not accessible by integration"
 	// instead of 422.
@@ -1195,6 +1199,17 @@ func (f *Fake) getRepo(w http.ResponseWriter, p principal, owner, name string) {
 	}
 }
 
+func (f *Fake) installOfLocked(account string) *Install {
+	for _, in := range f.installs {
+		if !in.Deleted && strings.EqualFold(in.Account, account) {
+			return in
+		}
+	}
+	return nil
+}
+
+func (f *Fake) installedLocked(account string) bool { return f.installOfLocked(account) != nil }
+
 func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, org string) {
 	var b struct {
 		Name        string `json:"name"`
@@ -1209,6 +1224,14 @@ func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, o
 	switch {
 	case org == "" && p.kind == "user":
 		owner = f.accounts[strings.ToLower(p.login)].Login
+		if f.PersonalNeedsInstall && !f.installedLocked(owner) {
+			apiError(w, 403, "Resource not accessible by integration")
+			return
+		}
+		if in := f.installOfLocked(owner); f.PersonalNeedsInstall && in != nil && in.Perms != nil && in.Perms["administration"] != "write" {
+			apiError(w, 403, "Resource not accessible by integration")
+			return
+		}
 	case org == "":
 		apiError(w, 403, "Resource not accessible by integration")
 		return

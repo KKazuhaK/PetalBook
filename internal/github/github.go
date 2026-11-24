@@ -34,18 +34,21 @@ const (
 	// CodeMissingPermission: the App, or its installation, lacks a permission
 	// (the answer names them); a refusal of GitHub to a person is CodeNoPermission.
 	CodeMissingPermission = "github_app_missing_permission"
-	CodeRepoNotInInstall  = "github_repo_not_in_installation"
-	CodePushFailed        = "github_push_failed"
-	CodeKeyInvalid        = "github_key_invalid"
-	CodeAppRejected       = "github_app_rejected"
-	CodeClientRejected    = "github_client_rejected"
-	CodeAppInUse          = "github_app_in_use"
-	CodeInvalid           = "invalid"
-	CodeForbidden         = "forbidden"
-	CodeNotFound          = "not_found"
-	CodeRateLimited       = "rate_limited"
-	CodeUnavailable       = "unavailable"
-	CodeInternal          = "internal"
+	// CodeAppNotInstalled: the person has authorised the App but it is not
+	// installed on their own account, where a repository cannot be made without it.
+	CodeAppNotInstalled  = "github_app_not_installed"
+	CodeRepoNotInInstall = "github_repo_not_in_installation"
+	CodePushFailed       = "github_push_failed"
+	CodeKeyInvalid       = "github_key_invalid"
+	CodeAppRejected      = "github_app_rejected"
+	CodeClientRejected   = "github_client_rejected"
+	CodeAppInUse         = "github_app_in_use"
+	CodeInvalid          = "invalid"
+	CodeForbidden        = "forbidden"
+	CodeNotFound         = "not_found"
+	CodeRateLimited      = "rate_limited"
+	CodeUnavailable      = "unavailable"
+	CodeInternal         = "internal"
 
 	// The codes a space's remote shows (errorCode) when its credential stops working.
 	CodeAuthorizationExpired = "github_authorization_expired"
@@ -67,7 +70,9 @@ type Error struct {
 	Msg    string
 	Repo   *RepoRef
 	// Missing names the permissions the App or its installation lacks.
-	Missing    []string
+	Missing []string
+	// InstallURL is where the App is installed (github_app_not_installed).
+	InstallURL string
 	RetryAfter time.Duration
 	Err        error
 }

@@ -641,3 +641,49 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 		}
 	})
 }
+
+// A person connects by installing the App on their own account in one GitHub
+// flow; without the App there, a repository in their account answers what to do.
+func TestConnectingByInstallingAndThePersonalAccountNeedsTheApp(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		admin.do("PUT", "/api/admin/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
+			"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
+		a.fake.PersonalNeedsInstall = true
+		member := a.addUser("tang", pw, "member")
+		a.fake.AddUser("tang-gh")
+		r := member.do("POST", "/api/github/authorization/start", map[string]any{"return": "/settings/github", "install": true}).want(t, 200, "")
+		installURL := r.body["url"].(string)
+		if !strings.Contains(installURL, "/installations/new?state=") {
+			t.Fatalf("%s", installURL)
+		}
+		back, _ := url.Parse(a.fake.InstallApp(installURL, "tang-gh", "https://notes.example.test/api/github/authorization/callback"))
+		cb := member.do("GET", back.Path+"?"+back.RawQuery, nil, "Sec-Fetch-Site", "cross-site")
+		if cb.code != 303 || cb.resp.Header.Get("Location") != "/settings/github" {
+			t.Fatalf("the callback answered %d %q", cb.code, cb.resp.Header.Get("Location"))
+		}
+		g := member.do("GET", "/api/github", nil).want(t, 200, "")
+		if g.body["authorization"].(map[string]any)["login"] != "tang-gh" {
+			t.Fatalf("%s", g.raw)
+		}
+		// It was installed in the same flow: a repository in the account is made.
+		member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "github": map[string]any{"owner": "tang-gh", "name": "mine"}}).want(t, 201, "")
+
+		// Another person authorises without installing: the owners say so and creating is refused with the way out.
+		other := a.addUser("kai", pw, "member")
+		a.fake.AddUser("kai-gh")
+		connectGitHub(t, a, other, "kai-gh")
+		o := other.do("GET", "/api/github/owners", nil).want(t, 200, "")
+		first := o.body["items"].([]any)[0].(map[string]any)
+		if first["login"] != "kai-gh" || first["needsInstall"] != true {
+			t.Fatalf("%s", o.raw)
+		}
+		e := other.do("POST", "/api/spaces", map[string]any{"name": "Kai", "github": map[string]any{"owner": "kai-gh", "name": "kai"}}).want(t, 409, "github_app_not_installed")
+		if e.body["installUrl"] != "https://github.com/apps/petalbook-notes/installations/new" || strings.Contains(e.raw, "integration") {
+			t.Fatalf("%s", e.raw)
+		}
+		if m := member.do("GET", "/api/github/owners", nil).want(t, 200, ""); m.body["items"].([]any)[0].(map[string]any)["needsInstall"] != false {
+			t.Fatalf("%s", m.raw)
+		}
+	})
+}

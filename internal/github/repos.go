@@ -19,6 +19,9 @@ type Owner struct {
 	Type           string // "User" or "Organization"
 	Via            string // "user": the caller's own token creates the repository; "app": the installation's
 	InstallationID int64  // 0 when not known (the caller's own account)
+	// NeedsInstall: the caller's own account, where the App is not installed;
+	// GitHub lets no repository be made there until it is.
+	NeedsInstall bool
 }
 
 // RepoItem is a repository a space can be connected to.
@@ -105,7 +108,13 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, stri
 			phase = "s"
 		} else {
 			if cur == "" {
-				out = append(out, Owner{Login: row.Login, Type: "User", Via: ViaUser})
+				own := Owner{Login: row.Login, Type: "User", Via: ViaUser}
+				// One JWT request, remembered while the App is there; a person with the App is not asked twice.
+				if st, serr := s.need(ctx); serr == nil {
+					_, ierr := st.app.UserInstallation(ctx, row.Login)
+					own.NeedsInstall = githubapp.IsStatus(ierr, http.StatusNotFound)
+				}
+				out = append(out, own)
 			}
 			list, next, err := s.c.UserInstallations(ctx, tok, c.Page)
 			if err != nil {
@@ -394,9 +403,25 @@ func (s *Service) createError(ctx context.Context, p *Plan, err error) error {
 		}
 		return errf(http.StatusBadRequest, CodeInvalid, "GitHub refused the repository: %s", said)
 	case http.StatusForbidden, http.StatusNotFound:
-		if p.Via == ViaApp && githubapp.IsPermissionRefusal(err) { // the installation's token may not create it
+		if githubapp.IsPermissionRefusal(err) {
 			if st, serr := s.need(ctx); serr == nil {
-				return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+				switch {
+				case p.Via == ViaApp: // the installation's token may not create it
+					return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+				case p.Org != "": // the person's token, through an installation that may not
+					return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+				default:
+					// The person's own account: a user's token reaches only the accounts the App is installed on.
+					_, ierr := st.app.UserInstallation(ctx, p.Owner)
+					switch {
+					case githubapp.IsStatus(ierr, http.StatusNotFound):
+						e := errf(http.StatusConflict, CodeAppNotInstalled, "the GitHub App is not installed on your account %s, and GitHub lets no repository be made there until it is; install it there first", p.Owner)
+						e.InstallURL = installURL(st.rec.HTMLURL)
+						return e
+					case ierr == nil:
+						return s.missingPermission(ctx, st, 0, administrationWrite)
+					}
+				}
 			}
 		}
 		return errf(http.StatusForbidden, CodeNoPermission, "GitHub refused to create the repository: %s", said)
