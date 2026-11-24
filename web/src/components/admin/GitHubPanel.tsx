@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAdminGitHub, useAdminGitHubInstallations, useDeleteAdminGitHub, useSaveAdminGitHub, useShareGitHubInstallation, useTenants } from '@/api/admin'
+import { useAdminGitHub, useAdminGitHubInstallations, useCheckAdminGitHub, useDeleteAdminGitHub, useSaveAdminGitHub, useShareGitHubInstallation, useStartGitHubManifest, useTenants } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import type { AdminGitHub, GitHubInstallation } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -13,7 +14,9 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { postManifest } from './githubManifest'
 import { tg } from '@/i18n/github'
 
 // The server's one GitHub App: its settings, and where it is installed with the
@@ -24,10 +27,39 @@ export function GitHubPanel() {
   if (app.isError) return <ErrorState message={t.fmt.labelled(tg.admin.loadFailed, app.error.message)} onRetry={() => void app.refetch()} />
   return (
     <div className="space-y-8">
+      <Returned />
       <AppSettings app={app.data} />
       {app.data.configured && <Installations />}
     </div>
   )
+}
+
+// `?github_app=created` or `?github_app_error=<code>` from the App Manifest flow: shown once, then taken out of the address.
+function Returned() {
+  const [params, setParams] = useSearchParams()
+  const [made] = useState(() => params.get('github_app') === 'created')
+  const [code] = useState(() => params.get('github_app_error') ?? '')
+  const ref = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (params.has('github_app') || params.has('github_app_error'))
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p)
+          next.delete('github_app')
+          next.delete('github_app_error')
+          return next
+        },
+        { replace: true },
+      )
+    ref.current?.focus()
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  if (made) return <p role="status" className="rounded-md border px-3 py-2 text-sm">{tg.admin.created}</p>
+  if (!code) return null
+  // Own keys only: a code like `constructor` is not a message.
+  const message = Object.hasOwn(tg.admin.returned, code) ? tg.admin.returned[code as keyof typeof tg.admin.returned] : tg.admin.returned.unknown
+  return <FormMessage focusRef={ref}>{t.fmt.labelled(tg.admin.createFailed, message)}</FormMessage>
 }
 
 function explain(e: unknown): string {
@@ -110,9 +142,23 @@ function AppSettings({ app }: { app: AdminGitHub }) {
               {tg.admin.missing(app.missing)}
             </p>
           )}
+          {app.gaps.length > 0 && (
+            <p role="alert" className="rounded-md border border-warning/50 bg-warning/5 px-3 py-2 text-xs break-words">
+              {tg.admin.gaps(app.gaps.map((g) => `${g.account} (${g.missing.join(', ')})`))}
+            </p>
+          )}
+          {app.anyAccount === false && (
+            <p role="alert" className="rounded-md border border-warning/50 bg-warning/5 px-3 py-2 text-xs break-words">
+              {tg.admin.anyAccountNo}
+            </p>
+          )}
+          {app.anyAccount === null && <p className="text-xs text-muted-foreground break-words">{tg.admin.anyAccountUnknown}</p>}
           {!app.userAuthorization && <p className="text-xs text-muted-foreground">{tg.admin.userAuthOff}</p>}
+          <Recheck checked={app.checked} />
         </div>
       )}
+
+      <CreateApp app={app} />
 
       <form className="grid grid-cols-1 gap-4" onSubmit={(e) => void submit(e)} noValidate>
         <Field label={tg.admin.appId} help={tg.admin.appIdHelp} value={appId} onChange={(e) => setAppId(e.target.value)} autoComplete="off" spellCheck={false} className="w-full min-w-0" />
@@ -174,6 +220,69 @@ function AppSettings({ app }: { app: AdminGitHub }) {
         </AlertDialogContent>
       </AlertDialog>
     </SettingsSection>
+  )
+}
+
+// Reads the App and its installations from GitHub again: the permissions shown are those of the day it was saved
+// (or last checked), and an administrator who changed them on GitHub asks for today's.
+function Recheck({ checked }: { checked: string }) {
+  const check = useCheckAdminGitHub()
+  const run = async () => {
+    try {
+      await check.mutateAsync()
+      toast.success(tg.admin.rechecked)
+    } catch (err) {
+      toast.error(explain(err))
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button type="button" variant="outline" size="sm" disabled={check.isPending} onClick={() => void run()}>
+        {check.isPending && <Spinner />}
+        {check.isPending ? tg.admin.rechecking : tg.admin.recheck}
+      </Button>
+      <span className="text-xs text-muted-foreground">{t.fmt.labelled(tg.admin.checkedAt, absoluteTime(checked))}</span>
+    </div>
+  )
+}
+
+// One click makes the App on GitHub (the App Manifest flow): the browser posts the manifest to GitHub, GitHub
+// asks the person to confirm and sends the browser back, and the server saves the App it was handed.
+function CreateApp({ app }: { app: AdminGitHub }) {
+  const start = useStartGitHubManifest()
+  const [org, setOrg] = useState('')
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const inUse = app.configured && (app.spaces > 0 || app.authorizations > 0)
+  const go = async () => {
+    setError('')
+    try {
+      const m = await start.mutateAsync({ ...(org.trim() ? { organization: org.trim() } : {}), ...(name.trim() ? { name: name.trim() } : {}) })
+      postManifest(m)
+    } catch (err) {
+      setError(explain(err))
+    }
+  }
+  return (
+    <div className="grid grid-cols-1 gap-3 rounded-lg border p-3">
+      <div className="grid gap-1">
+        <h3 className="text-sm font-medium">{tg.admin.createTitle}</h3>
+        <p className="text-xs text-muted-foreground">{tg.admin.createHelp}</p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label={tg.admin.createOrg} help={tg.admin.createOrgHelp} value={org} onChange={(e) => setOrg(e.target.value)} autoComplete="off" spellCheck={false} className="w-full min-w-0" />
+        <Field label={tg.admin.createName} help={tg.admin.createNameHelp} value={name} onChange={(e) => setName(e.target.value)} maxLength={34} autoComplete="off" className="w-full min-w-0" />
+      </div>
+      {inUse && <p className="text-xs text-muted-foreground">{tg.admin.createInUse}</p>}
+      <FormMessage>{error}</FormMessage>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" disabled={start.isPending || inUse} onClick={() => void go()}>
+          {start.isPending && <Spinner />}
+          {start.isPending ? tg.admin.createStarting : tg.admin.createButton}
+        </Button>
+        <span className="text-xs text-muted-foreground">{tg.admin.createManual}</span>
+      </div>
+    </div>
   )
 }
 

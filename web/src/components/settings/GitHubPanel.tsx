@@ -4,7 +4,7 @@ import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
 import type { GitHubLeftover } from '@/api/types'
-import { useCreateSpace, useDisconnectGitHub, useDismissGitHubLeftover, useGitHub, useSession } from '@/api/hooks'
+import { useCreateSpace, useDisconnectGitHub, useDismissGitHubLeftover, useGitHub, useGitHubOwners, useSession } from '@/api/hooks'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -78,6 +78,9 @@ function Failure() {
   return <FormMessage focusRef={ref}>{t.fmt.labelled(tg.account.failed, message)}</FormMessage>
 }
 
+// Connect goes to the App's installation page, which authorises the person in the same flow (so installing on
+// their own account and connecting it are one step); `install` false goes to the authorisation page alone, for a
+// person who has the App installed already.
 function Connect({ enabled, admin, label }: { enabled: boolean; admin: boolean; label: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -88,12 +91,12 @@ function Connect({ enabled, admin, label }: { enabled: boolean; admin: boolean; 
         {admin ? ` ${tg.account.userAuthOffAdmin}` : ''}
       </SettingsNote>
     )
-  const go = async () => {
+  const go = async (install: boolean) => {
     setBusy(true)
     setError('')
     try {
       // Back here, on this section.
-      const { url } = await api.githubStart('/settings/github')
+      const { url } = await api.githubStart('/settings/github', install)
       window.location.assign(url)
     } catch (e) {
       setBusy(false)
@@ -103,10 +106,14 @@ function Connect({ enabled, admin, label }: { enabled: boolean; admin: boolean; 
   return (
     <div className="grid grid-cols-1 gap-2">
       <p className="text-sm text-muted-foreground">{tg.account.notConnected}</p>
-      <div>
-        <Button type="button" onClick={() => void go()} disabled={busy}>
+      <p className="text-xs text-muted-foreground">{tg.account.connectHelp}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" onClick={() => void go(true)} disabled={busy}>
           {busy && <Spinner />}
           {label}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => void go(false)} disabled={busy}>
+          {tg.account.authorizeOnly}
         </Button>
       </div>
       <FormMessage>{error}</FormMessage>
@@ -156,6 +163,7 @@ function Connected() {
           <span className="text-sm tabular-nums">{tg.account.spaces(a.spaces)}</span>
         </SettingsRow>
       </SettingsRows>
+      {!expired && <NeedsInstall login={a.login} />}
       {expired && (
         <div role="alert" className="grid grid-cols-1 gap-1 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
           <p className="font-medium">{tg.account.expiredTitle}</p>
@@ -182,6 +190,40 @@ function Connected() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+// The person's own account, when the App is not installed there: GitHub lets nothing be made in it until it is.
+// One installation page connects and installs in the same step.
+function NeedsInstall({ login }: { login: string }) {
+  const owners = useGitHubOwners()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const own = owners.data?.pages[0]?.items.find((o) => o.type === 'User' && o.needsInstall)
+  if (!own) return null
+  const go = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const { url } = await api.githubStart('/settings/github', true)
+      window.location.assign(url)
+    } catch (e) {
+      setBusy(false)
+      setError(e instanceof ApiError ? e.message : tg.account.startFailed)
+    }
+  }
+  return (
+    <div role="status" className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+      <p className="font-medium break-words">{tg.account.needsInstallTitle(login)}</p>
+      <p className="text-muted-foreground">{tg.account.needsInstallBody}</p>
+      <div>
+        <Button type="button" size="sm" onClick={() => void go()} disabled={busy}>
+          {busy && <Spinner />}
+          {tg.account.installOnMine}
+        </Button>
+      </div>
+      <FormMessage>{error}</FormMessage>
     </div>
   )
 }

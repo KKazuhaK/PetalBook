@@ -1604,6 +1604,23 @@ function suite(target: Target) {
       })
     })
 
+    // The administrators' re-check and one-click App creation are site-only, on a real server and in the mock alike;
+    // without an App there is nothing to check (what they do with one is below, against the mock's GitHub).
+    describe('the App re-check and creation endpoints', () => {
+      it('are for site administrators, and a re-check needs an App', async () => {
+        const m = await newMember(uniq('ghc'))
+        for (const [path, body] of [
+          ['/api/admin/github/check', {}],
+          ['/api/admin/github/manifest', {}],
+        ] as const) {
+          const r = await call(m.browser, 'POST', path, body)
+          expect([r.status, r.json?.error], path).toEqual([403, 'forbidden'])
+        }
+        const none = await call(admin, 'POST', '/api/admin/github/check', {})
+        expect([none.status, none.json?.error]).toEqual([409, 'github_not_configured'])
+      })
+    })
+
     // GitHub (docs/api.md, "GitHub"). There is no GitHub behind a real server in this setup: the mock plays it.
     describe.skipIf(!!REAL)('GitHub (mock only)', () => {
       const KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
@@ -1721,7 +1738,7 @@ function suite(target: Target) {
         expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
         const m = await newMember(uniq('gh5'))
         const owners = await call(m.browser, 'GET', '/api/github/owners')
-        expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id }])
+        expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id, needsInstall: false }])
         const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, github: { owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } })
         expect(made.status).toBe(201)
         const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
@@ -1814,6 +1831,69 @@ function suite(target: Target) {
         await connectAccount(m.browser)
         const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
         expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
+      })
+
+      it('connects through the installation page in one flow, and tells the personal account that needs the App', async () => {
+        const m = await newMember(uniq('gh10'))
+        const start = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github', install: true })
+        expect(start.status).toBe(200)
+        expect(start.json.url).toContain('setup_action=install')
+        const cb = await call(m.browser, 'GET', start.json.url, undefined, {})
+        expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/github'])
+        expect((await call(m.browser, 'GET', '/api/github')).json.authorization).toMatchObject({ state: 'ok' })
+        // An organisation that has to approve the installation first.
+        const asked = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github', install: true })
+        const pending = await call(m.browser, 'GET', asked.json.url.replace('setup_action=install', 'setup_action=request'), undefined, {})
+        expect(pending.headers.get('Location')).toBe('/settings?github_error=requested')
+        // The own account of someone the App is not installed on: marked, and refused with the way out.
+        const other = await newMember(uniq('gh11'))
+        await connectAccount(other.browser)
+        await mockHook({ trap: 'personalNeedsInstall' })
+        try {
+          const owners = await call(other.browser, 'GET', '/api/github/owners')
+          expect(owners.json.items[0]).toMatchObject({ type: 'User', needsInstall: true })
+          expect(owners.json.items.filter((o: any) => o.needsInstall)).toHaveLength(1)
+          const login = owners.json.items[0].login
+          const refused = await call(other.browser, 'POST', '/api/spaces', { name: 'Own', github: { owner: login, name: `own-${run}` } })
+          expect([refused.status, codeOf(refused)]).toEqual([409, 'github_app_not_installed'])
+          expect(refused.json.installUrl).toContain('/installations/new')
+        } finally {
+          await mockHook({ trap: 'personalNeedsInstall', on: false })
+        }
+        expect((await call(m.browser, 'GET', '/api/github/owners')).json.items[0].needsInstall).toBe(false)
+      })
+
+      it('names the permission an App lacks, and the re-check shows what GitHub says now', async () => {
+        const m = await newMember(uniq('gh12'))
+        await connectAccount(m.browser)
+        await mockHook({ trap: 'missingPermission' })
+        try {
+          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Perm', github: { owner: 'kazuhahub', name: `perm-${run}` } })
+          expect([r.status, codeOf(r)]).toEqual([403, 'github_app_missing_permission'])
+          expect(r.json.missing).toEqual(['administration'])
+        } finally {
+          await mockHook({ trap: 'missingPermission', on: false })
+        }
+        // GitHub's side changes; the view keeps the last check until it is asked again.
+        const before = (await call(admin, 'GET', '/api/admin/github')).json
+        expect(before).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+        await mockHook({ side: { permissions: { administration: 'write', metadata: 'read' }, gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false } })
+        expect((await call(admin, 'GET', '/api/admin/github')).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+        const checked = await call(admin, 'POST', '/api/admin/github/check', {})
+        expect(checked.status).toBe(200)
+        expect(checked.json).toMatchObject({ missing: ['contents'], gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false })
+        expect((await call(admin, 'GET', '/api/admin/github')).json.missing).toEqual(['contents'])
+        await mockHook({ side: { permissions: { administration: 'write', contents: 'write', metadata: 'read' }, gaps: [], anyAccount: true } })
+        expect((await call(admin, 'POST', '/api/admin/github/check', {})).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+      })
+
+      it('checks the organisation and name before making the App, and does not replace one that is in use', async () => {
+        const m = await newMember(uniq('gh13'))
+        await connectAccount(m.browser)
+        expect(codeOf(await call(admin, 'POST', '/api/admin/github/manifest', { organization: 'a/b' }))).toBe('invalid')
+        expect(codeOf(await call(admin, 'POST', '/api/admin/github/manifest', { name: 'x'.repeat(35) }))).toBe('invalid')
+        const used = await call(admin, 'POST', '/api/admin/github/manifest', { organization: 'kazuhahub' })
+        expect([used.status, codeOf(used)]).toEqual([409, 'github_app_in_use'])
       })
 
       it('puts other remotes\' error states under errorCode too', async () => {

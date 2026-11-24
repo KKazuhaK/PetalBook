@@ -473,7 +473,7 @@ export interface ConnectRemoteInput {
 // --- GitHub (docs/api.md, "GitHub") ----------------------------------------------------
 
 export type GitHubVia = 'app' | 'user'
-export type GitHubErrorCode = 'github_authorization_expired' | 'github_authorization_missing' | 'github_installation_gone' | 'github_not_configured'
+export type GitHubErrorCode = 'github_authorization_expired' | 'github_authorization_missing' | 'github_installation_gone' | 'github_not_configured' | 'github_app_missing_permission'
 
 export interface GitHubAuthorization {
   login: string
@@ -510,6 +510,8 @@ export interface GitHubOwner {
   // Whose token creates the repository: the caller's own, or the installation's.
   via: GitHubVia
   installationId: number | null
+  // The caller's own account, where the App is not installed: GitHub lets no repository be made there until it is.
+  needsInstall: boolean
 }
 
 export interface GitHubRepo {
@@ -565,7 +567,23 @@ export type AdminGitHub =
       checked: string
       spaces: number
       authorizations: number
+      // Installations that lack a permission, from the last check.
+      gaps: GitHubGap[]
+      // Whether the App can be installed on any account (a person can only install it on their own account when it can); null: not known.
+      anyAccount: boolean | null
     }
+
+export interface GitHubGap {
+  installationId: number
+  account: string
+  missing: string[]
+}
+
+// What the administrator's browser posts to GitHub to make the App (docs/api.md, "POST /api/admin/github/manifest").
+export interface GitHubManifestStart {
+  url: string
+  manifest: Record<string, unknown>
+}
 
 export interface GitHubInstallation {
   id: number
@@ -654,6 +672,9 @@ export type ErrorCode =
   | 'github_app_rejected'
   | 'github_client_rejected'
   | 'github_app_in_use'
+  | 'github_app_missing_permission'
+  | 'github_app_not_installed'
+  | 'github_public_url_needed'
   | 'rate_limited'
   | 'captcha_failed'
   | 'local_login_refused'

@@ -82,6 +82,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (!repoNameOk(repoName)) problems.repo = tg.newSpace.repoInvalid
       if (Array.from(description).length > 350 || Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) problems.description = tg.newSpace.descriptionInvalid
       if (ownerLogin === '') problems.repo ??= tg.newSpace.ownerNone
+      if (existing === undefined && chosen?.needsInstall) problems.repo ??= tg.newSpace.errors.notInstalled(ownerLogin)
       gh = { owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined }
     }
     setFieldError(problems)
@@ -116,6 +117,11 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
         return setError(code === 'github_repo_not_in_installation' ? tg.newSpace.errors.notInInstallation : code === 'github_push_failed' ? tg.newSpace.errors.pushFailed : t.spaces.failed)
       case 'github_no_permission':
         return setError(tg.newSpace.errors.noPermission(err.message))
+      case 'github_app_not_installed':
+        return setError(tg.newSpace.errors.notInstalled(chosen?.login ?? ''))
+      case 'github_app_missing_permission':
+        if (body?.repo?.fullName) setLeft({ fullName: body.repo.fullName, htmlUrl: body.repo.htmlUrl ?? '' })
+        return setError(tg.newSpace.errors.missingPermission((err.body as { missing?: string[] } | undefined)?.missing ?? []))
       case 'github_owner_not_allowed':
         return setError(tg.newSpace.errors.ownerNotAllowed)
       case 'github_not_authorized':
@@ -133,7 +139,8 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
   const connect = async () => {
     try {
-      const { url } = await api.githubStart(window.location.pathname)
+      // Installing the App on one's own account connects it in the same step.
+      const { url } = await api.githubStart(window.location.pathname, true)
       window.location.assign(url)
     } catch (err) {
       explain(err)
@@ -203,6 +210,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                         <option key={o.login} value={o.login}>
                           {o.login}
                           {o.type === 'Organization' ? ` · ${tg.newSpace.organisation}` : ''}
+                          {o.needsInstall ? ` · ${tg.newSpace.needsInstall}` : ''}
                         </option>
                       ))}
                     </NativeSelect>
@@ -215,6 +223,16 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                       </div>
                     )}
                     <p className="text-xs text-muted-foreground">{chosen?.via === 'app' ? tg.newSpace.viaApp : tg.newSpace.viaUser}</p>
+                    {chosen?.needsInstall && (
+                      <div className="grid grid-cols-1 gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+                        <p className="break-words">{tg.newSpace.needsInstallHelp(chosen.login)}</p>
+                        <div>
+                          <Button type="button" variant="outline" size="sm" onClick={() => void connect()}>
+                            {tg.newSpace.installOnMine}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

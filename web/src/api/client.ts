@@ -597,7 +597,9 @@ export const api = {
   // --- GitHub (accounts mode) ---
   github: (signal?: AbortSignal) => request<GitHubInfo>('/github', { signal }),
   // The address to send the browser to; GitHub sends it back to `return` (a path of this site).
-  githubStart: (ret?: string) => request<{ url: string }>('/github/authorization/start', { method: 'POST', body: ret ? { return: ret } : {} }),
+  // `install` sends them to the App's installation page, which authorises them in the same flow; without it, to the authorisation page alone.
+  githubStart: (ret?: string, install?: boolean) =>
+    request<{ url: string }>('/github/authorization/start', { method: 'POST', body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) } }),
   githubDisconnect: () => request<void>('/github/authorization', { method: 'DELETE' }),
   githubDismissLeftover: (repoId: number) => request<void>(`/github/leftovers/${repoId}`, { method: 'DELETE' }),
   githubOwners: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubOwner>>(`/github/owners${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),

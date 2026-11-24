@@ -5,7 +5,7 @@
 // repository, an authorisation that ran out). There is no real GitHub behind it.
 
 import { HttpError } from './store.ts'
-import type { AdminGitHub, GitHubAuthorization, GitHubLeftover, GitHubCursorPage, GitHubInfo, GitHubInstallation, GitHubOwner, GitHubRepo, GitHubVia, PutAdminGitHubInput } from '../types.ts'
+import type { AdminGitHub, GitHubAuthorization, GitHubGap, GitHubLeftover, GitHubCursorPage, GitHubInfo, GitHubInstallation, GitHubManifestStart, GitHubOwner, GitHubRepo, GitHubVia, PutAdminGitHubInput } from '../types.ts'
 
 export interface MockGitHubOptions {
   // The App is set up from the start (`npm run dev:mock:accounts`).
@@ -19,6 +19,18 @@ interface AppRec {
   fingerprint: string
   permissions: Record<string, string>
   checked: number
+  gaps: GitHubGap[]
+  anyAccount: boolean | null
+}
+// What GitHub says about the App right now; the administration sees it only after a re-check.
+interface Side {
+  permissions: Record<string, string>
+  gaps: GitHubGap[]
+  anyAccount: boolean | null
+}
+interface Manifest {
+  userId: string
+  created: number
 }
 interface AuthRec {
   login: string
@@ -56,8 +68,12 @@ export const MOCK_GITHUB_APP = { name: 'PetalBook Notes', slug: 'petalbook-notes
 
 export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => number; random: () => number; spacesUsing: (userId: string) => number; spacesOnApp: () => number; tenantOf: (userId: string) => string; tenantExists: (id: string) => boolean }) {
   let app: AppRec | null = opts.configured
-    ? { appId: '1234567', clientId: 'Iv23liMockClientId', clientSecret: true, fingerprint: 'SHA256:mockFingerprint0123456789abcdefghijklmnopqrs', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now() }
+    ? { appId: '1234567', clientId: 'Iv23liMockClientId', clientSecret: true, fingerprint: 'SHA256:mockFingerprint0123456789abcdefghijklmnopqrs', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now(), gaps: [], anyAccount: true }
     : null
+  const side: Side = { permissions: { administration: 'write', contents: 'write', metadata: 'read' }, gaps: [], anyAccount: true }
+  const manifests = new Map<string, Manifest>()
+  // The personal accounts the App is installed on (by GitHub login).
+  const installedOn = new Set<string>()
   const auths = new Map<string, AuthRec>()
   // The reminders of empty repositories, by person, newest first.
   const leftovers = new Map<string, (GitHubLeftover & { created: string })[]>()
@@ -75,7 +91,7 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     { id: ++repoId, owner: 'petal-team', name: 'docs', private: true },
   ]
   // Mock only: what the next creation or connection finds.
-  const traps = { noPermission: false, notInInstallation: false, pushFails: false }
+  const traps = { noPermission: false, notInInstallation: false, pushFails: false, missingPermission: false, personalNeedsInstall: false }
 
   const key = (s: string) => s.toLowerCase()
   const invalid = (m: string) => new HttpError(400, 'invalid', m)
@@ -120,12 +136,16 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
 
   // --- connecting -----------------------------------------------------------------
 
+  const randomState = () => Array.from({ length: 24 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(deps.random() * 36)]).join('')
+
+  // `install: true` plays the App's installation page, which authorises the person in the same flow.
   const start = (userId: string, body: Record<string, unknown>): { url: string; state: string } => {
     requireApp()
     if (!userAuthorization()) throw notConfigured()
-    const state = Array.from({ length: 24 }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(deps.random() * 36)]).join('')
+    const state = randomState()
     attempts.set(state, { userId, ret: typeof body.return === 'string' && body.return.startsWith('/') && !body.return.startsWith('//') ? body.return : '/', created: deps.now() })
-    return { url: `/api/github/authorization/callback?state=${state}`, state }
+    const install = body.install === true ? '&setup_action=install&installation_id=7001' : ''
+    return { url: `/api/github/authorization/callback?state=${state}${install}`, state }
   }
 
   // The browser comes back: always a redirect.
@@ -136,7 +156,9 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     if (!at || cookieState !== state || !userId || at.userId !== userId || deps.now() - at.created > 600_000) return { to: '/settings?github_error=expired', clear: false }
     attempts.delete(state)
     if (q.get('error')) return fail('denied')
+    if (q.get('setup_action') === 'request') return fail('requested')
     const login = (q.get('login') ?? `${userId.slice(0, 6).toLowerCase()}-gh`).toLowerCase()
+    if (q.get('setup_action') === 'install') installedOn.add(login)
     for (const [uid, a] of auths) if (uid !== userId && a.login === login) return fail('account_in_use')
     const prev = connection(userId)
     if (prev && prev.login !== login && deps.spacesUsing(userId) > 0) return fail('different_account')
@@ -164,15 +186,15 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     const out: GitHubOwner[] = []
     const seen = new Set<number>()
     if (a) {
-      out.push({ login: a.login, type: 'User', via: 'user', installationId: null })
+      out.push({ login: a.login, type: 'User', via: 'user', installationId: null, needsInstall: traps.personalNeedsInstall && !installedOn.has(key(a.login)) })
       for (const i of insts) {
         if (i.type === 'Organization' && member(i, a.login)) {
-          out.push({ login: i.login, type: 'Organization', via: 'user', installationId: i.id })
+          out.push({ login: i.login, type: 'Organization', via: 'user', installationId: i.id, needsInstall: false })
           seen.add(i.id)
         }
       }
     }
-    for (const i of insts) if (sharedWith(i, userId) && i.type === 'Organization' && !seen.has(i.id)) out.push({ login: i.login, type: 'Organization', via: 'app', installationId: i.id })
+    for (const i of insts) if (sharedWith(i, userId) && i.type === 'Organization' && !seen.has(i.id)) out.push({ login: i.login, type: 'Organization', via: 'app', installationId: i.id, needsInstall: false })
     return page(out, cursor)
   }
 
@@ -210,6 +232,10 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     const p = plan(userId, input.owner)
     if (!NAME_RE.test(input.name) || input.name === '.' || input.name === '..' || input.name.toLowerCase().endsWith('.git')) throw invalid('仓库名只能用字母、数字、点、下划线和连字符，最多 100 个字符')
     if (traps.noPermission) throw new HttpError(403, 'github_no_permission', 'GitHub 拒绝建仓库：你在这个组织里没有建仓库的权限')
+    if (traps.personalNeedsInstall && !p.installation && p.via === 'user' && !installedOn.has(key(p.login))) {
+      throw new HttpError(409, 'github_app_not_installed', `App 还没有装到你的账号 ${p.login} 上，装好之前 GitHub 不让在里面建仓库`, { installUrl: `${MOCK_GITHUB_APP.htmlUrl}/installations/new` })
+    }
+    if (traps.missingPermission) throw new HttpError(403, 'github_app_missing_permission', 'App 或它的安装缺少 administration 权限', { missing: ['administration'] })
     if (repos.some((r) => key(r.owner) === key(p.login) && key(r.name) === key(input.name))) throw new HttpError(409, 'github_name_taken', `${p.login} 下已经有同名仓库`)
     const repo: RepoRec = { id: ++repoId, owner: p.login, name: input.name, private: input.private }
     repos.push(repo)
@@ -291,7 +317,62 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
       checked: new Date(app.checked).toISOString().replace(/\.\d+Z$/, 'Z'),
       spaces: deps.spacesOnApp(),
       authorizations: auths.size,
+      gaps: app.gaps,
+      anyAccount: app.anyAccount,
     }
+  }
+
+  // Reads what GitHub says about the App and its installations now.
+  const check = (): AdminGitHub => {
+    const a = requireApp()
+    a.permissions = { ...side.permissions }
+    a.gaps = side.gaps.map((g) => ({ ...g, missing: [...g.missing] }))
+    a.anyAccount = side.anyAccount
+    a.checked = deps.now()
+    return admin()
+  }
+
+  // The manifest flow: the browser posts the manifest to GitHub and comes back with a code.
+  const manifestStart = (userId: string, body: Record<string, unknown>): { start: GitHubManifestStart; state: string } => {
+    const org = typeof body.organization === 'string' ? body.organization.trim() : ''
+    const name = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : 'PetalBook notes.example.test'
+    if (org !== '' && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(org)) throw invalid('organization 不是 GitHub 账号名')
+    if (Array.from(name).length > 34) throw invalid('name 最多 34 个字符')
+    if (app && (deps.spacesOnApp() > 0 || auths.size > 0)) throw new HttpError(409, 'github_app_in_use', '还有空间在用这个 App，或有人连着 GitHub：先改掉那些再换 App')
+    const state = randomState()
+    manifests.set(state, { userId, created: deps.now() })
+    const ret = `${PUBLIC_URL}/api/github/manifest/callback`
+    return {
+      state,
+      start: {
+        url: `https://github.com${org ? `/organizations/${org}` : ''}/settings/apps/new?state=${state}`,
+        manifest: {
+          name,
+          url: PUBLIC_URL,
+          hook_attributes: { url: PUBLIC_URL, active: false },
+          redirect_url: ret,
+          callback_urls: [`${PUBLIC_URL}/api/github/authorization/callback`],
+          setup_url: ret,
+          public: true,
+          request_oauth_on_install: true,
+          default_permissions: { administration: 'write', contents: 'write', metadata: 'read' },
+        },
+      },
+    }
+  }
+
+  // GitHub sends the administrator's browser back: always a redirect.
+  const manifestCallback = (userId: string | null, siteAdmin: boolean, cookieState: string | undefined, q: URLSearchParams): { to: string; clear: boolean } => {
+    const expired = { to: '/admin/github?github_app_error=expired', clear: false }
+    const state = q.get('state') ?? ''
+    const at = manifests.get(state)
+    if (!at || cookieState !== state || !userId || !siteAdmin || at.userId !== userId || deps.now() - at.created > 600_000) return expired
+    manifests.delete(state)
+    if (!q.get('code') || q.get('code') === 'bad') return { to: '/admin/github?github_app_error=github_error', clear: true }
+    if (app && (deps.spacesOnApp() > 0 || auths.size > 0)) return { to: '/admin/github?github_app_error=app_in_use', clear: true }
+    app = { appId: '7654321', clientId: 'Iv23liMockManifest', clientSecret: true, fingerprint: 'SHA256:mockManifestFingerprint0123456789abcdefghijk', permissions: { administration: 'write', contents: 'write', metadata: 'read' }, checked: deps.now(), gaps: [], anyAccount: true }
+    side.permissions = { ...app.permissions }
+    return { to: '/admin/github?github_app=created', clear: true }
   }
 
   const putAdmin = (input: PutAdminGitHubInput): AdminGitHub => {
@@ -314,6 +395,8 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
       fingerprint: input.privateKey ? `SHA256:${btoa(input.privateKey).replace(/[^A-Za-z0-9]/g, '').slice(-43).padEnd(43, 'x')}` : (app?.fingerprint ?? ''),
       permissions: app?.permissions ?? { administration: 'write', contents: 'write', metadata: 'read' },
       checked: deps.now(),
+      gaps: app?.gaps ?? [],
+      anyAccount: app?.anyAccount ?? true,
     }
     return admin()
   }
@@ -379,6 +462,9 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     existing,
     admin,
     putAdmin,
+    check,
+    manifestStart,
+    manifestCallback,
     deleteAdmin,
     installations,
     share,
@@ -393,6 +479,12 @@ export function createGitHubBook(opts: MockGitHubOptions, deps: { now: () => num
     },
     setTrap: (name: keyof typeof traps, on: boolean) => {
       traps[name] = on
+    },
+    // Mock only: what GitHub says about the App now (seen by the administration after a re-check).
+    setSide: (v: Partial<Side>) => {
+      if (v.permissions) side.permissions = v.permissions
+      if (v.gaps) side.gaps = v.gaps
+      if (v.anyAccount !== undefined) side.anyAccount = v.anyAccount
     },
     // Mock only: a person is connected without going through GitHub.
     connect: (userId: string, login: string) => {

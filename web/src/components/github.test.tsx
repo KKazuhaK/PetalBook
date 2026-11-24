@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { useState } from 'react'
 import type { SpaceInfo } from '@/api/types'
@@ -153,6 +153,38 @@ describe('the new-space dialog', () => {
     expect(nameField().value).toBe('No')
   })
 
+  it('marks the own account that needs the App, blocks creating there and installs in one step', async () => {
+    await openNewSpace('connected')
+    await settle(() => text().includes(tg.newSpace.option), 'the option')
+    hook({ trap: 'personalNeedsInstall' })
+    await m!.qc.invalidateQueries()
+    await type(nameField(), 'Mine')
+    await click(checkbox(tg.newSpace.option))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await settle(() => text().includes(tg.newSpace.needsInstall), 'the mark')
+    expect(text()).toContain(tg.newSpace.needsInstallHelp('tang-gh'))
+    // The other accounts are not marked.
+    const marked = [...dialog()!.querySelectorAll('select option')].filter((o) => o.textContent!.includes(tg.newSpace.needsInstall))
+    expect(marked).toHaveLength(1)
+    await click(button(t.spaces.create))
+    await settle(() => text().includes(tg.newSpace.errors.notInstalled('tang-gh')), 'the refusal')
+    expect(posts()).toHaveLength(0)
+    await click(button(tg.newSpace.installOnMine))
+    await settle(() => m!.requests.some((r) => r.url === '/api/github/authorization/start'), 'the request')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/github/authorization/start')!.body!)).toEqual({ return: '/', install: true })
+  })
+
+  it('names the permission the App lacks instead of GitHub\'s refusal', async () => {
+    await openNewSpace('connected')
+    await settle(() => text().includes(tg.newSpace.option), 'the option')
+    hook({ trap: 'missingPermission' })
+    await type(nameField(), 'Perm')
+    await click(checkbox(tg.newSpace.option))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await click(button(t.spaces.create))
+    await settle(() => text().includes(tg.newSpace.errors.missingPermission(['administration'])), 'the message')
+  })
+
   it('fits a phone: one column, fields that may shrink, long names that break', async () => {
     await openNewSpace('connected')
     await settle(() => text().includes(tg.newSpace.option), 'the option')
@@ -199,7 +231,42 @@ describe('the GitHub section of the account', () => {
     await click(button(tg.account.connect, panel()!))
     await settle(() => m!.requests.some((r) => r.url === '/api/github/authorization/start'), 'the request')
     const req = m!.requests.find((r) => r.url === '/api/github/authorization/start')!
-    expect(JSON.parse(req.body!)).toEqual({ return: '/settings/github' })
+    // Connecting goes through the App's installation page, which authorises in the same flow.
+    expect(JSON.parse(req.body!)).toEqual({ return: '/settings/github', install: true })
+  })
+
+  it('can authorize alone when the App is installed already', async () => {
+    await openSettings('app')
+    await settle(() => button(tg.account.authorizeOnly, panel()!) !== undefined, 'the button')
+    await click(button(tg.account.authorizeOnly, panel()!))
+    await settle(() => m!.requests.some((r) => r.url === '/api/github/authorization/start'), 'the request')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/github/authorization/start')!.body!)).toEqual({ return: '/settings/github' })
+  })
+
+  it('offers to install the App on the person\'s own account when it is not there, and connects in the same step', async () => {
+    await openSettings('connected')
+    hook({ trap: 'personalNeedsInstall' })
+    await m!.qc.invalidateQueries()
+    await settle(() => panel()!.textContent!.includes(tg.account.needsInstallTitle('tang-gh')), 'the notice')
+    expect(panel()!.textContent).toContain(tg.account.needsInstallBody)
+    await click(button(tg.account.installOnMine, panel()!))
+    await settle(() => m!.requests.some((r) => r.url === '/api/github/authorization/start'), 'the request')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/github/authorization/start')!.body!)).toEqual({ return: '/settings/github', install: true })
+  })
+
+  it('says nothing about installing when the App is on the account', async () => {
+    await openSettings('connected')
+    await settle(() => panel()!.textContent!.includes('tang-gh'), 'the account')
+    expect(panel()!.textContent).not.toContain(tg.account.needsInstallBody)
+  })
+
+  it('explains an installation that sent no code, and one that waits for approval', async () => {
+    await openSettings('app', '/settings?github_error=installed')
+    await settle(() => panel()!.textContent!.includes(tg.account.errors.installed), 'the explanation')
+    await m!.unmount()
+    m = undefined
+    await openSettings('app', '/settings?github_error=requested')
+    await settle(() => panel()!.textContent!.includes(tg.account.errors.requested), 'the explanation')
   })
 
   it('shows a connection, and warns how many spaces use it before disconnecting', async () => {
@@ -436,7 +503,7 @@ describe('the GitHub section of the administration', () => {
     await click(button(tg.admin.shareSave, dialog()!)!)
     await settle(() => dialog() === null, 'the dialog closing again')
     const owners = person.request('GET', '/api/github/owners').body as { items: { login: string; via: string }[] }
-    expect(owners.items).toEqual([{ login: 'kazuhahub', type: 'Organization', via: 'app', installationId: 5001 }])
+    expect(owners.items).toEqual([{ login: 'kazuhahub', type: 'Organization', via: 'app', installationId: 5001, needsInstall: false }])
     expect(MOCK_ADMIN.username).toBeTruthy()
   })
 
@@ -454,3 +521,107 @@ describe('the GitHub section of the administration', () => {
     expect(confirm.disabled).toBe(true)
   })
 })
+
+describe('the App in the administration: re-checking, warnings and making it on GitHub', () => {
+  const routes = (
+    <SidebarProvider>
+      <Routes>
+        <Route path="/admin/:section?" element={<AdminGate />} />
+      </Routes>
+    </SidebarProvider>
+  )
+  const configured = { mode: 'accounts' as const, github: { configured: true } }
+
+  it('shows the permissions of the last check until Re-check reads them from GitHub again', async () => {
+    m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: configured })
+    await settle(() => text().includes(tg.admin.recheck), 'the card')
+    expect(text()).not.toContain(tg.admin.missing(['contents']))
+    // GitHub's side changed: the card does not know yet.
+    hook({ side: { permissions: { administration: 'write', metadata: 'read' }, gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }] } })
+    await m.qc.invalidateQueries()
+    expect(text()).not.toContain(tg.admin.missing(['contents']))
+    await click(button(tg.admin.recheck))
+    await settle(() => m!.requests.some((r) => r.method === 'POST' && r.url === '/api/admin/github/check'), 'the request')
+    await settle(() => text().includes(tg.admin.missing(['contents'])), 'the missing permission')
+    expect(text()).toContain(tg.admin.gaps(['kazuhahub (contents)']))
+  })
+
+  it('warns when the App can only be installed on one account, and says when GitHub did not say', async () => {
+    m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: configured })
+    await settle(() => button(tg.admin.recheck) !== undefined, 'the card')
+    expect(text()).not.toContain(tg.admin.anyAccountNo)
+    hook({ side: { anyAccount: false } })
+    await click(button(tg.admin.recheck))
+    await settle(() => text().includes(tg.admin.anyAccountNo), 'the warning')
+    await settle(() => button(tg.admin.recheck) !== undefined, 'the button again')
+    hook({ side: { anyAccount: null } })
+    await click(button(tg.admin.recheck))
+    await settle(() => text().includes(tg.admin.anyAccountUnknown) && !text().includes(tg.admin.anyAccountNo), 'the note')
+  })
+
+  it('makes the App on GitHub: asks the server for the manifest and posts it from the browser', async () => {
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+    try {
+      m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: { mode: 'accounts' } })
+      await settle(() => button(tg.admin.createButton) !== undefined, 'the button')
+      await type([...document.querySelectorAll<HTMLInputElement>('input')].find((i) => i.closest('div')?.textContent?.includes(tg.admin.createOrg) && i.id !== '')!, 'kazuhahub')
+      await click(button(tg.admin.createButton))
+      await settle(() => submit.mock.calls.length === 1, 'the form posted')
+      const req = m.requests.find((r) => r.method === 'POST' && r.url === '/api/admin/github/manifest')!
+      expect(JSON.parse(req.body!)).toEqual({ organization: 'kazuhahub' })
+      const form = submit.mock.contexts[0] as HTMLFormElement
+      expect(form.method).toBe('post')
+      expect(form.action).toMatch(/^https:\/\/github\.com\/organizations\/kazuhahub\/settings\/apps\/new\?state=/)
+      const manifest = JSON.parse((form.elements.namedItem('manifest') as HTMLInputElement).value)
+      expect(manifest).toMatchObject({ public: true, request_oauth_on_install: true, hook_attributes: { active: false }, default_permissions: { administration: 'write', contents: 'write', metadata: 'read' } })
+      expect(manifest.callback_urls).toEqual(['https://notes.example.test/api/github/authorization/callback'])
+      expect(manifest.redirect_url).toBe('https://notes.example.test/api/github/manifest/callback')
+    } finally {
+      submit.mockRestore()
+    }
+  })
+
+  it('does not offer to replace an App that is in use', async () => {
+    m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: configured })
+    await settle(() => text().includes(tg.admin.title), 'the section')
+    hook({ connect: 'root-gh' })
+    await m.qc.invalidateQueries()
+    await settle(() => text().includes(tg.admin.createInUse), 'the note')
+    expect(button(tg.admin.createButton)!.disabled).toBe(true)
+  })
+
+  it('says how the manifest flow ended, once, from the address GitHub sent the browser back to', async () => {
+    m = await mount(routes, { entries: ['/admin/github?github_app=created'], signIn: true, server: configured })
+    await settle(() => text().includes(tg.admin.created), 'the notice')
+    await settle(() => !locationText().includes('github_app'), 'the address cleaned')
+    expect(locationText()).toBe('/admin/github')
+    await m.unmount()
+    m = undefined
+    m = await mount(routes, { entries: ['/admin/github?github_app_error=app_in_use'], signIn: true, server: configured })
+    await settle(() => text().includes(tg.admin.returned.app_in_use), 'the explanation')
+    await m.unmount()
+    m = undefined
+    m = await mount(routes, { entries: ['/admin/github?github_app_error=constructor'], signIn: true, server: configured })
+    await settle(() => text().includes(tg.admin.returned.unknown), 'the generic message')
+  })
+
+  it('plays the manifest flow in the mock: the state is bound to the administrator\'s browser and works once', async () => {
+    m = await mount(routes, { entries: ['/admin/github'], signIn: true, server: { mode: 'accounts' } })
+    const server = m.server
+    const json = 'application/json'
+    const login = server.handle('POST', '/api/login', JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }), json, null)
+    const session = String(login.headers?.['Set-Cookie']).split(';')[0]
+    const start = server.handle('POST', '/api/admin/github/manifest', '{}', json, session)
+    expect(start.status).toBe(200)
+    const flow = String(start.headers?.['Set-Cookie']).split(';')[0]
+    const state = new URL((start.body as { url: string }).url).searchParams.get('state')!
+    const back = `/api/github/manifest/callback?code=a-code&state=${state}`
+    // Without the browser's cookie nothing happens; with it the App is saved, once.
+    expect(server.handle('GET', back, undefined, null, session).headers?.Location).toBe('/admin/github?github_app_error=expired')
+    expect(server.handle('GET', '/api/admin/github', undefined, null, session).body).toMatchObject({ configured: false })
+    expect(server.handle('GET', back, undefined, null, `${session}; ${flow}`).headers?.Location).toBe('/admin/github?github_app=created')
+    expect(server.handle('GET', '/api/admin/github', undefined, null, session).body).toMatchObject({ configured: true, appId: '7654321', userAuthorization: true })
+    expect(server.handle('GET', back, undefined, null, `${session}; ${flow}`).headers?.Location).toBe('/admin/github?github_app_error=expired')
+  })
+})
+

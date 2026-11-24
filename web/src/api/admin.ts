@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput } from './types'
+import type { MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, GitHubManifestStart, PutAdminGitHubInput } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -179,6 +179,10 @@ export const adminApi = {
   adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/github', { signal }),
   putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/github', { method: 'PUT', body: input }),
   deleteAdminGitHub: () => request<void>('/admin/github', { method: 'DELETE' }),
+  // Reads the App and its installations from GitHub again.
+  checkAdminGitHub: () => request<AdminGitHub>('/admin/github/check', { method: 'POST', body: {} }),
+  // The manifest and the address the browser posts it to, to make the App on GitHub in one click.
+  startGitHubManifest: (input: { organization?: string; name?: string }) => request<GitHubManifestStart>('/admin/github/manifest', { method: 'POST', body: input }),
   adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubInstallation>>(`/admin/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
   // Shares the installation with exactly these tenants; none stops sharing.
   putAdminGitHubInstallation: (id: number, tenants: string[]) => request<GitHubInstallation>(`/admin/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
@@ -559,6 +563,15 @@ function useGitHubChanged() {
 export function useSaveAdminGitHub() {
   const changed = useGitHubChanged()
   return useMutation({ mutationFn: (input: PutAdminGitHubInput) => adminApi.putAdminGitHub(input), onSuccess: () => changed() })
+}
+
+export function useCheckAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.checkAdminGitHub(), onSuccess: () => changed() })
+}
+
+export function useStartGitHubManifest() {
+  return useMutation({ mutationFn: (input: { organization?: string; name?: string }) => adminApi.startGitHubManifest(input) })
 }
 
 export function useDeleteAdminGitHub() {

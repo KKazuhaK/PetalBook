@@ -3,7 +3,7 @@
 // cookie stand-in), invites, spaces per user and a fake OpenID Connect
 // provider. It has no DOM or Node dependencies.
 
-import type { AdminSpace, CaptchaContext, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User, AdminGrant, AdminToken, ApiToken, ConsentInfo, Grant } from '../types.ts'
+import type { AdminSpace, CaptchaContext, ConnectRemoteInput, DailyNotice, FieldKind, Identity, Invite, Member, Page, Permission, Remote, RemoteKey, RemoteState, Role, ServerStatus, SettingsNotice, SpaceInfo, SpaceRole, User, AdminGrant, AdminToken, ApiToken, ConsentInfo, Grant, GitHubGap } from '../types.ts'
 import { gitBlobId } from './sha1.ts'
 import { ALPHABET, HttpError, compareCodePoints, createSpaceStore, isRecord, rfc3339, validFolder, type SpaceStore } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
@@ -105,6 +105,7 @@ export const MOCK_INVITE_TOKEN = 'mock-invite-token'
 export const SESSION_COOKIE = 'pb_session'
 const OIDC_COOKIE = 'pb_oidc'
 const GITHUB_COOKIE = 'pb_github'
+const GITHUB_MANIFEST_COOKIE = 'pb_github_manifest'
 const LOCAL_USER: User = { id: 'local', username: 'local', name: 'Local user', email: '', emailVerified: false, role: 'admin', disabled: false, passkeyRequired: false, created: '2026-01-01T00:00:00Z' }
 
 interface UserRec extends Omit<User, 'passkeyRequired' | 'passkeys' | 'sso'> {
@@ -2147,6 +2148,10 @@ export function createMockServer(options: MockOptions = {}) {
       const r = github.callback(ctx.user?.id ?? null, ctx.cookies[GITHUB_COOKIE], url.searchParams)
       return { status: 303, headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_COOKIE, '', 0) } : {}) } }
     }
+    if (method === 'GET' && path === '/github/manifest/callback') {
+      const r = github.manifestCallback(ctx.user?.id ?? null, isSiteAdmin(ctx.user ?? undefined), ctx.cookies[GITHUB_MANIFEST_COOKIE], url.searchParams)
+      return { status: 303, headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, '', 0) } : {}) } }
+    }
     const me = requireUser(ctx)
     if (method === 'GET' && path === '/github') return j(github.info(me.id))
     if (method === 'POST' && path === '/github/authorization/start') {
@@ -2174,7 +2179,7 @@ export function createMockServer(options: MockOptions = {}) {
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
 
-  const routeAdminGitHub = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const routeAdminGitHub = (me: UserRec, method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     if (path === '/admin/github' && method === 'GET') return j(github.admin())
     if (path === '/admin/github' && method === 'PUT') {
@@ -2187,6 +2192,11 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/github' && method === 'DELETE') {
       github.deleteAdmin()
       return { status: 204 }
+    }
+    if (path === '/admin/github/check' && method === 'POST') return j(github.check())
+    if (path === '/admin/github/manifest' && method === 'POST') {
+      const r = github.manifestStart(me.id, body)
+      return { status: 200, body: r.start, headers: { 'Set-Cookie': setCookie(GITHUB_MANIFEST_COOKIE, r.state, 600) } }
     }
     if (path === '/admin/github/installations' && method === 'GET') return j(github.installations(url.searchParams.get('cursor')))
     const inst = /^\/admin\/github\/installations\/(\d+)$/.exec(path)
@@ -2245,7 +2255,9 @@ export function createMockServer(options: MockOptions = {}) {
           }
         }
       }
-      if (typeof body.trap === 'string' && (body.trap === 'noPermission' || body.trap === 'notInInstallation' || body.trap === 'pushFails')) github.setTrap(body.trap, body.on !== false)
+      if (typeof body.trap === 'string' && (body.trap === 'noPermission' || body.trap === 'notInInstallation' || body.trap === 'pushFails' || body.trap === 'missingPermission' || body.trap === 'personalNeedsInstall')) github.setTrap(body.trap, body.on !== false)
+      // What GitHub says about the App now: the administration sees it after a re-check.
+      if (isRecord(body.side)) github.setSide({ permissions: isRecord(body.side.permissions) ? (body.side.permissions as Record<string, string>) : undefined, gaps: Array.isArray(body.side.gaps) ? (body.side.gaps as GitHubGap[]) : undefined, anyAccount: typeof body.side.anyAccount === 'boolean' || body.side.anyAccount === null ? (body.side.anyAccount as boolean | null) : undefined })
       return j({})
     }
 
@@ -2516,8 +2528,9 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/admin/github' || path.startsWith('/admin/github/')) {
       accountsOnly()
       // The server's GitHub App is the whole server's: a tenant's administrator is refused, as on the server.
-      if (!isSiteAdmin(requireAdmin(ctx))) throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
-      return routeAdminGitHub(method, path, url, body)
+      const me = requireAdmin(ctx)
+      if (!isSiteAdmin(me)) throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
+      return routeAdminGitHub(me, method, path, url, body)
     }
     // --- usage (3.3): one's own, and everyone's for the administrators ---
     if (path === '/account/usage' && method === 'GET') {
