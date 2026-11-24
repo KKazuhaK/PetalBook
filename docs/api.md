@@ -19,7 +19,8 @@ The web app talks to the server only through this API.
   actions the signed-in user may not take that are not a matter of a role in a
   space), `no_permission` (403: a member whose role in the space lacks the
   permission the request needs; the message names it), `space_disabled` (403: an
-  administrator has disabled the space, see "Administration"), `rate_limited` (429, with a
+  administrator has disabled the space, see "Administration"), `offline_off`
+  (403: offline copies are turned off, see "Offline sync"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
   repository"; nothing was changed), `internal` (500). Signing in has codes
@@ -3963,6 +3964,23 @@ a person of a disabled tenant, or their token, is refused as on every other
 route (`401`). The spaces of a disabled tenant are `403 space_disabled` to
 everyone, as for their pages, and are never in `heads`.
 
+**Allowing offline copies.** The layered setting `offline.copies` (site, tenant;
+allowed unless turned off, see "Settings by layer") decides whether the people
+of a tenant may keep copies on a device. A tenant administrator can turn it off
+for its own tenant. A site administrator (`PUT /api/admin/settings/offline.copies`)
+sets what tenants that say nothing follow, and can lock it (`lower` `lock`: the
+site's value is the tenant's, so a locked `false` is off for every tenant) or
+restrict it to off (`lower` `restrict`, `options` `[false]`: a tenant may only
+turn it off). When it is
+off for the caller's tenant, **all four endpoints** (`sync/catalog`, `changes`,
+`sync/pages`, `heads`) answer `403 offline_off` (after the sign-in, token and
+space checks, so a space of another tenant still answers as one that does not
+exist). Nothing else changes: the rest of the API works as before. A client
+reads the effective value from `GET /api/settings`; when it is off it stops
+syncing and polling, and deletes the offline copies of the signed-in account
+on the next start or poll. The app does not encrypt the copies; the client
+clears them on sign-out.
+
 The server keeps no record of devices. A client holds a **change cursor** per
 space and asks what changed after it; nothing is registered, and a device that
 is never seen again leaves nothing behind.
@@ -4464,6 +4482,7 @@ The settings of 3.3 (others join this table as they are made):
 | `quota.bytesPerPerson` | limit in bytes, or `null` | site, tenant, person | `null` | `allow` |
 | `quota.pagesPerPerson` | limit, or `null` | site, tenant, person | `null` | `allow` |
 | `daily.own`, `daily.api` | boolean (what a space may do) | site, tenant | `true` | `allow` |
+| `offline.copies` | boolean (may people keep offline copies; see "Offline sync") | site, tenant | `true` | `allow` |
 | `daily.default` | the shape of `/api/admin/daily`'s `default`; a tenant may name a space of its own tenant or an interface | site, tenant | `null` | `allow` |
 
 - `daily.own` and `daily.api` are the 2.3 `allow` switches; `PUT
@@ -4521,7 +4540,9 @@ site's.
 
 Any signed-in user; `space` optional (needs `read`). The effective value of
 every setting that has a space or person layer, and whether that layer can
-change it, so a client greys out "set by the administrators":
+change it, so a client greys out "set by the administrators". `offline.copies`
+is also in the list, with only its `effective` value (a person cannot change
+it; a client reads it to know whether it may keep offline copies):
 
 ```json
 {"settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}

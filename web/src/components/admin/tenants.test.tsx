@@ -115,6 +115,21 @@ describe('the Tenants page', () => {
 })
 
 describe('the Settings page', () => {
+  it('has offline.copies on both layers, named and explained, and a tenant\'s switch writes the tenant layer', async () => {
+    await open('settings')
+    await settle(() => document.querySelectorAll('[data-slot="setting-row"][data-key="offline.copies"]').length === 2, 'the rows')
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="offline.copies"]')]
+    expect(rows[0].textContent).toContain(tt.settings.names['offline.copies'])
+    expect(rows[0].textContent).toContain(tt.settings.helps['offline.copies'])
+    expect(rows[0].querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
+    expect(tt.settings.helps['offline.copies']).toMatch(/offline_off/)
+    await click(rows[1].querySelector('[role="switch"][aria-label$="' + tt.settings.follow + '"]'))
+    await click(rows[1].querySelector(`[role="switch"][aria-label="${tt.settings.names['offline.copies']}"]`))
+    await click(button(tt.settings.save, rows[1]))
+    await settle(() => m!.requests.some((r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/offline.copies'), 'saved')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/admin/tenants/0000000000/settings/offline.copies')!.body!)).toEqual({ value: false })
+  })
+
   it('shows the site layer and the tenant layer with the lock source, keeps a value a lock hides and brings it back', async () => {
     await open('settings', (server) => {
       const admin = adminRequests(server)

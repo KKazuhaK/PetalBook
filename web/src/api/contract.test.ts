@@ -3776,6 +3776,37 @@ function suite(target: Target) {
       expect((await call(admin, 'GET', `/api/sync/heads?${hundredOne}`)).status).toBe(400)
     })
 
+    it.skipIf(!accounts)('offline.copies: when the site locks it off, the four sync endpoints answer 403 offline_off; it is a setting a person only reads', async () => {
+      const routes = [syncUrl('/sync/catalog'), syncUrl('/changes?since=x'), syncUrl('/sync/pages?ids=01ZZZZZZZZ'), `/api/sync/heads?space=${spaceId}`]
+      const mineOf = async (c: typeof admin) => ((await call(c, 'GET', '/api/settings')).json.settings as { key: string; effective: unknown; space?: unknown; person?: unknown }[]).find((x) => x.key === 'offline.copies')
+      const def = ((await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; kind: string; layers: string[]; site: { value: unknown } }[]).find((x) => x.key === 'offline.copies')!
+      expect([def.kind, def.layers, def.site.value]).toEqual(['boolean', ['site', 'tenant'], true])
+      expect(await mineOf(admin)).toEqual({ key: 'offline.copies', effective: true })
+      try {
+        expect((await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } })).status).toBe(200)
+        expect((await mineOf(admin))?.effective).toBe(false)
+        for (const path of routes) {
+          const got = await call(admin, 'GET', path)
+          expect([got.status, got.json.error], path).toEqual([403, 'offline_off'])
+        }
+        // Nothing else is refused.
+        expect((await call(admin, 'GET', `/api/spaces/${spaceId}/pages`)).status).toBe(200)
+      } finally {
+        await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: true, lower: { mode: 'allow' } })
+      }
+      expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
+      expect((await call(admin, 'GET', syncUrl('/sync/catalog'))).status).toBe(200)
+      // A tenant may turn it off for itself (the one tenant of this server).
+      const t = ((await call(admin, 'GET', '/api/admin/tenants')).json.items as { id: string; default: boolean }[]).find((x) => x.default)!
+      try {
+        expect((await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: false })).status).toBe(200)
+        expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).json.error).toBe('offline_off')
+      } finally {
+        await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: true })
+      }
+      expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
+    })
+
     it.skipIf(!accounts)('somebody who is not a member of the space is told there is no such space, and has no head for it', async () => {
       const invite = await as(admin, () => adminApi.createInvite({ role: 'member', days: 1 }))
       const b = browser()

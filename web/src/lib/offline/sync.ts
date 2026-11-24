@@ -16,7 +16,8 @@ const TEXT_BATCH = 100
 // Bodies are fetched at most this many requests at a time.
 const TEXT_PARALLEL = 4
 
-export type Outcome = 'ok' | 'offline' | 'gone' | 'disabled' | 'error'
+// 'off': the server says offline copies are turned off for this account's tenant (403 offline_off).
+export type Outcome = 'ok' | 'offline' | 'gone' | 'disabled' | 'off' | 'error'
 export interface SyncResult {
   outcome: Outcome
   // The catalogue or the text changed: lists on screen are out of date.
@@ -36,6 +37,7 @@ export interface SyncOptions {
 export function classify(e: unknown): { outcome: Outcome; message: string } {
   if (e instanceof ApiError) {
     if (e.status === 404) return { outcome: 'gone', message: e.message }
+    if (e.status === 403 && e.code === 'offline_off') return { outcome: 'off', message: e.message }
     if (e.status === 403 && e.code === 'space_disabled') return { outcome: 'disabled', message: e.message }
     if (e.code === 'network' || e.code === 'timeout') return { outcome: 'offline', message: e.message }
     return { outcome: 'error', message: e.message }

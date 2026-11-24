@@ -8,6 +8,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { formatBytes } from '@/lib/bytes'
 import { ol } from '@/i18n/offline'
 import { DEFAULT_CAP_BYTES, DEFAULT_CONFIG, RECENT_KEPT, configure, dropCopy, syncNow, type OfflineConfig, type OfflineMode } from '@/lib/offline'
+import { useOfflineAllowed } from '@/lib/offline/allowed'
 import { useOffline } from '@/lib/offline/status'
 import { useCopy } from '@/lib/offline/useCopy'
 import { SettingsNote, SettingsSection } from './SettingsParts'
@@ -27,6 +28,16 @@ export default function OfflinePanel({ space }: { space: string }) {
   const offline = useOffline()
   const { spaces } = useActiveSpace()
   const [busy, setBusy] = useState(false)
+  const allowed = useOfflineAllowed(user)
+  // The administrators turned it off: no controls, only the reason (the app deletes this account's copies).
+  if (allowed === false)
+    return (
+      <SettingsSection title={ol.title} description={ol.help}>
+        <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground" data-slot="offline-off">
+          {ol.offByAdmin}
+        </p>
+      </SettingsSection>
+    )
   if (typeof indexedDB === 'undefined') return <SettingsNote>{ol.unsupported}</SettingsNote>
   if (failed) return <ErrorState message={ol.loadFailed} onRetry={reload} />
   if (!user || !info) return <PageFallback />

@@ -4,7 +4,7 @@
 
 import { api, ApiError } from '@/api/client'
 import { spacesOf } from './registry'
-import { existingStore } from './manager'
+import { clearAccount, existingStore } from './manager'
 import { classify, syncSpace, type SyncOptions, type SyncResult } from './sync'
 import { noteNetworkFailure, noteNetworkOk } from './status'
 
@@ -38,6 +38,18 @@ export const onSynced = (l: Listener) => {
   return () => void listeners.delete(l)
 }
 
+// The server says offline copies are turned off (403 offline_off): everything this account keeps on the device is
+// deleted, and the ones listening (the app, to ask the setting again) are told.
+const offListeners = new Set<(user: string) => void>()
+export const onOfflineOff = (l: (user: string) => void) => {
+  offListeners.add(l)
+  return () => void offListeners.delete(l)
+}
+async function refused(user: string) {
+  await clearAccount(user).catch(() => undefined)
+  offListeners.forEach((l) => l(user))
+}
+
 // Spaces being synced right now, for the settings to say so.
 const busy = new Set<string>()
 const busyListeners = new Set<() => void>()
@@ -66,6 +78,7 @@ export async function syncNow(user: string, space: string, opts: SyncOptions = {
     if (result.outcome === 'ok') noteNetworkOk()
     else if (result.outcome === 'offline') noteNetworkFailure()
     listeners.forEach((l) => l({ space, result }))
+    if (result.outcome === 'off') await refused(user)
     return result
   } finally {
     setBusy(space, false)
@@ -85,7 +98,12 @@ export async function pollOnce(user: string, signal?: AbortSignal, now: () => nu
       missing.push(...(r.missing ?? []))
     }
   } catch (e) {
-    if (classify(e).outcome === 'offline') noteNetworkFailure()
+    const c = classify(e).outcome
+    if (c === 'offline') noteNetworkFailure()
+    else if (c === 'off') {
+      noteNetworkOk()
+      await refused(user)
+    }
     return
   }
   noteNetworkOk()

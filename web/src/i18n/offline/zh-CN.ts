@@ -43,5 +43,6 @@ export const offlineZhCN = {
   saved: '已保存',
   failed: '没有保存成功',
   loadFailed: '读不出这台设备上的离线数据',
+  offByAdmin: '管理员关闭了离线副本。这台设备上不保存任何内容，这个账号原来在这里的副本也会被删除。',
   unsupported: '这个浏览器不能在本机保存数据。',
 } as const

@@ -515,6 +515,7 @@ export type ErrorCode =
   | 'forbidden'
   | 'no_permission'
   | 'space_disabled'
+  | 'offline_off'
   | 'user_not_found'
   | 'user_disabled'
   | 'last_owner'

@@ -5,7 +5,7 @@ import { t } from '@/i18n'
 import { ol } from '@/i18n/offline'
 import { DEFAULT_CAP_BYTES, DEFAULT_CONFIG, configure, existingStore, hasCopy } from '@/lib/offline'
 import { freshDevice } from '@/lib/offline/testkit'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
 import { sender } from '@/testing/listKit'
 import SettingsRoute from './SettingsRoute'
 import { formatBytes } from '@/lib/bytes'
@@ -161,6 +161,21 @@ describe('the Offline section', () => {
     expect(status()).toContain(ol.overCap)
     expect(status()).toContain(ol.disabled)
     expect(status()).toContain(ol.lastError('boom'))
+  })
+
+  it('is only a note, with no controls, when the administrators turn offline copies off', async () => {
+    m = await mount(routes, {
+      signIn: true,
+      server: { mode: 'accounts' },
+      entries: (server) => {
+        adminRequests(server)('PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } })
+        return ['/settings/offline']
+      },
+    })
+    await settle(() => dialog()?.querySelector('[data-slot="offline-off"]') !== null, 'the note')
+    expect(dialog().querySelector('[data-slot="offline-off"]')!.textContent).toBe(ol.offByAdmin)
+    expect(dialog().querySelector('input[name="offline-mode"]')).toBeNull()
+    expect(dialog().querySelector('[data-slot="offline-status"]')).toBeNull()
   })
 
   it('says so when this browser cannot keep data', async () => {

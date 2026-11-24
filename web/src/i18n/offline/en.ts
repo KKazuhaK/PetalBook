@@ -44,5 +44,6 @@ export const offlineEn: OfflineMessages = {
   saved: 'Saved',
   failed: 'Could not save',
   loadFailed: 'Could not read the offline data on this device',
+  offByAdmin: 'Offline copies are turned off by your administrators. Nothing is kept on this device, and any copy this account had here is deleted.',
   unsupported: 'This browser cannot keep data on this device.',
 }

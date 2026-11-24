@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { api, spaceApi } from '@/api/client'
+import { adminApi } from '@/api/admin'
+import { spacesOf } from './registry'
+import { onOfflineOff } from './poller'
 import { MOCK_ADMIN } from '@/api/mock/server'
 import { DEFAULT_CONFIG } from './store'
 import { configure, existingStore, hasCopy } from './manager'
@@ -199,5 +202,56 @@ describe('the timer', () => {
     await wait(30)
     expect(heads()).toBe(base + 1)
     stop()
+  })
+})
+
+describe('when the administrators turn offline copies off', () => {
+  const turnOff = () => adminApi.putSiteSetting('offline.copies', { value: false, lower: { mode: 'lock' } })
+  const turnOn = () => adminApi.putSiteSetting('offline.copies', { value: true, lower: { mode: 'allow' } })
+
+  it('the heads are refused: the copies of the account are deleted, the other requests stop, and the app is told', async () => {
+    const { a, b } = await twoSpaces()
+    await turnOff()
+    const told: string[] = []
+    const off = onOfflineOff((u) => told.push(u))
+    await pollOnce(me)
+    off()
+    expect(told).toEqual([me])
+    expect(hasCopy(me, a) || hasCopy(me, b)).toBe(false)
+    expect(spacesOf(me)).toEqual([])
+    expect((await indexedDB.databases()).filter((d) => d.name?.includes(encodeURIComponent(me)))).toEqual([])
+    // Nothing is left to ask for: a later round sends nothing.
+    const before = net.requests.length
+    await pollOnce(me)
+    expect(net.requests.length).toBe(before)
+  })
+
+  it('a sync that is refused does the same, and keeps nobody else\'s copy', async () => {
+    const { a } = await twoSpaces()
+    const other = (await configure('another-person', a, { ...DEFAULT_CONFIG }))!
+    expect(other).toBeDefined()
+    await turnOff()
+    const r = await syncNow(me, a)
+    expect(r.outcome).toBe('off')
+    expect(spacesOf(me)).toEqual([])
+    expect(hasCopy('another-person', a)).toBe(true)
+  })
+
+  it('does not delete anything when the server cannot be reached, only on its answer', async () => {
+    const { a } = await twoSpaces()
+    net.down()
+    await pollOnce(me)
+    expect(hasCopy(me, a)).toBe(true)
+    net.up()
+  })
+
+  it('copies can be kept and synced again once it is turned back on', async () => {
+    const { a } = await twoSpaces()
+    await turnOff()
+    await pollOnce(me)
+    await turnOn()
+    const store = (await configure(me, a, { ...DEFAULT_CONFIG }))!
+    expect((await syncSpace(store)).outcome).toBe('ok')
+    expect(hasCopy(me, a)).toBe(true)
   })
 })
