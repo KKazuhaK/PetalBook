@@ -75,7 +75,7 @@ func GetRemote(ctx context.Context, q Q, spaceID string) (*Remote, error) {
 // a connection credential, the reminders of its repository as an empty leftover are
 // cleared, in the same transaction.
 func PutRemote(ctx context.Context, q Q, r Remote) error {
-	return atomically(ctx, q, func(q Q) error {
+	return withSpace(ctx, q, r.SpaceID, func(q Q) error {
 		if r.Provider == "" {
 			r.Provider = ProviderGit
 			if r.CredType == CredConnection {
@@ -116,12 +116,22 @@ type RemoteStatus struct {
 // UpdateRemoteStatus records the outcome of a sync. It does nothing for a
 // space that has no row (it was disconnected meanwhile).
 func UpdateRemoteStatus(ctx context.Context, q Q, spaceID string, s RemoteStatus, now time.Time) error {
-	_, err := q.Exec(ctx, `UPDATE remotes SET state = ?, error_kind = ?, last_error = ?, remote_tip = ?,
-		last_good = CASE WHEN CAST(? AS TEXT) = '' THEN last_good ELSE CAST(? AS TEXT) END,
-		last_sync = CASE WHEN CAST(? AS BIGINT) = 0 THEN last_sync ELSE CAST(? AS BIGINT) END, updated = ?
-		WHERE space_id = ? AND url <> ''`,
-		s.State, s.ErrorKind, s.LastError, s.RemoteTip, s.LastGood, s.LastGood, syncMS(s.LastSync), syncMS(s.LastSync), ms(now), spaceID)
-	return err
+	return atomically(ctx, q, func(q Q) error {
+		res, err := q.Exec(ctx, `UPDATE remotes SET state = ?, error_kind = ?, last_error = ?, remote_tip = ?,
+			last_good = CASE WHEN CAST(? AS TEXT) = '' THEN last_good ELSE CAST(? AS TEXT) END,
+			last_sync = CASE WHEN CAST(? AS BIGINT) = 0 THEN last_sync ELSE CAST(? AS BIGINT) END, updated = ?
+			WHERE space_id = ? AND url <> ''`,
+			s.State, s.ErrorKind, s.LastError, s.RemoteTip, s.LastGood, s.LastGood, syncMS(s.LastSync), syncMS(s.LastSync), ms(now), spaceID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil
+		}
+		// Only the state is copied to the space (filters read it there).
+		_, err = q.Exec(ctx, `UPDATE spaces SET remote_state = ? WHERE id = ? AND remote_state <> ?`, s.State, spaceID, s.State)
+		return err
+	})
 }
 
 func syncMS(t time.Time) int64 {
@@ -133,7 +143,13 @@ func syncMS(t time.Time) int64 {
 
 // DeleteRemote removes the row of a space: the remote, and the credential with it.
 func DeleteRemote(ctx context.Context, q Q, spaceID string) error {
-	_, err := q.Exec(ctx, `DELETE FROM remotes WHERE space_id = ?`, spaceID)
+	err := withSpace(ctx, q, spaceID, func(q Q) error {
+		_, err := q.Exec(ctx, `DELETE FROM remotes WHERE space_id = ?`, spaceID)
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil // the space is gone, and its remote with it
+	}
 	return err
 }
 

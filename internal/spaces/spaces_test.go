@@ -741,7 +741,9 @@ func TestOpenPermissions(t *testing.T) {
 			t.Fatalf("%+v", h.Info)
 		}
 		h := open(boss, a.ID)
-		if h.Info.Perms != perm.All || h.Info.Role != "" || !h.Info.ViaAdmin || h.Info.Name != "A" || h.Info.Inbox != "Inbox" {
+		// An administrator manages a space and does not read it (3.5): reading is a
+		// view, opened with a reason.
+		if h.Info.Perms != AdminPerms || h.Info.Perms.Has(perm.Read) || h.Info.Perms.Has(perm.Write) || h.Info.Role != "" || !h.Info.ViaAdmin || h.Info.Name != "A" || h.Info.Inbox != "Inbox" {
 			t.Fatalf("%+v", h.Info)
 		}
 		if _, err := m.Open(ctx, stranger, a.ID); !errors.Is(err, ErrNotFound) {
@@ -904,5 +906,34 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 		if l, _ := m2.List(ctx, u.ID); len(l) != 1 {
 			t.Fatalf("%v", l)
 		}
+	})
+}
+
+// A tenant's administrator never reaches a person's own space, in any way; a
+// site administrator reaches it as they reach any space (to manage it).
+func TestAPersonalSpaceIsNotOpenedByATenantAdministrator(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		m := testManager(t, st)
+		person := addUser(t, st, "P1", "person")
+		personal, err := m.Create(ctx, person.ID, "Mine")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Q().Exec(ctx, `UPDATE spaces SET personal_of = ? WHERE id = ?`, person.ID, personal.ID); err != nil {
+			t.Fatal(err)
+		}
+		tenantAdmin := store.User{ID: "A1", Username: "tadmin", Role: "admin", TenantID: store.DefaultTenantID}
+		siteAdmin := store.User{ID: "A2", Username: "sadmin", Role: "admin", SiteAdmin: true, TenantID: store.DefaultTenantID}
+		if _, err := m.Open(ctx, tenantAdmin, personal.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a tenant administrator opened a personal space: %v", err)
+		}
+		h, err := m.Open(ctx, siteAdmin, personal.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.Info.Perms.Has(perm.Read) {
+			t.Fatal("a site administrator reads without a view")
+		}
+		h.Release()
 	})
 }

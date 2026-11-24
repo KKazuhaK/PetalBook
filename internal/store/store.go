@@ -42,6 +42,8 @@ type Store struct {
 	db      *sql.DB
 	dialect Dialect
 	rebinds sync.Map // query -> rewritten query (PostgreSQL only)
+	// people is what NoteActive and NoteWrite remember of who was written lately.
+	people noted
 	// tenantState is which tenants are disabled (see TenantDisabled).
 	tenantState atomic.Pointer[tenantState]
 }
@@ -108,6 +110,12 @@ func atomically(ctx context.Context, q Q, fn func(Q) error) error {
 		}
 	}
 	return fn(q)
+}
+
+// isPostgres reports whether q runs on PostgreSQL.
+func isPostgres(q Q) bool {
+	b, ok := q.(bound)
+	return ok && b.s.dialect == Postgres
 }
 
 // rebind rewrites ? placeholders to $1, $2... for PostgreSQL.

@@ -52,7 +52,7 @@ func TestAccountUsageIsTheCallersOwnNumbers(t *testing.T) {
 		if u = usageOf(t, f.memA); usedOf(t, u, "spaces") != 2 || usedOf(t, u, "bytes") != 0 || usedOf(t, u, "pages") != 0 {
 			t.Fatalf("%v", u)
 		}
-		f.measure(t, f.admA, mine)
+		f.measure(t, f.root, mine) // a personal space: the site measures it, a tenant administrator never reaches it
 		u = usageOf(t, f.memA)
 		if usedOf(t, u, "bytes") <= 0 || usedOf(t, u, "pages") != 3 || u["measuredAt"] == nil {
 			t.Fatalf("%v", u)
@@ -253,7 +253,7 @@ func TestBytesAndPagesWarnOncePerCrossing(t *testing.T) {
 		addPages(t, f.memA, mine, 4)
 		f.root.do("PUT", "/api/admin/settings/quota.pagesPerPerson", map[string]any{"value": 3}).want(t, 200, "")
 		f.root.do("PUT", "/api/admin/settings/quota.bytesPerPerson", map[string]any{"value": 1}).want(t, 200, "")
-		f.measure(t, f.admA, mine)
+		f.measure(t, f.root, mine) // a personal space: the site measures it, a tenant administrator never reaches it
 		u := usageOf(t, f.memA)
 		notices := u["notices"].([]any)
 		if len(notices) != 2 {
@@ -274,8 +274,8 @@ func TestBytesAndPagesWarnOncePerCrossing(t *testing.T) {
 		if len(rows) != 2 {
 			t.Fatalf("%d rows: %v", len(rows), rows)
 		}
-		f.measure(t, f.admA, mine)
-		f.measure(t, f.admA, mine)
+		f.measure(t, f.root, mine) // a personal space: the site measures it, a tenant administrator never reaches it
+		f.measure(t, f.root, mine) // a personal space: the site measures it, a tenant administrator never reaches it
 		if rows = f.root.audit(t, "quota_exceeded"); len(rows) != 2 {
 			t.Fatalf("a crossing was audited again: %d rows", len(rows))
 		}

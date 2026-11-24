@@ -56,12 +56,20 @@ func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 // outside the scope is not found.
 func GetUser(ctx context.Context, q Q, sc Scope, id string) (*User, error) {
 	cond, args := sc.cond("tenant_id")
-	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = ? AND `+cond, append([]any{id}, args...)...))
+	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = ? AND deleted_at IS NULL AND `+cond, append([]any{id}, args...)...))
 }
 
-// GetUserByUsername finds a user by the stored (lower case) username.
+// GetUserAny is GetUser for a person who may be in the recycle bin or a
+// tombstone: the recycle bin and the audit log are the only places that name one.
+func GetUserAny(ctx context.Context, q Q, id string) (*User, error) {
+	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
+}
+
+// GetUserByUsername finds a user by the stored (lower case) username. A deleted
+// person is not found (they cannot sign in, nor be added anywhere); their name
+// stays taken, which the unique key on it decides.
 func GetUserByUsername(ctx context.Context, q Q, username string) (*User, error) {
-	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE username = ?`, username))
+	return scanUser(q.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE username = ? AND deleted_at IS NULL`, username))
 }
 
 // HasUsers reports whether any account exists.
@@ -77,7 +85,7 @@ func HasUsers(ctx context.Context, q Q) (bool, error) {
 // ListUsers returns the users in the scope, oldest first.
 func ListUsers(ctx context.Context, q Q, sc Scope) ([]User, error) {
 	cond, args := sc.cond("tenant_id")
-	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users WHERE `+cond+` ORDER BY created, id`, args...)
+	rows, err := q.Query(ctx, `SELECT `+userCols+` FROM users WHERE deleted_at IS NULL AND `+cond+` ORDER BY created, id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +105,7 @@ func ListUsers(ctx context.Context, q Q, sc Scope) ([]User, error) {
 // case, oldest first; an empty query matches everyone. enabledOnly leaves out the
 // disabled accounts before the limit counts. limit <= 0 means no limit.
 func SearchUsers(ctx context.Context, q Q, d Dialect, sc Scope, query string, enabledOnly bool, limit int) ([]User, error) {
-	var conds []string
+	conds := []string{`deleted_at IS NULL`}
 	args := []any{}
 	sCond, sArgs := sc.cond("tenant_id")
 	conds, args = append(conds, sCond), append(args, sArgs...)
@@ -148,7 +156,7 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 	if err != nil {
 		return err
 	}
-	return usageOfNewUser(ctx, q, u.ID, u.TenantID)
+	return usageOfNewUser(ctx, q, u.ID, u.TenantID, u.Created)
 }
 
 // UpdateProfile sets the name and email, and whether the email is verified.
@@ -233,7 +241,7 @@ func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, l
 		return nil, nil
 	}
 	cond, cargs := sc.cond("tenant_id")
-	sqlText := `SELECT ` + userCols + ` FROM users WHERE email <> '' AND ` + asciiLower(d, "email") + ` = ? AND ` + cond + ` ORDER BY created, id`
+	sqlText := `SELECT ` + userCols + ` FROM users WHERE deleted_at IS NULL AND email <> '' AND ` + asciiLower(d, "email") + ` = ? AND ` + cond + ` ORDER BY created, id`
 	args := append([]any{key}, cargs...)
 	if limit > 0 {
 		sqlText += ` LIMIT ?`
@@ -262,7 +270,7 @@ const inEnabledTenant = `u.tenant_id NOT IN (SELECT id FROM tenants WHERE disabl
 // CountEnabledPasswordAdmins counts the enabled site administrators of enabled
 // tenants who have a password.
 func CountEnabledPasswordAdmins(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0 AND `+inEnabledTenant).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u JOIN passwords p ON p.user_id = u.id WHERE u.deleted_at IS NULL AND u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0 AND `+inEnabledTenant).Scan(&n)
 	return
 }
 
@@ -281,9 +289,11 @@ func SetSiteAdmin(ctx context.Context, q Q, id string, on bool) error {
 	return oneRow(res, err)
 }
 
-// SetDisabled disables or enables a user.
+// SetDisabled disables or enables a user. Enabling one ends a deletion of them
+// that did not finish: its record (users.delete_pending) is dropped, so that a
+// later deletion starts afresh.
 func SetDisabled(ctx context.Context, q Q, id string, disabled bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET disabled = ? WHERE id = ?`, b2i(disabled), id)
+	res, err := q.Exec(ctx, `UPDATE users SET disabled = ?, delete_pending = CASE WHEN ? = 1 THEN delete_pending ELSE '' END WHERE id = ?`, b2i(disabled), b2i(disabled), id)
 	return oneRow(res, err)
 }
 
@@ -296,7 +306,7 @@ func CountEnabledAdmins(ctx context.Context, q Q) (n int, err error) {
 // CountEnabledAdminsOutside is CountEnabledAdmins leaving out one tenant's
 // (the one about to be disabled; "" leaves out none).
 func CountEnabledAdminsOutside(ctx context.Context, q Q, tenantID string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u WHERE u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0 AND u.tenant_id <> ? AND `+inEnabledTenant, tenantID).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users u WHERE u.deleted_at IS NULL AND u.role = 'admin' AND u.site_admin = 1 AND u.disabled = 0 AND u.tenant_id <> ? AND `+inEnabledTenant, tenantID).Scan(&n)
 	return
 }
 

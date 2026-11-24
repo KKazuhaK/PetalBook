@@ -2,6 +2,7 @@
 // .zip of files and folders. Several .md files are sent one after another, each
 // as its own request, and their reports are added up.
 
+import { fileTooLargeText } from '@/lib/fileTooLarge'
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import { useBlocker, useNavigate, useParams, useSearchParams } from 'react-router'
 import { NotFoundPage } from '@/pages/NotFoundPage'
@@ -136,8 +137,9 @@ export default function ImportPage() {
       setFiles([])
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
+      const tooBig = fileTooLargeText(err)
       const why = err instanceof Error ? err.message : ''
-      const text = t.fmt.labelled(t.import.failed, why)
+      const text = tooBig ?? t.fmt.labelled(t.import.failed, why)
       setError(done > 0 ? `${text} ${t.import.failedAfter(done, send.length)}` : text)
       // What the files before it brought (and left out) is still shown.
       if (done > 0) setPartial(total)

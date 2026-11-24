@@ -47,10 +47,12 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 // AddMember makes a user a member of a space. The statement joins the two rows
 // on the same tenant, so a space and a user of different tenants are never
 // linked, whatever the caller checked: it writes nothing and returns
-// ErrNotFound, as it does for a space or a user that does not exist.
+// ErrNotFound, as it does for a space or a user that does not exist, and for a
+// person who is disabled or deleted (so one being deleted, whom the deletion
+// disabled first, is never added after the check of the caller).
 func AddMember(ctx context.Context, q Q, spaceID, userID, role string, now time.Time) error {
 	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
-		SELECT s.id, u.id, ?, ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ?`, role, ms(now), spaceID, userID)
+		SELECT s.id, u.id, ?, ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ? AND u.deleted_at IS NULL AND u.disabled = 0`, role, ms(now), spaceID, userID)
 	if err := oneRow(res, err); err != nil {
 		return err
 	}
@@ -91,7 +93,7 @@ func GetSpace(ctx context.Context, q Q, sc Scope, id string) (*SpaceInfo, error)
 	var s SpaceInfo
 	var personal sql.NullString
 	var created int64
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal_of IS NULL")
 	err := q.QueryRow(ctx, `SELECT id, name, personal_of, inbox, created, tenant_id FROM spaces WHERE id = ? AND `+cond, append([]any{id}, args...)...).
 		Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &s.TenantID)
 	if errors.Is(err, sql.ErrNoRows) {

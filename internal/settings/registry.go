@@ -19,6 +19,22 @@ const (
 	// device (4.1): the four sync endpoints answer 403 offline_off when it is off.
 	OfflineCopies = "offline.copies"
 
+	// FilesMaxBytes is the largest file a write may create or replace (3.5):
+	// site and tenant. The site's value is --max-upload and its lower rule
+	// restricts a tenant to at most that (see Service.SetFileCeiling).
+	FilesMaxBytes = "files.maxBytes"
+
+	// RecycleDays is how long an item stays in the recycle bin (3.5); ExportsDays
+	// and ExportsMaxBytes how long an export is kept and how much room all of them
+	// may take. Site only: they use the server's disk.
+	RecycleDays     = "recycle.days"
+	ExportsDays     = "exports.days"
+	ExportsMaxBytes = "exports.maxBytes"
+	// UsersReuseUsernames is whether a username a purge freed may be taken again:
+	// "after_purge" (anyone may, once the person is purged) or "never". Site only:
+	// usernames are unique on the whole server.
+	UsersReuseUsernames = "users.reuseUsernames"
+
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
@@ -55,6 +71,14 @@ func Definitions() []*Def {
 		// off. No space or person layer: a person who is not allowed has none, and
 		// one who is allowed chooses by which spaces they keep on the device.
 		{Key: OfflineCopies, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		// The size of one file (3.5). The default and the site's lower rule are the
+		// site's --max-upload, which the server sets (SetFileCeiling).
+		{Key: FilesMaxBytes, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(10 << 20), Min: 1, Max: 256 << 20,
+			Lower: Lower{Mode: Restrict, Max: i64(10 << 20)}},
+		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
+		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
+		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}},
+		{Key: UsersReuseUsernames, Kind: Choice, Layers: []Layer{Site}, Default: "after_purge", Choices: []string{"after_purge", "never"}, Lower: Lower{Mode: Allow}},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},

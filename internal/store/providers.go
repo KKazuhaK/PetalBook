@@ -129,14 +129,12 @@ func SetConnProviderPartial(ctx context.Context, q Q, id, partial string, at tim
 
 // DeleteConnProviderRow removes a provider; its connections and reminders go with it.
 func DeleteConnProviderRow(ctx context.Context, q Q, id string) error {
-	_, err := q.Exec(ctx, `DELETE FROM providers WHERE id = ?`, id)
-	return err
+	return deleteProviderRows(ctx, q, `id = ?`, id)
 }
 
 // DeleteTenantConnProviderRows removes the providers of a tenant (it is being deleted).
 func DeleteTenantConnProviderRows(ctx context.Context, q Q, tenantID string) error {
-	_, err := q.Exec(ctx, `DELETE FROM providers WHERE owner = ?`, tenantID)
-	return err
+	return deleteProviderRows(ctx, q, `owner = ?`, tenantID)
 }
 
 // --- people's connections ----------------------------------------------------------------
@@ -207,15 +205,25 @@ func PutProviderAuthorization(ctx context.Context, q Q, a ProviderAuthorization)
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
+	err := atomically(ctx, q, func(q Q) error {
+		return putProviderAuthorization(ctx, q, a)
+	})
+	if _, ok := UniqueOn(err); ok {
+		return ErrExists // another user connected the account since the check
+	}
+	return err
+}
+
+func putProviderAuthorization(ctx context.Context, q Q, a ProviderAuthorization) error {
 	_, err := q.Exec(ctx, `INSERT INTO provider_authorizations(`+pauthCols+`) VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?)
 		ON CONFLICT (provider, user_id) DO UPDATE SET account_id = excluded.account_id, login = excluded.login, access_enc = excluded.access_enc,
 		refresh_enc = excluded.refresh_enc, access_expires = excluded.access_expires, refresh_expires = excluded.refresh_expires,
 		state = excluded.state, version = provider_authorizations.version + 1, is_admin = excluded.is_admin, connected = excluded.connected, updated = excluded.updated`,
 		a.Provider, a.UserID, a.AccountID, a.Login, a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires), a.State, b2i(a.Admin), ms(a.Connected), ms(a.Updated))
-	if _, ok := UniqueOn(err); ok {
-		return ErrExists // another user connected the account since the check
+	if err != nil {
+		return err
 	}
-	return err
+	return settleConnected(ctx, q, a.UserID)
 }
 
 // ReplaceProviderTokens stores a renewed pair, but only if the connection is
@@ -245,8 +253,56 @@ func ExpireProviderAuthorization(ctx context.Context, q Q, provider, userID stri
 
 // DeleteProviderAuthorization removes a user's connection to a provider.
 func DeleteProviderAuthorization(ctx context.Context, q Q, provider, userID string) error {
-	_, err := q.Exec(ctx, `DELETE FROM provider_authorizations WHERE provider = ? AND user_id = ?`, provider, userID)
-	return err
+	return atomically(ctx, q, func(q Q) error {
+		if _, err := q.Exec(ctx, `DELETE FROM provider_authorizations WHERE provider = ? AND user_id = ?`, provider, userID); err != nil {
+			return err
+		}
+		return settleConnected(ctx, q, userID)
+	})
+}
+
+// DeleteUserProviderAuthorizations removes every connection a person has to a
+// provider of 3.8 (they are being deleted).
+func DeleteUserProviderAuthorizations(ctx context.Context, q Q, userID string) error {
+	return atomically(ctx, q, func(q Q) error {
+		if _, err := q.Exec(ctx, `DELETE FROM provider_authorizations WHERE user_id = ?`, userID); err != nil {
+			return err
+		}
+		return settleConnected(ctx, q, userID)
+	})
+}
+
+// deleteProviderRows deletes providers by a condition, their connections with
+// them (by cascade), and settles whether each person who had one is connected.
+func deleteProviderRows(ctx context.Context, q Q, where string, arg string) error {
+	return atomically(ctx, q, func(q Q) error {
+		rows, err := q.Query(ctx, `SELECT DISTINCT user_id FROM provider_authorizations WHERE provider IN (SELECT id FROM providers WHERE `+where+`) ORDER BY user_id`, arg)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM providers WHERE `+where, arg); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := settleConnected(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // DueProviderRenewals lists the connections to a provider in good standing

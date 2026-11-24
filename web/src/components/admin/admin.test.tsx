@@ -7,6 +7,7 @@ import { applySession } from '@/api/hooks'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
+import { tg } from '@/i18n/manage'
 import {
   adminRequests,
   byLabel,
@@ -64,6 +65,8 @@ describe('who can reach the administration', () => {
       ta.sections.users,
       ta.sections.groups,
       ta.sections.spaces,
+      ta.sections.manage,
+      ta.sections.recycle,
       ta.sections.daily,
       ta.sections.access,
       ta.sections.storage,
@@ -126,11 +129,14 @@ describe('all spaces', () => {
     await settle(() => rows().length === 3, 'three spaces')
     const team = rowOf('团队空间')
     const cells = [...team.querySelectorAll('td')].map((c) => c.textContent)
-    expect(cells[0]).toContain('名 tang')
-    expect(cells[1]).toBe('2')
-    expect(cells[2]).toContain(ta.spaces.notMeasured)
-    expect(cells[3]).toBe(ta.spaces.syncStates.local)
-    expect(cells[4]).toContain(ta.spaces.active)
+    // The first cell is the tick box of a bulk action.
+    expect(cells[1]).toContain('名 tang')
+    expect(cells[2]).toBe('2')
+    expect(cells[3]).toContain(ta.spaces.notMeasured)
+    expect(cells[4]).toContain(tg.where.names.server)
+    expect(cells[4]).toContain(tg.where.counted)
+    expect(cells[5]).toBe(ta.spaces.syncStates.local)
+    expect(cells[6]).toContain(ta.spaces.active)
     expect(team.textContent).not.toContain(ta.spaces.personal)
     expect(rows().filter((r) => r.textContent?.includes(ta.spaces.personal))).toHaveLength(2)
     // The way into a space's content.
@@ -269,18 +275,18 @@ describe('all spaces', () => {
     await settle(() => !rowOf('停用我').textContent!.includes(ta.spaces.disabled), 'enabled again')
   })
 
-  it('deletes a space once its name is typed, and says where it went', async () => {
-    let space = ''
-    m = await open((server) => {
-      space = (adminRequests(server)('POST', '/api/spaces', { name: '删掉我' }).body as { id: string }).id
-    })
+  it('deletes a space once its name is typed: it goes to the recycle bin, with the days it stays', async () => {
+    m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name: '删掉我' }))
     await settle(() => rows().length === 2, 'spaces')
     await openMenu('删掉我')
-    await click(menuItem(ta.spaces.delete))
-    await settle(() => document.querySelector('#delete-confirm') !== null, 'the dialog')
+    await click(menuItem(tg.spaces.delete))
+    await settle(
+      () => document.querySelector('#delete-confirm') !== null && text().includes(tg.del.daysLine(30)),
+      'the dialog with the preview',
+    )
     const confirm = () =>
       [...document.querySelectorAll('[role="dialog"] button')].find(
-        (b) => b.textContent === ta.spaces.deleteConfirm,
+        (b) => b.textContent === tg.del.space.confirm,
       ) as HTMLButtonElement
     expect(confirm().disabled).toBe(true)
     await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, '删掉')
@@ -288,10 +294,10 @@ describe('all spaces', () => {
     await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, '删掉我')
     expect(confirm().disabled).toBe(false)
     await click(confirm())
-    await settle(() => document.body.textContent!.includes(ta.spaces.deleted('删掉我')), 'the result')
-    expect(document.body.textContent).toMatch(new RegExp(`trash/${space}-\\d{8}T\\d{6}Z`))
-    await click([...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === t.common.close))
+    await settle(() => text().includes(tg.del.space.deleted('删掉我')), 'the result')
+    await click([...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === tg.bulk.close))
     await settle(() => rows().length === 1, 'the space is out of the table')
+    expect(m.server.manage.recycled().map((i) => i.name)).toEqual(['删掉我'])
   })
 
   it('compares the typed name trimmed and normalised, and shows the name to copy', async () => {
@@ -299,12 +305,12 @@ describe('all spaces', () => {
     m = await open((server) => void adminRequests(server)('POST', '/api/spaces', { name }))
     await settle(() => rows().length === 2, 'spaces')
     await openMenu(name)
-    await click(menuItem(ta.spaces.delete))
+    await click(menuItem(tg.spaces.delete))
     await settle(() => document.querySelector('#delete-confirm') !== null, 'the dialog')
     expect([...document.querySelectorAll('[role="dialog"] code')].map((c) => c.textContent)).toContain(name)
     const confirm = () =>
       [...document.querySelectorAll('[role="dialog"] button')].find(
-        (b) => b.textContent === ta.spaces.deleteConfirm,
+        (b) => b.textContent === tg.del.space.confirm,
       ) as HTMLButtonElement
     // The same letters, composed the other way, with spaces around.
     await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, ' Cafe\u0301  ')
@@ -313,14 +319,20 @@ describe('all spaces', () => {
     expect(confirm().disabled).toBe(true)
   })
 
-  it('a personal space cannot be transferred or deleted from the menu', async () => {
+  it('a personal space cannot be transferred, and its deletion says it goes with its person', async () => {
     m = await open()
     await settle(() => rows().length === 1, 'the personal space')
     const name = rows()[0].querySelector('th span')!.textContent!
     await openMenu(name)
     expect(menuItem(ta.spaces.transfer).getAttribute('aria-disabled')).toBe('true')
-    expect(menuItem(ta.spaces.delete).getAttribute('aria-disabled')).toBe('true')
     expect(menuItem(ta.spaces.disable).getAttribute('aria-disabled')).not.toBe('true')
+    await click(menuItem(tg.spaces.delete))
+    await settle(() => text().includes(tg.del.space.personalBlocked), 'the explanation')
+    const confirm = [...document.querySelectorAll('[role="dialog"] button')].find(
+      (b) => b.textContent === tg.del.space.confirm,
+    ) as HTMLButtonElement
+    await type(document.querySelector<HTMLInputElement>('#delete-confirm')!, name)
+    expect(confirm.disabled).toBe(true)
   })
 })
 

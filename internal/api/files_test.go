@@ -157,7 +157,7 @@ func TestUploadRefusals(t *testing.T) {
 		}
 	}
 	oct := []string{"Content-Type", "application/octet-stream"}
-	check("too large", f.send("POST", u+"?name=a.png", bytes.Repeat([]byte("x"), 1001), oct...), 413, "invalid")
+	check("too large", f.send("POST", u+"?name=a.png", bytes.Repeat([]byte("x"), 1001), oct...), 413, "file_too_large")
 	if rec := f.send("POST", u+"?name=a.png", bytes.Repeat([]byte("x"), 1000), oct...); rec.Code != 201 {
 		t.Errorf("at the limit: %d %s", rec.Code, rec.Body.String())
 	}

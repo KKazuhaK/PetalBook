@@ -2,6 +2,7 @@ package space
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -304,6 +305,9 @@ func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, er
 	}
 	doc.SetBody(in.Body)
 	data := doc.Bytes()
+	if err := tx.by.checkFileSize(path.Join(in.Folder, page.FileStem(meta.Title())+".md"), int64(len(data)), 0); err != nil {
+		return nil, err
+	}
 
 	stem := page.FileStem(meta.Title())
 	if stem == "" {
@@ -486,6 +490,9 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 	}
 	doc.SetBody(body)
 	newData := s.withIDs(rel, s.rebaseFile(whole, doc.Bytes()))
+	if err := tx.by.checkFileSize(rel, int64(len(newData)), int64(len(data))); err != nil {
+		return nil, err
+	}
 
 	wantRename := old.Title() != newMeta.Title()
 	if bytes.Equal(newData, data) && !wantRename {
@@ -536,6 +543,35 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 func (s *Space) CheckDraft(id string, meta page.Meta, body string) (*Page, error) {
 	p, _, err := s.Equivalent(id, "", meta, body)
 	return p, err
+}
+
+// CheckSaveSize refuses a header and body whose page file, as a save would
+// write it, is over the author's file limit (*FileTooLargeError), as Save
+// does, but writes nothing: it is the check of a draft. A page that is over
+// the limit already may be saved again at its size or smaller.
+func (s *Space) CheckSaveSize(by Author, id string, meta page.Meta, body string) error {
+	if by.MaxFile <= 0 {
+		return nil
+	}
+	// Nothing near the limit needs the file read: a draft is put at every
+	// pause in typing. The header takes about as many bytes as its JSON.
+	if mj, err := json.Marshal(meta); err == nil && int64(len(body))+2*int64(len(mj))+256 <= by.MaxFile {
+		return nil
+	}
+	rel, data, _, err := s.load(id, true)
+	if err != nil {
+		return err
+	}
+	doc := page.Parse(data)
+	newMeta, err := saveMeta(id, doc.Meta(), meta)
+	if err != nil {
+		return err
+	}
+	if err := doc.SetMeta(newMeta); err != nil {
+		return invalidf("%v", err)
+	}
+	doc.SetBody(body)
+	return by.checkFileSize(rel, int64(len(doc.Bytes())), int64(len(data)))
 }
 
 // Equivalent is CheckDraft that also reports whether saving this header and

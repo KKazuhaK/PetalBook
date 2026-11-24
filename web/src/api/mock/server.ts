@@ -7,6 +7,7 @@ import type {
   AssetsRemote,
   CacheState,
   AdminSpace,
+  SpaceLocation,
   CaptchaContext,
   ConnectRemoteInput,
   DailyNotice,
@@ -56,6 +57,7 @@ import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
 import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
 import { createQuotaBook } from './quotaBook.ts'
+import { createManageBook } from './manageBook.ts'
 import { createMailBook } from './mailBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
 
@@ -292,6 +294,8 @@ interface SpaceRec {
   exempt: boolean
   // The attachment repository (docs/api.md, "Server storage"), or null.
   assets: AssetsRec | null
+  // Mock only: where the bytes live when it is not what the remote says (a test sets it).
+  location?: SpaceLocation
 }
 // Mock only: a move is played one step each time it is asked for (0 %, 50 %, done).
 interface AssetsRec {
@@ -481,7 +485,12 @@ export function createMockServer(options: MockOptions = {}) {
       directRole: direct ?? '',
       viaGroups: via,
       // An administrator who is not a member may do everything.
-      permissions: [...(role ? ROLE_PERMISSIONS[role] : ROLE_PERMISSIONS.owner)],
+      // An administrator who is not a member manages the space and, without a view, does not read it (docs/api.md, "Viewing a space").
+      permissions: role
+        ? [...ROLE_PERMISSIONS[role]]
+        : accounts
+          ? (['members', 'manage'] as Permission[])
+          : [...ROLE_PERMISSIONS.owner],
       personal: s.personal,
       sync: s.remote ? s.remote.state : 'local',
       inbox: s.inbox,
@@ -806,6 +815,7 @@ export function createMockServer(options: MockOptions = {}) {
     const token = cookies[SESSION_COOKIE] ?? null
     const uid = token ? sessions.get(token) : undefined
     const user = uid ? (users.get(uid) ?? null) : null
+    if (user && !user.disabled) manage.touch(user.id)
     return { user: user && !user.disabled ? user : null, token, cookies }
   }
   const endedReasonOf = (ctx: Ctx): string | undefined => (ctx.token && !ctx.user ? endedWhy.get(ctx.token) : undefined)
@@ -1704,11 +1714,27 @@ export function createMockServer(options: MockOptions = {}) {
   // no administrator, is told it does not exist, the same as for a space that
   // does not; a disabled space opens for no one; a member without the
   // permission the route needs is refused.
-  const openSpace = (u: UserRec, id: string, need: Permission): SpaceRec => {
+  const openSpace = (
+    u: UserRec,
+    id: string,
+    need: Permission,
+    token: string | null = null,
+    listing = false,
+  ): SpaceRec => {
     const s = spaces.get(id)
     if (!s || (!groupBook.has(s, u.id) && u.role !== 'admin')) throw new HttpError(404, 'not_found', '没有这个空间')
     if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
-    if (!spaceInfo(s, u).permissions.includes(need)) throw new HttpError(403, 'no_permission', NO_PERMISSION(need))
+    // The one person of a single-user server owns what is there.
+    const member = groupBook.has(s, u.id) || !accounts
+    // A tenant administrator never reaches a personal space of someone else.
+    if (!member && s.personal && !isSiteAdmin(u)) throw new HttpError(404, 'not_found', '没有这个空间')
+    const permissions = member
+      ? spaceInfo(s, u).permissions
+      : [
+          ...spaceInfo(s, u).permissions,
+          ...(manage.viewing(token, s.id) || (listing && need === 'read') ? (['read'] as Permission[]) : []),
+        ]
+    if (!permissions.includes(need)) throw new HttpError(403, 'no_permission', NO_PERMISSION(need))
     return s
   }
   // What a route on a space asks of the caller (the route table of the real server).
@@ -1788,6 +1814,7 @@ export function createMockServer(options: MockOptions = {}) {
     onQuotaChanged: () => quotaBook.evaluate(),
     onTenantDeleted: (id) => github.tenantDeleted(id),
     maxSpacesFlag: options.maxSpaces,
+    maxUpload,
     makeInvite: (by, tenant, fill) => {
       const id = newId((x) => invites.has(x))
       const token = randomString(32)
@@ -1814,11 +1841,65 @@ export function createMockServer(options: MockOptions = {}) {
       }
     },
   })
+  // The largest file one write may create or replace for this caller's tenant (files.maxBytes, never above --max-upload).
+  const fileLimit = (u: UserRec | null | undefined): number =>
+    u ? Math.min(maxUpload, tenantBook.effective('files.maxBytes') as number) : maxUpload
+  const tooLarge = (limit: number, size: number | undefined, name: string) =>
+    new HttpError(413, 'file_too_large', `${name} is over the limit of ${limit} bytes`, {
+      limit,
+      ...(size === undefined ? {} : { size }),
+      name,
+    })
+  // The size of a page file as it would be written. A page over the limit already may be saved again at its size or smaller.
+  const pageFileSize = (b: Record<string, unknown>) =>
+    new TextEncoder().encode(JSON.stringify(b.meta ?? {}) + (typeof b.body === 'string' ? b.body : '')).length
+  const checkPageSize = (u: UserRec, b: Record<string, unknown>, before: number | null) => {
+    const limit = fileLimit(u)
+    const size = pageFileSize(b)
+    if (size > limit && (before === null || size > before)) {
+      const meta = b.meta as { title?: unknown } | undefined
+      throw tooLarge(limit, size, typeof meta?.title === 'string' && meta.title !== '' ? meta.title : 'page')
+    }
+  }
   // The four sync endpoints are refused when offline copies are off for the caller's tenant (offline.copies).
   const offlineAllowed = () => {
     if (tenantBook.effective('offline.copies') === false)
       throw new HttpError(403, 'offline_off', 'offline copies are turned off for this tenant')
   }
+  // Storage management (docs/api.md, "Storage management"): where bytes live, the lists, the recycle bin, the previews,
+  // the confirmations and jobs, the exports and the audited view. Everything it calls on is read when asked for.
+  const manage = createManageBook({
+    now,
+    rfc3339: (ms) => rfc3339(ms),
+    tenant: DEFAULT_TENANT,
+    spaces,
+    users,
+    newId: (taken) => newId(taken),
+    token: () => randomString(24),
+    adminItem: (s) => adminItem(s),
+    ownerOf: (s) => ownerOf(s),
+    isSiteAdmin: (u) => isSiteAdmin(u),
+    cacheOf: (s) => cacheOf(s),
+    notice: (s) => noticeOf(s),
+    dropSessions: (userId) => {
+      let n = 0
+      for (const [token, uid] of [...sessions]) {
+        if (uid === userId) {
+          sessions.delete(token)
+          n++
+        }
+      }
+      return n
+    },
+    accessOf: (userId) => ({
+      tokens: [...apiTokens.values()].filter((t) => t.userId === userId && t.revoked === null).length,
+      grants: [...grants.values()].filter((g) => g.userId === userId).length,
+      passkeys: users.get(userId)?.passkeys.length ?? 0,
+      identities: users.get(userId)?.identities.length ?? 0,
+    }),
+    groupCount: (userId) => groupBook.groupCount(userId),
+    recycleDays: () => tenantBook.effective('recycle.days') as number,
+  })
   // What people and the tenant use and may use (docs/api.md, "Quotas"); the numbers are the spaces' last measurements.
   const quotaBook = createQuotaBook({
     now,
@@ -1829,7 +1910,7 @@ export function createMockServer(options: MockOptions = {}) {
       [...spaces.values()].map((s) => ({
         id: s.id,
         ownerId: ownerOf(s)?.id ?? null,
-        bytes: s.size?.bytes ?? 0,
+        bytes: manage.counted(s) ? (s.size?.bytes ?? 0) : 0,
         pages: s.size?.pages ?? 0,
         measuredAt: s.size?.at ?? null,
       })),
@@ -2911,7 +2992,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (!s) throw new HttpError(404, 'not_found', 'no such space')
     return s
   }
-  const adminItem = (s: SpaceRec): AdminSpace => {
+  const adminItem = (s: SpaceRec): Omit<AdminSpace, 'location' | 'counted' | 'view'> => {
     const owner = ownerOf(s)
     return {
       id: s.id,
@@ -2947,35 +3028,18 @@ export function createMockServer(options: MockOptions = {}) {
     }
     return bytes
   }
-  const routeAdmin = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
+  const routeAdmin = (
+    me: UserRec,
+    token: string | null,
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
-    if (path === '/admin/spaces' && method === 'GET') {
-      let limit = 50
-      const raw = url.searchParams.get('limit')
-      if (raw !== null && raw !== '') {
-        const n = Number(raw)
-        if (!Number.isInteger(n) || n < 1 || n > 200)
-          throw new HttpError(400, 'invalid', 'limit is a number from 1 to 200')
-        limit = n
-      }
-      const needle = (url.searchParams.get('q') ?? '').toLowerCase()
-      const after = url.searchParams.get('cursor') ?? ''
-      // In order of creation, as the real server's id order is.
-      const all = [...spaces.values()]
-      const from = after ? all.findIndex((s) => s.id === after) + 1 : 0
-      const cache = url.searchParams.get('cache') ?? ''
-      const overdue = url.searchParams.get('overdue')
-      if (overdue !== null && overdue !== '0' && overdue !== '1')
-        throw new HttpError(400, 'invalid', 'overdue is 1 or 0')
-      const matching = all
-        .slice(from)
-        .filter((s) => needle === '' || s.name.toLowerCase().includes(needle))
-        .filter((s) => cache === '' || cacheOf(s) === cache)
-        .filter((s) => overdue !== '1' || noticeOf(s)?.overdue === true)
-      const page = matching.slice(0, limit)
-      const items = page.map(adminItem)
-      return j({ items, next: matching.length > limit ? page[page.length - 1].id : '' })
-    }
+    const managed = manage.route(me, token, method, path, url, body)
+    if (managed) return managed
+    if (path === '/admin/spaces' && method === 'GET') return manage.listSpaces(me, token, url)
     if (path === '/admin/status' && method === 'GET') {
       const status: ServerStatus = {
         version: 'mock',
@@ -2991,8 +3055,19 @@ export function createMockServer(options: MockOptions = {}) {
       }
       return j(status)
     }
-    if (path === '/admin/storage' && method === 'GET') return j(storageBody())
+    if (path === '/admin/storage' && method === 'GET') {
+      const body = storageBody()
+      // A tenant administrator is not told the exemptions, which are the site's.
+      if (!isSiteAdmin(me)) delete (body.affected as { exempt?: number }).exempt
+      return j({ ...body, summary: manage.summary(me) })
+    }
     if (path === '/admin/storage' && method === 'PUT') {
+      if (!isSiteAdmin(me))
+        throw new HttpError(
+          403,
+          'forbidden',
+          'only an administrator of the whole server may change the storage settings',
+        )
       putStorage(body)
       return j(storageBody())
     }
@@ -3000,6 +3075,8 @@ export function createMockServer(options: MockOptions = {}) {
     if (one) {
       const id = decodeURIComponent(one[1])
       const s = adminSpaceOf(id)
+      // A personal space is never reachable by a tenant administrator: it answers as one that does not exist.
+      if (s.personal && !isSiteAdmin(me)) throw new HttpError(404, 'not_found', 'no such space')
       switch (one[2]) {
         case 'size':
           if (method !== 'POST') break
@@ -3039,7 +3116,7 @@ export function createMockServer(options: MockOptions = {}) {
             if (body.pin && s.remote) s.cache = 'full'
           }
           if (typeof body.exempt === 'boolean') s.exempt = body.exempt
-          return j(adminItem(s))
+          return j(manage.decorate(s, token))
         case 'evict': {
           if (method !== 'POST') break
           if (!s.remote)
@@ -3059,19 +3136,9 @@ export function createMockServer(options: MockOptions = {}) {
           return { status: 204 }
         }
         case undefined:
-          if (method === 'GET') return j(adminItem(s))
+          if (method === 'GET') return j(manage.decorate(s, token))
           if (method !== 'DELETE') break
-          if (s.personal)
-            throw new HttpError(
-              409,
-              'personal_space',
-              'a personal space belongs to one person and cannot be transferred or deleted',
-            )
-          spaces.delete(id)
-          {
-            const stamp = rfc3339(now()).replace(/[-:]/g, '')
-            return j({ trashed: `trash/${id}-${stamp}`, cacheTrashed: `trash/${id}-${stamp}.cache`, warnings: [] })
-          }
+          return j(manage.deleteSpace(me, id, typeof body.reason === 'string' ? body.reason : ''))
       }
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
@@ -3505,7 +3572,10 @@ export function createMockServer(options: MockOptions = {}) {
     const st = space.store
     if (rest === '/pages') {
       if (method === 'GET') return { status: 200, body: st.listPages(url.searchParams) }
-      if (method === 'POST') return { status: 201, body: st.create(body) }
+      if (method === 'POST') {
+        checkPageSize(u, body, null)
+        return { status: 201, body: st.create(body) }
+      }
     }
     if (rest === '/pages/groups' && method === 'GET') return { status: 200, body: st.groups(url.searchParams) }
     if (rest === '/views' && method === 'GET') {
@@ -3629,7 +3699,11 @@ export function createMockServer(options: MockOptions = {}) {
       switch (one[3]) {
         case undefined:
           if (method === 'GET') return { status: 200, body: st.getPage(u.id, id) }
-          if (method === 'PUT') return { status: 200, body: st.save(u.id, id, body) }
+          if (method === 'PUT') {
+            const had = st.peek(id)
+            checkPageSize(u, body, had ? pageFileSize({ meta: had.meta, body: had.body }) : null)
+            return { status: 200, body: st.save(u.id, id, body) }
+          }
           if (method === 'DELETE') {
             st.remove(id)
             return { status: 204 }
@@ -3639,7 +3713,11 @@ export function createMockServer(options: MockOptions = {}) {
           if (method === 'POST') return { status: 200, body: st.move(id, body) }
           break
         case 'draft':
-          if (method === 'PUT') return { status: 200, body: st.putDraft(u.id, id, body) }
+          if (method === 'PUT') {
+            const had = st.peek(id)
+            checkPageSize(u, body, had ? pageFileSize({ meta: had.meta, body: had.body }) : null)
+            return { status: 200, body: st.putDraft(u.id, id, body) }
+          }
           if (method === 'DELETE') {
             st.deleteDraft(u.id, id, url.searchParams.get('version'), url.searchParams.get('rev'))
             return { status: 204 }
@@ -3661,7 +3739,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (name.trim() === '' || !(name.split(/[\\/]/).pop() ?? '').trim())
         throw new HttpError(400, 'invalid', '缺少文件名')
       if (!raw || raw.length === 0) throw new HttpError(400, 'invalid', '文件是空的')
-      if (raw.length > maxUpload) throw new HttpError(413, 'invalid', `文件太大，上限是 ${maxUpload} 字节`)
+      if (raw.length > fileLimit(u)) throw tooLarge(fileLimit(u), raw.length, name)
       const r = space.files.upload(id, name, raw)
       return { status: r.created ? 201 : 200, body: r.asset }
     }
@@ -3672,6 +3750,13 @@ export function createMockServer(options: MockOptions = {}) {
       if (!validFolder(folder)) throw new HttpError(400, 'invalid', folderRuleMessage(folder) ?? '文件夹路径不合法')
       if (!raw || raw.length === 0) throw new HttpError(400, 'invalid', '文件是空的')
       if (raw.length > maxImport) throw new HttpError(413, 'invalid', `文件太大，上限是 ${maxImport} 字节`)
+      // A file that is a page of its own is judged whole before anything is written (a zip is not opened by the mock).
+      if (
+        url.searchParams.get('name') &&
+        !/\.zip$/i.test(url.searchParams.get('name') ?? '') &&
+        raw.length > fileLimit(u)
+      )
+        throw tooLarge(fileLimit(u), raw.length, url.searchParams.get('name') ?? '')
       return { status: 200, body: runImport(st.create, raw, folder, url.searchParams.get('name') ?? '') }
     }
     if (rest.startsWith('/files/') && method === 'GET') {
@@ -3926,7 +4011,12 @@ export function createMockServer(options: MockOptions = {}) {
 
     if (method === 'GET' && path === '/meta') {
       const u = ctx.user
-      return j({ version: 'mock', maxUpload, maxImport, spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [] })
+      return j({
+        version: 'mock',
+        maxUpload: fileLimit(u),
+        maxImport,
+        spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [],
+      })
     }
     if (method === 'GET' && path === '/session') {
       const ended = endedReasonOf(ctx)
@@ -4277,6 +4367,7 @@ export function createMockServer(options: MockOptions = {}) {
       }
       const user = /^\/users\/([^/]+)$/.exec(path)
       if (user && method === 'PATCH') return j(patchUser(me, decodeURIComponent(user[1]), body))
+      if (user && method === 'DELETE') return j(manage.deleteUser(me, decodeURIComponent(user[1]), body))
       const userKeys = /^\/users\/([^/]+)\/passkeys(?:\/([^/]+))?$/.exec(path)
       if (userKeys) {
         const target = users.get(decodeURIComponent(userKeys[1]))
@@ -4369,12 +4460,19 @@ export function createMockServer(options: MockOptions = {}) {
     if (
       path === '/admin/status' ||
       path === '/admin/storage' ||
+      path.startsWith('/admin/storage/') ||
       path === '/admin/spaces' ||
-      path.startsWith('/admin/spaces/')
+      path.startsWith('/admin/spaces/') ||
+      path.startsWith('/admin/recycle') ||
+      path === '/admin/confirm' ||
+      path === '/admin/bulk' ||
+      path.startsWith('/admin/jobs/') ||
+      path.startsWith('/admin/exports') ||
+      /^\/admin\/users\/[^/]+\/deletion$/.test(path)
     ) {
       accountsOnly()
-      requireAdmin(ctx)
-      return routeAdmin(method, path, url, body)
+      const me = requireAdmin(ctx)
+      return routeAdmin(me, ctx.token, method, path, url, body)
     }
     if (path === '/settings' && method === 'GET') {
       requireUser(ctx)
@@ -4639,7 +4737,16 @@ export function createMockServer(options: MockOptions = {}) {
         rest.startsWith('/members/') &&
         decodeURIComponent(rest.slice('/members/'.length)) === me.id
       const own = leaving ? spaces.get(id) : undefined
-      const s = own && groupBook.has(own, me.id) ? own : openSpace(me, id, needOf(me, method, rest))
+      const s =
+        own && groupBook.has(own, me.id)
+          ? own
+          : openSpace(
+              me,
+              id,
+              needOf(me, method, rest),
+              ctx.token,
+              method === 'GET' && (rest === '/members' || rest === '/members/effective'),
+            )
       // Any request that opens the space is a use; one that needs files restores an evicted space (the lists are
       // answered by the index, which an evicted space keeps).
       s.lastUsed = now()
@@ -4747,6 +4854,12 @@ export function createMockServer(options: MockOptions = {}) {
     // The first space of the single-user server, or the one named.
     peek: (id: string, space?: string): Page | undefined =>
       (space ? spaces.get(space) : [...spaces.values()].find((s) => s.store.peek(id)))?.store.peek(id),
+    // Mock only: storage management's scenes (a busy space, jobs held back or interrupted, an export that expired) and
+    // where a space's bytes live (the mock has no way to make one that is the site's or the tenant's).
+    manage: {
+      ...manage.seed,
+      setLocation: (space: string, location: SpaceLocation) => void (spaces.get(space)!.location = location),
+    },
     // Mock only: the file of a type was damaged by hand.
     damageType: (space: string, name: string, message: string) => spaces.get(space)!.store.damageType(name, message),
     // A file that is not a page, for the check page: the mock has no files of its own.

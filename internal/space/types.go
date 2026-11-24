@@ -808,6 +808,10 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			return t, nil
 		}
 		rel := typesDir + "/" + name + ".json"
+		// A type is a file a write makes: files.maxBytes judges it as a page.
+		if err := by.checkFileSize(rel, int64(out.Len()), int64(len(data))); err != nil {
+			return TypeInfo{}, err
+		}
 		moved, err := s.makeTypeDir(tx, rel)
 		if err != nil {
 			return TypeInfo{}, err

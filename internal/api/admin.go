@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -45,43 +44,14 @@ type adminSpaceResp struct {
 	Sync string `json:"sync"`
 	// Storage is what the space's copy on the server is (milestone 3.1).
 	Storage *adminStorageResp `json:"storage"`
-}
-
-func (s *server) adminListSpaces(c *call) {
-	q := c.r.URL.Query()
-	limit := defaultAdminLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > maxAdminLimit {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
-			return
-		}
-		limit = n
-	}
-	sc, ok := s.adminScope(c)
-	if !ok {
-		return
-	}
-	f := store.SpaceFilter{Query: q.Get("q"), After: q.Get("cursor"), Limit: limit, Cache: q.Get("cache")}
-	switch q.Get("overdue") {
-	case "", "0":
-	case "1":
-		p := s.spaces.RemotePolicy()
-		f.Overdue = &p
-	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "overdue is 1 or 0")
-		return
-	}
-	rows, next, err := store.ListAllSpaces(c.r.Context(), s.opt.Store.Q(), sc, f)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	items := s.adminSpaceItems(c, rows)
-	writeJSON(c.w, http.StatusOK, struct {
-		Items []adminSpaceResp `json:"items"`
-		Next  string           `json:"next"`
-	}{items, next})
+	// Location is where the space's bytes live: server (only here), own (a
+	// remote of the person's), tenant or site (3.6). Counted says the quotas
+	// count them (server and site, never own and tenant).
+	Location string `json:"location"`
+	Counted  bool   `json:"counted"`
+	// View is the audited view of the space the caller's session has open, null
+	// when there is none (docs/api.md, "Viewing a space").
+	View *adminViewResp `json:"view"`
 }
 
 // adminSpaceItems is the answer's form of rows read by the store.
@@ -91,10 +61,18 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 		ids[i] = r.ID
 	}
 	syncs := s.spaces.SyncOf(c.r.Context(), ids)
+	var views map[string]time.Time
+	if c.p != nil && c.p.Grant == nil {
+		views = s.views.openIn(c.p.SessionID, ids, s.now())
+	}
 	items := make([]adminSpaceResp, len(rows))
 	for i, r := range rows {
 		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Inbox: r.Inbox, Created: rfc3339(r.Created), Disabled: r.Disabled,
-			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Tenant: r.TenantID, Storage: s.adminStorageOf(c.r.Context(), r)}
+			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Tenant: r.TenantID, Storage: s.adminStorageOf(c.r.Context(), r),
+			Location: r.Location, Counted: r.Counted()}
+		if end, ok := views[r.ID]; ok {
+			it.View = &adminViewResp{Since: rfc3339(end.Add(-viewTTL)), Until: rfc3339(end)}
+		}
 		if r.Owner != nil {
 			it.Owner = &adminOwner{r.Owner.ID, r.Owner.Username, r.Owner.Name}
 		}
@@ -109,7 +87,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 
 // adminGetSpace is one item of the list, found by its id.
 func (s *server) adminGetSpace(c *call) {
-	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("space"))
+	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), c.r.PathValue("space"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
 		return
@@ -122,7 +100,7 @@ func (s *server) adminGetSpace(c *call) {
 }
 
 func (s *server) adminResizeSpace(c *call) {
-	n, at, err := s.spaces.Resize(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"))
+	n, at, err := s.spaces.Resize(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -140,7 +118,7 @@ func (s *server) adminTransferSpace(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if err := s.spaces.Transfer(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), req.UserID); err != nil {
+	if err := s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), req.UserID); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -156,24 +134,11 @@ func (s *server) adminEnableSpace(c *call) {
 }
 
 func (s *server) adminSetDisabled(c *call, disabled bool) {
-	if err := s.spaces.SetDisabled(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), disabled); err != nil {
+	if err := s.spaces.SetDisabled(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), disabled); err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	c.w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) adminDeleteSpace(c *call) {
-	d, err := s.spaces.DeleteSpace(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Trashed      string   `json:"trashed"`
-		CacheTrashed string   `json:"cacheTrashed"`
-		Warnings     []string `json:"warnings"`
-	}{d.Trashed, d.CacheTrashed, append([]string{}, d.Warnings...)})
 }
 
 func (s *server) adminStatus(c *call) {

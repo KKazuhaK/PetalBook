@@ -683,3 +683,34 @@ func TestASlowSpaceOpenInTheSweeperDoesNotBlockOtherDrafts(t *testing.T) {
 	close(slow)
 	<-swept
 }
+
+// A draft the sweeper commits is judged by files.maxBytes as a commit by its
+// person is: one over the limit is not written, and the draft is kept (held,
+// so that its person sees it and is told why when they commit it).
+func TestABackgroundCommitIsJudgedByTheFileLimitAndKeepsTheDraft(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := newFixture(t, st, Config{})
+		p := f.page("T", "short\n")
+		long := strings.Repeat("a long line of text\n", 50)
+		f.put(p, p.Rev, long)
+		var asked string
+		f.svc.SetFileLimit(func(_ context.Context, userID string) int64 {
+			asked = userID
+			return 200
+		})
+		f.clk.t = f.clk.t.Add(3 * time.Minute)
+		if res := f.svc.Sweep(ctx); res.Applied != 0 || res.Held != 1 {
+			t.Fatalf("%+v", res)
+		}
+		if asked != store.LocalUserID {
+			t.Fatalf("the limit was asked for %q", asked)
+		}
+		d, err := store.GetDraft(ctx, st.Q(), spaces.SingleID, p.ID, store.LocalUserID)
+		if err != nil || d.Body != long || !d.Held {
+			t.Fatalf("the draft was not kept: %v %v", d, err)
+		}
+		if cur, err := f.sp.Get(p.ID); err != nil || cur.Body != "short\n" {
+			t.Fatalf("the file was written: %v", err)
+		}
+	})
+}

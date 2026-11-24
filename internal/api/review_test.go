@@ -2,9 +2,7 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -71,9 +69,9 @@ func TestTheLastEnabledOwnerStays(t *testing.T) {
 	})
 }
 
-// Deleting a space keeps what members had typed and not saved, next to the
-// directory in the trash; if it cannot be kept, nothing is deleted.
-func TestAdminDeleteKeepsTheDraftsInTheTrash(t *testing.T) {
+// Deleting a space keeps what members had typed and not saved, in the recycle
+// item; restoring gives it back, held drafts held.
+func TestAdminDeleteKeepsTheDraftsInTheItem(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -84,53 +82,41 @@ func TestAdminDeleteKeepsTheDraftsInTheTrash(t *testing.T) {
 		tm.editor.draft(url, p.body["rev"], "Held", "unsaved text\n").want(t, 200, "")
 		tm.owner.draft(url, p.body["rev"], "Held", "the owner's text\n").want(t, 200, "")
 		a.st.Q().Exec(context.Background(), `UPDATE drafts SET held = 1 WHERE user_id = ?`, tm.ownerID)
-
-		// The trash cannot be made: refused, nothing changed.
-		if err := os.WriteFile(filepath.Join(a.dir, "trash"), []byte("in the way"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if r := admin.do("DELETE", "/api/admin/spaces/"+tm.sid, nil); r.code < 400 {
-			t.Fatalf("the space was deleted without keeping its drafts: %d %s", r.code, r.raw)
-		}
-		tm.owner.do("GET", base+"/tree", nil).want(t, 200, "")
-		var n int
-		a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM drafts WHERE space_id = ?`, tm.sid).Scan(&n)
-		if n != 2 {
-			t.Fatalf("%d drafts after a refused delete", n)
-		}
-		if err := os.Remove(filepath.Join(a.dir, "trash")); err != nil {
-			t.Fatal(err)
-		}
-
-		r := admin.do("DELETE", "/api/admin/spaces/"+tm.sid, nil).want(t, 200, "")
-		if len(r.body["warnings"].([]any)) != 0 {
-			t.Fatal(r.raw)
-		}
-		files, _ := filepath.Glob(filepath.Join(a.dir, "trash", tm.sid+"-*.drafts.json"))
-		if len(files) != 1 {
-			t.Fatalf("drafts files: %v", files)
-		}
-		b, err := os.ReadFile(files[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got []struct {
-			Space, Page, UserID, Username, Body string
-			Held                                bool
-			Meta                                map[string]any
-		}
-		if err := json.Unmarshal(b, &got); err != nil || len(got) != 2 {
-			t.Fatalf("%v %s", err, b)
-		}
-		seen := map[string]bool{}
-		for _, d := range got {
-			seen[d.Username+"|"+strings.TrimSpace(d.Body)] = true
-			if d.Space != tm.sid || d.Page != p.body["id"] || d.Meta["title"] != "Held" || d.UserID == "" || d.Held != (d.Username == "olive") {
-				t.Fatalf("%+v", d)
+		drafts := func() map[string]string {
+			rows, err := a.st.Q().Query(context.Background(), `SELECT user_id, body, held FROM drafts WHERE space_id = ?`, tm.sid)
+			if err != nil {
+				t.Fatal(err)
 			}
+			defer rows.Close()
+			out := map[string]string{}
+			for rows.Next() {
+				var u, b string
+				var h int
+				if err := rows.Scan(&u, &b, &h); err != nil {
+					t.Fatal(err)
+				}
+				out[u] = fmt.Sprintf("%s|%d", strings.TrimSpace(b), h)
+			}
+			return out
 		}
-		if !seen["edith|unsaved text"] || !seen["olive|the owner's text"] {
-			t.Fatalf("%v", seen)
+		before := drafts()
+		if len(before) != 2 {
+			t.Fatalf("%v", before)
+		}
+
+		item := admin.do("DELETE", "/api/admin/spaces/"+tm.sid, nil).want(t, 200, "").body["id"].(string)
+		if n := len(drafts()); n != 0 {
+			t.Fatalf("%d drafts are still live", n)
+		}
+		admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 200, "")
+		after := drafts()
+		if len(after) != 2 || after[tm.ownerID] != "the owner's text|1" || after[tm.editorID] != "unsaved text|0" {
+			t.Fatalf("%v", after)
+		}
+		for k, v := range before {
+			if after[k] != v {
+				t.Fatalf("%s: %q, was %q", k, after[k], v)
+			}
 		}
 	})
 }

@@ -5,7 +5,6 @@ import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
   useAdminSpaces,
-  useDeleteSpace,
   useEvictSpace,
   usePutSpaceStorage,
   useResizeSpace,
@@ -14,7 +13,7 @@ import {
   useUserSearch,
   USER_SEARCH_LIMIT,
 } from '@/api/admin'
-import type { AdminSpace, CacheState, DeletedSpace, User } from '@/api/types'
+import type { AdminSpace, CacheState, ConfirmAction, SpaceSort, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -49,16 +48,20 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
+import { tg } from '@/i18n/manage'
+import { BulkBar } from './manage/BulkBar'
+import { BulkDialog } from './manage/BulkDialog'
+import { DeleteSpaceDialog } from './manage/DeleteSpaceDialog'
+import { ExportDialog } from './manage/ExportDialog'
+import { LocationBadge, useIsSite } from './manage/shared'
+import { ViewDialog } from './manage/ViewDialog'
 import { spaceUrls } from '@/lib/urls'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { ts } from '@/i18n/storage'
 
-// Two names that read the same: trimmed, and in the same Unicode normal form.
-const sameName = (a: string, b: string) => a.trim().normalize('NFC') === b.trim().normalize('NFC')
-
-type Action = { kind: 'transfer' | 'disable' | 'delete' | 'evict'; space: AdminSpace }
+type Action = { kind: 'transfer' | 'disable' | 'delete' | 'evict' | 'view' | 'export'; space: AdminSpace }
 
 // What a refusal of an administration call means, in plain words.
 function actionError(e: unknown): string {
@@ -88,9 +91,24 @@ export function SpacesPanel() {
   const q = useDebounced(text.trim(), 300)
   // What to show: all spaces, those past their deadline for a remote, or those in one cache state.
   const [filter, setFilter] = useState('')
+  const site = useIsSite()
+  const [sort, setSort] = useState<SpaceSort>('created')
+  const [order, setOrder] = useState<'asc' | 'desc'>('asc')
+  const [remote, setRemote] = useState('')
+  const [idle, setIdle] = useState('')
+  const [pinnedOnly, setPinnedOnly] = useState(false)
+  const [exemptOnly, setExemptOnly] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [bulk, setBulk] = useState<ConfirmAction | null>(null)
   const spaces = useAdminSpaces(q, true, {
     cache: filter === 'overdue' ? undefined : (filter as CacheState) || undefined,
     overdue: filter === 'overdue',
+    sort,
+    order,
+    remote: (remote || undefined) as 'none' | 'ok' | 'offline' | 'error' | undefined,
+    idleDays: idle ? Number(idle) : undefined,
+    pinned: pinnedOnly,
+    exempt: exemptOnly,
   })
   const setDisabled = useSetSpaceDisabled()
   const putStorage = usePutSpaceStorage()
@@ -141,13 +159,90 @@ export function SpacesPanel() {
         >
           <option value="">{ts.spaces.filterAll}</option>
           <option value="overdue">{ts.spaces.filterOverdue}</option>
-          {(['local', 'full', 'partial', 'evicted'] as const).map((c) => (
+          {(['local', 'full', 'partial', 'evicted', 'archived'] as const).map((c) => (
             <option key={c} value={c}>
               {ts.spaces.caches[c]}
             </option>
           ))}
         </NativeSelect>
+        <NativeSelect
+          aria-label={tg.spaces.sort}
+          value={sort}
+          onChange={(e) => {
+            setSort(e.target.value as SpaceSort)
+            setOrder(e.target.value === 'created' || e.target.value === 'name' ? 'asc' : 'desc')
+          }}
+          className="w-auto max-sm:w-full"
+        >
+          {(['created', 'name', 'bytes', 'lastUsed'] as const).map((k) => (
+            <option key={k} value={k}>
+              {tg.spaces.sorts[k]}
+            </option>
+          ))}
+        </NativeSelect>
+        <NativeSelect
+          aria-label={`${tg.spaces.sort} ↕`}
+          value={order}
+          onChange={(e) => setOrder(e.target.value as 'asc' | 'desc')}
+          className="w-auto max-sm:w-full"
+        >
+          <option value="asc">{tg.spaces.order.asc}</option>
+          <option value="desc">{tg.spaces.order.desc}</option>
+        </NativeSelect>
+        <NativeSelect
+          aria-label={tg.spaces.remote}
+          value={remote}
+          onChange={(e) => setRemote(e.target.value)}
+          className="w-auto max-sm:w-full"
+        >
+          {(['', 'none', 'ok', 'offline', 'error'] as const).map((k) => (
+            <option key={k} value={k}>
+              {tg.spaces.remote}：{tg.spaces.remotes[k]}
+            </option>
+          ))}
+        </NativeSelect>
+        <NativeSelect
+          aria-label={tg.spaces.idle}
+          value={idle}
+          onChange={(e) => setIdle(e.target.value)}
+          className="w-auto max-sm:w-full"
+        >
+          {(['', '30', '90', '180'] as const).map((k) => (
+            <option key={k} value={k}>
+              {k === '' ? `${tg.spaces.idle}：${tg.spaces.idles['']}` : tg.spaces.idles[k]}
+            </option>
+          ))}
+        </NativeSelect>
+        <label className="flex items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--color-primary)]"
+            checked={pinnedOnly}
+            onChange={(e) => setPinnedOnly(e.target.checked)}
+          />
+          {tg.spaces.pinned}
+        </label>
+        <label className="flex items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--color-primary)]"
+            checked={exemptOnly}
+            onChange={(e) => setExemptOnly(e.target.checked)}
+          />
+          {tg.spaces.exempt}
+        </label>
       </div>
+      {!site && <p className="text-xs text-muted-foreground">{tg.spaces.personalNote}</p>}
+      <BulkBar
+        count={picked.size}
+        actions={
+          site
+            ? ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export', 'evict', 'pin', 'unpin']
+            : ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export']
+        }
+        onAction={setBulk}
+        onClear={() => setPicked(new Set())}
+      />
 
       {spaces.isPending ? (
         <PageFallback />
@@ -161,9 +256,20 @@ export function SpacesPanel() {
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[54rem] text-left text-sm">
+            <table className="w-full min-w-[62rem] text-left text-sm">
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>
+                  <th scope="col" className="w-8 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label={tg.spaces.selectAll}
+                      className="size-4 accent-[var(--color-primary)]"
+                      checked={items.length > 0 && items.every((s) => picked.has(s.id))}
+                      onChange={() =>
+                        setPicked(items.every((s) => picked.has(s.id)) ? new Set() : new Set(items.map((s) => s.id)))
+                      }
+                    />
+                  </th>
                   <th scope="col" className="px-3 py-2 font-medium">
                     {ta.spaces.name}
                   </th>
@@ -175,6 +281,9 @@ export function SpacesPanel() {
                   </th>
                   <th scope="col" className="px-3 py-2 font-medium">
                     {ta.spaces.size}
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    {tg.spaces.where}
                   </th>
                   <th scope="col" className="px-3 py-2 font-medium">
                     {ta.spaces.sync}
@@ -195,6 +304,15 @@ export function SpacesPanel() {
                   <SpaceRow
                     key={s.id}
                     space={s}
+                    picked={picked.has(s.id)}
+                    onPick={() =>
+                      setPicked((prev) => {
+                        const next = new Set(prev)
+                        if (!next.delete(s.id)) next.add(s.id)
+                        return next
+                      })
+                    }
+                    site={site}
                     onAction={(kind) => setAction({ kind, space: s })}
                     onEnable={() => void enable(s)}
                     onPin={() =>
@@ -235,7 +353,35 @@ export function SpacesPanel() {
 
       {action?.kind === 'transfer' && <TransferDialog space={action.space} onClose={() => setAction(null)} />}
       {action?.kind === 'disable' && <DisableDialog space={action.space} onClose={() => setAction(null)} />}
-      {action?.kind === 'delete' && <DeleteDialog space={action.space} onClose={() => setAction(null)} />}
+      {action?.kind === 'delete' && (
+        <DeleteSpaceDialog
+          id={action.space.id}
+          name={action.space.name}
+          personal={action.space.personal}
+          onClose={() => setAction(null)}
+        />
+      )}
+      {action?.kind === 'view' && (
+        <ViewDialog space={action.space.id} name={action.space.name} onClose={() => setAction(null)} />
+      )}
+      {action?.kind === 'export' && (
+        <ExportDialog
+          request={{ spaces: [action.space.id] }}
+          name={action.space.name}
+          onClose={() => setAction(null)}
+        />
+      )}
+      {bulk && (
+        <BulkDialog
+          action={bulk}
+          label={tg.bulk.actions[bulk]}
+          request={{ spaces: [...picked] }}
+          onClose={() => {
+            setBulk(null)
+            setPicked(new Set())
+          }}
+        />
+      )}
       {action?.kind === 'evict' && <EvictDialog space={action.space} onClose={() => setAction(null)} />}
     </SettingsSection>
   )
@@ -243,12 +389,18 @@ export function SpacesPanel() {
 
 function SpaceRow({
   space: s,
+  picked,
+  onPick,
+  site,
   onAction,
   onEnable,
   onPin,
   onExempt,
 }: {
   space: AdminSpace
+  picked: boolean
+  onPick: () => void
+  site: boolean
   onAction: (kind: Action['kind']) => void
   onEnable: () => void
   onPin: () => void
@@ -257,6 +409,15 @@ function SpaceRow({
   const sp = ta.spaces
   return (
     <tr data-space={s.id}>
+      <td className="px-3 py-2.5">
+        <input
+          type="checkbox"
+          aria-label={tg.spaces.selectFor(s.name)}
+          className="size-4 accent-[var(--color-primary)]"
+          checked={picked}
+          onChange={onPick}
+        />
+      </td>
       <th scope="row" className="max-w-56 px-3 py-2.5 font-normal">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate font-medium">{s.name}</span>
@@ -276,6 +437,9 @@ function SpaceRow({
       <td className="px-3 py-2.5 text-right tabular-nums">{s.members}</td>
       <td className="px-3 py-2.5">
         <SizeCell space={s} />
+      </td>
+      <td className="px-3 py-2.5">
+        <LocationBadge location={s.location} counted={s.counted} />
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">{sp.syncStates[s.sync]}</td>
       <td className="px-3 py-2.5">
@@ -310,20 +474,28 @@ function SpaceRow({
               ) : (
                 <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>
               )}
+              <DropdownMenuItem onClick={() => onAction('view')}>{tg.spaces.view}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onAction('export')}>{tg.spaces.export}</DropdownMenuItem>
+              {site && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onPin}>
+                    {s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onExempt}>
+                    {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
+                    onClick={() => onAction('evict')}
+                  >
+                    {ts.spaces.evict}
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onPin}>{s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}</DropdownMenuItem>
-              <DropdownMenuItem onClick={onExempt}>
-                {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
-                onClick={() => onAction('evict')}
-              >
-                {ts.spaces.evict}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" disabled={s.personal} onClick={() => onAction('delete')}>
-                {sp.delete}
+              <DropdownMenuItem variant="destructive" onClick={() => onAction('delete')}>
+                {tg.spaces.delete}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -579,91 +751,5 @@ function DisableDialog({ space, onClose }: { space: AdminSpace; onClose: () => v
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  )
-}
-
-// Deleting asks for the space's name, and afterwards says where its files went.
-function DeleteDialog({ space, onClose }: { space: AdminSpace; onClose: () => void }) {
-  const sp = ta.spaces
-  const del = useDeleteSpace()
-  const [typed, setTyped] = useState('')
-  const [error, setError] = useState('')
-  const [result, setResult] = useState<DeletedSpace | null>(null)
-  // Typed names are compared as people see them: without stray spaces around, and
-  // with the same characters composed the same way.
-  const typedMatches = sameName(typed, space.name)
-
-  const confirm = async () => {
-    if (!typedMatches || del.isPending) return
-    setError('')
-    try {
-      setResult(await del.mutateAsync(space.id))
-    } catch (e) {
-      setError(actionError(e))
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        {result ? (
-          <div className="grid gap-4">
-            <DialogHeader>
-              <DialogTitle>{sp.deleted(space.name)}</DialogTitle>
-              <DialogDescription>{result.trashed ? sp.movedTo(result.trashed) : sp.notMoved}</DialogDescription>
-            </DialogHeader>
-            {result.warnings.length > 0 && (
-              <div role="alert" className="grid gap-1 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
-                <p className="font-medium">{sp.warnings}</p>
-                <ul className="list-disc pl-5 text-xs">
-                  {result.warnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <DialogFooter>
-              <Button type="button" onClick={onClose}>
-                {t.common.close}
-              </Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <form
-            className="grid gap-4"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void confirm()
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>{sp.deleteTitle(space.name)}</DialogTitle>
-              <DialogDescription>{sp.deleteHelp}</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-1.5">
-              <Label htmlFor="delete-confirm">{sp.deleteType}</Label>
-              <code className="rounded-md bg-muted px-2 py-1 text-sm break-all select-all">{space.name}</code>
-              <Input
-                id="delete-confirm"
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </div>
-            <FormMessage>{error}</FormMessage>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>
-                {sp.cancel}
-              </Button>
-              <Button type="submit" variant="destructive" disabled={!typedMatches || del.isPending}>
-                {del.isPending && <Spinner />}
-                {sp.deleteConfirm}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
   )
 }

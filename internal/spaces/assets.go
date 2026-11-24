@@ -51,7 +51,8 @@ type assetState struct {
 	repos     map[string]*assetrepo.Repo
 	moving    map[string]bool // moves running now
 	pinned    map[string]bool
-	connected map[string]bool // spaces that have an attachment repository; nil until first needed
+	tenants   map[string]string // the tenant of each space the cache named, remembered (AssetBytesOfTenant)
+	connected map[string]bool   // spaces that have an attachment repository; nil until first needed
 }
 
 func (m *Manager) assetsDir(id string) string { return filepath.Join(m.opt.DataDir, "assetrepos", id) }
@@ -108,6 +109,71 @@ func (m *Manager) AssetBytes(id string) int64 {
 	}
 	return 0
 }
+
+// AssetBytesOfTenant is what the attachments of one tenant's spaces take in the
+// cache: the cache's per-space map in memory, and the tenant of each space it
+// names, which is remembered (one query for all the spaces not seen before,
+// none after).
+func (m *Manager) AssetBytesOfTenant(ctx context.Context, tenant string) (int64, error) {
+	if m.single != nil {
+		return 0, nil
+	}
+	c := m.AssetCache()
+	if c == nil {
+		return 0, nil
+	}
+	cached := c.Spaces()
+	// The tenants are copied out for this call: another may clear the memory
+	// (at its bound) between the lookup and the sum, which must not undercount.
+	tenants := make(map[string]string, len(cached))
+	var unknown []string
+	m.as.mu.Lock()
+	for id := range cached {
+		if t, ok := m.as.tenants[id]; ok {
+			tenants[id] = t
+		} else {
+			unknown = append(unknown, id)
+		}
+	}
+	m.as.mu.Unlock()
+	if len(unknown) > 0 {
+		if testHookTenantLookup != nil {
+			testHookTenantLookup()
+		}
+		found, err := store.SpaceTenants(ctx, m.opt.Store.Q(), unknown) // a space that is gone is not there: its files are dropped with it
+		if err != nil {
+			return 0, err
+		}
+		m.as.mu.Lock()
+		if m.as.tenants == nil || len(m.as.tenants)+len(unknown) >= 50_000 {
+			m.as.tenants = map[string]string{}
+		}
+		for _, id := range unknown {
+			t, ok := found[id]
+			if !ok {
+				t = goneTenant // remembered too, so it is not asked about on every call
+			}
+			m.as.tenants[id] = t // a space never changes tenant
+			tenants[id] = t
+		}
+		m.as.mu.Unlock()
+	}
+	var total int64
+	for id, b := range cached {
+		if t := tenants[id]; t != goneTenant && t == tenant {
+			total += b
+		}
+	}
+	return total, nil
+}
+
+// goneTenant is the tenant remembered for a cached space the database no longer
+// has: no tenant's id.
+const goneTenant = "\x00gone"
+
+// testHookTenantLookup is called before each lookup of the tenants of cached
+// spaces in the database (a test counts them).
+var testHookTenantLookup func()
 
 // AssetTotals are the bytes of the attachment cache and its budget.
 func (m *Manager) AssetTotals() (total, budget int64) {
@@ -301,13 +367,13 @@ func (m *Manager) attachAssets(ctx context.Context, id string, sp *space.Space) 
 		return
 	}
 	sp.SetAssets(backend{m, id, r})
-	go m.refreshAssets(id, sp)
+	m.goBg(func() { m.refreshAssets(id, sp) })
 }
 
 // refreshAssets brings the table up to date with the remote (the fetch of a
 // pull), and the checks that said an attachment was missing with it.
 func (m *Manager) refreshAssets(id string, sp *space.Space) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(m.closedCtx(), 2*time.Minute)
 	defer cancel()
 	r, _, err := m.assetRepo(ctx, id)
 	if err != nil || r == nil {
@@ -586,7 +652,7 @@ func (m *Manager) finishConnectAssets(ctx context.Context, h *Handle, old *store
 		return nil, errors.Join(err, errors.New("the attachment repository could not be opened"))
 	}
 	h.Space.SetAssets(backend{m, id, r})
-	go m.refreshAssets(id, h.Space)
+	m.goBg(func() { m.refreshAssets(id, h.Space) })
 	return m.assetsView(h, arow), nil
 }
 

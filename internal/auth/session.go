@@ -112,6 +112,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 			s.log.Warn("could not record session use", "error", err)
 		}
 	}
+	// The person's last use: a lookup in memory unless an hour has passed.
+	if err := s.st.NoteActive(ctx, u.ID, now); err != nil {
+		s.log.Warn("could not record a person's last use", "error", err)
+	}
 	return &Principal{User: *u, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
 }
 
@@ -200,6 +204,11 @@ func (s *Service) evictUser(userID, keep string) {
 		}
 	}
 }
+
+// Forget drops what the service remembers of a person (their sessions and the
+// copy of their row): for a change made behind its back, such as a person who was
+// deleted or brought back.
+func (s *Service) Forget(userID string) { s.evictUser(userID, "") }
 
 // forgetRefusals empties the cache of refused cookies, so that a reason that is
 // no longer true (a person enabled again) is not given for its 30 seconds.

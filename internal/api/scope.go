@@ -24,7 +24,7 @@ func (c *call) ownScope() store.Scope { return store.InTenant(c.user().TenantID)
 // not exist, for a tenant administrator, and so is a tenant that does not
 // exist. It answers and returns false on such a refusal.
 func (s *server) adminScope(c *call) (store.Scope, bool) {
-	sc := store.ScopeOf(c.user())
+	sc := store.AdminScopeOf(c.user())
 	id := c.r.URL.Query().Get("tenant")
 	if id == "" {
 		return sc, true

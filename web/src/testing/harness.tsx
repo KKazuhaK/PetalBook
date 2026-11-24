@@ -191,6 +191,13 @@ export const press = (el: Element | Document, key: string, init: KeyboardEventIn
     el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
   })
 
+// An administrator reads a space they are not a member of only in an audited view: this answers the gate that asks why.
+export async function startView(reason = '检查一个举报') {
+  await settle(() => document.querySelector('[data-slot="view-form"] textarea') !== null, 'the form that asks why')
+  await type(document.querySelector<HTMLTextAreaElement>('[data-slot="view-form"] textarea')!, reason)
+  await click(document.querySelector<HTMLElement>('[data-slot="view-form"] button[type="submit"]'))
+}
+
 export const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 export const byText = (selector: string, text: string) =>
   [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null

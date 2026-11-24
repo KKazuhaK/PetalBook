@@ -132,6 +132,11 @@ func (s *server) syncPages(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "at most "+strconv.Itoa(maxSyncPages)+" pages at a time")
 		return
 	}
+	for _, id := range ids {
+		if page.ValidID(id) {
+			s.viewedPage(c, id)
+		}
+	}
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if !page.ValidID(id) {

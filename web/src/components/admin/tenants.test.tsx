@@ -232,6 +232,8 @@ describe('administrators and tenants in the Users page and the navigation', () =
       ta.sections.users,
       ta.sections.groups,
       ta.sections.spaces,
+      ta.sections.manage,
+      ta.sections.recycle,
       ta.sections.daily,
       ta.sections.access,
       ta.sections.storage,
@@ -260,6 +262,8 @@ describe('administrators and tenants in the Users page and the navigation', () =
       ta.sections.users,
       ta.sections.groups,
       ta.sections.spaces,
+      ta.sections.manage,
+      ta.sections.recycle,
       ta.sections.settings,
       ta.sections.usage,
     ])

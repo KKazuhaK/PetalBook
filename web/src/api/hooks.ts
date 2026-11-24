@@ -12,6 +12,7 @@ import {
   type Query,
   type QueryClient,
 } from '@tanstack/react-query'
+import { openView } from '@/lib/adminView'
 import { waitForSaves } from '@/editor/saveController'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
@@ -280,7 +281,13 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
   // the person's own may still be one an administrator can open.
   const wanted = route ?? last
   const viewed = useViewedSpace(wanted, !list.isPending && !!wanted && !mine.some((s) => s.id === wanted))
-  const spaces = viewed.data ? [...mine, viewed.data] : mine
+  // A view the server says is open adds the permission to read, and nothing else.
+  const open = !!openView(viewed.data?.view)
+  const seen =
+    viewed.data && open && !viewed.data.permissions.includes('read')
+      ? { ...viewed.data, permissions: [...viewed.data.permissions, 'read' as const] }
+      : viewed.data
+  const spaces = seen ? [...mine, seen] : mine
   const id = route ?? (last && spaces.some((s) => s.id === last) ? last : (spaces[0]?.id ?? null))
   return { id, spaces, resolving: list.isPending || viewed.isLoading }
 }
@@ -302,15 +309,17 @@ function useViewedSpace(space: string | null, wanted: boolean) {
     queryFn: async ({ signal }): Promise<SpaceInfo | null> => {
       try {
         const s = await api.adminSpace(space ?? '', signal)
+        // An administrator who is not a member manages the space and reads it only in a view (docs/api.md, "Viewing a space").
         return {
           id: s.id,
           name: s.name,
           role: '',
-          permissions: ['read', 'write', 'members', 'manage'],
+          permissions: ['members', 'manage'],
           personal: s.personal,
           sync: s.sync,
           inbox: s.inbox,
           disabled: s.disabled,
+          view: s.view,
         }
       } catch (e) {
         if (e instanceof ApiError && e.code === 'not_found') return null

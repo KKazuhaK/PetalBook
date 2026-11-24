@@ -66,15 +66,17 @@ func seedPlainUserAndSpace(t *testing.T, st *store.Store) {
 }
 
 // A database of main before the merge: 0016 and 0018 are there, 0015 and 0017 come.
+//
+// 0020 comes after both whatever the order, so it is not there either. The usage
+// rows are the ones 3.3 kept, written as they were (the recount of today needs
+// the columns of the later migrations).
 func TestStorageMigrationsAfterTheTenantsMigration(t *testing.T) {
-	storetest.EachWithoutVersion(t, []int{15, 17}, func(t *testing.T, st *store.Store) {
-		if n := count(t, st, `SELECT COUNT(*) FROM schema_migrations WHERE version IN (15, 17)`); n != 0 {
-			t.Fatal("0015 or 0017 is applied already")
+	storetest.EachWithoutVersion(t, []int{15, 17, 20}, func(t *testing.T, st *store.Store) {
+		if n := count(t, st, `SELECT COUNT(*) FROM schema_migrations WHERE version IN (15, 17, 20)`); n != 0 {
+			t.Fatal("0015, 0017 or 0020 is applied already")
 		}
 		seedPlainUserAndSpace(t, st)
-		if _, err := st.RecountUsage(ctx); err != nil {
-			t.Fatal(err)
-		}
+		seedUsageOf3_3(t, st)
 		if err := st.Migrate(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -83,9 +85,9 @@ func TestStorageMigrationsAfterTheTenantsMigration(t *testing.T) {
 }
 
 // A database of the storage branch before the merge: 0015 and 0017 are there,
-// 0016 and 0018 come, and its storage rows are kept.
+// 0016 and 0018 come (and 0020, which needs 0018), and its storage rows are kept.
 func TestStorageMigrationsBeforeTheTenantsMigration(t *testing.T) {
-	storetest.EachWithoutVersion(t, []int{16, 18}, func(t *testing.T, st *store.Store) {
+	storetest.EachWithoutVersion(t, []int{16, 18, 20}, func(t *testing.T, st *store.Store) {
 		seedPlainUserAndSpace(t, st)
 		exec := execer(t, st)
 		exec(`UPDATE spaces SET pinned = 1, last_used = 5 WHERE id = 'S1'`)
@@ -97,4 +99,14 @@ func TestStorageMigrationsBeforeTheTenantsMigration(t *testing.T) {
 		}
 		checkStorageAfterMerge(t, st)
 	})
+}
+
+// seedUsageOf3_3 writes the usage rows 3.3 keeps for the one person and space
+// seedPlainUserAndSpace makes (and the tenant's), as the schema of 3.3 has them.
+func seedUsageOf3_3(t *testing.T, st *store.Store) {
+	t.Helper()
+	exec := execer(t, st)
+	exec(`INSERT INTO usage(kind, id, tenant_id, spaces, bytes, pages, people) VALUES ('user', 'U1', ?, 1, 0, 0, 0)`, store.DefaultTenantID)
+	exec(`UPDATE usage SET spaces = 1, people = 1 WHERE kind = 'tenant' AND id = ?`, store.DefaultTenantID)
+	exec(`UPDATE spaces SET usage_user = 'U1' WHERE id = 'S1'`)
 }

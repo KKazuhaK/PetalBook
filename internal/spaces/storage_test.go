@@ -1547,3 +1547,55 @@ func TestMeasuringAPartialCloneLeavesItsUsageAlone(t *testing.T) {
 		}
 	})
 }
+
+// --- nothing runs on after the manager is closed -----------------------------------------
+
+// The measurement that follows a restore runs in the background. Close waits
+// for it (and stops it), so nothing is written into the data directory once
+// the manager is closed and the directory may be removed.
+func TestNothingWritesIntoTheDataDirAfterClose(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		var late atomic.Bool // the late measurement has gone by
+		f := remoteManager(t, st, func(o *Options) {
+			o.EvictHook = func(step string) error {
+				if step == "resize:start" {
+					time.Sleep(300 * time.Millisecond) // the measurement is late
+					late.Store(true)
+				}
+				return nil
+			}
+		})
+		remote := filterBare(t)
+		seedRemote(t, remote, 2)
+		in, _ := f.evictable(remote)
+		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		h, err := f.m.Open(ctx, f.user, in.ID) // restores it: the measurement starts
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.Release()
+		_, state := f.m.paths(in.ID)
+		f.m.Close()
+		if !late.Load() {
+			t.Fatal("Close returned while a background measurement was still to run")
+		}
+		if err := os.RemoveAll(f.dir); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(600 * time.Millisecond)
+		if exists(f.dir) || exists(state) {
+			t.Fatalf("something wrote into the data directory after Close: %s", f.dir)
+		}
+	})
+}
+
+func TestSyncDirReportsItsFailure(t *testing.T) {
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDir(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("a directory that cannot be opened was reported as synced")
+	}
+}

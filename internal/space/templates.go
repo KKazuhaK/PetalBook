@@ -263,6 +263,10 @@ func (s *Space) PutTemplate(by Author, name, baseRev string, meta page.Meta, bod
 		if curT != nil && string(cur) == string(data) {
 			return curT, nil
 		}
+		// A template is a file a write makes: files.maxBytes judges it as a page.
+		if err := by.checkFileSize(rel, int64(len(data)), int64(len(cur))); err != nil {
+			return nil, err
+		}
 		// Something that is not a folder where the folder of the templates
 		// belongs is put aside and the folder made again, as for the types.
 		if _, err := s.clearWayIn(tx, rel, rel); err != nil {

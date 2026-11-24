@@ -338,7 +338,7 @@ func TestAdminTransferOwnership(t *testing.T) {
 	})
 }
 
-func TestAdminDeleteMovesTheDirectoryToTheTrash(t *testing.T) {
+func TestAdminDeleteGoesThroughTheRecycleBin(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{spaces: func(o *spaces.Options) { o.CloseWait = 100 * time.Millisecond }}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
@@ -364,20 +364,30 @@ func TestAdminDeleteMovesTheDirectoryToTheTrash(t *testing.T) {
 		admin.do("DELETE", "/api/admin/spaces/"+tm.outsider.personalSpace(), nil).want(t, 409, "personal_space")
 		admin.do("DELETE", "/api/admin/spaces/"+admin.personalSpace(), nil).want(t, 409, "personal_space")
 
-		r := admin.do("DELETE", "/api/admin/spaces/"+tm.sid, nil).want(t, 200, "")
-		trashed, _ := r.body["trashed"].(string)
-		if !strings.HasPrefix(trashed, "trash/"+tm.sid+"-") || len(r.body["warnings"].([]any)) != 0 {
+		// What deleting does is shown first, from stored values.
+		pre := admin.do("GET", "/api/admin/spaces/"+tm.sid+"/deletion", nil).want(t, 200, "")
+		if pre.body["members"] != float64(3) || pre.body["drafts"] != float64(1) || pre.body["recycleDays"] != float64(30) || pre.body["exportable"] != true {
+			t.Fatal(pre.raw)
+		}
+		r := admin.do("DELETE", "/api/admin/spaces/"+tm.sid, map[string]any{"reason": "tidy up"}).want(t, 200, "")
+		item := r.body["id"].(string)
+		sp := r.body["space"].(map[string]any)
+		if r.body["kind"] != "space" || sp["id"] != tm.sid || sp["name"] != "Team" || r.body["reason"] != "tidy up" || r.body["restorable"] != true ||
+			r.body["deletedBy"].(map[string]any)["username"] != "kazuha" || r.body["purgeAt"] == "" || r.body["trashed"] != nil {
 			t.Fatal(r.raw)
 		}
 		if _, err := os.Stat(root); !os.IsNotExist(err) {
 			t.Fatalf("the directory is still in place: %v", err)
 		}
-		out, err := exec.Command("git", "-C", filepath.Join(a.dir, filepath.FromSlash(trashed)), "log", "--format=%s").Output()
+		out, err := exec.Command("git", "-C", filepath.Join(a.dir, "recycle", item, "space"), "log", "--format=%s").Output()
 		if err != nil || !strings.Contains(string(out), "keep me") {
-			t.Fatalf("the repository did not survive in the trash: %q %v", out, err)
+			t.Fatalf("the repository did not survive in the recycle bin: %q %v", out, err)
 		}
 		if _, err := os.Stat(filepath.Join(a.dir, "cache", tm.sid)); !os.IsNotExist(err) {
 			t.Fatal("the cache was left behind")
+		}
+		if _, err := os.Stat(filepath.Join(a.dir, "trash")); !os.IsNotExist(err) {
+			t.Fatal("1.7's trash directory is written again")
 		}
 		var drafts, members int
 		a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM drafts WHERE space_id = ?`, tm.sid).Scan(&drafts)
@@ -398,24 +408,33 @@ func TestAdminDeleteMovesTheDirectoryToTheTrash(t *testing.T) {
 			t.Fatal("still in the administration list")
 		}
 		admin.do("DELETE", "/api/admin/spaces/"+tm.sid, nil).want(t, 404, "not_found")
+		// It is in the bin, and comes back.
+		l := admin.do("GET", "/api/admin/recycle", nil).want(t, 200, "").body["items"].([]any)
+		if len(l) != 1 || l[0].(map[string]any)["id"] != item {
+			t.Fatalf("%v", l)
+		}
+		admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 200, "")
+		tm.owner.do("GET", base+"/tree", nil).want(t, 200, "")
 		// Other spaces are untouched.
 		tm.owner.do("GET", "/api/spaces/"+tm.owner.personalSpace()+"/tree", nil).want(t, 200, "")
 	})
 }
 
-func TestAdminDeleteReportsAMoveThatFailed(t *testing.T) {
+// A move that cannot happen leaves the item in the bin with its records, says so
+// (it is not restorable until it is moved), and the move is made when it can be.
+func TestAdminDeleteWithAMoveThatFailedIsFinishedLater(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
 		sid := tang.do("POST", "/api/spaces", map[string]any{"name": "Doomed"}).want(t, 201, "").body["id"].(string)
-		// A file where the trash directory should be: the move cannot happen.
-		if err := os.WriteFile(filepath.Join(a.dir, "trash"), []byte("in the way"), 0o644); err != nil {
+		// A file where the recycle directory should be: the move cannot happen.
+		if err := os.WriteFile(filepath.Join(a.dir, "recycle"), []byte("in the way"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		r := admin.do("DELETE", "/api/admin/spaces/"+sid, nil).want(t, 200, "")
-		w := r.body["warnings"].([]any)
-		if r.body["trashed"] != "" || len(w) == 0 || !strings.Contains(w[0].(string), "left where it is") {
+		item := r.body["id"].(string)
+		if r.body["restorable"] != false || len(r.body["problems"].([]any)) == 0 {
 			t.Fatal(r.raw)
 		}
 		// The rows are gone, the files are not.
@@ -423,6 +442,18 @@ func TestAdminDeleteReportsAMoveThatFailed(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(a.dir, "spaces", sid, ".git")); err != nil {
 			t.Fatalf("files were removed: %v", err)
 		}
+		admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 409, "conflict")
+		if err := os.Remove(filepath.Join(a.dir, "recycle")); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.mgr.FinishRecycle(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(a.dir, "recycle", item, "space", ".git")); err != nil {
+			t.Fatalf("the move was not finished: %v", err)
+		}
+		admin.do("POST", "/api/admin/recycle/"+item+"/restore", map[string]any{}).want(t, 200, "")
+		tang.do("GET", "/api/spaces/"+sid+"/tree", nil).want(t, 200, "")
 	})
 }
 

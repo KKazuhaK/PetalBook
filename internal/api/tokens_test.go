@@ -353,7 +353,9 @@ func TestAnAdministratorsTokenHasNoWayIntoOtherSpaces(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tm := newTeam(t, a)
-		// The session of an administrator opens every space ...
+		// The session of an administrator manages every space, and reads it in a view ...
+		admin.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "no_permission")
+		admin.do("POST", "/api/admin/spaces/"+tm.sid+"/view", map[string]any{"reason": "test"}).want(t, 200, "")
 		admin.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
 		// ... but no token can be made for a space they are not in,
 		admin.do("POST", "/api/account/tokens", map[string]any{"name": "n", "spaces": []string{tm.sid}}).want(t, 404, "not_found")

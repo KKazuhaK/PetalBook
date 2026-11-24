@@ -482,7 +482,8 @@ func (s *server) adminDeleteTenant(c *call) {
 			Spaces  int    `json:"spaces"`
 			Groups  int    `json:"groups"`
 			Invites int    `json:"invites"`
-		}{"tenant_not_empty", "the tenant still has users, spaces, groups or invites; 3.3 cannot move them to another tenant", ne.Users, ne.Spaces, ne.Groups, ne.Invites})
+			Recycle int    `json:"recycle"`
+		}{"tenant_not_empty", "the tenant still has users, spaces, groups, invites or items in the recycle bin; they cannot be moved to another tenant", ne.Users, ne.Spaces, ne.Groups, ne.Invites, ne.Recycle})
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) {

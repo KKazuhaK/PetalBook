@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react'
 import {
   ArrowLeft,
   Building2,
+  Database,
   Gauge,
   Mail,
   HardDrive,
@@ -11,6 +12,7 @@ import {
   Link2,
   Quote,
   ShieldCheck,
+  Trash2,
   SlidersHorizontal,
   Users,
   UsersRound,
@@ -32,6 +34,8 @@ import { UsersPanel } from './UsersPanel'
 
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
+const ManagePanel = lazy(() => import('./manage/ManagePanel').then((m) => ({ default: m.ManagePanel })))
+const RecyclePanel = lazy(() => import('./manage/RecyclePanel').then((m) => ({ default: m.RecyclePanel })))
 const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
 // "存储与同步" with 3.1's storage rules is another.
 const StoragePanel = lazy(() => import('./StoragePanel').then((m) => ({ default: m.StoragePanel })))
@@ -43,6 +47,8 @@ const ICONS: Record<AdminSection, typeof Users> = {
   users: Users,
   groups: UsersRound,
   spaces: Layers,
+  manage: Database,
+  recycle: Trash2,
   daily: Quote,
   access: KeyRound,
   storage: Link2,
@@ -57,6 +63,8 @@ const SECTIONS: readonly AdminSection[] = [
   'users',
   'groups',
   'spaces',
+  'manage',
+  'recycle',
   'daily',
   'access',
   'storage',
@@ -121,6 +129,16 @@ export default function AdminRoute() {
         {section === 'users' && <UsersPanel />}
         {section === 'groups' && <GroupsPanel />}
         {section === 'spaces' && <SpacesPanel />}
+        {section === 'manage' && (
+          <Suspense fallback={<PageFallback />}>
+            <ManagePanel />
+          </Suspense>
+        )}
+        {section === 'recycle' && (
+          <Suspense fallback={<PageFallback />}>
+            <RecyclePanel />
+          </Suspense>
+        )}
         {section === 'daily' && (
           <Suspense fallback={<PageFallback />}>
             <DailyPanel />

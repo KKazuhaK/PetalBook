@@ -123,12 +123,18 @@ func (s *server) getMeta(c *call) {
 		}
 		list = toSpaces(l)
 	}
+	// maxUpload is the largest file for the caller's tenant (the site's for a
+	// caller who is not signed in).
+	maxUpload := s.opt.MaxUpload
+	if c.p != nil {
+		maxUpload = s.fileLimit(c)
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Version   string      `json:"version"`
 		MaxUpload int64       `json:"maxUpload"`
 		MaxImport int64       `json:"maxImport"`
 		Spaces    []spaceResp `json:"spaces"`
-	}{s.opt.Version, s.opt.MaxUpload, s.opt.MaxImport, list})
+	}{s.opt.Version, maxUpload, s.opt.MaxImport, list})
 }
 
 func (s *server) getSession(c *call) {

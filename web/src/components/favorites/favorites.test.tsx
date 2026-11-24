@@ -7,6 +7,7 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { StarButton } from '@/components/favorites/StarButton'
 import { FileContextMenu, ENTRY_ATTR } from '@/components/files/FileContextMenu'
+import { SpaceGate } from '@/components/layout/SpaceGate'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import HomePage from '@/components/home/HomePage'
 import { t } from '@/i18n'
@@ -22,6 +23,7 @@ import {
   press,
   settle,
   shareSpace,
+  startView,
   type Mounted,
 } from '@/testing/harness'
 import { listShell, putViews, sender, type Send } from '@/testing/listKit'
@@ -42,6 +44,23 @@ const shell = (
         <AppSidebar />
         <Routes>
           <Route path="/s/:space" element={<HomePage />} />
+          <Route path="*" element={<div data-testid="elsewhere" />} />
+        </Routes>
+      </FileOpsProvider>
+    </QuickCaptureProvider>
+  </SidebarProvider>
+)
+
+// The same, with the gate an administrator who is not a member passes through (a view opens the space for reading).
+const gatedShell = (
+  <SidebarProvider>
+    <QuickCaptureProvider>
+      <FileOpsProvider>
+        <AppSidebar />
+        <Routes>
+          <Route path="/s/:space" element={<SpaceGate />}>
+            <Route index element={<HomePage />} />
+          </Route>
           <Route path="*" element={<div data-testid="elsewhere" />} />
         </Routes>
       </FileOpsProvider>
@@ -323,7 +342,7 @@ describe('who can have favourites', () => {
   })
 
   it('an administrator who is not a member has none and no star or menu entry, and no notice about it', async () => {
-    m = await mount(shell, {
+    m = await mount(gatedShell, {
       signIn: true,
       server: { mode: 'accounts' },
       entries: (server) => {
@@ -333,13 +352,15 @@ describe('who can have favourites', () => {
         return [`/s/${space}`]
       },
     })
+    await startView()
     await settle(() => document.querySelector('[data-slot="home"]') !== null, 'home')
     await settle(() => document.querySelector('[aria-busy="true"]') === null, 'loaded')
     expect(document.body.textContent).not.toContain(th.favorites.empty)
     expect(m.requests.some((r) => r.url.includes('/favorites'))).toBe(false)
     expect(group()).toBeNull()
     expect(document.querySelector('[data-slot="favorite-star"]')).toBeNull()
-    expect(document.querySelector('[role="status"]')).toBeNull()
+    // The only status is the banner of the view.
+    expect(document.querySelector('[role="status"]:not([data-slot="admin-view-banner"])')).toBeNull()
     expect(locationText()).toMatch(/^\/s\//)
   })
 

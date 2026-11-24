@@ -120,7 +120,7 @@ func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testi
 		done := make(chan error, 1)
 		go func() { _, _, err := m.Resize(ctx, store.AllTenants(), gone.ID); done <- err }()
 		time.Sleep(100 * time.Millisecond)
-		if _, err := m.DeleteSpace(ctx, store.AllTenants(), gone.ID); err != nil {
+		if _, err := m.RecycleSpace(ctx, store.AllTenants(), gone.ID, RecycleOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		<-m.sizeSem

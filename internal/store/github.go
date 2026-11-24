@@ -94,11 +94,17 @@ func PutGitHubAuthorization(ctx context.Context, q Q, a GitHubAuthorization) err
 	if testHookBeforeGitHubPut != nil {
 		testHookBeforeGitHubPut()
 	}
-	_, err := q.Exec(ctx, `INSERT INTO github_authorizations(`+ghAuthCols+`) VALUES (?,?,?,?,?,?,?,?,1,?,?)
-		ON CONFLICT (user_id) DO UPDATE SET github_id = excluded.github_id, login = excluded.login, access_enc = excluded.access_enc,
-		refresh_enc = excluded.refresh_enc, access_expires = excluded.access_expires, refresh_expires = excluded.refresh_expires,
-		state = excluded.state, version = github_authorizations.version + 1, connected = excluded.connected, updated = excluded.updated`,
-		a.UserID, a.GitHubID, a.Login, a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires), a.State, ms(a.Connected), ms(a.Updated))
+	err := atomically(ctx, q, func(q Q) error {
+		_, err := q.Exec(ctx, `INSERT INTO github_authorizations(`+ghAuthCols+`) VALUES (?,?,?,?,?,?,?,?,1,?,?)
+			ON CONFLICT (user_id) DO UPDATE SET github_id = excluded.github_id, login = excluded.login, access_enc = excluded.access_enc,
+			refresh_enc = excluded.refresh_enc, access_expires = excluded.access_expires, refresh_expires = excluded.refresh_expires,
+			state = excluded.state, version = github_authorizations.version + 1, connected = excluded.connected, updated = excluded.updated`,
+			a.UserID, a.GitHubID, a.Login, a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires), a.State, ms(a.Connected), ms(a.Updated))
+		if err != nil {
+			return err
+		}
+		return settleConnected(ctx, q, a.UserID)
+	})
 	if on, ok := UniqueOn(err); ok && strings.Contains(on, "github_id") {
 		return ErrExists // another user connected the account since the check
 	}
@@ -137,14 +143,44 @@ func ExpireGitHubAuthorization(ctx context.Context, q Q, userID string, from int
 
 // DeleteGitHubAuthorization removes a user's connection.
 func DeleteGitHubAuthorization(ctx context.Context, q Q, userID string) error {
-	_, err := q.Exec(ctx, `DELETE FROM github_authorizations WHERE user_id = ?`, userID)
-	return err
+	return atomically(ctx, q, func(q Q) error {
+		if _, err := q.Exec(ctx, `DELETE FROM github_authorizations WHERE user_id = ?`, userID); err != nil {
+			return err
+		}
+		return settleConnected(ctx, q, userID)
+	})
 }
 
 // DeleteGitHubAuthorizations removes every connection (the App was deleted).
 func DeleteGitHubAuthorizations(ctx context.Context, q Q) error {
-	_, err := q.Exec(ctx, `DELETE FROM github_authorizations`)
-	return err
+	return atomically(ctx, q, func(q Q) error {
+		rows, err := q.Query(ctx, `SELECT user_id FROM github_authorizations ORDER BY user_id`)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM github_authorizations`); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := settleConnected(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ListGitHubAuthorizations returns every connection, for revoking them.

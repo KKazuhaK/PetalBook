@@ -97,8 +97,9 @@ The server runs in one of two modes, chosen at start-up.
   `GET /api/session` and the ones under "Signing in" needs a session and
   answers `401 unauthenticated` without one. A space the user is not a member
   of answers `404 not_found`, the same as a space that does not exist, unless
-  the user is an administrator: an administrator may do everything in every
-  space (see "Members"). A member whose role lacks the permission a route needs
+  the user is an administrator: from 3.5 an administrator manages every space of
+  their scope (see "Members") and reads one only in a view they open with a
+  reason (see "Viewing a space"). A member whose role lacks the permission a route needs
   answers `403 no_permission`, a code of its own: it is never confused with the
   cross-site refusal, which is `403 forbidden`.
 
@@ -914,8 +915,9 @@ administrator confirms it or the person does. From milestone 3.1 the body may al
 (site administrators only, `403 forbidden` for a tenant administrator; see
 "Server storage", "Exemptions").
 
-An administrator cannot open another user's space through the API. Whoever
-can read the server's disk can read every file.
+Until 3.5 an administrator could not read another user's space through the API;
+from 3.5 they may, in a view that is recorded each time (see "Viewing a space").
+Whoever can read the server's disk can read every file.
 
 ### `GET /api/users/{id}/passkeys`, `DELETE /api/users/{id}/passkeys/{passkey}`
 
@@ -1073,7 +1075,8 @@ space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
 always keeps at least one owner. A personal space (`personal: true`) belongs to
 its person alone and never has other members. An administrator is not a member
 of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
-but may use these endpoints as if they were an owner. From 3.2 a shared space's
+but may use these endpoints as if they were an owner (the permissions an
+administrator has in a space they are not a member of are `members` and `manage`). From 3.2 a shared space's
 members may also be groups, with endpoints of their own (see "Groups"); this
 section is about people.
 
@@ -6799,21 +6802,40 @@ what the first does.
 - On each person's `usage` row (3.3), kept by difference in the same
   transactions that change what they count, and corrected by the daily recount:
   `held_bytes` (what the server holds for the spaces counted for the person:
-  `cloneBytes + indexBytes` of 3.1, summed), `remote_spaces` (those that follow
-  a remote), `grace_spaces`, `overdue_spaces` (3.1's deadline states),
-  `evicted_spaces`, `archived_spaces`, `pinned_spaces`, and `connected` (the person has
-  a connection of any provider, 2.7b). The tenant's row gets the same sums.
-- Open from 3.1: a space with an attachment repository is measured without its
-  attachments, so its usage misses them. 3.5 decides, before its part 4,
-  whether and how the attachment repository counts; until then 3.1's rule
-  stands (the text repository only).
+  `cloneBytes + indexBytes` of 3.1, summed, wherever the space lives),
+  `remote_spaces` (those that follow a remote), `partial_spaces`, `grace_spaces`,
+  `overdue_spaces` (3.1's deadline states), `evicted_spaces`, `archived_spaces`,
+  `pinned_spaces`, and `connected` (the person has a connection of any provider,
+  2.7b). The tenant's row gets the same sums. (`usage.bytes` is, from now on,
+  what is counted: see above.)
+- **Usage counts where the bytes live** (owner, 2026-11-23; this closes the
+  question 3.1 left open about attachment repositories). Every space has a
+  `location`, stored with it:
+  - `server`: only on this server (a space without a remote). Counted in full.
+  - `own`: the remote belongs to the person (their repository, their token, key
+    or connection). Measured and shown, **never counted**: a quota limits what
+    costs us, and this costs the person. What the server keeps for it (the
+    partial clone, the index, the attachment cache) is the pressure controller's
+    business, not quota (it is `held_bytes`, below).
+  - `tenant` and `site` (3.6): a tenant's own storage target (shown, not
+    counted) and the site's storage organisation (counted, with the size the
+    provider's API reports for the repository, text and attachments both).
+  The size of a remote repository is never found by downloading it. Counted
+  means `LocationCounts(location)`; 3.6 changes where a space's location is
+  decided (the one function `locationOf`) and where a `site` space's size comes
+  from (the provider, a repository at a time, at most every few hours, in the
+  background); nothing else here needs to change. A space that has an
+  attachment repository counts where that repository lives: with the space on
+  the server, or not at all in the person's own.
 - A person is **dormant** when `first_write IS NULL`, `remote_spaces = 0` and
   `connected = false`: registered, never connected anything, never used. It is
   a stored flag (`usage.dormant`), so the filter is an index range.
 
 Indexes: `(kind, tenant_id, held_bytes DESC, id)`, `(kind, tenant_id, last_active, id)`,
 `(kind, tenant_id, dormant, created, id)` on `usage`; `(tenant_id, size_bytes DESC, id)`,
-`(tenant_id, last_used, id)` and `(tenant_id, created, id)` on `spaces`.
+`(tenant_id, last_used, id)` and `(tenant_id, created, id)` on `spaces`, each also
+without the tenant for a site administrator's list across tenants; and the ones the
+filters need (see "As built").
 
 ### `GET /api/admin/storage`
 
@@ -6827,13 +6849,22 @@ of their tenant and the effective values of the settings, read only.
              "people": 340, "dormant": 51, "heldBytes": 3436973876, "usageBytes": 912680550400,
              "assetCacheBytes": 4831838208, "recycle": {"items": 4, "bytes": 52428800},
              "exports": {"items": 1, "bytes": 10485760}, "remotes": {"inGrace": 3, "overdue": 0},
-             "diskFreeBytes": 52428800000, "measuredAt": "2026-11-23T02:10:00Z"}}
+             "recycleDays": 30, "diskFreeBytes": 52428800000, "measuredAt": "2026-11-23T02:10:00Z"}}
 ```
 
 The sums are the tenant's `usage` row (one primary-key read) or, for the whole
 server, one aggregate over the tenants' rows; `assetCacheBytes` comes from
 memory (per space, summed for the tenant's spaces from the in-memory map);
-`diskFreeBytes` is for site administrators only.
+`diskFreeBytes` is for site administrators only. `recycleDays` is
+`recycle.days` as it is now (how long the recycle bin keeps an item).
+
+What is the server's own is the site's alone: a tenant administrator's answer
+has no `hosts.fromFlag`, `cache.minFreeBytes`, `git.version` (`git.partialClone`
+stays, it says what the settings can do) and no `summary.spaces.restoring` (the
+restores that run on the server, of every tenant); a site administrator's has
+them. In the summary of a tenant `assetCacheBytes` is summed over the tenant's
+spaces, the tenant of the cached spaces looked up in one query for the ones not
+seen before and remembered.
 
 ### `GET /api/admin/spaces` (filters and sorting added)
 
@@ -6842,15 +6873,20 @@ The 1.7 list, with 3.1's `storage` block, gains:
 - `sort`: `created` (the default, as before), `name`, `bytes` (`sizeBytes`),
   `lastUsed`; `order`: `asc` or `desc` (default `asc` for `created` and `name`,
   `desc` for the others). Spaces never measured, or never used, sort last.
+- Each item gains `location` (`server`, `own`, `tenant` or `site`) and
+  `counted` (whether its bytes count toward quotas: see "Measurements this
+  adds").
 - Filters, combinable: `tenant`, `q` (as before), `owner={user}`, `cache`
   (3.1), `remote=none|ok|offline|error`, `deadline=grace|overdue`, `pinned=1`,
   `exempt=1`, `idleDays={n}` (not used for at least `n` days, or never).
 - `400 invalid` for an unknown `sort`, `order` or filter value, and for a
   cursor that was made for another `sort`.
 
-Each filter is a column of `spaces` (3.1 stores the cache state, the remote
-state and the deadline state with the space), so a page is one query; the
-owners and member counts are looked up for the page only.
+Each filter is a column of `spaces` (the cache state, the remote's state, how
+it is followed, the pin and the exemption are stored with the space), so a page
+is one query; the owners and member counts are looked up for the page only. The
+cursor is opaque (`next` of the page before): a cursor of another sort or order
+is `400 invalid`.
 
 ### `GET /api/admin/storage/people?tenant=&q=&sort=&order=&cursor=&limit=`
 
@@ -6863,7 +6899,7 @@ People and what they hold, one page at a time:
   "spaces": 3, "remoteSpaces": 2, "evictedSpaces": 1, "pinnedSpaces": 0,
   "graceSpaces": 1, "overdueSpaces": 0, "usageBytes": 52428800, "heldBytes": 9437184,
   "measuredAt": "2026-11-23T02:10:00Z"}],
- "next": "9437184:01JD3K7A2M"}
+ "next": "held.desc:9437184:01JD3K7A2M"}
 ```
 
 - `sort`: `held` (the default: what the server holds, largest first), `bytes`
@@ -6877,6 +6913,92 @@ People and what they hold, one page at a time:
 `GET /api/admin/storage/people/{user}` is one item, plus `items` of the person's
 spaces in the shape of `GET /api/admin/spaces` (spaces counted for them, at
 most 200, by `lastUsed`).
+
+**As built (part 4: the measurements, the lists and the summary).**
+
+- **Where each number is kept.** `spaces` gains `location`, `remote_via` (`''`
+  without a remote, the provider of a connection, or `git`) and `remote_state`;
+  `users` gains `last_active` and `first_write`; `usage` gains `held_bytes`,
+  `remote_spaces`, `partial_spaces`, `grace_spaces`, `overdue_spaces`,
+  `evicted_spaces`, `archived_spaces`, `pinned_spaces`, `connected`, `dormant`,
+  and a copy of the person's `created` and `last_active` (so a list of people is
+  one index). All in migration `0020`.
+- **Deltas.** Every change of what a space contributes (a measurement, the
+  index size, the cache state, a pin, the remote coming, going or changing
+  state, a change of first owner, a deletion, a restore) is made in one
+  transaction with the space's lock taken first, and adds the difference to the
+  rows of the tenant and of the person the space is counted for. A person's
+  `connected` follows their connection rows (a GitHub authorization or one of
+  any provider of 3.8: connecting, disconnecting, deleting the provider and
+  deleting the person all settle it, and the recount reads both tables), and `dormant` is worked out again
+  whenever `remote_spaces`, `connected` or `first_write` changes (the tenant's
+  count with it). The daily recount puts every one of these right from the rows,
+  and also the `location`, `remote_via` and `remote_state` of spaces, and the
+  counted bytes of spaces that do not count; a space that the recount finds back
+  on the server (`own` to `server`) counts its last measurement again, as the
+  change of its remote does.
+- **`grace_spaces` and `overdue_spaces` are not kept by difference.** They change
+  with the clock and with the policy, not only with a write, so one grouped
+  query over the spaces that lack what is required sets them: every hour, when
+  `PUT /api/admin/storage` changes the policy, and with the daily recount. They
+  can be an hour behind the clock; the filters `deadline=grace|overdue` of the
+  list of spaces compute from the policy and `created` at the time of the
+  request and are not behind.
+- **Held bytes** are `size_bytes + index_bytes` of 3.1, nothing for the clone of
+  an evicted or archived space and nothing at all for an archived one.
+- **`last_active`** is written by a session, an API token or an OAuth grant,
+  once an hour for a person, from memory. **`first_write`** is written once, the
+  first time a change is credited to the person (every write goes through the
+  author of the change, which is where it is noted).
+- **Spaces** are listed by one query over an index for each sort, with and
+  without the tenant in front (site administrators see every tenant). A cursor
+  is `<sort>.<order>:<value>:<id>` (for the name, the stored `name_key` of the
+  last row, not the name folded again); spaces with no value of the sort (never
+  measured, never used) come after the others in id order, as a second range
+  (`<sort>.<order>.none::<id>`). Two spaces with the same value are ordered by
+  id, ascending in the index's own direction and descending in the other. The
+  filters: `cache=local|full|partial|evicted|archived|restoring` (`restoring` is
+  in memory only and keeps nothing), `remote=none|ok|offline|error` (`error`
+  keeps a rewritten history too), `deadline` and the older `overdue=1` (the
+  policy's ranges of `created`, then the lack of a remote, the exemption of the
+  space and of its owners), `pinned=1`, `exempt=1` (the space's own exemption,
+  not an owner's), `owner` (the first owner), `idleDays`, `q` (a name contains;
+  the one filter no index serves: it reads names in the order of the sort until
+  the page is full). `0` for `pinned`, `exempt`, `overdue` means not asked.
+- **People** are listed from the usage rows joined to their person by key, with
+  no one deleted. `sort=lastActive` puts people who were never active last in
+  both orders, `q` is a contains match as in `GET /api/users`. The person's
+  item counts the spaces as the list does: a tenant administrator is never shown
+  a personal space, in a list or in the person's `items`. The person's own row
+  (spaces, bytes, held bytes) does count their personal space, as the quota
+  does, so for a tenant administrator the total can be more than the spaces they
+  are shown add up to. (Aggregates are not split into personal and shared: 3.7
+  does that when the organisation's share and the person's home are separate.)
+- **Summary.** `GET /api/admin/storage` is open to tenant administrators (the
+  route is admin; `PUT` stays the site's). The body is 3.1's settings and
+  `summary`; `affected` is 3.1's aggregate for a site administrator and the
+  stored counts of grace and overdue spaces for a tenant administrator (who is
+  not told about exemptions). The summary is the tenant's usage row or one
+  aggregate over the tenants' rows, one count over the recycle bin and one over
+  the exports (each an index range of the tenant), the attachment cache from
+  memory and, for site administrators, the free room of the disk. Nothing walks
+  a disk or a repository. `GET ?tenant=` narrows it for a site administrator and
+  is a tenant that does not exist for anyone else. `PUT` answers the settings
+  only, as before.
+- **Indexes.** On `spaces`: `(tenant_id, created, id)` (replacing 0018's without
+  the id), `(created, id)`, `(tenant_id, name_key, id)`, `(name_key, id)`,
+  `(tenant_id, size_bytes DESC, id)`, `(size_bytes DESC, id)`,
+  `(tenant_id, last_used DESC, id)`, `(last_used DESC, id)`,
+  `(tenant_id, remote_via, created, id)` and `(remote_via, created, id)` (the
+  deadline filter and `cache=local`), `(tenant_id, remote_state, created, id)`
+  and `(remote_state, created, id)`, `(usage_user, created, id)`, and partial
+  ones for `pinned` and for `exempt`. On `usage`: for each sort of the people's
+  list one index with the tenant and one without, `(kind, tenant_id, dormant,
+  created, id)`, and partial ones for people with a grace period or an overdue
+  space. `internal/store/storage_explain_test.go` asks the database for the plan
+  of every list, sort and main filter, on a server of 16,000 rows, on SQLite and
+  on PostgreSQL, and fails on a scan of a whole table or a sort of the rows found.
+- Single-user mode answers `404` for all of it, as before.
 
 ### The recycle bin
 
@@ -6912,6 +7034,49 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
 - From 3.5 every deletion goes through the recycle bin; 1.7's `DATA/trash/` is
   no longer written or read.
 
+**As built.**
+
+- The states of an item are `moving` (its rows are already out of the live
+  tables and its directories are being moved to `DATA/recycle/<item>/space` and
+  `/cache`), `ready`, `restoring` and `purging`. Only an item that is `ready` is
+  restorable or purged; a crash leaves the others and the next start finishes
+  them (a move is completed, a restore is undone, a purge is carried on). A move
+  that cannot be made (the disk, a file in the way) leaves the item `moving`,
+  with `restorable: false` and a problem, and is tried again by the hourly job.
+- `DELETE /api/admin/spaces/{space}` takes an optional `{"reason": "…"}` (at most
+  500 characters); the drafts of its people are in the item, not in a file.
+- A tenant cannot be deleted while any item of the recycle bin is held for it
+  (`409 tenant_not_empty`, with `recycle`), so a restore always finds its tenant.
+- A personal space cannot be restored on its own (`409 conflict`): it goes back
+  with its person. The restore of a space whose people are gone, and any other,
+  puts back what it can and lists `skipped` (`{"user": …}` or `{"group": …}`);
+  `owner` must be someone of the tenant who exists, is not deleted and is not
+  disabled (`404 user_not_found` otherwise, the same answer as for an id that
+  does not exist).
+- The deadline of 3.1 is not stored: the policy computes it from the space's
+  creation date when it is read, so a restored space has the deadline the policy
+  in force gives it.
+- The purge job is the manager's (`RunRecycle`); it also deletes exports whose
+  days are over. When `recycle.days` cannot be read, the round purges nothing
+  (it is never run on the default).
+- An action on an item (moving, restoring, purging) holds it while it runs; the
+  hourly look at items that are not at rest only takes over what a crash or a
+  failure left, never an action that is still running, however long it takes. A
+  restore whose item is not `restoring` any more when it ends puts nothing back.
+  The hourly look reads each item again once it holds it and leaves it alone
+  unless it is still in the state it was listed in (a restore that finished
+  meanwhile is not moved back).
+- A move between `DATA/spaces` (or `DATA/cache`) and `DATA/recycle` on different
+  filesystems is a copy (synced, with the files' modes, written beside its
+  destination and renamed into place whole) and then a delete of the source,
+  which is first renamed aside (`.moved`, within its own filesystem) so that a
+  delete cut short never leaves a partial tree in its place; a copy cut short is
+  started again and what is set aside is deleted, so an item is never stuck
+  `moving` and a space is never left partial.
+- Deleting a space whose clone is being restored from its remote (3.1) stops
+  that restore and waits for it, and closes the space's index-only handle (4.1):
+  nothing is written at its live place after the move.
+
 #### Recycle item
 
 ```json
@@ -6919,9 +7084,12 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
  "space": {"id": "01JD3K8Q7Z", "name": "Team", "personal": false},
  "user": null, "with": [],
  "bytes": 18304211, "deletedAt": "2026-11-23T08:30:00Z", "deletedBy": {"id": "…", "username": "wu"},
- "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "restorable": true, "problems": []}
+ "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "state": "ready", "restorable": true, "problems": []}
 ```
 
+`state` is `ready`, `moving`, `restoring` or `purging` (see "As built"), in the
+list, in the answers that return an item and in the purge's `202`: a page that
+shows an item being purged reads it here and needs no memory of its own.
 `kind` is `space` or `user`. A `user` item has `user` and lists in `with` the
 space items recycled with that person (their personal space and the spaces they
 owned alone); those spaces are restored with the person, and on their own only
@@ -6937,7 +7105,8 @@ Items, newest first; one query a page.
 #### `POST /api/admin/recycle/{item}/restore`
 
 `{"owner": "01JD3K7A2M"}` (optional). `200` with what was restored and what
-was left out (`{"restored": {...}, "skipped": [{"user": "…", "reason": "deleted"}]}`).
+was left out (`{"restored": {...}, "skipped": [{"user": "…", "name": "tang", "reason": "deleted"}]}`;
+see "What a restore leaves out" for `skipped`).
 `409 owner_required`, `409 busy` (a purge of it is running), `409 conflict`
 (a space with that id exists again: never in practice, ids are random).
 
@@ -6946,6 +7115,28 @@ was left out (`{"restored": {...}, "skipped": [{"user": "…", "reason": "delete
 Purges now. Site administrators only (it frees the server's disk early; a
 tenant administrator waits for the date): `403 forbidden` otherwise. Needs a
 confirmation token from `POST /api/admin/confirm` (below). `204`.
+
+**As built:** `202` with the item: the purge is paced and may take long, so it
+starts in the background. The item is `purging` until it is gone (a restore of
+it answers `409 busy`); `space_purged` or `user_purged` is written when it is
+over; one that fails stays `purging` and the hourly job finishes it.
+
+**What a restore leaves out.** `skipped` (in the answer of the restore of a space
+and of a person) lists what was left out, each with its `name` as it was when the
+thing was deleted (the display name of a person, else their username; the name
+of a group or a space) and a stable `reason`:
+
+| Entry | `reason` | Meaning |
+|---|---|---|
+| `{"user": id, "name"}` | `deleted` | the person of a membership no longer exists, or is deleted |
+| `{"group": id, "name"}` | `deleted` | the group no longer exists |
+| `{"space": id, "name"}` | `busy` | a space that went with a person is not at rest (a purge or another action holds it); it stays in the bin |
+| `{"space": id, "name"}` | `owner_required` | it has no owner left: restore it on its own with an `owner` |
+| `{"space": id, "name"}` | `conflict` | a space with that id exists again |
+| `{"space": id, "name"}` | `failed` | anything else; it stays in the bin as an item of its own |
+
+`name` is `""` for a thing whose name was not kept. The codes are fixed; the page
+words them.
 
 ### Deleting a space
 
@@ -6968,6 +7159,8 @@ What deleting the space would do; reads stored values only:
 
 `exportable` is `false` for an evicted space whose remote cannot be reached now
 (an export needs its files; 3.1's restore is what fetches them).
+`attachments.inSpace` is `null`: no stored value counts a space's attachments, and
+the preview reads stored values only.
 
 ### Deleting a user
 
@@ -6984,9 +7177,16 @@ grants, groups, GitHub connection), never from files:
  "transfer": [{"space": {"id": "…", "name": "Team"}, "to": {"id": "…", "username": "li"}, "why": "editor",
                "credential": "user"}],
  "leave": [{"space": {"id": "…", "name": "Shared"}, "role": "owner"}],
- "revoke": {"tokens": 2, "grants": 1, "passkeys": 1, "identities": 1, "github": true, "sessions": 3},
- "groups": 4, "needsHeir": [], "blockers": []}
+ "revoke": {"tokens": 2, "grants": 1, "passkeys": 1, "identities": 1, "github": true, "sessions": 3,
+            "connections": [{"provider": "github", "name": "GitHub"}, {"provider": "gitlab-1", "name": "GitLab"}]},
+ "groups": 4, "needsHeir": [], "blockers": [], "bytes": 4194304, "recycleDays": 30}
 ```
+
+`revoke.connections` has one line for each provider the person is connected to
+(GitHub and the providers of 3.8); `github` stays as it was. Deleting the person
+ends each of them as the person's own disconnect does (the host is asked to
+revoke the token where it can be, best effort), and removes any row left of a
+provider that is not up; purging removes the rest with the person's data.
 
 The rules:
 
@@ -7038,6 +7238,67 @@ spaces (3.3's accounting); the tenant's people count goes down by one.
 `GET /api/groups`; their id answers `404 user_not_found` to everything but the
 recycle bin and the audit log, which show "deleted user" with the username.
 Their username stays taken while they are in the recycle bin.
+
+**As built.**
+
+- **The order and its recovery.** Step 1 disables the person (through the same
+  call as `PATCH /api/users/{id}`, so the last enabled administrator and
+  yourself are refused: `409 conflict`). A person who owns a space that was handed
+  on is an editor of it after `POST …/transfer`, so the deletion removes that
+  membership too (it is listed in `left`). The spaces of rules 1 and 2 are recycled
+  one by one with the marker `u:<user id>` as their parent; step 4, one
+  transaction, makes the person's item, marks the row, takes the group memberships
+  out and puts the spaces under the item. A failure anywhere leaves a disabled
+  person with fewer spaces and some items waiting under the marker, never a space
+  without an owner; asking again goes on from there and adopts them. Before step 1
+  the deletion records on the person's row whether they were disabled, and then
+  each transfer and each membership left, so a deletion asked again after a
+  failure records what the first attempt knew: the item says the person was
+  enabled if they were before the first attempt, and lists every transfer.
+  Enabling the person again ends that record, and so does a deletion that
+  finds the person enabled: a later deletion starts afresh.
+- A person who is disabled or deleted is never added to a space (the statement
+  refuses them), and a deleted person never counts as another owner of a space.
+  The last step also leaves any membership that slipped in after the plan (listed
+  in `left`); one whose leaving would leave a space without an owner refuses the
+  step (`409 conflict`), and asking again plans that space.
+- `DELETE /api/users/{id}` answers `409 heir_required` with `spaces` (`id`,
+  `name`) before anything is changed; `409 conflict` for the caller themself and
+  the last enabled site administrator (the preview lists them as `blockers` with
+  a `reason`: `self`, `last_admin`); `403 forbidden` for a site administrator when
+  the caller is a tenant administrator; `404 user_not_found` for a person who does
+  not exist, is in another tenant or is deleted already. The answer is the person's
+  recycle item, `with` the spaces recycled with them.
+- **Restoring** is `POST /api/admin/recycle/{item}/restore` on the person's item:
+  the row is brought back (enabled or disabled as it was), the group memberships
+  whose group is still there, then the spaces that went with them, a personal one
+  too. `200` `{"restored": {"item", "user", "spaces"}, "skipped": [...],
+  "transfers": [...], "left": [...]}`; a space that cannot be restored is left in
+  the bin as an item of its own and listed in `skipped`. A tenant administrator's
+  answer leaves personal spaces out of `spaces` and `skipped` (neither their id
+  nor their name) and says how many there were in `restored.personal`; a site
+  administrator's answer names them, and the audit row (`recycled`) is whole. A personal space whose
+  person is there (a deletion cut short, or a restore that left it) is restored on
+  its own.
+- **Purging** an item of a person purges the spaces recycled with them first, then
+  empties their row as described, in that order, so that a purge cut short is
+  finished at the next start. A purge takes only the spaces recycled with that
+  item (never those waiting under the person's marker, which belong to a
+  deletion under way), and empties the person only while that item is the one
+  that holds them (`users.recycle_item`): an item that went stale (a restore of
+  it was cut short) never touches a person who is back, or whom a later deletion
+  holds. An item whose person is not deleted (a restore cut
+  short) removes only itself and the spaces recycled with it: it never touches
+  the person's data.
+- **Usernames.** A deleted person's username stays taken (the row keeps it, so
+  the unique key refuses it, and `GET /api/…` lookups by username do not find
+  them). `users.reuseUsernames` is read at invites (when one is made with a
+  username), registration, accepting an invite and `autoCreate`; with `never` and a
+  retired name those answer `409 exists`, and `autoCreate` picks the next free
+  form. A sign-in by an SSO identity of a deleted person is refused (`disabled`),
+  never turned into a new account.
+- The daily sweep deletes a tombstone when no audit row (as actor or subject), no
+  invite (made or used), no recycle item, no export and no space names it.
 
 #### Restoring and purging a user
 
@@ -7119,6 +7380,30 @@ done.
 Single actions keep their own endpoints without a token, except the purge of a
 recycle item.
 
+**As built.** `POST /api/admin/confirm` takes every action of the list and answers
+the plan: the preview of each deletion, or one line per item; `needsHeir` and
+`blockers` name the person they are about (`{"user": …}`). The token holds the
+request it was asked for. `POST /api/admin/bulk` always needs it (a single
+purge's `?confirm=` is the other place it is used), is bound to the caller, spent
+at once, and is `409 confirm_stale` when the plan, made again from the records,
+has another hash (ids, states, owners, members, heirs, transfers). The actions
+`evict`, `pin` and `unpin` are the site's (`403 forbidden` for each item for a
+tenant administrator); `export` makes one export of the whole set. A job is a row
+of `bulk_jobs`; its `state` is `queued`, `running`, `done` (with `failed` listing
+`{"id", "error", "code"}` of each item that did not work, `409 busy` among them)
+or `interrupted`, and `failed` when the job broke (a panic, which the server
+survives, or progress that could not be written after a few tries; `failed` names
+the item it was on); `GET /api/admin/jobs/{id}` is the tenant's. Each item is done
+with the rights the administrator who started the job has at that moment (one who
+is no longer an administrator gets `403 forbidden` for the items left). A job
+waits in the queue of each tenant it works on (a site administrator's job on one
+tenant is that tenant's turn, not their own tenant's) and its row is that
+tenant's; a job a site administrator started is the site's: a tenant
+administrator does not see it. The hash of `delete_users` covers what each
+preview decides: the spaces recycled, each transfer and its heir, the spaces left
+and with which role, `needsHeir` and the blockers. A job runs on the
+server's own time: it does not stop when the caller's request ends.
+
 ### Exports
 
 An export is a zip of what a space holds, made before a deletion so that the
@@ -7149,10 +7434,35 @@ recycle items, or a user (their personal space and the spaces of rules 1 and 2).
   `507 exports_full` beyond it. One export at a time per tenant, two on the
   server; the rest wait.
 
+**As built.** An export's `state` is `queued` (waiting for its turn), `running`,
+`ready` or `failed` (with `error`); a ready export lists in `warnings` what it
+could not include (an attachment that could not be fetched), and the zip has the
+same list as `NOT-INCLUDED.txt` in the space's folder. The folder of a space is
+`<name>-<id>/`. A space in the recycle bin whose directory was never there (it was
+evicted when it was deleted) exports its drafts and addresses but no files. The
+notice to a space's owners is not sent (there is no account notice to put it in);
+the audit rows carry the export and its spaces. `user` in the request names the
+spaces of rules 1 and 2 of "Deleting a user" (the personal one only for a site
+administrator), or, for a person in the recycle bin, the items recycled with
+them. `history: true` is `403 forbidden` for a tenant administrator.
+
+Each entry of an export's `spaces` is `{"space": id, "name", "spaceId", "open"}`
+for a space and `{"item": id, "name", "spaceId", "open"}` for a space that was in
+the recycle bin when it was exported. `name` is as it was; `spaceId` is the space
+either way; `open` says whether that space exists now and the caller may open it
+(a personal space is never open to a tenant administrator, and one that was purged
+or whose item is still in the bin does not exist), so that the page links to it only
+then. One query answers it for a whole page.
+
 `GET /api/admin/exports`, `GET /api/admin/exports/{id}`, `DELETE /api/admin/exports/{id}`,
 and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
 `Range` supported). An export made by a tenant administrator is visible to that
 tenant's administrators and the site's.
+
+**As built:** an export a site administrator made is the site's: only site
+administrators list, read, download or delete it, whatever spaces it holds. So is
+any export that holds a history bundle, a personal space or the spaces of more
+than one tenant (only a site administrator can make one).
 
 ### Viewing a space
 
@@ -7183,8 +7493,41 @@ off ends the tenant's open views); site administrators always may.
   (`404 not_found`).
 - `DELETE /api/admin/spaces/{space}/view` ends it early.
 
+- `GET /api/admin/spaces` and `GET /api/admin/spaces/{space}` carry `view` on each
+  space: `{"since": "2026-11-23T09:30:00Z", "until": "2026-11-23T10:30:00Z"}` while the
+  caller's session has a view of it open (`since` is when it was opened or last
+  extended), `null` otherwise. It is the session's alone, so another session of
+  the same person, or another administrator, sees `null`. The page needs no memory
+  of its own to know whether to show the banner.
+
 The web app opens it from the space's row in the administration, asks for the
 reason, and shows a banner "管理员查看，只读，已记录" while it lasts.
+
+**As built.**
+
+- An administrator who is not a member of a space (a site administrator for any
+  space, a tenant administrator for their tenant's) has **only `members` and
+  `manage`** there, without a view: the names of its people, its remote, its
+  settings, its rename, its transfer. Not `read`, and never `write`. This
+  replaces 1.7's "an administrator may do everything in every space", which the
+  view would otherwise make pointless. A view adds `read` to those, for the
+  session that opened it, and nothing else.
+- A **personal space** is never reachable by a tenant administrator: not by a
+  view, not by an export, not even for managing it; every endpoint answers as for
+  a space that does not exist. That is every administration route that takes a
+  space or a recycle item (the space, its deletion preview, size, transfer,
+  disable, enable, delete, view; restore; the confirmations and exports by the
+  ids of their body), and the lists: `GET /api/admin/spaces` and the recycle bin
+  leave personal spaces out (the `with` of a person's item too). The person's own
+  item is the tenant's: restoring it brings their personal space back with them. A site administrator reaches it as any space,
+  with a view each time recorded.
+- `page_viewed` is recorded for `GET …/pages/{id}`, its history and versions,
+  `GET …/files/{path}` and `GET …/sync/pages` (one row an hour for each
+  administrator and page or path), and, as the path `pages?body=1`, for a listing
+  that asks for the pages' text.
+- A view of a space of a disabled tenant is `403 space_disabled`. The capability
+  `data.adminView` is 3.6's; until then every administrator who may see a space
+  may view it.
 
 Regional or compliance refinements (telling the owner first, a second
 administrator's approval, a longer retention of these rows) are a later item
@@ -7222,6 +7565,21 @@ of file, images included.
   (the site's for a caller not signed in); 4.1's offline uploads use it.
 - The effective value is read from the settings cache (one map lookup), never
   per layer on a request.
+- **As built.** The site's value is `--max-upload` and cannot be written
+  (`PUT /api/admin/settings/files.maxBytes` with a `value` answers `409
+  conflict`, as for any setting a flag sets); its `lower` can be changed, but the
+  value in effect is never above `--max-upload` whatever the layers say. A page
+  that is over the limit already (the limit was lowered) can still be saved
+  again at its size or smaller: only a write that makes an over-limit file
+  larger, or a new one, is refused. Templates and types are judged as pages are.
+  A draft the server commits on its own (the sweeper) is judged by its person's
+  limit; one over it is not written and is kept, held. A draft is judged when it is put and again
+  when it is committed. An import is judged whole before anything is written:
+  the first page or attachment over the limit is named and nothing is imported
+  (`name` is the path in the zip). The upload endpoint's old `413 invalid` is
+  now `413 file_too_large`; the `413 invalid` of a request body over `maxBody`
+  or `maxImport` stays as it was. 4.2's offline replay does not exist yet; it
+  goes through the same page writes, so it is judged by them.
 
 ### Audit
 

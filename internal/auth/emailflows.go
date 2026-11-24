@@ -231,6 +231,11 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	if barred, err := s.retiredName(ctx, s.st.Q(), username); err != nil {
+		return err
+	} else if barred {
+		return errf(Exists, "that username is taken")
+	}
 	if held, err := store.PendingUsername(ctx, s.st.Q(), username, s.now()); err != nil {
 		return err
 	} else if held {

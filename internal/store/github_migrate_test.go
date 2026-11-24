@@ -136,10 +136,9 @@ func TestGitHubMigrationAfterTheTenantsMigration(t *testing.T) {
 		}
 		exec := execer(t, st)
 		seedUserAndSpace(t, st, exec)
-		// Usage rows as 3.3 keeps them for a space made on main.
-		if _, err := st.RecountUsage(ctx); err != nil {
-			t.Fatal(err)
-		}
+		// Usage rows as 3.3 keeps them for a space made on main (the recount of
+		// today needs the tables 0013 makes).
+		seedUsageOf3_3(t, st)
 		if err := st.Migrate(ctx); err != nil {
 			t.Fatal(err)
 		}

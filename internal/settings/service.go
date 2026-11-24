@@ -34,9 +34,10 @@ type Service struct {
 	bind map[string]SiteBinding
 	now  func() time.Time
 
-	mu    sync.Mutex
-	gen   uint64
-	cache map[string]*cached // by tenant id ("" for the site alone)
+	mu      sync.Mutex
+	ceiling int64 // --max-upload, see SetFileCeiling
+	gen     uint64
+	cache   map[string]*cached // by tenant id ("" for the site alone)
 }
 
 type cached struct {
@@ -52,6 +53,43 @@ func New(st *store.Store) *Service {
 		s.byK[d.Key] = d
 	}
 	return s
+}
+
+// SetFileCeiling makes max (--max-upload) the site's value of files.maxBytes,
+// which no request can change, and the largest value a tenant may set: the
+// site's lower rule is "restrict, at most max" until a site administrator
+// says otherwise. Whatever the rules are, the value in effect never goes
+// above max (see FileLimit).
+func (s *Service) SetFileCeiling(max int64) {
+	d := s.byK[FilesMaxBytes]
+	d.Default = max
+	d.Lower = Lower{Mode: Restrict, Max: &max}
+	s.Bind(FilesMaxBytes, SiteBinding{
+		Get:      func(context.Context, store.Q) (any, error) { return max, nil },
+		Set:      func(context.Context, store.Q, any) error { return errors.New("set by --max-upload") },
+		ReadOnly: func() bool { return true },
+	})
+	s.mu.Lock()
+	s.ceiling = max
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// FileLimit is files.maxBytes in effect for a tenant: the settings cache's
+// value (one map lookup), at most the ceiling. 0 when no ceiling was set.
+func (s *Service) FileLimit(ctx context.Context, tenant string) int64 {
+	s.mu.Lock()
+	ceil := s.ceiling
+	s.mu.Unlock()
+	e, err := s.Get(ctx, tenant, FilesMaxBytes)
+	if err != nil {
+		return ceil
+	}
+	n, ok := e.Value.(int64)
+	if !ok || n <= 0 || (ceil > 0 && n > ceil) {
+		return ceil
+	}
+	return n
 }
 
 // Defs lists the definitions in order.

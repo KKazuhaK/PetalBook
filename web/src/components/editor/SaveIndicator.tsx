@@ -2,6 +2,7 @@ import { AlertTriangle, Check, CircleDashed, CircleDot, CloudOff, Loader2, LogIn
 import { ApiError } from '@/api/client'
 import type { SaveSnapshot } from '@/editor/saveController'
 import { t } from '@/i18n'
+import { fileTooLargeShort, fileTooLargeText } from '@/lib/fileTooLarge'
 
 const quiet = 'inline-flex items-center gap-1 text-xs text-muted-foreground'
 
@@ -82,6 +83,25 @@ export function SaveIndicator({
           >
             <CloudOff className="size-3.5" />
             {t.fmt.note(draftSafe ? u.commitDraft : u.commitLocal, s.retry)}
+          </button>
+        )
+      }
+      // A file over the limit: the text is not lost, it stays here; saying so is the message.
+      const big = fileTooLargeShort(e)
+      if (big) {
+        return (
+          <button
+            type="button"
+            onClick={onRetry}
+            title={fileTooLargeText(e)}
+            role="alert"
+            data-slot="file-too-large"
+            // On a phone the bar is narrow: the words are cut short there rather than pushing the page sideways, and
+            // the button is tall enough for a finger.
+            className="inline-flex max-w-[45vw] min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10 max-md:min-h-10 pointer-coarse:min-h-10 sm:max-w-none"
+          >
+            <AlertTriangle className="size-3.5 shrink-0" />
+            <span className="truncate">{t.fmt.note(big, s.retry)}</span>
           </button>
         )
       }

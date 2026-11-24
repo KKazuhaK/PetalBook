@@ -14,6 +14,7 @@ package gitstore
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -217,6 +218,11 @@ var allowedOptions = map[string][]string{
 	"rev-list":     {"--count", "--left-right", "--not", "--objects", "--missing=print", "--all"},
 	"rev-parse":    {"--is-inside-work-tree", "--abbrev-ref", "--absolute-git-dir", "--show-prefix", "--verify", "--quiet", "--short"},
 	"status":       {"--porcelain", "-z", "--untracked-files=no", "--untracked-files=normal"},
+	// An export of a space (3.5): the files of a commit as a tar, and a bundle
+	// of the whole history. Both only read the repository (the bundle writes
+	// one file, named by the caller, outside it).
+	"archive": {},
+	"bundle":  {},
 }
 
 // partialConfigKeys are the keys of a clone's own configuration that make it
@@ -298,6 +304,16 @@ func refuseDestructive(args []string) error {
 		if _, err := keepRefArgs(strings.TrimPrefix(rest[0], keepRefPrefix), rest[1]); err != nil {
 			return fmt.Errorf("%w: update-ref %s", errDestructive, strings.Join(rest, " "))
 		}
+	case "archive":
+		// Exactly: archive --format=tar <a commit id>. The id is never an option.
+		if len(rest) != 2 || rest[0] != "--format=tar" || !commitIDLike(rest[1]) {
+			return fmt.Errorf("%w: archive %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "bundle":
+		// Exactly: bundle create <file> --all, the file an absolute path.
+		if len(rest) != 3 || rest[0] != "create" || rest[2] != "--all" || !filepath.IsAbs(rest[1]) || strings.HasPrefix(rest[1], "-") {
+			return fmt.Errorf("%w: bundle %s", errDestructive, strings.Join(rest, " "))
+		}
 	case "write-tree", "read-tree":
 		// write-tree takes nothing; read-tree only the commit to read.
 		if (sub == "write-tree" && len(rest) != 0) || (sub == "read-tree" && (len(rest) != 1 || rest[0] != "HEAD")) {
@@ -334,4 +350,17 @@ func refuseDestructive(args []string) error {
 		}
 	}
 	return nil
+}
+
+// commitIDLike is true for a full commit id (40 or 64 hex characters).
+func commitIDLike(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }

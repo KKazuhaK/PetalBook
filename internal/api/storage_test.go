@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"sync"
@@ -88,8 +89,15 @@ func TestStorageSettingsEndpoint(t *testing.T) {
 		if cache["minIdleHours"] != float64(48) || cache["evictAfterDays"] != nil || cache["minFreeBytes"] != float64(10<<30) || p.body["localSpaces"].(map[string]any)["maxBytes"] != float64(5<<20) {
 			t.Fatal(p.raw)
 		}
-		if g2 := c.do("GET", "/api/admin/storage", nil).want(t, 200, ""); g2.raw != p.raw {
-			t.Fatalf("GET differs from PUT:\n%s\n%s", g2.raw, p.raw)
+		g2 := c.do("GET", "/api/admin/storage", nil).want(t, 200, "")
+		if g2.body["summary"] == nil || p.body["summary"] != nil {
+			t.Fatalf("GET has the summary and PUT does not:\n%s\n%s", g2.raw, p.raw)
+		}
+		delete(g2.body, "summary")
+		gj, _ := json.Marshal(g2.body)
+		pj, _ := json.Marshal(p.body)
+		if string(gj) != string(pj) {
+			t.Fatalf("GET differs from PUT:\n%s\n%s", gj, pj)
 		}
 		// Ranges.
 		for _, bad := range []map[string]any{

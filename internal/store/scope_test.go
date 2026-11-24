@@ -74,11 +74,23 @@ var scopeAllowlist = map[string]string{
 	"PageDrafts":              "a space already opened",
 	"LockFavorites":           "locks one user's row to serialise changes of their own favourites",
 	// --- linking statements: the statement itself joins both rows on one tenant ---
-	"AddMember":         "INSERT ... SELECT joining the space and the user on tenant_id",
-	"AddSpaceGroup":     "INSERT ... SELECT joining the space and the group on tenant_id",
-	"AddLocalMembers":   "INSERT ... SELECT joining the group and each person on tenant_id",
-	"ApplySynced":       "INSERT ... SELECT joining the group and the person on tenant_id",
-	"TransferOwnership": "INSERT ... SELECT joining the space and the new owner on tenant_id",
+	"AddMember":          "INSERT ... SELECT joining the space and the user on tenant_id",
+	"AddSpaceGroup":      "INSERT ... SELECT joining the space and the group on tenant_id",
+	"AddLocalMembers":    "INSERT ... SELECT joining the group and each person on tenant_id",
+	"ApplySynced":        "INSERT ... SELECT joining the group and the person on tenant_id",
+	"TransferOwnership":  "INSERT ... SELECT joining the space and the new owner on tenant_id",
+	"RestoreSpaceRows":   "INSERT ... SELECT joining the space and each person and group on tenant_id; the item was found in scope by the caller",
+	"RecycledView":       "reads the records of an item already found in scope, and a person's name by id",
+	"GetUserAny":         "the recycle bin and the audit log name a person who is deleted; the caller found them through an item in scope",
+	"GetUserState":       "whether a person is deleted, for the recycle bin's own steps, by the id of an item already found in scope",
+	"PurgeUserData":      "the purge of a person's item, which the caller found in scope; or the server's own job",
+	"RestoreUserRows":    "the restore of a person's item, which the caller found in scope",
+	"TenantsOf":          "the tenant of each id a bulk job works on, for its queue; the ids were checked in the caller's scope when the job was confirmed",
+	"LeaveSpace":         "one person's membership of a space already found, by ids; reads the other owners of that space",
+	"BeginUserDeletion":  "the record of a deletion of a person the caller found in scope (GetUser), by id",
+	"NoteUserDeletion":   "the record of a deletion of a person the caller found in scope, by id",
+	"ForgetUserDeletion": "the record of a deletion of a person the caller found in scope, by id",
+	"SweepTombstones":    "background job: the rows of purged people that nothing refers to, of every tenant",
 	// --- inserts: the tenant is a column of the new row, chosen by the caller ----
 	"InsertUser":   "the new row carries its tenant",
 	"InsertSpace":  "the new row carries its tenant",
@@ -115,36 +127,34 @@ var scopeAllowlist = map[string]string{
 	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
 	// tenant's: owner), set up by site administrators; a connection and a reminder are
 	// their user's; the account link is unique per provider on the whole server ---
-	"ListConnProviderRows":         "the server's providers, loaded at start and shown to site administrators; visibility by owner is the registry's rule",
-	"GetConnProviderRow":           "a provider by its id, for administrators and the provider's own reads",
-	"CountConnProviderRows":        "how many providers an owner has, for the limit",
-	"InsertConnProviderRow":        "a provider set up by a site administrator",
-	"UpdateConnProviderRow":        "a provider changed by a site administrator",
-	"SetConnProviderState":         "what a check of a provider's host found, written only to the application it was made with",
-	"ExpireProviderAuthorizations": "the provider's application was replaced by a site administrator: every connection to it ends",
-	"SetConnProviderPartial":       "what a check of a provider's host found",
-	"DeleteConnProviderRow":        "a provider removed by a site administrator",
-	"DeleteTenantConnProviderRows": "a tenant is being deleted: its own providers go with it",
-	"GetProviderAuthorization":     "one person's connection, by the id of a user already found in scope",
-	"ProviderAccountUser":          "an account on a host links to one PetalBook user on the whole server; callers learn only that it is taken (account_in_use)",
-	"PutProviderAuthorization":     "the caller's own connection; its account check is site-wide, as ProviderAccountUser's",
-	"ReplaceProviderTokens":        "one person's connection, by the id of a user already found",
-	"ExpireProviderAuthorization":  "one person's connection, by the id of a user already found",
-	"DeleteProviderAuthorization":  "the caller's own connection, or that of a user being deleted",
-	"DueProviderRenewals":          "background job: the daily renewal of the connections of every tenant",
-	"ListProviderAuthorizations":   "the provider was removed (site administrators only): every connection to it is revoked",
-	"CountProviderAuthorizations":  "the provider's own count, shown to site administrators only",
-	"CountProviderSpaces":          "the provider's own count, shown to site administrators only",
-	"CountUserProviderSpaces":      "the spaces syncing through one person's connection: same-tenant, as connecting checks",
-	"PutProviderLeftover":          "a reminder of the caller's own, by the id of a user already found",
-	"ListProviderLeftovers":        "the caller's own reminders, by the id of a user already found",
-	"DeleteProviderLeftover":       "the caller's own reminder, by the id of a user already found",
-	"MemberStanding":               "one person's roles on a space already found: memberships are same-tenant by construction",
-	"GetRemote":                    "the remote of a space already opened by the caller",
-	"PutRemote":                    "the remote of a space already opened, or one being made in the caller's tenant",
-	"UpdateRemoteStatus":           "the remote of an open space, by its id",
-	"DeleteRemote":                 "the remote of a space already opened by the caller",
-	"RemoteStates":                 "the server's map of sync states, read by space id",
+	"ListConnProviderRows":             "the server's providers, loaded at start and shown to site administrators; visibility by owner is the registry's rule",
+	"GetConnProviderRow":               "a provider by its id, for administrators and the provider's own reads",
+	"CountConnProviderRows":            "how many providers an owner has, for the limit",
+	"InsertConnProviderRow":            "a provider set up by a site administrator",
+	"UpdateConnProviderRow":            "a provider changed by a site administrator",
+	"SetConnProviderState":             "what a check of a provider's host found, written only to the application it was made with",
+	"ExpireProviderAuthorizations":     "the provider's application was replaced by a site administrator: every connection to it ends",
+	"SetConnProviderPartial":           "what a check of a provider's host found",
+	"GetProviderAuthorization":         "one person's connection, by the id of a user already found in scope",
+	"ProviderAccountUser":              "an account on a host links to one PetalBook user on the whole server; callers learn only that it is taken (account_in_use)",
+	"ReplaceProviderTokens":            "one person's connection, by the id of a user already found",
+	"ExpireProviderAuthorization":      "one person's connection, by the id of a user already found",
+	"DeleteUserProviderAuthorizations": "a person being deleted: their connections go with them",
+	"DeleteProviderAuthorization":      "the caller's own connection, or that of a user being deleted",
+	"DueProviderRenewals":              "background job: the daily renewal of the connections of every tenant",
+	"ListProviderAuthorizations":       "the provider was removed (site administrators only): every connection to it is revoked",
+	"CountProviderAuthorizations":      "the provider's own count, shown to site administrators only",
+	"CountProviderSpaces":              "the provider's own count, shown to site administrators only",
+	"CountUserProviderSpaces":          "the spaces syncing through one person's connection: same-tenant, as connecting checks",
+	"PutProviderLeftover":              "a reminder of the caller's own, by the id of a user already found",
+	"ListProviderLeftovers":            "the caller's own reminders, by the id of a user already found",
+	"DeleteProviderLeftover":           "the caller's own reminder, by the id of a user already found",
+	"MemberStanding":                   "one person's roles on a space already found: memberships are same-tenant by construction",
+	"GetRemote":                        "the remote of a space already opened by the caller",
+	"PutRemote":                        "the remote of a space already opened, or one being made in the caller's tenant",
+	"UpdateRemoteStatus":               "the remote of an open space, by its id",
+	"DeleteRemote":                     "the remote of a space already opened by the caller",
+	"RemoteStates":                     "the server's map of sync states, read by space id",
 	// --- 3.1: server storage. The disk, its policy and the cache of clones are the
 	// server's own (site administrators only, design.md 3.3's table); a space's
 	// records are reached by the id of a space already found ---
@@ -162,6 +172,7 @@ var scopeAllowlist = map[string]string{
 	"SumStorage":               "the server's disk, shown to site administrators only",
 	"EvictionCandidates":       "background job: the eviction of idle spaces of every tenant from the server's disk",
 	"CloneBytesOfRemoteSpaces": "background job: the server's disk budget for clones",
+	"SpaceTenants":             "the tenant of each space an in-memory cache names, by id",
 	"PinnedSpaceIDs":           "background job: the spaces kept on the server's disk, of every tenant",
 	"PutAssetRemote":           "the attachment repository of a space already opened, or one being made in the caller's tenant",
 }
@@ -248,3 +259,108 @@ func touches(body *ast.BlockStmt) bool {
 // The tables of 2.7 count as well: a GitHub connection is a user's and a remote
 // a space's, so a function that reaches them across users needs a reason.
 var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|providers|provider_authorizations|provider_leftovers|remotes)\b`)
+
+// A function that reads people leaves out the ones in the recycle bin
+// (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
+// users table that does not say deleted_at is on this list with the reason.
+var deletedAllowlist = map[string]string{
+	"EndTenantSessions":       "ends every session of a tenant's people when it is disabled; ending the (already ended) sessions of a deleted person too is harmless",
+	"DeleteTenantSessionEnds": "forgets a tenant's `disabled` records when it is enabled again; a deleted person's records go with the rest",
+	"GetUserAny":              "names a deleted person on purpose: the recycle bin and the audit log show them",
+	"GetUserState":            "reads whether a person is deleted",
+	"PlanUserDeletion":        "its first read is GetUser; the other queries are of people who are members of spaces of the person, filtered where it matters",
+	"FinishUserDeletion":      "marks the person: it reads and writes a row that is not deleted yet",
+	"RestoreUserRows":         "restores a deleted person",
+	"PurgeUserData":           "purges a deleted person",
+	"userDeletionPending":     "the record of a deletion under way, of a person who is not deleted yet (or who was just marked, in the same transaction)",
+	"SweepTombstones":         "the sweep of purged people",
+	"RecycledView":            "the name of the author of a draft kept in an item",
+	"RecordFolderMove":        "",
+	"HasUsers":                "whether the server has any account at all (setup): a deleted person's row counts",
+	"GetPolicyFacts":          "whether an owner of a space is exempt: the owners of a live space are not deleted",
+	"PolicyCounts":            "the same, counted for the whole server",
+	"policyConds":             "the same, as a condition",
+	"ListAllSpaces":           "the owner of each space of a page: the owners of a live space are not deleted",
+	"queryAdminSpaces":        "the owner of each space of a page: the owners of a live space are not deleted",
+	"deadlineCond":            "whether an owner of a space is exempt: the owners of a live space are not deleted",
+	"SettleDeadlines":         "whether an owner of a space is exempt: the owners of a live space are not deleted",
+	"InsertAudit":             "the tenant of the person an audit row is about, by id: the log names deleted people too",
+	"ofUser":                  "the condition of a person's tenant, for the lists of tokens and grants (a deleted person's are revoked)",
+	"seedUsage":               "runs in the migration that makes the usage table, before deleted_at exists",
+	"UserTenant":              "the tenant of a person by id, for what they may use of the GitHub App; a deleted person has no connection left",
+	"ListMembers":             "the members of a space: a deleted person has none left",
+	"GetMember":               "a member of a space: a deleted person has none left",
+	"SpaceOwner":              "the owner of a space already opened: a deleted person has none left",
+	"CountOtherEnabledOwners": "owners of a space already opened: a deleted person has none left",
+	"MemberStanding":          "the roles of a person's memberships: a deleted person has none left",
+	"ListUserSpaces":          "the spaces of a person by their own memberships: a deleted person has none left",
+	"UserHasIdentityOf":       "an identity of a person by id",
+	"GetTermsAccepted":        "the person's own record, by id",
+	"SetTermsAccepted":        "the person's own record, by id",
+	"EmailVerifiedBy":         "the person's own record, by id",
+	"SetEmail":                "a person already found",
+	"UserQuota":               "a person already found",
+	"SetUserQuota":            "a person already found",
+	"UsersWithQuota":          "the quotas set on people: a deleted person's is purged with them",
+	"UserUsageRows":           "the usage rows of people, read to put them right: a deleted person has one until they are purged",
+	"RecountUsage":            "puts the usage rows right: it counts the tenant's people without the deleted",
+	"CountEnabledAdmins":      "counts enabled administrators: through CountEnabledAdminsOutside, which leaves the deleted out",
+	"DisabledSpaces":          "",
+	"ListHeldDrafts":          "held drafts of people: a deleted person's are purged with them",
+	"PageDrafts":              "the drafts of a page, with the names of their authors",
+	"SpaceDrafts":             "the drafts of a space, with the names of their authors",
+	"ListAPITokens":           "tokens with their owners' names: a deleted person's are revoked",
+	"ListOAuthGrants":         "grants with their owners' names: a deleted person's are revoked",
+	"ListUserUsage":           "",
+	"GitHubSpaceCounts":       "",
+	"RemoteUserState":         "",
+}
+
+func TestEveryReadOfPeopleLeavesOutTheDeleted(t *testing.T) {
+	fset := token.NewFileSet()
+	files, err := parser.ParseDir(fset, ".", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := files["store"]
+	reads := regexp.MustCompile(`(?is)\bSELECT\b.*\b(FROM|JOIN)\s+users\b`)
+	var missing []string
+	for name, f := range pkg.Files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			reading, filtered := false, false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					return true
+				}
+				if reads.MatchString(s) {
+					reading = true
+				}
+				if strings.Contains(s, "deleted_at") {
+					filtered = true
+				}
+				return true
+			})
+			if reading && !filtered {
+				if _, ok := deletedAllowlist[fn.Name.Name]; !ok {
+					missing = append(missing, fn.Name.Name)
+				}
+			}
+		}
+	}
+	sort.Strings(missing)
+	for _, m := range missing {
+		t.Errorf("%s reads the users table and does not leave out deleted_at: add the condition, or put it on deletedAllowlist with the reason", m)
+	}
+}

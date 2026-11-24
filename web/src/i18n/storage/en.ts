@@ -96,6 +96,7 @@ export const storageEn = {
       full: 'Full clone',
       partial: 'Partial clone',
       evicted: 'Evicted',
+      archived: 'Archived',
       restoring: 'Restoring',
     },
     cacheHelp: {
@@ -103,6 +104,7 @@ export const storageEn = {
       full: 'Every version of every file is on the server.',
       partial: 'The current text and every commit; older versions are fetched on demand.',
       evicted: 'Only the index is on the server; the next use fetches the clone again.',
+      archived: "Only the space's record is on the server; opening it fetches the text again.",
       restoring: 'Being fetched from the remote right now.',
     },
     filter: 'Show',

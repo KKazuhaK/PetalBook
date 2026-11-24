@@ -124,6 +124,8 @@ export const tenantsZhCN = {
       'quota.spacesPerPerson': '每人的空间数上限',
       'quota.bytesPerPerson': '每人的磁盘上限（字节）',
       'quota.pagesPerPerson': '每人的页面数上限',
+      'files.maxBytes': '单个文件的大小上限（字节）',
+      'recycle.days': '回收站保留的天数',
     } as Record<string, string>,
     helps: {
       'registration.open': '默认关，并且对租户锁定：要开，全站管理员先放开，再在租户上打开。需要已启用的发信。',
@@ -135,6 +137,9 @@ export const tenantsZhCN = {
         '一个人最多可以拥有多少个空间，0 是不限，到了上限就不能再建新的。给了 --max-spaces 时以参数为准。个人的上限在「用户和邀请」里设。',
       'quota.bytesPerPerson': '一个人的空间占多少字节，留空是不限。超出只提醒，不拒绝。',
       'quota.pagesPerPerson': '一个人的空间一共有多少页，留空是不限。超出只提醒，不拒绝。',
+      'files.maxBytes':
+        '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',
+      'recycle.days': '删除的空间和人先在回收站保留多少天，之后才真正清除。只有全站管理员能设。',
     } as Record<string, string>,
   },
 }

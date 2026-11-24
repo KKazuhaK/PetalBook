@@ -654,6 +654,7 @@ func TestAGrantIsNeverMoreThanItsOwner(t *testing.T) {
 
 		// An administrator's grant has no way into spaces they are not a member of.
 		ag := a.bearer(grant(t, a, admin, "write", admin.personalSpace()).access, "")
+		admin.do("POST", "/api/admin/spaces/"+tm.sid+"/view", map[string]any{"reason": "test"}).want(t, 200, "")
 		admin.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
 		ag.tool("folders_list", map[string]any{"space": tm.sid}).refused(t, "token_scope")
 		ag.do("GET", "/api/admin/status", nil).want(t, 403, "token_scope")

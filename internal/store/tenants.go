@@ -18,6 +18,9 @@ import (
 type Scope struct {
 	tenant string
 	all    bool
+	// noPersonal leaves personal spaces out of what the scope sees of spaces and
+	// of the recycle bin (AdminScopeOf: a tenant administrator's).
+	noPersonal bool
 }
 
 // InTenant is the scope of one tenant.
@@ -36,7 +39,7 @@ func (sc Scope) Tenant() string { return sc.tenant }
 // site administrator's ?tenant= filter. A one-tenant scope stays as it is.
 func (sc Scope) Narrow(id string) Scope {
 	if sc.all && id != "" {
-		return InTenant(id)
+		return Scope{tenant: id, noPersonal: sc.noPersonal}
 	}
 	return sc
 }
@@ -62,6 +65,33 @@ func (sc Scope) ofUser(col string) (string, []any) {
 		return "1 = 0", nil
 	}
 	return col + " IN (SELECT id FROM users WHERE tenant_id = ?)", []any{sc.tenant}
+}
+
+// AdminScopeOf is ScopeOf for what an administrator reaches of spaces through
+// the administration: a tenant administrator's scope leaves personal spaces
+// out, live or in the recycle bin, so that every query of a space by id or by
+// list answers for a personal one as for a space that does not exist
+// (docs/api.md, "Viewing a space": a personal space is never reachable by a
+// tenant administrator). Deleting a person, which takes their personal space
+// with them, uses ScopeOf. Restoring one uses this scope too: the person's item
+// is not a personal space, and their personal space comes back with them by
+// the item it was recycled with, not through the scope.
+func AdminScopeOf(u User) Scope {
+	sc := ScopeOf(u)
+	if !sc.all {
+		sc.noPersonal = true
+	}
+	return sc
+}
+
+// spaceCond is cond on a row of a space (tenantCol), with the condition that it
+// is not a personal one (notPersonal) for a scope that leaves those out.
+func (sc Scope) spaceCond(tenantCol, notPersonal string) (string, []any) {
+	cond, args := sc.cond(tenantCol)
+	if sc.noPersonal {
+		cond += " AND " + notPersonal
+	}
+	return cond, args
 }
 
 // ScopeOf is the scope an administrator acts in: every tenant for a site
@@ -92,7 +122,7 @@ func (t Tenant) IsDefault() bool { return t.ID == DefaultTenantID }
 const MaxTenants = 1000
 
 // ErrTenantNotEmpty is the refusal of deleting a tenant that still has rows.
-type ErrTenantNotEmpty struct{ Users, Spaces, Groups, Invites int }
+type ErrTenantNotEmpty struct{ Users, Spaces, Groups, Invites, Recycle int }
 
 func (*ErrTenantNotEmpty) Error() string { return "the tenant is not empty" }
 
@@ -180,15 +210,22 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 }
 
 // TenantCounts is what a tenant holds.
-type TenantCounts struct{ Users, Spaces, Groups, Invites int }
+type TenantCounts struct {
+	Users, Spaces, Groups, Invites int
+
+	// Recycle is the items of the recycle bin held for the tenant: it cannot be
+	// deleted while one is there, so a restore always finds its tenant.
+	Recycle int
+}
 
 // CountTenantRows counts the users, spaces, groups and invites of a tenant.
 func CountTenantRows(ctx context.Context, q Q, id string) (c TenantCounts, err error) {
 	err = q.QueryRow(ctx, `SELECT
-		(SELECT COUNT(*) FROM users WHERE tenant_id = ?),
+		(SELECT COUNT(*) FROM users WHERE tenant_id = ? AND deleted_at IS NULL),
 		(SELECT COUNT(*) FROM spaces WHERE tenant_id = ?),
 		(SELECT COUNT(*) FROM groups WHERE tenant_id = ?),
-		(SELECT COUNT(*) FROM invites WHERE tenant_id = ?)`, id, id, id, id).Scan(&c.Users, &c.Spaces, &c.Groups, &c.Invites)
+		(SELECT COUNT(*) FROM invites WHERE tenant_id = ?),
+		(SELECT COUNT(*) FROM recycle_items WHERE tenant_id = ?)`, id, id, id, id, id).Scan(&c.Users, &c.Spaces, &c.Groups, &c.Invites, &c.Recycle)
 	return
 }
 
@@ -328,7 +365,7 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 			return err
 		}
 		if c.Users+c.Spaces+c.Groups+c.Invites > 0 {
-			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites}
+			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites, c.Recycle}
 		}
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
 			return err

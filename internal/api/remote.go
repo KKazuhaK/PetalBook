@@ -182,6 +182,7 @@ func (s *server) getHistory(c *call) {
 	if !ok {
 		return
 	}
+	s.viewedPage(c, id)
 	limit := 30
 	if l := c.r.URL.Query().Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
@@ -211,6 +212,7 @@ func (s *server) getVersion(c *call) {
 	if !ok {
 		return
 	}
+	s.viewedPage(c, id)
 	v, err := c.sp.Space.Version(c.r.Context(), id, c.r.PathValue("commit"))
 	if err != nil {
 		s.fail(c.w, err)

@@ -28,6 +28,8 @@ export const ADMIN_SECTIONS = [
   'users',
   'groups',
   'spaces',
+  'manage',
+  'recycle',
   'daily',
   'access',
   'storage',

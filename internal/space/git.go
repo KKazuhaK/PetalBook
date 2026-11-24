@@ -39,7 +39,14 @@ func ParseCommitter(s string) (name, email string, err error) {
 // in the app (for example "API token"): the commit ends with a
 // "Changed-via: <Via>" trailer, and a change made by one means is never
 // committed together with a change made by another.
-type Author struct{ Name, Email, Via string }
+type Author struct {
+	Name, Email, Via string
+	// MaxFile is the largest file this change may write (files.maxBytes of the
+	// author's tenant); 0 sets no limit. A page or an attachment over it is
+	// refused with a *FileTooLargeError before anything is written. What
+	// already exists is never checked: a lower limit makes no file unreadable.
+	MaxFile int64
+}
 
 // ViaToken is the Via of a change made on the API with an API token.
 const ViaToken = "API token"
@@ -59,6 +66,43 @@ func ContextWithVia(ctx context.Context, via string) context.Context {
 func ViaFrom(ctx context.Context) string {
 	v, _ := ctx.Value(viaKey{}).(string)
 	return v
+}
+
+type maxFileKey struct{}
+
+// ContextWithMaxFile carries the largest file a change may write down to the
+// code that learns the author of a change only by the id of the person (the
+// drafts service).
+func ContextWithMaxFile(ctx context.Context, n int64) context.Context {
+	return context.WithValue(ctx, maxFileKey{}, n)
+}
+
+// MaxFileFrom is the limit ContextWithMaxFile put in ctx, or 0.
+func MaxFileFrom(ctx context.Context) int64 {
+	n, _ := ctx.Value(maxFileKey{}).(int64)
+	return n
+}
+
+// FileTooLargeError is a file over the size limit (files.maxBytes): the API
+// answers it 413 file_too_large. Size is 0 when the size is not known.
+type FileTooLargeError struct {
+	Limit, Size int64
+	Name        string
+}
+
+func (e *FileTooLargeError) Error() string {
+	return fmt.Sprintf("%s is larger than the %d bytes a file may be", e.Name, e.Limit)
+}
+
+// checkFileSize refuses a file of size bytes the author may not write.
+// existing is the size of the file it replaces (0 for a new one): a rewrite
+// that does not make it larger is allowed, so a page that is over a limit
+// lowered after it was written can still be changed, and cut down.
+func (a Author) checkFileSize(name string, size int64, existing int64) error {
+	if a.MaxFile <= 0 || size <= a.MaxFile || size <= existing {
+		return nil
+	}
+	return &FileTooLargeError{Limit: a.MaxFile, Size: size, Name: path.Base(name)}
 }
 
 // cleanVia makes a Via fit a trailer: one line, no surrounding space.

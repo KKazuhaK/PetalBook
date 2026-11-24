@@ -758,6 +758,7 @@ func TestFavoritesInAccountsMode(t *testing.T) {
 			t.Fatalf("favourites of a removed member: %d, were %d (%v)", len(kept), len(before), err)
 		}
 		// Not shown to the administrator who opens the space either, whoever they are.
+		boss.do("POST", "/api/admin/spaces/"+tm.sid+"/view", map[string]any{"reason": "test"}).want(t, 200, "")
 		if r := boss.do("GET", base+"/favorites", nil).want(t, 200, ""); len(favItems(t, r.body)) != 0 {
 			t.Fatalf("%s", r.raw)
 		}

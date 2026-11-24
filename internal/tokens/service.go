@@ -178,6 +178,11 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "the account this token belongs to is disabled")
 	}
 	s.touch(ctx, e.key, now)
+	if s.st != nil {
+		if err := s.st.NoteActive(ctx, u.ID, now); err != nil {
+			s.log.Warn("could not record a person's last use", "error", err)
+		}
+	}
 	return &auth.Principal{User: *u, Grant: e.grant}, nil
 }
 

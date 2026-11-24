@@ -76,12 +76,20 @@ export const storageZhCN: StorageMessages = {
   },
   spaces: {
     cache: '服务器上的副本',
-    caches: { local: '仅本地', full: '完整克隆', partial: '部分克隆', evicted: '已清掉', restoring: '取回中' },
+    caches: {
+      local: '仅本地',
+      full: '完整克隆',
+      partial: '部分克隆',
+      evicted: '已清掉',
+      archived: '已归档',
+      restoring: '取回中',
+    },
     cacheHelp: {
       local: '只在这台服务器上：不会做部分克隆，也不会被清掉。',
       full: '每个文件的每个版本都在服务器上。',
       partial: '有当前的文字和所有提交；旧版本要用时再取。',
       evicted: '服务器上只剩索引；下次用到时再取回克隆。',
+      archived: '服务器上只留下这个空间的记录；打开它时再取回文字。',
       restoring: '正在从远端取回。',
     },
     filter: '显示',

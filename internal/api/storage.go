@@ -26,24 +26,24 @@ type storageResp struct {
 	} `json:"remotes"`
 	Hosts struct {
 		Allowed  []string `json:"allowed"`
-		FromFlag bool     `json:"fromFlag"`
+		FromFlag *bool    `json:"fromFlag,omitempty"` // the site's only
 	} `json:"hosts"`
 	LocalSpaces struct {
 		MaxBytes *int64 `json:"maxBytes"`
 	} `json:"localSpaces"`
 	Cache struct {
-		Partial        bool   `json:"partial"`
-		EvictAfterDays *int   `json:"evictAfterDays"`
-		MinIdleHours   int    `json:"minIdleHours"`
-		ClonesBytes    *int64 `json:"clonesBytes"`
-		MinFreeBytes   *int64 `json:"minFreeBytes"`
-		AssetsBytes    int64  `json:"assetsBytes"`
+		Partial        bool    `json:"partial"`
+		EvictAfterDays *int    `json:"evictAfterDays"`
+		MinIdleHours   int     `json:"minIdleHours"`
+		ClonesBytes    *int64  `json:"clonesBytes"`
+		MinFreeBytes   **int64 `json:"minFreeBytes,omitempty"` // the site's only; null inside is "no floor"
+		AssetsBytes    int64   `json:"assetsBytes"`
 	} `json:"cache"`
 	Assets struct {
 		NewSpaces bool `json:"newSpaces"`
 	} `json:"assets"`
 	Git struct {
-		Version      string `json:"version"`
+		Version      string `json:"version,omitempty"` // the site's only
 		PartialClone bool   `json:"partialClone"`
 	} `json:"git"`
 	Affected struct {
@@ -53,30 +53,65 @@ type storageResp struct {
 	} `json:"affected"`
 }
 
-func (s *server) storageBody(set spaces.StorageSettings, aff spaces.Affected) storageResp {
+// storageBody is the settings. The details of the server itself (the Git it
+// runs, a flag that sets the hosts, the disk floor) are for site only.
+func (s *server) storageBody(set spaces.StorageSettings, aff spaces.Affected, site bool) storageResp {
 	var r storageResp
 	r.Remotes.Require, r.Remotes.Scope, r.Remotes.GraceDays = set.Remotes.Require, set.Remotes.Scope, set.Remotes.GraceDays
 	if !set.Remotes.Since.IsZero() {
 		t := rfc3339(set.Remotes.Since)
 		r.Remotes.Since = &t
 	}
-	r.Hosts.Allowed, r.Hosts.FromFlag = set.Hosts.Allowed, s.spaces.HostsFromFlag()
+	r.Hosts.Allowed = set.Hosts.Allowed
 	r.LocalSpaces.MaxBytes = set.LocalSpaces.MaxBytes
 	c := set.Cache
-	r.Cache.Partial, r.Cache.EvictAfterDays, r.Cache.MinIdleHours, r.Cache.ClonesBytes, r.Cache.MinFreeBytes = c.Partial, c.EvictAfterDays, c.MinIdleHours, c.ClonesBytes, c.MinFreeBytes
+	r.Cache.Partial, r.Cache.EvictAfterDays, r.Cache.MinIdleHours, r.Cache.ClonesBytes = c.Partial, c.EvictAfterDays, c.MinIdleHours, c.ClonesBytes
 	r.Cache.AssetsBytes, r.Assets.NewSpaces = c.AssetsBytes, set.Assets.NewSpaces
-	r.Git.Version, r.Git.PartialClone = s.spaces.GitInfo()
+	version, partial := s.spaces.GitInfo()
+	r.Git.PartialClone = partial
+	if site {
+		flag := s.spaces.HostsFromFlag()
+		r.Hosts.FromFlag, r.Cache.MinFreeBytes, r.Git.Version = &flag, &c.MinFreeBytes, version
+	}
 	r.Affected.InGrace, r.Affected.Overdue, r.Affected.Exempt = aff.InGrace, aff.Overdue, aff.Exempt
 	return r
 }
 
+// storageGetResp is the settings and, from 3.5, the summary of what the server
+// holds, for the whole server or for one tenant.
+type storageGetResp struct {
+	storageResp
+	Summary storageSummaryResp `json:"summary"`
+}
+
+// adminGetStorage answers the settings and the summary. A site administrator
+// reads the server's (?tenant= narrows the summary); a tenant administrator the
+// effective settings, read only, and the summary of their tenant. The summary is
+// stored values only (docs/api.md, "GET /api/admin/storage").
 func (s *server) adminGetStorage(c *call) {
-	aff, err := s.spaces.Affected(c.r.Context())
+	sc, ok := s.adminScope(c)
+	if !ok {
+		return
+	}
+	var aff spaces.Affected
+	if sc.All() {
+		var err error
+		if aff, err = s.spaces.Affected(c.r.Context()); err != nil {
+			s.fail(c.w, err)
+			return
+		}
+	}
+	sum, err := s.storageSummary(c, sc)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, s.storageBody(s.spaces.Storage(), aff))
+	if !sc.All() {
+		// A tenant sees its own spaces in their grace period or past it (the
+		// exemptions are the site's to count).
+		aff = spaces.Affected{InGrace: int(sum.Remotes.InGrace), Overdue: int(sum.Remotes.Overdue)}
+	}
+	writeJSON(c.w, http.StatusOK, storageGetResp{s.storageBody(s.spaces.Storage(), aff, c.isSiteAdmin()), sum})
 }
 
 // section decodes one section of a PUT: an object of known keys.
@@ -232,7 +267,7 @@ func (s *server) adminPutStorage(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, s.storageBody(set, aff))
+	writeJSON(c.w, http.StatusOK, s.storageBody(set, aff, true))
 }
 
 // spaceStorageItem is the storage block of an item of the administration's list.

@@ -312,7 +312,7 @@ func ListGroupPeople(ctx context.Context, q Q, d Dialect, groupID, query, after 
 	if limit <= 0 {
 		limit = 50
 	}
-	where := `u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)`
+	where := `u.deleted_at IS NULL AND u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)`
 	args := []any{groupID}
 	if query != "" {
 		lower := "LOWER"
@@ -375,7 +375,7 @@ func ExistingUsers(ctx context.Context, q Q, sc Scope, ids []string) (map[string
 			args[j] = id
 		}
 		args = append(args, cargs...)
-		got, err := strCol(ctx, q, `SELECT id FROM users WHERE id IN (`+ph+`) AND `+cond, args...)
+		got, err := strCol(ctx, q, `SELECT id FROM users WHERE deleted_at IS NULL AND id IN (`+ph+`) AND `+cond, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -441,7 +441,7 @@ func AddLocalMembers(ctx context.Context, q Q, groupID string, ids []string, now
 		// person of another tenant is not added (the callers have said so
 		// before, with ExistingUsers, so this is the second wall).
 		if _, err := q.Exec(ctx, `INSERT INTO group_members(group_id, user_id, provider, value, created)
-			SELECT g.id, u.id, '', '', ? FROM groups g JOIN users u ON u.tenant_id = g.tenant_id WHERE g.id = ? AND u.id = ?
+			SELECT g.id, u.id, '', '', ? FROM groups g JOIN users u ON u.tenant_id = g.tenant_id WHERE g.id = ? AND u.id = ? AND u.deleted_at IS NULL
 			ON CONFLICT DO NOTHING`, ms(now), groupID, id); err != nil {
 			return err
 		}
@@ -515,7 +515,7 @@ func ApplySynced(ctx context.Context, q Q, userID, provider string, remove, add 
 		// Same tenant only: a mapping that names a group of another tenant brings
 		// nothing to this person.
 		if _, err := q.Exec(ctx, `INSERT INTO group_members(group_id, user_id, provider, value, created)
-			SELECT g.id, u.id, ?, ?, ? FROM groups g JOIN users u ON u.tenant_id = g.tenant_id WHERE g.id = ? AND u.id = ? ON CONFLICT DO NOTHING`, provider, m.Value, ms(now), m.GroupID, userID); err != nil {
+			SELECT g.id, u.id, ?, ?, ? FROM groups g JOIN users u ON u.tenant_id = g.tenant_id WHERE g.id = ? AND u.id = ? AND u.deleted_at IS NULL ON CONFLICT DO NOTHING`, provider, m.Value, ms(now), m.GroupID, userID); err != nil {
 			return err
 		}
 	}
@@ -695,7 +695,7 @@ func ListEffective(ctx context.Context, q Q, d Dialect, spaceID, query, after st
 	if limit <= 0 {
 		limit = 50
 	}
-	where := `u.disabled = 0 AND (u.id IN (SELECT user_id FROM space_members WHERE space_id = ?)
+	where := `u.deleted_at IS NULL AND u.disabled = 0 AND (u.id IN (SELECT user_id FROM space_members WHERE space_id = ?)
 		OR u.id IN (SELECT gm.user_id FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id WHERE sg.space_id = ?))`
 	args := []any{spaceID, spaceID}
 	if query != "" {

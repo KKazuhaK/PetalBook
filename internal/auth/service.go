@@ -573,6 +573,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
+	if barred, err := s.retiredName(ctx, s.st.Q(), username); err != nil {
+		return nil, err
+	} else if barred && !p.RetryUsername {
+		return nil, errf(Exists, "that username is taken")
+	}
 
 	// An account made without saying where (setup, the command line) is in the
 	// default tenant, and an administrator of it is one of the server, as every
@@ -628,6 +633,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			} else if err != nil {
 				return err
 			}
+			if barred, err := s.retiredName(ctx, q, cand.Username); err != nil {
+				return err
+			} else if barred {
+				return errRetiredName
+			}
 			if err := store.InsertUser(ctx, q, cand); err != nil {
 				return err
 			}
@@ -655,6 +665,12 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		if err == nil {
 			u = cand
 			break
+		}
+		if errors.Is(err, errRetiredName) {
+			if p.RetryUsername && attempt < 20 {
+				continue
+			}
+			err = errf(Exists, "that username is taken")
 		}
 		if on, ok := store.UniqueOn(err); ok {
 			switch {
@@ -749,4 +765,27 @@ func (s *Service) Users(ctx context.Context, sc store.Scope) ([]store.User, erro
 // leaves the disabled accounts out before the limit counts.
 func (s *Service) FindUsers(ctx context.Context, sc store.Scope, query string, enabledOnly bool, limit int) ([]store.User, error) {
 	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), sc, query, enabledOnly, limit)
+}
+
+// errRetiredName is a username that a purge freed and the site never gives out
+// again (users.reuseUsernames is "never").
+var errRetiredName = errors.New("that username was used by someone who was purged")
+
+// retiredName says whether a username may not be taken because a purge freed it
+// and the setting is "never". Every purge records the name whatever the setting
+// was, so switching to "never" later protects the names freed before. The
+// setting is read from the settings cache; the table only when it is "never".
+func (s *Service) retiredName(ctx context.Context, q store.Q, username string) (bool, error) {
+	st := s.settings.Load()
+	if st == nil {
+		return false, nil
+	}
+	e, err := st.Get(ctx, "", settings.UsersReuseUsernames)
+	if err != nil {
+		return false, err
+	}
+	if v, _ := e.Value.(string); v != "never" {
+		return false, nil
+	}
+	return store.UsernameRetired(ctx, q, username)
 }

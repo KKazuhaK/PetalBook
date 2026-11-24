@@ -78,9 +78,13 @@ type Info struct {
 	// Perms is what the user may do here. Everything that decides access reads
 	// this, never Role.
 	Perms perm.Set
-	// ViaAdmin: the user is no member but an instance administrator, who may do
-	// everything in every space without belonging to any (so it is in no list).
+	// ViaAdmin: the user is no member but an administrator, who manages the
+	// space (AdminPerms) without belonging to it (so it is in no list). Reading
+	// takes a view (Viewing).
 	ViaAdmin bool
+	// Viewing: an administrator reads the space in a view they opened (set by the
+	// API, which holds the views); Perms then include read.
+	Viewing  bool
 	Personal bool
 	// Disabled: an administrator has switched the space off. Perms are what the
 	// user would have in it, but Open refuses it. Read when the list is asked
@@ -99,6 +103,10 @@ type Info struct {
 	// Assets is "repository" when the space has an attachment repository, else "space".
 	Assets string
 }
+
+// AdminPerms is what an administrator who is not a member may do in a space:
+// manage it and its people. Not read, and never write.
+var AdminPerms = perm.Of(perm.Members, perm.Manage)
 
 // Handle is an open space together with the caller's view of it. Release it
 // when the request is done: a space in use is never closed.
@@ -172,6 +180,22 @@ type Options struct {
 	// RestoreDeadline bounds one restore once it has its turn (default 5
 	// minutes): a remote that hangs does not hold one of the two turns longer.
 	RestoreDeadline time.Duration
+	// RecycleEvery is how often the recycle bin's purge job looks (default an
+	// hour; negative turns it off). PurgePause is the wait between two
+	// directories being deleted (default 25 ms; negative: none). RecycleHook, if
+	// set, is called at each step of a deletion, a restore and a purge
+	// ("recycle:rows", "recycle:moved-space", "restore:marked", "purge:marked",
+	// ...); an error it returns stops there as a crash would (tests).
+	RecycleEvery time.Duration
+	PurgePause   time.Duration
+	RecycleHook  func(step string) error
+	// Rename replaces os.Rename for the moves of the recycle bin (tests: a
+	// rename that answers EXDEV, as one across filesystems does).
+	Rename func(oldpath, newpath string) error
+	// RemoveAll replaces os.RemoveAll for deleting the source of a move across
+	// filesystems once its copy is in place (tests: a delete cut short).
+	RemoveAll func(path string) error
+
 	// AssetsHook is called at each step of moving a space's attachments into
 	// its attachment repository; an error ends the move there, without
 	// recording a failure, as a crash would (tests).
@@ -271,6 +295,8 @@ type Manager struct {
 	ev        evictState   // eviction and restoring (evict.go)
 	cs        cacheStates  // cache states in memory (partial.go)
 	as        assetState   // attachment repositories and their cache (assets.go)
+	recycle   recycleState // the recycle bin (recycle.go)
+	exp       exportState  // exports (export.go)
 
 	trimMu    sync.Mutex      // one trim at a time
 	trimming  bool            // a background trim is queued or running (guarded by mu)
@@ -283,6 +309,10 @@ type Manager struct {
 
 	closeCtx    context.Context // ends when the manager is closed (background work stops with it)
 	closeCancel context.CancelFunc
+
+	bgMu     sync.Mutex     // guards bgClosed and the Adds to bg
+	bgClosed bool           // Close has begun: no background task starts any more
+	bg       sync.WaitGroup // background tasks started by goBg; Close waits for them
 
 	lock *os.File // DataDir/serve.lock, held while a server's manager runs (Options.Serve)
 
@@ -332,6 +362,12 @@ func NewAccounts(opt Options) (*Manager, error) {
 	m.lock = lock
 	m.initStorage(context.Background())
 	if opt.Serve {
+		if err := m.recoverExports(context.Background()); err != nil {
+			m.log.Warn("could not mark the exports a restart interrupted", "error", err)
+		}
+		if err := m.recoverRecycle(context.Background(), 0); err != nil {
+			m.log.Warn("could not finish the deletions, restores and purges a crash cut short", "error", err)
+		}
 		if err := m.recoverEvictions(context.Background()); err != nil {
 			m.log.Warn("could not finish the evictions and restores a crash cut short", "error", err)
 		}
@@ -519,7 +555,17 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID str
 		if m.opt.Store.TenantDisabled(sp.TenantID) {
 			return nil, ErrDisabled // the spaces of a disabled tenant cannot be opened, by anyone
 		}
-		in = Info{ID: sp.ID, Name: sp.Name, Perms: perm.All, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
+		// A person's own space is not an organisation's: a tenant's administrator
+		// does not reach it at all, as if it were not there (3.5; a site
+		// administrator, who may read any file on the disk, does).
+		if sp.Personal && !user.SiteAdmin {
+			return nil, ErrNotFound
+		}
+		// An administrator who is not a member manages the space (its members,
+		// its remote, its settings) and does not read it: reading is a view the
+		// administrator opens with a reason, which is recorded (see api
+		// "Viewing a space"), and the caller adds read to these only then.
+		in = Info{ID: sp.ID, Name: sp.Name, Perms: AdminPerms, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
 	}
 	in = m.withSync(ctx, []Info{in})[0]
 	var sp *space.Space
@@ -1115,6 +1161,9 @@ func (m *Manager) Close() error {
 		m.closeCancel()
 	}
 	m.mu.Unlock()
+	m.bgMu.Lock()
+	m.bgClosed = true
+	m.bgMu.Unlock()
 	// Spaces that requests still hold are given a few seconds to be released:
 	// closing one under a running request would end it half done. If they are
 	// not released in time they are closed anyway (changes made after that are
@@ -1136,7 +1185,10 @@ func (m *Manager) Close() error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	m.as.wg.Wait() // moves of attachments end when the manager is closed
+	m.exp.wg.Wait()     // exports end when the manager is closed
+	m.recycle.wg.Wait() // so do purges started by a request
+	m.as.wg.Wait()      // moves of attachments end when the manager is closed
+	m.bg.Wait()         // so do the background tasks (their context ends with the manager)
 	m.mu.Lock()
 	open := m.open
 	m.open = map[string]*opening{}
@@ -1183,6 +1235,9 @@ func (m *Manager) Run(ctx context.Context) {
 	evicted := make(chan struct{})
 	go func() { defer close(evicted); m.RunEvict(ctx) }()
 	defer func() { <-evicted }()
+	recycled := make(chan struct{})
+	go func() { defer close(recycled); m.RunRecycle(ctx) }()
+	defer func() { <-recycled }()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -1212,12 +1267,35 @@ func (m *Manager) trimSoon() {
 	}
 	m.trimming = true
 	m.mu.Unlock()
-	go func() {
+	if !m.goBg(func() {
 		m.Trim()
 		m.mu.Lock()
 		m.trimming = false
 		m.mu.Unlock()
+	}) {
+		m.mu.Lock()
+		m.trimming = false
+		m.mu.Unlock()
+	}
+}
+
+// goBg runs f in the background, tracked: Close waits for it, so nothing runs
+// on after the manager is closed (and writes into a data directory that is
+// gone). Work that can take long must stop on closedCtx. It reports false,
+// without running f, when Close has begun.
+func (m *Manager) goBg(f func()) bool {
+	m.bgMu.Lock()
+	if m.bgClosed {
+		m.bgMu.Unlock()
+		return false
+	}
+	m.bg.Add(1)
+	m.bgMu.Unlock()
+	go func() {
+		defer m.bg.Done()
+		f()
 	}()
+	return true
 }
 
 // Trim closes the spaces that have been idle for IdleAfter and, while more

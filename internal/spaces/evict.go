@@ -89,6 +89,8 @@ type restoreOp struct {
 	// closed, the index-only handle of the space; no new one is given (under
 	// ev.mu).
 	indexClosed bool
+	// cancel stops the restore (a deletion of the space; under ev.mu).
+	cancel context.CancelFunc
 }
 
 func (o *restoreOp) setPhase(p string) { o.phase.Store(p) }
@@ -150,6 +152,9 @@ type evictState struct {
 	failed   map[string]*restoreFail // spaces whose last restore failed, not tried again for a while
 	roundMu  sync.Mutex              // one round of eviction at a time
 	filling  map[string]bool         // pinned spaces being made full
+	// gone are the spaces being deleted (recycled): no restore starts for them,
+	// and one that runs puts nothing at their live place.
+	gone map[string]bool
 }
 
 func (m *Manager) evictDir() string     { return filepath.Join(m.opt.DataDir, "evicting") }
@@ -495,6 +500,10 @@ func (m *Manager) trimIndexOnly() {
 // *RestoringError.
 func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 	m.ev.mu.Lock()
+	if m.ev.gone[id] {
+		m.ev.mu.Unlock()
+		return ErrNotFound
+	}
 	op := m.ev.restores[id]
 	if f := m.ev.failed[id]; op == nil && f != nil {
 		// A restore failed a moment ago: it is not tried again yet.
@@ -510,7 +519,13 @@ func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 		op.setPhase("waiting")
 		m.ev.restores[id] = op
 		m.ev.waiting++
-		go m.runRestore(id, op)
+		if !m.goBg(func() { m.runRestore(id, op) }) {
+			// Closed meanwhile: the waiters are told, nothing is restored.
+			delete(m.ev.restores, id)
+			m.ev.waiting--
+			m.ev.mu.Unlock()
+			return errClosed
+		}
 	}
 	m.ev.mu.Unlock()
 	wait := m.opt.RestoreWait
@@ -539,7 +554,10 @@ func (m *Manager) runRestore(id string, op *restoreOp) {
 	if deadline <= 0 {
 		deadline = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	ctx, cancel := context.WithTimeout(m.closedCtx(), deadline)
+	m.ev.mu.Lock()
+	op.cancel = cancel
+	m.ev.mu.Unlock()
 	op.err = m.restore(ctx, id, op)
 	if op.err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		op.err = &RestoreFailed{Msg: "the remote repository did not answer in time", Err: op.err}
@@ -579,6 +597,9 @@ func (m *Manager) runRestore(id string, op *restoreOp) {
 func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	if !m.isEvicted(id) {
 		return nil
+	}
+	if m.restoreStopped(id) {
+		return errSpaceGone
 	}
 	if err := m.evictHook("restore:start"); err != nil {
 		return err
@@ -673,6 +694,9 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	if _, err := os.Lstat(root); err == nil {
 		return errors.New("the directory of the space exists while it is being restored")
 	}
+	if m.restoreStopped(id) {
+		return errSpaceGone // deleted meanwhile: its live place stays empty
+	}
 	// The index is kept: its epoch and sequence numbers stay, so the cursors of
 	// offline clients stay good, and the files that changed on the remote come
 	// in as changes at the first sync. Without the note (it fails, or the index
@@ -699,12 +723,60 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	if err := m.evictHook("restore:done"); err != nil {
 		return err
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	m.goBg(func() {
+		m.evictHook("resize:start")
+		ctx, cancel := context.WithTimeout(m.closedCtx(), time.Minute)
 		defer cancel()
 		m.Resize(ctx, store.AllTenants(), id) // the size of the clone is a measurement of its own (a full one only counts for the quotas)
-	}()
+	})
 	return nil
+}
+
+// errSpaceGone: the space is being deleted; its restore stops.
+var errSpaceGone = errors.New("the space is being deleted")
+
+func (m *Manager) restoreStopped(id string) bool {
+	m.ev.mu.Lock()
+	defer m.ev.mu.Unlock()
+	return m.ev.gone[id]
+}
+
+// stopRestores keeps a space that is being deleted from being restored from its
+// remote (3.1): no restore starts for it from now on, one that runs is cancelled
+// and waited for (it puts nothing at the space's live place once stopped), and
+// its index-only handle (4.1) is closed. allowRestores undoes it, for a deletion
+// that did not happen or a space that comes back from the bin.
+func (m *Manager) stopRestores(ctx context.Context, id string) error {
+	m.ev.mu.Lock()
+	if m.ev.gone == nil {
+		m.ev.gone = map[string]bool{}
+	}
+	m.ev.gone[id] = true
+	op := m.ev.restores[id]
+	var cancel context.CancelFunc
+	if op != nil {
+		cancel = op.cancel
+	}
+	m.ev.mu.Unlock()
+	if op != nil {
+		if cancel != nil {
+			cancel()
+		}
+		select {
+		case <-op.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	m.closeIndexOnly(id)
+	return nil
+}
+
+func (m *Manager) allowRestores(id string) {
+	m.ev.mu.Lock()
+	delete(m.ev.gone, id)
+	delete(m.ev.failed, id) // a restore stopped by the deletion is no failure
+	m.ev.mu.Unlock()
 }
 
 // restoreFailure turns a failed fetch into the refusal people see, and notes
@@ -889,11 +961,16 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 }
 
 // syncDir makes a rename durable where the platform allows.
-func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
 	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func (m *Manager) noteEvictedSize(ctx context.Context, id string) {

@@ -32,6 +32,8 @@ import { tsec } from '@/i18n/security'
 import { tm } from '@/i18n/mail'
 import { mailLang } from '@/pages/auth/MailPages'
 import { OwnLimits } from './OwnLimits'
+import { DeletePersonDialog } from './manage/DeletePersonDialog'
+import { tg } from '@/i18n/manage'
 
 // Users and invites, for administrators. Moved from the old users page; the
 // lists and forms are as they were.
@@ -71,6 +73,7 @@ function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
   const [open, setOpen] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<User | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
   // The roles a passkey is required of: for them the switch is on and cannot be turned off here.
   // The security settings are the server's: only a site administrator may read them.
@@ -192,6 +195,18 @@ function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite
               >
                 {u.disabled ? t.users.enable : t.users.disable}
               </Button>
+              {!self && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  aria-label={t.fmt.labelled(tg.bulk.actions.delete_users, u.name)}
+                  onClick={() => setDeleting(u)}
+                >
+                  {tg.bulk.actions.delete_users}…
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -207,6 +222,9 @@ function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite
           )
         })}
       </ul>
+      {deleting && (
+        <DeletePersonDialog id={deleting.id} username={deleting.username} onClose={() => setDeleting(null)} />
+      )}
     </SettingsSection>
   )
 }

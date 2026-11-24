@@ -16,3 +16,11 @@ func IndexOnlyRoutes() []string {
 	}
 	return out
 }
+
+// SetUpdateBulkJob makes the writes of the progress of the jobs that the user
+// starts go through fail first (state: the state written, try: 0 for the first
+// try); fail returning nil writes. It returns what undoes it.
+func SetUpdateBulkJob(userID string, fail func(state string, try int) error) func() {
+	jobWriteFaults.Store(userID, fail)
+	return func() { jobWriteFaults.Delete(userID) }
+}
