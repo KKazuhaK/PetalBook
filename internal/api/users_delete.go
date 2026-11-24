@@ -380,7 +380,7 @@ func (s *server) adminDeleteUser(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, s.recycleItemOf(*res.Item, s.recycleDays(c), s.userChildren(c, res.Item)))
+	writeJSON(c.w, http.StatusOK, s.recycleItemOf(*res.Item, s.recycleDays(c), withFor(c, s.userChildren(c, res.Item))))
 }
 
 // forgetUser drops the copies of a person the sign-in service holds.
@@ -397,7 +397,7 @@ func (s *server) userChildren(c *call, it *store.RecycleItem) []store.RecycleIte
 
 // restoreUser restores a person's item, with the spaces recycled with them.
 func (s *server) restoreUser(c *call, it *store.RecycleItem) {
-	res, err := s.spaces.RestoreUser(c.r.Context(), store.ScopeOf(c.user()), it.ID)
+	res, err := s.spaces.RestoreUser(c.r.Context(), store.AdminScopeOf(c.user()), it.ID)
 	if err != nil {
 		s.fail(c.w, err)
 		return

@@ -109,7 +109,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 
 // adminGetSpace is one item of the list, found by its id.
 func (s *server) adminGetSpace(c *call) {
-	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("space"))
+	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), c.r.PathValue("space"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
 		return
@@ -122,7 +122,7 @@ func (s *server) adminGetSpace(c *call) {
 }
 
 func (s *server) adminResizeSpace(c *call) {
-	n, at, err := s.spaces.Resize(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"))
+	n, at, err := s.spaces.Resize(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -140,7 +140,7 @@ func (s *server) adminTransferSpace(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if err := s.spaces.Transfer(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), req.UserID); err != nil {
+	if err := s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), req.UserID); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -156,7 +156,7 @@ func (s *server) adminEnableSpace(c *call) {
 }
 
 func (s *server) adminSetDisabled(c *call, disabled bool) {
-	if err := s.spaces.SetDisabled(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), disabled); err != nil {
+	if err := s.spaces.SetDisabled(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), disabled); err != nil {
 		s.fail(c.w, err)
 		return
 	}

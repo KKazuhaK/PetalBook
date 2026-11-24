@@ -156,7 +156,7 @@ func ListAllSpaces(ctx context.Context, q Q, sc Scope, f SpaceFilter) (out []Adm
 	}
 	var where []string
 	var args []any
-	sCond, sArgs := sc.cond("s.tenant_id")
+	sCond, sArgs := sc.spaceCond("s.tenant_id", "s.personal_of IS NULL")
 	where, args = append(where, sCond), append(args, sArgs...)
 	if f.After != "" {
 		where = append(where, `s.id > ?`)
@@ -272,7 +272,7 @@ func GetAdminSpace(ctx context.Context, q Q, sc Scope, id string) (AdminSpace, e
 
 // SetSpaceDisabled stops or allows opening a space.
 func SetSpaceDisabled(ctx context.Context, q Q, sc Scope, id string, disabled bool) error {
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal_of IS NULL")
 	res, err := q.Exec(ctx, `UPDATE spaces SET disabled = ? WHERE id = ? AND `+cond, append([]any{b2i(disabled), id}, args...)...)
 	return oneRow(res, err)
 }

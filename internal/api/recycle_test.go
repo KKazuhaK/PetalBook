@@ -313,7 +313,7 @@ func TestPersonalSpacesAreNeverViewedOrExportedByATenantAdministrator(t *testing
 			c.do("POST", "/api/admin/spaces/"+own+"/view", map[string]any{"reason": "curious"}).want(t, 404, "not_found")
 			c.do("GET", "/api/spaces/"+own+"/pages", nil).want(t, 404, "not_found")
 			c.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{own}}).want(t, 404, "not_found")
-			c.do("POST", "/api/admin/confirm", map[string]any{"action": "export", "spaces": []string{own}}).want(t, 200, "") // a plan is only a plan: see below
+			c.do("POST", "/api/admin/confirm", map[string]any{"action": "export", "spaces": []string{own}}).want(t, 404, "not_found")
 		}
 		// The same answer as for a space that is not there.
 		f.admA.do("POST", "/api/admin/spaces/"+fakeID+"/view", map[string]any{"reason": "curious"}).want(t, 404, "not_found")
@@ -501,4 +501,42 @@ func (a *acc) mgrExports(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// An export a site administrator made is the site's: a tenant administrator
+// never lists, reads or downloads it, whatever spaces it holds (a personal space,
+// a history bundle, or spaces of several tenants). One a tenant administrator
+// made is their tenant's administrators' and the site's.
+func TestAnExportOfTheSiteIsNeverSeenByATenantAdministrator(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		own := f.memA.personalSpace()
+		made := map[string]string{
+			"personal, with history":   f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{own}, "history": true}).want(t, 202, "").body["id"].(string),
+			"spaces of two tenants":    f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA, f.spaceB}}).want(t, 202, "").body["id"].(string),
+			"a space of the tenant":    f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA}}).want(t, 202, "").body["id"].(string),
+			"a space of the other one": f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["id"].(string),
+		}
+		for what, id := range made {
+			if done := waitExport(t, f.root, id); done["state"] != "ready" {
+				t.Fatalf("%s: %v", what, done)
+			}
+			for _, c := range []*client{f.admA, f.admB} {
+				c.do("GET", "/api/admin/exports/"+id, nil).want(t, 404, "not_found")
+				c.do("GET", "/api/admin/exports/"+id+"/download", nil).want(t, 404, "not_found")
+				c.do("DELETE", "/api/admin/exports/"+id, nil).want(t, 404, "not_found")
+				if r := c.do("GET", "/api/admin/exports", nil).want(t, 200, ""); strings.Contains(r.raw, id) {
+					t.Fatalf("%s is listed for a tenant administrator: %s", what, r.raw)
+				}
+			}
+			f.root.do("GET", "/api/admin/exports/"+id+"/download", nil).want(t, 200, "")
+		}
+		// A tenant administrator's own export is theirs and the site's.
+		mine := f.admA.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA}}).want(t, 202, "").body["id"].(string)
+		waitExport(t, f.admA, mine)
+		f.admA.do("GET", "/api/admin/exports/"+mine+"/download", nil).want(t, 200, "")
+		f.root.do("GET", "/api/admin/exports/"+mine, nil).want(t, 200, "")
+		f.admB.do("GET", "/api/admin/exports/"+mine, nil).want(t, 404, "not_found")
+	})
 }

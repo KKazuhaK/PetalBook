@@ -19,7 +19,7 @@ func SpaceFingerprints(ctx context.Context, q Q, sc Scope, ids []string) (map[st
 	if len(ids) == 0 {
 		return out, nil
 	}
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal_of IS NULL")
 	ph := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
 	idArgs := make([]any, len(ids))
 	for i, id := range ids {
@@ -102,7 +102,7 @@ type DeletionFacts struct {
 // a file.
 func GetDeletionFacts(ctx context.Context, q Q, sc Scope, id string) (DeletionFacts, error) {
 	var f DeletionFacts
-	cond, args := sc.cond("s.tenant_id")
+	cond, args := sc.spaceCond("s.tenant_id", "s.personal_of IS NULL")
 	var size *int64
 	var index int64
 	err := q.QueryRow(ctx, `SELECT s.page_count, s.usage_bytes, s.size_bytes, s.index_bytes,

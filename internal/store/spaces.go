@@ -91,7 +91,7 @@ func GetSpace(ctx context.Context, q Q, sc Scope, id string) (*SpaceInfo, error)
 	var s SpaceInfo
 	var personal sql.NullString
 	var created int64
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal_of IS NULL")
 	err := q.QueryRow(ctx, `SELECT id, name, personal_of, inbox, created, tenant_id FROM spaces WHERE id = ? AND `+cond, append([]any{id}, args...)...).
 		Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &s.TenantID)
 	if errors.Is(err, sql.ErrNoRows) {

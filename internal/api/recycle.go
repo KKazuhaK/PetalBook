@@ -69,12 +69,29 @@ func (s *server) recycleItemOf(it store.RecycleItem, days int, with []store.Recy
 	return out
 }
 
+// withFor is the items recycled with a person as the caller may see them: a
+// tenant administrator never sees a personal space, in the bin or not, so the
+// person's own space is left out of what they are shown (it comes back with the
+// person all the same).
+func withFor(c *call, with []store.RecycleItem) []store.RecycleItem {
+	if c.isSiteAdmin() {
+		return with
+	}
+	out := with[:0:0]
+	for _, w := range with {
+		if !w.Personal {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 func (s *server) recycleDays(c *call) int { return s.spaces.RecycleDays(c.r.Context()) }
 
 // recycleItemFound answers an item that is not in the caller's scope as one
 // that does not exist.
 func (s *server) recycleItemFound(c *call, id string) (*store.RecycleItem, bool) {
-	it, err := store.GetRecycleItem(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), id, false)
+	it, err := store.GetRecycleItem(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id, false)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such item in the recycle bin")
 		return nil, false
@@ -125,7 +142,7 @@ func (s *server) adminListRecycle(c *call) {
 				return
 			}
 		}
-		items[i] = s.recycleItemOf(it, days, with)
+		items[i] = s.recycleItemOf(it, days, withFor(c, with))
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []recycleItemResp `json:"items"`
@@ -148,7 +165,7 @@ func (s *server) adminRestoreItem(c *call) {
 		s.restoreUserItem(c, it, req.Owner)
 		return
 	}
-	res, err := s.spaces.RestoreSpace(c.r.Context(), store.ScopeOf(c.user()), it.ID, req.Owner)
+	res, err := s.spaces.RestoreSpace(c.r.Context(), store.AdminScopeOf(c.user()), it.ID, req.Owner)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -177,7 +194,7 @@ func (s *server) adminPurgeItem(c *call) {
 	if !s.useConfirm(c, c.r.URL.Query().Get("confirm"), confirmRequest{Action: "purge", Items: []string{it.ID}}) {
 		return
 	}
-	done, err := s.spaces.PurgeItem(c.r.Context(), store.ScopeOf(c.user()), it.ID)
+	done, err := s.spaces.PurgeItem(c.r.Context(), store.AdminScopeOf(c.user()), it.ID)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -213,7 +230,7 @@ func (s *server) adminDeleteSpace(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "reason is at most 500 characters")
 		return
 	}
-	it, err := s.spaces.RecycleSpace(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"), spaces.RecycleOptions{By: c.user().ID, ByName: c.user().Username, Reason: req.Reason})
+	it, err := s.spaces.RecycleSpace(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), spaces.RecycleOptions{By: c.user().ID, ByName: c.user().Username, Reason: req.Reason})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -285,7 +302,7 @@ func (s *server) deletionOf(c *call, sc store.Scope, id string) (deletionResp, b
 }
 
 func (s *server) adminSpaceDeletion(c *call) {
-	out, ok := s.deletionOf(c, store.ScopeOf(c.user()), c.r.PathValue("space"))
+	out, ok := s.deletionOf(c, store.AdminScopeOf(c.user()), c.r.PathValue("space"))
 	if !ok {
 		return
 	}

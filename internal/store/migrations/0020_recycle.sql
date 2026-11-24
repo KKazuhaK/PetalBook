@@ -48,7 +48,9 @@ ALTER TABLE users ADD COLUMN recycle_item TEXT NOT NULL DEFAULT '';
 CREATE INDEX users_live ON users(tenant_id, created, id) WHERE deleted_at IS NULL;
 
 -- A zip of what some spaces hold, made on request (state: queued, running,
--- ready, failed) and kept until expires.
+-- ready, failed) and kept until expires. site_only marks an export a site
+-- administrator made: only site administrators see it, whatever tenant_id says
+-- (it may hold a personal space, a history bundle, or several tenants' spaces).
 CREATE TABLE exports (
   id           TEXT PRIMARY KEY,
   tenant_id    TEXT NOT NULL,
@@ -56,6 +58,7 @@ CREATE TABLE exports (
   made_by_name TEXT NOT NULL DEFAULT '',
   spaces       TEXT NOT NULL DEFAULT '[]',
   history      BIGINT NOT NULL DEFAULT 0,
+  site_only    BIGINT NOT NULL DEFAULT 0,
   state        TEXT NOT NULL DEFAULT 'queued',
   error        TEXT NOT NULL DEFAULT '',
   bytes        BIGINT NOT NULL DEFAULT 0,
@@ -79,6 +82,8 @@ CREATE INDEX audit_log_actor ON audit_log(actor);
 -- A bulk action over many spaces, people or items, run in the background one
 -- item at a time. failed is a JSON list of what did not work and why; a job that
 -- was running when the server stopped reads "interrupted" at the next start.
+-- site_only marks a job a site administrator started: it is the site's, as
+-- such an export is.
 CREATE TABLE bulk_jobs (
   id         TEXT PRIMARY KEY,
   tenant_id  TEXT NOT NULL,
@@ -88,6 +93,7 @@ CREATE TABLE bulk_jobs (
   done       BIGINT NOT NULL DEFAULT 0,
   failed     TEXT NOT NULL DEFAULT '[]',
   state      TEXT NOT NULL DEFAULT 'queued',
+  site_only  BIGINT NOT NULL DEFAULT 0,
   created    BIGINT NOT NULL,
   updated    BIGINT NOT NULL
 );

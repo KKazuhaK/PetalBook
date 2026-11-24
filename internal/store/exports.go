@@ -28,9 +28,13 @@ type Export struct {
 	// the request named them (see ExportSource).
 	Spaces  []ExportSource
 	History bool
-	State   string
-	Error   string
-	Bytes   int64
+	// SiteOnly: a site administrator made it. Only site administrators see it,
+	// whatever its tenant (it may hold a personal space, a history bundle, or
+	// spaces of several tenants).
+	SiteOnly bool
+	State    string
+	Error    string
+	Bytes    int64
 	// Path is the file, relative to the data directory.
 	Path    string
 	Created time.Time
@@ -45,19 +49,19 @@ type ExportSource struct {
 	Name  string `json:"name,omitempty"`
 }
 
-const exportCols = `id, tenant_id, made_by, made_by_name, spaces, history, state, error, bytes, path, created, expires`
+const exportCols = `id, tenant_id, made_by, made_by_name, spaces, history, site_only, state, error, bytes, path, created, expires`
 
 func scanExport(sc interface{ Scan(...any) error }) (*Export, error) {
 	var e Export
 	var spaces string
-	var history, created, expires int64
-	if err := sc.Scan(&e.ID, &e.TenantID, &e.MadeBy, &e.MadeByName, &spaces, &history, &e.State, &e.Error, &e.Bytes, &e.Path, &created, &expires); err != nil {
+	var history, siteOnly, created, expires int64
+	if err := sc.Scan(&e.ID, &e.TenantID, &e.MadeBy, &e.MadeByName, &spaces, &history, &siteOnly, &e.State, &e.Error, &e.Bytes, &e.Path, &created, &expires); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	e.History, e.Created, e.Expires = history != 0, fromMS(created), fromMS(expires)
+	e.History, e.SiteOnly, e.Created, e.Expires = history != 0, siteOnly != 0, fromMS(created), fromMS(expires)
 	_ = json.Unmarshal([]byte(spaces), &e.Spaces)
 	return &e, nil
 }
@@ -65,14 +69,24 @@ func scanExport(sc interface{ Scan(...any) error }) (*Export, error) {
 // InsertExport adds an export.
 func InsertExport(ctx context.Context, q Q, e Export) error {
 	src, _ := json.Marshal(e.Spaces)
-	_, err := q.Exec(ctx, `INSERT INTO exports(`+exportCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.TenantID, e.MadeBy, e.MadeByName, string(src), b2i(e.History), e.State, e.Error, e.Bytes, e.Path, ms(e.Created), ms(e.Expires))
+	_, err := q.Exec(ctx, `INSERT INTO exports(`+exportCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.TenantID, e.MadeBy, e.MadeByName, string(src), b2i(e.History), b2i(e.SiteOnly), e.State, e.Error, e.Bytes, e.Path, ms(e.Created), ms(e.Expires))
 	return err
 }
 
-// GetExport returns an export of a tenant in the scope.
-func GetExport(ctx context.Context, q Q, sc Scope, id string) (*Export, error) {
+// exportCond is which exports the scope sees: a tenant's are those of the
+// tenant that are not the site's (SiteOnly).
+func exportCond(sc Scope) (string, []any) {
 	cond, args := sc.cond("tenant_id")
+	if !sc.all {
+		cond += " AND site_only = 0"
+	}
+	return cond, args
+}
+
+// GetExport returns an export the scope sees (see exportCond).
+func GetExport(ctx context.Context, q Q, sc Scope, id string) (*Export, error) {
+	cond, args := exportCond(sc)
 	return scanExport(q.QueryRow(ctx, `SELECT `+exportCols+` FROM exports WHERE id = ? AND `+cond, append([]any{id}, args...)...))
 }
 
@@ -82,7 +96,7 @@ func ListExports(ctx context.Context, q Q, sc Scope, after string, limit int) (o
 	if limit <= 0 {
 		limit = 50
 	}
-	cond, args := sc.cond("tenant_id")
+	cond, args := exportCond(sc)
 	where := []string{cond}
 	if after != "" {
 		at, id, ok := strings.Cut(after, ":")

@@ -67,9 +67,10 @@ func (s *server) adminCreateExport(c *call) {
 		writeError(c.w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may export the history")
 		return
 	}
-	sc := store.ScopeOf(c.user())
+	sc := store.AdminScopeOf(c.user())
 	var sources []store.ExportSource
 	tenants := map[string]bool{}
+	personal := false
 	for _, id := range req.Spaces {
 		sp, ok := s.adminSpaceFor(c, id)
 		if !ok {
@@ -77,6 +78,7 @@ func (s *server) adminCreateExport(c *call) {
 		}
 		sources = append(sources, store.ExportSource{Space: sp.ID, Name: sp.Name})
 		tenants[sp.TenantID] = true
+		personal = personal || sp.Personal
 	}
 	items, err := store.GetRecycleItems(c.r.Context(), s.opt.Store.Q(), sc, req.Items)
 	if err != nil {
@@ -91,6 +93,7 @@ func (s *server) adminCreateExport(c *call) {
 		}
 		sources = append(sources, store.ExportSource{Item: it.ID, Name: it.Name})
 		tenants[it.TenantID] = true
+		personal = personal || it.Personal
 	}
 	tenant := c.user().TenantID
 	if len(tenants) == 1 {
@@ -98,7 +101,8 @@ func (s *server) adminCreateExport(c *call) {
 			tenant = t
 		}
 	}
-	e, err := s.spaces.StartExport(c.r.Context(), spaces.ExportRequest{TenantID: tenant, By: c.user().ID, ByName: c.user().Username, Sources: sources, History: req.History})
+	e, err := s.spaces.StartExport(c.r.Context(), spaces.ExportRequest{TenantID: tenant, By: c.user().ID, ByName: c.user().Username, Sources: sources, History: req.History,
+		SiteOnly: exportSiteOnly(c.user(), req.History, personal, len(tenants))})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -113,6 +117,15 @@ func (s *server) adminCreateExport(c *call) {
 	}
 	s.auditRow(c, "export_created", tenant, map[string]any{"export": e.ID, "spaces": ids, "history": req.History})
 	writeJSON(c.w, http.StatusAccepted, exportOf(*e))
+}
+
+// exportSiteOnly says whether an export is the site's: one a site administrator
+// made, and in any case one that holds a history bundle, a personal space or
+// the spaces of more than one tenant. A tenant administrator never sees such an
+// export, whatever tenant its row names (docs/api.md, "Exports": what a tenant
+// administrator made is seen by that tenant's administrators and the site's).
+func exportSiteOnly(by store.User, history, personal bool, tenants int) bool {
+	return (by.SiteAdmin && by.Role == "admin") || history || personal || tenants > 1
 }
 
 func (s *server) adminListExports(c *call) {
@@ -222,7 +235,7 @@ func (s *server) adminDownloadExport(c *call) {
 func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user string) bool {
 	ctx := c.r.Context()
 	q := s.opt.Store.Q()
-	sc := store.ScopeOf(c.user())
+	sc := store.AdminScopeOf(c.user())
 	st, err := store.GetUserState(ctx, q, user)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !sc.All() && sc.Tenant() != st.Tenant) {
 		writeError(c.w, http.StatusNotFound, "user_not_found", "there is no such user")

@@ -577,3 +577,109 @@ func assertNoCrossTenantMemberships(t *testing.T, a *acc) {
 }
 
 var _ = time.Second
+
+// A personal space is never reachable by a tenant administrator: every route
+// that takes a space or a recycle item (in its path or its body) answers for a
+// personal one exactly as for an id that does not exist, and no list shows one
+// (docs/api.md, "Viewing a space", As built). The routes are read from the table,
+// so a new one is covered as it is added.
+func TestPersonalSpacesDoNotExistForATenantAdministratorOnEveryRoute(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		own := f.memA.personalSpace()
+		// A personal space in the recycle bin: the one of a person of A who was deleted.
+		pat := a.addUser("pat", pw, "member")
+		patSpace := pat.personalSpace()
+		patID := mustUserID(t, a, "pat")
+		userItem := f.admA.do("DELETE", "/api/users/"+patID, map[string]any{}).want(t, 200, "").body["id"].(string)
+		var personalItem string
+		if err := a.st.Q().QueryRow(context.Background(), `SELECT id FROM recycle_items WHERE space_id = ? AND personal = 1`, patSpace).Scan(&personalItem); err != nil {
+			t.Fatal(err)
+		}
+		// g is the fixture with "B's" space and item being A's personal ones.
+		g := *f
+		g.spaceB, g.itemB, g.userB = own, personalItem, f.userA
+		forbidden := []string{own, personalItem, patSpace}
+
+		checked := 0
+		check := func(name, method, pb string, bb any, pf string, bf any) {
+			t.Helper()
+			rb := f.admA.do(method, pb, bb)
+			rf := f.admA.do(method, pf, bf)
+			if shape(rb) != shape(rf) {
+				t.Errorf("%s: a personal space answered %s, a made-up id %s\n  %s\n  %s", name, shape(rb), shape(rf), rb.raw, rf.raw)
+			}
+			if rb.code < 400 {
+				t.Errorf("%s: a personal space was accepted: %d %s", name, rb.code, rb.raw)
+			}
+			for _, id := range forbidden {
+				if strings.Contains(rb.raw, id) {
+					t.Errorf("%s: the answer names %s: %s", name, id, rb.raw)
+				}
+			}
+			checked++
+		}
+		routes := api.Routes()
+		sort.Slice(routes, func(i, j int) bool { return routes[i].Pattern+routes[i].Method < routes[j].Pattern+routes[j].Method })
+		for _, rt := range routes {
+			key := rt.Method + " " + rt.Pattern
+			e := isolationRoutes[key]
+			switch {
+			case rt.Space:
+				e = isoEntry{kind: isoParam, query: e.query, queryOf: e.queryOf}
+			case rt.Admin && (strings.Contains(rt.Pattern, "{space}") || strings.Contains(rt.Pattern, "{item}")):
+			case key == "POST /api/admin/confirm" || key == "POST /api/admin/exports":
+			default:
+				continue
+			}
+			pb, bb := g.build(rt, e, true)
+			pf, bf := g.build(rt, e, false)
+			check(key, rt.Method, pb, bb, pf, bf)
+		}
+		// Every action of a confirmation, and an export, by the ids of the body.
+		for action, kind := range map[string]string{"delete_spaces": "spaces", "disable_spaces": "spaces", "enable_spaces": "spaces", "evict": "spaces",
+			"pin": "spaces", "unpin": "spaces", "export": "spaces", "restore": "items"} {
+			id := own
+			if kind == "items" {
+				id = personalItem
+			}
+			check("confirm "+action, "POST", "/api/admin/confirm", map[string]any{"action": action, kind: []string{id}},
+				"/api/admin/confirm", map[string]any{"action": action, kind: []string{fakeID}})
+		}
+		check("confirm export of an item", "POST", "/api/admin/confirm", map[string]any{"action": "export", "items": []string{personalItem}},
+			"/api/admin/confirm", map[string]any{"action": "export", "items": []string{fakeID}})
+		check("export of an item", "POST", "/api/admin/exports", map[string]any{"items": []string{personalItem}},
+			"/api/admin/exports", map[string]any{"items": []string{fakeID}})
+		if checked < 80 {
+			t.Fatalf("only %d calls were made: the table is not being read", checked)
+		}
+		// No list shows one.
+		for _, path := range []string{"/api/admin/spaces", "/api/admin/spaces?q=My", "/api/admin/recycle", "/api/admin/recycle?kind=space"} {
+			r := f.admA.do("GET", path, nil).want(t, 200, "")
+			for _, it := range r.body["items"].([]any) {
+				m := it.(map[string]any)
+				if m["personal"] == true {
+					t.Errorf("%s lists a personal space: %v", path, m)
+				}
+				if sp, ok := m["space"].(map[string]any); ok && sp["personal"] == true {
+					t.Errorf("%s lists a personal space: %v", path, m)
+				}
+			}
+			for _, id := range []string{own, personalItem} {
+				if strings.Contains(r.raw, `"id":"`+id+`"`) {
+					t.Errorf("%s lists %s: %s", path, id, r.raw)
+				}
+			}
+		}
+		// The person's own item is the tenant's: restoring it brings their personal space back with them.
+		f.admA.do("POST", "/api/admin/recycle/"+userItem+"/restore", map[string]any{}).want(t, 200, "")
+		pat.do("POST", "/api/login", map[string]any{"username": "pat", "password": pw}).want(t, 200, "")
+		if pat.personalSpace() != patSpace {
+			t.Fatal("the personal space did not come back with its person")
+		}
+		// A site administrator reaches every one of them.
+		f.root.do("GET", "/api/admin/spaces/"+own, nil).want(t, 200, "")
+		f.root.do("GET", "/api/admin/spaces/"+own+"/deletion", nil).want(t, 200, "")
+	})
+}

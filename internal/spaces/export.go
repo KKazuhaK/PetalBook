@@ -96,6 +96,8 @@ type ExportRequest struct {
 	// the caller's scope.
 	Sources []store.ExportSource
 	History bool
+	// SiteOnly: only site administrators may see it (see store.Export).
+	SiteOnly bool
 }
 
 // StartExport records an export and makes it in the background. ErrExportsFull
@@ -110,7 +112,7 @@ func (m *Manager) StartExport(ctx context.Context, req ExportRequest) (*store.Ex
 		return nil, ErrExportsFull
 	}
 	now := m.opt.Now()
-	e := store.Export{ID: page.NewID(now), TenantID: req.TenantID, MadeBy: req.By, MadeByName: req.ByName, Spaces: req.Sources, History: req.History,
+	e := store.Export{ID: page.NewID(now), TenantID: req.TenantID, MadeBy: req.By, MadeByName: req.ByName, Spaces: req.Sources, History: req.History, SiteOnly: req.SiteOnly,
 		State: store.ExportQueued, Created: now, Expires: now.Add(time.Duration(lim.Days) * 24 * time.Hour)}
 	if err := store.InsertExport(ctx, m.opt.Store.Q(), e); err != nil {
 		return nil, err

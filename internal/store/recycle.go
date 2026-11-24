@@ -93,7 +93,7 @@ func scanRecycle(sc interface{ Scan(...any) error }, withRecords bool) (*Recycle
 // GetRecycleItem returns an item of a tenant in the scope. The records are
 // read only when asked for: they are the size of a space's drafts.
 func GetRecycleItem(ctx context.Context, q Q, sc Scope, id string, withRecords bool) (*RecycleItem, error) {
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal = 0")
 	cols := recycleCols
 	if withRecords {
 		cols += `, records`
@@ -118,7 +118,7 @@ func ListRecycle(ctx context.Context, q Q, sc Scope, f RecycleFilter) (out []Rec
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal = 0")
 	where := []string{cond}
 	if f.Kind != "" {
 		where, args = append(where, `kind = ?`), append(args, f.Kind)
@@ -779,7 +779,7 @@ func GetRecycleItems(ctx context.Context, q Q, sc Scope, ids []string) (map[stri
 	if len(ids) == 0 {
 		return out, nil
 	}
-	cond, args := sc.cond("tenant_id")
+	cond, args := sc.spaceCond("tenant_id", "personal = 0")
 	ph := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
 	for _, id := range ids {
 		args = append(args, id)

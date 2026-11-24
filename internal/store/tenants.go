@@ -18,6 +18,9 @@ import (
 type Scope struct {
 	tenant string
 	all    bool
+	// noPersonal leaves personal spaces out of what the scope sees of spaces and
+	// of the recycle bin (AdminScopeOf: a tenant administrator's).
+	noPersonal bool
 }
 
 // InTenant is the scope of one tenant.
@@ -36,7 +39,7 @@ func (sc Scope) Tenant() string { return sc.tenant }
 // site administrator's ?tenant= filter. A one-tenant scope stays as it is.
 func (sc Scope) Narrow(id string) Scope {
 	if sc.all && id != "" {
-		return InTenant(id)
+		return Scope{tenant: id, noPersonal: sc.noPersonal}
 	}
 	return sc
 }
@@ -62,6 +65,31 @@ func (sc Scope) ofUser(col string) (string, []any) {
 		return "1 = 0", nil
 	}
 	return col + " IN (SELECT id FROM users WHERE tenant_id = ?)", []any{sc.tenant}
+}
+
+// AdminScopeOf is ScopeOf for what an administrator reaches of spaces through
+// the administration: a tenant administrator's scope leaves personal spaces
+// out, live or in the recycle bin, so that every query of a space by id or by
+// list answers for a personal one as for a space that does not exist
+// (docs/api.md, "Viewing a space": a personal space is never reachable by a
+// tenant administrator). Deleting and restoring a person, which takes their
+// personal space with them, uses ScopeOf.
+func AdminScopeOf(u User) Scope {
+	sc := ScopeOf(u)
+	if !sc.all {
+		sc.noPersonal = true
+	}
+	return sc
+}
+
+// spaceCond is cond on a row of a space (tenantCol), with the condition that it
+// is not a personal one (notPersonal) for a scope that leaves those out.
+func (sc Scope) spaceCond(tenantCol, notPersonal string) (string, []any) {
+	cond, args := sc.cond(tenantCol)
+	if sc.noPersonal {
+		cond += " AND " + notPersonal
+	}
+	return cond, args
 }
 
 // ScopeOf is the scope an administrator acts in: every tenant for a site

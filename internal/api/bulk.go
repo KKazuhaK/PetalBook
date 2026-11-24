@@ -194,7 +194,7 @@ func errorCodeOf(s *server, err error) (string, string) {
 
 // bulkItem does one item of a job with the rules of the action's own endpoint.
 func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, actor store.User, ip, job string) error {
-	sc := store.ScopeOf(actor)
+	sc := store.AdminScopeOf(actor)
 	by := func(kind string, tenant string, detail map[string]any) {
 		if s.auth == nil {
 			return
@@ -278,9 +278,10 @@ func mapNotFound(err error) error {
 
 // bulkExport makes one export of the spaces and items of a confirmed export.
 func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store.User) error {
-	sc := store.ScopeOf(actor)
+	sc := store.AdminScopeOf(actor)
 	var sources []store.ExportSource
 	tenants := map[string]bool{}
+	personal := false
 	for _, id := range req.Spaces {
 		sp, err := store.GetSpace(ctx, s.opt.Store.Q(), sc, id)
 		if err != nil || (sp.Personal && !(actor.SiteAdmin && actor.Role == "admin")) {
@@ -288,6 +289,7 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 		}
 		sources = append(sources, store.ExportSource{Space: sp.ID, Name: sp.Name})
 		tenants[sp.TenantID] = true
+		personal = personal || sp.Personal
 	}
 	items, err := store.GetRecycleItems(ctx, s.opt.Store.Q(), sc, req.Items)
 	if err != nil {
@@ -300,6 +302,7 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 		}
 		sources = append(sources, store.ExportSource{Item: it.ID, Name: it.Name})
 		tenants[it.TenantID] = true
+		personal = personal || it.Personal
 	}
 	tenant := actor.TenantID
 	if len(tenants) == 1 {
@@ -307,6 +310,7 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 			tenant = t
 		}
 	}
-	_, err = s.spaces.StartExport(ctx, spaces.ExportRequest{TenantID: tenant, By: actor.ID, ByName: actor.Username, Sources: sources})
+	_, err = s.spaces.StartExport(ctx, spaces.ExportRequest{TenantID: tenant, By: actor.ID, ByName: actor.Username, Sources: sources,
+		SiteOnly: exportSiteOnly(actor, false, personal, len(tenants))})
 	return err
 }
