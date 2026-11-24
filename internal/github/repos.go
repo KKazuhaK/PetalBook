@@ -437,6 +437,11 @@ func hasPermission(have map[string]string, name, want string) bool {
 // of the App. When that finds nothing (the stored view is old) it names all
 // that were asked for.
 func (s *Service) missingPermission(ctx context.Context, st *appState, installation int64, asked map[string]string) *Error {
+	// What the administrator sees should not stay as old as the day the App was saved.
+	s.autoRecheck(ctx, st)
+	if fresh, err := s.state(ctx); err == nil && fresh != nil {
+		st = fresh
+	}
 	var instPerms map[string]string
 	instKnown := false
 	if installation > 0 {

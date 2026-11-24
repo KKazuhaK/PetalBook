@@ -266,6 +266,16 @@ type adminGitHubResp struct {
 	Checked           string            `json:"checked"`
 	Spaces            int               `json:"spaces"`
 	Authorizations    int               `json:"authorizations"`
+	// Installations that lack a permission, from the last check.
+	Gaps []adminGapResp `json:"gaps"`
+	// Whether the App can be installed on any account; null when GitHub did not say.
+	AnyAccount *bool `json:"anyAccount"`
+}
+
+type adminGapResp struct {
+	InstallationID int64    `json:"installationId"`
+	Account        string   `json:"account"`
+	Missing        []string `json:"missing"`
 }
 
 func toAdminGitHub(v *github.AppView) any {
@@ -275,6 +285,11 @@ func toAdminGitHub(v *github.AppView) any {
 	r := adminGitHubResp{Configured: true, AppID: v.AppID, ClientID: v.ClientID, Slug: v.Slug, Name: v.Name, Owner: v.Owner,
 		HTMLURL: v.HTMLURL, InstallURL: v.InstallURL, CallbackURL: v.CallbackURL, Permissions: v.Permissions, Missing: v.Missing,
 		UserAuthorization: v.UserAuthorizaton, Checked: rfc3339(v.Checked), Spaces: v.Spaces, Authorizations: v.Authorizations}
+	r.AnyAccount = v.AnyAccount
+	r.Gaps = make([]adminGapResp, len(v.Gaps))
+	for i, g := range v.Gaps {
+		r.Gaps[i] = adminGapResp{g.ID, g.Account, g.Missing}
+	}
 	r.PrivateKey.Set, r.PrivateKey.Fingerprint = v.KeySet, v.Fingerprint
 	r.ClientSecret.Set = v.SecretSet
 	if r.Missing == nil {
@@ -320,6 +335,21 @@ func (s *server) adminPutGitHub(c *call) {
 	}
 	// Spaces that were waiting for the App are fetched again at once.
 	s.spaces.GitHubFixed("")
+	writeJSON(c.w, http.StatusOK, toAdminGitHub(v))
+}
+
+// adminCheckGitHub reads the App and its installations from GitHub again and
+// answers what the settings view now says.
+func (s *server) adminCheckGitHub(c *call) {
+	gh, ok := s.gh(c)
+	if !ok {
+		return
+	}
+	v, err := gh.Recheck(c.r.Context())
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	writeJSON(c.w, http.StatusOK, toAdminGitHub(v))
 }
 

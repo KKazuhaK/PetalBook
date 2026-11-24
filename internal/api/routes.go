@@ -164,6 +164,7 @@ var routeTable = []route{
 	{"POST", "/api/admin/daily/try", siteAdmin, true, false, false, (*server).adminTryDailyAPI},
 	{"GET", "/api/admin/github", siteAdmin, true, false, false, (*server).adminGetGitHub},
 	{"PUT", "/api/admin/github", siteAdmin, true, false, false, (*server).adminPutGitHub},
+	{"POST", "/api/admin/github/check", siteAdmin, true, false, false, (*server).adminCheckGitHub},
 	{"DELETE", "/api/admin/github", siteAdmin, true, false, false, (*server).adminDeleteGitHub},
 	{"GET", "/api/admin/github/installations", siteAdmin, true, false, false, (*server).adminGitHubInstallations},
 	{"PUT", "/api/admin/github/installations/{id}", siteAdmin, true, false, false, (*server).adminPutGitHubInstallation},

@@ -6055,7 +6055,8 @@ callback URL is the `callbackUrl` below.
  "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
  "callbackUrl": "https://notes.example.com/api/github/authorization/callback",
  "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
- "missing": [], "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
+ "missing": [], "gaps": [], "anyAccount": true,
+ "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
  "spaces": 4, "authorizations": 3}
 ```
 
@@ -6068,6 +6069,20 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
   compare with what GitHub shows for the App's keys.
 - `missing` lists the permissions above that the App lacks (`"administration"`,
   `"contents"`, `"metadata"`). It is a warning: saving is not refused.
+- `gaps` lists, from the last check, the installations that lack one of them
+  (an App whose permissions grew, installed where nobody has accepted that yet):
+  `[{"installationId": 51234567, "account": "kazuhahub", "missing": ["administration"]}]`,
+  at most 20. The owner accepts the new permissions in the installation's
+  settings on GitHub.
+- `anyAccount` says whether the App can be installed on any account, which a
+  person connecting their own account needs (the App must be public: "Any
+  account" in its settings). It is what GitHub says about the App when it does,
+  else `true` once an installation on an account that is not the App owner's has
+  been seen, else `null` (not known). A client warns on `false`.
+- Everything above is as of `checked`: it is read from GitHub when the App is
+  saved, by `POST /api/admin/github/check`, and, at most once a minute, when a
+  token GitHub refuses (for a permission the App or an installation lacks)
+  shows the stored view is old. A plain `GET` never asks GitHub.
 - `callbackUrl` is `<public-url>/api/github/authorization/callback`, `""`
   without `--public-url`. `userAuthorization` is as in `GET /api/github`.
 - `spaces` counts the spaces with a `github` credential; `authorizations` the
@@ -6104,6 +6119,15 @@ cached tokens. Another App (`appId` different from the saved one) is refused
 with `409 github_app_in_use` while any space has a `github` credential or any
 user is connected; another or no `clientId` only while any user is connected.
 `200` as `GET`.
+
+#### `POST /api/admin/github/check`
+
+No body. Reads the App (`GET /app`) and up to five pages of its installations
+(`GET /app/installations`) from GitHub again, stores what the permissions are
+now (`permissions`, `missing`, `gaps`, `anyAccount`, `checked`, and the App's
+name and page) and answers `200` as `GET /api/admin/github`. `409
+github_not_configured` without an App, or when GitHub no longer accepts its key;
+`503 unavailable` when GitHub cannot be reached (nothing is changed).
 
 #### `DELETE /api/admin/github`
 

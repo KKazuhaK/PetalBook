@@ -37,6 +37,18 @@ type AppView struct {
 	Checked          time.Time
 	Spaces           int
 	Authorizations   int
+	// Gaps lists the installations that lack a permission, from the last check.
+	Gaps []Gap
+	// AnyAccount: the App can be installed on any account (nil: not known). A
+	// person can only install it on their own account when it can.
+	AnyAccount *bool
+}
+
+// Gap is an installation that lacks permissions the App needs.
+type Gap struct {
+	ID      int64
+	Account string
+	Missing []string
 }
 
 func missingPermissions(have map[string]string) []string {
@@ -76,6 +88,10 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	v.Permissions, v.Missing = r.Permissions, missingPermissions(r.Permissions)
 	v.UserAuthorizaton = st.userAuth(s.opt.PublicURL)
 	v.Checked, v.Spaces, v.Authorizations = r.Checked, spaces, auths
+	for _, g := range r.Gaps {
+		v.Gaps = append(v.Gaps, Gap{ID: g.ID, Account: g.Account, Missing: g.Missing})
+	}
+	v.AnyAccount = r.AnyAccount
 	return v, nil
 }
 
@@ -206,7 +222,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		}
 	}
 	rec := appRecord{AppID: appID, ClientID: clientID, Fingerprint: githubapp.Fingerprint(key), Slug: info.Slug, Name: info.Name,
-		Owner: info.Owner.Login, HTMLURL: info.HTMLURL, Permissions: info.Permissions, Checked: s.opt.Now().UTC()}
+		Owner: info.Owner.Login, HTMLURL: info.HTMLURL, Permissions: info.Permissions, Checked: s.opt.Now().UTC(), AnyAccount: info.Public}
+	if old != nil && old.rec.AppID == appID && rec.AnyAccount == nil {
+		rec.AnyAccount = old.rec.AnyAccount
+	}
 	if rec.KeyEnc, err = s.opt.Secrets.Seal(siteBinding, purposeKey, pemBytes); err != nil {
 		return nil, err
 	}
@@ -429,4 +448,98 @@ func (s *Service) SetTenants(ctx context.Context, id int64, tenants []string) (*
 	}
 	return &Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
 		Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: set, Spaces: counts[id]}, nil
+}
+
+// --- re-checking the App ------------------------------------------------------------
+
+const (
+	// maxCheckPages bounds the installations a re-check reads (30 a page).
+	maxCheckPages = 5
+	// maxGaps bounds the installations listed as lacking a permission.
+	maxGaps = 20
+	// autoRecheckEvery is the least time between the checks a refused token
+	// causes, so a run of refusals asks GitHub once.
+	autoRecheckEvery = time.Minute
+)
+
+// Recheck reads the App and its installations from GitHub again and stores
+// what the permissions are now, so the administrator sees today's answer, not
+// the one from the day the App was saved.
+func (s *Service) Recheck(ctx context.Context) (*AppView, error) {
+	st, err := s.need(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.refresh(ctx, st); err != nil {
+		return nil, err
+	}
+	return s.View(ctx)
+}
+
+// autoRecheck is Recheck for a token that was refused over a permission: it
+// runs at most once a minute and never fails the caller.
+func (s *Service) autoRecheck(ctx context.Context, st *appState) {
+	now := s.opt.Now()
+	s.mu.Lock()
+	if !s.autoAt.IsZero() && now.Sub(s.autoAt) < autoRecheckEvery {
+		s.mu.Unlock()
+		return
+	}
+	s.autoAt = now
+	s.mu.Unlock()
+	if err := s.refresh(ctx, st); err != nil {
+		s.log.Info("could not re-check the GitHub App after a permission refusal", "reason", reason(err))
+	}
+}
+
+func (s *Service) refresh(ctx context.Context, st *appState) error {
+	info, err := st.app.AppInfo(ctx)
+	if err != nil {
+		return s.listError(err)
+	}
+	var gaps []gapRec
+	another := false // an installation on an account that is not the App owner's
+	page := 0
+	for n := 0; n < maxCheckPages; n++ {
+		list, next, err := st.app.Installations(ctx, page)
+		if err != nil {
+			return s.listError(err)
+		}
+		for _, in := range list {
+			if !strings.EqualFold(in.Account.Login, info.Owner.Login) {
+				another = true
+			}
+			if m := missingPermissions(in.Permissions); len(m) > 0 && !in.Suspended() && len(gaps) < maxGaps {
+				gaps = append(gaps, gapRec{ID: in.ID, Account: in.Account.Login, Missing: m})
+			}
+		}
+		if next == 0 {
+			break
+		}
+		page = next
+	}
+	// Write onto what is stored now, and only if it is still this App.
+	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), settingKey)
+	if err != nil {
+		return err
+	}
+	var rec appRecord
+	if !ok || json.Unmarshal([]byte(raw), &rec) != nil || rec.AppID != st.rec.AppID || rec.KeyEnc != st.rec.KeyEnc {
+		return nil // saved again or removed meanwhile: that is newer than this
+	}
+	rec.Slug, rec.Name, rec.Owner, rec.HTMLURL = info.Slug, info.Name, info.Owner.Login, info.HTMLURL
+	rec.Permissions, rec.Checked, rec.Gaps = info.Permissions, s.opt.Now().UTC(), gaps
+	switch {
+	case info.Public != nil:
+		rec.AnyAccount = info.Public
+	case another:
+		yes := true
+		rec.AnyAccount = &yes
+	}
+	b, _ := json.Marshal(rec)
+	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), settingKey, string(b), s.opt.Now()); err != nil {
+		return err
+	}
+	s.forget()
+	return nil
 }

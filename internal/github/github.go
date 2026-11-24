@@ -120,6 +120,7 @@ type Service struct {
 	genAll   uint64
 	attempts *attemptStore
 	onChange func(userID string)
+	autoAt   time.Time // when the App was last re-checked because a token was refused
 }
 
 // New returns a Service.
@@ -185,6 +186,18 @@ type appRecord struct {
 	HTMLURL     string            `json:"htmlUrl"`
 	Permissions map[string]string `json:"permissions"`
 	Checked     time.Time         `json:"checked"`
+	// Gaps are the installations that lack a permission the App needs (an
+	// App whose permissions grew, installed where nobody accepted that yet).
+	Gaps []gapRec `json:"gaps,omitempty"`
+	// AnyAccount says whether the App can be installed on any account; nil when
+	// GitHub did not say and nothing shows it.
+	AnyAccount *bool `json:"anyAccount,omitempty"`
+}
+
+type gapRec struct {
+	ID      int64    `json:"id"`
+	Account string   `json:"account"`
+	Missing []string `json:"missing"`
 }
 
 const (
