@@ -12,6 +12,7 @@ import {
   type Query,
   type QueryClient,
 } from '@tanstack/react-query'
+import { openView } from '@/lib/adminView'
 import { waitForSaves } from '@/editor/saveController'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
@@ -280,7 +281,7 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
   const wanted = route ?? last
   const viewed = useViewedSpace(wanted, !list.isPending && !!wanted && !mine.some((s) => s.id === wanted))
   // A view the server says is open adds the permission to read, and nothing else.
-  const open = !!viewed.data?.view && Date.parse(viewed.data.view.until) > Date.now()
+  const open = !!openView(viewed.data?.view)
   const seen =
     viewed.data && open && !viewed.data.permissions.includes('read')
       ? { ...viewed.data, permissions: [...viewed.data.permissions, 'read' as const] }

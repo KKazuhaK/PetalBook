@@ -7,6 +7,7 @@ import type { SpaceInfo } from '@/api/types'
 import { ViewForm } from '@/components/admin/manage/ViewForm'
 import { TopBar } from '@/components/layout/TopBar'
 import { Button } from '@/components/ui/button'
+import { openView } from '@/lib/adminView'
 import { clockTime } from '@/lib/time'
 import { adminPath } from '@/lib/urls'
 import { tg } from '@/i18n/manage'
@@ -39,7 +40,7 @@ export function AdminViewGate({ space }: { space: SpaceInfo }) {
 // While a view is open, on every page of the space: it is read only and it is recorded.
 export function AdminViewBanner({ space }: { space: SpaceInfo }) {
   const qc = useQueryClient()
-  const until = space.view && Date.parse(space.view.until) > Date.now() ? space.view.until : null
+  const until = openView(space.view)?.until
   const end = async () => {
     try {
       await manageApi.endView(space.id)
