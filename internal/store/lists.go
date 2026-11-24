@@ -687,7 +687,7 @@ func GetStorageSummary(ctx context.Context, q Q, sc Scope) (StorageSummary, erro
 	}
 	// When a space of the scope was last measured: the newest of the queue, one
 	// lookup of its index.
-	if err := q.QueryRow(ctx, `SELECT COALESCE(MAX(size_at), 0) FROM space_measure WHERE `+cond, args...).Scan(&measured); err != nil {
+	if err := q.QueryRow(ctx, `SELECT COALESCE(MAX(measured_at), 0) FROM space_measure WHERE `+cond, args...).Scan(&measured); err != nil {
 		return s, err
 	}
 	s.Local, s.Partial = max(spaces-remote, 0), partial

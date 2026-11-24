@@ -594,3 +594,27 @@ func TestOpenFreshMigratesAndEnforcesForeignKeys(t *testing.T) {
 		t.Fatalf("%v %v", u, err)
 	}
 }
+
+// The log of the state database is cut back to a limit whenever it restarts,
+// and Checkpoint (called by the hourly maintenance) lets it restart.
+func TestStateDatabaseLogIsLimited(t *testing.T) {
+	st := storetest.Open(t, "sqlite")
+	var limit int64
+	if err := st.Q().QueryRow(ctx, `PRAGMA journal_size_limit`).Scan(&limit); err != nil {
+		t.Fatal(err)
+	}
+	if limit != 64<<20 {
+		t.Fatalf("journal_size_limit=%d, want 64 MiB", limit)
+	}
+	if err := st.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckpointDoesNothingOnPostgres(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		if err := st.Checkpoint(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+}

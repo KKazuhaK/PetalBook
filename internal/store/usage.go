@@ -442,7 +442,7 @@ func (s *Store) RecordMeasurement(ctx context.Context, spaceID string, m Measure
 // by a measurement that changes it (RecordMeasurement); a tenant's is not
 // written by the measurement at all, so it is when a space of the tenant was
 // last measured, the newest of its rows of the queue (one index lookup).
-const measuredSQL = `CASE WHEN usage.kind = 'tenant' THEN COALESCE((SELECT MAX(sm.size_at) FROM space_measure sm WHERE sm.tenant_id = usage.id), 0) ELSE usage.measured END`
+const measuredSQL = `CASE WHEN usage.kind = 'tenant' THEN COALESCE((SELECT MAX(sm.measured_at) FROM space_measure sm WHERE sm.tenant_id = usage.id), 0) ELSE usage.measured END`
 
 // GetUsage returns the row of a person or a tenant; a row that does not exist
 // yet is all zeros.

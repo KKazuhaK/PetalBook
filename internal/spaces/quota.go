@@ -184,6 +184,9 @@ func (m *Manager) runRecount(ctx context.Context) {
 			return
 		case <-t.C:
 		case <-dl.C:
+			if err := m.opt.Store.Checkpoint(ctx); err != nil && ctx.Err() == nil {
+				m.log.Warn("could not checkpoint the state database", "error", err)
+			}
 			if _, err := m.SettleDeadlines(ctx); err != nil && ctx.Err() == nil {
 				m.log.Warn("could not count the spaces by deadline", "error", err)
 			}

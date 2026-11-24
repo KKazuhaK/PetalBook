@@ -145,12 +145,12 @@ func TestMeasurementQueueUsesItsIndexes(t *testing.T) {
 		bulk(t, st, "spaces", "id, name, name_key, created, tenant_id", n, 200, func(i int) []any {
 			return []any{fmt.Sprintf("S%05d", i), "s", "s", now, tenants[i%len(tenants)]}
 		})
-		bulk(t, st, "space_measure", "space_id, tenant_id, size_at", n, 200, func(i int) []any {
+		bulk(t, st, "space_measure", "space_id, tenant_id, size_at, measured_at", n, 200, func(i int) []any {
 			var at any = now - int64(i)*1000
 			if i%1000 == 0 {
 				at = nil
 			}
-			return []any{fmt.Sprintf("S%05d", i), tenants[i%len(tenants)], at}
+			return []any{fmt.Sprintf("S%05d", i), tenants[i%len(tenants)], at, at}
 		})
 		withDearScans(t, st, func(q store.Q) {
 			pq := &planQ{Q: q, d: st.Dialect()}
@@ -162,10 +162,73 @@ func TestMeasurementQueueUsesItsIndexes(t *testing.T) {
 					t.Errorf("the queue is not read by its index:\n%s", p)
 				}
 			}
-			plan := explain(t, st, q, `SELECT COALESCE(MAX(size_at), 0) FROM space_measure WHERE tenant_id = ?`, tenants[7])
+			plan := explain(t, st, q, `SELECT COALESCE(MAX(measured_at), 0) FROM space_measure WHERE tenant_id = ?`, tenants[7])
 			if !strings.Contains(plan, "space_measure_tenant") {
 				t.Errorf("the tenant's time is not one lookup:\n%s", plan)
 			}
 		})
+	})
+}
+
+// A measurement that failed moves the space to the back of the queue and is not
+// a measurement: the tenant's time (and the scope's) stays where it was.
+func TestFailedMeasurementIsNotCounted(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+		q := st.Q()
+		mkUser(t, st, "U1", "u1", "member")
+		if err := store.InsertSpace(ctx, q, store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AddMember(ctx, q, "S1", "U1", "owner", now); err != nil {
+			t.Fatal(err)
+		}
+		measured := func() time.Time {
+			t.Helper()
+			u, err := store.GetUsage(ctx, q, store.UsageTenant, store.DefaultTenantID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sum, err := store.GetStorageSummary(ctx, q, store.AllTenants())
+			if err != nil || !sum.Measured.Equal(u.Measured) {
+				t.Fatalf("summary %v (%v), tenant %v", sum.Measured, err, u.Measured)
+			}
+			l, err := store.UsageOfTenants(ctx, q, []string{store.DefaultTenantID})
+			if err != nil || !l[store.DefaultTenantID].Measured.Equal(u.Measured) {
+				t.Fatalf("list %+v %v", l, err)
+			}
+			return u.Measured
+		}
+		// Never measured, tried and failed: still never measured, but out of the way.
+		failed := now.Add(time.Minute)
+		if err := store.SkipSpaceSize(ctx, q, "S1", failed); err != nil {
+			t.Fatal(err)
+		}
+		if got := measured(); !got.IsZero() {
+			t.Fatalf("a failure counted as a measurement: %v", got)
+		}
+		if _, ok, _ := store.NextSpaceToMeasure(ctx, q, failed); ok {
+			t.Fatal("the failing space is tried again at once")
+		}
+		if _, ok, _ := store.NextSpaceToMeasure(ctx, q, failed.Add(time.Second)); !ok {
+			t.Fatal("the failing space never comes round again")
+		}
+		// Measured, then a failure: the tenant keeps the time of the measurement.
+		if _, err := st.RecordMeasurement(ctx, "S1", store.Measurement{Bytes: 10, Pages: 1, HavePages: true, At: now.Add(2 * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		good := now.Add(2 * time.Minute)
+		if got := measured(); !got.Equal(good) {
+			t.Fatalf("measured %v, want %v", got, good)
+		}
+		if err := store.SkipSpaceSize(ctx, q, "S1", now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if got := measured(); !got.Equal(good) {
+			t.Fatalf("a later failure moved the tenant's time: %v", got)
+		}
+		if _, ok, _ := store.NextSpaceToMeasure(ctx, q, now.Add(time.Hour)); ok {
+			t.Fatal("the failed space is still due")
+		}
 	})
 }

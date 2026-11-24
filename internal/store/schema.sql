@@ -203,15 +203,19 @@ CREATE INDEX spaces_owner ON spaces(usage_user, created, id);
 -- (NULL: never). It is a table of its own so that the measurement, which
 -- visits every space again and again, writes this narrow row and leaves the
 -- space's wide, many-indexed row alone unless what it found changed.
+-- size_at is when the space was last measured or tried (a failing space goes
+-- to the back of the queue). measured_at is when it was last measured, set only
+-- by a success (NULL: never), and is what the tenant's measuredAt shows.
 -- tenant_id is the space's (spaces do not move between tenants), so that when
--- a tenant was last measured is one index lookup (its newest size_at).
+-- a tenant was last measured is one index lookup (its newest measured_at).
 CREATE TABLE space_measure (
   space_id  TEXT COLLATE "C" PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
   tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
-  size_at   BIGINT
+  size_at   BIGINT,
+  measured_at BIGINT
 );
 CREATE INDEX space_measure_due ON space_measure(size_at, space_id);
-CREATE INDEX space_measure_tenant ON space_measure(tenant_id, size_at);
+CREATE INDEX space_measure_tenant ON space_measure(tenant_id, measured_at);
 
 CREATE TABLE space_members (
   space_id TEXT COLLATE "C" NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,

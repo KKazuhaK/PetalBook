@@ -5874,7 +5874,8 @@ answer as switched off, and no setting can open registration.
   limit. From 3.6 they are part of the tenant's capabilities (`storage.quota`,
   `other.people`; see "Capabilities" under "Tenant autonomy") and `quota` here is
   read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a space
-  of the tenant was last measured (`null`: never), and `over` lists the totals it
+  of the tenant was last measured (`null`: never; a measurement that failed does
+  not count), and `over` lists the totals it
   is over (`people`, `spaces`, `bytes`, `pages`).
 - The host a tenant is reached on is reserved: in 3.3 every tenant is served on
   the one `--public-url`, and a public endpoint names its tenant by slug.
@@ -6477,9 +6478,11 @@ Signed in.
 ```
 
 `limit` is `null` for none; `measuredAt` is `null` until a space of the person
-has been measured. A **notice** is a quota that is over: `scope` `person` for
-the person's own limit, `tenant` for the tenant's total (`quota` is then also
-`people`). Three lookups of rows by key; the numbers are the stored ones.
+has been measured. It is the time of the last measurement that found something
+new to record, so it may lag the last measurement that found the same as before
+(that one only moves the space in the measurement's queue). A **notice** is a
+quota that is over: `scope` `person` for the person's own limit, `tenant` for
+the tenant's total (`quota` is then also `people`). Three lookups of rows by key; the numbers are the stored ones.
 
 #### `GET /api/admin/usage?tenant={id}&over=1&cursor={cursor}&limit={n}`
 

@@ -231,6 +231,10 @@ func openSQLite(path string) (*Store, error) {
 	q.Add("_pragma", "synchronous(FULL)")
 	q.Add("_pragma", "busy_timeout(10000)")
 	q.Add("_pragma", "foreign_keys(1)")
+	// With a pool of readers the log may never find a moment with no reader
+	// in it, so it is not restarted and only grows. Past this size it is cut
+	// back to it whenever it does restart.
+	q.Add("_pragma", fmt.Sprintf("journal_size_limit(%d)", walSizeLimit))
 	q.Set("_txlock", "immediate")
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: q.Encode()}
 	db, err := sql.Open("sqlite", u.String())
@@ -261,6 +265,22 @@ func openSQLite(path string) (*Store, error) {
 
 // readConns is the size of SQLite's read pool.
 const readConns = 4
+
+// walSizeLimit is the size the write-ahead log is cut back to when it restarts.
+const walSizeLimit = 64 << 20
+
+// Checkpoint moves what the write-ahead log holds into the database file, as
+// far as the readers allow (PASSIVE: it never waits for a reader or blocks a
+// writer), so that the log can restart. SQLite checkpoints by itself after
+// 1000 pages, but only as far as the oldest reader; this is the periodic one
+// that catches up. It does nothing on PostgreSQL.
+func (s *Store) Checkpoint(ctx context.Context) error {
+	if s.dialect != SQLite {
+		return nil
+	}
+	var busy, logFrames, done int
+	return s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`).Scan(&busy, &logFrames, &done)
+}
 
 func openPostgres(dsn string) (*Store, error) {
 	db, err := sql.Open("pgx", dsn)

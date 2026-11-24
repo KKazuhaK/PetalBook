@@ -111,9 +111,18 @@ func queueMeasure(ctx context.Context, q Q, spaceID string) error {
 	return err
 }
 
-// stampMeasured records when a space was measured (or its measurement was
-// tried): its place in the queue. ErrNotFound for a space that is gone.
+// stampMeasured records when a space was measured: its place in the queue
+// (size_at) and the time of its last measurement (measured_at). ErrNotFound for
+// a space that is gone.
 func stampMeasured(ctx context.Context, q Q, spaceID string, at time.Time) error {
+	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id, size_at, measured_at) SELECT id, tenant_id, ?, ? FROM spaces WHERE id = ?
+		ON CONFLICT (space_id) DO UPDATE SET size_at = excluded.size_at, measured_at = excluded.measured_at`, ms(at), ms(at), spaceID)
+	return oneRow(res, err)
+}
+
+// stampTried records that measuring a space was tried and failed: its place in
+// the queue moves (size_at), its time of last measurement does not.
+func stampTried(ctx context.Context, q Q, spaceID string, at time.Time) error {
 	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id, size_at) SELECT id, tenant_id, ? FROM spaces WHERE id = ?
 		ON CONFLICT (space_id) DO UPDATE SET size_at = excluded.size_at`, ms(at), spaceID)
 	return oneRow(res, err)
@@ -133,10 +142,11 @@ func SetSpaceSize(ctx context.Context, q Q, id string, bytes int64, at time.Time
 
 // SkipSpaceSize records that measuring failed at this time, keeping the
 // earlier size: the space goes to the back of the queue instead of being tried
-// again at the next turn, for ever. For a space never measured this sets the
+// again at the next turn, for ever. It is not a measurement: the tenant's
+// measuredAt does not move. For a space never measured this sets the queue's
 // time but no size, which the list reports as not measured (both null).
 func SkipSpaceSize(ctx context.Context, q Q, id string, at time.Time) error {
-	return stampMeasured(ctx, q, id, at)
+	return stampTried(ctx, q, id, at)
 }
 
 // NextSpaceToMeasure returns the space that was measured longest ago, if it
