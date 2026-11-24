@@ -15,7 +15,7 @@ import (
 // tenant owns (users, spaces, groups, invites, audit_log) takes a Scope, or is on the allowlist below with the reason it may look
 // across tenants (or needs no scope because the row it works on has already
 // been found inside one). The tables of 2.7 that hang off a user or a space
-// (github_authorizations, github_installations, github_installation_tenants, github_leftovers, remotes) follow the same rule.
+// (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) follow the same rule.
 // scopeAllowlist is every exported function that touches the five tables
 // without a Scope parameter. The comment of each is the reason. A function
 // that gains a Scope, or is removed, must leave the list (the test says so), so
@@ -110,6 +110,31 @@ var scopeAllowlist = map[string]string{
 	"SetGitHubInstallationTenants": "a site administrator chooses the tenants an installation is shared with; the tenants are checked by the caller",
 	"GitHubInstallationTenants":    "which tenants installations are shared with, shown to site administrators only",
 	"DeleteGitHubInstallations":    "the App was removed (site administrators only): the shares go with the installations",
+	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
+	// tenant's: owner), set up by site administrators; a connection and a reminder are
+	// their user's; the account link is unique per provider on the whole server ---
+	"ListConnProviderRows":         "the server's providers, loaded at start and shown to site administrators; visibility by owner is the registry's rule",
+	"GetConnProviderRow":           "a provider by its id, for administrators and the provider's own reads",
+	"CountConnProviderRows":        "how many providers an owner has, for the limit",
+	"InsertConnProviderRow":        "a provider set up by a site administrator",
+	"UpdateConnProviderRow":        "a provider changed by a site administrator",
+	"SetConnProviderPartial":       "what a check of a provider's host found",
+	"DeleteConnProviderRow":        "a provider removed by a site administrator",
+	"DeleteTenantConnProviderRows": "a tenant is being deleted: its own providers go with it",
+	"GetProviderAuthorization":     "one person's connection, by the id of a user already found in scope",
+	"ProviderAccountUser":          "an account on a host links to one PetalBook user on the whole server; callers learn only that it is taken (account_in_use)",
+	"PutProviderAuthorization":     "the caller's own connection; its account check is site-wide, as ProviderAccountUser's",
+	"ReplaceProviderTokens":        "one person's connection, by the id of a user already found",
+	"ExpireProviderAuthorization":  "one person's connection, by the id of a user already found",
+	"DeleteProviderAuthorization":  "the caller's own connection, or that of a user being deleted",
+	"DueProviderRenewals":          "background job: the daily renewal of the connections of every tenant",
+	"ListProviderAuthorizations":   "the provider was removed (site administrators only): every connection to it is revoked",
+	"CountProviderAuthorizations":  "the provider's own count, shown to site administrators only",
+	"CountProviderSpaces":          "the provider's own count, shown to site administrators only",
+	"CountUserProviderSpaces":      "the spaces syncing through one person's connection: same-tenant, as connecting checks",
+	"PutProviderLeftover":          "a reminder of the caller's own, by the id of a user already found",
+	"ListProviderLeftovers":        "the caller's own reminders, by the id of a user already found",
+	"DeleteProviderLeftover":       "the caller's own reminder, by the id of a user already found",
 	"MemberStanding":               "one person's roles on a space already found: memberships are same-tenant by construction",
 	"GetRemote":                    "the remote of a space already opened by the caller",
 	"PutRemote":                    "the remote of a space already opened, or one being made in the caller's tenant",
@@ -188,7 +213,7 @@ func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(stale)
 	for _, m := range missing {
-		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, remotes) and takes no Scope: give it one, or put it on the allowlist with the reason", m)
+		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) and takes no Scope: give it one, or put it on the allowlist with the reason", m)
 	}
 	for _, s := range stale {
 		t.Error(s)
@@ -218,4 +243,4 @@ func touches(body *ast.BlockStmt) bool {
 
 // The tables of 2.7 count as well: a GitHub connection is a user's and a remote
 // a space's, so a function that reaches them across users needs a reason.
-var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|remotes)\b`)
+var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|providers|provider_authorizations|provider_leftovers|remotes)\b`)
