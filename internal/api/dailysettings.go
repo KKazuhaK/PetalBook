@@ -147,14 +147,17 @@ func (s *server) dailyAllowFor(ctx context.Context, tenantID string) (dailyAllow
 }
 
 // dailyDefaultFor is the default of the daily text for a tenant: the tenant's
-// own when it has one in effect, else the site's.
-func (s *server) dailyDefaultFor(ctx context.Context, tenantID string, site *siteDefault) (*siteDefault, error) {
+// own when it has one in effect, else the site's. scope names whose it is
+// ("tenant:<id>" or "site"), for what is chosen in turn among several
+// interfaces.
+func (s *server) dailyDefaultFor(ctx context.Context, tenantID string, site *siteDefault) (*siteDefault, string, error) {
 	e, err := s.settings.Get(ctx, tenantID, settings.DailyDefault)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if e.Tenant != nil && e.Tenant.InEffect && e.Tenant.Value != nil {
-		return fromGeneric(e.Tenant.Value)
+		def, err := fromGeneric(e.Tenant.Value)
+		return def, "tenant:" + tenantID, err
 	}
-	return site, nil
+	return site, "site", nil
 }

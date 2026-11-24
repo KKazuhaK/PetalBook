@@ -57,7 +57,7 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 			t.Fatalf("a refused default was saved: %v", g["default"])
 		}
 		code, r := setDefault(map[string]any{"": "en-quotes", "zh": "zh-quotes"})
-		if d := asMap(r["default"]); code != 200 || d["kind"] != "api" || fmt.Sprint(d["apis"]) != "map[:en-quotes zh-Hans:zh-quotes]" {
+		if d := asMap(r["default"]); code != 200 || d["kind"] != "api" || fmt.Sprint(d["apis"]) != "map[:[en-quotes] zh-Hans:[zh-quotes]]" {
 			t.Fatalf("%d %v", code, r)
 		}
 		// Nobody has chosen an interface, and the spaces may not: the default is the administrators' own.

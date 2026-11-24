@@ -22,6 +22,7 @@ import type {
   TokenAccess,
   BacklinkList,
   DailyAnswer,
+  DailyOptionChoice,
   DailyPrefs,
   DailySettings,
   FavoriteList,
@@ -608,7 +609,7 @@ export function spaceApi(space: string) {
       }),
     // Accounts mode only (the single-user server answers 404).
     dailyPrefs: (signal?: AbortSignal) => request<DailyPrefs>(base('/daily/prefs'), { signal }),
-    putDailyPrefs: (input: { inherit: boolean; apis: string[] }) =>
+    putDailyPrefs: (input: { inherit: boolean; apis: string[]; options?: DailyOptionChoice }) =>
       request<DailyPrefs>(base('/daily/prefs'), { method: 'PUT', body: input }),
 
     // A person's own favourites of the space.

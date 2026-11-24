@@ -145,12 +145,20 @@ export const adminEn: AdminMessages = {
     sourceClear: 'Remove the source for this language',
     defaultSpaceIncomplete: 'Choose a space and give a source for at least one language.',
     defaultApiHelp:
-      'One interface for each language; "All other languages" is for the languages with none of their own. This is the administrators\' own choice: it is not limited by "Spaces may choose an external interface".',
+      'The interfaces for each language, in order: with more than one they take turns by day, and one that does not answer is passed over for the next. "All other languages" is for the languages with none of their own. This is the administrators\' own choice: it is not limited by "Spaces may choose an external interface".',
     defaultApiFor: (l: string) => `${l} uses`,
     defaultApiRest: 'All other languages use',
     defaultApiNone: 'None',
     defaultApiIncomplete: 'Choose an interface for at least one language.',
     defaultApiOff: 'switched off',
+    defaultApiAdd: 'Add another…',
+    choice: {
+      all: 'All',
+      optionName: (key: string) => (key === 'categories' ? 'Categories' : key),
+      up: (name: string) => `Move ${name} up`,
+      down: (name: string) => `Move ${name} down`,
+      remove: (name: string) => `Remove ${name}`,
+    },
     linesTitle: 'Lines',
     linesHelp:
       'One per line, with a Tab between the text and where it is from; or Markdown, cut at lines of ---. Saving replaces the lines this language had.',

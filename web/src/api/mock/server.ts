@@ -1744,7 +1744,8 @@ export function createMockServer(options: MockOptions = {}) {
     enabled: boolean
     builtin?: boolean
   }
-  type SiteDefault = null | { kind: 'list' } | { kind: 'api'; apis: Record<string, string> }
+  type OptionChoice = Record<string, Record<string, string[]>>
+  type SiteDefault = null | { kind: 'list' } | { kind: 'api'; apis: Record<string, string[]>; options?: OptionChoice }
   interface ProviderState {
     enabled: boolean
     refresh?: string
@@ -1822,7 +1823,7 @@ export function createMockServer(options: MockOptions = {}) {
     providers: {} as Record<string, ProviderState>,
     notices: [] as DailyNotice[],
   }
-  const spaceDaily = new Map<string, { inherit: boolean; apis: string[] }>()
+  const spaceDaily = new Map<string, { inherit: boolean; apis: string[]; options?: OptionChoice }>()
   const KNOWN_LANGUAGES = [
     { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
     { tag: 'zh-Hant', name: '中文（繁體）', english: 'Chinese (Traditional)' },
@@ -1879,6 +1880,27 @@ export function createMockServer(options: MockOptions = {}) {
       author: 'from_who',
       link: 'https://hitokoto.cn?uuid={uuid}',
       rps: 20,
+      options: [
+        {
+          key: 'categories',
+          param: 'c',
+          kind: 'multi',
+          values: [
+            ['a', '动画', 'Anime'],
+            ['b', '漫画', 'Comics'],
+            ['c', '游戏', 'Games'],
+            ['d', '文学', 'Literature'],
+            ['e', '原创', 'Original'],
+            ['f', '来自网络', 'From the web'],
+            ['g', '其他', 'Other'],
+            ['h', '影视', 'Film & TV'],
+            ['i', '诗词', 'Poetry'],
+            ['j', '网易云', 'NetEase Music'],
+            ['k', '哲学', 'Philosophy'],
+            ['l', '抖机灵', 'Wit'],
+          ].map(([value, zh, en]) => ({ value, label: { zh, en } })),
+        },
+      ],
     },
     {
       id: 'zenquotes',
@@ -1971,23 +1993,59 @@ export function createMockServer(options: MockOptions = {}) {
           rps: a.rps,
           maxRps: p.rps,
           skipNew: a.skipNew,
+          options: p.options ?? [],
         }
       }),
       lines: { total, byLang, max: 5000 },
       notices: site.notices.map((n) => ({ ...n })),
     }
   }
-  // The interface for a language of a space's choice: the one made for the language the reader's is matched to, else
-  // one for every language, else any.
-  const chooseApi = (chosen: SiteApi[], lang: string): SiteApi | undefined => {
+  // The interfaces for a language of a space's choice, in the order it listed them: those made for the language the
+  // reader's is matched to, else those for every language, else all of them.
+  const chooseApis = (chosen: SiteApi[], lang: string): SiteApi[] => {
     const m = matchTag(lang, chosen.flatMap(apiTags))
-    return (
-      (m !== null ? chosen.find((a) => apiTags(a).includes(m)) : undefined) ??
-      chosen.find((a) => a.lang === '') ??
-      chosen[0]
-    )
+    if (m !== null) return chosen.filter((a) => apiTags(a).includes(m))
+    const every = chosen.filter((a) => a.lang === '')
+    return every.length > 0 ? every : chosen
   }
-  const quoteFrom = (api: SiteApi, date: string, skip: number): Record<string, unknown> => {
+  const valuesOf = (p: { options?: { key: string; values: { value: string }[] }[] } | undefined, chosen: unknown) => {
+    // Canonical as the server keeps it: only declared values, in declared order; none or all is nothing.
+    const out: Record<string, string[]> = {}
+    if (chosen === undefined) return out
+    if (!isRecord(chosen)) throw new HttpError(400, 'invalid', 'options are values by key')
+    for (const [key, values] of Object.entries(chosen)) {
+      const opt = p?.options?.find((o) => o.key === key)
+      if (!opt) throw new HttpError(400, 'invalid', `没有选项 ${key}`)
+      if (!Array.isArray(values)) throw new HttpError(400, 'invalid', 'values are a list')
+      for (const v of values)
+        if (typeof v !== 'string' || !opt.values.some((o) => o.value === v))
+          throw new HttpError(400, 'invalid', `${String(v)} 不是 ${key} 的值`)
+      const picked = opt.values.map((o) => o.value).filter((v) => values.includes(v))
+      if (picked.length > 0 && picked.length < opt.values.length) out[key] = picked
+    }
+    return out
+  }
+  // The options chosen for the built-in interfaces among ids, checked.
+  const checkOptions = (ids: string[], given: unknown): OptionChoice => {
+    const out: OptionChoice = {}
+    if (given === undefined || given === null) return out
+    if (!isRecord(given)) throw new HttpError(400, 'invalid', 'options are by interface id')
+    for (const [id, chosen] of Object.entries(given)) {
+      const p = PROVIDERS.find((x) => x.id === id)
+      if (!p || !ids.includes(id) || !site.providers[id]?.enabled)
+        throw new HttpError(400, 'invalid', `选项只给选了的内置接口：${id}`)
+      const one = valuesOf(p, chosen)
+      if (Object.keys(one).length > 0) out[id] = one
+    }
+    return out
+  }
+  const scopeNumber = (text: string) => [...text].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+  const quoteFrom = (
+    api: SiteApi,
+    date: string,
+    skip: number,
+    options?: Record<string, string[]>,
+  ): Record<string, unknown> => {
     // An external interface knows only today and the days next to it: another date is no error, there is just no text.
     if (
       Math.abs(
@@ -1996,7 +2054,7 @@ export function createMockServer(options: MockOptions = {}) {
     )
       return { page: null, reason: 'out_of_range' }
     const quote: Record<string, unknown> = {
-      text: `${api.name} ${date}${skip ? ` #${skip}` : ''}`,
+      text: `${api.name} ${date}${skip ? ` #${skip}` : ''}${options ? ` [${Object.values(options).flat().join(',')}]` : ''}`,
       ...(api.source ? { source: 'src' } : {}),
       ...(api.author ? { author: 'au' } : {}),
     }
@@ -2013,9 +2071,28 @@ export function createMockServer(options: MockOptions = {}) {
     // An interface the space chose. The mock makes no requests: the text names the interface, and an id with
     // "stale" in it plays one that did not answer.
     const apis = allApis()
-    const chosen = apis.filter((a) => a.enabled && locked.api && (spaceDaily.get(space.id)?.apis ?? []).includes(a.id))
-    const api = chooseApi(chosen, lang)
-    if (accounts && api) return quoteFrom(api, date, skip)
+    const mine = spaceDaily.get(space.id)
+    const chosen = (mine?.apis ?? [])
+      .map((id) => apis.find((a) => a.id === id))
+      .filter((a): a is SiteApi => a !== undefined && a.enabled && locked.api)
+    // Several interfaces take turns by day; one that has nothing fresh is passed over for the next, and "another"
+    // moves to the next. A stale answer is used only when no other has a fresh one.
+    const ask = (list: SiteApi[], scope: string, options: OptionChoice | undefined): Record<string, unknown> => {
+      const n = list.length
+      const day = Math.floor(Date.parse(date + 'T00:00:00Z') / 86400_000)
+      const first = (day + (scopeNumber(scope) % n) + skip) % n
+      let stale: Record<string, unknown> | undefined
+      for (let i = 0; i < n; i++) {
+        const a = list[(first + i) % n]
+        const r = quoteFrom(a, date, Math.floor(skip / n), options?.[a.id])
+        if (r.reason !== undefined) return r
+        if ((r.quote as { stale?: boolean }).stale) stale ??= r
+        else return r
+      }
+      return stale ?? { page: null, reason: 'unavailable' }
+    }
+    const own_ = accounts ? chooseApis(chosen, lang) : []
+    if (own_.length > 0) return ask(own_, 'space:' + space.id, mine?.options)
     if (accounts && site.default !== null && (spaceDaily.get(space.id)?.inherit ?? true)) {
       if (site.default.kind === 'api') {
         // The administrators' own choice, not limited by what spaces may choose.
@@ -2024,10 +2101,10 @@ export function createMockServer(options: MockOptions = {}) {
           lang,
           Object.keys(map).filter((k) => k !== ''),
         )
-        const id = m !== null ? map[m] : map['']
-        if (id === undefined) return { page: null, reason: 'no_source' }
-        const one = apis.find((a) => a.id === id && a.enabled)
-        return one ? quoteFrom(one, date, skip) : { page: null, reason: 'unavailable' }
+        const ids = m !== null ? map[m] : map['']
+        if (ids === undefined) return { page: null, reason: 'no_source' }
+        const list = ids.flatMap((id) => apis.filter((a) => a.id === id && a.enabled))
+        return list.length > 0 ? ask(list, 'site', site.default.options) : { page: null, reason: 'unavailable' }
       }
       const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
       const m = matchTag(lang, have)
@@ -2053,19 +2130,30 @@ export function createMockServer(options: MockOptions = {}) {
       for (const id of body.apis)
         if (typeof id !== 'string' || !usable.has(id))
           throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
-      spaceDaily.set(space.id, { inherit: body.inherit, apis: [...new Set(body.apis as string[])] })
+      const ids = [...new Set(body.apis as string[])]
+      const options = checkOptions(ids, body.options)
+      spaceDaily.set(space.id, {
+        inherit: body.inherit,
+        apis: ids,
+        ...(Object.keys(options).length > 0 ? { options } : {}),
+      })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
+    const kept = now.apis.filter((id) => available.some((a) => a.id === id))
     return {
       status: 200,
       body: {
         inherit: now.inherit,
-        apis: now.apis.filter((id) => available.some((a) => a.id === id)),
+        apis: kept,
+        options: Object.fromEntries(Object.entries(now.options ?? {}).filter(([id]) => kept.includes(id))),
         available: available.map((a) => ({
           id: a.id,
           name: a.name,
           lang: a.lang,
           ...(a.builtin ? { languages: PROVIDERS.find((p) => p.id === a.id)?.languages } : {}),
+          ...(a.builtin && PROVIDERS.find((p) => p.id === a.id)?.options
+            ? { options: PROVIDERS.find((p) => p.id === a.id)?.options }
+            : {}),
         })),
         languages: [...site.languages],
         allowed: { ...site.allow },
@@ -2149,15 +2237,20 @@ export function createMockServer(options: MockOptions = {}) {
           Object.keys(d.apis).length > 0
         ) {
           const ids = new Set(allApis().map((a) => a.id))
-          const apis: Record<string, string> = {}
-          for (const [k, id] of Object.entries(d.apis)) {
+          const apis: Record<string, string[]> = {}
+          for (const [k, value] of Object.entries(d.apis)) {
             const tag = k === '' ? '' : tagOf(k)
             if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            if (typeof id !== 'string' || !ids.has(id))
-              throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
-            apis[tag] = id
+            const list = typeof value === 'string' ? [value] : value
+            if (!Array.isArray(list) || list.length < 1 || list.length > 8)
+              throw new HttpError(400, 'invalid', '每种语言 1 到 8 个接口')
+            for (const id of list)
+              if (typeof id !== 'string' || !ids.has(id))
+                throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+            apis[tag] = [...new Set(list as string[])]
           }
-          next = { kind: 'api', apis }
+          const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
+          next = { kind: 'api', apis, ...(Object.keys(options).length > 0 ? { options } : {}) }
         } else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list or interfaces, or null')
       }
       // The notices are dismissed with an empty list.

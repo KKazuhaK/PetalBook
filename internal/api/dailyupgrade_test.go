@@ -73,7 +73,7 @@ func TestDailyInterfacesSavedFromPresetsAfterTheUpgrade(t *testing.T) {
 			if ps := asSlice(r["providers"]); asMap(ps[0])["enabled"] != true || asMap(ps[1])["enabled"] != false {
 				t.Fatalf("%v", ps)
 			}
-			if fmt.Sprint(asMap(r["default"])["apis"]) != "map[:zenquotes-custom zh-Hans:hitokoto]" {
+			if fmt.Sprint(asMap(r["default"])["apis"]) != "map[:[zenquotes-custom] zh-Hans:[hitokoto]]" {
 				t.Fatalf("%v", r["default"])
 			}
 			if got := noticeCodes(r); got != "builtin_renamed:zenquotes>zenquotes-custom" {

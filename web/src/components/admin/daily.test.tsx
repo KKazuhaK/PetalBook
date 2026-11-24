@@ -211,10 +211,52 @@ describe("the administrators' daily text page", () => {
     await click(formSave())
     await settle(() => calls().some((c) => c.body?.default?.kind === 'api'), 'saved')
     expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({
-      default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'english' } },
+      default: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['english'] } },
     })
     await settle(() => document.getElementById('daily-default-api-zh-Hans') !== null, 'still there')
-    expect(select('zh-Hans').value).toBe('quotes')
+    expect(document.querySelector('[data-lang="zh-Hans"] [data-api-item="quotes"]')).not.toBeNull()
+  })
+
+  it('a language lists several interfaces in order, and a built-in one has its categories', async () => {
+    await open((admin) => {
+      admin('PUT', '/api/admin/daily/apis/quotes', GOOD)
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
+    })
+    await settle(() => api('quotes') !== null, 'the interfaces')
+    await click([...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')][3])
+    const select = (l: string) => document.getElementById(`daily-default-api-${l}`) as unknown as HTMLSelectElement
+    await type(select('zh-Hans'), 'quotes')
+    await type(select('zh-Hans'), 'hitokoto')
+    const items = () =>
+      [...document.querySelectorAll('[data-lang="zh-Hans"] [data-api-item]')].map((e) =>
+        e.getAttribute('data-api-item'),
+      )
+    expect(items()).toEqual(['quotes', 'hitokoto'])
+    // Moved up, it goes first.
+    const up = document.querySelector<HTMLElement>('[data-api-item="hitokoto"] [data-action="up"]')!
+    await click(up)
+    expect(items()).toEqual(['hitokoto', 'quotes'])
+    // Categories: none is "All"; two are sent in the order they are declared.
+    const box = (v: string) =>
+      document.querySelector<HTMLInputElement>(
+        `[data-api-item="hitokoto"] [data-option="categories"] [data-value="${v}"]`,
+      )!
+    expect(box('').checked).toBe(true)
+    await click(box('i'))
+    await click(box('d'))
+    expect(box('').checked).toBe(false)
+    await click(formSave())
+    await settle(() => calls().some((c) => c.body?.default?.kind === 'api'), 'saved')
+    expect(calls().find((c) => c.body?.default?.kind === 'api')!.body).toEqual({
+      default: {
+        kind: 'api',
+        apis: { 'zh-Hans': ['hitokoto', 'quotes'] },
+        options: { hitokoto: { categories: ['d', 'i'] } },
+      },
+    })
+    // "All" takes the choice back.
+    await click(box(''))
+    expect(box('d').checked).toBe(false)
   })
 
   describe('the built-in interfaces', () => {

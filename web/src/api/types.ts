@@ -1290,11 +1290,24 @@ export interface DailyAnswer {
   reason?: DailyReason
 }
 
+// What a reader may choose of a built-in service (docs/api.md, "Built-in interfaces"): each value is sent as a
+// repeated query parameter; choosing none is choosing all.
+export interface DailyOption {
+  key: string
+  param: string
+  kind: 'multi'
+  values: { value: string; label: { zh: string; en: string } }[]
+}
+// The values chosen, by interface id and option key; absent is all.
+export type DailyOptionChoice = Record<string, Record<string, string[]>>
+
 export interface DailyPrefs {
   inherit: boolean
+  // In order: the first for the day, the next ones when it does not answer and for "another".
   apis: string[]
+  options?: DailyOptionChoice
   // A built-in interface that answers in more than one language lists them in `languages`.
-  available: { id: string; name: string; lang: string; languages?: string[] }[]
+  available: { id: string; name: string; lang: string; languages?: string[]; options?: DailyOption[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
   languages?: string[]
   default: { kind: string } | null
@@ -1368,6 +1381,7 @@ export interface DailyProvider {
   rps: number
   maxRps?: number
   skipNew: boolean
+  options?: DailyOption[]
 }
 export interface KnownLanguage {
   tag: string
@@ -1378,7 +1392,8 @@ export type DailyDefault =
   | null
   | { kind: 'list' }
   | { kind: 'space'; space: string; source: DailySettings }
-  | { kind: 'api'; apis: Record<string, string> }
+  // Each language lists its interfaces in order; the server also reads a single id.
+  | { kind: 'api'; apis: Record<string, string[]>; options?: DailyOptionChoice }
 export interface DailyNotice {
   code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
   id?: string

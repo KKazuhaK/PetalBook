@@ -809,7 +809,8 @@ func (f *Fetcher) lead(ctx context.Context, a API, lang, date string, skip int, 
 		f.mu.Unlock()
 		return f.fallback(ctx, lane, ErrUnavailable)
 	}
-	b := f.bucketOf(key.api, now)
+	// The rate limit is the interface's, whatever the options it is asked with.
+	b := f.bucketOf(a.ID, now)
 	if !b.take(now, a.RPS) {
 		f.mu.Unlock()
 		return f.fallback(ctx, lane, ErrRateLimited)
@@ -1434,6 +1435,108 @@ type Provider struct {
 	Site string `json:"site"`
 	// Note says what to know of the service.
 	Note string `json:"note"`
+	// Options are what the service lets a reader choose, each added to the
+	// address as a query parameter (see WithOptions).
+	Options []Option `json:"options,omitempty"`
+}
+
+// Option is a choice a built-in provider offers: which of Values to ask for,
+// sent as repeated query parameters named Param. Choosing none is choosing all
+// (nothing is sent).
+type Option struct {
+	Key   string `json:"key"`
+	Param string `json:"param"`
+	// Kind is "multi" (any number of the values).
+	Kind   string        `json:"kind"`
+	Values []OptionValue `json:"values"`
+}
+
+// OptionValue is one value of an option, with its label in each language.
+type OptionValue struct {
+	Value string            `json:"value"`
+	Label map[string]string `json:"label"`
+}
+
+// CheckOptions checks the values chosen for the options of a provider and
+// returns them in canonical form: only declared keys and values, each once, in
+// the order they are declared; a key with none, or with every value (the same
+// as none), is left out. nil when nothing is left.
+func (p Provider) CheckOptions(chosen map[string][]string) (map[string][]string, error) {
+	var out map[string][]string
+	for key, values := range chosen {
+		var opt *Option
+		for i := range p.Options {
+			if p.Options[i].Key == key {
+				opt = &p.Options[i]
+			}
+		}
+		if opt == nil {
+			return nil, fmt.Errorf("%s has no option %q", p.ID, key)
+		}
+		picked := map[string]bool{}
+		for _, v := range values {
+			if !slices.ContainsFunc(opt.Values, func(o OptionValue) bool { return o.Value == v }) {
+				return nil, fmt.Errorf("%q is not a value of the option %s of %s", v, key, p.ID)
+			}
+			picked[v] = true
+		}
+		if len(picked) == 0 || len(picked) == len(opt.Values) {
+			continue
+		}
+		var canon []string
+		for _, o := range opt.Values {
+			if picked[o.Value] {
+				canon = append(canon, o.Value)
+			}
+		}
+		if out == nil {
+			out = map[string][]string{}
+		}
+		out[key] = canon
+	}
+	return out, nil
+}
+
+// WithOptions is the interface of the provider asked for the chosen values: its
+// address gets each as a query parameter (`&c=d&c=i`, URL-encoded). Values that
+// are not declared are refused. Another choice is another address, so another
+// cache entry; the rate limit stays that of the id (see Fetcher.Get).
+func (p Provider) WithOptions(chosen map[string][]string) (API, error) {
+	a := p.API
+	canon, err := p.CheckOptions(chosen)
+	if err != nil {
+		return a, err
+	}
+	var extra []string
+	for _, opt := range p.Options {
+		for _, v := range canon[opt.Key] {
+			extra = append(extra, url.QueryEscape(opt.Param)+"="+url.QueryEscape(v))
+		}
+	}
+	if len(extra) > 0 {
+		sep := "?"
+		if strings.Contains(a.URL, "?") {
+			sep = "&"
+		}
+		a.URL += sep + strings.Join(extra, "&")
+	}
+	return a, nil
+}
+
+// hitokotoCategories are the types of sentence 一言 gives (its `c` parameter).
+var hitokotoCategories = []OptionValue{
+	{"a", map[string]string{"zh": "动画", "en": "Anime"}},
+	{"b", map[string]string{"zh": "漫画", "en": "Comics"}},
+	{"c", map[string]string{"zh": "游戏", "en": "Games"}},
+	{"d", map[string]string{"zh": "文学", "en": "Literature"}},
+	{"e", map[string]string{"zh": "原创", "en": "Original"}},
+	{"f", map[string]string{"zh": "来自网络", "en": "From the web"}},
+	{"g", map[string]string{"zh": "其他", "en": "Other"}},
+	{"h", map[string]string{"zh": "影视", "en": "Film & TV"}},
+	{"i", map[string]string{"zh": "诗词", "en": "Poetry"}},
+	{"j", map[string]string{"zh": "网易云", "en": "NetEase Music"}},
+	{"k", map[string]string{"zh": "哲学", "en": "Philosophy"}},
+	{"l", map[string]string{"zh": "抖机灵", "en": "Wit"}},
 }
 
 // Providers are the services the program knows how to ask. None is used, and
@@ -1444,8 +1547,9 @@ func Providers() []Provider {
 			URL:  "https://international.v1.hitokoto.cn/?max_length=80",
 			Text: "hitokoto", Source: "from", Author: "from_who", Link: "https://hitokoto.cn?uuid={uuid}", LangMap: map[string]string{},
 			Refresh: RefreshDaily, SkipNew: true, RPS: 20, Enabled: true, Builtin: true},
-			Site: "https://hitokoto.cn",
-			Note: "Free, no key. The international line allows 20 requests a second; the service asks for a link back, which is filled in."},
+			Site:    "https://hitokoto.cn",
+			Note:    "Free, no key. The international line allows 20 requests a second; the service asks for a link back, which is filled in.",
+			Options: []Option{{Key: "categories", Param: "c", Kind: "multi", Values: hitokotoCategories}}},
 		{API: API{ID: "zenquotes", Name: "ZenQuotes", Lang: "en", Languages: []string{"en"},
 			URL:  "https://zenquotes.io/api/today",
 			Text: "[0].q", Author: "[0].a", Link: "https://zenquotes.io/", LangMap: map[string]string{},

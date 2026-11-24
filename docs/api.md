@@ -3936,15 +3936,20 @@ administrators' settings. Owners never enter addresses; they choose among the
 interfaces that are set up.
 
 ```json
-{"inherit": true, "apis": ["hitokoto"],
- "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"]},
+{"inherit": true, "apis": ["hitokoto"], "options": {"hitokoto": {"categories": ["d", "i"]}},
+ "available": [{"id": "hitokoto", "name": "一言", "lang": "zh-Hans", "languages": ["zh-Hans", "zh-Hant"],
+                "options": [{"key": "categories", "param": "c", "kind": "multi",
+                             "values": [{"value": "a", "label": {"zh": "动画", "en": "Anime"}}, "…"]}]},
                {"id": "quotes", "name": "Quotes", "lang": "en"}],
  "languages": ["zh-Hans", "en"], "allowed": {"own": true, "api": true}, "default": {"kind": "list"}}
 ```
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
-made for it, else one that takes any language, else any); `available` are all
+made for it, else one that takes any language, else any; with several for the language
+they are in this order, see "Several interfaces for a language"); `options` are
+the values chosen for the built-in interfaces of `apis`, by interface id and
+option key (see "Options of a built-in interface"; absent is all); `available` are all
 that are set up (never their addresses), a built-in one with each of the
 languages it answers in (`languages`; `lang` is the first of them); `default` is `null` when the
 administrators set none. `languages` are the language codes the settings pages
@@ -3952,8 +3957,9 @@ have a tab for (the administrators' `languages`, below; nothing is limited to
 them). `allowed` is what the administrators let spaces do (below): a field that
 is `false` is set for the whole server, and what the space has there is saved
 when asked but has no effect until it is `true` again. `PUT` takes `{"inherit": true, "apis": []}` (both are
-needed) and answers as `GET`; `400 invalid` for an id that is not in
-`available`; it saves `apis` even when `allowed.api` is `false`.
+needed) and optionally `options`, and answers as `GET`; `400 invalid` for an id
+that is not in `available`, and for an option or value its interface does not
+declare, or one for an interface that is not in `apis`; it saves `apis` even when `allowed.api` is `false`.
 
 ### The administrators' settings of the daily text
 
@@ -4006,10 +4012,12 @@ nothing else, and the repairs are saved once, at the first read:
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
   sources by language as above, checked in that space (choosing a space shows
   its content to everybody; a client says so), or
-  `{"kind": "api", "apis": {"": "zenquotes", "zh": "hitokoto"}}`: an
-  interface id per language, `""` for all languages not listed. Each must be an
-  interface of `apis` (`400 invalid` with `error: "api_not_found"` otherwise);
-  a disabled or unanswering interface gives the daily reason `unavailable`.
+  `{"kind": "api", "apis": {"": ["zenquotes", "favqs"], "zh": ["hitokoto"]}, "options": {"hitokoto": {"categories": ["i"]}}}`:
+  the interface ids per language, in order, `""` for all languages not listed
+  (a single id written as a string is read as a list of one; 1 to 8 for each
+  language). Each must be an interface of `apis` (`400 invalid` with
+  `error: "api_not_found"` otherwise); `options` as for a space's choice. When
+  none of the listed interfaces is enabled the daily reason is `unavailable`.
   The interface is used exactly as when a space picks it (same cache, refresh
   and rate limit), and the `allow.api` lock does not apply to it: it limits
   what spaces may choose, not the administrators' own default.
@@ -4133,8 +4141,8 @@ above that breaks a rule (the message says which), or one of the codes of
 **Built-in interfaces** (`providers`): services the server knows how to ask,
 so an administrator only switches one on — no address, paths or language
 codes to fill in. `GET /api/admin/daily` lists them as
-`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true}`
-(`minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
+`{"id": "hitokoto", "name": "一言", "languages": ["zh-Hans", "zh-Hant"], "site": "https://hitokoto.cn", "note": "…", "enabled": false, "refresh": "daily", "minutes": 0, "rps": 20, "maxRps": 20, "skipNew": true, "options": [{"key": "categories", "param": "c", "kind": "multi", "values": [{"value": "a", "label": {"zh": "动画", "en": "Anime"}}, "…"]}]}`
+(`options` are what a reader may choose of the service, `[]` for none; `minutes` is set when `refresh` is `"minutes"`; `maxRps` is the service's own limit, the most `rps` may be).
 `PUT /api/admin/daily/providers/{id}` takes `{"enabled": true}` and optionally
 `refresh`, `minutes`, `rps` (not above the service's own limit) and
 `skipNew`; needs admin; answers as `GET /api/admin/daily`. An enabled built-in
@@ -4150,6 +4158,36 @@ is no longer built in (the earlier `quotable`, whose service is gone) is treated
 like any unknown id: an interface of the administrators' own keeps showing as
 such, a choice that names it is not found, and nothing else is picked in its
 place.
+
+**Options of a built-in interface.** A provider may declare options: a `key`, the
+query parameter `param` the values are sent as, a `kind` (`multi`: any number of
+the `values`) and the values with a label in `zh` and `en`. `hitokoto` has
+`categories` (`c`): a 动画, b 漫画, c 游戏, d 文学, e 原创, f 来自网络, g 其他,
+h 影视, i 诗词, j 网易云, k 哲学, l 抖机灵. What is chosen is stored with the
+choice (a space's `options`, a default's `options`, which a tenant's default
+has as well), by interface id and option key. Choosing none, or every value, is
+all, and is what is stored when nothing is chosen: settings saved before options
+behave as before. Values are kept once each in the order they are declared and
+are added to the address as repeated, URL-encoded parameters
+(`…?max_length=80&c=d&c=i`); a value that is not declared is `400 invalid`. An
+address with other values is another thing to the cache: two spaces with
+different categories never share or replace an item, and the same categories
+share one. The rate limit is the interface's, across all sets of values.
+Options of an interface that is no longer chosen are dropped when saved.
+
+**Several interfaces for a language.** A language's list is in order. The
+interfaces take turns by day: the one the day starts with is the day number
+plus a number made from the scope (the space, the tenant or the site) modulo
+the length of the list, so everybody in a scope sees the same one that day and
+a space with a choice of its own is in its own scope. One that is switched off,
+fails, is asked too often or has no usable answer is passed over for the next,
+within the same request; its last answer, shown as `stale`, is used only if no
+other has a fresh one, and when none answers the reason is `unavailable` (or
+`429 rate_limited` when every one was asked too often). "Another" (`skip`) moves
+to the next of the list; after the last it is the first again, which asks for a
+new item if its `skipNew` allows. With one interface nothing changes. For a
+space the list is its `apis` in order, for the reader's language (made for it,
+else for every language, else all).
 
 **Language codes in the address**: `{lang}` is filled with the reader's
 language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that

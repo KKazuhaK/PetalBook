@@ -1109,3 +1109,78 @@ func TestProviderByIDRemoved(t *testing.T) {
 		t.Fatal("quotable is gone")
 	}
 }
+
+func TestProviderOptions(t *testing.T) {
+	p, _ := ProviderByID("hitokoto")
+	if len(p.Options) != 1 || p.Options[0].Key != "categories" || p.Options[0].Param != "c" || len(p.Options[0].Values) != 12 {
+		t.Fatalf("%+v", p.Options)
+	}
+	if z, _ := ProviderByID("zenquotes"); len(z.Options) != 0 {
+		t.Fatal("zenquotes has none")
+	}
+	// Canonical: declared order, each once; none or all is nothing.
+	got, err := p.CheckOptions(map[string][]string{"categories": {"k", "d", "k"}})
+	if err != nil || fmt.Sprint(got) != "map[categories:[d k]]" {
+		t.Fatalf("%v %v", got, err)
+	}
+	for _, in := range []map[string][]string{nil, {"categories": nil}, {"categories": {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"}}} {
+		if got, err := p.CheckOptions(in); err != nil || len(got) != 0 {
+			t.Errorf("%v: %v %v", in, got, err)
+		}
+	}
+	for _, in := range []map[string][]string{{"categories": {"z"}}, {"categories": {"a&c=b"}}, {"genre": {"a"}}, {"categories": {""}}} {
+		if _, err := p.CheckOptions(in); err == nil {
+			t.Errorf("%v accepted", in)
+		}
+	}
+	// The address.
+	a, err := p.WithOptions(map[string][]string{"categories": {"i", "d"}})
+	if err != nil || a.URL != "https://international.v1.hitokoto.cn/?max_length=80&c=d&c=i" || a.ID != "hitokoto" {
+		t.Fatalf("%q %v", a.URL, err)
+	}
+	if a, _ := p.WithOptions(nil); a.URL != p.URL {
+		t.Fatalf("%q", a.URL)
+	}
+	if _, err := p.WithOptions(map[string][]string{"categories": {"nope"}}); err == nil {
+		t.Fatal("accepted")
+	}
+	// A parameter is joined with ? when the address has none, and values are escaped.
+	q := Provider{API: API{ID: "x", URL: "https://example.org/q"}, Options: []Option{{Key: "k", Param: "a b", Kind: "multi", Values: []OptionValue{{Value: "é/1"}, {Value: "2"}}}}}
+	if a, err := q.WithOptions(map[string][]string{"k": {"é/1"}}); err != nil || a.URL != "https://example.org/q?a+b=%C3%A9%2F1" {
+		t.Fatalf("%q %v", a.URL, err)
+	}
+}
+
+// Another address is another cache entry, and the rate limit is the id's.
+func TestOptionSetsShareTheRateLimitAndNotTheCache(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"text":"%s"}`, r.URL.RawQuery)
+	}))
+	defer srv.Close()
+	f := NewForTests(nil)
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	f.SetClock(func() time.Time { return now })
+	base := API{ID: "x", Name: "x", URL: srv.URL + "/q", Text: "text", Refresh: RefreshDaily, RPS: 0.5, Enabled: true}
+	p := Provider{API: base, Options: []Option{{Key: "k", Param: "c", Kind: "multi", Values: []OptionValue{{Value: "a"}, {Value: "b"}}}}}
+	a1, _ := p.WithOptions(map[string][]string{"k": {"a"}})
+	a2, _ := p.WithOptions(map[string][]string{"k": {"b"}})
+	r1, err := f.Get(context.Background(), a1, "", "2026-11-23", 0)
+	if err != nil || r1.Text != "c=a" {
+		t.Fatalf("%v %v", r1, err)
+	}
+	if _, err := f.Get(context.Background(), a2, "", "2026-11-23", 0); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("the second set was not limited: %v", err)
+	}
+	now = now.Add(3 * time.Second)
+	r2, err := f.Get(context.Background(), a2, "", "2026-11-23", 0)
+	if err != nil || r2.Text != "c=b" {
+		t.Fatalf("%v %v", r2, err)
+	}
+	// Each is kept for itself.
+	if again, _ := f.Get(context.Background(), a1, "", "2026-11-23", 0); again.Text != "c=a" || hits.Load() != 2 {
+		t.Fatalf("%v %d", again, hits.Load())
+	}
+}

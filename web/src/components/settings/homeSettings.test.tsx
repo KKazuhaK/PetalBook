@@ -216,6 +216,35 @@ describe('the Home section, accounts mode', () => {
     expect(boxes().map((b) => b.parentElement!.textContent)).toEqual([th.settings.apiFor('接口anyone', '')])
   })
 
+  it('the categories of a built-in interface and the order of several are saved with the choice', async () => {
+    await asOwner((admin) => {
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
+    })
+    await click(tab('zh-Hans'))
+    await click(mode(th.settings.modes.api))
+    const item = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-api-item="${id}"]`)!
+    const pick = (id: string) => item(id).querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    // The categories show once it is chosen.
+    expect(item('hitokoto').querySelector('[data-option="categories"]')).toBeNull()
+    await click(pick('zhone'))
+    await click(pick('hitokoto'))
+    const cat = (v: string) =>
+      item('hitokoto').querySelector<HTMLInputElement>(`[data-option="categories"] [data-value="${v}"]`)!
+    expect(cat('').checked).toBe(true)
+    await click(cat('i'))
+    await click(cat('k'))
+    // Hitokoto was chosen second; moved up it is tried first.
+    await click(item('hitokoto').querySelector<HTMLElement>('[data-action="up"]')!)
+    await click(save())
+    await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
+    expect(writes().find((w) => w.url === '/daily/prefs')!.body).toEqual({
+      inherit: true,
+      apis: ['hitokoto', 'zhone'],
+      options: { hitokoto: { categories: ['i', 'k'] } },
+    })
+  })
+
   it('an interface left chosen on a language that no longer uses one is let go', async () => {
     await asOwner((admin, space) => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))

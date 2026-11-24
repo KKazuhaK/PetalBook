@@ -178,6 +178,15 @@ export const homeEn: HomeMessages = {
     apisTitle: 'Interfaces',
     apisHelp: 'External interfaces the administrators set up; one text a day, the same for everybody in the space.',
     noApis: 'The administrators have not set up an interface that can be used.',
+    apisOrderHelp:
+      'With more than one for a language they take turns by day, in this order; one that does not answer is passed over for the next, and "another" moves on to the next.',
+    choice: {
+      all: 'All',
+      optionName: (key: string) => (key === 'categories' ? 'Categories' : key),
+      up: (name: string) => `Move ${name} up`,
+      down: (name: string) => `Move ${name} down`,
+      remove: (name: string) => `Remove ${name}`,
+    },
     apiFor: (name: string, lang: string) => (lang ? `${name} (${lang})` : `${name} (all languages)`),
     inheritTitle: 'Server default',
     inherit: "Use the server's default when there is no source",

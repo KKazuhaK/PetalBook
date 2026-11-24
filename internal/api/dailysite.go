@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -32,9 +35,46 @@ type siteDefault struct {
 	Kind   string             `json:"kind"`
 	Space  string             `json:"space,omitempty"`
 	Source *space.DailyConfig `json:"source,omitempty"`
-	// APIs are the ids of the interfaces by language, "" for the languages not
-	// listed.
-	APIs map[string]string `json:"apis,omitempty"`
+	// APIs are the ids of the interfaces by language, in order, "" for the
+	// languages not listed. A single id written as a string is read as a list of
+	// one.
+	APIs apiLists `json:"apis,omitempty"`
+	// Options are the options chosen for built-in interfaces of the lists, by
+	// interface id and option key; absent is all.
+	Options map[string]map[string][]string `json:"options,omitempty"`
+}
+
+// maxAPIsPerLanguage is how many interfaces one language of a default or of a
+// space's choice may list.
+const maxAPIsPerLanguage = 8
+
+// apiLists are the interface ids of each language of a default.
+type apiLists map[string][]string
+
+func (m *apiLists) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if raw == nil {
+		*m = nil
+		return nil
+	}
+	out := make(apiLists, len(raw))
+	for k, v := range raw {
+		var one string
+		if json.Unmarshal(v, &one) == nil {
+			out[k] = []string{one}
+			continue
+		}
+		var list []string
+		if err := json.Unmarshal(v, &list); err != nil {
+			return fmt.Errorf("the interfaces of %q are an id or a list of ids", k)
+		}
+		out[k] = list
+	}
+	*m = out
+	return nil
 }
 
 type dailyQuote struct {
@@ -168,6 +208,8 @@ type providerView struct {
 	RPS       float64  `json:"rps"`
 	MaxRPS    float64  `json:"maxRps"`
 	SkipNew   bool     `json:"skipNew"`
+	// Options are what a reader may choose of the service (see dailyfetch.Option).
+	Options []dailyfetch.Option `json:"options"`
 }
 
 type adminDailyResp struct {
@@ -201,11 +243,11 @@ func (s *server) adminDailyView(ctx context.Context) (adminDailyResp, error) {
 	for i, a := range all {
 		apis[i] = viewOfAPI(a)
 	}
-	providers := make([]providerView, 0, 2)
+	providers := make([]providerView, 0, 8)
 	for _, p := range dailyfetch.Providers() {
 		st := site.Providers[p.ID]
 		b := builtinAPI(p, st)
-		providers = append(providers, providerView{p.ID, p.Name, p.Languages, p.Site, p.Note, st.Enabled, b.Refresh, b.RefreshMinutes, b.RPS, p.RPS, b.SkipNew})
+		providers = append(providers, providerView{p.ID, p.Name, p.Languages, p.Site, p.Note, st.Enabled, b.Refresh, b.RefreshMinutes, b.RPS, p.RPS, b.SkipNew, optionsOf(p)})
 	}
 	notices := site.Notices
 	if notices == nil {
@@ -248,8 +290,9 @@ func checkDefaultAPIs(d *siteDefault, site *siteDaily) error {
 	for _, a := range site.all() {
 		known[a.ID] = true
 	}
-	out := make(map[string]string, len(d.APIs))
-	for l, id := range d.APIs {
+	out := make(apiLists, len(d.APIs))
+	used := map[string]bool{}
+	for l, ids := range d.APIs {
 		if l != "" {
 			cl, ok := langtag.Canonical(l)
 			if !ok {
@@ -260,19 +303,67 @@ func checkDefaultAPIs(d *siteDefault, site *siteDaily) error {
 			}
 			l = cl
 		}
-		if !known[id] {
-			return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", id)}
+		if len(ids) == 0 || len(ids) > maxAPIsPerLanguage {
+			return &space.InvalidError{Msg: fmt.Sprintf("each language has 1 to %d interfaces", maxAPIsPerLanguage)}
 		}
-		out[l] = id
+		list := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if !known[id] {
+				return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", id)}
+			}
+			if !slices.Contains(list, id) {
+				list = append(list, id)
+			}
+			used[id] = true
+		}
+		out[l] = list
 	}
-	d.APIs = out
+	opts, err := checkOptions(site, slices.Collect(maps.Keys(used)), d.Options)
+	if err != nil {
+		return err
+	}
+	d.APIs, d.Options = out, opts
 	return nil
+}
+
+// optionsOf is the options of a provider, never nil.
+func optionsOf(p dailyfetch.Provider) []dailyfetch.Option {
+	if p.Options == nil {
+		return []dailyfetch.Option{}
+	}
+	return p.Options
+}
+
+// checkOptions checks the options chosen for the interfaces in use (ids): only
+// built-in interfaces that are in use have options, with the values they
+// declare. The result is in canonical form (see dailyfetch.Provider.CheckOptions).
+func checkOptions(site *siteDaily, ids []string, given map[string]map[string][]string) (map[string]map[string][]string, error) {
+	var out map[string]map[string][]string
+	for id, chosen := range given {
+		p, ok := dailyfetch.ProviderByID(id)
+		builtin := slices.ContainsFunc(site.all(), func(a storedAPI) bool { return a.ID == id && a.Builtin })
+		if !ok || !builtin || !slices.Contains(ids, id) {
+			return nil, &space.InvalidError{Msg: fmt.Sprintf("options are for the built-in interfaces that are chosen; %q is not one", id)}
+		}
+		canon, err := p.CheckOptions(chosen)
+		if err != nil {
+			return nil, &space.InvalidError{Msg: err.Error()}
+		}
+		if len(canon) == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string]map[string][]string{}
+		}
+		out[id] = canon
+	}
+	return out, nil
 }
 
 // checkSiteDefault checks a default against the interfaces that are set up
 // (site) and the spaces there are; apis are written as canonical tags.
 func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault, site *siteDaily) error {
-	if d.Kind != "api" && d.APIs != nil {
+	if d.Kind != "api" && (d.APIs != nil || d.Options != nil) {
 		return &space.InvalidError{Msg: "only a default that is an interface has apis"}
 	}
 	switch d.Kind {

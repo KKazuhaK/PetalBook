@@ -135,13 +135,16 @@ describe('the mock gives the stable codes', () => {
   it('the default may be an interface for each language: api_not_found for one that is not set up', () => {
     const call = admin()
     put(call, {})
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': 'nothing' } } })).toMatchObject({
+    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': ['nothing'] } } })).toMatchObject({
       status: 400,
       body: { error: 'api_not_found' },
     })
     expect(
-      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: 'quotes', '': 'quotes' } } }),
-    ).toMatchObject({ status: 200, body: { default: { kind: 'api', apis: { 'zh-Hans': 'quotes', '': 'quotes' } } } })
+      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: ['quotes'], '': 'quotes' } } }),
+    ).toMatchObject({
+      status: 200,
+      body: { default: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['quotes'] } } },
+    })
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
     const daily = (lang: string) =>
       call('GET', `/api/spaces/${space}/daily?date=${new Date().toISOString().slice(0, 10)}&lang=${lang}`).body as {

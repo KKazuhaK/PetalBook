@@ -247,3 +247,21 @@ func TestCompareAndSetSiteSetting(t *testing.T) {
 		}
 	})
 }
+
+func TestSpaceChoiceKeepsItsOptions(t *testing.T) {
+	c := store.ParseSpaceChoice(`["a","b"]`)
+	if len(c.APIs) != 2 || c.Options != nil || c.JSON() != `["a","b"]` {
+		t.Fatalf("%+v %s", c, c.JSON())
+	}
+	c.Options = map[string]map[string][]string{"a": {"categories": {"i"}}}
+	back := store.ParseSpaceChoice(c.JSON())
+	if len(back.APIs) != 2 || back.Options["a"]["categories"][0] != "i" {
+		t.Fatalf("%s", c.JSON())
+	}
+	if got := store.ParseSpaceChoice("not json"); len(got.APIs) != 0 {
+		t.Fatal(got)
+	}
+	if got := store.ParseSpaceChoice(`[]`).JSON(); got != `[]` {
+		t.Fatal(got)
+	}
+}

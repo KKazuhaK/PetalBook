@@ -4,6 +4,7 @@ package dailyfetch
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"testing"
@@ -24,28 +25,46 @@ func TestLiveProviders(t *testing.T) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}, false, nil)
 	f.SetTimeout(slow)
-	for _, p := range Providers() {
-		t.Run(p.ID, func(t *testing.T) {
-			var res ProbeResult
-			var err error
-			for try := 0; try < 2; try++ {
-				if try > 0 {
-					time.Sleep(6 * time.Second)
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-				res, err = f.Probe(ctx, p.API, p.Lang, time.Now().Format("2006-01-02"))
-				cancel()
-				if err == nil && res.OK && len(res.PathErrors) == 0 {
-					break
-				}
+	probe := func(t *testing.T, a API) ProbeResult {
+		t.Helper()
+		var res ProbeResult
+		var err error
+		for try := 0; try < 2; try++ {
+			if try > 0 {
+				time.Sleep(6 * time.Second)
 			}
-			if err != nil {
-				t.Fatalf("%s: %v", p.ID, err)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			res, err = f.Probe(ctx, a, a.Lang, time.Now().Format("2006-01-02"))
+			cancel()
+			if err == nil && res.OK && len(res.PathErrors) == 0 {
+				break
 			}
-			if !res.OK || len(res.PathErrors) != 0 || res.Quote == nil || res.Quote.Text == "" {
-				t.Fatalf("%s: not ok: status %d, %s, path errors %+v, quote %+v", p.ID, res.Status, res.Message, res.PathErrors, res.Quote)
-			}
-			t.Logf("%s: ok, status %d, %q by %q, link %q", p.ID, res.Status, res.Quote.Text, res.Quote.Author, res.Quote.Link)
-		})
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", a.ID, err)
+		}
+		if !res.OK || len(res.PathErrors) != 0 || res.Quote == nil || res.Quote.Text == "" {
+			t.Fatalf("%s: not ok: status %d, %s, path errors %+v, quote %+v", a.ID, res.Status, res.Message, res.PathErrors, res.Quote)
+		}
+		t.Logf("%s: ok, status %d, %q by %q, link %q", a.ID, res.Status, res.Quote.Text, res.Quote.Author, res.Quote.Link)
+		return res
 	}
+	for _, p := range Providers() {
+		t.Run(p.ID, func(t *testing.T) { probe(t, p.API) })
+	}
+	// The categories of 一言 reach the service: with one chosen, the type that comes back is it.
+	t.Run("hitokoto categories", func(t *testing.T) {
+		p, _ := ProviderByID("hitokoto")
+		a, err := p.WithOptions(map[string][]string{"categories": {"i"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := probe(t, a)
+		var got struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(res.Raw), &got); err != nil || got.Type != "i" {
+			t.Fatalf("asked for c=i, got type %q (%v): %s", got.Type, err, res.Raw)
+		}
+	})
 }

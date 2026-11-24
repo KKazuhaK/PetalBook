@@ -17,6 +17,7 @@ import type {
   AdminDaily,
   DailyApi,
   DailyDefault,
+  DailyOptionChoice,
   DailyNotice,
   DailySettings,
   DailyTryResult,
@@ -26,6 +27,7 @@ import type {
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
+import { ListButtons, moved, OptionChoices } from '@/components/settings/DailyChoices'
 import { SourceFields } from '@/components/settings/SourceFields'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -323,7 +325,12 @@ function DefaultSection({ data }: { data: AdminDaily }) {
   const spaces = useAdminSpaces('')
   const initial = data.default
   const [kind, setKind] = useState<'none' | 'list' | 'space' | 'api'>(initial === null ? 'none' : initial.kind)
-  const [apis, setApis] = useState<Record<string, string>>(() => (initial?.kind === 'api' ? { ...initial.apis } : {}))
+  const [apis, setApis] = useState<Record<string, string[]>>(() =>
+    initial?.kind === 'api' ? Object.fromEntries(Object.entries(initial.apis).map(([l, ids]) => [l, [...ids]])) : {},
+  )
+  const [options, setOptions] = useState<DailyOptionChoice>(() =>
+    initial?.kind === 'api' ? structuredClone(initial.options ?? {}) : {},
+  )
   const [space, setSpace] = useState(initial?.kind === 'space' ? initial.space : '')
   const [drafts, setDrafts] = useState<Drafts>(() => (initial?.kind === 'space' ? draftsFrom(initial.source) : {}))
   const [tab, setTab] = useState('')
@@ -340,9 +347,11 @@ function DefaultSection({ data }: { data: AdminDaily }) {
     let value: DailyDefault = null
     if (kind === 'list') value = { kind: 'list' }
     if (kind === 'api') {
-      const chosen = Object.fromEntries(Object.entries(apis).filter(([, id]) => id !== ''))
+      const chosen = Object.fromEntries(Object.entries(apis).filter(([, ids]) => ids.length > 0))
       if (Object.keys(chosen).length === 0) return setError(d.defaultApiIncomplete)
-      value = { kind: 'api', apis: chosen }
+      const used = new Set(Object.values(chosen).flat())
+      const kept = Object.fromEntries(Object.entries(options).filter(([id]) => used.has(id)))
+      value = { kind: 'api', apis: chosen, ...(Object.keys(kept).length > 0 ? { options: kept } : {}) }
     }
     if (kind === 'space') {
       const source = settingsFrom(
@@ -368,34 +377,86 @@ function DefaultSection({ data }: { data: AdminDaily }) {
         <div className="grid grid-cols-1 gap-3 rounded-lg border p-4" data-slot="default-apis">
           <p className="text-xs break-words text-muted-foreground">{d.defaultApiHelp}</p>
           {[...data.languages, ...Object.keys(apis).filter((l) => l !== '' && !data.languages.includes(l)), ''].map(
-            (l) => (
-              <div
-                key={l || 'rest'}
-                className="grid min-w-0 grid-cols-1 items-center gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]"
-              >
-                <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
-                  {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
-                </Label>
-                <NativeSelect
-                  id={`daily-default-api-${l || 'rest'}`}
-                  value={apis[l] ?? ''}
-                  onChange={(e) => setApis((all) => ({ ...all, [l]: e.target.value }))}
+            (l) => {
+              const ids = apis[l] ?? []
+              const setIds = (next: string[]) => setApis((all) => ({ ...all, [l]: next }))
+              const nameOf = (id: string) => data.apis.find((a) => a.id === id)?.name ?? id
+              return (
+                <div
+                  key={l || 'rest'}
+                  className="grid min-w-0 grid-cols-1 items-start gap-1.5 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]"
+                  data-lang={l}
                 >
-                  <option value="">{d.defaultApiNone}</option>
-                  {apis[l] !== undefined && apis[l] !== '' && !data.apis.some((a) => a.id === apis[l]) && (
-                    <option value={apis[l]}>
-                      {apis[l]} ({d.defaultApiOff})
-                    </option>
-                  )}
-                  {data.apis.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                      {a.enabled ? '' : ` (${d.enabledOff})`}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-            ),
+                  <Label htmlFor={`daily-default-api-${l || 'rest'}`} className="break-words">
+                    {l === '' ? d.defaultApiRest : d.defaultApiFor(l)}
+                  </Label>
+                  <div className="grid min-w-0 gap-2">
+                    {ids.length > 0 && (
+                      <ol className="grid gap-2" data-slot="default-api-list">
+                        {ids.map((id, i) => {
+                          const known = data.apis.find((a) => a.id === id)
+                          const opts = data.providers.find((p) => p.id === id)?.options ?? []
+                          return (
+                            <li key={id} data-api-item={id} className="grid min-w-0 gap-1.5 rounded-lg border p-2">
+                              <div className="flex min-w-0 items-center justify-between gap-2">
+                                <span className="min-w-0 text-sm break-words">
+                                  {i + 1}. {nameOf(id)}
+                                  {(!known || !known.enabled) && (
+                                    <span className="text-xs text-muted-foreground"> ({d.defaultApiOff})</span>
+                                  )}
+                                </span>
+                                <ListButtons
+                                  name={nameOf(id)}
+                                  first={i === 0}
+                                  last={i === ids.length - 1}
+                                  onUp={() => setIds(moved(ids, i, -1))}
+                                  onDown={() => setIds(moved(ids, i, 1))}
+                                  onRemove={() => setIds(ids.filter((x) => x !== id))}
+                                  words={d.choice}
+                                />
+                              </div>
+                              {opts.length > 0 && (
+                                <OptionChoices
+                                  options={opts}
+                                  chosen={options[id]}
+                                  owner={`${l || 'rest'}-${id}`}
+                                  words={d.choice}
+                                  onChange={(next) =>
+                                    setOptions((all) => {
+                                      const out = { ...all }
+                                      if (Object.keys(next).length === 0) delete out[id]
+                                      else out[id] = next
+                                      return out
+                                    })
+                                  }
+                                />
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ol>
+                    )}
+                    <NativeSelect
+                      id={`daily-default-api-${l || 'rest'}`}
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value !== '') setIds([...ids, e.target.value])
+                      }}
+                    >
+                      <option value="">{ids.length === 0 ? d.defaultApiNone : d.defaultApiAdd}</option>
+                      {data.apis
+                        .filter((a) => !ids.includes(a.id))
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                            {a.enabled ? '' : ` (${d.enabledOff})`}
+                          </option>
+                        ))}
+                    </NativeSelect>
+                  </div>
+                </div>
+              )
+            },
           )}
         </div>
       )}
