@@ -258,6 +258,7 @@ func TestADisabledTenantSignsNobodyIn(t *testing.T) {
 		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": false}).want(t, 200, "")
 		a.newClient("").do("POST", "/api/login", map[string]any{"username": "mem-b", "password": pw}).want(t, 200, "")
 		tokB.do("GET", "/api/spaces", nil).want(t, 200, "")
+		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/view", map[string]any{"reason": "test"}).want(t, 200, "")
 		f.root.do("GET", "/api/spaces/"+f.spaceB+"/pages", nil).want(t, 200, "")
 		// A site administrator cannot disable their own tenant.
 		f.root.do("PATCH", "/api/admin/tenants/"+store.DefaultTenantID, map[string]any{"disabled": true}).want(t, 409, "default_tenant")

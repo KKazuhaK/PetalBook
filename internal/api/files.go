@@ -116,6 +116,7 @@ func sizeText(n int64) string {
 
 func (s *server) getFile(c *call) {
 	rel := c.r.PathValue("path")
+	s.viewedPath(c, rel)
 	// A browser that has the file of the attachment repository already is told
 	// so from the table, before anything is fetched: also when the repository
 	// cannot be reached.

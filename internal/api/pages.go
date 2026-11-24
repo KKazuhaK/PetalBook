@@ -158,6 +158,10 @@ func (s *server) listPages(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	if body {
+		// A listing with the pages' text reads them all: one row an hour says so.
+		s.viewedWhat(c, "listing:bodies", map[string]any{"path": "pages?body=1"})
+	}
 	res, err := c.sp.Space.List(q)
 	if err != nil {
 		s.fail(c.w, err)
@@ -242,6 +246,7 @@ func (s *server) getPage(c *call) {
 	if !ok {
 		return
 	}
+	s.viewedPage(c, id)
 	p, err := c.sp.Space.Get(id)
 	if err != nil {
 		s.fail(c.w, err)

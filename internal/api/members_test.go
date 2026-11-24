@@ -134,20 +134,24 @@ func TestSpaceListSaysWhatYouMayDo(t *testing.T) {
 	})
 }
 
-func TestAdministratorSeesEverySpace(t *testing.T) {
+func TestAnAdministratorManagesEverySpaceAndReadsOnlyInAView(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		boss := a.setup("kazuha", pw) // an administrator, a member of nothing but their own space
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid
-		// All of it works, writing and managing too.
-		boss.do("GET", base+"/tree", nil).want(t, 200, "")
-		p := boss.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "By admin"}, "body": "x\n"}).want(t, 201, "")
-		boss.do("GET", base+"/pages/"+p.body["id"].(string), nil).want(t, 200, "")
+		// Managing works; reading and writing do not (3.5: reading is a view).
+		boss.do("GET", base+"/tree", nil).want(t, 403, "no_permission")
+		boss.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "By admin"}, "body": "x\n"}).want(t, 403, "no_permission")
 		r := boss.do("PATCH", base, map[string]any{"name": "Renamed by admin"}).want(t, 200, "")
-		if r.body["role"] != "" || len(r.body["permissions"].([]any)) != 4 {
+		if r.body["role"] != "" || fmt.Sprint(r.body["permissions"]) != "[members manage]" {
 			t.Fatalf("%s", r.raw)
 		}
+		// In a view the space is read, and still not written.
+		boss.do("POST", "/api/admin/spaces/"+tm.sid+"/view", map[string]any{"reason": "test"}).want(t, 200, "")
+		boss.do("GET", base+"/tree", nil).want(t, 200, "")
+		boss.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "By admin"}, "body": "x\n"}).want(t, 403, "no_permission")
+		boss.do("DELETE", "/api/admin/spaces/"+tm.sid+"/view", nil).want(t, 204, "")
 		boss.do("GET", base+"/members", nil).want(t, 200, "")
 		// ... without becoming a member: not in their list, and the members do not change.
 		for _, s := range boss.do("GET", "/api/spaces", nil).body["spaces"].([]any) {
@@ -169,6 +173,7 @@ func TestAdministratorSeesEverySpace(t *testing.T) {
 		boss.do("GET", "/api/spaces/not-an-id/tree", nil).want(t, 404, "not_found")
 		tm.outsider.do("GET", base+"/tree", nil).want(t, 404, "not_found")
 		// An administrator is a person like any other in a space they do belong to.
+		boss.do("GET", base+"/tree", nil).want(t, 403, "no_permission")
 		boss.do("POST", base+"/members", map[string]any{"username": "kazuha", "role": "viewer"}).want(t, 201, "")
 		boss.do("GET", base+"/tree", nil).want(t, 200, "")
 	})

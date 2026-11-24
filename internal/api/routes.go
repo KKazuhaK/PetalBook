@@ -160,6 +160,18 @@ var routeTable = []route{
 	{"POST", "/api/admin/spaces/{space}/disable", admin, true, false, false, (*server).adminDisableSpace},
 	{"POST", "/api/admin/spaces/{space}/enable", admin, true, false, false, (*server).adminEnableSpace},
 	{"DELETE", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminDeleteSpace},
+	{"GET", "/api/admin/spaces/{space}/deletion", admin, true, false, false, (*server).adminSpaceDeletion},
+	{"POST", "/api/admin/spaces/{space}/view", admin, true, false, false, (*server).adminOpenView},
+	{"DELETE", "/api/admin/spaces/{space}/view", admin, true, false, false, (*server).adminEndView},
+	{"GET", "/api/admin/recycle", admin, true, false, false, (*server).adminListRecycle},
+	{"POST", "/api/admin/recycle/{item}/restore", admin, true, false, false, (*server).adminRestoreItem},
+	{"DELETE", "/api/admin/recycle/{item}", siteAdmin, true, false, false, (*server).adminPurgeItem},
+	{"POST", "/api/admin/confirm", admin, true, false, false, (*server).adminConfirm},
+	{"POST", "/api/admin/exports", admin, true, false, false, (*server).adminCreateExport},
+	{"GET", "/api/admin/exports", admin, true, false, false, (*server).adminListExports},
+	{"GET", "/api/admin/exports/{id}", admin, true, false, false, (*server).adminGetExport},
+	{"DELETE", "/api/admin/exports/{id}", admin, true, false, false, (*server).adminDeleteExport},
+	{"GET", "/api/admin/exports/{id}/download", admin, true, false, false, (*server).adminDownloadExport},
 	{"GET", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminGetDaily},
 	{"PUT", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminPutDaily},
 	{"PUT", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminPutDailyLines},
@@ -490,6 +502,9 @@ func (s *server) openSpace(c *call, rt route) bool {
 		return false
 	}
 	c.sp = h
+	if h.Info.ViaAdmin {
+		h.Info.Perms, h.Info.Viewing = s.withView(c, rt, h.Info.Perms, spaceID)
+	}
 	if self {
 		need = perm.Read
 	}

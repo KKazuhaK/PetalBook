@@ -163,19 +163,6 @@ func (s *server) adminSetDisabled(c *call, disabled bool) {
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) adminDeleteSpace(c *call) {
-	d, err := s.spaces.DeleteSpace(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("space"))
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Trashed      string   `json:"trashed"`
-		CacheTrashed string   `json:"cacheTrashed"`
-		Warnings     []string `json:"warnings"`
-	}{d.Trashed, d.CacheTrashed, append([]string{}, d.Warnings...)})
-}
-
 func (s *server) adminStatus(c *call) {
 	ctx := c.r.Context()
 	nSpaces, err := store.CountSpaces(ctx, s.opt.Store.Q(), store.AllTenants())

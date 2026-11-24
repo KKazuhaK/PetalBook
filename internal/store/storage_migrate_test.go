@@ -83,9 +83,9 @@ func TestStorageMigrationsAfterTheTenantsMigration(t *testing.T) {
 }
 
 // A database of the storage branch before the merge: 0015 and 0017 are there,
-// 0016 and 0018 come, and its storage rows are kept.
+// 0016 and 0018 come (and 0020, which needs 0018), and its storage rows are kept.
 func TestStorageMigrationsBeforeTheTenantsMigration(t *testing.T) {
-	storetest.EachWithoutVersion(t, []int{16, 18}, func(t *testing.T, st *store.Store) {
+	storetest.EachWithoutVersion(t, []int{16, 18, 20}, func(t *testing.T, st *store.Store) {
 		seedPlainUserAndSpace(t, st)
 		exec := execer(t, st)
 		exec(`UPDATE spaces SET pinned = 1, last_used = 5 WHERE id = 'S1'`)

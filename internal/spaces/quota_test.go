@@ -52,7 +52,7 @@ func TestTheNumberOfSpacesIsRefusedAtThePersonsAndTheTenantsLimit(t *testing.T) 
 		if rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{}); len(rows) != 3 {
 			t.Fatalf("%d spaces", len(rows))
 		}
-		if _, err := m.DeleteSpace(ctx, store.AllTenants(), a.ID); err != nil {
+		if _, err := m.RecycleSpace(ctx, store.AllTenants(), a.ID, RecycleOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := m.Create(ctx, one.ID, "F"); err != nil {

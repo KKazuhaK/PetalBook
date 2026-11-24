@@ -205,7 +205,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 
 		// --- the default from a space: shown to people who are not in it
 		sitePage := func(title, body string) {
-			if code, r := adm("POST", "/api/spaces/"+tm.sid+"/pages", map[string]any{"folder": "Site", "meta": map[string]any{"title": title, "tags": []any{"lang-en"}}, "body": body}); code != 201 {
+			if code, r := own("POST", "/api/spaces/"+tm.sid+"/pages", map[string]any{"folder": "Site", "meta": map[string]any{"title": title, "tags": []any{"lang-en"}}, "body": body}); code != 201 {
 				t.Fatalf("%d %v", code, r)
 			}
 		}

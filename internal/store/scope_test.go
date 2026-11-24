@@ -77,6 +77,8 @@ var scopeAllowlist = map[string]string{
 	"AddLocalMembers":   "INSERT ... SELECT joining the group and each person on tenant_id",
 	"ApplySynced":       "INSERT ... SELECT joining the group and the person on tenant_id",
 	"TransferOwnership": "INSERT ... SELECT joining the space and the new owner on tenant_id",
+	"RestoreSpaceRows":  "INSERT ... SELECT joining the space and each person and group on tenant_id; the item was found in scope by the caller",
+	"RecycledView":      "reads the records of an item already found in scope, and a person's name by id",
 	// --- inserts: the tenant is a column of the new row, chosen by the caller ----
 	"InsertUser":   "the new row carries its tenant",
 	"InsertSpace":  "the new row carries its tenant",

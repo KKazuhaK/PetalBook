@@ -200,7 +200,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 			t.Fatal(err)
 		}
 	}
-	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg}
+	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg, Now: clk.Now}
 	if o.maxSpaces > 0 {
 		n := o.maxSpaces // --max-spaces given: the site's quota.spacesPerPerson
 		opts.MaxSpaces = &n

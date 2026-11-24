@@ -24,6 +24,13 @@ const (
 	// restricts a tenant to at most that (see Service.SetFileCeiling).
 	FilesMaxBytes = "files.maxBytes"
 
+	// RecycleDays is how long an item stays in the recycle bin (3.5); ExportsDays
+	// and ExportsMaxBytes how long an export is kept and how much room all of them
+	// may take. Site only: they use the server's disk.
+	RecycleDays     = "recycle.days"
+	ExportsDays     = "exports.days"
+	ExportsMaxBytes = "exports.maxBytes"
+
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
@@ -64,6 +71,9 @@ func Definitions() []*Def {
 		// site's --max-upload, which the server sets (SetFileCeiling).
 		{Key: FilesMaxBytes, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(10 << 20), Min: 1, Max: 256 << 20,
 			Lower: Lower{Mode: Restrict, Max: i64(10 << 20)}},
+		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
+		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
+		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},

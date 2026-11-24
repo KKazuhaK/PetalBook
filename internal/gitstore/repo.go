@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -977,4 +978,17 @@ func (r *Repo) TouchesOutside(ctx context.Context, dir string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(out) != "", nil
+}
+
+// Archive writes the files of a commit (its full id) to w as a tar.
+func (r *Repo) Archive(ctx context.Context, commit string, w io.Writer) error {
+	_, err := r.run(ctx, Cmd{Args: []string{"archive", "--format=tar", commit}, Stdout: w})
+	return err
+}
+
+// Bundle writes the whole history, every branch, to the file at the absolute
+// path (a git bundle).
+func (r *Repo) Bundle(ctx context.Context, file string) error {
+	_, err := r.git(ctx, "bundle", "create", file, "--all")
+	return err
 }

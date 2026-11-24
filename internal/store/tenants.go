@@ -92,7 +92,7 @@ func (t Tenant) IsDefault() bool { return t.ID == DefaultTenantID }
 const MaxTenants = 1000
 
 // ErrTenantNotEmpty is the refusal of deleting a tenant that still has rows.
-type ErrTenantNotEmpty struct{ Users, Spaces, Groups, Invites int }
+type ErrTenantNotEmpty struct{ Users, Spaces, Groups, Invites, Recycle int }
 
 func (*ErrTenantNotEmpty) Error() string { return "the tenant is not empty" }
 
@@ -180,7 +180,13 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 }
 
 // TenantCounts is what a tenant holds.
-type TenantCounts struct{ Users, Spaces, Groups, Invites int }
+type TenantCounts struct {
+	Users, Spaces, Groups, Invites int
+
+	// Recycle is the items of the recycle bin held for the tenant: it cannot be
+	// deleted while one is there, so a restore always finds its tenant.
+	Recycle int
+}
 
 // CountTenantRows counts the users, spaces, groups and invites of a tenant.
 func CountTenantRows(ctx context.Context, q Q, id string) (c TenantCounts, err error) {
@@ -188,7 +194,8 @@ func CountTenantRows(ctx context.Context, q Q, id string) (c TenantCounts, err e
 		(SELECT COUNT(*) FROM users WHERE tenant_id = ?),
 		(SELECT COUNT(*) FROM spaces WHERE tenant_id = ?),
 		(SELECT COUNT(*) FROM groups WHERE tenant_id = ?),
-		(SELECT COUNT(*) FROM invites WHERE tenant_id = ?)`, id, id, id, id).Scan(&c.Users, &c.Spaces, &c.Groups, &c.Invites)
+		(SELECT COUNT(*) FROM invites WHERE tenant_id = ?),
+		(SELECT COUNT(*) FROM recycle_items WHERE tenant_id = ?)`, id, id, id, id, id).Scan(&c.Users, &c.Spaces, &c.Groups, &c.Invites, &c.Recycle)
 	return
 }
 
@@ -328,7 +335,7 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 			return err
 		}
 		if c.Users+c.Spaces+c.Groups+c.Invites > 0 {
-			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites}
+			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites, c.Recycle}
 		}
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
 			return err

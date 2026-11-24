@@ -38,6 +38,8 @@ type tenFx struct {
 	syncedB string
 	// cursorB is a change cursor of spaceB, as its member's device holds it.
 	cursorB string
+	// itemB is an item of B's recycle bin and exportB an export of B's.
+	itemB, exportB string
 }
 
 // fakeID is an id of the right form that nothing has.
@@ -105,6 +107,10 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	}
 	// A change cursor of B's space, as B's member's device would hold one.
 	f.cursorB = f.memB.do("GET", "/api/spaces/"+f.spaceB+"/sync/catalog", nil).want(t, 200, "").body["changes"].(string)
+	// B's recycle bin and B's exports (3.5).
+	spaceB2 := f.admB.do("POST", "/api/spaces", map[string]any{"name": "Space B2"}).want(t, 201, "").body["id"].(string)
+	f.itemB = f.admB.do("DELETE", "/api/admin/spaces/"+spaceB2, nil).want(t, 200, "").body["id"].(string)
+	f.exportB = f.admB.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["id"].(string)
 	a.auth.FlushAudit(ctx)
 	return f
 }
@@ -116,7 +122,7 @@ func (f *tenFx) groupAdd(t *testing.T, c *client, g string, ids ...string) {
 
 // bIDs are everything of tenant B that must never show in an answer to A.
 func (f *tenFx) bIDs() []string {
-	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB}
+	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, "Space B2"}
 	if f.syncedB != "" {
 		l = append(l, f.syncedB, "Synced B")
 	}
@@ -239,8 +245,26 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/users/{id}/passkeys":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
 	"DELETE /api/users/{id}/passkeys/{passkey}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "passkey": fakeID} }},
 
-	"GET /api/admin/spaces":                           {kind: isoList},
-	"GET /api/admin/spaces/{space}":                   {kind: isoParam},
+	"GET /api/admin/spaces":         {kind: isoList},
+	"GET /api/admin/spaces/{space}": {kind: isoParam},
+	// 3.5: the recycle bin, exports, views and confirmations. Every id is B's item,
+	// export or space; a tenant administrator of A is answered as for one that is
+	// not there. DELETE /api/admin/recycle/{item} is the server's (isoSite).
+	"GET /api/admin/spaces/{space}/deletion": {kind: isoParam},
+	"POST /api/admin/spaces/{space}/view":    {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"reason": "looking"} }},
+	"DELETE /api/admin/spaces/{space}/view":  {kind: isoParam},
+	"GET /api/admin/recycle":                 {kind: isoList},
+	"POST /api/admin/recycle/{item}/restore": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"item": f.itemB} }, body: func(f *tenFx, id string) any { return map[string]any{} }},
+	"POST /api/admin/confirm": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{} }, body: func(f *tenFx, id string) any {
+		return map[string]any{"action": "delete_spaces", "spaces": []string{ofB(f, id, f.spaceB)}}
+	}},
+	"POST /api/admin/exports": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{} }, body: func(f *tenFx, id string) any {
+		return map[string]any{"spaces": []string{ofB(f, id, f.spaceB)}}
+	}},
+	"GET /api/admin/exports":                          {kind: isoList},
+	"GET /api/admin/exports/{id}":                     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
+	"DELETE /api/admin/exports/{id}":                  {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
+	"GET /api/admin/exports/{id}/download":            {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
 	"POST /api/admin/spaces/{space}/size":             {kind: isoParam},
 	"POST /api/admin/spaces/{space}/transfer":         {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"userId": f.userB} }},
 	"POST /api/admin/spaces/{space}/disable":          {kind: isoParam},
@@ -321,7 +345,7 @@ func (f *tenFx) build(rt api.RouteInfo, e isoEntry, other bool) (path string, bo
 		ids = e.ids(f)
 	}
 	params := map[string]string{"space": f.spaceB, "group": f.groupB, "user": f.userB, "tenant": f.tenB, "id": f.userB, "key": "legal.termsUrl",
-		"tag": "x", "name": "x", "commit": "abc", "path...": "x.md", "passkey": fakeID}
+		"tag": "x", "name": "x", "commit": "abc", "path...": "x.md", "passkey": fakeID, "item": f.itemB}
 	path = rt.Pattern
 	for name, bID := range params {
 		if v, ok := ids[name]; ok {
@@ -364,6 +388,16 @@ func (f *tenFx) build(rt api.RouteInfo, e isoEntry, other bool) (path string, bo
 		body = nil
 	}
 	return path, body
+}
+
+// ofB is B's id for a request meant for B's things, and a made-up id for one
+// meant to be answered as for something that does not exist (the body of such a
+// request is given fakeID where it would name a tenant).
+func ofB(f *tenFx, id, b string) string {
+	if id == fakeID {
+		return fakeID
+	}
+	return b
 }
 
 // shape is what an answer says that must not depend on whose id was asked.
@@ -480,12 +514,14 @@ func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 		// Nothing of B changed, and no link joins two tenants.
 		a.auth.FlushAudit(context.Background())
 		for q, want := range map[string]int{
-			`SELECT COUNT(*) FROM spaces WHERE id = '` + f.spaceB + `' AND disabled = 0`:     1,
-			`SELECT COUNT(*) FROM groups WHERE id = '` + f.groupB + `' AND name = 'Group B'`: 1,
-			`SELECT COUNT(*) FROM groups WHERE id = '` + f.syncedB + `'`:                     1,
-			`SELECT COUNT(*) FROM users WHERE id = '` + f.userB + `' AND disabled = 0`:       1,
-			`SELECT COUNT(*) FROM tenants WHERE id = '` + f.tenB + `' AND name = 'Acme'`:     1,
-			`SELECT COUNT(*) FROM invites WHERE id = '` + f.inviteB + `'`:                    1,
+			`SELECT COUNT(*) FROM spaces WHERE id = '` + f.spaceB + `' AND disabled = 0`:          1,
+			`SELECT COUNT(*) FROM groups WHERE id = '` + f.groupB + `' AND name = 'Group B'`:      1,
+			`SELECT COUNT(*) FROM groups WHERE id = '` + f.syncedB + `'`:                          1,
+			`SELECT COUNT(*) FROM users WHERE id = '` + f.userB + `' AND disabled = 0`:            1,
+			`SELECT COUNT(*) FROM tenants WHERE id = '` + f.tenB + `' AND name = 'Acme'`:          1,
+			`SELECT COUNT(*) FROM invites WHERE id = '` + f.inviteB + `'`:                         1,
+			`SELECT COUNT(*) FROM recycle_items WHERE id = '` + f.itemB + `' AND state = 'ready'`: 1,
+			`SELECT COUNT(*) FROM exports WHERE id = '` + f.exportB + `'`:                         1,
 		} {
 			var n int
 			if err := a.st.Q().QueryRow(context.Background(), q).Scan(&n); err != nil || n != want {

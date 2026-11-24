@@ -97,8 +97,9 @@ The server runs in one of two modes, chosen at start-up.
   `GET /api/session` and the ones under "Signing in" needs a session and
   answers `401 unauthenticated` without one. A space the user is not a member
   of answers `404 not_found`, the same as a space that does not exist, unless
-  the user is an administrator: an administrator may do everything in every
-  space (see "Members"). A member whose role lacks the permission a route needs
+  the user is an administrator: from 3.5 an administrator manages every space of
+  their scope (see "Members") and reads one only in a view they open with a
+  reason (see "Viewing a space"). A member whose role lacks the permission a route needs
   answers `403 no_permission`, a code of its own: it is never confused with the
   cross-site refusal, which is `403 forbidden`.
 
@@ -864,8 +865,9 @@ administrator confirms it or the person does. From milestone 3.1 the body may al
 (site administrators only, `403 forbidden` for a tenant administrator; see
 "Server storage", "Exemptions").
 
-An administrator cannot open another user's space through the API. Whoever
-can read the server's disk can read every file.
+Until 3.5 an administrator could not read another user's space through the API;
+from 3.5 they may, in a view that is recorded each time (see "Viewing a space").
+Whoever can read the server's disk can read every file.
 
 ### `GET /api/users/{id}/passkeys`, `DELETE /api/users/{id}/passkeys/{passkey}`
 
@@ -1023,7 +1025,8 @@ space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
 always keeps at least one owner. A personal space (`personal: true`) belongs to
 its person alone and never has other members. An administrator is not a member
 of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
-but may use these endpoints as if they were an owner. From 3.2 a shared space's
+but may use these endpoints as if they were an owner (the permissions an
+administrator has in a space they are not a member of are `members` and `manage`). From 3.2 a shared space's
 members may also be groups, with endpoints of their own (see "Groups"); this
 section is about people.
 
@@ -6699,6 +6702,31 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
 - From 3.5 every deletion goes through the recycle bin; 1.7's `DATA/trash/` is
   no longer written or read.
 
+**As built.**
+
+- The states of an item are `moving` (its rows are already out of the live
+  tables and its directories are being moved to `DATA/recycle/<item>/space` and
+  `/cache`), `ready`, `restoring` and `purging`. Only an item that is `ready` is
+  restorable or purged; a crash leaves the others and the next start finishes
+  them (a move is completed, a restore is undone, a purge is carried on). A move
+  that cannot be made (the disk, a file in the way) leaves the item `moving`,
+  with `restorable: false` and a problem, and is tried again by the hourly job.
+- `DELETE /api/admin/spaces/{space}` takes an optional `{"reason": "…"}` (at most
+  500 characters); the drafts of its people are in the item, not in a file.
+- A tenant cannot be deleted while any item of the recycle bin is held for it
+  (`409 tenant_not_empty`, with `recycle`), so a restore always finds its tenant.
+- A personal space cannot be restored on its own (`409 conflict`): it goes back
+  with its person. The restore of a space whose people are gone, and any other,
+  puts back what it can and lists `skipped` (`{"user": …}` or `{"group": …}`);
+  `owner` must be someone of the tenant who exists, is not deleted and is not
+  disabled (`404 user_not_found` otherwise, the same answer as for an id that
+  does not exist).
+- The deadline of 3.1 is not stored: the policy computes it from the space's
+  creation date when it is read, so a restored space has the deadline the policy
+  in force gives it.
+- The purge job is the manager's (`RunRecycle`); it also deletes exports whose
+  days are over.
+
 #### Recycle item
 
 ```json
@@ -6755,6 +6783,8 @@ What deleting the space would do; reads stored values only:
 
 `exportable` is `false` for an evicted space whose remote cannot be reached now
 (an export needs its files; 3.1's restore is what fetches them).
+`attachments.inSpace` is `null`: no stored value counts a space's attachments, and
+the preview reads stored values only.
 
 ### Deleting a user
 
@@ -6936,6 +6966,17 @@ recycle items, or a user (their personal space and the spaces of rules 1 and 2).
   `507 exports_full` beyond it. One export at a time per tenant, two on the
   server; the rest wait.
 
+**As built.** An export's `state` is `queued` (waiting for its turn), `running`,
+`ready` or `failed` (with `error`); a ready export lists in `warnings` what it
+could not include (an attachment that could not be fetched), and the zip has the
+same list as `NOT-INCLUDED.txt` in the space's folder. The folder of a space is
+`<name>-<id>/`. A space in the recycle bin whose directory was never there (it was
+evicted when it was deleted) exports its drafts and addresses but no files. The
+notice to a space's owners is not sent (there is no account notice to put it in);
+the audit rows carry the export and its spaces. `user` in the request is
+available with 3.5's third part. `history: true` is `403 forbidden` for a tenant
+administrator.
+
 `GET /api/admin/exports`, `GET /api/admin/exports/{id}`, `DELETE /api/admin/exports/{id}`,
 and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
 `Range` supported). An export made by a tenant administrator is visible to that
@@ -6972,6 +7013,27 @@ off ends the tenant's open views); site administrators always may.
 
 The web app opens it from the space's row in the administration, asks for the
 reason, and shows a banner "管理员查看，只读，已记录" while it lasts.
+
+**As built.**
+
+- An administrator who is not a member of a space (a site administrator for any
+  space, a tenant administrator for their tenant's) has **only `members` and
+  `manage`** there, without a view: the names of its people, its remote, its
+  settings, its rename, its transfer. Not `read`, and never `write`. This
+  replaces 1.7's "an administrator may do everything in every space", which the
+  view would otherwise make pointless. A view adds `read` to those, for the
+  session that opened it, and nothing else.
+- A **personal space** is never reachable by a tenant administrator: not by a
+  view, not by an export, not even for managing it; every endpoint answers as for
+  a space that does not exist. A site administrator reaches it as any space,
+  with a view each time recorded.
+- `page_viewed` is recorded for `GET …/pages/{id}`, its history and versions,
+  `GET …/files/{path}` and `GET …/sync/pages` (one row an hour for each
+  administrator and page or path), and, as the path `pages?body=1`, for a listing
+  that asks for the pages' text.
+- A view of a space of a disabled tenant is `403 space_disabled`. The capability
+  `data.adminView` is 3.6's; until then every administrator who may see a space
+  may view it.
 
 Regional or compliance refinements (telling the owner first, a second
 administrator's approval, a longer retention of these rows) are a later item

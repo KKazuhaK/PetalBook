@@ -99,6 +99,9 @@ type Options struct {
 	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
 	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
 	MaxSpaces *int
+	// Now is the clock (default time.Now), for what has an end: confirmations and
+	// views of spaces.
+	Now func() time.Time
 	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
 	// accounts mode the administrators' setting decides.
 	NoMCP bool
@@ -122,6 +125,12 @@ type server struct {
 	origins map[string]bool
 	// importing lets one import run at a time (see importMarkdown).
 	importing chan struct{}
+	// confirms are the tokens of the confirmations; views the views of spaces
+	// that administrators opened (see confirm.go and adminview.go).
+	confirms *confirmStore
+	views    *viewTable
+	// now is the clock of what has an end (confirmations, views).
+	now func() time.Time
 	// originHosts are the hosts of the allowed origins: a request addressed to
 	// one of them (through a reverse proxy, say) passes the Host restriction.
 	originHosts map[string]bool
@@ -152,7 +161,11 @@ func New(opt Options) http.Handler {
 		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
-		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
+		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),
+		confirms: newConfirmStore(), views: newViewTable(), now: opt.Now}
+	if s.now == nil {
+		s.now = time.Now
+	}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -173,6 +186,7 @@ func New(opt Options) http.Handler {
 		}
 	}
 	s.settings.SetFileCeiling(opt.MaxUpload)
+	s.bindRecycle()
 	s.bindDailySettings()
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
@@ -595,6 +609,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		hoste *gitstore.HostError
 		qe    *spaces.QuotaError
 		ftl   *space.FileTooLargeError
+		nrs   *spaces.NotRestorable
 	)
 	var coded *codedError
 	var ghe *connections.Error
@@ -604,6 +619,18 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var rst *spaces.RestoringError
 	var rf *spaces.RestoreFailed
 	switch {
+	case errors.Is(err, spaces.ErrExportsFull):
+		writeError(w, http.StatusInsufficientStorage, "exports_full", "the exports already take the room they may; delete some, or wait for them to expire")
+	case errors.Is(err, spaces.ErrOwnerRequired):
+		writeError(w, http.StatusConflict, "owner_required", "nobody who owned the space can be put back: name an owner")
+	case errors.Is(err, spaces.ErrBusyItem):
+		writeError(w, http.StatusConflict, "busy", "the item is being moved, restored or purged right now")
+	case errors.Is(err, spaces.ErrRestoreConflict):
+		writeError(w, http.StatusConflict, "conflict", "a space with that id exists")
+	case errors.Is(err, spaces.ErrNeedsPerson):
+		writeError(w, http.StatusConflict, "conflict", "a personal space is restored with its person: restore the person")
+	case errors.As(err, &nrs):
+		writeError(w, http.StatusConflict, "conflict", nrs.Error())
 	case errors.As(err, &ftl):
 		var size int64
 		if ftl.Size > 0 {
