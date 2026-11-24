@@ -51,6 +51,7 @@ func CompareAndSetSiteSetting(ctx context.Context, q Q, key, old, value string, 
 type DailyLine struct {
 	Lang   string
 	Body   string
+	Author string
 	Source string
 }
 
@@ -89,11 +90,29 @@ func ReplaceDailyLines(ctx context.Context, q Q, lang string, lines []DailyLine)
 		return 0, ErrTooManyLines
 	}
 	for i, l := range lines {
-		if _, err := q.Exec(ctx, `INSERT INTO daily_lines(position, lang, body, source) VALUES (?, ?, ?, ?)`, last+int64(i)+1, lang, l.Body, l.Source); err != nil {
+		if _, err := q.Exec(ctx, `INSERT INTO daily_lines(position, lang, body, author, source) VALUES (?, ?, ?, ?, ?)`, last+int64(i)+1, lang, l.Body, l.Author, l.Source); err != nil {
 			return 0, err
 		}
 	}
 	return n + len(lines), nil
+}
+
+// DailyLines are the lines of one language, in the order they were added.
+func DailyLines(ctx context.Context, q Q, lang string) ([]DailyLine, error) {
+	rows, err := q.Query(ctx, `SELECT body, author, source FROM daily_lines WHERE lang = ? ORDER BY position`, lang)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DailyLine{}
+	for rows.Next() {
+		l := DailyLine{Lang: lang}
+		if err := rows.Scan(&l.Body, &l.Author, &l.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // DeleteDailyLines removes the lines of one language.
@@ -107,7 +126,7 @@ func DeleteDailyLines(ctx context.Context, q Q, lang string) error {
 func NthDailyLine(ctx context.Context, q Q, lang string, n int) (DailyLine, error) {
 	var l DailyLine
 	l.Lang = lang
-	err := q.QueryRow(ctx, `SELECT body, source FROM daily_lines WHERE lang = ? ORDER BY position LIMIT 1 OFFSET ?`, lang, n).Scan(&l.Body, &l.Source)
+	err := q.QueryRow(ctx, `SELECT body, author, source FROM daily_lines WHERE lang = ? ORDER BY position LIMIT 1 OFFSET ?`, lang, n).Scan(&l.Body, &l.Author, &l.Source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return l, ErrNotFound
 	}

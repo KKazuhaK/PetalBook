@@ -160,7 +160,7 @@ describe('the text of the day', () => {
     await ready()
     await settle(() => daily() !== null, 'the text')
     expect(daily()!.textContent).toMatch(/第 \d 条文案/)
-    expect(daily()!.textContent).toMatch(/《暮雪\d》｜副\d/)
+    expect(daily()!.textContent).toMatch(/第 \d 条文案.*—— 《暮雪\d｜副\d》/)
     const link = daily()!.querySelector<HTMLAnchorElement>('a')!
     expect(link.getAttribute('href')).toMatch(/^\/s\/default\/p\//)
     const asked = m.requests.filter((r) => r.url.includes('/daily?'))
@@ -297,7 +297,7 @@ describe('the text of the day', () => {
       await ready()
       await settle(() => daily() !== null, 'the text')
       expect(daily()!.textContent).toContain('一言')
-      expect(daily()!.textContent).toContain('au')
+      expect(daily()!.textContent).toContain('—— au《src》')
       const a = daily()!.querySelector<HTMLAnchorElement>('a')!
       expect(a.href).toBe('https://hitokoto.cn/?uuid=u1')
       expect(a.rel).toContain('noopener')

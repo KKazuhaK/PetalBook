@@ -76,6 +76,8 @@ type dailyPageResp struct {
 	// Body is the page's Markdown, cut to space.DailyBodyLimit characters.
 	Body          string `json:"body"`
 	BodyTruncated bool   `json:"bodyTruncated"`
+	// Author is the page's `author` (or `作者`) property, when it has one.
+	Author string `json:"author,omitempty"`
 }
 
 // getDaily answers with the daily text of a day, from the first of: the
@@ -155,7 +157,7 @@ func (s *server) getDaily(c *call) {
 			Page   *dailyPageResp `json:"page"`
 			Count  int            `json:"count"`
 			Origin string         `json:"origin"`
-		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated}, pick.Count, "space"}, day)
+		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated, pick.Author}, pick.Count, "space"}, day)
 		return
 	}
 	if why == space.DailyNoMatch {

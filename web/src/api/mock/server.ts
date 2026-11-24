@@ -48,6 +48,7 @@ import { SPACE_NAME } from './seed.ts'
 import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
 import { pickNumber } from './homeBook.ts'
 import { canonicalTag, matchTag } from '../../lib/langTags.ts'
+import { parseAttribution } from './attribution.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
@@ -1745,7 +1746,15 @@ export function createMockServer(options: MockOptions = {}) {
     builtin?: boolean
   }
   type OptionChoice = Record<string, Record<string, string[]>>
-  type SiteDefault = null | { kind: 'list' } | { kind: 'api'; apis: Record<string, string[]>; options?: OptionChoice }
+  type MockSource =
+    | { kind: 'api'; id: string; options?: Record<string, string[]> }
+    | { kind: 'list' }
+    | { kind: 'space'; space: string; source: unknown }
+  type SiteDefault =
+    | null
+    | { kind: 'list' }
+    | { kind: 'api'; apis: Record<string, string[]>; options?: OptionChoice }
+    | { kind: 'sources'; sources: Record<string, MockSource[]> }
   interface ProviderState {
     enabled: boolean
     refresh?: string
@@ -1815,7 +1824,7 @@ export function createMockServer(options: MockOptions = {}) {
     record: (kind, o) => book.record(kind, o),
   })
   const site = {
-    lines: new Map<string, { body: string; source: string }[]>(),
+    lines: new Map<string, { body: string; author: string; source: string }[]>(),
     default: null as SiteDefault,
     allow: { own: true, api: true },
     languages: ['zh-Hans', 'en'],
@@ -2165,49 +2174,75 @@ export function createMockServer(options: MockOptions = {}) {
     const chosen = (mine?.apis ?? [])
       .map((id) => apis.find((a) => a.id === id))
       .filter((a): a is SiteApi => a !== undefined && a.enabled && locked.api)
-    // Several interfaces take turns by day; one that has nothing fresh is passed over for the next, and "another"
-    // moves to the next. A stale answer is used only when no other has a fresh one.
-    const ask = (list: SiteApi[], scope: string, options: OptionChoice | undefined): Record<string, unknown> => {
-      const n = list.length
-      const day = Math.floor(Date.parse(date + 'T00:00:00Z') / 86400_000)
-      const first = (day + (scopeNumber(scope) % n) + skip) % n
-      let stale: Record<string, unknown> | undefined
-      for (let i = 0; i < n; i++) {
-        const a = list[(first + i) % n]
-        const r = quoteFrom(a, date, Math.floor(skip / n), options?.[a.id])
-        if (r.reason !== undefined) return r
-        if ((r.quote as { stale?: boolean }).stale) stale ??= r
-        else return r
-      }
-      return stale ?? { page: null, reason: 'unavailable' }
-    }
-    const own_ = accounts ? chooseApis(chosen, lang) : []
-    if (own_.length > 0) return ask(own_, 'space:' + space.id, mine?.options)
-    if (accounts && site.default !== null && (spaceDaily.get(space.id)?.inherit ?? true)) {
-      if (site.default.kind === 'api') {
-        // The administrators' own choice, not limited by what spaces may choose.
-        const map = site.default.apis
-        const m = matchTag(
-          lang,
-          Object.keys(map).filter((k) => k !== ''),
-        )
-        const ids = m !== null ? map[m] : map['']
-        if (ids === undefined) return { page: null, reason: 'no_source' }
-        const list = ids.flatMap((id) => apis.filter((a) => a.id === id && a.enabled))
-        return list.length > 0 ? ask(list, 'site', site.default.options) : { page: null, reason: 'unavailable' }
-      }
+    // What a source gives: an item (with its reason when it has none), as the server's fromSource.
+    const fromLines = (): Record<string, unknown> => {
       const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
       const m = matchTag(lang, have)
       const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : have.sort()[0])
       const list = use === undefined ? [] : (site.lines.get(use) ?? [])
-      if (list.length) {
-        const line = list[pickNumber('site:' + use, date, skip, list.length)]
-        return {
-          page: null,
-          quote: { text: line.body, ...(line.source ? { source: line.source } : {}) },
-          origin: 'site',
-        }
+      if (!list.length) return { page: null }
+      const line = list[pickNumber('site:' + use, date, skip, list.length)]
+      return {
+        page: null,
+        quote: {
+          text: line.body,
+          ...(line.author ? { author: line.author } : {}),
+          ...(line.source ? { source: line.source } : {}),
+        },
+        origin: 'site',
       }
+    }
+    const fromSource = (src: MockSource, lap: number, options: OptionChoice | undefined): Record<string, unknown> => {
+      if (src.kind === 'list') return fromLines()
+      if (src.kind === 'space') return { page: null } // the mock has no space to draw from
+      const a = apis.find((x) => x.id === src.id && x.enabled)
+      return a ? quoteFrom(a, date, lap, src.options ?? options?.[a.id]) : { page: null, reason: 'unavailable' }
+    }
+    // Sources take turns by day, one text at a time; one with nothing is passed over for the next, and "another"
+    // moves to the next. A stale answer is used only when no other has a fresh one.
+    const ask = (list: MockSource[], scope: string, options?: OptionChoice): Record<string, unknown> => {
+      const n = list.length
+      const day = Math.floor(Date.parse(date + 'T00:00:00Z') / 86400_000)
+      const first = (day + (scopeNumber(scope) % n) + skip) % n
+      let stale: Record<string, unknown> | undefined
+      let reason = ''
+      for (let i = 0; i < n; i++) {
+        const r = fromSource(list[(first + i) % n], Math.floor(skip / n), options)
+        if (r.quote === undefined) {
+          if (typeof r.reason === 'string' && r.reason > reason) reason = r.reason
+          continue
+        }
+        if ((r.quote as { stale?: boolean }).stale) stale ??= r
+        else return r
+      }
+      return stale ?? (reason ? { page: null, reason } : { page: null, reason: 'no_source' })
+    }
+    const own_ = accounts ? chooseApis(chosen, lang) : []
+    if (own_.length > 0)
+      return ask(
+        own_.map((a): MockSource => ({ kind: 'api', id: a.id })),
+        'space:' + space.id,
+        mine?.options,
+      )
+    if (accounts && site.default !== null && (spaceDaily.get(space.id)?.inherit ?? true)) {
+      const d = site.default
+      let list: MockSource[] | undefined
+      if (d.kind === 'list') list = [{ kind: 'list' }]
+      else {
+        const map: Record<string, MockSource[]> =
+          d.kind === 'api'
+            ? Object.fromEntries(
+                Object.entries(d.apis).map(([l, ids]) => [l, ids.map((id): MockSource => ({ kind: 'api', id }))]),
+              )
+            : d.sources
+        const m = matchTag(
+          lang,
+          Object.keys(map).filter((k) => k !== ''),
+        )
+        list = m !== null ? map[m] : map['']
+      }
+      if (list === undefined || list.length === 0) return { page: null, reason: 'no_source' }
+      return ask(list, 'site', d.kind === 'api' ? d.options : undefined)
     }
     return { page: null, reason: 'no_source' }
   }
@@ -2341,7 +2376,31 @@ export function createMockServer(options: MockOptions = {}) {
           }
           const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
           next = { kind: 'api', apis, ...(Object.keys(options).length > 0 ? { options } : {}) }
-        } else throw new HttpError(400, 'invalid', 'the mock takes a default that is a list or interfaces, or null')
+        } else if (isRecord(d) && d.kind === 'sources' && isRecord(d.sources) && Object.keys(d.sources).length > 0) {
+          const ids = new Set(allApis().map((a) => a.id))
+          const sources: Record<string, MockSource[]> = {}
+          for (const [k, value] of Object.entries(d.sources)) {
+            const tag = k === '' ? '' : tagOf(k)
+            if (tag in sources) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
+            const list = Array.isArray(value) ? value : [value]
+            if (list.length < 1 || list.length > 8) throw new HttpError(400, 'invalid', '每种语言 1 到 8 个来源')
+            sources[tag] = list.map((e): MockSource => {
+              const src = typeof e === 'string' ? { kind: 'api', id: e } : e
+              if (!isRecord(src)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
+              if (src.kind === 'list') return { kind: 'list' }
+              if (src.kind === 'space') return { kind: 'space', space: String(src.space), source: src.source }
+              if (src.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 space')
+              if (typeof src.id !== 'string' || !ids.has(src.id))
+                throw new HttpError(400, 'api_not_found', `没有接口 ${String(src.id)}`)
+              const options = checkOptions([src.id], src.options === undefined ? undefined : { [src.id]: src.options })[
+                src.id
+              ]
+              return { kind: 'api', id: src.id, ...(options ? { options } : {}) }
+            })
+          }
+          next = { kind: 'sources', sources }
+        } else
+          throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, interfaces or sources, or null')
       }
       // The notices are dismissed with an empty list.
       if ('notices' in body) {
@@ -2541,30 +2600,92 @@ export function createMockServer(options: MockOptions = {}) {
         )
       return { status: 200, body: { ok: true, status: 200, url, raw, rawTruncated: false, quote: clean } }
     }
-    if (path === '/admin/daily/lines' && method === 'PUT') {
-      const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
-      const format = body.format ?? 'lines'
+    // The lines of an upload or a paste, with the author and source cut off (as the server does).
+    const parseLines = (text: string, format: string): { text: string; author: string; source: string }[] => {
+      const clean = text.replace(/\r\n/g, '\n')
+      if (clean.includes('\0')) throw new HttpError(400, 'invalid', '有空字符')
+      if (format === 'csv') {
+        const rows = clean
+          .split('\n')
+          .filter((l) => l.trim() !== '')
+          .map((l) => {
+            const cells: string[] = []
+            let cur = ''
+            let quoted = false
+            for (const ch of l) {
+              if (ch === '"') quoted = !quoted
+              else if (ch === ',' && !quoted) {
+                cells.push(cur.trim())
+                cur = ''
+              } else cur += ch
+            }
+            cells.push(cur.trim())
+            return cells
+          })
+        const body =
+          rows.length > 0 && ['text', '文案', '正文', '内容'].includes(rows[0][0].toLowerCase()) ? rows.slice(1) : rows
+        return body.filter((r) => r[0] !== '').map((r) => ({ text: r[0], author: r[1] ?? '', source: r[2] ?? '' }))
+      }
       if (format !== 'lines' && format !== 'markdown')
-        throw new HttpError(400, 'invalid', 'format 是 lines 或 markdown')
-      const text = typeof body.text === 'string' ? body.text.replace(/\r\n/g, '\n') : ''
-      if (text.includes('\0')) throw new HttpError(400, 'invalid', '有空字符')
+        throw new HttpError(400, 'invalid', 'format 是 lines、markdown 或 csv')
       let parts: string[]
-      if (format === 'lines') parts = text.split('\n').filter((l) => l.trim() !== '')
+      if (format === 'lines') parts = clean.split('\n').filter((l) => l.trim() !== '')
       else {
-        const hasRule = text.split('\n').some((l) => l.trim() === '---')
-        parts = (hasRule ? text.split(/^\s*---\s*$/m) : text.split(/\n\s*\n/))
+        const hasRule = clean.split('\n').some((l) => l.trim() === '---')
+        parts = (hasRule ? clean.split(/^\s*---\s*$/m) : clean.split(/\n\s*\n/))
           .map((x) => x.trim())
           .filter((x) => x !== '')
       }
+      return parts.map((p) => {
+        const [b, ...rest] = p.split('\t')
+        const a = parseAttribution(b.trim())
+        const tabSource = rest.join('\t').trim()
+        return { text: a.text, author: a.author, source: tabSource || a.source }
+      })
+    }
+    if (path === '/admin/daily/lines/preview' && method === 'POST') {
+      const lines = parseLines(typeof body.text === 'string' ? body.text : '', String(body.format ?? 'lines'))
+      return {
+        status: 200,
+        body: {
+          lines: lines.map(({ text, author, source }) => ({
+            text,
+            ...(author ? { author } : {}),
+            ...(source ? { source } : {}),
+          })),
+        },
+      }
+    }
+    if (path === '/admin/daily/lines' && method === 'GET') {
+      const raw = url.searchParams.get('lang') ?? ''
+      const list = site.lines.get(raw === '' ? '' : tagOf(raw)) ?? []
+      return {
+        status: 200,
+        body: {
+          lines: list.map((l) => ({
+            text: l.body,
+            ...(l.author ? { author: l.author } : {}),
+            ...(l.source ? { source: l.source } : {}),
+          })),
+        },
+      }
+    }
+    if (path === '/admin/daily/lines' && method === 'PUT') {
+      const lang = body.lang === undefined || body.lang === '' ? '' : tagOf(body.lang)
+      const given = Array.isArray(body.lines)
+        ? (body.lines as Record<string, unknown>[]).map((l) => ({
+            text: String(l.text ?? '').trim(),
+            author: String(l.author ?? '').trim(),
+            source: String(l.source ?? '').trim(),
+          }))
+        : parseLines(typeof body.text === 'string' ? body.text : '', String(body.format ?? 'lines'))
+      const parts = given.filter((l) => l.text !== '')
       if (parts.length === 0) throw new HttpError(400, 'invalid', '里面没有文字；要去掉这些行，请删除')
       const total = [...site.lines].filter(([l]) => l !== lang).reduce((n, [, v]) => n + v.length, 0) + parts.length
       if (total > 5000) throw new HttpError(400, 'invalid', '服务器一共最多保留 5000 行')
       site.lines.set(
         lang,
-        parts.map((p) => {
-          const [b, ...rest] = p.split('\t')
-          return { body: b.trim(), source: rest.join('\t').trim() }
-        }),
+        parts.map((p) => ({ body: p.text, author: p.author, source: p.source })),
       )
       return { status: 200, body: siteView() }
     }

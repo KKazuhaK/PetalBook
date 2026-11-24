@@ -4009,6 +4009,22 @@ nothing else, and the repairs are saved once, at the first read:
   default, the interfaces and their header values are kept.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below),
+  `{"kind": "sources", "sources": {"": [ … ], "zh": [ … ]}}`, a list of sources
+  for each language in order, each `{"kind": "api", "id": "hitokoto", "options":
+  {…}}`, `{"kind": "list"}` (the lines; once in a list is enough) or
+  `{"kind": "space", "space": id, "source": {"folder"|"tag"|"type": …}}`
+  (1 to 8 for each language; a string is the id of an interface, a single
+  source is a list of one; `400 invalid` for a source that is none, an
+  interface that is not set up or a space that is not there; a tenant's
+  default may not have `list`, and its spaces are its own). The earlier kinds
+  are lists of one, or of the interfaces they list, and are read as such. The
+  sources of a language take turns by day, the way the interfaces of one do
+  (see "Several interfaces for a language"): the one the day starts with is
+  made from the day and the scope, "another" moves to the next, and a source
+  that fails, is asked too often or has nothing (no lines, a space with no
+  page that meets the source) is passed over for the next. Only one text is
+  ever given. The source of a page of a space says who wrote it and where
+  from, only when the page does (below),
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
   sources by language as above, checked in that space (choosing a space shows
   its content to everybody; a client says so), or
@@ -4318,7 +4334,7 @@ request; a success clears the wait. A space's own source and the default
 that is a space or lines are cheap (the index, a row) and use only the memory of
 the day and the browser's.
 
-#### `PUT /api/admin/daily/lines`, `DELETE /api/admin/daily/lines?lang=zh`
+#### `GET /api/admin/daily/lines?lang=`, `POST …/lines/preview`, `PUT …/lines`, `DELETE …/lines?lang=zh`
 
 The lines are a source of the default that is stored here: pasted or uploaded
 text, each entry with the language it is in (`""` for any language). `PUT`
@@ -4329,10 +4345,33 @@ replaces the lines of one language:
 ```
 
 `format` is `lines` (each line that is not blank is an entry; a tab separates the
-text from where it is from) or `markdown` (entries are cut at the lines that
-are `---`, or at the blank lines when there are none). Entries are at most 8 000
-bytes, their source 200 characters, and the server keeps at most 5 000 in all.
-`DELETE` removes the lines of one language. Both answer as `GET /api/admin/daily`.
+text from where it is from), `markdown` (entries are cut at the lines that
+are `---`, or at the blank lines when there are none) or `csv` (columns text,
+author, source; a first row that says `text` (or `文案`, `正文`, `内容`) is a
+header). Entries are at most 8 000 bytes, their author and source 200
+characters each, and the server keeps at most 5 000 in all.
+
+**Author and source.** An entry has `text`, `author` and `source`. In `lines`
+and `markdown` they are cut off the end of the entry when it ends with
+` —— `, ` — ` or ` -- ` (with the spaces) and an attribution, the last mark
+only: `人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》` is the author 纳兰性德
+and the source 山花子 (the source is what is in `《…》`); `The best way out is always
+through. — Robert Frost` has the author Robert Frost, and `… — Author, Source`
+both. What follows the mark must look like an attribution, else the entry is the
+text only: a name of a few words each beginning with a capital letter (the small
+words of names such as `van` and `de` allowed), or in Chinese up to 12
+characters, or anything with `《…》` that ends there, and no sentence
+punctuation, so `I think — therefore I am` and `Wait — what? — Douglas Adams`
+(split only at the last mark) are cut right. A tab gives the source and
+leaves the text to be cut for its author. `POST …/lines/preview` takes
+`{"text", "format"}` and answers `{"lines": [{"text", "author"?, "source"?}]}`,
+the split as it would be kept, and keeps nothing; so a wrong split can be
+seen. `PUT` takes `"lines": [{"text", "author", "source"}]` in place of `text`
+and `format`, to keep the lines as the administrators corrected them, and
+`GET` gives the lines kept for a language in that shape. All of these show
+the text as `{"text", "author", "source"}` of the daily quote (below).
+
+`DELETE` removes the lines of one language. `PUT` and `DELETE` answer as `GET /api/admin/daily`.
 Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
 under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
 it is stored, so they can still be replaced or deleted.

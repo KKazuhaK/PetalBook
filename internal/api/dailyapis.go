@@ -216,12 +216,13 @@ func (s *server) decodeSite(raw string) siteDaily {
 		Source  json.RawMessage                `json:"source"`
 		APIs    apiLists                       `json:"apis"`
 		Options map[string]map[string][]string `json:"options"`
+		Sources sourceLists                    `json:"sources"`
 	}
 	part("default", &def)
 	if def == nil {
 		return d
 	}
-	d.Default = &siteDefault{Kind: def.Kind, Space: def.Space, Options: def.Options}
+	d.Default = &siteDefault{Kind: def.Kind, Space: def.Space, Options: def.Options, Sources: def.Sources}
 	dropped := func(field, code string) {
 		s.log.Warn("a language of the daily text default is not a language tag; it is dropped", "field", field, "code", code)
 		d.notify(siteNotice{Code: "dropped_language", Lang: code, Field: field,
@@ -319,6 +320,14 @@ func (s *server) adoptBuiltins(d *siteDaily) {
 		if d.Default != nil {
 			for l, ids := range d.Default.APIs {
 				d.Default.APIs[l] = renamed(ids, a.ID, to)
+			}
+			for l, list := range d.Default.Sources {
+				for i := range list {
+					if list[i].Kind == "api" && list[i].ID == a.ID {
+						list[i].ID = to
+					}
+				}
+				d.Default.Sources[l] = list
 			}
 			if o, ok := d.Default.Options[a.ID]; ok {
 				delete(d.Default.Options, a.ID)
@@ -572,7 +581,11 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 	}
 	all := site.all()
 	if cands := chooseAPIs(all, choice.APIs, lang); len(cands) > 0 {
-		return s.dailyFromAPIs(c, site, cands, choice.Options, "space:"+c.sp.Info.ID, date, skip, lang, tz)
+		srcs := make([]dailySource, len(cands))
+		for i, a := range cands {
+			srcs[i] = dailySource{Kind: "api", ID: a.ID, Options: choice.Options[a.ID]}
+		}
+		return s.dailyFromSources(c, site, srcs, "space:"+c.sp.Info.ID, date, skip, lang, tz)
 	}
 	// The default of the person's tenant comes between the space's and the site's.
 	def, scope, err := s.dailyDefaultFor(ctx, c.user().TenantID, site.Default)
@@ -582,31 +595,12 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 	if !prefs.Inherit || def == nil {
 		return nil, "", nil
 	}
-	switch def.Kind {
-	case "list":
-		return s.dailyFromLines(ctx, date, skip, lang)
-	case "space":
-		return s.dailyFromSpace(ctx, *def, date, skip, lang)
-	case "api":
-		// The administrators' own choice: not limited by what spaces may choose.
-		ids, ok := defaultAPIsFor(def.APIs, lang)
-		if !ok {
-			return nil, "", nil
-		}
-		var cands []storedAPI
-		for _, id := range ids {
-			for i := range all {
-				if all[i].ID == id && all[i].Enabled {
-					cands = append(cands, all[i])
-				}
-			}
-		}
-		if len(cands) == 0 {
-			return nil, "unavailable", nil // gone, or switched off
-		}
-		return s.dailyFromAPIs(c, site, cands, def.Options, scope, date, skip, lang, tz)
+	// The administrators' own choice: not limited by what spaces may choose.
+	srcs, ok := def.sourcesFor(lang)
+	if !ok {
+		return nil, "", nil
 	}
-	return nil, "", nil
+	return s.dailyFromSources(c, site, srcs, scope, date, skip, lang, tz)
 }
 
 // defaultAPIsFor are the interfaces of the default for a reader's language, in
@@ -639,46 +633,88 @@ func rotation(scope, date string, n int) int {
 	return ((day+int(space.DailyNumber("rotate:"+scope, "")%uint64(n)))%n + n) % n
 }
 
-// dailyFromAPIs gives the text of the interfaces a choice lists for a language
-// (a space's, a tenant's, the site's; scope names which): one a day, in turn.
-// "Another" (skip) moves to the next of them, and after the last to the first
-// again, which then asks for a new item if it can. An interface that fails, is
-// switched off or is asked too often is passed over for the next; only when
-// none answers is the text unavailable. An answer that is the last thing an
-// interface said (stale) is used only when no other has a fresh one.
-func (s *server) dailyFromAPIs(c *call, site siteDaily, cands []storedAPI, opts map[string]map[string][]string, scope, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
-	// An interface is asked about the days around today only: each other
-	// day would be a request, a row kept and a lane of its own.
-	if !nearToday(date, s.opt.DailyFetch.Now(), tz) {
-		return nil, "out_of_range", nil
-	}
-	n := len(cands)
+// dailyFromSources gives the text of the sources a choice lists for a
+// language (a space's, a tenant's, the site's; scope names which): one a day, in
+// turn. A source is an external interface, the lines the administrators gave or
+// pages of a space; one alone is used as it is. "Another" (skip) moves to the
+// next; after the last it is the first again, which then asks for a new item if
+// it can. A source that fails, is switched off, is asked too often or has
+// nothing is passed over for the next; only when none gives anything is there
+// nothing. What an interface said last (stale) is used only when no other source
+// has a fresh one. Exactly one text is ever given.
+func (s *server) dailyFromSources(c *call, site siteDaily, srcs []dailySource, scope, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
+	ctx := c.r.Context()
+	n := len(srcs)
 	first := (rotation(scope, date, n) + skip) % n
 	lap := skip / n
 	var stale *dailyQuote
-	limited := true
+	limited := 0
+	reason := ""
+	rank := map[string]int{"": 0, "no_match": 1, "out_of_range": 2, "unavailable": 3}
 	for i := 0; i < n; i++ {
-		a := cands[(first+i)%n]
-		q, err := s.askAPI(c, site, a, opts[a.ID], date, lap, lang)
-		if err != nil {
-			limited = limited && errors.Is(err, dailyfetch.ErrRateLimited)
+		src := srcs[(first+i)%n]
+		q, why, err := s.fromSource(c, ctx, site, src, date, lap, lang, tz)
+		switch {
+		case errors.Is(err, dailyfetch.ErrRateLimited):
+			limited++
 			continue
-		}
-		if q.Stale {
+		case err != nil:
+			return nil, "", err
+		case q != nil && q.Stale:
 			if stale == nil {
 				stale = q
 			}
 			continue
+		case q != nil:
+			return q, "", nil
 		}
-		return q, "", nil
+		if rank[why] >= rank[reason] {
+			reason = why
+		}
 	}
 	switch {
 	case stale != nil:
 		return stale, "", nil
-	case limited:
+	case limited == n:
 		return nil, "", dailyfetch.ErrRateLimited
 	}
-	return nil, "unavailable", nil
+	return nil, reason, nil
+}
+
+// fromSource is the text of one source: a text, or nothing with the reason
+// (and the error when the interface was asked too often).
+func (s *server) fromSource(c *call, ctx context.Context, site siteDaily, src dailySource, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
+	switch src.Kind {
+	case "list":
+		return s.dailyFromLines(ctx, date, skip, lang)
+	case "space":
+		return s.dailyFromSpace(ctx, siteDefault{Space: src.Space, Source: src.Source}, date, skip, lang)
+	case "api":
+		// An interface is asked about the days around today only: each other
+		// day would be a request, a row kept and a lane of its own.
+		if !nearToday(date, s.opt.DailyFetch.Now(), tz) {
+			return nil, "out_of_range", nil
+		}
+		var api *storedAPI
+		for _, a := range site.all() {
+			if a.ID == src.ID && a.Enabled {
+				api = &a
+				break
+			}
+		}
+		if api == nil {
+			return nil, "unavailable", nil // gone, or switched off
+		}
+		q, err := s.askAPI(c, site, *api, src.Options, date, skip, lang)
+		switch {
+		case errors.Is(err, dailyfetch.ErrRateLimited):
+			return nil, "", err
+		case err != nil:
+			return nil, "unavailable", nil
+		}
+		return q, "", nil
+	}
+	return nil, "", nil
 }
 
 // askAPI asks an external interface (or what is kept of it), for a space's

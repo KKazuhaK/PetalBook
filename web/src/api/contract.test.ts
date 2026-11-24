@@ -3191,6 +3191,51 @@ function suite(target: Target) {
     })
 
     if (accounts) {
+      it('lines keep their author and source, split off the text and shown beforehand; sources of several kinds are one default', async () => {
+        const adm = (method: string, path: string, body?: unknown) =>
+          call(admin, method, `/api/admin/daily${path}`, body)
+        try {
+          const pre = await adm('POST', '/lines/preview', {
+            text: '人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nThe best way out is always through. — Robert Frost\nI think — therefore I am',
+            format: 'lines',
+          })
+          expect(pre.status).toBe(200)
+          expect(pre.json.lines).toEqual([
+            { text: '人到情多情转薄，而今真个不多情。', author: '纳兰性德', source: '山花子' },
+            { text: 'The best way out is always through.', author: 'Robert Frost' },
+            { text: 'I think — therefore I am' },
+          ])
+          const csv = await adm('POST', '/lines/preview', {
+            text: 'text,author,source\n"One, two",Seneca,Letters\n',
+            format: 'csv',
+          })
+          expect(csv.json.lines).toEqual([{ text: 'One, two', author: 'Seneca', source: 'Letters' }])
+          expect((await adm('POST', '/lines/preview', { text: 'x', format: 'xml' })).status).toBe(400)
+          expect(
+            (
+              await adm('PUT', '/lines', {
+                lang: '',
+                lines: [{ text: 'He said — no', author: 'Someone', source: 'Somewhere' }],
+              })
+            ).status,
+          ).toBe(200)
+          expect((await adm('GET', '/lines?lang=')).json.lines).toEqual([
+            { text: 'He said — no', author: 'Someone', source: 'Somewhere' },
+          ])
+          const mixed = await adm('PUT', '', { default: { kind: 'sources', sources: { '': [{ kind: 'list' }] } } })
+          expect(mixed.status).toBe(200)
+          expect(mixed.json.default).toEqual({ kind: 'sources', sources: { '': [{ kind: 'list' }] } })
+          // A single id is a list of one; a kind that is none is refused.
+          expect((await adm('PUT', '', { default: { kind: 'api', apis: { '': 'nothing' } } })).status).toBe(400)
+          expect(
+            (await adm('PUT', '', { default: { kind: 'sources', sources: { '': [{ kind: 'rss' }] } } })).status,
+          ).toBe(400)
+        } finally {
+          await adm('DELETE', '/lines?lang=')
+          await adm('PUT', '', { default: null })
+        }
+      })
+
       it('the administrators give a default for spaces with no source: lines by language, a choice per space, and the settings are theirs alone', async () => {
         const adm = (method: string, path: string, body?: unknown) =>
           call(admin, method, `/api/admin/daily${path}`, body)

@@ -46,6 +46,7 @@ import type {
   DailyTryResult,
   DeletedSpace,
   Invite,
+  DailyLine,
   LinesFormat,
   Role,
   ServerStatus,
@@ -309,8 +310,13 @@ export const adminApi = {
   // Shares the installation with exactly these tenants; none stops sharing.
   putAdminGitHubInstallation: (id: number, tenants: string[]) =>
     request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
-  putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) =>
+  putDailyLines: (input: { lang: string } & ({ text: string; format: LinesFormat } | { lines: DailyLine[] })) =>
     request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
+  // How a text would be split into lines, author and source; nothing is kept.
+  previewDailyLines: (input: { text: string; format: LinesFormat }) =>
+    request<{ lines: DailyLine[] }>('/admin/daily/lines/preview', { method: 'POST', body: input }),
+  // The lines kept for a language.
+  dailyLines: (lang: string) => request<{ lines: DailyLine[] }>(`/admin/daily/lines?lang=${enc(lang)}`),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
 
@@ -734,7 +740,7 @@ export const useSaveDailyProvider = () =>
   )
 export const useDeleteDailyApi = () => useDailyWrite((id: string) => adminApi.deleteDailyApi(id))
 export const useSaveDailyLines = () =>
-  useDailyWrite((input: { lang: string; text: string; format: LinesFormat }) => adminApi.putDailyLines(input))
+  useDailyWrite((input: Parameters<typeof adminApi.putDailyLines>[0]) => adminApi.putDailyLines(input))
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
   return useMutation({

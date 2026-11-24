@@ -601,3 +601,24 @@ func TestReadStoredDailyConfig(t *testing.T) {
 		t.Fatalf("%+v %v", c, dropped)
 	}
 }
+
+// A pick says who wrote the page and where it is from, only when the page does.
+func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
+	s := open(t)
+	mustCreate(t, s, "有", meta("title", "山花子", "author", "纳兰性德", "source", "纳兰词"), "人到情多情转薄\n")
+	mustCreate(t, s, "没有", meta("title", "无名"), "只有正文\n")
+	mustCreate(t, s, "中文", meta("title", "t", "作者", "苏轼", "出处", "东坡集"), "x\n")
+	folder := func(name string) DailySource { f := name; return DailySource{Folder: &f} }
+	p, _, err := s.DailyFrom("S", "2026-11-23", 0, folder("有"))
+	if err != nil || p == nil || p.Author != "纳兰性德" || p.Page.Source != "纳兰词" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	p, _, err = s.DailyFrom("S", "2026-11-23", 0, folder("没有"))
+	if err != nil || p == nil || p.Author != "" || p.Page.Source != "" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	p, _, err = s.DailyFrom("S", "2026-11-23", 0, folder("中文"))
+	if err != nil || p == nil || p.Author != "苏轼" || p.Page.Source != "东坡集" {
+		t.Fatalf("%+v %v", p, err)
+	}
+}

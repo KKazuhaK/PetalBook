@@ -734,6 +734,8 @@ type DailyPick struct {
 	Truncated bool
 	// Count is how many pages meet the source.
 	Count int
+	// Author is the page's `author` (or `作者`) property, when it has one.
+	Author string
 }
 
 // DailyNone says why there is no daily text.
@@ -950,7 +952,30 @@ func (s *Space) DailyFrom(spaceID, date string, skip int, source DailySource) (*
 		return nil, 0, err
 	}
 	body, cut := cutText(p.Body, DailyBodyLimit)
-	return &DailyPick{Page: sum, Body: body, Truncated: cut, Count: count}, 0, nil
+	pick := &DailyPick{Page: sum, Body: body, Truncated: cut, Count: count}
+	// What the page says about who wrote it and where it is from, only if it does.
+	if withProps, ok, err := s.idx.SummaryWithProps(sum.ID); err == nil && ok {
+		pick.Author = propText(withProps.Props, "author", "作者")
+		if pick.Page.Source == "" {
+			pick.Page.Source = propText(withProps.Props, "出处")
+		}
+	}
+	return pick, 0, nil
+}
+
+// propText is the first of the properties (a JSON object) named that is a
+// non-empty text.
+func propText(props json.RawMessage, names ...string) string {
+	var m map[string]any
+	if len(props) == 0 || json.Unmarshal(props, &m) != nil {
+		return ""
+	}
+	for _, n := range names {
+		if v, ok := m[n].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // cutText keeps the first max characters of text.

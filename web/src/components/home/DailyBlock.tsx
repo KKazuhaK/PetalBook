@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { RefreshCw } from 'lucide-react'
+import { ExternalLink, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
@@ -34,6 +34,34 @@ const webLink = (link: string | undefined): URL | null => {
 export function pageHead(p: { title?: string; subtitle?: string; label: string }): string {
   if (!p.title) return p.label
   return `《${p.title}》${p.subtitle ? `｜${p.subtitle}` : ''}`
+}
+
+// Who said it and where it is from, under every text of the day whatever it came from (a page of the space, the
+// administrators' lines, an external interface): "—— 作者《出处》" in Chinese, "— Author, Source" in English, only the
+// parts there are, and a link icon when there is a link to the origin. Nothing at all when there is none of them.
+export function Attribution({ author, source, link }: { author?: string; source?: string; link?: string }) {
+  const url = webLink(link)
+  const text =
+    uiLang === 'en' ? [author, source].filter(Boolean).join(', ') : `${author ?? ''}${source ? `《${source}》` : ''}`
+  if (!text && !url) return null
+  return (
+    <p className="flex items-center gap-1.5 text-sm text-muted-foreground" data-slot="daily-attribution">
+      {text && <span>{`${uiLang === 'en' ? '—' : '——'} ${text}`}</span>}
+      {url && (
+        <a
+          href={url.href}
+          target="_blank"
+          rel="noopener noreferrer nofollow"
+          title={th.daily.via(url.host)}
+          aria-label={th.daily.via(url.host)}
+          className="inline-flex text-muted-foreground underline-offset-4 hover:text-foreground"
+          data-slot="daily-link"
+        >
+          <ExternalLink className="size-3.5" aria-hidden="true" />
+        </a>
+      )}
+    </p>
+  )
 }
 
 // The text of the day under the greeting. A page of the space (its text, opening the page when clicked), or a line
@@ -104,16 +132,27 @@ export function DailyBlock({ now }: { now: Date }) {
           title={th.daily.open}
           className="group block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <p className="text-sm font-medium text-muted-foreground group-hover:text-foreground">{pageHead(data.page)}</p>
-          {data.page.body.trim() !== '' && (
-            <blockquote className="mt-1 line-clamp-6 text-base leading-relaxed whitespace-pre-line text-foreground/90">
+          {data.page.body.trim() !== '' ? (
+            <blockquote className="line-clamp-6 text-base leading-relaxed whitespace-pre-line text-foreground/90">
               {data.page.body.trim()}
               {data.page.bodyTruncated ? th.daily.cut : ''}
             </blockquote>
+          ) : (
+            <p className="text-base text-foreground/90">{pageHead(data.page)}</p>
           )}
         </Link>
       ) : (
         data.quote && <Quote quote={data.quote} />
+      )}
+      {data.page && (
+        <Attribution
+          author={data.page.author}
+          source={
+            data.page.title
+              ? `${data.page.title}${data.page.subtitle ? `｜${data.page.subtitle}` : ''}`
+              : data.page.source
+          }
+        />
       )}
       <figcaption className="flex items-center gap-2 text-xs text-muted-foreground">
         {more && (
@@ -135,28 +174,11 @@ export function DailyBlock({ now }: { now: Date }) {
 }
 
 function Quote({ quote }: { quote: DailyQuote }) {
-  const link = webLink(quote.link)
-  const by = [quote.author, quote.source].filter(Boolean).join(' · ')
   const when = quote.fetched ? new Date(quote.fetched) : null
   return (
     <>
       <blockquote className="text-base leading-relaxed whitespace-pre-line text-foreground/90">{quote.text}</blockquote>
-      {(by || link) && (
-        <p className="text-sm text-muted-foreground">
-          {by && <span>{by}</span>}
-          {by && link && ' · '}
-          {link && (
-            <a
-              href={link.href}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-              className="underline underline-offset-4 hover:text-foreground"
-            >
-              {th.daily.via(link.host)}
-            </a>
-          )}
-        </p>
-      )}
+      <Attribution author={quote.author} source={quote.source} link={quote.link} />
       {quote.stale && (
         <p className="text-xs text-amber-700 dark:text-amber-300" data-slot="daily-stale">
           {th.daily.stale(when && !Number.isNaN(when.getTime()) ? shortDate(when) : '')}

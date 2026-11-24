@@ -259,6 +259,54 @@ describe("the administrators' daily text page", () => {
     expect(box('d').checked).toBe(false)
   })
 
+  it('lines are split into text, author and source for a preview that can be corrected before it is kept', async () => {
+    await open()
+    const lines = [...document.querySelectorAll('textarea')].find((t) => t.getAttribute('aria-label') === d.linesText)!
+    await type(lines, '人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nI think — therefore I am')
+    await click(byText('button', d.linesPreview))
+    await settle(() => document.querySelectorAll('[data-slot="lines-row"]').length === 2, 'two rows')
+    const field = (row: number, name: string) =>
+      document
+        .querySelectorAll('[data-slot="lines-row"]')
+        [row].querySelector<HTMLInputElement>(`[data-field="${name}"]`)!
+    expect(field(0, 'author').value).toBe('纳兰性德')
+    expect(field(0, 'source').value).toBe('山花子')
+    // A dash inside a sentence is not a split.
+    expect(field(1, 'author').value).toBe('')
+    await type(field(1, 'author'), 'Descartes')
+    await click(byText('button', d.linesSave))
+    await settle(() => calls().some((c) => c.url === '/api/admin/daily/lines' && c.method === 'PUT'), 'saved')
+    expect(calls().find((c) => c.url === '/api/admin/daily/lines' && c.method === 'PUT')!.body).toEqual({
+      lang: '',
+      lines: [
+        { text: '人到情多情转薄，而今真个不多情。', author: '纳兰性德', source: '山花子' },
+        { text: 'I think — therefore I am', author: 'Descartes' },
+      ],
+    })
+  })
+
+  it('the default can list sources of several kinds for a language, one text at a time', async () => {
+    await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
+    await settle(() => api('quotes') !== null, 'the interface')
+    await click([...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')][3])
+    const add = (l: string) => document.getElementById(`daily-default-api-${l}`) as unknown as HTMLSelectElement
+    await type(add('rest'), 'quotes')
+    await type(add('rest'), '@list')
+    // The lines can be in the list once.
+    expect([...add('rest').querySelectorAll('option')].some((o) => o.value === '@list')).toBe(false)
+    expect(
+      [...document.querySelectorAll('[data-lang=""] [data-source-kind]')].map((e) =>
+        e.getAttribute('data-source-kind'),
+      ),
+    ).toEqual(['api', 'list'])
+    await click(document.querySelector<HTMLElement>('[data-lang=""] [data-source-kind="list"] [data-action="up"]')!)
+    await click(formSave())
+    await settle(() => calls().some((c) => c.body?.default?.kind === 'sources'), 'saved')
+    expect(calls().find((c) => c.body?.default?.kind === 'sources')!.body).toEqual({
+      default: { kind: 'sources', sources: { '': [{ kind: 'list' }, { kind: 'api', id: 'quotes' }] } },
+    })
+  })
+
   describe('the built-in interfaces', () => {
     it('are listed with switches, off until switched on, and nothing is edited in them', async () => {
       await open()

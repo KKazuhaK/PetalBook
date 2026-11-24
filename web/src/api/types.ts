@@ -1283,7 +1283,7 @@ export interface DailyQuote {
 export type DailyReason = 'no_source' | 'no_match' | 'unavailable' | 'out_of_range'
 // What `GET …/daily` says: a page of the space, a text from the administrators, or nothing to show.
 export interface DailyAnswer {
-  page: (PageSummary & { body: string; bodyTruncated?: boolean }) | null
+  page: (PageSummary & { body: string; bodyTruncated?: boolean; author?: string }) | null
   count?: number
   quote?: DailyQuote
   origin?: 'space' | 'external' | 'site'
@@ -1390,12 +1390,18 @@ export interface KnownLanguage {
   name: string
   english: string
 }
+export type DailySourceItem =
+  | { kind: 'api'; id: string; options?: Record<string, string[]> }
+  | { kind: 'list' }
+  | { kind: 'space'; space: string; source: DailySettings }
 export type DailyDefault =
   | null
   | { kind: 'list' }
   | { kind: 'space'; space: string; source: DailySettings }
   // Each language lists its interfaces in order; the server also reads a single id.
   | { kind: 'api'; apis: Record<string, string[]>; options?: DailyOptionChoice }
+  // Each language lists sources of any kind, in order: tried in turn by day, the next when one has nothing.
+  | { kind: 'sources'; sources: Record<string, DailySourceItem[]> }
 export interface DailyNotice {
   code: 'builtin_adopted' | 'builtin_renamed' | 'builtin_kept' | 'dropped_language' | 'unreadable' | (string & {})
   id?: string
@@ -1431,7 +1437,13 @@ export interface DailyTryResult {
   quote?: DailyQuote
   pathErrors?: { field: string; code: string; message: string }[]
 }
-export type LinesFormat = 'lines' | 'markdown'
+export type LinesFormat = 'lines' | 'markdown' | 'csv'
+// A line of the administrators' own text: the text, and who said it and where it is from, each split off.
+export interface DailyLine {
+  text: string
+  author?: string
+  source?: string
+}
 
 // --- security settings, providers and the audit log (docs/api.md, "Administration") ------------
 
