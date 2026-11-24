@@ -519,7 +519,13 @@ func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 		op.setPhase("waiting")
 		m.ev.restores[id] = op
 		m.ev.waiting++
-		go m.runRestore(id, op)
+		if !m.goBg(func() { m.runRestore(id, op) }) {
+			// Closed meanwhile: the waiters are told, nothing is restored.
+			delete(m.ev.restores, id)
+			m.ev.waiting--
+			m.ev.mu.Unlock()
+			return errClosed
+		}
 	}
 	m.ev.mu.Unlock()
 	wait := m.opt.RestoreWait
@@ -548,7 +554,7 @@ func (m *Manager) runRestore(id string, op *restoreOp) {
 	if deadline <= 0 {
 		deadline = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	ctx, cancel := context.WithTimeout(m.closedCtx(), deadline)
 	m.ev.mu.Lock()
 	op.cancel = cancel
 	m.ev.mu.Unlock()
@@ -717,11 +723,12 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	if err := m.evictHook("restore:done"); err != nil {
 		return err
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	m.goBg(func() {
+		m.evictHook("resize:start")
+		ctx, cancel := context.WithTimeout(m.closedCtx(), time.Minute)
 		defer cancel()
 		m.Resize(ctx, store.AllTenants(), id) // the size of the clone is a measurement of its own (a full one only counts for the quotas)
-	}()
+	})
 	return nil
 }
 
@@ -954,11 +961,16 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 }
 
 // syncDir makes a rename durable where the platform allows.
-func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
 	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func (m *Manager) noteEvictedSize(ctx context.Context, id string) {

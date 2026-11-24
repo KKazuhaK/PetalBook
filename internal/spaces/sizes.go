@@ -179,10 +179,12 @@ func (m *Manager) pageCount(ctx context.Context, id string) (n int64, ok bool) {
 	m.mu.Lock()
 	e := m.open[id]
 	var sp *space.Space
-	if e != nil && e.closing == nil && e.err == nil {
+	if e != nil && e.closing == nil {
+		// e.sp and e.err are written by the opener without m.mu and are only
+		// settled once done is closed.
 		select {
 		case <-e.done:
-			if e.sp != nil {
+			if e.err == nil && e.sp != nil {
 				sp = e.sp
 				e.refs++
 			}

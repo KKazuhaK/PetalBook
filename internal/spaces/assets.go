@@ -301,13 +301,13 @@ func (m *Manager) attachAssets(ctx context.Context, id string, sp *space.Space) 
 		return
 	}
 	sp.SetAssets(backend{m, id, r})
-	go m.refreshAssets(id, sp)
+	m.goBg(func() { m.refreshAssets(id, sp) })
 }
 
 // refreshAssets brings the table up to date with the remote (the fetch of a
 // pull), and the checks that said an attachment was missing with it.
 func (m *Manager) refreshAssets(id string, sp *space.Space) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(m.closedCtx(), 2*time.Minute)
 	defer cancel()
 	r, _, err := m.assetRepo(ctx, id)
 	if err != nil || r == nil {
@@ -586,7 +586,7 @@ func (m *Manager) finishConnectAssets(ctx context.Context, h *Handle, old *store
 		return nil, errors.Join(err, errors.New("the attachment repository could not be opened"))
 	}
 	h.Space.SetAssets(backend{m, id, r})
-	go m.refreshAssets(id, h.Space)
+	m.goBg(func() { m.refreshAssets(id, h.Space) })
 	return m.assetsView(h, arow), nil
 }
 

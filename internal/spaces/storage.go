@@ -594,13 +594,13 @@ func (m *Manager) noteUse(id string) {
 	}
 	m.st.touched[id] = now
 	m.st.touchMu.Unlock()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.goBg(func() {
+		ctx, cancel := context.WithTimeout(m.closedCtx(), 10*time.Second)
 		defer cancel()
 		if err := store.TouchSpaceUsed(ctx, m.opt.Store.Q(), id, now); err != nil {
 			m.log.Warn("could not record the use of a space", "space", id, "error", err)
 		}
-	}()
+	})
 }
 
 // lastUsed is the time of the space's last use: the later of the database's

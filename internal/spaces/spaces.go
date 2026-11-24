@@ -310,6 +310,10 @@ type Manager struct {
 	closeCtx    context.Context // ends when the manager is closed (background work stops with it)
 	closeCancel context.CancelFunc
 
+	bgMu     sync.Mutex     // guards bgClosed and the Adds to bg
+	bgClosed bool           // Close has begun: no background task starts any more
+	bg       sync.WaitGroup // background tasks started by goBg; Close waits for them
+
 	lock *os.File // DataDir/serve.lock, held while a server's manager runs (Options.Serve)
 
 	// testHook, set by tests only, runs at named points inside transactions.
@@ -1157,6 +1161,9 @@ func (m *Manager) Close() error {
 		m.closeCancel()
 	}
 	m.mu.Unlock()
+	m.bgMu.Lock()
+	m.bgClosed = true
+	m.bgMu.Unlock()
 	// Spaces that requests still hold are given a few seconds to be released:
 	// closing one under a running request would end it half done. If they are
 	// not released in time they are closed anyway (changes made after that are
@@ -1181,6 +1188,7 @@ func (m *Manager) Close() error {
 	m.exp.wg.Wait()     // exports end when the manager is closed
 	m.recycle.wg.Wait() // so do purges started by a request
 	m.as.wg.Wait()      // moves of attachments end when the manager is closed
+	m.bg.Wait()         // so do the background tasks (their context ends with the manager)
 	m.mu.Lock()
 	open := m.open
 	m.open = map[string]*opening{}
@@ -1259,12 +1267,35 @@ func (m *Manager) trimSoon() {
 	}
 	m.trimming = true
 	m.mu.Unlock()
-	go func() {
+	if !m.goBg(func() {
 		m.Trim()
 		m.mu.Lock()
 		m.trimming = false
 		m.mu.Unlock()
+	}) {
+		m.mu.Lock()
+		m.trimming = false
+		m.mu.Unlock()
+	}
+}
+
+// goBg runs f in the background, tracked: Close waits for it, so nothing runs
+// on after the manager is closed (and writes into a data directory that is
+// gone). Work that can take long must stop on closedCtx. It reports false,
+// without running f, when Close has begun.
+func (m *Manager) goBg(f func()) bool {
+	m.bgMu.Lock()
+	if m.bgClosed {
+		m.bgMu.Unlock()
+		return false
+	}
+	m.bg.Add(1)
+	m.bgMu.Unlock()
+	go func() {
+		defer m.bg.Done()
+		f()
 	}()
+	return true
 }
 
 // Trim closes the spaces that have been idle for IdleAfter and, while more

@@ -17,12 +17,12 @@ func (m *Manager) markCache(id string, sp *space.Space) {
 	if sp.Partial() {
 		want = store.CachePartial
 	}
-	go m.recordCache(id, want)
+	m.goBg(func() { m.recordCache(id, want) })
 }
 
 // recordCache is the write of markCache.
 func (m *Manager) recordCache(id, want string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(m.closedCtx(), 10*time.Second)
 	defer cancel()
 	st, err := store.GetSpaceStorage(ctx, m.opt.Store.Q(), id)
 	if err != nil {
@@ -57,13 +57,14 @@ func (m *Manager) makeFullSoon(id string) {
 	}
 	m.ev.filling[id] = true
 	m.ev.mu.Unlock()
-	go func() {
-		defer func() {
-			m.ev.mu.Lock()
-			delete(m.ev.filling, id)
-			m.ev.mu.Unlock()
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	forget := func() {
+		m.ev.mu.Lock()
+		delete(m.ev.filling, id)
+		m.ev.mu.Unlock()
+	}
+	if !m.goBg(func() {
+		defer forget()
+		ctx, cancel := context.WithTimeout(m.closedCtx(), 30*time.Minute)
 		defer cancel()
 		sp, release, err := m.Acquire(ctx, id) // an evicted space is restored first
 		if err != nil {
@@ -86,7 +87,9 @@ func (m *Manager) makeFullSoon(id string) {
 		if err := m.keepCacheState(ctx, id, store.CacheFull); err != nil {
 			m.log.Warn("could not record that a pinned space is full", "space", id, "error", err)
 		}
-	}()
+	}) {
+		forget()
+	}
 }
 
 // cacheStates is the stored cache state of every space, in memory: lists of

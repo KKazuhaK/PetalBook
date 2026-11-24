@@ -2,6 +2,7 @@ package spaces
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -61,7 +62,11 @@ func (m *Manager) moveDir(src, dst string) error {
 		os.RemoveAll(tmp)
 		return err
 	}
-	syncDir(filepath.Dir(dst))
+	// The copy must be on disk before the source is set aside: a failed sync
+	// followed by a power cut could otherwise leave no whole copy at all.
+	if err := syncDir(filepath.Dir(dst)); err != nil {
+		return fmt.Errorf("could not make the copy durable: %w", err)
+	}
 	if err := m.recycleStep("recycle:copied"); err != nil {
 		return err
 	}
