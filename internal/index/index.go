@@ -159,7 +159,9 @@ type Index struct {
 	queries atomic.Int64
 	// copied: the file was made from the prepared index of ReuseSchema.
 	copied bool
-	trace  func(query string, args []any)
+	// template: this is the prepared index itself, made with no meta rows.
+	template bool
+	trace    func(query string, args []any)
 	// shared and serial count the times a read had other connections share
 	// its snapshot, and the times it read in turn because none could (tests).
 	shared, serial atomic.Int64
@@ -204,7 +206,8 @@ const readConns = 8
 
 func open(dbPath, root string) (*Index, error) {
 	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan}
-	x.copied = root != templateRoot && copyTemplate(dbPath)
+	x.template = root == templateRoot
+	x.copied = !x.template && copyTemplate(dbPath)
 	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
 		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
 	var err error
@@ -251,9 +254,9 @@ func (x *Index) init() error {
 	}
 	fresh := version == 0
 	if x.copied && version == schemaVersion {
-		// A copy of the prepared index: only the root is to be set.
-		_, err := x.wdb.ExecContext(ctx, `UPDATE meta SET value = ? WHERE key = 'root' AND value = ?`, x.root, templateRoot)
-		return err
+		// A copy of the prepared index: the tables are there, and what is
+		// of this index alone is put in by the same code as a fresh one.
+		return x.inTx(ctx, func(tx *sql.Tx) error { return x.insertMeta(ctx, tx) })
 	}
 	if !fresh {
 		var root string
@@ -263,22 +266,46 @@ func (x *Index) init() error {
 		}
 		return nil
 	}
+	return x.inTx(ctx, func(tx *sql.Tx) error {
+		if err := x.createSchema(ctx, tx); err != nil {
+			return err
+		}
+		if x.template {
+			return nil
+		}
+		return x.insertMeta(ctx, tx)
+	})
+}
+
+func (x *Index) inTx(ctx context.Context, f func(*sql.Tx) error) error {
 	tx, err := x.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('root', ?)`, x.root); err != nil {
-		return err
-	}
-	// PRAGMA does not take parameters; the value is a constant.
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+	if err := f(tx); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// createSchema makes the tables and sets the schema version: the step a copy
+// of the prepared index has already had.
+func (x *Index) createSchema(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// PRAGMA does not take parameters; the value is a constant.
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
+	return err
+}
+
+// insertMeta writes the rows that belong to this index alone (its root, and
+// whatever else is added here). The prepared index has none, so nothing of one
+// index can reach another through a copy.
+func (x *Index) insertMeta(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('root', ?)`, x.root)
+	return err
 }
 
 // Close closes the database.

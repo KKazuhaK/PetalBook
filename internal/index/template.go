@@ -14,8 +14,11 @@ import (
 // as a copy of one that was made once. The server never calls it, and the tests
 // of this package do not either, so the schema is still created and tested here.
 
-// templateRoot stands in for the root of the space in the copied file; init
-// puts the real one in its place.
+// The prepared index has the tables and the schema version and no meta rows;
+// a copy gets them from the same code as a new index (see init), so nothing
+// that belongs to one index is ever shared through the template.
+
+// templateRoot is the root the prepared index is opened with; it is never stored.
 const templateRoot = "\x00template"
 
 var (
@@ -46,7 +49,28 @@ func copyTemplate(dbPath string) bool {
 	if template.err != nil {
 		return false
 	}
-	return os.WriteFile(dbPath, template.data, 0o644) == nil
+	return place(dbPath, template.data)
+}
+
+// place writes data to a file of its own beside dbPath and links it to dbPath,
+// which fails if anything is there: the file appears whole or not at all, and
+// two opens of the same new path cannot write into one file. The one that loses
+// reports false and finds what the winner made.
+func place(dbPath string, data []byte) bool {
+	f, err := os.CreateTemp(filepath.Dir(dbPath), filepath.Base(dbPath)+".tmp-*")
+	if err != nil {
+		return false
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false
+	}
+	return os.Link(tmp, dbPath) == nil
 }
 
 func buildTemplate() ([]byte, error) {

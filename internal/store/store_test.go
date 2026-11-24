@@ -607,3 +607,29 @@ func migrationFiles(t *testing.T) int {
 	}
 	return n
 }
+
+// A real first start: Open on a path with no file runs every migration, with
+// no prepared copy involved, and the connection enforces foreign keys.
+func TestOpenFreshMigratesAndEnforcesForeignKeys(t *testing.T) {
+	path := t.TempDir() + "/fresh.db"
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("path is not fresh: %v", err)
+	}
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var fk int
+	if err := st.Q().QueryRow(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
+		t.Fatalf("foreign_keys = %d, %v; want 1", fk, err)
+	}
+	var n int
+	if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != migrationFiles(t) {
+		t.Fatalf("%d migrations applied, %v; want %d", n, err, migrationFiles(t))
+	}
+	mkUser(t, st, "A", "a", "admin")
+	if u, err := store.GetUserByUsername(ctx, st.Q(), "a"); err != nil || u.ID != "A" {
+		t.Fatalf("%v %v", u, err)
+	}
+}

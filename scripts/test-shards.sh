@@ -28,11 +28,16 @@ timeout="${GOTEST_TIMEOUT:-30m}"
 
 die() { echo "test-shards: $*" >&2; exit 2; }
 
+# tests: keeps the lines of go test -list that are test names, whatever
+# characters (a letter that is not ASCII is allowed in a Go name) they have; the
+# rest is the "ok ..." line and any notice.
+tests() { grep -E '^(Test|Example|Fuzz)' || true; }
+
 # names PKG: the tests go test would run, one per line, sorted.
 names() {
   local out
   out="$(go test -race -list '.' "$1")" || { echo "$out" >&2; die "go test -list $1 failed"; }
-  grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' <<<"$out" | LC_ALL=C sort -u
+  tests <<<"$out" | LC_ALL=C sort -u
 }
 
 # assign N: reads names on stdin and writes "K name", K in 1..N.
@@ -65,7 +70,8 @@ assign() {
 # regex FILE K: the -run expression of shard K, from the output of assign.
 regex() {
   local list
-  list="$(awk -v k="$2" '$1 == k { print $2 }' "$1" | paste -sd'|' -)"
+  # Names are escaped, so that no character of one is read as part of the expression.
+  list="$(awk -v k="$2" '$1 == k { print $2 }' "$1" | sed 's/[][\\.*+?(){}|^$]/\\&/g' | paste -sd'|' -)"
   printf '^(%s)$' "$list"
 }
 
@@ -96,7 +102,7 @@ case "$cmd" in
     trap 'rm -rf "$work"' EXIT
     names "$pkg" | assign "$n" >"$work/assign"
     re="$(regex "$work/assign" "$k")"
-    [ "$re" != '^()$' ] || { echo "shard $k of $n has no tests"; exit 0; }
+    [ "$re" != '^()$' ] || { echo "shard $k of $n has no tests" >&2; exit 1; }
     echo "shard $k of $n of $pkg: $(tr -cd '|' <<<"$re" | wc -c | tr -d ' ') + 1 tests"
     # Not exec: the trap removes the work folder when go test is done.
     go test -race -timeout "$timeout" -run "$re" "$@" "$pkg"
@@ -116,7 +122,8 @@ case "$cmd" in
     for k in $(seq 1 "$n"); do
       re="$(regex "$work/assign" "$k")"
       [ "$re" = '^()$' ] && continue
-      go test -race -list "$re" "$pkg" | grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' >>"$work/seen" || true
+      out="$(go test -race -list "$re" "$pkg")" || { echo "$out" >&2; die "go test -list $pkg failed"; }
+      tests <<<"$out" >>"$work/seen"
     done
     LC_ALL=C sort "$work/seen" >"$work/seen.sorted"
     twice="$(uniq -d "$work/seen.sorted")"
