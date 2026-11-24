@@ -1,0 +1,12 @@
+# Build output, dependencies, coverage.
+dist
+node_modules
+coverage
+*.tsbuildinfo
+
+# Lock file, written by npm.
+package-lock.json
+
+# Static files served as they are, and test data that other code reads byte for byte.
+public
+src/markdown/__fixtures__
