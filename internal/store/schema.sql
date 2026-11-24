@@ -546,7 +546,9 @@ CREATE TABLE passkeys (
 CREATE INDEX passkeys_user ON passkeys(user_id);
 
 -- The audit log. tenant_id is a plain column, not a foreign key: the record of
--- what happened in a tenant outlives the tenant.
+-- what happened in a tenant outlives the tenant. id is 12 hexadecimal digits of
+-- the time in Unix milliseconds and a sequence number, so the ids sort by time:
+-- the trim deletes a range of ids, and no index of `at` is needed.
 CREATE TABLE audit_log (
   id        TEXT COLLATE "C" PRIMARY KEY,
   tenant_id TEXT COLLATE "C" NOT NULL DEFAULT '0000000000',
@@ -558,10 +560,11 @@ CREATE TABLE audit_log (
   ip        TEXT COLLATE "C" NOT NULL DEFAULT '',
   detail    TEXT COLLATE "C" NOT NULL DEFAULT '{}'
 );
-CREATE INDEX audit_log_at ON audit_log(at);
 CREATE INDEX audit_log_kind ON audit_log(kind, id);
 CREATE INDEX audit_log_user ON audit_log(user_id, id);
 CREATE INDEX audit_log_tenant ON audit_log(tenant_id, id);
+-- A tenant's log filtered by kind (a tenant administrator's view).
+CREATE INDEX audit_log_tenant_kind ON audit_log(tenant_id, kind, id);
 -- The daily sweep of tombstones asks whether the audit log still names a person.
 CREATE INDEX audit_log_actor ON audit_log(actor);
 
