@@ -3987,7 +3987,7 @@ that one part that cannot be read (`unreadable`, logged with its value) loses
 nothing else, and the repairs are saved once, at the first read:
 
 - An interface saved by 2.3's "use preset" with the id of a built-in one
-  (`hitokoto`, `quotable`) becomes the built-in one when its address, paths and
+  (`hitokoto`, `zenquotes`, `favqs`) becomes the built-in one when its address, paths and
   link are the built-in's and it has no headers: switched on or off as it was,
   with its `refresh`, `rps` (at most the service's limit) and `skipNew`; the
   spaces that chose it and the default keep the id. One the administrators
@@ -4006,7 +4006,7 @@ nothing else, and the repairs are saved once, at the first read:
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
   sources by language as above, checked in that space (choosing a space shows
   its content to everybody; a client says so), or
-  `{"kind": "api", "apis": {"": "quotable", "zh": "hitokoto"}}`: an
+  `{"kind": "api", "apis": {"": "zenquotes", "zh": "hitokoto"}}`: an
   interface id per language, `""` for all languages not listed. Each must be an
   interface of `apis` (`400 invalid` with `error: "api_not_found"` otherwise);
   a disabled or unanswering interface gives the daily reason `unavailable`.
@@ -4143,7 +4143,13 @@ and as the site default like any other; its address, paths, link and language
 mapping cannot be changed (`400 invalid`, `error: "builtin"`). None is enabled
 until an administrator enables it, and no service is contacted before that.
 Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
-back to the sentence as the service asks) and `quotable` (Quotable; `en`).
+back to the sentence as the service asks) `zenquotes` (ZenQuotes, quote of the day; `en`; the service requires a link back,
+which is filled in, and allows 5 requests per 30 seconds per address, so `rps`
+is at most 0.1) and `favqs` (FavQs, quote of the day; `en`). A stored id that
+is no longer built in (the earlier `quotable`, whose service is gone) is treated
+like any unknown id: an interface of the administrators' own keeps showing as
+such, a choice that names it is not found, and nothing else is picked in its
+place.
 
 **Language codes in the address**: `{lang}` is filled with the reader's
 language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that

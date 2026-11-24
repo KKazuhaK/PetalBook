@@ -92,7 +92,7 @@ describe("the administrators' daily text page", () => {
     m = await mount(routes, {
       entries: (server) => {
         server.seedDailyNotices([
-          { code: 'builtin_renamed', id: 'quotable', to: 'quotable-custom', message: 'renamed' },
+          { code: 'builtin_renamed', id: 'zenquotes', to: 'zenquotes-custom', message: 'renamed' },
           { code: 'dropped_language', lang: 'cn', field: 'source', message: 'dropped' },
         ])
         return ['/admin/daily']
@@ -102,7 +102,7 @@ describe("the administrators' daily text page", () => {
     })
     await settle(() => document.querySelector('[data-slot="daily-notices"]') !== null, 'the notices')
     const text = document.querySelector('[data-slot="daily-notices"]')!.textContent
-    expect(text).toContain(d.noticeRenamed('quotable', 'quotable-custom'))
+    expect(text).toContain(d.noticeRenamed('zenquotes', 'zenquotes-custom'))
     expect(text).toContain(d.noticeDropped('cn'))
     await click(byText('button', d.noticesDismiss))
     await settle(() => document.querySelector('[data-slot="daily-notices"]') === null, 'dismissed')
@@ -221,7 +221,7 @@ describe("the administrators' daily text page", () => {
     it('are listed with switches, off until switched on, and nothing is edited in them', async () => {
       await open()
       const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="builtin"] [data-provider]')]
-      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual(['hitokoto', 'quotable'])
+      expect(rows.map((r) => r.getAttribute('data-provider'))).toEqual(['hitokoto', 'zenquotes', 'favqs'])
       expect(rows[0].textContent).toContain('一言')
       expect(rows[0].textContent).toContain(d.builtinLanguages('zh-Hans, zh-Hant'))
       expect(rows[0].querySelector('a')!.getAttribute('href')).toBe('https://hitokoto.cn')

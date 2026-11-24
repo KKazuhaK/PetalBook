@@ -133,12 +133,13 @@ func TestProviders(t *testing.T) {
 			t.Errorf("%s is not built in", p.ID)
 		}
 	}
-	if len(ps) != 2 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
+	if len(ps) != 3 || ps[0].ID != "hitokoto" || ps[0].RPS != 20 || ps[0].Link != "https://hitokoto.cn?uuid={uuid}" || ps[0].URL != "https://international.v1.hitokoto.cn/?max_length=80" ||
 		ps[0].Text != "hitokoto" || ps[0].Source != "from" || ps[0].Author != "from_who" || fmt.Sprint(ps[0].Languages) != "[zh-Hans zh-Hant]" || ps[0].Site != "https://hitokoto.cn" ||
-		ps[1].ID != "quotable" || ps[1].Text != "[0].content" || ps[1].Author != "[0].author" || ps[1].RPS != 3 || ps[1].Link != "" || ps[1].URL != "https://api.quotable.io/quotes/random" || ps[1].Lang != "en" {
+		ps[1].ID != "zenquotes" || ps[1].Text != "[0].q" || ps[1].Author != "[0].a" || ps[1].RPS != 0.1 || ps[1].Link != "https://zenquotes.io/" || ps[1].URL != "https://zenquotes.io/api/today" || ps[1].Lang != "en" || ps[1].SkipNew ||
+		ps[2].ID != "favqs" || ps[2].Text != "quote.body" || ps[2].Author != "quote.author" || ps[2].RPS != 1 || ps[2].Link != "https://favqs.com/quotes/{quote.author_permalink}/{quote.id}" || ps[2].URL != "https://favqs.com/api/qotd" || ps[2].Lang != "en" || ps[2].SkipNew {
 		t.Fatalf("%+v", ps)
 	}
-	if p, ok := ProviderByID("quotable"); !ok || p.ID != "quotable" {
+	if p, ok := ProviderByID("zenquotes"); !ok || p.ID != "zenquotes" {
 		t.Fatal("ProviderByID")
 	}
 	if _, ok := ProviderByID("nope"); ok {
@@ -1099,5 +1100,12 @@ func TestAnInterfaceContactsOnlyItsOwnHostAndPort(t *testing.T) {
 	b.URL = strings.Replace(a.URL, "127.0.0.1:", "127.0.0.1:{lang}", 1)
 	if _, err := f.request(ctx, b, "1", "2026-11-23"); err == nil {
 		t.Error("a port made with the language was asked")
+	}
+}
+
+// A service that is no longer built in is simply not found.
+func TestProviderByIDRemoved(t *testing.T) {
+	if _, ok := ProviderByID("quotable"); ok {
+		t.Fatal("quotable is gone")
 	}
 }

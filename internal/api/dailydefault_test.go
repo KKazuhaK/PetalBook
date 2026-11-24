@@ -241,8 +241,8 @@ func (s *stubServices) RoundTrip(r *http.Request) (*http.Response, error) {
 	s.hits[r.URL.Host] = append(s.hits[r.URL.Host], r.URL.RequestURI())
 	s.mu.Unlock()
 	body := `{"hitokoto":"山有木兮木有枝","from":"越人歌","from_who":null,"uuid":"abc-123"}`
-	if r.URL.Host == "api.quotable.io" {
-		body = `[{"content":"Be kind","author":"Plato"}]`
+	if r.URL.Host == "zenquotes.io" {
+		body = `[{"q":"Be kind","a":"Plato"}]`
 	}
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
@@ -264,7 +264,7 @@ func TestBuiltInInterfaces(t *testing.T) {
 		x.fetcher.SetTransport(stub)
 		code, r := x.adm("GET", "/api/admin/daily", nil)
 		ps, _ := r["providers"].([]any)
-		if code != 200 || len(ps) != 2 || len(r["apis"].([]any)) != 0 || r["presets"] != nil {
+		if code != 200 || len(ps) != 3 || len(r["apis"].([]any)) != 0 || r["presets"] != nil {
 			t.Fatalf("%d %v", code, r)
 		}
 		h := asMap(ps[0])
@@ -272,8 +272,11 @@ func TestBuiltInInterfaces(t *testing.T) {
 			h["refresh"] != "daily" || h["rps"] != float64(20) || h["skipNew"] != true {
 			t.Fatalf("%v", h)
 		}
-		if q := asMap(ps[1]); q["id"] != "quotable" || fmt.Sprint(q["languages"]) != "[en]" || q["rps"] != float64(3) || q["enabled"] != false {
+		if q := asMap(ps[1]); q["id"] != "zenquotes" || fmt.Sprint(q["languages"]) != "[en]" || q["rps"] != 0.1 || q["enabled"] != false || q["skipNew"] != false {
 			t.Fatalf("%v", q)
+		}
+		if f := asMap(ps[2]); f["id"] != "favqs" || fmt.Sprint(f["languages"]) != "[en]" || f["rps"] != float64(1) || f["enabled"] != false {
+			t.Fatalf("%v", f)
 		}
 		// Only administrators; an unknown one is not found.
 		for name, c := range map[string]caller{"owner": x.own, "viewer": x.viewer} {
@@ -319,10 +322,10 @@ func TestBuiltInInterfaces(t *testing.T) {
 			t.Fatalf("%v", stub.hits)
 		}
 		// A reader of English with both chosen is given the one made for English; one of zh-Hant, the one for it.
-		if code, r := x.adm("PUT", "/api/admin/daily/providers/quotable", map[string]any{"enabled": true, "rps": 2}); code != 200 || asMap(asMap(r["providers"].([]any)[1]))["rps"] != float64(2) {
+		if code, r := x.adm("PUT", "/api/admin/daily/providers/zenquotes", map[string]any{"enabled": true, "rps": 0.05}); code != 200 || asMap(asMap(r["providers"].([]any)[1]))["rps"] != 0.05 {
 			t.Fatalf("%d %v", code, r)
 		}
-		x.choose("quotable", "hitokoto")
+		x.choose("zenquotes", "hitokoto")
 		if q := asMap(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en-GB")["quote"]); q == nil || q["text"] != "Be kind" || q["author"] != "Plato" {
 			t.Errorf("%v", q)
 		}
@@ -362,7 +365,7 @@ func TestBuiltInInterfaces(t *testing.T) {
 		}
 		// Switched off, it is gone from the interfaces and from what spaces can use; its settings stay.
 		code, r = x.adm("PUT", "/api/admin/daily/providers/hitokoto", map[string]any{"enabled": false})
-		if code != 200 || len(r["apis"].([]any)) != 1 || asMap(r["apis"].([]any)[0])["id"] != "quotable" || asMap(r["providers"].([]any)[0])["rps"] != float64(5) {
+		if code != 200 || len(r["apis"].([]any)) != 1 || asMap(r["apis"].([]any)[0])["id"] != "zenquotes" || asMap(r["providers"].([]any)[0])["rps"] != float64(5) {
 			t.Fatalf("%d %v", code, r)
 		}
 		if q := quoteOf(t, x.viewer, x.base, "date=2026-11-24&lang=zh-CN")["quote"]; asMap(q)["text"] == "山有木兮木有枝" {

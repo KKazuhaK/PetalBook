@@ -3337,7 +3337,8 @@ function suite(target: Target) {
           expect(start.json.presets).toBeUndefined()
           expect(start.json.providers.map((p: any) => [p.id, p.languages, p.rps])).toEqual([
             ['hitokoto', ['zh-Hans', 'zh-Hant'], 20],
-            ['quotable', ['en'], 3],
+            ['zenquotes', ['en'], 0.1],
+            ['favqs', ['en'], 1],
           ])
           expect(start.json.apis.some((a: any) => a.builtin)).toBe(false)
           // Making one: the value of a header is kept and never given back.

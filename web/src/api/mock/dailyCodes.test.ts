@@ -162,7 +162,8 @@ describe('the mock gives the stable codes', () => {
     expect(view().apis).toEqual([])
     expect(view().providers.map((p) => [p.id, p.enabled, p.rps])).toEqual([
       ['hitokoto', false, 20],
-      ['quotable', false, 3],
+      ['zenquotes', false, 0.1],
+      ['favqs', false, 1],
     ])
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', {})).toMatchObject({ status: 400 })
     expect(call('PUT', '/api/admin/daily/providers/nothing', { enabled: true }).status).toBe(404)
