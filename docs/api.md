@@ -7908,6 +7908,61 @@ unique on the server (they are in the callback addresses registered at the
 identity provider); `409 exists` says only that the slug is taken. `kind`
 `github` is social only.
 
+**Several sign-in methods per account** (owner, 2026-11-23). An account may
+have a password and any number of identities (Google, GitHub, Microsoft, …) at
+once, and any of them signs in to the same account. Linking stays 2.8's
+(`POST /api/auth/{kind}/{slug}/start` with `intent: "link"`), unlinking stays
+`DELETE /api/account/identities/{id}` (`409 conflict` when it would leave no
+way to sign in), and an account without a password adds one with
+`POST /api/account/password` without `current`. 3.6 adds:
+
+- `GET /api/account` gains `methods`, one list for the account page's
+  "登录方式":
+
+  ```json
+  "methods": [{"type": "password", "lastUsed": "2026-11-23T08:00:00Z"},
+              {"type": "identity", "id": "01JD3M2A4C", "providerSlug": "google", "kind": "oidc",
+               "class": "social", "label": "kazuha@example.com", "lastUsed": null},
+              {"type": "passkey", "id": "01JD3N7X2B", "name": "MacBook", "lastUsed": "2026-11-22T09:10:00Z"}],
+  "canUnlink": true
+  ```
+
+  `identities`, `passkeys` and `hasPassword` stay. `canUnlink` is whether
+  removing one method would still leave one.
+- **Templates.** `GET /api/admin/auth/provider-templates` (site
+  administrators): the presets shipped with the server (`google`, `microsoft`,
+  `apple`, `github`, `gitlab-com`), each with its `kind`, issuer or addresses,
+  scopes, `class: "social"` and icon (3.9):
+
+  ```json
+  {"templates": [{"id": "google", "name": "Google", "kind": "oidc", "class": "social",
+                  "issuer": "https://accounts.google.com", "scopes": ["openid", "email", "profile"],
+                  "icon": "preset:google"}]}
+  ```
+
+  `POST /api/admin/auth/providers` takes `{"template": "google", "slug": "google",
+  "clientId": "…", "clientSecret": "…"}`; the template fills the rest, and the
+  provider is then an ordinary one (a template that changes in a later release
+  does not change providers already made).
+- **Custom providers.** Besides the templates a site administrator may add any
+  OpenID Connect provider (`kind: "oidc"`, by its discovery document, as
+  before) or a plain OAuth 2.0 one, `kind: "oauth2"`:
+
+  ```json
+  {"slug": "forum", "kind": "oauth2", "class": "social", "name": "Our forum",
+   "authorizeUrl": "https://forum.example/oauth/authorize", "tokenUrl": "https://forum.example/oauth/token",
+   "userinfoUrl": "https://forum.example/api/me", "scopes": ["read:user"],
+   "fields": {"subject": "id", "email": "email", "emailVerified": null, "name": "name", "login": "username"},
+   "clientId": "…", "clientSecret": "…"}
+  ```
+
+  The three addresses are `https` and pass the public-address check; PKCE (S256)
+  is used. `fields.subject` is required and is read as a string. Without
+  `fields.emailVerified` the address is never treated as verified (no
+  `mergeVerifiedEmail`, no domain routing). `oauth2` is site-owned and
+  `social` only (`400 invalid` otherwise); a tenant's SSO stays OpenID Connect
+  or SAML. Its routes are `/api/auth/oauth2/{slug}/…`, as for the other kinds.
+
 #### Email domains and the SSO entry
 
 A tenant with the capability `signin.domains` claims the email domains its
