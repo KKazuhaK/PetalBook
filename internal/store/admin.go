@@ -14,8 +14,10 @@ import (
 
 // AdminSpace is a space as the administration list shows it.
 type AdminSpace struct {
-	ID       string
-	Name     string
+	ID   string
+	Name string
+	// NameKey is the stored key the name sort orders by (the cursor keeps it).
+	NameKey  string
 	Personal bool
 	// Inbox is the folder quick notes go to.
 	Inbox    string

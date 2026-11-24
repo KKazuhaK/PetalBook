@@ -1090,3 +1090,37 @@ func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
 		consistent(t, st)
 	})
 }
+
+// The cursor of the name sort is the stored key of the last row, not the name
+// folded again: a key that differs from the fold (an older folding, a repair)
+// still pages in order, with nothing skipped or shown twice.
+func TestTheNameCursorIsTheStoredKey(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		for id, name := range map[string]string{"S1": "Zed", "S2": "Bee", "S3": "Cee"} {
+			mkSpace(t, st, id, name)
+		}
+		for id, key := range map[string]string{"S1": "a1", "S2": "b1", "S3": "c1"} {
+			if _, err := st.Q().Exec(ctx, `UPDATE spaces SET name_key = ? WHERE id = ?`, key, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var got []string
+		after := ""
+		for i := 0; i < 5; i++ {
+			rows, next, err := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{Sort: "name", Limit: 1, After: after})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range rows {
+				got = append(got, r.ID)
+			}
+			if next == "" {
+				break
+			}
+			after = next
+		}
+		if strings.Join(got, ",") != "S1,S2,S3" {
+			t.Fatalf("paged %v, want S1,S2,S3", got)
+		}
+	})
+}

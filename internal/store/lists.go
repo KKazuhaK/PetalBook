@@ -394,7 +394,7 @@ func nonEmpty(l []string) []string {
 func sortValueOf(sort string, r AdminSpace) any {
 	switch sort {
 	case "name":
-		return FoldName(r.Name)
+		return r.NameKey
 	case "bytes":
 		if r.SizeBytes != nil {
 			return *r.SizeBytes
@@ -422,7 +422,7 @@ func sortMissing(sort string, r AdminSpace) bool {
 
 func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []any) (out []AdminSpace, err error) {
 	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, p.tenant_id, u.id, u.username, u.name,
-			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state
+			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state, p.name_key
 		FROM (SELECT s.id, s.name, s.name_key, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.size_at, s.tenant_id,
 			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes, s.location, s.remote_state,
 			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '') AS cred_type,
@@ -445,7 +445,7 @@ func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []an
 		var size, sizeAt sql.NullInt64
 		var used, pinned, exempt, ownerExempt, hasAssets int64
 		if err := rows.Scan(&s.ID, &s.Name, &personal, &s.Inbox, &created, &disabled, &size, &sizeAt, &s.Members, &s.TenantID, &ownerID, &ownerUser, &ownerName,
-			&used, &s.Storage.Cache, &pinned, &exempt, &s.Storage.IndexBytes, &s.CredType, &s.Provider, &ownerExempt, &hasAssets, &s.Location, &s.RemoteState); err != nil {
+			&used, &s.Storage.Cache, &pinned, &exempt, &s.Storage.IndexBytes, &s.CredType, &s.Provider, &ownerExempt, &hasAssets, &s.Location, &s.RemoteState, &s.NameKey); err != nil {
 			return nil, err
 		}
 		if used > 0 {
