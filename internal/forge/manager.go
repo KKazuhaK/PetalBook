@@ -343,7 +343,7 @@ func (m *Manager) CreateProvider(ctx context.Context, actorID string, body []byt
 		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "provider_limit", "the server has %d such providers, the most there can be", SiteLimit)
 	}
 	for _, p := range m.provs {
-		if p.row.Owner == store.ConnProviderSite && p.row.Host == hs.host {
+		if r, _ := p.snap(); r.Owner == store.ConnProviderSite && r.Host == hs.host {
 			return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "this host has a provider already (%s): one OAuth application per host", p.id)
 		}
 	}
