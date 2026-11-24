@@ -83,6 +83,20 @@ func UpdateBulkJob(ctx context.Context, q Q, id, state string, done int, failed 
 	return oneRow(res, err)
 }
 
+// BulkJobKeep is how long a job that ended (done, failed, interrupted) is kept
+// after its last change: GET /api/admin/jobs/{id} answers it until then.
+const BulkJobKeep = 30 * 24 * time.Hour
+
+// PruneBulkJobs deletes the jobs that ended before the given time (the daily
+// pass; a queued or running job is never deleted). It reads bulk_jobs_updated.
+func PruneBulkJobs(ctx context.Context, q Q, before time.Time) (int64, error) {
+	res, err := q.Exec(ctx, `DELETE FROM bulk_jobs WHERE updated < ? AND state NOT IN ('queued', 'running')`, ms(before))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // InterruptBulkJobs marks the jobs that were queued or running when the server
 // stopped as interrupted: what was not done is not done.
 func InterruptBulkJobs(ctx context.Context, q Q, now time.Time) (int64, error) {

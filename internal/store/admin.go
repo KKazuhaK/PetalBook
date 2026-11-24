@@ -3,13 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"strings"
 	"time"
 
 	"golang.org/x/text/cases"
-	"modernc.org/sqlite"
 )
 
 // AdminSpace is a space as the administration list shows it.
@@ -56,76 +54,11 @@ type AdminOwner struct {
 	ID, Username, Name string
 }
 
-// sqliteLower is the name of the function that lower-cases text on SQLite
-// (registered in init), for the search of users.
-const sqliteLower = "petalbook_lower"
-
-func init() {
-	sqlite.MustRegisterDeterministicScalarFunction(sqliteLower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		switch v := args[0].(type) {
-		case string:
-			return strings.ToLower(v), nil
-		case []byte:
-			return strings.ToLower(string(v)), nil
-		}
-		return args[0], nil
-	})
-	sqlite.MustRegisterDeterministicScalarFunction(sqliteASCIILower, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		switch v := args[0].(type) {
-		case string:
-			return asciiLowerGo(v), nil
-		case []byte:
-			return asciiLowerGo(string(v)), nil
-		}
-		return args[0], nil
-	})
-}
-
-// sqliteASCIILower lower-cases A to Z and nothing else (see asciiLower).
-const sqliteASCIILower = "petalbook_ascii_lower"
-
-func asciiLowerGo(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
-}
-
 // FoldName is a space name as it is searched: Unicode case folding, which
 // makes "STRASSE" and "Straße" the same, and the two spellings of an
-// i with a dot the same too. It is stored in spaces.name_key.
+// i with a dot the same too. It is stored in spaces.name_key, users.name_key,
+// groups.name_key and tenants.name_key.
 func FoldName(s string) string { return cases.Fold().String(s) }
-
-// fillSpaceNameKeys folds the names of the spaces that exist (migration 7).
-func fillSpaceNameKeys(ctx context.Context, q Q) error {
-	rows, err := q.Query(ctx, `SELECT id, name FROM spaces`)
-	if err != nil {
-		return err
-	}
-	type row struct{ id, key string }
-	var all []row
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			rows.Close()
-			return err
-		}
-		all = append(all, row{id, FoldName(name)})
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, r := range all {
-		if _, err := q.Exec(ctx, `UPDATE spaces SET name_key = ? WHERE id = ?`, r.key, r.id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').
 func likeEscape(s string) string {
@@ -170,39 +103,81 @@ func DisabledSpaces(ctx context.Context, q Q) (map[string]bool, error) {
 	return out, rows.Err()
 }
 
-// SetSpaceSize stores a measurement of the space's directory.
+// queueMeasure puts a space in the queue of the background measurement, as
+// never measured (a space that is in it already keeps its place).
+func queueMeasure(ctx context.Context, q Q, spaceID string) error {
+	_, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id) SELECT id, tenant_id FROM spaces WHERE id = ?
+		ON CONFLICT (space_id) DO NOTHING`, spaceID)
+	return err
+}
+
+// stampMeasured records when a space was measured: its place in the queue
+// (size_at) and the time of its last measurement (measured_at). ErrNotFound for
+// a space that is gone.
+func stampMeasured(ctx context.Context, q Q, spaceID string, at time.Time) error {
+	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id, size_at, measured_at) SELECT id, tenant_id, ?, ? FROM spaces WHERE id = ?
+		ON CONFLICT (space_id) DO UPDATE SET size_at = excluded.size_at, measured_at = excluded.measured_at`, ms(at), ms(at), spaceID)
+	return oneRow(res, err)
+}
+
+// stampTried records that measuring a space was tried and failed: its place in
+// the queue moves (size_at), its time of last measurement does not.
+func stampTried(ctx context.Context, q Q, spaceID string, at time.Time) error {
+	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id, size_at) SELECT id, tenant_id, ? FROM spaces WHERE id = ?
+		ON CONFLICT (space_id) DO UPDATE SET size_at = excluded.size_at`, ms(at), spaceID)
+	return oneRow(res, err)
+}
+
+// SetSpaceSize stores a measurement of the space's directory (for the listing
+// only: the quotas keep what RecordMeasurement counts). The space's row is
+// written only when the size changed.
 func SetSpaceSize(ctx context.Context, q Q, id string, bytes int64, at time.Time) error {
 	return withSpace(ctx, q, id, func(q Q) error {
-		_, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ?, size_at = ? WHERE id = ?`, bytes, ms(at), id)
-		return err
+		if _, err := q.Exec(ctx, `UPDATE spaces SET size_bytes = ? WHERE id = ? AND (size_bytes IS NULL OR size_bytes <> ?)`, bytes, id, bytes); err != nil {
+			return err
+		}
+		return stampMeasured(ctx, q, id, at)
 	})
 }
 
 // SkipSpaceSize records that measuring failed at this time, keeping the
 // earlier size: the space goes to the back of the queue instead of being tried
-// again at the next turn, for ever. For a space never measured this sets the
+// again at the next turn, for ever. It is not a measurement: the tenant's
+// measuredAt does not move. For a space never measured this sets the queue's
 // time but no size, which the list reports as not measured (both null).
 func SkipSpaceSize(ctx context.Context, q Q, id string, at time.Time) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET size_at = ? WHERE id = ?`, ms(at), id)
-	return oneRow(res, err)
+	return stampTried(ctx, q, id, at)
 }
 
 // NextSpaceToMeasure returns the space that was measured longest ago, if it
 // was before olderThan: one never measured first. ok is false when every space
-// is recent enough. Two index lookups.
+// is recent enough. Two lookups of the queue's index (space_measure_due).
 func NextSpaceToMeasure(ctx context.Context, q Q, olderThan time.Time) (id string, ok bool, err error) {
-	err = q.QueryRow(ctx, `SELECT id FROM spaces WHERE size_at IS NULL ORDER BY id LIMIT 1`).Scan(&id)
+	err = q.QueryRow(ctx, `SELECT space_id FROM space_measure WHERE size_at IS NULL ORDER BY space_id LIMIT 1`).Scan(&id)
 	if err == nil {
 		return id, true, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
-	err = q.QueryRow(ctx, `SELECT id FROM spaces WHERE size_at < ? ORDER BY size_at, id LIMIT 1`, ms(olderThan)).Scan(&id)
+	err = q.QueryRow(ctx, `SELECT space_id FROM space_measure WHERE size_at < ? ORDER BY size_at, space_id LIMIT 1`, ms(olderThan)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return id, err == nil, err
+}
+
+// queueMissingSpaces puts in the queue of the measurement any space that is
+// not in it (a space every path that makes one puts there; this is the daily
+// pass's safety net). It reports how many it added.
+func queueMissingSpaces(ctx context.Context, q Q) (int, error) {
+	res, err := q.Exec(ctx, `INSERT INTO space_measure(space_id, tenant_id)
+		SELECT s.id, s.tenant_id FROM spaces s WHERE NOT EXISTS (SELECT 1 FROM space_measure m WHERE m.space_id = s.id)`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // TransferOwnership makes newOwner the owner of the space, adding them as a

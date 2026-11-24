@@ -887,7 +887,9 @@ otherwise) except the two invite endpoints marked public.
 
 `{"users": [{…}]}`, ordered by `created`. Without parameters, every user.
 `?q={text}` keeps the users whose `username` or `name` contains the text,
-ignoring case (as the name filter of the administration's list of spaces does);
+ignoring case (as the name filter of the administration's list of spaces does:
+Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and
+PostgreSQL);
 `?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
 be sent alone; `400 invalid` for a `limit` outside the range. `?enabled=1`
 leaves out the disabled accounts, before the limit counts (`enabled=0`, the
@@ -5871,9 +5873,10 @@ answer as switched off, and no setting can open registration.
 - `quota`: the tenant's totals, set by site administrators only; `null` is no
   limit. From 3.6 they are part of the tenant's capabilities (`storage.quota`,
   `other.people`; see "Capabilities" under "Tenant autonomy") and `quota` here is
-  read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a
-  measurement last changed it (`null`: never), and `over` lists the totals it is
-  over (`people`, `spaces`, `bytes`, `pages`).
+  read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a space
+  of the tenant was last measured (`null`: never; a measurement that failed does
+  not count), and `over` lists the totals it
+  is over (`people`, `spaces`, `bytes`, `pages`).
 - The host a tenant is reached on is reserved: in 3.3 every tenant is served on
   the one `--public-url`, and a public endpoint names its tenant by slug.
 
@@ -6475,9 +6478,11 @@ Signed in.
 ```
 
 `limit` is `null` for none; `measuredAt` is `null` until a space of the person
-has been measured. A **notice** is a quota that is over: `scope` `person` for
-the person's own limit, `tenant` for the tenant's total (`quota` is then also
-`people`). Three lookups of rows by key; the numbers are the stored ones.
+has been measured. It is the time of the last measurement that found something
+new to record, so it may lag the last measurement that found the same as before
+(that one only moves the space in the measurement's queue). A **notice** is a
+quota that is over: `scope` `person` for the person's own limit, `tenant` for
+the tenant's total (`quota` is then also `people`). Three lookups of rows by key; the numbers are the stored ones.
 
 #### `GET /api/admin/usage?tenant={id}&over=1&cursor={cursor}&limit={n}`
 
@@ -7375,7 +7380,8 @@ one space fails that item, which is listed in `failed` with its error, and the
 rest go on). At most one bulk job per tenant and two on the server run at once;
 others wait (`state: "queued"`). A job survives nothing: after a restart, items
 not done are not done, and the job reads `state: "interrupted"` with what was
-done.
+done. A job that ended is kept 30 days after its last change, then deleted
+(`404` from then on).
 
 Single actions keep their own endpoints without a token, except the purge of a
 recycle item.

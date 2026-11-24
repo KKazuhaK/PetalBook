@@ -12,7 +12,8 @@ import (
 )
 
 // A function of this package that reads or writes one of the five tables a
-// tenant owns (users, spaces, groups, invites, audit_log) takes a Scope, or is on the allowlist below with the reason it may look
+// tenant owns (users, spaces, groups, invites, audit_log; and space_measure, the queue of
+// the background measurement, whose rows carry the space's tenant) takes a Scope, or is on the allowlist below with the reason it may look
 // across tenants (or needs no scope because the row it works on has already
 // been found inside one). The tables of 2.7 that hang off a user or a space
 // (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) follow the same rule.
@@ -31,22 +32,23 @@ var scopeAllowlist = map[string]string{
 	"CountPasskeyRequired":       "a count for the security page, which is the server's own",
 	"DeleteOldInvites":           "background job: expired invites of every tenant",
 	"TrimAudit":                  "background job: the audit log of every tenant",
-	"NextSpaceToMeasure":         "background job: the space measured longest ago, of any tenant",
 	"DisabledSpaces":             "the server's set of disabled space ids, which is checked by id",
 	"EndTenantSessions":          "a site administrator disabling a tenant: the tenant is the one named, its people's sessions end",
 	"DeleteTenantSessionEnds":    "a site administrator enabling a tenant again: the tenant is the one named",
 	// --- rows reached through a row that was already found in scope --------------
+	"LockSpace":               "locks the row of a space already found in scope, by id",
+	"LockGroup":               "locks the row of a group already found in scope, by id",
+	"LockFavorites":           "locks the row of a person already found in scope, by id",
+	"NextSpaceToMeasure":      "background job: the queue of the measurement, of every tenant",
 	"SpaceOwner":              "a space already opened by the caller",
 	"ListMembers":             "members of a space already opened by the caller",
 	"GetMember":               "a member of a space already opened by the caller",
 	"CountOtherEnabledOwners": "owners of a space already opened by the caller",
-	"LockSpace":               "a space already found in scope",
 	"RenameSpace":             "a space already opened by the caller",
 	"SetSpaceInbox":           "a space already opened by the caller",
 	"ListUserSpaces":          "the caller's own spaces: memberships are same-tenant by construction",
 	"EnsureLocal":             "single-user mode: the built-in user and space, in the default tenant",
 	"SetSpaceSize":            "background measurement of a space by id",
-	"SkipSpaceSize":           "background measurement of a space by id",
 	"UpdateProfile":           "the caller's own account, or a user already found in scope",
 	"SetEmail":                "a user already found in scope",
 	"SetEmailVerified":        "a user already found in scope",
@@ -64,7 +66,6 @@ var scopeAllowlist = map[string]string{
 	"ListGroupPeople":         "a group already found in scope",
 	"UserGroups":              "the groups of one person: memberships are same-tenant by construction",
 	"GroupSources":            "groups by ids already read in scope",
-	"LockGroup":               "a group already found in scope",
 	"ListSpaceGroups":         "a space already opened by the caller",
 	"UserSpaceGroups":         "a space already opened by the caller",
 	"ListEffective":           "a space already opened by the caller",
@@ -72,7 +73,6 @@ var scopeAllowlist = map[string]string{
 	"ListHeldDrafts":          "background job: held drafts of every tenant",
 	"SpaceDrafts":             "a space already found in scope, for its deletion",
 	"PageDrafts":              "a space already opened",
-	"LockFavorites":           "locks one user's row to serialise changes of their own favourites",
 	// --- linking statements: the statement itself joins both rows on one tenant ---
 	"AddMember":          "INSERT ... SELECT joining the space and the user on tenant_id",
 	"AddSpaceGroup":      "INSERT ... SELECT joining the space and the group on tenant_id",
@@ -228,7 +228,7 @@ func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(stale)
 	for _, m := range missing {
-		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) and takes no Scope: give it one, or put it on the allowlist with the reason", m)
+		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) or space_measure and takes no Scope: give it one, or put it on the allowlist with the reason", m)
 	}
 	for _, s := range stale {
 		t.Error(s)
@@ -236,10 +236,22 @@ func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
 }
 
 // touches reports whether a function body has a string literal (a query) that
-// names one of the tenant tables as a table (after FROM, JOIN, INTO, UPDATE).
+// names one of the tenant tables as a table (after FROM, JOIN, INTO, UPDATE), or
+// calls lockRow with the name of one: lockRow builds its query from the table
+// it is given, so the table is read from the call.
 func touches(body *ast.BlockStmt) bool {
 	found := false
 	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "lockRow" && len(call.Args) >= 3 {
+				if lit, ok := call.Args[2].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					if table, err := strconv.Unquote(lit.Value); err == nil && sqlTable.MatchString("FROM "+table) {
+						found = true
+					}
+				}
+			}
+			return true
+		}
 		lit, ok := n.(*ast.BasicLit)
 		if !ok || lit.Kind != token.STRING {
 			return true
@@ -256,9 +268,11 @@ func touches(body *ast.BlockStmt) bool {
 	return found
 }
 
+// space_measure (the queue of the background measurement) is a tenant's too:
+// each row carries the space's tenant_id.
 // The tables of 2.7 count as well: a GitHub connection is a user's and a remote
 // a space's, so a function that reaches them across users needs a reason.
-var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|providers|provider_authorizations|provider_leftovers|remotes)\b`)
+var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|providers|provider_authorizations|provider_leftovers|remotes|space_measure)\b`)
 
 // A function that reads people leaves out the ones in the recycle bin
 // (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
@@ -286,7 +300,6 @@ var deletedAllowlist = map[string]string{
 	"SettleDeadlines":         "whether an owner of a space is exempt: the owners of a live space are not deleted",
 	"InsertAudit":             "the tenant of the person an audit row is about, by id: the log names deleted people too",
 	"ofUser":                  "the condition of a person's tenant, for the lists of tokens and grants (a deleted person's are revoked)",
-	"seedUsage":               "runs in the migration that makes the usage table, before deleted_at exists",
 	"UserTenant":              "the tenant of a person by id, for what they may use of the GitHub App; a deleted person has no connection left",
 	"ListMembers":             "the members of a space: a deleted person has none left",
 	"GetMember":               "a member of a space: a deleted person has none left",
@@ -301,7 +314,6 @@ var deletedAllowlist = map[string]string{
 	"SetEmail":                "a person already found",
 	"UserQuota":               "a person already found",
 	"SetUserQuota":            "a person already found",
-	"UsersWithQuota":          "the quotas set on people: a deleted person's is purged with them",
 	"UserUsageRows":           "the usage rows of people, read to put them right: a deleted person has one until they are purged",
 	"RecountUsage":            "puts the usage rows right: it counts the tenant's people without the deleted",
 	"CountEnabledAdmins":      "counts enabled administrators: through CountEnabledAdminsOutside, which leaves the deleted out",
@@ -363,4 +375,45 @@ func TestEveryReadOfPeopleLeavesOutTheDeleted(t *testing.T) {
 	for _, m := range missing {
 		t.Errorf("%s reads the users table and does not leave out deleted_at: add the condition, or put it on deletedAllowlist with the reason", m)
 	}
+}
+
+// touches must see a table through a query and through lockRow, and must not
+// see one that is not a tenant table: the test above stands on it.
+func TestScopeTestSeesTenantTables(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want bool
+	}{
+		{`SELECT 1 FROM spaces WHERE id = ?`, true},
+		{`UPDATE space_measure SET size_at = 1`, true},
+		{`INSERT INTO space_measure(space_id) VALUES (1)`, true},
+		{`SELECT 1 FROM site_settings`, false},
+	} {
+		if got := touchesSrc(t, "_ = `"+c.src+"`"); got != c.want {
+			t.Errorf("%s: touches = %v", c.src, got)
+		}
+	}
+	for _, c := range []struct {
+		call string
+		want bool
+	}{
+		{`lockRow(ctx, q, "spaces", id)`, true},
+		{`lockRow(ctx, q, "groups", id)`, true},
+		{`lockRow(ctx, q, "users", id)`, true},
+		{`lockRow(ctx, q, "site_settings", id)`, false},
+		{`other(ctx, q, "spaces", id)`, false},
+	} {
+		if got := touchesSrc(t, c.call); got != c.want {
+			t.Errorf("%s: touches = %v", c.call, got)
+		}
+	}
+}
+
+func touchesSrc(t *testing.T, stmt string) bool {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "x.go", "package store\nfunc F() {\n"+stmt+"\n}\n", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return touches(f.Decls[0].(*ast.FuncDecl).Body)
 }

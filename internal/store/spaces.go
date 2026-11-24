@@ -41,6 +41,9 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, inbox, created, tenant_id, last_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, name, FoldName(name), owner, inbox, ms(now), tenantID, ms(now)); err != nil {
 		return err
 	}
+	if err := queueMeasure(ctx, q, id); err != nil {
+		return err
+	}
 	return usageOfNewSpace(ctx, q, tenantID)
 }
 
@@ -218,12 +221,31 @@ func CountOtherEnabledOwners(ctx context.Context, q Q, spaceID, except string) (
 
 // LockSpace makes the rest of the transaction the only one changing who is a
 // member of the space: the "keep one owner" rule reads a count and then
-// writes, and two people leaving at once must not both pass. A no-op write is
-// the lock that works the same on both databases (PostgreSQL holds the row
-// until commit; SQLite's transactions are serialized already).
+// writes, and two people leaving at once must not both pass. See lockRow.
 func LockSpace(ctx context.Context, q Q, spaceID string) error {
-	res, err := q.Exec(ctx, `UPDATE spaces SET id = id WHERE id = ?`, spaceID)
-	return oneRow(res, err)
+	return lockRow(ctx, q, "spaces", spaceID)
+}
+
+// lockRow takes the row of table with this id for the rest of the transaction,
+// or reports ErrNotFound. On PostgreSQL it is SELECT ... FOR NO KEY UPDATE: two
+// transactions that lock one row take turns, and, as the no-op UPDATE it
+// replaces, it does not block the foreign-key checks of rows that refer to it
+// (FOR UPDATE would), but it writes nothing: no new row version, no index
+// entries, no dead tuple to vacuum. On SQLite every write transaction holds
+// the database's one write lock from its start (BEGIN IMMEDIATE on the one
+// write connection), so the transactions are one after the other already and
+// the lock is only the check that the row exists.
+func lockRow(ctx context.Context, q Q, table, id string) error {
+	stmt := `SELECT 1 FROM ` + table + ` WHERE id = ?`
+	if isPostgres(q) {
+		stmt += ` FOR NO KEY UPDATE`
+	}
+	var one int
+	err := q.QueryRow(ctx, stmt, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // RenameSpace changes a space's display name.
@@ -278,12 +300,15 @@ func SpaceOwner(ctx context.Context, q Q, spaceID string) (*User, string, error)
 // EnsureLocal makes the built-in user and the one space of single-user mode
 // exist, so drafts can refer to them like to any other user and space.
 func EnsureLocal(ctx context.Context, q Q, spaceID, spaceName string, now time.Time) error {
-	if _, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, 'local', 'Local user', '', 'admin', 0, ?, 0, 0, ?, 1, 0)
-		ON CONFLICT (id) DO NOTHING`, LocalUserID, ms(now), DefaultTenantID); err != nil {
+	if _, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`, name_key, email_key) VALUES (?, 'local', 'Local user', '', 'admin', 0, ?, 0, 0, ?, 1, 0, ?, '')
+		ON CONFLICT (id) DO NOTHING`, LocalUserID, ms(now), DefaultTenantID, FoldName("Local user")); err != nil {
 		return err
 	}
 	if _, err := q.Exec(ctx, `INSERT INTO spaces(id, name, name_key, personal_of, created) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET name = excluded.name, name_key = excluded.name_key`, spaceID, spaceName, FoldName(spaceName), LocalUserID, ms(now)); err != nil {
+		return err
+	}
+	if err := queueMeasure(ctx, q, spaceID); err != nil {
 		return err
 	}
 	_, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created) VALUES (?, ?, 'owner', ?)

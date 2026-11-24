@@ -421,9 +421,10 @@ func sortMissing(sort string, r AdminSpace) bool {
 }
 
 func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []any) (out []AdminSpace, err error) {
-	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes, p.size_at, p.members, p.tenant_id, u.id, u.username, u.name,
+	rows, err := q.Query(ctx, `SELECT p.id, p.name, p.personal_of, p.inbox, p.created, p.disabled, p.size_bytes,
+			(SELECT sm.size_at FROM space_measure sm WHERE sm.space_id = p.id), p.members, p.tenant_id, u.id, u.username, u.name,
 			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state, p.name_key
-		FROM (SELECT s.id, s.name, s.name_key, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.size_at, s.tenant_id,
+		FROM (SELECT s.id, s.name, s.name_key, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.tenant_id,
 			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes, s.location, s.remote_state,
 			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '') AS cred_type,
 			COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '') AS provider,
@@ -546,12 +547,8 @@ func ListPeople(ctx context.Context, q Q, d Dialect, sc Scope, f PeopleFilter) (
 		add(`p.id = ?`, f.ID)
 	}
 	if f.Query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		pat := "%" + likeEscape(strings.ToLower(f.Query)) + "%"
-		add(`(`+lower+`(u.username) LIKE ? ESCAPE '\' OR `+lower+`(u.name) LIKE ? ESCAPE '\')`, pat, pat)
+		c, a := personMatches("u.", f.Query)
+		add(c, a...)
 	}
 	if f.Dormant {
 		add(`p.dormant = 1`)
@@ -682,10 +679,15 @@ func GetStorageSummary(ctx context.Context, q Q, sc Scope) (StorageSummary, erro
 	var spaces, remote, partial, measured int64
 	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(spaces), 0), COALESCE(SUM(remote_spaces), 0), COALESCE(SUM(partial_spaces), 0), COALESCE(SUM(evicted_spaces), 0),
 		COALESCE(SUM(archived_spaces), 0), COALESCE(SUM(people), 0), COALESCE(SUM(dormant), 0), COALESCE(SUM(held_bytes), 0), COALESCE(SUM(bytes), 0),
-		COALESCE(SUM(grace_spaces), 0), COALESCE(SUM(overdue_spaces), 0), COALESCE(MAX(measured), 0)
+		COALESCE(SUM(grace_spaces), 0), COALESCE(SUM(overdue_spaces), 0)
 		FROM usage WHERE kind = 'tenant' AND `+cond, args...).
-		Scan(&spaces, &remote, &partial, &s.Evicted, &s.Archived, &s.People, &s.Dormant, &s.HeldBytes, &s.UsageBytes, &s.InGrace, &s.Overdue, &measured)
+		Scan(&spaces, &remote, &partial, &s.Evicted, &s.Archived, &s.People, &s.Dormant, &s.HeldBytes, &s.UsageBytes, &s.InGrace, &s.Overdue)
 	if err != nil {
+		return s, err
+	}
+	// When a space of the scope was last measured: the newest of the queue, one
+	// lookup of its index.
+	if err := q.QueryRow(ctx, `SELECT COALESCE(MAX(measured_at), 0) FROM space_measure WHERE `+cond, args...).Scan(&measured); err != nil {
 		return s, err
 	}
 	s.Local, s.Partial = max(spaces-remote, 0), partial

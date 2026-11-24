@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// DefaultTenantID is the tenant made with the database (and the one rows of
+// single-user mode belong to).
+const DefaultTenantID = "0000000000"
+
+// DefaultTenantSlug is the slug of the default tenant.
+const DefaultTenantSlug = "default"
+
 // Scope is whose rows a query may see: one tenant's, or, for a site
 // administrator or a background job, every tenant's. Every method that reads
 // or lists users, spaces, groups, invites or audit rows by anything a client
@@ -64,7 +71,9 @@ func (sc Scope) ofUser(col string) (string, []any) {
 	case sc.tenant == "":
 		return "1 = 0", nil
 	}
-	return col + " IN (SELECT id FROM users WHERE tenant_id = ?)", []any{sc.tenant}
+	// A probe of each row's user by its key: no index of users by tenant is
+	// needed, and a page of a list stops after its rows.
+	return "EXISTS (SELECT 1 FROM users ou WHERE ou.id = " + col + " AND ou.tenant_id = ?)", []any{sc.tenant}
 }
 
 // AdminScopeOf is ScopeOf for what an administrator reaches of spaces through
@@ -179,7 +188,7 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 	if after != "" {
 		// The sort key is (default first, name key, id); it is the same row's
 		// key, looked up in the same statement.
-		where = append(where, `(CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, `+bytewise(d, "name_key")+`, id) > (SELECT CASE WHEN a.id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, `+bytewise(d, "a.name_key")+`, a.id FROM tenants a WHERE a.id = ?)`)
+		where = append(where, `(CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, name_key, id) > (SELECT CASE WHEN a.id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, a.name_key, a.id FROM tenants a WHERE a.id = ?)`)
 		args = append(args, after)
 	}
 	cond := ""
@@ -187,7 +196,7 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 		cond = " WHERE " + strings.Join(where, " AND ")
 	}
 	args = append(args, limit+1)
-	rows, err := q.Query(ctx, `SELECT `+tenantCols+` FROM tenants`+cond+` ORDER BY CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, `+bytewise(d, "name_key")+`, id LIMIT ?`, args...)
+	rows, err := q.Query(ctx, `SELECT `+tenantCols+` FROM tenants`+cond+` ORDER BY CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, name_key, id LIMIT ?`, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -357,14 +366,24 @@ func (s *Store) UpdateTenant(ctx context.Context, t Tenant) error {
 }
 
 // DeleteTenant deletes an empty tenant (its settings go with it), or fails with
-// *ErrTenantNotEmpty. The counts and the delete are one transaction.
+// *ErrTenantNotEmpty: one with users, spaces, groups, invites or items in the
+// recycle bin. The counts and the delete are one transaction.
+//
+// What is left of the tenant that the tenants foreign keys would otherwise
+// refuse: pending registrations, its share of the GitHub App's installations
+// and its usage row are deleted; a sign-in provider that put new accounts here
+// puts them in the default tenant; the tombstones of purged people (kept only
+// so the audit log can name them), the exports and the bulk jobs move to the
+// default tenant, the exports and jobs as site administrators' own (site_only),
+// where they expire and are pruned as any other. The audit log keeps its rows:
+// its tenant_id is not a foreign key.
 func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 	err := s.Tx(ctx, func(q Q) error {
 		c, err := CountTenantRows(ctx, q, id)
 		if err != nil {
 			return err
 		}
-		if c.Users+c.Spaces+c.Groups+c.Invites > 0 {
+		if c.Users+c.Spaces+c.Groups+c.Invites+c.Recycle > 0 {
 			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites, c.Recycle}
 		}
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
@@ -382,8 +401,15 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `UPDATE sign_in_providers SET tenant_id = ? WHERE tenant_id = ?`, DefaultTenantID, id); err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, `DELETE FROM usage WHERE tenant_id = ?`, id); err != nil {
-			return err
+		for _, st := range []string{
+			`UPDATE users SET tenant_id = '` + DefaultTenantID + `' WHERE tenant_id = ? AND deleted_at IS NOT NULL`,
+			`UPDATE exports SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
+			`UPDATE bulk_jobs SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
+			`DELETE FROM usage WHERE tenant_id = ?`,
+		} {
+			if _, err := q.Exec(ctx, st, id); err != nil {
+				return err
+			}
 		}
 		res, err := q.Exec(ctx, `DELETE FROM tenants WHERE id = ?`, id)
 		return oneRow(res, err)

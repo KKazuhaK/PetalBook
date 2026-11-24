@@ -55,15 +55,6 @@ func TestUsageCosts(t *testing.T) {
 		if _, err := q.Exec(ctx, `DELETE FROM usage`); err != nil { // the one row the empty database made
 			t.Fatal(err)
 		}
-		time1(fmt.Sprintf("the migration's step: %d people, %d spaces", people, spacesN), func() {
-			if err := st.Tx(ctx, func(q store.Q) error { return store.SeedUsage(ctx, q) }); err != nil {
-				t.Fatal(err)
-			}
-		})
-		consistent(t, st) // what the migration made is what a recount finds
-		if _, err := q.Exec(ctx, `DELETE FROM usage`); err != nil {
-			t.Fatal(err)
-		}
 		time1("first recount from nothing (every row made by an upsert)", func() { corrected, _ = st.RecountUsage(ctx) })
 		t.Logf("PERF   corrected %d rows", corrected)
 		time1("daily recount with nothing to correct", func() { corrected, _ = st.RecountUsage(ctx) })

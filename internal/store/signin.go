@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -442,16 +443,25 @@ func ListAudit(ctx context.Context, q Q, sc Scope, hideSite bool, kind, userID, 
 	return out, rows.Err()
 }
 
+// AuditTrimBatch is how many rows TrimAudit deletes in one statement.
+const AuditTrimBatch = 5000
+
+// AuditIDBefore is the smallest audit id of a row written at t or later: an id
+// is the time in Unix milliseconds as 12 hexadecimal digits, then a sequence
+// number (see InsertAudit's callers), so the ids below it are the rows older
+// than t.
+func AuditIDBefore(t time.Time) string { return fmt.Sprintf("%012x", ms(t)) }
+
 // TrimAudit deletes rows older than before and, beyond that, all but the
-// newest keep rows.
+// newest keep rows. It deletes a range of ids (see AuditIDBefore) a batch of
+// AuditTrimBatch rows at a time, each batch its own statement: on q the
+// database (not a transaction) each is its own transaction, so a large trim
+// never holds SQLite's one write connection, nor PostgreSQL's locks, for long.
 func TrimAudit(ctx context.Context, q Q, before time.Time, keep int) (int64, error) {
-	var total int64
-	res, err := q.Exec(ctx, `DELETE FROM audit_log WHERE at < ?`, ms(before))
+	total, err := trimAuditWhere(ctx, q, `id < ?`, AuditIDBefore(before))
 	if err != nil {
-		return 0, err
+		return total, err
 	}
-	n, _ := res.RowsAffected()
-	total += n
 	var cut string
 	err = q.QueryRow(ctx, `SELECT id FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET ?`, keep).Scan(&cut)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -460,10 +470,23 @@ func TrimAudit(ctx context.Context, q Q, before time.Time, keep int) (int64, err
 	if err != nil {
 		return total, err
 	}
-	res, err = q.Exec(ctx, `DELETE FROM audit_log WHERE id <= ?`, cut)
-	if err != nil {
-		return total, err
+	n, err := trimAuditWhere(ctx, q, `id <= ?`, cut)
+	return total + n, err
+}
+
+// trimAuditWhere deletes the rows whose id is in the range cond says (id < ?
+// or id <= ?), the oldest first, in batches.
+func trimAuditWhere(ctx context.Context, q Q, cond, bound string) (int64, error) {
+	var total int64
+	for {
+		res, err := q.Exec(ctx, `DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE `+cond+` ORDER BY id LIMIT ?)`, bound, AuditTrimBatch)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < AuditTrimBatch || ctx.Err() != nil {
+			return total, ctx.Err()
+		}
 	}
-	n, _ = res.RowsAffected()
-	return total + n, nil
 }

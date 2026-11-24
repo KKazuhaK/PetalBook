@@ -361,6 +361,10 @@ func TestRecycleKeepsEverythingAndRestoreGivesItBack(t *testing.T) {
 			}
 		}
 		f.noItem(item.ID)
+		var queued int
+		if err := f.st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM space_measure WHERE space_id = ?`, info.ID).Scan(&queued); err != nil || queued != 1 {
+			t.Errorf("the restored space is not in the measurement's queue: %d %v", queued, err)
+		}
 		if gitLog(root) != historyBefore || !pathExists(state) || pathExists(bin) {
 			t.Fatal("the directories did not come back as they were")
 		}
@@ -415,7 +419,8 @@ func TestEveryTableOfASpaceIsRecycled(t *testing.T) {
 		// These name a space without belonging to it: a token's or a grant's list of
 		// spaces it may reach (a restore brings its reach back by itself), and the
 		// bin's own row.
-		not := map[string]string{"api_token_spaces": "names spaces a token reaches; no foreign key", "oauth_grant_spaces": "the same for a grant", "recycle_items": "the bin's own"}
+		not := map[string]string{"api_token_spaces": "names spaces a token reaches; no foreign key", "oauth_grant_spaces": "the same for a grant", "recycle_items": "the bin's own",
+			"space_measure": "the measurement's queue: a restored space is queued again (RestoreSpaceRows)"}
 		for rows.Next() {
 			var n string
 			if err := rows.Scan(&n); err != nil {

@@ -11,8 +11,8 @@ import (
 
 // Groups (milestone 3.2). Every list here is one query a page, cut in an inner
 // select so the work is per row returned. Names and usernames are ordered
-// bytewise on both databases (COLLATE "C" on PostgreSQL), so a cursor means the
-// same on both.
+// bytewise on both databases (the columns are COLLATE "C" on PostgreSQL), so a
+// cursor means the same on both.
 
 // Group sources.
 const (
@@ -44,14 +44,6 @@ func scanGroup(sc interface{ Scan(...any) error }) (*Group, error) {
 	}
 	g.Created, g.Updated = fromMS(cr), fromMS(up)
 	return &g, nil
-}
-
-// bytewise is the column in an ORDER BY or a cursor comparison.
-func bytewise(d Dialect, col string) string {
-	if d == Postgres {
-		return col + ` COLLATE "C"`
-	}
-	return col
 }
 
 // InsertGroup adds a group; a taken name is a unique violation.
@@ -130,7 +122,7 @@ func ListGroups(ctx context.Context, q Q, d Dialect, sc Scope, f GroupFilter) (o
 		args = append(args, f.UserID)
 	}
 	if f.After != "" {
-		where = append(where, bytewise(d, `g.name_key`)+` > ?`)
+		where = append(where, `g.name_key > ?`)
 		args = append(args, f.After)
 	}
 	cond := ""
@@ -138,7 +130,7 @@ func ListGroups(ctx context.Context, q Q, d Dialect, sc Scope, f GroupFilter) (o
 		cond = "WHERE " + strings.Join(where, " AND ")
 	}
 	args = append(args, f.Limit+1)
-	rows, err := q.Query(ctx, `SELECT `+groupCols+` FROM groups g `+cond+` ORDER BY `+bytewise(d, `g.name_key`)+` LIMIT ?`, args...)
+	rows, err := q.Query(ctx, `SELECT `+groupCols+` FROM groups g `+cond+` ORDER BY g.name_key LIMIT ?`, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -166,7 +158,7 @@ type GroupRef struct{ ID, Name, Source string }
 // SearchGroups finds groups whose name contains q, by name: for choosing one.
 func SearchGroups(ctx context.Context, q Q, d Dialect, sc Scope, query string, limit int) ([]GroupRef, error) {
 	cond, cargs := sc.cond("tenant_id")
-	rows, err := q.Query(ctx, `SELECT id, name, source FROM groups WHERE `+cond+` AND name_key LIKE ? ESCAPE '\' ORDER BY `+bytewise(d, `name_key`)+` LIMIT ?`,
+	rows, err := q.Query(ctx, `SELECT id, name, source FROM groups WHERE `+cond+` AND name_key LIKE ? ESCAPE '\' ORDER BY name_key LIMIT ?`,
 		append(cargs, "%"+likeEscape(FoldName(query))+"%", limit)...)
 	if err != nil {
 		return nil, err
@@ -257,13 +249,12 @@ func ListGroupSpaces(ctx context.Context, q Q, d Dialect, groupID, after string,
 	cond := ""
 	if after != "" {
 		key, id, _ := strings.Cut(after, "\x00")
-		nk, sid := bytewise(d, `s.name_key`), bytewise(d, `s.id`)
-		cond = ` AND (` + nk + ` > ? OR (s.name_key = ? AND ` + sid + ` > ?))`
+		cond = ` AND (s.name_key > ? OR (s.name_key = ? AND s.id > ?))`
 		args = append(args, key, key, id)
 	}
 	args = append(args, limit+1)
 	rows, err := q.Query(ctx, `SELECT s.id, s.name, sg.role, s.name_key FROM space_groups sg JOIN spaces s ON s.id = sg.space_id
-		WHERE sg.group_id = ?`+cond+` ORDER BY `+bytewise(d, `s.name_key`)+`, `+bytewise(d, `s.id`)+` LIMIT ?`, args...)
+		WHERE sg.group_id = ?`+cond+` ORDER BY s.name_key, s.id LIMIT ?`, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -315,23 +306,19 @@ func ListGroupPeople(ctx context.Context, q Q, d Dialect, groupID, query, after 
 	where := `u.deleted_at IS NULL AND u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)`
 	args := []any{groupID}
 	if query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		where += ` AND (` + lower + `(u.username) LIKE ? ESCAPE '\' OR ` + lower + `(u.name) LIKE ? ESCAPE '\')`
-		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
-		args = append(args, pat, pat)
+		c, a := personMatches("u.", query)
+		where += ` AND ` + c
+		args = append(args, a...)
 	}
 	if after != "" {
-		where += ` AND ` + bytewise(d, `u.username`) + ` > ?`
+		where += ` AND ` + `u.username` + ` > ?`
 		args = append(args, after)
 	}
 	args = append(args, limit+1, groupID)
 	rows, err := q.Query(ctx, `SELECT p.id, p.username, p.name, p.disabled, gm.provider, gm.value, gm.created
-		FROM (SELECT u.id, u.username, u.name, u.disabled FROM users u WHERE `+where+` ORDER BY `+bytewise(d, `u.username`)+` LIMIT ?) p
+		FROM (SELECT u.id, u.username, u.name, u.disabled FROM users u WHERE `+where+` ORDER BY u.username LIMIT ?) p
 		JOIN group_members gm ON gm.user_id = p.id AND gm.group_id = ?
-		ORDER BY `+bytewise(d, `p.username`)+`, gm.provider, gm.value`, args...)
+		ORDER BY p.username, gm.provider, gm.value`, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -699,25 +686,21 @@ func ListEffective(ctx context.Context, q Q, d Dialect, spaceID, query, after st
 		OR u.id IN (SELECT gm.user_id FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id WHERE sg.space_id = ?))`
 	args := []any{spaceID, spaceID}
 	if query != "" {
-		lower := "LOWER"
-		if d == SQLite {
-			lower = sqliteLower
-		}
-		where += ` AND (` + lower + `(u.username) LIKE ? ESCAPE '\' OR ` + lower + `(u.name) LIKE ? ESCAPE '\')`
-		pat := "%" + likeEscape(strings.ToLower(query)) + "%"
-		args = append(args, pat, pat)
+		c, a := personMatches("u.", query)
+		where += ` AND ` + c
+		args = append(args, a...)
 	}
 	if after != "" {
-		where += ` AND ` + bytewise(d, `u.username`) + ` > ?`
+		where += ` AND ` + `u.username` + ` > ?`
 		args = append(args, after)
 	}
 	args = append(args, limit+1, spaceID, spaceID)
 	rows, err := q.Query(ctx, `SELECT p.id, p.username, p.name, m.role, g.id, g.name, g.source, sg.role
-		FROM (SELECT u.id, u.username, u.name FROM users u WHERE `+where+` ORDER BY `+bytewise(d, `u.username`)+` LIMIT ?) p
+		FROM (SELECT u.id, u.username, u.name FROM users u WHERE `+where+` ORDER BY u.username LIMIT ?) p
 		LEFT JOIN space_members m ON m.space_id = ? AND m.user_id = p.id
 		LEFT JOIN space_groups sg ON sg.space_id = ? AND sg.group_id IN (SELECT group_id FROM group_members WHERE user_id = p.id)
 		LEFT JOIN groups g ON g.id = sg.group_id
-		ORDER BY `+bytewise(d, `p.username`), args...)
+		ORDER BY p.username`, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -797,10 +780,9 @@ func ListUserAccess(ctx context.Context, q Q, userID string) ([]UserAccess, erro
 }
 
 // LockGroup makes the rest of the transaction the only one changing the people
-// of the group (a no-op write, as LockSpace does).
+// of the group (see lockRow).
 func LockGroup(ctx context.Context, q Q, groupID string) error {
-	res, err := q.Exec(ctx, `UPDATE groups SET id = id WHERE id = ?`, groupID)
-	return oneRow(res, err)
+	return lockRow(ctx, q, "groups", groupID)
 }
 
 // LockGroups locks several groups, in the order of their ids so that two

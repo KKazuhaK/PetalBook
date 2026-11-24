@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,13 +38,19 @@ var (
 
 // Store is safe for concurrent use.
 type Store struct {
-	db      *sql.DB
+	db *sql.DB
+	// rdb is SQLite's pool of read-only connections (nil on PostgreSQL), which
+	// the reads outside a transaction use (see Q).
+	rdb     *sql.DB
 	dialect Dialect
 	rebinds sync.Map // query -> rewritten query (PostgreSQL only)
 	// people is what NoteActive and NoteWrite remember of who was written lately.
 	people noted
 	// tenantState is which tenants are disabled (see TenantDisabled).
 	tenantState atomic.Pointer[tenantState]
+	// localeWarning is what is wrong with a PostgreSQL database's locale ("" when
+	// nothing is; see LocaleWarning).
+	localeWarning string
 }
 
 // Q is what queries run on: the database, or a transaction of it.
@@ -64,37 +69,80 @@ type runner interface {
 type bound struct {
 	s *Store
 	r runner
+	// reads, when set, runs the plain SELECTs (see Q).
+	reads runner
 }
 
 func (b bound) Exec(ctx context.Context, q string, a ...any) (sql.Result, error) {
 	return b.r.ExecContext(ctx, b.s.rebind(q), a...)
 }
 func (b bound) Query(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
-	return b.r.QueryContext(ctx, b.s.rebind(q), a...)
+	return b.reader(q).QueryContext(ctx, b.s.rebind(q), a...)
 }
 func (b bound) QueryRow(ctx context.Context, q string, a ...any) *sql.Row {
-	return b.r.QueryRowContext(ctx, b.s.rebind(q), a...)
+	return b.reader(q).QueryRowContext(ctx, b.s.rebind(q), a...)
+}
+
+// reader is where a query runs: a plain SELECT on the read pool when there is
+// one, anything else (a PRAGMA, a statement with RETURNING) on r.
+func (b bound) reader(q string) runner {
+	if b.reads != nil && isPlainSelect(q) {
+		return b.reads
+	}
+	return b.r
+}
+
+// isPlainSelect reports whether q is a SELECT, which a read-only connection can
+// run.
+func isPlainSelect(q string) bool {
+	q = strings.TrimSpace(q)
+	return len(q) > 6 && strings.EqualFold(q[:6], "SELECT") && !strings.Contains(q, "FOR UPDATE") && !strings.Contains(q, "FOR NO KEY UPDATE")
 }
 
 // Q runs queries outside a transaction.
-func (s *Store) Q() Q { return bound{s, s.db} }
+//
+// On SQLite its SELECTs run on a pool of read-only connections (readConns),
+// beside the one connection that writes, so that reads do not wait in line
+// behind writes and each other; its other statements run on the writer. In WAL
+// mode a read sees every write committed before it starts, so a caller that
+// writes and then reads, each on Q, reads what it wrote. The rule: what must be
+// read in the same state as a write (read, decide, write; or a write and a read
+// that must not see a later write between them) runs in one Tx, which is on the
+// writer, reads and all. A read on Q while the same goroutine holds a Tx open
+// sees the database without that transaction's writes (on PostgreSQL as
+// well); a Tx is used through its own Q only.
+func (s *Store) Q() Q {
+	if s.rdb != nil {
+		return bound{s: s, r: s.db, reads: s.rdb}
+	}
+	return bound{s: s, r: s.db}
+}
+
+// Stats reports the statistics of the pool of connections that writes (on
+// PostgreSQL, the only one).
+func (s *Store) Stats() sql.DBStats { return s.db.Stats() }
 
 // Dialect reports which database this is.
 func (s *Store) Dialect() Dialect { return s.dialect }
 
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.rdb != nil {
+		s.rdb.Close()
+	}
+	return s.db.Close()
+}
 
 // Tx runs fn in a transaction: committed when it returns nil, rolled back
-// otherwise. Inside fn use only the Q it is given. On SQLite the whole store
-// has one connection, so a query on s.Q() inside fn would wait for the
-// transaction forever.
+// otherwise. Inside fn use only the Q it is given. On SQLite the store has one
+// connection that writes, so a write on s.Q() inside fn would wait for the
+// transaction forever (and a read on s.Q() would not see fn's writes).
 func (s *Store) Tx(ctx context.Context, fn func(Q) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := fn(bound{s, tx}); err != nil {
+	if err := fn(bound{s: s, r: tx}); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -140,58 +188,6 @@ func (s *Store) rebind(q string) string {
 	return b.String()
 }
 
-// OpenAtVersion is Open, but brings the schema only up to version max (and not
-// the tenant state, which needs the last one); Migrate finishes the job. It is
-// for the tests of migrations: a database as an older version left it.
-func OpenAtVersion(ctx context.Context, target string, max int) (*Store, error) {
-	var s *Store
-	var err error
-	if strings.HasPrefix(target, "postgres://") || strings.HasPrefix(target, "postgresql://") {
-		s, err = openPostgres(target)
-	} else {
-		s, err = openSQLite(target)
-	}
-	if err != nil {
-		return nil, redact(err, target)
-	}
-	if err := s.migrateTo(ctx, max); err != nil {
-		s.Close()
-		return nil, redact(err, target)
-	}
-	return s, nil
-}
-
-// OpenWithoutVersion is OpenAtVersion for a database that has every version
-// but those of skip, as one migrated on a branch that did not have those files
-// yet; the tenant state is not loaded. Migrate then applies the missing
-// versions, as the first start after a merge does. It is for the tests of
-// migrations.
-func OpenWithoutVersion(ctx context.Context, target string, skip ...int) (*Store, error) {
-	var s *Store
-	var err error
-	if strings.HasPrefix(target, "postgres://") || strings.HasPrefix(target, "postgresql://") {
-		s, err = openPostgres(target)
-	} else {
-		s, err = openSQLite(target)
-	}
-	if err != nil {
-		return nil, redact(err, target)
-	}
-	if err := s.migrateWhere(ctx, func(v int) bool { return !slices.Contains(skip, v) }); err != nil {
-		s.Close()
-		return nil, redact(err, target)
-	}
-	return s, nil
-}
-
-// Migrate brings the schema up to date, as Open does at every start.
-func (s *Store) Migrate(ctx context.Context) error {
-	if err := s.migrate(ctx); err != nil {
-		return err
-	}
-	return s.loadTenantState(ctx)
-}
-
 // Open opens the state database at target and brings its schema up to date.
 // target is a postgres:// or postgresql:// URL, or the path of a SQLite file
 // (created if missing). The error never contains the password of a URL.
@@ -206,7 +202,7 @@ func Open(ctx context.Context, target string) (*Store, error) {
 	if err != nil {
 		return nil, redact(err, target)
 	}
-	if err := s.migrate(ctx); err != nil {
+	if err := s.prepareSchema(ctx); err != nil {
 		s.Close()
 		return nil, redact(err, target)
 	}
@@ -226,8 +222,8 @@ func openSQLite(path string) (*Store, error) {
 		return nil, err
 	}
 	// A file: URI keeps characters such as ? and # in the path from being
-	// read as options. One connection: SQLite has one writer anyway, and
-	// this way a write never fails with SQLITE_BUSY inside the process.
+	// read as options. One connection writes: SQLite has one writer anyway,
+	// and this way a write never fails with SQLITE_BUSY inside the process.
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	// FULL: a draft answered with 200 must survive a power cut, as a file
@@ -235,6 +231,10 @@ func openSQLite(path string) (*Store, error) {
 	q.Add("_pragma", "synchronous(FULL)")
 	q.Add("_pragma", "busy_timeout(10000)")
 	q.Add("_pragma", "foreign_keys(1)")
+	// With a pool of readers the log may never find a moment with no reader
+	// in it, so it is not restarted and only grows. Past this size it is cut
+	// back to it whenever it does restart.
+	q.Add("_pragma", fmt.Sprintf("journal_size_limit(%d)", walSizeLimit))
 	q.Set("_txlock", "immediate")
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: q.Encode()}
 	db, err := sql.Open("sqlite", u.String())
@@ -246,7 +246,40 @@ func openSQLite(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, dialect: SQLite}, nil
+	// The read pool: the same file, read only. It is opened after the writer
+	// has made the file and switched it to WAL.
+	r := url.Values{}
+	r.Add("_pragma", "busy_timeout(10000)")
+	r.Add("_pragma", "foreign_keys(1)")
+	r.Add("_pragma", "query_only(1)")
+	ru := url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: r.Encode()}
+	rdb, err := sql.Open("sqlite", ru.String())
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(readConns)
+	rdb.SetMaxIdleConns(readConns)
+	return &Store{db: db, rdb: rdb, dialect: SQLite}, nil
+}
+
+// readConns is the size of SQLite's read pool.
+const readConns = 4
+
+// walSizeLimit is the size the write-ahead log is cut back to when it restarts.
+const walSizeLimit = 64 << 20
+
+// Checkpoint moves what the write-ahead log holds into the database file, as
+// far as the readers allow (PASSIVE: it never waits for a reader or blocks a
+// writer), so that the log can restart. SQLite checkpoints by itself after
+// 1000 pages, but only as far as the oldest reader; this is the periodic one
+// that catches up. It does nothing on PostgreSQL.
+func (s *Store) Checkpoint(ctx context.Context) error {
+	if s.dialect != SQLite {
+		return nil
+	}
+	var busy, logFrames, done int
+	return s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`).Scan(&busy, &logFrames, &done)
 }
 
 func openPostgres(dsn string) (*Store, error) {
@@ -255,6 +288,10 @@ func openPostgres(dsn string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(20)
+	// As many idle as open: Go keeps 2 by default, so a burst of requests
+	// closed the connections it had just opened and the next burst opened them
+	// again (a TCP and TLS handshake and a backend start each).
+	db.SetMaxIdleConns(20)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -262,7 +299,80 @@ func openPostgres(dsn string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, dialect: Postgres}, nil
+	s := &Store{db: db, dialect: Postgres}
+	locale, err := databaseLocale(ctx, db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.localeWarning = localeProblem(locale)
+	return s, nil
+}
+
+// LocaleWarning says what is wrong with the locale of a PostgreSQL database, or
+// is "" when nothing is (and always on SQLite). Every text column of the schema
+// is COLLATE "C", so what the store sorts and compares does not depend on it;
+// but a database whose default collation is not bytewise sorts any other text
+// (an expression, a literal) differently from SQLite, and lower() and upper()
+// follow its LC_CTYPE. The server logs this at start; README.md says how
+// to make the database.
+func (s *Store) LocaleWarning() string { return s.localeWarning }
+
+// databaseLocale reads the locale columns of the current database from
+// pg_database: datcollate, datctype and, where the server has them,
+// datlocprovider (15) and datlocale (17).
+func databaseLocale(ctx context.Context, db *sql.DB) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM pg_database WHERE datname = current_database()`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	if !rows.Next() {
+		return out, rows.Err()
+	}
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return nil, err
+	}
+	for i, c := range cols {
+		switch c {
+		case "datcollate", "datctype", "datlocprovider", "datlocale":
+			if vals[i] != nil {
+				out[c] = fmt.Sprint(vals[i])
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+// localeProblem is the warning for a database's locale columns, "" when it
+// sorts text bytewise: the builtin provider (any of its locales sorts by code
+// point, which is byte order in UTF-8), or libc with C, POSIX or C.UTF-8.
+func localeProblem(l map[string]string) string {
+	bytewise := func(v string) bool {
+		return v == "C" || v == "POSIX" || strings.HasPrefix(v, "C.")
+	}
+	switch l["datlocprovider"] {
+	case "b":
+		return ""
+	case "i":
+		return "the database uses an ICU locale (" + l["datlocale"] + "); PetalBook's text columns sort bytewise (COLLATE \"C\") anyway, " +
+			"but make the database with LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8' (see README.md, PostgreSQL) so that nothing else depends on the locale"
+	}
+	if bytewise(l["datcollate"]) && bytewise(l["datctype"]) {
+		return ""
+	}
+	return "the database's locale is LC_COLLATE " + l["datcollate"] + ", LC_CTYPE " + l["datctype"] + "; PetalBook's text columns sort bytewise (COLLATE \"C\") anyway, " +
+		"but make the database with LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8' (see README.md, PostgreSQL) so that nothing else depends on the locale"
 }
 
 // redact removes the target, and the password inside it, from an error text.

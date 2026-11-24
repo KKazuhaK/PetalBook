@@ -132,7 +132,8 @@ func SetAssetMove(ctx context.Context, q Q, spaceID string, m AssetMove, now tim
 // MovesRunning lists the spaces whose move was under way (the server stopped
 // before it ended).
 func MovesRunning(ctx context.Context, q Q) ([]string, error) {
-	rows, err := q.Query(ctx, `SELECT space_id FROM asset_remotes WHERE move_state IN (?, ?) ORDER BY space_id`, MoveCopying, MoveSwitching)
+	// move_state <> '' is the condition of the partial index asset_remotes_move.
+	rows, err := q.Query(ctx, `SELECT space_id FROM asset_remotes WHERE move_state IN (?, ?) AND move_state <> '' ORDER BY space_id`, MoveCopying, MoveSwitching)
 	if err != nil {
 		return nil, err
 	}

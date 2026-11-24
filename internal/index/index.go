@@ -284,6 +284,20 @@ func removeDB(p string) {
 // It is read at Open; tests make it smaller.
 var walCheckpointAt int64 = 16 << 20
 
+// The page caches of an index's connections. SQLite gives every connection a
+// cache of its own: at 64 MB each, the 15 connections of an index (1 writer, 8
+// readers, 6 aux) and the 64 indexes a server keeps open could hold about 61 GB
+// in the worst case. The writer keeps 64 MB (a commit of many pages is its
+// work); a reader keeps 8 MB and reads the file through a memory map
+// (mmap_size; modernc's SQLite supports it, up to 2 GB), so the pages the
+// readers share live once, in the operating system's cache, and cost the
+// process nothing it has to keep. Negative cache sizes are in KiB.
+const (
+	writeCacheKiB = -65536
+	readCacheKiB  = -8192
+	readMmapBytes = 256 << 20
+)
+
 // readConns is the number of connections of db: the requests reading at the
 // same time, each on one (and maybe others of aux).
 const readConns = 8
@@ -292,8 +306,9 @@ func open(dbPath, root string) (*Index, error) {
 	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan, now: time.Now}
 	x.template = root == templateRoot
 	x.copied = !x.template && copyTemplate(dbPath)
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)&_pragma=cache_size(-65536)" +
+	base := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)" +
 		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
+	dsn := base + fmt.Sprintf("&_pragma=cache_size(%d)", writeCacheKiB)
 	var err error
 	if x.wdb, err = sql.Open("sqlite", dsn); err != nil {
 		return nil, err
@@ -318,8 +333,9 @@ func open(dbPath, root string) (*Index, error) {
 		}
 	}
 	// Reads cannot change the database: no write can end up on their
-	// connections by mistake.
-	rdsn := dsn + "&_pragma=query_only(1)"
+	// connections by mistake. Each has a small page cache of its own and maps
+	// the file instead (see readCacheKiB).
+	rdsn := base + fmt.Sprintf("&_pragma=cache_size(%d)&_pragma=mmap_size(%d)&_pragma=query_only(1)", readCacheKiB, readMmapBytes)
 	if x.db, err = sql.Open("sqlite", rdsn); err != nil {
 		x.wdb.Close()
 		return nil, err

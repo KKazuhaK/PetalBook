@@ -634,6 +634,10 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 		}
 		return out, err
 	}
+	// Measured again soon (its row of the queue went with it).
+	if err := queueMeasure(ctx, q, item.SpaceID); err != nil {
+		return out, err
+	}
 	back, err := readSpaceUsage(ctx, q, item.SpaceID)
 	if err != nil {
 		return out, err

@@ -456,6 +456,9 @@ func runServe(ctx context.Context, c serveConfig) error {
 			}
 		}
 	}
+	if w := st.LocaleWarning(); w != "" {
+		log.Warn(w)
+	}
 	drf, err := drafts.New(ctx, st, mgr, drafts.Config{Idle: c.draftIdle, Max: c.draftMax, Tick: c.draftTick}, log)
 	if err != nil {
 		return err

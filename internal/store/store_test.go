@@ -24,50 +24,15 @@ func mkUser(t *testing.T, st *store.Store, id, username, role string) {
 	}
 }
 
-func TestMigrationsAreIdempotent(t *testing.T) {
+func TestOpeningAgainChangesNothing(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		// Open already migrated once; running again must change nothing. The
-		// count follows the files, so a branch that adds one need not edit it.
-		var n int
-		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != migrationFiles(t) {
-			t.Fatalf("%d %v, want %d", n, err, migrationFiles(t))
+		// The database was made once and opened again (storetest copies a made
+		// file): it records the baseline of this build.
+		var hash string
+		if err := st.Q().QueryRow(ctx, `SELECT hash FROM schema_baseline WHERE id = 1`).Scan(&hash); err != nil || hash != store.BaselineHash() {
+			t.Fatalf("%q %v, want %q", hash, err, store.BaselineHash())
 		}
 		mkUser(t, st, "A", "a", "admin")
-	})
-}
-
-// The numbers may leave gaps (another branch owns them until it merges); every
-// file is applied once, by its own number.
-func TestMigrationsWithAGapApplyByNumber(t *testing.T) {
-	names, err := store.MigrationNames()
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, n := range names {
-		if n == "0013_github.sql" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("no 0013_github.sql in %v", names)
-	}
-	files, _ := store.MigrationVersions()
-	storetest.Each(t, func(t *testing.T, st *store.Store) {
-		rows, err := st.Q().Query(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer rows.Close()
-		var got []int
-		for rows.Next() {
-			var v int
-			rows.Scan(&v)
-			got = append(got, v)
-		}
-		if fmt.Sprint(got) != fmt.Sprint(files) {
-			t.Fatalf("applied %v, files %v", got, files)
-		}
 	})
 }
 
@@ -86,19 +51,6 @@ func TestReopenKeepsData(t *testing.T) {
 	defer st.Close()
 	if u, err := store.GetUserByUsername(ctx, st.Q(), "a"); err != nil || u.ID != "A" {
 		t.Fatalf("%v %v", u, err)
-	}
-}
-
-func TestNewerSchemaIsRefused(t *testing.T) {
-	path := t.TempDir() + "/s.db"
-	st, err := store.Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st.Q().Exec(ctx, `INSERT INTO schema_migrations(version, applied) VALUES (99, 0)`)
-	st.Close()
-	if _, err := store.Open(ctx, path); err == nil || !strings.Contains(err.Error(), "newer") {
-		t.Fatalf("%v", err)
 	}
 }
 
@@ -617,24 +569,7 @@ func TestSpaceInbox(t *testing.T) {
 	})
 }
 
-// migrationFiles counts the migration files, so the test needs no editing when
-// a migration is added (branches number theirs apart, and gaps are fine).
-func migrationFiles(t *testing.T) int {
-	t.Helper()
-	entries, err := os.ReadDir("migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 0
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".sql") {
-			n++
-		}
-	}
-	return n
-}
-
-// A real first start: Open on a path with no file runs every migration, with
+// A real first start: Open on a path with no file makes the schema, with
 // no prepared copy involved, and the connection enforces foreign keys.
 func TestOpenFreshMigratesAndEnforcesForeignKeys(t *testing.T) {
 	path := t.TempDir() + "/fresh.db"
@@ -651,11 +586,35 @@ func TestOpenFreshMigratesAndEnforcesForeignKeys(t *testing.T) {
 		t.Fatalf("foreign_keys = %d, %v; want 1", fk, err)
 	}
 	var n int
-	if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != migrationFiles(t) {
-		t.Fatalf("%d migrations applied, %v; want %d", n, err, migrationFiles(t))
+	if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_baseline`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("%d baseline rows, %v", n, err)
 	}
 	mkUser(t, st, "A", "a", "admin")
 	if u, err := store.GetUserByUsername(ctx, st.Q(), "a"); err != nil || u.ID != "A" {
 		t.Fatalf("%v %v", u, err)
 	}
+}
+
+// The log of the state database is cut back to a limit whenever it restarts,
+// and Checkpoint (called by the hourly maintenance) lets it restart.
+func TestStateDatabaseLogIsLimited(t *testing.T) {
+	st := storetest.Open(t, "sqlite")
+	var limit int64
+	if err := st.Q().QueryRow(ctx, `PRAGMA journal_size_limit`).Scan(&limit); err != nil {
+		t.Fatal(err)
+	}
+	if limit != 64<<20 {
+		t.Fatalf("journal_size_limit=%d, want 64 MiB", limit)
+	}
+	if err := st.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckpointDoesNothingOnPostgres(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		if err := st.Checkpoint(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
