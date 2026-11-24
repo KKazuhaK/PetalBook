@@ -18,6 +18,7 @@ export function SourceList({
   choices,
   canOwn,
   apiLocked,
+  unavailable,
   disabled,
   owner,
 }: {
@@ -31,6 +32,8 @@ export function SourceList({
   // Whether the administrators let a space use its own pages; and keep it from choosing an interface.
   canOwn: boolean
   apiLocked: boolean
+  // Interfaces the space chose that are switched off (kept, and skipped), by id.
+  unavailable?: Record<string, string>
   disabled?: boolean
   owner: string
 }) {
@@ -55,7 +58,8 @@ export function SourceList({
               key={it.kind === 'api' ? it.id : `${it.kind}-${i}`}
               data-api-item={it.kind === 'api' ? it.id : undefined}
               data-source-kind={it.kind}
-              className="grid min-w-0 gap-1.5 rounded-lg border p-2"
+              className={`grid min-w-0 gap-1.5 rounded-lg border p-2 ${it.kind === 'api' && unavailable?.[it.id] ? 'opacity-60' : ''}`}
+              data-unavailable={it.kind === 'api' ? (unavailable?.[it.id] ?? undefined) : undefined}
             >
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <span className="min-w-0 text-sm break-words">
@@ -63,6 +67,12 @@ export function SourceList({
                   {it.kind === 'api'
                     ? th.settings.apiFor(nameOf(it.id), available.find((a) => a.id === it.id)?.lang ?? '')
                     : label(it)}
+                  {it.kind === 'api' && unavailable?.[it.id] && (
+                    <span className="text-xs text-muted-foreground" data-slot="source-off">
+                      {' '}
+                      {th.settings.srcOff}
+                    </span>
+                  )}
                   {it.kind === 'api' && apiLocked && (
                     <span className="text-xs text-muted-foreground"> {th.settings.lockedByAdmin}</span>
                   )}

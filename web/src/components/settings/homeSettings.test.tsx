@@ -285,6 +285,34 @@ describe('the Home section, accounts mode', () => {
     })
   })
 
+  it('an interface that was switched off stays, greyed with the reason, and a save keeps it', async () => {
+    await asOwner((admin, space) => {
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
+      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['hitokoto'] })
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: false })
+    })
+    // It is on the first tab, in the list, marked.
+    expect(mode(th.settings.modes.api).checked).toBe(true)
+    const row = dialog()!.querySelector<HTMLElement>('[data-api-item="hitokoto"]')!
+    expect(row.getAttribute('data-unavailable')).toBe('disabled')
+    expect(row.querySelector('[data-slot="source-off"]')!.textContent).toContain(th.settings.srcOff.slice(1, 8))
+    // Another change is saved, and it goes back with it.
+    await click(dialog()!.querySelector<HTMLElement>('[role="switch"]')!)
+    await click(save())
+    await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
+    expect(writes().find((w) => w.url === '/daily/prefs')!.body).toMatchObject({ inherit: false, apis: ['hitokoto'] })
+  })
+
+  it('an interface that no longer exists is told, and nothing is shown in its place', async () => {
+    await asOwner((admin, space) => {
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
+      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['zhone'] })
+      admin('DELETE', '/api/admin/daily/apis/zhone')
+    })
+    expect(dialog()!.querySelector('[data-slot="source-gone"]')!.textContent).toContain('zhone')
+    expect(dialog()!.querySelector('[data-api-item="zhone"]')).toBeNull()
+  })
+
   it('an interface left chosen on a language that no longer uses one is let go', async () => {
     await asOwner((admin, space) => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))

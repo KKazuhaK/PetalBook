@@ -2242,6 +2242,10 @@ export function createMockServer(options: MockOptions = {}) {
         Object.keys(mine.sources).filter((k) => k !== ''),
       )
       const list = (m !== null ? mine.sources[m] : mine.sources['']) ?? []
+      // An interface that is gone or switched off is not there: when that is all there is, nothing else is picked.
+      const lost = list.some(
+        (src) => src.kind === 'api' && locked.api && !apis.some((a) => a.id === src.id && a.enabled),
+      )
       const usable = list.filter((src) =>
         src.kind === 'api'
           ? locked.api && apis.some((a) => a.id === src.id && a.enabled)
@@ -2250,7 +2254,10 @@ export function createMockServer(options: MockOptions = {}) {
             : true,
       )
       if (usable.length > 0) return ask(usable, 'space:' + space.id)
+      if (lost) return { page: null, reason: 'unavailable' }
     }
+    if (accounts && locked.api && (mine?.apis.length ?? 0) > 0 && chosen.length === 0)
+      return { page: null, reason: 'unavailable' }
     const own_ = accounts ? chooseApis(chosen, lang) : []
     if (own_.length > 0)
       return ask(
@@ -2280,12 +2287,26 @@ export function createMockServer(options: MockOptions = {}) {
     }
     return { page: null, reason: 'no_source' }
   }
+  // How an interface stands: set up and on, switched off, or not there at all.
+  const statusOf = (id: string): 'ok' | 'disabled' | 'gone' => {
+    const custom = site.apis.find((a) => a.id === id)
+    if (custom) return custom.enabled ? 'ok' : 'disabled'
+    if (PROVIDERS.some((p) => p.id === id)) return site.providers[id]?.enabled ? 'ok' : 'disabled'
+    return 'gone'
+  }
   const routeDailyPrefs = (space: SpaceRec, method: string, body: Record<string, unknown>): MockResponse => {
     const available = allApis().filter((a) => a.enabled)
     if (method === 'PUT') {
       if (typeof body.inherit !== 'boolean' || !Array.isArray(body.apis))
         throw new HttpError(400, 'invalid', '给 inherit 和 apis')
       const usable = new Set(available.map((a) => a.id))
+      // What the space chose and was switched off since is kept when the page sends it back.
+      const before = spaceDaily.get(space.id)
+      for (const id of [
+        ...(before?.apis ?? []),
+        ...Object.values(before?.sources ?? {}).flatMap((l) => l.flatMap((x) => (x.kind === 'api' ? [x.id] : []))),
+      ])
+        if (statusOf(id) === 'disabled') usable.add(id)
       for (const id of body.apis)
         if (typeof id !== 'string' || !usable.has(id))
           throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
@@ -2326,13 +2347,33 @@ export function createMockServer(options: MockOptions = {}) {
       })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
-    const kept = now.apis.filter((id) => available.some((a) => a.id === id))
+    const unavailable: Record<string, string> = {}
+    const kept = now.apis.filter((id) => {
+      const st = statusOf(id)
+      if (st !== 'ok') unavailable[id] = st
+      return st !== 'gone'
+    })
+    const sources = now.sources
+      ? Object.fromEntries(
+          Object.entries(now.sources).map(([l, list]) => [
+            l,
+            list.flatMap((src): Record<string, unknown>[] => {
+              if (src.kind !== 'api') return [src]
+              const st = statusOf(src.id)
+              if (st === 'ok') return [src]
+              unavailable[src.id] = st
+              return st === 'gone' ? [] : [{ ...src, available: false, reason: 'disabled' }]
+            }),
+          ]),
+        )
+      : undefined
     return {
       status: 200,
       body: {
         inherit: now.inherit,
         apis: kept,
-        ...(now.sources ? { sources: now.sources } : {}),
+        ...(sources ? { sources } : {}),
+        ...(Object.keys(unavailable).length > 0 ? { unavailable } : {}),
         options: Object.fromEntries(Object.entries(now.options ?? {}).filter(([id]) => kept.includes(id))),
         available: available.map((a) => ({
           id: a.id,
@@ -2440,6 +2481,8 @@ export function createMockServer(options: MockOptions = {}) {
           const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
           next = { kind: 'api', apis, ...(Object.keys(options).length > 0 ? { options } : {}) }
         } else if (isRecord(d) && d.kind === 'sources' && isRecord(d.sources) && Object.keys(d.sources).length > 0) {
+          if (d.options !== undefined)
+            throw new HttpError(400, 'invalid', 'options go with a source, not with the default')
           const ids = new Set(allApis().map((a) => a.id))
           const sources: Record<string, MockSource[]> = {}
           for (const [k, value] of Object.entries(d.sources)) {

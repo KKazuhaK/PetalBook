@@ -180,6 +180,9 @@ export const homeEn: HomeMessages = {
       'Sources for this language, in order: external interfaces the administrators set up, their lines, pages of this space. One text a day, the same for everybody in the space.',
     addSource: 'Add a source…',
     srcInterfaces: 'External interfaces',
+    srcOff: '(switched off by the administrators: kept, and skipped for now)',
+    srcGone: (ids: string) =>
+      `An interface this space chose no longer exists (${ids}); no text is shown until another source is chosen and saved.`,
     srcLines: "The administrators' lines",
     srcOwn: 'Pages of this space',
     noApis: 'The administrators have not set up an interface that can be used.',

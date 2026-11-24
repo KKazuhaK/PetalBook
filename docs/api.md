@@ -3961,6 +3961,19 @@ needed) and optionally `options` and `sources`, and answers as `GET`; `400 inval
 that is not in `available`, and for an option or value its interface does not
 declare, or one for an interface that is not in `apis`; it saves `apis` even when `allowed.api` is `false`.
 
+**Interfaces that are off or gone.** What a space chose and the administrators
+switched off (or deleted) since is not lost by a save from the settings page.
+`GET` keeps an interface that is switched off in `apis` and in `sources`, with
+`"available": false, "reason": "disabled"` on a source, and lists it in
+`unavailable` (`{"favqs": "disabled"}`); it is skipped when the text is read, and
+`PUT` takes it back as it is (it cannot be newly chosen while it is off: `400
+invalid`). One that no longer exists is left out of the answer and listed in
+`unavailable` as `"gone"`, so the settings page can say so. Reading then gives no
+text with the reason `unavailable` when nothing the space chose can be used: the
+default is not shown in its place, unless the space's list has another source
+that works (the lines, its own pages). Locks (`allowed`) are another matter:
+what a lock stops is kept and not used, and the default is shown.
+
 **A space's own list of sources.** `sources` is, as in the administrators'
 default, a list for each language in order (`""` for the languages not listed;
 at most 8 each), the sources taking turns by day with the same rotation and
@@ -4039,7 +4052,9 @@ nothing else, and the repairs are saved once, at the first read:
   are lists of one, or of the interfaces they list, and are read as such. The
   sources of a language take turns by day, the way the interfaces of one do
   (see "Several interfaces for a language"): the one the day starts with is
-  made from the day and the scope, "another" moves to the next, and a source
+  made from the day and the scope, "another" moves to the next source that gives
+  a text after the one that gave today's (a source that had nothing is not
+  stopped at twice), and a source
   that fails, is asked too often or has nothing (no lines, a space with no
   page that meets the source) is passed over for the next. Only one text is
   ever given. The source of a page of a space says who wrote it and where
@@ -4198,15 +4213,21 @@ option `category`), `shanbay` (扇贝每日一句; `zh-Hans`, `en`) and `iciba`
 (金山词霸每日一句; `zh-Hans`, `en`). The last two answer in both languages at
 once: each language is a lane of its own, and a reader gets the one text in
 their language (the translation or note for `zh-Hans`, the English for `en`),
-never both. `shanbay` is the interface the service's own mini program uses, not
+never both. `shanbay` and `iciba` serve only the languages they have, `zh-Hans`
+and `en`, matched the way languages are everywhere (`zh-Hant` and `zh-TW` are
+matched to `zh-Hans`, `en-GB` to `en`): a reader of another language (`fr`) is
+given none of their text, they are skipped, and the next source of the list
+answers (with none the reason is `no_source`). `shanbay` is the interface the service's own mini program uses, not
 a published API, so it may change. `iciba` labels its JSON `text/html`, which is
 accepted for it only (a flag only the program sets on a built-in interface; the
 body must still parse strictly as JSON, with the same size limit). None of
 them is in any default. A stored id that
-is no longer built in (the earlier `quotable`, whose service is gone) is treated
-like any unknown id: an interface of the administrators' own keeps showing as
-such, a choice that names it is not found, and nothing else is picked in its
-place.
+is no longer built in (the earlier `quotable`, whose service is gone) is an
+interface that does not exist: an interface of the administrators' own with that
+id keeps showing as such; in a default, a choice that names it gives the reason
+`unavailable` when read; and a space that chose it is shown nothing, with the
+reason `unavailable`: nothing else is picked in its place, not the tenant's or
+the site's default (see "Interfaces that are off or gone", below).
 
 **Options of a built-in interface.** A provider may declare options: a `key`, the
 query parameter `param` the values are sent as, a `kind` (`multi`: any number of
@@ -4373,7 +4394,11 @@ characters each, and the server keeps at most 5 000 in all.
 **Author and source.** An entry has `text`, `author` and `source`. In `lines`
 and `markdown` they are cut off the end of the entry when it ends with
 ` —— `, ` — ` or ` -- ` (with the spaces) and an attribution, the last mark
-only: `人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》` is the author 纳兰性德
+only, and only when a dash is not inside a sentence: what is before the mark
+ends a sentence or a quotation (`。！？…」』”’` or `. ! ? " '`), or what is
+after it has a `《source》`. So `春眠不觉晓 —— 处处闻啼鸟`, `人生如梦 —— 一尊还酹江月`,
+`Never give up — Never` and `War — Peace and Love` are text only, while
+`春眠不觉晓 —— 孟浩然《春晓》` is split: `人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》` is the author 纳兰性德
 and the source 山花子 (the source is what is in `《…》`); `The best way out is always
 through. — Robert Frost` has the author Robert Frost, and `… — Author, Source`
 both. What follows the mark must look like an attribution, else the entry is the

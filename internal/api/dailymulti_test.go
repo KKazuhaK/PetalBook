@@ -34,6 +34,8 @@ func (s *twoServices) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch r.URL.Host {
 	case "favqs.com":
 		body = `{"quote":{"body":"fav","author":"Buddha","author_permalink":"buddha","id":1}}`
+	case "apiv3.shanbay.com":
+		body = `{"content":"Be kind.","translation":"与人为善。","author":"A","assign_date":"2026-11-23"}`
 	case "international.v1.hitokoto.cn":
 		body = `{"hitokoto":"hito","from":"x","from_who":null,"uuid":"u"}`
 	}

@@ -19,7 +19,9 @@ var attributionMarks = []string{" —— ", " — ", " -- "}
 var latinParticles = map[string]bool{"de": true, "da": true, "del": true, "della": true, "di": true, "van": true, "von": true, "der": true, "den": true,
 	"la": true, "le": true, "du": true, "dos": true, "bin": true, "ibn": true, "al": true, "el": true, "of": true, "the": true, "and": true, "y": true, "e": true}
 
-// parseAttribution cuts the attribution off the end of a line:
+// parseAttribution cuts the attribution off the end of a line, when what is
+// before the mark ends a sentence or a quotation (。！？…」』” . ! ? " ') or what
+// is after it has a 《source》; any other dash is in the sentence:
 //
 //	text —— Author《Source》     text — Author, Source     text -- Author
 //
@@ -47,7 +49,19 @@ func parseAttribution(line string) attribution {
 	if !ok {
 		return attribution{Text: line}
 	}
+	// A dash inside a sentence is not a mark: what is before it has to end one,
+	// or what is after it has to name a 《source》.
+	if !endsSentence(text) && !strings.Contains(rest, "《") {
+		return attribution{Text: line}
+	}
 	return attribution{Text: text, Author: author, Source: source}
+}
+
+// endsSentence reports whether s ends with the punctuation that ends a
+// sentence or a quotation.
+func endsSentence(s string) bool {
+	r, _ := utf8.DecodeLastRuneInString(strings.TrimSpace(s))
+	return strings.ContainsRune("。！？…」』”’.!?\"'", r)
 }
 
 func readAttribution(rest string) (author, source string, ok bool) {

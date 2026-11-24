@@ -143,8 +143,9 @@ export function listsFromPrefs(prefs: DailyPrefs | null, tabs: readonly string[]
     return out
   }
   for (const id of prefs.apis) {
-    const tab = tabs.find((t) => apisOfTab(prefs, t).some((a) => a.id === id))
-    if (tab !== undefined) (out[tab] ??= []).push({ kind: 'api', id })
+    // One that is switched off is on no tab (it is not offered): it stays where all languages are, marked.
+    const tab = tabs.find((t) => apisOfTab(prefs, t).some((a) => a.id === id)) ?? ''
+    ;(out[tab] ??= []).push({ kind: 'api', id })
   }
   return out
 }

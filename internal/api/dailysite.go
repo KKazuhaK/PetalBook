@@ -57,6 +57,11 @@ type dailySource struct {
 	Options map[string][]string `json:"options,omitempty"`
 	Space   string              `json:"space,omitempty"`
 	Source  *space.DailyConfig  `json:"source,omitempty"`
+	// Available and Reason are only in an answer (a space's prefs): an interface
+	// that is switched off stays in the list, marked, and is skipped when read.
+	// They are not read from a request.
+	Available *bool  `json:"available,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // sourceLists are the sources of each language of a default.
@@ -843,6 +848,9 @@ func (s *server) checkSpaceSource(ctx context.Context, id string, src space.Dail
 // has 1 to maxAPIsPerLanguage sources, each an interface that is set up, the
 // administrators' lines, or a space with a source.
 func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *siteDaily) error {
+	if d.Options != nil {
+		return &space.InvalidError{Msg: "options go with a source of a default that is sources (each source has its own), not with the default"}
+	}
 	if d.Space != "" || d.Source != nil || d.APIs != nil || len(d.Sources) == 0 {
 		return &space.InvalidError{Msg: "a default that is sources needs sources, the list for each language (\"\" for all the others), and no space, source or apis"}
 	}

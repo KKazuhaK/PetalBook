@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 func (x *extFixture) putLines(lang, text, format string) {
@@ -28,8 +31,8 @@ func TestLinesKeepTheirAuthorAndSource(t *testing.T) {
 			t.Fatalf("%s", got)
 		}
 		// The preview splits the same way and keeps nothing.
-		code, p := x.adm("POST", "/api/admin/daily/lines/preview", map[string]any{"text": "a — B C\nno split here", "format": "lines"})
-		if code != 200 || fmt.Sprint(p["lines"]) != "[map[author:B C text:a] map[text:no split here]]" {
+		code, p := x.adm("POST", "/api/admin/daily/lines/preview", map[string]any{"text": "a. — B C\nno split here", "format": "lines"})
+		if code != 200 || fmt.Sprint(p["lines"]) != "[map[author:B C text:a.] map[text:no split here]]" {
 			t.Fatalf("%d %v", code, p)
 		}
 		_, g = x.adm("GET", "/api/admin/daily/lines?lang=", nil)
@@ -180,6 +183,11 @@ func TestSourcesAreReadFromOlderConfigsAndChecked(t *testing.T) {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
+		// Options belong to a source, not to the default: a top-level one is refused, not stored.
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "sources", "sources": map[string]any{"": []any{map[string]any{"kind": "list"}}},
+			"options": map[string]any{"hitokoto": map[string]any{"categories": []any{"z"}}}}}); code != 400 || r["error"] != "invalid" {
+			t.Errorf("%d %v", code, r)
+		}
 		// A space of the administrators' choice is a source too, with its pages' author and source.
 		if code, r := x.setSources(map[string]any{"": []any{map[string]any{"kind": "space", "space": x.tm.sid, "source": map[string]any{"folder": ""}}, map[string]any{"kind": "list"}}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
@@ -268,6 +276,154 @@ func TestASpaceListsSourcesOfSeveralKinds(t *testing.T) {
 		}
 		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "fav" {
 			t.Errorf("%q", got)
+		}
+	})
+}
+
+// "Another" starts after the source that answered, not after the one the day started with: when
+// the first of the day failed, the first "another" must not show what is already there.
+func TestAnotherFollowsTheSourceThatAnswered(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		svc := &twoServices{}
+		x.fetcher.SetTransport(svc)
+		x.enableAll()
+		svc.fail("international.v1.hitokoto.cn", true)
+		x.setSources(map[string]any{"": []any{map[string]any{"kind": "api", "id": "hitokoto"}, map[string]any{"kind": "api", "id": "favqs"}, map[string]any{"kind": "api", "id": "zenquotes"}}})
+		ask := func(query string) string {
+			x.now = x.now.Add(15 * time.Second)
+			return quoteText(quoteOf(t, x.own, x.base, query))
+		}
+		// Three days start with each of the three in turn, one of them with the one that is down.
+		for _, day := range []string{"2026-11-22", "2026-11-23", "2026-11-24"} {
+			a0 := ask("date=" + day + "&lang=en")
+			a1 := ask("date=" + day + "&lang=en&skip=1")
+			a2 := ask("date=" + day + "&lang=en&skip=2")
+			if a0 == "" || a1 == "" || a0 == a1 || a2 != a0 {
+				t.Errorf("%s: %q %q %q", day, a0, a1, a2)
+			}
+		}
+	})
+}
+
+// An interface the administrators switched off stays in what the space chose, marked, and a save
+// from the settings page keeps it; one that no longer exists is left out, and the answer says so.
+func TestASpacesSwitchedOffInterfaceIsKeptAndMarked(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		x.fetcher.SetTransport(&twoServices{})
+		x.enableAll()
+		x.putLines("", "Ours", "lines")
+		list := []any{map[string]any{"kind": "api", "id": "favqs"}, map[string]any{"kind": "list"}}
+		if code, r := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}, "sources": map[string]any{"": list}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		x.adm("PUT", "/api/admin/daily/providers/favqs", map[string]any{"enabled": false})
+		_, p := x.own("GET", x.base+"/daily/prefs", nil)
+		got := asSlice(asMap(p["sources"])[""])
+		if len(got) != 2 || asMap(got[0])["id"] != "favqs" || asMap(got[0])["available"] != false || asMap(got[0])["reason"] != "disabled" || asMap(p["unavailable"])["favqs"] != "disabled" {
+			t.Fatalf("%v", p)
+		}
+		// Read: skipped, the lines answer.
+		for _, day := range []string{"2026-11-22", "2026-11-23"} {
+			if got := quoteText(quoteOf(t, x.viewer, x.base, "date="+day+"&lang=en")); got != "Ours" {
+				t.Errorf("%s: %q", day, got)
+			}
+		}
+		// Saved again as the page sends it back, with the marks: kept.
+		if code, r := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}, "sources": p["sources"]}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		_, p = x.own("GET", x.base+"/daily/prefs", nil)
+		if len(asSlice(asMap(p["sources"])[""])) != 2 {
+			t.Fatalf("a save lost it: %v", p["sources"])
+		}
+		// But a space cannot newly choose one that is off.
+		if code, _ := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}, "sources": map[string]any{"": []any{map[string]any{"kind": "api", "id": "zenquotes"}, map[string]any{"kind": "api", "id": "dummyjson"}}}}); code != 400 {
+			t.Errorf("a switched-off interface was chosen: %d", code)
+		}
+		// Switched on again, it is used again.
+		x.adm("PUT", "/api/admin/daily/providers/favqs", map[string]any{"enabled": true})
+		_, p = x.own("GET", x.base+"/daily/prefs", nil)
+		if asMap(asSlice(asMap(p["sources"])[""])[0])["available"] != nil || p["unavailable"] != nil {
+			t.Fatalf("%v", p)
+		}
+	})
+}
+
+func TestAChosenInterfaceThatIsGoneIsToldAndNothingElseIsPicked(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		x.fetcher.SetTransport(&twoServices{})
+		x.enableAll()
+		x.putLines("", "Ours", "lines")
+		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		ctx := context.Background()
+		// What an earlier version had chosen: an interface that is not built in any more.
+		for name, raw := range map[string]string{"ids": `["quotable"]`, "sources": `{"apis":[],"sources":{"":[{"kind":"api","id":"quotable"}]}}`} {
+			if err := store.SetSpaceDaily(ctx, x.a.st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: raw}); err != nil {
+				t.Fatal(err)
+			}
+			_, p := x.own("GET", x.base+"/daily/prefs", nil)
+			if fmt.Sprint(p["apis"]) != "[]" || asMap(p["unavailable"])["quotable"] != "gone" {
+				t.Fatalf("%s: %v", name, p)
+			}
+			// The space does not fall through to the default: no text, and why.
+			r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")
+			if r["quote"] != nil || r["reason"] != "unavailable" {
+				t.Errorf("%s: %v", name, r)
+			}
+		}
+		// A list that still has something usable is used.
+		if err := store.SetSpaceDaily(ctx, x.a.st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: `{"apis":[],"sources":{"":[{"kind":"api","id":"quotable"},{"kind":"list"}]}}`}); err != nil {
+			t.Fatal(err)
+		}
+		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "Ours" {
+			t.Errorf("%q", got)
+		}
+		// Choosing again clears it.
+		x.choose("favqs")
+		if _, p := x.own("GET", x.base+"/daily/prefs", nil); p["unavailable"] != nil {
+			t.Errorf("%v", p)
+		}
+	})
+}
+
+// A bilingual interface serves the two languages it has, one text for each; a reader of another
+// language is not given the Chinese side, and the next source answers.
+func TestABilingualInterfaceSkipsLanguagesItDoesNotServe(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		x.fetcher.SetTransport(&twoServices{})
+		x.adm("PUT", "/api/admin/daily/providers/shanbay", map[string]any{"enabled": true})
+		x.adm("PUT", "/api/admin/daily/providers/favqs", map[string]any{"enabled": true})
+		// A default listing the two for every language, shanbay first on some days and favqs on others.
+		x.setSources(map[string]any{"": []any{map[string]any{"kind": "api", "id": "shanbay"}, map[string]any{"kind": "api", "id": "favqs"}}})
+		ask := func(lang, day string) string {
+			x.now = x.now.Add(2 * time.Second)
+			return quoteText(quoteOf(t, x.own, x.base, "date="+day+"&lang="+lang))
+		}
+		days := []string{"2026-11-22", "2026-11-23", "2026-11-24"}
+		for _, day := range days {
+			if got := ask("fr", day); got != "fav" {
+				t.Errorf("fr on %s: %q", day, got)
+			}
+		}
+		seen := map[string]bool{}
+		for _, day := range days {
+			seen[ask("en-GB", day)] = true
+		}
+		if !seen["Be kind."] {
+			t.Errorf("en: %v", seen)
+		}
+		for _, lang := range []string{"zh-CN", "zh-Hant"} { // zh-Hant is matched to zh-Hans, the one Chinese there is
+			seen := map[string]bool{}
+			for _, day := range days {
+				seen[ask(lang, day)] = true
+			}
+			if !seen["与人为善。"] || seen["Be kind."] {
+				t.Errorf("%s: %v", lang, seen)
+			}
 		}
 	})
 }

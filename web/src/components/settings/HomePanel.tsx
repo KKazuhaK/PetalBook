@@ -151,6 +151,10 @@ function Editor({
   const locked = (m: Mode) =>
     m === 'own' ? prefs?.allowed?.own === false : m === 'api' ? prefs?.allowed?.api === false : false
   const tabApis = apisOfTab(prefs, tab)
+  // Interfaces the space chose that no longer exist: left out of what was saved, and the owner is told.
+  const gone = Object.entries(prefs?.unavailable ?? {})
+    .filter(([, why]) => why === 'gone')
+    .map(([id]) => id)
   return (
     <div className="space-y-8">
       <SettingsSection title={th.title} description={th.settings.help}>
@@ -173,6 +177,11 @@ function Editor({
           ))}
         </div>
 
+        {gone.length > 0 && (
+          <div data-slot="source-gone">
+            <FormMessage tone="info">{th.settings.srcGone(gone.join(', '))}</FormMessage>
+          </div>
+        )}
         <div role="tabpanel" aria-label={tabName(tab)} className="grid gap-4 rounded-lg border p-4">
           <div role="radiogroup" aria-label={th.settings.sourceLabel} className="grid gap-2">
             {modes.map((m) => (
@@ -212,6 +221,7 @@ function Editor({
                 choices={choices}
                 canOwn={prefs?.allowed?.own !== false}
                 apiLocked={prefs?.allowed?.api === false}
+                unavailable={prefs?.unavailable}
                 disabled={busy}
                 owner={tab || 'all'}
               />

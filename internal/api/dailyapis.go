@@ -583,10 +583,20 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 	}
 	all := site.all()
 	// The space's own list of sources, of any kind, for the reader's language.
-	if srcs := s.spaceSources(choice, all, allow, lang); len(srcs) > 0 {
+	srcs, lost := s.spaceSources(choice, all, allow, lang)
+	if len(srcs) > 0 {
 		return s.dailyFromSources(c, site, srcs, "space:"+c.sp.Info.ID, date, skip, lang, tz)
 	}
-	if cands := chooseAPIs(all, choice.APIs, lang); len(cands) > 0 {
+	if lost {
+		// What the space chose is not there (gone, or switched off): nothing else is
+		// picked in its place, and the owner is told in settings.
+		return nil, "unavailable", nil
+	}
+	cands := chooseAPIs(all, choice.APIs, lang)
+	if len(cands) == 0 && len(choice.APIs) > 0 {
+		return nil, "unavailable", nil
+	}
+	if len(cands) > 0 {
 		srcs := make([]dailySource, len(cands))
 		for i, a := range cands {
 			srcs[i] = dailySource{Kind: "api", ID: a.ID, Options: choice.Options[a.ID]}
@@ -651,37 +661,53 @@ func rotation(scope, date string, n int) int {
 func (s *server) dailyFromSources(c *call, site siteDaily, srcs []dailySource, scope, date string, skip int, lang string, tz *int) (*dailyQuote, string, error) {
 	ctx := c.r.Context()
 	n := len(srcs)
-	first := (rotation(scope, date, n) + skip) % n
-	lap := skip / n
+	start := rotation(scope, date, n)
 	var stale *dailyQuote
-	limited := 0
+	limited, tried := 0, 0
 	reason := ""
 	rank := map[string]int{"": 0, "no_match": 1, "out_of_range": 2, "unavailable": 3}
-	for i := 0; i < n; i++ {
-		src := srcs[(first+i)%n]
-		q, why, err := s.fromSource(c, ctx, site, src, date, lap, lang, tz)
+	// A step is a place in the turns: the source after the start, and the one after it, round and round;
+	// each time round the list (the lap) an interface that can asks for a new item. "Another" is the next
+	// step that gives a text, so it moves on from the source that gave today's, not from the one the day
+	// started with when that one had nothing. With one source, step and skip are the same.
+	steps := n * (skip + 2)
+	if n == 1 {
+		steps = skip + 1
+	}
+	found := 0
+	for step := 0; step < steps; step++ {
+		if n == 1 && step < skip {
+			continue
+		}
+		q, why, err := s.fromSource(c, ctx, site, srcs[(start+step)%n], date, step/n, lang, tz)
+		tried++
 		switch {
 		case errors.Is(err, dailyfetch.ErrRateLimited):
 			limited++
-			continue
 		case err != nil:
 			return nil, "", err
 		case q != nil && q.Stale:
 			if stale == nil {
 				stale = q
 			}
-			continue
 		case q != nil:
-			return q, "", nil
+			if found == skip || n == 1 {
+				return q, "", nil
+			}
+			found++
+		default:
+			if rank[why] >= rank[reason] {
+				reason = why
+			}
 		}
-		if rank[why] >= rank[reason] {
-			reason = why
+		if found == 0 && step == n-1 && n > 1 {
+			break // nothing gives a text today: later steps would not
 		}
 	}
 	switch {
-	case stale != nil:
+	case stale != nil && found == 0:
 		return stale, "", nil
-	case limited == n:
+	case limited == tried:
 		return nil, "", dailyfetch.ErrRateLimited
 	}
 	return nil, reason, nil
@@ -734,6 +760,9 @@ func (s *server) fromSource(c *call, ctx context.Context, site siteDaily, src da
 		}
 		if api == nil {
 			return nil, "unavailable", nil // gone, or switched off
+		}
+		if !api.Serves(lang) {
+			return nil, "", nil // it has no text in this language: the next source answers
 		}
 		q, err := s.askAPI(c, site, *api, src.Options, date, skip, lang)
 		switch {
@@ -1362,6 +1391,10 @@ func probeRefusal(res dailyfetch.ProbeResult) *codedError {
 type dailyPrefsResp struct {
 	Inherit bool     `json:"inherit"`
 	APIs    []string `json:"apis"`
+	// Unavailable says, by interface id, what is the matter with an interface the
+	// space chose: "disabled" (switched off: kept, marked and skipped) or "gone"
+	// (it no longer exists: left out of the answer).
+	Unavailable map[string]string `json:"unavailable,omitempty"`
 	// Sources are the space's own lists of sources by language, when it has
 	// them (see putDailyPrefs); interfaces that are not set up are left out.
 	Sources sourceLists `json:"sources,omitempty"`
@@ -1424,20 +1457,36 @@ func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 			for l, list := range lists {
 				kept := []dailySource{}
 				for _, src := range list {
-					if src.Kind != "api" || known[src.ID] {
-						kept = append(kept, src)
+					src.Available, src.Reason = nil, ""
+					if src.Kind == "api" && !known[src.ID] {
+						switch site.ifaceStatus(src.ID) {
+						case "gone":
+							out.markUnavailable(src.ID, "gone")
+							continue
+						default:
+							no := false
+							src.Available, src.Reason = &no, "disabled"
+							out.markUnavailable(src.ID, "disabled")
+						}
 					}
+					kept = append(kept, src)
 				}
 				out.Sources[l] = kept
 			}
 		}
 	}
 	for _, id := range choice.APIs {
-		if known[id] {
-			out.APIs = append(out.APIs, id)
-			if o, ok := choice.Options[id]; ok {
-				out.Options[id] = o
-			}
+		switch {
+		case known[id]:
+		case site.ifaceStatus(id) == "gone":
+			out.markUnavailable(id, "gone")
+			continue
+		default:
+			out.markUnavailable(id, "disabled")
+		}
+		out.APIs = append(out.APIs, id)
+		if o, ok := choice.Options[id]; ok {
+			out.Options[id] = o
 		}
 	}
 	if site.Default != nil {
@@ -1446,6 +1495,33 @@ func (s *server) dailyPrefs(c *call) (dailyPrefsResp, error) {
 		}{site.Default.Kind}
 	}
 	return out, nil
+}
+
+func (r *dailyPrefsResp) markUnavailable(id, why string) {
+	if r.Unavailable == nil {
+		r.Unavailable = map[string]string{}
+	}
+	r.Unavailable[id] = why
+}
+
+// ifaceStatus is how an interface stands: "" when it is set up and enabled,
+// "disabled" when it exists and is switched off, "gone" when there is none.
+func (d *siteDaily) ifaceStatus(id string) string {
+	for _, a := range d.APIs {
+		if a.ID == id {
+			if a.Enabled {
+				return ""
+			}
+			return "disabled"
+		}
+	}
+	if _, ok := dailyfetch.ProviderByID(id); ok {
+		if d.Providers[id].Enabled {
+			return ""
+		}
+		return "disabled"
+	}
+	return "gone"
 }
 
 func (s *server) getDailyPrefs(c *call) {
@@ -1477,6 +1553,14 @@ func (s *server) putDailyPrefs(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// What the space already chose and the administrators switched off since stays
+	// as it is (the page sends it back); it cannot be newly chosen.
+	prefs, err := store.GetSpaceDaily(ctx, s.opt.Store.Q(), c.sp.Info.ID)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	site = site.withKept(store.ParseSpaceChoice(prefs.APIs))
 	known := map[string]bool{}
 	for _, a := range site.all() {
 		if a.Enabled {
@@ -1572,24 +1656,27 @@ func atoiRange(s string, lo, hi int) (int, bool) {
 // in order, without those the administrators do not let spaces use (an
 // interface while `allow.api` is off, the space's own pages while `allow.own`
 // is) or that are not set up or are switched off; they are kept and not used.
-func (s *server) spaceSources(choice store.SpaceChoice, all []storedAPI, allow dailyAllow, lang string) []dailySource {
+func (s *server) spaceSources(choice store.SpaceChoice, all []storedAPI, allow dailyAllow, lang string) (out []dailySource, lost bool) {
 	if len(choice.Sources) == 0 {
-		return nil
+		return nil, false
 	}
 	var lists sourceLists
 	if json.Unmarshal(choice.Sources, &lists) != nil {
-		return nil
+		return nil, false
 	}
 	d := siteDefault{Kind: "sources", Sources: lists}
 	list, ok := d.sourcesFor(lang)
 	if !ok {
-		return nil
+		return nil, false
 	}
-	var out []dailySource
 	for _, src := range list {
 		switch src.Kind {
 		case "api":
-			if !allow.API || !slices.ContainsFunc(all, func(a storedAPI) bool { return a.ID == src.ID && a.Enabled }) {
+			if !allow.API {
+				continue // locked: kept and not used, the way it always was
+			}
+			if !slices.ContainsFunc(all, func(a storedAPI) bool { return a.ID == src.ID && a.Enabled }) {
+				lost = true
 				continue
 			}
 		case "own":
@@ -1599,7 +1686,7 @@ func (s *server) spaceSources(choice store.SpaceChoice, all []storedAPI, allow d
 		}
 		out = append(out, src)
 	}
-	return out
+	return out, lost
 }
 
 // checkSpaceSources checks the sources a space's owner lists: interfaces that
@@ -1626,6 +1713,7 @@ func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (so
 		}
 		checked := make([]dailySource, 0, len(list))
 		for _, src := range list {
+			src.Available, src.Reason = nil, "" // marks of an answer, sent back
 			switch src.Kind {
 			case "api":
 				if src.Space != "" || src.Source != nil {
@@ -1667,4 +1755,44 @@ func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (so
 		out[l] = checked
 	}
 	return out, nil
+}
+
+// withKept is the settings with the interfaces a space chose earlier and that
+// are switched off counted as on, for checking what the space sends back (a
+// copy: nothing is saved of it).
+func (d siteDaily) withKept(choice store.SpaceChoice) siteDaily {
+	ids := map[string]bool{}
+	for _, id := range choice.APIs {
+		ids[id] = true
+	}
+	if len(choice.Sources) > 0 {
+		var lists sourceLists
+		if json.Unmarshal(choice.Sources, &lists) == nil {
+			for _, list := range lists {
+				for _, src := range list {
+					if src.Kind == "api" {
+						ids[src.ID] = true
+					}
+				}
+			}
+		}
+	}
+	d.APIs = slices.Clone(d.APIs)
+	d.Providers = maps.Clone(d.Providers)
+	if d.Providers == nil {
+		d.Providers = map[string]providerState{}
+	}
+	for id := range ids {
+		if d.ifaceStatus(id) != "disabled" {
+			continue
+		}
+		if i := slices.IndexFunc(d.APIs, func(a storedAPI) bool { return a.ID == id }); i >= 0 {
+			d.APIs[i].Enabled = true
+		} else {
+			st := d.Providers[id]
+			st.Enabled = true
+			d.Providers[id] = st
+		}
+	}
+	return d
 }

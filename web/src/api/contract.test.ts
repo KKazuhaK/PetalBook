@@ -3205,6 +3205,17 @@ function suite(target: Target) {
             { text: 'The best way out is always through.', author: 'Robert Frost' },
             { text: 'I think — therefore I am' },
           ])
+          // A dash inside a sentence is not a mark: the text before it does not end one, and there is no 《source》.
+          const dashes = await adm('POST', '/lines/preview', {
+            text: '春眠不觉晓 —— 处处闻啼鸟\nNever give up — Never\nWar — Peace and Love\n春眠不觉晓 —— 孟浩然《春晓》',
+            format: 'lines',
+          })
+          expect(dashes.json.lines).toEqual([
+            { text: '春眠不觉晓 —— 处处闻啼鸟' },
+            { text: 'Never give up — Never' },
+            { text: 'War — Peace and Love' },
+            { text: '春眠不觉晓', author: '孟浩然', source: '春晓' },
+          ])
           const csv = await adm('POST', '/lines/preview', {
             text: 'text,author,source\n"One, two",Seneca,Letters\n',
             format: 'csv',
@@ -3225,6 +3236,14 @@ function suite(target: Target) {
           const mixed = await adm('PUT', '', { default: { kind: 'sources', sources: { '': [{ kind: 'list' }] } } })
           expect(mixed.status).toBe(200)
           expect(mixed.json.default).toEqual({ kind: 'sources', sources: { '': [{ kind: 'list' }] } })
+          // Options belong to a source, not to the default.
+          expect(
+            (
+              await adm('PUT', '', {
+                default: { kind: 'sources', sources: { '': [{ kind: 'list' }] }, options: { x: { y: ['z'] } } },
+              })
+            ).status,
+          ).toBe(400)
           // A single id is a list of one; a kind that is none is refused.
           expect((await adm('PUT', '', { default: { kind: 'api', apis: { '': 'nothing' } } })).status).toBe(400)
           expect(

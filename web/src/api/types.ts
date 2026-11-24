@@ -1364,6 +1364,9 @@ export interface DailyPrefs {
   // The space's own list of sources for each language, when it has one: api, the administrators' lines (`list`) or
   // pages of this space (`own`). Read in place of `apis` for a language that has a list.
   sources?: Record<string, DailySpaceSource[]>
+  // What is the matter with an interface the space chose: `disabled` (switched off; kept, marked and skipped) or `gone`
+  // (it no longer exists; left out of the answer, and nothing else is shown in its place).
+  unavailable?: Record<string, 'disabled' | 'gone'>
   // A built-in interface that answers in more than one language lists them in `languages`.
   available: { id: string; name: string; lang: string; languages?: string[]; options?: DailyOption[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
@@ -1447,7 +1450,8 @@ export interface KnownLanguage {
   english: string
 }
 export type DailySpaceSource =
-  | { kind: 'api'; id: string; options?: Record<string, string[]> }
+  // An interface the administrators switched off stays in the list, marked `available: false`, and is skipped.
+  | { kind: 'api'; id: string; options?: Record<string, string[]>; available?: boolean; reason?: string }
   | { kind: 'list' }
   | { kind: 'own'; source: DailySource }
 export type DailySourceItem =

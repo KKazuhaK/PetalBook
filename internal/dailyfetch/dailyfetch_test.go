@@ -1278,3 +1278,21 @@ func TestBilingualProviderLanes(t *testing.T) {
 		t.Fatal("html taken for JSON")
 	}
 }
+
+func TestServes(t *testing.T) {
+	for _, id := range []string{"shanbay", "iciba"} {
+		p, _ := ProviderByID(id)
+		for lang, want := range map[string]bool{"en": true, "en-GB": true, "zh-Hans": true, "zh-CN": true, "zh-Hant": true, "zh-TW": true, "fr": false, "ja": false, "pt-BR": false} {
+			if got := p.Serves(lang); got != want {
+				t.Errorf("%s serves %s: %v", id, lang, got)
+			}
+		}
+	}
+	// The others serve every language, as before.
+	for _, id := range []string{"hitokoto", "zenquotes", "favqs", "jinrishici"} {
+		p, _ := ProviderByID(id)
+		if !p.Serves("fr") {
+			t.Errorf("%s", id)
+		}
+	}
+}

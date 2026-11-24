@@ -399,6 +399,19 @@ func checkLangMap(m map[string]string) (map[string]string, error) {
 	return out, nil
 }
 
+// Serves reports whether an interface gives a text in the language a reader asks
+// in. One that answers in two languages at once (Texts) only serves those it has,
+// matched the BCP 47 way (zh-Hant is matched to zh-Hans, the one Chinese it has);
+// a reader of another language is not given the side it would fall back to. Any
+// other interface serves every language, as it always did.
+func (a API) Serves(lang string) bool {
+	if len(a.Texts) == 0 {
+		return true
+	}
+	_, ok := langtag.Match(lang, a.Languages)
+	return ok
+}
+
 // textPath is the path of the text for a language asked for: the one of Texts
 // the language is matched to, else Text.
 func (a API) textPath(lang string) string {

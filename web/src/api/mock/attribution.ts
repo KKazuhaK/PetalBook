@@ -78,5 +78,7 @@ export function parseAttribution(line: string): Attribution {
   const rest = whole.slice(at + mark.length).trim()
   if (text === '' || rest === '') return { text: whole, author: '', source: '' }
   const got = readAttribution(rest)
+  // A dash inside a sentence is no mark: what is before it ends a sentence, or what is after it has a 《source》.
+  if (got && !/[。！？…」』”’.!?"']$/.test(text) && !rest.includes('《')) return { text: whole, author: '', source: '' }
   return got ? { text, ...got } : { text: whole, author: '', source: '' }
 }
