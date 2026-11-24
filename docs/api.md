@@ -6731,10 +6731,16 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
   hourly look at items that are not at rest only takes over what a crash or a
   failure left, never an action that is still running, however long it takes. A
   restore whose item is not `restoring` any more when it ends puts nothing back.
+  The hourly look reads each item again once it holds it and leaves it alone
+  unless it is still in the state it was listed in (a restore that finished
+  meanwhile is not moved back).
 - A move between `DATA/spaces` (or `DATA/cache`) and `DATA/recycle` on different
-  filesystems is a copy (synced, written beside its destination and renamed into
-  place whole) and then a delete of the source; a copy cut short is started
-  again, so an item is never stuck `moving`.
+  filesystems is a copy (synced, with the files' modes, written beside its
+  destination and renamed into place whole) and then a delete of the source,
+  which is first renamed aside (`.moved`, within its own filesystem) so that a
+  delete cut short never leaves a partial tree in its place; a copy cut short is
+  started again and what is set aside is deleted, so an item is never stuck
+  `moving` and a space is never left partial.
 - Deleting a space whose clone is being restored from its remote (3.1) stops
   that restore and waits for it, and closes the space's index-only handle (4.1):
   nothing is written at its live place after the move.
@@ -6889,6 +6895,8 @@ Their username stays taken while they are in the recycle bin.
   each transfer and each membership left, so a deletion asked again after a
   failure records what the first attempt knew: the item says the person was
   enabled if they were before the first attempt, and lists every transfer.
+  Enabling the person again ends that record, and so does a deletion that
+  finds the person enabled: a later deletion starts afresh.
 - A person who is disabled or deleted is never added to a space (the statement
   refuses them), and a deleted person never counts as another owner of a space.
   The last step also leaves any membership that slipped in after the plan (listed

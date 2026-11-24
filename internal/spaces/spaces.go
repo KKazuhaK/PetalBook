@@ -192,6 +192,9 @@ type Options struct {
 	// Rename replaces os.Rename for the moves of the recycle bin (tests: a
 	// rename that answers EXDEV, as one across filesystems does).
 	Rename func(oldpath, newpath string) error
+	// RemoveAll replaces os.RemoveAll for deleting the source of a move across
+	// filesystems once its copy is in place (tests: a delete cut short).
+	RemoveAll func(path string) error
 
 	// AssetsHook is called at each step of moving a space's attachments into
 	// its attachment repository; an error ends the move there, without

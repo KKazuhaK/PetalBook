@@ -325,10 +325,13 @@ type UserDeletionPending struct {
 // BeginUserDeletion records that a deletion of the person starts, before
 // anything is done (wasDisabled: whether they are disabled now), unless one is
 // under way already; it returns what the deletion under way has done (the one
-// just begun, or the earlier attempt's), and began when it is this one.
+// just begun, or the earlier attempt's), and began when it is this one. A
+// deletion's first step disables the person, so a record on a person who is not
+// disabled is stale (an attempt that never got that far, or one an
+// administrator ended by enabling them): it is replaced, never reused.
 func BeginUserDeletion(ctx context.Context, q Q, userID string, wasDisabled bool) (p UserDeletionPending, began bool, err error) {
 	raw, _ := json.Marshal(UserDeletionPending{WasDisabled: wasDisabled})
-	res, err := q.Exec(ctx, `UPDATE users SET delete_pending = ? WHERE id = ? AND delete_pending = '' AND deleted_at IS NULL`, string(raw), userID)
+	res, err := q.Exec(ctx, `UPDATE users SET delete_pending = ? WHERE id = ? AND (delete_pending = '' OR disabled = 0) AND deleted_at IS NULL`, string(raw), userID)
 	if err != nil {
 		return p, false, err
 	}

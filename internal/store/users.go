@@ -289,9 +289,11 @@ func SetSiteAdmin(ctx context.Context, q Q, id string, on bool) error {
 	return oneRow(res, err)
 }
 
-// SetDisabled disables or enables a user.
+// SetDisabled disables or enables a user. Enabling one ends a deletion of them
+// that did not finish: its record (users.delete_pending) is dropped, so that a
+// later deletion starts afresh.
 func SetDisabled(ctx context.Context, q Q, id string, disabled bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET disabled = ? WHERE id = ?`, b2i(disabled), id)
+	res, err := q.Exec(ctx, `UPDATE users SET disabled = ?, delete_pending = CASE WHEN ? = 1 THEN delete_pending ELSE '' END WHERE id = ?`, b2i(disabled), b2i(disabled), id)
 	return oneRow(res, err)
 }
 

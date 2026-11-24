@@ -72,8 +72,10 @@ func (sc Scope) ofUser(col string) (string, []any) {
 // out, live or in the recycle bin, so that every query of a space by id or by
 // list answers for a personal one as for a space that does not exist
 // (docs/api.md, "Viewing a space": a personal space is never reachable by a
-// tenant administrator). Deleting and restoring a person, which takes their
-// personal space with them, uses ScopeOf.
+// tenant administrator). Deleting a person, which takes their personal space
+// with them, uses ScopeOf. Restoring one uses this scope too: the person's item
+// is not a personal space, and their personal space comes back with them by
+// the item it was recycled with, not through the scope.
 func AdminScopeOf(u User) Scope {
 	sc := ScopeOf(u)
 	if !sc.all {

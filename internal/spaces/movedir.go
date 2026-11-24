@@ -14,17 +14,32 @@ import (
 // DATA/recycle are on different disks. The copy is written beside its
 // destination as <dst>.partial and renamed into place only when it is whole and
 // synced, so a destination that exists is always complete: a copy cut short is
-// started again from nothing, and one that finished before its source was
-// deleted is finished by deleting the source.
+// started again from nothing. The source is then renamed aside, within its own
+// filesystem, to <src>.moved (its parent synced) and only then deleted, so that
+// a delete cut short leaves a <src>.moved and never a partial <src>: when both
+// the source and the destination exist, both are whole (the copy finished, the
+// source was not touched), and a <src>.moved is never a whole copy of anything
+// that is not also in place. What a move cut short leaves beside the two places
+// (removeLeftovers) is deleted before the move is finished or undone.
 
 // partialSuffix marks a copy that is not finished.
 const partialSuffix = ".partial"
+
+// movedSuffix marks a source whose copy is in place, being deleted.
+const movedSuffix = ".moved"
 
 func (m *Manager) rename(oldpath, newpath string) error {
 	if m.opt.Rename != nil {
 		return m.opt.Rename(oldpath, newpath)
 	}
 	return os.Rename(oldpath, newpath)
+}
+
+func (m *Manager) removeAll(path string) error {
+	if m.opt.RemoveAll != nil {
+		return m.opt.RemoveAll(path)
+	}
+	return os.RemoveAll(path)
 }
 
 // moveDir moves the directory src to dst (which must not exist): a rename, or a
@@ -43,13 +58,37 @@ func (m *Manager) moveDir(src, dst string) error {
 		return err
 	}
 	if err := os.Rename(tmp, dst); err != nil { // beside it: the same filesystem
+		os.RemoveAll(tmp)
 		return err
 	}
 	syncDir(filepath.Dir(dst))
 	if err := m.recycleStep("recycle:copied"); err != nil {
 		return err
 	}
-	return os.RemoveAll(src)
+	// The source is set aside before it is deleted, so that a delete cut short
+	// never leaves a partial tree where a whole one is expected.
+	aside := src + movedSuffix
+	if err := os.RemoveAll(aside); err != nil {
+		return err
+	}
+	if err := os.Rename(src, aside); err != nil { // beside it: the same filesystem
+		return err
+	}
+	syncDir(filepath.Dir(src))
+	return m.removeAll(aside)
+}
+
+// removeLeftovers deletes what a move across filesystems cut short left beside
+// the two places of a directory: a copy not finished (.partial) and a source
+// set aside whose delete did not finish (.moved). None of them is ever the only
+// whole copy. The caller holds the item, so no move of it is running.
+func removeLeftovers(a, b string) error {
+	for _, p := range []string{a + partialSuffix, a + movedSuffix, b + partialSuffix, b + movedSuffix} {
+		if err := os.RemoveAll(p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // copyTree copies a directory tree: directories, regular files (synced) and
@@ -107,6 +146,11 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	defer in.Close()
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
+		return err
+	}
+	// The umask reduced the mode it was created with: it gets the source's.
+	if err := out.Chmod(perm); err != nil {
+		out.Close()
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {

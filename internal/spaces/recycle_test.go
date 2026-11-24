@@ -35,6 +35,9 @@ type rbFix struct {
 	pause func(step string)
 	// rename, when set, replaces os.Rename for the moves of the recycle bin.
 	rename func(oldpath, newpath string) error
+	// removeAll, when set, replaces os.RemoveAll for deleting the source of a
+	// move across filesystems.
+	removeAll func(path string) error
 }
 
 func (f *rbFix) clock() time.Time {
@@ -88,6 +91,15 @@ func newRbFix(t *testing.T, st *store.Store) *rbFix {
 				return r(oldpath, newpath)
 			}
 			return os.Rename(oldpath, newpath)
+		},
+		RemoveAll: func(path string) error {
+			f.mu.Lock()
+			r := f.removeAll
+			f.mu.Unlock()
+			if r != nil {
+				return r(path)
+			}
+			return os.RemoveAll(path)
 		}})
 	if err != nil {
 		t.Fatal(err)

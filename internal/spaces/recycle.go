@@ -298,13 +298,17 @@ func (m *Manager) moveToRecycle(ctx context.Context, it *store.RecycleItem) erro
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return err
 	}
+	syncDir(m.recycleRoot())
 	for _, d := range it.Dirs {
 		dst := filepath.Join(base, d)
 		src := m.livePath(it.SpaceID, d)
+		if err := removeLeftovers(src, dst); err != nil {
+			return err
+		}
 		switch {
 		case pathExists(dst) && pathExists(src):
 			// A copy across filesystems that finished (a destination is only
-			// ever there whole) before its source was deleted: the space is
+			// ever there whole) before its source was set aside: the space is
 			// deleted and not restorable while it moves, so the source is the
 			// copy's leftover.
 			if err := os.RemoveAll(src); err != nil {
@@ -446,13 +450,18 @@ func (m *Manager) restoreSpaceItem(ctx context.Context, it *store.RecycleItem, o
 func (m *Manager) moveBack(it *store.RecycleItem) {
 	base := m.RecycleDir(it.ID)
 	os.MkdirAll(base, 0o755)
+	syncDir(m.recycleRoot())
 	for _, d := range it.Dirs {
 		src, dst := m.livePath(it.SpaceID, d), filepath.Join(base, d)
-		os.RemoveAll(src + partialSuffix) // a copy to the live place cut short
+		// A copy to the live place cut short, or the bin's copy set aside and
+		// cut short while it was deleted (its live copy is whole).
+		if err := removeLeftovers(src, dst); err != nil {
+			m.log.Error("could not remove what a move of a restore left", "item", it.ID, "dir", d, "error", err)
+		}
 		switch {
 		case pathExists(src) && pathExists(dst):
-			// A copy to the live place that finished before the bin's was
-			// deleted: the bin's is whole, the live one goes.
+			// A copy to the live place that finished before the bin's was set
+			// aside: both are whole, the live one goes.
 			if err := os.RemoveAll(src); err != nil {
 				m.log.Error("could not remove a copy of a directory the restore did not finish", "item", it.ID, "dir", d, "error", err)
 			}
@@ -707,7 +716,8 @@ func (m *Manager) recycleRound(ctx context.Context) {
 // get their directories moved, items restoring get theirs put back, items
 // purging are purged. older leaves out items changed more recently than that
 // (the job's look must not take an action that is running now); the start passes
-// 0.
+// 0. Each item is read again once it is held, and left alone unless it is still
+// in the state it was listed in: an action may have finished on it since.
 func (m *Manager) recoverRecycle(ctx context.Context, older time.Duration) error {
 	items, err := store.RecycleNotAtRest(ctx, m.opt.Store.Q())
 	if err != nil {
@@ -724,6 +734,21 @@ func (m *Manager) recoverRecycle(ctx context.Context, older time.Duration) error
 		if !m.holdItem(it.ID) {
 			continue
 		}
+		// The list is as it was when it was read: an action may have finished
+		// on the item and let it go since (a restore that is done must not be
+		// moved back). It is read again under the hold, and left alone unless it
+		// is still in the state it was listed in.
+		cur, err := store.GetRecycleItem(ctx, m.opt.Store.Q(), store.AllTenants(), it.ID, false)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && (cur.State != it.State || cur.State == store.RecycleReady ||
+			(older > 0 && m.opt.Now().Sub(cur.StateAt) < older))) {
+			m.letItem(it.ID)
+			continue
+		}
+		if err != nil {
+			m.letItem(it.ID)
+			return err
+		}
+		it = cur
 		if err := m.recoverItem(ctx, it); err != nil {
 			m.letItem(it.ID)
 			return err

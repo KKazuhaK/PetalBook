@@ -65,3 +65,51 @@ func TestADeletedPersonIsNotAnotherOwner(t *testing.T) {
 		}
 	})
 }
+
+// The record of a deletion under way is dropped when the person is enabled
+// again, and a deletion of a person who is not disabled starts afresh: a later
+// deletion never takes an old attempt's "was disabled".
+func TestAStaleDeletionRecordIsNotReused(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		mkUser(t, st, "OLIVE", "olive", "member")
+		// A deletion of a disabled person, cut short; an administrator then
+		// enables them again.
+		if err := store.SetDisabled(ctx, q, "OLIVE", true); err != nil {
+			t.Fatal(err)
+		}
+		if _, began, err := store.BeginUserDeletion(ctx, q, "OLIVE", true); err != nil || !began {
+			t.Fatalf("%v %v", began, err)
+		}
+		if err := store.SetDisabled(ctx, q, "OLIVE", false); err != nil {
+			t.Fatal(err)
+		}
+		p, began, err := store.BeginUserDeletion(ctx, q, "OLIVE", false)
+		if err != nil || !began || p.WasDisabled {
+			t.Fatalf("after enabling: %+v %v %v", p, began, err)
+		}
+
+		// A record left on a person who is not disabled (the attempt never
+		// disabled them) is not reused either.
+		if _, err := q.Exec(ctx, `UPDATE users SET delete_pending = '{"wasDisabled":true}', disabled = 0 WHERE id = 'OLIVE'`); err != nil {
+			t.Fatal(err)
+		}
+		p, began, err = store.BeginUserDeletion(ctx, q, "OLIVE", false)
+		if err != nil || !began || p.WasDisabled {
+			t.Fatalf("enabled with a record: %+v %v %v", p, began, err)
+		}
+
+		// A deletion under way (the person disabled by it) is carried on: what
+		// it recorded stays.
+		if err := store.SetDisabled(ctx, q, "OLIVE", true); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.NoteUserDeletion(ctx, q, "OLIVE", &store.UserTransfer{Space: "S1", Name: "Team", To: "X"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		p, began, err = store.BeginUserDeletion(ctx, q, "OLIVE", true)
+		if err != nil || began || p.WasDisabled || len(p.Transfers) != 1 {
+			t.Fatalf("under way: %+v %v %v", p, began, err)
+		}
+	})
+}
