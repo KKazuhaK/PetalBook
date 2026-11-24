@@ -23,8 +23,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/KazuhaHub/authcore/captcha"
+	authsaml "github.com/KazuhaHub/authcore/saml"
+
+	"github.com/KKazuhaK/PetalBook/internal/mail"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -53,8 +59,10 @@ type Config struct {
 	// loopback or testing) unless OIDC is configured.
 	PublicURL      string
 	TrustedProxies []netip.Prefix
-	OIDC           *OIDCConfig
-	Password       PasswordParams // zero: DefaultPasswordParams
+	// OIDC is the provider of the old --oidc-* flags: read once, to make the
+	// provider "sso" of the state database (see importFlags).
+	OIDC     *OIDCConfig
+	Password PasswordParams // zero: DefaultPasswordParams
 	// HashConcurrency is how many password hashes may run at once (default 4).
 	HashConcurrency int
 	SessionIdle     time.Duration
@@ -62,10 +70,20 @@ type Config struct {
 	// CacheTTL bounds how long a cached session or user is trusted without
 	// asking the database again: changes made by another process (the
 	// command-line tool) take effect within it. Default 5 minutes.
-	CacheTTL   time.Duration
-	HTTPClient *http.Client // for the OIDC provider (tests)
-	Logger     *slog.Logger
-	Now        func() time.Time
+	CacheTTL time.Duration
+	// HTTPClient reaches the identity providers, the SAML metadata, GitHub and
+	// the captcha providers; a default client when nil (tests give their own).
+	HTTPClient *http.Client
+	// Secrets seals what is kept in the state database; the space manager's
+	// box when nil.
+	Secrets *secret.Box
+	// CaptchaEndpoint replaces the siteverify address of the third-party captcha (tests).
+	CaptchaEndpoint string
+	// Mail is for tests: the clock, backoff and trusted roots of the mail
+	// service. Mail is off until an administrator enables it, whatever this says.
+	Mail   mail.Options
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Service is safe for concurrent use.
@@ -81,11 +99,31 @@ type Service struct {
 	setupMu    sync.Mutex
 	setupToken string // in memory only; "" once a user exists
 
-	// Rate limits: failures per client address and per username; calls per
-	// address for endpoints that cannot fail.
-	byIP, byUser *failLimiter
-	calls        *bucketLimiter
-	starts       *bucketLimiter
+	// Limits, all in memory and bounded: requests per address per minute, and
+	// failures by address, by username and by the pair; the starts of single
+	// sign-on have their own allowance.
+	perMin                     *minuteLimiter
+	auditIP                    *minuteLimiter // auditThrottled: one row per address, reason and minute
+	failIP, failUser, failPair *failTable
+	starts                     *bucketLimiter
+
+	// The security settings in force (see security.go), the audit log, the
+	// providers, passkeys and captcha.
+	secPtr       atomic.Pointer[secState]
+	secMu        sync.Mutex
+	audit        *auditLog
+	provs        *providerSet
+	replay       *authsaml.MemoryReplayCache
+	pk           *passkeyState
+	capImg       *captcha.ImageGenerator
+	capStore     *captcha.MemoryStore
+	capTok       atomic.Pointer[tokenChecker]
+	capSecretErr atomic.Bool
+	flagsIgnored atomic.Bool
+
+	// onNewUser is told whose usage rows a new account reached (its own and its
+	// tenant's people), after it is made; nil: nobody is told.
+	onNewUser func(ctx context.Context, touched []store.Touched)
 
 	// adminMu serialises changes that must keep one enabled administrator.
 	adminMu sync.Mutex
@@ -98,8 +136,16 @@ type Service struct {
 	users    map[string]*cachedUser
 	negative map[string]time.Time
 
-	oidc    *oidcState
 	pending *pendingStore
+
+	// Mail (see mailcfg.go): the sender, the caps of an hour, and the settings
+	// that say whether registration is open (set by the API's constructor).
+	mail     *mail.Service
+	mailMu   sync.Mutex
+	mailCaps *hourCaps // messages per address and per caller
+	testCaps *hourCaps // test messages
+	regCaps  *hourCaps // registrations per tenant
+	settings atomic.Pointer[settings.Service]
 }
 
 type cachedSession struct {
@@ -107,6 +153,7 @@ type cachedSession struct {
 	created   time.Time
 	lastUsed  time.Time
 	persisted time.Time // the last_used the database has
+	held      bool
 	loaded    time.Time
 }
 
@@ -119,6 +166,10 @@ type cachedUser struct {
 type Principal struct {
 	User      store.User
 	SessionID string // hash of the session cookie; "" for the built-in user
+	// SessionCreated is when the session began (the sign-in).
+	SessionCreated time.Time
+	// Held: the session may only register a passkey and sign out.
+	Held bool
 	// Grant is set when the request is made with a credential of narrower
 	// reach than the person (an API token, later an OAuth access token); nil
 	// for a session and for the built-in user.
@@ -201,16 +252,26 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	s := &Service{
 		cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, hasher: h,
-		byIP:   newFailLimiter(10_000, 10, time.Second, 5*time.Minute, 15*time.Minute, cfg.Now),
-		byUser: newFailLimiter(10_000, 5, 2*time.Second, 5*time.Minute, 15*time.Minute, cfg.Now),
-		// Setup and invite tokens are unguessable, so these calls are only worth
-		// slowing down against abuse, not guessing; a shared address (an office)
-		// must still be able to onboard several people at once.
-		calls:    newBucketLimiter(10_000, 120, 60, cfg.Now),
+		perMin:   newMinuteLimiter(maxLimitKeys, cfg.Now),
+		auditIP:  newMinuteLimiter(maxLimitKeys, cfg.Now),
+		failIP:   newFailTable(maxLimitKeys, cfg.Now),
+		failUser: newFailTable(maxLimitKeys, cfg.Now),
+		failPair: newFailTable(maxLimitKeys, cfg.Now),
 		starts:   newBucketLimiter(10_000, 30, 20, cfg.Now),
+		audit:    newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
 		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]time.Time{},
-		pending: newPendingStore(cfg.Now),
+		pending:  newPendingStore(cfg.Now),
+		mailCaps: newHourCaps(maxLimitKeys), testCaps: newHourCaps(4), regCaps: newHourCaps(2000),
 	}
+	mo := cfg.Mail
+	if mo.Now == nil {
+		mo.Now = cfg.Now
+	}
+	if mo.Logger == nil {
+		mo.Logger = cfg.Logger
+	}
+	s.mail = mail.New(mo)
+	s.initCaptcha()
 	if cfg.PublicURL != "" {
 		u, err := url.Parse(cfg.PublicURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -218,10 +279,18 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		}
 		s.secure = u.Scheme == "https"
 	}
-	if cfg.OIDC != nil {
-		if s.oidc, err = newOIDCState(cfg); err != nil {
-			return nil, err
-		}
+	s.sec(ctx) // reads the settings, and builds what depends on them
+	if err := s.loadMail(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.reloadProviders(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.importFlags(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.initPasskeys(ctx); err != nil {
+		return nil, err
 	}
 	exists, err := store.HasUsers(ctx, s.st.Q())
 	if err != nil {
@@ -262,6 +331,10 @@ func (s *Service) SetupOpen(ctx context.Context) (bool, error) {
 	return !ok, nil
 }
 
+// OnNewUser installs what is told whose usage a new account reached (the quotas
+// look at the person and at the tenant's people). Call it before serving.
+func (s *Service) OnNewUser(fn func(ctx context.Context, touched []store.Touched)) { s.onNewUser = fn }
+
 func (s *Service) markUsersExist() {
 	s.setupMu.Lock()
 	s.usersExist.Store(true)
@@ -269,12 +342,13 @@ func (s *Service) markUsersExist() {
 	s.setupMu.Unlock()
 }
 
-// OIDCName is the provider's display name, or "" when none is configured.
-func (s *Service) OIDCName() string {
-	if s.oidc == nil {
-		return ""
+// LegacyOIDCName is the display name of the provider that answers the pre-2.8
+// endpoints, or "" when there is none.
+func (s *Service) LegacyOIDCName() string {
+	if rt := s.provs.legacy(); rt != nil && rt.row.Enabled {
+		return rt.row.Name
 	}
-	return s.oidc.cfg.Name
+	return ""
 }
 
 // ClientAddr is the client address used for rate limits.
@@ -315,7 +389,7 @@ func (s *Service) ClearFlowCookie(base string) *http.Cookie {
 
 // SessionCookie carries a new session token to the browser.
 func (s *Service) SessionCookie(token string) *http.Cookie {
-	return s.newCookie(s.SessionCookieName(), token, int(s.cfg.SessionMax/time.Second))
+	return s.newCookie(s.SessionCookieName(), token, int(s.secPtr.Load().max/time.Second))
 }
 
 // ClearSessionCookie tells the browser to drop its session.
@@ -342,14 +416,6 @@ func ctEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []
 
 func retryAfter(d time.Duration) *Error {
 	return &Error{Kind: RateLimited, Msg: "too many attempts; wait a little and try again", RetryAfter: d}
-}
-
-// throttle spends one of the client's calls on an endpoint anyone can reach.
-func (s *Service) throttle(ip string) error {
-	if d, ok := s.calls.take(ip); !ok {
-		return retryAfter(d)
-	}
-	return nil
 }
 
 // newID makes an id for a row; callers retry on a unique violation.
@@ -396,7 +462,8 @@ func cleanEmail(in string) (string, error) {
 		return "", nil
 	}
 	at := strings.Index(e, "@")
-	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r == 0x7f || r == '<' || r == '>' }) || !utf8.ValidString(e) {
+	// ASCII only: Unicode case mapping makes look-alikes equal (see store.EmailKey).
+	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r >= 0x7f || r == '<' || r == '>' }) {
 		return "", errf(Invalid, "that does not look like an email address")
 	}
 	return e, nil
@@ -424,9 +491,23 @@ type CreateParams struct {
 	// account exists, even when two setups run at once. FirstOK is the
 	// command-line form: it also records that an account exists, but never refuses.
 	Setup, FirstOK bool
+	// EmailVerified: the address came from a provider that vouched for it.
+	EmailVerified bool
 	// RetryUsername lets the name get a numeric suffix when it is taken (accounts made from an
 	// identity provider's claims).
 	RetryUsername bool
+	// TenantID is the tenant the account is made in (the default tenant when
+	// empty); SiteAdmin makes an administrator one of the whole server. An
+	// invite decides both (see AcceptInvite), and the first account is always a
+	// site administrator of the default tenant.
+	TenantID  string
+	SiteAdmin bool
+	// PasswordHash is a hash already made (a confirmed registration); it is
+	// used instead of Password. RegistrationID is the pending registration the
+	// account uses up, and Terms what the person accepted ("" for none).
+	PasswordHash   string
+	RegistrationID string
+	Terms          string
 }
 
 // IdentityParams is an external identity to attach.
@@ -461,7 +542,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if err := checkRole(p.Role); err != nil {
 		return nil, err
 	}
-	var pwHash string
+	pwHash := p.PasswordHash
 	if p.Password != "" {
 		if err := CheckPassword(p.Password); err != nil {
 			return nil, err
@@ -486,7 +567,18 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		return nil, err
 	}
 
-	u := store.User{Username: username, Name: name, Email: email, Role: p.Role, Created: s.now().UTC()}
+	// An account made without saying where (setup, the command line) is in the
+	// default tenant, and an administrator of it is one of the server, as every
+	// administrator was before tenants. An invite or a provider says where, and
+	// whether.
+	if p.Setup {
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, true
+	}
+	if p.TenantID == "" {
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, p.Role == "admin"
+	}
+	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC(),
+		TenantID: p.TenantID, SiteAdmin: p.SiteAdmin && p.Role == "admin"}
 	stg, err := s.cfg.Spaces.Stage("My notes", spaces.IdentityOf(u))
 	if err != nil {
 		return nil, err
@@ -515,11 +607,30 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return errf(NotFound, "that invite is not valid")
 				}
 			}
+			if p.RegistrationID != "" {
+				if ok, err := store.DeleteRegistration(ctx, q, p.RegistrationID); err != nil {
+					return err
+				} else if !ok {
+					return errf(NotFound, "that link is not valid, or has expired")
+				}
+			}
+			// The tenant must exist, and take new people: an invite of a disabled
+			// tenant is no invite.
+			if t, err := store.GetTenant(ctx, q, cand.TenantID); errors.Is(err, store.ErrNotFound) || err == nil && t.Disabled {
+				return errf(NotFound, "that invite is not valid")
+			} else if err != nil {
+				return err
+			}
 			if err := store.InsertUser(ctx, q, cand); err != nil {
 				return err
 			}
 			if pwHash != "" {
 				if err := store.SetPasswordHash(ctx, q, cand.ID, pwHash, s.now()); err != nil {
+					return err
+				}
+			}
+			if p.Terms != "" {
+				if err := store.SetTermsAccepted(ctx, q, cand.ID, p.Terms); err != nil {
 					return err
 				}
 			}
@@ -529,7 +640,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					return err
 				}
 			}
-			if err := store.InsertSpace(ctx, q, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
+			if err := store.InsertSpace(ctx, q, cand.TenantID, stg.ID(), stg.Name(), cand.ID, "", s.now()); err != nil {
 				return err
 			}
 			return store.AddMember(ctx, q, stg.ID(), cand.ID, "owner", s.now())
@@ -559,6 +670,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	}
 	stg.Commit(u.ID)
 	s.markUsersExist()
+	if s.onNewUser != nil {
+		s.onNewUser(context.WithoutCancel(ctx), []store.Touched{{UserID: u.ID, TenantID: u.TenantID}})
+	}
 	return &u, nil
 }
 
@@ -607,6 +721,9 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 		if err := store.SetPasswordHash(ctx, q, u.ID, hash, s.now()); err != nil {
 			return err
 		}
+		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+			return err
+		}
 		return store.DeleteUserSessions(ctx, q, u.ID, "")
 	})
 	if err == nil {
@@ -615,14 +732,14 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 	return err
 }
 
-// Users lists every account, oldest first (administrators only; the API checks).
-func (s *Service) Users(ctx context.Context) ([]store.User, error) {
-	return store.ListUsers(ctx, s.st.Q())
+// Users lists the accounts in the scope, oldest first (administrators only; the API checks).
+func (s *Service) Users(ctx context.Context, sc store.Scope) ([]store.User, error) {
+	return store.ListUsers(ctx, s.st.Q(), sc)
 }
 
 // FindUsers lists the accounts whose username or name contains query (ignoring
 // case), oldest first, at most limit of them (limit <= 0: no limit). enabledOnly
 // leaves the disabled accounts out before the limit counts.
-func (s *Service) FindUsers(ctx context.Context, query string, enabledOnly bool, limit int) ([]store.User, error) {
-	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), query, enabledOnly, limit)
+func (s *Service) FindUsers(ctx context.Context, sc store.Scope, query string, enabledOnly bool, limit int) ([]store.User, error) {
+	return store.SearchUsers(ctx, s.st.Q(), s.st.Dialect(), sc, query, enabledOnly, limit)
 }

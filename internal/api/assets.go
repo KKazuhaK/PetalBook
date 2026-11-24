@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 )
 
@@ -49,29 +50,37 @@ func (s *server) putAssetsRemote(c *call) {
 			Type     string `json:"type"`
 			Username string `json:"username"`
 			Token    string `json:"token"`
+			Provider string `json:"provider"`
 			Via      string `json:"via"`
 		} `json:"credential"`
-		GitHub *struct {
+		// Sync makes (or finds) the repository on a provider, as storage.sync
+		// does for a new space.
+		Sync *struct {
+			Provider    string `json:"provider"`
 			Owner       string `json:"owner"`
 			Name        string `json:"name"`
 			Private     *bool  `json:"private"`
 			Description string `json:"description"`
 			Create      *bool  `json:"create"`
 			Via         string `json:"via"`
-		} `json:"github"`
+		} `json:"sync"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, remoteBodyLimit) {
 		return
 	}
 	var v *spaces.AssetsView
 	var err error
-	if g := req.GitHub; g != nil {
-		v, err = s.spaces.ConnectAssetsGitHub(c.r.Context(), c.sp, c.user().ID, g.Via, spaces.GitHubCreate{
+	if g := req.Sync; g != nil {
+		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
+			writeError(c.w, http.StatusBadRequest, "invalid", "sync.provider is not a provider of this server that makes repositories")
+			return
+		}
+		v, err = s.spaces.ConnectAssetsSync(c.r.Context(), c.sp, c.user().ID, g.Via, spaces.SyncCreate{Provider: g.Provider,
 			Owner: g.Owner, Name: g.Name, Private: g.Private == nil || *g.Private, Description: g.Description, Create: g.Create == nil || *g.Create})
 	} else {
 		v, err = s.spaces.ConnectAssets(c.r.Context(), c.sp, spaces.ConnectRequest{URL: req.URL, Branch: req.Branch,
 			CredType: req.Credential.Type, Username: req.Credential.Username, Token: req.Credential.Token,
-			Via: req.Credential.Via, UserID: c.user().ID})
+			Provider: req.Credential.Provider, Via: req.Credential.Via, UserID: c.user().ID})
 	}
 	if err != nil {
 		s.fail(c.w, err)

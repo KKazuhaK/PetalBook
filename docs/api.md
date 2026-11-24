@@ -22,7 +22,9 @@ The web app talks to the server only through this API.
   administrator has disabled the space, see "Administration"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
-  repository"; nothing was changed), `internal` (500).
+  repository"; nothing was changed), `internal` (500). Signing in has codes
+  of its own (see "Sign-in error codes"), as do some sections; a section's own
+  code takes the place of the general one in `error`, with the status given.
   Server storage (milestone 3.1, see "Server storage") adds
   `remote_required` (409), `not_cached` and `restoring` (503, with
   `Retry-After`) and `space_full` (507).
@@ -56,11 +58,20 @@ The web app talks to the server only through this API.
     nor the host of an allowed origin gets `403 forbidden`.
   - Requests with no `Origin` and no `Sec-Fetch-Site`, such as `curl` or
     scripts, are not refused by these checks.
-  - One exception: `GET /api/auth/oidc/callback` is reached by a redirect from
-    the identity provider, so the `Sec-Fetch-Site` and `Origin` rules do not
-    apply to it. It changes nothing unless its `state` matches a sign-in this
-    browser started. `GET /api/github/authorization/callback` is the same
-    kind of exception under the same rule (see "GitHub").
+  - The exceptions are reached from an identity provider, so the
+    `Sec-Fetch-Site` and `Origin` rules do not apply to them:
+    `GET /api/auth/oidc/callback`, `GET /api/auth/oidc/{slug}/callback` and
+    `GET /api/auth/github/{slug}/callback` (a redirect), and
+    `POST /api/auth/saml/{slug}/acs` (a form the identity provider posts, so it
+    is `application/x-www-form-urlencoded`, not JSON). Each changes nothing
+    unless it matches a sign-in this browser started (its `state`, or for SAML
+    its `RelayState` and the attempt's cookie). `GET /api/auth/saml/{slug}/metadata`
+    is read by the identity provider and changes nothing.
+    `GET /api/connections/{provider}/authorization/callback`, the platform's
+    redirect back after a person connects their account for repositories (not
+    a sign-in), is the same kind of exception under the same rule (see
+    "Connections"). So is `GET /api/connections/github/manifest/callback`, where
+    GitHub sends an administrator's browser after the App is made.
 - A **space** is one tree of pages backed by one Git repository. Every page URL
   carries the space id. In single-user mode there is exactly one space, with
   the id `default`; in accounts mode a space id has the same form as a page id.
@@ -118,13 +129,28 @@ not signed in), in the shape of `GET /api/spaces`.
 ### User
 
 ```json
-{"id": "01JD3K8Q7Z", "username": "kazuha", "name": "Kazuha", "email": "", "role": "admin", "disabled": false, "created": "2026-11-21T08:30:00Z"}
+{"id": "01JD3K8Q7Z", "username": "kazuha", "name": "Kazuha", "email": "", "emailVerified": false, "role": "admin", "disabled": false, "passkeyRequired": false, "created": "2026-11-21T08:30:00Z"}
 ```
 
 `role` is `admin` or `member`. `username` is 2–32 characters of `a-z`, `0-9`,
 `.`, `_`, `-`, starting with a letter or digit; it is stored in lower case and
-upper case in a request is folded. `email` may be empty; it is never used to
-match an account.
+upper case in a request is folded. `email` may be empty. It never decides which
+account an identity signs in to, with one exception the administrators switch on
+per provider (see "Which account an identity signs in to"), and then only when
+`emailVerified` is `true`: the address came from a provider that vouched for it,
+or an administrator set or confirmed it. A user changing their own `email`
+clears `emailVerified`. From 3.3 an address that only a tenant administrator
+(not a site administrator) set or confirmed shows `emailVerified: true` but does
+not count for that exception.
+
+From 3.3 a User also has `siteAdmin` and `tenant` (see "Administrators" under
+"Tenants, registration and mail").
+
+`passkeyRequired` is whether this person must sign in with a passkey: set for
+them alone (`PATCH /api/users/{id}`) or for their role (the 安全 settings,
+`passkeys.requireRoles`). In a response it is the effective value, so it is
+`true` for everyone of a required role; `PATCH` changes only the person's own
+mark. See "When a passkey is required".
 
 ### `GET /api/session`
 
@@ -135,6 +161,7 @@ Never an error; no session needed. `Cache-Control: no-store`.
   "mode": "accounts",
   "user": null,
   "setup": false,
+  "hold": null,
   "methods": {"password": true, "oidc": {"name": "Company SSO"}}
 }
 ```
@@ -144,19 +171,94 @@ Never an error; no session needed. `Cache-Control: no-store`.
   built-in user: `{"id": "local", "username": "local", "name": "Local user", "role": "admin", …}`.
 - `setup`: `true` while there is no user at all; the app then shows the
   first-run page.
-- `methods.oidc` is `null` when no provider is configured. `methods` is absent
-  in single-user mode.
+- `hold`: `null`, or `"passkey"` when the signed-in user must register a passkey
+  before they can do anything else (see "When a passkey is required").
+- `methods` is kept for clients older than 2.8 and is absent in single-user
+  mode. `methods.oidc` is the provider that answers the pre-2.8 endpoints (see
+  "The pre-2.8 endpoints"), or `null` when there is none. The sign-in page reads
+  `GET /api/auth/providers` instead.
 
 ## Signing in
 
-Accounts mode only. The session is a cookie (`HttpOnly`, `SameSite=Lax`,
-`Secure` when `--public-url` is `https`); its value means nothing to the
-client. A session ends after 30 days without use and at the latest 90 days
-after sign-in. Changing a password ends the user's other sessions; disabling a
-user ends all of them.
+Accounts mode only. Single-user mode has no sign-in: every endpoint in this
+section, in "Account" and the security settings of "Administration" answers
+`404` there.
+
+The session is a cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when
+`--public-url` is `https`); its value means nothing to the client. A session
+ends after `sessionIdleDays` without use (30 by default) and at the latest
+`sessionMaxDays` after sign-in (90 by default); both are security settings, and
+a change applies to the sessions that already exist at their next request.
+Changing a password ends the user's other sessions; disabling a user ends all
+of them.
 
 A password is at least 8 characters and at most 1024 bytes; nothing else is
 required of it.
+
+Every way of signing in ends in the same place: a session for an enabled
+account. They differ in what proves who the person is (a password, a passkey,
+an identity provider) and in what the server checks before it spends any work
+on that proof (the per-address request limit, the captcha, the failure caps;
+see "Rate limit, failure caps and lockout").
+
+### `GET /api/auth/providers`
+
+Public; what the sign-in page draws. `Cache-Control: no-store`. Answered from
+memory, without a database query.
+
+```json
+{
+  "providers": [
+    {"slug": "company", "kind": "oidc", "name": "Company SSO", "icon": "preset:microsoft"},
+    {"slug": "campus", "kind": "saml", "name": "Campus login", "icon": ""},
+    {"slug": "github", "kind": "github", "name": "GitHub", "icon": "preset:github"}
+  ],
+  "loginMode": "dual",
+  "local": true,
+  "sso": true,
+  "passkey": true
+}
+```
+
+- `providers` are the enabled ones, in the administrators' order. `kind` is
+  `oidc`, `saml` or `github`. `icon` is `""` (none) or `preset:<name>`, one of
+  the icons the web app ships (`google`, `microsoft`, `github`, `gitlab`,
+  `okta`, `keycloak`, `authentik`, `key`); never an address, so the sign-in page
+  never makes the browser ask another site for anything.
+- `loginMode` is the mode in effect: `dual`, `sso_first`, `sso_redirect` or
+  `local_only`. With no enabled provider it is `local_only`, whatever is stored.
+- `local`: whether the page shows the password form without being asked
+  (`false` only for `sso_redirect`).
+- `sso`: whether the page shows the provider buttons (`false` for `local_only`,
+  and whenever no provider is enabled).
+- `passkey`: whether passkey sign-in is available (passkeys are switched on and
+  the server has a public URL they can work with, see "Passkeys").
+- From 3.3, `register` and `forgot`: whether the page links to registration and
+  to password reset, for the tenant named by `?tenant={slug}` (the default
+  tenant without it); see "Registration" and "Password reset".
+
+Whether password sign-in is refused (`ssoOnly`) is never in this answer, nor
+anything about a particular account: neither may help someone choose which
+accounts to guess.
+
+#### The sign-in page
+
+What the page draws comes only from the answer above:
+
+1. `dual`: username, password, the captcha when one is needed, "Sign in"; below
+   it "or sign in with" and one "Sign in with {name}" button per provider; the
+   passkey button when `passkey`.
+2. `sso_first`: the provider buttons first; the password form is folded into a
+   link "Use a password instead" and opens when it is clicked.
+3. `sso_redirect`: with exactly one provider the page goes straight to its
+   `start` and shows "Going to {name}…"; with several it does not go anywhere
+   and lists the buttons. Either way there is a link "Use a password instead"
+   (it loads `/login?local=1`, which shows the form). The page never goes to the
+   provider when the address carries `?local=1` or `?sso_error=`, so a failed
+   sign-in does not bounce back and forth.
+4. `local_only`: the form only.
+
+A button is a full-page navigation to `GET /api/auth/{kind}/{slug}/start`.
 
 ### `POST /api/setup`
 
@@ -164,34 +266,163 @@ Creates the first administrator. Works only while there are no users; after
 that `409 exists`.
 
 ```json
-{"token": "…", "username": "kazuha", "name": "Kazuha", "password": "…"}
+{"token": "…", "username": "kazuha", "name": "Kazuha", "password": "…", "captcha": {"id": "…", "answer": "…"}}
 ```
 
 `token` is the setup token the server prints in its log at start-up while
 there are no users (it also prints a link of the form
-`<public url>/setup#<token>`). Wrong token: `403 forbidden`. `name` defaults to
-the username. `201` with `{"user": {…}}` and a session cookie. The user gets a
-personal space.
+`<public url>/setup#<token>`). Wrong token: `403 forbidden`, counted as a
+failure of the address. `name` defaults to the username. `captcha` is needed
+only when the `setup` context asks for one (see "Captcha"). `201` with
+`{"user": {…}}` and a session cookie. The user gets a personal space.
 
 ### `POST /api/login`
 
 ```json
-{"username": "kazuha", "password": "…"}
+{"username": "kazuha", "password": "…", "captcha": {"id": "…", "answer": "…"}}
 ```
 
-`200` with `{"user": {…}}` and a session cookie. Wrong username or password,
-or a disabled user: `401 unauthenticated`, with the same message in every
-case. Too many attempts from one address or against one username:
-`429 rate_limited`.
+`captcha` is `{"id", "answer"}` for the self-hosted image, `{"token"}` for a
+third-party one, and left out when `GET /api/captcha` said none is required.
+
+`200` with `{"user": {…}}` and a session cookie. The server checks, in this
+order, and stops at the first refusal:
+
+1. The address's requests this minute: `429 rate_limited`.
+2. The captcha, when the `login` context requires one for this address or this
+   username: `400 captcha_failed`. Nothing is counted against the password.
+3. The address's failures: `429 rate_limited`.
+4. With lockout on, the key the lockout scope names (see "Lockout"):
+   `429 rate_limited`.
+5. The password, against the stored hash (or a dummy hash for a username nobody
+   has, so both take as long).
+6. A wrong password (or no such user, or a user with no password) counts one
+   failure against the address, the username and the pair. If the username or
+   the pair has now reached the cap: `429 rate_limited`; otherwise
+   `401 unauthenticated`. A disabled user is `401 unauthenticated` too; the
+   message is the same in every case.
+7. With the password right: password sign-in refused for this account
+   (`ssoOnly`, see "Security settings"): `403 local_login_refused`; a passkey is
+   required and the user has one: `403 passkey_required` (the page offers the
+   passkey button).
+8. Success clears the username's and the pair's failures and gives back the
+   address's. A user who must have a passkey and has none gets the session with
+   `hold: "passkey"`.
+
+So the password is checked before anything that depends on the username, and a
+person who types their password right is not stopped by someone else's
+failures against their name, unless the administrators chose the lockout scope
+`account`.
 
 ### `POST /api/logout`
 
 `204`; ends the session if there is one.
 
-### `POST /api/auth/oidc/start`
+### Passkeys
 
-Begins sign-in with the configured OpenID Connect provider. `404` when none is
-configured.
+A passkey is a WebAuthn credential. It signs in on its own (no password), for
+local accounts and accounts made through a provider alike; a person can have up
+to 20. The relying party is the host of `--public-url`, so passkeys need a
+public URL that is `https` (or `http` on a loopback name for trying things out);
+without one `passkey` is `false` in `GET /api/auth/providers` and these
+endpoints answer `404`. Changing the host of `--public-url` makes every passkey
+registered before unusable; the server logs a warning at start-up when it sees
+the host change.
+
+Sign-in asks the authenticator for user verification (a PIN or biometric), and
+the server checks that it was given, because the passkey is the only factor.
+Registration prefers a discoverable credential (one the browser can offer
+without a username).
+
+#### `POST /api/auth/passkey/begin`
+
+Public. `{"username": "kazuha"}`, or `{}` for a discoverable sign-in (the
+browser offers the passkeys it has for this site). Counts against the
+address's requests this minute.
+
+`200` with `{"ceremony": "…", "options": {…}}`: `options` is the
+`PublicKeyCredentialRequestOptions` to pass to `navigator.credentials.get`. With
+a username, `allowCredentials` lists that user's passkeys. A username nobody has,
+or one with no passkey, gets one made-up credential id (derived from the
+username and a server key, so it is the same every time), and the answer looks
+the same as for a user with one passkey. A ceremony lasts 5 minutes and is used
+once; at most 10,000 are open at a time (the oldest are dropped first).
+
+#### `POST /api/auth/passkey/finish?ceremony={id}&return={path}`
+
+Public. The body is the credential the browser returned
+(`PublicKeyCredential` as JSON). Counts against the address's requests this
+minute. `200` with `{"user": {…}, "return": "/s/01JD3K8Q7Z"}` and a session
+cookie; `return` is made safe as for single sign-on.
+
+- `401 passkey_failed`: the ceremony is unknown, used or expired, the
+  credential is not registered, the signature or user verification does not
+  check out, the authenticator's counter went backwards (a sign that the key was
+  copied: refused, recorded in the audit log, and the stored counter is not
+  moved), or the account is disabled. One code and one message for all.
+- `403 local_login_refused`: `ssoOnly` is in effect and the account is not an
+  administrator (see "Security settings").
+
+A passkey sign-in costs two indexed queries (the credential, by its id or by
+the named user's handle, and the user, by its id: a browser that is signing in
+has no session whose cache could answer), one write (the credential's counter
+and last use) and the insert of the new session.
+
+#### When a passkey is required
+
+The administrators can require a passkey of chosen people
+(`PATCH /api/users/{id}` with `passkeyRequired`) or of a role
+(`passkeys.requireRoles` in the security settings). For such a person:
+
+- With a passkey registered, password sign-in answers
+  `403 passkey_required` after the password was checked (a wrong password gets
+  the ordinary answers, so the code says nothing to someone who does not know
+  it). The page then shows "Your account signs in with a passkey" and the
+  passkey button.
+- With no passkey yet, password sign-in succeeds into a held session:
+  `GET /api/session` has `hold: "passkey"`, and the app shows only "Set up a
+  passkey to continue" (the passkey part of the account's security page) and
+  "Sign out". Every request answers `403 passkey_required` except
+  `GET /api/session`, `GET /api/meta`, `GET /api/auth/providers`,
+  `GET /api/account`, the account's passkey endpoints and `POST /api/logout`.
+  The first registered passkey lifts the hold for the session at once.
+- A held session makes no API token and approves no OAuth consent: those
+  endpoints answer `403 passkey_required` like the rest (see "Held sessions,
+  API tokens and OAuth grants").
+- A held session cannot connect or disconnect a GitHub account for repos,
+  list owners or repositories, finish GitHub's callback, or create a space
+  with a repository: `403 passkey_required` like the rest (see "Connections"). A
+  GitHub account connected before the hold stays connected.
+- Sign-in through an identity provider is not held: the provider decides how
+  its people prove who they are.
+- If they lose every passkey, an administrator deletes the lost ones
+  (`DELETE /api/users/{id}/passkeys/{passkey}`); the next password sign-in is
+  held again until a new one is registered.
+
+Whether a person is required and whether they have a passkey are kept with the
+cached user, so the hold costs no query per request.
+
+### Single sign-on
+
+The administrators configure any number of providers (see "Sign-in
+providers"), each with a `slug` that is part of its addresses. `kind` is `oidc`
+(OpenID Connect: Google, Microsoft Entra ID, Keycloak, Authentik, …), `saml`
+(SAML 2.0) or `github` (GitHub's OAuth sign-in, which is not OpenID Connect:
+there is no ID token, so the server reads the user from GitHub's API). A
+disabled or unknown provider answers `404` (for a navigation: a redirect to
+`/login?sso_error=provider_unavailable`). SSO has no captcha: the provider
+guards its own sign-in.
+
+#### Starting: `GET /api/auth/{kind}/{slug}/start?return={path}`
+
+A navigation from the sign-in page. Redirects (`303`) to the provider and sets
+the short-lived cookie that ties the attempt to this browser. Only for signing
+in (`intent: login`); the cross-site rules apply, so another site cannot start
+one. Counts against the address's sign-in starts (30 a minute).
+
+#### Starting: `POST /api/auth/{kind}/{slug}/start`
+
+The same as `POST /api/auth/oidc/start` before 2.8, for every kind:
 
 ```json
 {"intent": "login", "token": "", "return": "/s/01JD3K8Q7Z"}
@@ -204,28 +435,313 @@ configured.
 - `return`: a path inside the app to end up on. Anything that is not a plain
   absolute path (`/…`, not `//…`, no backslash) is replaced by `/`.
 
-`200` with `{"url": "https://idp.example/authorize?…"}` and a short-lived
-cookie that ties the attempt to this browser. The client navigates to `url`.
+`200` with `{"url": "https://idp.example/authorize?…"}` and the cookie. The
+client navigates to `url`. Tokens never travel in an address: that is why
+`setup`, `invite` and `link` use this form.
 
-### `GET /api/auth/oidc/callback`
+An attempt lasts 10 minutes and is used once; at most 10,000 are open (the
+oldest go first). It is held in memory: a restart in the middle of a sign-in
+sends the person back to `/login?sso_error=expired`.
 
-The provider redirects here. The server finishes the sign-in and answers with
-a redirect (`303`) into the app, never JSON:
+#### OpenID Connect: `GET /api/auth/oidc/{slug}/callback`
+
+The provider redirects here (the redirect URI to register at the provider is
+`<public url>/api/auth/oidc/{slug}/callback`; the provider settings show it).
+The server checks `state`, the browser's cookie, the code exchange with PKCE,
+the ID token's signature, issuer, audience and nonce, and answers with a
+redirect (`303`) into the app, never JSON:
 
 - success: to the `return` path, with a session cookie (for `link`, the
   session stays as it is);
-- failure: to `/login?error=<code>` (for `link`: `/settings?error=<code>`).
-  Codes: `idp_error` (the provider refused or the answer did not verify),
-  `expired` (the attempt is unknown, used, or older than 10 minutes),
-  `no_account` (nobody has this identity and accounts are not created
-  automatically), `disabled`, `identity_in_use` (`link`: another user has it),
-  `invite_invalid`, `setup_invalid`.
+- failure: to `/login?sso_error=<code>` (for `link`:
+  `/settings?sso_error=<code>`).
 
-An identity is the pair of the provider's issuer and the `sub` claim. With
-`intent: "login"`, an identity nobody has creates a member account only when
-the server runs with `--oidc-auto-create`. New accounts take their name from
-the `name` claim and their username from `preferred_username` (or the part of
-`email` before `@`), made valid and unique.
+An OpenID Connect identity is the provider's issuer and the `sub` claim.
+
+#### GitHub: `GET /api/auth/github/{slug}/callback`
+
+The same flow and outcomes as OpenID Connect. The server exchanges the code,
+then reads `GET /user` (and `GET /user/emails` for a verified address, and
+`GET /user/orgs` when the provider names organisations) with the user's token,
+which it keeps only for the length of the request. The identity is the
+provider's base URL (`https://github.com`, or a GitHub Enterprise Server
+address) and the numeric user id, never the login name, which a GitHub user can
+change. The scopes asked for are `read:user` and `user:email`, plus `read:org`
+when organisations are named.
+
+#### SAML: `POST /api/auth/saml/{slug}/acs`
+
+The identity provider posts the browser here (`application/x-www-form-urlencoded`,
+`SAMLResponse` and `RelayState`; at most 1 MiB). The JSON-only and cross-site
+rules do not apply to it (see "Conventions"). Counts against the address's
+requests this minute.
+
+The browser cookie of a SAML attempt is `__Secure-petalbook_saml_<slug>`,
+`SameSite=None`, scoped to this path: the post comes from another site, and a
+`Lax` cookie would not be sent with it. So SAML needs an `https` public URL.
+
+A `link` started over SAML also sets `__Host-petalbook_saml_link_<slug>`
+(`SameSite=None; Secure; Path=/`, host-only), and the attempt keeps a hash of
+it. The session cookie is not sent with the cross-site post, and a sibling
+subdomain could set the `__Secure-` attempt cookie in someone else's browser,
+so the ACS links only when this cookie matches; otherwise it answers
+`sso_error=expired`.
+
+The server checks that `RelayState` equals the cookie, finds the attempt, and
+has the response validated against the provider's metadata (signature with
+SHA-256 or stronger, exactly one assertion, audience, destination, the
+`InResponseTo` of this attempt, time window, not seen before). Then it answers
+as the OpenID Connect callback does, with a `303`.
+
+A SAML identity is the identity provider's entity ID and the `NameID`. A
+transient `NameID` (a new value at every sign-in) is refused, because it cannot
+name an account. Responses the identity provider sends without being asked
+(IdP-initiated) are refused unless the provider allows them
+(`allowIdpInitiated`); they can then only sign in, to `/`.
+
+Validating a response needs no database query: the metadata is held in memory,
+and the assertion ids already used are kept in memory (at most 65,536, each
+until its assertion expires).
+
+#### SAML: `GET /api/auth/saml/{slug}/metadata`
+
+Public. The service provider metadata to give the identity provider
+(`application/samlmetadata+xml`): entity ID, the ACS address, the signing
+certificate (no encryption key is offered: encrypted assertions are refused). It is served for a provider that is not enabled yet, so it can be
+set up at the identity provider first.
+
+#### The pre-2.8 endpoints
+
+`POST /api/auth/oidc/start` and `GET /api/auth/oidc/callback` keep working,
+unchanged, for the one OpenID Connect provider marked `legacyCallback` (`404`
+when none is). That provider's redirect URI is the old one,
+`<public url>/api/auth/oidc/callback`, so what is registered at the identity
+provider does not have to change. Its failures now redirect with `sso_error=`
+like the others.
+
+The provider given with `--oidc-*` before 2.8 becomes that provider on the
+first start of 2.8:
+
+- If the command line has `--oidc-issuer` and the state database has never
+  imported one, the server stores an OpenID Connect provider with slug `sso`,
+  the name of `--oidc-name` (default "Single sign-on"), the issuer, client id,
+  scopes and `--oidc-auto-create` of the command line, the client secret sealed,
+  `legacyCallback` on, enabled. The login mode stays `dual` (what the page was
+  before) and `ssoOnly` off. It logs that it did so.
+- The identities people linked keep working without any change: an identity is
+  stored by issuer and subject, and the issuer is the same.
+- From then on the state database is what counts. When `--oidc-*` is still given
+  and differs from the stored provider (or that provider was deleted), the
+  server logs a warning at start-up and the security settings show a notice
+  `flags_ignored`; the flags change nothing. They are accepted, and ignored this
+  way, until they are removed in a later version.
+- Nothing in this import can stop anyone from signing in: passwords are
+  accepted as before, and an administrator can always use their password.
+
+#### `?sso_error=` codes
+
+The codes a failed sign-in or link sends to `/login?sso_error=` or
+`/settings?sso_error=`. The page shows a sentence for each and offers to try
+again. None says anything about an account that the person did not prove they
+own.
+
+| Code | Meaning |
+|---|---|
+| `provider_unavailable` | the provider is disabled or unknown, its discovery document or metadata cannot be fetched, or its stored secret cannot be opened with this server's key |
+| `idp_error` | the provider refused, or its answer did not verify (OpenID Connect, GitHub) |
+| `expired` | the attempt is unknown, used, older than 10 minutes, or was started in another browser |
+| `no_account` | nobody has this identity and the provider does not create accounts; also when an address match is ambiguous |
+| `not_allowed` | GitHub: the person is in none of the organisations the provider requires |
+| `disabled` | the account is disabled |
+| `identity_in_use` | `link`: another account has this identity |
+| `invite_invalid` | `invite`: the invite is unknown, used or expired |
+| `setup_invalid` | `setup`: setup is done, or the token is wrong |
+| `rate_limited` | the address made too many requests (SAML ACS, starts) |
+| `saml_destination` | the response has no `Destination`, or another one |
+| `saml_weak_signature` | the response is signed or digested with something weaker than SHA-256 |
+| `saml_encrypted` | the response carries an encrypted assertion, which the provider does not allow |
+| `saml_replay` | the assertion was used before |
+| `saml_multiple_assertions` | the response carries more than one assertion |
+| `saml_attributes` | an attribute is declared more than once |
+| `saml_transient_nameid` | the `NameID` is transient; set the identity provider to persistent, emailAddress or unspecified |
+| `saml_no_nameid` | the assertion has no `NameID` |
+| `saml_assertion_rejected` | any other reason the response did not validate (signature, audience, time) |
+| `internal` | something failed on the server; it is in the log |
+
+Before 2.8 the parameter was `error=`; the web app shipped with 2.8 reads
+`sso_error=`.
+
+#### Which account an identity signs in to
+
+For `intent: login`, in this order:
+
+1. The account that has this identity (by issuer and subject: one query).
+2. With `mergeVerifiedEmail` on for this provider, and only then: the one
+   account of the provider's tenant (from 3.3; another tenant's accounts are
+   not looked at, here or in the `no_account` check below) whose `email`
+   equals the address the provider sent (ignoring case),
+   when the provider said the address is verified (`email_verified: true` in
+   OpenID Connect; a verified primary address on GitHub; for SAML, which has no
+   such claim, turning the option on means the administrators vouch for every
+   address the identity provider sends), and the account's `emailVerified` is
+   `true` because a provider vouched for the address, the person confirmed it,
+   or a site administrator set or confirmed it: an address that only a tenant
+   administrator set or confirmed does not count (they could give a person of
+   their tenant someone else's address). It is never an administrator's account, a disabled one, or one that
+   already has an identity from this provider. The identity is then attached to
+   it, and this is recorded in the audit log. Two accounts with the address:
+   `no_account`.
+3. With `autoCreate` on for this provider: a new member account, named as
+   before 2.8 (the `name` claim; the username from `preferred_username` or the
+   part of `email` before `@`, made valid and unique; for SAML, the attributes
+   the provider maps). Its `email` is the provider's address, and
+   `emailVerified` is whether the provider vouched for it. Never the first
+   account: that is made with the setup token. A GitHub provider can only create
+   accounts when it names organisations.
+4. Otherwise `no_account`.
+
+An address alone never merges accounts: the same address signing in from two
+providers makes two identities, and they are on one account only if the person
+linked the second one from their account (or the option above is on).
+
+Two providers may not share an issuer (see "Sign-in providers"), so an identity
+belongs to exactly one provider, and deleting a provider and adding it again
+with the same issuer brings its people's identities back.
+
+### Captcha
+
+The server's own image captcha (the default: nothing leaves the server), or
+Cloudflare Turnstile, Google reCAPTCHA (v2) or hCaptcha. Each context is
+switched on by itself:
+
+| Context | Form | Counted failures |
+|---|---|---|
+| `login` | `POST /api/login` | wrong passwords, by address and by username |
+| `invite` | `POST /api/invites/check`, `POST /api/invites/accept` | the address's failures |
+| `setup` | `POST /api/setup` | the address's failures |
+| `forgot` | `POST /api/password/forgot` (from 3.3; see "Password reset") | the address's failures |
+| `register` | `POST /api/register` (from 3.3; see "Registration") | the address's failures |
+
+Each context asks for a captcha either `always` or `after_failures` (the
+default, after 3): once the address, or for `login` the username, has that many
+failures in the current window. Passkey sign-in and single sign-on have no
+captcha.
+
+#### `GET /api/captcha?ctx={context}&account={username}`
+
+Public. `Cache-Control: no-store`. Counts against the address's requests this
+minute. `account` matters only for `login`; the page asks again when the
+username changes (when the field loses focus, not at every key).
+
+```json
+{"required": true, "provider": "image", "siteKey": "", "id": "…", "image": "data:image/png;base64,…"}
+```
+
+- `required: false`: send nothing; the other fields are absent.
+- `provider: "image"`: show `image`; send `{"id", "answer"}`.
+- `turnstile`, `recaptcha`, `hcaptcha`: render the provider's widget with
+  `siteKey`; send `{"token"}`.
+- An unknown `ctx`: `400 invalid`.
+
+An image challenge lasts 5 minutes and can be answered once, right or wrong; at
+most 10,000 are held in memory (the oldest are dropped first). A wrong answer is
+`400 captcha_failed`; the page asks for a new challenge.
+
+The captcha is checked before anything else costs work: before the failure
+caps, the password hash and the token lookups, and a wrong captcha is not a
+wrong password. A third-party provider that cannot be reached, answers
+something unreadable, or reports a host name other than the host of
+`--public-url` is a failure (`captcha_failed`): the form is not let through
+when the check could not be made.
+
+### Rate limit, failure caps and lockout
+
+Every count is in memory, in this one process, and starts again from zero when
+the server restarts. Each table holds at most 10,000 keys and drops the one
+seen longest ago first (a key under lockout goes only when every other key is
+locked too), so made-up addresses and names cannot grow memory. Addresses are
+those of "Conventions" (`--trusted-proxy`; an IPv6 address counts by its /64).
+
+**Requests per minute, per address** (`limits.perMinute`, 10 by default). One
+allowance per address shared by `POST /api/login`, `POST /api/setup`,
+`POST /api/invites/check`, `POST /api/invites/accept`, `GET /api/captcha`,
+`POST /api/auth/passkey/begin`, `POST /api/auth/passkey/finish` and
+`POST /api/auth/saml/{slug}/acs`. Over it: `429 rate_limited` with
+`Retry-After` (for the ACS, a redirect to `/login?sso_error=rate_limited`). The
+starts of single sign-on keep their own allowance (30 a minute per address).
+
+**Failure caps** (`limits.maxFailures`, 10 by default, in a window of
+`limits.windowMinutes`, 15 by default). Failures are counted three ways: by
+address, by username, and by the pair. A window starts at a key's first failure
+and ends `windowMinutes` later. The address's count is checked before any hash
+or token is looked at; the username's and the pair's only after the password
+turned out wrong. Over a cap: `429 rate_limited`, `Retry-After` until the
+window ends. Wrong setup and invite tokens count against the address.
+
+**Lockout** (`lockout.enabled`, off by default). When a key reaches the cap it
+is locked for `lockout.minutes` (15 by default, 1 to 10,080), however the window
+goes on, and the lock is checked before the password. `lockout.scope` decides
+which key is locked:
+
+- `ip_account` (the default, and the one to use): the address and the username
+  together. Someone elsewhere cannot lock a person out, and an office behind one
+  address is not locked out for one person's mistakes.
+- `ip`: the address, for every username.
+- `account`: the username, from every address. This refuses the right password
+  for the length of the lock, so anyone who knows a username can keep that
+  person out. The security page says so next to the choice and asks to confirm.
+
+A locked attempt is `429 rate_limited` with `Retry-After` until the lock ends,
+and is recorded in the audit log.
+
+### Audit log
+
+Sign-in events, security changes, API tokens made or revoked and OAuth grants
+revoked go to the audit log in the state database (see `GET /api/admin/audit`).
+Rows are written in batches in the background, from a queue of at most 10,000;
+when the queue is full, rows are dropped and counted, and a `dropped` row says
+how many. At most 100,000 rows or 90 days are kept.
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `connection_provider_changed` | a provider was configured, changed or removed (administrators; secrets as `"changed"`) | `provider`, `type` |
+| `account_connected`, `account_disconnected` | a person connected or disconnected an account of a provider | `provider`, `login` |
+| `login` | a session was started | `method` (`password`, `passkey`, `oidc`, `saml`, `github`), `provider` (slug), `created` (an account was made) |
+| `login_failed` | a sign-in was refused | `method`, `reason` (`bad_password`, `disabled`, `local_login_refused`, `passkey_required`, `passkey_failed`, `captcha_failed`, `rate_limited` for an attempt turned away by a lockout or by the address's failure cap, an `sso_error` code), `provider`; the username as typed, also for a name nobody has. `captcha_failed` and an address's `rate_limited` are written at most once a minute per address (IPv6 by /64) and reason; a passkey sign-in whose ceremony was never begun, like a single sign-on callback that matches no sign-in, is not written |
+| `rate_limited` | a key first went over the per-minute limit or a failure cap in a window (once per key and window, not per request) | `limit` (`per_minute`, `ip`, `username`, `pair`) |
+| `lockout` | a key was locked | `scope`, `minutes` |
+| `passkey_clone` | a passkey's counter went backwards | `passkey` (id) |
+| `identity_linked`, `identity_unlinked` | an identity was attached or removed | `provider`, `by` (`user`, `email`, `admin`) |
+| `passkey_added`, `passkey_removed` | a passkey was registered or deleted | `passkey`, `by` (`user`, `admin`) |
+| `security_changed` | `PUT /api/admin/security` changed something | `from`, `to`: the changed fields only, never a secret (a secret shows as `"changed"`) |
+| `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
+| `user_changed` | an administrator changed `role`, `disabled`, `passkeyRequired`, `email` or `emailVerified` | the changed fields |
+| `token_created` | an API token was made (`POST /api/account/tokens`) | `token` (id), `name`, `access`, `spaces` (ids); never the secret |
+| `token_revoked` | an API token was revoked through the server (once: revoking one already revoked writes nothing) | `token`, `name`, `by` (`user`, `admin`) |
+| `grant_revoked` | an OAuth grant was revoked through the server | `grant`, `client` (its name), `by` (`user`, `admin`) |
+| `dropped` | rows were lost because the queue was full | `count` |
+
+Each row has `at`, `kind`, `actor` (the user who acted, if any), `user` (the
+account it is about, if any), `username` (as typed, for refused sign-ins), `ip`
+and `detail`. Groups add rows of their own (see "Audit" under "Groups").
+
+### Sign-in error codes
+
+The codes of this section, besides those of "Conventions":
+
+| Code | Status | When |
+|---|---|---|
+| `captcha_failed` | 400 | a captcha was required and missing, wrong, expired or used, or a third-party check failed |
+| `rate_limited` | 429 | the per-minute limit, a failure cap or a lockout; `Retry-After` in seconds |
+| `local_login_refused` | 403 | `ssoOnly` is in effect and a non-administrator signed in with a password or a passkey, or accepted an invite with a password |
+| `passkey_required` | 403 | the password was right but this person must use a passkey; or the session is held until a passkey is registered |
+| `passkey_failed` | 401 (sign-in), 400 (registration) | the ceremony is unknown or expired, or the credential did not verify |
+| `recent_login_required` | 403 | registering a passkey needs a sign-in in the last 10 minutes |
+| `too_many_passkeys` | 409 | the account has 20 passkeys |
+| `unauthenticated` | 401 | wrong username or password, or a disabled account |
+
+The codes of the security settings and the provider settings are listed with
+them in "Administration".
 
 ## Account
 
@@ -237,16 +753,24 @@ Accounts mode, signed in.
 {
   "user": {…},
   "hasPassword": true,
-  "identities": [{"id": "01JD3M2A4C", "provider": "Company SSO", "label": "kazuha@example.com", "created": "2026-11-21T08:30:00Z"}]
+  "identities": [{"id": "01JD3M2A4C", "provider": "Company SSO", "providerSlug": "company", "kind": "oidc", "label": "kazuha@example.com", "created": "2026-11-21T08:30:00Z"}],
+  "passkeys": [{"id": "01JD3N7X2B", "name": "MacBook", "created": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "synced": true}]
 }
 ```
 
-`label` is the `email` or `preferred_username` claim seen when the identity
-was attached, for display only.
+`label` is the `email` or `preferred_username` claim (for SAML the mapped email
+or the `NameID`; for GitHub the login name) seen when the identity was attached,
+for display only. `providerSlug` and `kind` are `""` for an identity whose
+provider was deleted; `provider` is then the issuer's host. `synced` is whether
+the authenticator says the passkey is backed up (synced between devices).
+
+The page offers "Link" for every enabled provider of `GET /api/auth/providers`
+that the user has no identity from.
 
 ### `PATCH /api/account`
 
-`{"name": "…", "email": "…"}`, each optional. `200` with `{"user": {…}}`.
+`{"name": "…", "email": "…"}`, each optional. `200` with `{"user": {…}}`. A
+changed `email` makes `emailVerified` `false`.
 
 ### `POST /api/account/password`
 
@@ -254,10 +778,48 @@ was attached, for display only.
 password and must be left out when they have none (an account made through
 single sign-on). Wrong `current`: `403 forbidden`. `204`.
 
+### Linking an identity
+
+`POST /api/auth/{kind}/{slug}/start` with `{"intent": "link"}`, then the
+provider's callback, which returns to `/settings` (or
+`/settings?sso_error=<code>`). Linking an identity the user already has changes
+nothing; one another account has is `identity_in_use`. Linking ignores
+addresses: it attaches exactly the identity the person proved.
+
 ### `DELETE /api/account/identities/{id}`
 
 `204`. Refused with `409 conflict` when it would leave the user with no way to
-sign in (no password and no other identity).
+sign in (no password, no other identity, no passkey).
+
+### Account passkeys
+
+`GET /api/account/passkeys` is `{"passkeys": […]}` as in `GET /api/account`.
+
+#### `POST /api/account/passkeys/begin`
+
+`{"name": "MacBook"}` (1 to 64 characters; default "Passkey"). Needs a session
+signed in within the last 10 minutes, by any method: otherwise
+`403 recent_login_required`, and the page sends the person through sign-in again
+with `return` back to this page. `409 too_many_passkeys` at 20. `200` with
+`{"ceremony": "…", "options": {…}}`: the `PublicKeyCredentialCreationOptions` for
+`navigator.credentials.create`, which already excludes the user's passkeys.
+
+#### `POST /api/account/passkeys/finish?ceremony={id}`
+
+The body is the credential the browser returned. `201` with
+`{"passkeys": […]}`. `400 passkey_failed` when it does not verify,
+`409 exists` when that credential is already registered. A held session
+(`hold: "passkey"`) is released.
+
+#### `PATCH /api/account/passkeys/{id}`
+
+`{"name": "…"}`. `200` with the passkey. `404` for another user's.
+
+#### `DELETE /api/account/passkeys/{id}`
+
+`204`. `409 conflict` when it would leave the user with no way to sign in.
+Deleting the last passkey of someone who must have one is allowed: their next
+sign-in is held until they register another.
 
 ## Users and invites
 
@@ -275,15 +837,35 @@ leaves out the disabled accounts, before the limit counts (`enabled=0`, the
 default, keeps them; `400 invalid` for anything else). A picker that looks for
 one person sends `q` and `limit`, so it never loads every account.
 
+Each user here also has `passkeys` (how many) and `sso` (how many identities).
+
 ### `PATCH /api/users/{id}`
 
-`{"role": "member", "disabled": true}`, each optional (from milestone 3.1
-also `remoteExempt`, see "Server storage", "Exemptions"). `200` with
-`{"user": {…}}`. `409 conflict` when the change would leave no enabled
-administrator, or when an administrator tries to disable themself.
+`{"role": "member", "disabled": true, "passkeyRequired": true, "email": "…", "emailVerified": true}`,
+each optional. `200` with `{"user": {…}}`. `409 conflict` when the change would
+leave no enabled administrator, when an administrator tries to disable themself,
+or, while `ssoOnly` is in effect, when it would leave no enabled administrator
+with a password. `passkeyRequired: true` is refused with
+`400 passkey_unavailable` while passkeys cannot be used (see "Passkeys").
+Setting `email` without `emailVerified` makes it unverified. From 3.3 the body
+may also have `quota` (see "Quotas"), and the users of the administrators' lists
+and of this answer have `quota`: `{"spaces": null, "bytes": null, "pages": null}`
+(the person's own limits; `null` follows the tenant). From 3.3,
+`emailVerified: true` sent by a tenant administrator (not a site administrator)
+is stored and shown, but the address does not count for merging a sign-in by
+address (see "Which account an identity signs in to") until a site
+administrator confirms it or the person does. From milestone 3.1 the body may also have `remoteExempt`
+(site administrators only, `403 forbidden` for a tenant administrator; see
+"Server storage", "Exemptions").
 
 An administrator cannot open another user's space through the API. Whoever
 can read the server's disk can read every file.
+
+### `GET /api/users/{id}/passkeys`, `DELETE /api/users/{id}/passkeys/{passkey}`
+
+The user's passkeys as in `GET /api/account` (names, dates, no key material),
+and deleting one (`204`), for a person who lost a device. Deleting is recorded
+in the audit log.
 
 ### `POST /api/invites`
 
@@ -307,18 +889,27 @@ neither used nor expired.
 
 ### `POST /api/invites/check` (public)
 
-`{"token": "…"}`. `200` with `{"role": "member", "expires": "…"}`, or
-`404 not_found` for a token that is unknown, used or expired.
+`{"token": "…", "captcha": {…}}`. `200` with
+`{"role": "member", "expires": "…", "username": "", "name": "", "email": ""}`
+(the last three are what the invite fills in: see `POST /api/admin/tenants`; an
+ordinary invite has them empty), or `404 not_found` for a token that is
+unknown, used or expired (a failure of the address). `captcha` as for the
+`invite` context.
 
 ### `POST /api/invites/accept` (public)
 
 ```json
-{"token": "…", "username": "tang", "name": "Tang", "password": "…"}
+{"token": "…", "username": "tang", "name": "Tang", "password": "…", "captcha": {…}}
 ```
 
 `201` with `{"user": {…}}` and a session cookie; the user gets a personal
-space. `404 not_found` for a bad token, `409 exists` when the username is
-taken (the invite stays usable).
+space. A `username` or `name` left empty (or out) takes what the invite fills
+in; the invite's `email`, if it has one, becomes the account's (not verified).
+`404 not_found` for a bad token, `409 exists` when the username is
+taken (the invite stays usable). While `ssoOnly` is in effect, an invite for
+the `member` role cannot be accepted with a password: `403 local_login_refused`
+(the page offers the providers instead, which accept it with
+`intent: "invite"`); an account made that way could never sign in.
 
 ## Spaces
 
@@ -342,6 +933,10 @@ by the name of a role:
 
 An `owner` has all four, an `editor` `read` and `write`, a `viewer` `read`.
 In single-user mode the one user has all of them.
+From 3.2 `role` and `permissions` are the caller's effective ones, which
+include the roles of their groups, and the Space also has `directRole` (the
+caller's own role, `""` when they reach the space only through groups) and
+`viaGroups`; see "Effective permission" under "Groups".
 `personal` marks the space made together with the account. `sync` is `local`
 (the repository exists only on the server) or the `state` of its remote (see
 "Remote repository"). `inbox` is the folder that quick notes go to: a folder
@@ -376,30 +971,36 @@ characters; `inbox` is optional (default `Inbox`) and must be a valid folder
 path. `201` with the space.
 The server makes the Git repository. The caller is its owner. `403 forbidden` when
 the caller already owns as many spaces as the server allows (`--max-spaces`,
-20 by default).
+20 by default). From 3.3 this is `403 quota_exceeded` with `quota`, `limit` and
+`used` (see "Quotas"), and the limit is the setting `quota.spacesPerPerson`, or
+the person's own, or the tenant's total of spaces.
 
-With `github`, the space follows a repository on GitHub from its first commit
-(see "GitHub", "Creating a space with a GitHub repository"):
+With `storage.sync`, the space follows a repository on a provider from its first
+commit (see "Connections", "Spaces and remotes", and "The GitHub provider",
+"Creating a space with a repository"):
 
 ```json
 {"name": "Tang", "inbox": "收件箱",
- "github": {"owner": "kazuhahub", "name": "tang-notes", "private": true, "description": "Notes on Tang poetry", "create": true}}
+ "storage": {"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes", "private": true,
+                      "description": "Notes on Tang poetry", "create": true}}}
 ```
 
 `201` with the space; its `sync` is then the state of its remote. When it
 fails, no space and no record is left on the server; what can be left on
-GitHub, and how to retry, is described there.
+the provider, and how to retry, is described there.
 
 From milestone 3.1 (see "Server storage"):
 
-- `github.assets` asks for an attachment repository made with it, on the same
-  owner, with the same visibility and credential: `true` names it
-  `<name>-assets`, `{"name": "tang-notes-assets"}` names it.
+- `storage.sync.assets` asks for an attachment repository made with it, on the
+  same owner, with the same visibility and credential: `true` names it
+  `<name>-assets`, `{"name": "tang-notes-assets"}` names it, `false` makes
+  none, and leaving it out follows the administrators' `assets.newSpaces`.
 - `remote`, shaped like the body of `PUT …/remote` but with a `token`
   credential only (an SSH key has to be added to the repository first, which
   needs a space to hold it: `400 invalid`), connects the new space to an
   existing repository on any allowed host before it becomes visible, under
-  the same all-or-nothing rule. `remote` and `github` cannot both be given
+  the same all-or-nothing rule. This is the "other (by address)" choice of
+  "存在哪里". `remote` and `storage.sync` cannot both be given
   (`400 invalid`).
 - While the storage policy requires a remote of new spaces, a request without
   what it requires answers `409 remote_required`, before anything is made.
@@ -416,7 +1017,9 @@ space, each with a role (`owner`, `editor` or `viewer`, see "Space"). A space
 always keeps at least one owner. A personal space (`personal: true`) belongs to
 its person alone and never has other members. An administrator is not a member
 of the spaces they open, so they are not listed here and not in `GET /api/spaces`,
-but may use these endpoints as if they were an owner.
+but may use these endpoints as if they were an owner. From 3.2 a shared space's
+members may also be groups, with endpoints of their own (see "Groups"); this
+section is about people.
 
 ### Member
 
@@ -453,6 +1056,268 @@ goes through the space, which cannot be opened). `204`. `409 last_owner` when no
 other owner who can sign in would be left (a disabled user cannot be the one
 remaining owner; the same goes for `PATCH`): make someone else an owner first.
 The removed member's very next request to the space answers `404 not_found`.
+
+## Groups
+
+Milestone 3.2. Accounts mode; single-user mode has no groups and answers `404`
+on every endpoint here. A group is a set of people that can be made a member of a
+shared space with a role, like a person. There are two kinds, fixed when the
+group is made:
+
+- **local**: made in the app; an administrator adds and removes its people (see
+  "Groups" under "Administration").
+- **synced**: its people come only from sign-in. A sign-in provider maps values
+  of its groups claim to synced groups (see "Groups from sign-in" below), and
+  each sign-in through that provider brings the person's groups up to date. Its
+  people cannot be changed by hand (`409 group_synced`).
+
+Groups do not nest: a group's people are users, never other groups.
+
+### Group
+
+```json
+{"id": "01JD4A2K9P", "name": "Engineering", "description": "", "source": "synced",
+ "people": 214, "spaces": 3,
+ "mappedFrom": [{"provider": "company", "value": "5f1c…-engineering"}],
+ "created": "2026-11-23T08:30:00Z", "updated": "2026-11-23T08:30:00Z"}
+```
+
+- `id` has the form of a page id.
+- `name` is 1 to 80 characters, unique ignoring case (compared by Unicode case
+  folding, the same on SQLite and PostgreSQL, as space names are).
+  `description` is at most 500 characters.
+- `source` is `local` or `synced`, fixed once made.
+- `people` is how many users are in it; `spaces` how many spaces it is a member
+  of.
+- `mappedFrom` (synced groups only; `[]` for a local one) lists the providers'
+  claim values that feed it, read from the providers' settings.
+
+Only administrators see a whole group. Everyone else sees groups only as
+`{"id", "name", "source"}`: in a space's members (with the group's role and
+`people`), in `GET /api/groups` and in their own account.
+
+### Effective permission
+
+A person's permissions in a space are the union of the permissions of their
+direct role, if they are a member, and the roles of every group of theirs that
+is a member of the space. The built-in roles nest (`viewer` ⊂ `editor` ⊂
+`owner`), so the union is the highest of those roles. In the Space object (see
+"Spaces") `role` is the built-in role whose permissions are that union and
+`permissions` lists them; `directRole` is the person's own role, `""` when they
+reach the space only through groups; `viaGroups` is `true` when at least one of
+their groups is a member. A space reached both ways is listed once.
+
+Everything that asks what a person may do in a space uses this effective
+permission: every route's check, `GET /api/spaces`, an API token or OAuth grant
+(which is never more than its owner's permission now, see "API tokens"), MCP's
+`tools/list`, and whether a waiting draft of theirs may be written. A space that
+someone reaches only through a group can be put in a token; when the person
+leaves the group, or the group leaves the space, the token's next request to the
+space answers `404 not_found`, the same as for a removed member.
+
+**What it costs.** A permission check stays the in-memory lookup of 1.7: the
+server keeps, per person, the spaces they can reach and one byte of permissions
+for each. On a miss the list is read with one query (direct memberships and
+group memberships together) and kept; groups are never expanded per request.
+A change drops exactly the people it touches, and the very next request of each
+reads the database once:
+
+| Change | Whose cached list is dropped |
+|---|---|
+| a person added to or removed from a local group | that person |
+| a sign-in changes a person's synced groups (no change, nothing dropped) | that person |
+| a group added to a space, its role changed, or removed | every person in the group (one indexed query for their ids) |
+| a group deleted, or a provider's mapping entry removed | every person in it |
+| a space deleted | its direct members and every person in its groups |
+| a space renamed | nobody: names are kept apart from the per-person lists |
+
+The cache is bounded by entries (2 million space–person pairs by default), not
+by people, so a group in hundreds of spaces costs hundreds of pairs per person.
+Like the 1.7 cache, it lives in one process.
+
+### Groups as members of a space
+
+Shared spaces only: a personal space never has groups (`409 personal_space`).
+These need `members`, like the member endpoints, and an administrator may use
+them in any space.
+
+A space always keeps at least one **direct** owner who can sign in: an owner
+through a group does not count, because the identity provider may empty the
+group. For the same reason the first direct owner stays the Git author of a
+space's default commits.
+
+#### Group member
+
+```json
+{"groupId": "01JD4A2K9P", "name": "Engineering", "source": "synced", "role": "editor", "people": 214, "yours": true}
+```
+
+`yours` is true when the caller is in the group.
+
+#### `GET /api/spaces/{space}/members`
+
+Needs `read`, as before: `{"members": [{…}], "groups": [{…}]}`. `members` is
+unchanged: the direct members (owners first, then by name). `groups` are the
+groups that are members, by name. Neither is expanded or paged: a space has at
+most 200 groups. Each Member gains `viaGroups` (whether one of their groups is
+in the space too) and `effectiveRole`.
+
+#### `GET /api/spaces/{space}/members/effective?q={text}&cursor={cursor}&limit={n}`
+
+Needs `read`. Every person who can reach the space, with how:
+
+```json
+{"items": [{"userId": "01JD3K8Q7Z", "username": "tang", "name": "Tang", "role": "owner",
+            "directRole": "editor", "groups": [{"groupId": "01JD4A2K9P", "name": "Engineering", "role": "owner"}],
+            "you": false}],
+ "next": "tang"}
+```
+
+By username; `q` keeps people whose `username` or `name` contains it, ignoring
+case. `limit` 1 to 200 (default 50); `next` is the following page's `cursor`,
+`""` after the last. One query a page however large the groups are. Disabled
+users are left out. Administrators who are not members are not listed.
+
+#### `POST /api/spaces/{space}/groups`
+
+`{"groupId": "01JD4A2K9P", "role": "editor"}`. `201` with the group member.
+`404 group_not_found` for no such group; `409 exists` when it is a member
+already; `409 personal_space`; `409 group_limit` at 200 groups;
+`400 invalid` for a role that is not one of the three. Its people's very next
+request sees the space.
+
+#### `PATCH /api/spaces/{space}/groups/{group}`
+
+`{"role": "viewer"}`. `200` with the group member; `404 not_found` when the group
+is not a member. Applies to its people's very next request.
+
+#### `DELETE /api/spaces/{space}/groups/{group}`
+
+`204`; `404 not_found` when the group is not a member. Its people who are not
+direct members (and in no other group of the space) answer `404 not_found` on
+their very next request to it; their drafts are kept, as for a removed member.
+
+#### Leaving a space
+
+`DELETE /api/spaces/{space}/members/{user}` for oneself removes the direct
+membership only. A person who reaches the space only through groups cannot
+leave it themself: `409 member_via_group` (the message names the groups). One
+who is both a direct member and in a group leaves the direct membership and
+keeps the group's role.
+
+### `GET /api/groups?q={text}&limit={n}`
+
+Any signed-in user (not an API token). For finding a group to add to a space:
+`{"groups": [{"id", "name", "source"}]}`, the groups whose name contains `q`,
+ignoring case, by name. `q` is required (1 to 80 characters, `400 invalid`
+otherwise); `limit` 1 to 20 (default 20). Never the people of a group, nor its
+mapping.
+
+`GET /api/account` gains `groups`: `[{"id", "name", "source"}]`, the caller's
+groups by name.
+
+### Groups from sign-in
+
+A sign-in provider (see "Sign-in providers") may carry a `groups` setting:
+
+```json
+"groups": {"enabled": true, "claim": "groups", "missing": "keep",
+           "map": [{"value": "5f1c…-engineering", "groupId": "01JD4A2K9P"},
+                   {"value": "/staff", "groupId": "01JD4A3B7Q"}]}
+```
+
+- `claim`: where the values are read. OpenID Connect: a claim of the ID token
+  (the userinfo response is not read), holding a string or an array of strings
+  (default `groups`). SAML: an attribute name, every value of it
+  (`memberOf`, or `http://schemas.microsoft.com/ws/2008/06/identity/claims/groups`
+  for Entra ID). GitHub: not settable; the values are the organisations the
+  person belongs to (the logins 2.8 already reads, at most 500).
+- `missing`: what happens when the claim is not there at all: `keep` (default:
+  the person's groups from this provider stay as they are) or `clear` (as if
+  the list were empty). OpenID Connect's "groups overage" (Entra ID sends
+  `_claim_names` instead of the list when a person is in too many groups) counts
+  as missing.
+- `map`: up to 1,000 entries, each a value (1 to 256 bytes, compared exactly) and
+  a synced group. A value appears once per provider; a group may be fed by
+  several values and several providers. Values in the claim with no entry are
+  ignored: no group is ever made from a claim.
+
+**Sync.** After every successful sign-in through the provider (`login`, and
+`link` and `invite` too, which prove the same identity), with `enabled` on:
+
+1. The values are read (at most 1,000; more are ignored and the
+   `groups_claim_truncated` audit row says so) and mapped through `map`.
+2. The person's memberships that came from this provider are read (one query)
+   and compared: memberships for values no longer sent are removed, new ones
+   added. Memberships from other providers and of local groups are untouched.
+3. Only when something changed: one write, the person's cached list is dropped,
+   and a `groups_synced` audit row is written.
+
+The sync never refuses a sign-in. A person in more than 1,000 groups is not
+added to the ones past that number (`group_limit` in the audit row).
+
+**When a value disappears.** The person leaves that group at their next sign-in
+through the provider, not before: until then their sessions, tokens and grants
+keep the group's permissions. To take access away at once, disable the person,
+remove the group from the space, or remove the mapping entry. Removing an entry
+from `map` (or pointing it to another group) at once removes the memberships
+that entry brought, from everyone; deleting a provider removes every membership
+it brought (its identities are kept, as in 2.8). Disabling a provider changes
+nothing.
+
+**Refusals of the setting** (`POST`/`PATCH /api/admin/auth/providers`):
+`400 invalid` for a bad `claim`, `missing` or value; `404 group_not_found` for an
+unknown group; `409 group_not_synced` for a local group; `409 exists` for a
+value given twice.
+
+### Limits
+
+| What | Limit |
+|---|---|
+| groups of a tenant (from 3.3; before, of the server) | 10,000 |
+| people in a group | 100,000 |
+| groups a person is in | 1,000 |
+| groups that are members of one space | 200 |
+| mapping entries of one provider | 1,000 |
+| claim values read at one sign-in | 1,000, each at most 256 bytes |
+| people added in one request | 500 |
+| page size of every list | 1 to 200 (default 50); `GET /api/groups` 1 to 20 |
+
+Going over a limit is `409 group_limit`, with the limit in the message. Every
+list is paged with `cursor` and `next` and is one query a page.
+
+### Audit
+
+These rows join those of "Audit log":
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `group_created`, `group_changed`, `group_deleted` | an administrator made, renamed or deleted a group | `group`, `name`, `source`; for a change the changed fields; for a delete `people` and `spaces` |
+| `group_member_added`, `group_member_removed` | an administrator changed a local group's people (one row per request) | `group`, `users` (ids, at most 500) |
+| `groups_synced` | a sign-in changed a person's synced groups | `provider`, `added`, `removed` (group ids) |
+| `groups_claim_missing` | a provider with groups on sent no claim (or an overage) | `provider`, `missing` (`keep` or `clear`), `reason` (`absent`, `overage`) |
+| `groups_claim_truncated` | more values than read, or more groups than a person may be in | `provider`, `limit` (`values`, `group_limit`) |
+| `space_group_added`, `space_group_changed`, `space_group_removed` | a group became a member of a space, changed role, or left | `space`, `group`, `role` (old and new for a change) |
+
+`user` is the person a sync or a membership change is about; `actor` the one who
+acted (`null` for a sync).
+
+### Group error codes
+
+The codes of this section, besides those of "Conventions":
+
+| Code | Status | When |
+|---|---|---|
+| `group_not_found` | 404 | the group in the body (or in a mapping entry) does not exist |
+| `group_synced` | 409 | changing a synced group's people by hand |
+| `group_not_synced` | 409 | a mapping entry points to a local group |
+| `group_limit` | 409 | a limit of "Limits" would be passed |
+| `group_in_use` | 409 | deleting a group that is a member of spaces or mapped, without `force=1` (with `{"spaces": n, "mappings": n}`) |
+| `member_via_group` | 409 | leaving a space one reaches only through groups |
+| `user_not_found` | 404 | adding people who do not exist (with `{"missing": [ids]}`; nobody is added) |
+| `personal_space` | 409 | a group for a personal space |
+| `exists` | 409 | the name is taken; the group is a member already; a mapping value given twice |
+| `last_owner` | 409 | unchanged: counts direct owners only |
 
 ## Remote repository
 
@@ -491,6 +1356,7 @@ allows any).
 {
   "url": "git@github.com:kazuha/notes.git",
   "branch": "main",
+  "provider": "git",
   "credential": {"type": "ssh", "publicKey": "ssh-ed25519 AAAA… petalbook-01JD3K8Q7Z", "fingerprint": "SHA256:…"},
   "state": "ok",
   "lastSync": "2026-11-21T08:30:00Z",
@@ -505,18 +1371,21 @@ allows any).
   private key never leaves the server and is never returned; `publicKey` is
   what to add to the repository as a deploy key with write access), `token`
   (`{"type": "token", "username": "x-access-token"}`; the token is never
-  returned) or `github` (the server's GitHub App, see "GitHub"):
+  returned) or `connection` (a provider's connection, here the GitHub App; see "Connections"):
 
   ```json
-  {"type": "github", "via": "app", "installationId": 51234567, "account": "kazuhahub", "repoId": 881234567}
-  {"type": "github", "via": "user", "user": {"id": "01JD3K7A2M", "username": "tang"}, "login": "tang-gh", "repoId": 881234567}
+  {"type": "connection", "provider": "github", "via": "app", "installationId": 51234567, "account": "kazuhahub", "repoId": 881234567}
+  {"type": "connection", "provider": "github", "via": "user", "user": {"id": "01JD3K7A2M", "username": "tang"}, "login": "tang-gh", "repoId": 881234567}
   ```
 
   `via: "app"` fetches and pushes with an installation token of the App's
   installation on `account`; `via: "user"` with the GitHub authorisation of the
   PetalBook user `user` (GitHub account `login`). No secret is stored for the
   space itself and none is returned. `repoId` is GitHub's id of the
-  repository. With `github`, `url` is always `https://github.com/<owner>/<name>.git`.
+  repository. With a GitHub connection, `url` is always `https://github.com/<owner>/<name>.git`.
+- `provider`: the id of the provider the remote goes through (`github`), or
+  `git` for a plain address with a key or a token; a client shows the
+  platform's icon and name from it.
 - `state`: `ok`; `offline` (the last attempt could not reach the remote;
   `error` says why, in words fit to show); `rewritten` (paused, see above;
   `rewritten` is then `{"lastGood": "<commit>", "remote": "<commit>"}`);
@@ -526,10 +1395,10 @@ allows any).
   every other state. `auth` (the remote refused the credential), `hostkey`
   (the SSH host key changed), `clone` (the clone is not as the server left
   it), `rescued` (commits that could not be pushed were kept aside), and for a
-  `github` credential `github_authorization_expired`,
-  `github_authorization_missing`, `github_installation_gone`,
-  `github_not_configured` (see "GitHub", "When a GitHub credential stops
-  working"). A client shows `error` and uses `errorCode` only to choose what
+  `connection` credential `connection_expired`, `connection_missing`,
+  `installation_gone`, `app_missing_permission`, `provider_not_configured` (see
+  "The GitHub provider", "When a GitHub credential stops working"). The error
+  has `provider` too. A client shows `error` and uses `errorCode` only to choose what
   to offer (reconnect GitHub, open the installation's settings, ...). Codes
   may be added; a client treats one it does not know like `auth`.
 - `lastSync`: when the server last saw the remote (absent before the first).
@@ -561,9 +1430,9 @@ pair replaces the old one (only while the space is local).
 
 `branch` defaults to `main`. For `ssh` the credential is `{"type": "ssh"}`
 (the key from `…/remote/key`). Leaving `credential.token` out while the space
-already has a token keeps it. For `github` it is `{"type": "github", "via": "app"}`
-or `{"type": "github", "via": "user"}` (see "GitHub", "Switching an existing
-space to GitHub"). On a space that already follows a remote, `PUT` replaces
+already has a token keeps it. For a connection it is `{"type": "connection", "provider": "github", "via": "app"}`
+or `{"type": "connection", "provider": "github", "via": "user"}` (see "The GitHub
+provider", "Switching an existing space to GitHub"). On a space that already follows a remote, `PUT` replaces
 its address and credential: this is how a space moves from a deploy key or a
 token to the App, or back. The server connects before answering:
 
@@ -583,7 +1452,7 @@ remote cannot be reached or refuses the credential (nothing is changed, and
 ### `DELETE /api/spaces/{space}/remote`
 
 `204`. The space becomes local, with everything it has; the credential is
-deleted. Nothing is changed on the remote. A `github` credential has no secret
+deleted. Nothing is changed on the remote. A `connection` credential has no secret
 of its own: the App and the user's GitHub authorisation stay as they are.
 
 From milestone 3.1: `409 remote_required` while the storage policy requires a
@@ -607,13 +1476,181 @@ rewritten history: the space moves to that commit. `200` with the remote;
 `409 conflict` if the remote is no longer at that commit. Drafts are kept;
 those whose page changed are stale and are shown as such.
 
-## GitHub
+## Connections
+
+Milestone 2.7b. A *connection* is a person's account at a platform that holds
+repositories, and a *provider* is the platform's side of it. This section is
+the general shape; "The GitHub provider" below holds what is GitHub's. Accounts
+mode only; single-user mode answers `404`.
+
+**Storage & sync.** The product calls this area "存储与同步" (Storage & sync):
+
+- the administrators' page "存储与同步" holds the connections, one card per
+  platform (the storage rules of milestone 3.1 and the budget of 3.5 go above
+  them when they land);
+- the account page's section is "已连接的账号" (connected accounts), one row per
+  platform, with the leftover reminders under their platform;
+- a new space asks "存在哪里" (where it's stored): this server, sync to GitHub,
+  sync to GitLab, …, then "other (by address)";
+- ordinary users never see the words Git or repository ("同步到 GitHub"); the
+  administrators' page and the "other (by address)" option may.
+
+**One provider interface.** The server holds its providers in memory, by id. A
+provider describes itself, connects a person (start, callback, renewal,
+disconnect), lists the places it may create repositories in and the
+repositories it reaches, creates a repository, gives Git a credential, and
+checks its own configuration. GitHub (the App: manifest creation, install and
+authorise in one step, installations shared per tenant) is the first
+implementation; GitLab and Gitea follow in 3.8; plain Git by address, with a
+deploy key or a token, is the provider `git`. Nothing is released, so the
+generic shape replaces the GitHub-only one; there are no aliases.
+
+### Provider
+
+```json
+{"id": "github", "type": "github", "host": "github.com", "name": "GitHub",
+ "owner": "site",
+ "capabilities": {"createRepo": true, "installations": true, "connectAccount": true,
+                  "storageTarget": true, "partialSync": "yes"},
+ "configured": true,
+ "app": {"name": "PetalBook Notes", "slug": "petalbook-notes",
+         "htmlUrl": "https://github.com/apps/petalbook-notes",
+         "installUrl": "https://github.com/apps/petalbook-notes/installations/new"},
+ "userAuthorization": true,
+ "connection": {"login": "tang-gh", "accountId": "1234567", "state": "ok",
+                "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2},
+ "leftovers": [{"repoId": 881234567, "fullName": "kazuhahub/tang-notes",
+                "htmlUrl": "https://github.com/kazuhahub/tang-notes",
+                "spaceName": "Tang notes", "created": "2026-11-23T08:45:00Z"}]}
+```
+
+- `id`: the provider's id, used in every path below. `github` is the site's
+  GitHub App; 3.8's are chosen by the administrator (`gitlab`, `codeberg`, …;
+  lowercase letters, digits and `-`, at most 40). `git` is always there and has
+  no connection.
+- `type`: `github` (`gitlab` and `gitea` come with 3.8), `git`.
+- `owner`: `site` (tenants' own providers come with 3.6).
+- `capabilities`: what the client may offer; it shows options by capability,
+  never by the platform's name. `partialSync` is `yes`, `no` or `unknown` (not
+  yet detected; 3.5 detects it).
+- `configured`: whether the provider is set up and can be used. Everything else
+  of the provider answers `409 provider_not_configured` while it is `false`.
+- `app` is the provider's App when it has one (GitHub) and is set up, else
+  `null`: `installUrl` is where a person installs it. `userAuthorization` is
+  whether people can connect their account: for GitHub the App's client id and
+  secret are saved and the server has `--public-url`.
+- `connection`: the caller's connection or `null`; `state` is `ok` or
+  `expired` (see "Renewal"); `accountId` is the platform's id as a string;
+  `refreshExpires` is absent when the provider does not expire tokens;
+  `spaces` counts the spaces that sync through it, so a client can warn before
+  a disconnect.
+- `leftovers`: the caller's reminders of empty repositories a failed attempt to
+  make a space left on the platform (see "Leftover repositories"): newest
+  first, at most 20, `[]` when there are none and always present.
+
+### `GET /api/connections`
+
+Any signed-in user: `{"providers": [Provider]}`, in a stable order (GitHub,
+GitLab, Gitea, then by name, `git` last). The providers are the ones the server
+has, whether set up or not (`configured`), so a client can say there is nothing
+to connect to. Read from memory; one query for the caller's connections and
+leftovers.
+
+### Routes by provider
+
+| Work | Route |
+|---|---|
+| list the providers | `GET /api/connections` |
+| connect | `POST /api/connections/{provider}/authorization/start` |
+| the platform's redirect back | `GET /api/connections/{provider}/authorization/callback` |
+| disconnect | `DELETE /api/connections/{provider}/authorization` |
+| where a repository can be made | `GET /api/connections/{provider}/owners` |
+| repositories that can be connected | `GET /api/connections/{provider}/repos` |
+| dismiss a reminder | `DELETE /api/connections/{provider}/leftovers/{repoId}` |
+| the provider's configuration | `/api/admin/connections/{provider}…` (site administrators) |
+
+- `GET /api/admin/connections`: site administrators; every provider with its
+  configuration state, `partialSync`, and counts (connections, spaces; for
+  `git` there are no connections, and `spaces` counts the spaces on a plain
+  address).
+- A `{provider}` that does not exist answers `404 not_found`; a route a
+  provider's type does not have (installations on a type without them, anything
+  but `repos` on `git`) answers `404 not_found` too. `repos` on `git` is an
+  empty list.
+- The callbacks stay exceptions to the cross-site rule; the state names the
+  provider.
+
+### Spaces and remotes
+
+- `POST /api/spaces` takes `storage.sync`:
+
+  ```json
+  {"name": "Tang notes",
+   "storage": {"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes",
+                        "private": true, "description": "Notes on Tang poetry", "create": true}}}
+  ```
+
+  Without `sync` the space is on this server. The fields are the GitHub
+  provider's, see "Creating a space with a repository"; from 3.1 it may also
+  have `assets` (see "Spaces", `POST /api/spaces`). `provider: "git"` is
+  `400 invalid` here: a plain address is given as `remote` (3.1, with a
+  token), or connected after the space is made with `PUT …/remote`. Failures
+  that leave a repository behind answer with `repo` (and, from 3.1,
+  `assetsRepo`).
+- The Remote object's credential is `{"type": "connection", "provider": "github",
+  "via": "app" | "user", …}`; the other fields are the provider's (for GitHub
+  `installationId`, `account`, `user`, `login`, `repoId`). `ssh` and `token` stay.
+  `PUT …/remote` takes the same shape.
+- The Remote object has `provider` (the id; `git` for a plain address) so the
+  client shows the platform's icon and name.
+
+### Error codes
+
+Every error of a connection has `provider` (the id) next to `error` and
+`message`. The codes do not carry the platform's name:
+
+| Code | Meaning |
+|---|---|
+| `provider_not_configured` | the provider is not set up (or, for user flows, lacks what connecting needs) |
+| `connection_expired` | the person's connection ran out or was revoked (as a remote's `errorCode`) |
+| `connection_missing` | the person it names has no connection (any more) (as a remote's `errorCode`) |
+| `not_connected` | the request needs the caller's connection and there is none, or it is expired |
+| `installation_gone` | the App was uninstalled or suspended, or the repository left its selection |
+| `repo_not_in_installation` | no installation reaches the repository and it could not be added |
+| `app_not_installed` | the App is not installed where the caller wants a repository (`installUrl`): their own account, or an organisation the App was removed from |
+| `app_missing_permission` | the App or its installation lacks a permission (`permission` names the first, `missing` all) |
+| `provider_refused` | the platform refused a person (`message` passes on what it said) |
+| `provider_error` | the platform failed or answered something the server could not use |
+| `name_taken` | the owner has a repository of that name |
+| `push_failed` | the repository was made but the first push failed |
+| `auto_create_needs_org` | `autoCreate` on a sign-in provider (2.8) that names no organisation: anyone with an account there could make one |
+| `app_rejected`, `client_rejected`, `key_invalid` | the platform does not accept what the administrator entered |
+| `public_url_needed` | the flow needs `--public-url` |
+| `owner_not_allowed` | the owner is not one of the caller's |
+| `provider_in_use` | the provider cannot be changed or removed while spaces or people use it |
+| `account_in_use` | the platform account is connected to another person (any tenant) |
+
+### Storage
+
+`remotes.cred_type` is `ssh`, `token` or `connection`, and `remotes.provider` is
+the provider's id (`github` for a connection, `git` for the others). The
+GitHub provider's tables keep their names (`github_authorizations`,
+`github_installations`, `github_installation_tenants`, `github_leftovers`).
+
+### Audit
+
+`connection_provider_changed` (a provider configured, changed or removed:
+`provider`, `type`, secrets as `"changed"`), `account_connected` and
+`account_disconnected` (`provider`, `user`, `login`). All three are the
+server's own kinds: a tenant administrator's `GET /api/admin/audit` does not
+list `connection_provider_changed`.
+
+## The GitHub provider
 
 Accounts mode; single-user mode answers `404` here, as it does for the whole of
-"Remote repository" (so a `github` credential in `PUT …/remote` is `404` there
+"Remote repository" (so a `connection` credential in `PUT …/remote` is `404` there
 too). The server has at most one
-GitHub App, which an administrator configures (see "Administration", "GitHub
-App"); only `github.com` is supported. Three things come from it:
+GitHub App, which an administrator configures (see "Administration", "Connections", "The GitHub App"); only `github.com` is supported. Three things come from it:
 
 - **Installations**: where the App is installed (organisations, accounts). An
   installation token pushes and fetches a space's repository, and creates
@@ -623,11 +1660,21 @@ App"); only `github.com` is supported. Three things come from it:
   in the organisations GitHub lets that user create them in, and syncs a space
   when no installation reaches its repository. What a user token may do is
   what both the user and the App may do: GitHub checks the user's own rights.
-- **Spaces made with a new repository** (`POST /api/spaces` with `github`),
+- **Spaces made with a new repository** (`POST /api/spaces` with `storage.sync`),
   and existing spaces switched to the App (`PUT …/remote`).
 
-Every route here is a person's, not a token's: with an API token, `/api/github/…`
-and `/api/admin/github…` answer `403 token_scope` (see "API tokens"), and so
+**Tenants (3.3).** The App and its installations are the server's: only site
+administrators reach `/api/admin/connections/github…` (a tenant administrator gets
+`403 forbidden`, as for the other site-only routes), and an installation a site
+administrator shares is shared with the people of **every** tenant (see
+`PUT /api/admin/connections/github/installations/{id}`). A GitHub connection is its user's,
+so it is in the user's tenant: it syncs only spaces of that tenant. One GitHub
+account links to one PetalBook user on the whole server, whatever their
+tenants; `account_in_use` says only that it is taken. A space made with a
+repository is the creator's tenant's and counts toward its quotas.
+
+Every route here is a person's, not a token's: with an API token, `/api/connections/github/…`
+and `/api/admin/connections/github…` answer `403 token_scope` (see "API tokens"), and so
 do `POST /api/spaces` and `PUT …/remote`.
 
 | Work | Token |
@@ -636,9 +1683,9 @@ do `POST /api/spaces` and `PUT …/remote`.
 | Fetching and pushing a space with `via: "user"` | the user token of the PetalBook user the remote names |
 | Creating a repository in the user's account | user token (`POST /user/repos`) |
 | Creating a repository in an organisation the user's authorisation lists | user token (`POST /orgs/{org}/repos`) |
-| Creating a repository in an organisation an administrator shared | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
+| Creating a repository in an organisation an administrator shared with the caller's tenant | installation token, `administration: write` (`POST /orgs/{org}/repos`) |
 | Listing installations (administrators) | the App's JWT |
-| Listing the caller's owners and repositories | user token; installation token for a shared installation |
+| Listing the caller's owners and repositories | user token; installation token for an installation shared with the caller's tenant |
 
 ### Tokens, and how they reach Git
 
@@ -670,57 +1717,72 @@ do `POST /api/spaces` and `PUT …/remote`.
   costs at most one minted token per 55 minutes while someone uses it, and none
   while it is closed.
 
-### `GET /api/github`
+### The provider object
 
-Any signed-in user. What the client needs to show GitHub choices:
+`GET /api/connections` (see "Connections") shows GitHub as the provider
+`github`. `app` is `null` when no App is configured; then nothing else of the
+provider works and its other endpoints answer `409 provider_not_configured`.
+`userAuthorization` is whether users can connect their GitHub account: the
+App's client id and secret are saved and the server has `--public-url`.
+`connection.state` is `ok` or `expired` (see "Renewal"). `connection.spaces`
+counts the spaces that sync through it (`via: "user"` naming the caller), so a
+client can warn before a disconnect. `leftovers` are described under "Leftover
+repositories".
 
-```json
-{"app": {"name": "PetalBook Notes", "slug": "petalbook-notes",
-         "htmlUrl": "https://github.com/apps/petalbook-notes",
-         "installUrl": "https://github.com/apps/petalbook-notes/installations/new"},
- "userAuthorization": true,
- "authorization": {"login": "tang-gh", "githubId": 1234567, "state": "ok",
-                   "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2}}
-```
+### `POST /api/connections/github/authorization/start`
 
-- `app` is `null` when no App is configured; then nothing else here works and
-  the other endpoints of this section answer `409 github_not_configured`.
-- `userAuthorization` is whether users can connect their GitHub account: the
-  App's client id and secret are saved and the server has `--public-url`.
-- `authorization` is the caller's connection, or `null`. `state` is `ok` or
-  `expired` (see "Renewal"). `refreshExpires` is absent when the App does not
-  expire user tokens. `spaces` counts the spaces that sync through it
-  (`via: "user"` naming the caller), so a client can warn before a disconnect.
+`{"return": "/s/01JD3K8Q7Z/settings", "install": true}`, with `return` treated as
+in `POST /api/auth/oidc/start`. `200` with `{"url": "…"}` and a short-lived
+cookie that ties the attempt to this browser; the client navigates to `url`.
 
-### `POST /api/github/authorization/start`
+- **`install: true`** (what "Connect GitHub" uses): `url` is the App's
+  installation page,
+  `https://github.com/apps/<slug>/installations/new?state=…`. The App asks for
+  user authorisation during installation (`request_oauth_on_install`), so a
+  person installs the App on their own account (or an organisation) and
+  authorises it in one GitHub flow, and GitHub sends the browser to the callback
+  below with `code`, `state`, `installation_id` and `setup_action=install`. An
+  App entered by hand needs "Request user authorization (OAuth) during
+  installation" ticked in its settings (the one made by the manifest button has
+  it). The code of such a flow has no PKCE challenge, so none is sent back.
+  A person who already has the App installed everywhere can still authorise
+  alone with:
+- **`install` false or left out**: `url` is
+  `https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
 
-`{"return": "/s/01JD3K8Q7Z/settings"}`, with `return` treated as in
-`POST /api/auth/oidc/start`. `200` with
-`{"url": "https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256"}`
-and a short-lived cookie that ties the attempt to this browser; the client
-navigates to `url`. `redirect_uri` is
-`<public-url>/api/github/authorization/callback`. `state` is 32 random
+`redirect_uri` is `redirect_uri` is
+`<public-url>/api/connections/github/authorization/callback`. `state` is 32 random
 bytes; the PKCE verifier is 64 random characters and its S256 challenge is
-sent. Both are held in memory only, for 10 minutes, used once, bound to the
+sent (not for `install`). Both are held in memory only, for 10 minutes, used once, bound to the
 cookie and to the signed-in user (at most 10 000 attempts at a time: the
 oldest goes first). When reconnecting, `login=<the current login>` is sent so
-GitHub suggests the same account. `409 github_not_configured` when
+GitHub suggests the same account. `409 provider_not_configured` when
 `userAuthorization` is false.
 
-### `GET /api/github/authorization/callback`
+### `GET /api/connections/github/authorization/callback`
 
 GitHub redirects here. The server answers with a redirect (`303`), never JSON:
-to the `return` path on success, to `/settings?github_error=<code>` on failure.
+to the `return` path on success, to `/settings?connection_error=<code>&provider=github` on failure.
 It needs the session of the user who started the attempt; another session or
-none is `expired`. The server exchanges the code
+none is `expired`. The same callback serves both starts: a plain authorisation
+(`code` and `state`) and an installation (`code`, `state`, `installation_id`,
+`setup_action=install`). The server exchanges the code
 (`POST https://github.com/login/oauth/access_token` with the client id and
-secret, the code, `redirect_uri` and the PKCE verifier), then reads the
-account with `GET /user`.
+secret, the code, `redirect_uri` and, for a plain authorisation, the PKCE
+verifier), then reads the account with `GET /user`. An installation that
+brought no `code` (the App does not ask for authorisation during installation)
+is `installed`; one an organisation still has to approve
+(`setup_action=request`) is `requested`.
 
-Codes: `denied` (the user cancelled on GitHub), `expired` (the attempt is
-unknown, used, older than 10 minutes, or of another user), `github_error`
+Codes: `installed` (the App was installed but GitHub sent no code: authorise
+once more with `install` false; the App needs "Request user authorization
+(OAuth) during installation"), `requested` (the organisation's owners must
+approve the installation first), `denied` (the user cancelled on GitHub), `expired` (the attempt is
+unknown, used, older than 10 minutes, or of another user), `provider_error`
 (GitHub refused the exchange or could not be reached), `account_in_use`
-(another PetalBook user has connected this GitHub account), `different_account`
+(another PetalBook user has connected this GitHub account, in any tenant: the
+GitHub account id is unique on the server; the answer names neither the user
+nor the tenant), `different_account`
 (the caller has spaces syncing through another GitHub account: disconnect
 first, or switch those spaces).
 
@@ -730,12 +1792,12 @@ GitHub account's id and login, the access token and the refresh token
 their expiry times and the `state`. Connecting the same account again replaces
 the tokens; spaces that were waiting on it are retried at once.
 
-### `DELETE /api/github/authorization`
+### `DELETE /api/connections/github/authorization`
 
 `204`. The server asks GitHub to revoke the grant
 (`DELETE /applications/{client_id}/grant`, best effort) and deletes the tokens
 from the database and from memory whatever GitHub answers. Spaces that sync
-through it go to `state: "error"`, `errorCode: "github_authorization_missing"`
+through it go to `state: "error"`, `errorCode: "connection_missing"`
 the next time they talk to GitHub; nothing in them is deleted (see "When a
 GitHub credential stops working").
 
@@ -764,35 +1826,42 @@ stops working.
 - The device flow is not offered: the web app does not need it. It is left for
   the clients of phase 4.
 
-### `GET /api/github/owners?cursor={cursor}`
+### `GET /api/connections/github/owners?cursor={cursor}&recheck=true`
 
 The accounts the caller can create a repository in, one page at a time:
 
 ```json
 {"items": [
-  {"login": "tang-gh", "type": "User", "via": "user", "installationId": null},
-  {"login": "kazuhahub", "type": "Organization", "via": "user", "installationId": 51234567},
-  {"login": "petal-team", "type": "Organization", "via": "app", "installationId": 51239999}],
+  {"login": "tang-gh", "type": "User", "via": "user", "installationId": null, "needsInstall": false},
+  {"login": "kazuhahub", "type": "Organization", "via": "user", "installationId": 51234567, "needsInstall": false},
+  {"login": "petal-team", "type": "Organization", "via": "app", "installationId": 51239999, "needsInstall": false}],
  "next": "…"}
 ```
 
 In this order: the caller's own GitHub account, when connected; the
 organisations among the installations GitHub lists for the caller's
 connection (`GET /user/installations`, 30 to a page); the organisations whose
-installation an administrator shared and that are not already listed. `via`
-says which token creates the repository there. Each page is at most one call
+installation a site administrator shared with the caller's tenant and that are not
+already listed. `needsInstall` is `true` on the caller's own account when the
+App is not installed there: GitHub lets a user token create repositories only
+in accounts the App is installed on, so a repository in that account is refused
+with `409 app_not_installed` until the person installs it (the web app
+offers "Install on my account": `installUrl` of `GET /api/connections`, or the
+`install` start above). It is found with one call to GitHub on the first page
+(`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit). `recheck=true`, on the first page, forgets that memory for the caller first: a person who has just installed the App asks again instead of waiting the minute (the web app's "check again"). It is honoured at most once a minute per person: within the minute `recheck=true` is an ordinary call that uses the remembered answer, with no call to GitHub and no error, so looping it cannot use up the App's shared rate limit. Creating a space is never refused by the client on this flag; the server answers `409 app_not_installed`.
+`via` says which token creates the repository there. Each page is at most one call
 to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
-connection only shared installations are listed. A repository is created with
+connection only the installations shared with the caller's tenant are listed. A repository is created with
 the caller's own token wherever it can be, so GitHub's rules for that person
 in that organisation (who may create repositories, whether private ones are
 allowed) apply.
 
-### `GET /api/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
+### `GET /api/connections/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
 
 Repositories the caller can connect a space to, 30 to a page, for choosing one
 in `PUT …/remote` or `POST /api/spaces` with `create: false`. `installation`:
 the repositories of that installation the caller's connection reaches
-(`GET /user/installations/{id}/repositories`), or for a shared installation
+(`GET /user/installations/{id}/repositories`), or for an installation shared with the caller's tenant
 all of its repositories (installation token). `mine=true`: the caller's own
 repositories (`GET /user/repos?affiliation=owner`).
 
@@ -803,15 +1872,15 @@ repositories (`GET /user/repos?affiliation=owner`).
 ```
 
 `404 not_found` for an installation the caller can neither reach nor use as
-shared. GitHub cannot filter these lists by name, so there is no `q`: a client
+shared with their tenant. GitHub cannot filter these lists by name, so there is no `q`: a client
 filters the page it has, and the user can type `owner/name` instead.
 
-### Creating a space with a GitHub repository
+### Creating a space with a repository
 
-`POST /api/spaces` with `github` (see "Spaces"):
+`POST /api/spaces` with `storage.sync` and `provider: "github"` (see "Connections", "Spaces and remotes"):
 
-- `owner`: a `login` from `GET /api/github/owners` (case is ignored).
-  `403 github_owner_not_allowed` for anything else.
+- `owner`: a `login` from `GET /api/connections/github/owners` (case is ignored).
+  `403 owner_not_allowed` for anything else.
 - `name`: 1–100 characters of `A-Z a-z 0-9 . _ -`, not `.` or `..`, not
   ending in `.git`. Anything else is `400 invalid`: the server does not let
   GitHub rename it.
@@ -822,7 +1891,8 @@ filters the page it has, and the user can type `owner/name` instead.
   gets the space's history; one with content gives it to the new space, which
   is pristine. The credential is chosen as `PUT …/remote` would with no `via`
   given: the App when the caller may use its installation on that repository
-  (their connection can push there, or the installation is shared), otherwise
+  (their connection can push there, or the installation is shared with their
+  tenant), otherwise
   the caller's own connection.
 
 The repository is created empty (`auto_init: false`), so the space's first
@@ -830,7 +1900,10 @@ commit is the repository's first commit, on `main`. The order:
 
 1. Checks that need no network: the fields, that `github.com` is among the
    hosts the administrator allows (`--remote-host`; otherwise `403 forbidden`,
-   as for any other remote on a host that is not allowed), `--max-spaces`, the
+   as for any other remote on a host that is not allowed), the spaces quota
+   (the person's and the tenant's, as for any `POST /api/spaces`:
+   `403 quota_exceeded`; spaces still being made with a repository count as
+   made, so parallel requests cannot pass it), the
    owner, and that the tokens it needs exist (App configured, caller connected and not
    `expired` when `via` is `user`).
 2. The space is made on disk (`git init`, `space.yml`, the first commit). No
@@ -846,7 +1919,7 @@ commit is the repository's first commit, on `main`. The order:
    server adds it (`PUT /user/installations/{id}/repositories/{repoId}`, user
    token) and mints again; when it cannot, the caller's own account falls back
    to `via: "user"` and an organisation fails with
-   `409 github_repo_not_in_installation`. This works whether or not GitHub adds
+   `409 repo_not_in_installation`. This works whether or not GitHub adds
    a repository an App created to its installation by itself.
 5. `main` is pushed. A repository GitHub has just made is sometimes not found
    for a few seconds, so "not found", GitHub's `5xx` and an unreachable GitHub
@@ -858,32 +1931,35 @@ commit is the repository's first commit, on `main`. The order:
    that case. Every other refusal of the credential (`401`, `403`,
    "Authentication failed") and a credential the server could not get at all
    are not retried.
-6. In one transaction: the space, the caller as its owner, and its remote
-   (`github`, `via`, the installation, the repository id, the user). Then the
-   space becomes visible.
+6. In one transaction: the space (in the caller's tenant), the caller as its
+   owner, and its remote (`connection`, provider `github`, `via`, the installation, the repository id,
+   the user); the usage rows count it as any new space. Then the space becomes
+   visible.
 
 When a step fails:
 
 - Steps 1 and 2: nothing was made anywhere.
-- Step 3: the space on disk is removed. `409 github_name_taken` when the
+- Step 3: the space on disk is removed. `409 name_taken` when the
   owner already has a repository of that name (a client can offer
-  `create: false` when it is the caller's); `403 github_no_permission` when
-  GitHub refuses (the App lacks Administration write, the organisation does not
-  let this person create repositories, or does not allow private ones:
-  `message` passes on what GitHub said); `400 invalid` for any other refusal
+  `create: false` when it is the caller's); `403 app_missing_permission`
+  when the App or its installation lacks the Administration permission
+  (`missing` names it); `403 provider_refused` when GitHub refuses a person
+  (the organisation does not let this person create repositories, or does not
+  allow private ones: `message` passes on what GitHub said); `400 invalid` for any other refusal
   of the fields; `503 unavailable` when GitHub cannot be reached;
   `429 rate_limited` when GitHub limits the server.
 - Steps 4 to 6: the space on disk is removed. The repository stays on GitHub,
   empty: the server never deletes anything on a remote, and may not even be
   allowed to. The answer names it, so the same request with `create: false`
-  connects a new space to it once the cause is fixed:
+  connects a new space to it once the cause is fixed, and the server keeps a
+  reminder of it for the caller (see "Leftover repositories"):
 
   ```json
-  {"error": "github_push_failed", "message": "…",
+  {"error": "push_failed", "message": "…",
    "repo": {"id": 881234567, "fullName": "kazuhahub/tang-notes", "htmlUrl": "https://github.com/kazuhahub/tang-notes"}}
   ```
 
-  Codes: `409 github_repo_not_in_installation`, `502 github_push_failed`,
+  Codes: `409 repo_not_in_installation`, `502 push_failed`,
   `500 internal` (the transaction failed).
 - A crash between steps 3 and 6 is the same failure without an answer: the
   directory on disk has no record and no one sees it (the next start of the
@@ -891,15 +1967,48 @@ When a step fails:
   does not), and the empty repository is on
   GitHub, ready for `create: false`.
 
-Two requests for the same name: the second gets `409 github_name_taken`. The
+Two requests for the same name: the second gets `409 name_taken`. The
 server finishes the work when the client goes away, as `PUT …/remote` does.
+
+#### Leftover repositories
+
+The repository a failed attempt leaves is kept (the server never deletes on a
+remote). So that the person does not have to remember it, the server also
+records a reminder, per user, when the failure came after the repository was
+made (steps 4 to 6, the same cases that put `repo` in the answer; a crash has
+no answer and no reminder). A client shows the reminders in
+`GET /api/connections`'s `leftovers`, for instance on the account page or beside the
+list of spaces, with the repository's name and link and two actions:
+
+- **Connect it and try again**: `POST /api/spaces` with the reminder's
+  `spaceName` as `name` and `storage: {"sync": {"provider": "github", "owner", "name", "create": false}}` taken
+  from `fullName`. Nothing else is needed; the reminder is cleared by the
+  space connecting (below). When it fails again the reminder stays, and the
+  answer says why.
+- **I deleted it**: `DELETE /api/connections/github/leftovers/{repoId}`.
+
+A reminder is cleared when the person dismisses it, and by itself when any
+space is connected to that repository with a `connection` credential (by
+`create: false`, or by `PUT …/remote`), whoever made the reminder. A space
+connected with a plain URL and a token or key does not clear it. Only the newest 20 per user are kept; a
+second failure on the same repository replaces its reminder rather than adding
+one. Reminders are the user's own: they are deleted with the user and no one
+else sees them, in any tenant.
+
+### `DELETE /api/connections/github/leftovers/{repoId}`
+
+`204`. Dismisses the caller's reminder of that repository (the id from
+`leftovers[].repoId`). Nothing happens on GitHub. It is `204` also when there
+is no such reminder (it was cleared meanwhile), as for `DELETE
+/api/connections/github/authorization`. `repoId` that is not a positive number is
+`404 not_found`.
 
 ### Switching an existing space to GitHub
 
 `PUT /api/spaces/{space}/remote` (needs `manage`):
 
 ```json
-{"url": "https://github.com/kazuhahub/notes.git", "credential": {"type": "github", "via": "app"}}
+{"url": "https://github.com/kazuhahub/notes.git", "credential": {"type": "connection", "provider": "github", "via": "app"}}
 ```
 
 `url` must be a repository on `github.com`; `git@github.com:owner/name.git` is
@@ -916,17 +2025,22 @@ token is deleted.
 - `via: "user"`: the caller's connection, which must be able to push. The
   space then syncs as the caller on GitHub. Someone else with `manage` who
   `PUT`s it again ties it to themself. It keeps working only while that user
-  can sign in, still has `manage` in the space, and is connected.
+  can sign in, still has `manage` in the space (directly or through a group:
+  the union of their roles counts), and is connected. The caller must be in the
+  space's tenant (which only a site administrator, who may open a space of any
+  tenant, can fail): otherwise `403 forbidden`, before GitHub is asked.
 
-A `github` credential does not get around `--remote-host`: when `github.com`
+A GitHub connection does not get around `--remote-host`: when `github.com`
 is not an allowed host the answer is `403 forbidden`, as for any other remote
 on a host that is not allowed, and GitHub is not asked.
 
-Errors, besides those of `PUT …/remote`: `409 github_not_configured`;
-`409 github_not_authorized` (the caller has no connection, or it is
-`expired`); `409 github_repo_not_in_installation` (`via: "app"` and no
-installation reaches the repository); `403 github_owner_not_allowed` (the
-installation is not shared and the caller's connection cannot push there).
+Errors, besides those of `PUT …/remote`: `409 provider_not_configured`;
+`409 not_connected` (the caller has no connection, or it is
+`expired`); `409 repo_not_in_installation` (`via: "app"` and no
+installation reaches the repository); `403 owner_not_allowed` (the
+installation is not shared with the caller's tenant and the caller's connection
+cannot push there);
+`403 forbidden` (`via: "user"` and the caller is not in the space's tenant).
 
 ### When a GitHub credential stops working
 
@@ -935,10 +2049,11 @@ the server next mints or renews a token, or when Git is refused:
 
 | `errorCode` | Cause | Fix |
 |---|---|---|
-| `github_authorization_expired` | the refresh token expired or was revoked | the user the remote names connects again |
-| `github_authorization_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space | they connect again, or someone with `manage` switches the credential |
-| `github_installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
-| `github_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
+| `connection_expired` | the refresh token expired or was revoked | the user the remote names connects again |
+| `connection_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
+| `installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
+| `app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
+| `provider_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
 
 In every case nothing is lost: reads go on from what the server has; writes
 answer `503 unavailable` and change nothing, as for an unreachable remote;
@@ -952,19 +2067,22 @@ fixed (a user connects again, an administrator saves the App).
 
 | Code | Status | When |
 |---|---|---|
-| `github_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
-| `github_not_authorized` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
-| `github_owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared and the caller's connection does not reach the repository |
-| `github_name_taken` | 409 | the owner has a repository of that name |
-| `github_no_permission` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
-| `github_repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
-| `github_push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
+| `provider_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
+| `not_connected` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
+| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
+| `name_taken` | 409 | the owner has a repository of that name |
+| `provider_refused` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
+| `app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
+| `app_not_installed` | 409 | the owner is the caller's own account and the App is not installed there; `installUrl` is where to install it (instead of GitHub's raw `403 Resource not accessible by integration`). Installed, but without Administration, it is `app_missing_permission` |
+| `repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
+| `push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
 | `invalid` | 400 | a field breaks a rule above, or GitHub refused one |
 | `rate_limited` | 429 | GitHub limits the server; `Retry-After` is taken from GitHub's reset time |
 | `unavailable` | 503 | GitHub cannot be reached; nothing was changed |
 
-The administrators' endpoints add `github_key_invalid`, `github_app_rejected`,
-`github_client_rejected` and `github_app_in_use` (see "Administration").
+The administrators' endpoints add `key_invalid`, `app_rejected`,
+`client_rejected`, `provider_in_use` and `public_url_needed`
+(see "Administration").
 
 ### A site policy for remotes (milestone 3.1)
 
@@ -1026,7 +2144,10 @@ evicted space) wait for the network.
 
 ### `GET /api/admin/storage`, `PUT /api/admin/storage`
 
-Administrators only.
+Site administrators only (3.3: the server's disk, its policy and its cache are
+the server's own, not a tenant's; a tenant administrator gets `403 forbidden`).
+In the administrators' web page these settings are the storage part of
+"存储与同步" (Storage & sync), above the connections (see "Connections").
 
 ```json
 {"remotes": {"require": "github", "scope": "all", "graceDays": 30, "since": "2026-12-01T00:00:00Z"},
@@ -1046,9 +2167,11 @@ the next request, without a restart. `400 invalid` for a value outside its
 range.
 
 - `remotes.require`: `null` (no requirement, the default), `"any"` (a space
-  must follow a remote on an allowed host) or `"github"` (a repository on
-  GitHub with a `github` credential, see "GitHub"; `409 github_not_configured`
-  while the server has no App).
+  must follow a remote on an allowed host) or the id of a provider, such as
+  `"github"` (a repository on that platform with a `connection` credential
+  through it, see "Connections"; `409 provider_not_configured`, with
+  `provider`, while the provider is not set up; `"git"` is `400 invalid`,
+  `"any"` is what takes a plain address).
 - `remotes.scope`: `"new"` (spaces made from now on; the default) or `"all"`.
 - `remotes.graceDays`: 0 to 365, default 30. How long an existing space has to
   meet a requirement that `scope: "all"` puts on it. `since` is when the
@@ -1057,7 +2180,9 @@ range.
 - `hosts.allowed`: the hosts a remote may be on, what `--remote-host` sets
   today (`"*"` allows any). When the server was started with `--remote-host`,
   the flag wins: `fromFlag` is `true` and a `PUT` of `hosts` answers
-  `409 conflict`.
+  `409 conflict`. A connection's provider is held to the same list (its host,
+  as 2.7b checks `--remote-host`): a provider whose host is not allowed cannot
+  be used to connect or make a space.
 - `localSpaces.maxBytes`: `null` (no limit, the default) or at least 1 MiB.
   See "A limit on local spaces".
 - `cache.partial`: whether spaces that follow a remote are cloned partially
@@ -1074,7 +2199,7 @@ range.
   exceeded budget.
 - `cache.assetsBytes`: at least 64 MiB, default 5 GiB: the attachment cache,
   shared by all spaces with an attachment repository.
-- `assets.newSpaces`: when `true`, a space made with a GitHub repository gets an
+- `assets.newSpaces`: when `true`, a space made with `storage.sync` gets an
   attachment repository too unless the request says `"assets": false`. Default
   `false`.
 - `git.version` is the Git the server runs; `git.partialClone` is `false` when
@@ -1084,16 +2209,19 @@ range.
 - `affected` counts the spaces the policy now asks something of: in their grace
   period, past their deadline, and exempted.
 
-**Layers.** These settings are the site's. Following "the layering of settings
-and locks", each has a default and says whether lower layers may change it;
-in 3.1 every one of them is locked at the site: they decide how the server
-uses its own disk and whom it trusts, and a space's settings live in
-`space.yml`, which anyone who can push to its remote can change. The tenant
-layer is reserved: a tenant's administrators will be able to make a rule
-stricter (require a remote, `"github"` rather than `"any"`, a shorter grace
-period, a smaller budget for their spaces) and never looser. The two
-per-space values below (pinned, exempt) are records of the state database,
-not settings of the space.
+**Layers.** These settings are the site's, stored as one record of the state
+database and not in 3.3's layered settings (`GET /api/admin/settings`
+does not list them). Following "the layering of settings and locks", each has
+a default and says whether lower layers may change it; in 3.1 every one of
+them is locked at the site: they decide how the server uses its own disk and
+whom it trusts, and a space's settings live in `space.yml`, which anyone who
+can push to its remote can change. The tenant layer is reserved (see
+"Tenants, registration and mail"): a tenant's administrators will be able to
+make `remotes.require`, `remotes.graceDays` and `localSpaces.maxBytes`
+stricter (require a remote, a provider rather than `"any"`, a shorter grace
+period, a smaller limit) and never looser. The two per-space values below
+(pinned, exempt) are records of the state database, not settings of the
+space.
 
 ### Requiring a remote
 
@@ -1102,11 +2230,14 @@ Exempt users' spaces and exempt spaces (below) are left out.
 
 - **New spaces** (any `scope`): `POST /api/spaces` without what is required
   answers `409 remote_required` before anything is made: under `"any"` it
-  needs `github` or `remote`, under `"github"` it needs `github`.
+  needs `storage.sync` or `remote`, under a provider's id it needs
+  `storage.sync` with that `provider`. `remote` is the body of `PUT …/remote`
+  with a token (an SSH key needs the space first, to hold the key); it is
+  `400 invalid` together with `storage.sync`.
 - **The personal space** is made at a user's first sign-in, when they cannot
   have connected anything yet. It is made local, as now, and is given a
   deadline of its creation plus `graceDays`; the app offers the one step that
-  meets the requirement (connect GitHub, then a private repository
+  meets the requirement (connect the provider, then a private repository
   `petalbook-<username>` in their account).
 - **Existing spaces**, with `scope: "all"`: a space that does not meet the
   requirement gets the deadline `since + graceDays`. Until then nothing
@@ -1137,13 +2268,14 @@ Exempt users' spaces and exempt spaces (below) are left out.
   answer shows before anyone else sees it.
 - A space whose remote stops working (offline, `rewritten`, an `errorCode`)
   still follows it and meets the requirement: those states are handled as in
-  "Remote repository" and "GitHub".
+  "Remote repository" and "The GitHub provider".
 
 #### Exemptions
 
 - `PATCH /api/users/{id}` takes `{"remoteExempt": true}`: the spaces this user
-  owns are not asked for a remote (new ones included). The User object has
-  `remoteExempt` (absent when `false`).
+  owns are not asked for a remote (new ones included). Site administrators
+  only, as the requirement is the site's (`403 forbidden` for a tenant
+  administrator). The User object has `remoteExempt` (absent when `false`).
 - `PUT /api/admin/spaces/{space}/storage` takes `{"exempt": true}` for one
   space (below).
 
@@ -1279,8 +2411,8 @@ still waiting after 10 seconds answer:
 `fetching`, `checkout` or `indexing`. The space's `storage.cache` is
 `restoring` meanwhile. When the remote cannot be reached or the credential
 does not work, the restore fails at once: `503 unavailable` with the remote's
-`errorCode` where there is one (a GitHub authorisation that expired is fixed
-as in "When a GitHub credential stops working"), and the index-only answers
+`errorCode` where there is one (a connection that expired is fixed as in
+"When a GitHub credential stops working"), and the index-only answers
 above go on working. One restore is given 5 minutes once it has its turn; a
 remote that does not answer in that time fails it the same way. After a
 failure the space is not tried again for a while (3 seconds, doubled with each
@@ -1316,8 +2448,9 @@ repository. The space's repository then holds only the text and stays small:
 fetched quickly, restored quickly, cheap to keep in a partial clone.
 
 **A plain Git repository, not Git LFS.** It works on every host a space can
-use, with the same kinds of credential, the same restricted Git runner and the
-same GitHub App; its files can be browsed on GitHub like any others. LFS needs
+use, with the same kinds of credential (a `connection` too), the same
+restricted Git runner and the same provider; its files can be browsed on the
+platform like any others. LFS needs
 a second protocol and service beside Git, has its own storage and bandwidth
 quotas on GitHub billed apart from the repository, is not offered by every
 host, and puts pointer files in the space's repository that other clones show
@@ -1374,14 +2507,18 @@ more field, `move` (below); `404 not_found` when the space has none.
 
 #### `PUT /api/spaces/{space}/remote/assets`
 
-Needs `manage`. The body of `PUT …/remote`, or to make a repository on GitHub:
+Needs `manage`. The body of `PUT …/remote` (a `connection` credential
+included), or to make a repository on a provider:
 
 ```json
-{"github": {"owner": "kazuhahub", "name": "tang-notes-assets", "private": true, "create": true}}
+{"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes-assets", "private": true, "create": true}}
 ```
 
-with the fields and rules of "Creating a space with a GitHub repository"
-(`via` as the space's own remote has, unless given). The space must follow a
+with the fields and rules of `storage.sync` in "Creating a space with a
+repository" (`via` as the provider chooses, unless given; a `via: "user"`
+connection syncs only spaces of its person's tenant, as for the space's own
+remote). A repository that was made and could not be connected is named in
+`repo` and is remembered as a leftover (see "Leftover repositories"). The space must follow a
 remote: `409 remote_required` otherwise. Connecting follows the rules of
 `PUT …/remote`: an empty repository is used as it is; one with content is
 accepted while the space has never used an attachment repository and its
@@ -1432,33 +2569,40 @@ or moved): the space keeps its attachments in `assets/`. Otherwise
 
 #### With a new space
 
-`POST /api/spaces` with `github.assets` makes the attachment repository right
-after the space's repository (step 3 of "Creating a space with a GitHub
-repository"), with the same owner, visibility and credential, and checks it in
-step 4 the same way (an installation with "only selected repositories" gets
-it added, or the request fails with `409 github_repo_not_in_installation`).
+`POST /api/spaces` with `storage.sync.assets` (`true`, `false` or
+`{"name": "…"}`; absent follows `assets.newSpaces`, and the name defaults to
+`<name>-assets`) makes the attachment repository right after the space's
+repository (step 3 of "Creating a space with a repository"), with the same
+owner, visibility and credential, and checks it in step 4 the same way (an
+installation with "only selected repositories" gets it added, or the request
+fails with `409 repo_not_in_installation`).
 Failures are those of that section; once either repository has been made,
 the answer names what was made, and the same request with `create: false`
-uses both:
+uses both. Each repository that was made is also remembered as a leftover
+until a space uses it:
 
 ```json
-{"error": "github_push_failed", "message": "…",
+{"error": "push_failed", "provider": "github", "message": "…",
  "repo": {"id": 881234567, "fullName": "kazuhahub/tang-notes", "htmlUrl": "…"},
  "assetsRepo": {"id": 881234568, "fullName": "kazuhahub/tang-notes-assets", "htmlUrl": "…"}}
 ```
 
-When GitHub refuses to make the attachment repository after the space's was
-made, the answer is GitHub's own refusal as step 3 gives it (`409
-github_name_taken`, `403 github_no_permission`, `429 rate_limited` with its
+When the platform refuses to make the attachment repository after the space's
+was made, the answer is the provider's own refusal as step 3 gives it (`409
+name_taken`, `403 provider_refused`, `429 rate_limited` with its
 `Retry-After`, …), with `repo` naming the space's repository and no
 `assetsRepo`. The same request with `create: false` then finds the space's
 repository but not the attachment one, and fails with the error of
-connecting to it (`403 github_owner_not_allowed`, `409
-github_repo_not_in_installation`, …), whose `message` names the attachment
-repository that is missing and whose `repo` names the space's: make that
-repository on GitHub (or drop `github.assets`) and send the request again.
+connecting to it (`403 owner_not_allowed`, `409 repo_not_in_installation`,
+…), whose `message` names the attachment repository that is missing and whose
+`repo` names the space's: make that repository on the platform (or drop
+`storage.sync.assets`) and send the request again.
 
 ### Administrators: per space
+
+Site administrators only, as `/api/admin/storage` (the pin keeps the server's
+disk, the exemption is from the site's requirement, eviction is the server's
+cache): a tenant administrator gets `403 forbidden`.
 
 #### `PUT /api/admin/spaces/{space}/storage`
 
@@ -1485,7 +2629,8 @@ evicted without checking that the remote has everything).
 
 #### In the list of spaces and the status
 
-`GET /api/admin/spaces` and `GET /api/admin/spaces/{space}` add to each item:
+`GET /api/admin/spaces` and `GET /api/admin/spaces/{space}` (a tenant
+administrator's included, for the spaces of their tenant) add to each item:
 
 ```json
 "storage": {"cache": "partial", "pinned": false, "exempt": false, "lastUsed": "2026-11-22T02:10:00Z",
@@ -1498,7 +2643,7 @@ evicted without checking that the remote has everything).
 the space's files in the attachment cache (exact). `?cache=evicted` (or any
 other `cache` value) and `?overdue=1` filter the list, in the same one query.
 
-`GET /api/admin/status` adds:
+`GET /api/admin/status` (site administrators) adds:
 
 ```json
 "storage": {"spaces": {"local": 12, "full": 3, "partial": 41, "evicted": 156, "restoring": 0},
@@ -1514,7 +2659,7 @@ the sums of the stored measurements (one query) and of the cache in memory.
 | Situation | Cached space | Evicted space |
 |---|---|---|
 | Remote unreachable | reads as now; writes `503 unavailable`; old versions and attachments not on the server `503 not_cached` | lists and search from the index; anything needing a file `503 unavailable` |
-| Credential refused, a GitHub authorisation expired or missing (2.7) | the same, with the remote's `errorCode` | the same, with the remote's `errorCode` |
+| Credential refused, a connection expired or missing (`connection_expired`, `connection_missing`) | the same, with the remote's `errorCode` | the same, with the remote's `errorCode` |
 | Attachment repository unreachable | text as usual; cached attachments served; others `503 not_cached`; uploads `503 unavailable` | as above once restored |
 
 A space is never evicted in any of these states, so a space in use when its
@@ -1532,10 +2677,16 @@ case.
 | `unavailable` | 503 | as everywhere: the remote cannot be reached or refuses the credential; for an evicted space, it cannot be restored now (`Retry-After` while a failed restore is not tried again) |
 | `busy` | 409 | an eviction asked for while the space is in use or holds what its remote does not |
 | `conflict` | 409 | a second move; a change of the attachment repository during a move or after files went to it; `hosts` set by the flag; partial clones without Git 2.44 |
-| `invalid` | 400 | a setting outside its range, `remote` and `github` together |
+| `invalid` | 400 | a setting outside its range, `remote` and `storage.sync` together |
 
-GitHub's codes (see "GitHub") apply to making an attachment repository as they
-do to making a space's.
+The codes of "Connections" apply to making an attachment repository as they
+do to making a space's, with `provider`.
+
+**Usage and quotas (3.3).** What the quotas count of a space (`usage_bytes`)
+is written only by a measurement of a whole copy: a partial clone or an
+evicted space is measured for the list (`sizeBytes`, `cloneBytes`) only, and
+its usage keeps the last full measurement, so neither shrinks what a person
+uses.
 
 ## Pages
 
@@ -3492,6 +4643,29 @@ a few of their spaces, without that person's password or session. It is never
 more than its owner: what a request with a token may do is what the owner may
 do now, narrowed by the token.
 
+### Held sessions, API tokens and OAuth grants
+
+A hold (see "Passkeys") belongs to a session, not to the person: tokens and
+grants are independent of it. A person who is held cannot make a token or
+approve a consent (`403 passkey_required`), so nobody who only has the
+password gets a new credential that way. The tokens and grants the person
+made before a passkey was required of them keep working, with the same rules
+as always; requiring a passkey does not revoke them. Revoke them
+(`DELETE /api/admin/tokens/{id}`, `DELETE /api/admin/grants/{id}`) to stop
+them. This keeps a token request free of the passkey check (no query per
+request) and leaves running scripts and MCP clients alone when an
+administrator raises the sign-in requirements.
+
+The same holds for a lockout and for `ssoOnly`: both govern signing in, not
+credentials already made. A locked-out account, or a non-administrator under
+`ssoOnly`, keeps its tokens and grants; revoke them as above. Only a disabled
+owner is refused at once (`token_owner_disabled`, `invalid_grant`).
+
+`GET /oauth/authorize` with a held session goes on to the consent page as
+usual; the web app shows the passkey page there instead, and the consent page
+once a passkey is registered (the address is kept, also through the fresh
+sign-in that registering may ask for).
+
 ### How a token is presented
 
 `Authorization: Bearer pbk_…` on the request. Nothing else carries one (no
@@ -3523,7 +4697,7 @@ person's, kept for the browser; what a token writes goes straight to a commit
 under no name, and a token never commits a browser draft as "API token".
 
 Everything else, a route that needs `members` or `manage` (the remote of a
-space among them), and anything under `/api/account`, `/api/github`,
+space among them), and anything under `/api/account`, `/api/connections`,
 `/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and the sign-in
 routes, answers `403 token_scope`: a token cannot make tokens, change members,
 settings of a space, types, templates or remotes, connect or use its owner's
@@ -4103,6 +5277,201 @@ changed since. Returns `{"page": Page item}`. Needs `write`.
 There is no tool to delete pages or folders, move folders, or change types,
 templates, settings or members.
 
+## Offline sync
+
+Milestone 4.1. These endpoints let a client keep a copy of some spaces on the
+device and bring it up to date by asking only for what changed. They change
+nothing on the server; writing back what was done offline is milestone 4.2.
+Every endpoint here works in both modes (in single-user mode the space is
+`default`) and with an API token; an OAuth access token is still for `/mcp`
+only (`403 token_scope`).
+
+The server keeps no record of devices. A client holds a **change cursor** per
+space and asks what changed after it; nothing is registered, and a device that
+is never seen again leaves nothing behind.
+
+A client typically:
+
+1. walks the **catalogue** of a space once (`GET …/sync/catalog`), which also
+   hands it the change cursor taken before the walk began;
+2. fetches the bodies of the pages it wants (`GET …/sync/pages`);
+3. from then on asks `GET /api/sync/heads` for all its spaces at once, and
+   `GET …/changes` only for a space whose head differs from its cursor;
+4. when told `410 changes_expired`, walks the catalogue again and compares
+   `rev`s, fetching only the bodies whose `rev` changed.
+
+### Change cursor
+
+An opaque string. It names a point in the index of one space: an epoch, which
+is new every time the index is built from scratch (at an upgrade that changes
+the index, `POST …/reindex`, or when the index does not match the files), and
+a sequence number. Every write of a page to the index (added, its file changed,
+renamed or moved, its links rewritten by the server, read again after a change
+made outside the server) gives the page a new sequence number, higher than any
+before; a page that is removed leaves a record of its removal. So "what changed
+after a cursor" is one range read of an index, whatever the size of the space,
+and a page that changed many times since is reported once, as it is now.
+
+A cursor is good for as long as the index keeps its epoch and the server still
+holds the removals after it: the last 100,000, and none older than 180 days.
+Otherwise the answer is `410 changes_expired`, and the client walks the
+catalogue again. A string that is not a cursor this server made is
+`400 invalid`.
+
+### Catalogue entry
+
+The light summary that a catalogue and a change list hold for a page: what a
+tree, a list, a search by title and a check of `rev` need, without the
+excerpt, the properties or the body.
+
+```json
+{"id": "01JD3K8Q7Z", "path": "Tang/暮雪.md", "folder": "Tang", "title": "暮雪",
+ "label": "暮雪", "untitled": false, "tags": ["玉兰", "黄昏"], "type": "",
+ "created": "2025-12-03", "updated": "2026-11-21T08:30:00Z",
+ "rev": "3b18e512dba79e4c8300dd08aeb37f8e728b8dad"}
+```
+
+The fields mean what they mean in a page summary (see "Page summary");
+`title` and `created` are absent when the page has none. A page that was
+removed is `{"id": "01JD3K8Q7Z", "deleted": true}` in a change list (never in
+a catalogue).
+
+### `GET /api/spaces/{space}/sync/catalog`
+
+Needs `read`. Every page of the space, in the order the server holds them, a
+batch at a time.
+
+| name | meaning |
+|---|---|
+| `folder` | only pages in this folder and below it (repeatable, at most 50; the root, `""`, means all) |
+| `limit` | 1–5000, default 2000 |
+| `cursor` | the `next` of the previous batch |
+
+```json
+{"items": [/* catalogue entries */], "next": "opaque-or-empty",
+ "changes": "change cursor", "tree": "k2f0…", "settings": "9a1c…"}
+```
+
+`changes` is in the first batch only (the one asked for without `cursor`): the
+change cursor as it was before the walk began. A page that changes while the
+client walks may be in the catalogue as it was or as it is; either way it is
+in `GET …/changes?since=` that cursor, so nothing is missed. `tree` and
+`settings` are as in a change list (below). `next` is `""` after the last
+batch. A batch is one range read of the index; no file is read.
+
+A `cursor` made for another set of `folder`s, or that is not one this server
+made, is `400 invalid`. A cursor outlives changes to the space (it names a
+position, not an offset), but not a rebuild of the index: then `410
+changes_expired`, and the walk starts again.
+
+### `GET /api/spaces/{space}/changes?since={cursor}&limit={n}`
+
+Needs `read`. What changed in the space after the change cursor `since`
+(required): the pages added, changed, renamed or moved, as catalogue entries,
+and the pages removed, in the order they last changed.
+
+| name | meaning |
+|---|---|
+| `since` | a change cursor (required) |
+| `limit` | 1–5000, default 1000 |
+
+```json
+{"items": [{"id": "01JD3K8Q7Z", "path": "Tang/暮雪.md", "…": "…", "rev": "3b18e5…"},
+           {"id": "01JD3K8Q80", "deleted": true}],
+ "next": "change cursor", "more": false, "tree": "k2f0…", "settings": "9a1c…"}
+```
+
+- `next` is the cursor to keep: the client asks with it next time. With no
+  changes `items` is empty and `next` is `since`.
+- `more` is `true` when there were more changes than `limit`; the client asks
+  again with `next` at once.
+- Each page is in the answer at most once, as it is now. A page removed and
+  then made again with the same id (moved out of the space and back, outside
+  the server) is a catalogue entry, not a removal.
+- `tree` changes whenever a folder is made, moved or removed, or the number of
+  pages in a folder changes; the client then reads `GET …/tree` (and
+  `GET …/tags` if it shows tags). `settings` changes whenever a file the server
+  reads as settings changes (`.petalbook/space.yml`, `tags.yml`, the types and
+  the templates); the client then reads again what it uses of them (`…/types`,
+  `…/views`, `…/templates`, `…/tags`). Neither is a change of a page, so
+  neither is in `items`.
+- A change of a page's effective type that comes only from a folder binding
+  is a change of `settings`, not of the page.
+
+What counts is the index. In a space that follows a remote, changes made on
+the remote arrive with the space's next pull, which happens only while the
+space is open (see "Remote repository"). Changes made to the files outside the
+server arrive when the index sees them (see "Maintenance").
+
+Errors: `400 invalid` without `since`, or for a `since` or `limit` that cannot
+be used; `410 changes_expired` (see "Change cursor").
+
+### `GET /api/spaces/{space}/sync/pages?ids={id},{id},…`
+
+Needs `read`. Several pages at once, for filling the device's copy: 1 to 100
+page ids, comma-separated, each once.
+
+```json
+{"pages": [/* pages, as GET …/pages/{id} returns them, with the caller's draft */],
+ "missing": ["01JD3K8Q81"], "rest": ["01JD3K8Q90"]}
+```
+
+- Each page is what `GET …/pages/{id}` returns, `draft` included when the
+  caller has one (the drafts of the whole request are read in one query).
+- `missing` lists the ids that are not pages of the space (any more). Left out
+  when empty.
+- An answer holds at most 8 MiB of pages; the pages that did not fit are listed
+  in `rest`, in the order asked, for the next request. The first page always
+  fits, whatever its size (a page file is at most 8 MiB). Left out when empty.
+
+`400 invalid` for no ids, more than 100, an id given twice, or one that is not
+in the form of a page id.
+
+### `GET /api/sync/heads?space={id}&space={id}…`
+
+The change cursor each space is at now, so that a client with many spaces can
+ask once and then read changes only where something changed. 1 to 100
+`space` parameters, each once.
+
+```json
+{"heads": {"01JD4A2K9P": "change cursor", "default": "change cursor"},
+ "missing": ["01JD4A2K9Q"]}
+```
+
+- `heads` holds every space the caller may `read`; `missing` (left out when
+  empty) every other one, not telling a space that does not exist from one the
+  caller may not see. A disabled space is in `missing`.
+- A head equal to the client's cursor means nothing changed; a different one
+  means the client calls `GET …/changes`. A head is not a promise that there are
+  changes: comparing it is cheap, reading the changes settles it.
+- The answer comes from memory and never opens or pulls a space: a space that
+  is closed (idle, or cleared from the disk by milestone 3.1) answers the
+  head it had when it closed. So a device polling heads keeps no space open, and
+  a space that follows a remote and is closed shows the remote's changes only
+  once someone opens it.
+
+`400 invalid` for no `space`, more than 100, or one given twice.
+
+### What a client is expected to do
+
+Not enforced by the server, but what it is built for:
+
+- Ask `heads` once a minute while the app is visible and online, and at once
+  when it comes back to the foreground or the network returns. Do not poll
+  `changes` for spaces whose head did not move.
+- Walk a catalogue in batches one after another, not in parallel; fetch bodies
+  at most 4 requests at a time.
+- On `404` from any of these for a space, remove that space's copy from the
+  device (the caller can no longer read it). On `403 space_disabled`, keep the
+  copy, show it as read-only and stop asking until the space is in `heads`
+  again.
+
+**What it costs**, in a space of 50 000 pages (targets, measured before 4.1 is
+merged): a `changes` with nothing new under a millisecond; a catalogue batch of
+2000 under 20 ms; 100 bodies under 100 ms on an SSD; `heads` for 100 spaces
+a few microseconds each. The index grows by one column and one small table,
+under 1% of its size.
+
 ## Maintenance
 
 ### `POST /api/spaces/{space}/reindex`
@@ -4124,10 +5493,947 @@ A `.md` file with no header, a header that does not parse, no `id`, or an `id`
 another file already uses is not served as a page. The server logs each one
 at start-up, and the check page lists them (see "Checks").
 
+## Tenants, registration and mail
+
+Milestone 3.3. Accounts mode only. **Single-user mode has none of this**: there
+are no tenants, no registration, no mail and no quotas, every endpoint of this
+section answers `404`, and settings resolve site → space → personal with no
+tenant layer between (in single-user mode there are no administrators, so in
+practice only the space's own settings count, as before).
+
+What 3.3 adds is the plumbing for many tenants and for public sign-up, built so
+that a server with one tenant and registration closed (the state after the
+upgrade, and the default) behaves and costs exactly as before:
+
+- every user, space, group and invite belongs to a **tenant**; a **default
+  tenant** exists, and everything that existed before 3.3 is in it;
+- administrators are **site administrators** or **tenant administrators**;
+- settings resolve **site → tenant → space → personal**, with locks;
+- a tenant can open **registration** (off by default), which needs **outgoing
+  mail** (off until an administrator configures SMTP), as do **email
+  verification** and **password reset**;
+- **quotas** are measured per person and per tenant; only the number of spaces
+  is refused, the rest warns.
+
+**Nothing sends mail until a site administrator configures and enables SMTP**
+(see "Mail"). Until then the registration, verification and reset endpoints
+answer as switched off, and no setting can open registration.
+
+### Tenant
+
+```json
+{"id": "0000000000", "slug": "default", "name": "Default", "default": true, "disabled": false,
+ "registration": {"open": false},
+ "quota": {"people": null, "spaces": null, "bytes": null, "pages": null},
+ "usage": {"people": 40, "spaces": 212, "bytes": 18304211000, "pages": 61234, "measuredAt": "2026-11-23T02:10:00Z", "over": []},
+ "created": "2026-11-23T08:30:00Z", "updated": "2026-11-23T08:30:00Z"}
+```
+
+- `id` has the form of a page id. The default tenant's id is always
+  `0000000000` and its slug `default`; it cannot be disabled or deleted.
+- `slug`: 2 to 32 characters of `a-z`, `0-9` and `-`, starting with a letter or
+  digit, unique. It is what the public endpoints name a tenant by (below). It may
+  change; links that carry the old slug stop working.
+- `name`: 1 to 80 characters.
+- `disabled`: nobody of the tenant can sign in (`401 unauthenticated`, the same
+  message as a wrong password), their sessions end at their next request, their
+  API tokens and OAuth grants answer `401 token_owner_disabled`, and its spaces
+  cannot be opened. Nothing is deleted; enabling brings everything back.
+- `registration.open` is the effective value of the setting
+  `registration.open` for this tenant (see "Registration").
+- `quota`: the tenant's totals, set by site administrators only; `null` is no
+  limit. `usage` is what is measured (see "Quotas"): `measuredAt` is when a
+  measurement last changed it (`null`: never), and `over` lists the totals it is
+  over (`people`, `spaces`, `bytes`, `pages`).
+- The host a tenant is reached on is reserved: in 3.3 every tenant is served on
+  the one `--public-url`, and a public endpoint names its tenant by slug.
+
+### Where a request's tenant comes from
+
+- **Signed in** (session, API token, OAuth grant): the user's tenant. A user
+  belongs to exactly one tenant and never changes it in 3.3.
+- **Public endpoints** (`GET /api/auth/providers`, `GET /api/register`,
+  `POST /api/register`, `POST /api/password/forgot`): the `tenant` query
+  parameter or body field, a slug; absent means the default tenant. An unknown
+  or disabled slug is `404 not_found`.
+- **Usernames stay unique on the whole server**, so signing in needs no tenant:
+  `POST /api/login`, passkeys and single sign-on are unchanged, and the account
+  that signs in decides the tenant.
+- **New accounts**: `POST /api/setup` makes the first site administrator in the
+  default tenant; an invite makes the account in the invite's tenant; a
+  provider's `autoCreate` makes it in the provider's `tenant` (below; default
+  the default tenant); registration in the tenant registered for.
+
+### Data isolation
+
+A request sees only its own tenant's users, spaces, groups, invites, audit rows,
+API tokens and OAuth grants. A site administrator sees every tenant's, and may
+narrow a list with `?tenant={id}`. An id from another tenant answers exactly
+like an id that does not exist (`404 not_found`, `404 user_not_found`,
+`404 group_not_found`), so a tenant cannot learn what another holds.
+
+How it is held (this is a contract on the server's code, listed so it can be
+reviewed and tested):
+
+- `users`, `spaces`, `groups`, `invites` and `audit_log` have a `tenant_id`.
+  Everything else belongs to one of them (members, drafts, remotes, favourites,
+  tokens, grants, passkeys, identities) and is reached through it.
+- Every store method that reads or lists those tables by anything a client
+  sends takes a **scope** (one tenant, or every tenant for a site
+  administrator); a method without one does not compile. The few that must look
+  across tenants say why next to the code: a session or token by its id, a
+  sign-in by username or identity, the background jobs.
+  2.7's tables follow the same rule: a GitHub connection hangs off its user and
+  a remote off its space, so they carry no `tenant_id`; the methods that reach
+  across users (the daily renewal, the App's counts and the revocation when the
+  App is removed, both site administrators only) and the App's installations
+  (site-wide) are on the same list with their reasons.
+- **Links between rows are checked by the database write itself**: adding a
+  member, a group to a space, a person to a group, or transferring a space is an
+  `INSERT … SELECT` that joins both rows on the same `tenant_id`, so a missed
+  check in the API cannot create a cross-tenant link; it writes nothing and the
+  request answers as for an unknown id.
+- **The per-request permission check does not change**: the 1.7/3.2 cache of a
+  person's spaces only ever holds spaces of their tenant (memberships are
+  same-tenant by construction), so no tenant comparison is added to the hot
+  path. The tenant's `disabled` state is in memory (one small map, re-read on
+  change), checked where the session is loaded.
+- Caches keyed by user id or space id need no tenant in the key (ids are unique
+  on the server); the settings cache is keyed by tenant. The daily text's
+  external interfaces are site-wide and so is their cache.
+- **Strength**: one process and one database, separated by query conditions.
+  Whoever can read the server's disk or database reads every tenant. Nothing
+  stronger is promised (no database per tenant, no encryption per tenant).
+
+How it is tested (SQLite and PostgreSQL both):
+
+1. A fixture with two tenants holding the same shapes of data (people, shared
+   and personal spaces, local and synced groups, invites, tokens, grants, audit
+   rows). Every route of `internal/api/routes.go` is called by tenant A's
+   administrator, member and token with tenant B's ids: each answers as for an
+   unknown id, and no list contains an id of B. A test fails when a route is
+   added without an entry in this table.
+2. A test over the store's package that lists the exported methods touching the
+   five tables and fails for one that takes no scope and is not on the
+   commented allowlist.
+3. After every test of the fixture, one query asserts that no membership,
+   group membership, space group or transfer joins two tenants.
+4. The single-tenant suite runs unchanged: with one tenant nothing differs.
+
+### Administrators
+
+The User object gains:
+
+```json
+{"…": "…", "role": "admin", "siteAdmin": true, "tenant": {"id": "0000000000", "slug": "default", "name": "Default"}}
+```
+
+- `role` keeps its meaning inside the user's tenant: `admin` or `member`.
+- `siteAdmin`: an administrator of the whole server. It needs `role: "admin"`.
+  The upgrade makes every existing administrator a site administrator, so
+  nobody loses anything. Only a site administrator can set `siteAdmin`
+  (`PATCH /api/users/{id}`); the rule "at least one enabled administrator" of
+  1.7 and 2.8 now counts enabled site administrators of tenants that are not
+  disabled (one of a disabled tenant cannot sign in).
+- A **tenant administrator** (`role: "admin"`, `siteAdmin: false`) has, inside
+  their tenant, everything an administrator had before 3.3 except what is the
+  server's own. A site administrator has all of it, in every tenant.
+
+| Endpoints | Tenant administrator | Site administrator |
+|---|---|---|
+| `/api/users…`, `/api/invites…` | their tenant | every tenant (`?tenant=`; `POST /api/invites` may name `tenant`) |
+| `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
+| `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
+| `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
+
+The daily text's tenant default is a tenant setting (see "Settings by layer"),
+not `/api/admin/daily`, which stays the site's.
+
+`GET /api/session` returns the user with these fields; the web app shows the
+site-only pages of `/admin` to site administrators only.
+
+### `GET /api/admin/tenancy`, `PUT /api/admin/tenancy`
+
+Site administrators. `{"enabled": false, "tenants": 1}`. `enabled` (default
+`false`) is whether tenants other than the default one may be made. `PUT`
+takes `{"enabled": true}`; `tenants` is read only. Switching it off does not
+touch tenants that exist: they keep working, and no new one can be made.
+
+### `GET /api/admin/tenants?q={text}&cursor={cursor}&limit={n}`
+
+Site administrators. `{"items": [Tenant], "next": "…"}`, the default tenant
+first, then by name; `q` keeps names or slugs containing it (ignoring case, as
+for spaces). `limit` 1 to 200 (default 50). One query a page; `usage` is read
+from the stored measurements.
+
+### `GET /api/admin/tenants/{tenant}`
+
+A site administrator, or an administrator of that tenant (another tenant's
+answers `404 not_found`). `{tenant}` is the id.
+
+### `POST /api/admin/tenants`
+
+Site administrators; `409 tenants_off` while `tenancy.enabled` is `false`.
+
+```json
+{"slug": "acme", "name": "Acme", "admin": {"username": "wu", "name": "Wu", "email": "wu@acme.example"}}
+```
+
+`201` with the tenant. `admin` is optional: when given, the answer also has an
+`invite` (as `POST /api/invites` answers, role `admin`, 7 days) for the first
+administrator of the tenant; the link is shown once, and nothing is mailed.
+The invite **fills in** the form that accepts it: it has `username` (normalised
+as a username is), `name` and `email` (each `""` when not given), `POST
+/api/invites/check` answers them (below), and the account the invite makes gets
+the `email` (not verified). Each of the three may be left out, `username`
+too: the person then picks one when they accept (`POST /api/invites/accept`
+needs it). They are checked as `POST /api/invites` checks them (an ASCII
+address with something on both sides of the `@`, a name of 1 to 100 characters
+with no control characters), before the tenant is made: `400 invalid` for one
+that is not valid, and no tenant is made. `409 exists` for a slug taken;
+`409 tenant_limit` at 1,000 tenants.
+
+### `PATCH /api/admin/tenants/{tenant}`
+
+`{"name": "…", "slug": "…", "disabled": true, "quota": {…}}`, each optional. A
+tenant administrator may send `name` only (`403 forbidden` for the rest).
+`200` with the tenant. `409 default_tenant` for disabling the default tenant;
+`409 exists` for a slug taken; `409 conflict` when disabling the tenant of the
+caller, or when no enabled site administrator would be left outside the tenant.
+
+### `DELETE /api/admin/tenants/{tenant}`
+
+Site administrators. Only an empty tenant: no users, spaces, groups or invites
+(pending registrations are deleted with it). `204`. `409 tenant_not_empty` with
+`{"users": n, "spaces": n, "groups": n, "invites": n}`; `409 default_tenant`
+for the default tenant. 3.3 has no way to move people or spaces between
+tenants.
+
+### Sign-in providers and groups
+
+- Providers stay the server's (site administrators only) and every tenant's
+  sign-in page lists the same ones. A provider gains `tenant` (an id, default
+  the default tenant): where `autoCreate` makes accounts. An identity signs in
+  to its account whatever tenant that is in.
+- A provider's groups mapping may point to groups of any tenant; at sign-in
+  only the entries whose group is in the person's tenant are applied, the rest
+  are ignored for that person (not an error, not audited).
+- A group belongs to a tenant; group names are unique within a tenant (no
+  longer on the whole server). `GET /api/groups?q=` finds only the caller's
+  tenant's groups.
+
+### Settings by layer
+
+The general rule of design.md ("设置的分层和锁定") as an API. A **setting** has a
+key, a kind and the layers it exists in. Each layer either sets a value or
+follows the layer above (`null`), and each layer above the last says what the
+layers below it may do (`lower`):
+
+```json
+{"mode": "allow"}
+{"mode": "restrict", "options": ["any", "github"]}
+{"mode": "restrict", "max": 20}
+{"mode": "lock"}
+```
+
+- `allow`: the layers below may set any valid value.
+- `restrict`: for a `choice` setting, one of `options`; for a `limit` setting
+  (a number where smaller is stricter), at most `max`.
+- `lock`: the layers below cannot set it.
+
+A lower layer may only tighten what is above it: a tenant's `lower` must be at
+least as strict as the site's (fewer options, a smaller `max`, or `lock`). A
+value a lower layer set that a lock or a restriction now forbids is **kept**,
+with `inEffect: false`, and counts again when the rule is lifted; nobody's
+setting is lost. Space values stay in `space.yml` and personal ones in the
+state database, as before. The effective value is computed once per (tenant,
+settings revision, space settings version) and cached; a request does not walk
+the layers.
+
+The settings of 3.3 (others join this table as they are made):
+
+| Key | Kind | Layers | Site default | Site's `lower` by default |
+|---|---|---|---|---|
+| `registration.open` | boolean | site, tenant | `false` | `lock` |
+| `registration.domains` | list of domains (`[]`: any) | site, tenant | `[]` | `allow` |
+| `registration.perHour` | limit, 1 to 10,000 | site, tenant | 50 | `restrict`, `max` 50 |
+| `legal.termsUrl`, `legal.privacyUrl` | an `https` address or `""` | site, tenant | `""` | `allow` |
+| `quota.spacesPerPerson` | limit, 0 (none) to 10,000 | site, tenant, person | 20 (`--max-spaces`) | `allow` |
+| `quota.bytesPerPerson` | limit in bytes, or `null` | site, tenant, person | `null` | `allow` |
+| `quota.pagesPerPerson` | limit, or `null` | site, tenant, person | `null` | `allow` |
+| `daily.own`, `daily.api` | boolean (what a space may do) | site, tenant | `true` | `allow` |
+| `daily.default` | the shape of `/api/admin/daily`'s `default`; a tenant may name a space of its own tenant or an interface | site, tenant | `null` | `allow` |
+
+- `daily.own` and `daily.api` are the 2.3 `allow` switches; `PUT
+  /api/admin/daily` with `allow` and `PUT /api/admin/settings/daily.own` write
+  the same record. The tenant's `daily.default` comes between the space's and
+  the site's (2.3's "以后…插在空间和全站之间"); pasted lines stay site-only.
+- `quota.spacesPerPerson` at the site is `--max-spaces` when the flag is given
+  (then it is read only, `fromFlag: true`), else the stored value, 20 to begin
+  with. The person layer is a site or tenant administrator's override on the
+  user (`PATCH /api/users/{id}` with `quota`), not something people set for
+  themselves.
+- **Reserved for 3.1** (merged; its settings are still the site's own record,
+  `GET`/`PUT /api/admin/storage`, and not in this table yet):
+  `storage.remotes.require` (choice, ordered `null` < `any` < a provider's id,
+  2.7b), `storage.remotes.graceDays` and `storage.localSpaces.maxBytes`
+  (limits) join with layers site and tenant, and the site's `lower` defaults
+  to `lock`, as 3.1 decided; a tenant may only tighten them. 3.1's
+  `hosts.allowed` (what `--remote-host` sets) and its cache settings stay the
+  site's only. **Reserved for 2.7**: none of
+  the GitHub App's settings have a tenant layer.
+- Security settings (`/api/admin/security`, providers, mail) are the site's
+  only and are not in this table.
+
+#### `GET /api/admin/settings`, `PUT /api/admin/settings/{key}`
+
+Site administrators. `GET` answers every setting:
+
+```json
+{"settings": [{"key": "registration.open", "kind": "boolean", "layers": ["site", "tenant"],
+               "site": {"value": false, "lower": {"mode": "lock"}, "fromFlag": false}}]}
+```
+
+`PUT` takes `{"value": …, "lower": {…}}`, either or both. `200` with that
+setting. `400 invalid` for a value of the wrong kind or out of range;
+`404 not_found` for an unknown key; `409 conflict` for a setting set by a flag;
+the checks of "Registration" for `registration.open`. A change of `lower` that
+makes tenants' values ineffective answers `affected: n` (how many tenants).
+
+#### `GET /api/admin/tenants/{tenant}/settings`, `PUT /api/admin/tenants/{tenant}/settings/{key}`
+
+A site administrator or the tenant's administrator. `GET` answers every setting
+that has a tenant layer, with the site's part and the tenant's:
+
+```json
+{"settings": [{"key": "registration.open", "kind": "boolean", "layers": ["site", "tenant"],
+               "site": {"value": false, "lower": {"mode": "allow"}},
+               "tenant": {"value": true, "lower": null, "inEffect": true},
+               "effective": true}]}
+```
+
+`PUT` takes `{"value": …, "lower": {…}}`; `value: null` follows the site.
+`409 setting_locked` when the site locks the setting (a site administrator is
+refused too: unlock at the site first); `409 setting_restricted` for a value
+outside the site's `options` or above its `max`, or a `lower` looser than the
+site's.
+
+#### `GET /api/settings?space={space}`
+
+Any signed-in user; `space` optional (needs `read`). The effective value of
+every setting that has a space or person layer, and whether that layer can
+change it, so a client greys out "set by the administrators":
+
+```json
+{"settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}
+```
+
+`source` is the layer (`site` or `tenant`) whose lock, or whose value that
+switches it off, keeps the layer from changing it; absent when nothing does.
+
+### Mail
+
+Site administrators. Outgoing mail is what verification, password reset and
+registration use; **it is off until configured**, and nothing in 3.3 sends a
+message on its own initiative except as a reply to a person's request (a link
+they asked for) or an administrator's test.
+
+#### `GET /api/admin/mail`, `PUT /api/admin/mail`
+
+```json
+{"enabled": false, "host": "smtp.example.com", "port": 587, "security": "starttls",
+ "username": "notes@example.com", "hasPassword": true,
+ "from": "notes@example.com", "fromName": "PetalBook", "replyTo": "",
+ "status": {"ok": true, "checked": "2026-11-23T08:00:00Z", "message": ""},
+ "queue": {"waiting": 0, "sentLastHour": 12, "failedLastHour": 0}}
+```
+
+- `security`: `starttls` (the default; the server refuses to go on if the
+  server does not offer it), `tls` (TLS from the first byte, usually port 465),
+  or `none`, allowed only when `host` is a loopback address (a local relay). The
+  server's certificate is always verified; there is no option to skip that.
+- `username` and the password (write-only `password`; absent keeps the stored
+  one, `""` clears it) are sent with `PLAIN` over TLS only. The password is
+  sealed with the server's key (`secret.key`) like other secrets.
+- `from` is required to enable; `fromName` (at most 60 characters) and
+  `replyTo` are optional. One sender for the whole server in 3.3.
+- `enabled: true` needs `host`, `from` and `--public-url` (the links point to
+  it). `PUT` takes any of the fields; all are checked before anything is stored.
+- Mail waits in a queue **in memory** (at most 1,000 messages), sent one
+  connection at a time, each tried up to 3 times over 10 minutes and then
+  dropped and logged. A restart loses what is waiting; every message is a link
+  the person can ask for again, so nothing that cannot be redone is lost, and
+  no token sits in the database in readable form.
+- Messages are plain text plus a simple HTML part, in the language of the
+  request that caused them (`lang` in the body, else `Accept-Language`, else
+  English), from templates in the i18n files.
+
+Refusals: `400 invalid`, `400 mail_needs_public_url`, `400 mail_insecure`
+(`security: "none"` to a host that is not loopback), `400 mail_from_required`.
+A change writes `mail_changed` to the audit log (the password as `"changed"`).
+
+#### `POST /api/admin/mail/test`
+
+`{"to": "admin@example.com", "lang": "en"}` (`lang` optional). Sends one message now, waiting up to 15 seconds,
+to the address the administrator typed, and answers `200` with
+`{"ok": false, "message": "535 authentication failed"}` (the SMTP server's
+answer, never the password) or `{"ok": true}`, and updates `status`. Works also
+while `enabled` is `false`, so the settings can be tried before anyone gets
+mail. At most 10 an hour (`429 rate_limited`). Audit `mail_test`.
+
+### Registration
+
+A person makes their own account in a tenant. Off unless all of these hold for
+the tenant: the effective `registration.open` is `true`, mail is enabled, and
+the server has `--public-url`. **Opening it is refused** (`PUT` of
+`registration.open: true` at the site or the tenant, or unlocking it while a
+tenant has `true` stored):
+
+- `409 mail_not_configured` while mail is not enabled (a registration must
+  verify its address, see below);
+- `409 sso_only_with_registration` while `ssoOnly` is stored on; and from 3.3
+  the reverse check of 2.8 is real: `PUT /api/admin/security` with
+  `ssoOnly: true` answers `400 sso_only_with_registration` while any tenant's
+  effective `registration.open` is `true`.
+
+Switching mail off while registration is open is allowed and closes it in
+effect (`GET /api/register` says `open: false`); the setting stays.
+
+Signing up through a provider (`autoCreate`) is not registration: it is the
+provider's decision and is unchanged.
+
+#### `GET /api/register?tenant={slug}`
+
+Public. `Cache-Control: no-store`. Answered from memory.
+
+```json
+{"open": true, "tenant": {"slug": "default", "name": "Default"},
+ "domains": ["example.com"], "termsUrl": "https://example.com/terms", "privacyUrl": "",
+ "password": {"minLength": 8}}
+```
+
+When `open` is `false` the other fields are absent. `GET /api/auth/providers`
+gains `register` (this boolean) and `forgot` (see "Password reset"), and takes
+the same `?tenant=`, so the sign-in page shows the links.
+
+#### `POST /api/register`
+
+```json
+{"tenant": "default", "username": "tang", "name": "Tang", "email": "tang@example.com",
+ "password": "…", "acceptTerms": true, "captcha": {"id": "…", "answer": "…"}, "lang": "zh-Hans"}
+```
+
+The server checks, in this order, and stops at the first refusal:
+
+1. The address's requests this minute (the shared allowance of 2.8):
+   `429 rate_limited`.
+2. Registration open for the tenant: `403 registration_closed`.
+3. The `register` captcha context: `400 captcha_failed`.
+4. The fields: `400 invalid` (username form as for a User, name 1 to 80
+   characters, the password rule of "Signing in", an address of at most 254
+   bytes, ASCII only, that parses as one plain `local@domain`; see "Email
+   addresses are ASCII").
+5. `registration.domains` not empty and the address's domain not in it (a
+   domain also allows its subdomains): `400 email_domain_not_allowed`.
+6. A terms or privacy address set and `acceptTerms` not `true`:
+   `400 terms_required`.
+7. The username taken by an account or by a pending registration:
+   `409 exists`. (Usernames are not secret: they are shown to fellow members.)
+8. The tenant's registrations in the last hour at `registration.perHour`, or
+   1,000 pending: `429 rate_limited`.
+
+Then `202` with `{"sent": true}`, **always the same** whether or not a message
+goes out, so the answer never tells whether an address has an account:
+
+- if an enabled account of the tenant already has this verified address (not
+  verified by a tenant administrator alone, see "Password reset"), no account
+  is made: the username is held for 24 hours by a registration whose link is
+  never sent, as it would be for a free address, so asking for the same
+  username again answers `409 exists` either way; and the account's stored
+  address (not the one typed) gets "you already have an account" with a link
+  to reset the password;
+- if the address got 3 messages of this server in the last hour, or the caller's
+  address 5, nothing is sent (and nothing is said);
+- otherwise a **pending registration** is stored (the password already hashed,
+  the username reserved) and the address gets a link
+  `<public url>/register/confirm#<token>`, valid 24 hours.
+
+The account is made only when the link is followed: an address nobody controls
+never becomes an account.
+
+#### `POST /api/register/confirm`
+
+Public. `{"token": "…"}`. Counts against the address's requests this minute.
+`201` with `{"user": {…}}` and a session cookie: a `member` of the tenant with
+`email` and `emailVerified: true`, the acceptance of the terms recorded (when and
+which addresses), and a personal space, as for an invite. Refusals:
+`404 not_found` for a token unknown, used or expired (a failure of the
+address); `403 registration_closed` when registration was closed since (pending
+registrations are not honoured after closing); `409 exists` when the username
+was taken in between by an administrator. `registered` goes to the audit log.
+
+### Email verification
+
+For any account with an `email`. It is what makes an address count for
+password reset and for 2.8's merge by verified address.
+
+#### `POST /api/account/email/verify`
+
+Signed in. `{"lang": "zh-Hans"}`. Sends a link
+`<public url>/verify-email#<token>` (valid 24 hours) to the account's current
+`email`. `202 {"sent": true}`. `409 mail_not_configured`; `400 invalid` when
+the account has no email, or one stored with characters outside ASCII; `409 email_verified` when it is verified already;
+`429 rate_limited` after 3 in an hour.
+
+#### `POST /api/email/confirm`
+
+Public, so the link works on another device. `{"token": "…"}`. `204`: the
+account's `emailVerified` becomes `true` if its `email` is still the one the
+link was sent to. `404 not_found` for a token unknown, used, expired, or made
+for an address the account no longer has. Audit `email_verified`.
+
+`PATCH /api/account` with a new `email` (which clears `emailVerified`, as
+before) also sends a note to the old address when that one was verified ("the
+address of your account was changed"), with no link in it.
+
+Any change of an account's `email` (the person's `PATCH /api/account`, an
+administrator's `PATCH /api/users/{id}`) makes every verification and reset
+link sent before it unusable; a reset link also answers `404 not_found` once
+the account's `email` is no longer the one it was sent to.
+
+#### Email addresses are ASCII
+
+An `email` (registration, `PATCH /api/account`, an administrator's
+`PATCH /api/users/{id}`, a provider's claim) with any character
+outside ASCII is refused with `400 invalid` (from a provider: the account gets
+no address). Addresses are compared with A to Z made lower case and nothing
+else, in every lookup (registration, password reset, the merge by verified
+address of 2.8, `registration.domains`). Unicode case mapping would make
+look-alikes equal: `İ` (U+0130) and the Kelvin sign (U+212A) lower to `i` and
+`k`. An address stored before 3.3 with such characters is kept as it is, but
+matches no lookup and gets no account mail (no reset link, no verification
+link): the person or an administrator sets an ASCII address.
+
+### Password reset
+
+Off unless mail is enabled (and `--public-url` set). `GET /api/auth/providers`
+says `forgot: true` when it is on.
+
+#### `POST /api/password/forgot`
+
+Public. `{"tenant": "default", "login": "tang", "captcha": {…}, "lang": "zh-Hans"}`.
+`login` is a username or an email address. Checks: the address's requests this
+minute (`429 rate_limited`), on (`403 password_reset_off`), the `forgot`
+captcha context (`400 captcha_failed`). Then `202 {"sent": true}`, always the
+same. A message goes out only to an enabled account of the tenant (any tenant
+for a username) with a verified address, at most 3 an hour per account and 5
+per caller's address. An address only a tenant administrator marked verified
+(`email_verified_by` is `tenant_admin`) does not count here, as it does not for
+2.8's merge: a tenant administrator could give a member their own address and
+reset the password. The person verifies it with the link, or a site
+administrator marks it.
+
+- an account with a password gets a link `<public url>/reset-password#<token>`,
+  valid 1 hour, usable once; asking again makes the earlier links unusable;
+- an account without a password (made through single sign-on), or one whose
+  password sign-in `ssoOnly` refuses, gets "sign in with {provider}" and no link:
+  a reset never adds a password the person could not already use;
+- an address several accounts of the tenant have verified gets one message
+  with a link for each (at most 5).
+
+`password_reset_requested` goes to the audit log for an account that got a link
+(not for logins that match nothing).
+
+#### `POST /api/password/reset/check`
+
+Public. `{"token": "…"}`. `200` with `{"username": "tang", "expires": "…"}`, or
+`404 not_found` (a failure of the address). For the page to say "this link has
+expired" before the person types a password.
+
+#### `POST /api/password/reset`
+
+Public. `{"token": "…", "password": "…"}`. `204`. The password is set, every
+session of the account ends, its username's and pairs' failures and locks are
+cleared, and `password_reset` goes to the audit log. No session is started: the
+person signs in, so `ssoOnly`, a required passkey and the rest apply as at any
+sign-in. `404 not_found` for a bad token (a failure of the address);
+`400 invalid` for a password that breaks the rule.
+
+#### `POST /api/users/{id}/password-reset`
+
+Administrators (in their scope). Sends the same link to the user's verified
+address. `202`. `409 email_unverified` (also for an address only a tenant
+administrator marked verified, whoever asks), `409 mail_not_configured`,
+`409 conflict` for an account without a password.
+
+### Quotas
+
+Measured per person and per tenant: spaces owned, bytes, pages.
+
+- **Whose**: a space counts toward its first owner (the person whose name is
+  its default Git author, as in the administration's list: the earliest owner
+  membership) and its tenant; a transfer, or any change of who the first owner
+  is, moves it. Group members, editors, viewers and later owners count nothing.
+- **Spaces** are counted when they are made, deleted or handed over, in the
+  transaction that does it: the person's and the tenant's row change by the
+  difference.
+- **Bytes and pages** come from the background measurement of 1.7, which walks
+  one space at a time at most every 6 hours; it now also stores the space's
+  page count (one `COUNT` on the space's index: from the open space, or from the
+  index file of a closed one without opening it, so a space with a remote is not
+  pulled for it; a space whose index is gone keeps its earlier count). The
+  measurement stores both in one transaction (`spaces.usage_bytes`,
+  `spaces.page_count`) and adds the difference to the first owner's and the
+  tenant's row of the `usage` table, so reading anyone's usage is one row.
+- **Drift** is corrected from the rows themselves, by one grouped query a
+  table: once when the server starts running (a crash may have left a
+  difference) and once a day. A re-measure corrects a space's own numbers the
+  same way, by the difference to what it held. Nothing on a request path walks
+  files, counts pages, or recounts anything.
+- **Reserved for 3.1**: a space that is partially cloned or evicted keeps the
+  bytes of its last full measurement (3.1's `cloneBytes` and `indexBytes` are
+  what the server holds, not what the space holds); 3.1's measuring writes
+  `usage_bytes` only from a full working tree (the listing's `sizeBytes` may be
+  written on its own), and the quota reads `usage_bytes`. On this branch the
+  measurement is the 1.7 one, and `store.RecordMeasurement` is the one place
+  that writes `usage_bytes`.
+- **What is refused**: only spaces. `POST /api/spaces` over the person's limit
+  (their own, else the tenant's `quota.spacesPerPerson`, else the site's) or the
+  tenant's `quota.spaces` answers `403 quota_exceeded` with
+  `{"quota": "spaces", "limit": 20, "used": 20}`, as `--max-spaces` answered
+  `403 forbidden` before (old clients still see a `403`). A limit of `0` is none.
+  The check reads the person's usage row (and the tenant's, when it has a total):
+  one primary-key lookup each, however many spaces there are. Bytes, pages and
+  the tenant's people are **not refused** in 3.3: going over shows a notice to
+  the person and the tenant's administrators see it in the list and the tenant,
+  and `quota_exceeded` goes to the audit log once per crossing. Uploads keep
+  3.1's `507 space_full` for its own limit; a byte quota that refuses later will
+  answer `507 quota_exceeded`.
+- **A personal space** is never refused for a quota and counts toward the
+  person's and the tenant's totals.
+- **Over** means more than the limit (at it is not). Whether a row is over is
+  looked at after each measurement; after a change of whom a space is counted
+  for (a space made or deleted, a transfer, an owner added, promoted, demoted or
+  removed: the person it was counted for, the person it is now, and the
+  tenant); after a new account (the person and the tenant's people); after a
+  change of a person's limits or a tenant's totals, after a quota setting changes (everyone in its scope, one
+  read of the usage rows in pages of 500), and after the recount; it is stored
+  (`usage.over`), so `over=1` is an index range and a crossing is reported once:
+  a row that stays over, and is looked at again, writes nothing.
+
+#### `GET /api/account/usage`
+
+Signed in.
+
+```json
+{"spaces": {"used": 3, "limit": 20}, "bytes": {"used": 52428800, "limit": null},
+ "pages": {"used": 2100, "limit": null}, "measuredAt": "2026-11-23T02:10:00Z",
+ "notices": [{"quota": "pages", "scope": "person", "limit": 2000, "used": 2100}]}
+```
+
+`limit` is `null` for none; `measuredAt` is `null` until a space of the person
+has been measured. A **notice** is a quota that is over: `scope` `person` for
+the person's own limit, `tenant` for the tenant's total (`quota` is then also
+`people`). Three lookups of rows by key; the numbers are the stored ones.
+
+#### `GET /api/admin/usage?tenant={id}&over=1&cursor={cursor}&limit={n}`
+
+Administrators (in their scope: a tenant administrator's own tenant, a site
+administrator's every tenant, or `?tenant=`: `404 not_found` for one that is not
+theirs or does not exist). People by usage, largest bytes first, then by id:
+
+```json
+{"items": [{"user": {"id": "…", "username": "tang", "name": "Tang"}, "tenant": "0000000000",
+  "spaces": 3, "bytes": 52428800, "pages": 2100,
+  "limits": {"spaces": 20, "bytes": null, "pages": 2000},
+  "own": {"spaces": null, "bytes": null, "pages": 2000},
+  "ownInEffect": {"spaces": true, "bytes": true, "pages": true},
+  "over": ["pages"], "measuredAt": "2026-11-23T02:10:00Z"}],
+ "next": "52428800:01JD3K7A2M"}
+```
+
+`limits` are the limits in force (`null` none) and `own` the person's own
+(what the edit form starts with). `ownInEffect` is `false` for an own limit
+that a lock or a restriction put on the setting later forbids (see `quota` on
+`PATCH /api/users/{id}`); it is `true` for one that is in force or not set. `over=1` keeps those over a limit (`over=0` or
+none keeps all; anything else is `400 invalid`). `limit` is 1 to 200 (default
+50). The cursor is what `next` says (`400 invalid` for any other). One query a
+page over the usage table's index; the people's names are looked up for the page
+only.
+
+#### `quota` on `PATCH /api/users/{id}`
+
+`quota: {"spaces": 50, "bytes": null, "pages": 100000}`: each key given is a
+number (`spaces` 0 to 10,000, `0` meaning none; `bytes` and `pages` at least 1)
+or `null` to follow the tenant and the site; the keys left out stay. `200` with
+the user, whose `quota` is the person's own limits as they are now.
+
+- `400 invalid` for an unknown key, a value that is no whole number in range, or
+  a `quota` that is not an object.
+- A tenant administrator may lower a person's limit, not raise it above the
+  tenant's effective value (no limit is the highest): `403 forbidden`. Only a
+  site administrator may. Both answer to a lock or a restriction the layer above
+  put on the setting (`409 setting_locked`, `409 setting_restricted`): a tenant
+  administrator to the stricter of the site's and the tenant's, a site
+  administrator to the site's.
+- A lock or a restriction put on the setting **after** the value was saved
+  binds it by the same rule, that of the layer that saved it (a site
+  administrator's value answers to the site's rule, a tenant administrator's to
+  the stricter of the site's and the tenant's). Under a lock the own value is
+  not in effect: the tenant's value applies. Under a restriction it counts up
+  to the restriction's `max` (no limit is above any `max`). The value is kept,
+  shown with `inEffect: false` (`ownInEffect` in `GET /api/admin/usage`), and
+  counts again when the rule is lifted.
+- A person of another tenant is `404 not_found`, a member `403 forbidden`.
+- It is checked before anything else of the request is applied: a refused
+  `quota` changes nothing, not the other fields either.
+- Saving writes `user_changed` (with the new `quota`) to the audit log and looks
+  at the person's numbers again.
+
+### Abuse basics
+
+- **Per-address allowance** (2.8's `limits.perMinute`, 10 by default): shared
+  with sign-in by `GET /api/register`, `POST /api/register`,
+  `POST /api/register/confirm`, `POST /api/password/forgot`,
+  `POST /api/password/reset/check`, `POST /api/password/reset` and
+  `POST /api/email/confirm`.
+- **Failures**: a wrong token on the four token endpoints counts as a failure of
+  the address (2.8's caps and lockout).
+- **Captcha**: the `register` and `forgot` contexts of 2.8 are real: they appear
+  in `GET /api/admin/security`'s `captcha.contexts` and in `GET /api/captcha`,
+  each off by default, `always` or `after_failures` like the others (counted by
+  the address).
+- **Mail caps**: at most 3 messages an hour to one address, 5 caused by one
+  caller's address, `registration.perHour` registrations a tenant an hour, 1,000
+  pending registrations a tenant, 1,000 messages waiting on the server. Counts
+  are in memory, like 2.8's.
+- **Domains**: `registration.domains` limits who may register by address.
+- Tokens are 32 random bytes, sent only in the link's fragment (never a query:
+  not in logs or `Referer`), stored only as a SHA-256 hash, single use.
+
+### Audit
+
+These rows join those of "Audit log"; every row now has a `tenant` (`""` for
+the site's own kinds):
+
+| `kind` | When | `detail` |
+|---|---|---|
+| `tenant_created`, `tenant_changed`, `tenant_deleted` | a tenant was made, changed or deleted | `tenant`, `slug`, the changed fields |
+| `setting_changed` | a site or tenant setting changed | `key`, `layer`, `from`, `to` |
+| `mail_changed`, `mail_test` | the mail settings changed; a test was sent | the changed fields (password as `"changed"`); `to`, `ok` |
+| `registered` | a registration was confirmed | `email` |
+| `email_verified` | an address was verified | `email` |
+| `password_reset_requested`, `password_reset` | a reset link was sent; a password was reset | `by` (`user`, `admin`) |
+| `quota_exceeded` | a person or a tenant went over a quota (once per crossing) | `quota` (`spaces`, `bytes`, `pages`, `people`), `limit`, `used`, `scope` (`person`, `tenant`); the row's `user` is the person, and for a tenant's total the `tenant` is the one |
+
+`POST /api/register` writes nothing until it is confirmed (made-up addresses do
+not fill the log).
+
+### Error codes of this section
+
+| Code | Status | When |
+|---|---|---|
+| `tenants_off` | 409 | making a tenant while `tenancy.enabled` is `false` |
+| `tenant_limit` | 409 | 1,000 tenants |
+| `tenant_not_empty` | 409 | deleting a tenant that has users, spaces, groups or invites (with the counts) |
+| `default_tenant` | 409 | disabling or deleting the default tenant |
+| `setting_locked` | 409 | setting a value the layer above locks |
+| `setting_restricted` | 409 | a value outside the layer above's options or `max`, or a `lower` looser than it |
+| `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
+| `password_reset_off` | 403 | asking for a reset while mail is not enabled |
+| `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
+| `mail_needs_public_url` | 400 | enabling mail without `--public-url` |
+| `mail_insecure` | 400 | `security: "none"` to a host that is not loopback |
+| `mail_from_required` | 400 | enabling mail without `from` |
+| `sso_only_with_registration` | 409 (opening registration), 400 (`PUT /api/admin/security`) | `ssoOnly` and open registration together |
+| `email_domain_not_allowed` | 400 | the address's domain is not in `registration.domains` |
+| `terms_required` | 400 | `acceptTerms` missing while a terms or privacy address is set |
+| `email_verified` | 409 | asking to verify an address that is verified |
+| `email_unverified` | 409 | an administrator sending a reset to an unverified address |
+| `quota_exceeded` | 403 (spaces); 507 reserved for bytes | over a quota that is refused (with `quota`, `limit` and `used`) |
+| `captcha_failed` | 400 | as in "Signing in", for the `register` and `forgot` contexts |
+| `rate_limited` | 429 | the allowances and caps of "Abuse basics", with `Retry-After` |
+| `not_found` | 404 | a token unknown, used or expired; a tenant slug unknown or disabled; another tenant's id |
+
+### Storage
+
+Migration `0018_tenants.sql` (0013 is 2.7's, 0015 and 0017 are 3.1's, all on
+other branches). SQLite and PostgreSQL both. It is one migration for the whole
+milestone: the first part (tenants, layered settings, isolation) is below, and
+the parts that add registration, mail and quotas append their tables to it
+before the milestone is released.
+
+- `tenants` (id, slug unique, name, name_key, disabled, quota JSON, created,
+  updated), with the default row `0000000000` / `default`, made by the Go step of
+  the migration.
+- `users`, `spaces`, `groups`, `invites`, `audit_log` gain
+  `tenant_id TEXT NOT NULL DEFAULT '0000000000'`; `users` gains `site_admin`;
+  `invites` gains `site_admin` (the invited administrator is one of the server);
+  `sign_in_providers` gains `tenant_id` (where `autoCreate` puts accounts).
+- Indexes `(tenant_id, created)` on users and spaces, `(tenant_id, id)` on
+  the audit log, `(tenant_id)` on invites; groups have the unique index below.
+- Group names unique per tenant: the unique `name_key` becomes unique
+  `(tenant_id, name_key)` (a Go step of the migration: on PostgreSQL a dropped
+  constraint and a new index; on SQLite the table is rebuilt, which needs
+  foreign keys off and so runs on one pinned connection around the version's
+  transaction, which ends with `PRAGMA foreign_key_check`: a row that points
+  nowhere fails the migration, which rolls back, and foreign keys are switched
+  on again whatever happened).
+- New: `layered_settings` (layer, layer id, key, value, lower, updated).
+- Added by the second part: `registrations` (pending: id, tenant, username
+  unique, name, email, the password as a hash, the SHA-256 of the token, the
+  terms accepted as JSON, created, expires), `email_tokens` (the SHA-256 of the
+  token, kind `verify` or `reset`, user, address, created, expires, used) and the
+  column `users.terms_accepted` (JSON: `at`, `termsUrl`, `privacyUrl`). The mail
+  settings are a record of `site_settings` (key `mail`, the password sealed).
+- Added by the third part: `usage` (kind `user` or `tenant`, id, tenant_id,
+  spaces, bytes, pages, people, over, measured; primary key `(kind, id)`; indexes
+  `(kind, tenant_id, bytes DESC, id)` and `(kind, bytes DESC, id)` for the list of
+  people), and the columns `users.quota` (JSON, `''` for none), `spaces.page_count`,
+  `spaces.usage_bytes` (what the last measurement found; the 1.7 `size_bytes` is
+  its first value), `spaces.usage_user` (whom the space is counted for now, so a
+  hand-over moves exactly what was added; indexed), and `invites.username`,
+  `invites.name`, `invites.email` (what the invite fills in). The migration makes
+  the usage rows with two set statements (a fraction of a second at 20,000 people
+  and 40,000 spaces).
+- `UPDATE users SET site_admin = 1 WHERE role = 'admin'`.
+
+### What the first part of 3.3 does and does not do
+
+Done: the tenant model, `siteAdmin` and `tenant` on the User, data isolation, the
+administrator split, `/api/admin/tenancy`, the tenants, layered settings with
+locks (`/api/admin/settings`, the tenants' settings, `GET /api/settings`), the
+daily text's switches and default on that mechanism, and a provider's `tenant`.
+
+The quotas and usage (the `quota.*` settings, the tenant's `usage`,
+`/api/account/usage`, `/api/admin/usage`, `quota_exceeded`) and the prefilled
+invite of `POST /api/admin/tenants` came with the third part, below.
+
+### What the second part of 3.3 does
+
+Done: mail (`/api/admin/mail`, the test message, the queue), registration,
+email verification, password reset, the `register` and `forgot` flags of
+`GET /api/auth/providers`, the captcha contexts `register` and `forgot` (in
+`captcha.contexts`, off by default, like the others), and both directions of
+`sso_only_with_registration`. Details the implementation settled, which refine
+the text above:
+
+- **Nothing is sent by default.** Mail is off until `PUT /api/admin/mail` has
+  `enabled: true`; the tests of this repository talk to an SMTP server in the
+  test's own process and to no other.
+- `GET /api/admin/mail`'s `status.checked` is `null` until a delivery or a test
+  has happened (the status is kept in memory). `POST /api/admin/mail/test`
+  takes an optional `lang`, answers `409 mail_not_configured` while no `host`
+  is set and `400 mail_from_required` while no `from` is, and the 10 an hour are
+  counted by the server (all administrators together).
+- `PUT /api/admin/mail` checks in this order: field forms and ranges
+  (`invalid`), `mail_insecure`, then, when enabling, a missing host (`invalid`),
+  `mail_from_required`, `mail_needs_public_url`. Switching mail off drops what is
+  waiting in the queue and cancels the pending registrations.
+- The queue tries a message at once, again after 1 minute and again after 5,
+  and drops it after the third failure or 10 minutes, whichever comes first; the
+  log says why (never the address or the text, which hold a link).
+- **Closing registration deletes the pending registrations** (a change of
+  `registration.open` or of its `lower` at the site or the tenant, switching mail
+  off, deleting the tenant, and an hourly check), so their links answer
+  `404 not_found`; `403 registration_closed` at `POST /api/register/confirm` is
+  what a link of a registration that is still stored gets when its tenant is not
+  open (for instance the instant between the change and the deletion).
+- **The tenant's hour** of `registration.perHour` counts every `POST
+  /api/register` that passes the field checks, whether or not the address has an
+  account, and the pending cap of 1,000 is checked the same way, so those answers
+  do not tell either. The password is hashed in every case.
+- `GET /api/register` counts against the address's requests this minute.
+- A tenant administrator's changes of an address: `emailVerified: true` sent by a
+  site administrator always clears the `email_verified_by` mark of a tenant
+  administrator, also when the address was already shown as verified; so does the
+  person's own `POST /api/email/confirm`.
+- `POST /api/users/{id}/password-reset` answers `404 not_found` for a person
+  outside the caller's scope, `403 forbidden` for a tenant administrator and a
+  site administrator's account, and `409 conflict` also for a disabled account or
+  one whose password `ssoOnly` refuses. It counts against the address's 3 an hour
+  (`429 rate_limited`) but not against any caller's 5.
+- A reset link of an account that can no longer use a password (it is disabled,
+  or `ssoOnly` came on since) answers `404 not_found` and changes nothing.
+- A message that cannot be queued because 1,000 wait answers `503 unavailable`
+  to a signed-in person (verification) and is not said to a public caller.
+
+Details the first part settled:
+
+- An administrator invited by a site administrator into the default tenant is a
+  site administrator (what every administrator was before tenants); in any other
+  tenant, or invited by a tenant administrator, they are not. `POST
+  /api/invites` takes `tenant` and `siteAdmin` (only a site administrator may
+  send either to anything but their own tenant, or `true`), and answers both.
+  `POST /api/admin/tenants`'s invite is not a site administrator's.
+- `PATCH /api/users/{id}` with `role: "admin"` in the default tenant by a site
+  administrator also makes a site administrator unless `siteAdmin: false` is
+  sent. A demotion ends the flag. A tenant administrator who targets a site
+  administrator, or sends `siteAdmin`, is `403 forbidden`; `siteAdmin: true` for
+  a member is `400 invalid`.
+- `GET /api/admin/spaces` items have `tenant` (an id), as invites have.
+- The server's own audit kinds (`security_changed`, `provider_*`, `mail_*`,
+  `tenant_*`, `dropped`, `rate_limited`, `lockout`) are hidden from tenant
+  administrators; rows of the site layer's settings have no tenant.
+- Deleting a tenant puts the providers that named it back on the default tenant.
+
+### What the third part of 3.3 does
+
+Done: the `usage` table and its upkeep, the `quota.*` settings with their person
+layer, `GET /api/account/usage`, `GET /api/admin/usage`, `quota` on
+`PATCH /api/users/{id}`, the tenant's `usage`, `quota_exceeded` for the number of
+spaces, notices and the once-per-crossing audit row, and the prefilled invite of
+`POST /api/admin/tenants`. Details the implementation settled, which refine the
+text above:
+
+- `--max-spaces`, when it is given, is the site's value of
+  `quota.spacesPerPerson` (`fromFlag: true`, read only: a `PUT` of the value is
+  `409 conflict`); without it the stored setting counts, 20 to begin with. The
+  setting's lower rule can be set either way. `0` is no limit.
+- The quota settings are `limit` settings with layers site, tenant and person:
+  `quota.spacesPerPerson` is 0 to 10,000 (a `null` value sets it back to 20),
+  `quota.bytesPerPerson` 1 to 2^50 and `quota.pagesPerPerson` 1 to 2^40, both
+  may be `null` (no limit). The person layer is the user's own `quota`: it is
+  not among what `GET /api/settings` offers a person, who cannot set it.
+- Changing one of these settings, a person's `quota` or a tenant's `quota` looks
+  at the numbers of everyone it concerns at once, so `over`, the notices and the
+  audit follow the new limit without waiting for a measurement; the answer comes
+  after (a site-wide change reads the usage rows once: about 20 ms for 20,000
+  people when nothing changes, 0.3 s when half of them cross).
+- A tenant's `quota.people` counts people, not accounts that may sign in: a
+  disabled person counts. Nobody is refused for it: the tenant, its
+  administrators and its people see it (`over`, notices), and the audit has one
+  row.
+- A space is counted for a tenant from the moment it is made, and for its first
+  owner from the moment it has one; a space nobody owns counts for its tenant
+  only. A tenant that is deleted takes its usage row with it.
+- The audit's `quota_exceeded` for a person has the person as `user` and their
+  tenant as `tenant`; for a tenant's total it has the tenant only.
+- `POST /api/admin/spaces/{space}/size` measures with the same turn as the
+  background one (bytes, pages, usage, a look at the person), so an
+  administrator asking for a size also brings the quotas up to date.
+- A server upgraded from before quotas has its usage rows made by the migration
+  from the 1.7 measurements it already stored, with no page counts until each
+  space is measured once; the first pass of the sizer, a space at a time,
+  fills them.
+- Costs, measured on 20,000 people and 40,000 spaces (SQLite / PostgreSQL): the
+  migration's step 0.28 s / 0.7 s; the daily recount with nothing to correct
+  0.17 s / 0.19 s, correcting a thousand rows 0.20 s / 0.26 s; a person's usage
+  row 21 µs / 59 µs; a page of 50 people 0.2 ms / 0.5 ms, 1.3 ms / 2.0 ms ten
+  thousand people deep; recording a measurement 0.25 ms / 0.44 ms; making a space
+  (with its owner) 0.33 ms / 0.64 ms; handing one over 0.38 ms / 0.83 ms. For a
+  space of 20,000 pages the page count is 0.15 ms from the open space and 0.5 ms
+  from the index file of a closed one; the walk of its files (1.7's) is the turn's
+  cost, about 0.2 to 0.3 s.
+
 ## Administration
 
 Accounts mode, administrators only; single-user mode answers `404`, anyone else
-`403 forbidden`. These endpoints work on the server's records, not on a space's
+`403 forbidden`. From 3.3 an administrator is a site administrator or a tenant
+administrator, and a tenant administrator sees only their tenant and none of the
+server's own settings (see "Administrators" under "Tenants, registration and
+mail"). These endpoints work on the server's records, not on a space's
 pages: none opens a space (so they work on a disabled one), and nothing they do
 deletes a file. They are separate from "Users and invites", which is unchanged.
 
@@ -4245,6 +6551,294 @@ the room left for the server on the disk of the data directory; it is absent
 on platforms that cannot say (anything but Linux, macOS and FreeBSD).
 Milestone 3.1 adds `storage` (see "Server storage").
 
+### Security settings
+
+The 安全 page of `/admin`. The settings are in the state database. The server
+reads them once and keeps them in memory: a `PUT` takes effect at the next
+request, without a restart, and a change made by the command-line tool
+(`petalbook security reset`) within `CacheTTL` (5 minutes; one small query of a
+revision number, not one per request).
+
+#### `GET /api/admin/security`
+
+```json
+{
+  "login": {"mode": "dual", "effectiveMode": "dual", "ssoOnly": false, "ssoOnlyInEffect": false, "ssoAvailable": true},
+  "passkeys": {"enabled": true, "available": true, "requireRoles": [], "required": 2, "requiredWithout": 1},
+  "captcha": {
+    "provider": "image", "siteKey": "", "hasSecret": false,
+    "contexts": {
+      "login":  {"on": false, "when": "after_failures", "failures": 3},
+      "invite": {"on": false, "when": "after_failures", "failures": 3},
+      "setup":  {"on": false, "when": "after_failures", "failures": 3}
+    }
+  },
+  "lockout": {"enabled": false, "minutes": 15, "scope": "ip_account"},
+  "limits": {"perMinute": 10, "maxFailures": 10, "windowMinutes": 15, "sessionIdleDays": 30, "sessionMaxDays": 90},
+  "passwordAdmins": 1,
+  "notices": []
+}
+```
+
+- `login.mode` is what is stored; `effectiveMode` what the sign-in page uses
+  (`local_only` with no enabled provider: the page says so, and the choice is
+  kept for when one is added). `ssoAvailable`: some provider is enabled.
+- `login.ssoOnly`: refuse password and passkey sign-in for everyone who is not
+  an administrator (`403 local_login_refused`, checked after the password, so
+  it tells nothing to someone who does not know it). Administrators are never
+  refused: when the identity provider breaks, they can still sign in and fix
+  it. `ssoOnlyInEffect` is `false` while the page offers no provider
+  (`effectiveMode` is `local_only`): refusing passwords then would leave people
+  a form that always fails and nothing else.
+- `passkeys.enabled` (default `true`) switches passkeys on for the whole
+  server; `available` is whether they can work (see "Passkeys"). `requireRoles`
+  is `[]`, `["admin"]` or `["admin", "member"]`. `required` counts the people a
+  passkey is required of (by role or by themselves), `requiredWithout` those of
+  them who have none yet and will be held at their next sign-in.
+- `captcha.provider` is `image`, `turnstile`, `recaptcha` or `hcaptcha`.
+  `siteKey` is public (it goes into the page). The secret is never returned:
+  `hasSecret` says whether one is stored. `contexts.*.when` is `always` or
+  `after_failures`; `failures` is 1 to 100.
+- `lockout` and `limits` as in "Rate limit, failure caps and lockout".
+  `sessionIdleDays` is 1 to 365, `sessionMaxDays` 1 to 3650 and at least
+  `sessionIdleDays`.
+- `passwordAdmins` counts the enabled administrators with a password: the ones
+  who can still sign in if every provider fails.
+- `notices`: things the administrators should know, each `{"code", "message"}`:
+  `flags_ignored` (the `--oidc-*` flags differ from the stored provider),
+  `secret_unreadable` (a stored secret cannot be opened with this server's key,
+  with `slug` or `field`), `passkey_host_changed`.
+
+#### `PUT /api/admin/security`
+
+Takes any of the blocks `login`, `passkeys`, `captcha`, `lockout`, `limits`,
+and within a block any of its fields; what is left out stays. A secret is
+`captcha.secret`: absent keeps the stored one, `""` clears it. Everything sent
+is checked before anything is stored, so a refusal changes nothing. A value out
+of range is refused, never clamped. `200` with the settings as `GET` answers,
+and one `security_changed` row in the audit log.
+
+Refusals (`400` unless stated):
+
+| `error` | When |
+|---|---|
+| `invalid` | an unknown field value: a mode, scope, provider, context or role that does not exist, or a number out of range (the message names the field) |
+| `local_admin_required` | `ssoOnly: true`, or a `mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while `ssoOnly` is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
+| `sso_only_with_registration` | `ssoOnly: true` while any tenant's registration is open in effect (from 3.3; see "Registration") |
+| `captcha_site_key_required` | a third-party provider with a context switched on and no `siteKey` |
+| `captcha_secret_required` | a third-party provider with a context switched on and no secret; a secret stored for another provider does not count, so changing provider needs the new secret in the same request |
+| `captcha_needs_public_url` | a third-party provider without `--public-url` (its host name is what the answer is checked against) |
+| `passkey_unavailable` | `requireRoles` not empty, or `passkeys.enabled: true` with requirements, while passkeys cannot work (no suitable public URL) |
+| `passkey_requirement_unsatisfiable` | `passkeys.enabled: false` while passkeys are required of someone (lift the requirements first) |
+
+### Sign-in providers
+
+At most 50. Each has a `slug`: 1 to 32 characters of `a-z`, `0-9` and `-`,
+starting with a letter or digit, unique and fixed once made (it is in the
+addresses registered at the identity provider). All providers are read into
+memory once; a change re-reads them and rebuilds only the changed provider's
+client. OpenID Connect discovery documents and SAML metadata are kept in the
+state database and in memory, so a sign-in does not fetch them; SAML metadata
+given by address is fetched again every 24 hours in the background and on
+`refresh`.
+
+Secrets (an OpenID Connect or GitHub client secret, the SAML signing key) are
+sealed with the server's key (`secret.key`, as remote credentials are) and are
+never returned: `hasSecret` says whether one is stored.
+
+#### Provider
+
+```json
+{
+  "slug": "company", "kind": "oidc", "name": "Company SSO", "icon": "preset:microsoft",
+  "enabled": true, "order": 0,
+  "autoCreate": false, "mergeVerifiedEmail": false,
+  "oidc": {"issuer": "https://login.microsoftonline.com/<tenant>/v2.0", "clientId": "…", "hasSecret": true,
+           "scopes": ["profile", "email"], "legacyCallback": false,
+           "redirectUrl": "https://notes.example.com/api/auth/oidc/company/callback"},
+  "status": {"ok": true, "checked": "2026-11-23T08:00:00Z", "message": ""},
+  "people": 12,
+  "created": "…", "updated": "…"
+}
+```
+
+- `kind` is fixed once made. Exactly one of `oidc`, `saml`, `github` is present,
+  matching it.
+- `name` is 1 to 60 characters; `icon` as in `GET /api/auth/providers`.
+- `order` sorts the buttons (then `name`).
+- `autoCreate`: an identity nobody has makes a member account at its first
+  sign-in (see "Which account an identity signs in to"). Off by default.
+- `mergeVerifiedEmail`: the verified-address match of the same section. Off by
+  default; the page explains that it lets this provider sign people in to
+  existing accounts.
+- `status` is the last discovery or metadata fetch; `people` how many accounts
+  have an identity from this provider.
+
+`oidc`: `issuer` (an `https` address), `clientId`, the secret (write-only
+`clientSecret`; may be empty for a public client: PKCE is always used),
+`scopes` besides `openid` (default `profile`, `email`), `legacyCallback` (at most
+one provider has it, see "The pre-2.8 endpoints"), and the read-only
+`redirectUrl` to register.
+
+`saml`:
+
+```json
+{"metadataUrl": "https://idp.example/metadata", "metadataXml": "", "idpEntityId": "https://idp.example",
+ "entityId": "https://notes.example.com/api/auth/saml/campus/metadata",
+ "acsUrl": "https://notes.example.com/api/auth/saml/campus/acs",
+ "metadataPath": "/api/auth/saml/campus/metadata",
+ "attributes": {"email": "mail", "name": "displayName", "username": "uid"},
+ "nameIdFormat": "", "signRequests": false, "allowIdpInitiated": false, "certificate": "-----BEGIN CERTIFICATE-----…", "certificateExpires": "2036-11-23T00:00:00Z"}
+```
+
+One of `metadataUrl` (`https`) or `metadataXml` is given; `idpEntityId` is read
+from the metadata. `entityId` defaults to the metadata address shown. The
+signing key and certificate are made by the server when the provider is
+created (RSA 2048, 10 years); the key is never shown. `nameIdFormat` `""` lets
+the identity provider choose (transient is refused at sign-in). `attributes`
+name where the email, display name and username come from (empty: the
+`NameID`).
+
+`github`:
+
+```json
+{"baseUrl": "https://github.com", "clientId": "…", "hasSecret": true, "organizations": ["KazuhaHub"],
+ "redirectUrl": "https://notes.example.com/api/auth/github/github/callback"}
+```
+
+`baseUrl` is `https://github.com` or a GitHub Enterprise Server address.
+`organizations`: when not empty, only members of one of them may sign in
+(`sso_error=not_allowed` otherwise).
+
+`groups` (any kind, from 3.2; absent or `{"enabled": false}` by default): how
+the provider's groups claim maps to synced groups; see "Groups from sign-in".
+
+#### `GET /api/admin/auth/providers`, `GET /api/admin/auth/providers/{slug}`
+
+`{"providers": [{…}]}` in `order`, and one provider.
+
+#### `POST /api/admin/auth/providers`
+
+A provider as above, with `slug`, `kind`, `name` and the kind's required
+fields; for `oidc` and `github` the secret as `clientSecret`. `201` with the
+provider. The server fetches the discovery document or the metadata before it
+answers; a provider that cannot be reached is still stored, `enabled: false`
+unless asked otherwise, with `status.ok: false`.
+
+#### `PATCH /api/admin/auth/providers/{slug}`
+
+Any fields but `slug` and `kind`. `clientSecret` absent keeps the stored one,
+`""` clears it. `200` with the provider.
+
+#### `DELETE /api/admin/auth/providers/{slug}?force=1`
+
+`204`. The identities of its people stay (they come back if a provider with the
+same issuer is added). Without `force=1`, refused with `409 provider_in_use`
+(and `{"accounts": n}`) when some account has no other way to sign in: no
+password, no passkey, no identity from another provider.
+
+#### `POST /api/admin/auth/providers/{slug}/refresh`
+
+Fetches the discovery document or the metadata now. `200` with the provider
+(its `status` says how it went).
+
+#### Provider refusals
+
+| `error` | Status | When |
+|---|---|---|
+| `invalid` | 400 | a field is missing, too long or not of its form (the message names it) |
+| `exists` | 409 | the slug is taken |
+| `provider_issuer_in_use` | 409 | another provider has this issuer (OpenID Connect issuer, SAML entity ID, GitHub base URL) |
+| `provider_limit` | 409 | there are 50 providers |
+| `legacy_callback_in_use` | 409 | another provider has `legacyCallback` |
+| `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |
+| `saml_needs_https` | 400 | SAML without an `https` `--public-url` (the cookie that crosses from the identity provider must be `Secure`) |
+| `saml_metadata_invalid` | 400 | the metadata cannot be parsed, has no signing certificate or no redirect binding for sign-in |
+| `auto_create_needs_org` | 400 | `autoCreate` on a GitHub provider that names no organisation: anyone with a GitHub account could make one |
+| `public_url_required` | 400 | any provider without `--public-url` |
+| `provider_in_use` | 409 | `DELETE` without `force=1`, see above |
+
+### Groups
+
+Milestone 3.2; see "Groups" for what a group is and the codes. Every list is one
+query a page.
+
+#### `GET /api/admin/groups?q={text}&source={source}&user={id}&cursor={cursor}&limit={n}`
+
+`{"items": [Group], "next": "…"}`, by name. `q` keeps names containing it
+(ignoring case, as above); `source` is `local` or `synced`; `user` keeps the
+groups that user is in. `limit` 1 to 200 (default 50).
+
+#### `GET /api/admin/groups/{group}`
+
+One group; `404 not_found`.
+
+#### `POST /api/admin/groups`
+
+`{"name": "Engineering", "description": "", "source": "local"}`; `source` is
+required. `201` with the group. `409 exists` for a name taken, `409 group_limit`
+at 10,000 groups in the tenant (each tenant has its own 10,000; the message
+says how many the tenant has). A synced group starts empty; map it from a provider's
+`groups` setting.
+
+#### `PATCH /api/admin/groups/{group}`
+
+`{"name": "…", "description": "…"}`, each optional. `200` with the group.
+`source` cannot change (`400 invalid`).
+
+#### `DELETE /api/admin/groups/{group}?force=1`
+
+`204`. Without `force=1`, refused with `409 group_in_use` while the group is a
+member of a space or a provider maps to it. With it, the group leaves every
+space, its mapping entries are removed from the providers, and its people's
+cached lists are dropped. Nothing else is deleted: people, spaces and drafts
+stay.
+
+#### `GET /api/admin/groups/{group}/members?q={text}&cursor={cursor}&limit={n}`
+
+`{"items": [{"userId", "username", "name", "disabled", "from": [{"provider": "company", "value": "…"}], "added": "…"}], "next": "…"}`,
+by username. `from` is `[]` in a local group; in a synced group it is the
+provider and claim value each membership came from.
+
+#### `POST /api/admin/groups/{group}/members`
+
+Local groups only (`409 group_synced`). `{"userIds": ["01JD3K8Q7Z", …]}`, 1 to
+500. `200` with `{"added": 3, "already": 1}`. All or nothing: an unknown id is
+`404 user_not_found` with `{"missing": […]}`; `409 group_limit` when the group
+or a person would pass their limit. Disabled users may be added (they still
+cannot sign in).
+
+#### `DELETE /api/admin/groups/{group}/members/{user}`
+
+Local groups only (`409 group_synced`). `204`; `404 not_found` when they are not
+in it.
+
+#### `GET /api/admin/groups/{group}/spaces?cursor={cursor}&limit={n}`
+
+The spaces the group is a member of: `{"items": [{"id", "name", "role"}], "next": "…"}`,
+by name. What an administrator looks at before deleting a group.
+
+### `GET /api/admin/audit?kind={kind}&user={id}&cursor={cursor}&limit={n}`
+
+The audit log (see "Audit log" under "Signing in"), newest first:
+
+```json
+{"items": [{"id": "01JD3P…", "at": "2026-11-23T08:30:00Z", "kind": "lockout", "actor": null,
+            "user": null, "username": "kazuha", "ip": "203.0.113.7", "detail": {"scope": "ip_account", "minutes": 15}}],
+ "next": "01JD3O…"}
+```
+
+`kind` and `user` filter; `limit` is 1 to 200 (default 50). One query per page.
+
+### `petalbook security reset --data DIR`
+
+The command-line rescue for settings that keep everyone out: sets the login
+mode to `dual`, `ssoOnly` off, lockout off, every captcha context off and
+`passkeys.requireRoles` to `[]`. Providers, people and per-person
+requirements are untouched (`petalbook user passwd` sets a password). A
+running server sees it within 5 minutes; it is recorded in the audit log with
+`actor` `null` and `detail.by` `"cli"`.
+
 ### Machine access
 
 #### `GET /api/admin/access`, `PUT /api/admin/access`
@@ -4278,24 +6872,36 @@ Revokes any token. `204`, also when it was revoked already; `404 not_found`.
 The same for OAuth grants (items as in `GET /api/account/grants`, with
 `owner`).
 
-### GitHub App
+### Connections
 
-The server's one GitHub App (see "GitHub"). It is in the state database, not
+#### `GET /api/admin/connections`
+
+Site administrators. `{"providers": [{"id": "github", "type": "github", "name": "GitHub", "host": "github.com", "configured": true, "partialSync": "yes", "connections": 3, "spaces": 4}, {"id": "git", …}]}`:
+every provider the server has, with its configuration state and counts (people
+connected, spaces syncing through it). A tenant administrator gets
+`403 forbidden`.
+
+#### The GitHub App
+
+The server's one GitHub App (see "The GitHub provider"). It is in the state database, not
 in a flag or a file, and a change takes effect at once, without a restart. The
 private key and the client secret are sealed with the server's key
 (`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`), are **never returned**, and
 never reach a log or an error message. There is no webhook in 2.7 (the server
-finds out about an uninstalled App when GitHub refuses a token), and no
-manifest flow: the administrator makes the App on GitHub and copies its
-details here.
+finds out about an uninstalled App when GitHub refuses a token), and the
+administrator either makes the App on GitHub from here in one click (the
+manifest flow below) or makes it by hand and copies its details here.
 
 The App needs these permissions on GitHub: Contents read and write (Git),
 Metadata read, and Administration read and write (creating repositories;
 without it, spaces can only be connected to repositories that exist).
-"Request user authorization (OAuth) during installation" is not needed. Its
-callback URL is the `callbackUrl` below.
+"Request user authorization (OAuth) during installation" should be ticked, so
+that installing on one's own account and authorising it are one step, and the
+App must be installable on **any account** (public), or a person cannot install
+it on their own account: `anyAccount` below says which it is. Its callback URL
+is the `callbackUrl` below.
 
-#### `GET /api/admin/github`
+#### `GET /api/admin/connections/github`
 
 ```json
 {"configured": true, "appId": "1234567", "clientId": "Iv23liAbCdEfGhIjKlMn",
@@ -4303,9 +6909,10 @@ callback URL is the `callbackUrl` below.
  "htmlUrl": "https://github.com/apps/petalbook-notes",
  "installUrl": "https://github.com/apps/petalbook-notes/installations/new",
  "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
- "callbackUrl": "https://notes.example.com/api/github/authorization/callback",
+ "callbackUrl": "https://notes.example.com/api/connections/github/authorization/callback",
  "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
- "missing": [], "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
+ "missing": [], "gaps": [], "anyAccount": true,
+ "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
  "spaces": 4, "authorizations": 3}
 ```
 
@@ -4318,12 +6925,26 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
   compare with what GitHub shows for the App's keys.
 - `missing` lists the permissions above that the App lacks (`"administration"`,
   `"contents"`, `"metadata"`). It is a warning: saving is not refused.
-- `callbackUrl` is `<public-url>/api/github/authorization/callback`, `""`
-  without `--public-url`. `userAuthorization` is as in `GET /api/github`.
+- `gaps` lists, from the last check, the installations that lack one of them
+  (an App whose permissions grew, installed where nobody has accepted that yet):
+  `[{"installationId": 51234567, "account": "kazuhahub", "missing": ["administration"]}]`,
+  at most 20. The owner accepts the new permissions in the installation's
+  settings on GitHub.
+- `anyAccount` says whether the App can be installed on any account, which a
+  person connecting their own account needs (the App must be public: "Any
+  account" in its settings). It is what GitHub says about the App when it does,
+  else `true` once an installation on an account that is not the App owner's has
+  been seen, else `null` (not known). A client warns on `false`.
+- Everything above is as of `checked`: it is read from GitHub when the App is
+  saved, by `POST /api/admin/connections/github/check`, and, at most once a minute, when a
+  token GitHub refuses (for a permission the App or an installation lacks)
+  shows the stored view is old. A plain `GET` never asks GitHub.
+- `callbackUrl` is `<public-url>/api/connections/github/authorization/callback`, `""`
+  without `--public-url`. `userAuthorization` is as in `GET /api/connections`.
 - `spaces` counts the spaces with a `github` credential; `authorizations` the
   users connected.
 
-#### `PUT /api/admin/github`
+#### `PUT /api/admin/connections/github`
 
 ```json
 {"appId": "1234567", "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n…",
@@ -4333,36 +6954,114 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
 The first save needs `appId` and `privateKey`. Later, a `privateKey` or a
 `clientSecret` that is left out keeps the one stored. `clientId` and
 `clientSecret` go together; without them users cannot connect their GitHub
-accounts, and only shared installations can be used. `"clientId": ""` removes
-both (`409 github_app_in_use` while a user is connected; spaces that sync
+accounts, and only installations shared with a tenant can be used. `"clientId": ""` removes
+both (`409 provider_in_use` while a user is connected; spaces that sync
 through an installation do not stand in the way).
 
 The server checks with GitHub before it saves anything, and saves nothing when
 a check fails:
 
-- the key is an RSA key in PEM (PKCS#1 or PKCS#8): else `400 github_key_invalid`;
+- the key is an RSA key in PEM (PKCS#1 or PKCS#8): else `400 key_invalid`;
 - GitHub accepts a JWT signed with it for `appId` (`GET /app`): else
-  `400 github_app_rejected`;
-- `clientId` is that App's client id: else `400 github_client_rejected`;
+  `400 app_rejected`;
+- `clientId` is that App's client id: else `400 client_rejected`;
 - GitHub accepts the client id and secret (it is asked to check a made-up
   token with them, `POST /applications/{client_id}/token`: `404` means the
-  pair is right, `401` that it is not): else `400 github_client_rejected`;
+  pair is right, `401` that it is not): else `400 client_rejected`;
 - GitHub cannot be reached: `503 unavailable`.
 
 A new key or secret for the same App replaces the old one and drops the
 cached tokens. Another App (`appId` different from the saved one) is refused
-with `409 github_app_in_use` while any space has a `github` credential or any
+with `409 provider_in_use` while any space has a `github` credential or any
 user is connected; another or no `clientId` only while any user is connected.
 `200` as `GET`.
 
-#### `DELETE /api/admin/github`
+#### `POST /api/admin/connections/github/check`
+
+No body. Reads the App (`GET /app`) and up to five pages of its installations
+(`GET /app/installations`) from GitHub again, stores what the permissions are
+now (`permissions`, `missing`, `gaps`, `anyAccount`, `checked`, and the App's
+name and page) and answers `200` as `GET /api/admin/connections/github`. `409
+provider_not_configured` without an App, or when GitHub no longer accepts its key;
+`503 unavailable` when GitHub cannot be reached (nothing is changed).
+
+#### `POST /api/admin/connections/github/manifest`
+
+Makes the App on GitHub in one click (GitHub's App Manifest flow); entering an
+App by hand with `PUT` stays possible. `{"organization": "kazuhahub", "name":
+"PetalBook Notes"}`, both optional: with `organization` the App is made in that
+organisation (else in the administrator's own account), `name` is at most 34
+characters (default `PetalBook <host of --public-url>`; GitHub's names are
+unique, so the administrator may need another). `200`:
+
+```json
+{"url": "https://github.com/organizations/kazuhahub/settings/apps/new?state=…",
+ "manifest": {"name": "PetalBook Notes", "url": "https://notes.example.com",
+   "hook_attributes": {"url": "https://notes.example.com", "active": false},
+   "redirect_url": "https://notes.example.com/api/connections/github/manifest/callback",
+   "callback_urls": ["https://notes.example.com/api/connections/github/authorization/callback"],
+   "setup_url": "https://notes.example.com/api/connections/github/manifest/callback",
+   "public": true, "request_oauth_on_install": true,
+   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
+```
+
+and a short-lived cookie that ties the attempt to this browser. The client
+posts the manifest to `url` from the administrator's browser, as a form with one
+field, `manifest`, holding the JSON (`/settings/apps/new` without
+`organization`). The App is public ("Any account"), asks for user authorisation
+during installation, and has no webhook.
+
+The `state` in `url` is 32 random bytes, held in memory for ten minutes, used
+once, bound to the cookie and to the signed-in site administrator. `409
+public_url_needed` without `--public-url`; `409 provider_in_use` while
+any space has a `github` credential or any user is connected (an App in use is
+not replaced); `400 invalid` for a bad `organization` or `name`; `403
+forbidden` for anyone but a site administrator.
+
+#### `GET /api/connections/github/manifest/callback`
+
+Where GitHub sends the administrator's browser after the App is made, with
+`code` and `state`. Like the callback of a user's connection it answers a
+redirect (`303`), never JSON, needs the cookie and the session of the
+administrator who started the attempt, and is a cross-site navigation by nature.
+The server trades the code (`POST /app-manifests/{code}/conversions`, which needs
+no other credential and works once) for the App's id, slug, client id, client
+secret, private key and webhook secret, then saves them as `PUT
+/api/admin/connections/github` does (checked with GitHub, secrets sealed with the server's
+key; the webhook secret is only kept, sealed, since there is no webhook), and
+sends the browser to `/admin/storage?connection_app=created`. A failure goes to
+`/admin/storage?connection_app_error=<code>`: `expired` (no such attempt, used, older
+than ten minutes, another browser or user), `provider_error` (GitHub did not turn
+the code into an App, or the App could not be saved), `app_in_use`,
+`unavailable` (GitHub made the App but could not be asked to check it, so it is
+not saved yet; see the next route). A visit with `installation_id` or `setup_action` and no `code`
+(the manifest names this address as the post-installation page too) goes to
+`/settings/connections`.
+
+#### `POST /api/admin/connections/github/manifest/retry`
+
+When GitHub made the App but the server could not save it (`unavailable`: GitHub
+could not be asked to check it), the redirect is
+`/admin/storage?connection_app_error=unavailable&pending=1&app=<slug>`: the App
+exists on GitHub and its credentials are kept in the server's memory, sealed,
+for ten minutes, for that administrator only (one pending App per administrator,
+the newest). The retry takes no body, saves them as the callback would, and
+answers `200` as `GET /api/admin/connections/github`. `404 not_found` when
+nothing is pending (none was made, it was used or ten minutes passed: the
+administrator then finds the App at `https://github.com/apps/<slug>` (or in the
+organisation's settings), makes a private key there and enters the details with
+`PUT`; `app` in the redirect names it); `503 unavailable` when GitHub still
+cannot be reached (the credentials stay pending); `409 provider_in_use` as
+elsewhere. The redirect has no `pending` when nothing could be kept.
+
+#### `DELETE /api/admin/connections/github`
 
 `204`. The App's details are deleted, the users' connections with them
-(GitHub is asked to revoke each grant first, best effort), and the shared marks
-of installations. `409 github_app_in_use` while any space has a `github`
+(GitHub is asked to revoke each grant first, best effort), and what was shared of
+the installations. `409 provider_in_use` while any space has a `github`
 credential (`message` says how many): switch or disconnect those first.
 
-#### `GET /api/admin/github/installations?cursor={cursor}`
+#### `GET /api/admin/connections/github/installations?cursor={cursor}`
 
 The App's installations, one page at a time; each page is one call to GitHub
 (`GET /app/installations`, 30 to a page) and one query of the state database.
@@ -4372,22 +7071,29 @@ The App's installations, one page at a time; each page is one call to GitHub
             "repositorySelection": "selected", "suspended": false,
             "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
             "htmlUrl": "https://github.com/organizations/kazuhahub/settings/installations/51234567",
-            "shared": true, "spaces": 3}],
+            "tenants": ["01J8Z3X5K2"], "spaces": 3}],
  "next": "…"}
 ```
 
-`repositorySelection` is `all` or `selected`. `shared` is set below. `spaces`
-counts the spaces syncing through that installation. `409 github_not_configured`
+`repositorySelection` is `all` or `selected`. `tenants` are the ids of the
+tenants the installation is shared with, sorted (`[]`: none), set below. `spaces`
+counts the spaces syncing through that installation. `409 provider_not_configured`
 when there is no App.
 
-#### `PUT /api/admin/github/installations/{id}`
+#### `PUT /api/admin/connections/github/installations/{id}`
 
-`{"shared": true}`. A shared installation lets every member create
-repositories in that organisation and connect spaces to its repositories with
-the installation token, without a GitHub account of their own; GitHub then
-does not know who asked (the commits still name the PetalBook user as
-author). `false` (the default) leaves the organisation to those whose own
-GitHub connection reaches it. Spaces already connected are not affected either
-way. Only organisations can be shared: `400 invalid` for a user's account.
-`404 not_found` when GitHub does not know the installation. `200` with the
-item.
+`{"tenants": ["01J8Z3X5K2", "01J8Z3X5K3"]}`. Sharing is per tenant: the
+installation is shared with exactly these tenants, replacing what it was shared
+with before (`[]` stops sharing; it is the default). The people of a tenant it is shared
+with can create repositories in that organisation and connect spaces to its
+repositories with the installation token, without a GitHub account of their
+own; GitHub then does not know who asked (the commits still name the PetalBook
+user as author). People of any other tenant can use the organisation only when
+their own GitHub connection reaches it, and the installation does not appear
+in their owners or repositories. `tenants` is required; the old `{"shared":
+true}` is `400 invalid`. A tenant that does not exist is `400 invalid`, and
+more than 500 tenants too. A tenant that is deleted stops being shared with.
+Spaces already connected are not affected either way. Only organisations can be
+shared: `400 invalid` for a user's account. `404 not_found` when GitHub does not
+know the installation. `200` with the item.
+

@@ -8,8 +8,8 @@ import { Link } from 'react-router'
 import { AlertTriangle, Check, CircleAlert, CirclePause, Cloud, CloudOff, Copy, ExternalLink, KeyRound, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError, spaceApi } from '@/api/client'
-import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useActiveSpace, useGitHub, useGitHubOwners, useGitHubRepos, useRemote, useSession, useSyncRemote, useUpdateSpace } from '@/api/hooks'
-import type { ConnectRemoteInput, GitHubVia, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
+import { useAcceptRemote, useConnectRemote, useDisconnectRemote, useActiveSpace, useProvider, useConnectionOwners, useConnectionRepos, useRemote, useSession, useSyncRemote, useUpdateSpace } from '@/api/hooks'
+import type { ConnectRemoteInput, ConnectionVia, Remote, RemoteKey, RemoteState, SpaceInfo } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { can } from '@/lib/permissions'
@@ -240,16 +240,16 @@ function credentialText(remote: Remote): string {
 // connecting again, by installing the App again, or by an administrator.
 function ErrorNotice({ remote }: { remote: Remote }) {
   const session = useSession()
-  const github = useGitHub(remote.errorCode.startsWith('github_'))
+  const github = useProvider('github', remote.credential.type === 'connection')
   const [busy, setBusy] = useState(false)
   const me = session.data?.user?.id
   const c = remote.credential
-  const owner = c.type === 'github' && c.via === 'user' ? c.user : null
+  const owner = c.type === 'connection' && c.via === 'user' ? c.user : null
   const mine = owner !== null && owner.id === me
   const reconnect = async () => {
     setBusy(true)
     try {
-      const { url } = await api.githubStart(window.location.pathname)
+      const { url } = await api.connectionStart('github', window.location.pathname)
       window.location.assign(url)
     } catch (e) {
       setBusy(false)
@@ -269,13 +269,13 @@ function ErrorNotice({ remote }: { remote: Remote }) {
       <p className="text-muted-foreground">{known.body(owner?.username ?? '')}</p>
       <p className="text-muted-foreground">{tg.sync.keptSafe}</p>
       <div className="flex flex-wrap items-center gap-2">
-        {(code === 'github_authorization_expired' || code === 'github_authorization_missing') && mine && (
+        {(code === 'connection_expired' || code === 'connection_missing') && mine && (
           <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
             {busy && <Spinner />}
             {tg.sync.reconnect}
           </Button>
         )}
-        {code === 'github_installation_gone' && github.data?.app && (
+        {code === 'installation_gone' && github.data?.app && (
           <a className="inline-flex items-center gap-1 text-xs break-all underline underline-offset-4" href={github.data.app.installUrl} target="_blank" rel="noreferrer noopener">
             {tg.sync.openInstall}
             <ExternalLink className="size-3 shrink-0" />
@@ -419,7 +419,7 @@ const looksGitHub = (url: string) => /^(https:\/\/github\.com\/|git@github\.com:
 function Problem({ error }: { error: unknown }) {
   if (!error) return null
   const e = error instanceof ApiError ? error : null
-  const gh = e && (e.code as string).startsWith('github_') && Object.hasOwn(tg.sync.problems, e.code) ? (tg.sync.problems as Record<string, string>)[e.code] : null
+  const gh = e && Object.hasOwn(tg.sync.problems, e.code) ? (tg.sync.problems as Record<string, string>)[e.code] : null
   if (e && gh)
     return (
       <div role="alert" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
@@ -458,10 +458,10 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
   const connect = useConnectRemote(space)
   const [url, setUrl] = useState(existing?.url ?? '')
   const [branch, setBranch] = useState(existing?.branch ?? '')
-  const [kind, setKind] = useState<'ssh' | 'token' | 'github'>(existing?.credential.type ?? 'ssh')
-  const github = useGitHub()
-  const githubOffered = !!github.data?.app || existing?.credential.type === 'github'
-  const [via, setVia] = useState<GitHubVia>(existing?.credential.type === 'github' ? existing.credential.via : 'app')
+  const [kind, setKind] = useState<'ssh' | 'token' | 'github'>(existing?.credential.type === 'connection' ? 'github' : (existing?.credential.type ?? 'ssh'))
+  const github = useProvider('github')
+  const githubOffered = !!github.data?.app || existing?.credential.type === 'connection'
+  const [via, setVia] = useState<ConnectionVia>(existing?.credential.type === 'connection' ? existing.credential.via : 'app')
   // Until the person picks one, the address decides.
   const [chose, setChose] = useState(existing !== null)
   const [username, setUsername] = useState(existing?.credential.type === 'token' ? existing.credential.username : '')
@@ -513,7 +513,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
     const input: ConnectRemoteInput = {
       url: address,
       ...(branch.trim() ? { branch: branch.trim() } : {}),
-      credential: kind === 'ssh' ? { type: 'ssh' } : kind === 'github' ? { type: 'github', via } : { type: 'token', ...(username.trim() ? { username: username.trim() } : {}), ...(token ? { token } : {}) },
+      credential: kind === 'ssh' ? { type: 'ssh' } : kind === 'github' ? { type: 'connection', provider: 'github', via } : { type: 'token', ...(username.trim() ? { username: username.trim() } : {}), ...(token ? { token } : {}) },
     }
     try {
       await connect.mutateAsync(input)
@@ -594,7 +594,7 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
               </label>
             ))}
           </div>
-          {via === 'user' && github.data?.authorization?.state !== 'ok' && <p className="text-xs text-warning">{tg.sync.needConnection}</p>}
+          {via === 'user' && github.data?.connection?.state !== 'ok' && <p className="text-xs text-warning">{tg.sync.needConnection}</p>}
           <RepoPicker onPick={(fullName) => setUrl(fullName)} />
         </div>
       ) : (
@@ -647,12 +647,12 @@ function ConnectForm({ space, existing, onDone }: { space: string; existing: Rem
 // one fills in the address; typing owner/name there works as well.
 function RepoPicker({ onPick }: { onPick: (fullName: string) => void }) {
   const [open, setOpen] = useState(false)
-  const owners = useGitHubOwners(open)
+  const owners = useConnectionOwners('github', open)
   const list = owners.data?.pages.flatMap((p) => p.items) ?? []
   const [login, setLogin] = useState('')
   const chosen = list.find((o) => o.login === login) ?? list[0]
   const which = chosen ? (chosen.installationId !== null ? { installation: chosen.installationId } : { mine: true as const }) : null
-  const repos = useGitHubRepos(open ? which : null)
+  const repos = useConnectionRepos('github', open ? which : null)
   const [filter, setFilter] = useState('')
   const items = (repos.data?.pages.flatMap((p) => p.items) ?? []).filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()))
   return (

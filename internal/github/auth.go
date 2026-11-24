@@ -7,10 +7,12 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -27,15 +29,22 @@ var (
 const (
 	attemptTTL      = 10 * time.Minute
 	attemptCapacity = 10_000
-	renewBefore     = 5 * time.Minute
-	maxUserTokens   = 10_000
+	// manifestCapacity bounds the attempts to make the App, which have a store of
+	// their own: a flood of people connecting accounts must not push out an
+	// administrator's attempt.
+	manifestCapacity = 64
+	renewBefore      = 5 * time.Minute
+	maxUserTokens    = 10_000
 )
 
 // attempt is one authorisation between start and the callback.
 type attempt struct {
 	id, state, verifier, userID, ret string
-	expires                          time.Time
-	elem                             *list.Element
+	// kind is what the attempt is for: "" connecting an account, "manifest"
+	// making the App. One never finishes the other.
+	kind    string
+	expires time.Time
+	elem    *list.Element
 }
 
 // attemptStore keeps the authorisations in progress: in memory, bounded,
@@ -45,10 +54,11 @@ type attemptStore struct {
 	items map[string]*attempt
 	order *list.List
 	now   func() time.Time
+	cap   int
 }
 
-func newAttemptStore(now func() time.Time) *attemptStore {
-	return &attemptStore{items: map[string]*attempt{}, order: list.New(), now: now}
+func newAttemptStore(now func() time.Time, capacity int) *attemptStore {
+	return &attemptStore{items: map[string]*attempt{}, order: list.New(), now: now, cap: capacity}
 }
 
 func (p *attemptStore) put(a attempt) string {
@@ -64,7 +74,7 @@ func (p *attemptStore) put(a attempt) string {
 		p.order.Remove(f)
 		delete(p.items, f.Value.(string))
 	}
-	for len(p.items) >= attemptCapacity {
+	for len(p.items) >= p.cap {
 		f := p.order.Front()
 		if f == nil {
 			break
@@ -88,11 +98,11 @@ const (
 
 // take removes and returns the attempt of a browser if the state and the user
 // are the ones it was made for.
-func (p *attemptStore) take(id, state, userID string) (*attempt, takeResult) {
+func (p *attemptStore) take(kind, id, state, userID string) (*attempt, takeResult) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a, ok := p.items[id]
-	if !ok {
+	if !ok || a.kind != kind {
 		return nil, takeUnknown
 	}
 	if !p.now().Before(a.expires) {
@@ -139,12 +149,9 @@ func safeReturn(s string) string {
 // address to send the browser to and the value of the cookie that ties the
 // attempt to that browser.
 func (s *Service) StartAuthorization(ctx context.Context, userID, ret string) (authURL, binding string, err error) {
-	st, err := s.need(ctx)
+	st, err := s.needUserAuth(ctx)
 	if err != nil {
 		return "", "", err
-	}
-	if !st.userAuth(s.opt.PublicURL) {
-		return "", "", errf(http.StatusConflict, CodeNotConfigured, "users cannot connect GitHub accounts: the App's client id and secret and the server's --public-url are needed")
 	}
 	login := ""
 	if a, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil {
@@ -156,14 +163,50 @@ func (s *Service) StartAuthorization(ctx context.Context, userID, ret string) (a
 	return s.c.AuthorizeURL(st.rec.ClientID, s.CallbackURL(), state, challenge, login), binding, nil
 }
 
-// Callback failure codes (the github_error of /settings).
+func (s *Service) needUserAuth(ctx context.Context) (*appState, error) {
+	st, err := s.need(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !st.userAuth(s.opt.PublicURL) {
+		return nil, errf(http.StatusConflict, CodeNotConfigured, "users cannot connect GitHub accounts: the App's client id and secret and the server's --public-url are needed")
+	}
+	return st, nil
+}
+
+// StartInstall begins connecting a user's GitHub account through the App's
+// installation page: with "request user authorization during installation"
+// GitHub authorises the person in the same flow, so installing on their own
+// account and connecting it are one step. The attempt is bound as for
+// StartAuthorization; its code carries no PKCE challenge, as GitHub gives
+// none to an installation, so none is sent back.
+func (s *Service) StartInstall(ctx context.Context, userID, ret string) (installPage, binding string, err error) {
+	st, err := s.needUserAuth(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	page := installURL(st.rec.HTMLURL)
+	if page == "" {
+		return "", "", errf(http.StatusConflict, CodeNotConfigured, "GitHub did not say where the App is installed")
+	}
+	state := githubapp.RandomState()
+	binding = s.attempts.put(attempt{state: state, userID: userID, ret: safeReturn(ret)})
+	return page + "?state=" + url.QueryEscape(state), binding, nil
+}
+
+// Callback failure codes (the connection_error of /settings).
 const (
-	cbDenied     = "denied"
-	cbExpired    = "expired"
-	cbError      = "github_error"
-	cbInUse      = "account_in_use"
-	cbDifferent  = "different_account"
-	failRedirect = "/settings?github_error="
+	cbDenied    = "denied"
+	cbExpired   = "expired"
+	cbError     = "provider_error"
+	cbInUse     = "account_in_use"
+	cbDifferent = "different_account"
+	// cbInstalled: GitHub installed the App but sent no code (the App does not
+	// ask for authorisation during installation). cbRequested: an organisation
+	// has to approve the installation first.
+	cbInstalled  = "installed"
+	cbRequested  = "requested"
+	failRedirect = "/settings?provider=github&connection_error="
 )
 
 // CompleteAuthorization finishes an authorisation from GitHub's redirect. It
@@ -186,7 +229,7 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 	if !ok1 || !ok2 || !ok3 || binding == "" || state == "" {
 		return failRedirect + cbExpired, false
 	}
-	a, res := s.attempts.take(binding, state, userID)
+	a, res := s.attempts.take("", binding, state, userID)
 	if res != takeOK {
 		return failRedirect + cbExpired, res == takeUnknown
 	}
@@ -196,6 +239,12 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		return fail(cbDenied)
 	}
 	if code == "" {
+		switch action, _ := one("setup_action"); action {
+		case "request":
+			return fail(cbRequested)
+		case "install", "update":
+			return fail(cbInstalled)
+		}
 		return fail(cbError)
 	}
 	st, err := s.state(ctx)
@@ -244,6 +293,7 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		return fail(cbError)
 	}
 	s.bump(userID)
+	s.forgetNoApp(acct.Login) // they may have installed the App in this very flow
 	s.changed(userID)
 	return a.ret, true
 }
@@ -281,18 +331,8 @@ const (
 
 // --- the user's connection --------------------------------------------------------
 
-// Authorization is what a user sees of their connection.
-type Authorization struct {
-	Login          string
-	GitHubID       int64
-	State          string
-	Connected      time.Time
-	RefreshExpires time.Time
-	Spaces         int
-}
-
 // Connection returns the user's connection, or nil.
-func (s *Service) Connection(ctx context.Context, userID string) (*Authorization, error) {
+func (s *Service) Connection(ctx context.Context, userID string) (*connections.Connection, error) {
 	db := s.opt.Store.Q()
 	a, err := store.GetGitHubAuthorization(ctx, db, userID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -305,7 +345,7 @@ func (s *Service) Connection(ctx context.Context, userID string) (*Authorization
 	if err != nil {
 		return nil, err
 	}
-	return &Authorization{Login: a.Login, GitHubID: a.GitHubID, State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n}, nil
+	return &connections.Connection{Login: a.Login, AccountID: strconv.FormatInt(a.GitHubID, 10), State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n}, nil
 }
 
 // Disconnect deletes a user's connection. GitHub is asked to revoke the grant
@@ -622,32 +662,57 @@ func (s *Service) RunRenew(ctx context.Context) {
 	}
 }
 
-// Info is what any signed-in user may know about GitHub on this server.
-type Info struct {
-	Configured        bool
-	Name, Slug        string
-	HTMLURL           string
-	InstallURL        string
-	UserAuthorization bool
-	Authorization     *Authorization
-}
-
 // Info is the state of GitHub on this server and of the user's connection.
-func (s *Service) Info(ctx context.Context, userID string) (*Info, error) {
+func (s *Service) Info(ctx context.Context, userID string) (*connections.Info, error) {
 	st, err := s.state(ctx)
 	if err != nil {
 		return nil, err
 	}
-	in := &Info{}
+	in := &connections.Info{}
 	if st != nil {
-		in.Configured, in.Name, in.Slug, in.HTMLURL = true, st.rec.Name, st.rec.Slug, st.rec.HTMLURL
-		in.InstallURL = installURL(st.rec.HTMLURL)
+		in.Configured = true
+		in.App = &connections.App{Name: st.rec.Name, Slug: st.rec.Slug, HTMLURL: st.rec.HTMLURL, InstallURL: installURL(st.rec.HTMLURL)}
 		in.UserAuthorization = st.userAuth(s.opt.PublicURL)
 	}
-	if in.Authorization, err = s.Connection(ctx, userID); err != nil {
+	if in.Connection, err = s.Connection(ctx, userID); err != nil {
+		return nil, err
+	}
+	if in.Leftovers, err = s.Leftovers(ctx, userID); err != nil {
 		return nil, err
 	}
 	return in, nil
+}
+
+// Leftovers lists a user's reminders, newest first.
+func (s *Service) Leftovers(ctx context.Context, userID string) ([]connections.Leftover, error) {
+	rows, err := store.ListGitHubLeftovers(ctx, s.opt.Store.Q(), userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]connections.Leftover, len(rows))
+	for i, r := range rows {
+		out[i] = connections.Leftover{RepoID: r.RepoID, FullName: r.FullName, HTMLURL: r.HTMLURL, SpaceName: r.SpaceName, Created: r.Created}
+	}
+	return out, nil
+}
+
+const leftoverTimeout = 10 * time.Second
+
+// RecordLeftover remembers, for the user, a repository that was made for a
+// space that then could not be made. It is written even when ctx has run out
+// or was cancelled (the create that failed may have used all its time), under
+// a short timeout of its own.
+func (s *Service) RecordLeftover(ctx context.Context, userID string, repo *connections.Repo, spaceName string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leftoverTimeout)
+	defer cancel()
+	return store.PutGitHubLeftover(ctx, s.opt.Store.Q(), store.GitHubLeftover{UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
+		HTMLURL: repo.HTMLURL, SpaceName: spaceName, Created: s.opt.Now()})
+}
+
+// DismissLeftover forgets the user's reminder of a repository; there being none is fine.
+func (s *Service) DismissLeftover(ctx context.Context, userID string, repoID int64) error {
+	_, err := store.DeleteGitHubLeftover(ctx, s.opt.Store.Q(), userID, repoID)
+	return err
 }
 
 // Attempts is how many authorisations are in progress (tests).

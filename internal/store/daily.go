@@ -34,6 +34,18 @@ func SetSiteSetting(ctx context.Context, q Q, key, value string, now time.Time) 
 	return err
 }
 
+// CompareAndSetSiteSetting replaces a server-wide setting only if it still has
+// the value that was read (old), and says whether it did. A writer that read
+// the setting some time ago uses it so as never to overwrite a newer value.
+func CompareAndSetSiteSetting(ctx context.Context, q Q, key, old, value string, now time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE site_settings SET value = ?, updated = ? WHERE key = ? AND value = ?`, value, ms(now), key, old)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // DailyLine is one line of text of the daily text's own list: the text and
 // where it is from, in a language ("" for any).
 type DailyLine struct {

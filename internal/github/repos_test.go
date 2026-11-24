@@ -1,13 +1,14 @@
 package github_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -32,7 +33,7 @@ func newWorld(t *testing.T, st *store.Store) *world {
 	return w
 }
 
-func owners(t *testing.T, h *harness, user string) (all []github.Owner, pages int) {
+func owners(t *testing.T, h *harness, user string) (all []connections.Owner, pages int) {
 	t.Helper()
 	cur := ""
 	for {
@@ -56,11 +57,11 @@ func TestOwnersAreListedOnePageAtATime(t *testing.T) {
 		peti := w.f.Install("petal-team", "all")
 		w.f.AddOrg("other")
 		w.f.Install("other", "all")
-		if _, err := w.svc.SetShared(ctx, peti, true); err != nil {
+		if _, err := w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID}); err != nil {
 			t.Fatal(err)
 		}
 		// Sharing kazuhahub too must not list it twice.
-		if _, err := w.svc.SetShared(ctx, w.kazuhahub, true); err != nil {
+		if _, err := w.svc.SetTenants(ctx, w.kazuhahub, []string{store.DefaultTenantID}); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := owners(t, w.harness, "U1")
@@ -111,7 +112,7 @@ func TestSharedOwnersPageFromTheDatabase(t *testing.T) {
 		for i := 0; i < 35; i++ {
 			login := fmt.Sprintf("shared-%02d", i)
 			w.f.AddOrg(login)
-			if _, err := w.svc.SetShared(ctx, w.f.Install(login, "all"), true); err != nil {
+			if _, err := w.svc.SetTenants(ctx, w.f.Install(login, "all"), []string{store.DefaultTenantID}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -133,7 +134,7 @@ func TestPlanCreate(t *testing.T) {
 		peti := w.f.Install("petal-team", "all")
 		w.f.AddOrg("other")
 		w.f.Install("other", "all")
-		w.svc.SetShared(ctx, peti, true)
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
 
 		p, err := w.svc.PlanCreate(ctx, "U1", "TANG")
 		if err != nil || p.Via != "user" || p.Org != "" || p.Owner != "tang" {
@@ -148,7 +149,7 @@ func TestPlanCreate(t *testing.T) {
 			t.Fatalf("%+v %v", p, err)
 		}
 		for _, owner := range []string{"other", "someone-else"} {
-			if _, err := w.svc.PlanCreate(ctx, "U1", owner); code(err) != "github_owner_not_allowed" || status(err) != 403 {
+			if _, err := w.svc.PlanCreate(ctx, "U1", owner); code(err) != "owner_not_allowed" || status(err) != 403 {
 				t.Fatalf("%s: %v", owner, err)
 			}
 		}
@@ -159,7 +160,7 @@ func TestPlanCreate(t *testing.T) {
 		w.f.ExpireRefresh("tang")
 		w.clk.Advance(9 * time.Hour)
 		w.svc.UserToken(ctx, "U1")
-		if _, err := w.svc.PlanCreate(ctx, "U1", "tang"); code(err) != "github_not_authorized" || status(err) != 409 {
+		if _, err := w.svc.PlanCreate(ctx, "U1", "tang"); code(err) != "not_connected" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
 		// ...but a shared organisation still works without it.
@@ -169,13 +170,13 @@ func TestPlanCreate(t *testing.T) {
 	})
 }
 
-func create(t *testing.T, w *world, user, owner, name string) (*github.Repo, *github.Plan, error) {
+func create(t *testing.T, w *world, user, owner, name string) (*connections.Repo, *connections.Plan, error) {
 	t.Helper()
 	p, err := w.svc.PlanCreate(ctx, user, owner)
 	if err != nil {
 		return nil, nil, err
 	}
-	r, err := w.svc.CreateRepo(ctx, p, github.NewRepoSpec{Name: name, Private: true, Description: "d"})
+	r, err := w.svc.CreateRepo(ctx, p, connections.NewRepoSpec{Name: name, Private: true, Description: "d"})
 	return r, p, err
 }
 
@@ -196,29 +197,29 @@ func TestCreateRepositories(t *testing.T) {
 			t.Fatalf("the new repository has a commit: %q", out)
 		}
 		// A name already taken.
-		if _, _, err := create(t, w, "U1", "tang", "notes"); code(err) != "github_name_taken" || status(err) != 409 {
+		if _, _, err := create(t, w, "U1", "tang", "notes"); code(err) != "name_taken" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
 		// An organisation that does not let members create repositories: GitHub's own reason.
 		w.f.SetAccount("kazuhahub", func(a *githubapptest.Account) { a.NoCreate = true })
 		_, _, err = create(t, w, "U1", "kazuhahub", "another")
-		if code(err) != "github_no_permission" || status(err) != 403 || !strings.Contains(err.Error(), "permission to create repositories") {
+		if code(err) != "provider_refused" || status(err) != 403 || !strings.Contains(err.Error(), "permission to create repositories") {
 			t.Fatalf("%v", err)
 		}
 		w.f.SetAccount("kazuhahub", func(a *githubapptest.Account) { a.NoCreate, a.NoPrivate = false, true })
 		_, _, err = create(t, w, "U1", "kazuhahub", "another")
-		if code(err) != "github_no_permission" || !strings.Contains(err.Error(), "Private repositories") {
+		if code(err) != "provider_refused" || !strings.Contains(err.Error(), "Private repositories") {
 			t.Fatalf("%v", err)
 		}
 		// A refusal of the fields.
 		p, _ := w.svc.PlanCreate(ctx, "U1", "tang")
-		if _, err := w.svc.CreateRepo(ctx, p, github.NewRepoSpec{Name: "bad name"}); code(err) != "invalid" || status(err) != 400 {
+		if _, err := w.svc.CreateRepo(ctx, p, connections.NewRepoSpec{Name: "bad name"}); code(err) != "invalid" || status(err) != 400 {
 			t.Fatalf("%v", err)
 		}
 		// GitHub limiting the server answers 429 with the wait.
 		w.f.LimitUntil(w.clk.Now().Add(90 * time.Second))
-		_, err = w.svc.CreateRepo(ctx, p, github.NewRepoSpec{Name: "limited"})
-		var he *github.Error
+		_, err = w.svc.CreateRepo(ctx, p, connections.NewRepoSpec{Name: "limited"})
+		var he *connections.Error
 		if !errors.As(err, &he) || he.Code != "rate_limited" || he.Status != 429 || he.RetryAfter < 89*time.Second {
 			t.Fatalf("%v", err)
 		}
@@ -230,7 +231,7 @@ func TestCreateWithTheInstallationOfASharedOrganisation(t *testing.T) {
 		w := newWorld(t, st)
 		w.f.AddOrg("petal-team")
 		peti := w.f.Install("petal-team", "all")
-		w.svc.SetShared(ctx, peti, true)
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
 		w.user("U2", "nobody") // no GitHub connection at all
 		r, p, err := create(t, w, "U2", "petal-team", "wiki")
 		if err != nil || r.FullName != "petal-team/wiki" || p.Via != "app" {
@@ -241,9 +242,9 @@ func TestCreateWithTheInstallationOfASharedOrganisation(t *testing.T) {
 		if _, _, err := create(t, w, "U2", "petal-team", "wiki2"); err != nil || w.f.Minted() != minted+1 {
 			t.Fatalf("%v %d", err, w.f.Minted()-minted)
 		}
-		// An App without the Administration permission: GitHub's refusal, passed on.
+		// An App without the Administration permission: the answer names the permission.
 		w.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
-		if _, _, err := create(t, w, "U2", "petal-team", "wiki3"); code(err) != "github_no_permission" || status(err) != 403 {
+		if _, _, err := create(t, w, "U2", "petal-team", "wiki3"); code(err) != "app_missing_permission" || status(err) != 403 {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -300,8 +301,8 @@ func TestSelectedRepositoriesInstallations(t *testing.T) {
 		w.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
 		r, p, _ = create(t, w, "U1", "sel", "stuck")
 		_, err = w.svc.ChooseCredential(ctx, p, r)
-		var he *github.Error
-		if !errors.As(err, &he) || he.Code != "github_repo_not_in_installation" || he.Status != 409 || he.Repo == nil || he.Repo.FullName != "sel/stuck" {
+		var he *connections.Error
+		if !errors.As(err, &he) || he.Code != "repo_not_in_installation" || he.Status != 409 || he.Repo == nil || he.Repo.FullName != "sel/stuck" {
 			t.Fatalf("%v", err)
 		}
 		// ...while a personal account falls back to the user's own token.
@@ -341,29 +342,29 @@ func TestExistingRepositories(t *testing.T) {
 			t.Fatalf("%+v %v", c, err)
 		}
 		// Not the caller's, not shared: refused; shared: allowed without a connection.
-		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "petal-team", "docs", "app"); code(err) != "github_owner_not_allowed" || status(err) != 403 {
+		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "petal-team", "docs", "app"); code(err) != "owner_not_allowed" || status(err) != 403 {
 			t.Fatalf("%v", err)
 		}
 		w.user("U2", "nobody")
-		if _, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); code(err) != "github_not_authorized" || status(err) != 409 {
+		if _, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); code(err) != "not_connected" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
-		w.svc.SetShared(ctx, peti, true)
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
 		if c, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); err != nil || c.Via != "app" {
 			t.Fatalf("%+v %v", c, err)
 		}
 		// The App is not installed there.
-		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "none", "x", "app"); code(err) != "github_repo_not_in_installation" || status(err) != 409 {
+		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "none", "x", "app"); code(err) != "repo_not_in_installation" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
 		// Via the user: needs the connection and push access.
 		if c, _, err := w.svc.ResolveExisting(ctx, "U1", "tang", "mine", "user"); err != nil || c.Via != "user" || c.UserID != "U1" {
 			t.Fatalf("%+v %v", c, err)
 		}
-		if _, _, err := w.svc.ResolveExisting(ctx, "U2", "tang", "mine", "user"); code(err) != "github_not_authorized" {
+		if _, _, err := w.svc.ResolveExisting(ctx, "U2", "tang", "mine", "user"); code(err) != "not_connected" {
 			t.Fatalf("%v", err)
 		}
-		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "none", "x", "user"); code(err) != "github_owner_not_allowed" {
+		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "none", "x", "user"); code(err) != "owner_not_allowed" {
 			t.Fatalf("%v", err)
 		}
 		// With no preference, a repository the App does not reach falls back to the user.
@@ -374,7 +375,7 @@ func TestExistingRepositories(t *testing.T) {
 		w.f.AddOrg("sel", "tang")
 		w.f.Install("sel", "selected")
 		w.f.AddRepo("sel", "left-out", true)
-		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "sel", "left-out", "app"); code(err) != "github_repo_not_in_installation" {
+		if _, _, err := w.svc.ResolveExisting(ctx, "U1", "sel", "left-out", "app"); code(err) != "repo_not_in_installation" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -387,8 +388,8 @@ func TestRepositoryListsArePaged(t *testing.T) {
 			w.f.AddRepo("kazuhahub", fmt.Sprintf("r%02d", i), i%2 == 0)
 			w.f.AddRepo("tang", fmt.Sprintf("m%02d", i), true)
 		}
-		page := func(inst int64, mine bool, cur string) ([]github.RepoItem, string) {
-			items, next, err := w.svc.Repos(ctx, "U1", inst, mine, cur)
+		page := func(inst int64, mine bool, cur string) ([]connections.RepoItem, string) {
+			items, next, err := w.svc.Repos(ctx, "U1", connections.RepoQuery{Installation: inst, Mine: mine, Cursor: cur})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -410,19 +411,19 @@ func TestRepositoryListsArePaged(t *testing.T) {
 		// An installation the caller can neither reach nor use as shared.
 		w.f.AddOrg("other")
 		other := w.f.Install("other", "all")
-		if _, _, err := w.svc.Repos(ctx, "U1", other, false, ""); code(err) != "not_found" || status(err) != 404 {
+		if _, _, err := w.svc.Repos(ctx, "U1", connections.RepoQuery{Installation: other, Mine: false, Cursor: ""}); code(err) != "not_found" || status(err) != 404 {
 			t.Fatalf("%v", err)
 		}
 		// Shared: every repository, through the installation's token.
 		w.f.AddRepo("other", "pub", false)
-		w.svc.SetShared(ctx, other, true)
-		items, _, err := w.svc.Repos(ctx, "U1", other, false, "")
+		w.svc.SetTenants(ctx, other, []string{store.DefaultTenantID})
+		items, _, err := w.svc.Repos(ctx, "U1", connections.RepoQuery{Installation: other, Mine: false, Cursor: ""})
 		if err != nil || len(items) != 1 || items[0].FullName != "other/pub" || !items[0].CanPush {
 			t.Fatalf("%+v %v", items, err)
 		}
 		// Mine needs the connection.
 		w.user("U2", "nobody")
-		if _, _, err := w.svc.Repos(ctx, "U2", 0, true, ""); code(err) != "github_not_authorized" {
+		if _, _, err := w.svc.Repos(ctx, "U2", connections.RepoQuery{Installation: 0, Mine: true, Cursor: ""}); code(err) != "not_connected" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -472,7 +473,7 @@ func TestGitTokenOfASpace(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tok, err := w.svc.GitToken(ctx, r)
+			tok, err := w.svc.GitToken(ctx, r, false)
 			var ce *gitstore.CredentialError
 			if err != nil && !errors.As(err, &ce) {
 				t.Fatalf("not a credential error: %v", err)
@@ -500,32 +501,32 @@ func TestGitTokenOfASpace(t *testing.T) {
 		if err := store.SetMemberRole(ctx, st.Q(), "S2", "U1", "reader"); err != nil {
 			t.Fatal(err)
 		}
-		if _, ce := get("S2"); ce == nil || ce.Code != "github_authorization_missing" {
+		if _, ce := get("S2"); ce == nil || ce.Code != "connection_missing" {
 			t.Fatalf("%v", ce)
 		}
 		store.SetMemberRole(ctx, st.Q(), "S2", "U1", "owner")
 		store.SetDisabled(ctx, st.Q(), "U1", true)
-		if _, ce := get("S2"); ce == nil || ce.Code != "github_authorization_missing" {
+		if _, ce := get("S2"); ce == nil || ce.Code != "connection_missing" {
 			t.Fatalf("%v", ce)
 		}
 		store.SetDisabled(ctx, st.Q(), "U1", false)
 		// Expired: the code says so.
 		w.f.ExpireRefresh("tang")
 		w.clk.Advance(9 * time.Hour)
-		if _, ce := get("S2"); ce == nil || ce.Code != "github_authorization_expired" || ce.Offline {
+		if _, ce := get("S2"); ce == nil || ce.Code != "connection_expired" || ce.Offline {
 			t.Fatalf("%v", ce)
 		}
 		// Disconnected: missing.
 		if err := w.svc.Disconnect(ctx, "U1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, ce := get("S2"); ce == nil || ce.Code != "github_authorization_missing" {
+		if _, ce := get("S2"); ce == nil || ce.Code != "connection_missing" {
 			t.Fatalf("%v", ce)
 		}
 		// Uninstalled, repository taken out, or suspended.
 		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) { i.Deleted = true })
 		w.clk.Advance(2 * time.Hour)
-		if _, ce := get("S1"); ce == nil || ce.Code != "github_installation_gone" {
+		if _, ce := get("S1"); ce == nil || ce.Code != "installation_gone" {
 			t.Fatalf("%v", ce)
 		}
 		// GitHub that cannot be asked is not the credential's fault.
@@ -539,11 +540,230 @@ func TestGitTokenOfASpace(t *testing.T) {
 		// GitHub no longer accepts the App's key.
 		w.f.Key = githubapptest.NewKey(t)
 		w.clk.Advance(2 * time.Hour)
-		if _, ce := get("S1"); ce == nil || ce.Code != "github_not_configured" {
+		if _, ce := get("S1"); ce == nil || ce.Code != "provider_not_configured" {
 			t.Fatalf("%v", ce)
 		}
 		store.DeleteRemote(ctx, st.Q(), "S2")
 		store.DeleteRemote(ctx, st.Q(), "S1")
+		w.mustNotLeak()
+	})
+}
+
+// An installation is shared per tenant: only the people of the tenants it was
+// shared with can list it, create in it and connect to its repositories.
+func TestSharingIsPerTenant(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		w.f.AddOrg("petal-team")
+		peti := w.f.Install("petal-team", "all")
+		w.f.AddRepo("petal-team", "docs", true)
+		w.tenantUser("T2", "U2", "two")   // in a tenant it is shared with
+		w.tenantUser("T3", "U3", "three") // in a tenant it is not
+		if _, err := w.svc.SetTenants(ctx, peti, []string{"T2"}); err != nil {
+			t.Fatal(err)
+		}
+		names := func(user string) string {
+			var s []string
+			got, _ := owners(t, w.harness, user)
+			for _, o := range got {
+				s = append(s, o.Login)
+			}
+			return strings.Join(s, ",")
+		}
+		if got := names("U2"); got != "petal-team" {
+			t.Fatalf("U2 sees %q", got)
+		}
+		if got := names("U3"); got != "" {
+			t.Fatalf("U3 sees %q", got)
+		}
+		// U1 (default tenant) has its own connection, which does not reach petal-team.
+		if got := names("U1"); strings.Contains(got, "petal-team") {
+			t.Fatalf("U1 sees %q", got)
+		}
+		if p, err := w.svc.PlanCreate(ctx, "U2", "petal-team"); err != nil || p.Via != "app" || p.InstallationID != peti {
+			t.Fatalf("%+v %v", p, err)
+		}
+		for _, u := range []string{"U1", "U3"} {
+			if _, err := w.svc.PlanCreate(ctx, u, "petal-team"); code(err) != "owner_not_allowed" {
+				t.Fatalf("%s: %v", u, err)
+			}
+			if _, _, err := w.svc.ResolveExisting(ctx, u, "petal-team", "docs", "app"); err == nil {
+				t.Fatalf("%s connected to an installation not shared with their tenant", u)
+			}
+			if _, _, err := w.svc.Repos(ctx, u, connections.RepoQuery{Installation: peti, Mine: false, Cursor: ""}); code(err) != "not_found" {
+				t.Fatalf("%s: %v", u, err)
+			}
+		}
+		if c, _, err := w.svc.ResolveExisting(ctx, "U2", "petal-team", "docs", "app"); err != nil || c.Via != "app" {
+			t.Fatalf("%+v %v", c, err)
+		}
+		if items, _, err := w.svc.Repos(ctx, "U2", connections.RepoQuery{Installation: peti, Mine: false, Cursor: ""}); err != nil || len(items) != 1 {
+			t.Fatalf("%+v %v", items, err)
+		}
+		// The share is checked against the tenant of the space, not the caller's.
+		if c, _, err := w.svc.ResolveExistingIn(ctx, "T2", "U1", "petal-team", "docs", "app"); err != nil || c.Via != "app" {
+			t.Fatalf("a caller of another tenant, for a space of T2: %+v %v", c, err)
+		}
+		if _, _, err := w.svc.ResolveExistingIn(ctx, "T3", "U2", "petal-team", "docs", "app"); err == nil {
+			t.Fatal("a caller of T2 used the share for a space of T3")
+		}
+		// Un-sharing takes it away again; a deleted tenant takes its share.
+		if _, err := w.svc.SetTenants(ctx, peti, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.svc.PlanCreate(ctx, "U2", "petal-team"); code(err) != "owner_not_allowed" {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+func TestLeftoversAreListedWithInfoAndDismissedOneByOne(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		w.user("U2", "other")
+		repo := &connections.Repo{ID: 77, Owner: "kazuhahub", Name: "left", FullName: "kazuhahub/left", HTMLURL: "https://github.com/kazuhahub/left"}
+		if info, err := w.svc.Info(ctx, "U1"); err != nil || len(info.Leftovers) != 0 {
+			t.Fatalf("%+v %v", info, err)
+		}
+		if err := w.svc.RecordLeftover(ctx, "U1", repo, "Notes"); err != nil {
+			t.Fatal(err)
+		}
+		info, err := w.svc.Info(ctx, "U1")
+		if err != nil || len(info.Leftovers) != 1 || info.Leftovers[0].RepoID != 77 || info.Leftovers[0].FullName != "kazuhahub/left" || info.Leftovers[0].SpaceName != "Notes" {
+			t.Fatalf("%+v %v", info, err)
+		}
+		// A parent context that has run out (a slow create) does not lose the reminder.
+		dead, cancel := context.WithCancel(ctx)
+		cancel()
+		if err := w.svc.RecordLeftover(dead, "U1", &connections.Repo{ID: 78, FullName: "kazuhahub/late", HTMLURL: "https://github.com/kazuhahub/late"}, "Late"); err != nil {
+			t.Fatalf("a reminder was lost with its context: %v", err)
+		}
+		if info, err := w.svc.Info(ctx, "U1"); err != nil || len(info.Leftovers) != 2 {
+			t.Fatalf("%+v %v", info, err)
+		}
+		if err := w.svc.DismissLeftover(ctx, "U1", 78); err != nil {
+			t.Fatal(err)
+		}
+		// Per user.
+		if info, _ := w.svc.Info(ctx, "U2"); len(info.Leftovers) != 0 {
+			t.Fatalf("%+v", info.Leftovers)
+		}
+		if err := w.svc.DismissLeftover(ctx, "U2", 77); err != nil {
+			t.Fatal(err)
+		}
+		if info, _ := w.svc.Info(ctx, "U1"); len(info.Leftovers) != 1 {
+			t.Fatal("another user's dismissal took it")
+		}
+		if err := w.svc.DismissLeftover(ctx, "U1", 77); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.svc.DismissLeftover(ctx, "U1", 77); err != nil {
+			t.Fatalf("dismissing twice is fine: %v", err)
+		}
+		if info, _ := w.svc.Info(ctx, "U1"); len(info.Leftovers) != 0 {
+			t.Fatalf("%+v", info.Leftovers)
+		}
+	})
+}
+
+// An App or an installation without a permission is not the same as a
+// repository the installation does not reach: the person must be told which, and
+// which permission is missing.
+func TestMissingPermissionIsToldApartFromANotReachedRepository(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		missing := func(err error) []string {
+			var he *connections.Error
+			if errors.As(err, &he) {
+				return he.Missing
+			}
+			return nil
+		}
+		r, p, err := create(t, w, "U1", "kazuhahub", "perm")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The App has no Contents permission: GitHub answers 422 about permissions.
+		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		_, err = w.svc.ChooseCredential(ctx, p, r)
+		if code(err) != "app_missing_permission" || status(err) != 403 || strings.Join(missing(err), ",") != "contents" {
+			t.Fatalf("422 about permissions: %v (%s) %v", err, code(err), missing(err))
+		}
+		// The same with GitHub's other wording, a 403.
+		w.clk.Advance(2 * time.Minute)
+		w.f.PermissionRefusal403 = true
+		_, err = w.svc.ChooseCredential(ctx, p, r)
+		if code(err) != "app_missing_permission" || strings.Join(missing(err), ",") != "contents" {
+			t.Fatalf("403: %v (%s)", err, code(err))
+		}
+		w.f.PermissionRefusal403 = false
+		// An App that has it, installed where it has not been accepted yet: the installation lacks it.
+		w.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) {
+			i.Perms = map[string]string{"administration": "write", "metadata": "read"}
+		})
+		if _, err = w.svc.ChooseCredential(ctx, p, r); code(err) != "app_missing_permission" || strings.Join(missing(err), ",") != "contents" {
+			t.Fatalf("installation: %v (%s)", err, code(err))
+		}
+		// Connecting an existing repository says the same.
+		w.f.AddRepo("kazuhahub", "wiki", true)
+		if _, _, err = w.svc.ResolveExisting(ctx, "U1", "kazuhahub", "wiki", "app"); code(err) != "app_missing_permission" {
+			t.Fatalf("existing: %v (%s)", err, code(err))
+		}
+		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) { i.Perms = nil })
+		// A repository outside a selection is still the other case.
+		w.f.AddOrg("sel", "tang")
+		sel := w.f.Install("sel", "selected")
+		w.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
+		r2, p2, _ := create(t, w, "U1", "sel", "left-out")
+		if _, err = w.svc.ChooseCredential(ctx, p2, r2); code(err) != "repo_not_in_installation" {
+			t.Fatalf("selection: %v (%s)", err, code(err))
+		}
+		// A space's own credential: the remote shows the code.
+		repo := w.f.AddRepo("kazuhahub", "docs", true)
+		w.space("S1", store.Remote{GHVia: "app", GHInstallationID: w.kazuhahub, GHRepoID: repo.ID})
+		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		rem, _ := store.GetRemote(ctx, st.Q(), "S1")
+		_, err = w.svc.GitToken(ctx, rem, false)
+		var ce *gitstore.CredentialError
+		if !errors.As(err, &ce) || ce.Code != "app_missing_permission" {
+			t.Fatalf("git token: %v", err)
+		}
+		// Creating a repository without the Administration permission names it.
+		w.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		w.f.AddOrg("petal-team")
+		peti := w.f.Install("petal-team", "all")
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
+		w.user("U2", "nobody")
+		if _, _, err = create(t, w, "U2", "petal-team", "wiki3"); code(err) != "app_missing_permission" || strings.Join(missing(err), ",") != "administration" {
+			t.Fatalf("create: %v (%s) %v", err, code(err), missing(err))
+		}
+	})
+}
+
+// What GitHub refuses is in the server's log with GitHub's own words, and no
+// secret is.
+func TestGitHubsRefusalsAreInTheLogWithoutASecret(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		w.f.SetAccount("kazuhahub", func(a *githubapptest.Account) { a.NoCreate = true })
+		if _, _, err := create(t, w, "U1", "kazuhahub", "nope"); code(err) != "provider_refused" {
+			t.Fatalf("%v", err)
+		}
+		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		w.f.AddOrg("petal-team")
+		peti := w.f.Install("petal-team", "all")
+		w.svc.SetTenants(ctx, peti, []string{store.DefaultTenantID})
+		w.user("U2", "nobody")
+		r, _, _ := create(t, w, "U2", "petal-team", "wiki")
+		p, _ := w.svc.PlanCreate(ctx, "U2", "petal-team")
+		_, _ = w.svc.ChooseCredential(ctx, p, r)
+		logs := w.logs.String()
+		for _, want := range []string{"GitHub refused a request", "kind=create_org_repo", "status=403", "permission to create repositories", "kind=installation_token", "status=422", "not granted to this installation"} {
+			if !strings.Contains(logs, want) {
+				t.Errorf("the log lacks %q:\n%s", want, logs)
+			}
+		}
 		w.mustNotLeak()
 	})
 }

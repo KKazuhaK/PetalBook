@@ -24,6 +24,11 @@ export interface SpaceInfo {
   // The folder quick notes go to: a folder path, never empty. Only a name; the
   // folder exists once a page has been made in it.
   inbox: string
+  // From 3.2 `role` and `permissions` are the effective ones (the person's own
+  // role and their groups' together). The person's own role, "" when they reach
+  // the space only through groups, and whether a group of theirs is a member.
+  directRole?: SpaceRole | ''
+  viaGroups?: boolean
   // What the space's copy on the server is and what the storage policy asks of
   // it (docs/api.md, "Server storage"). Absent in single-user mode.
   storage?: SpaceStorage
@@ -31,9 +36,10 @@ export interface SpaceInfo {
 
 // What a space's copy on the server is.
 export type CacheState = 'local' | 'full' | 'partial' | 'evicted' | 'restoring'
-// A requirement of the storage policy that the space does not meet yet.
+// A requirement of the storage policy that the space does not meet yet: any
+// remote, or one through the provider of that id (2.7b's connections).
 export interface RemoteNotice {
-  required: 'any' | 'github'
+  required: string
   deadline: string
   overdue: boolean
 }
@@ -449,13 +455,15 @@ export type SyncState = 'local' | RemoteState
 export type RemoteCredential =
   | { type: 'ssh'; publicKey: string; fingerprint: string }
   | { type: 'token'; username: string }
-  // The server's GitHub App (docs/api.md, "GitHub"): no secret is stored for the space or returned.
-  | { type: 'github'; via: 'app'; installationId: number; account: string; repoId: number }
-  | { type: 'github'; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
+  // A provider's connection (docs/api.md, "Connections"): no secret is stored for the space or returned.
+  | { type: 'connection'; provider: string; via: 'app'; installationId: number; account: string; repoId: number }
+  | { type: 'connection'; provider: string; via: 'user'; user: { id: string; username: string }; login: string; account?: string; repoId: number }
 
 export interface Remote {
   url: string
   branch: string
+  // The provider the remote goes through (`git` for a plain address).
+  provider: string
   credential: RemoteCredential
   state: RemoteState
   // Absent before the first time the server saw the remote.
@@ -463,7 +471,7 @@ export interface Remote {
   // In words fit to show; empty when all is well.
   error: string
   // What `error` state needs, for choosing what to offer: `auth`, `hostkey`, `clone`, `rescued` or a
-  // `github_…` code (see GitHubErrorCode). A code this client does not know is treated like `auth`.
+  // connection code (see ConnectionErrorCode). A code this client does not know is treated like `auth`.
   errorCode: string
   // SSH only: the host key trusted on first connection.
   hostKey?: string
@@ -485,10 +493,10 @@ export interface AssetMove {
 export interface AssetsRemote extends Remote {
   move: AssetMove | null
 }
-// What `PUT .../remote/assets` takes: a Remote's body, or a repository to make or find on GitHub.
+// What `PUT .../remote/assets` takes: a Remote's body, or a repository to make or find on a provider.
 export type ConnectAssetsInput =
   | ConnectRemoteInput
-  | { github: { owner: string; name: string; private?: boolean; description?: string; create?: boolean; via?: GitHubVia } }
+  | { sync: { provider: string; owner: string; name: string; private?: boolean; description?: string; create?: boolean; via?: ConnectionVia } }
 
 export interface RemoteKey {
   publicKey: string
@@ -499,41 +507,70 @@ export interface ConnectRemoteInput {
   url: string
   branch?: string
   // A token left out while the space already has one keeps it.
-  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'github'; via: GitHubVia }
+  credential: { type: 'ssh' } | { type: 'token'; username?: string; token?: string } | { type: 'connection'; provider: string; via: ConnectionVia }
 }
 
-// --- GitHub (docs/api.md, "GitHub") ----------------------------------------------------
+// --- connections (docs/api.md, "Connections") ----------------------------------------------
 
-export type GitHubVia = 'app' | 'user'
-export type GitHubErrorCode = 'github_authorization_expired' | 'github_authorization_missing' | 'github_installation_gone' | 'github_not_configured'
+export type ConnectionVia = 'app' | 'user'
+export type ConnectionErrorCode = 'connection_expired' | 'connection_missing' | 'installation_gone' | 'provider_not_configured' | 'app_missing_permission'
 
-export interface GitHubAuthorization {
+export interface Connection {
   login: string
-  githubId: number
+  accountId: string
   state: 'ok' | 'expired'
   connected: string
-  // Absent when the App does not expire user tokens.
+  // Absent when the platform does not expire tokens.
   refreshExpires?: string
   // How many spaces sync through this connection.
   spaces: number
 }
 
-export interface GitHubInfo {
-  app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
-  // Whether people can connect their GitHub account.
-  userAuthorization: boolean
-  authorization: GitHubAuthorization | null
+export interface ProviderCapabilities {
+  createRepo: boolean
+  installations: boolean
+  connectAccount: boolean
+  storageTarget: boolean
+  partialSync: 'yes' | 'no' | 'unknown'
 }
 
-export interface GitHubOwner {
+// A platform the server syncs spaces with, and the caller's connection to it.
+export interface Provider {
+  id: string
+  type: string
+  host: string
+  name: string
+  owner: string
+  capabilities: ProviderCapabilities
+  configured: boolean
+  app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
+  // Whether people can connect their account.
+  userAuthorization: boolean
+  connection: Connection | null
+  // Empty repositories that failed attempts to make a space left on the platform, newest first.
+  leftovers: ConnectionLeftover[]
+}
+
+// A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
+export interface ConnectionLeftover {
+  repoId: number
+  fullName: string
+  htmlUrl: string
+  spaceName: string
+  created: string
+}
+
+export interface ConnectionOwner {
   login: string
   type: 'User' | 'Organization'
   // Whose token creates the repository: the caller's own, or the installation's.
-  via: GitHubVia
+  via: ConnectionVia
   installationId: number | null
+  // The caller's own account, where the App is not installed: no repository can be made there until it is.
+  needsInstall: boolean
 }
 
-export interface GitHubRepo {
+export interface ConnectionRepo {
   id: number
   fullName: string
   private: boolean
@@ -542,19 +579,20 @@ export interface GitHubRepo {
   canPush: boolean
 }
 
-export interface GitHubCursorPage<T> {
+export interface CursorPage<T> {
   items: T[]
   // Opaque; empty after the last page.
   next: string
 }
 
-// A new space with its own repository on GitHub (`POST /api/spaces`, `github`).
-export interface NewGitHubRepo {
+// A new space stored on a provider (`POST /api/spaces`, `storage.sync`).
+export interface NewSync {
+  provider: string
   owner: string
   name: string
   private?: boolean
   description?: string
-  // False connects the space to the repository that exists already.
+  // False connects the space to the one that exists already.
   create?: boolean
   // Also make an attachment repository, on the same owner and with the same credential (docs/api.md,
   // "Server storage"): `true` names it `<name>-assets`. Left out, the administrator's default applies.
@@ -564,7 +602,7 @@ export interface NewGitHubRepo {
 export interface CreateSpaceInput {
   name: string
   inbox?: string
-  github?: NewGitHubRepo
+  sync?: NewSync
 }
 
 // The settings of the server's one GitHub App as an administrator sees them: never a secret.
@@ -589,7 +627,23 @@ export type AdminGitHub =
       checked: string
       spaces: number
       authorizations: number
+      // Installations that lack a permission, from the last check.
+      gaps: GitHubGap[]
+      // Whether the App can be installed on any account (a person can only install it on their own account when it can); null: not known.
+      anyAccount: boolean | null
     }
+
+export interface GitHubGap {
+  installationId: number
+  account: string
+  missing: string[]
+}
+
+// What the administrator's browser posts to GitHub to make the App (docs/api.md, "POST /api/admin/connections/{provider}/manifest").
+export interface GitHubManifestStart {
+  url: string
+  manifest: Record<string, unknown>
+}
 
 export interface GitHubInstallation {
   id: number
@@ -598,7 +652,8 @@ export interface GitHubInstallation {
   suspended: boolean
   permissions: Record<string, string>
   htmlUrl: string
-  shared: boolean
+  // The ids of the tenants it is shared with, sorted; none: not shared.
+  tenants: string[]
   spaces: number
 }
 
@@ -624,6 +679,24 @@ export interface ReasonCode {
 
 export type ErrorCode =
   | 'token_limit'
+  | 'quota_exceeded'
+  | 'tenants_off'
+  | 'tenant_limit'
+  | 'tenant_not_empty'
+  | 'default_tenant'
+  | 'setting_locked'
+  | 'setting_restricted'
+  | 'mail_not_configured'
+  | 'mail_insecure'
+  | 'mail_from_required'
+  | 'mail_needs_public_url'
+  | 'registration_closed'
+  | 'password_reset_off'
+  | 'email_domain_not_allowed'
+  | 'terms_required'
+  | 'email_verified'
+  | 'email_unverified'
+  | 'sso_only_with_registration'
   | 'bad_language'
   | 'api_not_found'
   | 'builtin'
@@ -652,18 +725,35 @@ export type ErrorCode =
   | 'not_cached'
   | 'restoring'
   | 'space_full'
-  | 'github_not_configured'
-  | 'github_not_authorized'
-  | 'github_owner_not_allowed'
-  | 'github_name_taken'
-  | 'github_no_permission'
-  | 'github_repo_not_in_installation'
-  | 'github_push_failed'
-  | 'github_key_invalid'
-  | 'github_app_rejected'
-  | 'github_client_rejected'
-  | 'github_app_in_use'
+  | 'provider_not_configured'
+  | 'not_connected'
+  | 'owner_not_allowed'
+  | 'name_taken'
+  | 'provider_refused'
+  | 'repo_not_in_installation'
+  | 'push_failed'
+  | 'key_invalid'
+  | 'app_rejected'
+  | 'client_rejected'
+  | 'provider_in_use'
+  | 'app_missing_permission'
+  | 'app_not_installed'
+  | 'public_url_needed'
   | 'rate_limited'
+  | 'captcha_failed'
+  | 'local_login_refused'
+  | 'passkey_required'
+  | 'passkey_failed'
+  | 'recent_login_required'
+  | 'too_many_passkeys'
+  | 'passkey_unavailable'
+  | 'provider_in_use'
+  | 'group_not_found'
+  | 'group_synced'
+  | 'group_not_synced'
+  | 'group_limit'
+  | 'group_in_use'
+  | 'member_via_group'
   | 'unavailable'
   | 'internal'
   | 'network'
@@ -680,9 +770,21 @@ export interface User {
   username: string
   name: string
   email: string
+  emailVerified: boolean
   role: Role
   disabled: boolean
+  // Whether this person must sign in with a passkey.
+  passkeyRequired: boolean
+  // An administrator of the whole server (3.3); false for one of a tenant. Absent in single-user mode.
+  siteAdmin?: boolean
+  // The tenant the person belongs to; absent in single-user mode, which has none.
+  tenant?: TenantRef
+  // The person's own limits (null follows the tenant); only the administrators' list and PATCH answer have it.
+  quota?: OwnQuota
   created: string
+  // The users list only: how many passkeys and single sign-on identities the person has.
+  passkeys?: number
+  sso?: number
   // The storage policy does not ask the spaces this user owns for a remote (absent when false).
   remoteExempt?: boolean
 }
@@ -692,6 +794,8 @@ export interface SessionInfo {
   user: User | null
   // True while there is no user at all: the app shows the first-run page.
   setup: boolean
+  // `passkey`: the signed-in person must register a passkey before anything else.
+  hold?: 'passkey' | null
   // Absent in single-user mode.
   methods?: { password: boolean; oidc: { name: string } | null }
   // The API token the request was made with; the app's own requests have none.
@@ -772,16 +876,112 @@ export interface MachineAccess {
   oauth: boolean
 }
 
+export type ProviderKind = 'oidc' | 'saml' | 'github'
+
 export interface Identity {
   id: string
   provider: string
+  // `''` for an identity whose provider was deleted.
+  providerSlug: string
+  kind: ProviderKind | ''
   label: string
   created: string
+}
+export interface Passkey {
+  id: string
+  name: string
+  created: string
+  lastUsed?: string | null
+  synced: boolean
 }
 export interface AccountInfo {
   user: User
   hasPassword: boolean
   identities: Identity[]
+  passkeys: Passkey[]
+  // The groups the person is in, by name.
+  groups: GroupRef[]
+}
+
+// --- signing in (docs/api.md, "Signing in") -------------------------------------------
+
+export type LoginMode = 'dual' | 'sso_first' | 'sso_redirect' | 'local_only'
+export interface PublicProvider {
+  slug: string
+  kind: ProviderKind
+  name: string
+  // `''` or `preset:<name>`.
+  icon: string
+}
+export interface AuthProviders {
+  providers: PublicProvider[]
+  loginMode: LoginMode
+  local: boolean
+  sso: boolean
+  passkey: boolean
+  // 3.3: whether the page links to registration and to password reset.
+  register?: boolean
+  forgot?: boolean
+}
+
+// --- mail, registration, email verification and password reset (3.3) ---
+export type MailSecurity = 'starttls' | 'tls' | 'none'
+export interface MailSettings {
+  enabled: boolean
+  host: string
+  port: number
+  security: MailSecurity
+  username: string
+  hasPassword: boolean
+  from: string
+  fromName: string
+  replyTo: string
+  status: { ok: boolean; checked: string | null; message: string }
+  queue: { waiting: number; sentLastHour: number; failedLastHour: number }
+}
+export interface MailPatch {
+  enabled?: boolean
+  host?: string
+  port?: number
+  security?: MailSecurity
+  username?: string
+  // Write only: absent keeps the stored one, '' clears it.
+  password?: string
+  from?: string
+  fromName?: string
+  replyTo?: string
+}
+export interface MailTestResult {
+  ok: boolean
+  message?: string
+}
+export type RegisterInfo = { open: false } | { open: true; tenant: { slug: string; name: string }; domains: string[]; termsUrl: string; privacyUrl: string; password: { minLength: number } }
+export interface RegisterInput {
+  tenant?: string
+  username: string
+  name: string
+  email: string
+  password: string
+  acceptTerms?: boolean
+  captcha?: CaptchaAnswer
+  lang?: string
+}
+
+export type CaptchaProvider = 'image' | 'turnstile' | 'recaptcha' | 'hcaptcha'
+export type CaptchaContext = 'login' | 'invite' | 'setup' | 'forgot' | 'register'
+export interface CaptchaChallenge {
+  required: boolean
+  provider?: CaptchaProvider
+  siteKey?: string
+  id?: string
+  image?: string
+}
+// What a form sends back: the typed answer of an image, or a widget's token.
+export type CaptchaAnswer = { id: string; answer: string } | { token: string }
+
+export interface PasskeyCeremony {
+  ceremony: string
+  options: Record<string, unknown>
 }
 
 export interface Invite {
@@ -798,13 +998,22 @@ export interface CreatedInvite {
   role: Role
   created: string
   expires: string
+  // What a new tenant's first administrator's invite fills in (see InviteCheck).
+  username?: string
+  name?: string
+  email?: string
 }
 export interface InviteCheck {
   role: Role
   expires: string
+  // What the invite starts the form with ("" when it says nothing); the address becomes the account's, not verified.
+  username?: string
+  name?: string
+  email?: string
 }
 
 export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
+export type ProviderIntent = OidcIntent
 
 export type BatchPagesInput = { op: 'move'; ids: string[]; folder: string } | { op: 'delete'; ids: string[] }
 
@@ -817,6 +1026,88 @@ export interface Member {
   role: SpaceRole
   // True for the caller.
   you: boolean
+  // A group of theirs is a member of the space too; the role the person's own
+  // role and those groups give together.
+  viaGroups?: boolean
+  effectiveRole?: SpaceRole
+}
+
+// --- groups (docs/api.md, "Groups") --------------------------------------------------
+
+export type GroupSource = 'local' | 'synced'
+// What everyone may see of a group.
+export interface GroupRef {
+  id: string
+  name: string
+  source: GroupSource
+}
+// A group as an administrator sees it.
+export interface Group extends GroupRef {
+  description: string
+  people: number
+  spaces: number
+  mappedFrom: { provider: string; value: string }[]
+  created: string
+  updated: string
+}
+export interface GroupList {
+  items: Group[]
+  next: string
+}
+export interface GroupPerson {
+  userId: string
+  username: string
+  name: string
+  disabled: boolean
+  from: { provider: string; value: string }[]
+  added: string
+}
+export interface GroupPersonList {
+  items: GroupPerson[]
+  next: string
+}
+export interface GroupSpaceRef {
+  id: string
+  name: string
+  role: SpaceRole
+}
+export interface GroupSpaceList {
+  items: GroupSpaceRef[]
+  next: string
+}
+// A group that is a member of a space.
+export interface GroupMember {
+  groupId: string
+  name: string
+  source: GroupSource
+  role: SpaceRole
+  people: number
+  // The caller is in the group.
+  yours: boolean
+}
+export interface MembersResponse {
+  members: Member[]
+  groups: GroupMember[]
+}
+export interface EffectiveMember {
+  userId: string
+  username: string
+  name: string
+  role: SpaceRole | ''
+  directRole: SpaceRole | ''
+  groups: { groupId: string; name: string; role: SpaceRole }[]
+  you: boolean
+}
+export interface EffectiveMemberList {
+  items: EffectiveMember[]
+  next: string
+}
+// What a provider does with its groups claim.
+export interface GroupsMapping {
+  enabled: boolean
+  claim: string
+  missing: 'keep' | 'clear'
+  map: { value: string; groupId: string }[]
 }
 
 // --- administration (docs/api.md, "Administration") -----------------------------------
@@ -851,7 +1142,8 @@ export interface AdminSpaceStorage {
   remote: RemoteNotice | null
 }
 export interface AdminStorage {
-  remotes: { require: 'any' | 'github' | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
+  // require: null, 'any', or the id of a provider (2.7b's connections, such as 'github').
+  remotes: { require: string | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
   hosts: { allowed: string[]; fromFlag: boolean }
   localSpaces: { maxBytes: number | null }
   cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null; assetsBytes: number }
@@ -1065,3 +1357,251 @@ export interface DailyTryResult {
   pathErrors?: { field: string; code: string; message: string }[]
 }
 export type LinesFormat = 'lines' | 'markdown'
+
+// --- security settings, providers and the audit log (docs/api.md, "Administration") ------------
+
+export type LockoutScope = 'ip_account' | 'ip' | 'account'
+export type CaptchaWhen = 'always' | 'after_failures'
+export interface CaptchaContextSettings {
+  on: boolean
+  when: CaptchaWhen
+  failures: number
+}
+export interface SecurityNotice {
+  code: 'flags_ignored' | 'secret_unreadable' | 'passkey_host_changed' | (string & {})
+  message: string
+  slug?: string
+  field?: string
+}
+export interface SecuritySettings {
+  login: { mode: LoginMode; effectiveMode: LoginMode; ssoOnly: boolean; ssoOnlyInEffect: boolean; ssoAvailable: boolean }
+  passkeys: { enabled: boolean; available: boolean; requireRoles: Role[]; required: number; requiredWithout: number }
+  captcha: { provider: CaptchaProvider; siteKey: string; hasSecret: boolean; contexts: Record<CaptchaContext, CaptchaContextSettings> }
+  lockout: { enabled: boolean; minutes: number; scope: LockoutScope }
+  limits: { perMinute: number; maxFailures: number; windowMinutes: number; sessionIdleDays: number; sessionMaxDays: number }
+  passwordAdmins: number
+  notices: SecurityNotice[]
+}
+// What `PUT /api/admin/security` takes: any block, any field of it; `captcha.secret` is write-only.
+export interface SecurityPatch {
+  login?: Partial<{ mode: LoginMode; ssoOnly: boolean }>
+  passkeys?: Partial<{ enabled: boolean; requireRoles: Role[] }>
+  captcha?: Partial<{ provider: CaptchaProvider; siteKey: string; secret: string; contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>> }>
+  lockout?: Partial<{ enabled: boolean; minutes: number; scope: LockoutScope }>
+  limits?: Partial<SecuritySettings['limits']>
+}
+
+export interface OidcSettings {
+  issuer: string
+  clientId: string
+  hasSecret: boolean
+  scopes: string[]
+  legacyCallback: boolean
+  redirectUrl: string
+}
+export interface SamlSettings {
+  metadataUrl: string
+  metadataXml: string
+  idpEntityId: string
+  entityId: string
+  acsUrl: string
+  metadataPath: string
+  attributes: { email: string; name: string; username: string }
+  nameIdFormat: string
+  signRequests: boolean
+  allowIdpInitiated: boolean
+  certificate: string
+  certificateExpires: string
+}
+export interface GithubSettings {
+  baseUrl: string
+  clientId: string
+  hasSecret: boolean
+  organizations: string[]
+  redirectUrl: string
+}
+export interface AuthProvider {
+  slug: string
+  kind: ProviderKind
+  name: string
+  icon: string
+  enabled: boolean
+  order: number
+  autoCreate: boolean
+  mergeVerifiedEmail: boolean
+  groups: GroupsMapping
+  oidc?: OidcSettings
+  saml?: SamlSettings
+  github?: GithubSettings
+  status: { ok: boolean; checked: string; message: string }
+  people: number
+  created: string
+  updated: string
+}
+// What a create or a patch sends: the common fields and the kind's own block, with `clientSecret` where there is one.
+export interface ProviderInput {
+  slug?: string
+  kind?: ProviderKind
+  name?: string
+  icon?: string
+  enabled?: boolean
+  order?: number
+  autoCreate?: boolean
+  mergeVerifiedEmail?: boolean
+  groups?: Partial<GroupsMapping>
+  oidc?: Partial<Pick<OidcSettings, 'issuer' | 'clientId' | 'scopes' | 'legacyCallback'>> & { clientSecret?: string }
+  saml?: Partial<Pick<SamlSettings, 'metadataUrl' | 'metadataXml' | 'entityId' | 'attributes' | 'nameIdFormat' | 'signRequests' | 'allowIdpInitiated'>>
+  github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId' | 'organizations'>> & { clientSecret?: string }
+}
+
+export type AuditKind =
+  | 'login'
+  | 'login_failed'
+  | 'rate_limited'
+  | 'lockout'
+  | 'passkey_clone'
+  | 'identity_linked'
+  | 'identity_unlinked'
+  | 'passkey_added'
+  | 'passkey_removed'
+  | 'security_changed'
+  | 'provider_created'
+  | 'provider_changed'
+  | 'provider_deleted'
+  | 'user_changed'
+  | 'token_created'
+  | 'token_revoked'
+  | 'grant_revoked'
+  | 'group_created'
+  | 'group_changed'
+  | 'group_deleted'
+  | 'group_member_added'
+  | 'group_member_removed'
+  | 'groups_synced'
+  | 'groups_claim_missing'
+  | 'groups_claim_truncated'
+  | 'space_group_added'
+  | 'space_group_changed'
+  | 'space_group_removed'
+  | 'dropped'
+export interface AuditItem {
+  id: string
+  at: string
+  kind: AuditKind | (string & {})
+  actor: string | null
+  user: string | null
+  username: string | null
+  ip: string
+  detail: Record<string, unknown>
+}
+export interface AuditList {
+  items: AuditItem[]
+  next: string
+}
+
+// --- tenants and layered settings (3.3, docs/api.md "Tenants, registration and mail") ---
+
+export interface TenantRef {
+  id: string
+  slug: string
+  name: string
+}
+export type TenantQuotaKey = 'people' | 'spaces' | 'bytes' | 'pages'
+// What a tenant uses, as measured (docs/api.md, "Quotas"); `over` lists the totals it is over.
+export interface TenantUsage {
+  people: number
+  spaces: number
+  bytes: number
+  pages: number
+  measuredAt: string | null
+  over: TenantQuotaKey[]
+}
+export interface Tenant extends TenantRef {
+  default: boolean
+  disabled: boolean
+  registration: { open: boolean }
+  quota: Record<TenantQuotaKey, number | null>
+  usage: TenantUsage
+  created: string
+  updated: string
+}
+export interface TenantList {
+  items: Tenant[]
+  next: string
+}
+export interface Tenancy {
+  enabled: boolean
+  tenants: number
+}
+export type CreatedTenant = Tenant & { invite?: CreatedInvite }
+
+// --- quotas and usage (3.3) ---
+
+export type PersonQuotaKey = 'spaces' | 'bytes' | 'pages'
+// A person's own limits: a number, or null to follow the tenant and the site.
+export type OwnQuota = Record<PersonQuotaKey, number | null>
+// A quota that is over: the person's own (scope person) or the tenant's total (scope tenant).
+export interface UsageNotice {
+  quota: TenantQuotaKey
+  scope: 'person' | 'tenant'
+  limit: number
+  used: number
+}
+// GET /api/account/usage. limit null is none.
+export interface AccountUsage {
+  spaces: { used: number; limit: number | null }
+  bytes: { used: number; limit: number | null }
+  pages: { used: number; limit: number | null }
+  measuredAt: string | null
+  notices: UsageNotice[]
+}
+export interface PersonUsage {
+  user: { id: string; username: string; name: string }
+  tenant: string
+  spaces: number
+  bytes: number
+  pages: number
+  limits: Record<PersonQuotaKey, number | null>
+  // The person's own limits (null follows the tenant), what the edit form starts with.
+  own: OwnQuota
+  // false for an own limit a lock or restriction put on the setting later forbids (kept, in force again when lifted).
+  ownInEffect: Record<PersonQuotaKey, boolean>
+  over: PersonQuotaKey[]
+  measuredAt: string | null
+}
+export interface AdminUsageList {
+  items: PersonUsage[]
+  next: string
+}
+
+export type SettingLayer = 'site' | 'tenant' | 'space' | 'person'
+export type SettingKind = 'boolean' | 'choice' | 'limit' | 'list' | 'text' | 'doc'
+// What a layer lets the layers below it do.
+export interface SettingLower {
+  mode: 'allow' | 'restrict' | 'lock'
+  options?: (string | boolean)[]
+  max?: number
+}
+export interface SiteSetting {
+  key: string
+  kind: SettingKind
+  layers: SettingLayer[]
+  site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
+  // Set by PUT when the new rule makes this many tenants' values ineffective.
+  affected?: number
+}
+export interface TenantSetting {
+  key: string
+  kind: SettingKind
+  layers: SettingLayer[]
+  site: { value: unknown; lower: SettingLower }
+  tenant: { value: unknown; lower: SettingLower | null; inEffect: boolean } | null
+  effective: unknown
+}
+// What GET /api/settings says of a setting that a space or a person can change.
+export interface MySetting {
+  key: string
+  effective: unknown
+  space?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+  person?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+}

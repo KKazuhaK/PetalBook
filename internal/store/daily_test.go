@@ -114,7 +114,7 @@ func TestSpaceDailyChoice(t *testing.T) {
 			}
 		}
 		store.SetSpaceDaily(ctx, st.Q(), "S1", store.SpaceDaily{APIs: `["x"]`})
-		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, "S1"); return err }); err != nil {
+		if err := st.Tx(ctx, func(q store.Q) error { _, err := store.DeleteSpace(ctx, q, store.AllTenants(), "S1"); return err }); err != nil {
 			t.Fatal(err)
 		}
 		var n int
@@ -222,6 +222,28 @@ func TestLockSiteSetting(t *testing.T) {
 		}
 		if v, _, _ := store.GetSiteSetting(ctx, st.Q(), "k"); v != "{}"+strings.Repeat("x", n) {
 			t.Fatalf("%q", v)
+		}
+	})
+}
+
+func TestCompareAndSetSiteSetting(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q, now := st.Q(), time.Now()
+		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || ok {
+			t.Fatalf("a setting that is not there was set: %v %v", ok, err)
+		}
+		if err := store.SetSiteSetting(ctx, q, "k", "a", now); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || !ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+		// Read as "a", but it is "b" now: not written.
+		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "c", now); err != nil || ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+		if v, _, _ := store.GetSiteSetting(ctx, q, "k"); v != "b" {
+			t.Fatal(v)
 		}
 	})
 }

@@ -2,8 +2,9 @@
 
 import { t } from '@/i18n'
 
-import type {
+import type { RegisterInfo, RegisterInput, MySetting, EffectiveMemberList, GroupMember, GroupRef, MembersResponse,
   AccountInfo,
+  AccountUsage,
   AdminSpace,
   ApiToken,
   ConsentDecision,
@@ -24,12 +25,20 @@ import type {
   AssetsRemote,
   ConnectAssetsInput,
   ConnectRemoteInput,
-  GitHubCursorPage,
-  GitHubInfo,
-  GitHubOwner,
-  GitHubRepo,
-  NewGitHubRepo,
+  AuthProviders,
+  CaptchaAnswer,
+  CaptchaChallenge,
+  CaptchaContext,
+  ConnectionOwner,
+  ConnectionRepo,
+  CursorPage,
+  NewSync,
+  Provider,
   ErrorCode,
+  Passkey,
+  PasskeyCeremony,
+  ProviderIntent,
+  ProviderKind,
   ReasonCode,
   HistoryList,
   ImportReport,
@@ -154,9 +163,22 @@ function markSignedOut() {
   signedOutListeners.forEach((fn) => fn())
 }
 
+// --- a session held until a passkey is registered ---------------------------------------
+//
+// While `GET /api/session` has `hold: "passkey"` every other request answers 403
+// `passkey_required`. The app learns of it once, from whichever request hit it, and
+// shows the passkey page (a hold that began after the session was read).
+
+type HoldListener = () => void
+const holdListeners = new Set<HoldListener>()
+export function onHold(fn: HoldListener): () => void {
+  holdListeners.add(fn)
+  return () => void holdListeners.delete(fn)
+}
+
 // Paths where a 401 is an answer to the request itself (wrong password), not
 // a lost session.
-const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|invites\/(check|accept)|auth\/oidc\/start)$/
+const SIGN_IN_PATHS = /^\/(login|logout|setup|session|meta|captcha|invites\/(check|accept)|auth\/(providers|passkey\/(begin|finish)|oidc\/start|(oidc|saml|github)\/[^/]+\/start))$/
 // Paths where 403 is an answer about the request itself (a wrong setup token,
 // a wrong current password, a member asking for admin things), not a refused
 // origin. Page and space endpoints have no such 403: a space of someone else
@@ -274,6 +296,7 @@ export async function request<T>(path: string, { method = 'GET', body, keepalive
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut()
+    if (res.status === 403 && err.error === 'passkey_required' && !isSignIn) holdListeners.forEach((fn) => fn())
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
     if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
       const space = /^\/spaces\/([^/]+)/.exec(barePath)?.[1]
@@ -463,7 +486,20 @@ export function spaceApi(space: string) {
     reindex: () => request<{ pages: number; ms: number }>(base('/reindex'), { method: 'POST' }),
 
     // The people of the space (accounts mode). `user` is a member's `userId`.
-    members: (signal?: AbortSignal) => request<{ members: Member[] }>(base('/members'), { signal }),
+    members: (signal?: AbortSignal) => request<MembersResponse>(base('/members'), { signal }),
+    // Everyone who can reach the space, through their own role or a group, a cursor page at a time.
+    effectiveMembers: (params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+      const q = new URLSearchParams()
+      if (params.q) q.set('q', params.q)
+      if (params.cursor) q.set('cursor', params.cursor)
+      if (params.limit) q.set('limit', String(params.limit))
+      const qs = q.toString()
+      return request<EffectiveMemberList>(base(`/members/effective${qs ? `?${qs}` : ''}`), { signal })
+    },
+    // Groups as members of the space (shared spaces only).
+    addGroup: (groupId: string, role: SpaceRole) => request<GroupMember>(base('/groups'), { method: 'POST', body: { groupId, role } }),
+    setGroupRole: (groupId: string, role: SpaceRole) => request<GroupMember>(base(`/groups/${enc(groupId)}`), { method: 'PATCH', body: { role } }),
+    removeGroup: (groupId: string) => request<void>(base(`/groups/${enc(groupId)}`), { method: 'DELETE' }),
     addMember: (username: string, role: SpaceRole) => request<Member>(base('/members'), { method: 'POST', body: { username, role } }),
     setMemberRole: (user: string, role: SpaceRole) => request<Member>(base(`/members/${enc(user)}`), { method: 'PATCH', body: { role } }),
     // Removing yourself is leaving the space.
@@ -481,27 +517,52 @@ export const api = {
     if (s.user) markSignedIn()
     return s
   },
-  setup: async (input: { token: string; username: string; name?: string; password: string }) => {
+  setup: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/setup', { method: 'POST', body: input })
     markSignedIn()
     return r
   },
-  login: async (input: { username: string; password: string }) => {
+  login: async (input: { username: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/login', { method: 'POST', body: input })
     markSignedIn()
     return r
   },
   logout: () => request<void>('/logout', { method: 'POST' }),
+  // What the sign-in page draws: the enabled providers, the mode in effect and whether passkeys work.
+  providers: (signal?: AbortSignal) => request<AuthProviders>('/auth/providers', { signal }),
+  // Whether a captcha is needed now, and the challenge when it is. `account` matters for `login` only.
+  captcha: (ctx: CaptchaContext, account?: string, signal?: AbortSignal) =>
+    request<CaptchaChallenge>(`/captcha?ctx=${enc(ctx)}${account ? `&account=${enc(account)}` : ''}`, { signal }),
+  // Setup, invite and link carry a token or a session, so they ask for the address with a POST; a login is a plain navigation (see `providerStartUrl`).
+  providerStart: (kind: ProviderKind, slug: string, input: { intent: ProviderIntent; token?: string; return?: string }) =>
+    request<{ url: string }>(`/auth/${enc(kind)}/${enc(slug)}/start`, { method: 'POST', body: input }),
   oidcStart: (input: { intent: OidcIntent; token?: string; return?: string }) => request<{ url: string }>('/auth/oidc/start', { method: 'POST', body: input }),
+  passkeyBegin: (username?: string) => request<PasskeyCeremony>('/auth/passkey/begin', { method: 'POST', body: username ? { username } : {} }),
+  passkeyFinish: async (ceremony: string, ret: string, credential: unknown) => {
+    const r = await request<{ user: User; return: string }>(`/auth/passkey/finish?ceremony=${enc(ceremony)}&return=${enc(ret)}`, { method: 'POST', body: credential })
+    markSignedIn()
+    return r
+  },
 
   // --- account ---
   account: (signal?: AbortSignal) => request<AccountInfo>('/account', { signal }),
+  // The caller's own spaces, bytes and pages against their limits (3.3): stored numbers, nothing is measured for the request.
+  accountUsage: (signal?: AbortSignal) => request<AccountUsage>('/account/usage', { signal }),
+  // Finding a group by part of its name, to add it to a space: names only.
+  findGroups: (q: string, signal?: AbortSignal) => request<{ groups: GroupRef[] }>(`/groups?q=${enc(q)}&limit=20`, { signal }),
   updateAccount: (input: { name?: string; email?: string }) => request<{ user: User }>('/account', { method: 'PATCH', body: input }),
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) => request<void>('/account/password', { method: 'POST', body: input }),
   removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
+  // Registering a passkey: a ceremony, the browser's credential, then the list as it is.
+  passkeyRegisterBegin: (name: string) => request<PasskeyCeremony>('/account/passkeys/begin', { method: 'POST', body: { name } }),
+  passkeyRegisterFinish: (ceremony: string, credential: unknown) => request<{ passkeys: Passkey[] }>(`/account/passkeys/finish?ceremony=${enc(ceremony)}`, { method: 'POST', body: credential }),
+  renamePasskey: (id: string, name: string) => request<Passkey>(`/account/passkeys/${enc(id)}`, { method: 'PATCH', body: { name } }),
+  removePasskey: (id: string) => request<void>(`/account/passkeys/${enc(id)}`, { method: 'DELETE' }),
 
   // --- API tokens ---
+  // What each setting that a space or a person can change comes to for the caller, and who keeps it from changing (3.3).
+  settings: (space?: string, signal?: AbortSignal) => request<{ settings: MySetting[] }>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
   tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
   // `expiresInDays` 0 is a token that never expires; left out, 90 days.
   createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) => request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
@@ -515,8 +576,21 @@ export const api = {
   decideConsent: (input: ConsentDecision) => request<{ redirect: string }>('/oauth/consent', { method: 'POST', body: input }),
 
   // --- users and invites (administrators) ---
-  checkInvite: (token: string, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token }, signal }),
-  acceptInvite: async (input: { token: string; username: string; name?: string; password: string }) => {
+  // --- registration, email verification and password reset (3.3) ---
+  registerInfo: (tenant?: string, signal?: AbortSignal) => request<RegisterInfo>(`/register${tenant ? `?tenant=${enc(tenant)}` : ''}`, { signal }),
+  register: (input: RegisterInput) => request<{ sent: boolean }>('/register', { method: 'POST', body: input }),
+  registerConfirm: async (token: string) => {
+    const r = await request<{ user: User }>('/register/confirm', { method: 'POST', body: { token } })
+    markSignedIn()
+    return r
+  },
+  requestEmailVerify: (lang?: string) => request<{ sent: boolean }>('/account/email/verify', { method: 'POST', body: lang ? { lang } : {} }),
+  confirmEmail: (token: string) => request<void>('/email/confirm', { method: 'POST', body: { token } }),
+  forgotPassword: (input: { tenant?: string; login: string; captcha?: CaptchaAnswer; lang?: string }) => request<{ sent: boolean }>('/password/forgot', { method: 'POST', body: input }),
+  checkReset: (token: string, signal?: AbortSignal) => request<{ username: string; expires: string }>('/password/reset/check', { method: 'POST', body: { token }, signal }),
+  resetPassword: (token: string, password: string) => request<void>('/password/reset', { method: 'POST', body: { token, password } }),
+  checkInvite: (token: string, captcha?: CaptchaAnswer, signal?: AbortSignal) => request<InviteCheck>('/invites/check', { method: 'POST', body: { token, ...(captcha ? { captcha } : {}) }, signal }),
+  acceptInvite: async (input: { token: string; username: string; name?: string; password: string; captcha?: CaptchaAnswer }) => {
     const r = await request<{ user: User }>('/invites/accept', { method: 'POST', body: input })
     markSignedIn()
     return r
@@ -524,19 +598,25 @@ export const api = {
 
   // --- spaces ---
   spaces: (signal?: AbortSignal) => request<{ spaces: SpaceInfo[] }>('/spaces', { signal }),
-  createSpace: (name: string, inbox?: string, github?: NewGitHubRepo) =>
-    request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }), ...(github === undefined ? {} : { github }) } }),
+  // `sync` makes the space's repository on a provider too (docs/api.md, "Spaces and remotes").
+  createSpace: (name: string, inbox?: string, sync?: NewSync) =>
+    request<SpaceInfo>('/spaces', { method: 'POST', body: { name, ...(inbox === undefined ? {} : { inbox }), ...(sync === undefined ? {} : { storage: { sync } }) } }),
 
-  // --- GitHub (accounts mode) ---
-  github: (signal?: AbortSignal) => request<GitHubInfo>('/github', { signal }),
-  // The address to send the browser to; GitHub sends it back to `return` (a path of this site).
-  githubStart: (ret?: string) => request<{ url: string }>('/github/authorization/start', { method: 'POST', body: ret ? { return: ret } : {} }),
-  githubDisconnect: () => request<void>('/github/authorization', { method: 'DELETE' }),
-  githubOwners: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubOwner>>(`/github/owners${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
-  githubRepos: (which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
+  // --- connections (accounts mode; docs/api.md, "Connections") ---
+  connections: (signal?: AbortSignal) => request<{ providers: Provider[] }>('/connections', { signal }),
+  // The address to send the browser to; the platform sends it back to `return` (a path of this site).
+  // `install` sends them to the App's installation page, which authorises them in the same flow; without it, to the authorisation page alone.
+  connectionStart: (provider: string, ret?: string, install?: boolean) =>
+    request<{ url: string }>(`/connections/${enc(provider)}/authorization/start`, { method: 'POST', body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) } }),
+  connectionDisconnect: (provider: string) => request<void>(`/connections/${enc(provider)}/authorization`, { method: 'DELETE' }),
+  connectionDismissLeftover: (provider: string, repoId: number) => request<void>(`/connections/${enc(provider)}/leftovers/${repoId}`, { method: 'DELETE' }),
+  // recheck: the first page, after the server forgets what it remembered about this person ("the App is not installed there").
+  connectionOwners: (provider: string, cursor?: string, signal?: AbortSignal, recheck = false) =>
+    request<CursorPage<ConnectionOwner>>(`/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`, { signal }),
+  connectionRepos: (provider: string, which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
     const q = new URLSearchParams('installation' in which ? { installation: String(which.installation) } : { mine: 'true' })
     if (cursor) q.set('cursor', cursor)
-    return request<GitHubCursorPage<GitHubRepo>>(`/github/repos?${q.toString()}`, { signal })
+    return request<CursorPage<ConnectionRepo>>(`/connections/${enc(provider)}/repos?${q.toString()}`, { signal })
   },
   renameSpace: (id: string, name: string) => request<SpaceInfo>(`/spaces/${enc(id)}`, { method: 'PATCH', body: { name } }),
   // Either field or both; the server refuses a body with neither.
@@ -546,3 +626,6 @@ export const api = {
   // One space as the list has it; 404 for an id that is no space.
   adminSpace: (id: string, signal?: AbortSignal) => request<AdminSpace>(`/admin/spaces/${enc(id)}`, { signal }),
 }
+
+// Where a sign-in button goes: a full-page navigation (docs/api.md, "Starting").
+export const providerStartUrl = (kind: ProviderKind, slug: string, ret: string) => `${API_BASE}/auth/${enc(kind)}/${enc(slug)}/start?return=${enc(ret)}`

@@ -410,27 +410,34 @@ func (d *siteDaily) all() []storedAPI {
 // error from change leaves them as they were. change must use the state
 // database only through q.
 func (s *server) editSite(ctx context.Context, change func(q store.Q, d *siteDaily) error) error {
-	return s.opt.Store.Tx(ctx, func(q store.Q) error {
-		if err := store.LockSiteSetting(ctx, q, siteDailyKey, time.Now()); err != nil {
+	err := s.opt.Store.Tx(ctx, func(q store.Q) error { return s.editSiteQ(ctx, q, change) })
+	// What the layered settings cached of it (the switches, the default) is old now.
+	s.settings.Invalidate()
+	return err
+}
+
+// editSiteQ is editSite inside a transaction of the caller's (the layered
+// settings write the same record).
+func (s *server) editSiteQ(ctx context.Context, q store.Q, change func(q store.Q, d *siteDaily) error) error {
+	if err := store.LockSiteSetting(ctx, q, siteDailyKey, time.Now()); err != nil {
+		return err
+	}
+	d, err := s.loadSiteQ(ctx, q)
+	if err != nil {
+		return err
+	}
+	// The spaces that chose an interface whose id changed follow it.
+	for _, from := range slices.Sorted(maps.Keys(d.renames)) {
+		if err := store.RenameSpaceDailyAPI(ctx, q, from, d.renames[from]); err != nil {
 			return err
 		}
-		d, err := s.loadSiteQ(ctx, q)
-		if err != nil {
-			return err
-		}
-		// The spaces that chose an interface whose id changed follow it.
-		for _, from := range slices.Sorted(maps.Keys(d.renames)) {
-			if err := store.RenameSpaceDailyAPI(ctx, q, from, d.renames[from]); err != nil {
-				return err
-			}
-		}
-		if err := change(q, &d); err != nil {
-			return err
-		}
-		d.fill()
-		b, _ := json.Marshal(d)
-		return store.SetSiteSetting(ctx, q, siteDailyKey, string(b), time.Now())
-	})
+	}
+	if err := change(q, &d); err != nil {
+		return err
+	}
+	d.fill()
+	b, _ := json.Marshal(d)
+	return store.SetSiteSetting(ctx, q, siteDailyKey, string(b), time.Now())
 }
 
 // apiView is an interface as the administrators see it: the headers only by
@@ -535,25 +542,34 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 	if err != nil {
 		return nil, "", err
 	}
+	allow, err := s.dailyAllowFor(ctx, c.user().TenantID)
+	if err != nil {
+		return nil, "", err
+	}
 	var ids []string
-	if site.Allow.API { // when it is not allowed, the choice is kept and not used
+	if allow.API { // when it is not allowed, the choice is kept and not used
 		json.Unmarshal([]byte(prefs.APIs), &ids)
 	}
 	all := site.all()
 	if a := chooseAPI(all, ids, lang); a != nil {
 		return s.dailyFromAPI(c, site, *a, date, skip, lang, tz)
 	}
-	if !prefs.Inherit || site.Default == nil {
+	// The default of the person's tenant comes between the space's and the site's.
+	def, err := s.dailyDefaultFor(ctx, c.user().TenantID, site.Default)
+	if err != nil {
+		return nil, "", err
+	}
+	if !prefs.Inherit || def == nil {
 		return nil, "", nil
 	}
-	switch site.Default.Kind {
+	switch def.Kind {
 	case "list":
 		return s.dailyFromLines(ctx, date, skip, lang)
 	case "space":
-		return s.dailyFromSpace(ctx, *site.Default, date, skip, lang)
+		return s.dailyFromSpace(ctx, *def, date, skip, lang)
 	case "api":
 		// The administrators' own choice: not limited by what spaces may choose.
-		id, ok := defaultAPIFor(site.Default.APIs, lang)
+		id, ok := defaultAPIFor(def.APIs, lang)
 		if !ok {
 			return nil, "", nil
 		}

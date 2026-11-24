@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
@@ -21,7 +22,7 @@ func TestConnectingAnAccount(t *testing.T) {
 		h := newHarness(t, st)
 		h.user("U1", "kazuha")
 		h.f.AddUser("kazuha-gh")
-		if _, _, err := h.svc.StartAuthorization(ctx, "U1", "/"); code(err) != "github_not_configured" {
+		if _, _, err := h.svc.StartAuthorization(ctx, "U1", "/"); code(err) != "provider_not_configured" {
 			t.Fatalf("%v", err)
 		}
 		h.configure()
@@ -34,20 +35,20 @@ func TestConnectingAnAccount(t *testing.T) {
 		}
 		u, _ := url.Parse(authURL)
 		q := u.Query()
-		if q.Get("client_id") != h.f.ClientID || q.Get("redirect_uri") != publicURL+"/api/github/authorization/callback" ||
+		if q.Get("client_id") != h.f.ClientID || q.Get("redirect_uri") != publicURL+"/api/connections/github/authorization/callback" ||
 			q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || len(q.Get("state")) < 40 || q.Get("login") != "" {
 			t.Fatalf("%s", authURL)
 		}
 		back, _ := url.Parse(h.f.Authorize(authURL, "kazuha-gh"))
 		// Another browser's cookie, or another user, does not end the attempt.
-		if to, clear := h.svc.CompleteAuthorization(ctx, "not-the-binding", "U1", back.Query()); to != "/settings?github_error=expired" {
+		if to, clear := h.svc.CompleteAuthorization(ctx, "not-the-binding", "U1", back.Query()); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("%q %v", to, clear)
 		}
 		h.user("U2", "other")
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U2", back.Query()); to != "/settings?github_error=expired" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U2", back.Query()); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("another user's session: %q", to)
 		}
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "", back.Query()); to != "/settings?github_error=expired" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "", back.Query()); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("no session: %q", to)
 		}
 		to, clear := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query())
@@ -58,7 +59,7 @@ func TestConnectingAnAccount(t *testing.T) {
 			t.Fatalf("%v", fixed)
 		}
 		// The attempt is used once.
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?github_error=expired" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("a replay: %q", to)
 		}
 		c, err := h.svc.Connection(ctx, "U1")
@@ -98,14 +99,14 @@ func TestAuthorizationFailures(t *testing.T) {
 		// Cancelled on GitHub.
 		authURL, binding, _ := h.svc.StartAuthorization(ctx, "U1", "/")
 		back, _ := url.Parse(h.f.Deny(authURL))
-		if to, clear := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?github_error=denied" || !clear {
+		if to, clear := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?provider=github&connection_error=denied" || !clear {
 			t.Fatalf("%q", to)
 		}
 		// More than ten minutes later.
 		authURL, binding, _ = h.svc.StartAuthorization(ctx, "U1", "/")
 		back, _ = url.Parse(h.f.Authorize(authURL, "gh-a"))
 		h.clk.Advance(11 * time.Minute)
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?github_error=expired" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("%q", to)
 		}
 		// A repeated parameter.
@@ -113,7 +114,7 @@ func TestAuthorizationFailures(t *testing.T) {
 		back, _ = url.Parse(h.f.Authorize(authURL, "gh-a"))
 		qq := back.Query()
 		qq.Add("code", "second")
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", qq); to != "/settings?github_error=expired" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", qq); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("%q", to)
 		}
 		// A code GitHub does not know.
@@ -121,7 +122,7 @@ func TestAuthorizationFailures(t *testing.T) {
 		back, _ = url.Parse(h.f.Authorize(authURL, "gh-a"))
 		qq = back.Query()
 		qq.Set("code", "forged")
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", qq); to != "/settings?github_error=github_error" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", qq); to != "/settings?provider=github&connection_error=provider_error" {
 			t.Fatalf("%q", to)
 		}
 		// One GitHub account, one PetalBook user.
@@ -130,14 +131,14 @@ func TestAuthorizationFailures(t *testing.T) {
 		}
 		authURL, binding, _ = h.svc.StartAuthorization(ctx, "U2", "/")
 		back, _ = url.Parse(h.f.Authorize(authURL, "gh-a"))
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U2", back.Query()); to != "/settings?github_error=account_in_use" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U2", back.Query()); to != "/settings?provider=github&connection_error=account_in_use" {
 			t.Fatalf("%q", to)
 		}
 		// Another account while spaces sync through this one.
 		h.space("S1", store.Remote{GHVia: "user", GHUserID: "U1", GHRepoID: 1})
 		authURL, binding, _ = h.svc.StartAuthorization(ctx, "U1", "/")
 		back, _ = url.Parse(h.f.Authorize(authURL, "gh-b"))
-		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?github_error=different_account" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?provider=github&connection_error=different_account" {
 			t.Fatalf("%q", to)
 		}
 		if c, _ := h.svc.Connection(ctx, "U1"); c.Login != "gh-a" || c.Spaces != 1 {
@@ -174,7 +175,7 @@ func TestAttemptsAreBounded(t *testing.T) {
 		if n := h.svc.Attempts(); n > 10_000 {
 			t.Fatalf("%d attempts held", n)
 		}
-		if to, _ := h.svc.CompleteAuthorization(ctx, first, "U1", url.Values{"state": {"x"}, "code": {"y"}}); to != "/settings?github_error=expired" {
+		if to, _ := h.svc.CompleteAuthorization(ctx, first, "U1", url.Values{"state": {"x"}, "code": {"y"}}); to != "/settings?provider=github&connection_error=expired" {
 			t.Fatalf("the oldest attempt survived: %q", to)
 		}
 	})
@@ -329,7 +330,7 @@ func TestUnreachableGitHubChangesNothing(t *testing.T) {
 		h.clk.Advance(9 * time.Hour)
 		h.f.LimitUntil(h.clk.Now().Add(time.Minute))
 		_, err := h.svc.UserToken(ctx, "U1")
-		var he *github.Error
+		var he *connections.Error
 		if !errors.As(err, &he) || he.Code != "rate_limited" || he.RetryAfter < 59*time.Second {
 			t.Fatalf("%v", err)
 		}

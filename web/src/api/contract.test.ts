@@ -19,10 +19,10 @@
 // a real server would have to be waited on, or locked out, to run them.
 //
 // A real accounts server throttles failed sign-ins and bad invite tokens per
-// client address (ten free, then growing waits). The suite makes about seven such
-// failures a run and waits out any 429 it gets, so run it again straight away
-// and it slows down rather than fails; start from a fresh data directory when
-// that matters.
+// client address (ten in a window, then a wait until the window ends). The suite
+// makes more failures than that, so it raises the cap and the per-minute limit
+// for the run and puts them back afterwards. It waits out a short 429 and fails
+// at once on a long one, which means a cap was reached.
 //
 // History is written by Git commits, which a real server makes a few seconds
 // after the file is written and may join (two quick saves can be one commit),
@@ -118,6 +118,8 @@ function suite(target: Target) {
   let S: SpaceApi
   let SP_PAGES = ''
   const created: { users: string[] } = { users: [] }
+  // A real accounts server's sign-in limits as they were before the run.
+  let savedLimits: { perMinute: number; maxFailures: number } | undefined
 
   const browser = () => newBrowser(base)
   // Run `fn` as another browser (the client reads `globalThis.fetch`).
@@ -144,7 +146,10 @@ function suite(target: Target) {
   ): Promise<{ status: number; json: any; headers: Headers; res: Response }> => {
     const res = await b.fetch(path, { method, headers, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body), redirect: 'manual' })
     if (res.status === 429 && !opts.expect429 && REAL) {
-      const wait = Math.min(Number(res.headers.get('Retry-After')) || 1, 20)
+      const wait = Number(res.headers.get('Retry-After')) || 1
+      // A wait longer than a test may take is a cap the run has used up, not a
+      // per-minute pause: say so at once instead of retrying until the timeout.
+      if (wait > 20) throw new Error(`${method} ${path}: 429 with Retry-After ${wait}s; the run has reached a failure cap`)
       await new Promise((r) => setTimeout(r, wait * 1000 + 100))
       return call(b, method, path, body, headers, opts)
     }
@@ -170,6 +175,20 @@ function suite(target: Target) {
       const user = REAL ? CONTRACT_USER! : MOCK_ADMIN.username
       const password = REAL ? CONTRACT_PASSWORD! : MOCK_ADMIN.password
       await api.login({ username: user, password })
+      if (REAL) {
+        // The suite signs in far more often than ten times a minute from one
+        // address, and makes more failures from it (wrong passwords, bad
+        // invite, email and reset tokens) than the per-address cap allows in
+        // its window. Once the cap is reached every public endpoint, invite
+        // accept included, answers 429 for the rest of the window, so both
+        // limits are raised for the run and put back afterwards.
+        const got = await fetch('/api/admin/security')
+        if (got.status !== 200) throw new Error(`could not read the security settings: ${got.status} ${await got.text()}`)
+        const { perMinute, maxFailures } = ((await got.json()) as { limits: { perMinute: number; maxFailures: number } }).limits
+        savedLimits = { perMinute, maxFailures }
+        const r = await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: { perMinute: 1000, maxFailures: 1000 } }) })
+        if (r.status !== 200) throw new Error(`could not raise the sign-in limits for the run: ${r.status} ${await r.text()}`)
+      }
       spaceId = (await api.spaces()).spaces[0].id
     }
     S = spaceApi(spaceId)
@@ -178,6 +197,9 @@ function suite(target: Target) {
   afterAll(async () => {
     globalThis.fetch = admin.fetch
     for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
+    if (REAL && accounts && savedLimits) {
+      await fetch('/api/admin/security', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limits: savedLimits }) }).catch(() => undefined)
+    }
     globalThis.fetch = realFetch
     markSignedIn()
   })
@@ -270,6 +292,14 @@ function suite(target: Target) {
         ['POST', '/api/login', { username: 'a', password: 'b' }],
         ['POST', '/api/setup', { token: 'x', username: 'ab', password: 'password1' }],
         ['POST', '/api/auth/oidc/start', { intent: 'login' }],
+        ['GET', '/api/auth/providers'],
+        ['GET', '/api/captcha?ctx=login'],
+        ['POST', '/api/auth/passkey/begin', {}],
+        ['POST', '/api/auth/oidc/company/start', { intent: 'login' }],
+        ['GET', '/api/account/passkeys'],
+        ['GET', '/api/admin/security'],
+        ['GET', '/api/admin/auth/providers'],
+        ['GET', '/api/admin/audit'],
         ['GET', '/api/account'],
         ['GET', '/api/users'],
         ['GET', '/api/invites'],
@@ -695,7 +725,7 @@ function suite(target: Target) {
         const anon = browser()
         const ok = await call(anon, 'POST', '/api/invites/check', { token: inv.token })
         expect(ok.status).toBe(200)
-        expect(ok.json).toEqual({ role: 'member', expires: inv.expires })
+        expect(ok.json).toEqual({ role: 'member', expires: inv.expires, username: '', name: '', email: '' })
         const bad = await call(anon, 'POST', '/api/invites/check', { token: 'not-a-token' })
         expect([bad.status, bad.json.error]).toEqual([404, 'not_found'])
       })
@@ -864,6 +894,342 @@ function suite(target: Target) {
     }
     const roleOf = async (b: Browser, space: string) => ((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.id === space)
 
+    describe('groups', () => {
+      const mkGroup = async (name: string, source = 'local') => {
+        const r = await call(admin, 'POST', '/api/admin/groups', { name, source })
+        expect(r.status, name).toBe(201)
+        return r.json as { id: string; name: string; source: string; people: number; spaces: number; mappedFrom: unknown[] }
+      }
+
+      it('an administrator makes, renames, lists and deletes groups; names are unique ignoring case; only administrators may', async () => {
+        const name = uniq('Group')
+        const g = await mkGroup(name)
+        expect(g).toMatchObject({ name, source: 'local', people: 0, spaces: 0, mappedFrom: [] })
+        const clash = await call(admin, 'POST', '/api/admin/groups', { name: name.toUpperCase(), source: 'local' })
+        expect([clash.status, clash.json.error]).toEqual([409, 'exists'])
+        const bad = await call(admin, 'POST', '/api/admin/groups', { name: ' ', source: 'local' })
+        expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+        const renamed = await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { name: `${name} 2`, description: 'd' })
+        expect(renamed.json).toMatchObject({ name: `${name} 2`, description: 'd' })
+        expect((await call(admin, 'PATCH', `/api/admin/groups/${g.id}`, { source: 'synced' })).status).toBe(400)
+        const list = await call(admin, 'GET', `/api/admin/groups?q=${encodeURIComponent(name.toLowerCase())}`)
+        expect((list.json.items as { id: string }[]).map((x) => x.id)).toEqual([g.id])
+        expect(list.json.next).toBe('')
+        const m = await newMember(uniq('gm'))
+        expect((await call(m.browser, 'GET', '/api/admin/groups')).status).toBe(403)
+        expect((await call(admin, 'GET', '/api/admin/groups/01ZZZZZZZZ')).json.error).toBe('not_found')
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
+        expect((await call(admin, 'GET', `/api/admin/groups/${g.id}`)).status).toBe(404)
+      })
+
+      it('people: local groups only, all or nothing; synced groups refuse; anyone signed in finds a group by name and sees theirs in the account', async () => {
+        const local = await mkGroup(uniq('Local'))
+        const synced = await mkGroup(uniq('Synced'), 'synced')
+        const m = await newMember(uniq('gp'))
+        const refused = await call(admin, 'POST', `/api/admin/groups/${synced.id}/members`, { userIds: [m.user.id] })
+        expect([refused.status, refused.json.error]).toEqual([409, 'group_synced'])
+        const missing = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, { userIds: [m.user.id, '01ZZZZZZZZ'] })
+        expect([missing.status, missing.json.error, missing.json.missing]).toEqual([404, 'user_not_found', ['01ZZZZZZZZ']])
+        expect((await call(admin, 'GET', `/api/admin/groups/${local.id}`)).json.people).toBe(0)
+        const added = await call(admin, 'POST', `/api/admin/groups/${local.id}/members`, { userIds: [m.user.id, m.user.id] })
+        expect(added.json).toEqual({ added: 1, already: 0 })
+        const people = (await call(admin, 'GET', `/api/admin/groups/${local.id}/members`)).json.items as { userId: string; from: unknown[] }[]
+        expect(people.map((p) => [p.userId, p.from])).toEqual([[m.user.id, []]])
+        expect(((await call(m.browser, 'GET', '/api/account')).json.groups as { id: string }[]).map((x) => x.id)).toEqual([local.id])
+        const found = await call(m.browser, 'GET', `/api/groups?q=${encodeURIComponent(local.name.slice(1, 8))}`)
+        expect(found.json.groups).toEqual([{ id: local.id, name: local.name, source: 'local' }])
+        expect((await call(m.browser, 'GET', '/api/groups')).status).toBe(400)
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(204)
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${local.id}/members/${m.user.id}`)).status).toBe(404)
+        await call(admin, 'DELETE', `/api/admin/groups/${local.id}`)
+        await call(admin, 'DELETE', `/api/admin/groups/${synced.id}`)
+      })
+
+      it('a group in a space gives its people the role; the union with their own; leaving through a group is refused; removal ends it', async () => {
+        const owner = await newMember(uniq('go'))
+        const person = await newMember(uniq('gq'))
+        const sp = await ownedSpace(owner, 'Shared')
+        const g = await mkGroup(uniq('Team'))
+        await call(admin, 'POST', `/api/admin/groups/${g.id}/members`, { userIds: [person.user.id] })
+        const base = `/api/spaces/${sp.id}`
+        expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
+        const refusals: [unknown, number, string][] = [
+          [{ groupId: '01ZZZZZZZZ', role: 'viewer' }, 404, 'group_not_found'],
+          [{ groupId: g.id, role: 'boss' }, 400, 'invalid'],
+        ]
+        for (const [body, status, code] of refusals) {
+          const r = await call(owner.browser, 'POST', `${base}/groups`, body)
+          expect([r.status, r.json.error], JSON.stringify(body)).toEqual([status, code])
+        }
+        const mine = ((await call(owner.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).find((s) => s.personal)!
+        expect((await call(owner.browser, 'POST', `/api/spaces/${mine.id}/groups`, { groupId: g.id, role: 'viewer' })).json.error).toBe('personal_space')
+        const added = await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'editor' })
+        expect(added.status).toBe(201)
+        expect(added.json).toEqual({ groupId: g.id, name: g.name, source: 'local', role: 'editor', people: 1, yours: false })
+        expect((await call(owner.browser, 'POST', `${base}/groups`, { groupId: g.id, role: 'viewer' })).json.error).toBe('exists')
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '', viaGroups: true, permissions: ['read', 'write'] })
+        // Members and groups of the space, and everyone who can reach it.
+        const listed = (await call(person.browser, 'GET', `${base}/members`)).json as { members: Member[]; groups: { groupId: string; yours: boolean }[] }
+        expect(listed.members.map((x) => x.userId)).toEqual([owner.user.id])
+        expect(listed.groups.map((x) => [x.groupId, x.yours])).toEqual([[g.id, true]])
+        const eff = (await call(person.browser, 'GET', `${base}/members/effective`)).json.items as { userId: string; role: string; directRole: string }[]
+        expect(eff.map((x) => [x.userId, x.role, x.directRole]).sort()).toEqual([[owner.user.id, 'owner', 'owner'], [person.user.id, 'editor', '']].sort())
+        // Cannot leave: not a member of one's own.
+        const leave = await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)
+        expect([leave.status, leave.json.error]).toEqual([409, 'member_via_group'])
+        // Direct viewer and editor through the group: the union, then the direct membership goes and the group's role stays.
+        await addMember(owner, sp.id, person.user.username, 'viewer')
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: 'viewer', viaGroups: true })
+        expect((await call(person.browser, 'DELETE', `${base}/members/${person.user.id}`)).status).toBe(204)
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'editor', directRole: '' })
+        // The role of the group changes; the group leaves the space.
+        expect((await call(owner.browser, 'PATCH', `${base}/groups/${g.id}`, { role: 'viewer' })).json.role).toBe('viewer')
+        expect(await roleOf(person.browser, sp.id)).toMatchObject({ role: 'viewer', permissions: ['read'] })
+        expect((await call(owner.browser, 'PATCH', `${base}/groups/01ZZZZZZZZ`, { role: 'viewer' })).status).toBe(404)
+        // Deleting a group that is in a space needs force.
+        const inUse = await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)
+        expect([inUse.status, inUse.json.error, inUse.json.spaces]).toEqual([409, 'group_in_use', 1])
+        expect((await call(owner.browser, 'DELETE', `${base}/groups/${g.id}`)).status).toBe(204)
+        expect((await call(person.browser, 'GET', `${base}/members`)).status).toBe(404)
+        expect((await call(admin, 'DELETE', `/api/admin/groups/${g.id}`)).status).toBe(204)
+      })
+    })
+
+    describe('tenants and layered settings (3.3)', () => {
+      const slugOf = (p: string) => `${p}${run}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)
+
+      it('the user object says whether a person is a site administrator and which tenant they are in', async () => {
+        const me = (await call(admin, 'GET', '/api/session')).json.user as User
+        expect(me.siteAdmin).toBe(true)
+        expect(me.tenant?.slug).toBe('default')
+        const m = await newMember(uniq('tm'))
+        expect(m.user.siteAdmin).toBe(false)
+        expect(m.user.tenant?.id).toBe('0000000000')
+        // Only site administrators reach the server's own settings and the tenants.
+        for (const path of ['/api/admin/tenancy', '/api/admin/tenants', '/api/admin/settings']) expect((await call(m.browser, 'GET', path)).status, path).toBe(403)
+        expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
+      })
+
+      it('mail is off until an administrator enables it: registration and reset answer as switched off, nothing can open registration', async () => {
+        const mail = (await call(admin, 'GET', '/api/admin/mail')).json
+        // A server this suite runs against has not been given SMTP.
+        expect(mail.enabled).toBe(false)
+        expect(mail).toMatchObject({ security: 'starttls', hasPassword: false })
+        const anon = browser()
+        expect((await call(anon, 'GET', '/api/register')).json).toEqual({ open: false })
+        const pr = (await call(anon, 'GET', '/api/auth/providers')).json
+        expect([pr.register, pr.forgot]).toEqual([false, false])
+        expect((await call(anon, 'POST', '/api/password/forgot', { login: 'nobody' })).json.error).toBe('password_reset_off')
+        expect((await call(anon, 'POST', '/api/register', { username: 'x1', name: 'x', email: 'x@example.test', password: 'a-long-password' })).json.error).toBe('registration_closed')
+        expect((await call(anon, 'POST', '/api/email/confirm', { token: 'nope' })).json.error).toBe('not_found')
+        expect((await call(admin, 'PUT', '/api/admin/settings/registration.open', { value: true })).json.error).toBe('mail_not_configured')
+        expect((await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error).toBe('mail_insecure')
+        const m = await newMember(uniq('ml'))
+        for (const [method, path] of [['GET', '/api/admin/mail'], ['PUT', '/api/admin/mail'], ['POST', '/api/admin/mail/test']] as const) expect((await call(m.browser, method, path, method === 'GET' ? undefined : {})).status, path).toBe(403)
+      })
+
+      it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
+        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+        try {
+          expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: false })).status).toBe(200)
+          const slug = slugOf('tn')
+          expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })).json.error).toBe('tenants_off')
+          expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })).json.enabled).toBe(true)
+          const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: 'A', name: 'x' })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          const made = await call(admin, 'POST', '/api/admin/tenants', { slug, name: ' Acme ' })
+          expect(made.status).toBe(201)
+          const t = made.json as { id: string; slug: string; name: string; default: boolean; disabled: boolean }
+          expect([t.slug, t.name, t.default, t.disabled]).toEqual([slug, 'Acme', false, false])
+          expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Again' })).json.error).toBe('exists')
+          const list = (await call(admin, 'GET', '/api/admin/tenants?limit=200')).json as { items: { id: string; default: boolean }[] }
+          expect(list.items[0].default).toBe(true)
+          expect(list.items.some((x) => x.id === t.id)).toBe(true)
+          const renamed = await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { name: 'Acme Two', disabled: true })
+          expect([renamed.json.name, renamed.json.disabled]).toEqual(['Acme Two', true])
+          expect((await call(admin, 'PATCH', `/api/admin/tenants/${t.id}`, { mood: 1 })).status).toBe(400)
+          expect((await call(admin, 'GET', '/api/admin/tenants/01ZZZZZZZZ')).json.error).toBe('not_found')
+          for (const body of [{ disabled: true }]) expect((await call(admin, 'PATCH', '/api/admin/tenants/0000000000', body)).json.error).toBe('default_tenant')
+          expect((await call(admin, 'DELETE', '/api/admin/tenants/0000000000')).json.error).toBe('default_tenant')
+          expect((await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)).status).toBe(204)
+          expect((await call(admin, 'GET', `/api/admin/tenants/${t.id}`)).status).toBe(404)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+        }
+      })
+
+      it('settings by layer: values are checked, a lock refuses the tenant, a restriction caps it, and what a lock hides is kept', async () => {
+        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+        await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+        const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('ts'), name: 'Settings' })).json as { id: string }
+        const site = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/settings/${key}`, body)
+        const mine = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/${key}`, body)
+        const view = async () => ((await call(admin, 'GET', `/api/admin/tenants/${t.id}/settings`)).json.settings as { key: string; effective: unknown; tenant: { value: unknown; inEffect: boolean }; site: { lower: { mode: string } } }[]).find((x) => x.key === 'registration.perHour')!
+        try {
+          expect((await site('registration.perHour', { value: 0 })).json.error).toBe('invalid')
+          expect((await site('no.such.setting', { value: 1 })).status).toBe(404)
+          // Registration cannot be opened while mail is not enabled; a tenant cannot touch what the site locks.
+          expect((await site('registration.open', { value: true })).json.error).toBe('mail_not_configured')
+          expect((await mine('registration.open', { value: true })).json.error).toBe('setting_locked')
+          // The site's rule for perHour: at most 50. A tenant above it is refused, below it is in effect.
+          expect((await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })).status).toBe(200)
+          expect((await mine('registration.perHour', { value: 80 })).json.error).toBe('setting_restricted')
+          expect((await mine('registration.perHour', { value: 30 })).status).toBe(200)
+          expect((await view()).effective).toBe(30)
+          // Tightened to 10: the tenant's 30 is kept, not in effect, and the answer counts the tenants.
+          const tight = await site('registration.perHour', { lower: { mode: 'restrict', max: 10 } })
+          expect(tight.json.affected).toBeGreaterThanOrEqual(1)
+          const v = await view()
+          expect([v.tenant.value, v.tenant.inEffect]).toEqual([30, false])
+          // Loosened again: it counts again.
+          await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })
+          expect((await view()).tenant.inEffect).toBe(true)
+          expect((await mine('registration.perHour', { value: null })).status).toBe(200)
+          expect((await mine('registration.perHour', { lower: { mode: 'restrict', max: 60 } })).json.error).toBe('setting_restricted')
+        } finally {
+          await site('registration.perHour', { lower: null })
+          await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+        }
+      })
+
+      it("the daily text's switches are the layered settings daily.own and daily.api; GET /api/settings says who keeps them off", async () => {
+        const m = await newMember(uniq('ts'))
+        const read = async (key: string) => (((await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; site: { value: unknown } }[]).find((x) => x.key === key))!.site.value
+        const was = await read('daily.own')
+        try {
+          expect((await call(admin, 'PUT', '/api/admin/daily', { allow: { own: false } })).status).toBe(200)
+          expect(await read('daily.own')).toBe(false)
+          const mineAll = (await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string; effective: unknown; space?: { canChange: boolean; inEffect: boolean; source?: string } }[]
+          const own = mineAll.find((x) => x.key === 'daily.own')!
+          expect([own.effective, own.space?.canChange, own.space?.inEffect, own.space?.source]).toEqual([false, false, false, 'site'])
+          expect((await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: true })).status).toBe(200)
+          const back = (await call(admin, 'GET', '/api/admin/daily')).json as { allow: { own: boolean } }
+          expect(back.allow.own).toBe(true)
+        } finally {
+          await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: was })
+        }
+      })
+    })
+
+    describe('quotas and usage (3.3)', () => {
+      const slugOf = (p: string) => `${p}${run}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)
+      type Row = { used: number; limit: number | null }
+
+      it('GET /api/account/usage is the caller\'s own spaces, bytes and pages against their limits', async () => {
+        const m = await newMember(uniq('qa'))
+        const r = await call(m.browser, 'GET', '/api/account/usage')
+        expect(r.status).toBe(200)
+        const u = r.json as unknown as { spaces: Row; bytes: Row; pages: Row; measuredAt: string | null; notices: unknown[] }
+        // The personal space is one; nothing is measured on the request path, and nothing is limited unless an administrator said so.
+        expect(u.spaces.used).toBe(1)
+        expect(typeof u.spaces.limit === 'number' || u.spaces.limit === null).toBe(true)
+        expect(u.bytes.used).toBeGreaterThanOrEqual(0)
+        expect(u.pages.used).toBeGreaterThanOrEqual(0)
+        expect(u.notices).toEqual([])
+        expect(typeof u.measuredAt === 'string' || u.measuredAt === null).toBe(true)
+        // Signed in only.
+        expect((await call(browser(), 'GET', '/api/account/usage')).status).toBe(401)
+      })
+
+      it('GET /api/admin/usage lists people with their numbers, limits and own limits; it is checked, and for administrators only', async () => {
+        const m = await newMember(uniq('qb'))
+        const list = await call(admin, 'GET', '/api/admin/usage?limit=200')
+        expect(list.status).toBe(200)
+        const items = list.json.items as { user: { id: string; username: string; name: string }; tenant: string; spaces: number; bytes: number; pages: number; limits: Record<string, number | null>; own: Record<string, number | null>; over: string[]; measuredAt: string | null }[]
+        expect(items.length).toBeGreaterThan(0)
+        for (let i = 1; i < items.length; i++) expect(items[i].bytes).toBeLessThanOrEqual(items[i - 1].bytes)
+        const mine = items.find((x) => x.user.id === m.user.id)
+        // Found on the first page unless the server has more than 200 people with more bytes than this one.
+        if (mine) {
+          expect(mine.spaces).toBe(1)
+          expect(Object.keys(mine.limits).sort()).toEqual(['bytes', 'pages', 'spaces'])
+          expect(mine.own).toEqual({ spaces: null, bytes: null, pages: null })
+          expect(mine.over).toEqual([])
+        }
+        expect(typeof list.json.next).toBe('string')
+        expect((await call(admin, 'GET', '/api/admin/usage?limit=0')).status).toBe(400)
+        expect((await call(admin, 'GET', '/api/admin/usage?over=yes')).status).toBe(400)
+        expect((await call(admin, 'GET', '/api/admin/usage?tenant=01ZZZZZZZZ')).json.error).toBe('not_found')
+        expect((await call(m.browser, 'GET', '/api/admin/usage')).status).toBe(403)
+      })
+
+      it('quota on PATCH /api/users/{id} sets a person\'s own limits; the number of spaces is the one refused, with what ran out', async () => {
+        const m = await newMember(uniq('qc'))
+        const path = `/api/users/${m.user.id}`
+        expect((await call(m.browser, 'PATCH', path, { quota: { spaces: 5 } })).status).toBe(403)
+        for (const bad of ['x', { disk: 1 }, { spaces: -1 }, { spaces: 10001 }, { bytes: 0 }, { pages: 1.5 }, { bytes: '1' }]) {
+          const r = await call(admin, 'PATCH', path, { quota: bad })
+          expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+        }
+        const set = await call(admin, 'PATCH', path, { quota: { spaces: 1 } })
+        expect(set.status).toBe(200)
+        expect((set.json.user as User).quota).toEqual({ spaces: 1, bytes: null, pages: null })
+        try {
+          // The personal space is the one they may have.
+          const refused = await call(m.browser, 'POST', '/api/spaces', { name: 'One too many' })
+          expect([refused.status, refused.json.error, refused.json.quota, refused.json.limit, refused.json.used]).toEqual([403, 'quota_exceeded', 'spaces', 1, 1])
+          expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toEqual({ used: 1, limit: 1 })
+          const raised = await call(admin, 'PATCH', path, { quota: { spaces: 3, pages: 100000 } })
+          expect((raised.json.user as User).quota).toEqual({ spaces: 3, bytes: null, pages: 100000 })
+          expect((await call(m.browser, 'POST', '/api/spaces', { name: 'Allowed now' })).status).toBe(201)
+          // 0 is no limit; null follows the tenant and the site again.
+          expect((await call(admin, 'PATCH', path, { quota: { spaces: 0 } })).status).toBe(200)
+          expect((await call(m.browser, 'GET', '/api/account/usage')).json.spaces).toMatchObject({ used: 2, limit: null })
+        } finally {
+          const cleared = await call(admin, 'PATCH', path, { quota: { spaces: null, bytes: null, pages: null } })
+          expect((cleared.json.user as User).quota).toEqual({ spaces: null, bytes: null, pages: null })
+        }
+        const listed = ((await call(admin, 'GET', '/api/users')).json.users as User[]).find((x) => x.id === m.user.id)
+        expect(listed?.quota).toEqual({ spaces: null, bytes: null, pages: null })
+      })
+
+      it('the quotas are layered settings with a person layer, checked like the others; a tenant says what it uses', async () => {
+        const settings = (await call(admin, 'GET', '/api/admin/settings')).json.settings as { key: string; kind: string; layers: string[]; site: { value: unknown } }[]
+        for (const key of ['quota.spacesPerPerson', 'quota.bytesPerPerson', 'quota.pagesPerPerson']) {
+          const d = settings.find((x) => x.key === key)
+          expect([d?.kind, d?.layers]).toEqual(['limit', ['site', 'tenant', 'person']])
+        }
+        expect((await call(admin, 'PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 0 })).json.error).toBe('invalid')
+        expect((await call(admin, 'PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 10001 })).json.error).toBe('invalid')
+        // A person has no use for the layer: it is not among what GET /api/settings offers.
+        const m = await newMember(uniq('qd'))
+        expect(((await call(m.browser, 'GET', '/api/settings')).json.settings as { key: string }[]).some((x) => x.key.startsWith('quota.'))).toBe(false)
+        const tenant = (await call(admin, 'GET', '/api/admin/tenants/0000000000')).json as unknown as { usage: { people: number; spaces: number; bytes: number; pages: number; measuredAt: string | null; over: string[] } }
+        expect(tenant.usage.people).toBeGreaterThanOrEqual(1)
+        expect(tenant.usage.spaces).toBeGreaterThanOrEqual(1)
+        expect(Array.isArray(tenant.usage.over)).toBe(true)
+        expect('measuredAt' in tenant.usage).toBe(true)
+      })
+
+      it('a new tenant\'s first administrator\'s invite fills in the form that accepts it; nothing is mailed', async () => {
+        const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+        await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+        const username = uniq('qa')
+        const made = await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('qi'), name: 'Invite', admin: { username, name: 'First Admin', email: 'first@example.test' } })
+        expect(made.status).toBe(201)
+        const tenantId = made.json.id as string
+        const inv = made.json.invite as { id: string; token: string; role: string; username: string; name: string; email: string }
+        try {
+          expect([inv.role, inv.username, inv.name, inv.email]).toEqual(['admin', username, 'First Admin', 'first@example.test'])
+          const check = await call(browser(), 'POST', '/api/invites/check', { token: inv.token })
+          expect(check.status).toBe(200)
+          expect([check.json.role, check.json.username, check.json.name, check.json.email]).toEqual(['admin', username, 'First Admin', 'first@example.test'])
+          // An invite without a fill has nothing in them.
+          const plain = (await call(admin, 'POST', '/api/invites', { role: 'member' })).json as { id: string; token: string }
+          const empty = await call(browser(), 'POST', '/api/invites/check', { token: plain.token })
+          expect([empty.json.username ?? '', empty.json.name ?? '', empty.json.email ?? '']).toEqual(['', '', ''])
+          await call(admin, 'DELETE', `/api/invites/${plain.id}`)
+          const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('qj'), name: 'Bad', admin: { username, email: 'not-an-address' } })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+        } finally {
+          await call(admin, 'DELETE', `/api/invites/${inv.id}`)
+          await call(admin, 'DELETE', `/api/admin/tenants/${tenantId}`)
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+        }
+      })
+    })
+
     describe('members and permissions', () => {
       it('adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member\'s own list', async () => {
         const owner = await newMember(uniq('mo'))
@@ -1029,6 +1395,11 @@ function suite(target: Target) {
       const adminPaths: [string, string, unknown?][] = [
         ['GET', '/api/admin/spaces'],
         ['GET', '/api/admin/status'],
+        ['GET', '/api/admin/security'],
+        ['PUT', '/api/admin/security', {}],
+        ['GET', '/api/admin/auth/providers'],
+        ['POST', '/api/admin/auth/providers', {}],
+        ['GET', '/api/admin/audit'],
         ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],
         ['POST', '/api/admin/spaces/01ZZZZZZZZ/transfer', { userId: 'x' }],
@@ -1233,58 +1604,77 @@ function suite(target: Target) {
       })
     })
 
+    // The administrators' re-check and one-click App creation are site-only, on a real server and in the mock alike;
+    // without an App there is nothing to check (what they do with one is below, against the mock's GitHub).
+    describe('the App re-check and creation endpoints', () => {
+      it('are for site administrators, and a re-check needs an App', async () => {
+        const m = await newMember(uniq('ghc'))
+        for (const [path, body] of [
+          ['/api/admin/connections/github/check', {}],
+          ['/api/admin/connections/github/manifest', {}],
+        ] as const) {
+          const r = await call(m.browser, 'POST', path, body)
+          expect([r.status, r.json?.error], path).toEqual([403, 'forbidden'])
+        }
+        const none = await call(admin, 'POST', '/api/admin/connections/github/check', {})
+        expect([none.status, none.json?.error]).toEqual([409, 'provider_not_configured'])
+      })
+    })
+
     // GitHub (docs/api.md, "GitHub"). There is no GitHub behind a real server in this setup: the mock plays it.
     describe.skipIf(!!REAL)('GitHub (mock only)', () => {
       const KEY = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
       const CLIENT = 'Iv23liMockClientId'
-      const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/github', body)
+      const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/connections/github', body)
       const mockHook = (body: unknown) => call(admin, 'POST', '/api/_mock/github', body)
       const codeOf = (r: { json: any }) => r.json?.error
+      // The GitHub provider's entry in GET /api/connections.
+      const ghProvider = async (b: Browser) => ((await call(b, 'GET', '/api/connections')).json.providers as { id: string }[]).find((p) => p.id === 'github') as any
 
       // Plays the browser through connecting a GitHub account.
-      const connectAccount = async (b: Browser, ret = '/settings/github') => {
-        const start = await call(b, 'POST', '/api/github/authorization/start', { return: ret })
+      const connectAccount = async (b: Browser, ret = '/settings/connections') => {
+        const start = await call(b, 'POST', '/api/connections/github/authorization/start', { return: ret })
         expect(start.status).toBe(200)
         const cb = await call(b, 'GET', start.json.url, undefined, {})
         return cb
       }
 
-      it('starts with no App: everyone is told so, and every other endpoint answers 409 github_not_configured', async () => {
+      it('starts with no App: everyone is told so, and every other endpoint answers 409 provider_not_configured', async () => {
         const m = await newMember(uniq('gh0'))
-        const info = await call(m.browser, 'GET', '/api/github')
-        expect([info.status, info.json]).toEqual([200, { app: null, userAuthorization: false, authorization: null }])
-        const off = await call(admin, 'GET', '/api/admin/github')
+        const info = { json: await ghProvider(m.browser) }
+        expect(info.json).toMatchObject({ id: 'github', configured: false, app: null, userAuthorization: false, connection: null, leftovers: [] })
+        const off = await call(admin, 'GET', '/api/admin/connections/github')
         expect(off.json).toMatchObject({ configured: false })
-        expect(off.json.callbackUrl).toMatch(/\/api\/github\/authorization\/callback$/)
+        expect(off.json.callbackUrl).toMatch(/\/api\/connections\/github\/authorization\/callback$/)
         for (const [method, path, body] of [
-          ['POST', '/api/github/authorization/start', {}],
-          ['GET', '/api/github/owners'],
-          ['GET', '/api/github/repos?mine=true'],
-          ['GET', '/api/admin/github/installations'],
-          ['PUT', '/api/admin/github/installations/5001', { shared: true }],
+          ['POST', '/api/connections/github/authorization/start', {}],
+          ['GET', '/api/connections/github/owners'],
+          ['GET', '/api/connections/github/repos?mine=true'],
+          ['GET', '/api/admin/connections/github/installations'],
+          ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
         ] as const) {
           const r = await call(method.startsWith('P') && path.startsWith('/api/admin') ? admin : path.startsWith('/api/admin') ? admin : m.browser, method, path, body)
-          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'github_not_configured'])
+          expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'provider_not_configured'])
         }
-        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Gh', github: { owner: 'kazuhahub', name: 'x' } })
-        expect([sp.status, codeOf(sp)]).toEqual([409, 'github_not_configured'])
+        const sp = await call(m.browser, 'POST', '/api/spaces', { name: 'Gh', storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'x' } } })
+        expect([sp.status, codeOf(sp)]).toEqual([409, 'provider_not_configured'])
       })
 
       it('is for administrators to set up: a member gets 403, a refused check saves nothing, and no secret is ever returned', async () => {
         const m = await newMember(uniq('gh1'))
         for (const [method, path, body] of [
-          ['GET', '/api/admin/github'],
-          ['PUT', '/api/admin/github', {}],
-          ['DELETE', '/api/admin/github'],
-          ['GET', '/api/admin/github/installations'],
+          ['GET', '/api/admin/connections/github'],
+          ['PUT', '/api/admin/connections/github', {}],
+          ['DELETE', '/api/admin/connections/github'],
+          ['GET', '/api/admin/connections/github/installations'],
         ] as const) {
           const r = await call(m.browser, method, path, body)
           expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([403, 'forbidden'])
         }
         expect(codeOf(await putApp(admin, { appId: '1234567' }))).toBe('invalid')
-        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('github_key_invalid')
-        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' }))).toBe('github_client_rejected')
-        expect(((await call(admin, 'GET', '/api/admin/github')).json as any).configured).toBe(false)
+        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('key_invalid')
+        expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' }))).toBe('client_rejected')
+        expect(((await call(admin, 'GET', '/api/admin/connections/github')).json as any).configured).toBe(false)
         const saved = await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'a-secret' })
         expect(saved.status).toBe(200)
         expect(saved.json).toMatchObject({ configured: true, appId: '1234567', clientId: CLIENT, slug: 'petalbook-notes', privateKey: { set: true }, clientSecret: { set: true }, userAuthorization: true, missing: [], spaces: 0 })
@@ -1294,93 +1684,129 @@ function suite(target: Target) {
         // Saving again with the key and the secret left out keeps them.
         const again = await putApp(admin, { appId: '1234567' })
         expect(again.json).toMatchObject({ privateKey: { set: true }, clientSecret: { set: true } })
-        const seen = await call(m.browser, 'GET', '/api/github')
-        expect(seen.json).toMatchObject({ app: { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: expect.any(String), installUrl: expect.stringContaining('/installations/new') }, userAuthorization: true, authorization: null })
+        const seen = { json: await ghProvider(m.browser) }
+        expect(seen.json).toMatchObject({ app: { name: 'PetalBook Notes', slug: 'petalbook-notes', htmlUrl: expect.any(String), installUrl: expect.stringContaining('/installations/new') }, userAuthorization: true, connection: null })
       })
 
       it('connects an account only from the browser that started it, once, and disconnects', async () => {
         const m = await newMember(uniq('gh2'))
         const other = await newMember(uniq('gh3'))
-        const start = await call(m.browser, 'POST', '/api/github/authorization/start', { return: '/settings/github' })
-        expect(start.json.url).toContain('/api/github/authorization/callback')
+        const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections' })
+        expect(start.json.url).toContain('/api/connections/github/authorization/callback')
         // Another browser, or no session: expired, nothing is connected.
         const stray = await call(other.browser, 'GET', start.json.url, undefined, {})
-        expect([stray.status, stray.headers.get('Location')]).toEqual([303, '/settings?github_error=expired'])
+        expect([stray.status, stray.headers.get('Location')]).toEqual([303, '/settings?provider=github&connection_error=expired'])
         const ok = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/github'])
+        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/connections'])
         const replay = await call(m.browser, 'GET', start.json.url, undefined, {})
-        expect(replay.headers.get('Location')).toBe('/settings?github_error=expired')
-        const info = await call(m.browser, 'GET', '/api/github')
-        expect(info.json.authorization).toMatchObject({ state: 'ok', spaces: 0 })
-        expect(typeof info.json.authorization.login).toBe('string')
-        expect((await call(m.browser, 'DELETE', '/api/github/authorization')).status).toBe(204)
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization).toBeNull()
-        expect((await call(m.browser, 'DELETE', '/api/github/authorization')).status).toBe(204)
+        expect(replay.headers.get('Location')).toBe('/settings?provider=github&connection_error=expired')
+        const info = { json: await ghProvider(m.browser) }
+        expect(info.json.connection).toMatchObject({ state: 'ok', spaces: 0 })
+        expect(typeof info.json.connection.login).toBe('string')
+        expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
+        expect((await ghProvider(m.browser)).connection).toBeNull()
+        expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
       })
 
       it('lists the accounts to create in and the repositories to connect, a page at a time', async () => {
         const m = await newMember(uniq('gh4'))
-        expect(codeOf(await call(m.browser, 'GET', '/api/github/repos?mine=true'))).toBe('github_not_authorized')
+        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos?mine=true'))).toBe('not_connected')
         await connectAccount(m.browser)
-        const owners = await call(m.browser, 'GET', '/api/github/owners')
+        const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
         expect(owners.status).toBe(200)
         expect(owners.json.items[0]).toMatchObject({ type: 'User', via: 'user', installationId: null })
         const org = owners.json.items.find((o: any) => o.login === 'kazuhahub')
         expect(org).toMatchObject({ type: 'Organization', via: 'user', installationId: expect.any(Number) })
         expect(typeof owners.json.next).toBe('string')
-        const repos = await call(m.browser, 'GET', `/api/github/repos?installation=${org.installationId}`)
+        const repos = await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}`)
         expect(repos.status).toBe(200)
         expect(repos.json.items[0]).toMatchObject({ id: expect.any(Number), fullName: expect.stringContaining('kazuhahub/'), private: expect.any(Boolean), defaultBranch: 'main', canPush: true })
-        expect(codeOf(await call(m.browser, 'GET', '/api/github/repos'))).toBe('invalid')
-        expect(codeOf(await call(m.browser, 'GET', `/api/github/repos?installation=${org.installationId}&mine=true`))).toBe('invalid')
-        expect((await call(m.browser, 'GET', '/api/github/repos?installation=99')).status).toBe(404)
-        expect(codeOf(await call(m.browser, 'GET', '/api/github/owners?cursor=zzz'))).toBe('invalid')
+        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos'))).toBe('invalid')
+        expect(codeOf(await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}&mine=true`))).toBe('invalid')
+        expect((await call(m.browser, 'GET', '/api/connections/github/repos?installation=99')).status).toBe(404)
+        expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/owners?cursor=zzz'))).toBe('invalid')
       })
 
-      it('shares an organisation\'s installation, and a member without a GitHub account can then use it', async () => {
-        const list = await call(admin, 'GET', '/api/admin/github/installations')
+      it('shares an organisation\'s installation with a tenant, and a member without a GitHub account there can then use it', async () => {
+        const list = await call(admin, 'GET', '/api/admin/connections/github/installations')
         expect(list.status).toBe(200)
         const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
-        expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, shared: false, spaces: 0 })
-        expect(codeOf(await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, {}))).toBe('invalid')
-        expect((await call(admin, 'PUT', '/api/admin/github/installations/424242', { shared: true })).status).toBe(404)
-        const put = await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: true })
-        expect(put.json).toMatchObject({ id: item.id, shared: true })
+        expect(item).toMatchObject({ account: { type: 'Organization' }, repositorySelection: 'selected', suspended: false, tenants: [], spaces: 0 })
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {}))).toBe('invalid')
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { shared: true }))).toBe('invalid')
+        expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: ['01ZZZZZZZZ'] }))).toBe('invalid')
+        expect((await call(admin, 'PUT', '/api/admin/connections/github/installations/424242', { tenants: [] })).status).toBe(404)
+        const put = await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: ['0000000000'] })
+        expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
         const m = await newMember(uniq('gh5'))
-        const owners = await call(m.browser, 'GET', '/api/github/owners')
-        expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id }])
-        const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, github: { owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } })
+        const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
+        expect(owners.json.items).toEqual([{ login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id, needsInstall: false }])
+        const made = await call(m.browser, 'POST', '/api/spaces', { name: `Shared ${run}`, storage: { sync: { provider: 'github', owner: 'petal-team', name: `shared-${run}`, private: false, description: 'd' } } })
         expect(made.status).toBe(201)
         const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-        expect(remote.json).toMatchObject({ state: 'ok', errorCode: '', credential: { type: 'github', via: 'app', installationId: item.id, account: 'petal-team' } })
+        expect(remote.json).toMatchObject({ state: 'ok', errorCode: '', credential: { type: 'connection', provider: 'github', via: 'app', installationId: item.id, account: 'petal-team' } })
         // The App cannot be removed while a space syncs through it.
-        expect(codeOf(await call(admin, 'DELETE', '/api/admin/github'))).toBe('github_app_in_use')
+        expect(codeOf(await call(admin, 'DELETE', '/api/admin/connections/github'))).toBe('provider_in_use')
         await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
-        await call(admin, 'PUT', `/api/admin/github/installations/${item.id}`, { shared: false })
+        expect((await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: [] })).json.tenants).toEqual([])
       })
 
       it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {
         const m = await newMember(uniq('gh6'))
         await connectAccount(m.browser)
-        const body = (extra: Record<string, unknown>) => ({ name: `Repo ${run}`, github: { owner: 'kazuhahub', name: `notes-${run}`, ...extra } })
+        const body = (extra: Record<string, unknown>) => ({ name: `Repo ${run}`, storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `notes-${run}`, ...extra } } })
         const made = await call(m.browser, 'POST', '/api/spaces', body({ private: true, description: 'Notes' }))
         expect(made.status).toBe(201)
         expect(made.headers.get('Location')).toBe(`/api/spaces/${made.json.id}`)
         expect(made.json.sync).toBe('ok')
         const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-        expect(remote.json).toMatchObject({ url: `https://github.com/kazuhahub/notes-${run}.git`, branch: 'main', state: 'ok', errorCode: '', credential: { type: 'github', via: 'app', account: 'kazuhahub', repoId: expect.any(Number) } })
+        expect(remote.json).toMatchObject({ url: `https://github.com/kazuhahub/notes-${run}.git`, branch: 'main', state: 'ok', errorCode: '', credential: { type: 'connection', provider: 'github', via: 'app', account: 'kazuhahub', repoId: expect.any(Number) } })
         expect(JSON.stringify(remote.json)).not.toMatch(/token|secret/i)
         // The same name again: taken; create: false uses it.
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('github_name_taken')
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('name_taken')
         expect((await call(m.browser, 'POST', '/api/spaces', body({ create: false }))).status).toBe(201)
-        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', { name: 'x', github: { owner: 'nobody-here', name: 'x' } }))).toBe('github_owner_not_allowed')
+        expect(codeOf(await call(m.browser, 'POST', '/api/spaces', { name: 'x', storage: { sync: { provider: 'github', owner: 'nobody-here', name: 'x' } } }))).toBe('owner_not_allowed')
         expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({ name: 'bad name' })))).toBe('invalid')
         expect((await mockHook({ trap: 'noPermission' })).status).toBe(200)
         const refused = await call(m.browser, 'POST', '/api/spaces', body({ name: `other-${run}` }))
-        expect([refused.status, codeOf(refused)]).toEqual([403, 'github_no_permission'])
+        expect([refused.status, codeOf(refused)]).toEqual([403, 'provider_refused'])
         await mockHook({ trap: 'noPermission', on: false })
         const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
         expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
+      })
+
+      it('reminds a person of an empty repository a failed space left, until a space connects to it or they dismiss it', async () => {
+        const m = await newMember(uniq('gh6b'))
+        const other = await newMember(uniq('gh6c'))
+        await connectAccount(m.browser)
+        expect((await ghProvider(m.browser)).leftovers).toEqual([])
+        const body = (name: string, create = true) => ({ name: 'Kept', storage: { sync: { provider: 'github', owner: 'kazuhahub', name, create } } })
+        await mockHook({ trap: 'pushFails' })
+        const failed = await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`))
+        expect([failed.status, codeOf(failed)]).toEqual([502, 'push_failed'])
+        const second = await call(m.browser, 'POST', '/api/spaces', body(`left2-${run}`))
+        await mockHook({ trap: 'pushFails', on: false })
+        const list = (await ghProvider(m.browser)).leftovers
+        expect(list).toHaveLength(2)
+        expect(list[1]).toMatchObject({ repoId: failed.json.repo.id, fullName: `kazuhahub/left-${run}`, htmlUrl: failed.json.repo.htmlUrl, spaceName: 'Kept', created: expect.stringMatching(/Z$/) })
+        // Newest first, and only the person's own.
+        expect(list[0].repoId).toBe(second.json.repo.id)
+        expect((await ghProvider(other.browser)).leftovers).toEqual([])
+        // A connection that is refused (a branch name that cannot be used) leaves the reminder.
+        const sp = await ownedSpace(m, 'Refused')
+        const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: `https://github.com/kazuhahub/left2-${run}.git`, branch: 'bad branch', credential: { type: 'connection', provider: 'github', via: 'user' } })
+        expect([refused.status, codeOf(refused)]).toEqual([400, 'invalid'])
+        expect((await ghProvider(m.browser)).leftovers).toHaveLength(2)
+        // A space connecting to the repository (here by create: false) answers its reminder.
+        expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
+        expect((await ghProvider(m.browser)).leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
+        // Dismissing is the person's own, and fine when it is gone already.
+        expect((await call(other.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await ghProvider(m.browser)).leftovers).toHaveLength(1)
+        expect((await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status).toBe(204)
+        expect((await ghProvider(m.browser)).leftovers).toEqual([])
+        expect((await call(m.browser, 'DELETE', '/api/connections/github/leftovers/nope')).status).toBe(404)
       })
 
       it('switches a space to the App or to the user\'s connection with PUT .../remote', async () => {
@@ -1388,31 +1814,96 @@ function suite(target: Target) {
         await connectAccount(m.browser)
         const sp = await ownedSpace(m, 'Switch')
         const put = (credential: unknown, url = 'https://github.com/kazuhahub/wiki.git') => call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url, credential })
-        expect(codeOf(await put({ type: 'github' }))).toBe('invalid')
-        expect(codeOf(await put({ type: 'github', via: 'app' }, 'https://example.com/a/b.git'))).toBe('invalid')
-        const app = await put({ type: 'github', via: 'app' }, 'git@github.com:kazuhahub/wiki.git')
+        expect(codeOf(await put({ type: 'connection', provider: 'github' }))).toBe('invalid')
+        expect(codeOf(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://example.com/a/b.git'))).toBe('invalid')
+        const app = await put({ type: 'connection', provider: 'github', via: 'app' }, 'git@github.com:kazuhahub/wiki.git')
         expect(app.status).toBe(200)
-        expect(app.json).toMatchObject({ url: 'https://github.com/kazuhahub/wiki.git', credential: { type: 'github', via: 'app' } })
-        const mine = await call(m.browser, 'GET', '/api/github')
-        expect(mine.json.authorization.spaces).toBe(0)
-        const user = await put({ type: 'github', via: 'user' }, 'https://github.com/kazuhahub/notes.git')
-        expect(user.json).toMatchObject({ credential: { type: 'github', via: 'user', user: { id: m.user.id, username: m.user.username }, login: expect.any(String) } })
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization.spaces).toBe(1)
-        expect([(await put({ type: 'github', via: 'app' }, 'https://github.com/none/x.git')).status]).toEqual([409])
+        expect(app.json).toMatchObject({ url: 'https://github.com/kazuhahub/wiki.git', credential: { type: 'connection', provider: 'github', via: 'app' } })
+        const mine = { json: await ghProvider(m.browser) }
+        expect(mine.json.connection.spaces).toBe(0)
+        const user = await put({ type: 'connection', provider: 'github', via: 'user' }, 'https://github.com/kazuhahub/notes.git')
+        expect(user.json).toMatchObject({ credential: { type: 'connection', provider: 'github', via: 'user', user: { id: m.user.id, username: m.user.username }, login: expect.any(String) } })
+        expect((await ghProvider(m.browser)).connection.spaces).toBe(1)
+        expect([(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://github.com/none/x.git')).status]).toEqual([409])
         // An expired connection puts the space in error with a code that says why; connecting again and syncing fixes it.
         await mockHook({ expire: true, user: m.user.id })
         const bad = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
-        expect(bad.json).toMatchObject({ state: 'error', errorCode: 'github_authorization_expired' })
-        expect((await call(m.browser, 'GET', '/api/github')).json.authorization.state).toBe('expired')
+        expect(bad.json).toMatchObject({ state: 'error', errorCode: 'connection_expired' })
+        expect((await ghProvider(m.browser)).connection.state).toBe('expired')
         await connectAccount(m.browser)
         const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
         expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
       })
 
+      it('connects through the installation page in one flow, and tells the personal account that needs the App', async () => {
+        const m = await newMember(uniq('gh10'))
+        const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections', install: true })
+        expect(start.status).toBe(200)
+        expect(start.json.url).toContain('setup_action=install')
+        const cb = await call(m.browser, 'GET', start.json.url, undefined, {})
+        expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/connections'])
+        expect((await ghProvider(m.browser)).connection).toMatchObject({ state: 'ok' })
+        // An organisation that has to approve the installation first.
+        const asked = await call(m.browser, 'POST', '/api/connections/github/authorization/start', { return: '/settings/connections', install: true })
+        const pending = await call(m.browser, 'GET', asked.json.url.replace('setup_action=install', 'setup_action=request'), undefined, {})
+        expect(pending.headers.get('Location')).toBe('/settings?provider=github&connection_error=requested')
+        // The own account of someone the App is not installed on: marked, and refused with the way out.
+        const other = await newMember(uniq('gh11'))
+        await connectAccount(other.browser)
+        await mockHook({ trap: 'personalNeedsInstall' })
+        try {
+          const owners = await call(other.browser, 'GET', '/api/connections/github/owners')
+          expect(owners.json.items[0]).toMatchObject({ type: 'User', needsInstall: true })
+          expect(owners.json.items.filter((o: any) => o.needsInstall)).toHaveLength(1)
+          const login = owners.json.items[0].login
+          const refused = await call(other.browser, 'POST', '/api/spaces', { name: 'Own', storage: { sync: { provider: 'github', owner: login, name: `own-${run}` } } })
+          expect([refused.status, codeOf(refused)]).toEqual([409, 'app_not_installed'])
+          expect(refused.json.installUrl).toContain('/installations/new')
+        } finally {
+          await mockHook({ trap: 'personalNeedsInstall', on: false })
+        }
+        expect((await call(m.browser, 'GET', '/api/connections/github/owners')).json.items[0].needsInstall).toBe(false)
+      })
+
+      it('names the permission an App lacks, and the re-check shows what GitHub says now', async () => {
+        const m = await newMember(uniq('gh12'))
+        await connectAccount(m.browser)
+        await mockHook({ trap: 'missingPermission' })
+        try {
+          const r = await call(m.browser, 'POST', '/api/spaces', { name: 'Perm', storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `perm-${run}` } } })
+          expect([r.status, codeOf(r)]).toEqual([403, 'app_missing_permission'])
+          expect(r.json.missing).toEqual(['administration'])
+        } finally {
+          await mockHook({ trap: 'missingPermission', on: false })
+        }
+        // GitHub's side changes; the view keeps the last check until it is asked again.
+        const before = (await call(admin, 'GET', '/api/admin/connections/github')).json
+        expect(before).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+        await mockHook({ side: { permissions: { administration: 'write', metadata: 'read' }, gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false } })
+        expect((await call(admin, 'GET', '/api/admin/connections/github')).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+        const checked = await call(admin, 'POST', '/api/admin/connections/github/check', {})
+        expect(checked.status).toBe(200)
+        expect(checked.json).toMatchObject({ missing: ['contents'], gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }], anyAccount: false })
+        expect((await call(admin, 'GET', '/api/admin/connections/github')).json.missing).toEqual(['contents'])
+        await mockHook({ side: { permissions: { administration: 'write', contents: 'write', metadata: 'read' }, gaps: [], anyAccount: true } })
+        expect((await call(admin, 'POST', '/api/admin/connections/github/check', {})).json).toMatchObject({ missing: [], gaps: [], anyAccount: true })
+      })
+
+      it('checks the organisation and name before making the App, and does not replace one that is in use', async () => {
+        const m = await newMember(uniq('gh13'))
+        await connectAccount(m.browser)
+        expect(codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'a/b' }))).toBe('invalid')
+        expect(codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { name: 'x'.repeat(35) }))).toBe('invalid')
+        const used = await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'kazuhahub' })
+        expect([used.status, codeOf(used)]).toEqual([409, 'provider_in_use'])
+      })
+
       it('puts other remotes\' error states under errorCode too', async () => {
-        const sp = await ownedSpace({ browser: admin }, 'Plain')
-        await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
-        const r = await call(admin, 'GET', `/api/spaces/${sp.id}/remote`)
+        // A member of their own, so the administrator's spaces stay under the default quota of 20 for the rest of the run.
+        const m = await newMember(uniq('gh9'))
+        const sp = await ownedSpace(m, 'Plain')
+        await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url: 'https://github.com/a/b.git', credential: { type: 'token', token: 'x' } })
+        const r = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
         expect(r.json.errorCode).toBe('')
       })
     })
@@ -1483,6 +1974,8 @@ function suite(target: Target) {
         expect([put.status, put.json.error]).toEqual([409, 'remote_required'])
         expect((await call(admin, 'POST', base + '/move')).status).toBe(404)
         expect((await call(admin, 'DELETE', base)).status).toBe(404)
+        // The administrator's spaces count against their quota (3.3), which the later tests need.
+        expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
       })
 
       it.skipIf(!!REAL)('mock only: connects one, moves the attachments with progress, and cannot take it away after', async () => {
@@ -1507,6 +2000,7 @@ function suite(target: Target) {
         expect(state).toBe('done')
         const del = await call(admin, 'DELETE', base)
         expect([del.status, del.json.error]).toEqual([409, 'conflict'])
+        expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
       })
 
       it('is for administrators only', async () => {
@@ -4550,11 +5044,11 @@ function suite(target: Target) {
       expect([again.status, again.json.error]).toEqual([409, 'exists'])
     })
 
-    it('login through the provider: an identity nobody has is redirected to /login?error=no_account; a linked one signs in and goes to the return path', async () => {
+    it('login through the provider: an identity nobody has is redirected to /login?sso_error=no_account; a linked one signs in and goes to the return path', async () => {
       const b = ssoBrowser()
       const first = await start(b, { intent: 'login', return: '/s/abc' })
       const denied = await callback(b, first.url)
-      expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?error=no_account'])
+      expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?sso_error=no_account'])
 
       // Link it from a signed-in account, then sign in with it.
       const me = ssoBrowser()
@@ -4583,27 +5077,27 @@ function suite(target: Target) {
       }
     })
 
-    it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?error=expired', async () => {
+    it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?sso_error=expired', async () => {
       const b = ssoBrowser()
       const s = await start(b, { intent: 'login' })
       expect((await callback(b, s.url)).headers.get('Location')).toBe('/')
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?error=expired')
+      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=expired')
       const other = ssoBrowser()
       const s2 = await start(b, { intent: 'login' })
-      expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?error=expired')
+      expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?sso_error=expired')
       const s3 = await start(b, { intent: 'login' })
       clock += 11 * 60_000
-      expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?error=expired')
+      expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?sso_error=expired')
     })
 
-    it('the provider refusing is idp_error; link failures go to /settings?error=', async () => {
+    it('the provider refusing is idp_error; link failures go to /settings?sso_error=', async () => {
       const b = ssoBrowser()
       const s = await start(b, { intent: 'login' })
-      expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe('/login?error=idp_error')
+      expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe('/login?sso_error=idp_error')
       const me = ssoBrowser()
       await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
       const l = await start(me, { intent: 'link' })
-      expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe('/settings?error=idp_error')
+      expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe('/settings?sso_error=idp_error')
     })
 
     it('link needs a session; an identity another user has is identity_in_use; invite and setup tokens are checked', async () => {
@@ -4617,18 +5111,18 @@ function suite(target: Target) {
       // `boss` already has sub-1, so an invite through the same identity cannot create a second account.
       const b = ssoBrowser()
       const s = await start(b, { intent: 'invite', token: inv.token })
-      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?error=identity_in_use')
+      expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=identity_in_use')
       const bad = await start(ssoBrowser(), { intent: 'invite', token: 'nope' })
       expect(bad.url).toContain('/api/auth/oidc/callback')
       const b2 = ssoBrowser()
       const s2 = await start(b2, { intent: 'invite', token: 'nope' })
-      expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?error=invite_invalid')
+      expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?sso_error=invite_invalid')
       const b3 = ssoBrowser()
       const s3 = await start(b3, { intent: 'setup', token: 'tok' })
-      expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?error=setup_invalid')
+      expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?sso_error=setup_invalid')
     })
 
-    it('a disabled user signing in through the provider is /login?error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
+    it('a disabled user signing in through the provider is /login?sso_error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
       const boss = ssoBrowser()
       await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
       const sso2 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: { name: 'Company SSO', autoCreate: true, sub: 'sub-9' }, admin: { username: 'root', password: 'a-long-password' } })
@@ -4658,7 +5152,7 @@ function suite(target: Target) {
       await call(rootB, 'PATCH', `/api/users/${member.id}`, { disabled: true })
       const again = newBrowser(f2)
       const s2 = (await call(again, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
-      expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?error=disabled')
+      expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?sso_error=disabled')
     })
 
     it('too many wrong passwords against one name is 429 rate_limited with Retry-After, even for the right password, until the wait is over', async () => {
@@ -4671,6 +5165,233 @@ function suite(target: Target) {
       expect(e.retryAfter).toBeGreaterThan(0)
       clock += 61_000
       expect((await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(200)
+    })
+  })
+  // The sign-in providers, passkeys, captcha, security settings and audit log (milestone 2.8).
+  describe.skipIf(!accounts || !!REAL)('mock only (skipped on a real server: it starts from known settings): providers, passkeys, captcha, security settings and the audit log', () => {
+    let s28: MockServer
+    let f28: typeof fetch
+    const b28 = () => newBrowser(f28)
+    const inAs = async (user = MOCK_ADMIN.username, password = MOCK_ADMIN.password) => {
+      const b = b28()
+      expect((await call(b, 'POST', '/api/login', { username: user, password })).status).toBe(200)
+      return b
+    }
+    const company = { slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft', oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' } }
+
+    beforeAll(() => {
+      s28 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null })
+      f28 = mockFetch(s28, { jar: false })
+    })
+
+    it('the sign-in page\'s providers: none at first (local_only), then the enabled ones in order with their icon, and what the mode says', async () => {
+      const root = await inAs()
+      const none = await call(b28(), 'GET', '/api/auth/providers')
+      expect(none.headers.get('Cache-Control')).toBe('no-store')
+      expect(none.json).toEqual({ providers: [], loginMode: 'local_only', local: true, sso: false, passkey: true, register: false, forgot: false })
+      const made = await call(root, 'POST', '/api/admin/auth/providers', company)
+      expect(made.status).toBe(201)
+      expect(made.json).toMatchObject({ slug: 'company', kind: 'oidc', enabled: true, people: 0, status: { ok: true }, oidc: { hasSecret: true, redirectUrl: 'https://notes.example.com/api/auth/oidc/company/callback' } })
+      expect(made.json.oidc).not.toHaveProperty('clientSecret')
+      const list = (await call(b28(), 'GET', '/api/auth/providers')).json
+      expect(list).toEqual({ providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }], loginMode: 'dual', local: true, sso: true, passkey: true, register: false, forgot: false })
+      await call(root, 'PUT', '/api/admin/security', { login: { mode: 'sso_redirect' } })
+      expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({ loginMode: 'sso_redirect', local: false, sso: true })
+      await call(root, 'PUT', '/api/admin/security', { login: { mode: 'dual' } })
+    })
+
+    it('a provider\'s start: GET is a 303 to the provider, a disabled or unknown one goes to /login?sso_error=provider_unavailable, POST gives {url}', async () => {
+      const go = await call(b28(), 'GET', '/api/auth/oidc/company/start?return=%2Fs%2Fabc')
+      expect(go.status).toBe(303)
+      expect(go.headers.get('Location')).toContain('/api/auth/oidc/company/callback')
+      expect(go.headers.get('Set-Cookie')).toBeTruthy()
+      const unknown = await call(b28(), 'GET', '/api/auth/oidc/nobody/start')
+      expect([unknown.status, unknown.headers.get('Location')]).toEqual([303, '/login?sso_error=provider_unavailable'])
+      expect((await call(b28(), 'POST', '/api/auth/oidc/nobody/start', { intent: 'login' })).status).toBe(404)
+      expect((await call(b28(), 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json.url).toContain('/api/auth/oidc/company/callback?state=')
+    })
+
+    it('the provider refusals have their own codes', async () => {
+      const root = await inAs()
+      const refused = async (body: Record<string, unknown>) => {
+        const r = await call(root, 'POST', '/api/admin/auth/providers', body)
+        return [r.status, r.json.error]
+      }
+      expect(await refused({ ...company })).toEqual([409, 'exists'])
+      expect(await refused({ ...company, slug: 'second' })).toEqual([409, 'provider_issuer_in_use'])
+      expect(await refused({ ...company, slug: 'http', oidc: { issuer: 'http://x.example', clientId: 'c' } })).toEqual([400, 'oidc_issuer_invalid'])
+      expect(await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } })).toEqual([400, 'auto_create_needs_org'])
+      expect(await refused({ slug: 'saml', kind: 'saml', name: 'S', saml: { metadataUrl: 'https://x.example/bad-metadata' } })).toEqual([400, 'saml_metadata_invalid'])
+      expect(await refused({ slug: 'Bad Slug', kind: 'oidc', name: 'S', oidc: { issuer: 'https://y.example', clientId: 'c' } })).toEqual([400, 'invalid'])
+    })
+
+    it('an unreachable provider is stored switched off with status.ok false; refresh looks again', async () => {
+      const root = await inAs()
+      const r = await call(root, 'POST', '/api/admin/auth/providers', { slug: 'dead', kind: 'oidc', name: 'Dead', oidc: { issuer: 'https://unreachable.example', clientId: 'c' } })
+      expect([r.status, r.json.enabled, r.json.status.ok]).toEqual([201, false, false])
+      const again = await call(root, 'POST', '/api/admin/auth/providers/dead/refresh')
+      expect([again.status, again.json.status.ok]).toEqual([200, false])
+      expect((await call(root, 'DELETE', '/api/admin/auth/providers/dead')).status).toBe(204)
+    })
+
+    it('deleting a provider that is somebody\'s only way in is 409 provider_in_use with the count, until force=1', async () => {
+      const root = await inAs()
+      await call(root, 'PATCH', '/api/admin/auth/providers/company', { autoCreate: true })
+      const b = b28()
+      const st = (await call(b, 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json
+      const cb = await call(b, 'GET', st.url)
+      expect(cb.status).toBe(303)
+      const refused = await call(root, 'DELETE', '/api/admin/auth/providers/company')
+      expect([refused.status, refused.json.error, refused.json.accounts]).toEqual([409, 'provider_in_use', 1])
+      const acct = (await call(b, 'GET', '/api/account')).json
+      expect(acct.identities).toEqual([expect.objectContaining({ provider: 'Company SSO', providerSlug: 'company', kind: 'oidc' })])
+      expect((await call(root, 'DELETE', '/api/admin/auth/providers/company?force=1')).status).toBe(204)
+      // The identity stays, with no provider.
+      expect((await call(b, 'GET', '/api/account')).json.identities[0]).toMatchObject({ providerSlug: '', kind: '' })
+    })
+
+    it('security: the defaults, a change that is kept, and each refusal; nothing is half saved', async () => {
+      const root = await inAs()
+      const got = (await call(root, 'GET', '/api/admin/security')).json
+      expect(got).toMatchObject({ login: { mode: 'dual', ssoOnly: false }, passkeys: { enabled: true, available: true, requireRoles: [] }, captcha: { provider: 'image', hasSecret: false }, lockout: { enabled: false, minutes: 15, scope: 'ip_account' }, limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 }, notices: [] })
+      const bad = async (body: unknown) => {
+        const r = await call(root, 'PUT', '/api/admin/security', body)
+        return [r.status, r.json.error]
+      }
+      expect(await bad({ login: { mode: 'nope' } })).toEqual([400, 'invalid'])
+      expect(await bad({ limits: { sessionIdleDays: 400 } })).toEqual([400, 'invalid'])
+      expect(await bad({ limits: { sessionIdleDays: 50, sessionMaxDays: 40 } })).toEqual([400, 'invalid'])
+      expect(await bad({ captcha: { provider: 'turnstile', contexts: { login: { on: true } } } })).toEqual([400, 'captcha_site_key_required'])
+      expect(await bad({ captcha: { provider: 'turnstile', siteKey: 'k', contexts: { login: { on: true } } } })).toEqual([400, 'captcha_secret_required'])
+      // Refused as a whole: the valid part of the last one was not stored.
+      expect(await bad({ lockout: { minutes: 20 }, limits: { perMinute: 0 } })).toEqual([400, 'invalid'])
+      expect((await call(root, 'GET', '/api/admin/security')).json.lockout.minutes).toBe(15)
+      const ok = await call(root, 'PUT', '/api/admin/security', { lockout: { enabled: true, minutes: 20, scope: 'ip' }, captcha: { provider: 'turnstile', siteKey: 'k', secret: 's', contexts: { login: { on: true, when: 'always' } } } })
+      expect(ok.status).toBe(200)
+      expect(ok.json).toMatchObject({ lockout: { enabled: true, minutes: 20, scope: 'ip' }, captcha: { provider: 'turnstile', siteKey: 'k', hasSecret: true } })
+      expect(JSON.stringify(ok.json)).not.toContain('"s"')
+      // A secret stored for another provider does not count.
+      expect(await bad({ captcha: { provider: 'hcaptcha', siteKey: 'k2', contexts: { invite: { on: true } } } })).toEqual([400, 'captcha_secret_required'])
+      // Clearing the secret while a context needs it is refused; with the context off it works.
+      expect(await bad({ captcha: { secret: '' } })).toEqual([400, 'captcha_secret_required'])
+      expect((await call(root, 'PUT', '/api/admin/security', { captcha: { secret: '', contexts: { login: { on: false } } } })).json.captcha.hasSecret).toBe(false)
+      expect((await call(root, 'PUT', '/api/admin/security', { captcha: { provider: 'image', contexts: { login: { on: false } } }, lockout: { enabled: false, minutes: 15, scope: 'ip_account' } })).status).toBe(200)
+    })
+
+    it('ssoOnly: in effect only while a provider is enabled; then a member\'s password is refused after it was checked, an administrator\'s is not', async () => {
+      const root = await inAs()
+      // With no provider the page offers no button, so refusing passwords would lock the door.
+      expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).json.login).toMatchObject({ ssoOnly: true, ssoOnlyInEffect: false, effectiveMode: 'local_only', ssoAvailable: false })
+      await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+      expect((await call(root, 'POST', '/api/admin/auth/providers', { ...company, slug: 'acme', oidc: { issuer: 'https://acme.example', clientId: 'c' } })).status).toBe(201)
+      const member = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
+      const joined = await call(b28(), 'POST', '/api/invites/accept', { token: member.token, username: 'sso-m', password: 'a-long-password' })
+      expect(joined.status).toBe(201)
+      expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).status).toBe(200)
+      const refused = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
+      expect([refused.status, refused.json.error]).toEqual([403, 'local_login_refused'])
+      // A wrong password still gets the ordinary answer: the code says nothing to someone who does not know it.
+      expect((await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })).status).toBe(401)
+      expect((await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).status).toBe(200)
+      // No invite for a member can be accepted with a password.
+      const inv2 = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
+      expect((await call(b28(), 'POST', '/api/invites/accept', { token: inv2.token, username: 'sso-m2', password: 'a-long-password' })).json.error).toBe('local_login_refused')
+      await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+    })
+
+    it('captcha: asked for by the context, an image is answered once, a wrong or missing answer is 400 captcha_failed; unknown contexts are 400', async () => {
+      const root = await inAs()
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: true, when: 'always' } } } })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=invite')).json).toEqual({ required: false })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=forgot')).json).toEqual({ required: false })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=nope')).status).toBe(400)
+      const c = (await call(b28(), 'GET', '/api/captcha?ctx=login&account=x')).json
+      expect(c).toMatchObject({ required: true, provider: 'image', id: expect.any(String), image: expect.stringMatching(/^data:image\//) })
+      const missing = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+      expect([missing.status, missing.json.error]).toEqual([400, 'captcha_failed'])
+      const wrong = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: c.id, answer: 'zzzz' } })
+      expect([wrong.status, wrong.json.error]).toEqual([400, 'captcha_failed'])
+      // Used once, right or wrong: the same challenge cannot be answered again.
+      const reused = await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: c.id, answer: '4821' } })
+      expect(reused.json.error).toBe('captcha_failed')
+      const fresh = (await call(b28(), 'GET', '/api/captcha?ctx=login')).json
+      expect((await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password, captcha: { id: fresh.id, answer: '4821' } })).status).toBe(200)
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+    })
+
+    it('after_failures: a name that failed enough asks for a captcha, others do not', async () => {
+      const root = await inAs()
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: true, when: 'after_failures', failures: 2 } } } })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(false)
+      for (let i = 0; i < 2; i++) await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(true)
+      expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=someone-else')).json.required).toBe(false)
+      await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+    })
+
+    it('passkeys: register (named, a credential once), sign in with it, rename, delete; a ceremony is used once; a required person is held until they have one', async () => {
+      const root = await inAs()
+      const me = await inAs('sso-m', 'a-long-password')
+      const begin = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'MacBook' })
+      expect(begin.status).toBe(200)
+      expect(begin.json.options).toMatchObject({ challenge: expect.any(String), user: { name: 'sso-m' }, excludeCredentials: [] })
+      const done = await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m', type: 'public-key', response: {} })
+      expect(done.status).toBe(201)
+      expect(done.json.passkeys).toEqual([expect.objectContaining({ name: 'MacBook', synced: false })])
+      expect((await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m2' })).json.error).toBe('passkey_failed')
+      const again = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'Again' })
+      expect(again.json.options.excludeCredentials).toHaveLength(1)
+      expect((await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${again.json.ceremony}`, { id: 'cred-m' })).json.error).toBe('exists')
+      // Sign in with it: discoverable, then by name.
+      const lg = await call(b28(), 'POST', '/api/auth/passkey/begin', {})
+      const ok = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}&return=%2Fs%2Fx`, { id: 'cred-m' })
+      expect([ok.status, ok.json.return, ok.json.user.username]).toEqual([200, '/s/x', 'sso-m'])
+      const bad = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}`, { id: 'cred-m' })
+      expect([bad.status, bad.json.error]).toEqual([401, 'passkey_failed'])
+      const named = await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'sso-m' })
+      expect(named.json.options.allowCredentials).toEqual([{ type: 'public-key', id: 'cred-m' }])
+      // A name nobody has looks the same: one made-up credential.
+      expect((await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'nobody-here' })).json.options.allowCredentials).toHaveLength(1)
+      // Required of this person: the password is right, so the answer says passkey_required.
+      const uid = (await call(me, 'GET', '/api/account')).json.user.id
+      expect((await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: true })).json.user.passkeyRequired).toBe(true)
+      const must = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
+      expect([must.status, must.json.error]).toEqual([403, 'passkey_required'])
+      // Rename and delete; the admin sees them and can delete one.
+      const id = done.json.passkeys[0].id
+      expect((await call(me, 'PATCH', `/api/account/passkeys/${id}`, { name: 'Phone' })).json.name).toBe('Phone')
+      const list = (await call(root, 'GET', `/api/users/${uid}/passkeys`)).json.passkeys
+      expect(list.map((p: { name: string }) => p.name)).toEqual(['Phone'])
+      expect((await call(root, 'GET', '/api/users')).json.users.find((u: { id: string }) => u.id === uid)).toMatchObject({ passkeys: 1, sso: 0 })
+      expect((await call(root, 'DELETE', `/api/users/${uid}/passkeys/${id}`)).status).toBe(204)
+      // With none left and one required, the next password sign-in is held: only the passkey endpoints and sign-out work.
+      const held = b28()
+      expect((await call(held, 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })).status).toBe(200)
+      expect((await call(held, 'GET', '/api/session')).json.hold).toBe('passkey')
+      expect((await call(held, 'GET', '/api/spaces')).json.error).toBe('passkey_required')
+      expect((await call(held, 'GET', '/api/account')).status).toBe(200)
+      const hb = await call(held, 'POST', '/api/account/passkeys/begin', { name: 'New' })
+      expect((await call(held, 'POST', `/api/account/passkeys/finish?ceremony=${hb.json.ceremony}`, { id: 'cred-new' })).status).toBe(201)
+      expect((await call(held, 'GET', '/api/session')).json.hold).toBe(null)
+      expect((await call(held, 'GET', '/api/spaces')).status).toBe(200)
+      await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: false })
+    })
+
+    it('the audit log: newest first, filtered by kind and user, with a cursor', async () => {
+      const root = await inAs()
+      const all = (await call(root, 'GET', '/api/admin/audit?limit=5')).json
+      expect(all.items).toHaveLength(5)
+      expect(all.next).toBeTruthy()
+      for (let i = 1; i < all.items.length; i++) expect(all.items[i - 1].id > all.items[i].id).toBe(true)
+      const more = (await call(root, 'GET', `/api/admin/audit?limit=5&cursor=${all.next}`)).json
+      expect(more.items[0].id).toBe(all.next)
+      const kinds = (await call(root, 'GET', '/api/admin/audit?kind=security_changed&limit=200')).json.items
+      expect(kinds.length).toBeGreaterThan(0)
+      expect(kinds.every((r: { kind: string }) => r.kind === 'security_changed')).toBe(true)
+      expect(kinds[0]).toMatchObject({ actor: expect.any(String), detail: { from: expect.any(Object), to: expect.any(Object) } })
+      // A secret is never in it.
+      expect(JSON.stringify(kinds)).not.toContain('"s"')
+      expect((await call(root, 'GET', '/api/admin/audit?limit=0')).status).toBe(400)
     })
   })
 }

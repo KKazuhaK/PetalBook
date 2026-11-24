@@ -8,8 +8,15 @@ import (
 	"time"
 )
 
-// Credential type of a remote that syncs through the server's GitHub App.
-const CredGitHub = "github"
+// Credential type of a remote that syncs through a provider's connection (the
+// remote's Provider says which: here only "github").
+const CredConnection = "connection"
+
+// ProviderGit is the provider of a remote with a plain address, a deploy key or a token.
+const ProviderGit = "git"
+
+// ProviderGitHub is the id of the GitHub provider, the one the tables below belong to.
+const ProviderGitHub = "github"
 
 // States of a user's GitHub authorisation.
 const (
@@ -200,21 +207,29 @@ func CountGitHubAuthorizations(ctx context.Context, q Q) (n int, err error) {
 	return
 }
 
-// githubRemotes is every remote of a space that uses a github credential: the
-// space's own repository and its attachment repository.
-const githubRemotes = `(SELECT space_id, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> '' AND cred_type = 'github'
-	UNION ALL SELECT space_id, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '' AND cred_type = 'github')`
-
-// CountGitHubSpaces is how many spaces have a github credential, for their
-// own repository or their attachment repository.
+// CountGitHubSpaces is how many spaces sync through GitHub, for their own
+// repository or their attachment repository (milestone 3.1). The counts below
+// read both tables; the union is written out in each query so that the scope
+// test sees the tables they touch.
 func CountGitHubSpaces(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM `+githubRemotes+` g`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
+		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE cred_type = 'connection' AND provider = 'github'`).Scan(&n)
+	return
+}
+
+// CountGitSpaces is how many spaces sync to a plain Git address (a deploy key
+// or a token), for the provider "git": their own repository or their
+// attachment repository.
+func CountGitSpaces(ctx context.Context, q Q) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
+		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE provider = 'git'`).Scan(&n)
 	return
 }
 
 // CountUserGitHubSpaces is how many spaces sync through a user's authorisation.
 func CountUserGitHubSpaces(ctx context.Context, q Q, userID string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM `+githubRemotes+` g WHERE gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
+		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE cred_type = 'connection' AND provider = 'github' AND gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
 	return
 }
 
@@ -229,8 +244,9 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 	for i, id := range ids {
 		args[i], marks[i] = id, "?"
 	}
-	rows, err := q.Query(ctx, `SELECT gh_installation_id, COUNT(DISTINCT space_id) FROM `+githubRemotes+` g
-		WHERE gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
+	rows, err := q.Query(ctx, `SELECT gh_installation_id, COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
+		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g
+		WHERE cred_type = 'connection' AND provider = 'github' AND gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -247,27 +263,27 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 }
 
 // GitHubInstallation is an installation the administrator has looked at: its
-// account (to list it without asking GitHub) and whether it is shared.
+// account, to list it without asking GitHub. Who it is shared with is in
+// github_installation_tenants.
 type GitHubInstallation struct {
 	ID          int64
 	Account     string
 	AccountType string
-	Shared      bool
 	Updated     time.Time
 }
 
-const ghInstCols = `id, account, account_type, shared, updated`
+const ghInstCols = `id, account, account_type, updated`
 
 func scanGitHubInstallation(row interface{ Scan(...any) error }) (*GitHubInstallation, error) {
 	var i GitHubInstallation
-	var sh, up int64
-	if err := row.Scan(&i.ID, &i.Account, &i.AccountType, &sh, &up); err != nil {
+	var up int64
+	if err := row.Scan(&i.ID, &i.Account, &i.AccountType, &up); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	i.Shared, i.Updated = sh != 0, fromMS(up)
+	i.Updated = fromMS(up)
 	return &i, nil
 }
 
@@ -276,21 +292,32 @@ func GetGitHubInstallation(ctx context.Context, q Q, id int64) (*GitHubInstallat
 	return scanGitHubInstallation(q.QueryRow(ctx, `SELECT `+ghInstCols+` FROM github_installations WHERE id = ?`, id))
 }
 
-// PutGitHubInstallation stores an installation with its shared mark.
+// PutGitHubInstallation stores an installation. Its sharing is left as it is.
 func PutGitHubInstallation(ctx context.Context, q Q, i GitHubInstallation) error {
-	sh := 0
-	if i.Shared {
-		sh = 1
-	}
-	_, err := q.Exec(ctx, `INSERT INTO github_installations(`+ghInstCols+`) VALUES (?,?,?,?,?)
-		ON CONFLICT (id) DO UPDATE SET account = excluded.account, account_type = excluded.account_type, shared = excluded.shared, updated = excluded.updated`,
-		i.ID, i.Account, i.AccountType, sh, ms(i.Updated))
+	_, err := q.Exec(ctx, `INSERT INTO github_installations(`+ghInstCols+`) VALUES (?,?,?,?)
+		ON CONFLICT (id) DO UPDATE SET account = excluded.account, account_type = excluded.account_type, updated = excluded.updated`,
+		i.ID, i.Account, i.AccountType, ms(i.Updated))
 	return err
 }
 
-// SharedGitHubInstallationIDs says which of the installations are shared.
-func SharedGitHubInstallationIDs(ctx context.Context, q Q, ids []int64) (map[int64]bool, error) {
-	out := map[int64]bool{}
+// SetGitHubInstallationTenants replaces the set of tenants an installation is
+// shared with (an empty set stops sharing). Callers run it in a transaction.
+func SetGitHubInstallationTenants(ctx context.Context, q Q, id int64, tenants []string) error {
+	if _, err := q.Exec(ctx, `DELETE FROM github_installation_tenants WHERE installation_id = ?`, id); err != nil {
+		return err
+	}
+	for _, t := range tenants {
+		if _, err := q.Exec(ctx, `INSERT INTO github_installation_tenants(installation_id, tenant_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, id, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GitHubInstallationTenants says which tenants each of the installations is
+// shared with (sorted); an installation shared with none is not in the map.
+func GitHubInstallationTenants(ctx context.Context, q Q, ids []int64) (map[int64][]string, error) {
+	out := map[int64][]string{}
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -299,25 +326,45 @@ func SharedGitHubInstallationIDs(ctx context.Context, q Q, ids []int64) (map[int
 	for i, id := range ids {
 		args[i], marks[i] = id, "?"
 	}
-	rows, err := q.Query(ctx, `SELECT id FROM github_installations WHERE shared = 1 AND id IN (`+strings.Join(marks, ",")+`)`, args...)
+	rows, err := q.Query(ctx, `SELECT installation_id, tenant_id FROM github_installation_tenants
+		WHERE installation_id IN (`+strings.Join(marks, ",")+`) ORDER BY installation_id, tenant_id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var t string
+		if err := rows.Scan(&id, &t); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		out[id] = append(out[id], t)
 	}
 	return out, rows.Err()
 }
 
-// ListSharedGitHubInstallations lists shared installations with an id above
-// after, in id order, at most limit.
-func ListSharedGitHubInstallations(ctx context.Context, q Q, after int64, limit int) ([]GitHubInstallation, error) {
-	rows, err := q.Query(ctx, `SELECT `+ghInstCols+` FROM github_installations WHERE shared = 1 AND id > ? ORDER BY id LIMIT ?`, after, limit)
+// sharedWith is the condition that installation column col is shared with a
+// tenant in the scope.
+func sharedWith(sc Scope, col string) (string, []any) {
+	c, a := sc.cond("tenant_id")
+	return col + ` IN (SELECT installation_id FROM github_installation_tenants WHERE ` + c + `)`, a
+}
+
+// GitHubInstallationShared says whether an installation is shared with the
+// tenant of the scope.
+func GitHubInstallationShared(ctx context.Context, q Q, sc Scope, id int64) (bool, error) {
+	c, a := sharedWith(sc, "id")
+	var n int
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM github_installations WHERE id = ? AND `+c, append([]any{id}, a...)...).Scan(&n)
+	return n > 0, err
+}
+
+// ListGitHubInstallationsOf lists the installations shared with the tenant of
+// the scope, with an id above after, in id order, at most limit.
+func ListGitHubInstallationsOf(ctx context.Context, q Q, sc Scope, after int64, limit int) ([]GitHubInstallation, error) {
+	c, a := sharedWith(sc, "id")
+	rows, err := q.Query(ctx, `SELECT `+ghInstCols+` FROM github_installations WHERE id > ? AND `+c+` ORDER BY id LIMIT ?`,
+		append(append([]any{after}, a...), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -333,11 +380,83 @@ func ListSharedGitHubInstallations(ctx context.Context, q Q, after int64, limit 
 	return out, rows.Err()
 }
 
-// SharedGitHubInstallationOf returns the shared installation on an account (by
-// login, case ignored), or ErrNotFound.
-func SharedGitHubInstallationOf(ctx context.Context, q Q, login string) (*GitHubInstallation, error) {
+// GitHubInstallationOf returns the installation on an account (by login, case
+// ignored) shared with the tenant of the scope, or ErrNotFound.
+func GitHubInstallationOf(ctx context.Context, q Q, sc Scope, login string) (*GitHubInstallation, error) {
+	c, a := sharedWith(sc, "id")
 	return scanGitHubInstallation(q.QueryRow(ctx, `SELECT `+ghInstCols+` FROM github_installations
-		WHERE shared = 1 AND lower(account) = ? ORDER BY id LIMIT 1`, strings.ToLower(login)))
+		WHERE lower(account) = ? AND `+c+` ORDER BY id LIMIT 1`, append([]any{strings.ToLower(login)}, a...)...))
+}
+
+// MaxGitHubLeftovers is how many reminders of empty repositories a user keeps:
+// the newest.
+const MaxGitHubLeftovers = 20
+
+// GitHubLeftover is a reminder that a failed attempt to make a space with a
+// new repository left an empty one on GitHub.
+type GitHubLeftover struct {
+	UserID    string
+	RepoID    int64
+	FullName  string
+	HTMLURL   string
+	SpaceName string // the name the space was to have
+	Created   time.Time
+}
+
+// PutGitHubLeftover stores a reminder for a user, replacing the one for the
+// same repository, and keeps only the user's newest MaxGitHubLeftovers.
+func PutGitHubLeftover(ctx context.Context, q Q, l GitHubLeftover) error {
+	if _, err := q.Exec(ctx, `INSERT INTO github_leftovers(user_id, repo_id, full_name, html_url, space_name, created) VALUES (?,?,?,?,?,?)
+		ON CONFLICT (user_id, repo_id) DO UPDATE SET full_name = excluded.full_name, html_url = excluded.html_url,
+		space_name = excluded.space_name, created = excluded.created`,
+		l.UserID, l.RepoID, l.FullName, l.HTMLURL, l.SpaceName, ms(l.Created)); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `DELETE FROM github_leftovers WHERE user_id = ? AND repo_id NOT IN
+		(SELECT repo_id FROM github_leftovers WHERE user_id = ? ORDER BY created DESC, repo_id DESC LIMIT ?)`, l.UserID, l.UserID, MaxGitHubLeftovers)
+	return err
+}
+
+// ListGitHubLeftovers returns a user's reminders, newest first.
+func ListGitHubLeftovers(ctx context.Context, q Q, userID string) ([]GitHubLeftover, error) {
+	rows, err := q.Query(ctx, `SELECT repo_id, full_name, html_url, space_name, created FROM github_leftovers
+		WHERE user_id = ? ORDER BY created DESC, repo_id DESC LIMIT ?`, userID, MaxGitHubLeftovers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GitHubLeftover
+	for rows.Next() {
+		l := GitHubLeftover{UserID: userID}
+		var c int64
+		if err := rows.Scan(&l.RepoID, &l.FullName, &l.HTMLURL, &l.SpaceName, &c); err != nil {
+			return nil, err
+		}
+		l.Created = fromMS(c)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// DeleteGitHubLeftover removes a user's reminder of a repository and reports
+// whether there was one.
+func DeleteGitHubLeftover(ctx context.Context, q Q, userID string, repoID int64) (bool, error) {
+	res, err := q.Exec(ctx, `DELETE FROM github_leftovers WHERE user_id = ? AND repo_id = ?`, userID, repoID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UserTenant returns the tenant of a user, or ErrNotFound.
+func UserTenant(ctx context.Context, q Q, userID string) (string, error) {
+	var t string
+	err := q.QueryRow(ctx, `SELECT tenant_id FROM users WHERE id = ?`, userID).Scan(&t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return t, err
 }
 
 // DeleteGitHubInstallations forgets every installation (the App was deleted).
@@ -346,14 +465,36 @@ func DeleteGitHubInstallations(ctx context.Context, q Q) error {
 	return err
 }
 
-// MemberStanding is a user's role in a space and whether they are disabled;
-// ErrNotFound when they are not a member (or not a user).
-func MemberStanding(ctx context.Context, q Q, spaceID, userID string) (role string, disabled bool, err error) {
-	var d int64
-	err = q.QueryRow(ctx, `SELECT m.role, u.disabled FROM space_members m JOIN users u ON u.id = m.user_id
-		WHERE m.space_id = ? AND m.user_id = ?`, spaceID, userID).Scan(&role, &d)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, ErrNotFound
+// MemberStanding is every role through which a user reaches a space (their
+// direct role, if any, then the roles of their groups that are members of it)
+// and whether they are disabled; ErrNotFound when they reach it by neither
+// (or are not a user). Their permission is the union of the roles.
+func MemberStanding(ctx context.Context, q Q, spaceID, userID string) (roles []string, disabled bool, err error) {
+	rows, err := q.Query(ctx, `SELECT x.role, u.disabled FROM users u JOIN (
+			SELECT role, 0 AS ord FROM space_members WHERE space_id = ? AND user_id = ?
+			UNION ALL
+			SELECT sg.role, 1 AS ord FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id
+				WHERE sg.space_id = ? AND gm.user_id = ?
+		) x ON 1 = 1
+		WHERE u.id = ? ORDER BY x.ord, x.role`, spaceID, userID, spaceID, userID, userID)
+	if err != nil {
+		return nil, false, err
 	}
-	return role, d != 0, err
+	defer rows.Close()
+	for rows.Next() {
+		var role string
+		var d int64
+		if err := rows.Scan(&role, &d); err != nil {
+			return nil, false, err
+		}
+		roles = append(roles, role)
+		disabled = d != 0
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(roles) == 0 {
+		return nil, false, ErrNotFound
+	}
+	return roles, disabled, nil
 }

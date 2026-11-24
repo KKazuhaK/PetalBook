@@ -60,7 +60,7 @@ func TestMeasureStorageOnAGeneratedCorpus(t *testing.T) {
 	in2, h := f.connected("Corpus", remote)
 	connect := time.Since(start)
 	h.Release()
-	f.m.Resize(ctx, in2.ID)
+	f.m.Resize(ctx, store.AllTenants(), in2.ID)
 	_, state := f.m.paths(in2.ID)
 	root := f.root(in2.ID)
 	t.Logf("partial clone made by connecting (fetch, checkout, index): %.1f MB (.git %.1f MB, working tree %.1f MB), index %.1f MB, %v",

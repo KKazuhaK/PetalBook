@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { AssetsRemote, ConnectAssetsInput, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { AssetsRemote, ConnectAssetsInput, MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Provider, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -18,6 +18,17 @@ export const keys = {
   session: ['session'] as const,
   spaces: ['spaces'] as const,
   account: ['account'] as const,
+  providers: ['auth', 'providers'] as const,
+  adminSecurity: ['admin', 'security'] as const,
+  adminProviders: ['admin', 'providers'] as const,
+  accountUsage: ['account', 'usage'] as const,
+  adminUsage: (tenant: string, over: boolean) => ['admin', 'usage', tenant, over] as const,
+  adminGroups: ['admin', 'groups'] as const,
+  adminGroupList: (q: string, source: string) => ['admin', 'groups', 'list', q, source] as const,
+  adminGroupPeople: (id: string, q: string) => ['admin', 'groups', 'people', id, q] as const,
+  adminGroupSpaces: (id: string) => ['admin', 'groups', 'spaces', id] as const,
+  adminAudit: (kind: string, user: string) => ['admin', 'audit', kind, user] as const,
+  userPasskeys: (id: string) => ['users', 'passkeys', id] as const,
   users: ['users'] as const,
   userSearch: (q: string) => ['users', 'search', q] as const,
   invites: ['invites'] as const,
@@ -30,13 +41,19 @@ export const keys = {
   adminSpaceList: (q: string, filter = '') => ['admin', 'spaces', 'list', q, filter] as const,
   adminStorage: ['admin', 'storage'] as const,
   adminStatus: ['admin', 'status'] as const,
+  tenancy: ['admin', 'tenancy'] as const,
+  adminMail: ['admin', 'mail'] as const,
+  tenants: ['admin', 'tenants'] as const,
+  siteSettings: ['admin', 'settings', 'site'] as const,
+  tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
+  mySettings: (space: string) => ['settings', space] as const,
   adminDaily: ['admin', 'daily'] as const,
-  adminGitHub: ['admin', 'github'] as const,
-  adminGitHubInstallations: ['admin', 'github', 'installations'] as const,
-  // GitHub, for everyone: the App and the caller's connection; the accounts to make a repository in; a repository list.
-  github: ['github'] as const,
-  githubOwners: ['github', 'owners'] as const,
-  githubRepos: (which: string) => ['github', 'repos', which] as const,
+  adminGitHub: ['admin', 'connections', 'github'] as const,
+  adminGitHubInstallations: ['admin', 'connections', 'github', 'installations'] as const,
+  // Connections, for everyone: the providers and the caller's connection to each; the accounts to make a repository in; a repository list.
+  connections: ['connections'] as const,
+  connectionOwners: (provider: string) => ['connections', provider, 'owners'] as const,
+  connectionRepos: (provider: string, which: string) => ['connections', provider, 'repos', which] as const,
   // A space an administrator opens without being a member of it.
   viewedSpace: (space: string) => ['admin', 'spaces', 'view', space] as const,
   space: (space: string) => ['space', space] as const,
@@ -70,6 +87,8 @@ export const keys = {
   remote: (space: string) => ['space', space, 'remote'] as const,
   assetsRemote: (space: string) => ['space', space, 'remote', 'assets'] as const,
   members: (space: string) => ['space', space, 'members'] as const,
+  effectiveMembers: (space: string, q: string) => ['space', space, 'members', 'effective', q] as const,
+  groupSearch: (q: string) => ['groups', 'search', q] as const,
   // The home page: the day's text (by day, "another" and language), where it comes from, and a person's favourites.
   daily: (space: string, date: string, skip: number, lang: string) => ['space', space, 'daily', date, skip, lang] as const,
   dailySettings: (space: string) => ['space', space, 'dailySettings'] as const,
@@ -258,12 +277,24 @@ export function useUrls() {
   return useMemo(() => spaceUrls(space), [space])
 }
 
+// What the sign-in pages draw: the enabled providers and what is available (read again each time a page opens).
+export function useAuthProviders(enabled = true) {
+  return useQuery({ queryKey: keys.providers, queryFn: ({ signal }) => api.providers(signal), staleTime: 0, gcTime: 0, enabled })
+}
+
 // What changes when someone signs in or out: nothing cached may carry over to
 // another person.
 export function applySession(qc: QueryClient, user: User | null) {
   const prev = qc.getQueryData<SessionInfo>(keys.session)
   qc.clear()
   qc.setQueryData<SessionInfo>(keys.session, { ...(prev ?? { mode: 'accounts' as const }), user, setup: false })
+}
+
+// After a sign-in: the cache starts over for the new person, and the session is read again, because
+// whether it is held until a passkey is registered (`hold`) is only in the server's answer.
+export async function applySignIn(qc: QueryClient, user: User) {
+  applySession(qc, user)
+  await qc.fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 }).catch(() => undefined)
 }
 
 // --- space data ----------------------------------------------------------------
@@ -478,31 +509,51 @@ export function useCreateFolder() {
 
 // --- spaces, account, users ----------------------------------------------------
 
-// --- GitHub ---------------------------------------------------------------------
+// --- connections ------------------------------------------------------------------
 
-// The App and the caller's connection. Accounts mode only; a server with no App answers with `app: null`.
-export function useGitHub(enabled = true) {
-  return useQuery({ queryKey: keys.github, queryFn: ({ signal }) => api.github(signal), enabled, staleTime: 15_000 })
+// The providers of this server and the caller's connection to each. Accounts mode only.
+export function useConnections(enabled = true) {
+  return useQuery({ queryKey: keys.connections, queryFn: ({ signal }) => api.connections(signal), enabled, staleTime: 15_000 })
 }
 
-// The accounts a repository can be made in, a page at a time (one call to GitHub each).
-export function useGitHubOwners(enabled = true) {
+// One provider, from the same query; undefined while loading or when the server has none by that id.
+export function useProvider(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.connections,
+    queryFn: ({ signal }) => api.connections(signal),
+    enabled,
+    staleTime: 15_000,
+    select: (d): Provider | undefined => d.providers.find((p) => p.id === id),
+  })
+}
+
+// The accounts a repository can be made in, a page at a time (one call to the platform each).
+export function useConnectionOwners(provider: string, enabled = true) {
   return useInfiniteQuery({
-    queryKey: keys.githubOwners,
+    queryKey: keys.connectionOwners(provider),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => api.githubOwners(pageParam || undefined, signal),
+    queryFn: ({ pageParam, signal }) => api.connectionOwners(provider, pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 30_000,
   })
 }
 
+// "Check again": asks the platform about the caller's accounts anew, ignoring what the server remembered for a minute.
+export function useRecheckOwners(provider: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.connectionOwners(provider, undefined, undefined, true),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.connectionOwners(provider) }),
+  })
+}
+
 // The repositories of an installation (or the caller's own), a page at a time.
-export function useGitHubRepos(which: { installation: number } | { mine: true } | null) {
+export function useConnectionRepos(provider: string, which: { installation: number } | { mine: true } | null) {
   return useInfiniteQuery({
-    queryKey: keys.githubRepos(which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
+    queryKey: keys.connectionRepos(provider, which === null ? 'none' : 'installation' in which ? `i${which.installation}` : 'mine'),
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }) => api.githubRepos(which!, pageParam || undefined, signal),
+    queryFn: ({ pageParam, signal }) => api.connectionRepos(provider, which!, pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled: which !== null,
     staleTime: 30_000,
@@ -510,23 +561,41 @@ export function useGitHubRepos(which: { installation: number } | { mine: true } 
 }
 
 // Disconnecting ends every sync that used the connection: the spaces and the remotes read again.
-export function useDisconnectGitHub() {
+export function useDisconnect() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => api.githubDisconnect(),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.github }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
+    mutationFn: (provider: string) => api.connectionDisconnect(provider),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.connections }), qc.invalidateQueries({ queryKey: keys.spaces }), qc.invalidateQueries({ queryKey: ['space'] })]),
+  })
+}
+
+// Forgets a reminder of an empty repository ("I deleted it").
+export function useDismissLeftover() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ provider, repoId }: { provider: string; repoId: number }) => api.connectionDismissLeftover(provider, repoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.connections }),
   })
 }
 
 export function useCreateSpace() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.github)),
+    mutationFn: (input: string | CreateSpaceInput) => (typeof input === 'string' ? api.createSpace(input) : api.createSpace(input.name, input.inbox, input.sync)),
     // Another space, in the same list order the server gives: personal first, then by name.
-    onSuccess: (space) =>
+    onSuccess: (space, input) => {
       qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => ({
         spaces: [...(prev?.spaces ?? []), space].sort((a, b) => Number(b.personal) - Number(a.personal) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-      })),
+      }))
+      // One more space of theirs.
+      void qc.invalidateQueries({ queryKey: keys.accountUsage })
+      // A space on a repository answers the reminders of that repository.
+      if (typeof input !== 'string' && input.sync) void qc.invalidateQueries({ queryKey: keys.connections })
+    },
+    // A failed attempt may have left a reminder of the repository it made.
+    onError: (_e, input) => {
+      if (typeof input !== 'string' && input.sync) void qc.invalidateQueries({ queryKey: keys.connections })
+    },
   })
 }
 
@@ -556,6 +625,11 @@ function spaceChanged(qc: QueryClient, space: SpaceInfo) {
 
 export function useAccount(enabled = true) {
   return useQuery({ queryKey: keys.account, queryFn: ({ signal }) => api.account(signal), staleTime: Infinity, enabled })
+}
+
+// The caller's own usage. Measurements are made in the background, so a minute is as fresh as it gets.
+export function useAccountUsage(enabled = true) {
+  return useQuery({ queryKey: keys.accountUsage, queryFn: ({ signal }) => api.accountUsage(signal), staleTime: 60_000, enabled })
 }
 
 // What a person is told about a failed request, for the pages that show errors inline.
@@ -723,6 +797,36 @@ function useMembersChanged(space: string) {
   return () => Promise.all([qc.invalidateQueries({ queryKey: keys.members(space) }), qc.invalidateQueries({ queryKey: keys.spaces })])
 }
 
+// Everyone who can reach the space, a cursor page at a time; `q` is the name filter.
+export function useEffectiveMembers(space: string, q: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.effectiveMembers(space, q),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => spaceApi(space).effectiveMembers({ q: q || undefined, cursor: pageParam || undefined, limit: 50 }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled: enabled && space !== '',
+    staleTime: 10_000,
+  })
+}
+
+// A few groups by part of the name, for choosing one to add to a space.
+export function useGroupSearch(q: string, enabled = true) {
+  return useQuery({ queryKey: keys.groupSearch(q), queryFn: ({ signal }) => api.findGroups(q, signal), enabled: enabled && q !== '', staleTime: 15_000 })
+}
+
+export function useAddGroup(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).addGroup(groupId, role), onSuccess: changed })
+}
+export function useSetGroupRole(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: ({ groupId, role }: { groupId: string; role: SpaceRole }) => spaceApi(space).setGroupRole(groupId, role), onSuccess: changed })
+}
+export function useRemoveGroup(space: string) {
+  const changed = useMembersChanged(space)
+  return useMutation({ mutationFn: (groupId: string) => spaceApi(space).removeGroup(groupId), onSuccess: changed })
+}
+
 export function useAddMember(space: string) {
   const changed = useMembersChanged(space)
   return useMutation({ mutationFn: ({ username, role }: { username: string; role: SpaceRole }) => spaceApi(space).addMember(username, role), onSuccess: changed })
@@ -738,7 +842,7 @@ export function useRemoveMember(space: string) {
 
 // Updates one member in the cached list (a role change), without asking again.
 export function putMember(qc: QueryClient, space: string, member: Member) {
-  qc.setQueryData<{ members: Member[] }>(keys.members(space), (prev) => prev && { members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
+  qc.setQueryData<MembersResponse>(keys.members(space), (prev) => prev && { ...prev, members: prev.members.map((m) => (m.userId === member.userId ? member : m)) })
 }
 
 // --- page types ------------------------------------------------------------------

@@ -290,7 +290,7 @@ func (s *server) listMyGrants(c *call) {
 	if !s.oauthThere(c) {
 		return
 	}
-	rows, err := s.oauth.List(c.r.Context(), store.GrantFilter{UserID: c.user().ID, Limit: 500})
+	rows, err := s.oauth.List(c.r.Context(), c.ownScope(), store.GrantFilter{UserID: c.user().ID, Limit: 500})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -313,7 +313,7 @@ func (s *server) revokeGrant(c *call, owner string) {
 		return
 	}
 	id := c.r.PathValue("id")
-	rows, err := s.oauth.List(c.r.Context(), store.GrantFilter{ID: id, Limit: 1})
+	rows, err := s.oauth.List(c.r.Context(), store.ScopeOf(c.user()), store.GrantFilter{ID: id, Limit: 1})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -322,19 +322,31 @@ func (s *server) revokeGrant(c *call, owner string) {
 		writeError(c.w, http.StatusNotFound, "not_found", "no such grant")
 		return
 	}
+	if owner == "" && s.refuseSiteAdminOwner(c, rows[0].UserID) {
+		return
+	}
 	who := "the owner"
 	if owner == "" {
 		who = "an administrator"
 	}
-	if _, err := s.oauth.Revoke(c.r.Context(), id, "revoked by "+who); err != nil {
+	done, err := s.oauth.Revoke(c.r.Context(), id, "revoked by "+who)
+	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	if done {
+		s.audit(c, auth.AuditEvent{Kind: "grant_revoked", Actor: c.user().ID, User: rows[0].UserID,
+			Detail: map[string]any{"grant": id, "client": rows[0].ClientName, "by": revokedBy(owner)}})
 	}
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) adminListGrants(c *call) {
 	if !s.oauthThere(c) {
+		return
+	}
+	sc, ok := s.adminScope(c)
+	if !ok {
 		return
 	}
 	q := c.r.URL.Query()
@@ -358,7 +370,7 @@ func (s *server) adminListGrants(c *call) {
 		}
 		f.AfterCreated, f.AfterID = time.UnixMilli(n).UTC(), id
 	}
-	rows, err := s.oauth.List(c.r.Context(), f)
+	rows, err := s.oauth.List(c.r.Context(), sc, f)
 	if err != nil {
 		s.fail(c.w, err)
 		return

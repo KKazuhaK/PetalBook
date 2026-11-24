@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -27,13 +28,9 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// Open already migrated once; running again must change nothing. The
 		// count follows the files, so a branch that adds one need not edit it.
-		files, err := store.MigrationVersions()
-		if err != nil {
-			t.Fatal(err)
-		}
 		var n int
-		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != len(files) {
-			t.Fatalf("%d %v, want %d", n, err, len(files))
+		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != migrationFiles(t) {
+			t.Fatalf("%d %v, want %d", n, err, migrationFiles(t))
 		}
 		mkUser(t, st, "A", "a", "admin")
 	})
@@ -170,7 +167,7 @@ func TestFirstUserMarkerAllowsOneWinner(t *testing.T) {
 				t.Errorf("unexpected: %v", err)
 			}
 		}
-		users, _ := store.ListUsers(ctx, st.Q())
+		users, _ := store.ListUsers(ctx, st.Q(), store.AllTenants())
 		if wins != 1 || len(users) != 1 {
 			t.Fatalf("wins=%d users=%d", wins, len(users))
 		}
@@ -220,7 +217,7 @@ func TestInviteIsUsedOnce(t *testing.T) {
 		if _, err := store.FindUsableInvite(ctx, st.Q(), "h2", now.Add(2*time.Minute)); err != store.ErrNotFound {
 			t.Fatal(err)
 		}
-		if l, _ := store.ListOpenInvites(ctx, st.Q(), now.Add(2*time.Minute)); len(l) != 0 {
+		if l, _ := store.ListOpenInvites(ctx, st.Q(), store.AllTenants(), now.Add(2*time.Minute)); len(l) != 0 {
 			t.Fatalf("%v", l)
 		}
 	})
@@ -234,7 +231,7 @@ func TestSpacesAndMembership(t *testing.T) {
 		for _, s := range []struct{ id, name, personal, owner string }{
 			{"S1", "Zed", "", "A"}, {"S2", "My notes", "A", "A"}, {"S3", "Alpha", "", "A"}, {"S4", "Other", "B", "B"},
 		} {
-			if err := store.InsertSpace(ctx, st.Q(), s.id, s.name, s.personal, "", now); err != nil {
+			if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, s.id, s.name, s.personal, "", now); err != nil {
 				t.Fatal(err)
 			}
 			store.AddMember(ctx, st.Q(), s.id, s.owner, "owner", now)
@@ -244,7 +241,7 @@ func TestSpacesAndMembership(t *testing.T) {
 			t.Fatalf("%v %v", got, err)
 		}
 		// A second personal space for the same user is refused by the database.
-		if err := store.InsertSpace(ctx, st.Q(), "S5", "again", "A", "", now); !store.IsUnique(err) {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S5", "again", "A", "", now); !store.IsUnique(err) {
 			t.Fatalf("%v", err)
 		}
 		o, name, err := store.SpaceOwner(ctx, st.Q(), "S4")
@@ -260,7 +257,7 @@ func TestSpacesAndMembership(t *testing.T) {
 func TestDraftsLifecycle(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
 		t0 := time.UnixMilli(1_000_000)
 		idle, max := 2*time.Minute, 10*time.Minute
 		version := ""
@@ -326,7 +323,7 @@ func TestDraftsLifecycle(t *testing.T) {
 func TestPutDraftChecksThePreviousVersion(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
 		now := time.UnixMilli(5_000)
 		put := func(prev, body string) (store.Draft, error) {
 			return store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: "P", UserID: "A", BaseRev: "r", Meta: "{}", Body: body, Updated: now}, prev, time.Minute, time.Hour)
@@ -380,7 +377,7 @@ func TestPutDraftChecksThePreviousVersion(t *testing.T) {
 func TestConcurrentDraftStoresHaveOneWinner(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
 		for _, prev := range []string{"", "next"} {
 			base := ""
 			if prev != "" {
@@ -424,7 +421,7 @@ func TestConcurrentDraftStoresHaveOneWinner(t *testing.T) {
 func TestRescheduleAppliesNewTimes(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
 		t0 := time.UnixMilli(5_000_000)
 		store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: "P", UserID: "A", BaseRev: "r", Meta: "{}", Body: "", Updated: t0}, "", time.Hour, 2*time.Hour)
 		if err := store.RescheduleDrafts(ctx, st.Q(), time.Minute, 5*time.Minute); err != nil {
@@ -482,7 +479,7 @@ func TestRedactHidesThePassword(t *testing.T) {
 func TestTheDraftWriteIsItselfAGuard(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
 		put := func(page, prev, body string) (store.Draft, error) {
 			return store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: page, UserID: "A", BaseRev: "r", Meta: "{}", Body: body, Updated: time.Now()}, prev, time.Minute, time.Hour)
 		}
@@ -527,7 +524,7 @@ func TestHeldDraftsAreListedForRecovery(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "alice", "admin")
 		mkUser(t, st, "B", "bob", "member")
-		store.InsertSpace(ctx, st.Q(), "S", "s", "", "", time.Now())
+		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
 		put := func(user, page, body string) store.Draft {
 			d, err := store.PutDraft(ctx, st.Q(), store.Draft{SpaceID: "S", PageID: page, UserID: user, BaseRev: "r", Meta: `{"title":"T"}`, Body: body, Updated: time.UnixMilli(1000)}, "", time.Minute, time.Hour)
 			if err != nil {
@@ -555,7 +552,7 @@ func TestSpaceInbox(t *testing.T) {
 		mkUser(t, st, "A", "a", "admin")
 		now := time.Now()
 		for _, s := range []struct{ id, inbox string }{{"S1", ""}, {"S2", "收件箱"}} {
-			if err := store.InsertSpace(ctx, st.Q(), s.id, s.id, "", s.inbox, now); err != nil {
+			if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, s.id, s.id, "", s.inbox, now); err != nil {
 				t.Fatal(err)
 			}
 			store.AddMember(ctx, st.Q(), s.id, "A", "owner", now)
@@ -592,4 +589,21 @@ func TestSpaceInbox(t *testing.T) {
 			t.Fatalf("%v %v", got, err)
 		}
 	})
+}
+
+// migrationFiles counts the migration files, so the test needs no editing when
+// a migration is added (branches number theirs apart, and gaps are fine).
+func migrationFiles(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sql") {
+			n++
+		}
+	}
+	return n
 }

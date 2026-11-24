@@ -70,7 +70,7 @@ func TestTransferAndAddOfTheSameUserDoNotCollide(t *testing.T) {
 			var addErr, transferErr error
 			wg.Add(2)
 			go func() { defer wg.Done(); _, addErr = m.AddMember(ctx, h, u.Username, perm.Viewer) }()
-			go func() { defer wg.Done(); transferErr = m.Transfer(ctx, info.ID, u.ID) }()
+			go func() { defer wg.Done(); transferErr = m.Transfer(ctx, store.AllTenants(), info.ID, u.ID) }()
 			wg.Wait()
 			h.Release()
 			if transferErr != nil || (addErr != nil && !errors.Is(addErr, ErrAlreadyMember)) {
@@ -88,7 +88,7 @@ func TestTransferAndAddOfTheSameUserDoNotCollide(t *testing.T) {
 		if _, err := m.AddMember(ctx, h, "walt", perm.Viewer); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.Transfer(ctx, info.ID, u.ID); err != nil {
+		if err := m.Transfer(ctx, store.AllTenants(), info.ID, u.ID); err != nil {
 			t.Fatal(err)
 		}
 		if role, _ := store.MemberRole(ctx, st.Q(), info.ID, u.ID); role != perm.Owner {
@@ -118,9 +118,9 @@ func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testi
 		// Deleted after Resize passed its first look and before the walk.
 		m.sizeSem <- struct{}{}
 		done := make(chan error, 1)
-		go func() { _, _, err := m.Resize(ctx, gone.ID); done <- err }()
+		go func() { _, _, err := m.Resize(ctx, store.AllTenants(), gone.ID); done <- err }()
 		time.Sleep(100 * time.Millisecond)
-		if _, err := m.DeleteSpace(ctx, gone.ID); err != nil {
+		if _, err := m.DeleteSpace(ctx, store.AllTenants(), gone.ID); err != nil {
 			t.Fatal(err)
 		}
 		<-m.sizeSem
@@ -136,7 +136,7 @@ func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testi
 		if !m.measureNext(ctx, time.Hour) {
 			t.Fatal("a failing space stopped the round")
 		}
-		rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{})
+		rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +178,7 @@ func TestSpaceSearchIgnoresCaseBeyondASCII(t *testing.T) {
 			{"nothing like it", nil},
 			{"%", nil}, // a wildcard is a character
 		} {
-			rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: c.query})
+			rows, _, err := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{Query: c.query})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +196,7 @@ func TestSpaceSearchIgnoresCaseBeyondASCII(t *testing.T) {
 			}
 		}
 		// A rename is searched under its new name only.
-		rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: "plain"})
+		rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{Query: "plain"})
 		if len(rows) != 1 {
 			t.Fatalf("%v", rows)
 		}
@@ -204,7 +204,7 @@ func TestSpaceSearchIgnoresCaseBeyondASCII(t *testing.T) {
 			t.Fatal(err)
 		}
 		for q, n := range map[string]int{"plain": 0, "GRÖSSE": 1, "größe": 1} {
-			rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.SpaceFilter{Query: q})
+			rows, _, _ := store.ListAllSpaces(ctx, st.Q(), store.AllTenants(), store.SpaceFilter{Query: q})
 			if len(rows) != n {
 				t.Fatalf("%q after the rename: %d spaces, want %d", q, len(rows), n)
 			}

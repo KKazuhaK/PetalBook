@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
-import type { AdminStorage, AdminSpace, CacheState, PutAdminStorage, AdminDaily, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, GitHubCursorPage, GitHubInstallation, PutAdminGitHubInput, AdminSpaceList, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User } from './types'
+import type { AdminStorage, AdminSpace, CacheState, PutAdminStorage, MailPatch, MailSettings, MailTestResult, CreatedTenant, AdminUsageList, OwnQuota, SettingLower, SiteSetting, Tenancy, Tenant, TenantList, TenantQuotaKey, TenantSetting, Group, GroupList, GroupPersonList, GroupSource, GroupSpaceList, AdminDaily, AdminSpaceList, AuditList, AuthProvider, Passkey, ProviderInput, SecurityPatch, SecuritySettings, DailyAllow, AdminSpacesParams, CreatedInvite, DailyApi, DailyDefault, DailyProvider, DailyTryResult, DeletedSpace, Invite, LinesFormat, Role, ServerStatus, SpaceSize, User, AdminGrantList, AdminTokenList, MachineAccess, AdminGitHub, CursorPage, GitHubInstallation, GitHubManifestStart, PutAdminGitHubInput } from './types'
 
 export const adminApi = {
   // --- users and invites ---
@@ -20,7 +20,12 @@ export const adminApi = {
     const query = q.toString()
     return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
   },
-  updateUser: (id: string, input: { role?: Role; disabled?: boolean; remoteExempt?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  // `quota` sets the person's own limits: a number each, or null to follow the tenant; the keys left out stay.
+  // `remoteExempt` (site administrators) leaves the spaces the person owns out of the requirement of a remote.
+  updateUser: (id: string, input: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean; quota?: Partial<OwnQuota>; remoteExempt?: boolean }) => request<{ user: User }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  // The passkeys of one person, for an administrator who removes a lost one.
+  userPasskeys: (id: string, signal?: AbortSignal) => request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),
+  deleteUserPasskey: (id: string, passkey: string) => request<void>(`/users/${enc(id)}/passkeys/${enc(passkey)}`, { method: 'DELETE' }),
   createInvite: (input: { role?: Role; days?: number } = {}) => request<CreatedInvite>('/invites', { method: 'POST', body: input }),
   invites: (signal?: AbortSignal) => request<{ invites: Invite[] }>('/invites', { signal }),
   revokeInvite: (id: string) => request<void>(`/invites/${enc(id)}`, { method: 'DELETE' }),
@@ -50,6 +55,97 @@ export const adminApi = {
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   adminDeleteSpace: (id: string) => request<DeletedSpace>(`/admin/spaces/${enc(id)}`, { method: 'DELETE' }),
   adminStatus: (signal?: AbortSignal) => request<ServerStatus>('/admin/status', { signal }),
+
+  // --- usage (3.3): people by bytes, in the caller's scope; a site administrator may narrow to one tenant ---
+  usage: (params: { tenant?: string; over?: boolean; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.tenant) q.set('tenant', params.tenant)
+    if (params.over) q.set('over', '1')
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AdminUsageList>(`/admin/usage${qs ? `?${qs}` : ''}`, { signal })
+  },
+
+  // --- mail and password reset (3.3) ---
+  mail: (signal?: AbortSignal) => request<MailSettings>('/admin/mail', { signal }),
+  putMail: (input: MailPatch) => request<MailSettings>('/admin/mail', { method: 'PUT', body: input }),
+  testMail: (to: string, lang?: string) => request<MailTestResult>('/admin/mail/test', { method: 'POST', body: { to, ...(lang ? { lang } : {}) } }),
+  sendPasswordReset: (id: string, lang?: string) => request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
+
+  // --- tenants (3.3) ---
+  tenancy: (signal?: AbortSignal) => request<Tenancy>('/admin/tenancy', { signal }),
+  setTenancy: (enabled: boolean) => request<Tenancy>('/admin/tenancy', { method: 'PUT', body: { enabled } }),
+  tenants: (params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
+  },
+  tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
+  createTenant: (input: { slug: string; name: string; admin?: { username: string; name?: string; email?: string } }) => request<CreatedTenant>('/admin/tenants', { method: 'POST', body: input }),
+  updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean; quota?: Partial<Record<TenantQuotaKey, number | null>> }) => request<Tenant>(`/admin/tenants/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteTenant: (id: string) => request<void>(`/admin/tenants/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- layered settings (3.3) ---
+  siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
+  putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) => request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
+  tenantSettings: (tenant: string, signal?: AbortSignal) => request<{ settings: TenantSetting[] }>(`/admin/tenants/${enc(tenant)}/settings`, { signal }),
+  putTenantSetting: (tenant: string, key: string, input: { value?: unknown; lower?: SettingLower | null }) => request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
+
+  // --- groups ---
+  adminGroups: (params: { q?: string; source?: GroupSource | ''; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.source) q.set('source', params.source)
+    if (params.user) q.set('user', params.user)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<GroupList>(`/admin/groups${qs ? `?${qs}` : ''}`, { signal })
+  },
+  createGroup: (input: { name: string; description?: string; source: GroupSource }) => request<Group>('/admin/groups', { method: 'POST', body: input }),
+  updateGroup: (id: string, input: { name?: string; description?: string }) => request<Group>(`/admin/groups/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteGroup: (id: string, force = false) => request<void>(`/admin/groups/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  groupPeople: (id: string, params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.q) q.set('q', params.q)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<GroupPersonList>(`/admin/groups/${enc(id)}/members${qs ? `?${qs}` : ''}`, { signal })
+  },
+  // 1 to 500 users, all or nothing.
+  addGroupPeople: (id: string, userIds: string[]) => request<{ added: number; already: number }>(`/admin/groups/${enc(id)}/members`, { method: 'POST', body: { userIds } }),
+  removeGroupPerson: (id: string, userId: string) => request<void>(`/admin/groups/${enc(id)}/members/${enc(userId)}`, { method: 'DELETE' }),
+  groupSpaces: (id: string, params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<GroupSpaceList>(`/admin/groups/${enc(id)}/spaces${qs ? `?${qs}` : ''}`, { signal })
+  },
+
+  // --- security: settings, sign-in providers and the audit log ---
+  security: (signal?: AbortSignal) => request<SecuritySettings>('/admin/security', { signal }),
+  // Only the blocks and fields that changed; `captcha.secret` is write-only ("" clears it).
+  putSecurity: (patch: SecurityPatch) => request<SecuritySettings>('/admin/security', { method: 'PUT', body: patch }),
+  authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/auth/providers', { signal }),
+  createAuthProvider: (input: ProviderInput) => request<AuthProvider>('/admin/auth/providers', { method: 'POST', body: input }),
+  patchAuthProvider: (slug: string, input: ProviderInput) => request<AuthProvider>(`/admin/auth/providers/${enc(slug)}`, { method: 'PATCH', body: input }),
+  deleteAuthProvider: (slug: string, force = false) => request<void>(`/admin/auth/providers/${enc(slug)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  refreshAuthProvider: (slug: string) => request<AuthProvider>(`/admin/auth/providers/${enc(slug)}/refresh`, { method: 'POST' }),
+  audit: (params: { kind?: string; user?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.kind) q.set('kind', params.kind)
+    if (params.user) q.set('user', params.user)
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<AuditList>(`/admin/audit${qs ? `?${qs}` : ''}`, { signal })
+  },
 
   // --- machine access: API tokens ---
   access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
@@ -90,11 +186,18 @@ export const adminApi = {
     }
   },
   // --- the GitHub App of the whole server ---
-  adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/github', { signal }),
-  putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/github', { method: 'PUT', body: input }),
-  deleteAdminGitHub: () => request<void>('/admin/github', { method: 'DELETE' }),
-  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<GitHubCursorPage<GitHubInstallation>>(`/admin/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
-  putAdminGitHubInstallation: (id: number, shared: boolean) => request<GitHubInstallation>(`/admin/github/installations/${id}`, { method: 'PUT', body: { shared } }),
+  adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/connections/github', { signal }),
+  putAdminGitHub: (input: PutAdminGitHubInput) => request<AdminGitHub>('/admin/connections/github', { method: 'PUT', body: input }),
+  deleteAdminGitHub: () => request<void>('/admin/connections/github', { method: 'DELETE' }),
+  // Reads the App and its installations from GitHub again.
+  checkAdminGitHub: () => request<AdminGitHub>('/admin/connections/github/check', { method: 'POST', body: {} }),
+  // The manifest and the address the browser posts it to, to make the App on GitHub in one click.
+  startGitHubManifest: (input: { organization?: string; name?: string }) => request<GitHubManifestStart>('/admin/connections/github/manifest', { method: 'POST', body: input }),
+  // Saves the App GitHub made when saving it failed at the time (the redirect said `pending=1`).
+  retryGitHubManifest: () => request<AdminGitHub>('/admin/connections/github/manifest/retry', { method: 'POST', body: {} }),
+  adminGitHubInstallations: (cursor?: string, signal?: AbortSignal) => request<CursorPage<GitHubInstallation>>(`/admin/connections/github/installations${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
+  // Shares the installation with exactly these tenants; none stops sharing.
+  putAdminGitHubInstallation: (id: number, tenants: string[]) => request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
   putDailyLines: (input: { lang: string; text: string; format: LinesFormat }) => request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
   deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
@@ -130,6 +233,105 @@ export function useAdminSpaces(q: string, enabled = true, filter: { cache?: Cach
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
+  })
+}
+
+// People by usage, the most bytes first, a cursor page at a time.
+export function useAdminUsage(params: { tenant: string; over: boolean }, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminUsage(params.tenant, params.over),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.usage({ tenant: params.tenant || undefined, over: params.over, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 10_000,
+  })
+}
+
+// --- mail (3.3) ---
+
+export function useMail(enabled = true) {
+  return useQuery({ queryKey: keys.adminMail, queryFn: ({ signal }) => adminApi.mail(signal), enabled, staleTime: 5_000 })
+}
+export function usePutMail() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: MailPatch) => adminApi.putMail(input),
+    // Mail on or off changes what the sign-in page links to.
+    onSuccess: (data) => {
+      qc.setQueryData(keys.adminMail, data)
+      void qc.invalidateQueries({ queryKey: keys.providers })
+      void qc.invalidateQueries({ queryKey: keys.tenants })
+    },
+  })
+}
+
+// --- tenants and layered settings (3.3) ---
+
+export function useTenancy(enabled = true) {
+  return useQuery({ queryKey: keys.tenancy, queryFn: ({ signal }) => adminApi.tenancy(signal), enabled, staleTime: 15_000 })
+}
+export function useSetTenancy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (on: boolean) => adminApi.setTenancy(on),
+    onSuccess: (data) => qc.setQueryData(keys.tenancy, data),
+  })
+}
+// Every tenant, the default one first; there are at most 1,000, so the pages are followed to the end.
+// `fresh` asks again on mounting even when the list is cached: a dialog that offers tenants to pick must not miss a new one.
+export function useTenants(enabled = true, fresh = false) {
+  return useQuery({
+    queryKey: keys.tenants,
+    enabled,
+    staleTime: 15_000,
+    refetchOnMount: fresh ? 'always' : true,
+    queryFn: async ({ signal }) => {
+      const out: Tenant[] = []
+      let cursor = ''
+      do {
+        const page = await adminApi.tenants({ cursor, limit: 200 }, signal)
+        out.push(...page.items)
+        cursor = page.next
+      } while (cursor)
+      return out
+    },
+  })
+}
+export function useCreateTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: Parameters<typeof adminApi.createTenant>[0]) => adminApi.createTenant(input),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+  })
+}
+export function useUpdateTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof adminApi.updateTenant>[1]) => adminApi.updateTenant(id, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.tenants }),
+  })
+}
+export function useDeleteTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => adminApi.deleteTenant(id),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+  })
+}
+export function useSiteSettings(enabled = true) {
+  return useQuery({ queryKey: keys.siteSettings, queryFn: ({ signal }) => adminApi.siteSettings(signal), enabled, staleTime: 10_000 })
+}
+export function useTenantSettings(tenant: string, enabled = true) {
+  return useQuery({ queryKey: keys.tenantSettings(tenant), queryFn: ({ signal }) => adminApi.tenantSettings(tenant, signal), enabled: enabled && tenant !== '', staleTime: 10_000 })
+}
+// A change at one layer can change what every other layer shows (a lock, a restriction), so all of them are read again.
+export function usePutSetting() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenant, key, ...input }: { tenant?: string; key: string; value?: unknown; lower?: SettingLower | null }) =>
+      tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['admin', 'settings'] }), qc.invalidateQueries({ queryKey: ['settings'] }), qc.invalidateQueries({ queryKey: keys.adminDaily })]),
   })
 }
 
@@ -182,6 +384,92 @@ export function useDeleteSpace() {
   })
 }
 
+// --- groups --------------------------------------------------------------------------
+
+// Every group, a cursor page at a time; `q` is the name filter, `source` local or synced.
+export function useAdminGroups(q: string, source: GroupSource | '', enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGroupList(q, source),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.adminGroups({ q: q || undefined, source, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+// The synced groups whose names contain `q`, for the mapping of a sign-in provider: the first 200 by name (the
+// tenant has at most 10,000 groups, so the picker searches rather than loading them all).
+export function useSyncedGroups(q = '', enabled = true) {
+  return useQuery({
+    queryKey: keys.adminGroupList(q, 'synced-all'),
+    queryFn: ({ signal }) => adminApi.adminGroups({ q: q || undefined, source: 'synced', limit: 200 }, signal),
+    enabled,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useGroupPeople(id: string, q: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGroupPeople(id, q),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.groupPeople(id, { q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 10_000,
+  })
+}
+
+export function useGroupSpaces(id: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.adminGroupSpaces(id),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.groupSpaces(id, { cursor: pageParam || undefined, limit: ADMIN_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 10_000,
+  })
+}
+
+// What changes a group changes the lists of groups, and what the members of
+// spaces see of them, and a person's own groups.
+function useGroupsChanged() {
+  const qc = useQueryClient()
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.adminGroups }),
+      qc.invalidateQueries({ queryKey: keys.account }),
+      qc.invalidateQueries({ queryKey: keys.spaces }),
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'space' && q.queryKey[2] === 'members' }),
+    ])
+}
+export function useCreateGroup() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: (input: { name: string; description?: string; source: GroupSource }) => adminApi.createGroup(input), onSuccess: changed })
+}
+export function useUpdateGroup() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: ({ id, ...input }: { id: string; name?: string; description?: string }) => adminApi.updateGroup(id, input), onSuccess: changed })
+}
+export function useDeleteGroup() {
+  const changed = useGroupsChanged()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, force }: { id: string; force: boolean }) => adminApi.deleteGroup(id, force),
+    // The providers' mappings lose their entries with the group.
+    onSuccess: () => Promise.all([changed(), qc.invalidateQueries({ queryKey: keys.adminProviders })]),
+  })
+}
+export function useAddGroupPeople() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: ({ id, userIds }: { id: string; userIds: string[] }) => adminApi.addGroupPeople(id, userIds), onSuccess: changed })
+}
+export function useRemoveGroupPerson() {
+  const changed = useGroupsChanged()
+  return useMutation({ mutationFn: ({ id, userId }: { id: string; userId: string }) => adminApi.removeGroupPerson(id, userId), onSuccess: changed })
+}
+
 // --- the daily text of the whole server ----------------------------------------------
 
 export function useAdminDaily(enabled = true) {
@@ -208,6 +496,28 @@ export const useSaveDailyLines = () => useDailyWrite((input: { lang: string; tex
 export const useDeleteDailyLines = () => useDailyWrite((lang: string) => adminApi.deleteDailyLines(lang))
 export function useTryDailyApi() {
   return useMutation({ mutationFn: ({ api, lang, date }: { api: Omit<DailyApi, 'note'>; lang: string; date: string }) => adminApi.tryDailyApi(api, lang, date) })
+}
+
+// --- security ----------------------------------------------------------------------------
+
+export function useSecuritySettings(enabled = true) {
+  return useQuery({ queryKey: keys.adminSecurity, queryFn: ({ signal }) => adminApi.security(signal), enabled, staleTime: 15_000 })
+}
+
+export function useAuthProviders() {
+  return useQuery({ queryKey: keys.adminProviders, queryFn: ({ signal }) => adminApi.authProviders(signal), staleTime: 15_000 })
+}
+
+export const AUDIT_PAGE_SIZE = 50
+// The audit log, newest first, a cursor page at a time; `kind` and `user` filter.
+export function useAuditLog(kind: string, user: string) {
+  return useInfiniteQuery({
+    queryKey: keys.adminAudit(kind, user),
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => adminApi.audit({ kind: kind || undefined, user: user || undefined, cursor: pageParam || undefined, limit: AUDIT_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 5_000,
+  })
 }
 
 // --- machine access ------------------------------------------------------------------
@@ -259,12 +569,26 @@ export function useAdminGitHub(enabled = true) {
 // What an administrator changes about the App changes what everyone is offered.
 function useGitHubChanged() {
   const qc = useQueryClient()
-  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHub }), qc.invalidateQueries({ queryKey: keys.github }), qc.invalidateQueries({ queryKey: ['github', 'owners'] })])
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHub }), qc.invalidateQueries({ queryKey: keys.connections })])
 }
 
 export function useSaveAdminGitHub() {
   const changed = useGitHubChanged()
   return useMutation({ mutationFn: (input: PutAdminGitHubInput) => adminApi.putAdminGitHub(input), onSuccess: () => changed() })
+}
+
+export function useCheckAdminGitHub() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.checkAdminGitHub(), onSuccess: () => changed() })
+}
+
+export function useStartGitHubManifest() {
+  return useMutation({ mutationFn: (input: { organization?: string; name?: string }) => adminApi.startGitHubManifest(input) })
+}
+
+export function useRetryGitHubManifest() {
+  const changed = useGitHubChanged()
+  return useMutation({ mutationFn: () => adminApi.retryGitHubManifest(), onSuccess: () => changed() })
 }
 
 export function useDeleteAdminGitHub() {
@@ -277,7 +601,7 @@ export function useAdminGitHubInstallations(enabled = true) {
   return useInfiniteQuery({
     queryKey: keys.adminGitHubInstallations,
     initialPageParam: '',
-    queryFn: ({ pageParam, signal }): Promise<GitHubCursorPage<GitHubInstallation>> => adminApi.adminGitHubInstallations(pageParam || undefined, signal),
+    queryFn: ({ pageParam, signal }): Promise<CursorPage<GitHubInstallation>> => adminApi.adminGitHubInstallations(pageParam || undefined, signal),
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
@@ -287,8 +611,8 @@ export function useAdminGitHubInstallations(enabled = true) {
 export function useShareGitHubInstallation() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, shared }: { id: number; shared: boolean }) => adminApi.putAdminGitHubInstallation(id, shared),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['github', 'owners'] })]),
+    mutationFn: ({ id, tenants }: { id: number; tenants: string[] }) => adminApi.putAdminGitHubInstallation(id, tenants),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: keys.adminGitHubInstallations }), qc.invalidateQueries({ queryKey: ['connections'] })]),
   })
 }
 

@@ -101,7 +101,7 @@ describe('space limit', () => {
     expect(post().status).toBe(201)
     const r = post()
     expect(r.status).toBe(403)
-    expect(r.body).toMatchObject({ error: 'forbidden' })
+    expect(r.body).toMatchObject({ error: 'quota_exceeded', quota: 'spaces', limit: 2, used: 2 })
   })
 })
 

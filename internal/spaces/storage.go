@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -45,7 +45,7 @@ const (
 // StorageSettings is the site's storage policy.
 type StorageSettings struct {
 	Remotes struct {
-		Require   *string   `json:"require"` // nil, "any" or "github"
+		Require   *string   `json:"require"` // nil, "any" or the id of a provider ("github")
 		Scope     string    `json:"scope"`   // "new" or "all"
 		GraceDays int       `json:"graceDays"`
 		Since     time.Time `json:"since"` // when the requirement took its present form
@@ -285,8 +285,8 @@ func deref(p *string) string {
 
 func (m *Manager) validateStorage(s *StorageSettings) error {
 	bad := func(f string, a ...any) error { return fmt.Errorf("%w: "+f, append([]any{ErrInvalid}, a...)...) }
-	if r := s.Remotes.Require; r != nil && *r != "any" && *r != "github" {
-		return bad(`remotes.require is null, "any" or "github"`)
+	if r := s.Remotes.Require; r != nil && (*r == "" || *r == connections.GitID) {
+		return bad(`remotes.require is null, "any" or the id of a provider`)
 	}
 	if s.Remotes.Scope != "new" && s.Remotes.Scope != "all" {
 		return bad(`remotes.scope is "new" or "all"`)
@@ -294,8 +294,22 @@ func (m *Manager) validateStorage(s *StorageSettings) error {
 	if s.Remotes.GraceDays < 0 || s.Remotes.GraceDays > maxGraceDays {
 		return bad("remotes.graceDays is 0 to %d", maxGraceDays)
 	}
-	if deref(s.Remotes.Require) == "github" && m.opt.GitHub == nil {
-		return &github.Error{Status: http.StatusConflict, Code: github.CodeNotConfigured, Msg: "the server has no GitHub App; set it up before requiring GitHub"}
+	if r := deref(s.Remotes.Require); r != "" && r != "any" {
+		// A provider this server has: requiring one it does not have would leave
+		// nobody a way to meet the requirement.
+		if _, ok := m.opt.Connections.Get(r); !ok {
+			return bad(`remotes.require is null, "any" or the id of a provider of this server`)
+		}
+		p, err := m.provider(r)
+		if err != nil {
+			return err
+		}
+		if in, err := p.Info(context.Background(), ""); err != nil {
+			return err
+		} else if !in.Configured {
+			d := p.Descriptor()
+			return connections.Errorf(d.ID, http.StatusConflict, connections.CodeNotConfigured, "this server has no %s connection set up; set it up before requiring it", d.Name)
+		}
 	}
 	if m.single == nil && !m.opt.HostsFromFlag {
 		if len(s.Hosts.Allowed) == 0 {
@@ -378,15 +392,17 @@ func (m *Manager) dropFacts(id string) {
 // PolicyChanged tells the manager that an exemption of a user changed.
 func (m *Manager) PolicyChanged() { m.dropFacts("") }
 
-// acceptable reports whether a credential type meets the requirement.
-func acceptable(require, cred string) bool {
+// acceptable reports whether a remote meets the requirement: its credential
+// type ("" for none) and the provider it goes through. "any" takes any remote;
+// a provider's id takes a connection through that provider.
+func acceptable(require, cred, provider string) bool {
 	switch require {
 	case "":
 		return true
-	case "github":
-		return cred == CredGitHub
+	case "any":
+		return cred != ""
 	}
-	return cred != ""
+	return cred == CredConnection && provider == require
 }
 
 // Notice says what requirement a space does not meet, with its deadline; nil
@@ -403,7 +419,7 @@ func (m *Manager) Notice(ctx context.Context, id string) (*RemoteNotice, error) 
 	if err != nil {
 		return nil, err
 	}
-	if f.Exempt || f.OwnerExempt || acceptable(p.Require, f.CredType) {
+	if f.Exempt || f.OwnerExempt || acceptable(p.Require, f.CredType, f.Provider) {
 		return nil, nil
 	}
 	dl, ok := p.Deadline(f.Created)
@@ -429,35 +445,44 @@ func (m *Manager) CheckWritable(id string) error {
 		return nil // a failed lookup does not stop someone writing
 	}
 	return &RequiredError{Require: n.Required, Deadline: n.Deadline,
-		Msg: "This space is past its deadline for following a remote repository (" + describeRequire(n.Required) + "), so it is read only until it does."}
+		Msg: "This space is past its deadline for following a remote repository (" + m.describeRequire(n.Required) + "), so it is read only until it does."}
 }
 
-func describeRequire(r string) string {
-	if r == "github" {
-		return "on GitHub"
+func (m *Manager) describeRequire(r string) string {
+	if r == "any" || r == "" {
+		return "on an allowed host"
 	}
-	return "on an allowed host"
+	return "on " + m.providerName(r)
+}
+
+// providerName is the display name of a provider ("GitHub"), or its id.
+func (m *Manager) providerName(id string) string {
+	if p, ok := m.opt.Connections.Get(id); ok {
+		return p.Descriptor().Name
+	}
+	return id
 }
 
 // CheckNewSpace refuses a new space that does not have what the policy
 // requires, before anything is made. cred is the credential type the request
-// brings ("" for none); exempt users are not asked.
-func (m *Manager) CheckNewSpace(ctx context.Context, userID, cred string) error {
+// brings ("" for none) and provider the provider it goes through; exempt
+// users are not asked.
+func (m *Manager) CheckNewSpace(ctx context.Context, userID, cred, provider string) error {
 	if m.single != nil {
 		return nil
 	}
 	p := m.remotePolicy()
-	if !p.Active() || acceptable(p.Require, cred) {
+	if !p.Active() || acceptable(p.Require, cred, provider) {
 		return nil
 	}
-	if u, err := store.GetUser(ctx, m.opt.Store.Q(), userID); err == nil && u.RemoteExempt {
+	if u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID); err == nil && u.RemoteExempt { // the creator, by id
 		return nil
 	}
 	msg := "This server requires a space to follow a remote repository"
-	if p.Require == "github" {
-		msg += " on GitHub: make it with a github repository"
+	if p.Require != "any" {
+		msg += " " + m.describeRequire(p.Require) + ": make it with storage.sync on " + m.providerName(p.Require)
 	} else {
-		msg += " on an allowed host: give a remote or a github repository"
+		msg += " on an allowed host: give a remote or storage.sync"
 	}
 	return &RequiredError{Require: p.Require, Msg: msg + "."}
 }
@@ -484,13 +509,14 @@ func (m *Manager) CheckRemoval(ctx context.Context, id string) error {
 	return &RequiredError{Require: p.Require, Msg: "This server requires the space to follow a remote repository; it cannot be removed."}
 }
 
-// CheckCredential refuses a credential the requirement does not accept.
-func (m *Manager) CheckCredential(ctx context.Context, id, cred string) error {
+// CheckCredential refuses a credential the requirement does not accept: its
+// type and the provider it goes through.
+func (m *Manager) CheckCredential(ctx context.Context, id, cred, provider string) error {
 	if m.single != nil {
 		return nil
 	}
 	p := m.remotePolicy()
-	if !p.Active() || acceptable(p.Require, cred) {
+	if !p.Active() || acceptable(p.Require, cred, provider) {
 		return nil
 	}
 	f, err := m.policyFacts(ctx, id)
@@ -503,7 +529,7 @@ func (m *Manager) CheckCredential(ctx context.Context, id, cred string) error {
 	if _, ok := p.Deadline(f.Created); !ok {
 		return nil // not covered by a requirement of new spaces only
 	}
-	return &RequiredError{Require: p.Require, Msg: "This server requires a remote repository on GitHub; use a github credential."}
+	return &RequiredError{Require: p.Require, Msg: "This server requires a remote repository " + m.describeRequire(p.Require) + "; use a connection to " + m.providerName(p.Require) + "."}
 }
 
 // --- a limit on local spaces -------------------------------------------------------
@@ -521,7 +547,7 @@ func (m *Manager) CheckRoom(ctx context.Context, h *Handle, extra int64) error {
 	if limit == nil || h.Info.Sync != "local" {
 		return nil
 	}
-	row, err := store.GetAdminSpace(ctx, m.opt.Store.Q(), h.Info.ID)
+	row, err := store.GetAdminSpace(ctx, m.opt.Store.Q(), store.AllTenants(), h.Info.ID) // the space the caller has open
 	if err != nil {
 		return err
 	}
@@ -530,7 +556,7 @@ func (m *Manager) CheckRoom(ctx context.Context, h *Handle, extra int64) error {
 		size = *row.SizeBytes
 	}
 	if row.SizeBytes == nil || size+extra > *limit || float64(size+extra) > 0.9*float64(*limit) {
-		if n, _, err := m.Resize(ctx, h.Info.ID); err == nil {
+		if n, _, err := m.Resize(ctx, store.AllTenants(), h.Info.ID); err == nil { // the space the caller has open
 			size = n
 		}
 	}
@@ -599,7 +625,7 @@ func (m *Manager) LastUsed(db time.Time, id string) time.Time { return m.lastUse
 // NoticeOfRow is Notice for a row the administration's list has read.
 func (m *Manager) NoticeOfRow(r store.AdminSpace) *RemoteNotice {
 	p := m.remotePolicy()
-	if !p.Active() || r.Storage.Exempt || r.OwnerExempt || acceptable(p.Require, r.CredType) {
+	if !p.Active() || r.Storage.Exempt || r.OwnerExempt || acceptable(p.Require, r.CredType, r.Provider) {
 		return nil
 	}
 	dl, ok := p.Deadline(r.Created)

@@ -1,9 +1,11 @@
 package github_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
@@ -14,7 +16,7 @@ import (
 func TestSaveChecksWithGitHubAndStoresSealed(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		if v, err := h.svc.View(ctx); err != nil || v.Configured || v.CallbackURL != publicURL+"/api/github/authorization/callback" {
+		if v, err := h.svc.View(ctx); err != nil || v.Configured || v.CallbackURL != publicURL+"/api/connections/github/authorization/callback" {
 			t.Fatalf("%+v %v", v, err)
 		}
 		v := h.configure()
@@ -52,11 +54,11 @@ func TestSaveRefusesWhatGitHubRefusesAndSavesNothing(t *testing.T) {
 		}{
 			{"nothing", github.SaveRequest{}, "invalid", 400},
 			{"no key", github.SaveRequest{AppID: "424242"}, "invalid", 400},
-			{"not a key", github.SaveRequest{AppID: "424242", PrivateKey: "hello"}, "github_key_invalid", 400},
-			{"another key", github.SaveRequest{AppID: "424242", PrivateKey: githubapptest.KeyPEM(githubapptest.NewKey(t))}, "github_app_rejected", 400},
-			{"another app id", github.SaveRequest{AppID: "7", PrivateKey: h.f.KeyPEM()}, "github_app_rejected", 400},
-			{"another client id", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &bad, ClientSecret: "x"}, "github_client_rejected", 400},
-			{"wrong secret", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id, ClientSecret: "wrong"}, "github_client_rejected", 400},
+			{"not a key", github.SaveRequest{AppID: "424242", PrivateKey: "hello"}, "key_invalid", 400},
+			{"another key", github.SaveRequest{AppID: "424242", PrivateKey: githubapptest.KeyPEM(githubapptest.NewKey(t))}, "app_rejected", 400},
+			{"another app id", github.SaveRequest{AppID: "7", PrivateKey: h.f.KeyPEM()}, "app_rejected", 400},
+			{"another client id", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &bad, ClientSecret: "x"}, "client_rejected", 400},
+			{"wrong secret", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id, ClientSecret: "wrong"}, "client_rejected", 400},
 			{"id without secret", github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM(), ClientID: &id}, "invalid", 400},
 		}
 		for _, c := range cases {
@@ -106,15 +108,15 @@ func TestAnotherAppIsRefusedWhileInUse(t *testing.T) {
 		}
 		empty := ""
 		_, err := h.svc.Save(ctx, github.SaveRequest{ClientID: &empty})
-		if code(err) != "github_app_in_use" || status(err) != http.StatusConflict {
+		if code(err) != "provider_in_use" || status(err) != http.StatusConflict {
 			t.Fatalf("removing the client id while a user is connected: %v", err)
 		}
-		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "github_app_in_use" {
+		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "provider_in_use" {
 			t.Fatalf("another App id: %v", err)
 		}
 		// Deleting is refused while a space syncs through the App; connections go with it otherwise.
 		h.space("S1", store.Remote{GHVia: "user", GHUserID: "U1", GHRepoID: 5})
-		if err := h.svc.Delete(ctx); code(err) != "github_app_in_use" {
+		if err := h.svc.Delete(ctx); code(err) != "provider_in_use" {
 			t.Fatalf("%v", err)
 		}
 		if err := store.DeleteRemote(ctx, st.Q(), "S1"); err != nil {
@@ -141,7 +143,7 @@ func githubapptestKeyPEM(h *harness) string { return h.f.KeyPEM() }
 func TestInstallationsListAndSharing(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		h := newHarness(t, st)
-		if _, _, err := h.svc.Installations(ctx, ""); code(err) != "github_not_configured" || status(err) != 409 {
+		if _, _, err := h.svc.Installations(ctx, ""); code(err) != "provider_not_configured" || status(err) != 409 {
 			t.Fatalf("%v", err)
 		}
 		h.configure()
@@ -169,32 +171,46 @@ func TestInstallationsListAndSharing(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 		// Share one organisation; a user's account cannot be shared; GitHub must know the installation.
-		it, err := h.svc.SetShared(ctx, orgInst, true)
-		if err != nil || !it.Shared {
+		it, err := h.svc.SetTenants(ctx, orgInst, []string{store.DefaultTenantID})
+		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+"]" {
 			t.Fatalf("%+v %v", it, err)
 		}
-		if _, err := h.svc.SetShared(ctx, userInst, true); code(err) != "invalid" {
+		if _, err := h.svc.SetTenants(ctx, userInst, []string{store.DefaultTenantID}); code(err) != "invalid" {
 			t.Fatalf("%v", err)
 		}
-		if _, err := h.svc.SetShared(ctx, 12345, true); code(err) != "not_found" || status(err) != 404 {
+		if _, err := h.svc.SetTenants(ctx, 12345, []string{store.DefaultTenantID}); code(err) != "not_found" || status(err) != 404 {
 			t.Fatalf("%v", err)
 		}
 		list, _, _ := h.svc.Installations(ctx, next)
 		shared := 0
 		all, _, _ := h.svc.Installations(ctx, "")
 		for _, x := range append(all, list...) {
-			if x.Shared {
+			if len(x.Tenants) > 0 {
 				shared++
 			}
 		}
 		if shared != 1 {
 			t.Fatalf("%d shared", shared)
 		}
+		// Sharing with a tenant that does not exist, or twice with one, or with none.
+		if _, err := h.svc.SetTenants(ctx, orgInst, []string{"no-such-tenant"}); code(err) != "invalid" || status(err) != 400 {
+			t.Fatalf("%v", err)
+		}
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T2", Slug: "two", Name: "Two", Created: h.now}); err != nil {
+			t.Fatal(err)
+		}
+		it, err = h.svc.SetTenants(ctx, orgInst, []string{"T2", store.DefaultTenantID, "T2"})
+		if err != nil || fmt.Sprint(it.Tenants) != "["+store.DefaultTenantID+" T2]" {
+			t.Fatalf("%+v %v", it, err)
+		}
+		if _, err := h.svc.SetTenants(ctx, userInst, nil); err != nil {
+			t.Fatalf("stopping to share a user's account is allowed: %v", err)
+		}
 		// A space counts toward its installation.
 		h.user("U1", "kazuha")
 		h.space("S1", store.Remote{GHVia: "app", GHInstallationID: orgInst, GHRepoID: 1})
-		it, err = h.svc.SetShared(ctx, orgInst, false)
-		if err != nil || it.Shared || it.Spaces != 1 {
+		it, err = h.svc.SetTenants(ctx, orgInst, nil)
+		if err != nil || len(it.Tenants) != 0 || it.Spaces != 1 {
 			t.Fatalf("%+v %v", it, err)
 		}
 	})
@@ -218,8 +234,147 @@ func TestRemovingTheClientIDCountsOnlyConnectedUsers(t *testing.T) {
 			t.Fatalf("%+v", v)
 		}
 		// Another App is still refused while the space syncs through this one.
-		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "github_app_in_use" {
+		if _, err := h.svc.Save(ctx, github.SaveRequest{AppID: "999", PrivateKey: githubapptestKeyPEM(h)}); code(err) != "provider_in_use" {
 			t.Fatalf("another App id: %v", err)
+		}
+	})
+}
+
+// reads counts the requests for the App itself (GET /app), which a re-check makes.
+func appReads(h *harness) int {
+	n := 0
+	for _, r := range h.f.Requests() {
+		if r.Method == "GET" && r.Path == "/app" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestRecheckReadsThePermissionsAgain(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
+		v, err := h.svc.Save(ctx, github.SaveRequest{AppID: "424242", PrivateKey: h.f.KeyPEM()})
+		if err != nil || strings.Join(v.Missing, ",") != "administration" {
+			t.Fatalf("%+v %v", v, err)
+		}
+		// The owner gives the App the permission on GitHub: the stored view is old until it is checked again.
+		h.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		if v, _ = h.svc.View(ctx); strings.Join(v.Missing, ",") != "administration" {
+			t.Fatalf("a view read GitHub: %+v", v)
+		}
+		h.clk.Advance(time.Hour)
+		v, err = h.svc.Recheck(ctx)
+		if err != nil || len(v.Missing) != 0 || !v.Checked.Equal(h.clk.Now()) || v.Permissions["administration"] != "write" {
+			t.Fatalf("%+v %v", v, err)
+		}
+		if v, _ = h.svc.View(ctx); len(v.Missing) != 0 {
+			t.Fatalf("the re-check was not stored: %+v", v)
+		}
+		// An installation that has not accepted the new permission is told apart from the App.
+		h.f.AddOrg("kazuhahub")
+		inst := h.f.Install("kazuhahub", "all")
+		h.f.SetInstall(inst, func(i *githubapptest.Install) { i.Perms = map[string]string{"contents": "read", "metadata": "read"} })
+		v, err = h.svc.Recheck(ctx)
+		if err != nil || len(v.Missing) != 0 || len(v.Gaps) != 1 || v.Gaps[0].ID != inst || v.Gaps[0].Account != "kazuhahub" ||
+			strings.Join(v.Gaps[0].Missing, ",") != "administration,contents" {
+			t.Fatalf("%+v %v", v, err)
+		}
+		h.f.SetInstall(inst, func(i *githubapptest.Install) { i.Perms = nil })
+		if v, err = h.svc.Recheck(ctx); err != nil || len(v.Gaps) != 0 {
+			t.Fatalf("%+v %v", v, err)
+		}
+		// A key GitHub no longer accepts is the App's problem, said so.
+		h.f.Key = githubapptest.NewKey(t)
+		if _, err = h.svc.Recheck(ctx); code(err) != "provider_not_configured" || status(err) != 409 {
+			t.Fatalf("%v", err)
+		}
+		h.mustNotLeak()
+	})
+}
+
+func TestRecheckWithoutAnApp(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		if _, err := h.svc.Recheck(ctx); code(err) != "provider_not_configured" {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// A token request refused for a permission looks at the App again by itself, at
+// most once a minute.
+func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		repo := w.f.AddRepo("kazuhahub", "wiki", true)
+		w.space("S1", store.Remote{GHVia: "app", GHInstallationID: w.kazuhahub, GHRepoID: repo.ID})
+		rem, _ := store.GetRemote(ctx, st.Q(), "S1")
+		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
+		if v, _ := w.svc.View(ctx); len(v.Missing) != 0 {
+			t.Fatalf("%+v", v)
+		}
+		before := appReads(w.harness)
+		if _, err := w.svc.GitToken(ctx, rem, false); err == nil {
+			t.Fatal("a token was made without the permission")
+		}
+		v, _ := w.svc.View(ctx)
+		if strings.Join(v.Missing, ",") != "contents" || appReads(w.harness) != before+1 {
+			t.Fatalf("the refusal did not refresh the view (%d reads): %+v", appReads(w.harness)-before, v)
+		}
+		// A storm of refusals costs one read a minute.
+		for i := 0; i < 5; i++ {
+			w.svc.GitToken(ctx, rem, false)
+		}
+		if n := appReads(w.harness) - before; n != 1 {
+			t.Fatalf("%d reads of the App for six refusals", n)
+		}
+		w.clk.Advance(61 * time.Second)
+		w.f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+		w.f.SetInstall(w.kazuhahub, func(i *githubapptest.Install) {
+			i.Perms = map[string]string{"administration": "write", "metadata": "read"}
+		})
+		w.svc.GitToken(ctx, rem, false)
+		if v, _ = w.svc.View(ctx); len(v.Missing) != 0 || appReads(w.harness) != before+2 || len(v.Gaps) != 1 {
+			t.Fatalf("after a minute: %+v", v)
+		}
+	})
+}
+
+// Whether the App can be installed on any account is read from GitHub's data;
+// without it, an installation of another account proves it.
+func TestTheAppsVisibilityIsRead(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		// GitHub does not say: unknown.
+		h.f.Public = nil
+		v := h.configure()
+		if v.AnyAccount != nil {
+			t.Fatalf("unknown was guessed: %v", *v.AnyAccount)
+		}
+		// Installed on the owner's own organisation only: still unknown.
+		h.f.AddOrg("kazuhahub")
+		h.f.Install("kazuhahub", "all")
+		if v, _ = h.svc.Recheck(ctx); v.AnyAccount != nil {
+			t.Fatalf("the owner's own installation proves nothing: %v", *v.AnyAccount)
+		}
+		// An installation on someone else's account proves it can be.
+		h.f.AddUser("tang")
+		h.f.Install("tang", "all")
+		if v, _ = h.svc.Recheck(ctx); v.AnyAccount == nil || !*v.AnyAccount {
+			t.Fatalf("%v", v.AnyAccount)
+		}
+		// What GitHub says wins.
+		no := false
+		h.f.Public = &no
+		if v, _ = h.svc.Recheck(ctx); v.AnyAccount == nil || *v.AnyAccount {
+			t.Fatalf("a private App: %v", v.AnyAccount)
+		}
+		yes := true
+		h.f.Public = &yes
+		if v, _ = h.svc.Recheck(ctx); v.AnyAccount == nil || !*v.AnyAccount {
+			t.Fatalf("a public App: %v", v.AnyAccount)
 		}
 	})
 }

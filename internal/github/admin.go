@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -36,6 +38,18 @@ type AppView struct {
 	Checked          time.Time
 	Spaces           int
 	Authorizations   int
+	// Gaps lists the installations that lack a permission, from the last check.
+	Gaps []Gap
+	// AnyAccount: the App can be installed on any account (nil: not known). A
+	// person can only install it on their own account when it can.
+	AnyAccount *bool
+}
+
+// Gap is an installation that lacks permissions the App needs.
+type Gap struct {
+	ID      int64
+	Account string
+	Missing []string
 }
 
 func missingPermissions(have map[string]string) []string {
@@ -75,6 +89,10 @@ func (s *Service) View(ctx context.Context) (*AppView, error) {
 	v.Permissions, v.Missing = r.Permissions, missingPermissions(r.Permissions)
 	v.UserAuthorizaton = st.userAuth(s.opt.PublicURL)
 	v.Checked, v.Spaces, v.Authorizations = r.Checked, spaces, auths
+	for _, g := range r.Gaps {
+		v.Gaps = append(v.Gaps, Gap{ID: g.ID, Account: g.Account, Missing: g.Missing})
+	}
+	v.AnyAccount = r.AnyAccount
 	return v, nil
 }
 
@@ -92,9 +110,11 @@ type SaveRequest struct {
 	PrivateKey   string
 	ClientID     *string
 	ClientSecret string
+	// WebhookSecret is kept sealed when given (an App made from a manifest has one).
+	WebhookSecret string
 }
 
-func appInUse(spaces, auths int) *Error {
+func appInUse(spaces, auths int) *connections.Error {
 	var parts []string
 	if spaces > 0 {
 		parts = append(parts, strconv.Itoa(spaces)+" space(s) sync through the App")
@@ -102,7 +122,7 @@ func appInUse(spaces, auths int) *Error {
 	if auths > 0 {
 		parts = append(parts, strconv.Itoa(auths)+" user(s) are connected")
 	}
-	return errf(http.StatusConflict, CodeAppInUse, "another GitHub App cannot be set while %s: switch or disconnect those first", strings.Join(parts, " and "))
+	return errf(http.StatusConflict, CodeInUse, "another GitHub App cannot be set while %s: switch or disconnect those first", strings.Join(parts, " and "))
 }
 
 // Save checks the App with GitHub and stores it. It saves nothing when a check
@@ -173,7 +193,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		}
 		if spaces > 0 || auths > 0 {
 			if !appChanged {
-				return nil, errf(http.StatusConflict, CodeAppInUse, "the client id cannot be changed or removed while %d user(s) are connected: they disconnect first", auths)
+				return nil, errf(http.StatusConflict, CodeInUse, "the client id cannot be changed or removed while %d user(s) are connected: they disconnect first", auths)
 			}
 			return nil, appInUse(spaces, auths)
 		}
@@ -205,7 +225,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		}
 	}
 	rec := appRecord{AppID: appID, ClientID: clientID, Fingerprint: githubapp.Fingerprint(key), Slug: info.Slug, Name: info.Name,
-		Owner: info.Owner.Login, HTMLURL: info.HTMLURL, Permissions: info.Permissions, Checked: s.opt.Now().UTC()}
+		Owner: info.Owner.Login, HTMLURL: info.HTMLURL, Permissions: info.Permissions, Checked: s.opt.Now().UTC(), AnyAccount: info.Public}
+	if old != nil && old.rec.AppID == appID && rec.AnyAccount == nil {
+		rec.AnyAccount = old.rec.AnyAccount
+	}
 	if rec.KeyEnc, err = s.opt.Secrets.Seal(siteBinding, purposeKey, pemBytes); err != nil {
 		return nil, err
 	}
@@ -213,6 +236,13 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		if rec.SecretEnc, err = s.opt.Secrets.Seal(siteBinding, purposeSecret, []byte(secret)); err != nil {
 			return nil, err
 		}
+	}
+	if req.WebhookSecret != "" {
+		if rec.WebhookSecretEnc, err = s.opt.Secrets.Seal(siteBinding, purposeHook, []byte(req.WebhookSecret)); err != nil {
+			return nil, err
+		}
+	} else if old != nil && old.rec.AppID == appID {
+		rec.WebhookSecretEnc = old.rec.WebhookSecretEnc
 	}
 	raw, _ := json.Marshal(rec)
 	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), settingKey, string(raw), s.opt.Now()); err != nil {
@@ -232,7 +262,7 @@ func limited(err error) bool {
 // unreachable answers for a check that could not be made.
 func (s *Service) unreachable(err error) error {
 	if e := s.wrap(err); e != nil {
-		var he *Error
+		var he *connections.Error
 		if errors.As(e, &he) {
 			return he
 		}
@@ -256,7 +286,7 @@ func (s *Service) Delete(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		return errf(http.StatusConflict, CodeAppInUse, "%d space(s) sync through the App: switch or disconnect those first", n)
+		return errf(http.StatusConflict, CodeInUse, "%d space(s) sync through the App: switch or disconnect those first", n)
 	}
 	auths, err := store.ListGitHubAuthorizations(ctx, q)
 	if err != nil {
@@ -293,7 +323,7 @@ type Installation struct {
 	Suspended           bool
 	Permissions         map[string]string
 	HTMLURL             string
-	Shared              bool
+	Tenants             []string // the tenants it is shared with, sorted
 	Spaces              int
 }
 
@@ -345,7 +375,7 @@ func (s *Service) Installations(ctx context.Context, cur string) ([]Installation
 		ids[i] = in.ID
 	}
 	q := s.opt.Store.Q()
-	shared, err := store.SharedGitHubInstallationIDs(ctx, q, ids)
+	shared, err := store.GitHubInstallationTenants(ctx, q, ids)
 	if err != nil {
 		return nil, "", err
 	}
@@ -356,7 +386,7 @@ func (s *Service) Installations(ctx context.Context, cur string) ([]Installation
 	out := make([]Installation, len(list))
 	for i, in := range list {
 		out[i] = Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
-			Permissions: in.Permissions, HTMLURL: in.HTMLURL, Shared: shared[in.ID], Spaces: counts[in.ID]}
+			Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: shared[in.ID], Spaces: counts[in.ID]}
 	}
 	nc := ""
 	if next > 0 {
@@ -372,12 +402,28 @@ func (s *Service) listError(err error) error {
 	return s.unreachable(err)
 }
 
-// SetShared marks an installation of an organisation as shared (or not).
-func (s *Service) SetShared(ctx context.Context, id int64, shared bool) (*Installation, error) {
+// maxShareTenants bounds how many tenants one installation is shared with in a request.
+const maxShareTenants = 500
+
+// SetTenants shares an installation of an organisation with exactly these
+// tenants (none: stop sharing). Every tenant must exist.
+func (s *Service) SetTenants(ctx context.Context, id int64, tenants []string) (*Installation, error) {
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if len(tenants) > maxShareTenants {
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "share with at most %d tenants", maxShareTenants)
+	}
+	set := make([]string, 0, len(tenants))
+	seen := map[string]bool{}
+	for _, t := range tenants {
+		if t != "" && !seen[t] {
+			seen[t] = true
+			set = append(set, t)
+		}
+	}
+	sort.Strings(set)
 	in, err := st.app.Installation(ctx, id)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound) {
@@ -385,11 +431,25 @@ func (s *Service) SetShared(ctx context.Context, id int64, shared bool) (*Instal
 		}
 		return nil, s.listError(err)
 	}
-	if shared && in.Account.Type != "Organization" {
+	if len(set) > 0 && in.Account.Type != "Organization" {
 		return nil, errf(http.StatusBadRequest, CodeInvalid, "only the installation of an organisation can be shared")
 	}
-	if err := store.PutGitHubInstallation(ctx, s.opt.Store.Q(), store.GitHubInstallation{ID: id, Account: in.Account.Login,
-		AccountType: in.Account.Type, Shared: shared, Updated: s.opt.Now()}); err != nil {
+	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
+		for _, t := range set {
+			if _, err := store.GetTenant(ctx, q, t); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return errf(http.StatusBadRequest, CodeInvalid, "no such tenant: %s", t)
+				}
+				return err
+			}
+		}
+		if err := store.PutGitHubInstallation(ctx, q, store.GitHubInstallation{ID: id, Account: in.Account.Login,
+			AccountType: in.Account.Type, Updated: s.opt.Now()}); err != nil {
+			return err
+		}
+		return store.SetGitHubInstallationTenants(ctx, q, id, set)
+	})
+	if err != nil {
 		return nil, err
 	}
 	counts, err := store.GitHubSpaceCounts(ctx, s.opt.Store.Q(), []int64{id})
@@ -397,5 +457,106 @@ func (s *Service) SetShared(ctx context.Context, id int64, shared bool) (*Instal
 		return nil, err
 	}
 	return &Installation{ID: in.ID, Account: in.Account, RepositorySelection: in.RepositorySelection, Suspended: in.Suspended(),
-		Permissions: in.Permissions, HTMLURL: in.HTMLURL, Shared: shared, Spaces: counts[id]}, nil
+		Permissions: in.Permissions, HTMLURL: in.HTMLURL, Tenants: set, Spaces: counts[id]}, nil
+}
+
+// --- re-checking the App ------------------------------------------------------------
+
+const (
+	// maxCheckPages bounds the installations a re-check reads (30 a page).
+	maxCheckPages = 5
+	// maxGaps bounds the installations listed as lacking a permission.
+	maxGaps = 20
+	// autoRecheckEvery is the least time between the checks a refused token
+	// causes, so a run of refusals asks GitHub once.
+	autoRecheckEvery = time.Minute
+)
+
+// Recheck reads the App and its installations from GitHub again and stores
+// what the permissions are now, so the administrator sees today's answer, not
+// the one from the day the App was saved.
+func (s *Service) Recheck(ctx context.Context) (*AppView, error) {
+	st, err := s.need(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.refresh(ctx, st); err != nil {
+		return nil, err
+	}
+	return s.View(ctx)
+}
+
+// autoRecheck is Recheck for a token that was refused over a permission: it
+// runs at most once a minute and never fails the caller.
+func (s *Service) autoRecheck(ctx context.Context, st *appState) {
+	now := s.opt.Now()
+	s.mu.Lock()
+	if !s.autoAt.IsZero() && now.Sub(s.autoAt) < autoRecheckEvery {
+		s.mu.Unlock()
+		return
+	}
+	s.autoAt = now
+	s.mu.Unlock()
+	if err := s.refresh(ctx, st); err != nil {
+		s.log.Info("could not re-check the GitHub App after a permission refusal", "reason", reason(err))
+	}
+}
+
+var testHookBeforeRefreshWrite func()
+
+func (s *Service) refresh(ctx context.Context, st *appState) error {
+	info, err := st.app.AppInfo(ctx)
+	if err != nil {
+		return s.listError(err)
+	}
+	var gaps []gapRec
+	another := false // an installation on an account that is not the App owner's
+	page := 0
+	for n := 0; n < maxCheckPages; n++ {
+		list, next, err := st.app.Installations(ctx, page)
+		if err != nil {
+			return s.listError(err)
+		}
+		for _, in := range list {
+			if !strings.EqualFold(in.Account.Login, info.Owner.Login) {
+				another = true
+			}
+			if m := missingPermissions(in.Permissions); len(m) > 0 && !in.Suspended() && len(gaps) < maxGaps {
+				gaps = append(gaps, gapRec{ID: in.ID, Account: in.Account.Login, Missing: m})
+			}
+		}
+		if next == 0 {
+			break
+		}
+		page = next
+	}
+	// Write onto what is stored now, and only if it is still this App.
+	raw, ok, err := store.GetSiteSetting(ctx, s.opt.Store.Q(), settingKey)
+	if err != nil {
+		return err
+	}
+	var rec appRecord
+	if !ok || json.Unmarshal([]byte(raw), &rec) != nil || rec.AppID != st.rec.AppID || rec.KeyEnc != st.rec.KeyEnc {
+		return nil // saved again or removed meanwhile: that is newer than this
+	}
+	rec.Slug, rec.Name, rec.Owner, rec.HTMLURL = info.Slug, info.Name, info.Owner.Login, info.HTMLURL
+	rec.Permissions, rec.Checked, rec.Gaps = info.Permissions, s.opt.Now().UTC(), gaps
+	switch {
+	case info.Public != nil:
+		rec.AnyAccount = info.Public
+	case another:
+		yes := true
+		rec.AnyAccount = &yes
+	}
+	b, _ := json.Marshal(rec)
+	if testHookBeforeRefreshWrite != nil {
+		testHookBeforeRefreshWrite()
+	}
+	// Written only if the setting is still the one read above: an App saved in
+	// the meantime is newer than this check and stays.
+	if _, err := store.CompareAndSetSiteSetting(ctx, s.opt.Store.Q(), settingKey, raw, string(b), s.opt.Now()); err != nil {
+		return err
+	}
+	s.forget()
+	return nil
 }

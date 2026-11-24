@@ -980,7 +980,7 @@ func TestNewSpacesNeedWhatTheRequirementAsksAndExemptionsAreLeftOut(t *testing.T
 
 func countSpaces(t *testing.T, st *store.Store) int {
 	t.Helper()
-	n, err := store.CountSpaces(ctx, st.Q())
+	n, err := store.CountSpaces(ctx, st.Q(), store.AllTenants())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1515,6 +1515,41 @@ func TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater(t *testing.
 		}
 		if v, err := h2.Space.Version(ctx, "SNAP000001", items[2].Commit); err != nil || v.Body != "version 1\n" {
 			t.Fatalf("%v %v", v, err)
+		}
+	})
+}
+
+// 3.3's hook: only a measurement of a whole copy writes what the quotas count.
+// A partial clone is measured for the list, and its usage keeps the last full
+// measurement, so it never shrinks what its owner uses.
+func TestMeasuringAPartialCloneLeavesItsUsageAlone(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		f := remoteManager(t, st)
+		remote := filterBare(t)
+		seedRemote(t, remote, 3)
+		in, h := f.connected("Notes", remote)
+		defer h.Release()
+		deadline := time.Now().Add(5 * time.Second)
+		for cacheOf(t, st, in.ID) != store.CachePartial {
+			if time.Now().After(deadline) {
+				t.Fatal("the clone was not recorded as partial")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		const before = int64(123456789) // as a full measurement left it
+		if _, err := st.Q().Exec(ctx, `UPDATE spaces SET usage_bytes = ? WHERE id = ?`, before, in.ID); err != nil {
+			t.Fatal(err)
+		}
+		n, _, err := f.m.Resize(ctx, store.AllTenants(), in.ID)
+		if err != nil || n <= 0 {
+			t.Fatalf("%d %v", n, err)
+		}
+		var usage, size int64
+		if err := st.Q().QueryRow(ctx, `SELECT usage_bytes, size_bytes FROM spaces WHERE id = ?`, in.ID).Scan(&usage, &size); err != nil {
+			t.Fatal(err)
+		}
+		if usage != before || size != n {
+			t.Fatalf("usage %d (want %d kept), listing size %d (want %d)", usage, before, size, n)
 		}
 	})
 }

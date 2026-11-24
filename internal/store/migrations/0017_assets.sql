@@ -2,10 +2,12 @@
 -- holds the space's attachments, with the same columns as the space's own
 -- remote, a mark for "an attachment has gone to it" (after that it cannot be
 -- taken away) and the progress of moving the attachments of the space into it.
--- At most one row per space. The credential is stored as in remotes.
+-- At most one row per space. The credential is stored as in remotes, with the
+-- provider it goes through (2.7b's connections: 'git' or a provider id).
 --
--- 0014 is the sign-in milestone's, 0015 the storage policy's and 0016 the groups'; each
--- migration is recorded by its own number.
+-- 0014 is the sign-in milestone's, 0015 the storage policy's, 0016 the groups'
+-- and 0018 the tenants'; each migration is recorded by its own number, so they
+-- apply in any order.
 
 CREATE TABLE asset_remotes (
   space_id           TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
@@ -23,6 +25,7 @@ CREATE TABLE asset_remotes (
   remote_tip         TEXT NOT NULL DEFAULT '',
   last_sync          BIGINT NOT NULL DEFAULT 0,
   updated            BIGINT NOT NULL,
+  provider           TEXT NOT NULL DEFAULT 'git',
   gh_via             TEXT NOT NULL DEFAULT '',
   gh_installation_id BIGINT NOT NULL DEFAULT 0,
   gh_repo_id         BIGINT NOT NULL DEFAULT 0,

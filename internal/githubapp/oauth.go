@@ -71,6 +71,9 @@ func (c *Client) tokens(ctx context.Context, form url.Values) (*Tokens, error) {
 		return nil, err
 	}
 	if out.Error != "" {
+		if l := c.log.Load(); l != nil {
+			l.Warn("GitHub refused an OAuth request", "kind", "oauth_token", "error", quote(out.Error), "message", quote(out.Description))
+		}
 		return nil, &OAuthError{Code: out.Error, Description: out.Description}
 	}
 	if out.AccessToken == "" {
@@ -87,10 +90,14 @@ func (c *Client) tokens(ctx context.Context, form url.Values) (*Tokens, error) {
 	return t, nil
 }
 
-// ExchangeCode trades the code GitHub sent back for the user's tokens.
+// ExchangeCode trades the code GitHub sent back for the user's tokens; verifier
+// is empty for a code that came with an installation (it carries no challenge).
 func (c *Client) ExchangeCode(ctx context.Context, clientID, secret, code, redirect, verifier string) (*Tokens, error) {
-	return c.tokens(ctx, url.Values{"client_id": {clientID}, "client_secret": {secret}, "code": {code},
-		"redirect_uri": {redirect}, "code_verifier": {verifier}})
+	form := url.Values{"client_id": {clientID}, "client_secret": {secret}, "code": {code}, "redirect_uri": {redirect}}
+	if verifier != "" { // a code from an installation has no PKCE challenge to answer
+		form.Set("code_verifier", verifier)
+	}
+	return c.tokens(ctx, form)
 }
 
 // Refresh renews a user's tokens. GitHub replaces the refresh token with every

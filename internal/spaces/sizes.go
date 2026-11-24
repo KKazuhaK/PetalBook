@@ -21,6 +21,18 @@ package spaces
 // minute): a lookup of two index queries. The size is the sum of the sizes of
 // the files (hard links counted each time); the cache directory with the index
 // is not counted, it can be rebuilt.
+//
+// A space whose copy on the server is partial or evicted (milestone 3.1) is
+// measured for the listing only (SetSpaceSize): the quotas keep its last full
+// measurement, so a partial clone or an eviction never shrinks what a person
+// uses.
+//
+// The same turn also counts the pages of the space (one COUNT on its index: from
+// the open space, else from the index file without opening the space) and
+// stores both, with the difference added to the usage rows of the space's first
+// owner and its tenant in one transaction (see store.RecordMeasurement). That
+// is the quotas' only source of bytes and pages: nothing on a request path
+// walks files or counts pages.
 
 import (
 	"context"
@@ -29,6 +41,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -82,7 +96,7 @@ func (m *Manager) measureNext(ctx context.Context, age time.Duration) bool {
 	if !ok {
 		return false
 	}
-	_, _, err = m.Resize(ctx, id)
+	_, _, err = m.Resize(ctx, store.AllTenants(), id)
 	switch {
 	case err == nil:
 		return true
@@ -105,8 +119,8 @@ func (m *Manager) measureNext(ctx context.Context, age time.Duration) bool {
 
 // Resize measures the space's directory now and stores the result. It waits for
 // a walk that is already running (one at a time), and stops if ctx ends.
-func (m *Manager) Resize(ctx context.Context, id string) (int64, time.Time, error) {
-	if _, err := m.adminSpace(ctx, id); err != nil {
+func (m *Manager) Resize(ctx context.Context, sc store.Scope, id string) (int64, time.Time, error) {
+	if _, err := m.adminSpace(ctx, sc, id); err != nil {
 		return 0, time.Time{}, err
 	}
 	select {
@@ -121,21 +135,77 @@ func (m *Manager) Resize(ctx context.Context, id string) (int64, time.Time, erro
 		if errors.Is(err, fs.ErrNotExist) {
 			// A space deleted while it was being measured has had its directory
 			// moved away: that is not a failure to measure.
-			if _, aerr := m.adminSpace(ctx, id); errors.Is(aerr, ErrNotFound) {
+			if _, aerr := m.adminSpace(ctx, sc, id); errors.Is(aerr, ErrNotFound) {
 				return 0, time.Time{}, ErrNotFound
 			}
 		}
 		return 0, time.Time{}, err
 	}
-	// Not the request's context: a measurement that was made is kept.
 	at := m.opt.Now()
-	if err := store.SetSpaceSize(context.WithoutCancel(ctx), m.opt.Store.Q(), id, n, at); err != nil {
+	if !m.holdsWhole(id) {
+		// A partial clone or an evicted space (milestone 3.1): what the server
+		// holds of it is not what the space is, so only the listing's size is
+		// written and the quotas keep its last full measurement (see
+		// store.RecordMeasurement). Not the request's context, as below.
+		if err := store.SetSpaceSize(context.WithoutCancel(ctx), m.opt.Store.Q(), id, n, at); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return 0, time.Time{}, ErrNotFound
+			}
+			return 0, time.Time{}, err
+		}
+		return n, at, nil
+	}
+	pages, havePages := m.pageCount(ctx, id)
+	// Not the request's context: a measurement that was made is kept. One
+	// transaction stores the size and adds the difference to the usage rows.
+	touched, err := m.opt.Store.RecordMeasurement(context.WithoutCancel(ctx), id, store.Measurement{Bytes: n, Pages: pages, HavePages: havePages, At: at})
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return 0, time.Time{}, ErrNotFound
 		}
 		return 0, time.Time{}, err
 	}
+	if m.quota.usage != nil {
+		m.quota.usage(context.WithoutCancel(ctx), UsageEvent{Touched: []store.Touched{touched}})
+	}
 	return n, at, nil
+}
+
+// pageCount is the number of pages of a space: a COUNT on its index, from the
+// open space when it is open, else straight from the index file (opening the
+// space for it would pull its remote and push another space out). ok is false
+// when it cannot be known (no index yet): the space keeps its earlier count.
+func (m *Manager) pageCount(ctx context.Context, id string) (n int64, ok bool) {
+	m.mu.Lock()
+	e := m.open[id]
+	var sp *space.Space
+	if e != nil && e.closing == nil && e.err == nil {
+		select {
+		case <-e.done:
+			if e.sp != nil {
+				sp = e.sp
+				e.refs++
+			}
+		default:
+		}
+	}
+	m.mu.Unlock()
+	if sp != nil {
+		defer func() { m.mu.Lock(); e.refs--; m.mu.Unlock() }()
+		c, err := sp.PageCount()
+		if err != nil {
+			m.log.Warn("could not count the pages of a space", "space", id, "error", err)
+			return 0, false
+		}
+		return int64(c), true
+	}
+	_, state := m.paths(id)
+	c, found, err := index.CountFile(filepath.Join(state, "index.db"))
+	if err != nil {
+		m.log.Warn("could not count the pages of a space's index", "space", id, "error", err)
+		return 0, false
+	}
+	return int64(c), found
 }
 
 // dirSize adds up the sizes of the files under root. A file that disappears

@@ -9,6 +9,7 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { ts } from '@/i18n/signin'
 import { byLabel, click, installDomShims, locationState, locationText, mount, press, settle, type, type Mounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 import { SpaceSettingsRedirect } from './SpaceSettingsRedirect'
@@ -50,7 +51,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
 
   it('lists the sections in groups', async () => {
     await open('/settings/profile')
-    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.tokens, t.settingsUi.sections.github, t.settingsUi.sections.general, t.settingsUi.sections.types, t.settingsUi.sections.templates, t.settingsUi.sections.home, t.settingsUi.sections.members, t.settingsUi.sections.sync, t.settingsUi.sections.import])
+    expect(navLinks()).toEqual([t.settingsUi.sections.profile, t.settingsUi.sections.preferences, t.settingsUi.sections.security, t.settingsUi.sections.tokens, t.settingsUi.sections.connections, t.settingsUi.sections.usage, t.settingsUi.sections.general, t.settingsUi.sections.types, t.settingsUi.sections.templates, t.settingsUi.sections.home, t.settingsUi.sections.members, t.settingsUi.sections.sync, t.settingsUi.sections.import])
     const groups = [...dialog()!.querySelectorAll('nav [role="group"]')].map((g) => g.getAttribute('aria-label'))
     expect(groups).toEqual([t.settingsUi.groups.account, t.settingsUi.groups.space])
   })
@@ -69,7 +70,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
     await open('/settings/security')
     await settle(() => panelText().includes(t.settings.identities), 'security loaded')
     expect(heading()).toBe(t.settingsUi.sections.security)
-    expect(panelText()).toContain(t.settings.link('Company SSO'))
+    expect(panelText()).toContain(ts.identities.link('Company SSO'))
     expect(document.querySelector('input[type="password"]')).toBeNull()
     await click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === t.settings.changePassword))
     await settle(() => document.querySelector('[data-slot="dialog-content"]') !== null, 'password dialog')
@@ -83,7 +84,7 @@ describe('the settings dialog, accounts mode, administrator', () => {
   it('the navigation has an icon for each entry', async () => {
     await open('/settings/profile')
     const items = [...dialog()!.querySelectorAll('nav a')]
-    expect(items).toHaveLength(12)
+    expect(items).toHaveLength(13)
     for (const a of items) expect(a.querySelector('[data-slot="section-icon"]'), a.textContent ?? '').not.toBeNull()
   })
 
@@ -136,14 +137,14 @@ describe('the settings dialog, accounts mode, administrator', () => {
   })
 
   it('a link that failed comes back to plain /settings with the reason: it is shown where the linked sign-ins are', async () => {
-    await open('/settings?error=idp_error')
-    await settle(() => panelText().includes(t.settings.linkFailed), 'message')
+    await open('/settings?sso_error=idp_error')
+    await settle(() => panelText().includes(ts.identities.linkFailed), 'message')
     await settle(() => locationText() === '/settings/security', 'on security, error taken out of the address')
   })
 
   it('a failed sign-in link lands on security and says why, once', async () => {
-    await open('/settings/security?error=idp_error')
-    await settle(() => panelText().includes(t.settings.linkFailed), 'message')
+    await open('/settings/security?sso_error=idp_error')
+    await settle(() => panelText().includes(ts.identities.linkFailed), 'message')
     await settle(() => locationText() === '/settings/security', 'error taken out of the address')
   })
 

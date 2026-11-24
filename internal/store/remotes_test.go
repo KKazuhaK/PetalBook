@@ -13,7 +13,7 @@ func TestRemotes(t *testing.T) {
 		mkUser(t, st, "A", "a", "admin")
 		now := time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
 		for _, id := range []string{"S1", "S2"} {
-			if err := store.InsertSpace(ctx, st.Q(), id, id, "", "", now); err != nil {
+			if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, id, id, "", "", now); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -74,6 +74,27 @@ func TestRemotes(t *testing.T) {
 		}
 		if _, err := store.GetRemote(ctx, st.Q(), "S1"); err != store.ErrNotFound {
 			t.Fatal(err)
+		}
+	})
+}
+
+// The upsert and the clearing of the reminders are one step: when the second
+// fails, the row is not left changed.
+func TestPutRemoteIsAtomic(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Q().Exec(ctx, `DROP TABLE github_leftovers`); err != nil {
+			t.Fatal(err)
+		}
+		r := store.Remote{SpaceID: "S1", URL: "https://github.com/o/r.git", Branch: "main", CredType: "connection", State: store.RemoteOK, Updated: now, GHVia: "app", GHInstallationID: 1, GHRepoID: 7}
+		if err := store.PutRemote(ctx, st.Q(), r); err == nil {
+			t.Fatal("the reminders could not be cleared, and it did not fail")
+		}
+		if _, err := store.GetRemote(ctx, st.Q(), "S1"); err != store.ErrNotFound {
+			t.Fatalf("the row stayed although clearing the reminders failed: %v", err)
 		}
 	})
 }

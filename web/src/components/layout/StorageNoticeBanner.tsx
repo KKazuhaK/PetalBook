@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import { Cloud, X } from 'lucide-react'
-import { useSpaceId, useSpacePermissions, useSpaces } from '@/api/hooks'
+import { useConnections, useSpaceId, useSpacePermissions, useSpaces } from '@/api/hooks'
 import { settingsPath } from '@/components/settings/sections'
 import type { SettingsState } from '@/components/settings/useSettings'
 import { absoluteTime } from '@/lib/time'
@@ -33,7 +33,11 @@ export function StorageNoticeBanner() {
   const [dismissed, setDismissed] = useState(() => ({ key, day: readDismissed(key) }))
   const gone = (dismissed.key === key ? dismissed.day : readDismissed(key)) === today()
   const note = spaces.data?.spaces.find((s) => s.id === space)?.storage?.remote
+  // A requirement of a provider (2.7b's connections) is shown by the platform's name.
+  const byProvider = !!note && note.required !== 'any'
+  const connections = useConnections(byProvider)
   if (!note) return null
+  const providerName = connections.data?.providers.find((p) => p.id === note.required)?.name ?? note.required
   const when = absoluteTime(note.deadline)
   const overdue = note.overdue
   if (!overdue && gone) return null
@@ -51,7 +55,7 @@ export function StorageNoticeBanner() {
       <Cloud className="mt-0.5 size-4 shrink-0" aria-hidden />
       <p className="min-w-0 flex-1 break-words">
         <span className="font-medium">{overdue ? ts.notice.overdueTitle : ts.notice.graceTitle}.</span> {overdue ? ts.notice.overdueHelp(when) : ts.notice.graceHelp(when)}
-        {note.required === 'github' && <> {ts.notice.githubHelp}</>}{' '}
+        {note.required !== 'any' && <> {ts.notice.providerHelp(providerName)}</>}{' '}
         {manage && (
           <Link to={settingsPath('sync')} state={{ from: location.pathname + location.search + location.hash } satisfies SettingsState} className="font-medium underline underline-offset-2">
             {ts.notice.connect}

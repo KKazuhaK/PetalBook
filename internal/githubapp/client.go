@@ -15,11 +15,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,6 +42,10 @@ type Config struct {
 	Web  string // web base URL (OAuth, and the host of Git); DefaultWeb when empty
 	HTTP *http.Client
 	Now  func() time.Time
+	// Logger says why a call GitHub refused was refused (status, GitHub's
+	// message, what kind of call); nil logs nothing. It never gets a token, a
+	// key, a code or a request body.
+	Logger *slog.Logger
 }
 
 // Client talks to one GitHub. It is safe for concurrent use.
@@ -46,6 +53,7 @@ type Client struct {
 	api, web string
 	http     *http.Client
 	now      func() time.Time
+	log      atomic.Pointer[slog.Logger]
 }
 
 // IsLoopback reports whether host is localhost or a loopback address; plain
@@ -92,7 +100,18 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Client{api: api, web: web, http: cfg.HTTP, now: cfg.Now}, nil
+	c := &Client{api: api, web: web, http: cfg.HTTP, now: cfg.Now}
+	if cfg.Logger != nil {
+		c.log.Store(cfg.Logger)
+	}
+	return c, nil
+}
+
+// UseLogger gives the client the logger of its owner unless it has one already.
+func (c *Client) UseLogger(l *slog.Logger) {
+	if l != nil {
+		c.log.CompareAndSwap(nil, l)
+	}
 }
 
 // API is the REST base URL.
@@ -168,6 +187,16 @@ type request struct {
 	basicUser, basicPw string
 	body               any        // JSON
 	form               url.Values // form-encoded
+	// label stands for the path in errors and logs when the path itself holds
+	// something secret (the code of a manifest).
+	label string
+}
+
+func (r request) shownPath() string {
+	if r.label != "" {
+		return r.label
+	}
+	return r.path
 }
 
 // do makes one request and decodes a 2xx JSON answer into out (nil: ignored).
@@ -208,9 +237,9 @@ func (c *Client) do(ctx context.Context, r request, out any) (http.Header, error
 	if err != nil {
 		var ue *url.Error // the URL holds no secret, but keep only the cause
 		if errors.As(err, &ue) {
-			return nil, fmt.Errorf("github: %s %s: %w", r.method, r.path, ue.Err)
+			return nil, fmt.Errorf("github: %s %s: %w", r.method, r.shownPath(), ue.Err)
 		}
-		return nil, fmt.Errorf("github: %s %s: %w", r.method, r.path, err)
+		return nil, fmt.Errorf("github: %s %s: %w", r.method, r.shownPath(), err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -219,7 +248,7 @@ func (c *Client) do(ctx context.Context, r request, out any) (http.Header, error
 	}
 	if out != nil && len(bytes.TrimSpace(data)) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
-			return resp.Header, fmt.Errorf("github: %s %s: the answer is not what was expected", r.method, r.path)
+			return resp.Header, fmt.Errorf("github: %s %s: the answer is not what was expected", r.method, r.shownPath())
 		}
 	}
 	return resp.Header, nil
@@ -234,7 +263,7 @@ func (c *Client) statusError(r request, resp *http.Response, data []byte) error 
 		} `json:"errors"`
 	}
 	_ = json.Unmarshal(data, &e)
-	se := &StatusError{Method: r.method, Path: r.path, Status: resp.StatusCode, Message: e.Message}
+	se := &StatusError{Method: r.method, Path: r.shownPath(), Status: resp.StatusCode, Message: e.Message}
 	for _, x := range e.Errors {
 		if x.Message != "" {
 			se.Errors = append(se.Errors, x.Message)
@@ -254,6 +283,7 @@ func (c *Client) statusError(r request, resp *http.Response, data []byte) error 
 			se.Reset = time.Unix(s, 0)
 		}
 	}
+	c.logRefusal(r, se)
 	return se
 }
 
@@ -285,4 +315,110 @@ func pageQuery(page int) url.Values {
 		page = 1
 	}
 	return url.Values{"per_page": {strconv.Itoa(PerPage)}, "page": {strconv.Itoa(page)}}
+}
+
+// kindOf names what a call is for ("installation_token", "create_org_repo"),
+// without any of the names or numbers in its path.
+func kindOf(method, path string) string {
+	seg := strings.Split(strings.Trim(path, "/"), "/")
+	n := len(seg)
+	switch {
+	case path == "/app":
+		return "app"
+	case path == "/app/installations":
+		return "list_installations"
+	case n == 3 && seg[0] == "app" && seg[1] == "installations":
+		return "installation"
+	case n == 4 && seg[0] == "app" && seg[3] == "access_tokens":
+		return "installation_token"
+	case n == 4 && seg[0] == "repos" && seg[3] == "installation":
+		return "repo_installation"
+	case n == 3 && (seg[0] == "orgs" || seg[0] == "users") && seg[2] == "installation":
+		return "account_installation"
+	case n == 3 && seg[0] == "orgs" && seg[2] == "repos":
+		return "create_org_repo"
+	case path == "/user/repos" && method == http.MethodPost:
+		return "create_user_repo"
+	case path == "/user/repos":
+		return "list_user_repos"
+	case n == 3 && seg[0] == "repos":
+		return "get_repo"
+	case path == "/installation/repositories":
+		return "list_installation_repos"
+	case path == "/user":
+		return "user"
+	case path == "/user/installations":
+		return "list_user_installations"
+	case n == 4 && seg[0] == "user" && seg[1] == "installations":
+		return "list_user_installation_repos"
+	case n == 5 && seg[0] == "user" && seg[1] == "installations":
+		return "add_repo_to_installation"
+	case n == 3 && seg[0] == "applications" && seg[2] == "token":
+		return "check_client"
+	case n == 3 && seg[0] == "applications" && seg[2] == "grant":
+		return "revoke_grant"
+	case path == "/login/oauth/access_token":
+		return "oauth_token"
+	case n >= 1 && seg[0] == "app-manifests":
+		return "manifest_conversion"
+	}
+	return "other"
+}
+
+var tokenLike = regexp.MustCompile(`(?i)\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+|-----BEGIN[^-]*-----`)
+
+// quote makes something GitHub said fit on one log line: no control
+// characters, at most 300, and anything that looks like a token blanked out
+// (GitHub does not echo one, but a log is no place to find out).
+func quote(s string) string {
+	s = tokenLike.ReplaceAllString(s, "[redacted]")
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	if len(s) > 300 {
+		s = s[:300] + "..."
+	}
+	return s
+}
+
+// logRefusal says what GitHub refused: a missing page is only information, the
+// rest a warning.
+func (c *Client) logRefusal(r request, se *StatusError) {
+	l := c.log.Load()
+	if l == nil {
+		return
+	}
+	level := slog.LevelWarn
+	if se.Status == http.StatusNotFound || se.RateLimited {
+		level = slog.LevelInfo
+	}
+	attrs := []any{"kind", kindOf(r.method, r.path), "method", r.method, "status", se.Status, "message", quote(se.Message)}
+	if len(se.Errors) > 0 {
+		attrs = append(attrs, "details", quote(strings.Join(se.Errors, "; ")))
+	}
+	if se.RateLimited {
+		attrs = append(attrs, "rateLimited", true)
+	}
+	l.Log(context.Background(), level, "GitHub refused a request", attrs...)
+}
+
+// IsPermissionRefusal reports whether err is GitHub saying the App, or its
+// installation, lacks a permission for what was asked (a 403 or 422 about the
+// App's permissions), as opposed to a repository that is not reachable or a
+// person who may not do something ("You don't have permission to ...").
+func IsPermissionRefusal(err error) bool {
+	var se *StatusError
+	if !errors.As(err, &se) || se.RateLimited || (se.Status != http.StatusForbidden && se.Status != http.StatusUnprocessableEntity) {
+		return false
+	}
+	m := strings.ToLower(se.Message)
+	for _, w := range []string{"not accessible by integration", "permissions requested", "not granted to this installation", "permissions that are not granted"} {
+		if strings.Contains(m, w) {
+			return true
+		}
+	}
+	return false
 }

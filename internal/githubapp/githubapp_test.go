@@ -1,7 +1,9 @@
 package githubapp_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -282,5 +284,109 @@ func TestCreateRepoAndItsFailures(t *testing.T) {
 	f.AppPerms = map[string]string{"contents": "write", "metadata": "read"}
 	if _, err := app.Token(ctx, githubapp.TokenSpec{Installation: inst, Perms: map[string]string{"administration": "write"}, Once: true}); !githubapp.IsStatus(err, 422) {
 		t.Fatalf("%v", err)
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// A call GitHub refuses is logged with the status, GitHub's own words and what
+// kind of call it was; no token, key, code or name of an account is in it.
+func TestRefusalsAreLoggedWithGitHubsWords(t *testing.T) {
+	logs := &syncBuf{}
+	clk := githubapptest.NewClock()
+	f := githubapptest.New(t, clk)
+	c, err := githubapp.New(githubapp.Config{API: f.URL, Web: f.URL, Now: clk.Now,
+		Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, _ := c.NewApp("424242", f.Key)
+	f.AddOrg("kazuhahub")
+	inst := f.Install("kazuhahub", "all")
+	f.AppPerms = map[string]string{"metadata": "read"}
+	_, err = app.Token(ctx, githubapp.TokenSpec{Installation: inst, Perms: map[string]string{"contents": "write"}})
+	if !githubapp.IsPermissionRefusal(err) {
+		t.Fatalf("a 422 about permissions is not told as one: %v", err)
+	}
+	f.PermissionRefusal403 = true
+	_, err = app.Token(ctx, githubapp.TokenSpec{Installation: inst, Perms: map[string]string{"contents": "write"}})
+	if !githubapp.IsPermissionRefusal(err) {
+		t.Fatalf("a 403 about the integration is not told as one: %v", err)
+	}
+	f.PermissionRefusal403 = false
+	f.AppPerms = map[string]string{"administration": "write", "contents": "write", "metadata": "read"}
+	// A repository the installation does not reach is not a permission refusal.
+	f.AddOrg("sel")
+	sel := f.Install("sel", "selected")
+	repo := f.AddRepo("sel", "x", true)
+	_, err = app.Token(ctx, githubapp.TokenSpec{Installation: sel, RepoIDs: []int64{repo.ID}, Perms: map[string]string{"contents": "write"}})
+	if !githubapp.IsStatus(err, 422) || githubapp.IsPermissionRefusal(err) {
+		t.Fatalf("%v", err)
+	}
+	tok, err := app.Token(ctx, githubapp.TokenSpec{Installation: inst, Perms: map[string]string{"administration": "write"}, Once: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.AddRepo("kazuhahub", "taken", false)
+	if _, err = c.CreateRepo(ctx, tok, "kazuhahub", githubapp.NewRepo{Name: "taken"}); err == nil {
+		t.Fatal("expected a refusal")
+	}
+	// An OAuth refusal and a missing page.
+	_, _ = c.ExchangeCode(ctx, f.ClientID, f.ClientSecret, "a-code-nobody-made", "http://x/cb", "")
+	_, _ = app.OrgInstallation(ctx, "nowhere")
+
+	out := logs.String()
+	for _, want := range []string{"installation_token", "status=422", "status=403", "The permissions requested are not granted to this installation.",
+		"Resource not accessible by integration", "create_org_repo", "name already exists", "oauth_token", "bad_verification_code", "account_installation", "status=404"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the log lacks %q:\n%s", want, out)
+		}
+	}
+	for _, secret := range append(f.AllTokens(), tok, f.ClientSecret, f.KeyPEM(), "a-code-nobody-made", "Bearer", "Authorization") {
+		if secret != "" && strings.Contains(out, secret) {
+			t.Errorf("the log holds %q:\n%s", secret, out)
+		}
+	}
+	// A token-like string in GitHub's own words is blanked out.
+	if strings.Contains(out, "ghs_") {
+		t.Errorf("a token reached the log")
+	}
+}
+
+func TestConvertingAManifest(t *testing.T) {
+	logs := &syncBuf{}
+	f := githubapptest.New(t, nil)
+	c, _ := githubapp.New(githubapp.Config{API: f.URL, Web: f.URL, Logger: slog.New(slog.NewTextHandler(logs, nil))})
+	manifest := `{"name":"Notes","redirect_url":"https://notes.example.com/api/github/manifest/callback"}`
+	back := f.SubmitManifest(c.ManifestURL("", "st-1"), manifest)
+	if !strings.HasPrefix(back, "https://notes.example.com/api/github/manifest/callback?") || !strings.Contains(back, "state=st-1") {
+		t.Fatal(back)
+	}
+	code := back[strings.Index(back, "code=")+5:]
+	code = code[:strings.Index(code, "&")]
+	creds, err := c.ConvertManifest(ctx, code)
+	if err != nil || creds.ID != 424242 || creds.ClientID != f.ClientID || creds.ClientSecret != f.ClientSecret || creds.PEM != f.KeyPEM() || creds.WebhookSecret == "" || creds.Name != "Notes" {
+		t.Fatalf("%+v %v", creds, err)
+	}
+	// The code works once, and a refusal never shows it.
+	if _, err := c.ConvertManifest(ctx, code); !githubapp.IsStatus(err, 404) {
+		t.Fatalf("%v", err)
+	} else if strings.Contains(err.Error(), code) || strings.Contains(logs.String(), code) {
+		t.Fatalf("the code is in an error or a log: %v %s", err, logs.String())
+	}
+	if _, err := c.ConvertManifest(ctx, "a/b"); err == nil {
+		t.Fatal("a code with a slash was sent")
+	}
+	if got := c.ManifestURL("kazuhahub", "a b"); got != f.URL+"/organizations/kazuhahub/settings/apps/new?state=a+b" {
+		t.Fatal(got)
+	}
+	if got := c.ManifestURL("", "s"); got != f.URL+"/settings/apps/new?state=s" {
+		t.Fatal(got)
 	}
 }

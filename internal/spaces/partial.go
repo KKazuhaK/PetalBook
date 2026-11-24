@@ -125,6 +125,24 @@ func (m *Manager) cacheOf(id string, hasRemote bool) string {
 	return m.CacheState(stored, true, id)
 }
 
+// holdsWhole reports whether the server holds the whole of the space: a local
+// space or a full clone, not a partial clone and not an evicted space (nor one
+// being evicted). It is what a measurement may count for the quotas.
+func (m *Manager) holdsWhole(id string) bool {
+	if m.single != nil {
+		return true
+	}
+	m.loadCacheStates()
+	m.cs.mu.Lock()
+	stored := m.cs.m[id]
+	m.cs.mu.Unlock()
+	switch stored {
+	case store.CachePartial, store.CacheEvicted, store.CacheEvicting:
+		return false
+	}
+	return true
+}
+
 // keepCacheState is setCacheState for the record of what an open space's clone
 // is (partial or full): it is written only if the space is not evicted or being
 // evicted, decided by the database in the same statement, so an eviction marked

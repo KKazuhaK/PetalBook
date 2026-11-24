@@ -3,8 +3,10 @@ import { useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
-import { keys, useAccount, useSession } from '@/api/hooks'
-import type { AccountInfo, Identity } from '@/api/types'
+import { keys, useAccount, useAuthProviders, useSession } from '@/api/hooks'
+import type { AccountInfo, Identity, PublicProvider } from '@/api/types'
+import { ProviderIcon } from '@/components/auth/ProviderIcon'
+import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -12,6 +14,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { ts } from '@/i18n/signin'
+import { PasskeysSection } from './PasskeysSection'
 import { SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 
 // Security: the password and the linked sign-ins (accounts mode only). Moved
@@ -24,25 +28,21 @@ export function SecurityPanel() {
   if (account.isError) return <ErrorState message={t.fmt.labelled(t.settings.loadFailed, account.error.message)} onRetry={() => void account.refetch()} />
   return (
     <div className="space-y-8">
-      <Sections account={account.data} oidc={session.data.methods?.oidc?.name ?? null} />
+      <Sections account={account.data} />
     </div>
   )
 }
 
-function Sections({ account, oidc }: { account: AccountInfo; oidc: string | null }) {
+function Sections({ account }: { account: AccountInfo }) {
   const [params, setParams] = useSearchParams()
-  // `?error=` from a link that failed at the provider: shown once, then taken out of the address.
-  const [linkError] = useState(() => {
-    const code = params.get('error')
-    // Own keys only: a code like `constructor` is not a message.
-    return code ? (Object.hasOwn(t.auth.errors, code) ? t.auth.errors[code as keyof typeof t.auth.errors] : t.auth.errors.unknown) : ''
-  })
+  // `?sso_error=` from a link that failed at the provider: shown once, then taken out of the address.
+  const [linkError] = useState(() => ssoErrorMessage(params.get('sso_error')))
   useEffect(() => {
-    if (params.has('error'))
+    if (params.has('sso_error'))
       setParams(
         (p) => {
           const next = new URLSearchParams(p)
-          next.delete('error')
+          next.delete('sso_error')
           return next
         },
         { replace: true },
@@ -56,9 +56,10 @@ function Sections({ account, oidc }: { account: AccountInfo; oidc: string | null
   }, [linkError])
   return (
     <>
-      {linkError && <FormMessage focusRef={messageRef}>{t.fmt.labelled(t.settings.linkFailed, linkError)}</FormMessage>}
+      {linkError && <FormMessage focusRef={messageRef}>{t.fmt.labelled(ts.identities.linkFailed, linkError)}</FormMessage>}
       <PasswordSection account={account} />
-      <Identities account={account} oidc={oidc} />
+      <PasskeysSection account={account} />
+      <Identities account={account} />
     </>
   )
 }
@@ -147,16 +148,20 @@ function PasswordForm({ account, onDone }: { account: AccountInfo; onDone: (mess
   )
 }
 
-function Identities({ account, oidc }: { account: AccountInfo; oidc: string | null }) {
+function Identities({ account }: { account: AccountInfo }) {
   const qc = useQueryClient()
+  const providers = useAuthProviders()
   const [removing, setRemoving] = useState<Identity | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // A button for each enabled provider the person has no identity from.
+  const linked = new Set(account.identities.map((i) => `${i.kind}/${i.providerSlug}`))
+  const linkable = (providers.data?.providers ?? []).filter((p) => !linked.has(`${p.kind}/${p.slug}`))
 
-  const link = async () => {
+  const link = async (p: PublicProvider) => {
     setError('')
     try {
-      const { url } = await api.oidcStart({ intent: 'link', return: '/settings/security' })
+      const { url } = await api.providerStart(p.kind, p.slug, { intent: 'link', return: '/settings' })
       window.location.assign(url)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t.auth.failed)
@@ -180,19 +185,24 @@ function Identities({ account, oidc }: { account: AccountInfo; oidc: string | nu
   }
 
   // Nothing to show where no provider is set up and nothing is linked.
-  if (!oidc && account.identities.length === 0) return null
+  if (linkable.length === 0 && account.identities.length === 0) return null
   return (
     <SettingsSection title={t.settings.identities}>
       <SettingsRows>
-        {oidc && (
-          <SettingsRow title={t.settings.identities} help={account.identities.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}>
-            <Button type="button" variant="outline" onClick={() => void link()}>
-              {t.settings.link(oidc)}
-            </Button>
+        {linkable.length > 0 && (
+          <SettingsRow title={ts.identities.linkTo} help={account.identities.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}>
+            <div className="grid grid-cols-1 gap-2">
+              {linkable.map((p) => (
+                <Button key={`${p.kind}/${p.slug}`} type="button" variant="outline" className="w-full min-w-0 justify-start gap-2" onClick={() => void link(p)}>
+                  <ProviderIcon icon={p.icon} />
+                  <span className="min-w-0 truncate">{ts.identities.link(p.name)}</span>
+                </Button>
+              ))}
+            </div>
           </SettingsRow>
         )}
         {account.identities.map((i) => (
-          <SettingsRow key={i.id} title={i.provider} help={`${i.label} · ${t.settings.linkedOn(absoluteTime(i.created))}`}>
+          <SettingsRow key={i.id} title={i.providerSlug ? i.provider : `${ts.identities.deleted}: ${i.provider}`} help={`${i.label} · ${t.settings.linkedOn(absoluteTime(i.created))}`}>
             <Button type="button" variant="outline" size="sm" onClick={() => { setError(''); setRemoving(i) }}>
               {t.settings.remove}
             </Button>

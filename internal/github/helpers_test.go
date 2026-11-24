@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
@@ -85,13 +86,26 @@ func (h *harness) user(id, username string) {
 	}
 }
 
+// tenantUser makes a user in a tenant of their own (made if need be).
+func (h *harness) tenantUser(tenant, id, username string) {
+	h.t.Helper()
+	if _, err := store.GetTenant(ctx, h.st.Q(), tenant); err != nil {
+		if err := h.st.CreateTenant(ctx, store.Tenant{ID: tenant, Slug: strings.ToLower(tenant), Name: tenant, Created: h.now}); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	if err := store.InsertUser(ctx, h.st.Q(), store.User{ID: id, TenantID: tenant, Username: username, Name: username, Role: "member", Created: h.now}); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // space makes a space with a github remote row, as the manager would.
 func (h *harness) space(id string, r store.Remote) {
 	h.t.Helper()
-	if err := store.InsertSpace(ctx, h.st.Q(), id, id, "", "", h.now); err != nil {
+	if err := store.InsertSpace(ctx, h.st.Q(), store.DefaultTenantID, id, id, "", "", h.now); err != nil {
 		h.t.Fatal(err)
 	}
-	r.SpaceID, r.URL, r.Branch, r.CredType, r.State, r.Updated = id, "https://github.com/x/y.git", "main", "github", "ok", h.now
+	r.SpaceID, r.URL, r.Branch, r.CredType, r.State, r.Updated = id, "https://github.com/x/y.git", "main", "connection", "ok", h.now
 	if err := store.PutRemote(ctx, h.st.Q(), r); err != nil {
 		h.t.Fatal(err)
 	}
@@ -114,7 +128,7 @@ func (h *harness) connect(userID, login string) string {
 }
 
 func code(err error) string {
-	var he *github.Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Code
 	}
@@ -122,7 +136,7 @@ func code(err error) string {
 }
 
 func status(err error) int {
-	var he *github.Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Status
 	}

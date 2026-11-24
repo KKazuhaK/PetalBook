@@ -47,7 +47,7 @@ func testManager(t *testing.T, st *store.Store) *Manager {
 
 func addUser(t *testing.T, st *store.Store, id, username string) store.User {
 	t.Helper()
-	u := store.User{ID: id, Username: username, Name: username, Role: "member", Created: time.Now()}
+	u := store.User{ID: id, Username: username, Name: username, Role: "member", Created: time.Now(), TenantID: store.DefaultTenantID}
 	if err := store.InsertUser(ctx, st.Q(), u); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestSingleMode(t *testing.T) {
 		t.Fatal()
 	}
 	l, _ := m.List(ctx, store.LocalUserID)
-	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", Perms: perm.All, Personal: true, Inbox: "Inbox", Sync: "local"}) {
+	if len(l) != 1 || l[0] != (Info{ID: "default", Name: "Mine", Role: "owner", DirectRole: "owner", Perms: perm.All, Personal: true, Inbox: "Inbox", Sync: "local"}) {
 		t.Fatalf("%+v", l)
 	}
 	if h, err := m.Open(ctx, store.User{ID: store.LocalUserID, Role: "admin"}, "default"); err != nil || h.Space != sp {
@@ -90,7 +90,7 @@ func TestSingleMode(t *testing.T) {
 	if _, err := NewSingle(ctx, st, sp, nil); err != nil {
 		t.Fatal(err)
 	}
-	if u, err := store.GetUser(ctx, st.Q(), store.LocalUserID); err != nil || u.Role != "admin" {
+	if u, err := store.GetUser(ctx, st.Q(), store.AllTenants(), store.LocalUserID); err != nil || u.Role != "admin" {
 		t.Fatalf("%v %v", u, err)
 	}
 }
@@ -384,7 +384,7 @@ func TestAUserCannotOwnMoreSpacesThanTheLimit(t *testing.T) {
 		u := addUser(t, st, "U1", "one")
 		other := addUser(t, st, "U2", "two")
 		// A personal space counts, as any space the user owns does.
-		if err := store.InsertSpace(ctx, st.Q(), "PERSONAL1", "My notes", u.ID, "", time.Now()); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "PERSONAL1", "My notes", u.ID, "", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		store.AddMember(ctx, st.Q(), "PERSONAL1", u.ID, "owner", time.Now())
@@ -784,7 +784,7 @@ func TestMembershipChangedDropsOnlyThoseUsers(t *testing.T) {
 	cached := func(id string) bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		_, ok := m.lists[id]
+		_, ok := m.cache.users[id]
 		return ok
 	}
 	if !cached("U1") || !cached("U2") {
@@ -838,7 +838,7 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.InsertSpace(ctx, st.Q(), recorded.ID(), "Recorded", "", "", time.Now()); err != nil {
+		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, recorded.ID(), "Recorded", "", "", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		// A directory this code did not stage, with no row: not ours to remove.

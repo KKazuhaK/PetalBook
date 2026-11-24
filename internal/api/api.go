@@ -21,13 +21,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
-	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/quota"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -91,22 +93,29 @@ type Options struct {
 	// DailyFetch gets the daily text from the external interfaces an
 	// administrator configured; the one that refuses private addresses when nil.
 	DailyFetch *dailyfetch.Fetcher
-	// GitHub is the server's use of its GitHub App (accounts mode); nil when
-	// there is none, and the GitHub endpoints then answer github_not_configured.
-	GitHub *github.Service
+	// Connections are the server's providers of repositories (accounts mode); the
+	// provider "git" is added when it is missing.
+	Connections *connections.Registry
+	// MaxSpaces is --max-spaces when the flag was given: then it is the site's
+	// quota.spacesPerPerson, read only. Nil leaves the stored setting (20).
+	MaxSpaces *int
 	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
 	// accounts mode the administrators' setting decides.
 	NoMCP bool
 }
 
 type server struct {
-	opt     Options
-	log     *slog.Logger
-	auth    *auth.Service
-	spaces  *spaces.Manager
-	drafts  *drafts.Service
-	tokens  *tokens.Service
-	oauth   *oauth.Service
+	opt    Options
+	log    *slog.Logger
+	auth   *auth.Service
+	spaces *spaces.Manager
+	drafts *drafts.Service
+	tokens *tokens.Service
+	oauth  *oauth.Service
+	// settings are the layered settings (site, tenant; see internal/settings).
+	settings *settings.Service
+	// quota knows which limits apply and notices crossings (accounts mode).
+	quota   *quota.Service
 	single  bool
 	started time.Time
 	local   store.User // the built-in user of single-user mode
@@ -138,7 +147,11 @@ func New(opt Options) http.Handler {
 	if opt.DailyFetch == nil {
 		opt.DailyFetch = dailyfetch.New(NewDailyBacking(opt.Store))
 	}
-	s := &server{opt: opt, log: opt.Logger, auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
+	if _, ok := opt.Connections.Get(connections.GitID); !ok {
+		ps := opt.Connections.List()
+		opt.Connections = connections.NewRegistry(append(ps, connections.NewGit())...)
+	}
+	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1)}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -154,10 +167,15 @@ func New(opt Options) http.Handler {
 		}
 	}
 	if s.single {
-		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", Created: time.Now().UTC()}
-		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.LocalUserID); err == nil {
+		s.local = store.User{ID: store.LocalUserID, Username: "local", Name: "Local user", Role: "admin", SiteAdmin: true, TenantID: store.DefaultTenantID, Created: time.Now().UTC()}
+		if u, err := store.GetUser(context.Background(), opt.Store.Q(), store.AllTenants(), store.LocalUserID); err == nil {
 			s.local = *u
 		}
+	}
+	s.bindDailySettings()
+	if s.auth != nil {
+		s.auth.UseSettings(s.settings)
+		s.bindQuota()
 	}
 	mux := http.NewServeMux()
 	uploads := map[string]bool{}
@@ -187,6 +205,8 @@ func New(opt Options) http.Handler {
 	bodyType := func(r *http.Request) string {
 		if _, pattern := mux.Handler(r); uploads[pattern] {
 			return "application/octet-stream"
+		} else if pattern == "POST "+samlACSPattern {
+			return "application/x-www-form-urlencoded"
 		}
 		return "application/json"
 	}
@@ -270,8 +290,10 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 		// nature. It changes nothing unless its state matches a sign-in this
 		// browser started, so the cross-site rules do not apply to it.
 		// The endpoints of the authorization server are called, or the browser is
-		// sent to them, by other sites by design (see oauthCrossSite).
-		if !(r.Method == http.MethodGet && (r.URL.Path == oidcCallbackPath || r.URL.Path == githubCallbackPath)) && !oauthCrossSite(r) {
+		// sent to them, by other sites by design (see oauthCrossSite), and so are
+		// the sign-in endpoints an identity provider sends the browser to, and
+		// A platform's return from connecting an account for repos (connectionReturn).
+		if !fromIdentityProvider(r) && !connectionReturn(r) && !oauthCrossSite(r) {
 			if why := s.crossSite(r); why != "" {
 				if !oauthRefuse(sw, r, http.StatusForbidden, "invalid_request", why) {
 					writeError(sw, http.StatusForbidden, "forbidden", why)
@@ -292,7 +314,9 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 			}
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != want {
 				msg := "send Content-Type: application/json with every request that changes something"
-				if want != "application/json" {
+				if want == "application/x-www-form-urlencoded" {
+					msg = "send the form with Content-Type: " + want
+				} else if want != "application/json" {
 					msg = "send the file with Content-Type: " + want
 				}
 				if r.URL.Path == oauth.PathRegister {
@@ -310,6 +334,35 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 }
 
 const oidcCallbackPath = "/api/auth/oidc/callback"
+
+// fromIdentityProvider is true for the requests an identity provider's site
+// sends the browser to, or the provider itself makes: the redirects of
+// OpenID Connect and GitHub, the form posted to a SAML ACS, and the metadata.
+// None changes anything unless it matches a sign-in this browser started.
+func fromIdentityProvider(r *http.Request) bool {
+	p := r.URL.Path
+	switch r.Method {
+	case http.MethodGet:
+		if p == oidcCallbackPath {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(p, "/api/auth/"); ok {
+			parts := strings.Split(rest, "/")
+			if len(parts) == 3 && parts[1] != "" && (parts[0] == "oidc" || parts[0] == "github") && parts[2] == "callback" {
+				return true
+			}
+			if len(parts) == 3 && parts[0] == "saml" && parts[1] != "" && parts[2] == "metadata" {
+				return true
+			}
+		}
+	case http.MethodPost:
+		if rest, ok := strings.CutPrefix(p, "/api/auth/saml/"); ok {
+			parts := strings.Split(rest, "/")
+			return len(parts) == 2 && parts[0] != "" && parts[1] == "acs"
+		}
+	}
+	return false
+}
 
 // NormalizeOrigin lower-cases an origin and drops a trailing slash.
 func NormalizeOrigin(o string) string {
@@ -409,14 +462,32 @@ type errorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 	Current any    `json:"current,omitempty"`
-	// Repo is the empty repository a failed space creation left on GitHub.
-	Repo *githubRepoResp `json:"repo,omitempty"`
+	// Provider is the id of the provider an error of a connection is about.
+	Provider string `json:"provider,omitempty"`
+	// Repo is the empty repository a failed space creation left on the platform.
+	Repo *repoRefResp `json:"repo,omitempty"`
 	// AssetsRepo is the attachment repository made with the space's (milestone 3.1).
-	AssetsRepo *githubRepoResp `json:"assetsRepo,omitempty"`
+	AssetsRepo *repoRefResp `json:"assetsRepo,omitempty"`
+	// InstallURL is where the App is installed (app_not_installed).
+	InstallURL string `json:"installUrl,omitempty"`
+	// Permission is the first permission an App lacks (app_missing_permission).
+	Permission string `json:"permission,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`
 	Field  string `json:"field,omitempty"`
+	// Accounts is how many accounts a refused provider deletion would have left without a way in.
+	Accounts *int `json:"accounts,omitempty"`
+	// What a refused group request is about: how many spaces and provider
+	// entries keep a group, the ids of people that do not exist.
+	Spaces   *int     `json:"spaces,omitempty"`
+	Mappings *int     `json:"mappings,omitempty"`
+	Missing  []string `json:"missing,omitempty"`
+	// What a refused quota is about (quota_exceeded): which one, its limit, and
+	// what is used.
+	Quota string `json:"quota,omitempty"`
+	Limit *int64 `json:"limit,omitempty"`
+	Used  *int64 `json:"used,omitempty"`
 	// What the storage refusals say (see "Server storage"): remote_required has
 	// the requirement and, for an existing space, its deadline; not_cached says
 	// whether a fetch goes on; restoring says how far the restore is; an
@@ -517,9 +588,10 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		ue    *space.UnavailableError
 		urle  *gitstore.URLError
 		hoste *gitstore.HostError
+		qe    *spaces.QuotaError
 	)
 	var coded *codedError
-	var ghe *github.Error
+	var ghe *connections.Error
 	var req *spaces.RequiredError
 	var full *spaces.SpaceFullError
 	var nc *space.NotCachedError
@@ -527,7 +599,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var rf *spaces.RestoreFailed
 	switch {
 	case errors.As(err, &ghe):
-		s.failGitHub(w, ghe)
+		s.failConnection(w, ghe)
 	case errors.As(err, &req):
 		body := errorBody{Error: "remote_required", Message: req.Msg, Require: req.Require}
 		if !req.Deadline.IsZero() {
@@ -588,8 +660,12 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, spaces.ErrConnected):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.As(err, &qe):
+		writeJSON(w, http.StatusForbidden, errorBody{Error: "quota_exceeded", Message: strings.TrimPrefix(qe.Error(), spaces.ErrLimit.Error()+": "),
+			Quota: qe.Quota, Limit: &qe.Limit, Used: &qe.Used})
 	case errors.Is(err, spaces.ErrLimit):
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
+	case s.failGroup(w, err):
 	case errors.Is(err, spaces.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such space")
 	case errors.Is(err, spaces.ErrDisabled):
@@ -667,32 +743,44 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	}
 }
 
-type githubRepoResp struct {
+type repoRefResp struct {
 	ID       int64  `json:"id"`
 	FullName string `json:"fullName"`
 	HTMLURL  string `json:"htmlUrl"`
 }
 
-func (s *server) failGitHub(w http.ResponseWriter, e *github.Error) {
-	body := errorBody{Error: e.Code, Message: e.Msg}
+func (s *server) failConnection(w http.ResponseWriter, e *connections.Error) {
+	body := errorBody{Error: e.Code, Message: e.Msg, Provider: e.Provider}
 	if e.Repo != nil {
-		body.Repo = &githubRepoResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
+		body.Repo = &repoRefResp{e.Repo.ID, e.Repo.FullName, e.Repo.HTMLURL}
 	}
 	if e.AssetsRepo != nil {
-		body.AssetsRepo = &githubRepoResp{e.AssetsRepo.ID, e.AssetsRepo.FullName, e.AssetsRepo.HTMLURL}
+		body.AssetsRepo = &repoRefResp{e.AssetsRepo.ID, e.AssetsRepo.FullName, e.AssetsRepo.HTMLURL}
 	}
-	if e.Code == github.CodeRateLimited {
+	if len(e.Missing) > 0 {
+		body.Missing = e.Missing
+		if e.Code == connections.CodeMissingPermission {
+			body.Permission = e.Missing[0]
+		}
+	}
+	body.InstallURL = e.InstallURL
+	if e.Code == connections.CodeRateLimited {
 		secs := int((e.RetryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.Itoa(max(secs, 1)))
 	}
-	if e.Status >= 500 && e.Code == github.CodeInternal {
-		s.log.Error("a space made with a GitHub repository could not be recorded", "error", e.Err)
+	if e.Status >= 500 && e.Code == connections.CodeInternal {
+		s.log.Error("a space made with a repository on a provider could not be recorded", "error", e.Err)
 	}
 	writeJSON(w, e.Status, body)
 }
 
 func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
 	switch e.Kind {
+	case auth.Coded:
+		if e.Status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", strconv.Itoa(max(int((e.RetryAfter+time.Second-1)/time.Second), 1)))
+		}
+		writeJSON(w, e.Status, errorBody{Error: e.Code, Message: e.Msg, Accounts: e.Accounts})
 	case auth.Invalid:
 		writeError(w, http.StatusBadRequest, "invalid", e.Msg)
 	case auth.Unauthenticated:

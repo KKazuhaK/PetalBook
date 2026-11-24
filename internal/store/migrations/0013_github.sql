@@ -1,4 +1,4 @@
--- The GitHub App, users' GitHub authorisations and shared installations.
+-- The GitHub provider: the App, users' GitHub authorisations and shared installations.
 -- 0011 and 0012 belong to the MCP milestone (feat/mcp: API tokens and OAuth).
 -- Each migration is recorded by its own number and the missing ones run at the
 -- next start, so a database migrated on this branch alone picks up 0011 and
@@ -7,6 +7,15 @@
 -- A user's access and refresh tokens are stored sealed (see the secret
 -- package). version counts replacements: a renewal replaces the pair it was
 -- made from and nothing newer. The App's own settings are in site_settings.
+--
+-- An installation is shared per tenant: github_installation_tenants has a row
+-- for each tenant a site administrator shared it with. tenant_id is a plain
+-- column, not a foreign key: the tenants table belongs to 0018, which may run
+-- before or after this file. Deleting a tenant deletes its rows in code.
+--
+-- github_leftovers remembers, per user, an empty repository a failed attempt
+-- to make a space left on GitHub: a reminder, cleared by the person or when a
+-- space connects to the repository.
 
 CREATE TABLE github_authorizations (
   user_id         TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -27,11 +36,30 @@ CREATE TABLE github_installations (
   id           BIGINT PRIMARY KEY,
   account      TEXT NOT NULL,
   account_type TEXT NOT NULL DEFAULT 'Organization',
-  shared       BIGINT NOT NULL DEFAULT 0,
   updated      BIGINT NOT NULL
 );
-CREATE INDEX github_installations_shared ON github_installations(shared, id);
 
+CREATE TABLE github_installation_tenants (
+  installation_id BIGINT NOT NULL REFERENCES github_installations(id) ON DELETE CASCADE,
+  tenant_id       TEXT NOT NULL,
+  PRIMARY KEY (installation_id, tenant_id)
+);
+CREATE INDEX github_installation_tenants_tenant ON github_installation_tenants(tenant_id, installation_id);
+
+CREATE TABLE github_leftovers (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  repo_id    BIGINT NOT NULL,
+  full_name  TEXT NOT NULL,
+  html_url   TEXT NOT NULL,
+  space_name TEXT NOT NULL DEFAULT '',
+  created    BIGINT NOT NULL,
+  PRIMARY KEY (user_id, repo_id)
+);
+CREATE INDEX github_leftovers_repo ON github_leftovers(repo_id);
+
+-- provider is the id of the provider a remote goes through (milestone 2.7b): 'git'
+-- for a plain address with a key or a token, 'github' for cred_type 'connection'.
+ALTER TABLE remotes ADD COLUMN provider TEXT NOT NULL DEFAULT 'git';
 ALTER TABLE remotes ADD COLUMN gh_via TEXT NOT NULL DEFAULT '';
 ALTER TABLE remotes ADD COLUMN gh_installation_id BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE remotes ADD COLUMN gh_repo_id BIGINT NOT NULL DEFAULT 0;

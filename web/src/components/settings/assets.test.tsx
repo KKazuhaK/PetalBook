@@ -51,8 +51,9 @@ describe('the attachment repository in the sync settings', () => {
 
   it('connects one, moves the attachments with progress, and cannot be taken away after', async () => {
     await open(true)
-    await settle(() => text().includes(ts.assets.title), 'the attachment section')
-    const url = [...panel()!.querySelectorAll<HTMLInputElement>('input')].find((i) => i.placeholder.includes('-assets.git'))!
+    const field = () => [...panel()!.querySelectorAll<HTMLInputElement>('input')].find((i) => i.placeholder.includes('-assets.git'))
+    await settle(() => field() !== undefined, 'the attachment section')
+    const url = field()!
     await type(url, 'https://github.com/kazuhahub/wiki-assets.git')
     await click(button(ts.assets.connect))
     await settle(() => m!.requests.some((r) => r.method === 'PUT' && r.url.endsWith('/remote/assets')), 'the PUT')

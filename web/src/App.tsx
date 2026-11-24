@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/providers/theme'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
-import { ApiError, onForbidden, onSignedOut, onSpaceAccess, onUnavailable } from '@/api/client'
+import { ApiError, onForbidden, onHold, onSignedOut, onSpaceAccess, onUnavailable } from '@/api/client'
 import { keys, lastSpace, refreshSpaceAccess, useSession, useSpaces } from '@/api/hooks'
 import { SpaceSettingsRedirect } from '@/components/settings/SpaceSettingsRedirect'
 import { AdminGate } from '@/components/admin/AdminGate'
@@ -26,6 +26,13 @@ const PageEditor = lazy(() => import('@/pages/PageEditor'))
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const SetupPage = lazy(() => import('@/pages/auth/SetupPage'))
 const InvitePage = lazy(() => import('@/pages/auth/InvitePage'))
+const MailPage = (name: 'RegisterPage' | 'RegisterConfirmPage' | 'VerifyEmailPage' | 'ForgotPage' | 'ResetPasswordPage') => lazy(() => import('@/pages/auth/MailPages').then((m) => ({ default: m[name] })))
+const RegisterPage = MailPage('RegisterPage')
+const RegisterConfirmPage = MailPage('RegisterConfirmPage')
+const VerifyEmailPage = MailPage('VerifyEmailPage')
+const ForgotPage = MailPage('ForgotPage')
+const ResetPasswordPage = MailPage('ResetPasswordPage')
+const HeldPage = lazy(() => import('@/pages/auth/HeldPage'))
 const ConsentPage = lazy(() => import('@/pages/auth/ConsentPage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
@@ -61,6 +68,8 @@ function AuthGate() {
   if (s.mode === 'accounts') {
     if (s.setup) return <Navigate to="/setup" replace />
     if (!s.user) return <Navigate to={loginUrl(pathname + search)} replace />
+    // A person who must have a passkey and has none: nothing but the page to set one up.
+    if (s.hold === 'passkey') return later(<HeldPage />)
   }
   return <Outlet />
 }
@@ -95,6 +104,11 @@ const router = createBrowserRouter([
   { path: 'login', element: later(<LoginPage />) },
   { path: 'setup', element: later(<SetupPage />) },
   { path: 'invite', element: later(<InvitePage />) },
+  { path: 'register', element: later(<RegisterPage />) },
+  { path: 'register/confirm', element: later(<RegisterConfirmPage />) },
+  { path: 'verify-email', element: later(<VerifyEmailPage />) },
+  { path: 'forgot', element: later(<ForgotPage />) },
+  { path: 'reset-password', element: later(<ResetPasswordPage />) },
   { path: 'oauth/authorize', element: <ToTheServer /> },
   {
     element: <AuthGate />,
@@ -148,6 +162,14 @@ export default function App() {
     () =>
       onSignedOut(() => {
         queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, user: null })
+      }),
+    [],
+  )
+  // Every request answers 403 `passkey_required` while the session is held: the session says so from then on.
+  useEffect(
+    () =>
+      onHold(() => {
+        queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, hold: 'passkey' })
       }),
     [],
   )

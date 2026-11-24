@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -40,6 +42,8 @@ type Store struct {
 	db      *sql.DB
 	dialect Dialect
 	rebinds sync.Map // query -> rewritten query (PostgreSQL only)
+	// tenantState is which tenants are disabled (see TenantDisabled).
+	tenantState atomic.Pointer[tenantState]
 }
 
 // Q is what queries run on: the database, or a transaction of it.
@@ -95,6 +99,17 @@ func (s *Store) Tx(ctx context.Context, fn func(Q) error) error {
 	return tx.Commit()
 }
 
+// atomically runs fn in one transaction: a new one when q is the database
+// itself, or q when it already is a transaction.
+func atomically(ctx context.Context, q Q, fn func(Q) error) error {
+	if b, ok := q.(bound); ok {
+		if _, isDB := b.r.(*sql.DB); isDB {
+			return b.s.Tx(ctx, fn)
+		}
+	}
+	return fn(q)
+}
+
 // rebind rewrites ? placeholders to $1, $2... for PostgreSQL.
 func (s *Store) rebind(q string) string {
 	if s.dialect != Postgres {
@@ -117,6 +132,58 @@ func (s *Store) rebind(q string) string {
 	return b.String()
 }
 
+// OpenAtVersion is Open, but brings the schema only up to version max (and not
+// the tenant state, which needs the last one); Migrate finishes the job. It is
+// for the tests of migrations: a database as an older version left it.
+func OpenAtVersion(ctx context.Context, target string, max int) (*Store, error) {
+	var s *Store
+	var err error
+	if strings.HasPrefix(target, "postgres://") || strings.HasPrefix(target, "postgresql://") {
+		s, err = openPostgres(target)
+	} else {
+		s, err = openSQLite(target)
+	}
+	if err != nil {
+		return nil, redact(err, target)
+	}
+	if err := s.migrateTo(ctx, max); err != nil {
+		s.Close()
+		return nil, redact(err, target)
+	}
+	return s, nil
+}
+
+// OpenWithoutVersion is OpenAtVersion for a database that has every version
+// but those of skip, as one migrated on a branch that did not have those files
+// yet; the tenant state is not loaded. Migrate then applies the missing
+// versions, as the first start after a merge does. It is for the tests of
+// migrations.
+func OpenWithoutVersion(ctx context.Context, target string, skip ...int) (*Store, error) {
+	var s *Store
+	var err error
+	if strings.HasPrefix(target, "postgres://") || strings.HasPrefix(target, "postgresql://") {
+		s, err = openPostgres(target)
+	} else {
+		s, err = openSQLite(target)
+	}
+	if err != nil {
+		return nil, redact(err, target)
+	}
+	if err := s.migrateWhere(ctx, func(v int) bool { return !slices.Contains(skip, v) }); err != nil {
+		s.Close()
+		return nil, redact(err, target)
+	}
+	return s, nil
+}
+
+// Migrate brings the schema up to date, as Open does at every start.
+func (s *Store) Migrate(ctx context.Context) error {
+	if err := s.migrate(ctx); err != nil {
+		return err
+	}
+	return s.loadTenantState(ctx)
+}
+
 // Open opens the state database at target and brings its schema up to date.
 // target is a postgres:// or postgresql:// URL, or the path of a SQLite file
 // (created if missing). The error never contains the password of a URL.
@@ -132,6 +199,10 @@ func Open(ctx context.Context, target string) (*Store, error) {
 		return nil, redact(err, target)
 	}
 	if err := s.migrate(ctx); err != nil {
+		s.Close()
+		return nil, redact(err, target)
+	}
+	if err := s.loadTenantState(ctx); err != nil {
 		s.Close()
 		return nil, redact(err, target)
 	}

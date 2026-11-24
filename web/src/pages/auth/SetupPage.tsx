@@ -2,13 +2,17 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@/api/client'
-import { applySession, useSession } from '@/api/hooks'
+import { applySignIn, useAuthProviders, useSession } from '@/api/hooks'
+import type { PublicProvider } from '@/api/types'
 import { AuthLayout, OrDivider } from '@/components/auth/AuthLayout'
+import { CaptchaField, useCaptcha } from '@/components/auth/Captcha'
+import { ProviderActions } from '@/components/auth/ProviderButtons'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { forgetFragmentToken, fragmentToken } from '@/lib/auth'
 import { t } from '@/i18n'
+import { ts } from '@/i18n/signin'
 
 // First run: the server has no user yet. The setup token comes from the address
 // (`/setup#<token>`, as the server prints it), or is pasted.
@@ -19,10 +23,13 @@ export default function SetupPage() {
   const s = session.data
   if (s.mode === 'single') return <Navigate to="/" replace />
   if (!s.setup) return <Navigate to={s.user ? '/' : '/login'} replace />
-  return <SetupForm oidc={s.methods?.oidc?.name ?? null} />
+  return <SetupForm />
 }
 
-function SetupForm({ oidc }: { oidc: string | null }) {
+function SetupForm() {
+  const providers = useAuthProviders()
+  const list = providers.data?.sso ? providers.data.providers : []
+  const captcha = useCaptcha('setup')
   const qc = useQueryClient()
   const navigate = useNavigate()
   // Read once; the address bar no longer has it afterwards.
@@ -55,24 +62,29 @@ function SetupForm({ oidc }: { oidc: string | null }) {
     setFieldError(problems)
     if (Object.keys(problems).length) return
     setBusy(true)
+    const sent = captcha.value()
     try {
-      const { user } = await api.setup({ token, username: username.trim(), name: name.trim() || undefined, password: pass })
-      applySession(qc, user)
+      const { user } = await api.setup({ token, username: username.trim(), name: name.trim() || undefined, password: pass, ...(sent ? { captcha: sent } : {}) })
+      await applySignIn(qc, user)
       navigate('/', { replace: true })
     } catch (err) {
       setBusy(false)
-      if (err instanceof ApiError && err.status === 403) setFieldError({ token: t.setup.badToken })
+      if (err instanceof ApiError && err.code === 'captcha_failed') {
+        setError(sent ? ts.captcha.failed : ts.captcha.required)
+        void captcha.refresh()
+      } else if (err instanceof ApiError && err.code === 'rate_limited') setError(ts.login.rateLimited(t.auth.wait(err.retryAfter ?? 60)))
+      else if (err instanceof ApiError && err.status === 403) setFieldError({ token: t.setup.badToken })
       else if (err instanceof ApiError && err.code === 'exists') setError(t.setup.exists)
       else if (err instanceof ApiError && err.code === 'invalid') setFieldError({ username: err.message })
       else setError(err instanceof ApiError ? err.message : t.auth.failed)
     }
   }
 
-  const sso = async () => {
+  const sso = async (p: PublicProvider) => {
     setError('')
     if (!token) return setFieldError({ token: t.setup.tokenRequired })
     try {
-      const { url } = await api.oidcStart({ intent: 'setup', token, return: '/' })
+      const { url } = await api.providerStart(p.kind, p.slug, { intent: 'setup', token, return: '/' })
       window.location.assign(url)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t.auth.failed)
@@ -94,16 +106,16 @@ function SetupForm({ oidc }: { oidc: string | null }) {
         <Field label={t.auth.password} help={t.auth.passwordHelp} error={fieldError.password} type="password" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="new-password" required />
         <Field label={t.auth.confirmPassword} type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" required />
         {fromLink && fieldError.token && <FormMessage>{fieldError.token}</FormMessage>}
-        <Button type="submit" disabled={busy}>
+        <CaptchaField captcha={captcha} disabled={busy} />
+        <Button type="submit" disabled={busy || captcha.missing}>
           {busy ? t.setup.submitting : t.setup.submit}
         </Button>
       </form>
-      {oidc && (
+      {list.length > 0 && (
         <>
           <OrDivider />
-          <Button type="button" variant="outline" onClick={() => void sso()}>
-            {t.setup.sso(oidc)}
-          </Button>
+          <p className="text-xs text-muted-foreground">{ts.setupSso.help}</p>
+          <ProviderActions providers={list} label={ts.setupSso.withProvider} onPick={(p) => void sso(p)} />
         </>
       )}
     </AuthLayout>

@@ -32,12 +32,17 @@ function optionsFromEnv(): MockOptions {
   const mode = process.env.MOCK_MODE ?? 'single'
   if (mode === 'single') return {}
   const oidc = { name: '示例单点登录' }
-  if (mode === 'setup') return { mode: 'accounts', admin: false, oidc }
+  // A few providers to look at: the first (`sso`) answers the pre-2.8 endpoints, the others are of the other kinds.
+  const providers: MockOptions['providers'] = [
+    { slug: 'campus', kind: 'saml', name: 'Campus login', order: 1, saml: { metadataUrl: 'https://idp.example/metadata' } },
+    { slug: 'github', kind: 'github', name: 'GitHub', icon: 'preset:github', order: 2, github: { clientId: 'dev', organizations: ['KazuhaHub'] } },
+  ]
+  if (mode === 'setup') return { mode: 'accounts', admin: false, oidc, providers }
   if (mode !== 'accounts') throw new Error(`MOCK_MODE must be single, accounts or setup, not ${mode}`)
   const start = process.env.MOCK_REMOTE
   if (start && !['ok', 'offline', 'rewritten', 'error'].includes(start)) throw new Error(`MOCK_REMOTE must be ok, offline, rewritten or error, not ${start}`)
   // MOCK_OAUTH=1 plays a server with an authorization server: /api/_mock/oauth opens the consent page.
-  return { mode: 'accounts', oidc, oauth: process.env.MOCK_OAUTH === '1', invite: { token: MOCK_INVITE_TOKEN }, github: { configured: true }, ...(start ? { remote: { start: start as RemoteState } } : {}) }
+  return { mode: 'accounts', oidc, providers, oauth: process.env.MOCK_OAUTH === '1', invite: { token: MOCK_INVITE_TOKEN }, github: { configured: true }, ...(start ? { remote: { start: start as RemoteState } } : {}) }
 }
 
 export function mockApi(): Plugin {

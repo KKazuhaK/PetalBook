@@ -30,7 +30,7 @@ func TestStoragePolicyQueries(t *testing.T) {
 			{"S1", "U1", t0, ""}, {"S2", "U1", t0, "token"}, {"S3", "U1", t0.Add(100 * day), ""}, {"S4", "U2", t0, ""},
 		}
 		for _, s := range spaces {
-			if err := store.InsertSpace(ctx, q, s.id, s.id, "", "", s.created); err != nil {
+			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, s.id, s.id, "", "", s.created); err != nil {
 				t.Fatal(err)
 			}
 			if err := store.AddMember(ctx, q, s.id, s.owner, "owner", s.created); err != nil {
@@ -78,12 +78,12 @@ func TestStoragePolicyQueries(t *testing.T) {
 			t.Fatal("counted without a requirement")
 		}
 		// The list filters.
-		over, _, err := store.ListAllSpaces(ctx, q, store.SpaceFilter{Overdue: &pol, Limit: 50})
+		over, _, err := store.ListAllSpaces(ctx, q, store.AllTenants(), store.SpaceFilter{Overdue: &pol, Limit: 50})
 		if err != nil || len(over) != 1 || over[0].ID != "S1" || over[0].Storage.Exempt {
 			t.Fatalf("%+v %v", over, err)
 		}
 		for cache, want := range map[string][]string{"local": {"S1", "S3", "S4"}, "full": {"S2"}, "partial": {}, "evicted": {}} {
-			rows, _, err := store.ListAllSpaces(ctx, q, store.SpaceFilter{Cache: cache, Limit: 50})
+			rows, _, err := store.ListAllSpaces(ctx, q, store.AllTenants(), store.SpaceFilter{Cache: cache, Limit: 50})
 			var ids []string
 			for _, r := range rows {
 				ids = append(ids, r.ID)

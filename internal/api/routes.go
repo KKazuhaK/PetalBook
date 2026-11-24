@@ -30,6 +30,7 @@ const (
 	kindPublic kind = iota + 1
 	kindSignedIn
 	kindAdmin
+	kindSiteAdmin
 	kindSpace
 )
 
@@ -38,8 +39,12 @@ var (
 	public = access{kind: kindPublic}
 	// signedIn needs a session.
 	signedIn = access{kind: kindSignedIn}
-	// admin needs a session of an administrator.
+	// admin needs a session of an administrator of a tenant (or of the server):
+	// what it shows and changes is the caller's tenant's (see adminScope).
 	admin = access{kind: kindAdmin}
+	// siteAdmin needs a session of an administrator of the whole server: the
+	// server's own settings and the tenants themselves.
+	siteAdmin = access{kind: kindSiteAdmin}
 )
 
 // inSpaceOrSelf is inSpace, except that the caller may do it to themselves.
@@ -111,17 +116,20 @@ var routeTable = []route{
 	{"POST", "/api/invites/check", public, true, false, false, (*server).checkInvite},
 	{"POST", "/api/invites/accept", public, true, false, false, (*server).acceptInvite},
 
-	{"GET", "/api/github", signedIn, true, false, false, (*server).getGitHub},
-	{"POST", "/api/github/authorization/start", signedIn, true, false, false, (*server).githubAuthStart},
-	{"GET", githubCallbackPath, public, true, true, false, (*server).githubAuthCallback},
-	{"DELETE", "/api/github/authorization", signedIn, true, false, false, (*server).githubDisconnect},
-	{"GET", "/api/github/owners", signedIn, true, false, false, (*server).githubOwners},
-	{"GET", "/api/github/repos", signedIn, true, false, false, (*server).githubRepos},
+	{"GET", "/api/connections", signedIn, true, false, false, (*server).listConnections},
+	{"POST", "/api/connections/{provider}/authorization/start", signedIn, true, false, false, (*server).connectStart},
+	{"GET", connCallbackPrefix + "{provider}" + connCallbackSuffix, public, true, true, false, (*server).connectCallback},
+	{"GET", connManifestPath, public, true, true, false, (*server).connectManifestCallback},
+	{"DELETE", "/api/connections/{provider}/authorization", signedIn, true, false, false, (*server).connectDisconnect},
+	{"DELETE", "/api/connections/{provider}/leftovers/{repoId}", signedIn, true, false, false, (*server).connectDismissLeftover},
+	{"GET", "/api/connections/{provider}/owners", signedIn, true, false, false, (*server).connectOwners},
+	{"GET", "/api/connections/{provider}/repos", signedIn, true, false, false, (*server).connectRepos},
 
 	{"GET", "/api/account", signedIn, true, false, false, (*server).getAccount},
 	{"PATCH", "/api/account", signedIn, true, false, false, (*server).patchAccount},
 	{"POST", "/api/account/password", signedIn, true, false, false, (*server).changePassword},
 	{"DELETE", "/api/account/identities/{id}", signedIn, true, false, false, (*server).unlinkIdentity},
+	{"GET", "/api/account/usage", signedIn, true, false, false, (*server).accountUsage},
 	{"GET", "/api/account/tokens", signedIn, true, false, false, (*server).listMyTokens},
 	{"POST", "/api/account/tokens", signedIn, true, false, false, (*server).createToken},
 	{"DELETE", "/api/account/tokens/{id}", signedIn, true, false, false, (*server).revokeMyToken},
@@ -130,39 +138,67 @@ var routeTable = []route{
 	{"GET", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentInfo},
 	{"POST", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentDecide},
 
+	{"GET", "/api/groups", signedIn, true, false, false, (*server).findGroups},
+	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
+
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
 	{"POST", "/api/invites", admin, true, false, false, (*server).createInvite},
 	{"GET", "/api/invites", admin, true, false, false, (*server).listInvites},
 	{"DELETE", "/api/invites/{id}", admin, true, false, false, (*server).deleteInvite},
 
+	{"GET", "/api/admin/usage", admin, true, false, false, (*server).adminUsage},
 	{"GET", "/api/admin/spaces", admin, true, false, false, (*server).adminListSpaces},
 	{"GET", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminGetSpace},
 	{"POST", "/api/admin/spaces/{space}/size", admin, true, false, false, (*server).adminResizeSpace},
-	{"PUT", "/api/admin/spaces/{space}/storage", admin, true, false, false, (*server).adminPutSpaceStorage},
-	{"POST", "/api/admin/spaces/{space}/evict", admin, true, false, false, (*server).adminEvictSpace},
-	{"GET", "/api/admin/storage", admin, true, false, false, (*server).adminGetStorage},
-	{"PUT", "/api/admin/storage", admin, true, false, false, (*server).adminPutStorage},
+	{"PUT", "/api/admin/spaces/{space}/storage", siteAdmin, true, false, false, (*server).adminPutSpaceStorage},
+	{"POST", "/api/admin/spaces/{space}/evict", siteAdmin, true, false, false, (*server).adminEvictSpace},
+	{"GET", "/api/admin/storage", siteAdmin, true, false, false, (*server).adminGetStorage},
+	{"PUT", "/api/admin/storage", siteAdmin, true, false, false, (*server).adminPutStorage},
 	{"POST", "/api/admin/spaces/{space}/transfer", admin, true, false, false, (*server).adminTransferSpace},
 	{"POST", "/api/admin/spaces/{space}/disable", admin, true, false, false, (*server).adminDisableSpace},
 	{"POST", "/api/admin/spaces/{space}/enable", admin, true, false, false, (*server).adminEnableSpace},
 	{"DELETE", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminDeleteSpace},
-	{"GET", "/api/admin/daily", admin, true, false, false, (*server).adminGetDaily},
-	{"PUT", "/api/admin/daily", admin, true, false, false, (*server).adminPutDaily},
-	{"PUT", "/api/admin/daily/lines", admin, true, false, false, (*server).adminPutDailyLines},
-	{"DELETE", "/api/admin/daily/lines", admin, true, false, false, (*server).adminDeleteDailyLines},
-	{"PUT", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminPutDailyAPI},
-	{"DELETE", "/api/admin/daily/apis/{id}", admin, true, false, false, (*server).adminDeleteDailyAPI},
-	{"PUT", "/api/admin/daily/providers/{id}", admin, true, false, false, (*server).adminPutDailyProvider},
-	{"POST", "/api/admin/daily/try", admin, true, false, false, (*server).adminTryDailyAPI},
-	{"GET", "/api/admin/github", admin, true, false, false, (*server).adminGetGitHub},
-	{"PUT", "/api/admin/github", admin, true, false, false, (*server).adminPutGitHub},
-	{"DELETE", "/api/admin/github", admin, true, false, false, (*server).adminDeleteGitHub},
-	{"GET", "/api/admin/github/installations", admin, true, false, false, (*server).adminGitHubInstallations},
-	{"PUT", "/api/admin/github/installations/{id}", admin, true, false, false, (*server).adminPutGitHubInstallation},
-	{"GET", "/api/admin/status", admin, true, false, false, (*server).adminStatus},
-	{"GET", "/api/admin/access", admin, true, false, false, (*server).adminGetAccess},
-	{"PUT", "/api/admin/access", admin, true, false, false, (*server).adminPutAccess},
+	{"GET", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminGetDaily},
+	{"PUT", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminPutDaily},
+	{"PUT", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminPutDailyLines},
+	{"DELETE", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminDeleteDailyLines},
+	{"PUT", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminPutDailyAPI},
+	{"DELETE", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminDeleteDailyAPI},
+	{"PUT", "/api/admin/daily/providers/{id}", siteAdmin, true, false, false, (*server).adminPutDailyProvider},
+	{"POST", "/api/admin/daily/try", siteAdmin, true, false, false, (*server).adminTryDailyAPI},
+	{"GET", "/api/admin/connections", siteAdmin, true, false, false, (*server).adminListConnections},
+	{"GET", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminGetConnection},
+	{"PUT", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminPutConnection},
+	{"POST", "/api/admin/connections/{provider}/manifest", siteAdmin, true, false, false, (*server).adminConnectionManifest},
+	{"POST", "/api/admin/connections/{provider}/manifest/retry", siteAdmin, true, false, false, (*server).adminConnectionManifestRetry},
+	{"POST", "/api/admin/connections/{provider}/check", siteAdmin, true, false, false, (*server).adminCheckConnection},
+	{"DELETE", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminDeleteConnection},
+	{"GET", "/api/admin/connections/{provider}/installations", siteAdmin, true, false, false, (*server).adminConnectionInstallations},
+	{"PUT", "/api/admin/connections/{provider}/installations/{id}", siteAdmin, true, false, false, (*server).adminPutConnectionInstallation},
+	{"GET", "/api/admin/status", siteAdmin, true, false, false, (*server).adminStatus},
+	{"GET", "/api/admin/access", siteAdmin, true, false, false, (*server).adminGetAccess},
+	{"PUT", "/api/admin/access", siteAdmin, true, false, false, (*server).adminPutAccess},
+	{"GET", "/api/admin/groups", admin, true, false, false, (*server).adminListGroups},
+	{"POST", "/api/admin/groups", admin, true, false, false, (*server).adminCreateGroup},
+	{"GET", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminGetGroup},
+	{"PATCH", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminPatchGroup},
+	{"DELETE", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminDeleteGroup},
+	{"GET", "/api/admin/groups/{group}/members", admin, true, false, false, (*server).adminGroupMembers},
+	{"POST", "/api/admin/groups/{group}/members", admin, true, false, false, (*server).adminAddGroupMembers},
+	{"DELETE", "/api/admin/groups/{group}/members/{user}", admin, true, false, false, (*server).adminRemoveGroupMember},
+	{"GET", "/api/admin/groups/{group}/spaces", admin, true, false, false, (*server).adminGroupSpaces},
+	{"GET", "/api/admin/tenancy", siteAdmin, true, false, false, (*server).adminGetTenancy},
+	{"PUT", "/api/admin/tenancy", siteAdmin, true, false, false, (*server).adminPutTenancy},
+	{"GET", "/api/admin/tenants", siteAdmin, true, false, false, (*server).adminListTenants},
+	{"POST", "/api/admin/tenants", siteAdmin, true, false, false, (*server).adminCreateTenant},
+	{"GET", "/api/admin/tenants/{tenant}", admin, true, false, false, (*server).adminGetTenant},
+	{"PATCH", "/api/admin/tenants/{tenant}", admin, true, false, false, (*server).adminPatchTenant},
+	{"DELETE", "/api/admin/tenants/{tenant}", siteAdmin, true, false, false, (*server).adminDeleteTenant},
+	{"GET", "/api/admin/tenants/{tenant}/settings", admin, true, false, false, (*server).adminGetTenantSettings},
+	{"PUT", "/api/admin/tenants/{tenant}/settings/{key}", admin, true, false, false, (*server).adminPutTenantSetting},
+	{"GET", "/api/admin/settings", siteAdmin, true, false, false, (*server).adminGetSettings},
+	{"PUT", "/api/admin/settings/{key}", siteAdmin, true, false, false, (*server).adminPutSetting},
 	{"GET", "/api/admin/tokens", admin, true, false, false, (*server).adminListTokens},
 	{"DELETE", "/api/admin/tokens/{id}", admin, true, false, false, (*server).adminRevokeToken},
 	{"GET", "/api/admin/grants", admin, true, false, false, (*server).adminListGrants},
@@ -224,6 +260,10 @@ var routeTable = []route{
 	{"GET", "/api/spaces/{space}/pages/{id}/versions/{commit}", inSpace(perm.Read), false, false, false, (*server).getVersion},
 
 	{"GET", "/api/spaces/{space}/members", inSpace(perm.Read), true, false, false, (*server).listMembers},
+	{"GET", "/api/spaces/{space}/members/effective", inSpace(perm.Read), true, false, false, (*server).effectiveMembers},
+	{"POST", "/api/spaces/{space}/groups", inSpace(perm.Members), true, false, false, (*server).addSpaceGroup},
+	{"PATCH", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).patchSpaceGroup},
+	{"DELETE", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).deleteSpaceGroup},
 	{"POST", "/api/spaces/{space}/members", inSpace(perm.Members), true, false, false, (*server).addMember},
 	{"PATCH", "/api/spaces/{space}/members/{user}", inSpace(perm.Members), true, false, false, (*server).patchMember},
 	{"DELETE", "/api/spaces/{space}/members/{user}", inSpaceOrSelf(perm.Members), true, false, false, (*server).removeMember},
@@ -243,8 +283,9 @@ var routeTable = []route{
 // RouteInfo describes a route for tests and tooling.
 type RouteInfo struct {
 	Method, Pattern string
-	Public          bool // no session needed
-	Admin           bool
+	Public          bool      // no session needed
+	Admin           bool      // a tenant's or the server's administrator
+	SiteAdmin       bool      // the server's administrator only
 	Space           bool      // a route on {space}
 	Perm            perm.Perm // what a space route asks of the caller in the space
 	OrSelf          bool      // the permission is waived for the caller's own {user}
@@ -257,7 +298,7 @@ func Routes() []RouteInfo {
 	out := make([]RouteInfo, len(routeTable))
 	for i, r := range routeTable {
 		a := r.access
-		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Admin: a.kind == kindAdmin,
+		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Admin: a.kind == kindAdmin, SiteAdmin: a.kind == kindSiteAdmin,
 			Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf, AccountsOnly: r.accountsOnly, Upload: r.upload}
 	}
 	return out
@@ -316,8 +357,16 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 		}
+		if c.p != nil && c.p.Held && !heldAllowed[rt.method+" "+rt.pattern] {
+			writeError(w, http.StatusForbidden, "passkey_required", "register a passkey to continue")
+			return
+		}
 		if rt.access.kind == kindAdmin && c.p.User.Role != "admin" {
 			writeError(w, http.StatusForbidden, "forbidden", "only an administrator may do that")
+			return
+		}
+		if rt.access.kind == kindSiteAdmin && !c.isSiteAdmin() {
+			writeError(w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may do that")
 			return
 		}
 		if rt.access.kind == kindSpace {

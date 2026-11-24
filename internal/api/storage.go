@@ -280,7 +280,8 @@ func (s *server) adminPutSpaceStorage(c *call) {
 	}
 	id := c.r.PathValue("space")
 	ctx := c.r.Context()
-	if _, err := store.GetSpace(ctx, s.opt.Store.Q(), id); err != nil {
+	// The site's storage (site administrators only): a space of any tenant.
+	if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.AllTenants(), id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(c.w, http.StatusNotFound, "not_found", "no such space")
 			return
@@ -300,7 +301,7 @@ func (s *server) adminPutSpaceStorage(c *call) {
 			return
 		}
 	}
-	row, err := store.GetAdminSpace(ctx, s.opt.Store.Q(), id)
+	row, err := store.GetAdminSpace(ctx, s.opt.Store.Q(), store.AllTenants(), id)
 	if err != nil {
 		s.fail(c.w, err)
 		return

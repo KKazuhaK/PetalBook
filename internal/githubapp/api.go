@@ -26,6 +26,9 @@ type AppInfo struct {
 	HTMLURL     string            `json:"html_url"`
 	Owner       Account           `json:"owner"`
 	Permissions map[string]string `json:"permissions"`
+	// Public says whether the App can be installed on any account (nil: GitHub
+	// did not say).
+	Public *bool `json:"public"`
 }
 
 // Installation is one place the App is installed.
@@ -240,4 +243,65 @@ func (c *Client) AddRepoToInstallation(ctx context.Context, token string, instal
 	_, err := c.bearer(ctx, token, http.MethodPut,
 		"/user/installations/"+strconv.FormatInt(installation, 10)+"/repositories/"+strconv.FormatInt(repo, 10), nil, nil, nil)
 	return err
+}
+
+// AppCredentials is everything GitHub hands over once, when a manifest is
+// turned into an App. Keep none of it in a log or an error.
+type AppCredentials struct {
+	ID            int64             `json:"id"`
+	Slug          string            `json:"slug"`
+	Name          string            `json:"name"`
+	ClientID      string            `json:"client_id"`
+	ClientSecret  string            `json:"client_secret"`
+	WebhookSecret string            `json:"webhook_secret"`
+	PEM           string            `json:"pem"`
+	HTMLURL       string            `json:"html_url"`
+	Owner         Account           `json:"owner"`
+	Permissions   map[string]string `json:"permissions"`
+}
+
+// ConvertManifest trades the code GitHub sent back after the manifest flow for
+// the new App's credentials. The code works once, for an hour, and needs no
+// other credential.
+func (c *Client) ConvertManifest(ctx context.Context, code string) (*AppCredentials, error) {
+	if code == "" || len(code) > 128 || strings.ContainsAny(code, "/ ?#%\\") {
+		return nil, errors.New("github: the manifest code is unusable")
+	}
+	var out AppCredentials
+	if _, err := c.do(ctx, request{method: http.MethodPost, base: c.api, path: "/app-manifests/" + code + "/conversions", label: "/app-manifests/{code}/conversions"}, &out); err != nil {
+		return nil, err
+	}
+	if out.ID == 0 || out.ClientID == "" || out.ClientSecret == "" || out.PEM == "" {
+		return nil, errors.New("github: the manifest answer is incomplete")
+	}
+	return &out, nil
+}
+
+// Manifest is the App Manifest GitHub makes an App from.
+type Manifest struct {
+	Name               string            `json:"name"`
+	URL                string            `json:"url"`
+	HookAttributes     ManifestHook      `json:"hook_attributes"`
+	RedirectURL        string            `json:"redirect_url"`
+	CallbackURLs       []string          `json:"callback_urls"`
+	SetupURL           string            `json:"setup_url"`
+	Public             bool              `json:"public"`
+	RequestOAuthOnInst bool              `json:"request_oauth_on_install"`
+	DefaultPermissions map[string]string `json:"default_permissions"`
+}
+
+// ManifestHook is the manifest's webhook: none.
+type ManifestHook struct {
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
+}
+
+// ManifestURL is where the browser posts the manifest: the page of the
+// organisation's App settings when org is given, else the person's own.
+func (c *Client) ManifestURL(org, state string) string {
+	base := c.web + "/settings/apps/new"
+	if org != "" {
+		base = c.web + "/organizations/" + org + "/settings/apps/new"
+	}
+	return base + "?state=" + url.QueryEscape(state)
 }

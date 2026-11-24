@@ -19,14 +19,27 @@ const (
 
 // pendingEntry is one sign-in between /api/auth/oidc/start and the callback.
 type pendingEntry struct {
-	state   authoidc.State
-	intent  string
-	token   string // setup or invite token, held in memory only
-	userID  string // link: the user who asked
-	ret     string
-	expires time.Time
-	elem    *list.Element
-	id      string
+	kind string
+	slug string
+	// state is the protocol state of an OpenID Connect attempt.
+	state authoidc.State
+	// stateValue is what the callback must echo: the OpenID Connect state, the
+	// GitHub state, or the id itself for SAML (RelayState equals the cookie).
+	stateValue string
+	// verifier is the PKCE verifier of a GitHub attempt.
+	verifier string
+	// samlID is the ID of the AuthnRequest a SAML response must answer.
+	samlID string
+	intent string
+	token  string // setup or invite token, held in memory only
+	userID string // link: the user who asked
+	// linkBinding is the hash of the host-only cookie a SAML link set in the
+	// browser that started it (see samlLinkCookie).
+	linkBinding string
+	ret         string
+	expires     time.Time
+	elem        *list.Element
+	id          string
 }
 
 // pendingStore keeps the protocol state of sign-ins in progress: in memory,
@@ -46,6 +59,16 @@ func newPendingStore(now func() time.Time) *pendingStore {
 // put stores an entry and returns the random id for the browser-binding cookie.
 func (p *pendingStore) put(e pendingEntry) string {
 	id := randomToken()
+	p.putAs(id, e)
+	return id
+}
+
+// putAs stores an entry under an id the caller made (SAML: the id is also the
+// RelayState, which must equal the cookie).
+func (p *pendingStore) putAs(id string, e pendingEntry) {
+	if e.stateValue == "" {
+		e.stateValue = id
+	}
 	now := p.now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -70,7 +93,6 @@ func (p *pendingStore) put(e pendingEntry) string {
 	e.id, e.expires = id, now.Add(pendingTTL)
 	e.elem = p.order.PushBack(id)
 	p.items[id] = &e
-	return id
 }
 
 type takeResult int
@@ -97,7 +119,7 @@ func (p *pendingStore) take(id, state string) (*pendingEntry, takeResult) {
 		delete(p.items, id)
 		return nil, takeUnknown
 	}
-	if subtle.ConstantTimeCompare([]byte(state), []byte(e.state.Value)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(state), []byte(e.stateValue)) != 1 {
 		return nil, takeBinding
 	}
 	p.order.Remove(e.elem)

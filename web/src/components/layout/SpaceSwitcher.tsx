@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router'
 import { ChevronsUpDown } from 'lucide-react'
-import { syncOf, useActiveSpace, useRenameSpace } from '@/api/hooks'
+import { rememberSpace, syncOf, useActiveSpace, useRenameSpace } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
-import { useOpenSettings } from '@/components/settings/useSettings'
+import { settingsPath } from '@/components/settings/sections'
+import { useOpenSettings, type SettingsState } from '@/components/settings/useSettings'
 import { NameDialog } from './NameDialog'
 import { NewSpaceDialog } from './NewSpaceDialog'
 import { SyncIndicator } from './SyncIndicator'
@@ -59,7 +60,13 @@ export function SpaceSwitcher() {
         </DropdownMenu>
         {id && <SyncIndicator space={id} sync={syncOf(current)} />}
       </div>
-      <NewSpaceDialog open={dialog === 'new'} onOpenChange={(o) => !o && setDialog(null)} onCreated={(space) => navigate(spaceUrls(space.id).home())} />
+      <NewSpaceDialog open={dialog === 'new'} onOpenChange={(o) => !o && setDialog(null)} onCreated={(space, then) => {
+          const home = spaceUrls(space.id).home()
+          if (!then?.openSync) return navigate(home)
+          // Made on this server: the address is given in the new space's sync settings.
+          rememberSpace(space.id)
+          navigate(settingsPath('sync'), { state: { from: home } satisfies SettingsState })
+        }} />
       <NameDialog
         open={dialog === 'rename'}
         onOpenChange={(o) => !o && setDialog(null)}

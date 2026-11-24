@@ -136,7 +136,7 @@ func CountDrafts(ctx context.Context, q Q, spaceID string) (int, error) {
 // RemotePolicy is the part of the storage policy a query needs: which remote
 // is required, and when the requirement began to apply (see PolicyBase).
 type RemotePolicy struct {
-	Require string // "", "any" or "github"
+	Require string // "", "any" or the id of a provider (2.7b's connections: "github")
 	All     bool   // scope "all": spaces that existed before Since are asked too
 	Since   time.Time
 	Grace   time.Duration
@@ -170,20 +170,27 @@ func (p RemotePolicy) Deadline(created time.Time) (time.Time, bool) {
 	return base.Add(p.Grace), true
 }
 
-// policyConds is the SQL that says a space s is asked for a remote it does not
-// have and is not exempt, and its deadline expression; args are for the
-// placeholders in order.
-func policyConds(p RemotePolicy) (asked, deadline string, args []any) {
-	lacks := `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '')`
-	if p.Require == "github" {
-		lacks = `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '' AND r.cred_type = 'github')`
+// lacksRemote is the SQL that says a space s does not follow a remote of the
+// kind the policy requires, with the arguments of its placeholders: any remote,
+// or one that goes through the required provider's connection.
+func lacksRemote(p RemotePolicy) (string, []any) {
+	if p.Require == "any" {
+		return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '')`, nil
 	}
+	return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = ?)`, []any{p.Require}
+}
+
+// policyConds is the SQL that says a space s is asked for a remote it does not
+// have and is not exempt, and its deadline expression; askedArgs and dlArgs
+// are for the placeholders of each, in order.
+func policyConds(p RemotePolicy) (asked string, askedArgs []any, deadline string, dlArgs []any) {
+	lacks, askedArgs := lacksRemote(p)
 	exempt := `s.exempt = 0 AND NOT EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0)`
 	// The deadline: creation (or Since for an older space under scope "all")
 	// plus the grace period; NULL for a space that is not covered.
 	deadline = `(CASE WHEN s.created >= CAST(? AS BIGINT) THEN s.created WHEN CAST(? AS BIGINT) <> 0 THEN CAST(? AS BIGINT) END + CAST(? AS BIGINT))`
-	args = []any{ms(p.Since), b2i(p.All), ms(p.Since), p.Grace.Milliseconds()}
-	return lacks + ` AND ` + exempt, deadline, args
+	dlArgs = []any{ms(p.Since), b2i(p.All), ms(p.Since), p.Grace.Milliseconds()}
+	return lacks + ` AND ` + exempt, askedArgs, deadline, dlArgs
 }
 
 // PolicyCounts counts the spaces the policy asks something of now: in their
@@ -193,20 +200,17 @@ func PolicyCounts(ctx context.Context, q Q, p RemotePolicy) (inGrace, overdue, e
 	if !p.Active() {
 		return 0, 0, 0, nil
 	}
-	asked, dl, dargs := policyConds(p)
+	asked, aargs, dl, dargs := policyConds(p)
 	row := q.QueryRow(ctx, `SELECT
 		COALESCE(SUM(CASE WHEN `+dl+` IS NOT NULL AND `+dl+` >= CAST(? AS BIGINT) THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN `+dl+` IS NOT NULL AND `+dl+` < CAST(? AS BIGINT) THEN 1 ELSE 0 END), 0)
 		FROM spaces s WHERE `+asked,
-		concat(dargs, dargs, ms(p.Now), dargs, dargs, ms(p.Now))...)
+		concat(dargs, dargs, ms(p.Now), dargs, dargs, ms(p.Now), aargs)...)
 	if err = row.Scan(&inGrace, &overdue); err != nil {
 		return
 	}
-	lacks := `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '')`
-	if p.Require == "github" {
-		lacks = `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '' AND r.cred_type = 'github')`
-	}
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM spaces s WHERE `+lacks+` AND (s.exempt <> 0 OR EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0))`).Scan(&exempt)
+	lacks, largs := lacksRemote(p)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM spaces s WHERE `+lacks+` AND (s.exempt <> 0 OR EXISTS (SELECT 1 FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0))`, largs...).Scan(&exempt)
 	return
 }
 
@@ -295,6 +299,7 @@ type PolicyFacts struct {
 	Exempt      bool   // the space is exempt
 	OwnerExempt bool   // an owner is exempt
 	CredType    string // of the remote it follows; "" when it follows none
+	Provider    string // the provider that remote goes through ("git" or a provider id)
 }
 
 // GetPolicyFacts reads them: one query on the space's primary key.
@@ -304,8 +309,9 @@ func GetPolicyFacts(ctx context.Context, q Q, id string) (PolicyFacts, error) {
 	var personal sql.NullString
 	err := q.QueryRow(ctx, `SELECT s.created, s.personal_of, s.exempt,
 		(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0),
-		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '')
-		FROM spaces s WHERE s.id = ?`, id).Scan(&created, &personal, &exempt, &ownerExempt, &f.CredType)
+		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), ''),
+		COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '')
+		FROM spaces s WHERE s.id = ?`, id).Scan(&created, &personal, &exempt, &ownerExempt, &f.CredType, &f.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, ErrNotFound
 	}

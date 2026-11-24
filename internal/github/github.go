@@ -19,69 +19,60 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
-// Codes of the errors of the GitHub endpoints (docs/api.md, "GitHub").
-const (
-	CodeNotConfigured    = "github_not_configured"
-	CodeNotAuthorized    = "github_not_authorized"
-	CodeOwnerNotAllowed  = "github_owner_not_allowed"
-	CodeNameTaken        = "github_name_taken"
-	CodeNoPermission     = "github_no_permission"
-	CodeRepoNotInInstall = "github_repo_not_in_installation"
-	CodePushFailed       = "github_push_failed"
-	CodeKeyInvalid       = "github_key_invalid"
-	CodeAppRejected      = "github_app_rejected"
-	CodeClientRejected   = "github_client_rejected"
-	CodeAppInUse         = "github_app_in_use"
-	CodeInvalid          = "invalid"
-	CodeNotFound         = "not_found"
-	CodeRateLimited      = "rate_limited"
-	CodeUnavailable      = "unavailable"
-	CodeInternal         = "internal"
+// ProviderID is the id this provider has in the registry and in every path.
+const ProviderID = "github"
 
-	// The codes a space's remote shows (errorCode) when its credential stops working.
-	CodeAuthorizationExpired = "github_authorization_expired"
-	CodeAuthorizationMissing = "github_authorization_missing"
-	CodeInstallationGone     = "github_installation_gone"
+// The codes this package uses, by their generic names (see connections).
+const (
+	CodeNotConfigured     = connections.CodeNotConfigured
+	CodeNotConnected      = connections.CodeNotConnected
+	CodeOwnerNotAllowed   = connections.CodeOwnerNotAllowed
+	CodeNameTaken         = connections.CodeNameTaken
+	CodeRefused           = connections.CodeRefused
+	CodeMissingPermission = connections.CodeMissingPermission
+	CodeAppNotInstalled   = connections.CodeAppNotInstalled
+	CodePublicURLNeeded   = connections.CodePublicURLNeeded
+	CodeRepoNotInInstall  = connections.CodeRepoNotInInstall
+	CodePushFailed        = connections.CodePushFailed
+	CodeKeyInvalid        = connections.CodeKeyInvalid
+	CodeAppRejected       = connections.CodeAppRejected
+	CodeClientRejected    = connections.CodeClientRejected
+	CodeInUse             = connections.CodeInUse
+	CodeProviderError     = connections.CodeProviderError
+	CodeInvalid           = connections.CodeInvalid
+	CodeForbidden         = connections.CodeForbidden
+	CodeNotFound          = connections.CodeNotFound
+	CodeRateLimited       = connections.CodeRateLimited
+	CodeUnavailable       = connections.CodeUnavailable
+	CodeInternal          = connections.CodeInternal
+
+	CodeConnectionExpired = connections.CodeConnectionExpired
+	CodeConnectionMissing = connections.CodeConnectionMissing
+	CodeInstallationGone  = connections.CodeInstallationGone
 )
 
-// RepoRef names a repository on GitHub in an error answer.
-type RepoRef struct {
-	ID       int64
-	FullName string
-	HTMLURL  string
+// Via values.
+const (
+	ViaApp  = connections.ViaApp
+	ViaUser = connections.ViaUser
+)
+
+func errf(status int, code, format string, a ...any) *connections.Error {
+	return connections.Errorf(ProviderID, status, code, format, a...)
 }
 
-// Error is a refusal with the code, status and message the API answers with.
-type Error struct {
-	Code   string
-	Status int
-	Msg    string
-	Repo   *RepoRef
-	// AssetsRepo is the attachment repository that was made with the space's
-	// (milestone 3.1) when a later step failed.
-	AssetsRepo *RepoRef
-	RetryAfter time.Duration
-	Err        error
-}
-
-func (e *Error) Error() string { return e.Msg }
-func (e *Error) Unwrap() error { return e.Err }
-
-func errf(status int, code, format string, a ...any) *Error {
-	return &Error{Code: code, Status: status, Msg: fmt.Sprintf(format, a...)}
-}
-
-func notConfigured() *Error {
+func notConfigured() *connections.Error {
 	return errf(http.StatusConflict, CodeNotConfigured, "this server has no GitHub App set up (an administrator sets it up in the administration)")
 }
 
-func notAuthorized() *Error {
-	return errf(http.StatusConflict, CodeNotAuthorized, "connect your GitHub account first")
+func notConnected() *connections.Error {
+	return errf(http.StatusConflict, CodeNotConnected, "connect your GitHub account first")
 }
 
 // Options configures a Service.
@@ -108,15 +99,20 @@ type Service struct {
 	log *slog.Logger
 	c   *githubapp.Client
 
-	mu       sync.Mutex
-	cur      *appState // nil: not loaded
-	curAt    time.Time
-	tokens   map[string]cachedUser // by PetalBook user id
-	renewing map[string]*renewal
-	gens     map[string]uint64 // see tokenGen
-	genAll   uint64
-	attempts *attemptStore
-	onChange func(userID string)
+	mu        sync.Mutex
+	cur       *appState // nil: not loaded
+	curAt     time.Time
+	tokens    map[string]cachedUser // by PetalBook user id
+	renewing  map[string]*renewal
+	gens      map[string]uint64 // see tokenGen
+	genAll    uint64
+	attempts  *attemptStore
+	manifests *attemptStore          // the attempts to make the App: apart from attempts (see manifestCapacity)
+	noApp     map[string]time.Time   // GitHub logins the App is known not to be installed for, until (guarded by mu)
+	rechecked map[string]time.Time   // PetalBook user ids, until when their next recheck is refused (guarded by mu)
+	pending   map[string]*pendingApp // Apps GitHub made that could not be saved, by administrator (guarded by mu)
+	onChange  func(userID string)
+	autoAt    time.Time // when the App was last re-checked because a token was refused
 }
 
 // New returns a Service.
@@ -140,8 +136,10 @@ func New(opt Options) (*Service, error) {
 		opt.SettingsTTL = time.Minute
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
+	opt.Client.UseLogger(opt.Logger) // what GitHub refuses is told in the server's log
 	return &Service{opt: opt, log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
-		attempts: newAttemptStore(opt.Now)}, nil
+		attempts: newAttemptStore(opt.Now, attemptCapacity), manifests: newAttemptStore(opt.Now, manifestCapacity),
+		noApp: map[string]time.Time{}, rechecked: map[string]time.Time{}, pending: map[string]*pendingApp{}}, nil
 }
 
 // Client is the GitHub client; its web base is where repositories are.
@@ -170,22 +168,38 @@ const settingKey = "github_app"
 
 // appRecord is what is stored of the App; the key and the secret are sealed.
 type appRecord struct {
-	AppID       string            `json:"appId"`
-	ClientID    string            `json:"clientId,omitempty"`
-	KeyEnc      string            `json:"keyEnc"`
-	SecretEnc   string            `json:"secretEnc,omitempty"`
-	Fingerprint string            `json:"fingerprint"`
-	Slug        string            `json:"slug"`
-	Name        string            `json:"name"`
-	Owner       string            `json:"owner"`
-	HTMLURL     string            `json:"htmlUrl"`
-	Permissions map[string]string `json:"permissions"`
-	Checked     time.Time         `json:"checked"`
+	AppID     string `json:"appId"`
+	ClientID  string `json:"clientId,omitempty"`
+	KeyEnc    string `json:"keyEnc"`
+	SecretEnc string `json:"secretEnc,omitempty"`
+	// WebhookSecretEnc is the secret GitHub gives with an App made from a
+	// manifest; no webhook is used, so it is only kept, sealed.
+	WebhookSecretEnc string            `json:"webhookSecretEnc,omitempty"`
+	Fingerprint      string            `json:"fingerprint"`
+	Slug             string            `json:"slug"`
+	Name             string            `json:"name"`
+	Owner            string            `json:"owner"`
+	HTMLURL          string            `json:"htmlUrl"`
+	Permissions      map[string]string `json:"permissions"`
+	Checked          time.Time         `json:"checked"`
+	// Gaps are the installations that lack a permission the App needs (an
+	// App whose permissions grew, installed where nobody accepted that yet).
+	Gaps []gapRec `json:"gaps,omitempty"`
+	// AnyAccount says whether the App can be installed on any account; nil when
+	// GitHub did not say and nothing shows it.
+	AnyAccount *bool `json:"anyAccount,omitempty"`
+}
+
+type gapRec struct {
+	ID      int64    `json:"id"`
+	Account string   `json:"account"`
+	Missing []string `json:"missing"`
 }
 
 const (
 	purposeKey    = "github-app-key"
 	purposeSecret = "github-client-secret"
+	purposeHook   = "github-webhook-secret"
 	siteBinding   = "site"
 )
 
@@ -290,7 +304,7 @@ func (s *Service) CallbackURL() string {
 	if s.opt.PublicURL == "" {
 		return ""
 	}
-	return s.opt.PublicURL + "/api/github/authorization/callback"
+	return s.opt.PublicURL + "/api/connections/github/authorization/callback"
 }
 
 // wrap turns an error of the GitHub client into the answer for the caller:
@@ -299,7 +313,7 @@ func (s *Service) wrap(err error) error {
 	if err == nil {
 		return nil
 	}
-	var he *Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return err
 	}
@@ -307,10 +321,10 @@ func (s *Service) wrap(err error) error {
 	if errors.As(err, &se) {
 		switch {
 		case se.RateLimited:
-			return &Error{Code: CodeRateLimited, Status: http.StatusTooManyRequests, Msg: "GitHub is limiting this server; try again in a moment",
+			return &connections.Error{Provider: ProviderID, Code: CodeRateLimited, Status: http.StatusTooManyRequests, Msg: "GitHub is limiting this server; try again in a moment",
 				RetryAfter: se.RetryAfter(s.opt.Now()), Err: err}
 		case se.Status >= 500:
-			return &Error{Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now", Err: err}
+			return &connections.Error{Provider: ProviderID, Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now", Err: err}
 		}
 		return err
 	}
@@ -321,13 +335,13 @@ func (s *Service) wrap(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return err
 	}
-	return &Error{Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now", Err: err}
+	return &connections.Error{Provider: ProviderID, Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now", Err: err}
 }
 
 // Offline reports whether err means GitHub could not be reached or is limiting
 // us, as opposed to GitHub having refused something.
 func Offline(err error) bool {
-	var he *Error
+	var he *connections.Error
 	if errors.As(err, &he) {
 		return he.Code == CodeUnavailable || he.Code == CodeRateLimited
 	}

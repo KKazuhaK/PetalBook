@@ -6,34 +6,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/store"
-)
-
-// Owner is an account a repository can be created in.
-type Owner struct {
-	Login          string
-	Type           string // "User" or "Organization"
-	Via            string // "user": the caller's own token creates the repository; "app": the installation's
-	InstallationID int64  // 0 when not known (the caller's own account)
-}
-
-// RepoItem is a repository a space can be connected to.
-type RepoItem struct {
-	ID            int64
-	FullName      string
-	Private       bool
-	DefaultBranch string
-	HTMLURL       string
-	CanPush       bool
-}
-
-// Via values.
-const (
-	ViaApp  = "app"
-	ViaUser = "user"
 )
 
 // connected is the user's connection when it is usable, with its token; nil
@@ -66,7 +45,7 @@ func (s *Service) userFailed(ctx context.Context, userID string, err error) erro
 		if row, gerr := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); gerr == nil {
 			s.expire(ctx, row)
 		}
-		return notAuthorized()
+		return notConnected()
 	}
 	return s.wrap(err)
 }
@@ -74,16 +53,21 @@ func (s *Service) userFailed(ctx context.Context, userID string, err error) erro
 // Owners lists the accounts the caller can create a repository in, one page of
 // GitHub's list (one request) at a time: the caller's own account, the
 // organisations among the installations GitHub lists for them, then the
-// organisations an administrator shared that are not listed yet.
-func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, string, error) {
+// organisations an administrator shared with the caller's tenant that are not
+// listed yet.
+func (s *Service) Owners(ctx context.Context, userID, cur string) ([]connections.Owner, string, error) {
 	if _, err := s.need(ctx); err != nil {
+		return nil, "", err
+	}
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
 		return nil, "", err
 	}
 	c, err := decodeCursor(cur)
 	if err != nil {
 		return nil, "", err
 	}
-	var out []Owner
+	var out []connections.Owner
 	seen := append([]int64(nil), c.Seen...)
 	phase := c.Kind
 	if phase == "" {
@@ -99,7 +83,12 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, stri
 			phase = "s"
 		} else {
 			if cur == "" {
-				out = append(out, Owner{Login: row.Login, Type: "User", Via: ViaUser})
+				own := connections.Owner{Login: row.Login, Type: "User", Via: ViaUser}
+				// One JWT request, remembered while the App is there; a person with the App is not asked twice.
+				if st, serr := s.need(ctx); serr == nil {
+					own.NeedsInstall = s.notInstalledFor(ctx, st, row.Login)
+				}
+				out = append(out, own)
 			}
 			list, next, err := s.c.UserInstallations(ctx, tok, c.Page)
 			if err != nil {
@@ -110,7 +99,7 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, stri
 					continue
 				}
 				seen = append(seen, in.ID)
-				out = append(out, Owner{Login: in.Account.Login, Type: in.Account.Type, Via: ViaUser, InstallationID: in.ID})
+				out = append(out, connections.Owner{Login: in.Account.Login, Type: in.Account.Type, Via: ViaUser, InstallationID: in.ID})
 			}
 			if next > 0 {
 				return out, encodeCursor(cursor{Kind: "p", Page: next, Seen: capSeen(seen)}), nil
@@ -124,7 +113,7 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, stri
 		skip[id] = true
 	}
 	const limit = 30
-	rows, err := store.ListSharedGitHubInstallations(ctx, s.opt.Store.Q(), c.After, limit+1)
+	rows, err := store.ListGitHubInstallationsOf(ctx, s.opt.Store.Q(), sc, c.After, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -137,9 +126,95 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]Owner, stri
 		if skip[r.ID] {
 			continue
 		}
-		out = append(out, Owner{Login: r.Account, Type: r.AccountType, Via: ViaApp, InstallationID: r.ID})
+		out = append(out, connections.Owner{Login: r.Account, Type: r.AccountType, Via: ViaApp, InstallationID: r.ID})
 	}
 	return out, next, nil
+}
+
+// noAppFor is how long "the App is not installed for this person" is
+// remembered, so reading the owners again and again costs GitHub no call.
+const noAppFor = time.Minute
+
+// maxNoApp bounds the logins remembered as having no App.
+const maxNoApp = 10_000
+
+// notInstalledFor reports whether the App is not installed on the account of
+// login. A "no" from GitHub is remembered for a minute; a "yes" is remembered
+// by the App's own lookup while the App is there.
+func (s *Service) notInstalledFor(ctx context.Context, st *appState, login string) bool {
+	key := strings.ToLower(login)
+	now := s.opt.Now()
+	s.mu.Lock()
+	until, ok := s.noApp[key]
+	s.mu.Unlock()
+	if ok && now.Before(until) {
+		return true
+	}
+	_, err := st.app.UserInstallation(ctx, login)
+	missing := githubapp.IsStatus(err, http.StatusNotFound)
+	s.mu.Lock()
+	if missing {
+		if len(s.noApp) >= maxNoApp {
+			for k, t := range s.noApp {
+				if !now.Before(t) {
+					delete(s.noApp, k)
+				}
+			}
+			if len(s.noApp) >= maxNoApp {
+				s.noApp = map[string]time.Time{}
+			}
+		}
+		s.noApp[key] = now.Add(noAppFor)
+	} else {
+		delete(s.noApp, key)
+	}
+	s.mu.Unlock()
+	return missing
+}
+
+// forgetNoApp drops the memory of the App not being installed for a login: it
+// is known to be, or the person has just connected.
+func (s *Service) forgetNoApp(login string) {
+	s.mu.Lock()
+	delete(s.noApp, strings.ToLower(login))
+	s.mu.Unlock()
+}
+
+// recheckEvery is how often one person may make the next Owners ask GitHub
+// again: each ask costs a call of the App's rate limit, which everyone shares.
+const recheckEvery = time.Minute
+
+// maxRechecked bounds the people remembered as having just rechecked.
+const maxRechecked = 10_000
+
+// RecheckPerson forgets that the App was not installed on the person's own account,
+// for a person who has installed it since (the next Owners asks GitHub). It
+// is allowed once a minute per person; within the minute it changes nothing
+// and the answer stays the remembered one.
+func (s *Service) RecheckPerson(ctx context.Context, userID string) {
+	now := s.opt.Now()
+	s.mu.Lock()
+	if until, ok := s.rechecked[userID]; ok && now.Before(until) {
+		s.mu.Unlock()
+		return
+	}
+	if len(s.rechecked) >= maxRechecked {
+		for k, t := range s.rechecked {
+			if !now.Before(t) {
+				delete(s.rechecked, k)
+			}
+		}
+		if len(s.rechecked) >= maxRechecked {
+			// All are recent: refuse this one rather than forget the others.
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.rechecked[userID] = now.Add(recheckEvery)
+	s.mu.Unlock()
+	if row, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil && row != nil {
+		s.forgetNoApp(row.Login)
+	}
 }
 
 func capSeen(seen []int64) []int64 {
@@ -150,9 +225,10 @@ func capSeen(seen []int64) []int64 {
 }
 
 // Repos lists repositories the caller can connect a space to: those of an
-// installation (shared: all of them; otherwise the ones the caller's own
+// installation (shared with the caller's tenant: all of them; otherwise the ones the caller's own
 // connection reaches), or, with mine, the caller's own. One request per page.
-func (s *Service) Repos(ctx context.Context, userID string, installation int64, mine bool, cur string) ([]RepoItem, string, error) {
+func (s *Service) Repos(ctx context.Context, userID string, q connections.RepoQuery) ([]connections.RepoItem, string, error) {
+	installation, mine, cur := q.Installation, q.Mine, q.Cursor
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, "", err
@@ -174,17 +250,21 @@ func (s *Service) Repos(ctx context.Context, userID string, installation int64, 
 			return nil, "", err
 		}
 		if tok == "" {
-			return nil, "", notAuthorized()
+			return nil, "", notConnected()
 		}
 		if list, next, err = s.c.UserRepos(ctx, tok, c.Page); err != nil {
 			return nil, "", s.userFailed(ctx, userID, err)
 		}
 	case installation > 0:
-		inst, err := store.GetGitHubInstallation(ctx, s.opt.Store.Q(), installation)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
+		sc, err := s.scopeOf(ctx, userID)
+		if err != nil {
 			return nil, "", err
 		}
-		if inst != nil && inst.Shared {
+		shared, err := store.GitHubInstallationShared(ctx, s.opt.Store.Q(), sc, installation)
+		if err != nil {
+			return nil, "", err
+		}
+		if shared {
 			tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: installation, Perms: map[string]string{"metadata": "read"}})
 			if err != nil {
 				if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity) && !limited(err) {
@@ -214,9 +294,9 @@ func (s *Service) Repos(ctx context.Context, userID string, installation int64, 
 	default:
 		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "give installation or mine=true")
 	}
-	out := make([]RepoItem, len(list))
+	out := make([]connections.RepoItem, len(list))
 	for i, r := range list {
-		out[i] = RepoItem{ID: r.ID, FullName: r.FullName, Private: r.Private, DefaultBranch: r.DefaultBranch, HTMLURL: r.HTMLURL, CanPush: r.Permissions.Push || pushOK}
+		out[i] = connections.RepoItem{ID: r.ID, FullName: r.FullName, Private: r.Private, DefaultBranch: r.DefaultBranch, HTMLURL: r.HTMLURL, CanPush: r.Permissions.Push || pushOK}
 	}
 	nc := ""
 	if next > 0 {
@@ -227,30 +307,14 @@ func (s *Service) Repos(ctx context.Context, userID string, installation int64, 
 
 // --- creating a repository -----------------------------------------------------------
 
-// Plan says where a repository will be created and with whose token.
-type Plan struct {
-	Owner          string // as GitHub spells it
-	Org            string // "" for the caller's own account
-	Via            string // the token that creates it: "user" or "app"
-	UserID         string
-	InstallationID int64 // where the App is installed on the account, if known
-}
-
-// NewRepoSpec is what a repository is created with.
-type NewRepoSpec struct {
-	Name        string
-	Private     bool
-	Description string
-}
-
 const maxOwnerPages = 10
 
 // PlanCreate decides, without creating anything, whose token creates a
 // repository for owner: the caller's own when the owner is their account or an
 // organisation GitHub lists for them, else the installation's when an
-// administrator shared it. It needs the App and, for the first, the caller's
+// administrator shared it with the caller's tenant. It needs the App and, for the first, the caller's
 // connection (github_not_authorized when it has expired).
-func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*Plan, error) {
+func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*connections.Plan, error) {
 	if _, err := s.need(ctx); err != nil {
 		return nil, err
 	}
@@ -264,9 +328,9 @@ func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*Plan, 
 	}
 	if row != nil && strings.EqualFold(row.Login, owner) {
 		if tok == "" {
-			return nil, notAuthorized()
+			return nil, notConnected()
 		}
-		return &Plan{Owner: row.Login, Via: ViaUser, UserID: userID}, nil
+		return &connections.Plan{Owner: row.Login, Via: ViaUser, UserID: userID}, nil
 	}
 	if tok != "" {
 		for page := 1; page > 0 && page <= maxOwnerPages; {
@@ -276,15 +340,19 @@ func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*Plan, 
 			}
 			for _, in := range list {
 				if in.Account.Type == "Organization" && !in.Suspended() && strings.EqualFold(in.Account.Login, owner) {
-					return &Plan{Owner: in.Account.Login, Org: in.Account.Login, Via: ViaUser, UserID: userID, InstallationID: in.ID}, nil
+					return &connections.Plan{Owner: in.Account.Login, Org: in.Account.Login, Via: ViaUser, UserID: userID, InstallationID: in.ID}, nil
 				}
 			}
 			page = next
 		}
 	}
-	sh, err := store.SharedGitHubInstallationOf(ctx, s.opt.Store.Q(), owner)
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	sh, err := store.GitHubInstallationOf(ctx, s.opt.Store.Q(), sc, owner)
 	if err == nil && sh.AccountType == "Organization" {
-		return &Plan{Owner: sh.Account, Org: sh.Account, Via: ViaApp, UserID: userID, InstallationID: sh.ID}, nil
+		return &connections.Plan{Owner: sh.Account, Org: sh.Account, Via: ViaApp, UserID: userID, InstallationID: sh.ID}, nil
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
@@ -302,26 +370,13 @@ func ValidRepoName(name string) bool {
 	return repoNameRe.MatchString(name) && name != "." && name != ".." && !strings.HasSuffix(strings.ToLower(name), ".git")
 }
 
-// Repo is a repository on GitHub as this package hands it on.
-type Repo struct {
-	ID       int64
-	Owner    string
-	Name     string
-	FullName string
-	HTMLURL  string
-	Private  bool
-}
-
-func repoOf(r *githubapp.Repo) *Repo {
+func repoOf(r *githubapp.Repo) *connections.Repo {
 	owner, name, _ := strings.Cut(r.FullName, "/")
-	return &Repo{ID: r.ID, Owner: owner, Name: name, FullName: r.FullName, HTMLURL: r.HTMLURL, Private: r.Private}
+	return &connections.Repo{ID: r.ID, Owner: owner, Name: name, FullName: r.FullName, HTMLURL: r.HTMLURL, Private: r.Private}
 }
-
-// Ref is the repository as an error answer names it.
-func (r *Repo) Ref() *RepoRef { return &RepoRef{ID: r.ID, FullName: r.FullName, HTMLURL: r.HTMLURL} }
 
 // CreateRepo creates the empty repository the plan describes.
-func (s *Service) CreateRepo(ctx context.Context, p *Plan, n NewRepoSpec) (*Repo, error) {
+func (s *Service) CreateRepo(ctx context.Context, p *connections.Plan, n connections.NewRepoSpec) (*connections.Repo, error) {
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, err
@@ -338,8 +393,10 @@ func (s *Service) CreateRepo(ctx context.Context, p *Plan, n NewRepoSpec) (*Repo
 			switch {
 			case githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err):
 				return nil, errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App")
+			case githubapp.IsPermissionRefusal(err):
+				return nil, s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
 			case githubapp.IsStatus(err, http.StatusUnprocessableEntity, http.StatusForbidden, http.StatusNotFound) && !limited(err):
-				return nil, errf(http.StatusForbidden, CodeNoPermission, "the App does not have the Administration permission there; an administrator must grant it")
+				return nil, errf(http.StatusForbidden, CodeRefused, "the App is not installed there, or GitHub refused it a token for the installation")
 			}
 			return nil, s.wrap(err)
 		}
@@ -348,6 +405,7 @@ func (s *Service) CreateRepo(ctx context.Context, p *Plan, n NewRepoSpec) (*Repo
 	if err != nil {
 		return nil, s.createError(ctx, p, err)
 	}
+	s.forgetNoApp(p.Owner) // it worked: the App is there
 	return repoOf(r), nil
 }
 
@@ -355,12 +413,12 @@ func (s *Service) CreateRepo(ctx context.Context, p *Plan, n NewRepoSpec) (*Repo
 func (s *Service) tokenError(err error) error {
 	switch {
 	case errors.Is(err, ErrNoAuthorization), errors.Is(err, ErrAuthorizationExpired):
-		return notAuthorized()
+		return notConnected()
 	}
 	return s.wrap(err)
 }
 
-func (s *Service) createError(ctx context.Context, p *Plan, err error) error {
+func (s *Service) createError(ctx context.Context, p *connections.Plan, err error) error {
 	var se *githubapp.StatusError
 	if !errors.As(err, &se) || se.RateLimited {
 		return s.wrap(err)
@@ -378,7 +436,40 @@ func (s *Service) createError(ctx context.Context, p *Plan, err error) error {
 		}
 		return errf(http.StatusBadRequest, CodeInvalid, "GitHub refused the repository: %s", said)
 	case http.StatusForbidden, http.StatusNotFound:
-		return errf(http.StatusForbidden, CodeNoPermission, "GitHub refused to create the repository: %s", said)
+		if githubapp.IsPermissionRefusal(err) {
+			if st, serr := s.need(ctx); serr == nil {
+				switch {
+				case p.Via == ViaApp: // the installation's token may not create it
+					return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+				case p.Org != "":
+					// The person's own token, refused in an organisation: the App may not
+					// be installed there (then it is not a permission the App lacks), or
+					// it is, and the installation lacks the permission.
+					st.app.ForgetLookup("org", p.Org)
+					_, ierr := st.app.OrgInstallation(ctx, p.Org)
+					switch {
+					case githubapp.IsStatus(ierr, http.StatusNotFound):
+						e := errf(http.StatusConflict, CodeAppNotInstalled, "the GitHub App is not installed on %s, and GitHub lets no repository be made there until it is; an owner of %s installs it first", p.Owner, p.Owner)
+						e.InstallURL = installURL(st.rec.HTMLURL)
+						return e
+					case ierr == nil:
+						return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+					}
+				default:
+					// The person's own account: a user's token reaches only the accounts the App is installed on.
+					_, ierr := st.app.UserInstallation(ctx, p.Owner)
+					switch {
+					case githubapp.IsStatus(ierr, http.StatusNotFound):
+						e := errf(http.StatusConflict, CodeAppNotInstalled, "the GitHub App is not installed on your account %s, and GitHub lets no repository be made there until it is; install it there first", p.Owner)
+						e.InstallURL = installURL(st.rec.HTMLURL)
+						return e
+					case ierr == nil:
+						return s.missingPermission(ctx, st, 0, administrationWrite)
+					}
+				}
+			}
+		}
+		return errf(http.StatusForbidden, CodeRefused, "GitHub refused to create the repository: %s", said)
 	case http.StatusUnauthorized:
 		if p.Via == ViaUser {
 			return s.userFailed(ctx, p.UserID, err)
@@ -390,23 +481,63 @@ func (s *Service) createError(ctx context.Context, p *Plan, err error) error {
 
 // --- the credential of a space --------------------------------------------------------
 
-// Cred is how a space syncs with its repository.
-type Cred struct {
-	Via            string
-	InstallationID int64 // via "app"
-	UserID         string
-	RepoID         int64
+var (
+	contentsWrite       = map[string]string{"contents": "write"}
+	administrationWrite = map[string]string{"administration": "write"}
+)
+
+// hasPermission reports whether a set of granted permissions holds one at
+// least at the level wanted.
+func hasPermission(have map[string]string, name, want string) bool {
+	got := have[name]
+	return got != "" && (want != "write" || got == "write")
 }
 
-var contentsWrite = map[string]string{"contents": "write"}
+// missingPermission is the answer for a token GitHub refused because the App
+// or its installation lacks permissions: it names which of those asked for
+// are missing, from what GitHub says the installation has and what was stored
+// of the App. When that finds nothing (the stored view is old) it names all
+// that were asked for.
+func (s *Service) missingPermission(ctx context.Context, st *appState, installation int64, asked map[string]string) *connections.Error {
+	// What the administrator sees should not stay as old as the day the App was saved.
+	s.autoRecheck(ctx, st)
+	if fresh, err := s.state(ctx); err == nil && fresh != nil {
+		st = fresh
+	}
+	var instPerms map[string]string
+	instKnown := false
+	if installation > 0 {
+		if in, err := st.app.Installation(ctx, installation); err == nil {
+			instPerms, instKnown = in.Permissions, true
+		}
+	}
+	var names []string
+	for name, want := range asked {
+		if !hasPermission(st.rec.Permissions, name, want) || (instKnown && !hasPermission(instPerms, name, want)) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		for name := range asked {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	e := errf(http.StatusForbidden, CodeMissingPermission, "the GitHub App or its installation lacks the %s permission; an administrator must add it to the App on GitHub and accept the change in the installation's settings", strings.Join(names, ", "))
+	e.Missing = names
+	return e
+}
 
 // reaches asks for the narrow token a space syncs with: false when the
-// installation does not reach the repository (a 404 or 422 of GitHub).
+// installation does not reach the repository (a 404 or 422 of GitHub); an
+// App or installation that lacks the permission is an error of its own.
 func (s *Service) reaches(ctx context.Context, st *appState, installation, repoID int64) (bool, error) {
 	_, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: installation, RepoIDs: []int64{repoID}, Perms: contentsWrite})
 	switch {
 	case err == nil:
 		return true, nil
+	case githubapp.IsPermissionRefusal(err):
+		return false, s.missingPermission(ctx, st, installation, contentsWrite)
 	case githubapp.IsStatus(err, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusForbidden) && !limited(err):
 		return false, nil
 	case githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err):
@@ -421,7 +552,7 @@ func (s *Service) reaches(ctx context.Context, st *appState, installation, repoI
 // installed there and reaches the repository, else with the caller's token.
 // An installation of "selected repositories" that does not reach the new
 // repository gets it added with the caller's token.
-func (s *Service) ChooseCredential(ctx context.Context, p *Plan, repo *Repo) (*Cred, error) {
+func (s *Service) ChooseCredential(ctx context.Context, p *connections.Plan, repo *connections.Repo) (*connections.Cred, error) {
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, err
@@ -457,7 +588,7 @@ func (s *Service) ChooseCredential(ctx context.Context, p *Plan, repo *Repo) (*C
 			}
 		}
 		if ok {
-			return &Cred{Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, nil
+			return &connections.Cred{Provider: ProviderID, Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, nil
 		}
 		if p.InstallationID == 0 { // found by a lookup: forget it, it may have moved
 			if p.Org != "" {
@@ -472,50 +603,65 @@ func (s *Service) ChooseCredential(ctx context.Context, p *Plan, repo *Repo) (*C
 		e.Repo = repo.Ref()
 		return nil, e
 	}
-	return &Cred{Via: ViaUser, UserID: p.UserID, RepoID: repo.ID}, nil
+	return &connections.Cred{Provider: ProviderID, Via: ViaUser, UserID: p.UserID, RepoID: repo.ID}, nil
 }
 
 // ResolveExisting decides how a space syncs with a repository that exists. via
 // is "app", "user" or "" (the server picks: the App when the caller may use
 // it, else the caller's own connection). The caller must be allowed to use the
 // repository: with via "app" their connection can push to it or the
-// installation is shared; with via "user" their connection can push.
-func (s *Service) ResolveExisting(ctx context.Context, userID, owner, name, via string) (*Cred, *Repo, error) {
+// installation is shared with their tenant; with via "user" their connection can push.
+func (s *Service) ResolveExisting(ctx context.Context, userID, owner, name, via string) (*connections.Cred, *connections.Repo, error) {
+	sc, err := s.scopeOf(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.resolveExisting(ctx, sc, userID, owner, name, via)
+}
+
+// ResolveExistingIn is ResolveExisting for a space of the given tenant: an
+// installation counts as shared when it is shared with that tenant, whichever
+// tenant the caller belongs to (a site admin may connect another tenant's space).
+func (s *Service) ResolveExistingIn(ctx context.Context, tenantID, userID, owner, name, via string) (*connections.Cred, *connections.Repo, error) {
+	return s.resolveExisting(ctx, store.InTenant(tenantID), userID, owner, name, via)
+}
+
+func (s *Service) resolveExisting(ctx context.Context, sc store.Scope, userID, owner, name, via string) (*connections.Cred, *connections.Repo, error) {
 	st, err := s.need(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	switch via {
 	case ViaApp:
-		return s.existingApp(ctx, st, userID, owner, name)
+		return s.existingApp(ctx, st, sc, userID, owner, name)
 	case ViaUser:
 		return s.existingUser(ctx, userID, owner, name)
 	}
-	cred, repo, aerr := s.existingApp(ctx, st, userID, owner, name)
+	cred, repo, aerr := s.existingApp(ctx, st, sc, userID, owner, name)
 	if aerr == nil {
 		return cred, repo, nil
 	}
-	var he *Error
-	if !errors.As(aerr, &he) || (he.Code != CodeRepoNotInInstall && he.Code != CodeOwnerNotAllowed && he.Code != CodeNotAuthorized) {
+	var he *connections.Error
+	if !errors.As(aerr, &he) || (he.Code != CodeRepoNotInInstall && he.Code != CodeOwnerNotAllowed && he.Code != CodeNotConnected && he.Code != CodeMissingPermission) {
 		return nil, nil, aerr
 	}
 	cred, repo, uerr := s.existingUser(ctx, userID, owner, name)
 	if uerr == nil {
 		return cred, repo, nil
 	}
-	if errors.As(uerr, &he) && he.Code == CodeNotAuthorized {
+	if errors.As(uerr, &he) && he.Code == CodeNotConnected {
 		return nil, nil, aerr // the first refusal says more
 	}
 	return nil, nil, uerr
 }
 
-func (s *Service) existingUser(ctx context.Context, userID, owner, name string) (*Cred, *Repo, error) {
+func (s *Service) existingUser(ctx context.Context, userID, owner, name string) (*connections.Cred, *connections.Repo, error) {
 	_, tok, err := s.connected(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if tok == "" {
-		return nil, nil, notAuthorized()
+		return nil, nil, notConnected()
 	}
 	r, err := s.c.GetRepo(ctx, tok, owner, name)
 	if err != nil {
@@ -527,10 +673,10 @@ func (s *Service) existingUser(ctx context.Context, userID, owner, name string) 
 	if !r.Permissions.Push {
 		return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "your GitHub connection cannot push to %s", r.FullName)
 	}
-	return &Cred{Via: ViaUser, UserID: userID, RepoID: r.ID}, repoOf(r), nil
+	return &connections.Cred{Provider: ProviderID, Via: ViaUser, UserID: userID, RepoID: r.ID}, repoOf(r), nil
 }
 
-func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, name string) (*Cred, *Repo, error) {
+func (s *Service) existingApp(ctx context.Context, st *appState, sc store.Scope, userID, owner, name string) (*connections.Cred, *connections.Repo, error) {
 	inst, err := st.app.RepoInstallation(ctx, owner, name)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound) {
@@ -539,11 +685,9 @@ func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, 
 		return nil, nil, s.listError(err)
 	}
 	var repo *githubapp.Repo
-	shared := false
-	if row, serr := store.GetGitHubInstallation(ctx, s.opt.Store.Q(), inst); serr == nil {
-		shared = row.Shared
-	} else if !errors.Is(serr, store.ErrNotFound) {
-		return nil, nil, serr
+	shared, err := store.GitHubInstallationShared(ctx, s.opt.Store.Q(), sc, inst)
+	if err != nil {
+		return nil, nil, err
 	}
 	if shared {
 		tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: inst, Perms: map[string]string{"metadata": "read"}})
@@ -562,7 +706,7 @@ func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, 
 			return nil, nil, err
 		}
 		if tok == "" {
-			return nil, nil, notAuthorized()
+			return nil, nil, notConnected()
 		}
 		if repo, err = s.c.GetRepo(ctx, tok, owner, name); err != nil {
 			if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err) {
@@ -582,7 +726,7 @@ func (s *Service) existingApp(ctx context.Context, st *appState, userID, owner, 
 		st.app.ForgetLookup("repo", owner+"/"+name) // it may have moved: look again next time
 		return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "the App's installation does not reach %s", repo.FullName)
 	}
-	return &Cred{Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, repoOf(repo), nil
+	return &connections.Cred{Provider: ProviderID, Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, repoOf(repo), nil
 }
 
 // ParseRepoURL reads the address of a repository on this GitHub: https, ssh
@@ -628,4 +772,17 @@ func (s *Service) ParseRepoURL(raw string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return o, n, true
+}
+
+// scopeOf is the scope of the tenant a user belongs to: what an installation
+// shared with that tenant may be used for. A user that is gone sees nothing.
+func (s *Service) scopeOf(ctx context.Context, userID string) (store.Scope, error) {
+	t, err := store.UserTenant(ctx, s.opt.Store.Q(), userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Scope{}, nil
+	}
+	if err != nil {
+		return store.Scope{}, err
+	}
+	return store.InTenant(t), nil
 }

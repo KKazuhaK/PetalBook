@@ -15,9 +15,23 @@ var migrationFS embed.FS
 
 // goSteps are the migrations that need more than SQL: the function of a
 // version runs inside the same transaction, after the statements of its file.
-var goSteps = map[int]func(ctx context.Context, q Q) error{
-	7: fillSpaceNameKeys,
+//
+// A step is made by a function of the dialect so that one version can do
+// different things on SQLite and PostgreSQL (see tenantsStep).
+var goSteps = map[int]func(d Dialect) func(ctx context.Context, q Q) error{
+	7:  func(Dialect) func(context.Context, Q) error { return fillSpaceNameKeys },
+	18: tenantsStep,
 }
+
+// foreignKeysOff lists the versions whose step rebuilds a table on SQLite. A
+// rebuild must run with foreign keys off (dropping the table would otherwise
+// delete the rows that reference it), and that pragma does nothing inside a
+// transaction. So when such a version is pending, SQLite runs the whole
+// migration on one pinned connection: foreign keys are switched off before the
+// transaction starts, PRAGMA foreign_key_check ends the transaction (a failure
+// rolls everything back), and they are switched on again after it, whatever
+// happened. PostgreSQL has no such need and runs as always.
+var foreignKeysOff = map[int]bool{18: true}
 
 type migration struct {
 	version int
@@ -73,12 +87,97 @@ func splitStatements(sql string) []string {
 // migrate applies the migrations that have not run yet, in one transaction, so
 // a failure leaves the database as it was. It is safe to run at every start,
 // and on PostgreSQL two servers starting together take turns.
-func (s *Store) migrate(ctx context.Context) error {
+func (s *Store) migrate(ctx context.Context) error { return s.migrateTo(ctx, 0) }
+
+// migrateTo is migrate, stopping after version max (0: no limit); tests use it
+// to make a database as an older version left it.
+func (s *Store) migrateTo(ctx context.Context, max int) error {
+	return s.migrateWhere(ctx, func(v int) bool { return max <= 0 || v <= max })
+}
+
+// migrateWhere is migrate, applying only the versions keep accepts; tests use
+// it to make a database that lacks one version, as one migrated on another
+// branch does.
+func (s *Store) migrateWhere(ctx context.Context, keep func(version int) bool) error {
 	list, err := loadMigrations()
 	if err != nil {
 		return err
 	}
-	return s.Tx(ctx, func(q Q) error {
+	var cut []migration
+	for _, m := range list {
+		if keep(m.version) {
+			cut = append(cut, m)
+		}
+	}
+	list = cut
+	run := func(q Q) error { return s.applyMigrations(ctx, q, list) }
+	if s.dialect != SQLite {
+		return s.Tx(ctx, run)
+	}
+	pending, err := s.pendingForeignKeysOff(ctx, list)
+	if err != nil || !pending {
+		if err != nil {
+			return err
+		}
+		return s.Tx(ctx, run)
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	// Whatever happens next, the connection goes back to the pool with foreign
+	// keys on.
+	defer conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys = ON`)
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := run(bound{s, tx}); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// pendingForeignKeysOff reports whether a migration that must run with foreign
+// keys off has not been applied yet.
+func (s *Store) pendingForeignKeysOff(ctx context.Context, list []migration) (bool, error) {
+	var has int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&has); err != nil {
+		return false, err
+	}
+	done := map[int]bool{}
+	if has > 0 {
+		rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v int
+			if err := rows.Scan(&v); err != nil {
+				return false, err
+			}
+			done[v] = true
+		}
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+	}
+	for _, m := range list {
+		if foreignKeysOff[m.version] && !done[m.version] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) applyMigrations(ctx context.Context, q Q, list []migration) error {
+	{
 		if s.dialect == Postgres {
 			if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(727274001)`); err != nil {
 				return err
@@ -122,8 +221,13 @@ func (s *Store) migrate(ctx context.Context) error {
 					return fmt.Errorf("migration %s: %w", m.name, err)
 				}
 			}
-			if step := goSteps[m.version]; step != nil {
-				if err := step(ctx, q); err != nil {
+			if mk := goSteps[m.version]; mk != nil {
+				if err := mk(s.dialect)(ctx, q); err != nil {
+					return fmt.Errorf("migration %s: %w", m.name, err)
+				}
+			}
+			if s.dialect == SQLite && foreignKeysOff[m.version] {
+				if err := checkForeignKeys(ctx, q); err != nil {
 					return fmt.Errorf("migration %s: %w", m.name, err)
 				}
 			}
@@ -132,5 +236,5 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 		return nil
-	})
+	}
 }

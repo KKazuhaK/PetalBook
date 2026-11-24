@@ -29,12 +29,23 @@ const indexName = "index.html"
 
 // Handler serves the embedded web app. built is false when only the
 // placeholder is embedded; the handler then explains how to get the app.
-func Handler() (h http.Handler, built bool) {
+func Handler(opts ...Option) (h http.Handler, built bool) {
 	sub, err := fs.Sub(embedded, "dist")
 	if err != nil { // cannot happen: dist is part of the embed pattern
-		return New(nil), false
+		return New(nil, opts...), false
 	}
-	return New(sub), Built(sub)
+	return New(sub, opts...), Built(sub)
+}
+
+// Option changes how New serves the app.
+type Option func(*handler)
+
+// WithCaptcha names the captcha provider in force for a request ("" or
+// "image" for none from a third party), so the page's policy lets that
+// provider's widget load. It is called once per page served and must be
+// cheap: the policies themselves are built once, here.
+func WithCaptcha(provider func(*http.Request) string) Option {
+	return func(h *handler) { h.captcha = provider }
 }
 
 // Built reports whether fsys holds a built web app (an index.html).
@@ -52,6 +63,30 @@ func Built(fsys fs.FS) bool {
 const indexCSP = "default-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; " +
 	"font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
+// captchaCSP is the page's policy while a third-party captcha is configured:
+// indexCSP plus that provider's script, frame and (where it calls out from
+// the page) connect sources, from each provider's own CSP documentation.
+// web/src/components/auth/Captcha.tsx loads the scripts named here.
+var captchaCSP = func() map[string]string {
+	policy := func(script, frame, connect, style string) string {
+		return "default-src 'self'; script-src 'self' " + script + "; frame-src " + frame +
+			"; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'" + style +
+			"; font-src 'self' data:; connect-src 'self'" + connect + "; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	}
+	const hc = "https://hcaptcha.com https://*.hcaptcha.com"
+	return map[string]string{
+		// Cloudflare: script and frame from challenges.cloudflare.com.
+		"turnstile": policy("https://challenges.cloudflare.com", "https://challenges.cloudflare.com", "", ""),
+		// Google's reCAPTCHA FAQ: scripts under www.google.com/recaptcha/ and
+		// www.gstatic.com/recaptcha/, frames from www.google.com/recaptcha/
+		// and recaptcha.google.com/recaptcha/.
+		"recaptcha": policy("https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/",
+			"https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/", "", ""),
+		// hCaptcha: script, frame, style and connect from hcaptcha.com and its subdomains.
+		"hcaptcha": policy(hc, hc, " "+hc, " "+hc),
+	}
+}()
+
 const notBuiltText = `PetalBook is running, but the web app is not built into this binary.
 
 The API is available under /api/. To get the web app either:
@@ -67,6 +102,8 @@ var clientRoutes = map[string]bool{"s": true, "f": true, "t": true, "p": true}
 type handler struct {
 	fsys fs.FS // nil or without index.html: not built
 
+	captcha func(*http.Request) string
+
 	mu    sync.Mutex
 	etags map[string]string
 }
@@ -74,11 +111,25 @@ type handler struct {
 // New returns a handler that serves fsys as a single-page app: files as
 // themselves, other extension-less paths as index.html. A nil fsys, or one
 // without index.html, gives the "not built" handler.
-func New(fsys fs.FS) http.Handler {
+func New(fsys fs.FS, opts ...Option) http.Handler {
 	if !Built(fsys) {
 		fsys = nil
 	}
-	return &handler{fsys: fsys, etags: map[string]string{}}
+	h := &handler{fsys: fsys, etags: map[string]string{}}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// csp is the page's policy for this request.
+func (h *handler) csp(r *http.Request) string {
+	if h.captcha != nil {
+		if p, ok := captchaCSP[h.captcha(r)]; ok {
+			return p
+		}
+	}
+	return indexCSP
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +231,7 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, name string,
 		hd.Set("Cache-Control", "no-cache")
 	}
 	if name == indexName {
-		hd.Set("Content-Security-Policy", indexCSP)
+		hd.Set("Content-Security-Policy", h.csp(r))
 	}
 	if tag, err := h.etag(name, rs); err == nil {
 		hd.Set("ETag", tag)

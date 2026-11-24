@@ -10,7 +10,7 @@ import { DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { GeneralPanel } from './GeneralPanel'
-import { GitHubPanel } from './GitHubPanel'
+import { ConnectionsPanel } from './ConnectionsPanel'
 import { ImportPanel } from './ImportPanel'
 import { PreferencesPanel } from './PreferencesPanel'
 import { ProfilePanel } from './ProfilePanel'
@@ -29,6 +29,8 @@ const HomePanel = lazy(() => import('./HomePanel'))
 const TemplatesPanel = lazy(() => import('./TemplatesPanel'))
 // And the API tokens', which have their own words.
 const TokensPanel = lazy(() => import('./TokensPanel'))
+// Usage has the words of quotas with it.
+const UsagePanel = lazy(() => import('./UsagePanel'))
 
 // The settings surface: one dialog, reached from `/settings/<section>`. It is a
 // route so a link, a reload and the old addresses all work; what is behind it is
@@ -65,15 +67,15 @@ export default function SettingsRoute() {
 
   // An address that names no section, or one this person does not have, goes
   // to the section they would get; the query (a failed sign-in link says why in
-  // `?error=`) and where to return to are kept.
-  // A link that failed comes back to plain `/settings?error=…`: its message is
-  // shown where the linked sign-ins are.
-  // A GitHub connection that failed comes back to plain `/settings?github_error=…`, and is explained on its own section.
+  // `?sso_error=`) and where to return to are kept.
+  // A link that failed comes back to plain `/settings?sso_error=…`: its message is
+  // shown where the linked sign-ins are. A GitHub connection for repos that
+  // failed comes back to `/settings?connection_error=…`, explained on its own section.
   const query = new URLSearchParams(location.search)
   const landing =
-    requested === undefined && query.has('github_error') && shown.some((s) => s.id === 'github')
-      ? 'github'
-      : requested === undefined && query.has('error') && shown.some((s) => s.id === 'security')
+    requested === undefined && query.has('connection_error') && shown.some((s) => s.id === 'connections')
+      ? 'connections'
+      : requested === undefined && query.has('sso_error') && shown.some((s) => s.id === 'security')
         ? 'security'
         : section
   if (session && spacesReady && requested !== landing) return <Navigate to={{ pathname: settingsPath(landing), search: location.search }} state={location.state} replace />
@@ -97,8 +99,15 @@ export default function SettingsRoute() {
           </Suspense>
         )
         break
-      case 'github':
-        body = <GitHubPanel />
+      case 'connections':
+        body = <ConnectionsPanel />
+        break
+      case 'usage':
+        body = (
+          <Suspense fallback={<PageFallback />}>
+            <UsagePanel />
+          </Suspense>
+        )
         break
       case 'preferences':
         body = <PreferencesPanel />

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
@@ -17,7 +18,7 @@ func credErr(code, msg string, err error) *gitstore.CredentialError {
 
 func offlineErr(err error) *gitstore.CredentialError {
 	msg := "could not reach GitHub"
-	var he *Error
+	var he *connections.Error
 	if errors.As(err, &he) && he.Code == CodeRateLimited {
 		msg = "GitHub is limiting this server for a moment"
 	}
@@ -28,15 +29,11 @@ func offlineErr(err error) *gitstore.CredentialError {
 // token narrowed to its repository (via "app"), or the access token of the
 // user the remote names (via "user"). Every error is a *gitstore.CredentialError:
 // with a Code when the credential cannot be had until someone fixes something,
-// Offline when GitHub could not be asked.
-func (s *Service) GitToken(ctx context.Context, r *store.Remote) (string, error) {
-	return s.gitToken(ctx, r, true)
-}
-
-// GitTokenStaging is GitToken for a space that is being made: it has no member
-// yet (it is made for the user the remote names), so that is not asked.
-func (s *Service) GitTokenStaging(ctx context.Context, r *store.Remote) (string, error) {
-	return s.gitToken(ctx, r, false)
+// Offline when GitHub could not be asked. staging is a space that is being
+// made: it has no member yet (it is made for the user the remote names), so
+// that is not asked.
+func (s *Service) GitToken(ctx context.Context, r *store.Remote, staging bool) (string, error) {
+	return s.gitToken(ctx, r, !staging)
 }
 
 func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember bool) (string, error) {
@@ -58,19 +55,27 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 			return "", offlineErr(s.wrap(err))
 		case githubapp.IsStatus(err, http.StatusUnauthorized):
 			return "", credErr(CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App", err)
+		case githubapp.IsPermissionRefusal(err):
+			s.autoRecheck(ctx, st) // the administration should see what the App has now
+			return "", credErr(CodeMissingPermission, "the App or its installation lacks the Contents permission; an administrator must add it to the App on GitHub and accept the change in the installation's settings", err)
 		case githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity):
 			return "", credErr(CodeInstallationGone, "the App is no longer installed there, or its installation no longer reaches the repository; install it again or add the repository", err)
 		}
 		return "", offlineErr(s.wrap(err))
 	case ViaUser:
 		if checkMember {
-			role, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
+			// Manage may come directly or through a group: the union counts.
+			roles, disabled, err := store.MemberStanding(ctx, s.opt.Store.Q(), r.SpaceID, r.GHUserID)
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return "", offlineErr(err)
 			}
-			ps, _ := perm.ForRole(role)
+			var ps perm.Set
+			for _, role := range roles {
+				rp, _ := perm.ForRole(role)
+				ps |= rp
+			}
 			if errors.Is(err, store.ErrNotFound) || disabled || !ps.Has(perm.Manage) {
-				return "", credErr(CodeAuthorizationMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
+				return "", credErr(CodeConnectionMissing, "the GitHub connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
 			}
 		}
 		tok, err := s.UserToken(ctx, r.GHUserID)
@@ -78,11 +83,11 @@ func (s *Service) gitToken(ctx context.Context, r *store.Remote, checkMember boo
 		case err == nil:
 			return tok, nil
 		case errors.Is(err, ErrNoAuthorization):
-			return "", credErr(CodeAuthorizationMissing, "the person whose GitHub connection this space syncs with has disconnected it; they must connect again", err)
+			return "", credErr(CodeConnectionMissing, "the person whose GitHub connection this space syncs with has disconnected it; they must connect again", err)
 		case errors.Is(err, ErrAuthorizationExpired):
-			return "", credErr(CodeAuthorizationExpired, "the GitHub authorisation this space syncs with has expired or was revoked; its owner must connect again", err)
+			return "", credErr(CodeConnectionExpired, "the GitHub authorisation this space syncs with has expired or was revoked; its owner must connect again", err)
 		}
-		var he *Error
+		var he *connections.Error
 		if errors.As(err, &he) && he.Code == CodeNotConfigured {
 			return "", credErr(CodeNotConfigured, "the server's GitHub App is not set up any more; an administrator must set it up again", err)
 		}

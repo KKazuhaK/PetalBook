@@ -111,8 +111,10 @@ func TestStorageSettingsEndpoint(t *testing.T) {
 		} {
 			c.do("PUT", "/api/admin/storage", bad).want(t, 400, "invalid")
 		}
-		// GitHub cannot be required while the server has no App.
-		c.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 409, "github_not_configured")
+		// A provider this server does not have cannot be required (one it has but
+		// has not set up answers 409 provider_not_configured; see internal/spaces).
+		c.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 400, "invalid")
+		c.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "git"}}).want(t, 400, "invalid")
 		// Hosts are stored and apply to the next request.
 		c.do("PUT", "/api/admin/storage", map[string]any{"hosts": map[string]any{"allowed": []string{"git.example.test"}}}).want(t, 200, "")
 		sid := c.personalSpace()
@@ -231,8 +233,8 @@ func TestASpaceCanBeMadeWithARemoteAndOverdueSpacesAreWritableAfterAnExemption(t
 		remote := filterRemote(t)
 		pushVersions(t, remote, 2)
 		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "any", "scope": "new"}}).want(t, 200, "")
-		// remote and github together are a mistake.
-		admin.do("POST", "/api/spaces", map[string]any{"name": "X", "remote": connectBody("file://" + remote), "github": map[string]any{"owner": "o", "name": "n"}}).want(t, 400, "invalid")
+		// remote and storage.sync together are a mistake.
+		admin.do("POST", "/api/spaces", map[string]any{"name": "X", "remote": connectBody("file://" + remote), "storage": map[string]any{"sync": map[string]any{"provider": "github", "owner": "o", "name": "n"}}}).want(t, 400, "invalid")
 		r := admin.do("POST", "/api/spaces", map[string]any{"name": "Followed", "remote": connectBody("file://" + remote)}).want(t, 201, "")
 		if r.body["sync"] != "ok" {
 			t.Fatal(r.raw)

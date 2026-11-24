@@ -64,7 +64,7 @@ func (m *Manager) userEntry(ctx context.Context, userID string) (cachedAuthor, e
 	if ok && now.Sub(c.at) < authorTTL {
 		return c, nil
 	}
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), userID)
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // by id, for a user already known to the caller
 	if err != nil {
 		return cachedAuthor{}, err
 	}
@@ -99,16 +99,11 @@ func (m *Manager) MayWrite(ctx context.Context, userID, spaceID string) (bool, e
 	if c.admin {
 		return true, nil
 	}
-	l, err := m.list(ctx, userID)
-	if err != nil {
+	ps, ok, err := m.permsOf(ctx, userID, spaceID)
+	if err != nil || !ok {
 		return false, err
 	}
-	for _, in := range l {
-		if in.ID == spaceID {
-			return in.Perms.Has(perm.Write), nil
-		}
-	}
-	return false, nil
+	return ps.Has(perm.Write), nil
 }
 
 func (m *Manager) forgetAuthor(userID string) {

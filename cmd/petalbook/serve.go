@@ -21,6 +21,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
@@ -49,6 +50,9 @@ type serveConfig struct {
 	// maxSpaces is how many spaces one user may own (0: no limit); spaceIdle
 	// and maxOpenSpaces decide when spaces that are not in use are closed.
 	maxSpaces, maxOpenSpaces int
+	// maxSpacesSet is whether --max-spaces was given: then it is the site's
+	// quota.spacesPerPerson, read only.
+	maxSpacesSet bool
 	// maxUpload is the largest file accepted as an upload, in bytes; inbox is
 	// the folder quick notes go to in single-user mode.
 	maxUpload int64
@@ -104,14 +108,17 @@ func newServe() *cobra.Command {
 and the server listens on a loopback address only unless --insecure-no-auth
 says that is acceptable.
 
---data DIR is accounts mode: people sign in with a password or an OpenID
-Connect provider, each has a personal space and may make more, and the server
+--data DIR is accounts mode: people sign in with a password, a passkey or a
+provider (OpenID Connect, SAML or GitHub) that the administrators set up on the
+安全 page, each has a personal space and may make more, and the server
 may listen on any address. Spaces live in DIR/spaces/<id>, their indexes in
 DIR/cache/<id>, and the state database (users, sessions, drafts) in
 DIR/petalbook.db unless --database says otherwise. The first run prints a
 set-up link in the log; open it to create the administrator. If nobody can
-sign in, "petalbook user add" and "petalbook user passwd" work on the data
-directory directly.
+sign in, "petalbook user add", "petalbook user passwd" and "petalbook security
+reset" work on the data directory directly. The --oidc-* flags of earlier
+versions are read once, at the first start, and become the provider "sso" of the
+state database; from then on the database counts and the flags only warn.
 
 Either way a space is a Git repository. Typing is kept as a draft in the state
 database; a draft becomes the file after --draft-idle without changes (or
@@ -135,6 +142,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c.nameSet = cmd.Flags().Changed("name")
 			c.mcpSet = cmd.Flags().Changed("mcp")
+			c.maxSpacesSet = cmd.Flags().Changed("max-spaces")
 			c.noMCP = !mcpOn
 			c.hostsSet = cmd.Flags().Changed("remote-host")
 			c.remoteSet = cmd.Flags().Changed("pull-interval") || cmd.Flags().Changed("remote-host") || cmd.Flags().Changed("remote-timeout")
@@ -152,7 +160,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringVar(&c.database, "database", "", "state database: a SQLite file path or a postgres:// URL (default: DATA/petalbook.db, or state.db in the state directory)")
 	f.StringVar(&c.publicURL, "public-url", "", "accounts mode: the address people use, e.g. https://notes.example.com (decides whether cookies are Secure, and is accepted as the server's own origin; required with OIDC)")
 	f.StringSliceVar(&c.trustedProxies, "trusted-proxy", nil, "address or CIDR of a reverse proxy whose X-Forwarded-For is believed when limiting sign-in attempts (repeatable, or comma-separated)")
-	f.StringVar(&c.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL (https); turns single sign-on on")
+	f.StringVar(&c.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL (https); imported once as the provider \"sso\" of the state database, which counts from then on")
 	f.StringVar(&c.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
 	f.StringVar(&c.oidcClientSecretFile, "oidc-client-secret-file", "", "file holding the OpenID Connect client secret (or set PETALBOOK_OIDC_CLIENT_SECRET)")
 	f.StringVar(&c.oidcName, "oidc-name", "", "name of the provider on the sign-in page (default \"Single sign-on\")")
@@ -176,7 +184,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.Int64Var(&c.maxImport, "max-import", api.DefaultMaxImport, "largest Markdown file or zip accepted as an import, in bytes (0: the default, 100 MiB)")
 	f.BoolVar(&mcpOn, "mcp", true, "single-user mode: serve /mcp for MCP clients with an API token (false: it answers 404); in accounts mode an administrator decides, in the app")
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
-	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit)")
+	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit); when given, it is the site's quota.spacesPerPerson and cannot be changed in the app")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
 	f.IntVar(&c.maxOpenSpaces, "max-open-spaces", spaces.DefaultMaxOpen, "accounts mode: at most this many spaces open at once; the least recently used are closed first")
 	f.BoolVar(&c.insecure, "insecure-no-auth", false, "single-user mode: allow a non-loopback --listen address (anyone who can reach it can read and edit everything). The checks against requests from other web sites stay on, and without loopback-only mode there is no implicit own origin: a browser needs --allow-origin for the address it uses")
@@ -369,6 +377,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		sp       *space.Space
 		svc      *auth.Service
 		ghs      *github.Service
+		conns    *connections.Registry
 		spClosed bool
 	)
 	defer func() {
@@ -401,14 +410,15 @@ func runServe(ctx context.Context, c serveConfig) error {
 		if ghs, err = github.New(github.Options{Store: st, Secrets: box, Client: ghc, PublicURL: cfg.publicURL, Logger: log, RenewEvery: c.githubRenewEvery}); err != nil {
 			return err
 		}
+		conns = connections.NewRegistry(ghs, connections.NewGit())
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Serve: true, Committer: c.committer,
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
 			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
-			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, GitHub: ghs,
+			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, Connections: conns,
 			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}, HostsFromFlag: c.hostsSet}); err != nil {
 			return err
 		}
-		ghs.OnChange(mgr.GitHubFixed)
+		conns.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
 		if svc, err = auth.New(ctx, auth.Config{Store: st, Spaces: mgr, PublicURL: cfg.publicURL, TrustedProxies: cfg.proxies,
 			OIDC: cfg.oidc, HTTPClient: c.oidcHTTPClient, Password: passwordParams, Logger: log}); err != nil {
 			return err
@@ -454,9 +464,14 @@ func runServe(ctx context.Context, c serveConfig) error {
 			return fmt.Errorf("the authorization server: %w", err)
 		}
 	}
-	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, GitHub: ghs, PublicURL: cfg.publicURL, NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
+	handler := api.New(api.Options{Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tokenSvc, OAuth: oauthSvc, Connections: conns, PublicURL: cfg.publicURL, MaxSpaces: c.maxSpacesFlag(), NoMCP: c.noMCP, Version: version, MaxUpload: c.maxUpload, MaxImport: c.maxImport,
 		RestrictHost: loopback, AllowOrigins: cfg.origins, Logger: log})
-	webApp, webBuilt := webui.Handler()
+	var webOpts []webui.Option
+	if svc != nil {
+		// The page's policy lets the configured captcha provider's widget load.
+		webOpts = append(webOpts, webui.WithCaptcha(func(r *http.Request) string { return svc.CaptchaProvider(r.Context()) }))
+	}
+	webApp, webBuilt := webui.Handler(webOpts...)
 	if !webBuilt {
 		log.Warn("this binary has no web app built in (build it with make release); only the API is served")
 	}
@@ -501,7 +516,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 	}
 	if svc != nil {
 		run(svc.Run)
-		run(svc.WarmOIDC)
+		run(svc.WarmProviders)
 	}
 
 	errc := make(chan error, 1)
@@ -561,9 +576,9 @@ func withWebApp(apiHandler, app http.Handler) http.Handler {
 
 func signInMethods(cfg *checked) string {
 	if cfg.oidc != nil {
-		return "password, " + cfg.oidc.Issuer
+		return "password, passkeys, providers of the state database (--oidc-* is imported once: " + cfg.oidc.Issuer + ")"
 	}
-	return "password"
+	return "password, passkeys, providers of the state database"
 }
 
 func originOf(u string) []string {
@@ -571,6 +586,15 @@ func originOf(u string) []string {
 		return []string{o}
 	}
 	return nil
+}
+
+// maxSpacesFlag is --max-spaces when it was given, else nil.
+func (c serveConfig) maxSpacesFlag() *int {
+	if !c.maxSpacesSet {
+		return nil
+	}
+	n := c.maxSpaces
+	return &n
 }
 
 // nameIfSet returns the name only when the user gave one, so a name already

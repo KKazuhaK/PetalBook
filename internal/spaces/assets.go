@@ -24,7 +24,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/assetcache"
 	"github.com/KKazuhaK/PetalBook/internal/assetrepo"
-	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -355,9 +355,13 @@ func (m *Manager) assetsView(h *Handle, row *store.AssetRemote) *AssetsView {
 			v.ErrorCode = st.Kind
 		}
 	}
+	v.Provider = row.Provider
+	if v.Provider == "" {
+		v.Provider = store.ProviderGit
+	}
 	switch row.CredType {
-	case CredGitHub:
-		v.GitHub = m.githubView(&row.Remote)
+	case CredConnection:
+		v.Connection = m.connectionView(&row.Remote)
 	case CredSSH:
 		v.PublicKey = row.PubKey
 		v.Fingerprint, _ = gitstore.Fingerprint(row.PubKey)
@@ -416,9 +420,20 @@ func (m *Manager) ConnectAssets(ctx context.Context, h *Handle, req ConnectReque
 		return nil, err
 	}
 	var remote gitstore.Remote
-	var ghCred *github.Cred
-	if req.CredType == CredGitHub {
-		if remote, ghCred, err = m.resolveGitHub(ctx, req); err != nil {
+	var ghCred *connections.Cred
+	if req.CredType == CredConnection {
+		// As for the space's own repository (Connect): a person's connection
+		// syncs only spaces of their own tenant.
+		sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), id) // the space the caller has open, by id
+		if err != nil {
+			return nil, err
+		}
+		if req.Via == connections.ViaUser {
+			if err := m.sameTenant(ctx, req.Provider, sp.TenantID, req.UserID); err != nil {
+				return nil, err
+			}
+		}
+		if remote, ghCred, err = m.resolveConnection(ctx, sp.TenantID, req); err != nil {
 			return nil, err
 		}
 	} else if remote, err = gitstore.ParseURL(req.URL, m.hostPolicy()); err != nil {
@@ -427,7 +442,7 @@ func (m *Manager) ConnectAssets(ctx context.Context, h *Handle, req ConnectReque
 	return m.connectAssetsWith(ctx, h, req, remote, ghCred, spaceRow)
 }
 
-func (m *Manager) connectAssetsWith(ctx context.Context, h *Handle, req ConnectRequest, remote gitstore.Remote, ghCred *github.Cred, spaceRow *store.Remote) (*AssetsView, error) {
+func (m *Manager) connectAssetsWith(ctx context.Context, h *Handle, req ConnectRequest, remote gitstore.Remote, ghCred *connections.Cred, spaceRow *store.Remote) (*AssetsView, error) {
 	box, err := m.box()
 	if err != nil {
 		return nil, err
@@ -502,11 +517,11 @@ func (m *Manager) connectAssetsWith(ctx context.Context, h *Handle, req ConnectR
 			return nil, fmt.Errorf("%w: the space has no ssh key; connect the attachment repository with a token, or generate the space's key first", ErrInvalid)
 		}
 		row.CredType, row.PrivKeyEnc, row.PubKey = CredSSH, spaceRow.PrivKeyEnc, spaceRow.PubKey
-	case CredGitHub:
-		row.CredType = CredGitHub
+	case CredConnection:
+		row.CredType, row.Provider = CredConnection, req.Provider
 		row.GHVia, row.GHInstallationID, row.GHRepoID, row.GHUserID = ghCred.Via, ghCred.InstallationID, ghCred.RepoID, ghCred.UserID
 	default:
-		return nil, fmt.Errorf("%w: credential.type must be ssh, token or github", ErrInvalid)
+		return nil, fmt.Errorf("%w: credential.type must be ssh, token or connection", ErrInvalid)
 	}
 	return m.finishConnectAssets(ctx, h, old, row)
 }
@@ -718,77 +733,92 @@ func localAssetFiles(root string, limit int) int {
 	return n
 }
 
-// ConnectAssetsGitHub connects the attachment repository to a repository on
-// GitHub, made on the spot when g.Create is set (the same plan, credential and
-// checks as for a space: docs/api.md "Creating a space with a GitHub
-// repository"), or one that is there. A repository that was made and could not
-// be connected is named in the error.
-func (m *Manager) ConnectAssetsGitHub(ctx context.Context, h *Handle, userID, via string, g GitHubCreate) (*AssetsView, error) {
+// ConnectAssetsSync connects the attachment repository to a repository on a
+// provider, made on the spot when g.Create is set (the same plan, credential
+// and checks as for a space: docs/api.md "Creating a space with a
+// repository"), or one that is there. A repository that was made and could
+// not be connected is named in the error, and remembered for the person as an
+// empty leftover.
+func (m *Manager) ConnectAssetsSync(ctx context.Context, h *Handle, userID, via string, g SyncCreate) (*AssetsView, error) {
 	if m.single != nil {
 		return nil, ErrNotFound
 	}
 	if _, err := m.needSpaceRemote(ctx, h.Info.ID); err != nil {
 		return nil, err
 	}
-	gh, err := m.needGitHub()
+	gh, err := m.provider(g.Provider)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.githubHostAllowed(gh); err != nil {
+	if err := m.hostAllowed(gh); err != nil {
 		return nil, err
 	}
-	if !github.ValidRepoName(g.Name) {
-		return nil, fmt.Errorf("%w: github.name is 1 to 100 characters of letters, digits, '.', '_' and '-', not '.' or '..' and not ending in .git", ErrInvalid)
+	if !gh.ValidRepoName(g.Name) {
+		return nil, invalidAt(gh.Descriptor().ID, "sync.name is 1 to 100 characters of letters, digits, '.', '_' and '-', not '.' or '..' and not ending in .git")
+	}
+	sp, err := store.GetSpace(ctx, m.opt.Store.Q(), store.AllTenants(), h.Info.ID) // the space the caller has open, by id
+	if err != nil {
+		return nil, err
+	}
+	if via == connections.ViaUser {
+		if err := m.sameTenant(ctx, g.Provider, sp.TenantID, userID); err != nil {
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 	defer cancel()
-	var cred *github.Cred
-	var repo *github.Repo
+	var cred *connections.Cred
+	var repo *connections.Repo
 	created := false
 	if g.Create {
 		plan, err := gh.PlanCreate(ctx, userID, g.Owner)
 		if err != nil {
 			return nil, err
 		}
-		if repo, err = gh.CreateRepo(ctx, plan, github.NewRepoSpec{Name: g.Name, Private: g.Private, Description: g.Description}); err != nil {
+		if repo, err = gh.CreateRepo(ctx, plan, connections.NewRepoSpec{Name: g.Name, Private: g.Private, Description: g.Description}); err != nil {
 			return nil, err
 		}
 		created = true
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
-			return nil, markRepo(err, repo, created)
+			return nil, m.markRepo(ctx, gh, userID, h.Info.Name, err, repo, created)
 		}
-	} else if cred, repo, err = gh.ResolveExisting(ctx, userID, g.Owner, g.Name, via); err != nil {
+	} else if cred, repo, err = gh.ResolveExistingIn(ctx, sp.TenantID, userID, g.Owner, g.Name, via); err != nil {
 		return nil, err
 	}
-	u := gh.Client().RepoURL(repo.Owner, repo.Name)
+	u := gh.RepoURL(repo.Owner, repo.Name)
 	scheme := "https"
 	if strings.HasPrefix(u, "http://") {
 		scheme = "http"
 	}
-	remote := gitstore.Remote{URL: u, Scheme: scheme, Host: strings.ToLower(gh.Client().Host())}
+	remote := gitstore.Remote{URL: u, Scheme: scheme, Host: strings.ToLower(gh.Descriptor().Host)}
 	spaceRow, err := store.GetRemote(ctx, m.opt.Store.Q(), h.Info.ID)
 	if err != nil {
-		return nil, markRepo(err, repo, created)
+		return nil, m.markRepo(ctx, gh, userID, h.Info.Name, err, repo, created)
 	}
-	v, err := m.connectAssetsWith(ctx, h, ConnectRequest{URL: u, CredType: CredGitHub, UserID: userID, Via: cred.Via}, remote, cred, spaceRow)
+	v, err := m.connectAssetsWith(ctx, h, ConnectRequest{URL: u, CredType: CredConnection, Provider: g.Provider, UserID: userID, Via: cred.Via}, remote, cred, spaceRow)
 	if err != nil {
-		return nil, markRepo(err, repo, created)
+		return nil, m.markRepo(ctx, gh, userID, h.Info.Name, err, repo, created)
 	}
 	return v, nil
 }
 
-// markRepo names a repository that was made on GitHub in the error of a later
-// step, so that the same request with create false can use it.
-func markRepo(err error, repo *github.Repo, created bool) error {
+// markRepo names a repository that was made on the provider in the error of a
+// later step, so that the same request with create false can use it, and
+// remembers it for the person as an empty leftover.
+func (m *Manager) markRepo(ctx context.Context, p connections.Provider, userID, spaceName string, err error, repo *connections.Repo, created bool) error {
 	if !created || repo == nil {
 		return err
 	}
-	var he *github.Error
-	if errors.As(err, &he) {
-		he.Repo = repo.Ref()
-		return he
+	if rerr := p.RecordLeftover(ctx, userID, repo, spaceName); rerr != nil {
+		m.log.Warn("could not remember a repository left empty by a failed attachment repository", "repo", repo.FullName, "error", rerr)
 	}
-	return &github.Error{Code: github.CodePushFailed, Status: http.StatusBadGateway, Msg: err.Error(), Repo: repo.Ref(), Err: err}
+	var he *connections.Error
+	if errors.As(err, &he) {
+		c := *he
+		c.Repo = repo.Ref()
+		return &c
+	}
+	return &connections.Error{Provider: p.Descriptor().ID, Code: connections.CodePushFailed, Status: http.StatusBadGateway, Msg: err.Error(), Repo: repo.Ref(), Err: err}
 }
 
 func (m *Manager) assetsModeOf(has bool) string {

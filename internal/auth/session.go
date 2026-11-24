@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -59,9 +58,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		if err != nil {
 			return nil, err
 		}
-		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now}
+		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now, held: row.Held}
 	}
-	if now.Sub(snap.lastUsed) > s.cfg.SessionIdle || now.Sub(snap.created) > s.cfg.SessionMax {
+	sec := s.sec(ctx)
+	if now.Sub(snap.lastUsed) > sec.idle || now.Sub(snap.created) > sec.max {
 		s.endSession(ctx, id)
 		return nil, errf(Unauthenticated, "your session has ended; sign in again")
 	}
@@ -73,7 +73,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		}
 		return nil, err
 	}
-	if u.Disabled {
+	// A disabled tenant is a disabled account: one atomic load, and a map lookup
+	// only while some tenant is disabled.
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		s.endSession(ctx, id)
 		return nil, errf(Unauthenticated, "sign in to continue")
 	}
@@ -108,7 +110,16 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 			s.log.Warn("could not record session use", "error", err)
 		}
 	}
-	return &Principal{User: *u, SessionID: id}, nil
+	return &Principal{User: *u, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
+}
+
+// releaseHold forgets, in the cache, that a session was held.
+func (s *Service) releaseHold(id string) {
+	s.cmu.Lock()
+	if cs := s.sessions[id]; cs != nil {
+		cs.held = false
+	}
+	s.cmu.Unlock()
 }
 
 // CachedUser is the user of an id, from the cache that sessions use: no query
@@ -128,7 +139,7 @@ func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error
 	}
 	gen := s.gen
 	s.cmu.Unlock()
-	u, err := store.GetUser(ctx, s.st.Q(), id)
+	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), id) // by session or token: the account decides the tenant
 	if err != nil {
 		return nil, err
 	}
@@ -190,88 +201,16 @@ func (s *Service) Logout(ctx context.Context, token string) {
 }
 
 // issueSession starts a session for a user and returns the cookie value.
-func (s *Service) issueSession(ctx context.Context, userID string) (string, error) {
+func (s *Service) issueSession(ctx context.Context, userID string, held bool) (string, error) {
 	token := randomToken()
 	now := s.now().UTC()
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now}); err != nil {
+		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held}); err != nil {
 			return err
 		}
 		return store.TrimSessions(ctx, q, userID, maxSessionsPerUser)
 	})
 	return token, err
-}
-
-// Login checks a username and password. A wrong password, an unknown user and
-// a disabled user get the same answer after the same amount of work.
-//
-// The attempt is reserved against the address's and the username's allowance
-// before any password is hashed, and given back only if it succeeds: hashes
-// queue behind each other, and judging every queued attempt against the count
-// from before the burst would let a burst through.
-func (s *Service) Login(ctx context.Context, username, password, ip string) (*store.User, string, error) {
-	ukey := userKey(username)
-	if wait := s.reserve("ip:"+ip, ukey); wait > 0 {
-		return nil, "", retryAfter(wait)
-	}
-	ok := false
-	defer func() {
-		if ok {
-			s.byIP.refund("ip:" + ip)
-			s.byUser.reset(ukey)
-		}
-	}()
-	if len(password) > MaxPasswordBytes {
-		return nil, "", errUnauth()
-	}
-	var u *store.User
-	hash := s.hasher.dummy
-	if un, err := NormalizeUsername(username); err == nil {
-		switch row, err := store.GetUserByUsername(ctx, s.st.Q(), un); {
-		case err == nil:
-			u = row
-			if h, err := store.GetPasswordHash(ctx, s.st.Q(), row.ID); err == nil {
-				hash = h
-			} else if !errors.Is(err, store.ErrNotFound) {
-				return nil, "", err
-			}
-		case !errors.Is(err, store.ErrNotFound):
-			return nil, "", err
-		}
-	}
-	good, rehash, err := s.hasher.verify(ctx, hash, password)
-	if err != nil {
-		return nil, "", err
-	}
-	if !good || u == nil || u.Disabled || hash == s.hasher.dummy {
-		return nil, "", errUnauth()
-	}
-	if rehash {
-		if nh, err := s.hasher.hash(ctx, password); err == nil {
-			if err := store.SetPasswordHash(ctx, s.st.Q(), u.ID, nh, s.now()); err != nil {
-				s.log.Warn("could not upgrade a password hash", "error", err)
-			}
-		}
-	}
-	token, err := s.issueSession(ctx, u.ID)
-	if err != nil {
-		return nil, "", err
-	}
-	ok = true
-	return u, token, nil
-}
-
-// reserve counts an attempt against an address and a username at once. It
-// returns how long to wait when either is blocked; then neither is charged.
-func (s *Service) reserve(ipKey, userKey string) time.Duration {
-	if wait := s.byIP.reserve(ipKey); wait > 0 {
-		return wait
-	}
-	if wait := s.byUser.reserve(userKey); wait > 0 {
-		s.byIP.refund(ipKey)
-		return wait
-	}
-	return 0
 }
 
 // userKey is the username as sign-in reads it: trimmed and folded, and cut to
@@ -287,43 +226,4 @@ func userKey(username string) string {
 		}
 	}
 	return "u:" + string(u)
-}
-
-// Setup creates the first administrator from the first-run token.
-func (s *Service) Setup(ctx context.Context, token, username, name, password, ip string) (*store.User, string, error) {
-	if err := s.throttle(ip); err != nil {
-		return nil, "", err
-	}
-	if wait := s.byIP.reserve("ip:" + ip); wait > 0 {
-		return nil, "", retryAfter(wait)
-	}
-	good := false
-	defer func() {
-		if good {
-			s.byIP.refund("ip:" + ip)
-		}
-	}()
-	open, err := s.SetupOpen(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	if !open {
-		return nil, "", errf(Exists, "setup is already done")
-	}
-	if !s.setupTokenOK(token) {
-		return nil, "", errf(Forbidden, "the setup token is wrong")
-	}
-	good = true
-	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: "admin", Password: password, Setup: true})
-	if err != nil {
-		return nil, "", err
-	}
-	tok, err := s.issueSession(ctx, u.ID)
-	return u, tok, err
-}
-
-// setupTokenOK compares in constant time; it is false once an account exists.
-func (s *Service) setupTokenOK(given string) bool {
-	want := s.SetupToken()
-	return want != "" && ctEqual(given, want)
 }

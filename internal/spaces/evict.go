@@ -650,7 +650,7 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		m.Resize(ctx, id) // the size of the clone is a measurement of its own
+		m.Resize(ctx, store.AllTenants(), id) // the size of the clone is a measurement of its own (a full one only counts for the quotas)
 	}()
 	return nil
 }
@@ -704,7 +704,7 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 		return err
 	}
 	q := m.opt.Store.Q()
-	if _, err := store.GetSpace(ctx, q, id); err != nil {
+	if _, err := store.GetSpace(ctx, q, store.AllTenants(), id); err != nil { // the eviction is the site's, by space id
 		if errors.Is(err, store.ErrNotFound) {
 			return ErrNotFound
 		}

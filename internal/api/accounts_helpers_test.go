@@ -18,6 +18,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/api"
 	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
 	"github.com/KKazuhaK/PetalBook/internal/github"
@@ -127,6 +128,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		CommitIdle: time.Hour, CommitMax: 2 * time.Hour, Now: clk.Now, MaxSpaces: o.maxSpaces}
 	var fake *githubapptest.Fake
 	var ghsvc *github.Service
+	var reg *connections.Registry
 	if o.github {
 		fake = githubapptest.New(t, clk)
 		gc, err := githubapp.New(githubapp.Config{API: fake.URL, Web: fake.URL, Now: clk.Now})
@@ -137,7 +139,8 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		if ghsvc, err = github.New(github.Options{Store: st, Secrets: box, Client: gc, PublicURL: o.public, Now: clk.Now, SettingsTTL: time.Nanosecond}); err != nil {
 			t.Fatal(err)
 		}
-		sopt.Secrets, sopt.GitHub = box, ghsvc
+		reg = connections.NewRegistry(ghsvc, connections.NewGit())
+		sopt.Secrets, sopt.Connections = box, reg
 		sopt.RemotePolicy = gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}
 		sopt.PushRetry = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond}
 	}
@@ -163,6 +166,20 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The mail queue is delivered (to a fake server of the test; mail stays off
+	// until a test enables it).
+	mailCtx, stopMail := context.WithCancel(ctx)
+	t.Cleanup(stopMail)
+	go svc.RunMail(mailCtx)
+	// Nearly every test signs in from one address, many times: the allowance of
+	// a minute is lifted here, and the tests of the limits set it back.
+	var lift auth.SecurityPatch
+	if err := json.Unmarshal([]byte(`{"limits":{"perMinute":100000}}`), &lift); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateSecurity(ctx, "", "", lift); err != nil {
+		t.Fatal(err)
+	}
 	dcfg := drafts.Config{Now: clk.Now}
 	if o.draftCfg != nil {
 		o.draftCfg(&dcfg)
@@ -172,7 +189,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		t.Fatal(err)
 	}
 	if ghsvc != nil {
-		ghsvc.OnChange(mgr.GitHubFixed)
+		ghsvc.OnChange(mgr.ConnectionFixed)
 	}
 	tok := api.NewTokens(tokens.Config{Store: st, Now: clk.Now, Logger: log}, svc)
 	var oa *oauth.Service
@@ -183,7 +200,11 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 			t.Fatal(err)
 		}
 	}
-	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, GitHub: ghsvc}
+	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg}
+	if o.maxSpaces > 0 {
+		n := o.maxSpaces // --max-spaces given: the site's quota.spacesPerPerson
+		opts.MaxSpaces = &n
+	}
 	h := api.New(opts)
 	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc}
 }

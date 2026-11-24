@@ -120,6 +120,10 @@ type Install struct {
 	Deleted bool
 	// NoAdd: the user cannot add repositories to it.
 	NoAdd bool
+	// Perms is what the installation was granted when it differs from the
+	// App's (an App whose permissions changed, and an installation that has not
+	// accepted the change); nil: the App's.
+	Perms map[string]string
 }
 
 // Repo is a repository.
@@ -168,6 +172,11 @@ type code struct {
 	login, challenge, redirect string
 }
 
+type manifestCode struct {
+	state string
+	m     map[string]any
+}
+
 // Request is one request the fake served.
 type Request struct {
 	Method, Path, Query string
@@ -189,6 +198,17 @@ type Fake struct {
 	// AppPerms is what the App has: GET /app says so and installation tokens
 	// may not ask for more.
 	AppPerms map[string]string
+	// Public is whether the App can be installed on any account, as GET /app
+	// says; nil leaves it out (GitHub does not always say).
+	Public *bool
+	// PersonalNeedsInstall makes GitHub refuse a user's token a repository in the
+	// user's own account unless the App is installed there (403 "Resource not
+	// accessible by integration"), as the real one does.
+	PersonalNeedsInstall bool
+	// PermissionRefusal403 makes a token that asks for a permission the
+	// installation lacks answer 403 "Resource not accessible by integration"
+	// instead of 422.
+	PermissionRefusal403 bool
 	// AutoAdd makes a repository created in an account that has an installation
 	// of selected repositories join it (GitHub does not promise to).
 	AutoAdd bool
@@ -199,6 +219,11 @@ type Fake struct {
 	NoRefresh bool
 	// RejectGit makes Git refuse every credential (a revoked token).
 	RejectGit bool
+	// AppDown makes GET /app answer 503: GitHub made an App but cannot be asked about it.
+	AppDown bool
+	// OrgNeedsInstall makes GitHub refuse a user's token a repository in an
+	// organisation the App is not installed on ("Resource not accessible by integration").
+	OrgNeedsInstall bool
 	// BreakRefreshReply makes the answer to a renewal one the client cannot use
 	// (after the old refresh token was spent), to test that a pair is kept.
 	BreakRefreshReply bool
@@ -212,6 +237,8 @@ type Fake struct {
 	users    map[string]*userToken
 	refresh  map[string]*refreshToken
 	codes    map[string]*code
+	mcodes   map[string]*manifestCode
+	manifest []map[string]any // every manifest posted, newest last
 	limitTo  time.Time
 	reqs     []Request
 	gitRoot  string
@@ -226,11 +253,12 @@ func New(t testing.TB, clock Clocker) *Fake {
 	if clock == nil {
 		clock = NewClock()
 	}
-	f := &Fake{t: t, Clock: clock, AppID: 424242, Slug: "petalbook-notes", Name: "PetalBook Notes",
+	yes := true
+	f := &Fake{t: t, Clock: clock, Public: &yes, AppID: 424242, Slug: "petalbook-notes", Name: "PetalBook Notes",
 		ClientID: "Iv23liFakeClientId", ClientSecret: "fake-client-secret-0123456789", Key: sharedKey(), nextID: 1000,
 		AppPerms: map[string]string{"administration": "write", "contents": "write", "metadata": "read"},
 		accounts: map[string]*Account{}, installs: map[int64]*Install{}, repos: map[string]*Repo{},
-		inst: map[string]*instToken{}, users: map[string]*userToken{}, refresh: map[string]*refreshToken{}, codes: map[string]*code{},
+		inst: map[string]*instToken{}, users: map[string]*userToken{}, refresh: map[string]*refreshToken{}, codes: map[string]*code{}, mcodes: map[string]*manifestCode{},
 		gitRoot: t.TempDir()}
 	if gitBin, err := gitstore.Path(); err == nil {
 		f.git = &cgi.Handler{Path: gitBin, Args: []string{"http-backend"}, Root: "/", InheritEnv: []string{"PATH"},
@@ -377,6 +405,108 @@ func (f *Fake) Authorize(authURL, login string) string {
 	bq.Set("state", q.Get("state"))
 	back.RawQuery = bq.Encode()
 	return back.String()
+}
+
+// InstallApp plays a person installing the App from its installation page with
+// "request user authorization during installation": installURL is the page the
+// server sent them to (its state is kept), login is who installs and
+// authorises, callback is the App's callback URL. The App is installed on that
+// account (all repositories) unless it is there already. It returns the URL
+// GitHub then sends the browser to: the code has no PKCE challenge, as GitHub
+// gives none to an installation.
+func (f *Fake) InstallApp(installURL, login, callback string) string {
+	f.t.Helper()
+	u, err := url.Parse(installURL)
+	if err != nil || !strings.HasSuffix(u.Path, "/installations/new") {
+		f.t.Fatalf("not an installation URL: %q", installURL)
+	}
+	state := u.Query().Get("state")
+	if state == "" {
+		f.t.Fatalf("the installation URL carries no state: %q", installURL)
+	}
+	f.mu.Lock()
+	var inst int64
+	for _, in := range f.installs {
+		if !in.Deleted && strings.EqualFold(in.Account, login) {
+			inst = in.ID
+		}
+	}
+	if inst == 0 {
+		in := &Install{ID: f.id(), Account: login, Selection: "all", Repos: map[int64]bool{}}
+		f.installs[in.ID] = in
+		inst = in.ID
+	}
+	c := randHex(10)
+	f.codes[c] = &code{login: login, redirect: callback}
+	f.mu.Unlock()
+	back, _ := url.Parse(callback)
+	q := back.Query()
+	q.Set("code", c)
+	q.Set("state", state)
+	q.Set("installation_id", strconv.FormatInt(inst, 10))
+	q.Set("setup_action", "install")
+	back.RawQuery = q.Encode()
+	return back.String()
+}
+
+// SubmitManifest plays GitHub's page for the manifest flow: the browser posted
+// manifestJSON to postURL (whose query holds the state); the person accepts the
+// App. It returns the URL GitHub sends the browser back to, with a code that
+// POST /app-manifests/{code}/conversions turns into the fake's App. The
+// manifest is kept for Manifests.
+func (f *Fake) SubmitManifest(postURL, manifestJSON string) string {
+	f.t.Helper()
+	u, err := url.Parse(postURL)
+	if err != nil || !strings.HasSuffix(u.Path, "/settings/apps/new") {
+		f.t.Fatalf("not a manifest URL: %q", postURL)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(manifestJSON), &m); err != nil {
+		f.t.Fatalf("the manifest is not JSON: %v", err)
+	}
+	redirect, _ := m["redirect_url"].(string)
+	back, err := url.Parse(redirect)
+	if err != nil || redirect == "" {
+		f.t.Fatalf("the manifest has no redirect_url")
+	}
+	c := randHex(10)
+	f.mu.Lock()
+	f.mcodes[c] = &manifestCode{state: u.Query().Get("state"), m: m}
+	f.manifest = append(f.manifest, m)
+	f.mu.Unlock()
+	q := back.Query()
+	q.Set("code", c)
+	if st := u.Query().Get("state"); st != "" {
+		q.Set("state", st)
+	}
+	back.RawQuery = q.Encode()
+	return back.String()
+}
+
+// Manifests are the manifests submitted so far, oldest first.
+func (f *Fake) Manifests() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.manifest...)
+}
+
+func (f *Fake) convertManifest(w http.ResponseWriter, c string) {
+	f.mu.Lock()
+	mc := f.mcodes[c]
+	delete(f.mcodes, c) // a code works once
+	f.mu.Unlock()
+	if mc == nil {
+		apiError(w, 404, "Not Found")
+		return
+	}
+	name, _ := mc.m["name"].(string)
+	if name == "" {
+		name = f.Name
+	}
+	writeJSON(w, 201, map[string]any{"id": f.AppID, "slug": f.Slug, "name": name, "client_id": f.ClientID,
+		"client_secret": f.ClientSecret, "webhook_secret": "fake-webhook-secret-0123456789", "pem": f.KeyPEM(),
+		"html_url": "https://github.com/apps/" + f.Slug, "owner": map[string]any{"login": "kazuhahub", "id": 1, "type": "Organization"},
+		"permissions": f.AppPerms})
 }
 
 // Deny is the redirect when the user cancels.
@@ -696,8 +826,12 @@ func (f *Fake) installJSON(in *Install) map[string]any {
 			typ = "Organization"
 		}
 	}
+	perms := f.AppPerms
+	if in.Perms != nil {
+		perms = in.Perms
+	}
 	m := map[string]any{"id": in.ID, "account": map[string]any{"id": id, "login": in.Account, "type": typ},
-		"repository_selection": in.Selection, "permissions": f.AppPerms, "app_id": f.AppID,
+		"repository_selection": in.Selection, "permissions": perms, "app_id": f.AppID,
 		"html_url": fmt.Sprintf("https://github.com/settings/installations/%d", in.ID), "suspended_at": nil}
 	if in.Suspended {
 		m["suspended_at"] = f.Clock.Now()
@@ -736,6 +870,11 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 		f.serveClientAPI(w, r, path)
 		return
 	}
+	// A manifest's code is the only credential of its conversion.
+	if r.Method == "POST" && strings.HasPrefix(path, "/app-manifests/") && strings.HasSuffix(path, "/conversions") {
+		f.convertManifest(w, strings.Split(path, "/")[2])
+		return
+	}
 	if f.limited(w) {
 		return
 	}
@@ -746,11 +885,17 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 	seg := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	switch {
 	case r.Method == "GET" && path == "/app" && p.kind == "jwt":
-		a := f.accounts[strings.ToLower(f.Slug)]
-		_ = a
-		writeJSON(w, 200, map[string]any{"id": f.AppID, "slug": f.Slug, "name": f.Name, "client_id": f.ClientID,
+		if f.AppDown {
+			apiError(w, 503, "Service Unavailable")
+			return
+		}
+		body := map[string]any{"id": f.AppID, "slug": f.Slug, "name": f.Name, "client_id": f.ClientID,
 			"html_url": "https://github.com/apps/" + f.Slug, "owner": map[string]any{"login": "kazuhahub", "id": 1, "type": "Organization"},
-			"permissions": f.AppPerms})
+			"permissions": f.AppPerms}
+		if f.Public != nil {
+			body["public"] = *f.Public
+		}
+		writeJSON(w, 200, body)
 	case r.Method == "GET" && path == "/app/installations" && p.kind == "jwt":
 		f.mu.Lock()
 		var all []*Install
@@ -975,10 +1120,18 @@ func (f *Fake) mint(w http.ResponseWriter, r *http.Request, idStr string) {
 		apiError(w, 403, "This installation has been suspended")
 		return
 	}
+	granted := f.AppPerms
+	if in.Perms != nil {
+		granted = in.Perms
+	}
 	for k, want := range b.Perms {
-		have := f.AppPerms[k]
+		have := granted[k]
 		if have == "" || (want == "write" && have != "write") {
-			apiError(w, 422, "The permissions requested are not granted to this installation.")
+			if f.PermissionRefusal403 {
+				apiError(w, 403, "Resource not accessible by integration")
+			} else {
+				apiError(w, 422, "The permissions requested are not granted to this installation.")
+			}
 			return
 		}
 	}
@@ -1055,6 +1208,17 @@ func (f *Fake) getRepo(w http.ResponseWriter, p principal, owner, name string) {
 	}
 }
 
+func (f *Fake) installOfLocked(account string) *Install {
+	for _, in := range f.installs {
+		if !in.Deleted && strings.EqualFold(in.Account, account) {
+			return in
+		}
+	}
+	return nil
+}
+
+func (f *Fake) installedLocked(account string) bool { return f.installOfLocked(account) != nil }
+
 func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, org string) {
 	var b struct {
 		Name        string `json:"name"`
@@ -1069,6 +1233,14 @@ func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, o
 	switch {
 	case org == "" && p.kind == "user":
 		owner = f.accounts[strings.ToLower(p.login)].Login
+		if f.PersonalNeedsInstall && !f.installedLocked(owner) {
+			apiError(w, 403, "Resource not accessible by integration")
+			return
+		}
+		if in := f.installOfLocked(owner); f.PersonalNeedsInstall && in != nil && in.Perms != nil && in.Perms["administration"] != "write" {
+			apiError(w, 403, "Resource not accessible by integration")
+			return
+		}
 	case org == "":
 		apiError(w, 403, "Resource not accessible by integration")
 		return
@@ -1092,6 +1264,10 @@ func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, o
 	case "user":
 		if org != "" && (!acc.Org || !acc.Members[strings.ToLower(p.login)]) {
 			apiError(w, 404, "Not Found")
+			return
+		}
+		if org != "" && f.OrgNeedsInstall && !f.installedLocked(org) {
+			apiError(w, 403, "Resource not accessible by integration")
 			return
 		}
 		if org != "" && acc.NoCreate {

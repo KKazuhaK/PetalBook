@@ -43,7 +43,7 @@ func scanAssetRemote(row interface{ Scan(...any) error }) (*AssetRemote, error) 
 	var sync, upd, used, mupd int64
 	m := &r.Move
 	if err := row.Scan(&r.SpaceID, &r.URL, &r.Branch, &r.CredType, &r.Username, &r.TokenEnc, &r.PrivKeyEnc, &r.PubKey, &r.LastGood,
-		&r.State, &r.ErrorKind, &r.LastError, &r.RemoteTip, &sync, &upd, &r.GHVia, &r.GHInstallationID, &r.GHRepoID, &r.GHUserID,
+		&r.State, &r.ErrorKind, &r.LastError, &r.RemoteTip, &sync, &upd, &r.Provider, &r.GHVia, &r.GHInstallationID, &r.GHRepoID, &r.GHUserID,
 		&used, &m.State, &m.Files, &m.FilesDone, &m.Bytes, &m.BytesDone, &m.Error, &mupd); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -69,19 +69,33 @@ func GetAssetRemote(ctx context.Context, q Q, spaceID string) (*AssetRemote, err
 // PutAssetRemote inserts the attachment repository of a space, or replaces its
 // address and credential; whether anything went to it and the move are kept.
 func PutAssetRemote(ctx context.Context, q Q, r Remote) error {
-	var sync int64
-	if !r.LastSync.IsZero() {
-		sync = ms(r.LastSync)
-	}
-	_, err := q.Exec(ctx, `INSERT INTO asset_remotes(`+remoteCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT (space_id) DO UPDATE SET url = excluded.url, branch = excluded.branch, cred_type = excluded.cred_type,
-		username = excluded.username, token_enc = excluded.token_enc, privkey_enc = excluded.privkey_enc, pubkey = excluded.pubkey,
-		last_good = excluded.last_good, state = excluded.state, error_kind = excluded.error_kind, last_error = excluded.last_error,
-		remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated,
-		gh_via = excluded.gh_via, gh_installation_id = excluded.gh_installation_id, gh_repo_id = excluded.gh_repo_id, gh_user_id = excluded.gh_user_id`,
-		r.SpaceID, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
-		r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.GHVia, r.GHInstallationID, r.GHRepoID, r.GHUserID)
-	return err
+	return atomically(ctx, q, func(q Q) error {
+		if r.Provider == "" {
+			r.Provider = ProviderGit
+			if r.CredType == CredConnection {
+				r.Provider = ProviderGitHub
+			}
+		}
+		var sync int64
+		if !r.LastSync.IsZero() {
+			sync = ms(r.LastSync)
+		}
+		_, err := q.Exec(ctx, `INSERT INTO asset_remotes(`+remoteCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT (space_id) DO UPDATE SET url = excluded.url, branch = excluded.branch, cred_type = excluded.cred_type,
+			username = excluded.username, token_enc = excluded.token_enc, privkey_enc = excluded.privkey_enc, pubkey = excluded.pubkey,
+			last_good = excluded.last_good, state = excluded.state, error_kind = excluded.error_kind, last_error = excluded.last_error,
+			remote_tip = excluded.remote_tip, last_sync = excluded.last_sync, updated = excluded.updated, provider = excluded.provider,
+			gh_via = excluded.gh_via, gh_installation_id = excluded.gh_installation_id, gh_repo_id = excluded.gh_repo_id, gh_user_id = excluded.gh_user_id`,
+			r.SpaceID, r.URL, r.Branch, r.CredType, r.Username, r.TokenEnc, r.PrivKeyEnc, r.PubKey, r.LastGood,
+			r.State, r.ErrorKind, r.LastError, r.RemoteTip, sync, ms(r.Updated), r.Provider, r.GHVia, r.GHInstallationID, r.GHRepoID, r.GHUserID)
+		if err != nil || r.URL == "" || r.GHRepoID == 0 {
+			return err
+		}
+		// An attachment repository in use answers every reminder of it, as a
+		// space's own repository does (PutRemote).
+		_, err = q.Exec(ctx, `DELETE FROM github_leftovers WHERE repo_id = ?`, r.GHRepoID)
+		return err
+	})
 }
 
 // UpdateAssetRemoteStatus records what the server last saw of the repository.

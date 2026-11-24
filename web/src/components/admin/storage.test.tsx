@@ -113,9 +113,11 @@ describe('the storage page', () => {
   it('shows what the server refuses in its own words', async () => {
     m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => byLabel(ts.admin.remotes.require) !== null, 'the form')
+    // The platforms come from the connections; the mock lists GitHub, not set up.
+    await settle(() => (byLabel(ts.admin.remotes.require) as HTMLSelectElement).querySelector('option[value="github"]') !== null, 'the platform')
     await type(byLabel(ts.admin.remotes.require) as HTMLSelectElement, 'github')
     await click(buttonIn(document, ts.admin.save))
-    await settle(() => text().includes(ts.admin.errors.codes.github_not_configured), 'the refusal')
+    await settle(() => text().includes(ts.admin.errors.codes.provider_not_configured), 'the refusal')
   })
 })
 

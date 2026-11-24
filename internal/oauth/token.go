@@ -59,7 +59,7 @@ func (s *Service) ownerUsable(ctx context.Context, userID string) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	return !u.Disabled, nil
+	return !u.Disabled && !s.cfg.Store.TenantDisabled(u.TenantID), nil
 }
 
 func (s *Service) exchangeCode(w http.ResponseWriter, r *http.Request) {

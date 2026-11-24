@@ -22,7 +22,7 @@ func newRoot() *cobra.Command {
 		},
 	}
 	root.SetVersionTemplate("petalbook {{.Version}}\n")
-	root.AddCommand(newServe(), newUser(), newDraft(), newToken(), newVersion())
+	root.AddCommand(newServe(), newUser(), newSecurity(), newDraft(), newToken(), newVersion())
 	return root
 }
 

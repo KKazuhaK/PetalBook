@@ -42,26 +42,30 @@ release: web
 	cp -R web/dist/. internal/webui/dist/
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o petalbook ./cmd/petalbook
 
+# go test stops a package after 10 minutes by default; internal/api under the
+# race detector is close to that on a busy CI machine, so every run gets 30.
+GOTEST_TIMEOUT ?= 30m
+
 # Under the race detector a few tests use smaller sizes (see raceDetector in
 # internal/index and internal/space): this is the run for pull requests.
 test:
-	go test -race ./cmd/... ./internal/...
+	go test -race -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
 
 # The same tests without the race detector, so that those tests run at their
 # full size. It is quick, and is what main runs beside "test".
 test-full:
-	go test ./cmd/... ./internal/...
+	go test -timeout $(GOTEST_TIMEOUT) ./cmd/... ./internal/...
 
 # "test" in three parts that together are all of it, so that CI runs them on
 # machines of their own: the two packages that take longest, and the rest.
 test-index:
-	go test -race ./internal/index
+	go test -race -timeout $(GOTEST_TIMEOUT) ./internal/index
 
 test-space:
-	go test -race ./internal/space
+	go test -race -timeout $(GOTEST_TIMEOUT) ./internal/space
 
 test-rest:
-	go test -race $(REST_PKGS)
+	go test -race -timeout $(GOTEST_TIMEOUT) $(REST_PKGS)
 
 # The tests of the packages that use the state database (the ones that import
 # internal/store/storetest), run on SQLite and on PostgreSQL in a throwaway
