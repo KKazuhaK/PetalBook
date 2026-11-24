@@ -160,7 +160,7 @@ describe('the text of the day', () => {
     await ready()
     await settle(() => daily() !== null, 'the text')
     expect(daily()!.textContent).toMatch(/第 \d 条文案/)
-    expect(daily()!.textContent).toMatch(/《暮雪\d》｜副\d/)
+    expect(daily()!.textContent).toMatch(/第 \d 条文案.*—— 《暮雪\d｜副\d》/)
     const link = daily()!.querySelector<HTMLAnchorElement>('a')!
     expect(link.getAttribute('href')).toMatch(/^\/s\/default\/p\//)
     const asked = m.requests.filter((r) => r.url.includes('/daily?'))
@@ -292,16 +292,16 @@ describe('the text of the day', () => {
       admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: false, apis: [id] })
     }
 
-    it('an external text with who said it and a link back, drawn as a web link', async () => {
+    it('an external text with who said it, and never a link to somewhere else', async () => {
       m = await open(withApi('yiyan'))
       await ready()
       await settle(() => daily() !== null, 'the text')
       expect(daily()!.textContent).toContain('一言')
-      expect(daily()!.textContent).toContain('au')
-      const a = daily()!.querySelector<HTMLAnchorElement>('a')!
-      expect(a.href).toBe('https://hitokoto.cn/?uuid=u1')
-      expect(a.rel).toContain('noopener')
-      expect(a.target).toBe('_blank')
+      expect(daily()!.textContent).toContain('—— au《src》')
+      // The service sends a link back; it is kept and not drawn: nothing here leads off the site.
+      expect(daily()!.querySelector('a')).toBeNull()
+      expect(daily()!.querySelector('[data-slot="daily-link"]')).toBeNull()
+      expect(daily()!.innerHTML).not.toContain('hitokoto.cn')
       expect(daily()!.querySelector('[data-slot="daily-stale"]')).toBeNull()
     })
 

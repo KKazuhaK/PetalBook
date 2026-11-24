@@ -44,17 +44,17 @@ func TestDailyInterfacesSavedFromPresetsAfterTheUpgrade(t *testing.T) {
 		ctx := context.Background()
 		st := x.a.st
 		url := x.qs.URL + "/q?lang={lang}&d={date}"
-		enc, err := x.a.mgr.Secrets().Seal("site", api.HeaderPurpose("quotable", "X-Api-Key", url), []byte("the-key-value"))
+		enc, err := x.a.mgr.Secrets().Seal("site", api.HeaderPurpose("zenquotes", "X-Api-Key", url), []byte("the-key-value"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		hitokoto := `{"id":"hitokoto","name":"一言","lang":"zh","url":"https://international.v1.hitokoto.cn/?max_length=80","text":"hitokoto","source":"from","author":"from_who","link":"https://hitokoto.cn?uuid={uuid}","refresh":"minutes","refreshMinutes":30,"skipNew":false,"rps":50,"enabled":true,"headers":[]}`
-		quotable := `{"id":"quotable","name":"Quotable","lang":"en","url":"` + url + `","text":"data.0.q","source":"","author":"data.0.a","link":"","refresh":"daily","skipNew":true,"rps":100,"enabled":true,"headers":[{"name":"X-Api-Key","enc":"` + enc + `"}]}`
-		old := `{"default":{"kind":"api","apis":{"":"quotable","zh-Hans":"hitokoto"}},"languages":["zh","en"],"apis":[` + hitokoto + `,` + quotable + `],"allow":{"own":true,"api":true}}`
+		zenquotes := `{"id":"zenquotes","name":"ZenQuotes","lang":"en","url":"` + url + `","text":"data.0.q","source":"","author":"data.0.a","link":"","refresh":"daily","skipNew":true,"rps":100,"enabled":true,"headers":[{"name":"X-Api-Key","enc":"` + enc + `"}]}`
+		old := `{"default":{"kind":"api","apis":{"":"zenquotes","zh-Hans":"hitokoto"}},"languages":["zh","en"],"apis":[` + hitokoto + `,` + zenquotes + `],"allow":{"own":true,"api":true}}`
 		if err := store.SetSiteSetting(ctx, st.Q(), "daily", old, x.now); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetSpaceDaily(ctx, st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: `["hitokoto","quotable"]`}); err != nil {
+		if err := store.SetSpaceDaily(ctx, st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: `["hitokoto","zenquotes"]`}); err != nil {
 			t.Fatal(err)
 		}
 		check := func() {
@@ -63,29 +63,29 @@ func TestDailyInterfacesSavedFromPresetsAfterTheUpgrade(t *testing.T) {
 			if code != 200 {
 				t.Fatalf("%d %v", code, r)
 			}
-			h, q := apiByID(r, "hitokoto"), apiByID(r, "quotable-custom")
+			h, q := apiByID(r, "hitokoto"), apiByID(r, "zenquotes-custom")
 			if len(asSlice(r["apis"])) != 2 || h == nil || h["builtin"] != true || h["refresh"] != "minutes" || h["refreshMinutes"] != float64(30) || h["rps"] != float64(20) || h["skipNew"] != false || h["enabled"] != true {
 				t.Fatalf("hitokoto: %v", r["apis"])
 			}
-			if q == nil || q["builtin"] == true || q["url"] != url || fmt.Sprint(q["headers"]) != "[map[name:X-Api-Key set:true]]" || apiByID(r, "quotable") != nil {
-				t.Fatalf("quotable: %v", r["apis"])
+			if q == nil || q["builtin"] == true || q["url"] != url || fmt.Sprint(q["headers"]) != "[map[name:X-Api-Key set:true]]" || apiByID(r, "zenquotes") != nil {
+				t.Fatalf("zenquotes: %v", r["apis"])
 			}
 			if ps := asSlice(r["providers"]); asMap(ps[0])["enabled"] != true || asMap(ps[1])["enabled"] != false {
 				t.Fatalf("%v", ps)
 			}
-			if fmt.Sprint(asMap(r["default"])["apis"]) != "map[:quotable-custom zh-Hans:hitokoto]" {
+			if fmt.Sprint(asMap(r["default"])["apis"]) != "map[:[zenquotes-custom] zh-Hans:[hitokoto]]" {
 				t.Fatalf("%v", r["default"])
 			}
-			if got := noticeCodes(r); got != "builtin_renamed:quotable>quotable-custom" {
+			if got := noticeCodes(r); got != "builtin_renamed:zenquotes>zenquotes-custom" {
 				t.Fatalf("%q", got)
 			}
 			_, p := x.own("GET", x.base+"/daily/prefs", nil)
-			if fmt.Sprint(p["apis"]) != "[hitokoto quotable-custom]" {
+			if fmt.Sprint(p["apis"]) != "[hitokoto zenquotes-custom]" {
 				t.Fatalf("%v", p)
 			}
 			// A built-in one is offered with each of its languages.
 			for _, a := range asSlice(p["available"]) {
-				if m := asMap(a); m["id"] == "hitokoto" && fmt.Sprint(m["languages"]) != "[zh-Hans zh-Hant]" || m["id"] == "quotable-custom" && m["languages"] != nil {
+				if m := asMap(a); m["id"] == "hitokoto" && fmt.Sprint(m["languages"]) != "[zh-Hans zh-Hant]" || m["id"] == "zenquotes-custom" && m["languages"] != nil {
 					t.Fatalf("%v", p["available"])
 				}
 			}
@@ -101,7 +101,7 @@ func TestDailyInterfacesSavedFromPresetsAfterTheUpgrade(t *testing.T) {
 			} `json:"providers"`
 		}
 		json.Unmarshal([]byte(raw), &saved)
-		if len(saved.APIs) != 1 || saved.APIs[0].ID != "quotable-custom" || !saved.Providers["hitokoto"].Enabled {
+		if len(saved.APIs) != 1 || saved.APIs[0].ID != "zenquotes-custom" || !saved.Providers["hitokoto"].Enabled {
 			t.Fatalf("not saved: %s", raw)
 		}
 		// Once: reading again changes nothing.
@@ -115,10 +115,10 @@ func TestDailyInterfacesSavedFromPresetsAfterTheUpgrade(t *testing.T) {
 			t.Fatalf("%v (key %v)", r, x.qs.key.Load())
 		}
 		// The administrators can delete their own, and switch the built-in one on.
-		if code, r := x.adm("DELETE", "/api/admin/daily/apis/quotable-custom", nil); code != 200 {
+		if code, r := x.adm("DELETE", "/api/admin/daily/apis/zenquotes-custom", nil); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily/providers/quotable", map[string]any{"enabled": true}); code != 200 || apiByID(r, "quotable")["builtin"] != true {
+		if code, r := x.adm("PUT", "/api/admin/daily/providers/zenquotes", map[string]any{"enabled": true}); code != 200 || apiByID(r, "zenquotes")["builtin"] != true {
 			t.Fatalf("%d %v", code, r)
 		}
 		// The notices go when they are dismissed.
@@ -136,28 +136,28 @@ func TestDailyPresetWhoseHeadersCannotMoveStays(t *testing.T) {
 		t := x.t
 		ctx := context.Background()
 		url := x.qs.URL + "/q?lang={lang}"
-		old := `{"apis":[{"id":"quotable","name":"Quotable","lang":"en","url":"` + url + `","text":"data.0.q","refresh":"daily","rps":3,"enabled":true,"headers":[{"name":"X-Api-Key","enc":"not-sealed"}]}]}`
+		old := `{"apis":[{"id":"zenquotes","name":"ZenQuotes","lang":"en","url":"` + url + `","text":"data.0.q","refresh":"daily","rps":3,"enabled":true,"headers":[{"name":"X-Api-Key","enc":"not-sealed"}]}]}`
 		if err := store.SetSiteSetting(ctx, x.a.st.Q(), "daily", old, x.now); err != nil {
 			t.Fatal(err)
 		}
 		code, r := x.adm("GET", "/api/admin/daily", nil)
-		if q := apiByID(r, "quotable"); code != 200 || q == nil || q["builtin"] == true || noticeCodes(r) != "builtin_kept:quotable>" {
+		if q := apiByID(r, "zenquotes"); code != 200 || q == nil || q["builtin"] == true || noticeCodes(r) != "builtin_kept:zenquotes>" {
 			t.Fatalf("%d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily/providers/quotable", map[string]any{"enabled": true}); code != 400 {
+		if code, r := x.adm("PUT", "/api/admin/daily/providers/zenquotes", map[string]any{"enabled": true}); code != 400 {
 			t.Fatalf("%d %v", code, r)
 		}
-		b := map[string]any{"id": "quotable", "name": "Mine", "lang": "en", "url": url, "text": "data.0.q", "headers": []any{map[string]any{"name": "X-Api-Key", "value": "new"}}}
-		if code, r := x.putAPI("quotable", b); code != 200 || apiByID(r, "quotable")["name"] != "Mine" || apiByID(r, "quotable")["builtin"] == true {
+		b := map[string]any{"id": "zenquotes", "name": "Mine", "lang": "en", "url": url, "text": "data.0.q", "headers": []any{map[string]any{"name": "X-Api-Key", "value": "new"}}}
+		if code, r := x.putAPI("zenquotes", b); code != 200 || apiByID(r, "zenquotes")["name"] != "Mine" || apiByID(r, "zenquotes")["builtin"] == true {
 			t.Fatalf("%d %v", code, r)
 		}
-		if _, r := x.adm("GET", "/api/admin/daily", nil); apiByID(r, "quotable")["name"] != "Mine" {
+		if _, r := x.adm("GET", "/api/admin/daily", nil); apiByID(r, "zenquotes")["name"] != "Mine" {
 			t.Fatalf("%v", r["apis"])
 		}
-		if code, r := x.adm("DELETE", "/api/admin/daily/apis/quotable", nil); code != 200 || apiByID(r, "quotable") != nil {
+		if code, r := x.adm("DELETE", "/api/admin/daily/apis/zenquotes", nil); code != 200 || apiByID(r, "zenquotes") != nil {
 			t.Fatalf("%d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily/providers/quotable", map[string]any{"enabled": true}); code != 200 || apiByID(r, "quotable")["builtin"] != true {
+		if code, r := x.adm("PUT", "/api/admin/daily/providers/zenquotes", map[string]any{"enabled": true}); code != 200 || apiByID(r, "zenquotes")["builtin"] != true {
 			t.Fatalf("%d %v", code, r)
 		}
 	})
@@ -225,6 +225,36 @@ func TestDailyLinesUnderAnOldCode(t *testing.T) {
 		}
 		if counts, _ := store.DailyLineCounts(ctx, st.Q()); len(counts) != 0 {
 			t.Fatalf("%v", counts)
+		}
+	})
+}
+
+// A stored choice of a service that is no longer built in (quotable, whose
+// domain no longer resolves) never breaks the settings or the reader's page,
+// and no other service is picked in its place.
+func TestDailyRemovedBuiltInIsNotReplaced(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		ctx := context.Background()
+		old := `{"default":{"kind":"api","apis":{"":"quotable"}},"providers":{"quotable":{"enabled":true}},"allow":{"own":true,"api":true}}`
+		if err := store.SetSiteSetting(ctx, x.a.st.Q(), "daily", old, x.now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetSpaceDaily(ctx, x.a.st.Q(), x.tm.sid, store.SpaceDaily{Inherit: true, APIs: `["quotable"]`}); err != nil {
+			t.Fatal(err)
+		}
+		code, r := x.adm("GET", "/api/admin/daily", nil)
+		if code != 200 || len(asSlice(r["apis"])) != 0 || len(asSlice(r["providers"])) != 8 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if code, _ := x.own("GET", x.base+"/daily/prefs", nil); code != 200 {
+			t.Fatalf("prefs: %d", code)
+		}
+		if code, _ := x.viewer("GET", x.base+"/daily?date=2026-11-23&lang=en", nil); code != 200 {
+			t.Fatalf("daily: %d", code)
+		}
+		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en"); r["quote"] != nil {
+			t.Fatalf("another service was picked: %v", r)
 		}
 	})
 }

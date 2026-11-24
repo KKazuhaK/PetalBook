@@ -10,13 +10,16 @@ import {
   useTree,
   useTypes,
 } from '@/api/hooks'
-import type { DailyPrefs, DailySettings } from '@/api/types'
+import type { DailyOptionChoice, DailyPrefs, DailySettings } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
   apisOfTab,
+  listsFromPrefs,
+  prefsPayload,
+  type SpaceItem,
   draftsFrom,
   emptyDraft,
   settingsFrom,
@@ -28,6 +31,7 @@ import {
 import { th } from '@/i18n/home'
 import { SettingsNote, SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 import { SourceFields, type SourceChoices } from './SourceFields'
+import { SourceList } from './SourceList'
 
 // The "Home" section: where the text of the day at the top of the space's home page comes from, one page per
 // language (the first is "all languages", which every language without a page of its own falls back to). For each:
@@ -76,15 +80,23 @@ function Editor({
   const [drafts, setDrafts] = useState<Drafts>(() => {
     const d = draftsFrom(saved)
     // A language whose interface is chosen shows as such.
-    for (const tab of tabsOf([], saved, prefs))
-      if (!d[tab] && apisOfTab(prefs, tab).some((a) => prefs?.apis.includes(a.id)))
-        d[tab] = { ...emptyDraft(), mode: 'api' }
+    const chosen = listsFromPrefs(prefs, tabsOf(prefs?.languages ?? DEFAULT_LANGUAGES, saved, prefs))
+    for (const [tab, list] of Object.entries(chosen))
+      if (!d[tab] && list.length > 0) d[tab] = { ...emptyDraft(), mode: 'api' }
     return d
   })
-  const [apis, setApis] = useState<Set<string>>(() => new Set(prefs?.apis ?? []))
-  const [inherit, setInherit] = useState(prefs?.inherit ?? true)
   const known = useMemo(() => prefs?.languages ?? DEFAULT_LANGUAGES, [prefs])
   const tabs = useMemo(() => tabsOf(known, saved, prefs), [known, saved, prefs])
+  // The sources of each language in order: interfaces, the administrators' lines, pages of this space. With more than
+  // one they take turns by day, and one that gives nothing is passed over for the next.
+  const [lists, setLists] = useState<Record<string, SpaceItem[]>>(() => listsFromPrefs(prefs, tabs))
+  const [options, setOptions] = useState<DailyOptionChoice>(() => {
+    const o: DailyOptionChoice = structuredClone(prefs?.options ?? {})
+    for (const list of Object.values(prefs?.sources ?? {}))
+      for (const src of list) if (src.kind === 'api' && src.options) o[src.id] = structuredClone(src.options)
+    return o
+  })
+  const [inherit, setInherit] = useState(prefs?.inherit ?? true)
   const [tab, setTab] = useState('')
   const [error, setError] = useState('')
   const busy = saveSettings.isPending || savePrefs.isPending
@@ -106,13 +118,23 @@ function Editor({
       const next = settingsFrom(drafts)
       if (JSON.stringify(next) !== JSON.stringify(saved)) await saveSettings.mutateAsync(next)
       if (prefs) {
-        // An interface only counts on a language whose choice is "an interface".
-        const keep = [...apis].filter((id) => {
-          const owner = tabs.find((c) => apisOfTab(prefs, c).some((a) => a.id === id))
-          return owner === undefined || (drafts[owner]?.mode ?? 'default') === 'api'
-        })
-        if (inherit !== prefs.inherit || JSON.stringify([...keep].sort()) !== JSON.stringify([...prefs.apis].sort()))
-          await savePrefs.mutateAsync({ inherit, apis: keep })
+        // A list only counts on a language whose choice is "an interface".
+        const taken = tabs.filter((t) => (drafts[t]?.mode ?? 'default') === 'api')
+        for (const t of taken) {
+          const bad = (lists[t] ?? []).some((i) => i.kind === 'own' && i.draft.value === '')
+          if (bad) {
+            setTab(t)
+            return setError(`${tabName(t)}: ${th.settings.chooseFirst}`)
+          }
+        }
+        const payload = prefsPayload(lists, options, taken)
+        const before = prefsPayload(
+          listsFromPrefs(prefs, tabs),
+          Object.fromEntries(Object.entries(prefs.options ?? {})),
+          tabs,
+        )
+        if (inherit !== prefs.inherit || JSON.stringify(payload) !== JSON.stringify(before))
+          await savePrefs.mutateAsync({ inherit, ...payload })
       }
       toast.success(th.settings.saved)
     } catch (e) {
@@ -129,6 +151,10 @@ function Editor({
   const locked = (m: Mode) =>
     m === 'own' ? prefs?.allowed?.own === false : m === 'api' ? prefs?.allowed?.api === false : false
   const tabApis = apisOfTab(prefs, tab)
+  // Interfaces the space chose that no longer exist: left out of what was saved, and the owner is told.
+  const gone = Object.entries(prefs?.unavailable ?? {})
+    .filter(([, why]) => why === 'gone')
+    .map(([id]) => id)
   return (
     <div className="space-y-8">
       <SettingsSection title={th.title} description={th.settings.help}>
@@ -151,6 +177,11 @@ function Editor({
           ))}
         </div>
 
+        {gone.length > 0 && (
+          <div data-slot="source-gone">
+            <FormMessage tone="info">{th.settings.srcGone(gone.join(', '))}</FormMessage>
+          </div>
+        )}
         <div role="tabpanel" aria-label={tabName(tab)} className="grid gap-4 rounded-lg border p-4">
           <div role="radiogroup" aria-label={th.settings.sourceLabel} className="grid gap-2">
             {modes.map((m) => (
@@ -179,25 +210,21 @@ function Editor({
           {draft.mode === 'api' && (
             <div className="grid gap-2" data-slot="daily-apis">
               <p className="text-xs text-muted-foreground">{th.settings.apisHelp}</p>
+              {tabApis.length > 1 && <p className="text-xs text-muted-foreground">{th.settings.apisOrderHelp}</p>}
               {tabApis.length === 0 && <p className="text-sm text-muted-foreground">{th.settings.noApis}</p>}
-              {tabApis.map((a) => (
-                <label key={a.id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={apis.has(a.id)}
-                    disabled={busy}
-                    onChange={(e) =>
-                      setApis((prev) => {
-                        const next = new Set(prev)
-                        if (e.target.checked) next.add(a.id)
-                        else next.delete(a.id)
-                        return next
-                      })
-                    }
-                  />
-                  {th.settings.apiFor(a.name, a.lang)}
-                </label>
-              ))}
+              <SourceList
+                items={lists[tab] ?? []}
+                onItems={(next) => setLists((all) => ({ ...all, [tab]: next }))}
+                available={tabApis}
+                options={options}
+                onOptions={setOptions}
+                choices={choices}
+                canOwn={prefs?.allowed?.own !== false}
+                apiLocked={prefs?.allowed?.api === false}
+                unavailable={prefs?.unavailable}
+                disabled={busy}
+                owner={tab || 'all'}
+              />
             </div>
           )}
         </div>

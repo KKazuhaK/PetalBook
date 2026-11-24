@@ -1567,7 +1567,8 @@ export function useSaveDailyPrefs() {
   const qc = useQueryClient()
   const space = useSpaceId()
   return useMutation({
-    mutationFn: (input: { inherit: boolean; apis: string[] }) => spaceApi(space).putDailyPrefs(input),
+    mutationFn: (input: Parameters<ReturnType<typeof spaceApi>['putDailyPrefs']>[0]) =>
+      spaceApi(space).putDailyPrefs(input),
     onSuccess: (res) => {
       qc.setQueryData(keys.dailyPrefs(space), res)
       void qc.invalidateQueries({ queryKey: ['space', space, 'daily'] })

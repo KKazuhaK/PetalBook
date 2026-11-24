@@ -180,6 +180,8 @@ var routeTable = []route{
 	{"GET", "/api/admin/exports/{id}/download", admin, true, false, false, (*server).adminDownloadExport},
 	{"GET", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminGetDaily},
 	{"PUT", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminPutDaily},
+	{"GET", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminGetDailyLines},
+	{"POST", "/api/admin/daily/lines/preview", siteAdmin, true, false, false, (*server).adminPreviewDailyLines},
 	{"PUT", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminPutDailyLines},
 	{"DELETE", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminDeleteDailyLines},
 	{"PUT", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminPutDailyAPI},

@@ -192,6 +192,15 @@ describe('the Home section, accounts mode', () => {
     enabled: true,
   })
 
+  const addMenu = () =>
+    dialog()!.querySelector<HTMLSelectElement>(
+      `[data-slot="daily-apis"] select[aria-label="${th.settings.addSource}"]`,
+    )!
+  const addable = () => [...addMenu().querySelectorAll('option')].map((o) => o.value).filter((v) => v !== '')
+  const items = () =>
+    [...dialog()!.querySelectorAll('[data-slot="source-list"] > li')].map((e) => e.getAttribute('data-source-kind'))
+  const item = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-api-item="${id}"]`)!
+
   it("the interfaces made for a language are on its tab; choosing them is saved as the space's choice", async () => {
     await asOwner((admin) => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
@@ -200,12 +209,10 @@ describe('the Home section, accounts mode', () => {
     })
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
-    const boxes = () => [
-      ...dialog()!.querySelectorAll<HTMLInputElement>('[data-slot="daily-apis"] input[type="checkbox"]'),
-    ]
-    expect(boxes()).toHaveLength(1)
-    expect(boxes()[0].parentElement!.textContent).toBe(th.settings.apiFor('接口zhone', 'zh-Hans'))
-    await click(boxes()[0])
+    // The interfaces of the tab, and the other kinds of source.
+    expect(addable()).toEqual(['zhone', '@list', '@own'])
+    await type(addMenu(), 'zhone')
+    expect(items()).toEqual(['api'])
     await click(save())
     await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
     expect(writes().find((w) => w.url === '/daily/prefs')!.body).toEqual({ inherit: true, apis: ['zhone'] })
@@ -213,7 +220,97 @@ describe('the Home section, accounts mode', () => {
     // The all-languages tab has the one that takes any language.
     await click(tab(''))
     await click(mode(th.settings.modes.api))
-    expect(boxes().map((b) => b.parentElement!.textContent)).toEqual([th.settings.apiFor('接口anyone', '')])
+    expect(addable()).toEqual(['anyone', '@list', '@own'])
+  })
+
+  it('sources of several kinds in a language: interfaces, the lines, pages of this space, in order', async () => {
+    await asOwner((admin) => admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans')))
+    await click(tab('zh-Hans'))
+    await click(mode(th.settings.modes.api))
+    await type(addMenu(), 'zhone')
+    await type(addMenu(), '@list')
+    await type(addMenu(), '@own')
+    expect(items()).toEqual(['api', 'list', 'own'])
+    // The lines can be listed once.
+    expect(addable()).toEqual(['@own'])
+    // Pages of this space need a source before it is saved.
+    await click(save())
+    await settle(() => document.body.textContent!.includes(th.settings.chooseFirst), 'asked for a source')
+    expect(writes().some((w) => w.url === '/daily/prefs')).toBe(false)
+    const own = dialog()!.querySelector<HTMLElement>('[data-source-kind="own"]')!
+    expect(own.querySelectorAll('select').length).toBeGreaterThan(0)
+    await click(dialog()!.querySelector<HTMLElement>('[data-source-kind="list"] [data-action="up"]')!)
+    expect(items()).toEqual(['list', 'api', 'own'])
+  })
+
+  it('the categories of a built-in interface and the order of several are saved with the choice', async () => {
+    await asOwner((admin) => {
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
+    })
+    await click(tab('zh-Hans'))
+    await click(mode(th.settings.modes.api))
+    await type(addMenu(), 'zhone')
+    await type(addMenu(), 'hitokoto')
+    const cat = (v: string) =>
+      item('hitokoto').querySelector<HTMLInputElement>(`[data-option="categories"] [data-value="${v}"]`)!
+    expect(cat('').checked).toBe(true)
+    await click(cat('i'))
+    await click(cat('k'))
+    // Hitokoto was chosen second; moved up it is tried first.
+    await click(item('hitokoto').querySelector<HTMLElement>('[data-action="up"]')!)
+    await click(save())
+    await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
+    expect(writes().find((w) => w.url === '/daily/prefs')!.body).toEqual({
+      inherit: true,
+      apis: ['hitokoto', 'zhone'],
+      options: { hitokoto: { categories: ['i', 'k'] } },
+    })
+  })
+
+  it('a category that is a path is one choice, and the default is not sent', async () => {
+    await asOwner((admin) => admin('PUT', '/api/admin/daily/providers/jinrishici', { enabled: true }))
+    await click(tab('zh-Hans'))
+    await click(mode(th.settings.modes.api))
+    await type(addMenu(), 'jinrishici')
+    const pick = () => dialog()!.querySelector<HTMLSelectElement>('[data-option="category"] select')!
+    expect(pick().value).toBe('all')
+    await type(pick(), 'shuqing/libie')
+    await click(save())
+    await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
+    expect(writes().find((w) => w.url === '/daily/prefs')!.body).toEqual({
+      inherit: true,
+      apis: ['jinrishici'],
+      options: { jinrishici: { category: ['shuqing/libie'] } },
+    })
+  })
+
+  it('an interface that was switched off stays, greyed with the reason, and a save keeps it', async () => {
+    await asOwner((admin, space) => {
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true })
+      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['hitokoto'] })
+      admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: false })
+    })
+    // It is on the first tab, in the list, marked.
+    expect(mode(th.settings.modes.api).checked).toBe(true)
+    const row = dialog()!.querySelector<HTMLElement>('[data-api-item="hitokoto"]')!
+    expect(row.getAttribute('data-unavailable')).toBe('disabled')
+    expect(row.querySelector('[data-slot="source-off"]')!.textContent).toContain(th.settings.srcOff.slice(1, 8))
+    // Another change is saved, and it goes back with it.
+    await click(dialog()!.querySelector<HTMLElement>('[role="switch"]')!)
+    await click(save())
+    await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
+    expect(writes().find((w) => w.url === '/daily/prefs')!.body).toMatchObject({ inherit: false, apis: ['hitokoto'] })
+  })
+
+  it('an interface that no longer exists is told, and nothing is shown in its place', async () => {
+    await asOwner((admin, space) => {
+      admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
+      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: true, apis: ['zhone'] })
+      admin('DELETE', '/api/admin/daily/apis/zhone')
+    })
+    expect(dialog()!.querySelector('[data-slot="source-gone"]')!.textContent).toContain('zhone')
+    expect(dialog()!.querySelector('[data-api-item="zhone"]')).toBeNull()
   })
 
   it('an interface left chosen on a language that no longer uses one is let go', async () => {

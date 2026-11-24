@@ -3217,9 +3217,8 @@ function suite(target: Target) {
         en.id,
         en.id,
       ])
-      // A language with no source of its own gets one of them, always the same.
-      expect(await title('fr')).toBe(await title('de'))
-      expect(await title('')).toBe(await title('fr'))
+      // A language with no source of its own gets none: not the source of another language.
+      for (const lang of ['fr', 'de', '']) expect((await daily(`date=2026-11-23&lang=${lang}`)).json.page).toBeNull()
       // The same source for every language.
       expect((await setDaily({ folder: `${folder}/zh` })).status).toBe(200)
       expect(await title('en')).toBe(zh.id)
@@ -3319,11 +3318,11 @@ function suite(target: Target) {
           .status,
       ).toBe(200)
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily.folder).toBe(`${folder}/mixmoved`)
-      // Without all languages, only the ones that have a source are asked for: another language gets one of them.
+      // Without all languages, only the ones that have a source are given a text: another language gets none.
       expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({
         'zh-Hans': { folder: `${folder}/mixzh`, filter: [] },
       })
-      expect(await id('fr')).toBe(zh.id)
+      expect((await daily('date=2026-11-23&lang=fr')).json.page).toBeNull()
     })
 
     it('tells a browser how long it may keep the daily text, and gives it a validator', async () => {
@@ -3462,6 +3461,70 @@ function suite(target: Target) {
     })
 
     if (accounts) {
+      it('lines keep their author and source, split off the text and shown beforehand; sources of several kinds are one default', async () => {
+        const adm = (method: string, path: string, body?: unknown) =>
+          call(admin, method, `/api/admin/daily${path}`, body)
+        try {
+          const pre = await adm('POST', '/lines/preview', {
+            text: '人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nThe best way out is always through. — Robert Frost\nI think — therefore I am',
+            format: 'lines',
+          })
+          expect(pre.status).toBe(200)
+          expect(pre.json.lines).toEqual([
+            { text: '人到情多情转薄，而今真个不多情。', author: '纳兰性德', source: '山花子' },
+            { text: 'The best way out is always through.', author: 'Robert Frost' },
+            { text: 'I think — therefore I am' },
+          ])
+          // A dash inside a sentence is not a mark: the text before it does not end one, and there is no 《source》.
+          const dashes = await adm('POST', '/lines/preview', {
+            text: '春眠不觉晓 —— 处处闻啼鸟\nNever give up — Never\nWar — Peace and Love\n春眠不觉晓 —— 孟浩然《春晓》',
+            format: 'lines',
+          })
+          expect(dashes.json.lines).toEqual([
+            { text: '春眠不觉晓 —— 处处闻啼鸟' },
+            { text: 'Never give up — Never' },
+            { text: 'War — Peace and Love' },
+            { text: '春眠不觉晓', author: '孟浩然', source: '春晓' },
+          ])
+          const csv = await adm('POST', '/lines/preview', {
+            text: 'text,author,source\n"One, two",Seneca,Letters\n',
+            format: 'csv',
+          })
+          expect(csv.json.lines).toEqual([{ text: 'One, two', author: 'Seneca', source: 'Letters' }])
+          expect((await adm('POST', '/lines/preview', { text: 'x', format: 'xml' })).status).toBe(400)
+          expect(
+            (
+              await adm('PUT', '/lines', {
+                lang: '',
+                lines: [{ text: 'He said — no', author: 'Someone', source: 'Somewhere' }],
+              })
+            ).status,
+          ).toBe(200)
+          expect((await adm('GET', '/lines?lang=')).json.lines).toEqual([
+            { text: 'He said — no', author: 'Someone', source: 'Somewhere' },
+          ])
+          const mixed = await adm('PUT', '', { default: { kind: 'sources', sources: { '': [{ kind: 'list' }] } } })
+          expect(mixed.status).toBe(200)
+          expect(mixed.json.default).toEqual({ kind: 'sources', sources: { '': [{ kind: 'list' }] } })
+          // Options belong to a source, not to the default.
+          expect(
+            (
+              await adm('PUT', '', {
+                default: { kind: 'sources', sources: { '': [{ kind: 'list' }] }, options: { x: { y: ['z'] } } },
+              })
+            ).status,
+          ).toBe(400)
+          // A single id is a list of one; a kind that is none is refused.
+          expect((await adm('PUT', '', { default: { kind: 'api', apis: { '': 'nothing' } } })).status).toBe(400)
+          expect(
+            (await adm('PUT', '', { default: { kind: 'sources', sources: { '': [{ kind: 'rss' }] } } })).status,
+          ).toBe(400)
+        } finally {
+          await adm('DELETE', '/lines?lang=')
+          await adm('PUT', '', { default: null })
+        }
+      })
+
       it('the administrators give a default for spaces with no source: lines by language, a choice per space, and the settings are theirs alone', async () => {
         const adm = (method: string, path: string, body?: unknown) =>
           call(admin, method, `/api/admin/daily${path}`, body)
@@ -3540,6 +3603,25 @@ function suite(target: Target) {
           expect(
             (await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: ['nope'] })).status,
           ).toBe(400)
+          // A space lists sources of its own, of several kinds, for each language; one that is none is refused.
+          const prefsUrl = `/api/spaces/${sp}/daily/prefs`
+          for (const bad of [
+            [{ kind: 'rss' }],
+            [{ kind: 'api', id: 'nope' }],
+            [{ kind: 'own' }],
+            [{ kind: 'list', id: 'x' }],
+          ])
+            expect((await call(admin, 'PUT', prefsUrl, { inherit: true, apis: [], sources: { '': bad } })).status).toBe(
+              400,
+            )
+          const mixed = await call(admin, 'PUT', prefsUrl, {
+            inherit: true,
+            apis: [],
+            sources: { '': [{ kind: 'list' }, { kind: 'own', source: { tag: 'nothing-here' } }] },
+          })
+          expect(mixed.status).toBe(200)
+          expect(mixed.json.sources[''].map((x: { kind: string }) => x.kind)).toEqual(['list', 'own'])
+          expect((await call(admin, 'PUT', prefsUrl, { inherit: true, apis: [] })).json.sources).toBeUndefined()
           const off = await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: false, apis: [] })
           expect([off.status, off.json.inherit]).toEqual([200, false])
           expect((await dq('date=2026-11-23&lang=zh')).json).toEqual({ page: null, reason: 'no_source' })
@@ -3608,7 +3690,13 @@ function suite(target: Target) {
           expect(start.json.presets).toBeUndefined()
           expect(start.json.providers.map((p: any) => [p.id, p.languages, p.rps])).toEqual([
             ['hitokoto', ['zh-Hans', 'zh-Hant'], 20],
-            ['quotable', ['en'], 3],
+            ['zenquotes', ['en'], 0.1],
+            ['favqs', ['en'], 1],
+            ['animechan', ['en'], 1 / 60],
+            ['dummyjson', ['en'], 1],
+            ['jinrishici', ['zh-Hans', 'zh-Hant'], 1],
+            ['shanbay', ['zh-Hans', 'en'], 1],
+            ['iciba', ['zh-Hans', 'en'], 1],
           ])
           expect(start.json.apis.some((a: any) => a.builtin)).toBe(false)
           // Making one: the value of a header is kept and never given back.
