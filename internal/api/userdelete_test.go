@@ -1033,6 +1033,72 @@ func TestABulkJobThatBreaksIsMarkedFailed(t *testing.T) {
 	})
 }
 
+// Closing the handler while a bulk job runs stops the job before its next item
+// and marks it interrupted with what was done; Close returns only once the job
+// has ended, so nothing of it runs on into the spaces and the database that are
+// closed after the handler. A job asked for after Close is not started.
+func TestClosingTheHandlerInterruptsABulkJobAndWaitsForIt(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		kazuha := mustUserID(t, a, "kazuha")
+		var items []string
+		var closed, ended atomic.Bool
+		held, release := make(chan struct{}), make(chan struct{})
+		defer api.SetBulkJobHook(kazuha, func(ctx context.Context, point, item string) {
+			if closed.Load() {
+				t.Errorf("the job is still running after Close returned (%s %s)", point, item)
+			}
+			if point == "end" {
+				ended.Store(true)
+				return
+			}
+			items = append(items, item)
+			if len(items) == 2 {
+				// Held at the second item until the handler is closed.
+				close(held)
+				select {
+				case <-ctx.Done():
+				case <-release:
+				}
+			}
+		})()
+		c := f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "disable_users", "users": []string{f.viewerID, f.editorID}}).want(t, 200, "")
+		id := f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
+		select {
+		case <-held:
+		case <-time.After(30 * time.Second):
+			t.Fatal("the job did not reach its second item")
+		}
+		a.h.Close()
+		if !ended.Load() {
+			t.Error("Close returned while the job was still running")
+			close(release)
+			for !ended.Load() {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		closed.Store(true)
+		j, err := store.GetBulkJob(context.Background(), a.st.Q(), store.AllTenants(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.State != store.JobInterrupted || j.Done != 1 || len(j.Failed) != 0 {
+			t.Fatalf("the job is %s with %d done and %v failed; want interrupted with 1 done", j.State, j.Done, j.Failed)
+		}
+		if !mustUser(t, a, "victor").Disabled || mustUser(t, a, "edith").Disabled {
+			t.Fatal("the first item is done and the second is not")
+		}
+		// A job asked for after Close is refused, and its row does not stay queued.
+		c = f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "enable_users", "users": []string{f.viewerID}}).want(t, 200, "")
+		f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 503, "unavailable")
+		if n := a.countRows(t, `SELECT COUNT(*) FROM bulk_jobs WHERE state IN ('queued', 'running')`); n != 0 {
+			t.Fatalf("%d jobs are left queued or running", n)
+		}
+		a.h.Close() // a second Close is harmless
+	})
+}
+
 // The rights of the administrator who started a job are checked again for each
 // item: one who is no longer an administrator stops being obeyed.
 func TestABulkJobChecksTheAdministratorForEachItem(t *testing.T) {

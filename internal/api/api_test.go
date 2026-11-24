@@ -56,7 +56,9 @@ func newFixture(t *testing.T, mod ...func(*api.Options)) *fixture {
 	for _, m := range mod {
 		m(&opts)
 	}
-	return &fixture{t: t, dir: dir, sp: sp, h: api.New(opts), opts: opts}
+	h := api.New(opts)
+	t.Cleanup(h.Close)
+	return &fixture{t: t, dir: dir, sp: sp, h: h, opts: opts}
 }
 
 // do sends a JSON request. body is marshalled unless it is a string or []byte,

@@ -155,7 +155,9 @@ func TestMCPInSingleUserMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h = api.New(api.Options{Store: f.opts.Store, Spaces: f.opts.Spaces, Drafts: f.opts.Drafts, Tokens: svc, Version: "test-1"})
+	h := api.New(api.Options{Store: f.opts.Store, Spaces: f.opts.Spaces, Drafts: f.opts.Drafts, Tokens: svc, Version: "test-1"})
+	t.Cleanup(h.Close)
+	f.h = h
 	call := func(secret, tool string, args map[string]any) (int, map[string]any, string) {
 		msg := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}}
 		code, r, raw := f.do("POST", "/mcp", msg, "Authorization", "Bearer "+secret, "Accept", "application/json, text/event-stream")
@@ -198,6 +200,7 @@ func TestMCPInSingleUserMode(t *testing.T) {
 	}
 	// The switch of the command line.
 	off := api.New(api.Options{Store: f.opts.Store, Spaces: f.opts.Spaces, Drafts: f.opts.Drafts, Tokens: svc, Version: "test-1", NoMCP: true})
+	t.Cleanup(off.Close)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	req.Header.Set("Content-Type", "application/json")

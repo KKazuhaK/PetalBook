@@ -760,7 +760,9 @@ func TestTokensInSingleUserMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h = api.New(api.Options{Store: f.opts.Store, Spaces: f.opts.Spaces, Drafts: f.opts.Drafts, Tokens: svc, Version: "test-1"})
+	h := api.New(api.Options{Store: f.opts.Store, Spaces: f.opts.Spaces, Drafts: f.opts.Drafts, Tokens: svc, Version: "test-1"})
+	t.Cleanup(h.Close)
+	f.h = h
 	auth := []string{"Authorization", "Bearer " + secret}
 	// With no token the server works as it did.
 	if code, _, raw := f.do("GET", base+"/tree", nil); code != 200 {

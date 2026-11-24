@@ -7380,8 +7380,10 @@ one space fails that item, which is listed in `failed` with its error, and the
 rest go on). At most one bulk job per tenant and two on the server run at once;
 others wait (`state: "queued"`). A job survives nothing: after a restart, items
 not done are not done, and the job reads `state: "interrupted"` with what was
-done. A job that ended is kept 30 days after its last change, then deleted
-(`404` from then on).
+done. A server that stops does not wait for its jobs to finish: each stops before
+its next item (the one it was on is cut short as a request whose client left)
+and is marked `interrupted` before the server exits. A job that ended is kept 30
+days after its last change, then deleted (`404` from then on).
 
 Single actions keep their own endpoints without a token, except the purge of a
 recycle item.

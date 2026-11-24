@@ -1,18 +1,20 @@
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
 // A tenant runs one bulk job at a time and the server two; the others wait.
 func TestTheJobRunnerAllowsOnePerTenantAndTwoOnTheServer(t *testing.T) {
+	bg := context.Background()
 	r := newJobRunner()
-	r.acquire("A")
-	r.acquire("B")
+	r.acquire(bg, "A")
+	r.acquire(bg, "B")
 	got := make(chan string, 4)
-	go func() { r.acquire("C"); got <- "C" }()
-	go func() { r.acquire("A"); got <- "A" }()
+	go func() { r.acquire(bg, "C"); got <- "C" }()
+	go func() { r.acquire(bg, "A"); got <- "A" }()
 	select {
 	case x := <-got:
 		t.Fatalf("%s started while two jobs were running", x)
@@ -44,10 +46,11 @@ func TestTheJobRunnerAllowsOnePerTenantAndTwoOnTheServer(t *testing.T) {
 
 // A job that works on several tenants waits for the turn of each of them.
 func TestAJobOfSeveralTenantsWaitsForEachOfThem(t *testing.T) {
+	bg := context.Background()
 	r := newJobRunner()
-	r.acquire("B")
+	r.acquire(bg, "B")
 	got := make(chan struct{})
-	go func() { r.acquire("A", "B"); close(got) }()
+	go func() { r.acquire(bg, "A", "B"); close(got) }()
 	select {
 	case <-got:
 		t.Fatal("it started while tenant B's turn was taken")
@@ -60,4 +63,33 @@ func TestAJobOfSeveralTenantsWaitsForEachOfThem(t *testing.T) {
 		t.Fatal("it never started")
 	}
 	r.release("A", "B")
+}
+
+// A job waiting for its turn stops waiting when its context ends (the handler
+// is closed), having taken nothing.
+func TestAWaitingJobStopsWaitingWhenItsContextEnds(t *testing.T) {
+	r := newJobRunner()
+	r.acquire(context.Background(), "A")
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan bool)
+	go func() { got <- r.acquire(ctx, "A") }()
+	select {
+	case <-got:
+		t.Fatal("it started while tenant A's turn was taken")
+	case <-time.After(150 * time.Millisecond):
+	}
+	cancel()
+	r.wake()
+	select {
+	case ok := <-got:
+		if ok {
+			t.Fatal("it took a turn after its context ended")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("it went on waiting")
+	}
+	r.release("A")
+	if !r.acquire(context.Background(), "A") {
+		t.Fatal("tenant A's turn was not given back")
+	}
 }
