@@ -400,12 +400,13 @@ func checkLangMap(m map[string]string) (map[string]string, error) {
 }
 
 // Serves reports whether an interface gives a text in the language a reader asks
-// in. One that answers in two languages at once (Texts) only serves those it has,
-// matched the BCP 47 way (zh-Hant is matched to zh-Hans, the one Chinese it has);
-// a reader of another language is not given the side it would fall back to. Any
-// other interface serves every language, as it always did.
+// in. A built-in one serves the languages it has (Languages), matched the BCP 47
+// way (zh-Hant is matched to zh-Hans, the one Chinese 扇贝 has); a reader of
+// another language is not given what it would fall back to: 一言 is never used
+// for English. An interface of the administrators' own, which has no list of
+// languages, serves every language its place in a default gives it.
 func (a API) Serves(lang string) bool {
-	if len(a.Texts) == 0 {
+	if len(a.Languages) == 0 {
 		return true
 	}
 	_, ok := langtag.Match(lang, a.Languages)
@@ -1638,14 +1639,14 @@ func Providers() []Provider {
 			Text: "hitokoto", Source: "from", Author: "from_who", Link: "https://hitokoto.cn?uuid={uuid}", LangMap: map[string]string{},
 			Refresh: RefreshDaily, SkipNew: true, RPS: 20, Enabled: true, Builtin: true},
 			Site:    "https://hitokoto.cn",
-			Note:    "Free, no key. The international line allows 20 requests a second; the service asks for a link back, which is filled in.",
+			Note:    "Free, no key. Chinese only. The international line allows 20 requests a second; the service asks for a link back, which is kept and not shown.",
 			Options: []Option{{Key: "categories", Param: "c", Kind: "multi", Values: hitokotoCategories}}},
 		{API: API{ID: "zenquotes", Name: "ZenQuotes", Lang: "en", Languages: []string{"en"},
 			URL:  "https://zenquotes.io/api/today",
 			Text: "[0].q", Author: "[0].a", Link: "https://zenquotes.io/", LangMap: map[string]string{},
 			Refresh: RefreshDaily, SkipNew: false, RPS: 0.1, Enabled: true, Builtin: true},
 			Site: "https://zenquotes.io/",
-			Note: "Free, no key. Quote of the day; attribution with a link back is required and filled in; 5 requests per 30 seconds per address."},
+			Note: "Free, no key. Quote of the day. Its terms require a link back to ZenQuotes, which PetalBook does not show: enable it only if you accept that. 5 requests per 30 seconds per address."},
 		{API: API{ID: "favqs", Name: "FavQs", Lang: "en", Languages: []string{"en"},
 			URL:  "https://favqs.com/api/qotd",
 			Text: "quote.body", Author: "quote.author", Link: "https://favqs.com/quotes/{quote.author_permalink}/{quote.id}", LangMap: map[string]string{},

@@ -3946,7 +3946,7 @@ interfaces that are set up.
 
 `inherit` is whether the space shows the server's default when it has nothing
 else; `apis` are the ids of the interfaces it uses (for a language, the one
-made for it, else one that takes any language, else any; with several for the language
+made for it, else one that takes every language, and none when there is no such: never one made for another language; with several for the language
 they are in this order, see "Several interfaces for a language"); `options` are
 the values chosen for the built-in interfaces of `apis`, by interface id and
 option key (see "Options of a built-in interface"; absent is all); `available` are all
@@ -4062,7 +4062,7 @@ nothing else, and the repairs are saved once, at the first read:
   `{"kind": "space", "space": id, "source": …}` where `source` is a source or
   sources by language as above, checked in that space (choosing a space shows
   its content to everybody; a client says so), or
-  `{"kind": "api", "apis": {"": ["zenquotes", "favqs"], "zh": ["hitokoto"]}, "options": {"hitokoto": {"categories": ["i"]}}}`:
+  `{"kind": "api", "apis": {"": ["favqs", "dummyjson"], "zh": ["hitokoto"]}, "options": {"hitokoto": {"categories": ["i"]}}}`:
   the interface ids per language, in order, `""` for all languages not listed
   (a single id written as a string is read as a list of one; 1 to 8 for each
   language). Each must be an interface of `apis` (`400 invalid` with
@@ -4201,9 +4201,11 @@ and as the site default like any other; its address, paths, link and language
 mapping cannot be changed (`400 invalid`, `error: "builtin"`). None is enabled
 until an administrator enables it, and no service is contacted before that.
 Today: `hitokoto` (一言, the international line; `zh-Hans`, `zh-Hant`; link
-back to the sentence as the service asks) `zenquotes` (ZenQuotes, quote of the day; `en`; the service requires a link back,
-which is filled in, and allows 5 requests per 30 seconds per address, so `rps`
-is at most 0.1), `favqs` (FavQs, quote of the day; `en`), `animechan`
+back to the sentence as the service asks, kept in the answer but never shown as a
+link by the web app) `zenquotes` (ZenQuotes, quote of the day; `en`; its terms
+require a link back to ZenQuotes, which PetalBook does not show, so it is in no
+default and an administrator enables it at their own judgement; it allows 5
+requests per 30 seconds per address, so `rps` is at most 0.1), `favqs` (FavQs, quote of the day; `en`), `animechan`
 (Animechan, anime quotes with the anime as `source` and the character as
 `author`; `en`; 100 requests a day per address, so `rps` is at most 1/60 and
 "another" does not ask it again), `dummyjson` (DummyJSON, about 1,400 quotes made
@@ -4251,6 +4253,19 @@ stored as none). `jinrishici` has `category`: `all`, the first level (`shuqing`,
 `siji`, …) and the second (`shuqing/libie`), the categories the service
 publishes that answered with JSON when checked.
 
+**Only the reader's language.** The daily text is in the language of the reader
+and no other: the source for the language they are matched to (BCP 47, so
+`zh-Hant` finds `zh-Hans`), else the one for "all other languages", and when
+there is none the answer has no text and the page shows its greeting alone. Lines
+and pages of another language are not used in its place, and neither is an
+interface a space chose that is made for another language. A built-in interface
+serves the languages it has (`languages` of the provider): `hitokoto` and
+`jinrishici` have Chinese only, `zenquotes`, `favqs`, `animechan` and
+`dummyjson` English only; listing one under a language it does not have is `400
+invalid`, and one listed under `""` is skipped for the readers it has no text for.
+The web app shows the author and source as text, `—— 作者《出处》`, and never as
+a link: `link` is kept in the answer and not drawn.
+
 **Several interfaces for a language.** A language's list is in order. The
 interfaces take turns by day: the one the day starts with is the day number
 plus a number made from the scope (the space, the tenant or the site) modulo
@@ -4263,7 +4278,7 @@ other has a fresh one, and when none answers the reason is `unavailable` (or
 to the next of the list; after the last it is the first again, which asks for a
 new item if its `skipNew` allows. With one interface nothing changes. For a
 space the list is its `apis` in order, for the reader's language (made for it,
-else for every language, else all).
+or else for every language, and none otherwise).
 
 **Language codes in the address**: `{lang}` is filled with the reader's
 language as matched (a canonical BCP 47 tag, e.g. `zh-Hans`). Services that
@@ -4419,9 +4434,10 @@ the text as `{"text", "author", "source"}` of the daily quote (below).
 Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
 under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
 it is stored, so they can still be replaced or deleted.
-For a language the lines used are those of the language, else of its
-language without region, else those for any language, else the first
-language that has some; the line is picked as a page is (from the day and
+For a language the lines used are those of the language (matched as languages
+are everywhere), else those for any language ("all other languages"); never
+those of another language: a reader of a language with none of its own and no
+lines for any language is given none. The line is picked as a page is (from the day and
 `skip`, modulo how many there are).
 
 ### Favourites

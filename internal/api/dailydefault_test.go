@@ -312,7 +312,11 @@ func TestBuiltInInterfaces(t *testing.T) {
 			t.Fatalf("%v", r["providers"])
 		}
 		x.choose("hitokoto")
-		for _, lang := range []string{"zh-CN", "zh-TW", "fr"} {
+		// 一言 has Chinese only: a reader of French is given nothing of it.
+		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=fr"); r["quote"] != nil {
+			t.Errorf("fr: %v", r)
+		}
+		for _, lang := range []string{"zh-CN", "zh-TW"} {
 			r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang="+lang)
 			if q := asMap(r["quote"]); q == nil || q["text"] != "山有木兮木有枝" || q["source"] != "越人歌" || q["author"] != nil || q["link"] != "https://hitokoto.cn?uuid=abc-123" {
 				t.Errorf("%s: %v", lang, r)

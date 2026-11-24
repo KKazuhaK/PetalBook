@@ -34,6 +34,8 @@ func (s *twoServices) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch r.URL.Host {
 	case "favqs.com":
 		body = `{"quote":{"body":"fav","author":"Buddha","author_permalink":"buddha","id":1}}`
+	case "dummyjson.com":
+		body = `{"quote":"dummy","author":"D"}`
 	case "apiv3.shanbay.com":
 		body = `{"content":"Be kind.","translation":"与人为善。","author":"A","assign_date":"2026-11-23"}`
 	case "international.v1.hitokoto.cn":
@@ -57,12 +59,13 @@ func (x *extFixture) setDefault(apis map[string]any, options map[string]any) {
 }
 
 func (x *extFixture) enableAll() {
-	for _, id := range []string{"zenquotes", "favqs", "hitokoto"} {
+	for _, id := range []string{"zenquotes", "favqs", "hitokoto", "dummyjson"} {
 		x.adm("PUT", "/api/admin/daily/providers/"+id, map[string]any{"enabled": true, "rps": 0.1})
 	}
 	// ZenQuotes at 0.1 is its most; the others are tuned to it so that several days can be asked.
 	x.adm("PUT", "/api/admin/daily/providers/favqs", map[string]any{"enabled": true, "rps": 1})
 	x.adm("PUT", "/api/admin/daily/providers/hitokoto", map[string]any{"enabled": true, "rps": 5})
+	x.adm("PUT", "/api/admin/daily/providers/dummyjson", map[string]any{"enabled": true, "rps": 1})
 }
 
 func TestSeveralInterfacesTakeTurnsByDay(t *testing.T) {
@@ -70,7 +73,7 @@ func TestSeveralInterfacesTakeTurnsByDay(t *testing.T) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
-		x.setDefault(map[string]any{"": []any{"hitokoto", "favqs"}}, nil)
+		x.setDefault(map[string]any{"": []any{"dummyjson", "favqs"}}, nil)
 		// Each ask is a moment later, so that the rate limits do not come into it.
 		ask := func(c caller, base, query string) string {
 			x.now = x.now.Add(2 * time.Second)
@@ -103,12 +106,12 @@ func TestAnInterfaceThatFailsIsPassedOverForTheNext(t *testing.T) {
 		svc := &twoServices{}
 		x.fetcher.SetTransport(svc)
 		x.enableAll()
-		x.setDefault(map[string]any{"": []any{"hitokoto", "favqs"}}, nil)
+		x.setDefault(map[string]any{"": []any{"dummyjson", "favqs"}}, nil)
 		text := func(day string) string {
 			x.now = x.now.Add(2 * time.Second)
 			return quoteText(quoteOf(t, x.own, x.base, "date="+day+"&lang=en"))
 		}
-		svc.fail("international.v1.hitokoto.cn", true)
+		svc.fail("dummyjson.com", true)
 		for _, day := range []string{"2026-11-22", "2026-11-23", "2026-11-24"} {
 			if got := text(day); got != "fav" {
 				t.Fatalf("hitokoto is down on %s: %q", day, got)
@@ -116,14 +119,14 @@ func TestAnInterfaceThatFailsIsPassedOverForTheNext(t *testing.T) {
 		}
 		// Rate limited counts the same: favqs at once after a request of its own is limited, and
 		// hitokoto, which answers, is used.
-		svc.fail("international.v1.hitokoto.cn", false)
+		svc.fail("dummyjson.com", false)
 		x.adm("PUT", "/api/admin/daily/providers/favqs", map[string]any{"enabled": true, "rps": 0.01})
 		x.now = x.now.Add(time.Hour)
-		if got := text("2026-11-22"); got != "hito" && got != "fav" {
+		if got := text("2026-11-22"); got != "dummy" && got != "fav" {
 			t.Fatalf("%q", got)
 		}
 		// None answers: the last thing said is shown as stale, and with nothing said, the text is unavailable.
-		svc.fail("international.v1.hitokoto.cn", true)
+		svc.fail("dummyjson.com", true)
 		svc.fail("favqs.com", true)
 		x.now = x.now.Add(48 * time.Hour)
 		r := quoteOf(t, x.own, x.base, "date=2026-11-25&lang=en")
@@ -166,7 +169,7 @@ func TestSeveralInterfacesInASpaceAndTheLock(t *testing.T) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
-		x.setDefault(map[string]any{"": []any{"hitokoto"}}, nil)
+		x.setDefault(map[string]any{"": []any{"dummyjson"}}, nil)
 		x.choose("zenquotes", "favqs")
 		d22 := quoteText(quoteOf(t, x.own, x.base, "date=2026-11-22&lang=en"))
 		x.now = x.now.Add(15 * time.Second)
@@ -178,7 +181,7 @@ func TestSeveralInterfacesInASpaceAndTheLock(t *testing.T) {
 		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
-		if got := quoteText(quoteOf(t, x.own, x.base, "date=2026-11-23&lang=en")); got != "hito" {
+		if got := quoteText(quoteOf(t, x.own, x.base, "date=2026-11-23&lang=en")); got != "dummy" {
 			t.Fatalf("locked: %q", got)
 		}
 	})

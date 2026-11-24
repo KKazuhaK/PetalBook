@@ -167,6 +167,9 @@ func TestSourcesAreReadFromOlderConfigsAndChecked(t *testing.T) {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
+		if code, r := x.setSources(map[string]any{"": []any{map[string]any{"kind": "list"}}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
 		_, r := x.adm("GET", "/api/admin/daily", nil)
 		if got := fmt.Sprint(asMap(r["default"])["sources"]); got != "map[:[map[kind:list]]]" {
 			t.Fatalf("%s", got)
@@ -288,8 +291,8 @@ func TestAnotherFollowsTheSourceThatAnswered(t *testing.T) {
 		svc := &twoServices{}
 		x.fetcher.SetTransport(svc)
 		x.enableAll()
-		svc.fail("international.v1.hitokoto.cn", true)
-		x.setSources(map[string]any{"": []any{map[string]any{"kind": "api", "id": "hitokoto"}, map[string]any{"kind": "api", "id": "favqs"}, map[string]any{"kind": "api", "id": "zenquotes"}}})
+		svc.fail("dummyjson.com", true)
+		x.setSources(map[string]any{"": []any{map[string]any{"kind": "api", "id": "dummyjson"}, map[string]any{"kind": "api", "id": "favqs"}, map[string]any{"kind": "api", "id": "zenquotes"}}})
 		ask := func(query string) string {
 			x.now = x.now.Add(15 * time.Second)
 			return quoteText(quoteOf(t, x.own, x.base, query))
@@ -339,7 +342,7 @@ func TestASpacesSwitchedOffInterfaceIsKeptAndMarked(t *testing.T) {
 			t.Fatalf("a save lost it: %v", p["sources"])
 		}
 		// But a space cannot newly choose one that is off.
-		if code, _ := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}, "sources": map[string]any{"": []any{map[string]any{"kind": "api", "id": "zenquotes"}, map[string]any{"kind": "api", "id": "dummyjson"}}}}); code != 400 {
+		if code, _ := x.own("PUT", x.base+"/daily/prefs", map[string]any{"inherit": true, "apis": []any{}, "sources": map[string]any{"": []any{map[string]any{"kind": "api", "id": "zenquotes"}, map[string]any{"kind": "api", "id": "animechan"}}}}); code != 400 {
 			t.Errorf("a switched-off interface was chosen: %d", code)
 		}
 		// Switched on again, it is used again.
@@ -404,8 +407,9 @@ func TestABilingualInterfaceSkipsLanguagesItDoesNotServe(t *testing.T) {
 			return quoteText(quoteOf(t, x.own, x.base, "date="+day+"&lang="+lang))
 		}
 		days := []string{"2026-11-22", "2026-11-23", "2026-11-24"}
+		// French: shanbay is skipped, and favqs is English only: nothing, not the Chinese side.
 		for _, day := range days {
-			if got := ask("fr", day); got != "fav" {
+			if got := ask("fr", day); got != "" {
 				t.Errorf("fr on %s: %q", day, got)
 			}
 		}
@@ -424,6 +428,81 @@ func TestABilingualInterfaceSkipsLanguagesItDoesNotServe(t *testing.T) {
 			if !seen["与人为善。"] || seen["Be kind."] {
 				t.Errorf("%s: %v", lang, seen)
 			}
+		}
+	})
+}
+
+// The daily text is in the reader's language only: no source for it, no text, and the lines or
+// interfaces of another language are not given in its place.
+func TestNoTextInAnotherLanguage(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		x.fetcher.SetTransport(&twoServices{})
+		x.enableAll()
+		x.putLines("zh-Hans", "中文的一行", "lines")
+		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		none := func(what, query string) {
+			t.Helper()
+			if r := quoteOf(t, x.viewer, x.base, query); r["quote"] != nil {
+				t.Errorf("%s: %v", what, r)
+			}
+		}
+		// Lines in Chinese only: a Chinese reader has them (also zh-Hant, matched to zh-Hans), an English one none.
+		for _, lang := range []string{"zh-CN", "zh-Hant"} {
+			if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang="+lang)); got != "中文的一行" {
+				t.Errorf("%s: %q", lang, got)
+			}
+		}
+		none("lines in zh given to en", "date=2026-11-23&lang=en")
+		none("lines in zh given to fr", "date=2026-11-23&lang=fr")
+		// Lines for any language ("All other languages") are given to a language with none of its own.
+		x.putLines("", "For any language", "lines")
+		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "For any language" {
+			t.Errorf("%q", got)
+		}
+		x.adm("DELETE", "/api/admin/daily/lines?lang=", nil)
+		// Sources by language: a list for zh is not given to en, but one under "" is.
+		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "sources", "sources": map[string]any{"zh-Hans": []any{map[string]any{"kind": "list"}}}}})
+		none("a zh list given to en", "date=2026-11-23&lang=en")
+		// A space that chose an interface made for Chinese gives an English reader nothing of it.
+		x.adm("PUT", "/api/admin/daily", map[string]any{"default": nil})
+		x.choose("hitokoto")
+		none("an interface for zh chosen by the space, given to en", "date=2026-11-23&lang=en")
+		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=zh-CN")); got != "hito" {
+			t.Errorf("the Chinese reader has it: %q", got)
+		}
+	})
+}
+
+// Hitokoto has Chinese only: it is never put under another language, and under "all other languages"
+// it is not used for an English reader.
+func TestHitokotoIsNeverUsedForEnglish(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		x.fetcher.SetTransport(&twoServices{})
+		x.enableAll()
+		for name, sources := range map[string]map[string]any{"en": {"en": []any{map[string]any{"kind": "api", "id": "hitokoto"}}}, "fr, with others": {"fr": []any{map[string]any{"kind": "api", "id": "favqs"}, map[string]any{"kind": "api", "id": "hitokoto"}}}} {
+			if code, r := x.setSources(sources); code != 400 {
+				t.Errorf("%s: %d %v", name, code, r)
+			}
+		}
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"en": []any{"hitokoto"}}}}); code != 400 {
+			t.Errorf("the earlier kind: %d %v", code, r)
+		}
+		for _, lang := range []string{"zh-Hans", "zh-Hant"} {
+			if code, r := x.setSources(map[string]any{lang: []any{map[string]any{"kind": "api", "id": "hitokoto"}}}); code != 200 {
+				t.Errorf("%s: %d %v", lang, code, r)
+			}
+		}
+		// Explicitly under "all other languages": the Chinese readers get it, the English one does not.
+		if code, r := x.setSources(map[string]any{"": []any{map[string]any{"kind": "api", "id": "hitokoto"}}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=zh-CN")); got != "hito" {
+			t.Errorf("%q", got)
+		}
+		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en"); r["quote"] != nil {
+			t.Errorf("hitokoto for an English reader: %v", r)
 		}
 	})
 }

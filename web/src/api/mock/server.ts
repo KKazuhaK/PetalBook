@@ -1924,7 +1924,7 @@ export function createMockServer(options: MockOptions = {}) {
       name: 'ZenQuotes',
       languages: ['en'],
       site: 'https://zenquotes.io/',
-      note: 'Free, no key. Quote of the day; attribution with a link back is required and filled in; 5 requests per 30 seconds per address.',
+      note: 'Free, no key. Quote of the day. Its terms require a link back to ZenQuotes, which PetalBook does not show: enable it only if you accept that. 5 requests per 30 seconds per address.',
       url: 'https://zenquotes.io/api/today',
       text: '[0].q',
       source: '',
@@ -2106,8 +2106,8 @@ export function createMockServer(options: MockOptions = {}) {
   const chooseApis = (chosen: SiteApi[], lang: string): SiteApi[] => {
     const m = matchTag(lang, chosen.flatMap(apiTags))
     if (m !== null) return chosen.filter((a) => apiTags(a).includes(m))
-    const every = chosen.filter((a) => a.lang === '')
-    return every.length > 0 ? every : chosen
+    // Those that take every language; never one made for another language.
+    return chosen.filter((a) => a.lang === '')
   }
   const valuesOf = (
     p: { options?: { key: string; kind: string; default?: string; values: { value: string }[] }[] } | undefined,
@@ -2186,7 +2186,8 @@ export function createMockServer(options: MockOptions = {}) {
     const fromLines = (): Record<string, unknown> => {
       const have = [...site.lines.keys()].filter((l) => l !== '' && (site.lines.get(l)?.length ?? 0) > 0)
       const m = matchTag(lang, have)
-      const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : have.sort()[0])
+      // The language of the reader, or the lines for all the others; never those of another language.
+      const use = m ?? ((site.lines.get('')?.length ?? 0) > 0 ? '' : undefined)
       const list = use === undefined ? [] : (site.lines.get(use) ?? [])
       if (!list.length) return { page: null }
       const line = list[pickNumber('site:' + use, date, skip, list.length)]
@@ -2214,6 +2215,8 @@ export function createMockServer(options: MockOptions = {}) {
         }
       }
       const a = apis.find((x) => x.id === src.id && x.enabled)
+      // A built-in interface gives text in the languages it has only (一言 is never used for English).
+      if (a?.builtin && !servesLang(a.id, lang)) return { page: null }
       return a ? quoteFrom(a, date, lap, src.options ?? options?.[a.id]) : { page: null, reason: 'unavailable' }
     }
     // Sources take turns by day, one text at a time; one with nothing is passed over for the next, and "another"
@@ -2286,6 +2289,11 @@ export function createMockServer(options: MockOptions = {}) {
       return ask(list, 'site', d.kind === 'api' ? d.options : undefined)
     }
     return { page: null, reason: 'no_source' }
+  }
+  // Whether a built-in interface has text in a language (matched as languages are): 一言 has Chinese only.
+  const servesLang = (id: string, lang: string): boolean => {
+    const have = PROVIDERS.find((p) => p.id === id)?.languages
+    return have === undefined || matchTag(lang, have) !== null
   }
   // How an interface stands: set up and on, switched off, or not there at all.
   const statusOf = (id: string): 'ok' | 'disabled' | 'gone' => {
@@ -2473,9 +2481,11 @@ export function createMockServer(options: MockOptions = {}) {
             const list = typeof value === 'string' ? [value] : value
             if (!Array.isArray(list) || list.length < 1 || list.length > 8)
               throw new HttpError(400, 'invalid', '每种语言 1 到 8 个接口')
-            for (const id of list)
+            for (const id of list) {
               if (typeof id !== 'string' || !ids.has(id))
                 throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+              if (tag !== '' && !servesLang(id, tag)) throw new HttpError(400, 'invalid', `${id} 没有 ${tag} 的文案`)
+            }
             apis[tag] = [...new Set(list as string[])]
           }
           const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
@@ -2498,6 +2508,8 @@ export function createMockServer(options: MockOptions = {}) {
               if (src.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 space')
               if (typeof src.id !== 'string' || !ids.has(src.id))
                 throw new HttpError(400, 'api_not_found', `没有接口 ${String(src.id)}`)
+              if (tag !== '' && !servesLang(src.id, tag))
+                throw new HttpError(400, 'invalid', `${src.id} 没有 ${tag} 的文案`)
               const options = checkOptions([src.id], src.options === undefined ? undefined : { [src.id]: src.options })[
                 src.id
               ]

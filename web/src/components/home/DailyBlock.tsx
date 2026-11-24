@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { ExternalLink, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { useQueryClient } from '@tanstack/react-query'
@@ -19,17 +19,6 @@ import { shortDate } from '@/lib/time'
 // languages that are set up (zh-CN finds zh-Hans, en-GB finds en).
 const lang = canonicalTag(uiLang) ?? 'en'
 
-// A link is only drawn for an address that is a web address: what an interface says is not taken on trust.
-const webLink = (link: string | undefined): URL | null => {
-  if (!link) return null
-  try {
-    const u = new URL(link)
-    return u.protocol === 'https:' || u.protocol === 'http:' ? u : null
-  } catch {
-    return null
-  }
-}
-
 // "《Title》｜Subtitle" for a page that has them, else what the page is called.
 export function pageHead(p: { title?: string; subtitle?: string; label: string }): string {
   if (!p.title) return p.label
@@ -38,28 +27,15 @@ export function pageHead(p: { title?: string; subtitle?: string; label: string }
 
 // Who said it and where it is from, under every text of the day whatever it came from (a page of the space, the
 // administrators' lines, an external interface): "—— 作者《出处》" in Chinese, "— Author, Source" in English, only the
-// parts there are, and a link icon when there is a link to the origin. Nothing at all when there is none of them.
-export function Attribution({ author, source, link }: { author?: string; source?: string; link?: string }) {
-  const url = webLink(link)
+// parts there are, as plain text. There is never a link to somewhere else here: what an interface sends as one is
+// not drawn, so that the home page does not send people off the site. Nothing at all when there is none of them.
+export function Attribution({ author, source }: { author?: string; source?: string }) {
   const text =
     uiLang === 'en' ? [author, source].filter(Boolean).join(', ') : `${author ?? ''}${source ? `《${source}》` : ''}`
-  if (!text && !url) return null
+  if (!text) return null
   return (
-    <p className="flex items-center gap-1.5 text-sm text-muted-foreground" data-slot="daily-attribution">
-      {text && <span>{`${uiLang === 'en' ? '—' : '——'} ${text}`}</span>}
-      {url && (
-        <a
-          href={url.href}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          title={th.daily.via(url.host)}
-          aria-label={th.daily.via(url.host)}
-          className="inline-flex text-muted-foreground underline-offset-4 hover:text-foreground"
-          data-slot="daily-link"
-        >
-          <ExternalLink className="size-3.5" aria-hidden="true" />
-        </a>
-      )}
+    <p className="text-sm text-muted-foreground" data-slot="daily-attribution">
+      {`${uiLang === 'en' ? '—' : '——'} ${text}`}
     </p>
   )
 }
@@ -178,7 +154,7 @@ function Quote({ quote }: { quote: DailyQuote }) {
   return (
     <>
       <blockquote className="text-base leading-relaxed whitespace-pre-line text-foreground/90">{quote.text}</blockquote>
-      <Attribution author={quote.author} source={quote.source} link={quote.link} />
+      <Attribution author={quote.author} source={quote.source} />
       {quote.stale && (
         <p className="text-xs text-amber-700 dark:text-amber-300" data-slot="daily-stale">
           {th.daily.stale(when && !Number.isNaN(when.getTime()) ? shortDate(when) : '')}

@@ -51,7 +51,7 @@ import {
   type SourceDraft,
 } from '@/lib/dailySettings'
 import { dayOf } from '@/api/hooks'
-import { canonicalTag } from '@/lib/langTags'
+import { canonicalTag, matchTag } from '@/lib/langTags'
 import { dailyCodeMessage } from './dailyCodes'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
@@ -558,6 +558,7 @@ function DefaultSection({ data }: { data: AdminDaily }) {
                       <optgroup label={d.sourceInterfaces}>
                         {data.apis
                           .filter((a) => !items.some((x) => x.kind === 'api' && x.id === a.id))
+                          .filter((a) => l === '' || !a.builtin || matchTag(l, a.languages ?? [a.lang]) !== null)
                           .map((a) => (
                             <option key={a.id} value={a.id}>
                               {a.name}

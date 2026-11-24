@@ -81,7 +81,6 @@ export const homeZhCN = {
     skipLimit: '今天最多只能换到这里了。',
     tooOften: '换得太快了，过一会儿再试。',
     open: '打开这一篇',
-    via: (host: string) => `来源：${host}`,
     stale: (when: string) => `这是 ${when} 的，对方暂时没有回应。`,
     noMatch: '设置的来源里还没有符合条件的页面。',
     noMatchSettings: '去设置',

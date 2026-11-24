@@ -386,13 +386,11 @@ func TestDailyConfigByLanguage(t *testing.T) {
 			t.Errorf("%s: %s", lang, p.Page.Title)
 		}
 	}
-	// A language nobody wrote a source for gets one of the sources, always the same.
-	a, b := mustDailyLang(t, s, "fr"), mustDailyLang(t, s, "de")
-	if a.Page.Title != b.Page.Title || a.Page.Title != "English one" {
-		t.Errorf("%s %s", a.Page.Title, b.Page.Title)
-	}
-	if p := mustDailyLang(t, s, ""); p.Page.Title != "English one" {
-		t.Errorf("no language: %s", p.Page.Title)
+	// A language nobody wrote a source for gets none: not the source of another language.
+	for _, lang := range []string{"fr", "de", ""} {
+		if p, none, err := s.DailyText("S", "2026-11-23", 0, lang); err != nil || p != nil || none == 0 {
+			t.Errorf("%q: %v %v %v", lang, p, none, err)
+		}
 	}
 	// A folder moved takes the sources of every language with it.
 	if _, err := s.MoveFolder(Author{}, "文案", "诗"); err != nil {
@@ -620,5 +618,25 @@ func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
 	p, _, err = s.DailyFrom("S", "2026-11-23", 0, folder("中文"))
 	if err != nil || p == nil || p.Author != "苏轼" || p.Page.Source != "东坡集" {
 		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+// A source by language is for that language (matched the BCP 47 way) or for all the others, and for no other:
+// a reader of a language with none gets nothing, not the first source there is.
+func TestDailyConfigHasNoFallbackToAnotherLanguage(t *testing.T) {
+	folder := "x"
+	zh := DailySource{Folder: &folder}
+	only := DailyConfig{ByLang: map[string]DailySource{"zh-Hans": zh}}
+	if only.For("zh-CN") == nil || only.For("zh-Hant") == nil {
+		t.Error("a Chinese reader has it")
+	}
+	for _, lang := range []string{"en", "fr", "en-GB", ""} {
+		if got := only.For(lang); got != nil {
+			t.Errorf("%q is given the source of zh", lang)
+		}
+	}
+	all := DailyConfig{All: &zh, ByLang: map[string]DailySource{"zh-Hans": {Tag: "t"}}}
+	if got := all.For("en"); got == nil || got.Tag != "" {
+		t.Errorf("all other languages: %+v", got)
 	}
 }

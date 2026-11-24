@@ -147,14 +147,9 @@ func (c *DailyConfig) For(lang string) *DailySource {
 			return &d
 		}
 	}
-	if c.All != nil {
-		return c.All
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	d := c.ByLang[keys[0]]
-	return &d
+	// The source for all the other languages, if there is one; never the source of
+	// another language: the text is in the reader's language or there is none.
+	return c.All
 }
 
 // MarshalJSON writes the one source, or the sources by language.

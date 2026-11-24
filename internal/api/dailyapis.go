@@ -593,8 +593,8 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 		return nil, "unavailable", nil
 	}
 	cands := chooseAPIs(all, choice.APIs, lang)
-	if len(cands) == 0 && len(choice.APIs) > 0 {
-		return nil, "unavailable", nil
+	if len(cands) == 0 && slices.ContainsFunc(choice.APIs, func(id string) bool { return site.ifaceStatus(id) != "" }) {
+		return nil, "unavailable", nil // one it chose is gone or off, and none else gives a text
 	}
 	if len(cands) > 0 {
 		srcs := make([]dailySource, len(cands))
@@ -821,7 +821,7 @@ func apiLangs(a storedAPI) []string {
 // chooseAPIs picks, among the enabled interfaces a space chose, those for the
 // language, in the order the space listed them: made for the language the
 // reader's is matched to (the BCP 47 way), else those that take every
-// language, else all of them.
+// language; none when there is no such, never one made for another language.
 func chooseAPIs(all []storedAPI, ids []string, lang string) []storedAPI {
 	var mine []storedAPI
 	var tags []string
@@ -848,10 +848,8 @@ func chooseAPIs(all []storedAPI, ids []string, lang string) []storedAPI {
 	if m, ok := langtag.Match(lang, tags); ok {
 		return pick(func(a storedAPI) bool { return slices.Contains(apiLangs(a), m) })
 	}
-	if out := pick(func(a storedAPI) bool { return a.Lang == "" }); len(out) > 0 {
-		return out
-	}
-	return mine
+	// Those that take every language; never one made for another language.
+	return pick(func(a storedAPI) bool { return a.Lang == "" })
 }
 
 // --- the administrators' side -------------------------------------------------------

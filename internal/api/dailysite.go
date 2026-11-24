@@ -222,8 +222,8 @@ func linesByLang(counts map[string]int) (map[string]int, map[string][]string) {
 }
 
 // dailyFromLines picks one of the lines the administrators gave: those in the
-// language the reader's is matched to, else those for any language, else the
-// first language that has some.
+// language the reader's is matched to, else those for any language; never those
+// of another language.
 func (s *server) dailyFromLines(ctx context.Context, date string, skip int, lang string) (*dailyQuote, string, error) {
 	q := s.opt.Store.Q()
 	rawCounts, err := store.DailyLineCounts(ctx, q)
@@ -242,10 +242,7 @@ func (s *server) dailyFromLines(ctx context.Context, date string, skip int, lang
 	if m, ok := langtag.Match(lang, langs); ok {
 		use = m
 	} else if counts[""] == 0 {
-		if len(langs) == 0 {
-			return nil, "", nil
-		}
-		use = langs[0]
+		return nil, "", nil
 	}
 	n := int((space.DailyNumber("site:"+use, date) + uint64(skip)) % uint64(counts[use]))
 	var line store.DailyLine
@@ -419,6 +416,9 @@ func checkDefaultAPIs(d *siteDefault, site *siteDaily) error {
 		for _, id := range ids {
 			if !known[id] {
 				return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", id)}
+			}
+			if err := site.checkServes(id, l); err != nil {
+				return err
 			}
 			if !slices.Contains(list, id) {
 				list = append(list, id)
@@ -886,6 +886,9 @@ func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *
 				if !known[src.ID] {
 					return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", src.ID)}
 				}
+				if err := site.checkServes(src.ID, l); err != nil {
+					return err
+				}
 				// Options are checked below, with the interfaces in use.
 			case "list":
 				if src.ID != "" || src.Options != nil || src.Space != "" || src.Source != nil {
@@ -927,5 +930,20 @@ func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *
 		}
 	}
 	d.Sources = out
+	return nil
+}
+
+// checkServes refuses a built-in interface under a language it has no text in
+// (一言 under English): it would never be used there. Under "" (all the other
+// languages) anything may be listed; the readers it does not serve are skipped.
+func (d *siteDaily) checkServes(id, lang string) error {
+	if lang == "" {
+		return nil
+	}
+	for _, a := range d.all() {
+		if a.ID == id && a.Builtin && !a.Serves(lang) {
+			return &space.InvalidError{Msg: fmt.Sprintf("%s has no text in %s; list it under the languages it has", a.Name, lang)}
+		}
+	}
 	return nil
 }

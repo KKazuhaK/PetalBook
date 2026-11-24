@@ -1288,11 +1288,35 @@ func TestServes(t *testing.T) {
 			}
 		}
 	}
-	// The others serve every language, as before.
-	for _, id := range []string{"hitokoto", "zenquotes", "favqs", "jinrishici"} {
+	// Each built-in interface serves the languages it has, and no other: 一言 is never used for English.
+	for id, langs := range map[string]map[string]bool{
+		"hitokoto":   {"zh-CN": true, "zh-Hant": true, "en": false, "fr": false},
+		"jinrishici": {"zh-Hans": true, "zh-TW": true, "en": false},
+		"zenquotes":  {"en": true, "en-GB": true, "zh-CN": false, "fr": false},
+		"favqs":      {"en": true, "de": false},
+	} {
 		p, _ := ProviderByID(id)
-		if !p.Serves("fr") {
-			t.Errorf("%s", id)
+		for lang, want := range langs {
+			if got := p.Serves(lang); got != want {
+				t.Errorf("%s serves %s: %v", id, lang, got)
+			}
 		}
+	}
+	// An interface of the administrators' own has no list of languages and serves the ones a default gives it.
+	if !(API{ID: "mine", Lang: "zh-Hans"}).Serves("en") {
+		t.Error("an interface of their own")
+	}
+}
+
+// ZenQuotes' terms ask for a link back, which is not shown, so it says so and is in no default.
+func TestZenQuotesSaysItsTermsNeedALink(t *testing.T) {
+	p, _ := ProviderByID("zenquotes")
+	for _, want := range []string{"link back", "does not show", "enable it only if you accept"} {
+		if !strings.Contains(p.Note, want) {
+			t.Errorf("the note does not say %q: %s", want, p.Note)
+		}
+	}
+	if h, _ := ProviderByID("hitokoto"); !strings.Contains(h.Note, "Chinese only") {
+		t.Error(h.Note)
 	}
 }

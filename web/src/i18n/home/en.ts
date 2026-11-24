@@ -120,7 +120,6 @@ export const homeEn: HomeMessages = {
     skipLimit: 'That is as many as can be skipped today.',
     tooOften: 'Too quick: try again in a moment.',
     open: 'Open this page',
-    via: (host: string) => `From ${host}`,
     stale: (when: string) => `This one is from ${when}; the service is not answering for now.`,
     noMatch: 'The chosen source has no page that matches yet.',
     noMatchSettings: 'Open settings',

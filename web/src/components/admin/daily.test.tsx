@@ -285,6 +285,17 @@ describe("the administrators' daily text page", () => {
     })
   })
 
+  it('一言 is offered for Chinese and for all the other languages, never for English', async () => {
+    await open((admin) => admin('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }))
+    await settle(() => document.querySelectorAll('input[name="daily-default"]').length === 4, 'the default editor')
+    await click([...document.querySelectorAll<HTMLInputElement>('input[name="daily-default"]')][3])
+    const offered = (l: string) =>
+      [...document.getElementById(`daily-default-api-${l}`)!.querySelectorAll('option')].map((o) => o.value)
+    expect(offered('en')).not.toContain('hitokoto')
+    expect(offered('zh-Hans')).toContain('hitokoto')
+    expect(offered('rest')).toContain('hitokoto')
+  })
+
   it('the default can list sources of several kinds for a language, one text at a time', async () => {
     await open((admin) => admin('PUT', '/api/admin/daily/apis/quotes', GOOD))
     await settle(() => api('quotes') !== null, 'the interface')
