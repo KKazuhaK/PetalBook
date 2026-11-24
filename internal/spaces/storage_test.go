@@ -587,9 +587,7 @@ func TestARestoreWaitsThenAnswersRestoringAndGoesOn(t *testing.T) {
 		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		old := RestoreWait
-		RestoreWait = 100 * time.Millisecond
-		defer func() { RestoreWait = old }()
+		f.m.opt.RestoreWait = 100 * time.Millisecond
 		f.r.mu.Lock()
 		f.r.hold = make(chan struct{})
 		hold := f.r.hold
@@ -673,9 +671,7 @@ func TestAtMostTwoRestoresRunAtOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		old := RestoreWait
-		RestoreWait = 50 * time.Millisecond
-		defer func() { RestoreWait = old }()
+		f.m.opt.RestoreWait = 50 * time.Millisecond
 		f.r.mu.Lock()
 		f.r.hold = make(chan struct{})
 		hold := f.r.hold
@@ -1352,9 +1348,7 @@ func TestAFailedRestoreIsRememberedAndAHangingOneEnds(t *testing.T) {
 		if err := f.m.Evict(ctx, in.ID, EvictOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		oldWait, oldDeadline := RestoreWait, RestoreDeadline
-		RestoreWait, RestoreDeadline = 50*time.Millisecond, 300*time.Millisecond
-		defer func() { RestoreWait, RestoreDeadline = oldWait, oldDeadline }()
+		f.m.opt.RestoreWait, f.m.opt.RestoreDeadline = 50*time.Millisecond, 300*time.Millisecond
 		hold := make(chan struct{})
 		f.r.mu.Lock()
 		f.r.hold = hold

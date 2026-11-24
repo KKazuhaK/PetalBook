@@ -40,14 +40,6 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
-// RestoreWait is how long a request that needs the files of an evicted space
-// waits for its restore (10 seconds) before it answers 503 restoring.
-var RestoreWait = 10 * time.Second
-
-// RestoreDeadline bounds one restore once it has its turn (5 minutes): a
-// remote that hangs does not hold one of the two turns for longer.
-var RestoreDeadline = 5 * time.Minute
-
 var (
 	// ErrNotEvictable: a local or pinned space, or one already evicted (409 conflict).
 	ErrNotEvictable = errors.New("the space cannot be evicted")
@@ -499,7 +491,8 @@ func (m *Manager) trimIndexOnly() {
 // --- restoring -------------------------------------------------------------------------
 
 // ensureRestored makes the space's files exist: it starts a restore (or joins
-// the one that runs) and waits for it, up to RestoreWait; then *RestoringError.
+// the one that runs) and waits for it, up to Options.RestoreWait; then
+// *RestoringError.
 func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 	m.ev.mu.Lock()
 	op := m.ev.restores[id]
@@ -520,7 +513,11 @@ func (m *Manager) ensureRestored(ctx context.Context, id string) error {
 		go m.runRestore(id, op)
 	}
 	m.ev.mu.Unlock()
-	t := time.NewTimer(RestoreWait)
+	wait := m.opt.RestoreWait
+	if wait <= 0 {
+		wait = 10 * time.Second
+	}
+	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
 	case <-op.done:
@@ -538,7 +535,11 @@ func (m *Manager) runRestore(id string, op *restoreOp) {
 	m.ev.mu.Lock()
 	m.ev.waiting--
 	m.ev.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), RestoreDeadline)
+	deadline := m.opt.RestoreDeadline
+	if deadline <= 0 {
+		deadline = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	op.err = m.restore(ctx, id, op)
 	if op.err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		op.err = &RestoreFailed{Msg: "the remote repository did not answer in time", Err: op.err}

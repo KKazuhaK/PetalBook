@@ -165,6 +165,13 @@ type Options struct {
 	// and of a restore; an error it returns stops there as a crash would (tests).
 	EvictEvery time.Duration
 	EvictHook  func(step string) error
+	// RestoreWait is how long a request that needs the files of an evicted
+	// space waits for its restore before it answers 503 restoring (default 10
+	// seconds).
+	RestoreWait time.Duration
+	// RestoreDeadline bounds one restore once it has its turn (default 5
+	// minutes): a remote that hangs does not hold one of the two turns longer.
+	RestoreDeadline time.Duration
 	// AssetsHook is called at each step of moving a space's attachments into
 	// its attachment repository; an error ends the move there, without
 	// recording a failure, as a crash would (tests).

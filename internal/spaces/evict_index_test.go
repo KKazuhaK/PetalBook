@@ -102,9 +102,7 @@ func TestAnEvictedSpaceWhoseIndexCannotAnswerIsRestoredNotEmptied(t *testing.T) 
 				}
 				tc.spoil(t, f.indexPath(in.ID))
 
-				old := RestoreWait
-				RestoreWait = 100 * time.Millisecond
-				defer func() { RestoreWait = old }()
+				f.m.opt.RestoreWait = 100 * time.Millisecond
 				f.r.mu.Lock()
 				f.r.hold = make(chan struct{})
 				hold := f.r.hold

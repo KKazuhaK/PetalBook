@@ -397,10 +397,10 @@ func (f *fetchHold) Run(ctx context.Context, c gitstore.Cmd) (string, string, er
 func TestRestoringAnswersWithThePhaseAndRetryAfter(t *testing.T) {
 	t.Parallel()
 	n := &fetchHold{}
-	old := spaces.RestoreWait
-	spaces.RestoreWait = 100 * time.Millisecond
-	defer func() { spaces.RestoreWait = old }()
-	eachAccounts(t, storageOpts(&n.netSwitch, func(o *spaces.Options) { o.RemoteRunner = n }), func(t *testing.T, a *acc) {
+	eachAccounts(t, storageOpts(&n.netSwitch, func(o *spaces.Options) {
+		o.RemoteRunner = n
+		o.RestoreWait = 100 * time.Millisecond
+	}), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		remote := filterRemote(t)
 		pushVersions(t, remote, 2)
