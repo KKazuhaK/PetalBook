@@ -17,6 +17,9 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
   apisOfTab,
+  listsFromPrefs,
+  prefsPayload,
+  type SpaceItem,
   draftsFrom,
   emptyDraft,
   settingsFrom,
@@ -28,7 +31,7 @@ import {
 import { th } from '@/i18n/home'
 import { SettingsNote, SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 import { SourceFields, type SourceChoices } from './SourceFields'
-import { ListButtons, moved, OptionChoices } from './DailyChoices'
+import { SourceList } from './SourceList'
 
 // The "Home" section: where the text of the day at the top of the space's home page comes from, one page per
 // language (the first is "all languages", which every language without a page of its own falls back to). For each:
@@ -77,17 +80,23 @@ function Editor({
   const [drafts, setDrafts] = useState<Drafts>(() => {
     const d = draftsFrom(saved)
     // A language whose interface is chosen shows as such.
-    for (const tab of tabsOf([], saved, prefs))
-      if (!d[tab] && apisOfTab(prefs, tab).some((a) => prefs?.apis.includes(a.id)))
-        d[tab] = { ...emptyDraft(), mode: 'api' }
+    const chosen = listsFromPrefs(prefs, tabsOf(prefs?.languages ?? DEFAULT_LANGUAGES, saved, prefs))
+    for (const [tab, list] of Object.entries(chosen))
+      if (!d[tab] && list.length > 0) d[tab] = { ...emptyDraft(), mode: 'api' }
     return d
   })
-  // The chosen interfaces, in order (the order of one language's are the order they are tried in).
-  const [apis, setApis] = useState<string[]>(() => [...(prefs?.apis ?? [])])
-  const [options, setOptions] = useState<DailyOptionChoice>(() => structuredClone(prefs?.options ?? {}))
-  const [inherit, setInherit] = useState(prefs?.inherit ?? true)
   const known = useMemo(() => prefs?.languages ?? DEFAULT_LANGUAGES, [prefs])
   const tabs = useMemo(() => tabsOf(known, saved, prefs), [known, saved, prefs])
+  // The sources of each language in order: interfaces, the administrators' lines, pages of this space. With more than
+  // one they take turns by day, and one that gives nothing is passed over for the next.
+  const [lists, setLists] = useState<Record<string, SpaceItem[]>>(() => listsFromPrefs(prefs, tabs))
+  const [options, setOptions] = useState<DailyOptionChoice>(() => {
+    const o: DailyOptionChoice = structuredClone(prefs?.options ?? {})
+    for (const list of Object.values(prefs?.sources ?? {}))
+      for (const src of list) if (src.kind === 'api' && src.options) o[src.id] = structuredClone(src.options)
+    return o
+  })
+  const [inherit, setInherit] = useState(prefs?.inherit ?? true)
   const [tab, setTab] = useState('')
   const [error, setError] = useState('')
   const busy = saveSettings.isPending || savePrefs.isPending
@@ -109,22 +118,23 @@ function Editor({
       const next = settingsFrom(drafts)
       if (JSON.stringify(next) !== JSON.stringify(saved)) await saveSettings.mutateAsync(next)
       if (prefs) {
-        // An interface only counts on a language whose choice is "an interface".
-        const keep = apis.filter((id) => {
-          const owner = tabs.find((c) => apisOfTab(prefs, c).some((a) => a.id === id))
-          return owner === undefined || (drafts[owner]?.mode ?? 'default') === 'api'
-        })
-        const keptOptions = Object.fromEntries(Object.entries(options).filter(([id]) => keep.includes(id)))
-        if (
-          inherit !== prefs.inherit ||
-          JSON.stringify(keep) !== JSON.stringify(prefs.apis) ||
-          JSON.stringify(keptOptions) !== JSON.stringify(prefs.options ?? {})
+        // A list only counts on a language whose choice is "an interface".
+        const taken = tabs.filter((t) => (drafts[t]?.mode ?? 'default') === 'api')
+        for (const t of taken) {
+          const bad = (lists[t] ?? []).some((i) => i.kind === 'own' && i.draft.value === '')
+          if (bad) {
+            setTab(t)
+            return setError(`${tabName(t)}: ${th.settings.chooseFirst}`)
+          }
+        }
+        const payload = prefsPayload(lists, options, taken)
+        const before = prefsPayload(
+          listsFromPrefs(prefs, tabs),
+          Object.fromEntries(Object.entries(prefs.options ?? {})),
+          tabs,
         )
-          await savePrefs.mutateAsync({
-            inherit,
-            apis: keep,
-            ...(Object.keys(keptOptions).length > 0 ? { options: keptOptions } : {}),
-          })
+        if (inherit !== prefs.inherit || JSON.stringify(payload) !== JSON.stringify(before))
+          await savePrefs.mutateAsync({ inherit, ...payload })
       }
       toast.success(th.settings.saved)
     } catch (e) {
@@ -193,64 +203,18 @@ function Editor({
               <p className="text-xs text-muted-foreground">{th.settings.apisHelp}</p>
               {tabApis.length > 1 && <p className="text-xs text-muted-foreground">{th.settings.apisOrderHelp}</p>}
               {tabApis.length === 0 && <p className="text-sm text-muted-foreground">{th.settings.noApis}</p>}
-              {tabApis.map((a) => {
-                const chosen = apis.includes(a.id)
-                // The order of the chosen ones of this tab.
-                const mine = apis.filter((id) => tabApis.some((x) => x.id === id))
-                const at = mine.indexOf(a.id)
-                const shift = (by: -1 | 1) => {
-                  const next = moved(mine, at, by)
-                  let k = 0
-                  setApis((all) => all.map((id) => (mine.includes(id) ? next[k++] : id)))
-                }
-                return (
-                  <div key={a.id} className="grid gap-1.5" data-api-item={a.id}>
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={chosen}
-                          disabled={busy}
-                          onChange={(e) =>
-                            setApis((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
-                          }
-                        />
-                        {th.settings.apiFor(a.name, a.lang)}
-                      </label>
-                      {chosen && mine.length > 1 && (
-                        <ListButtons
-                          name={a.name}
-                          first={at === 0}
-                          last={at === mine.length - 1}
-                          onUp={() => shift(-1)}
-                          onDown={() => shift(1)}
-                          words={th.settings.choice}
-                          disabled={busy}
-                        />
-                      )}
-                    </div>
-                    {chosen && (a.options?.length ?? 0) > 0 && (
-                      <div className="ml-6">
-                        <OptionChoices
-                          options={a.options!}
-                          chosen={options[a.id]}
-                          owner={a.id}
-                          words={th.settings.choice}
-                          disabled={busy}
-                          onChange={(next) =>
-                            setOptions((all) => {
-                              const out = { ...all }
-                              if (Object.keys(next).length === 0) delete out[a.id]
-                              else out[a.id] = next
-                              return out
-                            })
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+              <SourceList
+                items={lists[tab] ?? []}
+                onItems={(next) => setLists((all) => ({ ...all, [tab]: next }))}
+                available={tabApis}
+                options={options}
+                onOptions={setOptions}
+                choices={choices}
+                canOwn={prefs?.allowed?.own !== false}
+                apiLocked={prefs?.allowed?.api === false}
+                disabled={busy}
+                owner={tab || 'all'}
+              />
             </div>
           )}
         </div>

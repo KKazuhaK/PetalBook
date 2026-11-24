@@ -148,6 +148,10 @@ type SpaceDaily struct {
 type SpaceChoice struct {
 	APIs    []string
 	Options map[string]map[string][]string
+	// Sources are the sources of each language in order, of any kind (JSON the
+	// API reads and writes: {"": [{"kind": "api", "id": …}, …]}); absent when the
+	// space only lists interfaces.
+	Sources json.RawMessage
 }
 
 // ParseSpaceChoice reads what SpaceDaily.APIs holds; what cannot be read is no choice.
@@ -161,9 +165,13 @@ func ParseSpaceChoice(raw string) SpaceChoice {
 	var obj struct {
 		APIs    []string                       `json:"apis"`
 		Options map[string]map[string][]string `json:"options"`
+		Sources json.RawMessage                `json:"sources"`
 	}
 	if json.Unmarshal([]byte(raw), &obj) == nil {
 		c.APIs, c.Options = obj.APIs, obj.Options
+		if string(obj.Sources) != "null" {
+			c.Sources = obj.Sources
+		}
 	}
 	return c
 }
@@ -174,14 +182,15 @@ func (c SpaceChoice) JSON() string {
 	if ids == nil {
 		ids = []string{}
 	}
-	if len(c.Options) == 0 {
+	if len(c.Options) == 0 && len(c.Sources) == 0 {
 		b, _ := json.Marshal(ids)
 		return string(b)
 	}
 	b, _ := json.Marshal(struct {
 		APIs    []string                       `json:"apis"`
-		Options map[string]map[string][]string `json:"options"`
-	}{ids, c.Options})
+		Options map[string]map[string][]string `json:"options,omitempty"`
+		Sources json.RawMessage                `json:"sources,omitempty"`
+	}{ids, c.Options, c.Sources})
 	return string(b)
 }
 
@@ -241,6 +250,23 @@ func RenameSpaceDailyAPI(ctx context.Context, q Q, from, to string) error {
 				opts[to] = o
 			}
 			c.Options, changed = opts, true
+		}
+		if len(c.Sources) > 0 {
+			var lists map[string][]map[string]any
+			if json.Unmarshal(c.Sources, &lists) == nil {
+				moved := false
+				for _, list := range lists {
+					for _, src := range list {
+						if src["kind"] == "api" && src["id"] == from {
+							src["id"], moved = to, true
+						}
+					}
+				}
+				if moved {
+					c.Sources, _ = json.Marshal(lists)
+					changed = true
+				}
+			}
 		}
 		if changed {
 			c.APIs = out

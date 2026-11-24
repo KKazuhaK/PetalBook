@@ -29,7 +29,6 @@ import type {
   ChecksResponse,
   FixCheckInput,
   ConnectRemoteInput,
-  DailyOptionChoice,
   DailyPrefs,
   DailySettings,
   Favorite,
@@ -1559,7 +1558,7 @@ export function useSaveDailyPrefs() {
   const qc = useQueryClient()
   const space = useSpaceId()
   return useMutation({
-    mutationFn: (input: { inherit: boolean; apis: string[]; options?: DailyOptionChoice }) =>
+    mutationFn: (input: Parameters<ReturnType<typeof spaceApi>['putDailyPrefs']>[0]) =>
       spaceApi(space).putDailyPrefs(input),
     onSuccess: (res) => {
       qc.setQueryData(keys.dailyPrefs(space), res)

@@ -1361,6 +1361,9 @@ export interface DailyPrefs {
   // In order: the first for the day, the next ones when it does not answer and for "another".
   apis: string[]
   options?: DailyOptionChoice
+  // The space's own list of sources for each language, when it has one: api, the administrators' lines (`list`) or
+  // pages of this space (`own`). Read in place of `apis` for a language that has a list.
+  sources?: Record<string, DailySpaceSource[]>
   // A built-in interface that answers in more than one language lists them in `languages`.
   available: { id: string; name: string; lang: string; languages?: string[]; options?: DailyOption[] }[]
   // The languages the settings pages have a tab for (besides "all languages").
@@ -1443,6 +1446,10 @@ export interface KnownLanguage {
   name: string
   english: string
 }
+export type DailySpaceSource =
+  | { kind: 'api'; id: string; options?: Record<string, string[]> }
+  | { kind: 'list' }
+  | { kind: 'own'; source: DailySource }
 export type DailySourceItem =
   | { kind: 'api'; id: string; options?: Record<string, string[]> }
   | { kind: 'list' }

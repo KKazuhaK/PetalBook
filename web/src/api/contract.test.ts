@@ -3314,6 +3314,25 @@ function suite(target: Target) {
           expect(
             (await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: true, apis: ['nope'] })).status,
           ).toBe(400)
+          // A space lists sources of its own, of several kinds, for each language; one that is none is refused.
+          const prefsUrl = `/api/spaces/${sp}/daily/prefs`
+          for (const bad of [
+            [{ kind: 'rss' }],
+            [{ kind: 'api', id: 'nope' }],
+            [{ kind: 'own' }],
+            [{ kind: 'list', id: 'x' }],
+          ])
+            expect((await call(admin, 'PUT', prefsUrl, { inherit: true, apis: [], sources: { '': bad } })).status).toBe(
+              400,
+            )
+          const mixed = await call(admin, 'PUT', prefsUrl, {
+            inherit: true,
+            apis: [],
+            sources: { '': [{ kind: 'list' }, { kind: 'own', source: { tag: 'nothing-here' } }] },
+          })
+          expect(mixed.status).toBe(200)
+          expect(mixed.json.sources[''].map((x: { kind: string }) => x.kind)).toEqual(['list', 'own'])
+          expect((await call(admin, 'PUT', prefsUrl, { inherit: true, apis: [] })).json.sources).toBeUndefined()
           const off = await call(admin, 'PUT', `/api/spaces/${sp}/daily/prefs`, { inherit: false, apis: [] })
           expect([off.status, off.json.inherit]).toEqual([200, false])
           expect((await dq('date=2026-11-23&lang=zh')).json).toEqual({ page: null, reason: 'no_source' })

@@ -192,6 +192,15 @@ describe('the Home section, accounts mode', () => {
     enabled: true,
   })
 
+  const addMenu = () =>
+    dialog()!.querySelector<HTMLSelectElement>(
+      `[data-slot="daily-apis"] select[aria-label="${th.settings.addSource}"]`,
+    )!
+  const addable = () => [...addMenu().querySelectorAll('option')].map((o) => o.value).filter((v) => v !== '')
+  const items = () =>
+    [...dialog()!.querySelectorAll('[data-slot="source-list"] > li')].map((e) => e.getAttribute('data-source-kind'))
+  const item = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-api-item="${id}"]`)!
+
   it("the interfaces made for a language are on its tab; choosing them is saved as the space's choice", async () => {
     await asOwner((admin) => {
       admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans'))
@@ -200,12 +209,10 @@ describe('the Home section, accounts mode', () => {
     })
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
-    const boxes = () => [
-      ...dialog()!.querySelectorAll<HTMLInputElement>('[data-slot="daily-apis"] input[type="checkbox"]'),
-    ]
-    expect(boxes()).toHaveLength(1)
-    expect(boxes()[0].parentElement!.textContent).toBe(th.settings.apiFor('接口zhone', 'zh-Hans'))
-    await click(boxes()[0])
+    // The interfaces of the tab, and the other kinds of source.
+    expect(addable()).toEqual(['zhone', '@list', '@own'])
+    await type(addMenu(), 'zhone')
+    expect(items()).toEqual(['api'])
     await click(save())
     await settle(() => writes().some((w) => w.url === '/daily/prefs'), 'saved')
     expect(writes().find((w) => w.url === '/daily/prefs')!.body).toEqual({ inherit: true, apis: ['zhone'] })
@@ -213,7 +220,27 @@ describe('the Home section, accounts mode', () => {
     // The all-languages tab has the one that takes any language.
     await click(tab(''))
     await click(mode(th.settings.modes.api))
-    expect(boxes().map((b) => b.parentElement!.textContent)).toEqual([th.settings.apiFor('接口anyone', '')])
+    expect(addable()).toEqual(['anyone', '@list', '@own'])
+  })
+
+  it('sources of several kinds in a language: interfaces, the lines, pages of this space, in order', async () => {
+    await asOwner((admin) => admin('PUT', '/api/admin/daily/apis/zhone', API('zhone', 'zh-Hans')))
+    await click(tab('zh-Hans'))
+    await click(mode(th.settings.modes.api))
+    await type(addMenu(), 'zhone')
+    await type(addMenu(), '@list')
+    await type(addMenu(), '@own')
+    expect(items()).toEqual(['api', 'list', 'own'])
+    // The lines can be listed once.
+    expect(addable()).toEqual(['@own'])
+    // Pages of this space need a source before it is saved.
+    await click(save())
+    await settle(() => document.body.textContent!.includes(th.settings.chooseFirst), 'asked for a source')
+    expect(writes().some((w) => w.url === '/daily/prefs')).toBe(false)
+    const own = dialog()!.querySelector<HTMLElement>('[data-source-kind="own"]')!
+    expect(own.querySelectorAll('select').length).toBeGreaterThan(0)
+    await click(dialog()!.querySelector<HTMLElement>('[data-source-kind="list"] [data-action="up"]')!)
+    expect(items()).toEqual(['list', 'api', 'own'])
   })
 
   it('the categories of a built-in interface and the order of several are saved with the choice', async () => {
@@ -223,12 +250,8 @@ describe('the Home section, accounts mode', () => {
     })
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
-    const item = (id: string) => dialog()!.querySelector<HTMLElement>(`[data-api-item="${id}"]`)!
-    const pick = (id: string) => item(id).querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    // The categories show once it is chosen.
-    expect(item('hitokoto').querySelector('[data-option="categories"]')).toBeNull()
-    await click(pick('zhone'))
-    await click(pick('hitokoto'))
+    await type(addMenu(), 'zhone')
+    await type(addMenu(), 'hitokoto')
     const cat = (v: string) =>
       item('hitokoto').querySelector<HTMLInputElement>(`[data-option="categories"] [data-value="${v}"]`)!
     expect(cat('').checked).toBe(true)
@@ -249,8 +272,7 @@ describe('the Home section, accounts mode', () => {
     await asOwner((admin) => admin('PUT', '/api/admin/daily/providers/jinrishici', { enabled: true }))
     await click(tab('zh-Hans'))
     await click(mode(th.settings.modes.api))
-    const item = dialog()!.querySelector<HTMLElement>('[data-api-item="jinrishici"]')!
-    await click(item.querySelector<HTMLInputElement>('input[type="checkbox"]')!)
+    await type(addMenu(), 'jinrishici')
     const pick = () => dialog()!.querySelector<HTMLSelectElement>('[data-option="category"] select')!
     expect(pick().value).toBe('all')
     await type(pick(), 'shuqing/libie')

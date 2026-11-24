@@ -176,7 +176,12 @@ export const homeEn: HomeMessages = {
     filterValues: 'Values (separated by commas)',
     ops: { in: 'is one of', notIn: 'is none of', empty: 'is empty', notEmpty: 'is not empty', contains: 'contains' },
     apisTitle: 'Interfaces',
-    apisHelp: 'External interfaces the administrators set up; one text a day, the same for everybody in the space.',
+    apisHelp:
+      'Sources for this language, in order: external interfaces the administrators set up, their lines, pages of this space. One text a day, the same for everybody in the space.',
+    addSource: 'Add a source…',
+    srcInterfaces: 'External interfaces',
+    srcLines: "The administrators' lines",
+    srcOwn: 'Pages of this space',
     noApis: 'The administrators have not set up an interface that can be used.',
     apisOrderHelp:
       'With more than one for a language they take turns by day, in this order; one that does not answer is passed over for the next, and "another" moves on to the next.',

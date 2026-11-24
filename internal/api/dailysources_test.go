@@ -191,3 +191,83 @@ func TestSourcesAreReadFromOlderConfigsAndChecked(t *testing.T) {
 		}
 	})
 }
+
+// A space lists sources of several kinds as the other layers do: its own pages, the
+// administrators' lines, an interface with options. Old choices (a list of ids) read as before.
+func TestASpaceListsSourcesOfSeveralKinds(t *testing.T) {
+	withExternal(t, func(x *extFixture) {
+		t := x.t
+		svc := &twoServices{}
+		x.fetcher.SetTransport(svc)
+		x.enableAll()
+		x.putLines("", "Ours", "lines")
+		if code, r := x.own("POST", x.base+"/pages", map[string]any{"folder": "poems", "meta": map[string]any{"title": "山花子", "author": "纳兰性德"}, "body": "Mine\n"}); code != 201 {
+			t.Fatalf("%d %v", code, r)
+		}
+		put := func(body map[string]any) (int, map[string]any) {
+			body["inherit"] = true
+			return x.own("PUT", x.base+"/daily/prefs", body)
+		}
+		own := map[string]any{"kind": "own", "source": map[string]any{"folder": "poems"}}
+		for name, sources := range map[string]any{"a kind that is none": []any{map[string]any{"kind": "rss"}}, "an interface that is none": []any{map[string]any{"kind": "api", "id": "nothing"}},
+			"a space of another": []any{map[string]any{"kind": "space", "space": x.tm.sid, "source": map[string]any{"folder": "poems"}}}, "pages without a source": []any{map[string]any{"kind": "own"}},
+			"options not declared": []any{map[string]any{"kind": "api", "id": "hitokoto", "options": map[string]any{"categories": []any{"z"}}}}} {
+			if code, r := put(map[string]any{"apis": []any{}, "sources": map[string]any{"": sources}}); code != 400 {
+				t.Errorf("%s: %d %v", name, code, r)
+			}
+		}
+		code, r := put(map[string]any{"apis": []any{}, "sources": map[string]any{"": []any{own, map[string]any{"kind": "list"}, map[string]any{"kind": "api", "id": "favqs"}}}})
+		if code != 200 || len(asSlice(asMap(r["sources"])[""])) != 3 {
+			t.Fatalf("%d %v", code, r)
+		}
+		seen := map[string]bool{}
+		for _, day := range []string{"2026-11-22", "2026-11-23", "2026-11-24"} {
+			x.now = x.now.Add(2 * time.Second)
+			r := quoteOf(t, x.viewer, x.base, "date="+day+"&lang=en")
+			q := asMap(r["quote"])
+			seen[quoteText(r)] = true
+			if r["page"] != nil || q == nil {
+				t.Fatalf("one item only: %v", r)
+			}
+			if q["text"] == "Mine" && (q["author"] != "纳兰性德" || q["source"] != "山花子") {
+				t.Errorf("%v", q)
+			}
+		}
+		// Three kinds, three days: each had its turn.
+		if len(seen) != 3 {
+			t.Errorf("%v", seen)
+		}
+		// Fallback: the pages are gone (the folder has none), the interface down: the lines.
+		if code, r := put(map[string]any{"apis": []any{}, "sources": map[string]any{"": []any{map[string]any{"kind": "own", "source": map[string]any{"tag": "nothing"}}, map[string]any{"kind": "api", "id": "favqs"}, map[string]any{"kind": "list"}}}}); code != 200 {
+			t.Fatalf("%d %v", code, r)
+		}
+		svc.fail("favqs.com", true)
+		for _, day := range []string{"2026-11-22", "2026-11-23", "2026-11-24"} {
+			x.now = x.now.Add(2 * time.Second)
+			if got := quoteText(quoteOf(t, x.viewer, x.base, "date="+day+"&lang=en")); got != "Ours" {
+				t.Errorf("%s: %q", day, got)
+			}
+		}
+		svc.fail("favqs.com", false)
+		// The locks: with interfaces locked, the list that remains is used; both locked, the default.
+		x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false}})
+		x.now = x.now.Add(time.Hour)
+		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "Ours" {
+			t.Errorf("locked interfaces: %q", got)
+		}
+		x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false, "own": false}})
+		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en"); quoteText(r) != "Ours" {
+			t.Errorf("%v", r)
+		}
+		// Old prefs, a list of ids, read as before and are returned without sources.
+		x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": true, "own": true}})
+		x.choose("favqs")
+		_, p := x.own("GET", x.base+"/daily/prefs", nil)
+		if fmt.Sprint(p["apis"]) != "[favqs]" || p["sources"] != nil {
+			t.Fatalf("%v", p)
+		}
+		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "fav" {
+			t.Errorf("%q", got)
+		}
+	})
+}

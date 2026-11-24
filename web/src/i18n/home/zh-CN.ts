@@ -137,7 +137,12 @@ export const homeZhCN = {
     filterValues: '值（用逗号分开）',
     ops: { in: '是其中之一', notIn: '不是其中之一', empty: '为空', notEmpty: '不为空', contains: '包含' },
     apisTitle: '可用的接口',
-    apisHelp: '管理员配好的外部接口，每天取一条，这个空间的人看到同一条。',
+    apisHelp:
+      '这种语言的来源，按顺序：管理员配好的外部接口、管理员的文案、这个空间的页面。每天取一条，这个空间的人看到同一条。',
+    addSource: '添加一个来源…',
+    srcInterfaces: '外部接口',
+    srcLines: '管理员的文案',
+    srcOwn: '这个空间的页面',
     noApis: '管理员还没有配可以用的接口。',
     apisOrderHelp: '一种语言选了多个时按天轮换，顺序就是这里的顺序；哪个没有回应就用下一个，点「换一条」也换到下一个。',
     choice: {

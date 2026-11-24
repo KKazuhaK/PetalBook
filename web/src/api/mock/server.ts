@@ -47,7 +47,7 @@ import {
 import { SPACE_NAME } from './seed.ts'
 import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
 import { createForgeBook, FORGE_COOKIE } from './forgeBook.ts'
-import { pickNumber } from './homeBook.ts'
+import { pickNumber, type DailySource } from './homeBook.ts'
 import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { parseAttribution } from './attribution.ts'
 import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
@@ -1753,6 +1753,8 @@ export function createMockServer(options: MockOptions = {}) {
     | { kind: 'api'; id: string; options?: Record<string, string[]> }
     | { kind: 'list' }
     | { kind: 'space'; space: string; source: unknown }
+    // Pages of the space asking: only a space's own list has it.
+    | { kind: 'own'; source: DailySource }
   type SiteDefault =
     | null
     | { kind: 'list' }
@@ -1835,7 +1837,10 @@ export function createMockServer(options: MockOptions = {}) {
     providers: {} as Record<string, ProviderState>,
     notices: [] as DailyNotice[],
   }
-  const spaceDaily = new Map<string, { inherit: boolean; apis: string[]; options?: OptionChoice }>()
+  const spaceDaily = new Map<
+    string,
+    { inherit: boolean; apis: string[]; options?: OptionChoice; sources?: Record<string, MockSource[]> }
+  >()
   const KNOWN_LANGUAGES = [
     { tag: 'zh-Hans', name: '中文（简体）', english: 'Chinese (Simplified)' },
     { tag: 'zh-Hant', name: '中文（繁體）', english: 'Chinese (Traditional)' },
@@ -2198,6 +2203,16 @@ export function createMockServer(options: MockOptions = {}) {
     const fromSource = (src: MockSource, lap: number, options: OptionChoice | undefined): Record<string, unknown> => {
       if (src.kind === 'list') return fromLines()
       if (src.kind === 'space') return { page: null } // the mock has no space to draw from
+      if (src.kind === 'own') {
+        const got = home.pick(space.id, q, src.source)
+        const page = got?.page as { body: string; title?: string; label: string; source?: string } | undefined
+        if (!page) return { page: null, reason: 'no_match' }
+        return {
+          page: null,
+          quote: { text: page.body.trim() || page.label, ...(page.title ? { source: page.title } : {}) },
+          origin: 'space',
+        }
+      }
       const a = apis.find((x) => x.id === src.id && x.enabled)
       return a ? quoteFrom(a, date, lap, src.options ?? options?.[a.id]) : { page: null, reason: 'unavailable' }
     }
@@ -2219,6 +2234,22 @@ export function createMockServer(options: MockOptions = {}) {
         else return r
       }
       return stale ?? (reason ? { page: null, reason } : { page: null, reason: 'no_source' })
+    }
+    // The space's own list of sources, for the reader's language, without what is locked.
+    if (accounts && mine?.sources) {
+      const m = matchTag(
+        lang,
+        Object.keys(mine.sources).filter((k) => k !== ''),
+      )
+      const list = (m !== null ? mine.sources[m] : mine.sources['']) ?? []
+      const usable = list.filter((src) =>
+        src.kind === 'api'
+          ? locked.api && apis.some((a) => a.id === src.id && a.enabled)
+          : src.kind === 'own'
+            ? locked.own
+            : true,
+      )
+      if (usable.length > 0) return ask(usable, 'space:' + space.id)
     }
     const own_ = accounts ? chooseApis(chosen, lang) : []
     if (own_.length > 0)
@@ -2260,10 +2291,34 @@ export function createMockServer(options: MockOptions = {}) {
           throw new HttpError(400, 'invalid', `没有接口 ${String(id)}：只能用管理员设好并启用的`)
       const ids = [...new Set(body.apis as string[])]
       const options = checkOptions(ids, body.options)
+      let sources: Record<string, MockSource[]> | undefined
+      if (body.sources !== undefined) {
+        if (!isRecord(body.sources)) throw new HttpError(400, 'invalid', 'sources are lists by language')
+        sources = {}
+        for (const [k, value] of Object.entries(body.sources)) {
+          const tag = k === '' ? '' : tagOf(k)
+          const list = Array.isArray(value) ? value : [value]
+          if (list.length > 8) throw new HttpError(400, 'invalid', '每种语言最多 8 个来源')
+          sources[tag] = list.map((e): MockSource => {
+            if (!isRecord(e)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
+            if (e.kind === 'list') return { kind: 'list' }
+            if (e.kind === 'own') {
+              if (!isRecord(e.source)) throw new HttpError(400, 'invalid', '要给出 folder、tag 或 type')
+              return { kind: 'own', source: { filter: [], ...e.source } as unknown as DailySource }
+            }
+            if (e.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 own')
+            if (typeof e.id !== 'string' || !usable.has(e.id))
+              throw new HttpError(400, 'invalid', `没有接口 ${String(e.id)}：只能用管理员设好并启用的`)
+            const opts = checkOptions([e.id], e.options === undefined ? undefined : { [e.id]: e.options })[e.id]
+            return { kind: 'api', id: e.id, ...(opts ? { options: opts } : {}) }
+          })
+        }
+      }
       spaceDaily.set(space.id, {
         inherit: body.inherit,
         apis: ids,
         ...(Object.keys(options).length > 0 ? { options } : {}),
+        ...(sources && Object.keys(sources).length > 0 ? { sources } : {}),
       })
     } else if (method !== 'GET') throw new HttpError(404, 'not_found', '没有这个接口')
     const now = spaceDaily.get(space.id) ?? { inherit: true, apis: [] }
@@ -2273,6 +2328,7 @@ export function createMockServer(options: MockOptions = {}) {
       body: {
         inherit: now.inherit,
         apis: kept,
+        ...(now.sources ? { sources: now.sources } : {}),
         options: Object.fromEntries(Object.entries(now.options ?? {}).filter(([id]) => kept.includes(id))),
         available: available.map((a) => ({
           id: a.id,

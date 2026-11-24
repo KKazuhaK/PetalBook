@@ -3957,9 +3957,28 @@ have a tab for (the administrators' `languages`, below; nothing is limited to
 them). `allowed` is what the administrators let spaces do (below): a field that
 is `false` is set for the whole server, and what the space has there is saved
 when asked but has no effect until it is `true` again. `PUT` takes `{"inherit": true, "apis": []}` (both are
-needed) and optionally `options`, and answers as `GET`; `400 invalid` for an id
+needed) and optionally `options` and `sources`, and answers as `GET`; `400 invalid` for an id
 that is not in `available`, and for an option or value its interface does not
 declare, or one for an interface that is not in `apis`; it saves `apis` even when `allowed.api` is `false`.
+
+**A space's own list of sources.** `sources` is, as in the administrators'
+default, a list for each language in order (`""` for the languages not listed;
+at most 8 each), the sources taking turns by day with the same rotation and
+fallback ("Several interfaces for a language"), but its kinds are
+`{"kind": "api", "id", "options"?}` (an interface that is set up and enabled),
+`{"kind": "list"}` (the administrators' lines) and
+`{"kind": "own", "source": {"folder"|"tag"|"type": …, "filter"?}}` (pages of this
+space, checked in it; the text has the page's body, its `author`/`作者` as the
+author and its source or title as the source, and no link). A space that
+chooses no `sources` keeps its `apis` as before (an ordered list of interface
+ids and their `options`, read in order for the language); a language that has a
+list uses it in place of `apis`. `GET` gives `sources` when the space has them,
+without the interfaces that are no longer set up. The locks apply to what is
+listed and leave it saved: with `allowed.api` off a listed interface is skipped,
+with `allowed.own` off the pages of the space are, and what is left is used
+(`list` is the administrators' own). The tenant's default takes the same lists
+(`kind: "sources"`, with `space` sources of the tenant's own spaces and no
+`list`), through the settings API only: its editor comes with 3.6.
 
 ### The administrators' settings of the daily text
 
