@@ -122,6 +122,8 @@ export const tenantsEn: TenantsMessages = {
       'quota.spacesPerPerson': 'Spaces one person may own',
       'quota.bytesPerPerson': 'Disk one person may use (bytes)',
       'quota.pagesPerPerson': 'Pages one person may have',
+      'files.maxBytes': 'Largest size of one file (bytes)',
+      'recycle.days': 'Days the recycle bin keeps things',
     },
     helps: {
       'registration.open': 'Off by default and locked for tenants: to open it, a site administrator unlocks it first, then it is switched on in the tenant. Needs mail to be enabled.',
@@ -131,6 +133,8 @@ export const tenantsEn: TenantsMessages = {
       'quota.spacesPerPerson': 'How many spaces one person may own; 0 is no limit, and at the limit they cannot make another. --max-spaces, when given, decides. A person\'s own limit is set under Users and invites.',
       'quota.bytesPerPerson': 'How many bytes a person\'s spaces take; empty is no limit. Going over only warns.',
       'quota.pagesPerPerson': 'How many pages a person\'s spaces hold in all; empty is no limit. Going over only warns.',
+      'files.maxBytes': "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
+      'recycle.days': 'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
     },
   },
 }

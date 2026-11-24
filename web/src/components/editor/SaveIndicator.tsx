@@ -2,6 +2,7 @@ import { AlertTriangle, Check, CircleDashed, CircleDot, CloudOff, Loader2, LogIn
 import { ApiError } from '@/api/client'
 import type { SaveSnapshot } from '@/editor/saveController'
 import { t } from '@/i18n'
+import { fileTooLargeShort, fileTooLargeText } from '@/lib/fileTooLarge'
 
 const quiet = 'inline-flex items-center gap-1 text-xs text-muted-foreground'
 
@@ -66,6 +67,16 @@ export function SaveIndicator({ snapshot, draftSafe, onRetry, onOpenConflict }: 
           >
             <CloudOff className="size-3.5" />
             {t.fmt.note(draftSafe ? u.commitDraft : u.commitLocal, s.retry)}
+          </button>
+        )
+      }
+      // A file over the limit: the text is not lost, it stays here; saying so is the message.
+      const big = fileTooLargeShort(e)
+      if (big) {
+        return (
+          <button type="button" onClick={onRetry} title={fileTooLargeText(e)} role="alert" data-slot="file-too-large" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10">
+            <AlertTriangle className="size-3.5" />
+            {t.fmt.note(big, s.retry)}
           </button>
         )
       }
