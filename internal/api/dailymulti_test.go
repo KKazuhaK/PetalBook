@@ -141,12 +141,12 @@ func TestAnInterfaceThatFailsIsPassedOverForTheNext(t *testing.T) {
 	})
 }
 
-func TestADefaultWrittenWithOneIdIsAListOfOne(t *testing.T) {
+func TestADefaultOfOneInterfaceIsAListOfOne(t *testing.T) {
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
-		x.setDefault(map[string]any{"": "zenquotes", "zh-Hans": []any{"hitokoto"}}, nil)
+		x.setDefault(map[string]any{"": []any{"zenquotes"}, "zh-Hans": []any{"hitokoto"}}, nil)
 		_, r := x.adm("GET", "/api/admin/daily", nil)
 		if got := fmt.Sprint(asMap(r["default"])["apis"]); got != "map[:[zenquotes] zh-Hans:[hitokoto]]" {
 			t.Fatalf("%s", got)
@@ -155,7 +155,7 @@ func TestADefaultWrittenWithOneIdIsAListOfOne(t *testing.T) {
 			t.Fatalf("one interface: %q", got)
 		}
 		for name, apis := range map[string]any{"an empty list": map[string]any{"": []any{}}, "too many": map[string]any{"": []any{"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
-			"an unknown id": map[string]any{"": []any{"zenquotes", "nothing"}}, "a number": map[string]any{"": 3}} {
+			"an unknown id": map[string]any{"": []any{"zenquotes", "nothing"}}, "a number": map[string]any{"": 3}, "an id that is no list": map[string]any{"": "zenquotes"}} {
 			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": apis}}); code != 400 {
 				t.Errorf("%s: %d %v", name, code, r)
 			}

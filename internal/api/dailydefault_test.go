@@ -393,15 +393,15 @@ func TestBuiltInInterfaces(t *testing.T) {
 	})
 }
 
-// There is no list of hosts: one that is sent is ignored, and an interface may
-// only contact the host and port of its own address.
+// There is no list of hosts: one that is sent is refused as an unknown key, and
+// an interface may only contact the host and port of its own address.
 func TestNoListOfHosts(t *testing.T) {
 	withExternal(t, func(x *extFixture) {
 		t := x.t
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{"a.example"}, "languages": []any{"en"}}); code != 200 || r["hosts"] != nil || fmt.Sprint(r["languages"]) != "[en]" {
+		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{"a.example"}, "languages": []any{"en"}}); code != 400 {
 			t.Fatalf("%d %v", code, r)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": "not a list"}); code != 200 || r["hosts"] != nil {
+		if code, r := x.adm("GET", "/api/admin/daily", nil); code != 200 || r["hosts"] != nil || fmt.Sprint(r["languages"]) != "[zh-Hans en]" {
 			t.Fatalf("%d %v", code, r)
 		}
 		// An interface works with no host saved anywhere, and a trial too.
