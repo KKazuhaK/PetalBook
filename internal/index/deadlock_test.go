@@ -1,6 +1,8 @@
 package index
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"runtime/pprof"
@@ -85,7 +87,7 @@ func deadlockRound(t *testing.T, round int, d time.Duration) int64 {
 				paths = append(paths, rel(i))
 			}
 			if _, err := x.Refresh(src, paths, nil); err != nil {
-				fail(err)
+				fail(fmt.Errorf("refresh: %w", err))
 				return
 			}
 		}
@@ -122,7 +124,7 @@ func deadlockRound(t *testing.T, round int, d time.Duration) int64 {
 					_, err = x.Problems()
 				}
 				if err != nil {
-					fail(err)
+					fail(fmt.Errorf("read kind %d: %w", (i+r)%8, err))
 					return
 				}
 			}
@@ -146,4 +148,51 @@ func deadlockRound(t *testing.T, round int, d time.Duration) int64 {
 		t.Fatalf("round %d: reads, writes and the checkpointer did not end within 20s (deadlock); goroutines:\n%s", round, dump.String())
 	}
 	return x.checkpoints.Load() - before
+}
+
+// TestWriteWaitsForTheWriteLock: a write waits for the write lock of the
+// database, held for a moment by another connection, instead of failing with
+// SQLITE_BUSY. Inside the index a read connection takes that lock for a moment
+// when it finds the header of the log being written; here a connection from
+// outside holds it. A deferred transaction reads first and asks for the lock
+// at its first write, and SQLite does not call the busy handler for a
+// transaction that already reads: the write must begin IMMEDIATE.
+func TestWriteWaitsForTheWriteLock(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "index.db")
+	x, err := Open(dbPath, "/space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer x.Close()
+	src := newMem()
+	src.put("a.md", "---\nid: A\ntitle: a\n---\nbody\n")
+	if _, err := x.Sync(src, false); err != nil {
+		t.Fatal(err)
+	}
+
+	other, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	c, err := other.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		c.ExecContext(context.Background(), `ROLLBACK`)
+		close(released)
+	}()
+	src.put("a.md", "---\nid: A\ntitle: a2\n---\nbody 2\n")
+	_, err = x.Refresh(src, []string{"a.md"}, nil)
+	<-released
+	if err != nil {
+		t.Fatalf("a write while another connection held the write lock for a moment: %v", err)
+	}
 }

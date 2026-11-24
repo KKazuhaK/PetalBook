@@ -308,7 +308,15 @@ func open(dbPath, root string) (*Index, error) {
 	x.copied = !x.template && copyTemplate(dbPath)
 	base := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)" +
 		fmt.Sprintf("&_pragma=journal_size_limit(%d)", x.walMax)
-	dsn := base + fmt.Sprintf("&_pragma=cache_size(%d)", writeCacheKiB)
+	// Writes begin IMMEDIATE: a deferred transaction reads first and asks for
+	// the write lock at its first write, and when another connection holds
+	// that lock for a moment SQLite fails it with SQLITE_BUSY at once, without
+	// the busy timeout (a transaction that already reads may not wait for the
+	// lock: the holder could be waiting for it to end). A read connection
+	// takes that lock for a moment when it finds the header of the log half
+	// written by a commit; so may a tool that opens the file. BEGIN IMMEDIATE
+	// takes the lock first and waits for it like any other lock.
+	dsn := base + fmt.Sprintf("&_pragma=cache_size(%d)&_txlock=immediate", writeCacheKiB)
 	var err error
 	if x.wdb, err = sql.Open("sqlite", dsn); err != nil {
 		return nil, err
