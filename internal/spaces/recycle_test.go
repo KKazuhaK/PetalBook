@@ -58,7 +58,6 @@ func newRbFix(t *testing.T, st *store.Store) *rbFix {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
 	f.dir = filepath.Join(dir, "data")
 	m, err := NewAccounts(Options{Store: st, DataDir: f.dir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond,
 		CommitIdle: time.Hour, CommitMax: time.Hour, Now: f.clock, PurgePause: -1, RecycleEvery: -1,
@@ -73,7 +72,19 @@ func newRbFix(t *testing.T, st *store.Store) *rbFix {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { m.Close() })
+	// The manager's background work (the attachment repository of the fixture's
+	// space is probed on a host that does not exist) may make a directory after
+	// Close has returned: the directory is removed until it stays removed.
+	t.Cleanup(func() {
+		m.Close()
+		for i := 0; i < 20; i++ {
+			os.RemoveAll(dir)
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
 	f.gfix = &gfix{t: t, st: st, m: m}
 	return f
 }
@@ -332,7 +343,12 @@ func TestRecycleKeepsEverythingAndRestoreGivesItBack(t *testing.T) {
 				t.Errorf("%s: %+v", u, l)
 			}
 		}
-		// And it opens, with its page.
+		// And it opens, with its page. (Its attachment repository, on a host that does
+		// not exist, is taken away first: opening would start probing it in the
+		// background, after the test.)
+		if _, err := st.Q().Exec(ctx, `DELETE FROM asset_remotes WHERE space_id = ?`, info.ID); err != nil {
+			t.Fatal(err)
+		}
 		h, err := f.m.Open(ctx, store.User{ID: "olive", Role: "member"}, info.ID)
 		if err != nil {
 			t.Fatal(err)

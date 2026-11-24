@@ -29,6 +29,8 @@ const (
 type confirmEntry struct {
 	user, action, ids, hash string
 	expires                 time.Time
+	// req is what the token was asked for: a bulk action runs it.
+	req confirmRequest
 }
 
 type confirmStore struct {
@@ -94,6 +96,23 @@ func (c *confirmStore) take(tok, user, action, ids, hash string, now time.Time) 
 		return confirmStaleNow
 	}
 	return confirmOK
+}
+
+// takeAny spends a token of the user, whatever it is for, and returns what it was
+// asked for (the bulk action runs that). It is spent whether or not the plan
+// still holds.
+func (c *confirmStore) takeAny(tok, user string, now time.Time) (*confirmEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.m[tok]
+	if e == nil || !e.expires.After(now) || e.user != user {
+		if e != nil && !e.expires.After(now) {
+			delete(c.m, tok)
+		}
+		return nil, false
+	}
+	delete(c.m, tok)
+	return e, true
 }
 
 // idsKey is the exact set of ids as one string.
@@ -192,7 +211,7 @@ func (s *server) adminConfirm(c *call) {
 	if !ok {
 		return
 	}
-	tok := s.confirms.issue(confirmEntry{user: c.user().ID, action: req.Action, ids: idsKey(ids), hash: plan.Hash}, s.now())
+	tok := s.confirms.issue(confirmEntry{user: c.user().ID, action: req.Action, ids: idsKey(ids), hash: plan.Hash, req: req}, s.now())
 	nh, bl := plan.NeedsHeir, plan.Blockers
 	if nh == nil {
 		nh = []any{}
@@ -248,6 +267,8 @@ func (s *server) planFor(c *call, req confirmRequest) (confirmPlan, bool) {
 		return s.planSpaces(c, sc, req)
 	case "items":
 		return s.planItems(c, sc, req)
+	case "users":
+		return s.planUsers(c, sc, req)
 	case "spaces+items":
 		p1, ok := s.planSpaces(c, sc, confirmRequest{Action: req.Action, Spaces: req.Spaces})
 		if !ok {

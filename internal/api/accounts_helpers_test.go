@@ -66,6 +66,8 @@ type acc struct {
 	clock  *clock
 	h      http.Handler
 	public string
+	// apiOpts are the options the handler was made with (see restart).
+	apiOpts api.Options
 	// With accOpts.github: the fake GitHub and the server's use of it.
 	fake  *githubapptest.Fake
 	ghsvc *github.Service
@@ -206,7 +208,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		opts.MaxSpaces = &n
 	}
 	h := api.New(opts)
-	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc}
+	return &acc{apiOpts: opts, t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc}
 }
 
 // client is a browser: it keeps cookies and has an address.
@@ -362,4 +364,11 @@ func (w testWriter) Write(p []byte) (int, error) {
 func (a *acc) dropMembershipCache(t *testing.T, username string) {
 	t.Helper()
 	a.mgr.MembershipChanged(mustUserID(t, a, username))
+}
+
+// restart makes a new handler over the same database, spaces and services, as a
+// restart of the server does: what it reads at its start it reads again.
+func (a *acc) restart(t *testing.T) {
+	t.Helper()
+	a.h = api.New(a.apiOpts)
 }

@@ -126,3 +126,58 @@ func GetDeletionFacts(ctx context.Context, q Q, sc Scope, id string) (DeletionFa
 	f.HeldBytes += index
 	return f, nil
 }
+
+// UserFingerprints is SpaceFingerprints for people: their state, their role, and
+// the spaces they belong to with their roles there, for the plans of deleting,
+// disabling and enabling people. A person who is not in the scope (or is
+// deleted) is not in the map.
+func UserFingerprints(ctx context.Context, q Q, sc Scope, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	cond, args := sc.cond("tenant_id")
+	ph := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
+	idArgs := make([]any, len(ids))
+	for i, id := range ids {
+		idArgs[i] = id
+	}
+	rows, err := q.Query(ctx, `SELECT id, tenant_id, role, disabled, site_admin FROM users WHERE deleted_at IS NULL AND `+cond+` AND id IN (`+ph+`)`, append(args, idArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+	base := map[string]string{}
+	for rows.Next() {
+		var id, tenant, role string
+		var disabled, site int64
+		if err := rows.Scan(&id, &tenant, &role, &disabled, &site); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		base[id] = strings.Join([]string{id, tenant, role, itoa(disabled), itoa(site)}, "|")
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	mrows, err := q.Query(ctx, `SELECT user_id, space_id, role FROM space_members WHERE user_id IN (`+ph+`) ORDER BY user_id, space_id`, idArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer mrows.Close()
+	member := map[string][]string{}
+	for mrows.Next() {
+		var uid, sid, role string
+		if err := mrows.Scan(&uid, &sid, &role); err != nil {
+			return nil, err
+		}
+		member[uid] = append(member[uid], sid+":"+role)
+	}
+	if err := mrows.Err(); err != nil {
+		return nil, err
+	}
+	for id, b := range base {
+		out[id] = b + "|" + strings.Join(member[id], ",")
+	}
+	return out, nil
+}

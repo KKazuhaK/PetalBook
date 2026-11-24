@@ -50,7 +50,7 @@ func InsertSpace(ctx context.Context, q Q, tenantID, id, name, personalOf, inbox
 // ErrNotFound, as it does for a space or a user that does not exist.
 func AddMember(ctx context.Context, q Q, spaceID, userID, role string, now time.Time) error {
 	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
-		SELECT s.id, u.id, ?, ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ?`, role, ms(now), spaceID, userID)
+		SELECT s.id, u.id, ?, ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ? AND u.deleted_at IS NULL`, role, ms(now), spaceID, userID)
 	if err := oneRow(res, err); err != nil {
 		return err
 	}

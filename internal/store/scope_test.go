@@ -79,6 +79,11 @@ var scopeAllowlist = map[string]string{
 	"TransferOwnership": "INSERT ... SELECT joining the space and the new owner on tenant_id",
 	"RestoreSpaceRows":  "INSERT ... SELECT joining the space and each person and group on tenant_id; the item was found in scope by the caller",
 	"RecycledView":      "reads the records of an item already found in scope, and a person's name by id",
+	"GetUserAny":        "the recycle bin and the audit log name a person who is deleted; the caller found them through an item in scope",
+	"GetUserState":      "whether a person is deleted, for the recycle bin's own steps, by the id of an item already found in scope",
+	"PurgeUserData":     "the purge of a person's item, which the caller found in scope; or the server's own job",
+	"RestoreUserRows":   "the restore of a person's item, which the caller found in scope",
+	"SweepTombstones":   "background job: the rows of purged people that nothing refers to, of every tenant",
 	// --- inserts: the tenant is a column of the new row, chosen by the caller ----
 	"InsertUser":   "the new row carries its tenant",
 	"InsertSpace":  "the new row carries its tenant",
@@ -221,3 +226,102 @@ func touches(body *ast.BlockStmt) bool {
 // The tables of 2.7 count as well: a GitHub connection is a user's and a remote
 // a space's, so a function that reaches them across users needs a reason.
 var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|remotes)\b`)
+
+// A function that reads people leaves out the ones in the recycle bin
+// (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
+// users table that does not say deleted_at is on this list with the reason.
+var deletedAllowlist = map[string]string{
+	"GetUserAny":              "names a deleted person on purpose: the recycle bin and the audit log show them",
+	"GetUserState":            "reads whether a person is deleted",
+	"PlanUserDeletion":        "its first read is GetUser; the other queries are of people who are members of spaces of the person, filtered where it matters",
+	"FinishUserDeletion":      "marks the person: it reads and writes a row that is not deleted yet",
+	"RestoreUserRows":         "restores a deleted person",
+	"PurgeUserData":           "purges a deleted person",
+	"SweepTombstones":         "the sweep of purged people",
+	"RecycledView":            "the name of the author of a draft kept in an item",
+	"RecordFolderMove":        "",
+	"HasUsers":                "whether the server has any account at all (setup): a deleted person's row counts",
+	"GetPolicyFacts":          "whether an owner of a space is exempt: the owners of a live space are not deleted",
+	"PolicyCounts":            "the same, counted for the whole server",
+	"policyConds":             "the same, as a condition",
+	"ListAllSpaces":           "the owner of each space of a page: the owners of a live space are not deleted",
+	"InsertAudit":             "the tenant of the person an audit row is about, by id: the log names deleted people too",
+	"ofUser":                  "the condition of a person's tenant, for the lists of tokens and grants (a deleted person's are revoked)",
+	"seedUsage":               "runs in the migration that makes the usage table, before deleted_at exists",
+	"UserTenant":              "the tenant of a person by id, for what they may use of the GitHub App; a deleted person has no connection left",
+	"ListMembers":             "the members of a space: a deleted person has none left",
+	"GetMember":               "a member of a space: a deleted person has none left",
+	"SpaceOwner":              "the owner of a space already opened: a deleted person has none left",
+	"CountOtherEnabledOwners": "owners of a space already opened: a deleted person has none left",
+	"MemberStanding":          "the roles of a person's memberships: a deleted person has none left",
+	"ListUserSpaces":          "the spaces of a person by their own memberships: a deleted person has none left",
+	"UserHasIdentityOf":       "an identity of a person by id",
+	"GetTermsAccepted":        "the person's own record, by id",
+	"SetTermsAccepted":        "the person's own record, by id",
+	"EmailVerifiedBy":         "the person's own record, by id",
+	"SetEmail":                "a person already found",
+	"UserQuota":               "a person already found",
+	"SetUserQuota":            "a person already found",
+	"UsersWithQuota":          "the quotas set on people: a deleted person's is purged with them",
+	"UserUsageRows":           "the usage rows of people, read to put them right: a deleted person has one until they are purged",
+	"RecountUsage":            "puts the usage rows right: it counts the tenant's people without the deleted",
+	"CountEnabledAdmins":      "counts enabled administrators: through CountEnabledAdminsOutside, which leaves the deleted out",
+	"DisabledSpaces":          "",
+	"ListHeldDrafts":          "held drafts of people: a deleted person's are purged with them",
+	"PageDrafts":              "the drafts of a page, with the names of their authors",
+	"SpaceDrafts":             "the drafts of a space, with the names of their authors",
+	"ListAPITokens":           "tokens with their owners' names: a deleted person's are revoked",
+	"ListOAuthGrants":         "grants with their owners' names: a deleted person's are revoked",
+	"ListUserUsage":           "",
+	"GitHubSpaceCounts":       "",
+	"RemoteUserState":         "",
+}
+
+func TestEveryReadOfPeopleLeavesOutTheDeleted(t *testing.T) {
+	fset := token.NewFileSet()
+	files, err := parser.ParseDir(fset, ".", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := files["store"]
+	reads := regexp.MustCompile(`(?is)\bSELECT\b.*\b(FROM|JOIN)\s+users\b`)
+	var missing []string
+	for name, f := range pkg.Files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			reading, filtered := false, false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					return true
+				}
+				if reads.MatchString(s) {
+					reading = true
+				}
+				if strings.Contains(s, "deleted_at") {
+					filtered = true
+				}
+				return true
+			})
+			if reading && !filtered {
+				if _, ok := deletedAllowlist[fn.Name.Name]; !ok {
+					missing = append(missing, fn.Name.Name)
+				}
+			}
+		}
+	}
+	sort.Strings(missing)
+	for _, m := range missing {
+		t.Errorf("%s reads the users table and does not leave out deleted_at: add the condition, or put it on deletedAllowlist with the reason", m)
+	}
+}

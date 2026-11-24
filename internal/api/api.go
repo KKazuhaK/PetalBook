@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -129,6 +130,9 @@ type server struct {
 	// that administrators opened (see confirm.go and adminview.go).
 	confirms *confirmStore
 	views    *viewTable
+	// jobs runs the bulk jobs; jobWG lets a test wait for them.
+	jobs  *jobRunner
+	jobWG sync.WaitGroup
 	// now is the clock of what has an end (confirmations, views).
 	now func() time.Time
 	// originHosts are the hosts of the allowed origins: a request addressed to
@@ -162,7 +166,7 @@ func New(opt Options) http.Handler {
 	}
 	s := &server{opt: opt, log: opt.Logger, settings: settings.New(opt.Store), auth: opt.Auth, spaces: opt.Spaces, drafts: opt.Drafts, tokens: opt.Tokens, oauth: opt.OAuth, single: opt.Auth == nil, started: time.Now(),
 		origins: map[string]bool{}, originHosts: map[string]bool{}, importing: make(chan struct{}, 1),
-		confirms: newConfirmStore(), views: newViewTable(), now: opt.Now}
+		confirms: newConfirmStore(), views: newViewTable(), jobs: newJobRunner(), now: opt.Now}
 	if s.now == nil {
 		s.now = time.Now
 	}
@@ -187,6 +191,7 @@ func New(opt Options) http.Handler {
 	}
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
+	s.markJobsInterrupted()
 	s.bindDailySettings()
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
@@ -610,6 +615,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		qe    *spaces.QuotaError
 		ftl   *space.FileTooLargeError
 		nrs   *spaces.NotRestorable
+		hre   *heirRequiredError
 	)
 	var coded *codedError
 	var ghe *connections.Error
@@ -619,6 +625,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var rst *spaces.RestoringError
 	var rf *spaces.RestoreFailed
 	switch {
+	case errors.As(err, &hre):
+		s.failHeir(w, hre)
 	case errors.Is(err, spaces.ErrExportsFull):
 		writeError(w, http.StatusInsufficientStorage, "exports_full", "the exports already take the room they may; delete some, or wait for them to expire")
 	case errors.Is(err, spaces.ErrOwnerRequired):

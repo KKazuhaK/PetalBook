@@ -214,8 +214,46 @@ func (s *server) adminDownloadExport(c *call) {
 	http.ServeContent(c.w, c.r, "", st.ModTime(), f)
 }
 
-// exportUserSources is the part of an export of a person (see users.go).
-func (s *server) exportUserSources(c *call, spaces, items *[]string, user string) bool {
-	writeError(c.w, http.StatusBadRequest, "invalid", "exporting a person is not available yet")
-	return false
+// exportUserSources adds what an export of a person holds: their personal space
+// and the spaces nobody else is in (rules 1 and 2 of deleting them), or, for a
+// person who is in the recycle bin, the items recycled with them. A personal
+// space is left out for a tenant administrator, who never sees one. It answers
+// and reports false for a person who is not in the caller's scope.
+func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user string) bool {
+	ctx := c.r.Context()
+	q := s.opt.Store.Q()
+	sc := store.ScopeOf(c.user())
+	st, err := store.GetUserState(ctx, q, user)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !sc.All() && sc.Tenant() != st.Tenant) {
+		writeError(c.w, http.StatusNotFound, "user_not_found", "there is no such user")
+		return false
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	if st.Deleted {
+		children, err := store.UserSpaceItems(ctx, q, user, st.Item)
+		if err != nil {
+			s.fail(c.w, err)
+			return false
+		}
+		for _, ch := range children {
+			if ch.State == store.RecycleReady && (!ch.Personal || c.isSiteAdmin()) {
+				*itemIDs = append(*itemIDs, ch.ID)
+			}
+		}
+		return true
+	}
+	plan, err := store.PlanUserDeletion(ctx, q, sc, user, "", nil)
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	for _, r := range plan.Recycle {
+		if !r.Personal || c.isSiteAdmin() {
+			*spaceIDs = append(*spaceIDs, r.ID)
+		}
+	}
+	return true
 }

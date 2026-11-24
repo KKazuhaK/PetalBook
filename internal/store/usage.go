@@ -338,7 +338,7 @@ func ListUserUsage(ctx context.Context, q Q, sc Scope, f UsageFilter) (out []Usa
 	rows, err := q.Query(ctx, `SELECT p.id, p.tenant_id, p.spaces, p.bytes, p.pages, p.over, p.measured, u.username, u.name, u.quota
 		FROM (SELECT id, tenant_id, spaces, bytes, pages, over, measured FROM usage WHERE `+strings.Join(where, " AND ")+`
 			ORDER BY bytes DESC, id LIMIT ?) p
-		JOIN users u ON u.id = p.id
+		JOIN users u ON u.id = p.id AND u.deleted_at IS NULL
 		ORDER BY p.bytes DESC, p.id`, args...)
 	if err != nil {
 		return nil, "", err
@@ -559,19 +559,22 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 		return 0, err
 	}
 	// Every person and every tenant has a row, with the people counted.
-	rows, err = q.Query(ctx, `SELECT tenant_id, id FROM users`)
+	rows, err = q.Query(ctx, `SELECT tenant_id, id, CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END FROM users`)
 	if err != nil {
 		return 0, err
 	}
 	for rows.Next() {
 		var tenant, id string
-		if err := rows.Scan(&tenant, &id); err != nil {
+		var gone int
+		if err := rows.Scan(&tenant, &id, &gone); err != nil {
 			rows.Close()
 			return 0, err
 		}
 		get(UsageUser, id)
 		tenantOf[UsageUser+"\x00"+id] = tenant
-		get(UsageTenant, tenant).people++
+		if gone == 0 {
+			get(UsageTenant, tenant).people++ // a deleted person is not one of the tenant's people
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

@@ -144,6 +144,7 @@ var routeTable = []route{
 
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
+	{"DELETE", "/api/users/{id}", admin, true, false, false, (*server).adminDeleteUser},
 	{"POST", "/api/invites", admin, true, false, false, (*server).createInvite},
 	{"GET", "/api/invites", admin, true, false, false, (*server).listInvites},
 	{"DELETE", "/api/invites/{id}", admin, true, false, false, (*server).deleteInvite},
@@ -167,6 +168,9 @@ var routeTable = []route{
 	{"POST", "/api/admin/recycle/{item}/restore", admin, true, false, false, (*server).adminRestoreItem},
 	{"DELETE", "/api/admin/recycle/{item}", siteAdmin, true, false, false, (*server).adminPurgeItem},
 	{"POST", "/api/admin/confirm", admin, true, false, false, (*server).adminConfirm},
+	{"POST", "/api/admin/bulk", admin, true, false, false, (*server).adminBulk},
+	{"GET", "/api/admin/jobs/{id}", admin, true, false, false, (*server).adminGetJob},
+	{"GET", "/api/admin/users/{user}/deletion", admin, true, false, false, (*server).adminUserDeletion},
 	{"POST", "/api/admin/exports", admin, true, false, false, (*server).adminCreateExport},
 	{"GET", "/api/admin/exports", admin, true, false, false, (*server).adminListExports},
 	{"GET", "/api/admin/exports/{id}", admin, true, false, false, (*server).adminGetExport},

@@ -349,7 +349,7 @@ func CountPasskeyRequired(ctx context.Context, q Q, roles []string) (required, w
 		where += ` OR u.role IN (` + strings.Join(ph, ",") + `)`
 	}
 	err = q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM passkeys k WHERE k.user_id = u.id) THEN 1 ELSE 0 END), 0)
-		FROM users u WHERE u.disabled = 0 AND (`+where+`)`, args...).Scan(&required, &without)
+		FROM users u WHERE u.deleted_at IS NULL AND u.disabled = 0 AND (`+where+`)`, args...).Scan(&required, &without)
 	return
 }
 

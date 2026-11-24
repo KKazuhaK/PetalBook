@@ -284,6 +284,8 @@ func TestOpeningAnOlderDatabaseFillsNameKeys(t *testing.T) {
 		`ALTER TABLE users DROP COLUMN recycle_item`,
 		`DROP TABLE recycle_items`,
 		`DROP TABLE exports`,
+		`DROP TABLE retired_usernames`,
+		`DROP TABLE bulk_jobs`,
 		`DROP TABLE github_authorizations`,
 		`DROP TABLE github_leftovers`,
 		`DROP TABLE github_installation_tenants`,

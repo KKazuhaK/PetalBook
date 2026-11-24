@@ -65,3 +65,30 @@ CREATE TABLE exports (
 );
 CREATE INDEX exports_tenant ON exports(tenant_id, created DESC, id DESC);
 CREATE INDEX exports_expires ON exports(expires);
+
+-- Every username a purge has freed, case folded. Read only when
+-- users.reuseUsernames is "never", but written by every purge, so that switching
+-- to "never" later also protects the names purged before.
+CREATE TABLE retired_usernames (
+  name      TEXT PRIMARY KEY,
+  purged_at BIGINT NOT NULL
+);
+-- The daily sweep of tombstones asks whether the audit log still names a person.
+CREATE INDEX audit_log_actor ON audit_log(actor);
+
+-- A bulk action over many spaces, people or items, run in the background one
+-- item at a time. failed is a JSON list of what did not work and why; a job that
+-- was running when the server stopped reads "interrupted" at the next start.
+CREATE TABLE bulk_jobs (
+  id         TEXT PRIMARY KEY,
+  tenant_id  TEXT NOT NULL,
+  made_by    TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  total      BIGINT NOT NULL,
+  done       BIGINT NOT NULL DEFAULT 0,
+  failed     TEXT NOT NULL DEFAULT '[]',
+  state      TEXT NOT NULL DEFAULT 'queued',
+  created    BIGINT NOT NULL,
+  updated    BIGINT NOT NULL
+);
+CREATE INDEX bulk_jobs_state ON bulk_jobs(state) WHERE state IN ('queued', 'running');

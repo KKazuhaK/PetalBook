@@ -556,7 +556,21 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 	// A personal space goes with its person: on its own it would be a second
 	// home for someone who is not there.
 	if item.Personal && !withPerson {
-		return out, ErrNeedsPerson
+		// The person may be there already: a deletion that was cut short, or one
+		// that was restored without this space. Then it goes back to them.
+		var who string
+		if i := rec.Space.col("personal_of"); i >= 0 {
+			who = jsonStr(row0(rec.Space, i))
+		}
+		var live int
+		if who != "" {
+			if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id = ? AND deleted_at IS NULL AND tenant_id = ?`, who, item.TenantID).Scan(&live); err != nil {
+				return out, err
+			}
+		}
+		if live == 0 {
+			return out, ErrNeedsPerson
+		}
 	}
 	// The space row, with its counters reset: it is counted again below.
 	sc := rec.Space
@@ -783,4 +797,11 @@ func GetRecycleItems(ctx context.Context, q Q, sc Scope, ids []string) (map[stri
 		out[it.ID] = *it
 	}
 	return out, rows.Err()
+}
+
+func row0(t tableRows, i int) any {
+	if len(t.Rows) == 0 || i >= len(t.Rows[0]) {
+		return nil
+	}
+	return t.Rows[0][i]
 }

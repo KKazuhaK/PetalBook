@@ -39,7 +39,7 @@ type tenFx struct {
 	// cursorB is a change cursor of spaceB, as its member's device holds it.
 	cursorB string
 	// itemB is an item of B's recycle bin and exportB an export of B's.
-	itemB, exportB string
+	itemB, exportB, jobB string
 }
 
 // fakeID is an id of the right form that nothing has.
@@ -111,6 +111,8 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	spaceB2 := f.admB.do("POST", "/api/spaces", map[string]any{"name": "Space B2"}).want(t, 201, "").body["id"].(string)
 	f.itemB = f.admB.do("DELETE", "/api/admin/spaces/"+spaceB2, nil).want(t, 200, "").body["id"].(string)
 	f.exportB = f.admB.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["id"].(string)
+	tok := f.admB.do("POST", "/api/admin/confirm", map[string]any{"action": "export", "spaces": []string{f.spaceB}}).want(t, 200, "").body["confirm"].(string)
+	f.jobB = f.admB.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
 	a.auth.FlushAudit(ctx)
 	return f
 }
@@ -122,7 +124,7 @@ func (f *tenFx) groupAdd(t *testing.T, c *client, g string, ids ...string) {
 
 // bIDs are everything of tenant B that must never show in an answer to A.
 func (f *tenFx) bIDs() []string {
-	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, "Space B2"}
+	l := []string{f.tenB, f.userB, f.spaceB, f.groupB, f.inviteB, f.tokenB, f.grantB, "adm-b", "mem-b", "Space B", "Group B", "Acme", f.secretB, f.itemB, f.exportB, f.jobB, "Space B2"}
 	if f.syncedB != "" {
 		l = append(l, f.syncedB, "Synced B")
 	}
@@ -261,6 +263,10 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/exports": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{} }, body: func(f *tenFx, id string) any {
 		return map[string]any{"spaces": []string{ofB(f, id, f.spaceB)}}
 	}},
+	"GET /api/admin/users/{user}/deletion":            {kind: isoParam},
+	"DELETE /api/users/{id}":                          {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }, body: func(f *tenFx, id string) any { return map[string]any{} }},
+	"POST /api/admin/bulk":                            {kind: isoExempt, reason: "names nothing: the token holds the ids, bound to the caller who asked for it, and a confirmation cannot be asked for an id outside the caller's tenant (404; see the confirm entry and TestABulkJobRunsOneItemAtATimeAndListsWhatFailed)"},
+	"GET /api/admin/jobs/{id}":                        {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.jobB} }},
 	"GET /api/admin/exports":                          {kind: isoList},
 	"GET /api/admin/exports/{id}":                     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
 	"DELETE /api/admin/exports/{id}":                  {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},

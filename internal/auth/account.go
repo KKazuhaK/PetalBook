@@ -501,6 +501,13 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 			return nil, err
 		}
 		inv.Username, inv.Name, inv.Email = f.Username, f.Name, f.Email
+		if f.Username != "" {
+			if barred, err := s.retiredName(ctx, s.st.Q(), f.Username); err != nil {
+				return nil, err
+			} else if barred {
+				return nil, errf(Exists, "that username is taken")
+			}
+		}
 	}
 	for attempt := 0; ; attempt++ {
 		inv.ID = s.newID()

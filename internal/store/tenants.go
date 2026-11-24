@@ -191,7 +191,7 @@ type TenantCounts struct {
 // CountTenantRows counts the users, spaces, groups and invites of a tenant.
 func CountTenantRows(ctx context.Context, q Q, id string) (c TenantCounts, err error) {
 	err = q.QueryRow(ctx, `SELECT
-		(SELECT COUNT(*) FROM users WHERE tenant_id = ?),
+		(SELECT COUNT(*) FROM users WHERE tenant_id = ? AND deleted_at IS NULL),
 		(SELECT COUNT(*) FROM spaces WHERE tenant_id = ?),
 		(SELECT COUNT(*) FROM groups WHERE tenant_id = ?),
 		(SELECT COUNT(*) FROM invites WHERE tenant_id = ?),

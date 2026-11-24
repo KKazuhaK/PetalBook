@@ -6856,6 +6856,50 @@ spaces (3.3's accounting); the tenant's people count goes down by one.
 recycle bin and the audit log, which show "deleted user" with the username.
 Their username stays taken while they are in the recycle bin.
 
+**As built.**
+
+- **The order and its recovery.** Step 1 disables the person (through the same
+  call as `PATCH /api/users/{id}`, so the last enabled administrator and
+  yourself are refused: `409 conflict`). A person who owns a space that was handed
+  on is an editor of it after `POST …/transfer`, so the deletion removes that
+  membership too (it is listed in `left`). The spaces of rules 1 and 2 are recycled
+  one by one with the marker `u:<user id>` as their parent; step 4, one
+  transaction, makes the person's item, marks the row, takes the group memberships
+  out and puts the spaces under the item. A failure anywhere leaves a disabled
+  person with fewer spaces and some items waiting under the marker, never a space
+  without an owner; asking again goes on from there and adopts them. The item
+  records whether the person was disabled before step 1; asked again after a
+  failure it records `disabled`, as the person already is.
+- `DELETE /api/users/{id}` answers `409 heir_required` with `spaces` (`id`,
+  `name`) before anything is changed; `409 conflict` for the caller themself and
+  the last enabled site administrator (the preview lists them as `blockers` with
+  a `reason`: `self`, `last_admin`); `403 forbidden` for a site administrator when
+  the caller is a tenant administrator; `404 user_not_found` for a person who does
+  not exist, is in another tenant or is deleted already. The answer is the person's
+  recycle item, `with` the spaces recycled with them.
+- **Restoring** is `POST /api/admin/recycle/{item}/restore` on the person's item:
+  the row is brought back (enabled or disabled as it was), the group memberships
+  whose group is still there, then the spaces that went with them, a personal one
+  too. `200` `{"restored": {"item", "user", "spaces"}, "skipped": [...],
+  "transfers": [...], "left": [...]}`; a space that cannot be restored is left in
+  the bin as an item of its own and listed in `skipped`. A personal space whose
+  person is there (a deletion cut short, or a restore that left it) is restored on
+  its own.
+- **Purging** an item of a person purges the spaces recycled with them first, then
+  empties their row as described, in that order, so that a purge cut short is
+  finished at the next start. An item whose person is not deleted (a restore cut
+  short) removes only itself and what waited under it: it never touches the
+  person's data.
+- **Usernames.** A deleted person's username stays taken (the row keeps it, so
+  the unique key refuses it, and `GET /api/…` lookups by username do not find
+  them). `users.reuseUsernames` is read at invites (when one is made with a
+  username), registration, accepting an invite and `autoCreate`; with `never` and a
+  retired name those answer `409 exists`, and `autoCreate` picks the next free
+  form. A sign-in by an SSO identity of a deleted person is refused (`disabled`),
+  never turned into a new account.
+- The daily sweep deletes a tombstone when no audit row (as actor or subject), no
+  invite (made or used), no recycle item, no export and no space names it.
+
 #### Restoring and purging a user
 
 - Restoring brings back the person as they were before step 1 (enabled or
@@ -6936,6 +6980,20 @@ done.
 Single actions keep their own endpoints without a token, except the purge of a
 recycle item.
 
+**As built.** `POST /api/admin/confirm` takes every action of the list and answers
+the plan: the preview of each deletion, or one line per item; `needsHeir` and
+`blockers` name the person they are about (`{"user": …}`). The token holds the
+request it was asked for. `POST /api/admin/bulk` always needs it (a single
+purge's `?confirm=` is the other place it is used), is bound to the caller, spent
+at once, and is `409 confirm_stale` when the plan, made again from the records,
+has another hash (ids, states, owners, members, heirs, transfers). The actions
+`evict`, `pin` and `unpin` are the site's (`403 forbidden` for each item for a
+tenant administrator); `export` makes one export of the whole set. A job is a row
+of `bulk_jobs`; its `state` is `queued`, `running`, `done` (with `failed` listing
+`{"id", "error", "code"}` of each item that did not work, `409 busy` among them)
+or `interrupted`; `GET /api/admin/jobs/{id}` is the tenant's. A job runs on the
+server's own time: it does not stop when the caller's request ends.
+
 ### Exports
 
 An export is a zip of what a space holds, made before a deletion so that the
@@ -6973,9 +7031,10 @@ same list as `NOT-INCLUDED.txt` in the space's folder. The folder of a space is
 `<name>-<id>/`. A space in the recycle bin whose directory was never there (it was
 evicted when it was deleted) exports its drafts and addresses but no files. The
 notice to a space's owners is not sent (there is no account notice to put it in);
-the audit rows carry the export and its spaces. `user` in the request is
-available with 3.5's third part. `history: true` is `403 forbidden` for a tenant
-administrator.
+the audit rows carry the export and its spaces. `user` in the request names the
+spaces of rules 1 and 2 of "Deleting a user" (the personal one only for a site
+administrator), or, for a person in the recycle bin, the items recycled with
+them. `history: true` is `403 forbidden` for a tenant administrator.
 
 `GET /api/admin/exports`, `GET /api/admin/exports/{id}`, `DELETE /api/admin/exports/{id}`,
 and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,

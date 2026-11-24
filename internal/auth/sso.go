@@ -780,6 +780,11 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	switch {
 	case err == nil:
 		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // an identity signs in to its account, whatever tenant
+		if errors.Is(err, store.ErrNotFound) {
+			// The person is in the recycle bin (their identities stay attached,
+			// unusable): refused, not made a new account by autoCreate.
+			return nil, false, ssoErr("disabled")
+		}
 		if err != nil {
 			return nil, false, err
 		}

@@ -356,7 +356,7 @@ func TransferOwnership(ctx context.Context, q Q, spaceID, newOwner string, now t
 	// (nothing is written and the answer is ErrNotFound). Callers also hold
 	// LockSpace, as every change of members does.
 	res, err := q.Exec(ctx, `INSERT INTO space_members(space_id, user_id, role, created)
-		SELECT s.id, u.id, 'owner', ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ?
+		SELECT s.id, u.id, 'owner', ? FROM spaces s JOIN users u ON u.tenant_id = s.tenant_id WHERE s.id = ? AND u.id = ? AND u.deleted_at IS NULL
 		ON CONFLICT (space_id, user_id) DO UPDATE SET role = 'owner'`, ms(now), spaceID, newOwner)
 	if err := oneRow(res, err); err != nil {
 		return nil, err
@@ -416,6 +416,6 @@ func CountSpaces(ctx context.Context, q Q, sc Scope) (n int, err error) {
 
 func CountUsers(ctx context.Context, q Q, sc Scope) (n int, err error) {
 	cond, args := sc.cond("tenant_id")
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE `+cond, args...).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND `+cond, args...).Scan(&n)
 	return
 }

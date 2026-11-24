@@ -112,6 +112,8 @@ func (m *Manager) RecycleDays(ctx context.Context) int {
 type recycleState struct {
 	mu   sync.Mutex
 	days func(context.Context) int
+	// swept is when the tombstones were last looked at (guarded by mu).
+	swept time.Time
 }
 
 // RecycleOptions say who deletes a space and why.
@@ -440,7 +442,7 @@ func (m *Manager) finishPurge(ctx context.Context, it *store.RecycleItem) error 
 		return err
 	}
 	if it.Kind == store.RecycleUser {
-		if err := m.purgeUserData(ctx, it); err != nil {
+		if err := m.purgeUserItem(ctx, it); err != nil {
 			return err
 		}
 	}
@@ -556,6 +558,7 @@ func (m *Manager) recycleRound(ctx context.Context) {
 	if err := m.ExpireExports(ctx); err != nil && ctx.Err() == nil {
 		m.log.Warn("could not delete the exports that are past their days", "error", err)
 	}
+	m.sweepTombstonesDaily(ctx)
 }
 
 // recoverRecycle finishes what a crash (or a failed move) left: items moving
@@ -598,10 +601,30 @@ func (m *Manager) recoverRecycle(ctx context.Context, older time.Duration) error
 	return nil
 }
 
-// purgeUserData is what purging a person's item does besides deleting its
-// directories (see user.go).
-func (m *Manager) purgeUserData(ctx context.Context, it *store.RecycleItem) error { return nil }
-
 // FinishRecycle finishes what a failed move or a crash left in the recycle bin:
 // what a start does, for a caller that wants it now.
 func (m *Manager) FinishRecycle(ctx context.Context) error { return m.recoverRecycle(ctx, 0) }
+
+// sweepTombstonesDaily deletes the rows of purged people that nothing refers to
+// any more, once a day.
+func (m *Manager) sweepTombstonesDaily(ctx context.Context) {
+	m.recycle.mu.Lock()
+	due := m.opt.Now().Sub(m.recycle.swept) >= tombstoneEvery
+	if due {
+		m.recycle.swept = m.opt.Now()
+	}
+	m.recycle.mu.Unlock()
+	if !due {
+		return
+	}
+	if n, err := m.SweepTombstones(ctx); err != nil && ctx.Err() == nil {
+		m.log.Warn("could not sweep the rows of purged people", "error", err)
+	} else if n > 0 {
+		m.log.Info("deleted the rows of purged people that nothing refers to", "count", n)
+	}
+}
+
+// StepHook runs the test hook of the recycle bin at a named step of another
+// action that has crash points of its own (deleting a person); an error it
+// returns stops there as a crash would (tests).
+func (m *Manager) StepHook(step string) error { return m.recycleStep(step) }

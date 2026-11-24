@@ -185,6 +185,11 @@ func (s *Service) evictUser(userID, keep string) {
 	}
 }
 
+// Forget drops what the service remembers of a person (their sessions and the
+// copy of their row): for a change made behind its back, such as a person who was
+// deleted or brought back.
+func (s *Service) Forget(userID string) { s.evictUser(userID, "") }
+
 func (s *Service) dropUser(userID string) {
 	s.cmu.Lock()
 	s.gen++

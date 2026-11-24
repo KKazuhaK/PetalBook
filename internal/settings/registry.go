@@ -30,6 +30,10 @@ const (
 	RecycleDays     = "recycle.days"
 	ExportsDays     = "exports.days"
 	ExportsMaxBytes = "exports.maxBytes"
+	// UsersReuseUsernames is whether a username a purge freed may be taken again:
+	// "after_purge" (anyone may, once the person is purged) or "never". Site only:
+	// usernames are unique on the whole server.
+	UsersReuseUsernames = "users.reuseUsernames"
 
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
@@ -74,6 +78,7 @@ func Definitions() []*Def {
 		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}},
+		{Key: UsersReuseUsernames, Kind: Choice, Layers: []Layer{Site}, Default: "after_purge", Choices: []string{"after_purge", "never"}, Lower: Lower{Mode: Allow}},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},
