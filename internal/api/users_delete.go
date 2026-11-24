@@ -78,6 +78,8 @@ type userDeletionResp struct {
 	NeedsHeir []planSpaceResp  `json:"needsHeir"`
 	Blockers  []map[string]any `json:"blockers"`
 	Bytes     int64            `json:"bytes"`
+	// RecycleDays is how long what is recycled is kept (recycle.days now).
+	RecycleDays int `json:"recycleDays"`
 }
 
 // blockersOf says why the caller may not delete the person (the last enabled site
@@ -134,7 +136,7 @@ func (s *server) userDeletionOf(c *call, id, heir string, transfers map[string]s
 		s.fail(c.w, err)
 		return userDeletionResp{}, false
 	}
-	out := userDeletionResp{User: recycleUserRef{target.ID, target.Username}, Groups: plan.Groups, Blockers: blockers}
+	out := userDeletionResp{User: recycleUserRef{target.ID, target.Username}, Groups: plan.Groups, Blockers: blockers, RecycleDays: s.recycleDays(c)}
 	if out.Blockers == nil {
 		out.Blockers = []map[string]any{}
 	}

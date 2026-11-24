@@ -31,7 +31,6 @@ beforeAll(() => {
 })
 beforeEach(() => {
   localStorage.clear()
-  sessionStorage.clear()
 })
 
 let m: Mounted | undefined
@@ -133,9 +132,8 @@ describe('the recycle bin', () => {
     await type(pick, [...pick.options].find((o) => o.textContent?.includes('newowner'))!.value)
     await click(buttonIn(dlg(), tg.recycle.restoreConfirm))
     await settle(() => text().includes(tg.recycle.restoreDone('没主人了')), 'restored')
-    expect(dlg().querySelector('[data-slot="restore-skipped"]')?.textContent ?? '').toContain(
-      tg.recycle.skippedUser(m!.server.userId('gone') ?? '').slice(0, 6),
-    )
+    // The person is named, not shown as an id.
+    expect(dlg().querySelector('[data-slot="restore-skipped"]')?.textContent ?? '').toContain(tg.recycle.skippedUser('gone'))
     expect(JSON.parse(requests('POST', '/api/admin/recycle/').at(-1)!.body!)).toEqual({
       owner: m!.server.userId('newowner'),
     })
@@ -252,6 +250,8 @@ describe('exports', () => {
     await settle(() => exportsList()[0].getAttribute('data-state') === 'ready', 'ready')
     const row = exportsList()[0]
     expect(row.textContent).toContain('要导出')
+    // The space still exists and the caller may open it: its name links to it.
+    expect(row.querySelector<HTMLAnchorElement>('[data-slot="export-space-link"]')?.getAttribute('href')).toMatch(/^\/s\/[^/]+\/$/)
     expect(row.querySelector('[data-slot="export-expires"]')!.textContent).toBe(tg.exports.expires(7))
     const link = row.querySelector<HTMLAnchorElement>('a[download]')!
     expect(link.getAttribute('href')).toMatch(/^\/api\/admin\/exports\/[^/]+\/download$/)
@@ -353,6 +353,9 @@ describe('the audited view of a space', () => {
       reason: '检查一个被举报的页面',
     })
     expect(document.querySelector('[data-slot="admin-view-banner"]')!.textContent).toContain(tg.view.banner)
+    // The server knows the view is open: the page keeps nothing of it in the browser.
+    expect(sessionStorage.length).toBe(0)
+    expect(requests('GET', `/api/admin/spaces/${space}`).length).toBeGreaterThan(0)
     await settle(() => document.querySelector('[data-testid="space-pages"]') !== null, 'the space opens')
     // Ending the view closes the space again.
     await click(buttonIn(document.querySelector('[data-slot="admin-view-banner"]'), tg.view.end))

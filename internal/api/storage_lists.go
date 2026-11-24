@@ -303,6 +303,8 @@ type storageSummaryResp struct {
 		InGrace int64 `json:"inGrace"`
 		Overdue int64 `json:"overdue"`
 	} `json:"remotes"`
+	// RecycleDays is how long the recycle bin keeps an item (recycle.days now).
+	RecycleDays   int     `json:"recycleDays"`
 	DiskFreeBytes *uint64 `json:"diskFreeBytes,omitempty"`
 	MeasuredAt    *string `json:"measuredAt"`
 }
@@ -333,6 +335,7 @@ func (s *server) storageSummary(c *call, sc store.Scope) (storageSummaryResp, er
 	}
 	r.Recycle.Items, r.Recycle.Bytes, r.Exports.Items, r.Exports.Bytes = sum.RecycleItems, sum.RecycleBytes, sum.ExportItems, sum.ExportBytes
 	r.Remotes.InGrace, r.Remotes.Overdue = sum.InGrace, sum.Overdue
+	r.RecycleDays = s.recycleDays(c)
 	r.MeasuredAt = optTime(sum.Measured)
 	if c.isSiteAdmin() {
 		if free, ok := diskFree(s.spaces.DataDir()); ok {

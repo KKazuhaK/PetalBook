@@ -5,7 +5,7 @@
 // shown a personal space, the disk's free room, nor can purge early. Time moves one step each time a running job,
 // a purge or an export is asked about, so a test sees the states one after another.
 
-import type { AdminSpace, CacheState, SpaceLocation, SpaceRole } from '../types.ts'
+import type { AdminSpace, CacheState, RestoreSkipped, SpaceLocation, SpaceRole } from '../types.ts'
 import { HttpError } from './store.ts'
 import type { MockResponse } from './server.ts'
 
@@ -48,7 +48,7 @@ export interface ManageBookOptions<S extends BookSpace, U extends BookUser> {
   users: Map<string, U>
   newId: (taken: (id: string) => boolean) => string
   token: () => string
-  adminItem: (s: S) => Omit<AdminSpace, 'location' | 'counted'>
+  adminItem: (s: S) => Omit<AdminSpace, 'location' | 'counted' | 'view'>
   ownerOf: (s: S) => U | undefined
   isSiteAdmin: (u: U | undefined) => boolean
   cacheOf: (s: S) => CacheState
@@ -154,7 +154,7 @@ interface ExportRec2 {
   id: string
   by: string
   siteOnly: boolean
-  sources: { space?: string; item?: string; name: string }[]
+  sources: { space?: string; item?: string; name: string; spaceId: string }[]
   history: boolean
   state: 'queued' | 'running' | 'ready' | 'failed'
   error: string
@@ -170,8 +170,8 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
   const confirms = new Map<string, ConfirmRec>()
   const jobs = new Map<string, JobRec>()
   const exportsMap = new Map<string, ExportRec2>()
-  // (session, space) -> when the view ends.
-  const views = new Map<string, number>()
+  // (session, space) -> when the view started and when it ends.
+  const views = new Map<string, { since: number; until: number }>()
   const activity = new Map<string, { lastActive?: number; firstWrite?: number }>()
   const busy = new Set<string>()
   const hooks = { holdJobs: false, exportsLimit: Infinity, breakJobs: false }
@@ -193,10 +193,15 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
   // --- where the bytes live ---
   const locationOf = (s: S): SpaceLocation => s.location ?? (s.remote ? 'own' : 'server')
   const counted = (s: S) => locationOf(s) === 'server' || locationOf(s) === 'site'
-  const decorate = (s: S): AdminSpace => ({
+  const viewOf = (token: string | null, space: string): AdminSpace['view'] => {
+    const v = views.get(viewKey(token ?? '', space))
+    return v && v.until > o.now() ? { since: o.rfc3339(v.since), until: o.rfc3339(v.until) } : null
+  }
+  const decorate = (s: S, token: string | null): AdminSpace => ({
     ...o.adminItem(s),
     location: locationOf(s),
     counted: counted(s),
+    view: viewOf(token, s.id),
   })
   const heldOf = (s: S) =>
     (s.remote && s.cache === 'evicted' ? 0 : (s.size?.bytes ?? 0)) + (s.size ? Math.round(s.size.bytes / 8) : 0)
@@ -293,6 +298,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       usageBytes: sum(all.filter(counted), bytesOf),
       assetCacheBytes: sum(all, (s) => s.assets?.cacheBytes ?? 0),
       recycle: { items: bin.length, bytes: sum(bin, (i) => i.bytes) },
+      recycleDays: o.recycleDays(),
       exports: { items: ex.length, bytes: sum(ex, (e) => e.bytes) },
       remotes: {
         inGrace: notices.filter((x) => !x.overdue).length,
@@ -305,7 +311,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
 
   // --- the list of spaces ---
   const SPACE_SORTS = ['created', 'name', 'bytes', 'lastUsed']
-  const listSpaces = (me: U, url: URL): MockResponse => {
+  const listSpaces = (me: U, token: string | null, url: URL): MockResponse => {
     const limit = limitOf(url)
     tenantParam(me, url)
     const sort = oneOf(url, 'sort', SPACE_SORTS) || 'created'
@@ -354,7 +360,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       return (order === 'asc' ? c : -c) || (a.id < b.id ? -1 : 1)
     })
     const { page, next } = paged(rows, (s) => s.id, value, `${sort}.${order}`, url.searchParams.get('cursor'), limit)
-    return { status: 200, body: { items: page.map(decorate), next } }
+    return { status: 200, body: { items: page.map((s) => decorate(s, token)), next } }
   }
 
   // --- people ---
@@ -445,7 +451,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     )
     return { status: 200, body: { items: page, next } }
   }
-  const onePerson = (me: U, id: string): MockResponse => {
+  const onePerson = (me: U, token: string | null, id: string): MockResponse => {
     const u = userFor(id)
     // Their personal space is counted in their row, and never shown to a tenant administrator.
     const spaces = ownedBy(u)
@@ -454,7 +460,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       .slice(0, 200)
     return {
       status: 200,
-      body: { ...personRow(u), items: spaces.map(decorate) },
+      body: { ...personRow(u), items: spaces.map((s) => decorate(s, token)) },
     }
   }
 
@@ -491,6 +497,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       deletedBy: i.deletedBy,
       purgeAt: o.rfc3339(at + o.recycleDays() * DAY),
       reason: i.reason,
+      state: i.purging === null ? 'ready' : 'purging',
       restorable: i.purging === null,
       problems: i.purging === null ? [] : ['the item is not at rest (purging)'],
     }
@@ -577,6 +584,11 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     return recycleSpace(s, me, reason, parent)
   }
 
+  // The name a person had when they were deleted, as the server kept it with the space.
+  const nameOfGone = (userId: string): string => {
+    for (const i of items.values()) if (i.kind === 'user' && i.user?.id === userId) return i.user.name || i.user.username
+    return ''
+  }
   const restoreSpace = (me: U, i: ItemRec<S, U>, ownerId: string, parentUser?: boolean): MockResponse => {
     const s = i.space!
     if (i.purging !== null) throw new HttpError(409, 'busy', 'a purge of this item is running')
@@ -584,9 +596,9 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       throw new HttpError(409, 'conflict', 'a personal space goes back with its person')
     if (o.spaces.has(s.id)) throw new HttpError(409, 'conflict', 'a space with that id exists again')
     // What is left out is worked out first, and applied only when the restore goes through.
-    const skipped: { user?: string; group?: string; reason: string }[] = []
+    const skipped: RestoreSkipped[] = []
     const gone = [...s.members.keys()].filter((uid) => !o.users.has(uid))
-    for (const uid of gone) skipped.push({ user: uid, reason: 'deleted' })
+    for (const uid of gone) skipped.push({ user: uid, name: nameOfGone(uid), reason: 'deleted' })
     const remaining = [...s.members].filter(([uid]) => o.users.has(uid))
     if (ownerId) {
       const u = o.users.get(ownerId)
@@ -617,15 +629,13 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     const u = i.user!
     u.disabled = i.wasDisabled === true
     o.users.set(u.id, u)
-    const skipped: { user?: string; group?: string; reason: string }[] = []
+    const skipped: RestoreSkipped[] = []
     const back: string[] = []
     for (const k of childrenOf(i.id)) {
       const s = k.space!
       if (o.spaces.has(s.id)) {
         k.parent = undefined
-        skipped.push({
-          reason: `space ${s.id}: a space with that id exists again`,
-        })
+        skipped.push({ space: s.id, name: s.name, reason: 'conflict' })
         continue
       }
       for (const [uid] of [...s.members]) if (!o.users.has(uid)) s.members.delete(uid)
@@ -753,6 +763,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       needsHeir,
       blockers,
       bytes: sum(recycle, (r) => r.bytes),
+      recycleDays: o.recycleDays(),
     }
   }
   const deleteUser = (
@@ -1063,7 +1074,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
   }
 
   // --- exports ---
-  const exportOut = (e: ExportRec2) => ({
+  const exportOut = (me: U, e: ExportRec2) => ({
     id: e.id,
     tenant: o.tenant,
     madeBy: { id: e.by, username: o.users.get(e.by)?.username ?? '' },
@@ -1071,6 +1082,9 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       ...(s.space ? { space: s.space } : {}),
       ...(s.item ? { item: s.item } : {}),
       name: s.name,
+      spaceId: s.spaceId,
+      // Exists now and the caller may open it (the mock has one tenant: a personal space is a site administrator's only).
+      open: o.spaces.has(s.spaceId) && (siteOf(me) || !o.spaces.get(s.spaceId)!.personal),
     })),
     history: e.history,
     state: e.state,
@@ -1109,13 +1123,13 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     let personal = false
     for (const id of spaceIds) {
       const s = spaceFor(me, id)
-      sources.push({ space: s.id, name: s.name })
+      sources.push({ space: s.id, name: s.name, spaceId: s.id })
       personal = personal || s.personal
     }
     for (const id of itemIds) {
       const i = itemFor(me, id)
       if (i.kind !== 'space') return gone('no such item in the recycle bin')
-      sources.push({ item: i.id, name: i.space!.name })
+      sources.push({ item: i.id, name: i.space!.name, spaceId: i.space!.id })
       personal = personal || i.space!.personal
     }
     const bytes = sum(spaceIds, (id) => bytesOf(o.spaces.get(id)!)) + sum(itemIds, (id) => items.get(id)!.bytes) + 2048
@@ -1157,7 +1171,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     if (reason === '' || reason.length > 500) bad('reason is from 1 to 500 characters')
     if (s.disabled) throw new HttpError(403, 'space_disabled', 'this space has been disabled by an administrator')
     const until = o.now() + 3_600_000
-    views.set(viewKey(token ?? '', s.id), until)
+    views.set(viewKey(token ?? '', s.id), { since: o.now(), until })
     return { status: 200, body: { space: s.id, until: o.rfc3339(until) } }
   }
 
@@ -1169,7 +1183,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     touch,
     listSpaces,
     // Whether this session may read a space it is not a member of.
-    viewing: (token: string | null, space: string) => (views.get(viewKey(token ?? '', space)) ?? 0) > o.now(),
+    viewing: (token: string | null, space: string) => (views.get(viewKey(token ?? '', space))?.until ?? 0) > o.now(),
     // The request of a person who is gone from the world: their sessions are dropped by the server.
     deleteSpace: (me: U, id: string, reason: string) => itemOut(me, deleteSpace(me, id, reason)),
     deleteUser: (me: U, id: string, b: Record<string, unknown>) => {
@@ -1192,7 +1206,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
       })
       if (path === '/admin/storage/people' && method === 'GET') return listPeople(me, url)
       const person = /^\/admin\/storage\/people\/([^/]+)$/.exec(path)
-      if (person && method === 'GET') return onePerson(me, decodeURIComponent(person[1]))
+      if (person && method === 'GET') return onePerson(me, token, decodeURIComponent(person[1]))
       if (path === '/admin/recycle' && method === 'GET') return listRecycle(me, url)
       const item = /^\/admin\/recycle\/([^/]+)(\/restore)?$/.exec(path)
       if (item) {
@@ -1240,7 +1254,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
           },
           false,
         )
-        return j({ ...exportOut(e), state: 'running' }, 202)
+        return j({ ...exportOut(me, e), state: 'running' }, 202)
       }
       if (path === '/admin/exports' && method === 'GET') {
         const rows = [...exportsMap.keys()]
@@ -1252,7 +1266,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
             }
           })
           .sort((a, b) => b.created - a.created || (a.id < b.id ? 1 : -1))
-        return j({ items: rows.map(exportOut), next: '' })
+        return j({ items: rows.map((e) => exportOut(me, e)), next: '' })
       }
       const ex = /^\/admin\/exports\/([^/]+)(\/download)?$/.exec(path)
       if (ex) {
@@ -1268,7 +1282,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
             },
           }
         }
-        if (!ex[2] && method === 'GET') return j(exportOut(e))
+        if (!ex[2] && method === 'GET') return j(exportOut(me, e))
         if (!ex[2] && method === 'DELETE') {
           exportsMap.delete(e.id)
           return { status: 204 }

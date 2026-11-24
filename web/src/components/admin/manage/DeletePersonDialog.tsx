@@ -21,13 +21,12 @@ import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
 import { adminPath } from '@/lib/urls'
 import { tg } from '@/i18n/manage'
-import { manageError, UserPicker, useIsSite, useRecycleDays } from './shared'
+import { manageError, UserPicker, useIsSite } from './shared'
 
 // Deleting one person: what happens to each of their spaces, who inherits, what stops working; then their username
 // typed, and where they went. The person goes to the recycle bin, never away.
 export function DeletePersonDialog({ id, username, onClose }: { id: string; username: string; onClose: () => void }) {
   const site = useIsSite()
-  const days = useRecycleDays()
   const [heir, setHeir] = useState<User | null>(null)
   const plan = useUserDeletion(id, heir?.id ?? '')
   const del = useDeleteUser()
@@ -93,7 +92,7 @@ export function DeletePersonDialog({ id, username, onClose }: { id: string; user
           >
             <DialogHeader>
               <DialogTitle>{tg.del.user.title(username)}</DialogTitle>
-              <DialogDescription>{days === null ? tg.del.daysUnknown : tg.del.daysLine(days)}</DialogDescription>
+              <DialogDescription>{p ? tg.del.daysLine(p.recycleDays) : tg.del.daysUnknown}</DialogDescription>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">{tg.del.user.intro}</p>
             {plan.isPending ? (

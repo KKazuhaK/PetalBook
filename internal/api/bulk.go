@@ -423,7 +423,7 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 		if err != nil || (sp.Personal && !(actor.SiteAdmin && actor.Role == "admin")) {
 			return spaces.ErrNotFound
 		}
-		sources = append(sources, store.ExportSource{Space: sp.ID, Name: sp.Name})
+		sources = append(sources, store.ExportSource{Space: sp.ID, SpaceID: sp.ID, Name: sp.Name})
 		tenants[sp.TenantID] = true
 		personal = personal || sp.Personal
 	}
@@ -436,7 +436,7 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 		if !ok || it.Kind != store.RecycleSpace {
 			return spaces.ErrNotFound
 		}
-		sources = append(sources, store.ExportSource{Item: it.ID, Name: it.Name})
+		sources = append(sources, store.ExportSource{Item: it.ID, SpaceID: it.SpaceID, Name: it.Name})
 		tenants[it.TenantID] = true
 		personal = personal || it.Personal
 	}

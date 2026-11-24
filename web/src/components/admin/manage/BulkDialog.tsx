@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatBytes } from '@/lib/bytes'
 import { tg } from '@/i18n/manage'
-import { manageError, UserPicker, useRecycleDays } from './shared'
+import { manageError, UserPicker } from './shared'
 
 const isSpacePreview = (l: unknown): l is SpaceDeletionPreview =>
   !!l && typeof l === 'object' && 'heldBytes' in l && 'recycleDays' in l
@@ -137,7 +137,6 @@ export function BulkDialog({
 }) {
   const confirm = useConfirm()
   const start = useStartBulk()
-  const days = useRecycleDays()
   const [plan, setPlan] = useState<ConfirmResult | null>(null)
   const [error, setError] = useState('')
   const [stale, setStale] = useState(false)
@@ -176,6 +175,9 @@ export function BulkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, ask])
 
+  // What the deletion preview of the first line says the bin keeps things for.
+  const first = plan?.plan[0]
+  const days = first && 'recycleDays' in first && typeof first.recycleDays === 'number' ? first.recycleDays : null
   const blockers = plan?.blockers ?? []
   const needs = plan?.needsHeir ?? []
   const blocked = blockers.length > 0 || (needs.length > 0 && !heir)

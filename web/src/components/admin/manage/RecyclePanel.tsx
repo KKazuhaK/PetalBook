@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Search } from 'lucide-react'
+import { Link } from 'react-router'
 import { ApiError } from '@/api/client'
 import {
   exportDownloadUrl,
@@ -28,6 +29,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatBytes } from '@/lib/bytes'
+import { spaceUrls } from '@/lib/urls'
 import { absoluteTime } from '@/lib/time'
 import { useDebounced } from '@/lib/useDebounced'
 import { tg } from '@/i18n/manage'
@@ -53,9 +55,7 @@ function Bin() {
   const [text, setText] = useState('')
   const q = useDebounced(text.trim(), 300)
   const [kind, setKind] = useState('')
-  // Items whose purge was started here: the list is read again until they are gone.
-  const [purging, setPurging] = useState<Set<string>>(new Set())
-  const list = useRecycle({ q: q || undefined, kind: kind || undefined }, purging)
+  const list = useRecycle({ q: q || undefined, kind: kind || undefined })
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
   const [restoring, setRestoring] = useState<RecycleItem | null>(null)
   const [purge, setPurge] = useState<RecycleItem | null>(null)
@@ -125,7 +125,7 @@ function Bin() {
           <ul className="divide-y rounded-lg border" data-slot="recycle-list">
             {items.map((i) => {
               const left = daysLeft(i.purgeAt)
-              const beingPurged = purging.has(i.id)
+              const beingPurged = i.state === 'purging'
               return (
                 <li
                   key={i.id}
@@ -218,11 +218,7 @@ function Bin() {
       )}
       {restoring && <RestoreDialog item={restoring} onClose={() => setRestoring(null)} />}
       {purge && (
-        <PurgeDialog
-          item={purge}
-          onStarted={(id) => setPurging((prev) => new Set(prev).add(id))}
-          onClose={() => setPurge(null)}
-        />
+        <PurgeDialog item={purge} onClose={() => setPurge(null)} />
       )}
       {exporting && (
         <ExportDialog request={{ items: [exporting.id] }} name={nameOf(exporting)} onClose={() => setExporting(null)} />
@@ -284,7 +280,11 @@ function RestoreDialog({ item, onClose }: { item: RecycleItem; onClose: () => vo
                 <ul className="list-disc pl-5 text-xs">
                   {done.skipped.map((s, i) => (
                     <li key={i}>
-                      {s.user ? tg.recycle.skippedUser(s.user) : s.group ? tg.recycle.skippedGroup(s.group) : s.reason}
+                      {s.user
+                        ? tg.recycle.skippedUser(s.name)
+                        : s.group
+                          ? tg.recycle.skippedGroup(s.name)
+                          : tg.recycle.skippedSpace(s.name, s.reason)}
                     </li>
                   ))}
                 </ul>
@@ -350,15 +350,7 @@ function RestoreDialog({ item, onClose }: { item: RecycleItem; onClose: () => vo
 }
 
 // Purging early, for site administrators: a fresh confirmation each time the dialog opens, then the name typed.
-function PurgeDialog({
-  item,
-  onStarted,
-  onClose,
-}: {
-  item: RecycleItem
-  onStarted: (id: string) => void
-  onClose: () => void
-}) {
+function PurgeDialog({ item, onClose }: { item: RecycleItem; onClose: () => void }) {
   const confirm = useConfirm()
   const purge = usePurge()
   const [token, setToken] = useState<string | null>(null)
@@ -396,7 +388,6 @@ function PurgeDialog({
       {
         onSuccess: () => {
           setStarted(true)
-          onStarted(item.id)
         },
         onError: (e) => {
           if (e instanceof ApiError && (e.code === 'confirm_stale' || e.status === 404)) {
@@ -492,7 +483,22 @@ function ExportsSection() {
               <div className="min-w-0 flex-1 basis-56">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-sm font-medium">
-                    {e.spaces.map((s) => s.name ?? s.space ?? s.item).join('、')}
+                    {e.spaces.map((s, i) => (
+                      <span key={`${s.spaceId}:${i}`}>
+                        {i > 0 && '、'}
+                        {s.open ? (
+                          <Link
+                            to={spaceUrls(s.spaceId).home()}
+                            className="underline underline-offset-4 hover:text-primary"
+                            data-slot="export-space-link"
+                          >
+                            {s.name || s.spaceId}
+                          </Link>
+                        ) : (
+                          s.name || s.spaceId
+                        )}
+                      </span>
+                    ))}
                   </span>
                   <Badge variant={e.state === 'failed' ? 'destructive' : e.state === 'ready' ? 'secondary' : 'outline'}>
                     {tg.exports.state[e.state]}

@@ -254,6 +254,29 @@ type spaceRecords struct {
 	Version int                  `json:"version"`
 	Space   tableRows            `json:"space"`
 	Tables  map[string]tableRows `json:"tables"`
+	// Users and Groups are the names of the people and groups the space had, as
+	// they were when it was recycled, so that a restore can say who it left out
+	// after they are gone.
+	Users  map[string]string `json:"users,omitempty"`
+	Groups map[string]string `json:"groups,omitempty"`
+}
+
+// nameMap reads rows of (id, name) into a map.
+func nameMap(ctx context.Context, q Q, query string, args ...any) (map[string]string, error) {
+	rows, err := q.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
 }
 
 // recycledTable is a table with rows of a space, and which of its columns name
@@ -396,6 +419,13 @@ func RecycleSpaceRows(ctx context.Context, q Q, sc Scope, in RecycleSpaceIn) (ou
 			return out, err
 		}
 	}
+	// The names of its people and groups, for a restore that has to leave some out.
+	if rec.Users, err = nameMap(ctx, q, `SELECT id, CASE WHEN name <> '' THEN name ELSE username END FROM users WHERE id IN (SELECT user_id FROM space_members WHERE space_id = ?)`, in.SpaceID); err != nil {
+		return out, err
+	}
+	if rec.Groups, err = nameMap(ctx, q, `SELECT id, name FROM groups WHERE id IN (SELECT group_id FROM space_groups WHERE space_id = ?)`, in.SpaceID); err != nil {
+		return out, err
+	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
 		return out, err
@@ -441,10 +471,15 @@ func RecycleSpaceRows(ctx context.Context, q Q, sc Scope, in RecycleSpaceIn) (ou
 	return out, err
 }
 
-// RestoreSkipped is a row of a recycled space that was left out of a restore.
+// RestoreSkipped is something that was left out of a restore: a person (User),
+// a group (Group) or a space that stayed in the recycle bin (Space), with its
+// name and why. Reason is one of the codes of docs/api.md ("deleted", "busy",
+// "owner_required", "conflict", "failed").
 type RestoreSkipped struct {
 	User   string `json:"user,omitempty"`
 	Group  string `json:"group,omitempty"`
+	Space  string `json:"space,omitempty"`
+	Name   string `json:"name"`
 	Reason string `json:"reason"`
 }
 
@@ -650,9 +685,9 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 			if n, _ := res.RowsAffected(); n == 0 {
 				switch {
 				case userCol >= 0 && t.name == "space_members":
-					out.Skipped = append(out.Skipped, RestoreSkipped{User: fmt.Sprint(jsonValue(r[userCol])), Reason: "deleted"})
+					out.Skipped = append(out.Skipped, RestoreSkipped{User: fmt.Sprint(jsonValue(r[userCol])), Name: rec.Users[fmt.Sprint(jsonValue(r[userCol]))], Reason: "deleted"})
 				case groupCol >= 0:
-					out.Skipped = append(out.Skipped, RestoreSkipped{Group: fmt.Sprint(jsonValue(r[groupCol])), Reason: "deleted"})
+					out.Skipped = append(out.Skipped, RestoreSkipped{Group: fmt.Sprint(jsonValue(r[groupCol])), Name: rec.Groups[fmt.Sprint(jsonValue(r[groupCol]))], Reason: "deleted"})
 				}
 			}
 		}

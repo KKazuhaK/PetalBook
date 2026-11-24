@@ -75,6 +75,33 @@ func (v *viewTable) active(session, space string, now time.Time) bool {
 	return ok
 }
 
+// openIn is the end of each view the session has open among the spaces, one
+// lock for all of them.
+func (v *viewTable) openIn(session string, ids []string, now time.Time) map[string]time.Time {
+	if session == "" || len(ids) == 0 {
+		return nil
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var out map[string]time.Time
+	for _, id := range ids {
+		if t, ok := v.until[viewKey{session, id}]; ok && t.After(now) {
+			if out == nil {
+				out = map[string]time.Time{}
+			}
+			out[id] = t
+		}
+	}
+	return out
+}
+
+// adminViewResp is a view the caller's session has open: when it started (the
+// last time it was opened or extended) and when it ends.
+type adminViewResp struct {
+	Since string `json:"since"`
+	Until string `json:"until"`
+}
+
 // firstOpen says whether (who, space, what) has not been audited in the last
 // hour, and notes that it is now.
 func (v *viewTable) firstOpen(who, space, what string, now time.Time) bool {

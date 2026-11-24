@@ -33,7 +33,7 @@ export function SpaceGate() {
   // A new key per space: nothing of the old one stays mounted.
   return (
     <>
-      {outsider && <AdminViewBanner key={`view:${space}`} space={space} />}
+      {outsider && <AdminViewBanner key={`view:${space}`} space={current} />}
       <StorageNoticeBanner key={`storage:${space}`} />
       <SettingsNoticeBanner key={`notice:${space}`} />
       <Outlet key={space} />

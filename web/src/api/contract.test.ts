@@ -877,14 +877,22 @@ function suite(target: Target) {
           expect([(await call(admin, 'GET', path)).status, path].join(' ')).toBe(`403 ${path}`)
         }
         expect((await call(admin, 'POST', `/api/admin/spaces/${mine.id}/view`, {})).status).toBe(400)
+        expect((await call(admin, 'GET', `/api/admin/spaces/${mine.id}`)).json.view).toBeNull()
         const view = await call(admin, 'POST', `/api/admin/spaces/${mine.id}/view`, { reason: 'contract test' })
         expect(view.status).toBe(200)
         expect(view.json.space).toBe(mine.id)
+        // The server says the view is open: since and until, on the space and in the list.
+        const open = (await call(admin, 'GET', `/api/admin/spaces/${mine.id}`)).json.view
+        expect(open).toEqual({ since: expect.any(String), until: view.json.until })
+        expect(Date.parse(open.until) - Date.parse(open.since)).toBe(3_600_000)
+        const listed = (await call(admin, 'GET', `/api/admin/spaces?owner=${m.user.id}`)).json.items as AdminSpace[]
+        expect(listed.find((x) => x.id === mine.id)?.view).toEqual(open)
         for (const path of [`${mineSpace}/pages`, `${mineSpace}/pages/${own.json.id}`, `${mineSpace}/tree`]) {
           expect((await call(admin, 'GET', path)).status, path).toBe(200)
         }
         expect((await call(admin, 'POST', `${mineSpace}/pages`, { body: 'x' })).status).toBe(403)
         expect((await call(admin, 'DELETE', `/api/admin/spaces/${mine.id}/view`)).status).toBe(204)
+        expect((await call(admin, 'GET', `/api/admin/spaces/${mine.id}`)).json.view).toBeNull()
         expect(((await call(admin, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]).map((s) => s.id)).not.toContain(mine.id)
         // Nothing of theirs shows in their lists, either way.
         expect((await walk({ q: '只有我能看', recursive: true, folder: '' })).length).toBe(0)
@@ -2092,6 +2100,7 @@ function suite(target: Target) {
         expect(s.recycle).toEqual({ items: expect.any(Number), bytes: expect.any(Number) })
         expect(s.exports).toEqual({ items: expect.any(Number), bytes: expect.any(Number) })
         expect(s.remotes).toEqual({ inGrace: expect.any(Number), overdue: expect.any(Number) })
+        expect(s.recycleDays).toBeGreaterThanOrEqual(1)
       })
 
       it('lists spaces with where their bytes live and whether they count, sorted, with a cursor that is for one sort', async () => {
@@ -2138,7 +2147,10 @@ function suite(target: Target) {
         const del = await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`, { reason: 'contract test' })
         expect(del.status).toBe(200)
         expect(del.json.reason).toBe('contract test')
+        expect(del.json.state).toBe('ready')
         const item = del.json.id as string
+        const listedItem = ((await call(admin, 'GET', '/api/admin/recycle?limit=200')).json.items as { id: string; state: string }[]).find((i) => i.id === item)
+        expect(listedItem?.state).toBe('ready')
         expect((await call(owner.browser, 'GET', `/api/spaces/${sp.id}/pages`)).status).toBe(404)
         const back = await call(admin, 'POST', `/api/admin/recycle/${item}/restore`, {})
         expect(back.status).toBe(200)
@@ -2155,6 +2167,7 @@ function suite(target: Target) {
         await addMember(leaver, shared.id, viewer.user.username, 'viewer')
         const plan = await call(admin, 'GET', `/api/admin/users/${leaver.user.id}/deletion`)
         expect(plan.status).toBe(200)
+        expect(plan.json.recycleDays).toBeGreaterThanOrEqual(1)
         expect(plan.json.needsHeir.map((s: { id: string }) => s.id)).toEqual([shared.id])
         expect(plan.json.recycle.some((r: { space: { personal?: boolean } }) => r.space.personal)).toBe(true)
         const refused = await call(admin, 'DELETE', `/api/users/${leaver.user.id}`, {})
@@ -2170,6 +2183,7 @@ function suite(target: Target) {
         expect(back.status).toBe(200)
         expect(back.json.restored.user.id).toBe(leaver.user.id)
         expect(back.json.transfers.map((t: { space: string }) => t.space)).toContain(shared.id)
+        for (const k of back.json.skipped as { name: string; reason: string }[]) expect(k).toEqual(expect.objectContaining({ name: expect.any(String), reason: expect.any(String) }))
         expect(((await call(admin, 'GET', '/api/users')).json.users as User[]).some((u) => u.id === leaver.user.id)).toBe(true)
       })
 
@@ -2222,6 +2236,7 @@ function suite(target: Target) {
         const ready = await waitFor(async () => (await call(admin, 'GET', `/api/admin/exports/${made.json.id}`)).json, (e) => e.state === 'ready' || e.state === 'failed', 'the export')
         expect(ready.state).toBe('ready')
         expect(Date.parse(ready.expires)).toBeGreaterThan(Date.now())
+        expect(ready.spaces).toEqual([{ space: sp.id, name: `Exported ${run}`, spaceId: sp.id, open: true }])
         expect(((await call(admin, 'GET', '/api/admin/exports')).json.items as { id: string }[]).some((e) => e.id === made.json.id)).toBe(true)
         const dl = await call(admin, 'GET', `/api/admin/exports/${made.json.id}/download`)
         expect(dl.status).toBe(200)

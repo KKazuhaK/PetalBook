@@ -47,6 +47,44 @@ type ExportSource struct {
 	Space string `json:"space,omitempty"`
 	Item  string `json:"item,omitempty"`
 	Name  string `json:"name,omitempty"`
+	// SpaceID is the space either way (for an item, the space it held), so that
+	// a list of exports can link back to it while it exists.
+	SpaceID string `json:"spaceId,omitempty"`
+}
+
+// OpenableSpaces says which of the spaces exist and are in the scope (a personal
+// one never for a tenant administrator's scope, see AdminScopeOf): the ones an
+// administrator with the scope may open. Spaces in the recycle bin do not exist.
+// One query for each 500 ids.
+func OpenableSpaces(ctx context.Context, q Q, sc Scope, ids []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	const chunk = 500
+	for len(ids) > 0 {
+		n := min(chunk, len(ids))
+		part := ids[:n]
+		ids = ids[n:]
+		cond, args := sc.spaceCond("tenant_id", "personal_of IS NULL")
+		for _, id := range part {
+			args = append(args, id)
+		}
+		rows, err := q.Query(ctx, `SELECT id FROM spaces WHERE `+cond+` AND id IN (`+strings.TrimSuffix(strings.Repeat("?, ", len(part)), ", ")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 const exportCols = `id, tenant_id, made_by, made_by_name, spaces, history, site_only, state, error, bytes, path, created, expires`

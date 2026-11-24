@@ -332,8 +332,10 @@ export const manageEn = {
     restoreOwnerHelp: 'Every owner this space had is gone. Choose one.',
     restoreDone: (name: string) => `“${name}” is restored`,
     restoreSkipped: 'Left out',
-    skippedUser: (id: string) => `a person who is gone (${id})`,
-    skippedGroup: (id: string) => `a group that is gone (${id})`,
+    skippedUser: (name: string) => `${name || 'A person'}: no longer here, so not a member again`,
+    skippedGroup: (name: string) => `${name || 'A group'}: no longer here, so not added again`,
+    skippedSpace: (name: string, reason: string) =>
+      `${name || 'A space'}: ${({ busy: 'in use by another action, so it stays in the bin', owner_required: 'has no owner left, so it stays in the bin: restore it on its own and choose one', conflict: 'a space with that id exists again, so it stays in the bin' } as Record<string, string>)[reason] ?? 'could not be restored, so it stays in the bin'}`,
     restoreTransfers: 'Spaces handed over when they were deleted (not undone; redo by hand if you want)',
     restoreLeft: 'Spaces they left when deleted (not undone)',
     restoreSpaces: (n: number) => `${n} spaces came back with them.`,

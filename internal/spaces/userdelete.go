@@ -139,12 +139,12 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 	for i := range children {
 		child := &children[i]
 		if child.State != store.RecycleReady {
-			res.Skipped = append(res.Skipped, store.RestoreSkipped{Reason: "space " + child.SpaceID + " is not at rest"})
+			res.Skipped = append(res.Skipped, store.RestoreSkipped{Space: child.SpaceID, Name: child.Name, Reason: "busy"})
 			continue
 		}
 		r, err := m.restoreSpaceItem(ctx, child, "", true)
 		if err != nil {
-			res.Skipped = append(res.Skipped, store.RestoreSkipped{Reason: "space " + child.SpaceID + ": " + err.Error()})
+			res.Skipped = append(res.Skipped, store.RestoreSkipped{Space: child.SpaceID, Name: child.Name, Reason: skipReason(err)})
 			continue
 		}
 		res.Spaces = append(res.Spaces, r.SpaceID)
@@ -222,3 +222,17 @@ func (m *Manager) SweepTombstones(ctx context.Context) (int64, error) {
 
 // tombstoneEvery is how often the sweep runs.
 const tombstoneEvery = 24 * time.Hour
+
+// skipReason is the code that says why a space of a restored person stayed in the
+// recycle bin (docs/api.md, "Restoring a user").
+func skipReason(err error) string {
+	switch {
+	case errors.Is(err, store.ErrOwnerRequired):
+		return "owner_required"
+	case errors.Is(err, store.ErrRestoreConflict):
+		return "conflict"
+	case errors.Is(err, store.ErrBusyItem):
+		return "busy"
+	}
+	return "failed"
+}

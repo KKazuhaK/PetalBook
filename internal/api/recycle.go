@@ -29,19 +29,22 @@ type recycleUserRef struct {
 }
 
 type recycleItemResp struct {
-	ID         string           `json:"id"`
-	Kind       string           `json:"kind"`
-	Tenant     string           `json:"tenant"`
-	Space      *recycleSpaceRef `json:"space"`
-	User       *recycleUserRef  `json:"user"`
-	With       []recycleItemRef `json:"with"`
-	Bytes      int64            `json:"bytes"`
-	DeletedAt  string           `json:"deletedAt"`
-	DeletedBy  recycleUserRef   `json:"deletedBy"`
-	PurgeAt    string           `json:"purgeAt"`
-	Reason     string           `json:"reason"`
-	Restorable bool             `json:"restorable"`
-	Problems   []string         `json:"problems"`
+	ID        string           `json:"id"`
+	Kind      string           `json:"kind"`
+	Tenant    string           `json:"tenant"`
+	Space     *recycleSpaceRef `json:"space"`
+	User      *recycleUserRef  `json:"user"`
+	With      []recycleItemRef `json:"with"`
+	Bytes     int64            `json:"bytes"`
+	DeletedAt string           `json:"deletedAt"`
+	DeletedBy recycleUserRef   `json:"deletedBy"`
+	PurgeAt   string           `json:"purgeAt"`
+	Reason    string           `json:"reason"`
+	// State is ready, moving (its directories are being moved), restoring or
+	// purging: only a ready item can be restored or purged.
+	State      string   `json:"state"`
+	Restorable bool     `json:"restorable"`
+	Problems   []string `json:"problems"`
 }
 
 // recycleItemRef is an item recycled with a person.
@@ -56,7 +59,7 @@ type recycleItemRef struct {
 func (s *server) recycleItemOf(it store.RecycleItem, days int, with []store.RecycleItem) recycleItemResp {
 	out := recycleItemResp{ID: it.ID, Kind: it.Kind, Tenant: it.TenantID, Bytes: it.Bytes, DeletedAt: rfc3339(it.DeletedAt),
 		DeletedBy: recycleUserRef{it.DeletedBy, it.DeletedByName}, PurgeAt: rfc3339(it.DeletedAt.Add(time.Duration(days) * 24 * time.Hour)),
-		Reason: it.Reason, With: []recycleItemRef{}, Problems: s.spaces.Problems(&it)}
+		Reason: it.Reason, State: it.State, With: []recycleItemRef{}, Problems: s.spaces.Problems(&it)}
 	out.Restorable = len(out.Problems) == 0
 	if it.Kind == store.RecycleUser {
 		out.User = &recycleUserRef{it.UserID, it.Name}

@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { ApiError } from '@/api/client'
-import { useRecycle } from '@/api/manage'
-import { USER_SEARCH_LIMIT, useSiteSettings, useUserSearch } from '@/api/admin'
+import { USER_SEARCH_LIMIT, useUserSearch } from '@/api/admin'
 import { useSession } from '@/api/hooks'
 import type { SpaceLocation, User } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
@@ -21,20 +20,6 @@ export function manageError(e: unknown, fallback = tg.failed): string {
   if (!(e instanceof ApiError)) return fallback
   const codes = tg.errors as Record<string, string>
   return codes[e.code] ?? (e.message || fallback)
-}
-
-// How long things stay in the bin, as far as this page can know: the site's setting for a site administrator, else what
-// the items in the bin say (their `purgeAt` less their `deletedAt`). null when neither is known: the copy then says
-// "some days" and the dialogs that read it from a preview say the number.
-export function useRecycleDays(): number | null {
-  const site = useIsSite()
-  const settings = useSiteSettings(site)
-  const bin = useRecycle({})
-  const fromSetting = settings.data?.settings.find((s) => s.key === 'recycle.days')?.site.value
-  if (typeof fromSetting === 'number') return fromSetting
-  const first = bin.data?.pages[0]?.items[0]
-  if (first) return Math.round((Date.parse(first.purgeAt) - Date.parse(first.deletedAt)) / 86_400_000)
-  return null
 }
 
 export const daysLeft = (iso: string, now = Date.now()): number =>

@@ -24,6 +24,8 @@ export interface SpaceInfo {
   // The folder quick notes go to: a folder path, never empty. Only a name; the
   // folder exists once a page has been made in it.
   inbox: string
+  // On a space an administrator is not a member of: the audited view this session has open, null when there is none.
+  view?: AdminViewState | null
   // From 3.2 `role` and `permissions` are the effective ones (the person's own
   // role and their groups' together). The person's own role, "" when they reach
   // the space only through groups, and whether a group of theirs is a member.
@@ -1142,6 +1144,12 @@ export interface AdminSpace {
   // Where the bytes live, and whether they count toward quotas (docs/api.md, "Measurements this adds").
   location: SpaceLocation
   counted: boolean
+  // The audited view of the space this session has open; null when there is none (docs/api.md, "Viewing a space").
+  view: AdminViewState | null
+}
+export interface AdminViewState {
+  since: string
+  until: string
 }
 // `server`: only on this server; `own`: the person's own remote; `tenant`: the organisation's own storage target;
 // `site`: the site's storage organisation. The first and the last count toward quotas, the other two do not.
@@ -1182,6 +1190,8 @@ export interface StorageSummary {
   recycle: { items: number; bytes: number }
   exports: { items: number; bytes: number }
   remotes: { inGrace: number; overdue: number }
+  // How long the recycle bin keeps an item.
+  recycleDays: number
   diskFreeBytes?: number
   measuredAt: string | null
 }
@@ -1745,6 +1755,8 @@ export interface StoragePeopleList {
 export type StoragePersonDetail = StoragePerson & { items: AdminSpace[] }
 
 export type RecycleKind = 'space' | 'user'
+// `ready` is the only state in which an item can be restored or purged; the others are an action in progress.
+export type RecycleState = 'ready' | 'moving' | 'restoring' | 'purging'
 // An item recycled with a person.
 export interface RecycleChild {
   id: string
@@ -1763,6 +1775,7 @@ export interface RecycleItem {
   deletedBy: { id: string; username: string }
   purgeAt: string
   reason: string
+  state: RecycleState
   // false (with `problems`) while the item is moving, being restored or purged, or when a directory is missing.
   restorable: boolean
   problems: string[]
@@ -1771,10 +1784,19 @@ export interface RecycleList {
   items: RecycleItem[]
   next: string
 }
+// `name` is as it was when the thing was deleted ('' when it was not kept); `reason` is a code (docs/api.md, "What a
+// restore leaves out"): `deleted` for a person or group, and for a space `busy`, `owner_required`, `conflict` or `failed`.
+export interface RestoreSkipped {
+  user?: string
+  group?: string
+  space?: string
+  name: string
+  reason: string
+}
 export interface RestoreResult {
   restored: { item: string; space?: { id: string; name: string }; user?: User; spaces?: string[] }
-  // What was left out: a person or a group that is gone, or a space that stayed in the bin (`reason` only).
-  skipped: { user?: string; group?: string; reason: string }[]
+  // What was left out, by name: a person or a group that is gone, or a space that stayed in the bin.
+  skipped: RestoreSkipped[]
   transfers?: { space: string; name: string; to: string; toUsername: string }[]
   left?: { space: string; name: string; role: string }[]
 }
@@ -1811,6 +1833,7 @@ export interface UserDeletionPlan {
   needsHeir: PlanSpace[]
   blockers: { reason: 'self' | 'last_admin' | string; message?: string }[]
   bytes: number
+  recycleDays: number
 }
 export type ConfirmAction = 'delete_spaces' | 'delete_users' | 'purge' | 'restore' | 'evict' | 'pin' | 'unpin' | 'disable_spaces' | 'enable_spaces' | 'disable_users' | 'enable_users' | 'export'
 export interface ConfirmRequest {
@@ -1848,8 +1871,9 @@ export interface ExportRec {
   id: string
   tenant: string
   madeBy: { id: string; username: string }
-  // `space` for a live space, `item` for one in the recycle bin; `name` as it was.
-  spaces: { space?: string; item?: string; name?: string }[]
+  // `space` for a live space, `item` for one in the recycle bin; `name` as it was, `spaceId` the space either way and
+  // `open` whether it exists now and the caller may open it.
+  spaces: { space?: string; item?: string; name: string; spaceId: string; open: boolean }[]
   history: boolean
   state: ExportState
   error?: string

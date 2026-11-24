@@ -14,25 +14,66 @@ import (
 // background, kept for exports.days, audited when it is made and when it is
 // downloaded.
 
-type exportResp struct {
-	ID       string               `json:"id"`
-	Tenant   string               `json:"tenant"`
-	MadeBy   recycleUserRef       `json:"madeBy"`
-	Spaces   []store.ExportSource `json:"spaces"`
-	History  bool                 `json:"history"`
-	State    string               `json:"state"`
-	Error    string               `json:"error,omitempty"`
-	Warnings []string             `json:"warnings"`
-	Bytes    int64                `json:"bytes"`
-	Created  string               `json:"created"`
-	Expires  string               `json:"expires"`
+// exportSourceResp is one space an export holds: `space` for a live space and
+// `item` for one that was in the recycle bin, `name` as it was, `spaceId` the
+// space either way, and `open` whether it exists now and the caller may open it
+// (so that the page links to it only then).
+type exportSourceResp struct {
+	Space   string `json:"space,omitempty"`
+	Item    string `json:"item,omitempty"`
+	Name    string `json:"name,omitempty"`
+	SpaceID string `json:"spaceId"`
+	Open    bool   `json:"open"`
 }
 
-func exportOf(e store.Export) exportResp {
-	out := exportResp{ID: e.ID, Tenant: e.TenantID, MadeBy: recycleUserRef{e.MadeBy, e.MadeByName}, Spaces: e.Spaces, History: e.History, State: e.State,
+type exportResp struct {
+	ID       string             `json:"id"`
+	Tenant   string             `json:"tenant"`
+	MadeBy   recycleUserRef     `json:"madeBy"`
+	Spaces   []exportSourceResp `json:"spaces"`
+	History  bool               `json:"history"`
+	State    string             `json:"state"`
+	Error    string             `json:"error,omitempty"`
+	Warnings []string           `json:"warnings"`
+	Bytes    int64              `json:"bytes"`
+	Created  string             `json:"created"`
+	Expires  string             `json:"expires"`
+}
+
+// exportsOf is the answer's form of exports: one query for all the spaces they
+// hold says which can be opened by the caller.
+func (s *server) exportsOf(c *call, rows []store.Export) ([]exportResp, error) {
+	var ids []string
+	for _, e := range rows {
+		for _, src := range e.Spaces {
+			ids = append(ids, sourceSpace(src))
+		}
+	}
+	open, err := store.OpenableSpaces(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]exportResp, len(rows))
+	for i, e := range rows {
+		out[i] = exportOf(e, open)
+	}
+	return out, nil
+}
+
+// sourceSpace is the space an export source holds.
+func sourceSpace(src store.ExportSource) string {
+	if src.SpaceID != "" {
+		return src.SpaceID
+	}
+	return src.Space
+}
+
+func exportOf(e store.Export, open map[string]bool) exportResp {
+	out := exportResp{ID: e.ID, Tenant: e.TenantID, MadeBy: recycleUserRef{e.MadeBy, e.MadeByName}, Spaces: make([]exportSourceResp, len(e.Spaces)), History: e.History, State: e.State,
 		Bytes: e.Bytes, Created: rfc3339(e.Created), Expires: rfc3339(e.Expires), Warnings: []string{}}
-	if out.Spaces == nil {
-		out.Spaces = []store.ExportSource{}
+	for i, src := range e.Spaces {
+		id := sourceSpace(src)
+		out.Spaces[i] = exportSourceResp{Space: src.Space, Item: src.Item, Name: src.Name, SpaceID: id, Open: open[id]}
 	}
 	switch e.State {
 	case store.ExportFailed:
@@ -76,7 +117,7 @@ func (s *server) adminCreateExport(c *call) {
 		if !ok {
 			return
 		}
-		sources = append(sources, store.ExportSource{Space: sp.ID, Name: sp.Name})
+		sources = append(sources, store.ExportSource{Space: sp.ID, SpaceID: sp.ID, Name: sp.Name})
 		tenants[sp.TenantID] = true
 		personal = personal || sp.Personal
 	}
@@ -91,7 +132,7 @@ func (s *server) adminCreateExport(c *call) {
 			writeError(c.w, http.StatusNotFound, "not_found", "no such item in the recycle bin")
 			return
 		}
-		sources = append(sources, store.ExportSource{Item: it.ID, Name: it.Name})
+		sources = append(sources, store.ExportSource{Item: it.ID, SpaceID: it.SpaceID, Name: it.Name})
 		tenants[it.TenantID] = true
 		personal = personal || it.Personal
 	}
@@ -116,7 +157,12 @@ func (s *server) adminCreateExport(c *call) {
 		}
 	}
 	s.auditRow(c, "export_created", tenant, map[string]any{"export": e.ID, "spaces": ids, "history": req.History})
-	writeJSON(c.w, http.StatusAccepted, exportOf(*e))
+	out, err := s.exportsOf(c, []store.Export{*e})
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusAccepted, out[0])
 }
 
 // exportSiteOnly says whether an export is the site's: one a site administrator
@@ -152,9 +198,10 @@ func (s *server) adminListExports(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	items := make([]exportResp, len(rows))
-	for i, e := range rows {
-		items[i] = exportOf(e)
+	items, err := s.exportsOf(c, rows)
+	if err != nil {
+		s.fail(c.w, err)
+		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Items []exportResp `json:"items"`
@@ -177,7 +224,12 @@ func (s *server) exportFound(c *call) (*store.Export, bool) {
 
 func (s *server) adminGetExport(c *call) {
 	if e, ok := s.exportFound(c); ok {
-		writeJSON(c.w, http.StatusOK, exportOf(*e))
+		out, err := s.exportsOf(c, []store.Export{*e})
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		writeJSON(c.w, http.StatusOK, out[0])
 	}
 }
 

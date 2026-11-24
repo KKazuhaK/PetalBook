@@ -6636,13 +6636,14 @@ of their tenant and the effective values of the settings, read only.
              "people": 340, "dormant": 51, "heldBytes": 3436973876, "usageBytes": 912680550400,
              "assetCacheBytes": 4831838208, "recycle": {"items": 4, "bytes": 52428800},
              "exports": {"items": 1, "bytes": 10485760}, "remotes": {"inGrace": 3, "overdue": 0},
-             "diskFreeBytes": 52428800000, "measuredAt": "2026-11-23T02:10:00Z"}}
+             "recycleDays": 30, "diskFreeBytes": 52428800000, "measuredAt": "2026-11-23T02:10:00Z"}}
 ```
 
 The sums are the tenant's `usage` row (one primary-key read) or, for the whole
 server, one aggregate over the tenants' rows; `assetCacheBytes` comes from
 memory (per space, summed for the tenant's spaces from the in-memory map);
-`diskFreeBytes` is for site administrators only.
+`diskFreeBytes` is for site administrators only. `recycleDays` is
+`recycle.days` as it is now (how long the recycle bin keeps an item).
 
 ### `GET /api/admin/spaces` (filters and sorting added)
 
@@ -6857,9 +6858,12 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
  "space": {"id": "01JD3K8Q7Z", "name": "Team", "personal": false},
  "user": null, "with": [],
  "bytes": 18304211, "deletedAt": "2026-11-23T08:30:00Z", "deletedBy": {"id": "…", "username": "wu"},
- "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "restorable": true, "problems": []}
+ "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "state": "ready", "restorable": true, "problems": []}
 ```
 
+`state` is `ready`, `moving`, `restoring` or `purging` (see "As built"), in the
+list, in the answers that return an item and in the purge's `202`: a page that
+shows an item being purged reads it here and needs no memory of its own.
 `kind` is `space` or `user`. A `user` item has `user` and lists in `with` the
 space items recycled with that person (their personal space and the spaces they
 owned alone); those spaces are restored with the person, and on their own only
@@ -6875,7 +6879,8 @@ Items, newest first; one query a page.
 #### `POST /api/admin/recycle/{item}/restore`
 
 `{"owner": "01JD3K7A2M"}` (optional). `200` with what was restored and what
-was left out (`{"restored": {...}, "skipped": [{"user": "…", "reason": "deleted"}]}`).
+was left out (`{"restored": {...}, "skipped": [{"user": "…", "name": "tang", "reason": "deleted"}]}`;
+see "What a restore leaves out" for `skipped`).
 `409 owner_required`, `409 busy` (a purge of it is running), `409 conflict`
 (a space with that id exists again: never in practice, ids are random).
 
@@ -6889,6 +6894,23 @@ confirmation token from `POST /api/admin/confirm` (below). `204`.
 starts in the background. The item is `purging` until it is gone (a restore of
 it answers `409 busy`); `space_purged` or `user_purged` is written when it is
 over; one that fails stays `purging` and the hourly job finishes it.
+
+**What a restore leaves out.** `skipped` (in the answer of the restore of a space
+and of a person) lists what was left out, each with its `name` as it was when the
+thing was deleted (the display name of a person, else their username; the name
+of a group or a space) and a stable `reason`:
+
+| Entry | `reason` | Meaning |
+|---|---|---|
+| `{"user": id, "name"}` | `deleted` | the person of a membership no longer exists, or is deleted |
+| `{"group": id, "name"}` | `deleted` | the group no longer exists |
+| `{"space": id, "name"}` | `busy` | a space that went with a person is not at rest (a purge or another action holds it); it stays in the bin |
+| `{"space": id, "name"}` | `owner_required` | it has no owner left: restore it on its own with an `owner` |
+| `{"space": id, "name"}` | `conflict` | a space with that id exists again |
+| `{"space": id, "name"}` | `failed` | anything else; it stays in the bin as an item of its own |
+
+`name` is `""` for a thing whose name was not kept. The codes are fixed; the page
+words them.
 
 ### Deleting a space
 
@@ -6930,7 +6952,7 @@ grants, groups, GitHub connection), never from files:
                "credential": "user"}],
  "leave": [{"space": {"id": "…", "name": "Shared"}, "role": "owner"}],
  "revoke": {"tokens": 2, "grants": 1, "passkeys": 1, "identities": 1, "github": true, "sessions": 3},
- "groups": 4, "needsHeir": [], "blockers": []}
+ "groups": 4, "needsHeir": [], "blockers": [], "bytes": 4194304, "recycleDays": 30}
 ```
 
 The rules:
@@ -7188,6 +7210,14 @@ spaces of rules 1 and 2 of "Deleting a user" (the personal one only for a site
 administrator), or, for a person in the recycle bin, the items recycled with
 them. `history: true` is `403 forbidden` for a tenant administrator.
 
+Each entry of an export's `spaces` is `{"space": id, "name", "spaceId", "open"}`
+for a space and `{"item": id, "name", "spaceId", "open"}` for a space that was in
+the recycle bin when it was exported. `name` is as it was; `spaceId` is the space
+either way; `open` says whether that space exists now and the caller may open it
+(a personal space is never open to a tenant administrator, and one that was purged
+or whose item is still in the bin does not exist), so that the page links to it only
+then. One query answers it for a whole page.
+
 `GET /api/admin/exports`, `GET /api/admin/exports/{id}`, `DELETE /api/admin/exports/{id}`,
 and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
 `Range` supported). An export made by a tenant administrator is visible to that
@@ -7226,6 +7256,13 @@ off ends the tenant's open views); site administrators always may.
 - A space in the recycle bin is viewed through its export, not here
   (`404 not_found`).
 - `DELETE /api/admin/spaces/{space}/view` ends it early.
+
+- `GET /api/admin/spaces` and `GET /api/admin/spaces/{space}` carry `view` on each
+  space: `{"since": "2026-11-23T09:30:00Z", "until": "2026-11-23T10:30:00Z"}` while the
+  caller's session has a view of it open (`since` is when it was opened or last
+  extended), `null` otherwise. It is the session's alone, so another session of
+  the same person, or another administrator, sees `null`. The page needs no memory
+  of its own to know whether to show the banner.
 
 The web app opens it from the space's row in the administration, asks for the
 reason, and shows a banner "管理员查看，只读，已记录" while it lasts.

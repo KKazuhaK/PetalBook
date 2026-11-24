@@ -142,11 +142,8 @@ export function usePerson(id: string, tenant?: string) {
   })
 }
 
-// `watch`: items just purged; the list is read again until they are gone (the items carry no state of their own).
-export function useRecycle(
-  params: { tenant?: string; kind?: string; q?: string },
-  watch: ReadonlySet<string> = new Set(),
-) {
+// The list is read again while any item on it is being moved, restored or purged (its `state`), until it is at rest or gone.
+export function useRecycle(params: { tenant?: string; kind?: string; q?: string }) {
   return useInfiniteQuery({
     queryKey: [...RECYCLE_KEY, 'list', JSON.stringify(params)],
     initialPageParam: '',
@@ -155,7 +152,7 @@ export function useRecycle(
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 5_000,
     refetchInterval: (q) =>
-      watch.size > 0 && q.state.data?.pages.some((p) => p.items.some((i) => watch.has(i.id))) ? pollMs.value : false,
+      q.state.data?.pages.some((p) => p.items.some((i) => i.state !== 'ready')) ? pollMs.value : false,
   })
 }
 

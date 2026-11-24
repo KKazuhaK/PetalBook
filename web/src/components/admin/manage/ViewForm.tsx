@@ -7,12 +7,11 @@ import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { rememberView } from '@/lib/adminView'
 import { tg } from '@/i18n/manage'
 import { manageError } from './shared'
 
 // The reason for an audited, read-only view of a space an administrator is not a member of. The view is recorded on
-// the server; the page remembers that it was started.
+// the server; the server also says whether one is open.
 export function ViewForm({
   space,
   name,
@@ -34,8 +33,7 @@ export function ViewForm({
     setBusy(true)
     setError('')
     try {
-      const v = await manageApi.startView(space, reason.trim())
-      rememberView(space, v.until)
+      await manageApi.startView(space, reason.trim())
       void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
       onStarted()
     } catch (e) {

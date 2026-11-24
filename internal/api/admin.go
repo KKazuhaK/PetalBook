@@ -49,6 +49,9 @@ type adminSpaceResp struct {
 	// count them (server and site, never own and tenant).
 	Location string `json:"location"`
 	Counted  bool   `json:"counted"`
+	// View is the audited view of the space the caller's session has open, null
+	// when there is none (docs/api.md, "Viewing a space").
+	View *adminViewResp `json:"view"`
 }
 
 // adminSpaceItems is the answer's form of rows read by the store.
@@ -58,11 +61,18 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 		ids[i] = r.ID
 	}
 	syncs := s.spaces.SyncOf(c.r.Context(), ids)
+	var views map[string]time.Time
+	if c.p != nil && c.p.Grant == nil {
+		views = s.views.openIn(c.p.SessionID, ids, s.now())
+	}
 	items := make([]adminSpaceResp, len(rows))
 	for i, r := range rows {
 		it := adminSpaceResp{ID: r.ID, Name: r.Name, Personal: r.Personal, Inbox: r.Inbox, Created: rfc3339(r.Created), Disabled: r.Disabled,
 			Members: r.Members, SizeBytes: r.SizeBytes, Sync: syncs[i], Tenant: r.TenantID, Storage: s.adminStorageOf(c.r.Context(), r),
 			Location: r.Location, Counted: r.Counted()}
+		if end, ok := views[r.ID]; ok {
+			it.View = &adminViewResp{Since: rfc3339(end.Add(-viewTTL)), Until: rfc3339(end)}
+		}
 		if r.Owner != nil {
 			it.Owner = &adminOwner{r.Owner.ID, r.Owner.Username, r.Owner.Name}
 		}

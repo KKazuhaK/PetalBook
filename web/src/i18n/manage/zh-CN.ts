@@ -316,8 +316,10 @@ export const manageZhCN: ManageMessages = {
     restoreOwnerHelp: '这个空间原来的所有者都不在了，请选一位。',
     restoreDone: (name) => `「${name}」已恢复`,
     restoreSkipped: '没有一起回来的',
-    skippedUser: (id) => `一个已经不在的人（${id}）`,
-    skippedGroup: (id) => `一个已经不在的组（${id}）`,
+    skippedUser: (name) => `${name || '一个人'}：已经不在了，没有重新加入`,
+    skippedGroup: (name) => `${name || '一个组'}：已经不在了，没有重新加入`,
+    skippedSpace: (name, reason) =>
+      `${name || '一个空间'}：${({ busy: '正被另一个操作占用，仍留在回收站', owner_required: '没有所有者了，仍留在回收站：请单独恢复并选一位所有者', conflict: '同编号的空间又出现了，仍留在回收站' } as Record<string, string>)[reason] ?? '没能恢复，仍留在回收站'}`,
     restoreTransfers: '删除时转交出去的空间（没有撤销，需要的话请手动处理）',
     restoreLeft: '删除时他退出的空间（没有撤销）',
     restoreSpaces: (n) => `一起回来了 ${n} 个空间。`,

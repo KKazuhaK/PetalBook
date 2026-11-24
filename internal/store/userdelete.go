@@ -303,12 +303,15 @@ type UserLeft struct {
 
 // userRecords is the document of a person's item.
 type userRecords struct {
-	Version     int            `json:"version"`
-	WasDisabled bool           `json:"wasDisabled"`
-	Groups      tableRows      `json:"groups"`
-	Transfers   []UserTransfer `json:"transfers"`
-	Left        []UserLeft     `json:"left"`
-	Recycled    []string       `json:"recycled"`
+	Version     int       `json:"version"`
+	WasDisabled bool      `json:"wasDisabled"`
+	Groups      tableRows `json:"groups"`
+	// GroupNames are the names of those groups as they were, for a restore that
+	// finds one of them gone.
+	GroupNames map[string]string `json:"groupNames,omitempty"`
+	Transfers  []UserTransfer    `json:"transfers"`
+	Left       []UserLeft        `json:"left"`
+	Recycled   []string          `json:"recycled"`
 }
 
 // UserDeletionPending is what a deletion of a person under way has done so far,
@@ -439,6 +442,10 @@ func FinishUserDeletion(ctx context.Context, q Q, sc Scope, in FinishUserDeletio
 	if err != nil {
 		return nil, err
 	}
+	groupNames, err := nameMap(ctx, q, `SELECT id, name FROM groups WHERE id IN (SELECT group_id FROM group_members WHERE user_id = ?)`, in.UserID)
+	if err != nil {
+		return nil, err
+	}
 	// What an earlier attempt of this deletion did and knew comes first.
 	pending, ok, err := userDeletionPending(ctx, q, in.UserID)
 	if err != nil {
@@ -449,7 +456,7 @@ func FinishUserDeletion(ctx context.Context, q Q, sc Scope, in FinishUserDeletio
 		in.Transfers = MergeTransfers(pending.Transfers, in.Transfers)
 		in.Left = mergeLeft(pending.Left, in.Left)
 	}
-	raw, err := json.Marshal(userRecords{Version: 1, WasDisabled: in.WasDisabled, Groups: groups, Transfers: in.Transfers, Left: in.Left, Recycled: in.Recycled})
+	raw, err := json.Marshal(userRecords{Version: 1, WasDisabled: in.WasDisabled, Groups: groups, GroupNames: groupNames, Transfers: in.Transfers, Left: in.Left, Recycled: in.Recycled})
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +560,7 @@ func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time) (
 				return out, err
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
-				out.Skipped = append(out.Skipped, RestoreSkipped{Group: gid, Reason: "deleted"})
+				out.Skipped = append(out.Skipped, RestoreSkipped{Group: gid, Name: rec.GroupNames[gid], Reason: "deleted"})
 			} else {
 				out.GroupMembers++
 			}

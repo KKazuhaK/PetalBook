@@ -1863,7 +1863,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (!s) throw new HttpError(404, 'not_found', 'no such space')
     return s
   }
-  const adminItem = (s: SpaceRec): Omit<AdminSpace, 'location' | 'counted'> => {
+  const adminItem = (s: SpaceRec): Omit<AdminSpace, 'location' | 'counted' | 'view'> => {
     const owner = ownerOf(s)
     return {
       id: s.id,
@@ -1903,7 +1903,7 @@ export function createMockServer(options: MockOptions = {}) {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     const managed = manage.route(me, token, method, path, url, body)
     if (managed) return managed
-    if (path === '/admin/spaces' && method === 'GET') return manage.listSpaces(me, url)
+    if (path === '/admin/spaces' && method === 'GET') return manage.listSpaces(me, token, url)
     if (path === '/admin/status' && method === 'GET') {
       const status: ServerStatus = {
         version: 'mock',
@@ -1968,7 +1968,7 @@ export function createMockServer(options: MockOptions = {}) {
             if (body.pin && s.remote) s.cache = 'full'
           }
           if (typeof body.exempt === 'boolean') s.exempt = body.exempt
-          return j(manage.decorate(s))
+          return j(manage.decorate(s, token))
         case 'evict': {
           if (method !== 'POST') break
           if (!s.remote) throw new HttpError(409, 'conflict', '这个空间不跟随远端仓库，它是自己页面的唯一一份，不能清掉。')
@@ -1981,7 +1981,7 @@ export function createMockServer(options: MockOptions = {}) {
           return { status: 204 }
         }
         case undefined:
-          if (method === 'GET') return j(manage.decorate(s))
+          if (method === 'GET') return j(manage.decorate(s, token))
           if (method !== 'DELETE') break
           return j(manage.deleteSpace(me, id, typeof body.reason === 'string' ? body.reason : ''))
       }
