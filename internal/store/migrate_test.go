@@ -47,3 +47,22 @@ CREATE INDEX a_x ON a(id)`
 		}
 	}
 }
+
+func TestLocaleProblem(t *testing.T) {
+	for _, c := range []struct {
+		l    map[string]string
+		warn bool
+	}{
+		{map[string]string{"datcollate": "C", "datctype": "C"}, false},
+		{map[string]string{"datcollate": "C", "datctype": "C.UTF-8", "datlocprovider": "c"}, false},
+		{map[string]string{"datcollate": "POSIX", "datctype": "C.utf8"}, false},
+		{map[string]string{"datcollate": "en_US.UTF-8", "datctype": "en_US.UTF-8", "datlocprovider": "b", "datlocale": "C.UTF-8"}, false},
+		{map[string]string{"datcollate": "en_US.UTF-8", "datctype": "en_US.UTF-8", "datlocprovider": "c"}, true},
+		{map[string]string{"datcollate": "C", "datctype": "en_US.UTF-8"}, true},
+		{map[string]string{"datcollate": "C", "datctype": "C", "datlocprovider": "i", "datlocale": "und"}, true},
+	} {
+		if got := localeProblem(c.l) != ""; got != c.warn {
+			t.Errorf("%v: warned %v, want %v", c.l, got, c.warn)
+		}
+	}
+}

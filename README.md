@@ -40,6 +40,28 @@ SQLite，设置 `PETALBOOK_DATABASE` 可以换成 PostgreSQL。`petalbook serve 
 ./petalbook serve --data ~/petalbook-data --public-url https://notes.example.com
 ```
 
+**PostgreSQL.** 给 PetalBook 单独建一个库，用内置的 `C.UTF-8` 区域（PostgreSQL 17 起），
+这样排序和大小写都不随操作系统的区域走，和 SQLite 一致；库的区域不是 C 时启动日志会警告
+（表里的文本列都声明了 `COLLATE "C"`，数据照样对，但别的地方会受区域影响）。
+Make a database of its own with the builtin `C.UTF-8` locale (PostgreSQL 17 and later), so that sorting
+and case do not follow the operating system's locale; the server warns at start when the database's
+locale is not C (every text column is `COLLATE "C"`, so the data is right anyway).
+
+```sql
+CREATE DATABASE petalbook OWNER petalbook TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8';
+```
+
+```bash
+PETALBOOK_DATABASE='postgres://petalbook:…@db.example.com/petalbook' ./petalbook serve --data ~/petalbook-data
+```
+
+（PostgreSQL 16 及更早：`CREATE DATABASE petalbook TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C.UTF-8'`，
+或 `LOCALE 'C'`。/ On 16 and earlier use `LC_COLLATE 'C'`.)
+
+2026-11-24 起状态库从一个新的基线开始（`0001_baseline.sql`）：之前的开发库、演示库打不开，要删掉重建。
+From 2026-11-24 the state database starts from a new baseline: development and demonstration databases
+made before it are refused at start and must be made again.
+
 **容器镜像 / Container image.** 镜像里有 `git` 和 `ssh`，以非 root 用户运行，数据放在卷 `/data`，
 默认命令是 `petalbook serve --data /data --listen :8080`（多用户模式）。
 `--public-url` 是人们在浏览器里打开的地址，必须给（可以用环境变量 `PETALBOOK_PUBLIC_URL`），

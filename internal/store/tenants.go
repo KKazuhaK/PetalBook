@@ -186,7 +186,7 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 	if after != "" {
 		// The sort key is (default first, name key, id); it is the same row's
 		// key, looked up in the same statement.
-		where = append(where, `(CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, `+bytewise(d, "name_key")+`, id) > (SELECT CASE WHEN a.id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, `+bytewise(d, "a.name_key")+`, a.id FROM tenants a WHERE a.id = ?)`)
+		where = append(where, `(CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, name_key, id) > (SELECT CASE WHEN a.id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, a.name_key, a.id FROM tenants a WHERE a.id = ?)`)
 		args = append(args, after)
 	}
 	cond := ""
@@ -194,7 +194,7 @@ func ListTenants(ctx context.Context, q Q, d Dialect, query, after string, limit
 		cond = " WHERE " + strings.Join(where, " AND ")
 	}
 	args = append(args, limit+1)
-	rows, err := q.Query(ctx, `SELECT `+tenantCols+` FROM tenants`+cond+` ORDER BY CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, `+bytewise(d, "name_key")+`, id LIMIT ?`, args...)
+	rows, err := q.Query(ctx, `SELECT `+tenantCols+` FROM tenants`+cond+` ORDER BY CASE WHEN id = '`+DefaultTenantID+`' THEN 0 ELSE 1 END, name_key, id LIMIT ?`, args...)
 	if err != nil {
 		return nil, "", err
 	}

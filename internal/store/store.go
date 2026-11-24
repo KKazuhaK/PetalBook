@@ -45,6 +45,9 @@ type Store struct {
 	people noted
 	// tenantState is which tenants are disabled (see TenantDisabled).
 	tenantState atomic.Pointer[tenantState]
+	// localeWarning is what is wrong with a PostgreSQL database's locale ("" when
+	// nothing is; see LocaleWarning).
+	localeWarning string
 }
 
 // Q is what queries run on: the database, or a transaction of it.
@@ -209,7 +212,80 @@ func openPostgres(dsn string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, dialect: Postgres}, nil
+	s := &Store{db: db, dialect: Postgres}
+	locale, err := databaseLocale(ctx, db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.localeWarning = localeProblem(locale)
+	return s, nil
+}
+
+// LocaleWarning says what is wrong with the locale of a PostgreSQL database, or
+// is "" when nothing is (and always on SQLite). Every text column of the schema
+// is COLLATE "C", so what the store sorts and compares does not depend on it;
+// but a database whose default collation is not bytewise sorts any other text
+// (an expression, a literal) differently from SQLite, and lower() and upper()
+// follow its LC_CTYPE. The server logs this at start; README.md says how
+// to make the database.
+func (s *Store) LocaleWarning() string { return s.localeWarning }
+
+// databaseLocale reads the locale columns of the current database from
+// pg_database: datcollate, datctype and, where the server has them,
+// datlocprovider (15) and datlocale (17).
+func databaseLocale(ctx context.Context, db *sql.DB) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM pg_database WHERE datname = current_database()`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	if !rows.Next() {
+		return out, rows.Err()
+	}
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return nil, err
+	}
+	for i, c := range cols {
+		switch c {
+		case "datcollate", "datctype", "datlocprovider", "datlocale":
+			if vals[i] != nil {
+				out[c] = fmt.Sprint(vals[i])
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+// localeProblem is the warning for a database's locale columns, "" when it
+// sorts text bytewise: the builtin provider (any of its locales sorts by code
+// point, which is byte order in UTF-8), or libc with C, POSIX or C.UTF-8.
+func localeProblem(l map[string]string) string {
+	bytewise := func(v string) bool {
+		return v == "C" || v == "POSIX" || strings.HasPrefix(v, "C.")
+	}
+	switch l["datlocprovider"] {
+	case "b":
+		return ""
+	case "i":
+		return "the database uses an ICU locale (" + l["datlocale"] + "); PetalBook's text columns sort bytewise (COLLATE \"C\") anyway, " +
+			"but make the database with LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8' (see README.md, PostgreSQL) so that nothing else depends on the locale"
+	}
+	if bytewise(l["datcollate"]) && bytewise(l["datctype"]) {
+		return ""
+	}
+	return "the database's locale is LC_COLLATE " + l["datcollate"] + ", LC_CTYPE " + l["datctype"] + "; PetalBook's text columns sort bytewise (COLLATE \"C\") anyway, " +
+		"but make the database with LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8' (see README.md, PostgreSQL) so that nothing else depends on the locale"
 }
 
 // redact removes the target, and the password inside it, from an error text.
