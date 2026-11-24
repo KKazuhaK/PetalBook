@@ -4518,10 +4518,10 @@ management」一节。设计按 2.7、3.1 都合并之后写。
       邮箱可能是转发地址（`privaterelay.appleid.com`），按已验证的邮箱处理，但不拿它去做
       邮箱域名的 SSO 路由和按域名加入组织。
     - **模板分常用和更多**（所有者 2026-11-23）：「添加登录方式」默认只列常用的几个（Google、
-      微软、Apple、GitHub、GitLab.com）；其余放在「更多模板」里，点开再选，按地区分组：
+      微软、Apple、GitHub）；其余放在「更多模板」里，点开再选，按地区分组：
       - 内地：微信（开放平台的网站应用扫码）、企业微信、钉钉、飞书、QQ、支付宝；
       - 其他地区：LINE、Kakao、Naver、Yandex；
-      - 通用：Discord、Slack、X、Facebook、Amazon。
+      - 通用：GitLab.com、Discord、Slack、X、Facebook、Amazon。
       模板带地区标签；地区预设 `site.profile` 决定哪些算「常用」（`cn` 时常用的是微信、企业微信、
       钉钉、飞书和手机号，境外的几家放进「更多」）。多数内地平台不是标准的 OIDC：微信用
       `appid` 而不是 `client_id`、令牌接口的参数和返回格式自成一套、主体用 `unionid`，所以
