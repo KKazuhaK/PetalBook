@@ -189,7 +189,7 @@ status: 定稿
   - **安装范围是「仅选定仓库」时，App 建出的新仓库访问不到**，GitHub 不会
     自动把它加进安装。服务器用用户令牌调
     `PUT /user/installations/{id}/repositories/{repoId}` 把它加进去，之后就
-    能访问；没有用户令牌时答 `409 github_repo_not_in_installation`，并留一条
+    能访问；没有用户令牌时答 `409 repo_not_in_installation`，并留一条
     「空仓库提醒」，和设计一致。
   - **用户网页授权带 PKCE 可以用**。
   - **在个人账号下建仓库，App 没装在这个个人账号上就失败**：GitHub 答
@@ -203,7 +203,7 @@ status: 定稿
     （`request_oauth_on_install`），安装和授权在 GitHub 的同一趟流程里完成；
     回调同时处理 `setup_action=install` 和普通授权。
   - 已授权但 App 没装在自己账号上时，在个人账号下建仓库答
-    `409 github_app_not_installed`（带安装地址），不再把 GitHub 的 403 原样
+    `409 app_not_installed`（带安装地址），不再把 GitHub 的 403 原样
     抛给人。
   - 管理页要提示「App 只能装在一个账号上」，因为个人账号的流程需要
     「Any account」；同时管理页可以一键用 App Manifest 流程建出这样的 App。
@@ -214,7 +214,7 @@ status: 定稿
     metadata 读、不要 webhook），浏览器把清单 POST 到
     `https://github.com/settings/apps/new`（指定组织时是
     `/organizations/{org}/settings/apps/new`），GitHub 带 `code` 回到
-    `/api/github/manifest/callback`，服务器用
+    `/api/connections/github/manifest/callback`，服务器用
     `POST /app-manifests/{code}/conversions` 换出 App 的 ID、slug、client id、
     client secret、私钥和 webhook secret，和手填的 App 一样加密保存。`state`
     绑定管理员的会话和浏览器，只能用一次，10 分钟过期。手填仍然保留。
@@ -224,8 +224,8 @@ status: 定稿
   - 调用 GitHub 失败时，日志记状态码、GitHub 的原话和请求类型，不记令牌、
     私钥、授权码。
   - App 缺权限和仓库不在安装范围里是两回事，错误码分开
-    （`github_app_missing_permission` 带缺的权限名，对比
-    `github_repo_not_in_installation`）。
+    （`app_missing_permission` 带缺的权限名，对比
+    `repo_not_in_installation`）。
 
 凭据存数据库，用服务器密钥加密。令牌只通过环境变量传给 `git`，不出现在
 命令行、远端地址、`.git/config` 或日志里。
@@ -994,6 +994,7 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
 | 2.5 | 模板和校验页 |
 | 2.6 | API token 和 MCP |
 | 2.7 | GitHub App、GitHub 用户授权、自动建仓库 |
+| 2.7b | 通用的连接（一个提供方接口，GitHub 是第一个实现）；「存储与同步」的命名和管理页合并（所有者 2026-11-23 加，在 2.7 的修复之后、2.7 合并之前做，见「2.7b 的约定」） |
 | 2.8 | passkey、SAML、同时配多个登录提供方、登录验证码 |
 
 **2.1 页面类型、属性面板、表格视图**
@@ -1881,7 +1882,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   `POST /applications/{client_id}/token` 验 client id 和 secret，`404` 表示
   这对是对的），核对不过就不存。App 缺少的权限（Contents 写、Metadata 读、
   Administration 写）只提示不拒绝。换成另一个 App 时，只要还有空间或用户在用
-  就拒绝（`409 github_app_in_use`）；同一个 App 换私钥或 secret 随时可以。
+  就拒绝（`409 provider_in_use`）；同一个 App 换私钥或 secret 随时可以。
 - **令牌**：照搬 Rackbook `internal/githubapp`。安装令牌只在内存里，同步用的
   按单个仓库收窄（`repository_ids`、`contents: write`），建仓库用的是
   `administration: write`、不限仓库、只为这一次请求；到期前 5 分钟才换，同一
@@ -1896,7 +1897,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   先写库再用（GitHub 每次续期都换掉刷新令牌，旧的立即失效）；每天把 30 天内
   要过期的刷新令牌续一次，所以几个月不打开空间的人也不会掉线。刷新令牌过期
   或被撤销时，连接变成 `expired`，用它同步的空间进入 `error`、错误码
-  `github_authorization_expired`：读照常，写回 `503` 不改动任何东西，草稿照存，
+  `connection_expired`：读照常，写回 `503` 不改动任何东西，草稿照存，
   重新连接后立即重试并补提交，不丢东西。断开连接时尽力向 GitHub 撤销授权，
   库里和内存里的令牌无论如何都删掉。
 - **谁的令牌建仓库**：能用用户自己的令牌就用（个人账号下 `POST /user/repos`、
@@ -1907,10 +1908,10 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
 - **谁的令牌同步**：组织下的仓库用安装令牌（`via: "app"`），不依赖某个人一直
   在、一直连着；个人账号下，App 装在这个账号上且能访问新仓库时也用安装令牌，
   否则用这个人的用户令牌（`via: "user"`）。用户令牌同步的空间，绑定的人不能
-  登录、没了 `manage` 或断开连接后就停（`github_authorization_missing`），
+  登录、没了 `manage` 或断开连接后就停（`connection_missing`），
   免得被移出空间的人的令牌还在被用。
-- **新建空间时建仓库**：扩展 `POST /api/spaces`，加 `github: {owner, name,
-  private, description, create}`，不另开接口。顺序：不联网的检查（字段、
+- **新建空间时建仓库**：扩展 `POST /api/spaces`，加 `storage.sync: {provider: "github", owner, name,
+  private, description, create}`（2.7b 前叫 `github`），不另开接口。顺序：不联网的检查（字段、
   `--max-spaces`（3.3 起是空间数配额）、owner、令牌在不在）→ 在磁盘上建好空间（还没有记录、谁也
   看不到）→ 在 GitHub 上建空仓库（`auto_init: false`，空间的第一个提交就是
   仓库的第一个提交）→ 选定并验证同步用的凭据 → 推送 `main`（刚建的仓库有时
@@ -1924,58 +1925,58 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   留着，同时给这个人记一条提醒，之后在账号页的 GitHub 一栏里看得到（也可以放
   在空间列表旁），写着仓库名和链接，有两个动作：「连上它再试一次」（就是用
   `POST /api/spaces` 带 `create: false`，名字和仓库取自提醒，不另开接口）和
-  「我已经删了」（`DELETE /api/github/leftovers/{repoId}`，没有这条提醒也回
+  「我已经删了」（`DELETE /api/connections/github/leftovers/{repoId}`，没有这条提醒也回
   `204`）。按用户存：`github_leftovers(user_id, repo_id, full_name, html_url,
   space_name, created)`，主键是 `(user_id, repo_id)`，用户删了跟着删；同一个
   仓库再失败只换成新的一条；每人最多留最新的 20 条。清掉的时机：本人处理，
   或者**任何空间连上了这个仓库**（`PutRemote` 在同一个事务里按 `gh_repo_id`
   删掉所有人的这条提醒，所以重试成功、手动 `PUT …/remote` 都会清）。提醒放在
-  `GET /api/github` 的 `leftovers` 里，这个接口本来就是账号页和建空间对话框
+  `GET /api/connections` 的 `leftovers` 里，这个接口本来就是账号页和建空间对话框
   要读的，不多一次请求。崩溃没有回答，也记不下来，所以崩溃留下的仓库不在
   其中（见上）。
 - **「仅选定仓库」的安装**：不赌 GitHub 会不会自动把 App 建的仓库加进安装。
   建完就为新仓库单独换一次令牌试；够不着、而调用者的连接能看到这个安装时，
   用用户令牌把仓库加进安装（`PUT /user/installations/{id}/repositories/{repoId}`）
   再试；还不行时，个人账号退回 `via: "user"`，组织下回
-  `409 github_repo_not_in_installation`（带 `repo`）。Administration 是组织级
-  还是仓库级：也不赌，GitHub 拒绝建仓库时原样回 `403 github_no_permission`，
+  `409 repo_not_in_installation`（带 `repo`）。Administration 是组织级
+  还是仓库级：也不赌，GitHub 拒绝建仓库时原样回 `403 provider_refused`，
   `message` 转述 GitHub 的原因。两种结果下接口都不用改，实测只决定界面上
   提示怎么写、默认走哪条路。
 - **已有空间切到 GitHub**：`PUT …/remote` 的凭据多一种
-  `{"type": "github", "via": "app" | "user"}`；已经在跟随远端的空间 `PUT` 时
+  `{"type": "connection", "provider": "github", "via": "app" | "user"}`；已经在跟随远端的空间 `PUT` 时
   原地换地址和凭据，同一个仓库历史相同，只换凭据，旧的密钥或令牌删掉。SSH
   形式的 github.com 地址接受，存成 https 形式。`via: "app"` 要求调用者的连接
   能推送到这个仓库或安装已共享给自己的租户，否则任何有 `manage` 的人都能把空间接到 App
   够得着的任意仓库。
 - **Remote 对象**加 `errorCode`：把现有的内部分类（`auth`、`hostkey`、`clone`、
-  `rescued`）露出来，再加四个 GitHub 的（`github_authorization_expired`、
-  `github_authorization_missing`、`github_installation_gone`、
-  `github_not_configured`）。处于这几种状态的空间每 10 分钟重试一次，原因
+  `rescued`）露出来，再加四个 GitHub 的（`connection_expired`、
+  `connection_missing`、`installation_gone`、
+  `provider_not_configured`）。处于这几种状态的空间每 10 分钟重试一次，原因
   消除时（重新连接、管理员保存 App）立即重试。
 - **列表都分页，从不全取**：安装列表、可建仓库的账号、可连接的仓库，每页最多
   一次 GitHub 请求（30 条），游标不透明；仓库列表 GitHub 不能按名字筛，所以
   不提供 `q`，界面上可以直接输入 `owner/name`。
-- **状态库**（SQLite 和 PostgreSQL 都要测）：`remotes` 加 `cred_type = 'github'`
+- **状态库**（SQLite 和 PostgreSQL 都要测）：`remotes` 加 `cred_type = 'connection'`、`provider`
   和 `gh_via`、`gh_installation_id`、`gh_repo_id`、`gh_user_id` 几列；新表
   `github_authorizations`（每个用户一行，GitHub 账号 id 唯一，两个令牌加密，
   过期时间、状态、版本号用来做「只替换续期前的那一对」）；
   `github_installations`（安装 id、账号）和 `github_installation_tenants`（安装 ×
   租户：共享给了哪些租户）；App 的配置放 `site_settings`。
 - **给 3.1 留的位置**：`GET/PUT /api/admin/storage` 的
-  `remotes: {require: null | "any" | "github", scope: "new" | "all", graceDays}`
+  `remotes: {require: null | "any" | 一个提供方 id, scope: "new" | "all", graceDays}`
   和错误码 `409 remote_required` 只在 `docs/api.md` 里预留，不实现。建空间和
   建仓库已经是「要么整个成功、要么不留空间」的一步，3.1 只要在第一步前加
   检查。
 - **和 3.3 的租户合在一起（2026-11-23）**：
-  - App 的设置和安装列表是全站的：`/api/admin/github…` 只给全站管理员，租户
-    管理员和其他全站专属的接口一样得到 `403 forbidden`；管理后台的「GitHub」
-    页也只对全站管理员显示。设置照旧在 `site_settings`，没有租户层。
+  - App 的设置和安装列表是全站的：`/api/admin/connections/github…` 只给全站管理员，租户
+    管理员和其他全站专属的接口一样得到 `403 forbidden`；管理后台的「存储与同步」
+    页里的连接也只对全站管理员显示。设置照旧在 `site_settings`，没有租户层。
   - **共享安装按租户算（所有者定，2026-11-23，取代之前的全站共享）**：全站管理员
-    把某个组织的安装共享给**挑出来的几个租户**（`PUT /api/admin/github/installations/{id}`，
+    把某个组织的安装共享给**挑出来的几个租户**（`PUT /api/admin/connections/github/installations/{id}`，
     `{tenants: [id]}`，整组替换，`[]` 不共享），只有这些租户的成员能用安装令牌在
-    那里建仓库、连接仓库，也只有他们在 `GET /api/github/owners` 和 `repos` 里看
+    那里建仓库、连接仓库，也只有他们在 `GET /api/connections/github/owners` 和 `repos` 里看
     得到它；别的租户只有自己的 GitHub 连接够得着时才能用这个组织。共享的决定
-    仍在全站管理员手里，租户管理员碰不到（`/api/admin/github…` 全站专属）。
+    仍在全站管理员手里，租户管理员碰不到（`/api/admin/connections/github…` 全站专属）。
     存在状态库里：0013 里 `github_installations` 没有共享列，另有
     `github_installation_tenants(installation_id, tenant_id)`，主键是两列，
     `tenant_id` 有索引，安装被忘掉时（删除 App）跟着删；`tenant_id` 不是外键，
@@ -1987,7 +1988,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
     管理员用的写和读（`SetGitHubInstallationTenants`、`GitHubInstallationTenants`），
     和 `UserTenant`；扫描的表里加了 `github_installation_tenants`。隔离测试
     加了一个真正的跨租户用例：共享给 B 之后，B 的成员看得到、能建，A 的成员
-    看不到、建不了（`github_owner_not_allowed`）、列仓库 `404`，也没有仓库被建。
+    看不到、建不了（`owner_not_allowed`）、列仓库 `404`，也没有仓库被建。
     管理后台的安装行上挑租户。
   - 用户的 GitHub 连接属于用户，所以跟着用户落在它的租户里，不另加
     `tenant_id`。一个 GitHub 账号只能连一个 PetalBook 用户，这条**跨租户**
@@ -2004,8 +2005,8 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   - 迁移：0013 不碰 0018 改的表（0018 给 users、spaces 加列、重建 groups），
     所以两种顺序都对：本分支上迁移过的库合并后补跑 0014、0016、0018；main 上
     迁移过的库补跑 0013。两种顺序都有测试（SQLite 和 PostgreSQL）。
-  - 隔离测试里每个 2.7 的路由都有条目：`/api/admin/github…` 按全站专属测，
-    `/api/github…` 是调用者自己的连接，或共享给调用者租户的安装。
+  - 隔离测试里每个 2.7 的路由都有条目：`/api/admin/connections/github…` 按全站专属测，
+    `/api/connections/github…` 是调用者自己的连接，或共享给调用者租户的安装。
 
 **2.7 做出来的样子**：
 
@@ -2017,7 +2018,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   用户授权、REST 调用，基地址可配，默认 `api.github.com` 和 `github.com`，
   测试用 `githubapptest` 里的假 GitHub，不连真的）；`internal/github` 是服务
   器怎么用这个 App（设置、授权与续期、可建仓库的账号、选凭据、给 Git 的令牌）；
-  `internal/spaces` 里是建空间与切换（`CreateWithGitHub`）。给 Git 的令牌还是走
+  `internal/spaces` 里是建空间与切换（`CreateWithSync`）。给 Git 的令牌还是走
   `gitstore.Token` 的环境变量 credential helper，`gitstore` 只多了一个能说明
   「凭据本身拿不到」的错误类型。
 - 基地址有两个隐藏的启动参数 `--github-api-url`、`--github-url`，只给测试用
@@ -2046,7 +2047,7 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
   浏览器授权」才会发生。可以在写回前再看一次进程内的代数，或让版本号在重连后
   继续递增。
 - 用某人的 GitHub 连接同步的空间，如果服务器的 App 的 client 没了（管理后台
-  在还有人连着时不让删，所以几乎碰不到），写入会答 `409 github_not_configured`
+  在还有人连着时不让删，所以几乎碰不到），写入会答 `409 provider_not_configured`
   而不是文档说的 `503 unavailable`：凭据错误里包着 GitHub 的错误，`fail()` 先
   认出了后者。不丢东西；以后让凭据错误不再包这个错误，或者按场合排序。
 
@@ -2055,8 +2056,6 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
 - 设备码流程（网页用不上，留给第 4 期的客户端）。
 - Webhook（App 被卸载要等下次换令牌被拒时才发现）；用推送事件代替每分钟
   拉取，留给 3.1 一起看。
-- App manifest 流程（Rackbook 也没有）：管理员在 GitHub 上手动建 App，把
-  ID、私钥、client id 和 secret 填进来。
 - GitHub Enterprise Server、多个 App、GitHub 登录（登录在 2.8，和这里的
   「连接 GitHub 账号」是两回事，库里分开存）。
 - 单用户模式：没有账号，这一节全部 `404`。
@@ -2371,14 +2370,113 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
 - 和 2.7 合在一起时定下：被扣住的会话碰不到 GitHub 的任何接口（查看、连接、
   断开、列出所有者和仓库、GitHub 的回调、带仓库建空间，都是
   `403 passkey_required`），扣住之前连好的 GitHub 账号不受影响。GitHub 登录
-  （`/api/auth/github/{slug}/…`）和为仓库连接 GitHub 账号（`/api/github/…`）
-  在跨站例外里也分开列。审计日志还没有记 GitHub App 设置的改动和连接、断开
-  GitHub 账号，留到以后：要加三个事件种类，连带前端的种类列表、文案、模拟
-  服务器和接口文档的表。
+  （`/api/auth/github/{slug}/…`）和为仓库连接 GitHub 账号（`/api/connections/github/…`）
+  在跨站例外里也分开列。审计日志的三个事件种类（`connection_provider_changed`、
+  `account_connected`、`account_disconnected`）在 2.7b 里加上了，连带前端的种类列表、
+  文案、模拟服务器和接口文档的表。
 - passkey 和单点登录把返回地址（`return`）交给服务器，服务器只收 2048 字节以内的，
   超过就回首页（密码登录在页面里跳转，没有这个限制）。`/oauth/authorize`
   的地址一般远短于此，但客户端用很长的 `client_id`（元数据文档地址）和 `state`
   时可能超过，那时登录后不会回到授权流程，要在客户端重新开始。
+
+**2.7b 的约定（2026-11-23）**：通用的连接，以及「存储与同步」。接口和错误码写在
+`docs/api.md` 的「Connections」一节（2.7 的「GitHub」一节改成了「The GitHub provider」，
+管理员的那一节在「Administration」的「Connections」）。所有者 2026-11-23 定：这是 2.7 的
+修复之后、2.7 合并之前的一个里程碑，在 2.7 的分支上做，和 2.7 一起合并（作为 2.7 那个 PR 的
+最后一部分，在分支上单独审一次）。3.1 的约定在 `feat/storage` 里；那里的路由、错误码、
+`github` 字段按下面的对照表改名。
+
+定下来的：
+
+- **命名：「存储与同步」**（所有者 2026-11-23 定）。界面和文档里不再有「代码托管」
+  或单独的「GitHub」一节：
+  - 管理页「存储与同步」把 3.1 的「存储」页和 2.7 的「GitHub」管理页并成一页：
+    上半是「存在哪里」的规则（3.1 的要求远端、宽限期、只在本地的空间的上限、允许的
+    主机；3.5 的站点存储预算和存储压力，见「3.5 的约定」）；下半是「连接」：每个平台
+    一张卡片（品牌图标、配好没有、是否支持部分同步、GitHub 的 App 和安装列表、
+    以后 GitLab／Gitea 的 OAuth 应用）。2.7 和 3.1 谁后合并，谁负责把两页并起来。
+  - 账号页的那一栏叫「已连接的账号」，每个平台一行（GitHub 一行，以后 GitLab 等各
+    一行），2.7 的「空仓库提醒」放在对应平台那一行下面。
+  - 新建空间时的选择叫「存在哪里」：这台服务器／同步到 GitHub／同步到 GitLab／…
+    （只列出全站配好、这个人能用的平台），最后是「其他（按地址）」。
+  - 对普通用户界面上不说 Git 和仓库：说「同步到 GitHub」「在 GitHub 上的位置」
+    「同步出了问题」。管理页和「其他（按地址）」这个高级选项里照实说 Git、仓库、
+    部署密钥。
+- **后端一个提供方接口**：一个提供方说明自己（类型、主机、显示名、能力）、连接一个
+  人（开始授权、回调、续期、断开）、列出可建仓库的地方和已有的仓库、建仓库、给 Git
+  的凭据、检查自己的配置。服务器里的提供方在内存里一张表，按 id 查。
+  - **GitHub 是第一个实现**，2.7 的行为全部照旧：一键用 App Manifest 建 App、安装和
+    授权在 GitHub 的同一趟流程里完成、组织的安装按租户共享、令牌按单个仓库收窄。
+    `internal/githubapp` 不动，只在它上面加一层实现这个接口。
+  - **GitLab**（gitlab.com 和自托管）和 **Gitea／Forgejo／Codeberg** 在它们自己的
+    里程碑 3.8 里做：每个主机一个 OAuth 应用，由管理员配，用户连一次。
+  - **按地址的普通 Git**（部署密钥或令牌）保留，是类型 `git` 的提供方：没有「连接」，
+    凭据仍是每个空间一份。
+  - 能力（`capabilities`）每个提供方一组：能不能建仓库、有没有安装（只有 GitHub）、
+    能不能连个人账号、能不能当租户的存储目标、是否支持部分同步（3.5 起自动检测，
+    见下）。界面只按能力显示选项，不按平台名字写死。
+- **接口是通用的**（所有者 2026-11-23 定：还没发布，选干净的通用形状，不留别名）：
+  - `GET /api/connections` 列出提供方（类型、能力、这个人的连接状态、空仓库提醒）；
+    2.7 的 `/api/github/…` 变成 `/api/connections/github/…`，`/api/admin/github…`
+    变成 `/api/admin/connections/github…`；租户的（3.6）变成
+    `/api/admin/tenants/{tenant}/connections/{provider}…`。
+  - `POST /api/spaces` 的 `github` 变成 `storage.sync`：`{provider, owner, name,
+    private, create, assets}`；不带就是「这台服务器」。
+  - Remote 的凭据 `type: "github"` 变成 `type: "connection"`，带 `provider` 和 `via`
+    （`app`、`user`，3.6 加 `tenant`）。
+  - 错误码去掉 `github_` 前缀、带 `provider`：比如 `github_authorization_expired` 变成
+    `connection_expired`，`github_not_configured` 变成 `provider_not_configured`，
+    `github_repo_not_in_installation` 变成 `repo_not_in_installation`。对照表在
+    `docs/api.md`。
+  - 3.1 的 `remotes.require` 取 `null`、`"any"` 或一个提供方 id（取代 `"github"`）；
+    3.1 的 `github.assets` 变成 `storage.sync.assets`。
+- **3.6 的租户存储目标用同一个接口**：存储目标就是「一个提供方 + 一个位置（GitHub 的
+  组织、GitLab 的组、Gitea 的组织）+ 租户的凭据」。GitLab／Gitea 的目标要等 3.8。
+  3.6 的能力 `integrations.github` 改名 `integrations.connections`，分层键
+  `github.useSiteApp` 改名 `connections.useSiteApps`。
+- **状态库**：GitHub 自己的表（`github_authorizations`、`github_installations`、
+  `github_installation_tenants`）名字不变，是 GitHub 实现的；`remotes` 的
+  `cred_type` 取 `ssh`、`token`、`connection`，加一列 `provider`。迁移用合并时下一个
+  空着的编号，SQLite 和 PostgreSQL 都测；v0.x 不做升级兼容，开发库里 2.7 存的
+  `cred_type = 'github'` 由迁移改成 `connection`／`github`，只为开发库能打开。
+- **测试**：提供方接口有一套共用的合同测试（假的提供方跑一遍，GitHub 实现跑一遍，
+  3.8 的两个实现以后也跑这一套）。
+
+2.7b 不做的：GitLab、Gitea 的实现（3.8）；GitHub 以外的品牌图标（3.9；GitHub 的图标 2.7b 里做，
+用 Simple Icons 的 CC0 路径内联进网页，不连外网）；提供方的自动发现（管理员手动加）。
+
+所有者 2026-11-23 定的：
+
+1. 「存储与同步」取代「代码托管」和单独的「GitHub」：管理页一页，账号页「已连接的
+   账号」，新空间「存在哪里」；对普通用户不说 Git 和仓库。
+2. 后端一个提供方接口，GitHub（2.7 的 App）是第一个实现；GitLab、Gitea／Forgejo／
+   Codeberg 在自己的里程碑（3.8）；按地址的普通 Git 保留；接口通用，GitHub 专属的
+   路由改成按提供方的，不留别名；3.6 的租户存储目标用同一个接口。
+
+**2.7b 做出来的样子**：
+
+- **接口在 `internal/connections`**：`Provider` 接口、`Registry`（按 id 查，内存里一张表）、
+  通用的 `Error`（带 `Provider`）和一套共用的合同测试（`connections/conntest`：假的提供方跑一遍，
+  GitHub 实现跑一遍）。`git`（按地址的普通 Git）是一个没有连接的提供方，`repos` 回空列表。
+  GitHub 的实现是 `internal/github` 的 `Service`，在 `internal/githubapp` 上加一层，行为照旧。
+- **网页**：管理页「存储与同步」（`/admin/storage`）放连接，一个平台一张卡片，3.1 的存储规则和
+  3.5 的预算以后放在卡片上面；账号页「已连接的账号」（`/settings/connections`）；新建空间的
+  「存在哪里」。普通用户的界面上没有 Git、仓库这两个词；GitHub 的图标是 Simple Icons 的路径，
+  内联在网页里。
+- **迁移**：0013 还没合并，就地改：`remotes` 加 `provider`，`cred_type` 的值是 `connection`。
+  开发库里已经跑过旧的 0013 的，要删了重建（v0.x 不做升级兼容）。
+- **审计**：加了 `connection_provider_changed`、`account_connected`、`account_disconnected`。
+- **顺手修了 2.7 评审里的五个问题**：
+  1. 一键建 App 时，GitHub 已经换出了 App 但保存失败（GitHub 连不上）：不再说「什么都没存」。
+     换出的密钥和 secret 加密留在内存里十分钟，管理员可以点「再试一次保存」
+     （`POST /api/admin/connections/github/manifest/retry`）；过期了就告诉管理员 App 已经在
+     GitHub 上、名字和地址，让他手动填。
+  2. 自动重新检查 App 时，只在库里的记录还是读到的那条时才写回（比较并替换），
+     所以不会盖掉刚保存的新 App。
+  3. 「这个人没装 App」的结果缓存一分钟，列所有者不会用光 App 的速率限制，日志也不会每次都记。
+  4. 用户令牌在没装 App 的组织下建仓库被拒：答 `app_not_installed`（带 `installUrl`）或
+     `provider_refused`，不再答 `app_missing_permission`。
+  5. 一键建 App 的尝试有自己的小表（最多 64 条，满了最早的先走），连接账号的尝试挤不掉它。
 
 **第 2 期之外，但 1.7 之后要记着的**
 

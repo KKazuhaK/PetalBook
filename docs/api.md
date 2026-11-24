@@ -66,7 +66,9 @@ The web app talks to the server only through this API.
     is read by the identity provider and changes nothing.
     `GET /api/github/authorization/callback`, GitHub's redirect back after a
     person connects their GitHub account for repos (not a sign-in), is the same
-    kind of exception under the same rule (see "GitHub").
+    kind of exception under the same rule (see "Connections"). So is
+    `GET /api/connections/github/manifest/callback`, where GitHub sends an
+    administrator's browser after the App is made.
 - A **space** is one tree of pages backed by one Git repository. Every page URL
   carries the space id. In single-user mode there is exactly one space, with
   the id `default`; in accounts mode a space id has the same form as a page id.
@@ -386,7 +388,7 @@ The administrators can require a passkey of chosen people
   API tokens and OAuth grants").
 - A held session cannot connect or disconnect a GitHub account for repos,
   list owners or repositories, finish GitHub's callback, or create a space
-  with a repository: `403 passkey_required` like the rest (see "GitHub"). A
+  with a repository: `403 passkey_required` like the rest (see "Connections"). A
   GitHub account connected before the hold stays connected.
 - Sign-in through an identity provider is not held: the provider decides how
   its people prove who they are.
@@ -699,6 +701,8 @@ how many. At most 100,000 rows or 90 days are kept.
 
 | `kind` | When | `detail` |
 |---|---|---|
+| `connection_provider_changed` | a provider was configured, changed or removed (administrators; secrets as `"changed"`) | `provider`, `type` |
+| `account_connected`, `account_disconnected` | a person connected or disconnected an account of a provider | `provider`, `login` |
 | `login` | a session was started | `method` (`password`, `passkey`, `oidc`, `saml`, `github`), `provider` (slug), `created` (an account was made) |
 | `login_failed` | a sign-in was refused | `method`, `reason` (`bad_password`, `disabled`, `local_login_refused`, `passkey_required`, `passkey_failed`, `captcha_failed`, `rate_limited` for an attempt turned away by a lockout or by the address's failure cap, an `sso_error` code), `provider`; the username as typed, also for a name nobody has. `captcha_failed` and an address's `rate_limited` are written at most once a minute per address (IPv6 by /64) and reason; a passkey sign-in whose ceremony was never begun, like a single sign-on callback that matches no sign-in, is not written |
 | `rate_limited` | a key first went over the per-minute limit or a failure cap in a window (once per key and window, not per request) | `limit` (`per_minute`, `ip`, `username`, `pair`) |
@@ -954,17 +958,19 @@ the caller already owns as many spaces as the server allows (`--max-spaces`,
 `used` (see "Quotas"), and the limit is the setting `quota.spacesPerPerson`, or
 the person's own, or the tenant's total of spaces.
 
-With `github`, the space follows a repository on GitHub from its first commit
-(see "GitHub", "Creating a space with a GitHub repository"):
+With `storage.sync`, the space follows a repository on a provider from its first
+commit (see "Connections", "Spaces and remotes", and "The GitHub provider",
+"Creating a space with a repository"):
 
 ```json
 {"name": "Tang", "inbox": "收件箱",
- "github": {"owner": "kazuhahub", "name": "tang-notes", "private": true, "description": "Notes on Tang poetry", "create": true}}
+ "storage": {"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes", "private": true,
+                      "description": "Notes on Tang poetry", "create": true}}}
 ```
 
 `201` with the space; its `sync` is then the state of its remote. When it
 fails, no space and no record is left on the server; what can be left on
-GitHub, and how to retry, is described there.
+the provider, and how to retry, is described there.
 
 ### `PATCH /api/spaces/{space}`
 
@@ -1317,6 +1323,7 @@ allows any).
 {
   "url": "git@github.com:kazuha/notes.git",
   "branch": "main",
+  "provider": "git",
   "credential": {"type": "ssh", "publicKey": "ssh-ed25519 AAAA… petalbook-01JD3K8Q7Z", "fingerprint": "SHA256:…"},
   "state": "ok",
   "lastSync": "2026-11-21T08:30:00Z",
@@ -1331,18 +1338,21 @@ allows any).
   private key never leaves the server and is never returned; `publicKey` is
   what to add to the repository as a deploy key with write access), `token`
   (`{"type": "token", "username": "x-access-token"}`; the token is never
-  returned) or `github` (the server's GitHub App, see "GitHub"):
+  returned) or `connection` (a provider's connection, here the GitHub App; see "Connections"):
 
   ```json
-  {"type": "github", "via": "app", "installationId": 51234567, "account": "kazuhahub", "repoId": 881234567}
-  {"type": "github", "via": "user", "user": {"id": "01JD3K7A2M", "username": "tang"}, "login": "tang-gh", "repoId": 881234567}
+  {"type": "connection", "provider": "github", "via": "app", "installationId": 51234567, "account": "kazuhahub", "repoId": 881234567}
+  {"type": "connection", "provider": "github", "via": "user", "user": {"id": "01JD3K7A2M", "username": "tang"}, "login": "tang-gh", "repoId": 881234567}
   ```
 
   `via: "app"` fetches and pushes with an installation token of the App's
   installation on `account`; `via: "user"` with the GitHub authorisation of the
   PetalBook user `user` (GitHub account `login`). No secret is stored for the
   space itself and none is returned. `repoId` is GitHub's id of the
-  repository. With `github`, `url` is always `https://github.com/<owner>/<name>.git`.
+  repository. With a GitHub connection, `url` is always `https://github.com/<owner>/<name>.git`.
+- `provider`: the id of the provider the remote goes through (`github`), or
+  `git` for a plain address with a key or a token; a client shows the
+  platform's icon and name from it.
 - `state`: `ok`; `offline` (the last attempt could not reach the remote;
   `error` says why, in words fit to show); `rewritten` (paused, see above;
   `rewritten` is then `{"lastGood": "<commit>", "remote": "<commit>"}`);
@@ -1352,10 +1362,10 @@ allows any).
   every other state. `auth` (the remote refused the credential), `hostkey`
   (the SSH host key changed), `clone` (the clone is not as the server left
   it), `rescued` (commits that could not be pushed were kept aside), and for a
-  `github` credential `github_authorization_expired`,
-  `github_authorization_missing`, `github_installation_gone`,
-  `github_app_missing_permission`, `github_not_configured` (see "GitHub", "When a GitHub credential stops
-  working"). A client shows `error` and uses `errorCode` only to choose what
+  `connection` credential `connection_expired`, `connection_missing`,
+  `installation_gone`, `app_missing_permission`, `provider_not_configured` (see
+  "The GitHub provider", "When a GitHub credential stops working"). The error
+  has `provider` too. A client shows `error` and uses `errorCode` only to choose what
   to offer (reconnect GitHub, open the installation's settings, ...). Codes
   may be added; a client treats one it does not know like `auth`.
 - `lastSync`: when the server last saw the remote (absent before the first).
@@ -1387,9 +1397,9 @@ pair replaces the old one (only while the space is local).
 
 `branch` defaults to `main`. For `ssh` the credential is `{"type": "ssh"}`
 (the key from `…/remote/key`). Leaving `credential.token` out while the space
-already has a token keeps it. For `github` it is `{"type": "github", "via": "app"}`
-or `{"type": "github", "via": "user"}` (see "GitHub", "Switching an existing
-space to GitHub"). On a space that already follows a remote, `PUT` replaces
+already has a token keeps it. For a connection it is `{"type": "connection", "provider": "github", "via": "app"}`
+or `{"type": "connection", "provider": "github", "via": "user"}` (see "The GitHub
+provider", "Switching an existing space to GitHub"). On a space that already follows a remote, `PUT` replaces
 its address and credential: this is how a space moves from a deploy key or a
 token to the App, or back. The server connects before answering:
 
@@ -1409,7 +1419,7 @@ remote cannot be reached or refuses the credential (nothing is changed, and
 ### `DELETE /api/spaces/{space}/remote`
 
 `204`. The space becomes local, with everything it has; the credential is
-deleted. Nothing is changed on the remote. A `github` credential has no secret
+deleted. Nothing is changed on the remote. A `connection` credential has no secret
 of its own: the App and the user's GitHub authorisation stay as they are.
 
 ### `POST /api/spaces/{space}/remote/sync`
@@ -1423,13 +1433,176 @@ rewritten history: the space moves to that commit. `200` with the remote;
 `409 conflict` if the remote is no longer at that commit. Drafts are kept;
 those whose page changed are stale and are shown as such.
 
-## GitHub
+## Connections
+
+Milestone 2.7b. A *connection* is a person's account at a platform that holds
+repositories, and a *provider* is the platform's side of it. This section is
+the general shape; "The GitHub provider" below holds what is GitHub's. Accounts
+mode only; single-user mode answers `404`.
+
+**Storage & sync.** The product calls this area "存储与同步" (Storage & sync):
+
+- the administrators' page "存储与同步" holds the connections, one card per
+  platform (the storage rules of milestone 3.1 and the budget of 3.5 go above
+  them when they land);
+- the account page's section is "已连接的账号" (connected accounts), one row per
+  platform, with the leftover reminders under their platform;
+- a new space asks "存在哪里" (where it's stored): this server, sync to GitHub,
+  sync to GitLab, …, then "other (by address)";
+- ordinary users never see the words Git or repository ("同步到 GitHub"); the
+  administrators' page and the "other (by address)" option may.
+
+**One provider interface.** The server holds its providers in memory, by id. A
+provider describes itself, connects a person (start, callback, renewal,
+disconnect), lists the places it may create repositories in and the
+repositories it reaches, creates a repository, gives Git a credential, and
+checks its own configuration. GitHub (the App: manifest creation, install and
+authorise in one step, installations shared per tenant) is the first
+implementation; GitLab and Gitea follow in 3.8; plain Git by address, with a
+deploy key or a token, is the provider `git`. Nothing is released, so the
+generic shape replaces the GitHub-only one; there are no aliases.
+
+### Provider
+
+```json
+{"id": "github", "type": "github", "host": "github.com", "name": "GitHub",
+ "owner": "site",
+ "capabilities": {"createRepo": true, "installations": true, "connectAccount": true,
+                  "storageTarget": true, "partialSync": "yes"},
+ "configured": true,
+ "app": {"name": "PetalBook Notes", "slug": "petalbook-notes",
+         "htmlUrl": "https://github.com/apps/petalbook-notes",
+         "installUrl": "https://github.com/apps/petalbook-notes/installations/new"},
+ "userAuthorization": true,
+ "connection": {"login": "tang-gh", "accountId": "1234567", "state": "ok",
+                "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2},
+ "leftovers": [{"repoId": 881234567, "fullName": "kazuhahub/tang-notes",
+                "htmlUrl": "https://github.com/kazuhahub/tang-notes",
+                "spaceName": "Tang notes", "created": "2026-11-23T08:45:00Z"}]}
+```
+
+- `id`: the provider's id, used in every path below. `github` is the site's
+  GitHub App; 3.8's are chosen by the administrator (`gitlab`, `codeberg`, …;
+  lowercase letters, digits and `-`, at most 40). `git` is always there and has
+  no connection.
+- `type`: `github` (`gitlab` and `gitea` come with 3.8), `git`.
+- `owner`: `site` (tenants' own providers come with 3.6).
+- `capabilities`: what the client may offer; it shows options by capability,
+  never by the platform's name. `partialSync` is `yes`, `no` or `unknown` (not
+  yet detected; 3.5 detects it).
+- `configured`: whether the provider is set up and can be used. Everything else
+  of the provider answers `409 provider_not_configured` while it is `false`.
+- `app` is the provider's App when it has one (GitHub) and is set up, else
+  `null`: `installUrl` is where a person installs it. `userAuthorization` is
+  whether people can connect their account: for GitHub the App's client id and
+  secret are saved and the server has `--public-url`.
+- `connection`: the caller's connection or `null`; `state` is `ok` or
+  `expired` (see "Renewal"); `accountId` is the platform's id as a string;
+  `refreshExpires` is absent when the provider does not expire tokens;
+  `spaces` counts the spaces that sync through it, so a client can warn before
+  a disconnect.
+- `leftovers`: the caller's reminders of empty repositories a failed attempt to
+  make a space left on the platform (see "Leftover repositories"): newest
+  first, at most 20, `[]` when there are none and always present.
+
+### `GET /api/connections`
+
+Any signed-in user: `{"providers": [Provider]}`, in a stable order (GitHub,
+GitLab, Gitea, then by name, `git` last). The providers are the ones the server
+has, whether set up or not (`configured`), so a client can say there is nothing
+to connect to. Read from memory; one query for the caller's connections and
+leftovers.
+
+### Routes by provider
+
+| Work | Route |
+|---|---|
+| list the providers | `GET /api/connections` |
+| connect | `POST /api/connections/{provider}/authorization/start` |
+| the platform's redirect back | `GET /api/connections/{provider}/authorization/callback` |
+| disconnect | `DELETE /api/connections/{provider}/authorization` |
+| where a repository can be made | `GET /api/connections/{provider}/owners` |
+| repositories that can be connected | `GET /api/connections/{provider}/repos` |
+| dismiss a reminder | `DELETE /api/connections/{provider}/leftovers/{repoId}` |
+| the provider's configuration | `/api/admin/connections/{provider}…` (site administrators) |
+
+- `GET /api/admin/connections`: site administrators; every provider with its
+  configuration state, `partialSync`, and counts (connections, spaces).
+- A `{provider}` that does not exist answers `404 not_found`; a route a
+  provider's type does not have (installations on a type without them, anything
+  but `repos` on `git`) answers `404 not_found` too. `repos` on `git` is an
+  empty list.
+- The callbacks stay exceptions to the cross-site rule; the state names the
+  provider.
+
+### Spaces and remotes
+
+- `POST /api/spaces` takes `storage.sync`:
+
+  ```json
+  {"name": "Tang notes",
+   "storage": {"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes",
+                        "private": true, "description": "Notes on Tang poetry", "create": true}}}
+  ```
+
+  Without `sync` the space is on this server. The fields are the GitHub
+  provider's, see "Creating a space with a repository". `provider: "git"` is
+  `400 invalid` here: a plain address is connected after the space is made, with
+  `PUT …/remote`. Failures that leave a repository behind answer with `repo`.
+- The Remote object's credential is `{"type": "connection", "provider": "github",
+  "via": "app" | "user", …}`; the other fields are the provider's (for GitHub
+  `installationId`, `account`, `user`, `login`, `repoId`). `ssh` and `token` stay.
+  `PUT …/remote` takes the same shape.
+- The Remote object has `provider` (the id; `git` for a plain address) so the
+  client shows the platform's icon and name.
+
+### Error codes
+
+Every error of a connection has `provider` (the id) next to `error` and
+`message`. The codes do not carry the platform's name:
+
+| Code | Meaning |
+|---|---|
+| `provider_not_configured` | the provider is not set up (or, for user flows, lacks what connecting needs) |
+| `connection_expired` | the person's connection ran out or was revoked (as a remote's `errorCode`) |
+| `connection_missing` | the person it names has no connection (any more) (as a remote's `errorCode`) |
+| `not_connected` | the request needs the caller's connection and there is none, or it is expired |
+| `installation_gone` | the App was uninstalled or suspended, or the repository left its selection |
+| `repo_not_in_installation` | no installation reaches the repository and it could not be added |
+| `app_not_installed` | the App is not installed where the caller wants a repository (`installUrl`): their own account, or an organisation the App was removed from |
+| `app_missing_permission` | the App or its installation lacks a permission (`permission` names the first, `missing` all) |
+| `provider_refused` | the platform refused a person (`message` passes on what it said) |
+| `provider_error` | the platform failed or answered something the server could not use |
+| `name_taken` | the owner has a repository of that name |
+| `push_failed` | the repository was made but the first push failed |
+| `auto_create_needs_org` | (2.8's sign-in providers, unchanged) |
+| `app_rejected`, `client_rejected`, `key_invalid` | the platform does not accept what the administrator entered |
+| `public_url_needed` | the flow needs `--public-url` |
+| `owner_not_allowed` | the owner is not one of the caller's |
+| `provider_in_use` | the provider cannot be changed or removed while spaces or people use it |
+| `account_in_use` | the platform account is connected to another person (any tenant) |
+
+### Storage
+
+`remotes.cred_type` is `ssh`, `token` or `connection`, and `remotes.provider` is
+the provider's id (`github` for a connection, `git` for the others). The
+GitHub provider's tables keep their names (`github_authorizations`,
+`github_installations`, `github_installation_tenants`, `github_leftovers`).
+
+### Audit
+
+`connection_provider_changed` (a provider configured, changed or removed:
+`provider`, `type`, secrets as `"changed"`), `account_connected` and
+`account_disconnected` (`provider`, `user`, `login`). All three are the
+server's own kinds: a tenant administrator's `GET /api/admin/audit` does not
+list `connection_provider_changed`.
+
+## The GitHub provider
 
 Accounts mode; single-user mode answers `404` here, as it does for the whole of
-"Remote repository" (so a `github` credential in `PUT …/remote` is `404` there
+"Remote repository" (so a `connection` credential in `PUT …/remote` is `404` there
 too). The server has at most one
-GitHub App, which an administrator configures (see "Administration", "GitHub
-App"); only `github.com` is supported. Three things come from it:
+GitHub App, which an administrator configures (see "Administration", "Connections", "The GitHub App"); only `github.com` is supported. Three things come from it:
 
 - **Installations**: where the App is installed (organisations, accounts). An
   installation token pushes and fetches a space's repository, and creates
@@ -1439,21 +1612,21 @@ App"); only `github.com` is supported. Three things come from it:
   in the organisations GitHub lets that user create them in, and syncs a space
   when no installation reaches its repository. What a user token may do is
   what both the user and the App may do: GitHub checks the user's own rights.
-- **Spaces made with a new repository** (`POST /api/spaces` with `github`),
+- **Spaces made with a new repository** (`POST /api/spaces` with `storage.sync`),
   and existing spaces switched to the App (`PUT …/remote`).
 
 **Tenants (3.3).** The App and its installations are the server's: only site
-administrators reach `/api/admin/github…` (a tenant administrator gets
+administrators reach `/api/admin/connections/github…` (a tenant administrator gets
 `403 forbidden`, as for the other site-only routes), and an installation a site
 administrator shares is shared with the people of **every** tenant (see
-`PUT /api/admin/github/installations/{id}`). A GitHub connection is its user's,
+`PUT /api/admin/connections/github/installations/{id}`). A GitHub connection is its user's,
 so it is in the user's tenant: it syncs only spaces of that tenant. One GitHub
 account links to one PetalBook user on the whole server, whatever their
 tenants; `account_in_use` says only that it is taken. A space made with a
 repository is the creator's tenant's and counts toward its quotas.
 
-Every route here is a person's, not a token's: with an API token, `/api/github/…`
-and `/api/admin/github…` answer `403 token_scope` (see "API tokens"), and so
+Every route here is a person's, not a token's: with an API token, `/api/connections/github/…`
+and `/api/admin/connections/github…` answer `403 token_scope` (see "API tokens"), and so
 do `POST /api/spaces` and `PUT …/remote`.
 
 | Work | Token |
@@ -1496,38 +1669,19 @@ do `POST /api/spaces` and `PUT …/remote`.
   costs at most one minted token per 55 minutes while someone uses it, and none
   while it is closed.
 
-### `GET /api/github`
+### The provider object
 
-Any signed-in user. What the client needs to show GitHub choices:
+`GET /api/connections` (see "Connections") shows GitHub as the provider
+`github`. `app` is `null` when no App is configured; then nothing else of the
+provider works and its other endpoints answer `409 provider_not_configured`.
+`userAuthorization` is whether users can connect their GitHub account: the
+App's client id and secret are saved and the server has `--public-url`.
+`connection.state` is `ok` or `expired` (see "Renewal"). `connection.spaces`
+counts the spaces that sync through it (`via: "user"` naming the caller), so a
+client can warn before a disconnect. `leftovers` are described under "Leftover
+repositories".
 
-```json
-{"app": {"name": "PetalBook Notes", "slug": "petalbook-notes",
-         "htmlUrl": "https://github.com/apps/petalbook-notes",
-         "installUrl": "https://github.com/apps/petalbook-notes/installations/new"},
- "userAuthorization": true,
- "authorization": {"login": "tang-gh", "githubId": 1234567, "state": "ok",
-                   "connected": "2026-11-23T08:30:00Z", "refreshExpires": "2027-05-23T08:30:00Z", "spaces": 2},
- "leftovers": [{"repoId": 881234567, "fullName": "kazuhahub/tang-notes",
-                "htmlUrl": "https://github.com/kazuhahub/tang-notes",
-                "spaceName": "Tang notes", "created": "2026-11-23T08:45:00Z"}]}
-```
-
-- `app` is `null` when no App is configured; then nothing else here works and
-  the other endpoints of this section answer `409 github_not_configured`.
-- `userAuthorization` is whether users can connect their GitHub account: the
-  App's client id and secret are saved and the server has `--public-url`.
-- `authorization` is the caller's connection, or `null`. `state` is `ok` or
-  `expired` (see "Renewal"). `refreshExpires` is absent when the App does not
-  expire user tokens. `spaces` counts the spaces that sync through it
-  (`via: "user"` naming the caller), so a client can warn before a disconnect.
-- `leftovers` are the caller's reminders of empty repositories a failed attempt
-  to make a space left on GitHub (see "Creating a space with a GitHub
-  repository", and "Leftover repositories" below): newest first, at most 20,
-  `[]` when there are none and always present (also when `app` is `null`).
-  `spaceName` is the name the space was to have; `created` is when the
-  repository was made.
-
-### `POST /api/github/authorization/start`
+### `POST /api/connections/github/authorization/start`
 
 `{"return": "/s/01JD3K8Q7Z/settings", "install": true}`, with `return` treated as
 in `POST /api/auth/oidc/start`. `200` with `{"url": "…"}` and a short-lived
@@ -1549,18 +1703,18 @@ cookie that ties the attempt to this browser; the client navigates to `url`.
   `https://github.com/login/oauth/authorize?client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
 
 `redirect_uri` is `redirect_uri` is
-`<public-url>/api/github/authorization/callback`. `state` is 32 random
+`<public-url>/api/connections/github/authorization/callback`. `state` is 32 random
 bytes; the PKCE verifier is 64 random characters and its S256 challenge is
 sent (not for `install`). Both are held in memory only, for 10 minutes, used once, bound to the
 cookie and to the signed-in user (at most 10 000 attempts at a time: the
 oldest goes first). When reconnecting, `login=<the current login>` is sent so
-GitHub suggests the same account. `409 github_not_configured` when
+GitHub suggests the same account. `409 provider_not_configured` when
 `userAuthorization` is false.
 
-### `GET /api/github/authorization/callback`
+### `GET /api/connections/github/authorization/callback`
 
 GitHub redirects here. The server answers with a redirect (`303`), never JSON:
-to the `return` path on success, to `/settings?github_error=<code>` on failure.
+to the `return` path on success, to `/settings?connection_error=<code>&provider=github` on failure.
 It needs the session of the user who started the attempt; another session or
 none is `expired`. The same callback serves both starts: a plain authorisation
 (`code` and `state`) and an installation (`code`, `state`, `installation_id`,
@@ -1576,7 +1730,7 @@ Codes: `installed` (the App was installed but GitHub sent no code: authorise
 once more with `install` false; the App needs "Request user authorization
 (OAuth) during installation"), `requested` (the organisation's owners must
 approve the installation first), `denied` (the user cancelled on GitHub), `expired` (the attempt is
-unknown, used, older than 10 minutes, or of another user), `github_error`
+unknown, used, older than 10 minutes, or of another user), `provider_error`
 (GitHub refused the exchange or could not be reached), `account_in_use`
 (another PetalBook user has connected this GitHub account, in any tenant: the
 GitHub account id is unique on the server; the answer names neither the user
@@ -1590,12 +1744,12 @@ GitHub account's id and login, the access token and the refresh token
 their expiry times and the `state`. Connecting the same account again replaces
 the tokens; spaces that were waiting on it are retried at once.
 
-### `DELETE /api/github/authorization`
+### `DELETE /api/connections/github/authorization`
 
 `204`. The server asks GitHub to revoke the grant
 (`DELETE /applications/{client_id}/grant`, best effort) and deletes the tokens
 from the database and from memory whatever GitHub answers. Spaces that sync
-through it go to `state: "error"`, `errorCode: "github_authorization_missing"`
+through it go to `state: "error"`, `errorCode: "connection_missing"`
 the next time they talk to GitHub; nothing in them is deleted (see "When a
 GitHub credential stops working").
 
@@ -1624,7 +1778,7 @@ stops working.
 - The device flow is not offered: the web app does not need it. It is left for
   the clients of phase 4.
 
-### `GET /api/github/owners?cursor={cursor}`
+### `GET /api/connections/github/owners?cursor={cursor}`
 
 The accounts the caller can create a repository in, one page at a time:
 
@@ -1643,10 +1797,10 @@ installation a site administrator shared with the caller's tenant and that are n
 already listed. `needsInstall` is `true` on the caller's own account when the
 App is not installed there: GitHub lets a user token create repositories only
 in accounts the App is installed on, so a repository in that account is refused
-with `409 github_app_not_installed` until the person installs it (the web app
-offers "Install on my account": `installUrl` of `GET /api/github`, or the
+with `409 app_not_installed` until the person installs it (the web app
+offers "Install on my account": `installUrl` of `GET /api/connections`, or the
 `install` start above). It is found with one call to GitHub on the first page
-(`GET /users/{login}/installation`, remembered while the App is there).
+(`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit).
 `via` says which token creates the repository there. Each page is at most one call
 to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
 connection only the installations shared with the caller's tenant are listed. A repository is created with
@@ -1654,7 +1808,7 @@ the caller's own token wherever it can be, so GitHub's rules for that person
 in that organisation (who may create repositories, whether private ones are
 allowed) apply.
 
-### `GET /api/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
+### `GET /api/connections/github/repos?installation={id}&cursor={cursor}` or `?mine=true`
 
 Repositories the caller can connect a space to, 30 to a page, for choosing one
 in `PUT …/remote` or `POST /api/spaces` with `create: false`. `installation`:
@@ -1673,12 +1827,12 @@ repositories (`GET /user/repos?affiliation=owner`).
 shared with their tenant. GitHub cannot filter these lists by name, so there is no `q`: a client
 filters the page it has, and the user can type `owner/name` instead.
 
-### Creating a space with a GitHub repository
+### Creating a space with a repository
 
-`POST /api/spaces` with `github` (see "Spaces"):
+`POST /api/spaces` with `storage.sync` and `provider: "github"` (see "Connections", "Spaces and remotes"):
 
-- `owner`: a `login` from `GET /api/github/owners` (case is ignored).
-  `403 github_owner_not_allowed` for anything else.
+- `owner`: a `login` from `GET /api/connections/github/owners` (case is ignored).
+  `403 owner_not_allowed` for anything else.
 - `name`: 1–100 characters of `A-Z a-z 0-9 . _ -`, not `.` or `..`, not
   ending in `.git`. Anything else is `400 invalid`: the server does not let
   GitHub rename it.
@@ -1717,7 +1871,7 @@ commit is the repository's first commit, on `main`. The order:
    server adds it (`PUT /user/installations/{id}/repositories/{repoId}`, user
    token) and mints again; when it cannot, the caller's own account falls back
    to `via: "user"` and an organisation fails with
-   `409 github_repo_not_in_installation`. This works whether or not GitHub adds
+   `409 repo_not_in_installation`. This works whether or not GitHub adds
    a repository an App created to its installation by itself.
 5. `main` is pushed. A repository GitHub has just made is sometimes not found
    for a few seconds, so "not found", GitHub's `5xx` and an unreachable GitHub
@@ -1730,18 +1884,18 @@ commit is the repository's first commit, on `main`. The order:
    "Authentication failed") and a credential the server could not get at all
    are not retried.
 6. In one transaction: the space (in the caller's tenant), the caller as its
-   owner, and its remote (`github`, `via`, the installation, the repository id,
+   owner, and its remote (`connection`, provider `github`, `via`, the installation, the repository id,
    the user); the usage rows count it as any new space. Then the space becomes
    visible.
 
 When a step fails:
 
 - Steps 1 and 2: nothing was made anywhere.
-- Step 3: the space on disk is removed. `409 github_name_taken` when the
+- Step 3: the space on disk is removed. `409 name_taken` when the
   owner already has a repository of that name (a client can offer
-  `create: false` when it is the caller's); `403 github_app_missing_permission`
+  `create: false` when it is the caller's); `403 app_missing_permission`
   when the App or its installation lacks the Administration permission
-  (`missing` names it); `403 github_no_permission` when GitHub refuses a person
+  (`missing` names it); `403 provider_refused` when GitHub refuses a person
   (the organisation does not let this person create repositories, or does not
   allow private ones: `message` passes on what GitHub said); `400 invalid` for any other refusal
   of the fields; `503 unavailable` when GitHub cannot be reached;
@@ -1753,18 +1907,18 @@ When a step fails:
   reminder of it for the caller (see "Leftover repositories"):
 
   ```json
-  {"error": "github_push_failed", "message": "…",
+  {"error": "push_failed", "message": "…",
    "repo": {"id": 881234567, "fullName": "kazuhahub/tang-notes", "htmlUrl": "https://github.com/kazuhahub/tang-notes"}}
   ```
 
-  Codes: `409 github_repo_not_in_installation`, `502 github_push_failed`,
+  Codes: `409 repo_not_in_installation`, `502 push_failed`,
   `500 internal` (the transaction failed).
 - A crash between steps 3 and 6 is the same failure without an answer: the
   directory on disk has no record and no one sees it (the next start removes
   it once it is a quarter of an hour old), and the empty repository is on
   GitHub, ready for `create: false`.
 
-Two requests for the same name: the second gets `409 github_name_taken`. The
+Two requests for the same name: the second gets `409 name_taken`. The
 server finishes the work when the client goes away, as `PUT …/remote` does.
 
 #### Leftover repositories
@@ -1774,30 +1928,30 @@ remote). So that the person does not have to remember it, the server also
 records a reminder, per user, when the failure came after the repository was
 made (steps 4 to 6, the same cases that put `repo` in the answer; a crash has
 no answer and no reminder). A client shows the reminders in
-`GET /api/github`'s `leftovers`, for instance on the account page or beside the
+`GET /api/connections`'s `leftovers`, for instance on the account page or beside the
 list of spaces, with the repository's name and link and two actions:
 
 - **Connect it and try again**: `POST /api/spaces` with the reminder's
-  `spaceName` as `name` and `github: {"owner", "name", "create": false}` taken
+  `spaceName` as `name` and `storage: {"sync": {"provider": "github", "owner", "name", "create": false}}` taken
   from `fullName`. Nothing else is needed; the reminder is cleared by the
   space connecting (below). When it fails again the reminder stays, and the
   answer says why.
-- **I deleted it**: `DELETE /api/github/leftovers/{repoId}`.
+- **I deleted it**: `DELETE /api/connections/github/leftovers/{repoId}`.
 
 A reminder is cleared when the person dismisses it, and by itself when any
-space is connected to that repository with a `github` credential (by
+space is connected to that repository with a `connection` credential (by
 `create: false`, or by `PUT …/remote`), whoever made the reminder. A space
 connected with a plain URL and a token or key does not clear it. Only the newest 20 per user are kept; a
 second failure on the same repository replaces its reminder rather than adding
 one. Reminders are the user's own: they are deleted with the user and no one
 else sees them, in any tenant.
 
-### `DELETE /api/github/leftovers/{repoId}`
+### `DELETE /api/connections/github/leftovers/{repoId}`
 
 `204`. Dismisses the caller's reminder of that repository (the id from
 `leftovers[].repoId`). Nothing happens on GitHub. It is `204` also when there
 is no such reminder (it was cleared meanwhile), as for `DELETE
-/api/github/authorization`. `repoId` that is not a positive number is
+/api/connections/github/authorization`. `repoId` that is not a positive number is
 `404 not_found`.
 
 ### Switching an existing space to GitHub
@@ -1805,7 +1959,7 @@ is no such reminder (it was cleared meanwhile), as for `DELETE
 `PUT /api/spaces/{space}/remote` (needs `manage`):
 
 ```json
-{"url": "https://github.com/kazuhahub/notes.git", "credential": {"type": "github", "via": "app"}}
+{"url": "https://github.com/kazuhahub/notes.git", "credential": {"type": "connection", "provider": "github", "via": "app"}}
 ```
 
 `url` must be a repository on `github.com`; `git@github.com:owner/name.git` is
@@ -1827,14 +1981,14 @@ token is deleted.
   space's tenant (which only a site administrator, who may open a space of any
   tenant, can fail): otherwise `403 forbidden`, before GitHub is asked.
 
-A `github` credential does not get around `--remote-host`: when `github.com`
+A GitHub connection does not get around `--remote-host`: when `github.com`
 is not an allowed host the answer is `403 forbidden`, as for any other remote
 on a host that is not allowed, and GitHub is not asked.
 
-Errors, besides those of `PUT …/remote`: `409 github_not_configured`;
-`409 github_not_authorized` (the caller has no connection, or it is
-`expired`); `409 github_repo_not_in_installation` (`via: "app"` and no
-installation reaches the repository); `403 github_owner_not_allowed` (the
+Errors, besides those of `PUT …/remote`: `409 provider_not_configured`;
+`409 not_connected` (the caller has no connection, or it is
+`expired`); `409 repo_not_in_installation` (`via: "app"` and no
+installation reaches the repository); `403 owner_not_allowed` (the
 installation is not shared with the caller's tenant and the caller's connection
 cannot push there);
 `403 forbidden` (`via: "user"` and the caller is not in the space's tenant).
@@ -1846,11 +2000,11 @@ the server next mints or renews a token, or when Git is refused:
 
 | `errorCode` | Cause | Fix |
 |---|---|---|
-| `github_authorization_expired` | the refresh token expired or was revoked | the user the remote names connects again |
-| `github_authorization_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
-| `github_installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
-| `github_app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
-| `github_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
+| `connection_expired` | the refresh token expired or was revoked | the user the remote names connects again |
+| `connection_missing` | that user disconnected, was disabled or deleted, or lost `manage` in the space (directly and through every group) | they connect again, or someone with `manage` switches the credential |
+| `installation_gone` | the App was uninstalled or suspended there, or the repository was taken out of its selection | install it again, or add the repository |
+| `app_missing_permission` | GitHub refuses the installation's token because the App or its installation lacks Contents | an administrator gives the App Contents (write) and accepts the change in the installation's settings; then re-check in the administration |
+| `provider_not_configured` | the server's App is not configured, or its key no longer works | an administrator fixes the App |
 
 In every case nothing is lost: reads go on from what the server has; writes
 answer `503 unavailable` and change nothing, as for an unreachable remote;
@@ -1864,21 +2018,21 @@ fixed (a user connects again, an administrator saves the App).
 
 | Code | Status | When |
 |---|---|---|
-| `github_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
-| `github_not_authorized` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
-| `github_owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
-| `github_name_taken` | 409 | the owner has a repository of that name |
-| `github_no_permission` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
-| `github_app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
-| `github_app_not_installed` | 409 | the owner is the caller's own account and the App is not installed there; `installUrl` is where to install it (instead of GitHub's raw `403 Resource not accessible by integration`). Installed, but without Administration, it is `github_app_missing_permission` |
-| `github_repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
-| `github_push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
+| `provider_not_configured` | 409 | no App, or (for user flows) no client id and secret or no `--public-url` |
+| `not_connected` | 409 | the request needs the caller's GitHub connection and there is none, or it is `expired` |
+| `owner_not_allowed` | 403 | the owner is not one of the caller's owners; the installation is not shared with the caller's tenant and the caller's connection does not reach the repository |
+| `name_taken` | 409 | the owner has a repository of that name |
+| `provider_refused` | 403 | GitHub refused to create the repository (`message` says what GitHub said) |
+| `app_missing_permission` | 403 | the App, or its installation, lacks a permission the call needs (a token GitHub refused with a 403 or 422 that talks about permissions); `missing` lists the names (`administration`, `contents`), `repo` is set when the server had made a repository. It is not the same as the next one: the permission is the problem, not the repository. As the `errorCode` of a space's remote it says syncing needs a permission |
+| `app_not_installed` | 409 | the owner is the caller's own account and the App is not installed there; `installUrl` is where to install it (instead of GitHub's raw `403 Resource not accessible by integration`). Installed, but without Administration, it is `app_missing_permission` |
+| `repo_not_in_installation` | 409 | no installation reaches the repository and it could not be added; the answer has `repo` when the server made it |
+| `push_failed` | 502 | the repository was made but the first push failed; the answer has `repo` |
 | `invalid` | 400 | a field breaks a rule above, or GitHub refused one |
 | `rate_limited` | 429 | GitHub limits the server; `Retry-After` is taken from GitHub's reset time |
 | `unavailable` | 503 | GitHub cannot be reached; nothing was changed |
 
-The administrators' endpoints add `github_key_invalid`, `github_app_rejected`,
-`github_client_rejected`, `github_app_in_use` and `github_public_url_needed`
+The administrators' endpoints add `key_invalid`, `app_rejected`,
+`client_rejected`, `provider_in_use` and `public_url_needed`
 (see "Administration").
 
 ### Reserved: a site policy for remotes (milestone 3.1)
@@ -1888,7 +2042,7 @@ Not built in 2.7; the names are kept for it and not used for anything else.
 - `GET /api/admin/storage`, `PUT /api/admin/storage` with
   `{"remotes": {"require": null, "scope": "new", "graceDays": 30}}`: `require`
   is `null` (no requirement), `"any"` (a space must follow some remote) or
-  `"github"` (a repository on GitHub, made through the App); `scope` is
+  a provider id (a repository through that provider); `scope` is
   `"new"` (spaces made from now on) or `"all"`.
 - While a requirement applies, `POST /api/spaces` without what it requires,
   and `DELETE …/remote`, answer `409 remote_required`. For `"any"`,
@@ -3891,7 +4045,7 @@ person's, kept for the browser; what a token writes goes straight to a commit
 under no name, and a token never commits a browser draft as "API token".
 
 Everything else, a route that needs `members` or `manage` (the remote of a
-space among them), and anything under `/api/account`, `/api/github`,
+space among them), and anything under `/api/account`, `/api/connections`,
 `/api/users`, `/api/invites`, `/api/admin`, `/api/oauth` and the sign-in
 routes, answers `403 token_scope`: a token cannot make tokens, change members,
 settings of a space, types, templates or remotes, connect or use its owner's
@@ -4839,7 +4993,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -6059,16 +6213,25 @@ Revokes any token. `204`, also when it was revoked already; `404 not_found`.
 The same for OAuth grants (items as in `GET /api/account/grants`, with
 `owner`).
 
-### GitHub App
+### Connections
 
-The server's one GitHub App (see "GitHub"). It is in the state database, not
+#### `GET /api/admin/connections`
+
+Site administrators. `{"providers": [{"id": "github", "type": "github", "name": "GitHub", "host": "github.com", "configured": true, "partialSync": "yes", "connections": 3, "spaces": 4}, {"id": "git", …}]}`:
+every provider the server has, with its configuration state and counts (people
+connected, spaces syncing through it). A tenant administrator gets
+`403 forbidden`.
+
+#### The GitHub App
+
+The server's one GitHub App (see "The GitHub provider"). It is in the state database, not
 in a flag or a file, and a change takes effect at once, without a restart. The
 private key and the client secret are sealed with the server's key
 (`DATA/secret.key`, or `PETALBOOK_SECRET_KEY`), are **never returned**, and
 never reach a log or an error message. There is no webhook in 2.7 (the server
-finds out about an uninstalled App when GitHub refuses a token), and no
-manifest flow: the administrator makes the App on GitHub and copies its
-details here.
+finds out about an uninstalled App when GitHub refuses a token), and the
+administrator either makes the App on GitHub from here in one click (the
+manifest flow below) or makes it by hand and copies its details here.
 
 The App needs these permissions on GitHub: Contents read and write (Git),
 Metadata read, and Administration read and write (creating repositories;
@@ -6079,7 +6242,7 @@ App must be installable on **any account** (public), or a person cannot install
 it on their own account: `anyAccount` below says which it is. Its callback URL
 is the `callbackUrl` below.
 
-#### `GET /api/admin/github`
+#### `GET /api/admin/connections/github`
 
 ```json
 {"configured": true, "appId": "1234567", "clientId": "Iv23liAbCdEfGhIjKlMn",
@@ -6087,7 +6250,7 @@ is the `callbackUrl` below.
  "htmlUrl": "https://github.com/apps/petalbook-notes",
  "installUrl": "https://github.com/apps/petalbook-notes/installations/new",
  "privateKey": {"set": true, "fingerprint": "SHA256:…"}, "clientSecret": {"set": true},
- "callbackUrl": "https://notes.example.com/api/github/authorization/callback",
+ "callbackUrl": "https://notes.example.com/api/connections/github/authorization/callback",
  "permissions": {"administration": "write", "contents": "write", "metadata": "read"},
  "missing": [], "gaps": [], "anyAccount": true,
  "userAuthorization": true, "checked": "2026-11-23T08:30:00Z",
@@ -6114,15 +6277,15 @@ Before anything is saved: `{"configured": false, "callbackUrl": "…"}`.
   else `true` once an installation on an account that is not the App owner's has
   been seen, else `null` (not known). A client warns on `false`.
 - Everything above is as of `checked`: it is read from GitHub when the App is
-  saved, by `POST /api/admin/github/check`, and, at most once a minute, when a
+  saved, by `POST /api/admin/connections/github/check`, and, at most once a minute, when a
   token GitHub refuses (for a permission the App or an installation lacks)
   shows the stored view is old. A plain `GET` never asks GitHub.
-- `callbackUrl` is `<public-url>/api/github/authorization/callback`, `""`
-  without `--public-url`. `userAuthorization` is as in `GET /api/github`.
+- `callbackUrl` is `<public-url>/api/connections/github/authorization/callback`, `""`
+  without `--public-url`. `userAuthorization` is as in `GET /api/connections`.
 - `spaces` counts the spaces with a `github` credential; `authorizations` the
   users connected.
 
-#### `PUT /api/admin/github`
+#### `PUT /api/admin/connections/github`
 
 ```json
 {"appId": "1234567", "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n…",
@@ -6133,37 +6296,37 @@ The first save needs `appId` and `privateKey`. Later, a `privateKey` or a
 `clientSecret` that is left out keeps the one stored. `clientId` and
 `clientSecret` go together; without them users cannot connect their GitHub
 accounts, and only installations shared with a tenant can be used. `"clientId": ""` removes
-both (`409 github_app_in_use` while a user is connected; spaces that sync
+both (`409 provider_in_use` while a user is connected; spaces that sync
 through an installation do not stand in the way).
 
 The server checks with GitHub before it saves anything, and saves nothing when
 a check fails:
 
-- the key is an RSA key in PEM (PKCS#1 or PKCS#8): else `400 github_key_invalid`;
+- the key is an RSA key in PEM (PKCS#1 or PKCS#8): else `400 key_invalid`;
 - GitHub accepts a JWT signed with it for `appId` (`GET /app`): else
-  `400 github_app_rejected`;
-- `clientId` is that App's client id: else `400 github_client_rejected`;
+  `400 app_rejected`;
+- `clientId` is that App's client id: else `400 client_rejected`;
 - GitHub accepts the client id and secret (it is asked to check a made-up
   token with them, `POST /applications/{client_id}/token`: `404` means the
-  pair is right, `401` that it is not): else `400 github_client_rejected`;
+  pair is right, `401` that it is not): else `400 client_rejected`;
 - GitHub cannot be reached: `503 unavailable`.
 
 A new key or secret for the same App replaces the old one and drops the
 cached tokens. Another App (`appId` different from the saved one) is refused
-with `409 github_app_in_use` while any space has a `github` credential or any
+with `409 provider_in_use` while any space has a `github` credential or any
 user is connected; another or no `clientId` only while any user is connected.
 `200` as `GET`.
 
-#### `POST /api/admin/github/check`
+#### `POST /api/admin/connections/github/check`
 
 No body. Reads the App (`GET /app`) and up to five pages of its installations
 (`GET /app/installations`) from GitHub again, stores what the permissions are
 now (`permissions`, `missing`, `gaps`, `anyAccount`, `checked`, and the App's
-name and page) and answers `200` as `GET /api/admin/github`. `409
-github_not_configured` without an App, or when GitHub no longer accepts its key;
+name and page) and answers `200` as `GET /api/admin/connections/github`. `409
+provider_not_configured` without an App, or when GitHub no longer accepts its key;
 `503 unavailable` when GitHub cannot be reached (nothing is changed).
 
-#### `POST /api/admin/github/manifest`
+#### `POST /api/admin/connections/github/manifest`
 
 Makes the App on GitHub in one click (GitHub's App Manifest flow); entering an
 App by hand with `PUT` stays possible. `{"organization": "kazuhahub", "name":
@@ -6176,9 +6339,9 @@ unique, so the administrator may need another). `200`:
 {"url": "https://github.com/organizations/kazuhahub/settings/apps/new?state=…",
  "manifest": {"name": "PetalBook Notes", "url": "https://notes.example.com",
    "hook_attributes": {"url": "https://notes.example.com", "active": false},
-   "redirect_url": "https://notes.example.com/api/github/manifest/callback",
-   "callback_urls": ["https://notes.example.com/api/github/authorization/callback"],
-   "setup_url": "https://notes.example.com/api/github/manifest/callback",
+   "redirect_url": "https://notes.example.com/api/connections/github/manifest/callback",
+   "callback_urls": ["https://notes.example.com/api/connections/github/authorization/callback"],
+   "setup_url": "https://notes.example.com/api/connections/github/manifest/callback",
    "public": true, "request_oauth_on_install": true,
    "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
 ```
@@ -6191,12 +6354,12 @@ during installation, and has no webhook.
 
 The `state` in `url` is 32 random bytes, held in memory for ten minutes, used
 once, bound to the cookie and to the signed-in site administrator. `409
-github_public_url_needed` without `--public-url`; `409 github_app_in_use` while
+public_url_needed` without `--public-url`; `409 provider_in_use` while
 any space has a `github` credential or any user is connected (an App in use is
 not replaced); `400 invalid` for a bad `organization` or `name`; `403
 forbidden` for anyone but a site administrator.
 
-#### `GET /api/github/manifest/callback`
+#### `GET /api/connections/github/manifest/callback`
 
 Where GitHub sends the administrator's browser after the App is made, with
 `code` and `state`. Like the callback of a user's connection it answers a
@@ -6205,24 +6368,41 @@ administrator who started the attempt, and is a cross-site navigation by nature.
 The server trades the code (`POST /app-manifests/{code}/conversions`, which needs
 no other credential and works once) for the App's id, slug, client id, client
 secret, private key and webhook secret, then saves them as `PUT
-/api/admin/github` does (checked with GitHub, secrets sealed with the server's
+/api/admin/connections/github` does (checked with GitHub, secrets sealed with the server's
 key; the webhook secret is only kept, sealed, since there is no webhook), and
-sends the browser to `/admin/github?github_app=created`. A failure goes to
-`/admin/github?github_app_error=<code>`: `expired` (no such attempt, used, older
-than ten minutes, another browser or user), `github_error` (GitHub did not turn
+sends the browser to `/admin/storage?connection_app=created`. A failure goes to
+`/admin/storage?connection_app_error=<code>`: `expired` (no such attempt, used, older
+than ten minutes, another browser or user), `provider_error` (GitHub did not turn
 the code into an App, or the App could not be saved), `app_in_use`,
-`unavailable`. A visit with `installation_id` or `setup_action` and no `code`
+`unavailable` (GitHub made the App but could not be asked to check it, so it is
+not saved yet; see the next route). A visit with `installation_id` or `setup_action` and no `code`
 (the manifest names this address as the post-installation page too) goes to
-`/settings/github`.
+`/settings/connections`.
 
-#### `DELETE /api/admin/github`
+#### `POST /api/admin/connections/github/manifest/retry`
+
+When GitHub made the App but the server could not save it (`unavailable`: GitHub
+could not be asked to check it), the redirect is
+`/admin/storage?connection_app_error=unavailable&pending=1&app=<slug>`: the App
+exists on GitHub and its credentials are kept in the server's memory, sealed,
+for ten minutes, for that administrator only (one pending App per administrator,
+the newest). The retry takes no body, saves them as the callback would, and
+answers `200` as `GET /api/admin/connections/github`. `404 not_found` when
+nothing is pending (none was made, it was used or ten minutes passed: the
+administrator then finds the App at `https://github.com/apps/<slug>` (or in the
+organisation's settings), makes a private key there and enters the details with
+`PUT`; `app` in the redirect names it); `503 unavailable` when GitHub still
+cannot be reached (the credentials stay pending); `409 provider_in_use` as
+elsewhere. The redirect has no `pending` when nothing could be kept.
+
+#### `DELETE /api/admin/connections/github`
 
 `204`. The App's details are deleted, the users' connections with them
 (GitHub is asked to revoke each grant first, best effort), and what was shared of
-the installations. `409 github_app_in_use` while any space has a `github`
+the installations. `409 provider_in_use` while any space has a `github`
 credential (`message` says how many): switch or disconnect those first.
 
-#### `GET /api/admin/github/installations?cursor={cursor}`
+#### `GET /api/admin/connections/github/installations?cursor={cursor}`
 
 The App's installations, one page at a time; each page is one call to GitHub
 (`GET /app/installations`, 30 to a page) and one query of the state database.
@@ -6238,10 +6418,10 @@ The App's installations, one page at a time; each page is one call to GitHub
 
 `repositorySelection` is `all` or `selected`. `tenants` are the ids of the
 tenants the installation is shared with, sorted (`[]`: none), set below. `spaces`
-counts the spaces syncing through that installation. `409 github_not_configured`
+counts the spaces syncing through that installation. `409 provider_not_configured`
 when there is no App.
 
-#### `PUT /api/admin/github/installations/{id}`
+#### `PUT /api/admin/connections/github/installations/{id}`
 
 `{"tenants": ["01J8Z3X5K2", "01J8Z3X5K3"]}`. Sharing is per tenant: the
 installation is shared with exactly these tenants, replacing what it was shared
@@ -6257,3 +6437,4 @@ more than 500 tenants too. A tenant that is deleted stops being shared with.
 Spaces already connected are not affected either way. Only organisations can be
 shared: `400 invalid` for a user's account. `404 not_found` when GitHub does not
 know the installation. `200` with the item.
+
