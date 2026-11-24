@@ -21,6 +21,8 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/drafts"
+	"github.com/KKazuhaK/PetalBook/internal/forge"
+	"github.com/KKazuhaK/PetalBook/internal/forge/forgetest"
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
@@ -69,6 +71,10 @@ type acc struct {
 	// With accOpts.github: the fake GitHub and the server's use of it.
 	fake  *githubapptest.Fake
 	ghsvc *github.Service
+	// With accOpts.forges: a fake GitLab and a fake Gitea, and the manager of the
+	// providers an administrator sets up.
+	gl, gt *forgetest.Fake
+	fm     *forge.Manager
 }
 
 type accOpts struct {
@@ -86,6 +92,9 @@ type accOpts struct {
 	dailyFetch *dailyfetch.Fetcher
 	// github gives the server a GitHub service that talks to a fake GitHub.
 	github bool
+	// forges gives the server the means to set up GitLab and Gitea providers,
+	// and a fake host of each.
+	forges bool
 	// oauth turns the authorization server on; cimd fetches client metadata documents.
 	oauth bool
 	cimd  *http.Client
@@ -129,17 +138,33 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	var fake *githubapptest.Fake
 	var ghsvc *github.Service
 	var reg *connections.Registry
+	var gl, gt *forgetest.Fake
+	var fm *forge.Manager
+	var box *secret.Box
+	if o.github || o.forges {
+		box = secret.NewBoxWithKey([32]byte{4, 5, 6})
+	}
 	if o.github {
 		fake = githubapptest.New(t, clk)
 		gc, err := githubapp.New(githubapp.Config{API: fake.URL, Web: fake.URL, Now: clk.Now})
 		if err != nil {
 			t.Fatal(err)
 		}
-		box := secret.NewBoxWithKey([32]byte{4, 5, 6})
 		if ghsvc, err = github.New(github.Options{Store: st, Secrets: box, Client: gc, PublicURL: o.public, Now: clk.Now, SettingsTTL: time.Nanosecond}); err != nil {
 			t.Fatal(err)
 		}
 		reg = connections.NewRegistry(ghsvc, connections.NewGit())
+	} else if o.forges {
+		reg = connections.NewRegistry(connections.NewGit())
+	}
+	if o.forges {
+		gl, gt = forgetest.NewGitLab(t, clk), forgetest.NewGitea(t, clk)
+		var err error
+		if fm, err = forge.NewManager(ctx, forge.Options{Store: st, Secrets: box, Registry: reg, PublicURL: o.public, Now: clk.Now, Unsafe: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reg != nil {
 		sopt.Secrets, sopt.Connections = box, reg
 		sopt.RemotePolicy = gitstore.Policy{Hosts: []string{"*"}, AllowUnsafe: true}
 		sopt.PushRetry = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond}
@@ -191,6 +216,10 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 	if ghsvc != nil {
 		ghsvc.OnChange(mgr.ConnectionFixed)
 	}
+	if fm != nil {
+		fm.SetHostAllowed(mgr.HostAllowed)
+		reg.OnChange(func(_, userID string) { mgr.ConnectionFixed(userID) })
+	}
 	tok := api.NewTokens(tokens.Config{Store: st, Now: clk.Now, Logger: log}, svc)
 	var oa *oauth.Service
 	if o.oauth {
@@ -206,7 +235,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 		opts.MaxSpaces = &n
 	}
 	h := api.New(opts)
-	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc}
+	return &acc{t: t, dir: dir, st: st, mgr: mgr, auth: svc, drafts: drf, tokens: tok, oauth: oa, clock: clk, h: h, public: o.public, fake: fake, ghsvc: ghsvc, gl: gl, gt: gt, fm: fm}
 }
 
 // client is a browser: it keeps cookies and has an address.

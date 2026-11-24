@@ -1535,7 +1535,7 @@ generic shape replaces the GitHub-only one; there are no aliases.
   3.8's are chosen by the administrator, of the site or of a tenant (`gitlab`,
   `gitlab-acme`, `codeberg`, …; lowercase letters, digits and `-`, at most 40,
   unique on the server). `git` is always there and has no connection.
-- `type`: `github` (`gitlab` and `gitea` come with 3.8), `git`.
+- `type`: `github`, `gitlab`, `gitea` (Forgejo and Codeberg too), `git`.
 - `owner`: `site`; from 3.6 also `{"tenant": "<id>"}` for a tenant's own
   provider (see "Tenant-owned resources").
 - `capabilities`: what the client may offer; it shows options by capability,
@@ -9049,7 +9049,7 @@ One OAuth application per host, configured by an administrator.
 ### Storage, audit, errors
 
 - Migration: the next free number at merge time (0023 when 3.5–3.7 are in
-  first), SQLite and PostgreSQL. `providers` (id,
+  first; built as 0019), SQLite and PostgreSQL. `providers` (id,
   type, host, name, owner, client id, sealed secret, state, updated by and at);
   `provider_authorizations` (provider, user, account id, login, sealed tokens,
   expiries, state, version; unique `(provider, account_id)` and
@@ -9059,6 +9059,122 @@ One OAuth application per host, configured by an administrator.
 - Errors: 2.7b's generic codes; `provider_limit` (409).
 - Tests talk to fake GitLab and Gitea servers in the process, never to a real
   host.
+
+### As built (3.8, 2026-11-24)
+
+What the server does where the text above leaves room, and where it differs.
+
+- **Setting up.** `POST /api/admin/connections` (`201`, with `Location`) takes
+  `{id, type, host, name?, clientId, clientSecret}`; `GET`, `PATCH` (and `PUT`,
+  the same) and `DELETE` `/api/admin/connections/{provider}`;
+  `POST …/{provider}/check` reads the host again. Site administrators only (a
+  tenant administrator gets `403`; the tenant routes and
+  `integrations.connections` come with 3.6). `host` is a name with an optional
+  port (`gitlab.example.com`, `git.example.org:8443`), always https; the
+  server's `--remote-unsafe` also takes `http://…` and private addresses (tests
+  and labs). `id` is 1 to 40 of `a-z`, `0-9` and `-`, not `git` or `github`, not
+  starting with `t-`. The answer (and `GET`):
+
+  ```json
+  {"id": "gitlab-acme", "type": "gitlab", "host": "gitlab.acme.example", "name": "Acme GitLab", "owner": "site",
+   "configured": true, "clientId": "…", "hasSecret": true,
+   "callbackUrl": "https://notes.example.com/api/connections/gitlab-acme/authorization/callback",
+   "scopes": ["api"], "userAuthorization": true, "version": "16.7.2", "checked": "2026-11-24T08:00:00Z",
+   "partialSync": "unknown", "connections": 0, "spaces": 0, "updated": "2026-11-24T08:00:00Z"}
+  ```
+
+  `PATCH` changes `name`, `clientId` and `clientSecret` (the host is checked with
+  them before they are kept). Giving the provider **another client id** ends every
+  connection to it (`state` becomes `expired`, the stored tokens are deleted, and
+  people connect again): a token of a replaced application is never used. A new
+  secret for the same client id keeps the connections. A check never replaces a
+  version the server already knows with an empty one (GitLab does not say its
+  version to anyone signed out);
+  `id`, `type` and `host` cannot change (`400 invalid`). `configured` is `false`
+  after a check that failed (version, platform, client), and then every call of
+  the provider answers `409 provider_not_configured` until a check passes; a
+  host that cannot be reached is not a verdict, and leaves the state alone.
+- **Refusals** are `400 invalid` with a `reason`: `host_invalid`,
+  `host_not_public`, `host_unreachable`, `not_this_platform`,
+  `unsupported_version` (GitLab before 15, Gitea before 1.19; a Forgejo is
+  judged by the Gitea it follows), `client_rejected`, `type_invalid`. A host the
+  storage settings do not allow is the same error a remote on it gets. `409
+  exists` is a taken id or host, `409 provider_limit` the 20th, `409
+  provider_in_use` (with `connections` and `spaces`) a removal of one in use.
+- **Checking a host.** The version endpoint (GitLab answers a signed-out caller
+  `401 {"message": "401 Unauthorized"}`, which is how it is recognised; its
+  version is read with the first person's token and kept), then the token
+  endpoint is called with a code that cannot be valid: `invalid_grant` means the
+  host knows the client, `invalid_client` that it does not.
+- **Scopes.** GitLab: `api` (creating a project needs it; `read_repository` and
+  `write_repository` only cover Git). Gitea and Forgejo: none are asked for; the
+  application's token is as wide as the person's own rights.
+- **Tokens.** Git is given the user name `oauth2` and the access token. An
+  OAuth token is the person's, not narrowed to one repository as a GitHub
+  installation token is, so a space syncs with the connected person's token and
+  nobody else's; `via` is always `user` (`"app"` is `400 invalid`). GitLab's
+  refresh tokens do not end; Gitea's end at the `exp` they carry (read, not
+  verified), so `refreshExpires` is there for Gitea only. A refresh token is
+  renewed in the last tenth of its life (and at the latest 30 days before it
+  ends), not on a fixed window: a Gitea token that lives 730 hours is renewed
+  once, about three days before it ends, not every day. A `401` from the host to
+  a call made with a person's token does not end the connection by itself: the
+  server renews the pair once (one renewal at a time per person; if another
+  request has already replaced the token, that one is used) and makes the call
+  again once; the connection becomes `expired` only when the host refuses the
+  refresh token itself. GitLab is asked to revoke on disconnect (`/oauth/revoke`); Gitea has no such endpoint, and the
+  tokens are deleted here either way.
+- **Owners and repositories.** `GET /api/connections/{provider}/owners?q=&cursor=`
+  lists the person's own namespace first (`type: "User"`, first page only), then
+  groups (GitLab: those with at least Developer access, subgroups by full path)
+  or organisations (Gitea: those where one of their teams may create
+  repositories); `via` is `user`, `installationId` is `null`, `needsInstall` is
+  `false`. `GET …/repos?q=&cursor=` lists the repositories the person's
+  connection can push to (`mine=true` may be said, and is not needed;
+  `installation=`, with any value, is `400 invalid`). Cursors are page numbers made by the server
+  (`400 invalid` otherwise); `q` is at most 100 characters. A GitLab group that
+  lists the person but does not let them create projects passes `PlanCreate`
+  and is refused when the project is made (`403 provider_refused`); a Gitea
+  organisation is checked first (`403 owner_not_allowed`).
+- **Administrators of a Gitea.** When the person who connects is an
+  administrator of the Gitea or Forgejo instance (its user answer says
+  `is_admin`), `connection` has `"admin": true` (the field is absent otherwise,
+  and always for GitLab). The token the server then holds carries those
+  administrator rights, which a Gitea cannot narrow. The web app shows a
+  warning on that connection (in English and Chinese) and suggests an ordinary
+  account. It is read when the person connects and kept until they connect
+  again; it is not asked of the host at each renewal.
+- **Names.** A repository name is 1 to 100 of letters, digits, `.`, `_` and `-`,
+  not `.`, `..` or ending in `.git` (GitLab: also not starting with `.` or `-`
+  and not ending in `.atom`; Gitea: not ending in `.wiki`). A name that is taken
+  is `409 name_taken`, as on GitHub; the automatic suffix is 3.6's.
+- **Partial sync.** The first time a repository is made or connected, and every
+  30 days after, the server asks the repository for its Git protocol v2
+  advertisement with the person's token and records whether `fetch` lists
+  `filter` on the provider (`partialSync` is then `yes` or `no`; `unknown`
+  before). 3.5's table of hosts takes over this column when it is built.
+- **Limits of the checks.** Every request the server makes to a host (OAuth,
+  REST, the partial-sync probe) is refused unless the address it resolved to is
+  public, follows no redirect and uses no proxy of the environment. The `git`
+  programs connect by themselves and are held only to the allowed hosts.
+- **Tenants.** A provider has an owner, `site` or a tenant, shown as `"site"` or
+  `{"tenant": "<id>"}`; people of other tenants do not see a tenant's provider in
+  the list and get `404 not_found` from its routes. Nothing makes a tenant's
+  provider yet (3.6).
+- **Audit.** `connection_provider_changed` with `change` `created`, `saved` or
+  `removed` (never a secret); `account_connected` and `account_disconnected` as
+  for GitHub.
+- **Process.** Providers live in the memory of the process that serves them;
+  one set up by another process of the same database is picked up by the daily
+  renewal pass or a restart. Saving a provider, checking it and removing it
+  never write a stale copy of the row: a save reads the provider after it has
+  the lock; a check writes the state, the version and the time only, and not at
+  all if the client was replaced while it ran; a reload reads the rows with the
+  lock held, so it cannot bring back a provider that was just removed.
+- **Error text.** What a host says in an error (its message, an OAuth
+  description) reaches errors and logs with line breaks and control characters
+  replaced by spaces, at most 300 bytes, and anything that looks like a token
+  (a GitLab or GitHub token, a private key, a JWT) replaced by `[redacted]`.
 
 ## Avatars and brand icons
 

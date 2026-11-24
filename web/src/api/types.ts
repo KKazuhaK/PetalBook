@@ -559,6 +559,8 @@ export interface Connection {
   refreshExpires?: string
   // How many spaces sync through this connection.
   spaces: number
+  // The host said the account is an administrator of the host (Gitea, Forgejo): the token carries those rights.
+  admin?: boolean
 }
 
 export interface ProviderCapabilities {
@@ -575,7 +577,8 @@ export interface Provider {
   type: string
   host: string
   name: string
-  owner: string
+  // 'site', or the tenant that owns a provider of its own.
+  owner: 'site' | { tenant: string }
   capabilities: ProviderCapabilities
   configured: boolean
   app: { name: string; slug: string; htmlUrl: string; installUrl: string } | null
@@ -587,6 +590,56 @@ export interface Provider {
 }
 
 // A reminder: the repository was made and kept; `spaceName` is what the space was to be called.
+// What the administrators' list says of each provider (docs/api.md, "Administration", "Connections").
+export interface AdminProviderRow {
+  id: string
+  type: string
+  name: string
+  host: string
+  configured: boolean
+  partialSync: 'yes' | 'no' | 'unknown'
+  connections: number
+  spaces: number
+}
+
+// A host set up with an OAuth application (GitLab, Gitea, Forgejo, Codeberg); the secret is never returned.
+export interface AdminForge {
+  id: string
+  type: string
+  host: string
+  name: string
+  owner: 'site' | { tenant: string }
+  configured: boolean
+  clientId: string
+  hasSecret: boolean
+  // Where the host sends people back to: to be set as the application's redirect URI there ('' without a public address).
+  callbackUrl: string
+  // What the application is asked for (none for a host whose tokens are as wide as the person).
+  scopes: string[]
+  userAuthorization: boolean
+  version: string
+  checked?: string
+  partialSync: 'yes' | 'no' | 'unknown'
+  connections: number
+  spaces: number
+  updated: string
+}
+
+export interface CreateAdminForgeInput {
+  id: string
+  type: string
+  host: string
+  name?: string
+  clientId: string
+  clientSecret: string
+}
+
+export interface PatchAdminForgeInput {
+  name?: string
+  clientId?: string
+  clientSecret?: string
+}
+
 export interface ConnectionLeftover {
   repoId: number
   fullName: string

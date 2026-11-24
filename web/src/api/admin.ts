@@ -7,6 +7,10 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
 import type {
+  AdminForge,
+  AdminProviderRow,
+  CreateAdminForgeInput,
+  PatchAdminForgeInput,
   AdminStorage,
   AdminSpace,
   CacheState,
@@ -289,6 +293,17 @@ export const adminApi = {
       throw e
     }
   },
+  // --- the hosts of GitLab and Gitea an administrator sets up ---
+  adminConnectionProviders: (signal?: AbortSignal) =>
+    request<{ providers: AdminProviderRow[] }>('/admin/connections', { signal }),
+  createAdminForge: (input: CreateAdminForgeInput) =>
+    request<AdminForge>('/admin/connections', { method: 'POST', body: input }),
+  adminForge: (id: string, signal?: AbortSignal) => request<AdminForge>(`/admin/connections/${enc(id)}`, { signal }),
+  patchAdminForge: (id: string, input: PatchAdminForgeInput) =>
+    request<AdminForge>(`/admin/connections/${enc(id)}`, { method: 'PATCH', body: input }),
+  checkAdminForge: (id: string) =>
+    request<AdminForge>(`/admin/connections/${enc(id)}/check`, { method: 'POST', body: {} }),
+  deleteAdminForge: (id: string) => request<void>(`/admin/connections/${enc(id)}`, { method: 'DELETE' }),
   // --- the GitHub App of the whole server ---
   adminGitHub: (signal?: AbortSignal) => request<AdminGitHub>('/admin/connections/github', { signal }),
   putAdminGitHub: (input: PutAdminGitHubInput) =>
@@ -829,6 +844,64 @@ export function useAdminGrants(enabled = true) {
     enabled,
     staleTime: 15_000,
   })
+}
+
+// --- the hosts of GitLab and Gitea ---------------------------------------------------
+
+// Every provider the server has, with its counts; the cards of the hosts are made from it.
+export function useAdminConnectionProviders(enabled = true) {
+  return useQuery({
+    queryKey: keys.adminConnectionList,
+    queryFn: ({ signal }) => adminApi.adminConnectionProviders(signal),
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+export function useAdminForge(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.adminForge(id),
+    queryFn: ({ signal }) => adminApi.adminForge(id, signal),
+    enabled,
+    staleTime: 15_000,
+  })
+}
+
+// What an administrator changes about a host changes what everyone is offered.
+function useForgeChanged() {
+  const qc = useQueryClient()
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.adminConnectionList }),
+      qc.invalidateQueries({ queryKey: ['admin', 'connections'] }),
+      qc.invalidateQueries({ queryKey: keys.connections }),
+    ])
+}
+
+export function useCreateAdminForge() {
+  const changed = useForgeChanged()
+  return useMutation({
+    mutationFn: (input: CreateAdminForgeInput) => adminApi.createAdminForge(input),
+    onSuccess: () => changed(),
+  })
+}
+
+export function usePatchAdminForge(id: string) {
+  const changed = useForgeChanged()
+  return useMutation({
+    mutationFn: (input: PatchAdminForgeInput) => adminApi.patchAdminForge(id, input),
+    onSuccess: () => changed(),
+  })
+}
+
+export function useCheckAdminForge(id: string) {
+  const changed = useForgeChanged()
+  return useMutation({ mutationFn: () => adminApi.checkAdminForge(id), onSuccess: () => changed() })
+}
+
+export function useDeleteAdminForge(id: string) {
+  const changed = useForgeChanged()
+  return useMutation({ mutationFn: () => adminApi.deleteAdminForge(id), onSuccess: () => changed() })
 }
 
 // --- the GitHub App ----------------------------------------------------------------

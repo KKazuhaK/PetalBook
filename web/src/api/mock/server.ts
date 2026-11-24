@@ -46,6 +46,7 @@ import {
 } from './store.ts'
 import { SPACE_NAME } from './seed.ts'
 import { createGitHubBook, type MockGitHubOptions } from './githubBook.ts'
+import { createForgeBook, FORGE_COOKIE } from './forgeBook.ts'
 import { pickNumber } from './homeBook.ts'
 import { canonicalTag, matchTag } from '../../lib/langTags.ts'
 import { parseAttribution } from './attribution.ts'
@@ -393,6 +394,8 @@ export function createMockServer(options: MockOptions = {}) {
     tenantOf: () => DEFAULT_TENANT,
     tenantExists: (id) => tenantBook.exists(id),
   })
+  // The hosts with an OAuth application (GitLab, Gitea): a spaces here never sync through one, so they are not counted.
+  const forge = createForgeBook({ now, random, spacesUsing: () => 0, hasSpaces: () => 0 })
   // Sessions held until a passkey is registered, and when each session began (registering needs a recent sign-in).
   const held = new Set<string>()
   const sessionAt = new Map<string, number>()
@@ -3614,7 +3617,8 @@ export function createMockServer(options: MockOptions = {}) {
       }
     }
     const me = requireUser(ctx)
-    if (method === 'GET' && path === '/connections') return j({ providers: [github.info(me.id), GIT_PROVIDER] })
+    if (method === 'GET' && path === '/connections')
+      return j({ providers: [github.info(me.id), ...forge.info(me.id), GIT_PROVIDER] })
     if (method === 'POST' && path === '/connections/github/authorization/start') {
       const r = github.start(me.id, body)
       return { status: 200, body: { url: r.url }, headers: { 'Set-Cookie': setCookie(GITHUB_COOKIE, r.state, 600) } }
@@ -3643,6 +3647,94 @@ export function createMockServer(options: MockOptions = {}) {
           url.searchParams.get('cursor'),
         ),
       )
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  // The hosts with an OAuth application (accounts mode).
+  const routeForge = (
+    ctx: Ctx,
+    id: string,
+    method: string,
+    path: string,
+    url: URL,
+    body: Record<string, unknown>,
+  ): MockResponse => {
+    const cookie = FORGE_COOKIE + id
+    if (method === 'GET' && path === `/connections/${id}/authorization/callback`) {
+      const r = forge.callback(id, ctx.user?.id ?? null, ctx.cookies[cookie], url.searchParams)
+      return {
+        status: 303,
+        headers: { Location: r.to, ...(r.clear ? { 'Set-Cookie': setCookie(cookie, '', 0) } : {}) },
+      }
+    }
+    const me = requireUser(ctx)
+    if (method === 'POST' && path === `/connections/${id}/authorization/start`) {
+      const r = forge.start(id, me.id, body)
+      return { status: 200, body: { url: r.url }, headers: { 'Set-Cookie': setCookie(cookie, r.state, 600) } }
+    }
+    if (method === 'DELETE' && path === `/connections/${id}/authorization`) {
+      forge.disconnect(id, me.id)
+      return { status: 204 }
+    }
+    const left = new RegExp(`^/connections/${id}/leftovers/([^/]+)$`).exec(path)
+    if (left && method === 'DELETE') {
+      if (!/^\d+$/.test(left[1]) || Number(left[1]) <= 0) throw new HttpError(404, 'not_found', '没有这个仓库')
+      forge.dismiss(id, me.id, Number(left[1]))
+      return { status: 204 }
+    }
+    if (method === 'GET' && path === `/connections/${id}/owners`)
+      return {
+        status: 200,
+        body: forge.owners(id, me.id, url.searchParams.get('cursor'), url.searchParams.get('q') ?? ''),
+      }
+    if (method === 'GET' && path === `/connections/${id}/repos`) {
+      if (url.searchParams.get('installation') !== null)
+        throw new HttpError(400, 'invalid', 'this provider has no installations', { provider: id })
+      return {
+        status: 200,
+        body: forge.repos(id, me.id, url.searchParams.get('cursor'), url.searchParams.get('q') ?? ''),
+      }
+    }
+    throw new HttpError(404, 'not_found', '没有这个接口')
+  }
+
+  const routeAdminForge = (id: string, method: string, path: string, body: Record<string, unknown>): MockResponse => {
+    const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    if (path === '/admin/connections' && method === 'GET') {
+      const gh = github.admin()
+      const providers = [
+        {
+          id: 'github',
+          type: 'github',
+          name: 'GitHub',
+          host: 'github.com',
+          configured: gh.configured,
+          partialSync: 'yes' as const,
+          connections: gh.configured ? gh.authorizations : 0,
+          spaces: gh.configured ? gh.spaces : 0,
+        },
+        ...forge.list(),
+        {
+          id: 'git',
+          type: 'git',
+          name: 'Git',
+          host: '',
+          configured: true,
+          partialSync: 'unknown' as const,
+          connections: 0,
+          spaces: 0,
+        },
+      ]
+      return j({ providers })
+    }
+    if (path === '/admin/connections' && method === 'POST') return j(forge.create(body), 201)
+    if (path === `/admin/connections/${id}/check` && method === 'POST') return j(forge.check(id))
+    if (path === `/admin/connections/${id}` && method === 'GET') return j(forge.admin(id))
+    if (path === `/admin/connections/${id}` && (method === 'PATCH' || method === 'PUT')) return j(forge.patch(id, body))
+    if (path === `/admin/connections/${id}` && method === 'DELETE') {
+      forge.remove(id)
+      return { status: 204 }
     }
     throw new HttpError(404, 'not_found', '没有这个接口')
   }
@@ -3737,6 +3829,16 @@ export function createMockServer(options: MockOptions = {}) {
       )
       if (!target) throw new HttpError(404, 'not_found', '没有这个页面')
       return j(target.store.touch(touch[1], body))
+    }
+
+    // Mock only: a person is connected to a host without the round trip, or their connection ran out, or the host goes down.
+    if (method === 'POST' && path === '/_mock/forge') {
+      const uid = typeof body.user === 'string' ? body.user : (ctx.user?.id ?? '')
+      const id = typeof body.provider === 'string' ? body.provider : ''
+      if (typeof body.connect === 'string') forge.connect(id, uid, body.connect, body.admin === true)
+      if (body.expire === true) forge.expire(id, uid)
+      if (typeof body.down === 'boolean') forge.setDown(id, body.down)
+      return j({})
     }
 
     // Mock only: a person's GitHub connection ran out (their spaces that sync through it go to error), or a trap for the next creation.
@@ -4086,6 +4188,22 @@ export function createMockServer(options: MockOptions = {}) {
       if (method === 'POST') return decideConsent(me, body)
     }
 
+    // --- the hosts with an OAuth application ---
+    const forgeId = /^\/connections\/([^/]+)\//.exec(path)?.[1] ?? ''
+    if (forgeId !== '' && forge.has(forgeId)) {
+      accountsOnly()
+      return routeForge(ctx, forgeId, method, path, url, body)
+    }
+    if (path === '/admin/connections' || /^\/admin\/connections\/([^/]+)(\/check)?$/.test(path)) {
+      const id = /^\/admin\/connections\/([^/]+)/.exec(path)?.[1] ?? ''
+      if (id === '' || forge.has(id) || !(id === 'github' || id === 'git')) {
+        accountsOnly()
+        const me = requireAdmin(ctx)
+        if (!isSiteAdmin(me))
+          throw new HttpError(403, 'forbidden', 'only an administrator of the whole server may do that')
+        return routeAdminForge(id, method, path, body)
+      }
+    }
     // --- GitHub ---
     if (path === '/connections' || path === '/connections/github' || path.startsWith('/connections/github/')) {
       accountsOnly()
