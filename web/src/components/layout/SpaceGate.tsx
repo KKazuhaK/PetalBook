@@ -30,7 +30,8 @@ export function SpaceGate() {
   // An administrator who is not a member manages the space but reads it only in an audited view. The settings are the
   // managing: they open without one.
   const outsider = current.role === ''
-  if (outsider && !current.permissions.includes('read') && !pathname.endsWith('/settings')) return <AdminViewGate space={current} />
+  if (outsider && !current.permissions.includes('read') && !pathname.endsWith('/settings'))
+    return <AdminViewGate space={current} />
   // A new key per space: nothing of the old one stays mounted.
   return (
     <>

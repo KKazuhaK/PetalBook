@@ -90,7 +90,14 @@ export function SaveIndicator({
       const big = fileTooLargeShort(e)
       if (big) {
         return (
-          <button type="button" onClick={onRetry} title={fileTooLargeText(e)} role="alert" data-slot="file-too-large" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10">
+          <button
+            type="button"
+            onClick={onRetry}
+            title={fileTooLargeText(e)}
+            role="alert"
+            data-slot="file-too-large"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10"
+          >
             <AlertTriangle className="size-3.5" />
             {t.fmt.note(big, s.retry)}
           </button>

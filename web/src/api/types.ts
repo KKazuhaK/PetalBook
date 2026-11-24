@@ -1969,7 +1969,19 @@ export interface UserDeletionPlan {
   bytes: number
   recycleDays: number
 }
-export type ConfirmAction = 'delete_spaces' | 'delete_users' | 'purge' | 'restore' | 'evict' | 'pin' | 'unpin' | 'disable_spaces' | 'enable_spaces' | 'disable_users' | 'enable_users' | 'export'
+export type ConfirmAction =
+  | 'delete_spaces'
+  | 'delete_users'
+  | 'purge'
+  | 'restore'
+  | 'evict'
+  | 'pin'
+  | 'unpin'
+  | 'disable_spaces'
+  | 'enable_spaces'
+  | 'disable_users'
+  | 'enable_users'
+  | 'export'
 export interface ConfirmRequest {
   action: ConfirmAction
   spaces?: string[]
@@ -1979,7 +1991,14 @@ export interface ConfirmRequest {
   transfers?: Record<string, string>
 }
 // One line of a confirmation's plan: the preview of a deletion, or what an action does to one thing.
-export type ConfirmPlanLine = (SpaceDeletionPreview | UserDeletionPlan | { space: { id: string; name: string }; action: string } | { user: { id: string; username: string }; action: string } | { item: string; kind: RecycleKind; name: string; bytes: number; action: string; deletedAt: string }) & Record<string, unknown>
+export type ConfirmPlanLine = (
+  | SpaceDeletionPreview
+  | UserDeletionPlan
+  | { space: { id: string; name: string }; action: string }
+  | { user: { id: string; username: string }; action: string }
+  | { item: string; kind: RecycleKind; name: string; bytes: number; action: string; deletedAt: string }
+) &
+  Record<string, unknown>
 export interface ConfirmResult {
   confirm: string
   expires: string

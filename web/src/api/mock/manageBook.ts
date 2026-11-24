@@ -586,7 +586,8 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
 
   // The name a person had when they were deleted, as the server kept it with the space.
   const nameOfGone = (userId: string): string => {
-    for (const i of items.values()) if (i.kind === 'user' && i.user?.id === userId) return i.user.name || i.user.username
+    for (const i of items.values())
+      if (i.kind === 'user' && i.user?.id === userId) return i.user.name || i.user.username
     return ''
   }
   const restoreSpace = (me: U, i: ItemRec<S, U>, ownerId: string, parentUser?: boolean): MockResponse => {

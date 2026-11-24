@@ -217,9 +217,7 @@ function Bin() {
         </>
       )}
       {restoring && <RestoreDialog item={restoring} onClose={() => setRestoring(null)} />}
-      {purge && (
-        <PurgeDialog item={purge} onClose={() => setPurge(null)} />
-      )}
+      {purge && <PurgeDialog item={purge} onClose={() => setPurge(null)} />}
       {exporting && (
         <ExportDialog request={{ items: [exporting.id] }} name={nameOf(exporting)} onClose={() => setExporting(null)} />
       )}

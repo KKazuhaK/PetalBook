@@ -133,7 +133,9 @@ describe('the recycle bin', () => {
     await click(buttonIn(dlg(), tg.recycle.restoreConfirm))
     await settle(() => text().includes(tg.recycle.restoreDone('没主人了')), 'restored')
     // The person is named, not shown as an id.
-    expect(dlg().querySelector('[data-slot="restore-skipped"]')?.textContent ?? '').toContain(tg.recycle.skippedUser('gone'))
+    expect(dlg().querySelector('[data-slot="restore-skipped"]')?.textContent ?? '').toContain(
+      tg.recycle.skippedUser('gone'),
+    )
     expect(JSON.parse(requests('POST', '/api/admin/recycle/').at(-1)!.body!)).toEqual({
       owner: m!.server.userId('newowner'),
     })
@@ -251,7 +253,9 @@ describe('exports', () => {
     const row = exportsList()[0]
     expect(row.textContent).toContain('要导出')
     // The space still exists and the caller may open it: its name links to it.
-    expect(row.querySelector<HTMLAnchorElement>('[data-slot="export-space-link"]')?.getAttribute('href')).toMatch(/^\/s\/[^/]+\/$/)
+    expect(row.querySelector<HTMLAnchorElement>('[data-slot="export-space-link"]')?.getAttribute('href')).toMatch(
+      /^\/s\/[^/]+\/$/,
+    )
     expect(row.querySelector('[data-slot="export-expires"]')!.textContent).toBe(tg.exports.expires(7))
     const link = row.querySelector<HTMLAnchorElement>('a[download]')!
     expect(link.getAttribute('href')).toMatch(/^\/api\/admin\/exports\/[^/]+\/download$/)
