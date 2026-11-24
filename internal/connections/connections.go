@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -88,6 +89,12 @@ type Error struct {
 	Missing []string
 	// InstallURL is where the App is installed (CodeAppNotInstalled).
 	InstallURL string
+	// Counts says how much uses a provider that cannot be removed
+	// (CodeInUse): "connections" and "spaces".
+	Counts map[string]int
+	// Reason says what is wrong with a configuration (CodeInvalid of an
+	// administrator's request): a short name a client can show its own words for.
+	Reason     string
 	RetryAfter time.Duration
 	Err        error
 }
@@ -114,8 +121,11 @@ type Capabilities struct {
 // Descriptor is how a provider describes itself.
 type Descriptor struct {
 	ID, Type, Host, Name string
-	// Owner is "site" (tenants' own providers come with 3.6).
+	// Owner is "site", or "tenant" for a provider a tenant owns, whose id is
+	// TenantID (a provider of the site has none). Only people of that tenant
+	// see or use a tenant's provider.
 	Owner        string
+	TenantID     string
 	Capabilities Capabilities
 }
 
@@ -194,6 +204,9 @@ type RepoQuery struct {
 	Installation int64
 	Mine         bool
 	Cursor       string
+	// Q narrows the list to repositories whose name contains it; a provider
+	// that cannot search ignores it.
+	Q string
 }
 
 // Repo is a repository as a provider hands it on.
@@ -223,6 +236,9 @@ type Plan struct {
 	Via            string // the token that creates it: "user" or "app"
 	UserID         string
 	InstallationID int64 // where the App is installed on the account, if known
+	// Ref is what the provider needs to find the place again when it creates the
+	// repository (GitLab's id of a group's namespace).
+	Ref string
 }
 
 // Cred is how a space syncs with its repository.
@@ -282,10 +298,15 @@ type Provider interface {
 	OnChange(f func(userID string))
 }
 
-// Registry holds the server's providers in memory, by id.
+// Registry holds the server's providers in memory, by id. Providers that an
+// administrator sets up at run time (GitLab, Gitea) come and go, so it is safe
+// for concurrent use.
 type Registry struct {
-	byID map[string]Provider
-	list []Provider
+	mu      sync.RWMutex
+	byID    map[string]Provider
+	list    []Provider
+	creator Creator
+	changed func(provider, userID string)
 }
 
 // NewRegistry returns a registry of the providers. Ids must be distinct.
@@ -299,8 +320,63 @@ func NewRegistry(ps ...Provider) *Registry {
 		r.byID[id] = p
 		r.list = append(r.list, p)
 	}
-	sort.SliceStable(r.list, func(i, j int) bool { return less(r.list[i].Descriptor(), r.list[j].Descriptor()) })
+	r.sort()
 	return r
+}
+
+func (r *Registry) sort() {
+	sort.SliceStable(r.list, func(i, j int) bool { return less(r.list[i].Descriptor(), r.list[j].Descriptor()) })
+}
+
+// Add puts a provider in the registry; false when its id is taken.
+func (r *Registry) Add(p Provider) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id := p.Descriptor().ID
+	if _, dup := r.byID[id]; dup {
+		return false
+	}
+	r.byID[id] = p
+	r.list = append(r.list, p)
+	r.sort()
+	if f := r.changed; f != nil {
+		p.OnChange(func(userID string) { f(id, userID) })
+	}
+	return true
+}
+
+// Remove takes the provider with the id out of the registry.
+func (r *Registry) Remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.byID[id]; !ok {
+		return
+	}
+	delete(r.byID, id)
+	out := r.list[:0:0]
+	for _, p := range r.list {
+		if p.Descriptor().ID != id {
+			out = append(out, p)
+		}
+	}
+	r.list = out
+}
+
+// SetCreator says what makes the providers an administrator sets up.
+func (r *Registry) SetCreator(c Creator) {
+	r.mu.Lock()
+	r.creator = c
+	r.mu.Unlock()
+}
+
+// Creator is what the registry has to make a provider, or nil.
+func (r *Registry) Creator() Creator {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.creator
 }
 
 // typeRank orders the types: GitHub, GitLab, Gitea, the rest by name, git last.
@@ -333,8 +409,26 @@ func (r *Registry) Get(id string) (Provider, bool) {
 	if r == nil {
 		return nil, false
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	p, ok := r.byID[id]
 	return p, ok
+}
+
+// GetFor returns the provider with the id when the tenant may see it: a
+// provider of the site is everyone's, a tenant's own is its people's only (a
+// provider of another tenant is as good as not there).
+func (r *Registry) GetFor(id, tenantID string) (Provider, bool) {
+	p, ok := r.Get(id)
+	if !ok || !VisibleTo(p.Descriptor(), tenantID) {
+		return nil, false
+	}
+	return p, true
+}
+
+// VisibleTo says whether people of the tenant may see and use the provider.
+func VisibleTo(d Descriptor, tenantID string) bool {
+	return d.TenantID == "" || d.TenantID == tenantID
 }
 
 // List returns the providers in their stable order.
@@ -342,11 +436,28 @@ func (r *Registry) List() []Provider {
 	if r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return append([]Provider(nil), r.list...)
 }
 
-// OnChange registers f on every provider; f is told which provider changed.
+// ListFor returns the providers the tenant's people may see, in their stable order.
+func (r *Registry) ListFor(tenantID string) []Provider {
+	var out []Provider
+	for _, p := range r.List() {
+		if VisibleTo(p.Descriptor(), tenantID) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// OnChange registers f on every provider, those that are there now and those
+// added later; f is told which provider changed.
 func (r *Registry) OnChange(f func(provider, userID string)) {
+	r.mu.Lock()
+	r.changed = f
+	r.mu.Unlock()
 	for _, p := range r.List() {
 		id := p.Descriptor().ID
 		p.OnChange(func(userID string) { f(id, userID) })
@@ -403,4 +514,40 @@ type ManifestMaker interface {
 	// RetryManifest saves an App the platform made but the server could not
 	// save at the time.
 	RetryManifest(ctx context.Context, userID string) (any, error)
+}
+
+// Creator makes the providers an administrator sets up at run time (GitLab and
+// Gitea hosts). The body is the request's JSON; the answer is what the
+// administrator sees of the new provider.
+type Creator interface {
+	CreateProvider(ctx context.Context, actorID string, body []byte) (Provider, any, error)
+}
+
+// GitUser is a provider that wants Git to be given a user name other than the
+// default one with its token (GitLab's is "oauth2").
+type GitUser interface {
+	GitUsername() string
+}
+
+// Connected is a provider that can say, cheaply, who a user is on the platform.
+type Connected interface {
+	Login(ctx context.Context, userID string) string
+}
+
+// Searcher is a provider whose lists of owners can be narrowed by a search text.
+type Searcher interface {
+	OwnersQ(ctx context.Context, userID, cursor, q string) ([]Owner, string, error)
+}
+
+type actorKey struct{}
+
+// WithActor says who an administrative change is made by.
+func WithActor(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, actorKey{}, userID)
+}
+
+// ActorOf is who an administrative change is made by, "" when not said.
+func ActorOf(ctx context.Context) string {
+	s, _ := ctx.Value(actorKey{}).(string)
+	return s
 }
