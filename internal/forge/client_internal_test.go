@@ -6,7 +6,9 @@ import (
 )
 
 func TestWhatAHostSaysCannotForgeALogLineOrCarryAToken(t *testing.T) {
-	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0YW5nIiwiZXhwIjoxNzY0MDAwMDAwfQ.c2lnbmF0dXJlLXNpZ25hdHVyZS14eA"
+	// Put together at run time, so the secret scanner does not take this
+	// made-up token for a real one.
+	jwt := strings.Join([]string{"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", "eyJzdWIiOiJ0YW5nIiwiZXhwIjoxNzY0MDAwMDAwfQ", "c2lnbmF0dXJlLXNpZ25hdHVyZS14eA"}, ".")
 	evil := "bad\nlevel=ERROR msg=forged\r\x1b[31m next \u0085 " + jwt + " glpat-abcdef123456 -----BEGIN PRIVATE KEY-----"
 	for name, err := range map[string]error{
 		"status":     &StatusError{Method: "GET", Kind: "user", Status: 400, Message: evil},

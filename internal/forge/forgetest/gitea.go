@@ -12,7 +12,14 @@ func (f *Fake) gtRepo(r *Repo, login string) map[string]any {
 	l := f.levelLocked(login, r)
 	return map[string]any{"id": r.ID, "name": r.Name, "full_name": full, "html_url": f.URL + "/" + full, "clone_url": f.URL + "/" + full + ".git",
 		"private": r.Private, "default_branch": "main", "description": r.Desc, "owner": map[string]any{"login": r.Owner, "username": r.Owner},
-		"permissions": map[string]any{"admin": l >= Owner, "push": l >= Developer, "pull": l >= Guest}}
+		"permissions": gtPerms{Admin: l >= Owner, Push: l >= Developer, Pull: l >= Guest}}
+}
+
+// gtPerms is a repository's permissions in Gitea's answer.
+type gtPerms struct {
+	Admin bool `json:"admin"`
+	Push  bool `json:"push"`
+	Pull  bool `json:"pull"`
 }
 
 func gtError(w http.ResponseWriter, status int, msg string) {

@@ -26,7 +26,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -275,16 +274,25 @@ func (f *Fake) newRepoLocked(owner, name string, private bool, desc string) *Rep
 	key := strings.ToLower(owner + "/" + name)
 	f.repos[key] = r
 	dir := filepath.Join(f.gitRoot, key+".git")
-	if out, err := exec.Command("git", "init", "--bare", "-q", "-b", "main", dir).CombinedOutput(); err != nil {
-		f.t.Fatalf("git init: %v %s", err, out)
+	// A bare repository is a few files; making it by hand keeps git itself out
+	// of this package (only gitstore's runner starts git).
+	for _, d := range []string{"objects", "refs/heads", "refs/tags"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(d)), 0o755); err != nil {
+			f.t.Fatal(err)
+		}
 	}
 	allow := "true"
 	if f.NoPartial {
 		allow = "false"
 	}
-	for _, kv := range [][2]string{{"uploadpack.allowFilter", allow}, {"uploadpack.allowAnySHA1InWant", "true"}, {"http.receivepack", "true"}} {
-		if out, err := exec.Command("git", "-C", dir, "config", kv[0], kv[1]).CombinedOutput(); err != nil {
-			f.t.Fatalf("git config: %v %s", err, out)
+	files := map[string]string{
+		"HEAD": "ref: refs/heads/main\n",
+		"config": "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n" +
+			"[uploadpack]\n\tallowFilter = " + allow + "\n\tallowAnySHA1InWant = true\n[http]\n\treceivepack = true\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			f.t.Fatal(err)
 		}
 	}
 	return r
