@@ -3,19 +3,27 @@
 ## 推送之前 / Before you push
 
 ```bash
+make hooks   # 只需一次 / once per clone
 make check
 ```
 
-跑拉取请求（PR）会跑的全部检查：gofmt、`go mod tidy` 是否干净、`go vet`、
-SQLite 上的 Go 测试（含 `-race`）、govulncheck、网页端的类型检查、lint 和测试，
-以及工作流文件的 actionlint。不需要 PostgreSQL、root 或 Docker。
-Go 和网页端两半并行跑，每个目标的输出在它结束时整段打印，最后有一张每个目标耗时的表。
+`make hooks` 打开 `.githooks/pre-commit`：提交时对暂存的 Go 文件跑 `gofmt -w`，
+对暂存的网页端文件跑 `eslint --fix`，并把结果重新暂存（只暂存了一部分的文件只检查，不改写）。
+`make hooks` turns on `.githooks/pre-commit`: on commit it runs `gofmt -w` on the staged Go
+files and `eslint --fix` on the staged web files, and stages the result (a file that is
+staged in part is only checked, never rewritten).
 
-Runs everything a pull request must pass: gofmt, a clean `go mod tidy`,
+`make check` 跑拉取请求（PR）会跑的全部检查：gofmt、`go mod tidy` 是否干净、`go vet`、
+SQLite 上的 Go 测试（含 `-race`）、govulncheck、网页端的类型检查、lint 和测试、
+工作流文件的 actionlint，以及对整个 git 历史的密钥扫描（gitleaks）。不需要 PostgreSQL、root 或 Docker。
+各部分并行跑，每个目标的输出在它结束时整段打印，最后有一张每个目标耗时的表。
+
+`make check` runs everything a pull request must pass: gofmt, a clean `go mod tidy`,
 `go vet`, the Go tests on SQLite with `-race`, govulncheck, the web typecheck,
-lint and tests, and actionlint on the workflow files. It needs no PostgreSQL, root or
-Docker. The Go and web halves run side by side (`scripts/lanes.sh`); each target's output is
-printed whole when it ends, and a table of how long each target took closes the run.
+lint and tests, actionlint on the workflow files, and a secret scan (gitleaks) of the
+whole git history. It needs no PostgreSQL, root or Docker. The parts run side by side
+(`scripts/lanes.sh`); each target's output is printed whole when it ends, and a table of
+how long each target took closes the run.
 
 改动存储、文件名处理、构建或发布流程之前，再跑一遍完整的：
 Before a risky change (storage, file names, build, release), run the full set:
@@ -24,39 +32,32 @@ Before a risky change (storage, file names, build, release), run the full set:
 make check-full
 ```
 
-它在 `check` 之外还有不带 `-race` 的完整规模 Go 测试（`make test-full`）、
-PostgreSQL 测试（只跑用到状态数据库的包；需要 `initdb`、`pg_ctl`、`psql`）、
-大小写折叠的 tmpfs 上的测试（只在 Linux 上，内核 6.13 以上；CI 用 ext4 镜像代替）、`make release`、
-契约测试（SQLite 和 PostgreSQL 各跑一遍账号模式，`make contract-postgres`）和六个平台的交叉编译。
-That adds the Go tests without `-race` at their full size (`make test-full`), the PostgreSQL tests (only the
-packages that use the state database; needs `initdb`, `pg_ctl` and `psql`), the tests on
-a case-folding tmpfs (Linux only, kernel 6.13 or newer; CI uses an ext4 image instead), `make release`, the
-contract tests (accounts mode runs on SQLite and on PostgreSQL, `make contract-postgres`), and a cross-compile for six platforms.
-这些也并行跑：检查、完整规模测试、PostgreSQL 和大小写折叠一起，然后是 release 和契约测试，与交叉编译一起。
-They run in lanes too: the checks, the full-size tests, PostgreSQL and case folding together, then the release build
-with the contract tests, beside the cross-compile.
+它在 `check` 之外还有 PostgreSQL 测试（只跑用到状态数据库的包；需要 `initdb`、`pg_ctl`、`psql`）、
+大小写折叠的 tmpfs 上的测试（只在 Linux 上，内核 6.13 以上；CI 用 ext4 镜像代替）、六个平台的交叉编译、
+`make release`，以及契约测试（SQLite 和 PostgreSQL 各跑一遍账号模式，`make contract-postgres`）。
+That adds the PostgreSQL tests (only the packages that use the state database; needs `initdb`, `pg_ctl`
+and `psql`), the tests on a case-folding tmpfs (Linux only, kernel 6.13 or newer; CI uses an ext4 image
+instead), a cross-compile for six platforms, `make release`, and the contract tests (accounts mode runs on
+SQLite and on PostgreSQL, `make contract-postgres`).
 
 每一项检查都只定义在 `Makefile` 里，CI 只是调用这些目标，所以本地通过的，CI 上也通过。
 Every check is defined in the `Makefile` only; CI just calls those targets.
 
 ## 什么在哪里跑 / What runs where
 
-- **拉取请求 / Pull request**：Go 分三台机器并行：`make test-index`、`make test-space`，
-  以及 `make check-go-rest`（gofmt、`go mod tidy`、`go vet` 和其余各包的测试）加 `make vuln`
-  （只在改了 Go 相关文件时）；网页端两台：`make check-web-static`（类型检查和 lint）和
-  `make web-test`（只在改了网页端、`Makefile` 或 `.github/` 时）；再加 actionlint。
-  三台 Go 机器合起来就是 `make test` 加上 `make check-go-rest` 里的检查。
-  Go runs on three machines, side by side: `make test-index`, `make test-space`, and
-  `make check-go-rest` (gofmt, `go mod tidy`, `go vet` and the tests of every other package) with `make vuln`
-  (only when a change can affect Go); the web app on two: `make check-web-static` (typecheck and lint) and
-  `make web-test` (only when it changed the web app, the `Makefile` or `.github/`); and actionlint.
-  The three Go machines together are `make test` plus the checks in `make check-go-rest`.
-- **合并到 main / Push to main**：以上全部，再加不带 `-race` 的完整规模测试（`make test-full`）、
-  PostgreSQL（只跑用到状态数据库的包，含 PostgreSQL 上的契约测试）、大小写折叠、契约测试、
-  单文件构建（`make release`）加交叉编译、容器镜像构建。
-  Everything above, plus the full-size tests without `-race` (`make test-full`), PostgreSQL (only the packages that
-  use the state database, including the contract tests on it), case folding, contract tests, the
-  single-binary build with cross-compile, and the image build.
+- **拉取请求 / Pull request**：三个任务。`lint`（`make lint`：gofmt、`go mod tidy`、`go vet`、网页端类型检查和
+  ESLint、actionlint、govulncheck，以及对这个 PR 的提交做 gitleaks 扫描）总是跑；`go`（`make test`，全部 Go
+  测试，带 `-race`）只在改了 Go 相关文件时跑；`web`（`make web-test`）只在改了网页端、`Makefile` 或 `.github/` 时跑。
+  Three jobs. `lint` (`make lint`: gofmt, `go mod tidy`, `go vet`, the web typecheck and ESLint, actionlint,
+  govulncheck, and a gitleaks scan of the pull request's commits) always runs; `go` (`make test`, all the Go
+  tests with `-race`) only when a change can affect Go; `web` (`make web-test`) only when it changed the web
+  app, the `Makefile` or `.github/`.
+- **合并到 main / Push to main**：以上三个，再加三个：`postgres`（`make test-postgres`，只跑用到状态数据库的包，
+  再加 `make contract` 和 `make contract-postgres` 两种契约测试）、`compat`（大小写折叠的文件系统上的测试，
+  加交叉编译）、`release`（`make release` 单文件构建，加容器镜像构建）。
+  Those three, plus three more: `postgres` (`make test-postgres`, only the packages that use the state database,
+  then the contract tests on SQLite and on PostgreSQL), `compat` (the tests on a case-folding file system, and
+  the cross-compile), and `release` (the single-binary build `make release`, and the image build).
 - **发布 / Release**（推送 `v*` 标签）：标签必须在 main 上，且 ci 在该提交上已通过；
   然后在 Linux amd64、arm64 和 macOS 上再跑 `make check-go`，构建四个平台的二进制和
   多架构镜像（签名并带来源证明），最后才公开草稿发布。
@@ -64,25 +65,36 @@ Every check is defined in the `Makefile` only; CI just calls those targets.
   Linux amd64, Linux arm64 and macOS; binaries and a signed, attested multi-arch
   image are built; the release is a draft until the very last step.
 
+## 密钥扫描 / Secret scan
+
+`make secrets` 用固定版本的 gitleaks 扫描 git 历史，输出已遮蔽。测试里故意放的假密钥写在
+`.gitleaks.toml` 里，每条只对应一条规则和一个文件；新增这类测试数据时，先想想能不能写得不像密钥，
+不行再往那里加一条。
+`make secrets` scans the git history with a pinned gitleaks and redacts its output. The made-up keys that
+tests hold on purpose are listed in `.gitleaks.toml`, each for one rule and one file; when a new test needs
+one, first see whether it can be written so that it does not look like a key, and only then add an entry.
+
 ## 测试的规模与速度 / Test size and speed
 
-少数压力测试和模型测试在 `-race` 下用较小的规模（见 `internal/index`、`internal/space` 里的 `raceDetector`），
-完整规模由不带 `-race` 的 `make test-full` 跑，它在 main 上必过。新增这类测试时照此办理：
-两种规模都要有。会修改包级变量的测试不能并行；其余独立的测试用 `t.Parallel()`，
+少数压力测试和模型测试在 `-race` 下用较小的规模（见 `internal/index`、`internal/space` 里的 `raceDetector`）；
+CI 和 `make check` 都带 `-race`，所以跑的就是这个规模。需要完整规模时在本地跑
+`go test ./internal/index ./internal/space`。新增这类测试时照此办理：两种规模都要有。
+会修改包级变量的测试不能并行；其余独立的测试用 `t.Parallel()`，
 但测耗时或内存的（`timed`、`bounded`）要保持串行。等待不要用真实时间：用可配置的短间隔
 （例如 `spaces.Options.CloseWait`），不要用 `time.Sleep` 去赌。网页端的模型测试拆在几个
 `src/editor/model.*.test.ts` 里（共用 `modelHarness.ts`），好让 vitest 并行跑它们。
 
 A few stress and model tests use a smaller size under `-race` (see `raceDetector` in `internal/index` and
-`internal/space`), and the full size runs in `make test-full`, without it, which must pass on main. A new test of that
-kind does the same: both sizes. A test that changes a package variable cannot run in parallel; the others that
+`internal/space`); CI and `make check` both use `-race`, so that is the size they run. For the full size run
+`go test ./internal/index ./internal/space` locally. A new test of that kind does the same: both sizes. A test
+that changes a package variable cannot run in parallel; the others that
 share nothing use `t.Parallel()`, but those that measure time or memory (`timed`, `bounded`) stay serial.
 Do not wait in real time: use a short, configurable interval (for example `spaces.Options.CloseWait`), and no
 `time.Sleep` that bets on a duration. The web model test is split over the `src/editor/model.*.test.ts` files
 (sharing `modelHarness.ts`) so that vitest runs them side by side.
 
-`make test-index`, `make test-space` and `make test-rest` are `make test` in three parts, for CI;
-`make check-go` is all of it, and is what to run on one machine.
+`make test` is all the Go tests; `make check-go` adds gofmt, `go mod tidy` and `go vet`, and is what a
+release runs on each platform.
 
 ## 分支与合并 / Branches and merging
 

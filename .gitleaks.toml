@@ -1,0 +1,18 @@
+# The default rules, plus the few places where the tests hold a made-up secret
+# on purpose. Each entry names the rule and the file, so a real key anywhere
+# else, or any other kind of secret in these files, is still found.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "RSA private key text that the GitHub App form and its API tests send, to check that it is never echoed back"
+targetRules = ["private-key"]
+paths = [
+  '''web/src/api/contract\.test\.ts''',
+  '''web/src/components/github\.test\.tsx''',
+]
+
+[[allowlists]]
+description = "Made-up sealed value written straight into the test database"
+targetRules = ["generic-api-key"]
+paths = ['''internal/api/signin_providers_test\.go''']
