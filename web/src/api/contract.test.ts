@@ -2946,9 +2946,8 @@ function suite(target: Target) {
         en.id,
         en.id,
       ])
-      // A language with no source of its own gets one of them, always the same.
-      expect(await title('fr')).toBe(await title('de'))
-      expect(await title('')).toBe(await title('fr'))
+      // A language with no source of its own gets none: not the source of another language.
+      for (const lang of ['fr', 'de', '']) expect((await daily(`date=2026-11-23&lang=${lang}`)).json.page).toBeNull()
       // The same source for every language.
       expect((await setDaily({ folder: `${folder}/zh` })).status).toBe(200)
       expect(await title('en')).toBe(zh.id)
@@ -3048,11 +3047,11 @@ function suite(target: Target) {
           .status,
       ).toBe(200)
       expect((await call(admin, 'GET', `${base()}/daily/settings`)).json.daily.folder).toBe(`${folder}/mixmoved`)
-      // Without all languages, only the ones that have a source are asked for: another language gets one of them.
+      // Without all languages, only the ones that have a source are given a text: another language gets none.
       expect((await setDaily({ zh: { folder: `${folder}/mixzh` } })).json.daily).toEqual({
         'zh-Hans': { folder: `${folder}/mixzh`, filter: [] },
       })
-      expect(await id('fr')).toBe(zh.id)
+      expect((await daily('date=2026-11-23&lang=fr')).json.page).toBeNull()
     })
 
     it('tells a browser how long it may keep the daily text, and gives it a validator', async () => {
