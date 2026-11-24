@@ -284,7 +284,7 @@ type storageSummaryResp struct {
 		Partial   int64 `json:"partial"`
 		Evicted   int64 `json:"evicted"`
 		Archived  int64 `json:"archived"`
-		Restoring int   `json:"restoring"`
+		Restoring *int  `json:"restoring,omitempty"` // the server's, so the site's only
 	} `json:"spaces"`
 	People          int64 `json:"people"`
 	Dormant         int64 `json:"dormant"`
@@ -323,8 +323,10 @@ func (s *server) storageSummary(c *call, sc store.Scope) (storageSummaryResp, er
 		r.Tenant = &t
 	}
 	r.Spaces.Local, r.Spaces.Full, r.Spaces.Partial, r.Spaces.Evicted, r.Spaces.Archived = sum.Local, sum.Full, sum.Partial, sum.Evicted, sum.Archived
-	restoring, _ := s.spaces.RestoreCounts()
-	r.Spaces.Restoring = restoring
+	if c.isSiteAdmin() {
+		restoring, _ := s.spaces.RestoreCounts()
+		r.Spaces.Restoring = &restoring
+	}
 	r.People, r.Dormant, r.HeldBytes, r.UsageBytes = sum.People, sum.Dormant, sum.HeldBytes, sum.UsageBytes
 	if sc.All() {
 		r.AssetCacheBytes, _ = s.spaces.AssetTotals()

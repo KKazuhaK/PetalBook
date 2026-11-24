@@ -75,7 +75,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
   const [evictDays, setEvictDays] = useState(text(data.cache.evictAfterDays, 1))
   const [idle, setIdle] = useState(String(data.cache.minIdleHours))
   const [clones, setClones] = useState(text(data.cache.clonesBytes, GIB))
-  const [free, setFree] = useState(text(data.cache.minFreeBytes, GIB))
+  const [free, setFree] = useState(text(data.cache.minFreeBytes ?? null, GIB))
   const [assetCache, setAssetCache] = useState(text(data.cache.assetsBytes, MIB))
   const [newAssets, setNewAssets] = useState(data.assets.newSpaces)
   const [error, setError] = useState('')
@@ -128,7 +128,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
     if (data.cache.evictAfterDays !== days) cache.evictAfterDays = days
     if (data.cache.minIdleHours !== idleH) cache.minIdleHours = idleH
     if (data.cache.clonesBytes !== budget) cache.clonesBytes = budget
-    if (data.cache.minFreeBytes !== floor) cache.minFreeBytes = floor
+    if (data.cache.minFreeBytes !== undefined && data.cache.minFreeBytes !== floor) cache.minFreeBytes = floor
     if (data.cache.assetsBytes !== assetsBudget) cache.assetsBytes = assetsBudget
     if (Object.keys(cache).length > 0) body.cache = cache
     if (data.assets.newSpaces !== newAssets) body.assets = { newSpaces: newAssets }
@@ -145,7 +145,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
   return (
     <form className="grid gap-8" onSubmit={(e) => void submit(e)} noValidate>
       <p className="text-sm text-muted-foreground">{a.intro}</p>
-      <p className="text-xs text-muted-foreground">{a.git(data.git.version, data.git.partialClone)}</p>
+      <p className="text-xs text-muted-foreground">{a.git(data.git.version ?? '', data.git.partialClone)}</p>
 
       <SettingsSection title={a.remotes.title} description={a.remotes.help}>
         <SettingsRows>

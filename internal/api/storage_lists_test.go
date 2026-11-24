@@ -381,3 +381,26 @@ func TestLastActiveAndFirstWriteAreRecorded(t *testing.T) {
 		_ = fmt.Sprint
 	})
 }
+
+// The server's own details are the site's: a tenant administrator is not told
+// the Git version, whether a flag sets the hosts, the disk floor or the
+// server-wide restores that run.
+func TestStorageDetailsOfTheServerAreForSiteAdministrators(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		tenant := f.admA.do("GET", "/api/admin/storage", nil).want(t, 200, "")
+		site := f.root.do("GET", "/api/admin/storage", nil).want(t, 200, "")
+		for _, key := range []string{`"version"`, `"fromFlag"`, `"minFreeBytes"`, `"restoring"`} {
+			if strings.Contains(tenant.raw, key) {
+				t.Errorf("a tenant administrator is told %s: %s", key, tenant.raw)
+			}
+			if !strings.Contains(site.raw, key) {
+				t.Errorf("a site administrator is not told %s: %s", key, site.raw)
+			}
+		}
+		if tenant.body["cache"] == nil || tenant.body["remotes"] == nil {
+			t.Fatalf("the effective settings are gone: %s", tenant.raw)
+		}
+	})
+}

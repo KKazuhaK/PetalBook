@@ -1264,18 +1264,19 @@ export interface AdminSpaceStorage {
 export interface AdminStorage {
   // require: null, 'any', or the id of a provider (2.7b's connections, such as 'github').
   remotes: { require: string | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
-  hosts: { allowed: string[]; fromFlag: boolean }
+  // `fromFlag`, `cache.minFreeBytes`, `git.version` and the summary's `spaces.restoring` are the site's: a tenant administrator is not told them.
+  hosts: { allowed: string[]; fromFlag?: boolean }
   localSpaces: { maxBytes: number | null }
   cache: {
     partial: boolean
     evictAfterDays: number | null
     minIdleHours: number
     clonesBytes: number | null
-    minFreeBytes: number | null
+    minFreeBytes?: number | null
     assetsBytes: number
   }
   assets: { newSpaces: boolean }
-  git: { version: string; partialClone: boolean }
+  git: { version?: string; partialClone: boolean }
   // `exempt` is the site's: a tenant administrator is not told it.
   affected: { inGrace: number; overdue: number; exempt?: number }
   // What the server holds (docs/api.md, "GET /api/admin/storage"); `diskFreeBytes` is for site administrators only.
@@ -1284,7 +1285,7 @@ export interface AdminStorage {
 export interface StorageSummary {
   // null for the whole server.
   tenant: string | null
-  spaces: { local: number; full: number; partial: number; evicted: number; archived: number; restoring: number }
+  spaces: { local: number; full: number; partial: number; evicted: number; archived: number; restoring?: number }
   people: number
   dormant: number
   heldBytes: number
