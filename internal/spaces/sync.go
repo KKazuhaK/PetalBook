@@ -6,7 +6,6 @@ package spaces
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -42,7 +41,7 @@ func (m *Manager) hostAllowed(p connections.Provider) error {
 		return he
 	}
 	if err != nil {
-		return fmt.Errorf("%w: the address of this provider is not usable", ErrInvalid)
+		return invalidAt(p.Descriptor().ID, "the address of this provider is not usable")
 	}
 	return nil
 }
@@ -51,7 +50,7 @@ func (m *Manager) hostAllowed(p connections.Provider) error {
 // it syncs: the address is stored in https form on the provider's host.
 func (m *Manager) resolveConnection(ctx context.Context, tenantID string, req ConnectRequest) (gitstore.Remote, *connections.Cred, error) {
 	if req.Provider == "" {
-		return gitstore.Remote{}, nil, fmt.Errorf("%w: credential.provider is required for a connection", ErrInvalid)
+		return gitstore.Remote{}, nil, invalidAt("", "credential.provider is required for a connection")
 	}
 	p, err := m.provider(req.Provider)
 	if err != nil {
@@ -60,10 +59,10 @@ func (m *Manager) resolveConnection(ctx context.Context, tenantID string, req Co
 	d := p.Descriptor()
 	owner, name, ok := p.ParseRepoURL(req.URL)
 	if !ok {
-		return gitstore.Remote{}, nil, fmt.Errorf("%w: a connection goes with a repository on %s (https://%s/owner/name.git or git@%s:owner/name.git)", ErrInvalid, d.Name, d.Host, d.Host)
+		return gitstore.Remote{}, nil, invalidAt(d.ID, "a connection goes with a repository on %s (https://%s/owner/name.git or git@%s:owner/name.git)", d.Name, d.Host, d.Host)
 	}
 	if req.Via != connections.ViaApp && req.Via != connections.ViaUser {
-		return gitstore.Remote{}, nil, fmt.Errorf("%w: credential.via must be app or user", ErrInvalid)
+		return gitstore.Remote{}, nil, invalidAt(d.ID, "credential.via must be app or user")
 	}
 	if err := m.hostAllowed(p); err != nil {
 		return gitstore.Remote{}, nil, err
@@ -117,11 +116,11 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		return Info{}, err
 	}
 	if !gh.ValidRepoName(g.Name) {
-		return Info{}, fmt.Errorf("%w: storage.sync.name is 1 to 100 characters of letters, digits, '.', '_' and '-', not '.' or '..' and not ending in .git", ErrInvalid)
+		return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.name is 1 to 100 characters of letters, digits, '.', '_' and '-', not '.' or '..' and not ending in .git")
 	}
 	if utf8.RuneCountInString(g.Description) > 350 || !utf8.ValidString(g.Description) ||
 		strings.IndexFunc(g.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return Info{}, fmt.Errorf("%w: storage.sync.description is at most 350 characters, without control characters", ErrInvalid)
+		return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.description is at most 350 characters, without control characters")
 	}
 	// The limit counts the spaces being made as well as the ones that exist.
 	// The space is the creator's tenant's, as Create's is.
@@ -361,4 +360,12 @@ func (m *Manager) ConnectionFixed(userID string) {
 			}
 		}()
 	}
+}
+
+// invalidAt is a 400 of a connection route: it carries the provider's id like
+// every error of a connection, and still is an ErrInvalid.
+func invalidAt(provider, format string, a ...any) error {
+	e := connections.Errorf(provider, http.StatusBadRequest, connections.CodeInvalid, format, a...)
+	e.Err = ErrInvalid
+	return e
 }

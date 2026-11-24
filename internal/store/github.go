@@ -213,6 +213,13 @@ func CountGitHubSpaces(ctx context.Context, q Q) (n int, err error) {
 	return
 }
 
+// CountGitSpaces is how many spaces sync to a plain Git address (a deploy key
+// or a token), for the provider "git".
+func CountGitSpaces(ctx context.Context, q Q) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND provider = 'git'`).Scan(&n)
+	return
+}
+
 // CountUserGitHubSpaces is how many spaces sync through a user's authorisation.
 func CountUserGitHubSpaces(ctx context.Context, q Q, userID string) (n int, err error) {
 	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM remotes WHERE url <> '' AND cred_type = 'connection' AND provider = 'github' AND gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)

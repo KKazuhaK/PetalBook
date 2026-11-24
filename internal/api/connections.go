@@ -9,6 +9,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/connections"
+	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
 // The connection endpoints (docs/api.md, "Connections", "The GitHub provider"
@@ -58,10 +59,16 @@ func (s *server) registry() *connections.Registry { return s.opt.Connections }
 func (s *server) provider(c *call) (connections.Provider, bool) {
 	p, ok := s.registry().Get(c.r.PathValue("provider"))
 	if !ok {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such provider")
+		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "no such provider")
 		return nil, false
 	}
 	return p, true
+}
+
+// connError answers an error of a connection route: like every one of them
+// it carries the provider's id.
+func (s *server) connError(c *call, provider string, status int, code, msg string) {
+	s.failConnection(c.w, connections.Errorf(provider, status, code, "%s", msg))
 }
 
 type capabilitiesResp struct {
@@ -187,6 +194,10 @@ func (s *server) connectCallback(c *call) {
 		return
 	}
 	id := p.Descriptor().ID
+	if p.Descriptor().Type == connections.GitID {
+		s.connError(c, id, http.StatusNotFound, connections.CodeNotFound, "a plain Git address has nothing to connect")
+		return
+	}
 	binding := ""
 	if ck, err := c.r.Cookie(s.auth.FlowCookieName(connCookieBase + id)); err == nil {
 		binding = ck.Value
@@ -239,7 +250,7 @@ func (s *server) connectDismissLeftover(c *call) {
 	}
 	id, err := strconv.ParseInt(c.r.PathValue("repoId"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such repository")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "no such repository")
 		return
 	}
 	if err := p.DismissLeftover(c.r.Context(), c.user().ID, id); err != nil {
@@ -254,7 +265,11 @@ func (s *server) connectOwners(c *call) {
 	if !ok {
 		return
 	}
-	items, next, err := p.Owners(c.r.Context(), c.user().ID, c.r.URL.Query().Get("cursor"))
+	q := c.r.URL.Query()
+	if rc, ok := p.(connections.Rechecker); ok && q.Get("recheck") == "true" && q.Get("cursor") == "" {
+		rc.RecheckPerson(c.r.Context(), c.user().ID)
+	}
+	items, next, err := p.Owners(c.r.Context(), c.user().ID, q.Get("cursor"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -291,14 +306,14 @@ func (s *server) connectRepos(c *call) {
 		if v := q.Get("installation"); v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil || n <= 0 {
-				writeError(c.w, http.StatusBadRequest, "invalid", "installation is a number")
+				s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "installation is a number")
 				return
 			}
 			inst = n
 		}
 		mine := q.Get("mine") == "true"
 		if (inst == 0) == !mine {
-			writeError(c.w, http.StatusBadRequest, "invalid", "give installation or mine=true, not both and not neither")
+			s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "give installation or mine=true, not both and not neither")
 			return
 		}
 	}
@@ -339,7 +354,7 @@ func (s *server) adminProvider(c *call) (connections.Provider, connections.Admin
 	}
 	a, ok := p.(connections.Administered)
 	if !ok {
-		writeError(c.w, http.StatusNotFound, "not_found", "this provider has no settings")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "this provider has no settings")
 		return nil, nil, false
 	}
 	return p, a, true
@@ -372,6 +387,13 @@ func (s *server) adminListConnections(c *call) {
 				return
 			}
 		}
+		if d.Type == connections.GitID {
+			// Nobody connects to a plain address; the spaces on one are counted.
+			if r.Spaces, err = store.CountGitSpaces(c.r.Context(), s.opt.Store.Q()); err != nil {
+				s.fail(c.w, err)
+				return
+			}
+		}
 		out = append(out, r)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
@@ -399,7 +421,7 @@ func (s *server) adminPutConnection(c *call) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(c.w, c.r.Body, authBodyLimit))
 	if err != nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "the body could not be read")
+		s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "the body could not be read")
 		return
 	}
 	v, err := a.AdminSave(c.r.Context(), body)
@@ -456,7 +478,7 @@ func (s *server) manifestMaker(c *call) (connections.Provider, connections.Manif
 	}
 	m, ok := p.(connections.ManifestMaker)
 	if !ok {
-		writeError(c.w, http.StatusNotFound, "not_found", "this provider's App cannot be made in one click")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "this provider's App cannot be made in one click")
 		return nil, nil, false
 	}
 	return p, m, true
@@ -544,7 +566,7 @@ func (s *server) installable(c *call) (connections.Installable, bool) {
 	}
 	in, ok := p.(connections.Installable)
 	if !ok {
-		writeError(c.w, http.StatusNotFound, "not_found", "this provider has no installations")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "this provider has no installations")
 		return nil, false
 	}
 	return in, true
@@ -573,7 +595,7 @@ func (s *server) adminPutConnectionInstallation(c *call) {
 	}
 	id, err := strconv.ParseInt(c.r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such installation")
+		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "no such installation")
 		return
 	}
 	var req struct {
@@ -583,7 +605,7 @@ func (s *server) adminPutConnectionInstallation(c *call) {
 		return
 	}
 	if req.Tenants == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give tenants: the ids of the tenants to share with (none: [])")
+		s.connError(c, c.r.PathValue("provider"), http.StatusBadRequest, connections.CodeInvalid, "give tenants: the ids of the tenants to share with (none: [])")
 		return
 	}
 	it, err := in.SetInstallationTenants(c.r.Context(), id, *req.Tenants)

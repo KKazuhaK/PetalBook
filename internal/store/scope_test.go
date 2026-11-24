@@ -98,6 +98,7 @@ var scopeAllowlist = map[string]string{
 	"DueGitHubRenewals":            "background job: the daily renewal of the connections of every tenant",
 	"CountGitHubAuthorizations":    "the App's own count, shown to site administrators only",
 	"CountGitHubSpaces":            "the App's own count, shown to site administrators only",
+	"CountGitSpaces":               "the count of plain-address remotes, shown to site administrators only",
 	"GitHubSpaceCounts":            "the App's own count per installation, shown to site administrators only",
 	"CountUserGitHubSpaces":        "the spaces syncing through one person's connection: same-tenant, as connecting checks",
 	"GetGitHubInstallation":        "an installation of the server's App: the server's own",

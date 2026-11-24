@@ -34,13 +34,15 @@ func (g *Git) StartConnect(context.Context, string, StartRequest) (*Start, error
 	return nil, g.notFound()
 }
 
+// CompleteConnect is never reached over HTTP (the callback route answers 404
+// for this provider); it only sends the browser home.
 func (*Git) CompleteConnect(context.Context, string, string, url.Values) (string, bool) {
 	return "/", true
 }
 
-func (*Git) Disconnect(context.Context, string) error { return nil }
+func (g *Git) Disconnect(context.Context, string) error { return g.notFound() }
 
-func (*Git) DismissLeftover(context.Context, string, int64) error { return nil }
+func (g *Git) DismissLeftover(context.Context, string, int64) error { return g.notFound() }
 
 func (*Git) Owners(context.Context, string, string) ([]Owner, string, error) {
 	return nil, "", (&Git{}).notFound()

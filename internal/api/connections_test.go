@@ -688,6 +688,22 @@ func TestConnectingByInstallingAndThePersonalAccountNeedsTheApp(t *testing.T) {
 		if m := member.do("GET", "/api/connections/github/owners", nil).want(t, 200, ""); m.body["items"].([]any)[0].(map[string]any)["needsInstall"] != false {
 			t.Fatalf("%s", m.raw)
 		}
+
+		// "Not installed" is remembered for a minute; having installed the App
+		// meanwhile, the person asks again and the memory is dropped.
+		a.fake.Install("kai-gh", "all")
+		needs := func(path string) any {
+			return other.do("GET", path, nil).want(t, 200, "").body["items"].([]any)[0].(map[string]any)["needsInstall"]
+		}
+		if needs("/api/connections/github/owners") != true {
+			t.Fatal("the answer was not remembered")
+		}
+		if needs("/api/connections/github/owners?recheck=true") != false {
+			t.Fatal("recheck=true did not ask GitHub again")
+		}
+		if needs("/api/connections/github/owners") != false {
+			t.Fatal("the new answer was not kept")
+		}
 	})
 }
 
@@ -769,5 +785,67 @@ func TestAnAppThatWaitsToBeSavedIsFinishedByItsAdministrator(t *testing.T) {
 		admin.do("POST", "/api/admin/connections/github/manifest/retry", nil).want(t, 404, "not_found")
 		admin.do("POST", "/api/admin/connections/nothing/manifest/retry", nil).want(t, 404, "not_found")
 		admin.do("POST", "/api/admin/connections/git/manifest/retry", nil).want(t, 404, "not_found")
+	})
+}
+
+// Every error of a connection route names its provider (docs/api.md, "Error
+// codes"), whichever route and whichever provider; and a plain Git address,
+// which has nothing to connect, answers 404 on every route but repos.
+func TestEveryConnectionErrorNamesItsProvider(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin, member := ghSetup(t, a)
+		sp := member.do("POST", "/api/spaces", map[string]any{"name": "Wiki"}).want(t, 201, "").body["id"].(string)
+		cred := func(p string, extra map[string]any) map[string]any {
+			c := map[string]any{"type": "connection", "provider": p, "via": "app"}
+			for k, v := range extra {
+				c[k] = v
+			}
+			return c
+		}
+		type probe struct {
+			who            *client
+			method, path   string
+			body           any
+			status         int
+			code, provider string
+		}
+		probes := []probe{
+			{member, "GET", "/api/connections/github/repos", nil, 400, "invalid", "github"},
+			{member, "GET", "/api/connections/github/repos?installation=x", nil, 400, "invalid", "github"},
+			{member, "GET", "/api/connections/github/repos?installation=1&mine=true", nil, 400, "invalid", "github"},
+			{member, "DELETE", "/api/connections/github/leftovers/abc", nil, 404, "not_found", "github"},
+			{member, "GET", "/api/connections/nope/owners", nil, 404, "not_found", "nope"},
+			{member, "GET", "/api/connections/git/owners", nil, 404, "not_found", "git"},
+			{member, "POST", "/api/connections/git/authorization/start", map[string]any{}, 404, "not_found", "git"},
+			{member, "DELETE", "/api/connections/git/authorization", nil, 404, "not_found", "git"},
+			{member, "DELETE", "/api/connections/git/leftovers/1", nil, 404, "not_found", "git"},
+			{member, "GET", "/api/connections/git/authorization/callback", nil, 404, "not_found", "git"},
+			{admin, "GET", "/api/admin/connections/git", nil, 404, "not_found", "git"},
+			{admin, "PUT", "/api/admin/connections/git", map[string]any{}, 404, "not_found", "git"},
+			{admin, "POST", "/api/admin/connections/git/manifest", nil, 404, "not_found", "git"},
+			{admin, "GET", "/api/admin/connections/git/installations", nil, 404, "not_found", "git"},
+			{admin, "PUT", "/api/admin/connections/git/installations/1", map[string]any{"tenants": []string{}}, 404, "not_found", "git"},
+			{admin, "PUT", "/api/admin/connections/github/installations/abc", map[string]any{"tenants": []string{}}, 404, "not_found", "github"},
+			{admin, "PUT", "/api/admin/connections/github/installations/1", map[string]any{}, 400, "invalid", "github"},
+			{admin, "GET", "/api/admin/connections/nope", nil, 404, "not_found", "nope"},
+			{member, "PUT", "/api/spaces/" + sp + "/remote", map[string]any{"url": "https://example.com/a/b.git", "credential": cred("github", nil)}, 400, "invalid", "github"},
+			{member, "PUT", "/api/spaces/" + sp + "/remote", map[string]any{"url": a.fake.URL + "/kazuhahub/wiki.git", "credential": cred("github", map[string]any{"via": "x"})}, 400, "invalid", "github"},
+			{member, "POST", "/api/spaces", map[string]any{"name": "X", "storage": ghSync(map[string]any{"owner": "kazuhahub", "name": "a b"})}, 400, "invalid", "github"},
+			{member, "POST", "/api/spaces", map[string]any{"name": "X", "storage": ghSync(map[string]any{"owner": "kazuhahub", "name": "ok", "description": "a\nb"})}, 400, "invalid", "github"},
+		}
+		for _, p := range probes {
+			r := p.who.do(p.method, p.path, p.body)
+			if r.code != p.status || r.body["error"] != p.code || r.body["provider"] != p.provider {
+				t.Errorf("%s %s: want %d %s from %q, got %d %s", p.method, p.path, p.status, p.code, p.provider, r.code, r.raw)
+			}
+		}
+		// The list of providers counts the spaces on a plain address too.
+		for _, row := range admin.do("GET", "/api/admin/connections", nil).want(t, 200, "").body["providers"].([]any) {
+			if g := row.(map[string]any); g["id"] == "git" && (g["spaces"] != float64(0) || g["connections"] != float64(0)) {
+				t.Errorf("%v", g)
+			}
+		}
+		// repos on git is an empty list, not an error.
+		member.do("GET", "/api/connections/git/repos?mine=true", nil).want(t, 200, "")
 	})
 }

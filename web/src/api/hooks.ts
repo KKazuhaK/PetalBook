@@ -537,6 +537,15 @@ export function useConnectionOwners(provider: string, enabled = true) {
   })
 }
 
+// "Check again": asks the platform about the caller's accounts anew, ignoring what the server remembered for a minute.
+export function useRecheckOwners(provider: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.connectionOwners(provider, undefined, undefined, true),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.connectionOwners(provider) }),
+  })
+}
+
 // The repositories of an installation (or the caller's own), a page at a time.
 export function useConnectionRepos(provider: string, which: { installation: number } | { mine: true } | null) {
   return useInfiniteQuery({

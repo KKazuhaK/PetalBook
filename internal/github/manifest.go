@@ -211,14 +211,13 @@ func (s *Service) keepPending(userID string, creds *githubapp.AppCredentials) bo
 // used, or ten minutes passed); while GitHub still cannot be asked it stays.
 func (s *Service) RetryManifest(ctx context.Context, userID string) (any, error) {
 	now := s.opt.Now()
+	// The entry is taken, not just read: of two retries at once only one gets
+	// it, so the App is saved once.
 	s.mu.Lock()
 	p := s.pending[userID]
-	if p != nil && !now.Before(p.expires) {
-		delete(s.pending, userID)
-		p = nil
-	}
+	delete(s.pending, userID)
 	s.mu.Unlock()
-	if p == nil {
+	if p == nil || !now.Before(p.expires) {
 		return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
 	}
 	raw, err := s.opt.Secrets.Open(userID, pendingPurpose, p.sealed)
@@ -227,25 +226,21 @@ func (s *Service) RetryManifest(ctx context.Context, userID string) (any, error)
 		err = json.Unmarshal(raw, &creds)
 	}
 	if err != nil {
-		s.dropPending(userID, p)
 		return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
 	}
 	v, err := s.saveMade(ctx, &creds)
 	var he *connections.Error
 	if err != nil && errors.As(err, &he) && he.Code == CodeUnavailable {
-		return nil, err // still pending
+		// Still pending: put it back, unless the administrator has made another meanwhile.
+		s.mu.Lock()
+		if s.pending[userID] == nil {
+			s.pending[userID] = p
+		}
+		s.mu.Unlock()
+		return nil, err
 	}
-	s.dropPending(userID, p)
 	if err != nil {
 		return nil, err
 	}
 	return toAdminView(v), nil
-}
-
-func (s *Service) dropPending(userID string, p *pendingApp) {
-	s.mu.Lock()
-	if s.pending[userID] == p {
-		delete(s.pending, userID)
-	}
-	s.mu.Unlock()
 }

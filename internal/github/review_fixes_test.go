@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +58,43 @@ func TestAnAppMadeOnGitHubThatCouldNotBeSavedCanBeSavedAgain(t *testing.T) {
 		}
 		if _, err := h.svc.RetryManifest(ctx, "A1"); code(err) != "not_found" {
 			t.Fatalf("a pending App was used twice: %v", err)
+		}
+	})
+}
+
+// Two retries at once never both save the App: the first takes the pending
+// entry, the others find none.
+func TestTwoRetriesOfAPendingAppSaveItOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		h := newHarness(t, st)
+		h.user("A1", "root")
+		s, _ := h.svc.StartManifest(ctx, "A1", connections.ManifestRequest{})
+		q := submit(t, h, s)
+		h.f.AppDown = true
+		h.svc.CompleteManifest(ctx, s.Binding, "A1", q)
+		h.f.AppDown = false
+		const n = 8
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		var ok, gone atomic.Int32
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := h.svc.RetryManifest(ctx, "A1")
+				switch {
+				case err == nil:
+					ok.Add(1)
+				case code(err) == "not_found":
+					gone.Add(1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if ok.Load() != 1 || gone.Load() != n-1 {
+			t.Fatalf("%d saved and %d found nothing waiting; want 1 and %d", ok.Load(), gone.Load(), n-1)
 		}
 	})
 }

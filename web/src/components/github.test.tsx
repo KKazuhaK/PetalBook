@@ -154,7 +154,7 @@ describe('the new-space dialog', () => {
     expect(nameField().value).toBe('No')
   })
 
-  it('marks the own account that needs the App, blocks creating there and installs in one step', async () => {
+  it('marks the own account that needs the App, lets the server refuse creating there, asks again and installs in one step', async () => {
     await openNewSpace('connected')
     await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
     hook({ trap: 'personalNeedsInstall' })
@@ -169,10 +169,31 @@ describe('the new-space dialog', () => {
     expect(marked).toHaveLength(1)
     await click(button(t.spaces.create))
     await settle(() => text().includes(tg.newSpace.errors.notInstalled('tang-gh')), 'the refusal')
-    expect(posts()).toHaveLength(0)
+    // The server answered; the client did not refuse on its own.
+    expect(posts()).toHaveLength(1)
+    // "Check again" asks for the owners with the server's memory dropped.
+    await click(button(tg.newSpace.checkAgain)!)
+    await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/owners?recheck=true'), 'the recheck')
     await click(button(tg.newSpace.installOnMine))
     await settle(() => m!.requests.some((r) => r.url === '/api/connections/github/authorization/start'), 'the request')
     expect(JSON.parse(m!.requests.find((r) => r.url === '/api/connections/github/authorization/start')!.body!)).toEqual({ return: '/', install: true })
+  })
+
+  it('offers other (by address): the space is made on the server and its sync settings open', async () => {
+    const created: { space: SpaceInfo; openSync: boolean }[] = []
+    m = await mount(<NewSpaceDialog open onOpenChange={() => {}} onCreated={(space, then) => created.push({ space, openSync: then?.openSync === true })} />, {
+      signIn: true,
+      server: { mode: 'accounts', github: { configured: true } },
+      entries: ['/'],
+    })
+    await settle(() => dialog() !== null && text().includes(tg.newSpace.whereOther), 'the option')
+    await type(nameField(), 'By address')
+    await click(checkbox(tg.newSpace.whereOther))
+    await click(button(t.spaces.create)!)
+    await settle(() => created.length === 1, 'the space')
+    expect(created[0]!.openSync).toBe(true)
+    // No place was made on a platform for it.
+    expect(JSON.parse(posts()[0]!.body!).sync).toBeUndefined()
   })
 
   it('names the permission the App lacks instead of GitHub\'s refusal', async () => {

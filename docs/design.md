@@ -2437,8 +2437,8 @@ access」。分三部分各审了一次（token、授权服务、MCP）。第三
 - **状态库**：GitHub 自己的表（`github_authorizations`、`github_installations`、
   `github_installation_tenants`）名字不变，是 GitHub 实现的；`remotes` 的
   `cred_type` 取 `ssh`、`token`、`connection`，加一列 `provider`。迁移用合并时下一个
-  空着的编号，SQLite 和 PostgreSQL 都测；v0.x 不做升级兼容，开发库里 2.7 存的
-  `cred_type = 'github'` 由迁移改成 `connection`／`github`，只为开发库能打开。
+  空着的编号，SQLite 和 PostgreSQL 都测；v0.x 不做升级兼容：2.7b 之前建的开发库
+  必须删掉重建，迁移不转换里面的旧行（例如 `cred_type = 'github'`）。
 - **测试**：提供方接口有一套共用的合同测试（假的提供方跑一遍，GitHub 实现跑一遍，
   3.8 的两个实现以后也跑这一套）。
 

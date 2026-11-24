@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { ApiError, api } from '@/api/client'
-import { useConnectionOwners, useConnections, useCreateSpace } from '@/api/hooks'
+import { useConnectionOwners, useConnections, useCreateSpace, useRecheckOwners } from '@/api/hooks'
 import type { ConnectionOwner, NewSync, SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
@@ -28,6 +28,14 @@ export function repoNameFrom(name: string): string {
 
 const repoNameOk = (n: string) => /^[A-Za-z0-9._-]{1,100}$/.test(n) && n !== '.' && n !== '..' && !n.toLowerCase().endsWith('.git')
 
+// What follows a new space: "by address" has no place made yet, so the sync settings open for the address to be given.
+export interface NewSpaceThen {
+  openSync: boolean
+}
+
+// The "where" of the option "other (by address)".
+const OTHER = '*address'
+
 interface Left {
   fullName: string
   htmlUrl: string
@@ -36,7 +44,7 @@ interface Left {
 // Makes a space: its name and where it is stored: on this server, or synced with a platform the server connects
 // to (the owner, name, privacy and description of the place made there for it).
 // Mounted only while open, so the form starts empty each time.
-export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (space: SpaceInfo) => void }) {
+export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (space: SpaceInfo, then?: NewSpaceThen) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && <NewSpaceForm onClose={() => onOpenChange(false)} onCreated={onCreated} />}
@@ -44,13 +52,13 @@ export function NewSpaceDialog({ open, onOpenChange, onCreated }: { open: boolea
   )
 }
 
-function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: (space: SpaceInfo) => void }) {
+function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: (space: SpaceInfo, then?: NewSpaceThen) => void }) {
   const create = useCreateSpace()
   const connections = useConnections()
   // The platforms a space can be synced to: set up, and able to make a place for it.
   const providers = (connections.data?.providers ?? []).filter((p) => p.configured && p.capabilities.createRepo)
   const [name, setName] = useState('')
-  // Where the space is stored: '' is this server, else the id of a provider.
+  // Where the space is stored: '' is this server, else the id of a provider, or OTHER for a plain address given afterwards.
   const [where, setWhere] = useState('')
   const provider = providers.find((p) => p.id === where) ?? null
   const useRepo = provider !== null
@@ -69,6 +77,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   useEffect(() => input.current?.select(), [])
 
   const owners = useConnectionOwners(where, useRepo)
+  const recheck = useRecheckOwners(where)
   const list: ConnectionOwner[] = owners.data?.pages.flatMap((p) => p.items) ?? []
   // The first account until the person picks one.
   const chosen = list.find((o) => o.login === owner) ?? list[0]
@@ -87,7 +96,6 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (!repoNameOk(repoName)) problems.repo = tg.newSpace.repoInvalid
       if (Array.from(description).length > 350 || Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) problems.description = tg.newSpace.descriptionInvalid
       if (ownerLogin === '') problems.repo ??= tg.newSpace.ownerNone
-      if (existing === undefined && chosen?.needsInstall) problems.repo ??= tg.newSpace.errors.notInstalled(ownerLogin)
       gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined }
     }
     setFieldError(problems)
@@ -99,7 +107,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
     try {
       // A Chinese-language app names the inbox folder in Chinese.
       const space = await create.mutateAsync({ name: trimmed, inbox: t.inbox.folderName, ...(gh ? { sync: gh } : {}) })
-      onCreated(space)
+      onCreated(space, where === OTHER ? { openSync: true } : undefined)
       onClose()
     } catch (err) {
       setBusy(false)
@@ -196,6 +204,13 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 </span>
               </label>
             ))}
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <input type="radio" name="new-space-where" className="mt-1 accent-[var(--brand)]" checked={where === OTHER} onChange={() => setWhere(OTHER)} />
+              <span className="min-w-0">
+                <span className="block font-medium">{tg.newSpace.whereOther}</span>
+                <span className="block text-xs text-muted-foreground">{tg.newSpace.whereOtherHelp}</span>
+              </span>
+            </label>
 
             {useRepo && (
               <div className="grid min-w-0 grid-cols-1 gap-3">
@@ -246,7 +261,12 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
                         <div>
                           <Button type="button" variant="outline" size="sm" onClick={() => void connect()}>
                             {tg.newSpace.installOnMine}
+                          </Button>{' '}
+                          <Button type="button" variant="ghost" size="sm" disabled={recheck.isPending} onClick={() => recheck.mutate()}>
+                            {recheck.isPending ? <Spinner /> : null}
+                            {recheck.isPending ? tg.newSpace.checkingAgain : tg.newSpace.checkAgain}
                           </Button>
+                          {recheck.isError && <span role="alert" className="ml-2 text-xs text-destructive">{tg.newSpace.checkFailed}</span>}
                         </div>
                       </div>
                     )}

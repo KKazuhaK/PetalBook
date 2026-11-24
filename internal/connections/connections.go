@@ -353,6 +353,13 @@ func (r *Registry) OnChange(f func(provider, userID string)) {
 // Optional parts of a provider, found by type assertion: what only some types
 // of provider have.
 
+// Rechecker is a provider that remembers an answer about a person ("the App is
+// not installed on your account") for a while; RecheckPerson drops what it remembers
+// about the person, so the next read asks the platform again.
+type Rechecker interface {
+	RecheckPerson(ctx context.Context, userID string)
+}
+
 // Administered is a provider an administrator sets up. The values are what the
 // API shows as they are (JSON).
 type Administered interface {

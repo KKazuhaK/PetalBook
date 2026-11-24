@@ -195,6 +195,15 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 		if n, _ := store.CountGitHubSpaces(ctx, q); n != 3 {
 			t.Fatal(n)
 		}
+		if err := store.InsertSpace(ctx, q, store.DefaultTenantID, "S4", "S4", "", "", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "S4", URL: "https://example.test/o/S4.git", Branch: "main", State: "ok", Updated: now, CredType: "token"}); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := store.CountGitSpaces(ctx, q); err != nil || n != 1 {
+			t.Fatal(n, err)
+		}
 		if n, _ := store.CountUserGitHubSpaces(ctx, q, "A"); n != 1 {
 			t.Fatal(n)
 		}

@@ -281,6 +281,7 @@ export function createMockServer(options: MockOptions = {}) {
     now,
     random,
     spacesUsing: (uid) => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github' && s.remote.credential.via === 'user' && s.remote.credential.userId === uid).length,
+    // The mock keeps a connection through GitHub as type "github" (the API shows it as type "connection", provider "github").
     spacesOnApp: () => [...spaces.values()].filter((s) => s.remote?.credential.type === 'github').length,
     // The mock has one world: everyone is in the default tenant.
     tenantOf: () => DEFAULT_TENANT,

@@ -598,7 +598,7 @@ export interface GitHubGap {
   missing: string[]
 }
 
-// What the administrator's browser posts to GitHub to make the App (docs/api.md, "POST /api/admin/github/manifest").
+// What the administrator's browser posts to GitHub to make the App (docs/api.md, "POST /api/admin/connections/{provider}/manifest").
 export interface GitHubManifestStart {
   url: string
   manifest: Record<string, unknown>

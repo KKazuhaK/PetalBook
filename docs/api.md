@@ -64,11 +64,11 @@ The web app talks to the server only through this API.
     unless it matches a sign-in this browser started (its `state`, or for SAML
     its `RelayState` and the attempt's cookie). `GET /api/auth/saml/{slug}/metadata`
     is read by the identity provider and changes nothing.
-    `GET /api/github/authorization/callback`, GitHub's redirect back after a
-    person connects their GitHub account for repos (not a sign-in), is the same
-    kind of exception under the same rule (see "Connections"). So is
-    `GET /api/connections/github/manifest/callback`, where GitHub sends an
-    administrator's browser after the App is made.
+    `GET /api/connections/{provider}/authorization/callback`, the platform's
+    redirect back after a person connects their account for repositories (not
+    a sign-in), is the same kind of exception under the same rule (see
+    "Connections"). So is `GET /api/connections/github/manifest/callback`, where
+    GitHub sends an administrator's browser after the App is made.
 - A **space** is one tree of pages backed by one Git repository. Every page URL
   carries the space id. In single-user mode there is exactly one space, with
   the id `default`; in accounts mode a space id has the same form as a page id.
@@ -1527,7 +1527,9 @@ leftovers.
 | the provider's configuration | `/api/admin/connections/{provider}…` (site administrators) |
 
 - `GET /api/admin/connections`: site administrators; every provider with its
-  configuration state, `partialSync`, and counts (connections, spaces).
+  configuration state, `partialSync`, and counts (connections, spaces; for
+  `git` there are no connections, and `spaces` counts the spaces on a plain
+  address).
 - A `{provider}` that does not exist answers `404 not_found`; a route a
   provider's type does not have (installations on a type without them, anything
   but `repos` on `git`) answers `404 not_found` too. `repos` on `git` is an
@@ -1778,7 +1780,7 @@ stops working.
 - The device flow is not offered: the web app does not need it. It is left for
   the clients of phase 4.
 
-### `GET /api/connections/github/owners?cursor={cursor}`
+### `GET /api/connections/github/owners?cursor={cursor}&recheck=true`
 
 The accounts the caller can create a repository in, one page at a time:
 
@@ -1800,7 +1802,7 @@ in accounts the App is installed on, so a repository in that account is refused
 with `409 app_not_installed` until the person installs it (the web app
 offers "Install on my account": `installUrl` of `GET /api/connections`, or the
 `install` start above). It is found with one call to GitHub on the first page
-(`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit).
+(`GET /users/{login}/installation`, remembered while the App is there; the answer "not installed there" is remembered for a minute per person, so a person without the App does not cost a call or a log line at every visit). `recheck=true`, on the first page, forgets that memory for the caller first: a person who has just installed the App asks again instead of waiting the minute (the web app's "check again"). Creating a space is never refused by the client on this flag; the server answers `409 app_not_installed`.
 `via` says which token creates the repository there. Each page is at most one call
 to GitHub. `cursor` is opaque; `next` is `""` after the last page. Without a
 connection only the installations shared with the caller's tenant are listed. A repository is created with

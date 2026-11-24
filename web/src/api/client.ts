@@ -603,8 +603,9 @@ export const api = {
     request<{ url: string }>(`/connections/${enc(provider)}/authorization/start`, { method: 'POST', body: { ...(ret ? { return: ret } : {}), ...(install ? { install: true } : {}) } }),
   connectionDisconnect: (provider: string) => request<void>(`/connections/${enc(provider)}/authorization`, { method: 'DELETE' }),
   connectionDismissLeftover: (provider: string, repoId: number) => request<void>(`/connections/${enc(provider)}/leftovers/${repoId}`, { method: 'DELETE' }),
-  connectionOwners: (provider: string, cursor?: string, signal?: AbortSignal) =>
-    request<CursorPage<ConnectionOwner>>(`/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : ''}`, { signal }),
+  // recheck: the first page, after the server forgets what it remembered about this person ("the App is not installed there").
+  connectionOwners: (provider: string, cursor?: string, signal?: AbortSignal, recheck = false) =>
+    request<CursorPage<ConnectionOwner>>(`/connections/${enc(provider)}/owners${cursor ? `?cursor=${enc(cursor)}` : recheck ? '?recheck=true' : ''}`, { signal }),
   connectionRepos: (provider: string, which: { installation: number } | { mine: true }, cursor?: string, signal?: AbortSignal) => {
     const q = new URLSearchParams('installation' in which ? { installation: String(which.installation) } : { mine: 'true' })
     if (cursor) q.set('cursor', cursor)

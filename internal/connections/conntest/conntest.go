@@ -72,19 +72,32 @@ func noConnection(t *testing.T, h Harness) {
 	if in.Connection != nil || in.Leftovers == nil || len(in.Leftovers) != 0 {
 		t.Fatalf("%+v", in)
 	}
-	// Disconnecting nothing, and dismissing a reminder there is not, are fine.
-	if err := h.Provider.Disconnect(ctx, h.User); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.Provider.DismissLeftover(ctx, h.User, 424242); err != nil {
-		t.Fatal(err)
-	}
-	// A callback that matches no attempt changes nothing and still redirects.
-	if to, _ := h.Provider.CompleteConnect(ctx, "no-such-binding", h.User, nil); to == "" || to[0] != '/' {
-		t.Fatalf("the callback redirects to %q", to)
+	d := h.Provider.Descriptor()
+	if d.Type == connections.GitID {
+		// A plain address has nothing to connect: its routes are 404 not_found.
+		for name, err := range map[string]error{
+			"disconnect": h.Provider.Disconnect(ctx, h.User),
+			"dismiss":    h.Provider.DismissLeftover(ctx, h.User, 424242),
+		} {
+			var ce *connections.Error
+			if !errors.As(err, &ce) || ce.Status != 404 || ce.Code != connections.CodeNotFound || ce.Provider != d.ID {
+				t.Fatalf("%s on a provider without connections: %v", name, err)
+			}
+		}
+	} else {
+		// Disconnecting nothing, and dismissing a reminder there is not, are fine.
+		if err := h.Provider.Disconnect(ctx, h.User); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.Provider.DismissLeftover(ctx, h.User, 424242); err != nil {
+			t.Fatal(err)
+		}
+		// A callback that matches no attempt changes nothing and still redirects.
+		if to, _ := h.Provider.CompleteConnect(ctx, "no-such-binding", h.User, nil); to == "" || to[0] != '/' {
+			t.Fatalf("the callback redirects to %q", to)
+		}
 	}
 	// Reading a list never fails for a person who has nothing.
-	d := h.Provider.Descriptor()
 	if d.Type == connections.GitID {
 		items, next, err := h.Provider.Repos(ctx, h.User, connections.RepoQuery{Mine: true})
 		if err != nil || items == nil || len(items) != 0 || next != "" {

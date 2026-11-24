@@ -180,6 +180,14 @@ func (s *Service) forgetNoApp(login string) {
 	s.mu.Unlock()
 }
 
+// RecheckPerson forgets that the App was not installed on the person's own account,
+// for a person who has installed it since (the next Owners asks GitHub).
+func (s *Service) RecheckPerson(ctx context.Context, userID string) {
+	if row, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil && row != nil {
+		s.forgetNoApp(row.Login)
+	}
+}
+
 func capSeen(seen []int64) []int64 {
 	if len(seen) > 400 {
 		return seen[len(seen)-400:]
