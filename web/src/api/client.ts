@@ -2,7 +2,9 @@
 
 import { t } from '@/i18n'
 import { noteNetworkOk } from '@/lib/offline/status'
+import { forgetLastAccount } from '@/lib/lastAccount'
 
+import { ENDED_REASONS } from './types'
 import type {
   RegisterInfo,
   RegisterInput,
@@ -46,6 +48,7 @@ import type {
   CursorPage,
   NewSync,
   Provider,
+  EndedReason,
   ErrorCode,
   Passkey,
   PasskeyCeremony,
@@ -117,6 +120,9 @@ const reasonOf = (b: { error: string; header?: unknown; field?: unknown }): Reas
   ...(typeof b.header === 'string' ? { header: b.header } : {}),
   ...(typeof b.field === 'string' ? { field: b.field } : {}),
 })
+
+// The `reason` of a 401: one of the four, or nothing.
+const endedReasonOf = (v: unknown): EndedReason | undefined => ENDED_REASONS.find((r) => r === v)
 
 export class ApiError extends Error {
   readonly status: number
@@ -204,7 +210,8 @@ export function onForbidden(fn: ForbiddenListener): () => void {
 // and an editor that leaves in the meantime does not hammer the server with
 // saves that cannot work. Nothing here touches local drafts.
 
-type SignedOutListener = () => void
+// `reason` is why, as the 401 said it (an expired one when it said nothing: see `markSignedOut`).
+type SignedOutListener = (reason: EndedReason) => void
 const signedOutListeners = new Set<SignedOutListener>()
 export function onSignedOut(fn: SignedOutListener): () => void {
   signedOutListeners.add(fn)
@@ -216,10 +223,12 @@ export const isSignedOut = () => signedOut
 export function markSignedIn() {
   signedOut = false
 }
-function markSignedOut() {
+// `reason` is the one the 401 carried. A session lost with none given (the server keeps no record of it: it was
+// signed out on purpose elsewhere, or the record is old) is told as an expired one.
+function markSignedOut(reason: EndedReason | undefined) {
   if (signedOut) return
   signedOut = true
-  signedOutListeners.forEach((fn) => fn())
+  signedOutListeners.forEach((fn) => fn(reason ?? 'expired'))
 }
 
 // --- a session held until a passkey is registered ---------------------------------------
@@ -384,13 +393,14 @@ export async function request<T>(
       host?: unknown
       header?: unknown
       field?: unknown
+      reason?: unknown
     }
     if (err.error === 'forbidden' && !USER_LEVEL_403.test(barePath)) {
       const message = forbiddenMessage(globalThis.location?.origin ?? '')
       forbiddenListeners.forEach((fn) => fn(message))
       throw new ApiError(res.status, 'forbidden', message)
     }
-    if (res.status === 401 && !isSignIn) markSignedOut()
+    if (res.status === 401 && !isSignIn) markSignedOut(endedReasonOf(err.reason))
     if (res.status === 403 && err.error === 'passkey_required' && !isSignIn) holdListeners.forEach((fn) => fn())
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())
     if (err.error === 'space_disabled' || err.error === 'no_permission' || err.error === 'not_found') {
@@ -697,6 +707,8 @@ export const api = {
   logout: async () => {
     const who = knownUser
     await request<void>('/logout', { method: 'POST' })
+    // On purpose: the browser forgets who it was too (a session that ended by itself keeps it).
+    forgetLastAccount()
     knownUser = null
     if (who) await offlineHooks.signedOut?.(who).catch(() => undefined)
   },
@@ -866,5 +878,6 @@ export const api = {
 }
 
 // Where a sign-in button goes: a full-page navigation (docs/api.md, "Starting").
-export const providerStartUrl = (kind: ProviderKind, slug: string, ret: string) =>
-  `${API_BASE}/auth/${enc(kind)}/${enc(slug)}/start?return=${enc(ret)}`
+// `hint` is the address of the person coming back, for the provider's `login_hint`.
+export const providerStartUrl = (kind: ProviderKind, slug: string, ret: string, hint?: string) =>
+  `${API_BASE}/auth/${enc(kind)}/${enc(slug)}/start?return=${enc(ret)}${hint ? `&login_hint=${enc(hint)}` : ''}`

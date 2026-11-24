@@ -19,6 +19,18 @@ export const signinEn: SigninMessages = {
     loadFailed: 'Could not load the sign-in methods',
     ssoRetry: 'Try again',
   },
+  // Coming back after a session ended (docs/api.md, "Why a session ended").
+  ended: {
+    expired: 'Your sign-in has expired. Please sign in again.',
+    signed_out_elsewhere: 'You were signed out on another device.',
+    password_changed: 'Your password was changed. Sign in with the new password.',
+    disabled: 'Your account has been disabled. Please contact an administrator.',
+    otherAccount: 'Use another account',
+    backToSignIn: 'Back to sign in',
+    continueWith: (name: string) => `Continue with ${name}`,
+    accountLabel: 'Last signed-in account',
+    passkeyHint: 'Continue with your passkey',
+  },
   ssoErrors: {
     provider_unavailable:
       'This sign-in method is not available right now: it is switched off, or the server cannot reach it. Try again later or ask an administrator.',

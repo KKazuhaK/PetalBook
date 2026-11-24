@@ -731,7 +731,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
 			return err
 		}
-		return store.DeleteUserSessions(ctx, q, u.ID, "")
+		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())
 	})
 	if err != nil {
 		return err

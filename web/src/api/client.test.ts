@@ -15,6 +15,7 @@ import {
 } from './client'
 import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
+import { ENDED_REASONS } from './types'
 import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
 
 // Everything of a space, for the default one, next to the endpoints that are not in a space.
@@ -309,6 +310,33 @@ describe('being signed out', () => {
     ).toBe(true)
     expect(told).toBe(1)
     expect(isSignedOut()).toBe(true)
+  })
+
+  it('tells the app why, when the 401 says so; a 401 with no reason, or one it does not know, is an expired session', async () => {
+    const withAdmin = createMockServer({ mode: 'accounts', empty: true, admin: MOCK_ADMIN })
+    for (const reason of [
+      'expired',
+      'signed_out_elsewhere',
+      'password_changed',
+      'disabled',
+      'something_new',
+      undefined,
+    ]) {
+      markSignedIn()
+      globalThis.fetch = mockFetch(withAdmin)
+      await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
+      // The server answers the cookie of a session that ended with its reason.
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ error: 'unauthenticated', message: 'sign in', ...(reason ? { reason } : {}) }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      const told: string[] = []
+      const off = onSignedOut((r) => told.push(r))
+      await api.tags().catch(() => undefined)
+      off()
+      expect(told).toEqual([reason && ENDED_REASONS.includes(reason as never) ? reason : 'expired'])
+    }
   })
 
   it('until someone signs in, requests that need a session fail on the spot, without reaching the server', async () => {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	authoidc "github.com/KazuhaHub/authcore/oidc"
@@ -259,6 +260,26 @@ type BeginParams struct {
 	Return string
 	// User is the signed-in user, for link.
 	User *store.User
+	// LoginHint is the address of the person who is coming back (the sign-in page
+	// after a session ended). An OpenID Connect provider gets it as `login_hint`;
+	// SAML and GitHub have no such parameter, so it is not sent to them.
+	LoginHint string
+}
+
+// withLoginHint adds `login_hint` to an authorization address, if the hint is
+// a plausible one (one line, not long). Anything else leaves the address as it is.
+func withLoginHint(authURL, hint string) string {
+	if hint == "" || len(hint) > 254 || strings.ContainsFunc(hint, unicode.IsControl) {
+		return authURL
+	}
+	u, err := url.Parse(authURL)
+	if err != nil {
+		return authURL
+	}
+	q := u.Query()
+	q.Set("login_hint", hint)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // BeginResult is where to send the browser and the cookie that ties the
@@ -351,7 +372,7 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 			return nil, unavailable(err)
 		}
 		e.state, e.stateValue = az.State, az.State.Value
-		return &BeginResult{URL: az.URL, Cookie: s.ssoCookie(s.pending.put(e))}, nil
+		return &BeginResult{URL: withLoginHint(az.URL, p.LoginHint), Cookie: s.ssoCookie(s.pending.put(e))}, nil
 	case KindGitHub:
 		if rt.secretErr != nil {
 			return nil, unavailable(rt.secretErr)

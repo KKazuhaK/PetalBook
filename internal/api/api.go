@@ -794,7 +794,8 @@ func (s *server) failAuth(w http.ResponseWriter, e *auth.Error) {
 	case auth.Invalid:
 		writeError(w, http.StatusBadRequest, "invalid", e.Msg)
 	case auth.Unauthenticated:
-		writeError(w, http.StatusUnauthorized, "unauthenticated", e.Msg)
+		// Reason is there only when the cookie was a session that ended.
+		writeJSON(w, http.StatusUnauthorized, errorBody{Error: "unauthenticated", Message: e.Msg, Reason: e.Reason})
 	case auth.Forbidden:
 		writeError(w, http.StatusForbidden, "forbidden", e.Msg)
 	case auth.NotFound:

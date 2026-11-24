@@ -880,11 +880,17 @@ export interface User {
   remoteExempt?: boolean
 }
 
+// Why a session ended without the person signing out (docs/api.md, "Why a session ended").
+export type EndedReason = 'expired' | 'signed_out_elsewhere' | 'password_changed' | 'disabled'
+export const ENDED_REASONS: readonly EndedReason[] = ['expired', 'signed_out_elsewhere', 'password_changed', 'disabled']
+
 export interface SessionInfo {
   mode: 'single' | 'accounts'
   user: User | null
   // True while there is no user at all: the app shows the first-run page.
   setup: boolean
+  // Why the session of this browser's cookie ended, when that is why nobody is signed in (absent otherwise).
+  endedReason?: EndedReason
   // `passkey`: the signed-in person must register a passkey before anything else.
   hold?: 'passkey' | null
   // Absent in single-user mode.

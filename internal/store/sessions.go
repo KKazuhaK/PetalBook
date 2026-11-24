@@ -45,9 +45,53 @@ func DeleteSession(ctx context.Context, q Q, id string) error {
 }
 
 // DeleteUserSessions ends every session of the user except keep ("" keeps none).
-func DeleteUserSessions(ctx context.Context, q Q, userID, keep string) error {
+//
+// reason says why (one of the End* constants, never ""): a row of session_ends is
+// kept for each, so the sign-in page can say so when the browser comes back.
+func DeleteUserSessions(ctx context.Context, q Q, userID, keep, reason string, at time.Time) error {
+	if _, err := q.Exec(ctx, `INSERT INTO session_ends(id, reason, ended) SELECT id, ?, ? FROM sessions WHERE user_id = ? AND id <> ?
+		ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, ended = excluded.ended`, reason, ms(at), userID, keep); err != nil {
+		return err
+	}
 	_, err := q.Exec(ctx, `DELETE FROM sessions WHERE user_id = ? AND id <> ?`, userID, keep)
 	return err
+}
+
+// Why a session ended without the person signing out.
+const (
+	EndExpired   = "expired"              // idle or past its absolute lifetime
+	EndElsewhere = "signed_out_elsewhere" // signed out everywhere, or revoked by an administrator
+	EndPassword  = "password_changed"
+	EndDisabled  = "disabled"
+)
+
+// EndSession records why a session ended and deletes it.
+func EndSession(ctx context.Context, q Q, id, reason string, at time.Time) error {
+	if _, err := q.Exec(ctx, `INSERT INTO session_ends(id, reason, ended) VALUES (?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, ended = excluded.ended`, id, reason, ms(at)); err != nil {
+		return err
+	}
+	return DeleteSession(ctx, q, id)
+}
+
+// SessionEndReason is why the session of a cookie hash ended; "" when no record
+// of it is kept (never a session, signed out on purpose, or older than the sweep).
+func SessionEndReason(ctx context.Context, q Q, id string) (string, error) {
+	var reason string
+	err := q.QueryRow(ctx, `SELECT reason FROM session_ends WHERE id = ?`, id).Scan(&reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return reason, err
+}
+
+// DeleteOldSessionEnds forgets the records made before the given time.
+func DeleteOldSessionEnds(ctx context.Context, q Q, before time.Time) (int64, error) {
+	res, err := q.Exec(ctx, `DELETE FROM session_ends WHERE ended < ?`, ms(before))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // TrimSessions keeps only the newest n sessions of a user, so signing in over
@@ -59,17 +103,21 @@ func TrimSessions(ctx context.Context, q Q, userID string, n int) error {
 }
 
 // DeleteExpiredSessions removes sessions idle since idleBefore or older than
-// createdBefore, and reports how many.
-func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore time.Time) (int64, error) {
+// createdBefore (recording each as ended at `at` for want of use), and reports how many.
+func DeleteExpiredSessions(ctx context.Context, q Q, idleBefore, createdBefore, at time.Time) (int64, error) {
 	var total int64
 	for _, st := range []struct {
-		sql string
+		col string
 		at  time.Time
 	}{
-		{`DELETE FROM sessions WHERE last_used < ?`, idleBefore},
-		{`DELETE FROM sessions WHERE created < ?`, createdBefore},
+		{"last_used", idleBefore},
+		{"created", createdBefore},
 	} {
-		res, err := q.Exec(ctx, st.sql, ms(st.at))
+		if _, err := q.Exec(ctx, `INSERT INTO session_ends(id, reason, ended) SELECT id, ?, ? FROM sessions WHERE `+st.col+` < ?
+			ON CONFLICT(id) DO NOTHING`, EndExpired, ms(at), ms(st.at)); err != nil {
+			return total, err
+		}
+		res, err := q.Exec(ctx, `DELETE FROM sessions WHERE `+st.col+` < ?`, ms(st.at))
 		if err != nil {
 			return total, err
 		}

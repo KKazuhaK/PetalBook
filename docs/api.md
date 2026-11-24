@@ -176,6 +176,9 @@ Never an error; no session needed. `Cache-Control: no-store`.
   first-run page.
 - `hold`: `null`, or `"passkey"` when the signed-in user must register a passkey
   before they can do anything else (see "When a passkey is required").
+- `endedReason`: only when there is no `user` and the request's session cookie
+  belonged to a session that ended (the same values as `reason` of a 401, below);
+  absent for everyone else, so a cookie that never was a session learns nothing.
 - `methods` is kept for clients older than 2.8 and is absent in single-user
   mode. `methods.oidc` is the provider that answers the pre-2.8 endpoints (see
   "The pre-2.8 endpoints"), or `null` when there is none. The sign-in page reads
@@ -322,7 +325,39 @@ failures against their name, unless the administrators chose the lockout scope
 
 ### `POST /api/logout`
 
-`204`; ends the session if there is one.
+`204`; ends the session if there is one. A session ended this way leaves no
+record: it is the person's own doing, so nothing is said to its cookie later.
+
+### Why a session ended
+
+When a session ends without the person signing out, the server keeps one small
+record for 30 days: the SHA-256 of the session cookie value (never the value),
+the reason and the time. A daily sweep removes records older than that. A `401
+unauthenticated` answer to a request that carries the cookie of such a session
+has one more field, `reason`:
+
+```json
+{"error": "unauthenticated", "message": "your session has ended; sign in again", "reason": "expired"}
+```
+
+| `reason` | The session ended because |
+| --- | --- |
+| `expired` | it was idle for longer than the idle limit, or older than the absolute limit (see 安全 settings, `limits.sessionIdleDays`, `limits.sessionMaxDays`) |
+| `signed_out_elsewhere` | the person signed out of every device, or an administrator revoked their sessions |
+| `password_changed` | the password was changed or reset (the session that made the change stays) |
+| `disabled` | the account, or its tenant, was disabled |
+
+An unknown cookie, a malformed one, one of a session that was signed out with
+`POST /api/logout`, and a record older than 30 days get the plain 401 with no
+`reason`: nothing is told to a cookie that cannot prove it was a session. `GET
+/api/session` carries the same value as `endedReason`. The sign-in answers do
+not change: a disabled account signing in is refused like any wrong password.
+
+The web app keeps the last person's display name, username or email, avatar URL
+and last sign-in method in this browser's `localStorage` (never a secret), shows
+the reason on the sign-in page and offers that person's last method again, then
+returns to the page they were on. It forgets the person when they sign out on
+purpose, and never shows them for `disabled`.
 
 ### Passkeys
 
@@ -419,12 +454,18 @@ disabled or unknown provider answers `404` (for a navigation: a redirect to
 `/login?sso_error=provider_unavailable`). SSO has no captcha: the provider
 guards its own sign-in.
 
-#### Starting: `GET /api/auth/{kind}/{slug}/start?return={path}`
+#### Starting: `GET /api/auth/{kind}/{slug}/start?return={path}&login_hint={address}`
 
 A navigation from the sign-in page. Redirects (`303`) to the provider and sets
 the short-lived cookie that ties the attempt to this browser. Only for signing
 in (`intent: login`); the cross-site rules apply, so another site cannot start
 one. Counts against the address's sign-in starts (30 a minute).
+
+`login_hint` is optional: the sign-in page sends the email of the person who is
+coming back after a session ended. For an `oidc` provider it is passed on as the
+`login_hint` of the authorization request; a value that is over 254 bytes or has
+a control character is dropped. `saml` and `github` have no such parameter and
+ignore it.
 
 #### Starting: `POST /api/auth/{kind}/{slug}/start`
 

@@ -31,6 +31,9 @@ type Error struct {
 	Status int
 	// Accounts is the count a provider_in_use answer carries.
 	Accounts *int
+	// Reason, on an Unauthenticated refusal of a cookie whose session ended, is
+	// why (store.EndExpired and the others); "" for any other cookie.
+	Reason string
 }
 
 func (e *Error) Error() string { return e.Msg }

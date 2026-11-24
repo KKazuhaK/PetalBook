@@ -366,6 +366,8 @@ export function createMockServer(options: MockOptions = {}) {
 
   const users = new Map<string, UserRec>()
   const sessions = new Map<string, string>()
+  // Why a session ended without the person signing out, by cookie value (the server keeps the hash, for 30 days).
+  const endedWhy = new Map<string, string>()
   const invites = new Map<string, InviteRec>()
   const apiTokens = new Map<string, TokenRec>()
   // What an administrator allows machines (docs/api.md, "Machine access").
@@ -805,8 +807,12 @@ export function createMockServer(options: MockOptions = {}) {
     const user = uid ? (users.get(uid) ?? null) : null
     return { user: user && !user.disabled ? user : null, token, cookies }
   }
+  const endedReasonOf = (ctx: Ctx): string | undefined => (ctx.token && !ctx.user ? endedWhy.get(ctx.token) : undefined)
   const requireUser = (ctx: Ctx): UserRec => {
-    if (!ctx.user) throw new HttpError(401, 'unauthenticated', '请先登录')
+    if (!ctx.user) {
+      const reason = endedReasonOf(ctx)
+      throw new HttpError(401, 'unauthenticated', '请先登录', reason ? { reason } : undefined)
+    }
     return ctx.user
   }
   const requireAdmin = (ctx: Ctx): UserRec => {
@@ -834,8 +840,12 @@ export function createMockServer(options: MockOptions = {}) {
     if (opts.held) held.add(token)
     return setCookie(SESSION_COOKIE, token)
   }
-  const endSessions = (userId: string, except?: string | null) => {
-    for (const [t, uid] of [...sessions]) if (uid === userId && t !== except) sessions.delete(t)
+  const endSessions = (userId: string, except?: string | null, reason = 'signed_out_elsewhere') => {
+    for (const [t, uid] of [...sessions])
+      if (uid === userId && t !== except) {
+        sessions.delete(t)
+        endedWhy.set(t, reason)
+      }
   }
 
   // --- validation ---
@@ -1006,7 +1016,7 @@ export function createMockServer(options: MockOptions = {}) {
       const u = users.get(id)
       if (u) u.passwordHash = hash
     },
-    endSessions: (id) => endSessions(id),
+    endSessions: (id) => endSessions(id, null, 'password_changed'),
     ssoOnlyInEffect: () => book.ssoOnlyInEffect(),
     ssoOnlyStored: () => book.security.login.ssoOnly,
     providerName: () => 'single sign-on',
@@ -1362,7 +1372,7 @@ export function createMockServer(options: MockOptions = {}) {
     u.passwordHash = hashOf(next)
     mailBook.cleanUserTokens(u.id, 'reset')
     // Other sessions end; this one stays.
-    endSessions(u.id, ctx.token)
+    endSessions(u.id, ctx.token, 'password_changed')
   }
 
   const removeIdentity = (u: UserRec, id: string) => {
@@ -1450,7 +1460,7 @@ export function createMockServer(options: MockOptions = {}) {
       u.emailVerified = body.emailVerified as boolean
       note('emailVerified', u.emailVerified)
     }
-    if (disabled) endSessions(u.id)
+    if (disabled) endSessions(u.id, null, 'disabled')
     if (applyQuota) {
       applyQuota()
       note('quota', quotaBook.ownOf(u.id))
@@ -3485,9 +3495,11 @@ export function createMockServer(options: MockOptions = {}) {
       return j({ version: 'mock', maxUpload, maxImport, spaces: u ? callerSpaces(u).map((s) => spaceInfo(s, u)) : [] })
     }
     if (method === 'GET' && path === '/session') {
+      const ended = endedReasonOf(ctx)
       const base = {
         mode,
         user: ctx.user ? publicUser(ctx.user) : null,
+        ...(ended ? { endedReason: ended } : {}),
         setup: accounts && users.size === 0,
         hold: accounts && ctx.token && ctx.user && held.has(ctx.token) ? ('passkey' as const) : null,
         token: null,
@@ -3556,6 +3568,16 @@ export function createMockServer(options: MockOptions = {}) {
               ? (body.side.anyAccount as boolean | null)
               : undefined,
         })
+      return j({})
+    }
+
+    // Mock only: the session of the request's cookie ends for this reason (default: it ran out), as if it had been long ago.
+    if (method === 'POST' && path === '/_mock/end-session') {
+      accountsOnly()
+      if (ctx.token && sessions.has(ctx.token)) {
+        sessions.delete(ctx.token)
+        endedWhy.set(ctx.token, typeof body.reason === 'string' ? body.reason : 'expired')
+      }
       return j({})
     }
 

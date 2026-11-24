@@ -23,10 +23,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 
 	s.cmu.Lock()
 	gen := s.gen // an eviction while we work must not be undone by our insert
-	if until, bad := s.negative[id]; bad {
-		if now.Before(until) {
+	if neg, bad := s.negative[id]; bad {
+		if now.Before(neg.until) {
 			s.cmu.Unlock()
-			return nil, errf(Unauthenticated, "sign in to continue")
+			return nil, ended(neg.reason, "sign in to continue")
 		}
 		delete(s.negative, id)
 	}
@@ -44,6 +44,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if cs == nil {
 		row, err := store.GetSession(ctx, s.st.Q(), id)
 		if errors.Is(err, store.ErrNotFound) {
+			// Why it ended, if it was a session: one lookup by the hash, then remembered with the refusal.
+			reason, rerr := store.SessionEndReason(ctx, s.st.Q(), id)
+			if rerr != nil {
+				return nil, rerr
+			}
 			s.cmu.Lock()
 			if len(s.negative) >= maxNegative {
 				for k := range s.negative {
@@ -51,9 +56,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 					break
 				}
 			}
-			s.negative[id] = now.Add(negativeTTL)
+			s.negative[id] = negative{until: now.Add(negativeTTL), reason: reason}
 			s.cmu.Unlock()
-			return nil, errf(Unauthenticated, "sign in to continue")
+			return nil, ended(reason, "sign in to continue")
 		}
 		if err != nil {
 			return nil, err
@@ -62,13 +67,13 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	}
 	sec := s.sec(ctx)
 	if now.Sub(snap.lastUsed) > sec.idle || now.Sub(snap.created) > sec.max {
-		s.endSession(ctx, id)
-		return nil, errf(Unauthenticated, "your session has ended; sign in again")
+		s.endSession(ctx, id, store.EndExpired)
+		return nil, ended(store.EndExpired, "your session has ended; sign in again")
 	}
 	u, err := s.cachedUser(ctx, snap.userID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.endSession(ctx, id)
+			s.endSession(ctx, id, "")
 			return nil, errf(Unauthenticated, "sign in to continue")
 		}
 		return nil, err
@@ -76,8 +81,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	// A disabled tenant is a disabled account: one atomic load, and a map lookup
 	// only while some tenant is disabled.
 	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
-		s.endSession(ctx, id)
-		return nil, errf(Unauthenticated, "sign in to continue")
+		s.endSession(ctx, id, store.EndDisabled)
+		return nil, ended(store.EndDisabled, "sign in to continue")
 	}
 
 	touch := false
@@ -159,13 +164,27 @@ func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error
 	return u, nil
 }
 
-// endSession removes one session from the database and the cache.
-func (s *Service) endSession(ctx context.Context, id string) {
+// ended is the refusal of a cookie whose session is gone, with why when it is known.
+func ended(reason, msg string) *Error {
+	e := errf(Unauthenticated, "%s", msg)
+	e.Reason = reason
+	return e
+}
+
+// endSession removes one session from the database and the cache. With a
+// reason, a record of why is kept (a sign-out on purpose has none).
+func (s *Service) endSession(ctx context.Context, id, reason string) {
 	s.cmu.Lock()
 	s.gen++
 	delete(s.sessions, id)
 	s.cmu.Unlock()
-	if err := store.DeleteSession(ctx, s.st.Q(), id); err != nil {
+	var err error
+	if reason == "" {
+		err = store.DeleteSession(ctx, s.st.Q(), id)
+	} else {
+		err = store.EndSession(ctx, s.st.Q(), id, reason, s.now())
+	}
+	if err != nil {
 		s.log.Warn("could not delete a session", "error", err)
 	}
 }
@@ -197,7 +216,18 @@ func (s *Service) Logout(ctx context.Context, token string) {
 	if token == "" || len(token) > 256 {
 		return
 	}
-	s.endSession(ctx, hashToken(token))
+	s.endSession(ctx, hashToken(token), "")
+}
+
+// SignOutEverywhere ends every session of the user but keep ("" keeps none),
+// for the person signing out of the other devices, or an administrator
+// revoking them. Each one answers 401 with `signed_out_elsewhere` afterwards.
+func (s *Service) SignOutEverywhere(ctx context.Context, userID, keep string) error {
+	if err := store.DeleteUserSessions(ctx, s.st.Q(), userID, keep, store.EndElsewhere, s.now()); err != nil {
+		return err
+	}
+	s.evictUser(userID, keep)
+	return nil
 }
 
 // issueSession starts a session for a user and returns the cookie value.

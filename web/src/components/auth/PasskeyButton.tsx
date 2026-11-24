@@ -16,12 +16,14 @@ export function PasskeyButton({
   onDone,
   onError,
   disabled,
+  size,
 }: {
   username?: string
   ret: string
   onDone: (r: { user: User; return: string }) => void
   onError: (message: string, e?: unknown) => void
   disabled?: boolean
+  size?: 'lg'
 }) {
   const [busy, setBusy] = useState(false)
   const go = async () => {
@@ -61,7 +63,7 @@ export function PasskeyButton({
     <Button
       type="button"
       variant="outline"
-      className="w-full min-w-0 gap-2"
+      className={`w-full min-w-0 gap-2 ${size === 'lg' ? 'h-10' : ''}`}
       disabled={busy || disabled}
       onClick={() => void go()}
     >
