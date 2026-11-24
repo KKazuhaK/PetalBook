@@ -108,7 +108,7 @@ const isFields = (f: unknown): f is Fields => {
     !!x &&
     typeof x.title === 'string' &&
     typeof x.subtitle === 'string' &&
-    (x.source === undefined || typeof x.source === 'string') &&
+    typeof x.source === 'string' &&
     Array.isArray(x.tags) &&
     x.tags.every((t) => typeof t === 'string') &&
     (x.others === undefined || (typeof x.others === 'object' && x.others !== null && !Array.isArray(x.others)))

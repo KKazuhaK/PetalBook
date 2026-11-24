@@ -132,22 +132,3 @@ export function sectionFromPath(pathname: string): SectionId | null | undefined 
   if (!m) return undefined
   return isSectionId(m[1]) ? m[1] : null
 }
-
-// The old addresses, and the section each one is now:
-//   /settings            -> profile (accounts) or preferences (single-user)
-//   /s/<space>/settings  -> sync (accounts) or general (single-user), for that space
-// The space is returned so the caller can make it the one in use.
-export function legacySettingsTarget(pathname: string, v: Visibility): { section: SectionId; space?: string } | null {
-  if (pathname === '/settings' || pathname === '/settings/') return { section: defaultSection(v) }
-  const m = /^\/s\/([^/]+)\/settings\/?$/.exec(pathname)
-  if (m) {
-    let space = m[1]
-    try {
-      space = decodeURIComponent(space)
-    } catch {
-      // Left as it is; the settings then show the space in use.
-    }
-    return { section: v.mode === 'single' ? 'general' : 'sync', space }
-  }
-  return null
-}

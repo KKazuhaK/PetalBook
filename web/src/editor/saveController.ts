@@ -71,10 +71,8 @@ export interface Fields {
   title: string
   subtitle: string
   tags: string[]
-  // Where the text comes from (a person, a book, an address). Absent means "not
-  // edited here": a local draft written before the field existed carries none,
-  // and must not read as "the person emptied it".
-  source?: string
+  // Where the text comes from (a person, a book, an address).
+  source: string
   // The rest of the header (every key but `id` and the four above), when it is
   // not the file's: rewritten in the source view, or held by a draft the text
   // was loaded from. Absent means "as the file has them", whatever the file
@@ -215,7 +213,7 @@ export function cleanFields(f: Fields): Fields {
   return {
     title: line(f.title),
     subtitle: line(f.subtitle),
-    ...(f.source === undefined ? {} : { source: line(f.source) }),
+    source: line(f.source),
     tags,
     ...(f.others === undefined ? {} : { others: f.others }),
   }
@@ -279,8 +277,7 @@ export function changedFields(served: Fields, typed: Fields): FieldChanges {
   return {
     title: typed.title !== served.title && clean.title !== served.title,
     subtitle: typed.subtitle !== served.subtitle && clean.subtitle !== served.subtitle,
-    source:
-      typed.source !== undefined && typed.source !== (served.source ?? '') && clean.source !== (served.source ?? ''),
+    source: typed.source !== served.source && clean.source !== served.source,
     tags: !sameTags(typed.tags, served.tags) && !sameTags(clean.tags, served.tags),
   }
 }

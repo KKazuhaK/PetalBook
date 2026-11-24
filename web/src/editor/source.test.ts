@@ -24,11 +24,4 @@ describe('the source field', () => {
     const out = buildSave(base, { ...fieldsOf(base.meta), source: '' }, same)
     expect(out && 'source' in out.meta).toBe(false)
   })
-
-  it('a draft from before the field existed (no source) leaves the header source alone', () => {
-    const { source: _s, ...old } = fieldsOf(base.meta)
-    void _s
-    expect(buildSave(base, old, same)).toBeNull()
-    expect(buildSave(base, { ...old, title: '暮雪二' }, same)?.meta.source).toBe('《雪国》')
-  })
 })

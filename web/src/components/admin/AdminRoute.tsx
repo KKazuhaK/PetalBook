@@ -86,8 +86,7 @@ const SITE_ONLY: readonly AdminSection[] = ['daily', 'access', 'storage', 'secur
 export default function AdminRoute() {
   const { section } = useParams()
   const { id } = useActiveSpace()
-  // The server says siteAdmin on every user; a user object without it is from before tenants, when every administrator was one.
-  const siteAdmin = useSession().data?.user?.siteAdmin !== false
+  const siteAdmin = useSession().data?.user?.siteAdmin === true
   const sections = SECTIONS.filter((s) => siteAdmin || !SITE_ONLY.includes(s))
   useDocumentTitle(`${isAdminSection(section) ? ta.sections[section] : ta.title} · ${ta.title} · ${t.appName}`)
   if (!isAdminSection(section) || !sections.includes(section)) return <Navigate to={adminPath('users')} replace />

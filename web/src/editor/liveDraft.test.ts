@@ -6,15 +6,15 @@ const editor = () => ({ isDestroyed: false, getJSON: vi.fn(() => ({ type: 'doc' 
 describe('LiveDraft', () => {
   it('reports no body until the body has been edited', () => {
     const toMd = vi.fn(() => 'md')
-    const d = new LiveDraft({ title: 'T', subtitle: '', tags: [] }, toMd)
+    const d = new LiveDraft({ title: 'T', subtitle: '', source: '', tags: [] }, toMd)
     d.attachEditor(editor())
-    expect(d.read()).toEqual({ title: 'T', subtitle: '', tags: [], body: undefined })
+    expect(d.read()).toEqual({ title: 'T', subtitle: '', source: '', tags: [], body: undefined })
     expect(toMd).not.toHaveBeenCalled()
   })
 
   it('converts once per distinct edit state, however often it is read', () => {
     const toMd = vi.fn(() => 'md')
-    const d = new LiveDraft({ title: '', subtitle: '', tags: [] }, toMd)
+    const d = new LiveDraft({ title: '', subtitle: '', source: '', tags: [] }, toMd)
     d.attachEditor(editor())
     d.bodyChanged()
     d.bodyChanged()
@@ -27,7 +27,7 @@ describe('LiveDraft', () => {
   })
 
   it('keeps the last conversion when the editor is already gone', () => {
-    const d = new LiveDraft({ title: '', subtitle: '', tags: [] }, () => 'last')
+    const d = new LiveDraft({ title: '', subtitle: '', source: '', tags: [] }, () => 'last')
     const ed = editor()
     d.attachEditor(ed)
     d.bodyChanged()
@@ -37,17 +37,17 @@ describe('LiveDraft', () => {
   })
 
   it('reset forgets body edits and takes the new fields', () => {
-    const d = new LiveDraft({ title: 'a', subtitle: '', tags: [] }, () => 'md')
+    const d = new LiveDraft({ title: 'a', subtitle: '', source: '', tags: [] }, () => 'md')
     d.attachEditor(editor())
     d.bodyChanged()
-    d.reset({ title: 'b', subtitle: 's', tags: ['x'] })
-    expect(d.read()).toEqual({ title: 'b', subtitle: 's', tags: ['x'], body: undefined })
+    d.reset({ title: 'b', subtitle: 's', source: '', tags: ['x'] })
+    expect(d.read()).toEqual({ title: 'b', subtitle: 's', source: '', tags: ['x'], body: undefined })
   })
 })
 
 describe('LiveDraft without a usable editor', () => {
   it('fails loudly if the body was edited but the editor is gone and nothing was converted', () => {
-    const d = new LiveDraft({ title: '', subtitle: '', tags: [] }, () => 'md')
+    const d = new LiveDraft({ title: '', subtitle: '', source: '', tags: [] }, () => 'md')
     d.attachEditor({ isDestroyed: true, getJSON: () => ({ type: 'doc' }) })
     d.bodyChanged()
     expect(() => d.read()).toThrow(/no longer available/)

@@ -373,13 +373,7 @@ function EditorSession({
     planRestore(write ? initial : file, local, docToMarkdown, (md) => docToMarkdown(markdownToDoc(md))),
   )
   const content: Content | null = restore.kind === 'file' ? null : restore.content
-  // A local copy from before the source field existed carries none: the box then shows
-  // what the server has, so the person never types over a value they were not shown.
-  const [fields, setFields] = useState<Fields>(() =>
-    content
-      ? { ...content.fields, source: content.fields.source ?? fieldsOf((initial.draft ?? initial).meta).source }
-      : fieldsOf(initial.meta),
-  )
+  const [fields, setFields] = useState<Fields>(() => (content ? content.fields : fieldsOf(initial.meta)))
   // What has been typed, readable when a request runs (see LiveDraft).
   const [live] = useState(() => new LiveDraft(fields, docToMarkdown))
   const [conflict, setConflict] = useState<ConflictInfo | null>(null)
@@ -927,7 +921,7 @@ function EditorSession({
             !editor.isDestroyed &&
             f.title === restored.fields.title &&
             f.subtitle === restored.fields.subtitle &&
-            (f.source ?? '') === (restored.fields.source ?? '') &&
+            f.source === restored.fields.source &&
             sameTags(f.tags, restored.fields.tags) &&
             f.others === restored.fields.others &&
             bodyNow() === restored.markdown
@@ -1180,10 +1174,10 @@ function EditorSession({
                     suggestions={tags.data?.tags ?? []}
                     readOnly={readOnly}
                   />
-                  {(!readOnly || (fields.source ?? '') !== '') && (
+                  {(!readOnly || fields.source !== '') && (
                     <AutoTextarea
                       readOnly={readOnly}
-                      value={fields.source ?? ''}
+                      value={fields.source}
                       onChange={(v) => setField('source', v)}
                       onEnter={() => editor?.commands.focus('start')}
                       placeholder={t.editor.sourcePlaceholder}

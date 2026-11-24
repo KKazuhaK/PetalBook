@@ -13,6 +13,8 @@ import { committed, deleteDb, eachRecord, openDb, req } from './idb'
 import { dbName, dropEntry, setEntry } from './registry'
 
 export const RECENT_KEPT = 200
+// The one layout of a copy (see open). Until the first release a change of layout changes the stores made there,
+// not this number: a copy of another version is not converted.
 const DB_VERSION = 2
 
 export type OfflineMode = 'catalog' | 'text'
@@ -141,15 +143,14 @@ export class OfflineStore {
   // `create: false` opens only a copy that is there: a database that is not is left unmade, and the open fails.
   static async open(user: string, space: string, create = true): Promise<OfflineStore> {
     const db = await openDb(dbName(user, space), DB_VERSION, (d, old, tx) => {
-      if (old === 0 && !create) return tx.abort()
-      if (old < 1) {
-        d.createObjectStore('meta', { keyPath: 'key' })
-        d.createObjectStore('catalog', { keyPath: 'id' })
-        d.createObjectStore('pages', { keyPath: 'id' })
-        d.createObjectStore('textmeta', { keyPath: 'id' })
-        d.createObjectStore('opened', { keyPath: 'id' }).createIndex('at', 'at')
-      }
-      if (old < 2) d.createObjectStore('walk', { keyPath: 'id' })
+      // The stores are made only in a new database: one of another version is not converted, and does not open.
+      if (old !== 0 || !create) return tx.abort()
+      d.createObjectStore('meta', { keyPath: 'key' })
+      d.createObjectStore('catalog', { keyPath: 'id' })
+      d.createObjectStore('pages', { keyPath: 'id' })
+      d.createObjectStore('textmeta', { keyPath: 'id' })
+      d.createObjectStore('opened', { keyPath: 'id' }).createIndex('at', 'at')
+      d.createObjectStore('walk', { keyPath: 'id' })
     })
     return new OfflineStore(user, space, db)
   }

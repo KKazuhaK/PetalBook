@@ -244,7 +244,7 @@ describe('gaining write while a page is open', () => {
         // What this browser kept from when the person could write.
         saveDraft(draftRef(adminId, space, pageId), {
           baseRev: page.rev,
-          fields: { title: '共享页', subtitle: '', tags: [] },
+          fields: { title: '共享页', subtitle: '', source: '', tags: [] },
           bodyText: '我的草稿',
           savedAt: Date.now(),
           token: 'tok-1',
