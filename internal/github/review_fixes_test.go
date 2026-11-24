@@ -174,6 +174,56 @@ func TestNotInstalledForAPersonIsRemembered(t *testing.T) {
 	})
 }
 
+// A person can ask again ("recheck") once a minute: a second ask within the
+// minute is an ordinary read from the memory and costs GitHub no call, so a
+// person without the App cannot use up the App's shared rate limit by looping.
+func TestRecheckIsLimitedToOnceAMinutePerPerson(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		w := newWorld(t, st)
+		w.f.PersonalNeedsInstall = true
+		w.f.AddUser("kai")
+		w.user("U2", "kai")
+		w.connect("U2", "kai")
+		const path = "/users/kai/installation"
+		recheck := func() bool {
+			w.svc.RecheckPerson(ctx, "U2")
+			o, _ := owners(t, w.harness, "U2")
+			return o[0].NeedsInstall
+		}
+		if !recheck() { // the first recheck is allowed and asks GitHub
+			t.Fatal("the App is not installed for kai")
+		}
+		asked := w.f.Count("GET", path)
+		for i := 0; i < 5; i++ {
+			w.clk.Advance(5 * time.Second)
+			if !recheck() {
+				t.Fatal("the cached answer was lost")
+			}
+		}
+		if n := w.f.Count("GET", path); n != asked {
+			t.Fatalf("GitHub was asked %d more times within the minute", n-asked)
+		}
+		// Another person is not held back by kai's recheck.
+		w.f.AddUser("lee")
+		w.user("U3", "lee")
+		w.connect("U3", "lee")
+		w.svc.RecheckPerson(ctx, "U3")
+		owners(t, w.harness, "U3")
+		if n := w.f.Count("GET", "/users/lee/installation"); n != 1 {
+			t.Fatalf("lee's first recheck made %d calls", n)
+		}
+		// After the minute a recheck asks again.
+		w.clk.Advance(time.Minute)
+		w.f.Install("kai", "all")
+		if recheck() {
+			t.Fatal("a recheck after the minute did not ask GitHub")
+		}
+		if n := w.f.Count("GET", path); n != asked+1 {
+			t.Fatalf("GitHub was asked %d times after the minute", n-asked)
+		}
+	})
+}
+
 // 4. A person's own token refused in an organisation the App is not installed
 // on is "not installed" (with where to install it), never a missing permission.
 func TestAnOrganisationWithoutTheAppIsNotAMissingPermission(t *testing.T) {

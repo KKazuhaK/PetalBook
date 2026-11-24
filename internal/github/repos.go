@@ -180,9 +180,38 @@ func (s *Service) forgetNoApp(login string) {
 	s.mu.Unlock()
 }
 
+// recheckEvery is how often one person may make the next Owners ask GitHub
+// again: each ask costs a call of the App's rate limit, which everyone shares.
+const recheckEvery = time.Minute
+
+// maxRechecked bounds the people remembered as having just rechecked.
+const maxRechecked = 10_000
+
 // RecheckPerson forgets that the App was not installed on the person's own account,
-// for a person who has installed it since (the next Owners asks GitHub).
+// for a person who has installed it since (the next Owners asks GitHub). It
+// is allowed once a minute per person; within the minute it changes nothing
+// and the answer stays the remembered one.
 func (s *Service) RecheckPerson(ctx context.Context, userID string) {
+	now := s.opt.Now()
+	s.mu.Lock()
+	if until, ok := s.rechecked[userID]; ok && now.Before(until) {
+		s.mu.Unlock()
+		return
+	}
+	if len(s.rechecked) >= maxRechecked {
+		for k, t := range s.rechecked {
+			if !now.Before(t) {
+				delete(s.rechecked, k)
+			}
+		}
+		if len(s.rechecked) >= maxRechecked {
+			// All are recent: refuse this one rather than forget the others.
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.rechecked[userID] = now.Add(recheckEvery)
+	s.mu.Unlock()
 	if row, err := store.GetGitHubAuthorization(ctx, s.opt.Store.Q(), userID); err == nil && row != nil {
 		s.forgetNoApp(row.Login)
 	}
