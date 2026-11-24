@@ -92,7 +92,7 @@ jobs:
           echo "go=$go web=$web"
 
   # Everything that only reads the code: formatting, go vet, go mod tidy, the web
-  # typecheck and ESLint, the workflow files, known vulnerabilities, and a
+  # typecheck, ESLint and Prettier check, the workflow files, known vulnerabilities, and a
   # secret scan of the commits being added. It always runs, whatever changed.
   lint:
     name: lint
@@ -251,7 +251,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Its own cache key, so this job's build cache does not collide with the go job's.
       - uses: ./.github/actions/go
+        with:
+          cache-suffix: compat
       # The runner's kernel may be older than tmpfs casefold (Linux 6.13), and
       # Ubuntu restricts the user namespaces the script's local mode needs. An
       # ext4 image made with -O casefold works on any kernel since 5.2; it is
