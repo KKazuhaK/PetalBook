@@ -29,8 +29,12 @@ var (
 const (
 	attemptTTL      = 10 * time.Minute
 	attemptCapacity = 10_000
-	renewBefore     = 5 * time.Minute
-	maxUserTokens   = 10_000
+	// manifestCapacity bounds the attempts to make the App, which have a store of
+	// their own: a flood of people connecting accounts must not push out an
+	// administrator's attempt.
+	manifestCapacity = 64
+	renewBefore      = 5 * time.Minute
+	maxUserTokens    = 10_000
 )
 
 // attempt is one authorisation between start and the callback.
@@ -50,10 +54,11 @@ type attemptStore struct {
 	items map[string]*attempt
 	order *list.List
 	now   func() time.Time
+	cap   int
 }
 
-func newAttemptStore(now func() time.Time) *attemptStore {
-	return &attemptStore{items: map[string]*attempt{}, order: list.New(), now: now}
+func newAttemptStore(now func() time.Time, capacity int) *attemptStore {
+	return &attemptStore{items: map[string]*attempt{}, order: list.New(), now: now, cap: capacity}
 }
 
 func (p *attemptStore) put(a attempt) string {
@@ -69,7 +74,7 @@ func (p *attemptStore) put(a attempt) string {
 		p.order.Remove(f)
 		delete(p.items, f.Value.(string))
 	}
-	for len(p.items) >= attemptCapacity {
+	for len(p.items) >= p.cap {
 		f := p.order.Front()
 		if f == nil {
 			break
@@ -288,6 +293,7 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 		return fail(cbError)
 	}
 	s.bump(userID)
+	s.forgetNoApp(acct.Login) // they may have installed the App in this very flow
 	s.changed(userID)
 	return a.ret, true
 }

@@ -760,3 +760,14 @@ func ghProvider(t *testing.T, c *client) result {
 	t.Fatalf("no GitHub provider in %s", r.raw)
 	return result{}
 }
+
+func TestAnAppThatWaitsToBeSavedIsFinishedByItsAdministrator(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		member := a.addUser("tang", pw, "member")
+		member.do("POST", "/api/admin/connections/github/manifest/retry", nil).want(t, 403, "forbidden")
+		admin.do("POST", "/api/admin/connections/github/manifest/retry", nil).want(t, 404, "not_found")
+		admin.do("POST", "/api/admin/connections/nothing/manifest/retry", nil).want(t, 404, "not_found")
+		admin.do("POST", "/api/admin/connections/git/manifest/retry", nil).want(t, 404, "not_found")
+	})
+}

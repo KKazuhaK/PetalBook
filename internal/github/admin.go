@@ -502,6 +502,8 @@ func (s *Service) autoRecheck(ctx context.Context, st *appState) {
 	}
 }
 
+var testHookBeforeRefreshWrite func()
+
 func (s *Service) refresh(ctx context.Context, st *appState) error {
 	info, err := st.app.AppInfo(ctx)
 	if err != nil {
@@ -547,7 +549,12 @@ func (s *Service) refresh(ctx context.Context, st *appState) error {
 		rec.AnyAccount = &yes
 	}
 	b, _ := json.Marshal(rec)
-	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), settingKey, string(b), s.opt.Now()); err != nil {
+	if testHookBeforeRefreshWrite != nil {
+		testHookBeforeRefreshWrite()
+	}
+	// Written only if the setting is still the one read above: an App saved in
+	// the meantime is newer than this check and stays.
+	if _, err := store.CompareAndSetSiteSetting(ctx, s.opt.Store.Q(), settingKey, raw, string(b), s.opt.Now()); err != nil {
 		return err
 	}
 	s.forget()

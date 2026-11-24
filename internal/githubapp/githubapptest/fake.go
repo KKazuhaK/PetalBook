@@ -219,6 +219,11 @@ type Fake struct {
 	NoRefresh bool
 	// RejectGit makes Git refuse every credential (a revoked token).
 	RejectGit bool
+	// AppDown makes GET /app answer 503: GitHub made an App but cannot be asked about it.
+	AppDown bool
+	// OrgNeedsInstall makes GitHub refuse a user's token a repository in an
+	// organisation the App is not installed on ("Resource not accessible by integration").
+	OrgNeedsInstall bool
 	// BreakRefreshReply makes the answer to a renewal one the client cannot use
 	// (after the old refresh token was spent), to test that a pair is kept.
 	BreakRefreshReply bool
@@ -880,6 +885,10 @@ func (f *Fake) serveAPI(w http.ResponseWriter, r *http.Request) {
 	seg := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	switch {
 	case r.Method == "GET" && path == "/app" && p.kind == "jwt":
+		if f.AppDown {
+			apiError(w, 503, "Service Unavailable")
+			return
+		}
 		body := map[string]any{"id": f.AppID, "slug": f.Slug, "name": f.Name, "client_id": f.ClientID,
 			"html_url": "https://github.com/apps/" + f.Slug, "owner": map[string]any{"login": "kazuhahub", "id": 1, "type": "Organization"},
 			"permissions": f.AppPerms}
@@ -1255,6 +1264,10 @@ func (f *Fake) createRepo(w http.ResponseWriter, r *http.Request, p principal, o
 	case "user":
 		if org != "" && (!acc.Org || !acc.Members[strings.ToLower(p.login)]) {
 			apiError(w, 404, "Not Found")
+			return
+		}
+		if org != "" && f.OrgNeedsInstall && !f.installedLocked(org) {
+			apiError(w, 403, "Resource not accessible by integration")
 			return
 		}
 		if org != "" && acc.NoCreate {

@@ -99,16 +99,19 @@ type Service struct {
 	log *slog.Logger
 	c   *githubapp.Client
 
-	mu       sync.Mutex
-	cur      *appState // nil: not loaded
-	curAt    time.Time
-	tokens   map[string]cachedUser // by PetalBook user id
-	renewing map[string]*renewal
-	gens     map[string]uint64 // see tokenGen
-	genAll   uint64
-	attempts *attemptStore
-	onChange func(userID string)
-	autoAt   time.Time // when the App was last re-checked because a token was refused
+	mu        sync.Mutex
+	cur       *appState // nil: not loaded
+	curAt     time.Time
+	tokens    map[string]cachedUser // by PetalBook user id
+	renewing  map[string]*renewal
+	gens      map[string]uint64 // see tokenGen
+	genAll    uint64
+	attempts  *attemptStore
+	manifests *attemptStore          // the attempts to make the App: apart from attempts (see manifestCapacity)
+	noApp     map[string]time.Time   // GitHub logins the App is known not to be installed for, until (guarded by mu)
+	pending   map[string]*pendingApp // Apps GitHub made that could not be saved, by administrator (guarded by mu)
+	onChange  func(userID string)
+	autoAt    time.Time // when the App was last re-checked because a token was refused
 }
 
 // New returns a Service.
@@ -134,7 +137,8 @@ func New(opt Options) (*Service, error) {
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
 	opt.Client.UseLogger(opt.Logger) // what GitHub refuses is told in the server's log
 	return &Service{opt: opt, log: opt.Logger, c: opt.Client, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
-		attempts: newAttemptStore(opt.Now)}, nil
+		attempts: newAttemptStore(opt.Now, attemptCapacity), manifests: newAttemptStore(opt.Now, manifestCapacity),
+		noApp: map[string]time.Time{}, pending: map[string]*pendingApp{}}, nil
 }
 
 // Client is the GitHub client; its web base is where repositories are.

@@ -2,11 +2,13 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/connections"
@@ -84,7 +86,7 @@ func (s *Service) StartManifest(ctx context.Context, userID string, req connecti
 		}
 	}
 	state := githubapp.RandomState()
-	binding := s.attempts.put(attempt{kind: manifestKind, state: state, userID: userID})
+	binding := s.manifests.put(attempt{kind: manifestKind, state: state, userID: userID})
 	ret := s.manifestReturn()
 	m := githubapp.Manifest{
 		Name:               name,
@@ -122,7 +124,7 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 	if binding == "" || state == "" || len(q["code"]) > 1 || len(q["state"]) > 1 {
 		return manifestFail + "expired", false
 	}
-	_, res := s.attempts.take(manifestKind, binding, state, userID)
+	_, res := s.manifests.take(manifestKind, binding, state, userID)
 	if res != takeOK {
 		return manifestFail + "expired", res == takeUnknown
 	}
@@ -134,15 +136,20 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 		s.log.Warn("GitHub did not turn the manifest into an App", "reason", reason(err))
 		return fail("provider_error")
 	}
-	secretID := creds.ClientID
-	_, err = s.Save(ctx, SaveRequest{AppID: strconv.FormatInt(creds.ID, 10), PrivateKey: creds.PEM, ClientID: &secretID, ClientSecret: creds.ClientSecret, WebhookSecret: creds.WebhookSecret})
+	_, err = s.saveMade(ctx, creds)
 	if err != nil {
 		var he *connections.Error
 		switch {
 		case errors.As(err, &he) && he.Code == CodeInUse:
 			return fail("app_in_use")
 		case errors.As(err, &he) && he.Code == CodeUnavailable:
-			return fail("unavailable")
+			// GitHub made the App but could not be asked about it: it exists there
+			// and what it gave is kept, sealed, for a retry.
+			to := manifestFail + "unavailable"
+			if s.keepPending(userID, creds) {
+				to += "&pending=1"
+			}
+			return to + "&app=" + url.QueryEscape(creds.Slug), true
 		}
 		s.log.Warn("the App GitHub made could not be saved", "reason", reason(err))
 		return fail("provider_error")
@@ -150,7 +157,95 @@ func (s *Service) CompleteManifest(ctx context.Context, binding, userID string, 
 	return manifestDone, true
 }
 
-// RetryManifest saves an App GitHub made but the server could not save at the time.
+// saveMade saves the App GitHub made, as one entered by hand.
+func (s *Service) saveMade(ctx context.Context, creds *githubapp.AppCredentials) (*AppView, error) {
+	secretID := creds.ClientID
+	return s.Save(ctx, SaveRequest{AppID: strconv.FormatInt(creds.ID, 10), PrivateKey: creds.PEM, ClientID: &secretID, ClientSecret: creds.ClientSecret, WebhookSecret: creds.WebhookSecret})
+}
+
+// pendingTTL is how long an App GitHub made but the server could not save is
+// kept for a retry; maxPending bounds how many administrators have one.
+const (
+	pendingTTL     = 10 * time.Minute
+	maxPending     = 16
+	pendingPurpose = "github-manifest-pending"
+)
+
+// pendingApp is what GitHub gave for an App that could not be saved yet. The
+// credentials are sealed even in memory.
+type pendingApp struct {
+	sealed  string // the AppCredentials as JSON, sealed for the administrator
+	expires time.Time
+}
+
+// keepPending remembers the App for the administrator; false when it could not be kept.
+func (s *Service) keepPending(userID string, creds *githubapp.AppCredentials) bool {
+	if userID == "" {
+		return false
+	}
+	raw, err := json.Marshal(creds)
+	if err != nil {
+		return false
+	}
+	sealed, err := s.opt.Secrets.Seal(userID, pendingPurpose, raw)
+	if err != nil {
+		return false
+	}
+	now := s.opt.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, p := range s.pending {
+		if !now.Before(p.expires) {
+			delete(s.pending, k)
+		}
+	}
+	if _, replaced := s.pending[userID]; !replaced && len(s.pending) >= maxPending {
+		return false
+	}
+	s.pending[userID] = &pendingApp{sealed: sealed, expires: now.Add(pendingTTL)}
+	return true
+}
+
+// RetryManifest saves the App GitHub made for the administrator when the
+// server could not save it then. It is not_found when none is waiting (it was
+// used, or ten minutes passed); while GitHub still cannot be asked it stays.
 func (s *Service) RetryManifest(ctx context.Context, userID string) (any, error) {
-	return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
+	now := s.opt.Now()
+	s.mu.Lock()
+	p := s.pending[userID]
+	if p != nil && !now.Before(p.expires) {
+		delete(s.pending, userID)
+		p = nil
+	}
+	s.mu.Unlock()
+	if p == nil {
+		return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
+	}
+	raw, err := s.opt.Secrets.Open(userID, pendingPurpose, p.sealed)
+	var creds githubapp.AppCredentials
+	if err == nil {
+		err = json.Unmarshal(raw, &creds)
+	}
+	if err != nil {
+		s.dropPending(userID, p)
+		return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
+	}
+	v, err := s.saveMade(ctx, &creds)
+	var he *connections.Error
+	if err != nil && errors.As(err, &he) && he.Code == CodeUnavailable {
+		return nil, err // still pending
+	}
+	s.dropPending(userID, p)
+	if err != nil {
+		return nil, err
+	}
+	return toAdminView(v), nil
+}
+
+func (s *Service) dropPending(userID string, p *pendingApp) {
+	s.mu.Lock()
+	if s.pending[userID] == p {
+		delete(s.pending, userID)
+	}
+	s.mu.Unlock()
 }

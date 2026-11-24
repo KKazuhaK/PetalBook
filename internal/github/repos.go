@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/connections"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
@@ -85,8 +86,7 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]connections
 				own := connections.Owner{Login: row.Login, Type: "User", Via: ViaUser}
 				// One JWT request, remembered while the App is there; a person with the App is not asked twice.
 				if st, serr := s.need(ctx); serr == nil {
-					_, ierr := st.app.UserInstallation(ctx, row.Login)
-					own.NeedsInstall = githubapp.IsStatus(ierr, http.StatusNotFound)
+					own.NeedsInstall = s.notInstalledFor(ctx, st, row.Login)
 				}
 				out = append(out, own)
 			}
@@ -129,6 +129,55 @@ func (s *Service) Owners(ctx context.Context, userID, cur string) ([]connections
 		out = append(out, connections.Owner{Login: r.Account, Type: r.AccountType, Via: ViaApp, InstallationID: r.ID})
 	}
 	return out, next, nil
+}
+
+// noAppFor is how long "the App is not installed for this person" is
+// remembered, so reading the owners again and again costs GitHub no call.
+const noAppFor = time.Minute
+
+// maxNoApp bounds the logins remembered as having no App.
+const maxNoApp = 10_000
+
+// notInstalledFor reports whether the App is not installed on the account of
+// login. A "no" from GitHub is remembered for a minute; a "yes" is remembered
+// by the App's own lookup while the App is there.
+func (s *Service) notInstalledFor(ctx context.Context, st *appState, login string) bool {
+	key := strings.ToLower(login)
+	now := s.opt.Now()
+	s.mu.Lock()
+	until, ok := s.noApp[key]
+	s.mu.Unlock()
+	if ok && now.Before(until) {
+		return true
+	}
+	_, err := st.app.UserInstallation(ctx, login)
+	missing := githubapp.IsStatus(err, http.StatusNotFound)
+	s.mu.Lock()
+	if missing {
+		if len(s.noApp) >= maxNoApp {
+			for k, t := range s.noApp {
+				if !now.Before(t) {
+					delete(s.noApp, k)
+				}
+			}
+			if len(s.noApp) >= maxNoApp {
+				s.noApp = map[string]time.Time{}
+			}
+		}
+		s.noApp[key] = now.Add(noAppFor)
+	} else {
+		delete(s.noApp, key)
+	}
+	s.mu.Unlock()
+	return missing
+}
+
+// forgetNoApp drops the memory of the App not being installed for a login: it
+// is known to be, or the person has just connected.
+func (s *Service) forgetNoApp(login string) {
+	s.mu.Lock()
+	delete(s.noApp, strings.ToLower(login))
+	s.mu.Unlock()
 }
 
 func capSeen(seen []int64) []int64 {
@@ -319,6 +368,7 @@ func (s *Service) CreateRepo(ctx context.Context, p *connections.Plan, n connect
 	if err != nil {
 		return nil, s.createError(ctx, p, err)
 	}
+	s.forgetNoApp(p.Owner) // it worked: the App is there
 	return repoOf(r), nil
 }
 
@@ -354,8 +404,20 @@ func (s *Service) createError(ctx context.Context, p *connections.Plan, err erro
 				switch {
 				case p.Via == ViaApp: // the installation's token may not create it
 					return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
-				case p.Org != "": // the person's token, through an installation that may not
-					return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+				case p.Org != "":
+					// The person's own token, refused in an organisation: the App may not
+					// be installed there (then it is not a permission the App lacks), or
+					// it is, and the installation lacks the permission.
+					st.app.ForgetLookup("org", p.Org)
+					_, ierr := st.app.OrgInstallation(ctx, p.Org)
+					switch {
+					case githubapp.IsStatus(ierr, http.StatusNotFound):
+						e := errf(http.StatusConflict, CodeAppNotInstalled, "the GitHub App is not installed on %s, and GitHub lets no repository be made there until it is; an owner of %s installs it first", p.Owner, p.Owner)
+						e.InstallURL = installURL(st.rec.HTMLURL)
+						return e
+					case ierr == nil:
+						return s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
+					}
 				default:
 					// The person's own account: a user's token reaches only the accounts the App is installed on.
 					_, ierr := st.app.UserInstallation(ctx, p.Owner)
