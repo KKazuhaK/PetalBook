@@ -98,7 +98,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (!repoNameOk(repoName)) problems.repo = tg.newSpace.repoInvalid
       if (Array.from(description).length > 350 || Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) problems.description = tg.newSpace.descriptionInvalid
       if (ownerLogin === '') problems.repo ??= tg.newSpace.ownerNone
-      gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined, ...(withAssets ? { assets: true } : {}) }
+      gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined, assets: withAssets }
     }
     setFieldError(problems)
     if (Object.keys(problems).length > 0) return

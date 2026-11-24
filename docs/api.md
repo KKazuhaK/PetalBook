@@ -7059,7 +7059,10 @@ elsewhere. The redirect has no `pending` when nothing could be kept.
 `204`. The App's details are deleted, the users' connections with them
 (GitHub is asked to revoke each grant first, best effort), and what was shared of
 the installations. `409 provider_in_use` while any space has a `github`
-credential (`message` says how many): switch or disconnect those first.
+credential (`message` says how many): switch or disconnect those first. Also
+`409 provider_in_use` while `remotes.require` of the storage settings names the
+provider (`message` says to change the requirement first), because nobody could
+meet the requirement without it.
 
 #### `GET /api/admin/connections/github/installations?cursor={cursor}`
 

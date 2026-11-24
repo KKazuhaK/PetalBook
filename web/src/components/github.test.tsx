@@ -91,7 +91,7 @@ describe('the new-space dialog', () => {
     await type(dialog()!.querySelector('textarea')!, 'Notes on Tang poetry')
     await click(button(t.spaces.create))
     await settle(() => created.length === 1, 'the space')
-    expect(JSON.parse(posts()[0].body!)).toEqual({ name: 'Tang Notes', inbox: t.inbox.folderName, storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'tang-notes', private: true, description: 'Notes on Tang poetry', create: true } } })
+    expect(JSON.parse(posts()[0].body!)).toEqual({ name: 'Tang Notes', inbox: t.inbox.folderName, storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'tang-notes', private: true, description: 'Notes on Tang poetry', create: true, assets: false } } })
     expect(created[0].sync).toBe('ok')
     await settle(() => dialog() === null, 'the dialog closing')
   })
@@ -107,6 +107,19 @@ describe('the new-space dialog', () => {
     await click(button(t.spaces.create))
     await settle(() => created.length === 1, 'the space')
     expect(JSON.parse(posts()[0].body!).storage.sync).toMatchObject({ provider: 'github', create: true, assets: true })
+  })
+
+  it('says no to an attachment repository when the box is not ticked, so the administrator\'s default never decides for the person', async () => {
+    const created = await openNewSpace('connected')
+    await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
+    await type(nameField(), 'Tang Notes')
+    await click(checkbox(tg.newSpace.whereSync('GitHub')))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await click(checkbox(ts.assets.newSpace))
+    await click(checkbox(ts.assets.newSpace))
+    await click(button(t.spaces.create))
+    await settle(() => created.length === 1, 'the space')
+    expect(JSON.parse(posts()[0].body!).storage.sync.assets).toBe(false)
   })
 
   it('checks the repository name before asking', async () => {

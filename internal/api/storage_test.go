@@ -546,3 +546,35 @@ func TestAFailedRestoreAnswersUnavailableWithRetryAfter(t *testing.T) {
 		}
 	})
 }
+
+func TestRequiringAProviderThatIsNotSetUpIsRefusedAndASetUpOneCannotBeRemovedWhileRequired(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		r := admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 409, "provider_not_configured")
+		if r.body["provider"] != "github" {
+			t.Fatal(r.raw)
+		}
+		if g := admin.do("GET", "/api/admin/storage", nil).want(t, 200, ""); g.body["remotes"].(map[string]any)["require"] != nil {
+			t.Fatal(g.raw)
+		}
+		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
+			"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 200, "")
+		d := admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 409, "provider_in_use")
+		if d.body["provider"] != "github" || !strings.Contains(d.body["message"].(string), "remotes.require") {
+			t.Fatal(d.raw)
+		}
+		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": nil}}).want(t, 200, "")
+		admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 204, "")
+	})
+}
+
+func TestATenantAdministratorCannotExemptAPersonFromTheRemoteRequirement(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		f.admB.do("PATCH", "/api/users/"+f.userB, map[string]any{"remoteExempt": true}).want(t, 403, "forbidden")
+		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"remoteExempt": true}).want(t, 200, "")
+	})
+}

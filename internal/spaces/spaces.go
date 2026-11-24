@@ -928,6 +928,9 @@ func (m *Manager) SweepStaged(ctx context.Context) (int, error) {
 		if err := os.RemoveAll(state); err != nil {
 			return n, err
 		}
+		if err := os.RemoveAll(m.assetsDir(id)); err != nil { // the attachment clone is made before the row
+			return n, err
+		}
 		os.Remove(m.stagedMark(id))
 		n++
 	}
