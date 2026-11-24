@@ -203,7 +203,9 @@ const (
 	siteBinding   = "site"
 )
 
-// appState is the App ready for use.
+// appState is the App ready for use. Once published in Service.cur it is
+// immutable: a reload builds a new one and swaps it in under mu, so a caller
+// holding one always sees a whole, consistent state.
 type appState struct {
 	rec    appRecord
 	app    *githubapp.App
@@ -231,10 +233,11 @@ func (s *Service) state(ctx context.Context) (*appState, error) {
 		}
 	}
 	s.mu.Lock()
-	// Keep the App already in use when the saved one is the same (it holds the token cache).
+	// Keep the App client already in use when the saved one is the same (it
+	// holds the token cache), but publish a new state: callers may still be
+	// reading the one they took, so a published state is never written to.
 	if st != nil && s.cur != nil && s.cur.rec.KeyEnc == st.rec.KeyEnc && s.cur.rec.AppID == st.rec.AppID {
-		s.cur.rec, s.cur.secret = st.rec, st.secret
-		st = s.cur
+		st.app, st.key = s.cur.app, s.cur.key
 	}
 	s.cur, s.curAt = st, s.opt.Now()
 	s.mu.Unlock()
