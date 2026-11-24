@@ -143,8 +143,7 @@ type SpaceDaily struct {
 
 // SpaceChoice is the external interfaces a space uses, in order, and the
 // options chosen for each (interface id, option key, values). Stored in
-// SpaceDaily.APIs as the JSON list of the ids when there are no options (the
-// first form), else as {"apis": [...], "options": {...}}.
+// SpaceDaily.APIs as {"apis": [...], "options": {...}, "sources": {...}}.
 type SpaceChoice struct {
 	APIs    []string
 	Options map[string]map[string][]string
@@ -154,24 +153,21 @@ type SpaceChoice struct {
 	Sources json.RawMessage
 }
 
+type spaceChoiceJSON struct {
+	APIs    []string                       `json:"apis"`
+	Options map[string]map[string][]string `json:"options,omitempty"`
+	Sources json.RawMessage                `json:"sources,omitempty"`
+}
+
 // ParseSpaceChoice reads what SpaceDaily.APIs holds; what cannot be read is no choice.
 func ParseSpaceChoice(raw string) SpaceChoice {
-	var c SpaceChoice
-	var ids []string
-	if json.Unmarshal([]byte(raw), &ids) == nil {
-		c.APIs = ids
-		return c
+	var obj spaceChoiceJSON
+	if json.Unmarshal([]byte(raw), &obj) != nil {
+		return SpaceChoice{}
 	}
-	var obj struct {
-		APIs    []string                       `json:"apis"`
-		Options map[string]map[string][]string `json:"options"`
-		Sources json.RawMessage                `json:"sources"`
-	}
-	if json.Unmarshal([]byte(raw), &obj) == nil {
-		c.APIs, c.Options = obj.APIs, obj.Options
-		if string(obj.Sources) != "null" {
-			c.Sources = obj.Sources
-		}
+	c := SpaceChoice{APIs: obj.APIs, Options: obj.Options}
+	if len(obj.Sources) > 0 && string(obj.Sources) != "null" {
+		c.Sources = obj.Sources
 	}
 	return c
 }
@@ -182,15 +178,7 @@ func (c SpaceChoice) JSON() string {
 	if ids == nil {
 		ids = []string{}
 	}
-	if len(c.Options) == 0 && len(c.Sources) == 0 {
-		b, _ := json.Marshal(ids)
-		return string(b)
-	}
-	b, _ := json.Marshal(struct {
-		APIs    []string                       `json:"apis"`
-		Options map[string]map[string][]string `json:"options,omitempty"`
-		Sources json.RawMessage                `json:"sources,omitempty"`
-	}{ids, c.Options, c.Sources})
+	b, _ := json.Marshal(spaceChoiceJSON{ids, c.Options, c.Sources})
 	return string(b)
 }
 
@@ -201,7 +189,7 @@ func GetSpaceDaily(ctx context.Context, q Q, spaceID string) (SpaceDaily, error)
 	var apis string
 	err := q.QueryRow(ctx, `SELECT inherit, apis FROM space_daily WHERE space_id = ?`, spaceID).Scan(&inherit, &apis)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SpaceDaily{Inherit: true, APIs: "[]"}, nil
+		return SpaceDaily{Inherit: true, APIs: `{"apis":[]}`}, nil
 	}
 	return SpaceDaily{Inherit: inherit != 0, APIs: apis}, err
 }
@@ -211,79 +199,6 @@ func SetSpaceDaily(ctx context.Context, q Q, spaceID string, d SpaceDaily) error
 	_, err := q.Exec(ctx, `INSERT INTO space_daily(space_id, inherit, apis) VALUES (?, ?, ?)
 		ON CONFLICT (space_id) DO UPDATE SET inherit = excluded.inherit, apis = excluded.apis`, spaceID, b2i(d.Inherit), d.APIs)
 	return err
-}
-
-// RenameSpaceDailyAPI makes the spaces that chose the interface from choose
-// the interface to instead, in the place it had. It reads the rows that
-// mention it (a LIKE on the JSON, then an exact check) and writes those only.
-func RenameSpaceDailyAPI(ctx context.Context, q Q, from, to string) error {
-	rows, err := q.Query(ctx, `SELECT space_id, apis FROM space_daily WHERE apis LIKE ? ESCAPE '\'`, "%"+likeEscape(from)+"%")
-	if err != nil {
-		return err
-	}
-	type change struct{ id, apis string }
-	var changes []change
-	for rows.Next() {
-		var id, apis string
-		if err := rows.Scan(&id, &apis); err != nil {
-			rows.Close()
-			return err
-		}
-		c := ParseSpaceChoice(apis)
-		out, changed, seen := make([]string, 0, len(c.APIs)), false, map[string]bool{}
-		for _, v := range c.APIs {
-			if v == from {
-				v, changed = to, true
-			}
-			if !seen[v] {
-				seen[v] = true
-				out = append(out, v)
-			}
-		}
-		if o, ok := c.Options[from]; ok {
-			opts := map[string]map[string][]string{}
-			for k, v := range c.Options {
-				opts[k] = v
-			}
-			delete(opts, from)
-			if _, taken := opts[to]; !taken {
-				opts[to] = o
-			}
-			c.Options, changed = opts, true
-		}
-		if len(c.Sources) > 0 {
-			var lists map[string][]map[string]any
-			if json.Unmarshal(c.Sources, &lists) == nil {
-				moved := false
-				for _, list := range lists {
-					for _, src := range list {
-						if src["kind"] == "api" && src["id"] == from {
-							src["id"], moved = to, true
-						}
-					}
-				}
-				if moved {
-					c.Sources, _ = json.Marshal(lists)
-					changed = true
-				}
-			}
-		}
-		if changed {
-			c.APIs = out
-			changes = append(changes, change{id, c.JSON()})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, c := range changes {
-		if _, err := q.Exec(ctx, `UPDATE space_daily SET apis = ? WHERE space_id = ?`, c.apis, c.id); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // DailyCached is one thing an external interface said.

@@ -47,9 +47,8 @@ func Canonical(s string) (string, bool) {
 	return out, true
 }
 
-// Read is a tag as saved: the canonical tag when it is one (so a value saved
-// before the rule, `zh` or `pt-br`, is read as `zh-Hans` or `pt-BR`), else
-// the text in lower case.
+// Read is a tag as written: the canonical tag when it is one (`zh` or
+// `pt-br` is read as `zh-Hans` or `pt-BR`), else the text in lower case.
 func Read(s string) string {
 	if c, ok := Canonical(s); ok {
 		return c

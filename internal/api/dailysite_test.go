@@ -105,6 +105,8 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 		// --- the settings are checked
 		for name, body := range map[string]map[string]any{
 			"an unknown key":                 {"extra": 1},
+			"hosts, which is no setting":     {"hosts": []any{}},
+			"notices, which are none":        {"notices": []any{}},
 			"a language that is none":        {"languages": []any{"cn"}},
 			"a default of nowhere":           {"default": map[string]any{"kind": "space", "space": "0000000000", "source": map[string]any{"tag": "x"}}},
 			"a default with no kind":         {"default": map[string]any{}},

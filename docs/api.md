@@ -4064,47 +4064,23 @@ protection of the network is in one place).
  "languages": ["zh-Hans", "en"],
  "apis": [ /* interfaces, below */ ],
  "providers": [ /* built-in interfaces, below */ ],
- "lines": {"total": 6, "byLang": {"zh-Hans": 3, "en": 2, "": 1}, "max": 5000},
- "notices": []}
+ "lines": {"total": 6, "byLang": {"zh-Hans": 3, "en": 2, "": 1}, "max": 5000}}
 ```
 
-`PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays)
-and answers as `GET`; `lines`, `apis` and `providers` are read-only here. A
-`hosts` field sent by an older client is ignored.
-
-`notices` are what the server changed by itself in settings an earlier
-version saved, so that nothing has to be repaired by hand; they stay until
-`PUT` is sent `{"notices": []}`. Each is `{"code", "message"}` with what it is
-about (`id`, `to`, `lang`, `field`). The settings are read part by part, so
-that one part that cannot be read (`unreadable`, logged with its value) loses
-nothing else, and the repairs are saved once, at the first read:
-
-- An interface saved by 2.3's "use preset" with the id of a built-in one
-  (`hitokoto`, `zenquotes`, `favqs`) becomes the built-in one when its address, paths and
-  link are the built-in's and it has no headers: switched on or off as it was,
-  with its `refresh`, `rps` (at most the service's limit) and `skipNew`; the
-  spaces that chose it and the default keep the id. One the administrators
-  changed stays theirs as `<id>-custom` (`builtin_renamed`, with `to`), its
-  header values sealed again for the new id, and every space's choice and the
-  default follow the new id. One whose header values cannot be sealed again
-  keeps its id (`builtin_kept`); `PUT` and `DELETE` of `…/apis/{id}` then act on
-  it before the built-in one, so it can be changed or deleted and the built-in
-  one switched on after that.
-- A code in the default that is not a language tag (`cn`, which 2.3 accepted),
-  or a second spelling of one (`zh` beside `zh-Hans`: the canonical key wins),
-  is dropped (`dropped_language`, with `lang` and `field`); the rest of the
-  default, the interfaces and their header values are kept.
+`PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays;
+any other key is `400 invalid`) and answers as `GET`; `lines`, `apis` and
+`providers` are read-only here.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "sources", "sources": {"": [ … ], "zh": [ … ]}}`, a list of sources
   for each language in order, each `{"kind": "api", "id": "hitokoto", "options":
   {…}}`, `{"kind": "list"}` (the lines; once in a list is enough) or
   `{"kind": "space", "space": id, "source": {"folder"|"tag"|"type": …}}`
-  (1 to 8 for each language; a string is the id of an interface, a single
-  source is a list of one; `400 invalid` for a source that is none, an
-  interface that is not set up or a space that is not there; a tenant's
-  default may not have `list`, and its spaces are its own). The earlier kinds
-  are lists of one, or of the interfaces they list, and are read as such. The
+  (1 to 8 for each language, always a list of source objects; `400 invalid`
+  for a source that is none, an interface that is not set up or a space that
+  is not there; a tenant's default may not have `list`, and its spaces are its
+  own). A `list`, `space` or `api` default is used as a list of one, or of the
+  interfaces it lists. The
   sources of a language take turns by day, the way the interfaces of one do
   (see "Several interfaces for a language"): the one the day starts with is
   made from the day and the scope, "another" moves to the next source that gives
@@ -4119,8 +4095,7 @@ nothing else, and the repairs are saved once, at the first read:
   its content to everybody; a client says so), or
   `{"kind": "api", "apis": {"": ["favqs", "dummyjson"], "zh": ["hitokoto"]}, "options": {"hitokoto": {"categories": ["i"]}}}`:
   the interface ids per language, in order, `""` for all languages not listed
-  (a single id written as a string is read as a list of one; 1 to 8 for each
-  language). Each must be an interface of `apis` (`400 invalid` with
+  (a list of 1 to 8 for each language). Each must be an interface of `apis` (`400 invalid` with
   `error: "api_not_found"` otherwise); `options` as for a space's choice. When
   none of the listed interfaces is enabled the daily reason is `unavailable`.
   The interface is used exactly as when a space picks it (same cache, refresh
@@ -4140,9 +4115,7 @@ nothing else, and the repairs are saved once, at the first read:
   (`zh-TW` finds `zh-Hans` when there is no `zh-Hant`), then "all languages". `GET /api/admin/daily` also returns
   `knownLanguages`: `[{"tag": "zh-Hans", "name": "中文（简体）", "english": "Chinese (Simplified)"}, …]`,
   the common languages a client offers to pick from (any valid tag may still be
-  typed). Values saved before this rule (`zh`, `pt-br`) are read as their
-  canonical tags (`zh` → `zh-Hans`, `pt-br` → `pt-BR`) and written back in
-  that form on the next save.
+  typed).
 - `allow` is what the spaces may do: `own` is whether a space may have a source
   of its own (`daily` in its `space.yml`), `api` whether it may choose an
   external interface. Both are `true` until set; `PUT` takes either or both
@@ -4278,10 +4251,8 @@ answers (with none the reason is `no_source`). `shanbay` is the interface the se
 a published API, so it may change. `iciba` labels its JSON `text/html`, which is
 accepted for it only (a flag only the program sets on a built-in interface; the
 body must still parse strictly as JSON, with the same size limit). None of
-them is in any default. A stored id that
-is no longer built in (the earlier `quotable`, whose service is gone) is an
-interface that does not exist: an interface of the administrators' own with that
-id keeps showing as such; in a default, a choice that names it gives the reason
+them is in any default. An id that names no interface (one that was
+deleted) is an interface that does not exist: in a default, a choice that names it gives the reason
 `unavailable` when read; and a space that chose it is shown nothing, with the
 reason `unavailable`: nothing else is picked in its place, not the tenant's or
 the site's default (see "Interfaces that are off or gone", below).
@@ -4486,9 +4457,6 @@ and `format`, to keep the lines as the administrators corrected them, and
 the text as `{"text", "author", "source"}` of the daily quote (below).
 
 `DELETE` removes the lines of one language. `PUT` and `DELETE` answer as `GET /api/admin/daily`.
-Lines saved by 2.3 under a code that is not a language tag (`cn`) are shown
-under that code in `byLang`, and `PUT` and `DELETE` take that code exactly as
-it is stored, so they can still be replaced or deleted.
 For a language the lines used are those of the language (matched as languages
 are everywhere), else those for any language ("all other languages"); never
 those of another language: a reader of a language with none of its own and no

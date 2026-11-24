@@ -125,7 +125,7 @@ export const opTakesValues = (op: PropFilter['op']) => op === 'in' || op === 'no
 // or pages of this space.
 export type SpaceItem = { kind: 'api'; id: string } | { kind: 'list' } | { kind: 'own'; draft: SourceDraft }
 
-// The lists as the editor holds them, by tab: a space's own `sources`, else its interfaces (the earlier shape) each
+// The lists as the editor holds them, by tab: a space's own `sources`, else its interfaces (`apis`) each
 // on the tab of the language it is made for, in the order they were chosen.
 export function listsFromPrefs(prefs: DailyPrefs | null, tabs: readonly string[]): Record<string, SpaceItem[]> {
   const out: Record<string, SpaceItem[]> = {}
@@ -150,8 +150,8 @@ export function listsFromPrefs(prefs: DailyPrefs | null, tabs: readonly string[]
   return out
 }
 
-// What to send for the lists of the tabs that take "an interface" as their source. Only interfaces: the earlier
-// shape (an ordered list of ids and their options), which every server reads; else `sources` by language.
+// What to send for the lists of the tabs that take "an interface" as their source. Only interfaces: `apis` (an
+// ordered list of ids and their options); else `sources` by language.
 export function prefsPayload(
   lists: Record<string, SpaceItem[]>,
   options: Record<string, Record<string, string[]>>,

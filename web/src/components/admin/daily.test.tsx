@@ -88,27 +88,6 @@ describe("the administrators' daily text page", () => {
     expect(document.body.textContent).toContain(d.allowApi)
   })
 
-  it('says what the server changed by itself on an upgrade, until it is dismissed', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        server.seedDailyNotices([
-          { code: 'builtin_renamed', id: 'zenquotes', to: 'zenquotes-custom', message: 'renamed' },
-          { code: 'dropped_language', lang: 'cn', field: 'source', message: 'dropped' },
-        ])
-        return ['/admin/daily']
-      },
-      signIn: true,
-      server: { mode: 'accounts' },
-    })
-    await settle(() => document.querySelector('[data-slot="daily-notices"]') !== null, 'the notices')
-    const text = document.querySelector('[data-slot="daily-notices"]')!.textContent
-    expect(text).toContain(d.noticeRenamed('zenquotes', 'zenquotes-custom'))
-    expect(text).toContain(d.noticeDropped('cn'))
-    await click(byText('button', d.noticesDismiss))
-    await settle(() => document.querySelector('[data-slot="daily-notices"]') === null, 'dismissed')
-    expect(calls().at(-1)).toEqual({ method: 'PUT', url: '/api/admin/daily', body: { notices: [] } })
-  })
-
   it('the languages are tabs: pick one from the known ones, search them, type any valid tag, take one away', async () => {
     await open()
     expect(
@@ -600,34 +579,6 @@ describe("the administrators' daily text page", () => {
       expect(r.textContent).toContain('山色空蒙雨亦奇')
       expect(r.textContent).not.toContain(d.pathError(d.fieldAuthor))
       expect(r.querySelector('.text-destructive')).toBeNull()
-    })
-
-    it('an optional path error from the server is shown as no value, and a refusal for one is no refusal', async () => {
-      const { TryResult } = await import('./DailyPanel')
-      const { createRoot } = await import('react-dom/client')
-      const host = document.createElement('div')
-      document.body.append(host)
-      const root = createRoot(host)
-      await act(async () => {
-        root.render(
-          <TryResult
-            result={{
-              ok: false,
-              status: 200,
-              error: 'path_error',
-              field: 'author',
-              message: 'no text or number at from_who',
-              quote: { text: 'x' },
-              pathErrors: [{ field: 'author', code: 'path_error', message: 'no text or number at from_who' }],
-            }}
-          />,
-        )
-      })
-      expect(host.textContent).toContain(d.tryOk(200))
-      expect(host.textContent).not.toContain(d.pathError(d.fieldAuthor))
-      expect(host.querySelector('.text-destructive')).toBeNull()
-      await act(async () => root.unmount())
-      host.remove()
     })
 
     it('marks what is required with a star and aria-required, and what is optional in words', async () => {

@@ -22,7 +22,6 @@ import type {
   DailyOptionChoice,
   DailySource,
   DailySourceItem,
-  DailyNotice,
   DailySettings,
   DailyTryResult,
   KnownLanguage,
@@ -77,50 +76,12 @@ export function DailyPanel() {
   return (
     <div className="min-w-0 space-y-10" data-slot="admin-daily">
       <p className="text-sm break-words text-muted-foreground">{d.help}</p>
-      <NoticesSection data={data} />
       <AllowSection data={data} />
       <LanguagesSection data={data} />
       <DefaultSection data={data} />
       <LinesSection data={data} />
       <BuiltinSection data={data} />
       <ApisSection data={data} />
-    </div>
-  )
-}
-
-// What the server changed by itself in settings an earlier version saved, until an administrator dismisses it.
-const noticeText = (n: DailyNotice) => {
-  switch (n.code) {
-    case 'builtin_renamed':
-      return d.noticeRenamed(n.id ?? '', n.to ?? '')
-    case 'builtin_kept':
-      return d.noticeKept(n.id ?? '')
-    case 'dropped_language':
-      return d.noticeDropped(n.lang ?? '')
-  }
-  return n.message
-}
-
-function NoticesSection({ data }: { data: AdminDaily }) {
-  const save = useSaveDailySite()
-  const notices = data.notices ?? []
-  if (notices.length === 0) return null
-  return (
-    <div role="status" data-slot="daily-notices" className="min-w-0 space-y-2 rounded-md border p-4 text-sm">
-      <p className="font-medium">{d.noticesTitle}</p>
-      <ul className="list-disc space-y-1 ps-5 break-words">
-        {notices.map((n, i) => (
-          <li key={i}>{noticeText(n)}</li>
-        ))}
-      </ul>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={save.isPending}
-        onClick={() => save.mutate({ notices: [] }, { onError: (e) => void toast.error(message(e)) })}
-      >
-        {d.noticesDismiss}
-      </Button>
     </div>
   )
 }
@@ -402,7 +363,7 @@ function DefaultSection({ data }: { data: AdminDaily }) {
       if (all.some((i) => i.kind === 'space' && (i.space === '' || i.draft.value === '')))
         return setError(d.defaultSpaceIncomplete)
       if (all.every((i) => i.kind === 'api')) {
-        // Interfaces only: as the earlier shape, which every server reads.
+        // Interfaces only: a default of kind `api`.
         const used = new Set(all.map((i) => (i.kind === 'api' ? i.id : '')))
         const kept = Object.fromEntries(Object.entries(options).filter(([id]) => used.has(id)))
         value = {
@@ -1316,10 +1277,6 @@ function ApiEditor({
   )
 }
 
-// A source, an author and a link are optional: a path that finds nothing there is no value, not a problem. Only the
-// text is required, and a path that would show a secret is always one.
-const optionalGap = (e: { field: string; code: string }) => e.field !== 'text' && e.code === 'path_error'
-
 // What the interface answered, as it came and as the paths read it; a path that found nothing in the text says so.
 export function TryResult({ result }: { result: DailyTryResult }) {
   const q = result.quote
@@ -1329,11 +1286,8 @@ export function TryResult({ result }: { result: DailyTryResult }) {
     [d.fieldAuthor, q?.author, 'author'],
     [d.fieldLink, q?.link, 'link'],
   ]
-  const errors = (result.pathErrors ?? []).filter((e) => !optionalGap(e))
-  // The refusal of a trial with only such gaps (an older server) is no refusal.
-  const gapOnly =
-    !result.ok && result.error === 'path_error' && result.field !== 'text' && errors.length === 0 && !!q?.text
-  const ok = result.ok || gapOnly
+  const errors = result.pathErrors ?? []
+  const ok = result.ok
   return (
     <div className="grid min-w-0 grid-cols-1 gap-2 text-sm" data-slot="try-result" role="status">
       <p className={`break-words ${ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}`}>

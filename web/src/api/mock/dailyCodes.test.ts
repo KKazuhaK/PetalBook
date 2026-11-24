@@ -140,10 +140,14 @@ describe('the mock gives the stable codes', () => {
       body: { error: 'api_not_found' },
     })
     expect(
-      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: ['quotes'], '': 'quotes' } } }),
+      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: ['quotes'], '': ['quotes'] } } }),
     ).toMatchObject({
       status: 200,
       body: { default: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['quotes'] } } },
+    })
+    // A single id is no list.
+    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': 'quotes' } } })).toMatchObject({
+      status: 400,
     })
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
     const daily = (lang: string) =>

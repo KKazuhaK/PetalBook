@@ -3536,6 +3536,7 @@ function suite(target: Target) {
           const empty = await adm('GET', '')
           expect(empty.status).toBe(200)
           expect(empty.json.hosts).toBeUndefined()
+          expect(empty.json.notices).toBeUndefined()
           expect(empty.json).toMatchObject({
             providers: expect.any(Array),
             knownLanguages: expect.any(Array),
@@ -3545,7 +3546,10 @@ function suite(target: Target) {
           // Bad requests.
           for (const [what, method, path, body] of [
             ['an unknown key', 'PUT', '', { extra: 1 }],
+            ['hosts, which is no setting', 'PUT', '', { hosts: [] }],
+            ['notices, which are none', 'PUT', '', { notices: [] }],
             ['a default with no kind', 'PUT', '', { default: {} }],
+            ['a single id where a list goes', 'PUT', '', { default: { kind: 'sources', sources: { '': 'x' } } }],
             ['a bad language', 'PUT', '/lines', { lang: 'chinese!', text: 'x' }],
             ['no text', 'PUT', '/lines', { lang: 'en', text: ' \n ' }],
             ['a bad format', 'PUT', '/lines', { lang: 'en', text: 'x', format: 'html' }],
