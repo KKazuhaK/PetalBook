@@ -230,6 +230,36 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, dormant: 1})
 		consistent(t, st)
 
+		// A connection to a 3.8 provider counts the same, and so does losing it,
+		// by the connection, by the provider's deletion and by the recount.
+		for _, id := range []string{"gl", "gl2"} {
+			if err := store.InsertConnProviderRow(ctx, q, store.ConnProviderRow{ID: id, Type: "gitlab", Host: id + ".example.com", Scheme: "https", Name: id, Owner: store.ConnProviderSite,
+				State: "ok", Created: now, Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := store.PutProviderAuthorization(ctx, q, store.ProviderAuthorization{Provider: "gl", UserID: "Ub", AccountID: "7", Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
+		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
+		consistent(t, st)
+		if err := store.DeleteProviderAuthorization(ctx, q, "gl", "Ub"); err != nil {
+			t.Fatal(err)
+		}
+		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
+		consistent(t, st)
+		if err := store.PutProviderAuthorization(ctx, q, store.ProviderAuthorization{Provider: "gl2", UserID: "Ub", AccountID: "8", Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
+		if err := store.DeleteConnProviderRow(ctx, q, "gl2"); err != nil {
+			t.Fatal(err)
+		}
+		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
+		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, dormant: 1})
+		consistent(t, st)
+
 		// A space that follows a remote is not dormant either, and is dormant again without it.
 		if err := store.AddMember(ctx, q, "Sb", "Ub", "owner", now); err != nil {
 			t.Fatal(err)

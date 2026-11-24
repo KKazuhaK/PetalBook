@@ -780,7 +780,7 @@ func recountUsage(ctx context.Context, q Q) (int, error) {
 	// Every person and every tenant has a row, with the people counted, and
 	// what a person is (connected, dormant) worked out again.
 	rows, err = q.Query(ctx, `SELECT tenant_id, id, CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END, created, COALESCE(last_active, 0),
-		CASE WHEN first_write IS NULL THEN 0 ELSE 1 END, CASE WHEN EXISTS (SELECT 1 FROM github_authorizations a WHERE a.user_id = users.id) THEN 1 ELSE 0 END FROM users`)
+		CASE WHEN first_write IS NULL THEN 0 ELSE 1 END, CASE WHEN `+hasConnectionSQL("users.id")+` THEN 1 ELSE 0 END FROM users`)
 	if err != nil {
 		return 0, err
 	}

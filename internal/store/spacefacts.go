@@ -177,13 +177,19 @@ func (s *Store) NoteWrite(ctx context.Context, userID string, at time.Time) erro
 	return nil
 }
 
+// hasConnectionSQL is the condition that a person has a connection: a GitHub
+// authorization or one of any provider of 2.7b. id is the SQL of their id.
+func hasConnectionSQL(id string) string {
+	return `(EXISTS (SELECT 1 FROM github_authorizations ga WHERE ga.user_id = ` + id + `) OR EXISTS (SELECT 1 FROM provider_authorizations pa WHERE pa.user_id = ` + id + `))`
+}
+
 // settleConnected makes the person's usage row say whether they have a
 // connection (a GitHub authorization, any provider of 2.7b), and the tenant's
 // count with it. Call it in the transaction that adds or removes a connection.
 func settleConnected(ctx context.Context, q Q, userID string) error {
 	var tenant string
 	var have, want int64
-	err := q.QueryRow(ctx, `SELECT u.tenant_id, u.connected, CASE WHEN EXISTS (SELECT 1 FROM github_authorizations a WHERE a.user_id = u.id) THEN 1 ELSE 0 END
+	err := q.QueryRow(ctx, `SELECT u.tenant_id, u.connected, CASE WHEN `+hasConnectionSQL("u.id")+` THEN 1 ELSE 0 END
 		FROM usage u WHERE u.kind = 'user' AND u.id = ?`, userID).Scan(&tenant, &have, &want)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && have == want) {
 		return nil
