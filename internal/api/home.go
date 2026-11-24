@@ -119,8 +119,6 @@ func (s *server) getDaily(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "tz is minutes east of UTC, from -840 to 840")
 		return
 	}
-	now := s.opt.DailyFetch.Now()
-	day := maxAgeFor(date, tz, now)
 	type none struct {
 		Page   *dailyPageResp `json:"page"`
 		Reason string         `json:"reason"`
@@ -157,11 +155,11 @@ func (s *server) getDaily(c *call) {
 			Page   *dailyPageResp `json:"page"`
 			Count  int            `json:"count"`
 			Origin string         `json:"origin"`
-		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated, pick.Author}, pick.Count, "space"}, day)
+		}{&dailyPageResp{toSummary(pick.Page, c.sp.Space.TypeResolver()), pick.Body, pick.Truncated, pick.Author}, pick.Count, "space"})
 		return
 	}
 	if why == space.DailyNoMatch {
-		s.writeDaily(c, none{nil, "no_match"}, 60)
+		s.writeDaily(c, none{nil, "no_match"})
 		return
 	}
 	// 2 and 3. What the administrators gave (accounts mode only).
@@ -176,28 +174,28 @@ func (s *server) getDaily(c *call) {
 			s.fail(c.w, err)
 			return
 		case q != nil:
-			age := day
-			if !q.expires.IsZero() {
-				age = clampAge(int(q.expires.Sub(now) / time.Second))
-			}
 			s.writeDaily(c, struct {
 				Page   *dailyPageResp `json:"page"`
 				Quote  *dailyQuote    `json:"quote"`
 				Origin string         `json:"origin"`
-			}{nil, q, q.origin}, age)
+			}{nil, q, q.origin})
 			return
 		case reason != "":
-			s.writeDaily(c, none{nil, reason}, 60)
+			s.writeDaily(c, none{nil, reason})
 			return
 		}
 	}
-	s.writeDaily(c, none{nil, "no_source"}, 60)
+	s.writeDaily(c, none{nil, "no_source"})
 }
 
-// writeDaily answers a request for the daily text: a browser may keep it for
-// maxAge seconds (it is the person's own to keep: private), and a request that
-// carries the ETag of what would be sent gets 304.
-func (s *server) writeDaily(c *call, v any, maxAge int) {
+// writeDaily answers a request for the daily text. A browser keeps it (it is
+// the person's own: private) but asks again every time (no-cache): what the
+// administrators chose can change at any moment, and a text kept until the
+// end of the day would go on showing the old choice. The ETag makes asking
+// cheap: a request that carries the ETag of what would be sent gets a 304
+// without a body, and the answer itself is cheap because the server keeps
+// each period's text.
+func (s *server) writeDaily(c *call, v any) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -209,7 +207,7 @@ func (s *server) writeDaily(c *call, v any, maxAge int) {
 	etag := `"` + hex.EncodeToString(sum[:12]) + `"`
 	h := c.w.Header()
 	h.Set("ETag", etag)
-	h.Set("Cache-Control", "private, max-age="+strconv.Itoa(maxAge))
+	h.Set("Cache-Control", "private, no-cache")
 	if match := c.r.Header.Get("If-None-Match"); match != "" {
 		for _, m := range strings.Split(match, ",") {
 			if strings.TrimPrefix(strings.TrimSpace(m), "W/") == etag {

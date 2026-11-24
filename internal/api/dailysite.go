@@ -11,7 +11,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
@@ -193,9 +192,6 @@ type dailyQuote struct {
 	Fetched string `json:"fetched,omitempty"`
 	Stale   bool   `json:"stale,omitempty"`
 	origin  string
-	// expires is when what was answered stops being the same, zero when it is
-	// the end of the day asked for.
-	expires time.Time
 }
 
 // linesByLang groups what the table counts by canonical language tag (lines

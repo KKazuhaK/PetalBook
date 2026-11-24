@@ -3875,12 +3875,12 @@ only affects what the asker is shown; `lang` is the language of the interface
 (`zh`, `en`, `zh-CN`; left out, no language); `tz` is the browser's offset in
 minutes east of UTC (`-480` for UTC-8, from -840 to 840).
 
-The answer carries `Cache-Control: private, max-age=N` and an `ETag`, and a
-request with a matching `If-None-Match` gets `304`. `N` is how long it stays the same:
-until the end of `date` where the browser is (from `tz`; `300` when `tz` is
-left out), until the end of the refresh period for an interface that
-refreshes by the hour or the minute, at least 60 and at most 86 400 seconds, and
-60 for an answer with nothing to show or a text that is `stale`.
+The answer carries `Cache-Control: private, no-cache` and an `ETag`, and a
+request with a matching `If-None-Match` gets `304` with no body. A browser
+keeps the answer but asks again every time, so a change to what the
+administrators or the space chose (sources, languages, providers) shows at
+once and not at the end of the day. Asking is cheap: the answer for a period
+is kept by the server, and one that has not changed is a `304`.
 
 From the space's own source (and that is also how a page of this space is
 returned):

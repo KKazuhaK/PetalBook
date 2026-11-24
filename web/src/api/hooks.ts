@@ -1497,8 +1497,9 @@ export function dayOf(now: Date): { date: string; tz: number } {
   }
 }
 
-// The text of the day. `skip` is "another one", and only this browser sees it. The server says how long the answer
-// stays the same, so asking again within the day costs nothing; the last text stays on screen while another is read.
+// The text of the day. `skip` is "another one", and only this browser sees it. The server has the browser ask every
+// time (an unchanged answer is a 304), so only a short staleTime is kept here, and saving daily settings
+// invalidates it; the last text stays on screen while another is read.
 export function useDaily(date: string, tz: number, skip: number, lang: string, enabled = true) {
   const space = useSpaceId()
   const { read } = useSpacePermissions()
