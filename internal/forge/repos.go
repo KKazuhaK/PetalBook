@@ -82,6 +82,14 @@ func (p *Provider) pageOf(cursor string) (int, error) {
 	return n, nil
 }
 
+// checkQ bounds a search text: it is passed on to the host.
+func (p *Provider) checkQ(q string) error {
+	if len(q) > 100 || strings.ContainsAny(q, "\x00\r\n") {
+		return p.errf(http.StatusBadRequest, connections.CodeInvalid, "q is at most 100 characters on one line")
+	}
+	return nil
+}
+
 func nextCursor(next int) string {
 	if next <= 0 {
 		return ""
@@ -99,6 +107,9 @@ func (p *Provider) Owners(ctx context.Context, userID, cursor string) ([]connect
 func (p *Provider) OwnersQ(ctx context.Context, userID, cursor, q string) ([]connections.Owner, string, error) {
 	row, tok, err := p.ready(ctx, userID)
 	if err != nil {
+		return nil, "", err
+	}
+	if err := p.checkQ(q); err != nil {
 		return nil, "", err
 	}
 	page, err := p.pageOf(cursor)
@@ -131,6 +142,9 @@ func (p *Provider) Repos(ctx context.Context, userID string, q connections.RepoQ
 	}
 	page, err := p.pageOf(q.Cursor)
 	if err != nil {
+		return nil, "", err
+	}
+	if err := p.checkQ(q.Q); err != nil {
 		return nil, "", err
 	}
 	list, next, err := p.d.repos(ctx, p.c, tok, page, strings.TrimSpace(q.Q))

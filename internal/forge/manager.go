@@ -515,6 +515,10 @@ func (m *Manager) RunRenew(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		// A host another process of this database set up appears here too.
+		if err := m.Reload(ctx); err != nil {
+			m.log.Warn("could not look for providers set up elsewhere", "error", err)
+		}
 		m.mu.Lock()
 		list := make([]*Provider, 0, len(m.provs))
 		for _, p := range m.provs {

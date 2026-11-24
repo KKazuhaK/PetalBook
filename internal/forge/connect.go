@@ -106,6 +106,9 @@ func (p *Provider) CompleteConnect(ctx context.Context, binding, userID string, 
 		p.m.log.Warn("could not read the account", "provider", p.id, "reason", reason(err))
 		return fail(cbError)
 	}
+	if r.PlatformVersion == "" {
+		p.learnVersion(ctx, tok.Access)
+	}
 	now := p.m.opt.Now()
 	db := p.m.opt.Store.Q()
 	if prev, err := store.GetProviderAuthorization(ctx, db, p.id, userID); err == nil && prev.AccountID != acct.ID {
@@ -444,3 +447,20 @@ func (p *Provider) RenewDue(ctx context.Context) int {
 
 // Attempts is how many authorisations are in progress (tests).
 func (p *Provider) Attempts() int { return p.attempts.len() }
+
+// learnVersion reads, with a person's token, the version of a host that does not
+// say it to anyone signed out, and keeps it. A version that cannot do what this
+// server needs (PKCE) leaves the provider not set up until an administrator has
+// seen to it.
+func (p *Provider) learnVersion(ctx context.Context, access string) {
+	v, err := p.d.version(ctx, p.c, access)
+	if err != nil || v == "" {
+		return
+	}
+	state := stateOK
+	if !p.d.minVersion(v) {
+		state = stateError
+		p.m.log.Warn("a host is older than this server supports", "provider", p.id, "version", sanitize(v))
+	}
+	p.setState(ctx, state, v, p.m.opt.Now())
+}

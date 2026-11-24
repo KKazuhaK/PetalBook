@@ -58,6 +58,9 @@ type driver interface {
 	// does not say without one.
 	probe(ctx context.Context, c *client) (version string, err error)
 	minVersion(v string) bool
+	// version reads the host's version with a person's token, for a platform that
+	// does not say it to anyone signed out; "" when probe already says it.
+	version(ctx context.Context, c *client, tok string) (string, error)
 	// refreshExpires is when a refresh token ends, zero when it never does or the
 	// host does not say.
 	refreshExpires(refresh string, now time.Time) time.Time

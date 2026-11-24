@@ -62,6 +62,16 @@ func (gitlab) minVersion(v string) bool {
 	return ok && major >= 15 // PKCE and expiring tokens by default
 }
 
+func (gitlab) version(ctx context.Context, c *client, tok string) (string, error) {
+	var out struct {
+		Version string `json:"version"`
+	}
+	if _, err := c.do(ctx, request{method: http.MethodGet, path: "/api/v4/version", bearer: tok, kind: "version"}, &out); err != nil {
+		return "", err
+	}
+	return out.Version, nil
+}
+
 type glUser struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`

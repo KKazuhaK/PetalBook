@@ -1334,3 +1334,79 @@ func TestATenantsProviderIsNobodyElses(t *testing.T) {
 }
 
 var _ = json.Marshal
+
+func TestAHostThatHidesItsVersionIsReadAfterTheFirstConnection(t *testing.T) {
+	each(t, func(t *testing.T, h *harness) {
+		p := h.add("main").(*forge.Provider)
+		version := func() string {
+			v, err := p.AdminView(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(v)
+			var m map[string]any
+			_ = json.Unmarshal(raw, &m)
+			return m["version"].(string)
+		}
+		want := h.f.Version
+		if h.kind == "gitlab" {
+			// GitLab says its version to the signed-in only.
+			if v := version(); v != "" {
+				t.Fatalf("%q before anyone connected", v)
+			}
+		} else if version() != want {
+			t.Fatalf("%q", version())
+		}
+		h.user("U1", "tang")
+		h.f.AddUser("tang-h")
+		h.connect(p, "U1", "tang-h")
+		if v := version(); v != want {
+			t.Fatalf("version %q after connecting, want %q", v, want)
+		}
+		// A host that was upgraded the wrong way (or is older than first thought) stops being usable.
+		if h.kind == "gitlab" {
+			h.user("U2", "wu")
+			h.f.AddUser("wu-h")
+			h.f.Version = "14.0.1"
+			row, _ := store.GetConnProviderRow(ctx, h.st.Q(), "main")
+			row.PlatformVersion = ""
+			_ = store.UpdateConnProviderRow(ctx, h.st.Q(), *row)
+			p2 := h.reloaded()
+			h.connect(p2, "U2", "wu-h")
+			if in, _ := p2.Info(ctx, "U2"); in.Configured {
+				t.Fatal("a version without PKCE is configured")
+			}
+		}
+	})
+}
+
+// reloaded is the provider as a restarted server has it.
+func (h *harness) reloaded() connections.Provider {
+	h.t.Helper()
+	reg := connections.NewRegistry(connections.NewGit())
+	opt := h.opt
+	opt.Registry = reg
+	if _, err := forge.NewManager(ctx, opt); err != nil {
+		h.t.Fatal(err)
+	}
+	p, ok := reg.Get("main")
+	if !ok {
+		h.t.Fatal("not back")
+	}
+	return p
+}
+
+func TestASearchTextIsBounded(t *testing.T) {
+	each(t, func(t *testing.T, h *harness) {
+		p := h.add("main").(*forge.Provider)
+		h.user("U1", "tang")
+		h.f.AddUser("tang-h")
+		h.connect(p, "U1", "tang-h")
+		for _, q := range []string{strings.Repeat("a", 101), "a\nb"} {
+			_, _, err := p.OwnersQ(ctx, "U1", "", q)
+			wantCode(t, err, 400, "invalid")
+			_, _, err = p.Repos(ctx, "U1", connections.RepoQuery{Q: q})
+			wantCode(t, err, 400, "invalid")
+		}
+	})
+}

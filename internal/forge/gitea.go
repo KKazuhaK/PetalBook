@@ -81,6 +81,8 @@ func (gitea) refreshExpires(refresh string, now time.Time) time.Time {
 	return t
 }
 
+func (gitea) version(context.Context, *client, string) (string, error) { return "", nil }
+
 func (gitea) user(ctx context.Context, c *client, tok string) (*account, error) {
 	var u struct {
 		ID    int64  `json:"id"`
