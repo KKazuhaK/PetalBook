@@ -176,6 +176,15 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 		if q := r.resp.Header.Get("Location"); !strings.Contains(q, url.QueryEscape(testPublic+"/api/auth/oidc/one/callback")) {
 			t.Fatalf("redirect uri: %s", q)
 		}
+		// The page of someone coming back passes the address as login_hint; a hint that is not one line is dropped.
+		r = c.do("GET", "/api/auth/oidc/one/start?login_hint="+url.QueryEscape("a+b@example.test"), nil)
+		if loc, err := url.Parse(r.resp.Header.Get("Location")); err != nil || r.code != 303 || loc.Query().Get("login_hint") != "a+b@example.test" {
+			t.Fatalf("%d %s", r.code, r.resp.Header.Get("Location"))
+		}
+		r = c.do("GET", "/api/auth/oidc/one/start?login_hint="+url.QueryEscape("a\nb"), nil)
+		if loc, err := url.Parse(r.resp.Header.Get("Location")); err != nil || r.code != 303 || loc.Query().Has("login_hint") {
+			t.Fatalf("%d %s", r.code, r.resp.Header.Get("Location"))
+		}
 		// Unknown and disabled providers go back to the sign-in page.
 		for _, p := range []string{"/api/auth/oidc/nope/start", "/api/auth/saml/one/start"} {
 			r := c.do("GET", p, nil)

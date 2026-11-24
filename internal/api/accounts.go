@@ -140,11 +140,14 @@ func (s *server) getSession(c *call) {
 		} `json:"oidc"`
 	}
 	out := struct {
-		Mode    string    `json:"mode"`
-		User    *userResp `json:"user"`
-		Setup   bool      `json:"setup"`
-		Hold    *string   `json:"hold"`
-		Methods *methods  `json:"methods,omitempty"`
+		Mode  string    `json:"mode"`
+		User  *userResp `json:"user"`
+		Setup bool      `json:"setup"`
+		Hold  *string   `json:"hold"`
+		// EndedReason is why the session of the request's cookie ended, for a visitor
+		// who is not signed in because of it; absent otherwise.
+		EndedReason string   `json:"endedReason,omitempty"`
+		Methods     *methods `json:"methods,omitempty"`
 		// Token is the API token the request was made with; null for a session.
 		Token *struct {
 			ID     string   `json:"id"`
@@ -171,6 +174,9 @@ func (s *server) getSession(c *call) {
 	}
 	if !s.single {
 		out.Mode = "accounts"
+		if c.p == nil {
+			out.EndedReason = c.ended
+		}
 		setup, err := s.auth.SetupOpen(c.r.Context())
 		if err != nil {
 			s.fail(c.w, err)

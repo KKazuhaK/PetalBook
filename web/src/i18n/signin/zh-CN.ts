@@ -17,6 +17,18 @@ export const signinZhCN = {
     loadFailed: '无法读取登录方式',
     ssoRetry: '重新登录',
   },
+  // Coming back after a session ended (docs/api.md, "Why a session ended").
+  ended: {
+    expired: '登录已过期，请重新登录',
+    signed_out_elsewhere: '你已在其他设备上退出登录',
+    password_changed: '密码已修改，请用新密码登录',
+    disabled: '你的账号已被停用，请联系管理员',
+    otherAccount: '使用其他账号',
+    backToSignIn: '返回登录页',
+    continueWith: (name: string) => `通过 ${name} 继续`,
+    accountLabel: '上次登录的账号',
+    passkeyHint: '用 passkey 继续登录',
+  },
   // The sentence for each `?sso_error=` code.
   ssoErrors: {
     provider_unavailable: '这个登录方式现在不可用：它被停用了，或服务器连不上它。请稍后再试或联系管理员。',

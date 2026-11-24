@@ -33,6 +33,8 @@ var scopeAllowlist = map[string]string{
 	"TrimAudit":                  "background job: the audit log of every tenant",
 	"NextSpaceToMeasure":         "background job: the space measured longest ago, of any tenant",
 	"DisabledSpaces":             "the server's set of disabled space ids, which is checked by id",
+	"EndTenantSessions":          "a site administrator disabling a tenant: the tenant is the one named, its people's sessions end",
+	"DeleteTenantSessionEnds":    "a site administrator enabling a tenant again: the tenant is the one named",
 	// --- rows reached through a row that was already found in scope --------------
 	"SpaceOwner":              "a space already opened by the caller",
 	"ListMembers":             "members of a space already opened by the caller",

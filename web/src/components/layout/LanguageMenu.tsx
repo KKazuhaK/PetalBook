@@ -33,10 +33,12 @@ export function LanguageRadioItems() {
 
 // A button for the sidebar footer, next to the theme toggle. Single-user mode
 // has no account menu, so this is where the language is changed there.
-export function LanguageToggle() {
+export function LanguageToggle({ className }: { className?: string }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={t.language.label} />}>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon" className={className} aria-label={t.language.label} />}
+      >
         <Languages className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-36">

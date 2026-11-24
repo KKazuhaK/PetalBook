@@ -15,6 +15,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { ErrorState, PageFallback } from '@/components/common'
 import { FolderList, RecentList, SearchList, TagList } from '@/pages/Lists'
 import { NotFoundPage } from '@/pages/NotFoundPage'
+import { RememberAccount } from '@/components/auth/RememberAccount'
 import { loginUrl } from '@/lib/auth'
 import { t } from '@/i18n'
 
@@ -172,8 +173,9 @@ export default function App() {
   // The first 401 (the client reports it once) marks the session as gone.
   useEffect(
     () =>
-      onSignedOut(() => {
-        queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, user: null })
+      onSignedOut((endedReason) => {
+        // The sign-in page says why from the session it is given.
+        queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, user: null, endedReason })
       }),
     [],
   )
@@ -205,6 +207,7 @@ export default function App() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
+          <RememberAccount />
           <RouterProvider router={router} />
           <Toaster position="bottom-right" />
         </TooltipProvider>

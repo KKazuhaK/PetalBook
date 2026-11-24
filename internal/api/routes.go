@@ -75,6 +75,9 @@ type call struct {
 	p *auth.Principal
 	// sp is the space of {space} on member routes.
 	sp *spaces.Handle
+	// ended is why the session of the request's cookie ended, on a public
+	// route reached with such a cookie ("" otherwise).
+	ended string
 }
 
 func (c *call) user() store.User { return c.p.User }
@@ -360,6 +363,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 					s.fail(w, err)
 					return
 				}
+				c.ended = ae.Reason
 			default:
 				s.fail(w, err)
 				return
