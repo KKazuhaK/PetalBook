@@ -550,17 +550,27 @@ func TestAnExportOfTheSiteIsNeverSeenByATenantAdministrator(t *testing.T) {
 // gone, and the purge is audited when it is over.
 func TestAnEarlyPurgeRunsInTheBackground(t *testing.T) {
 	t.Parallel()
-	held, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
+	// Each database's server has a hook of its own (the subtests may run at
+	// once), found by its data directory.
+	type pause struct{ held, release chan struct{} }
+	var pauses sync.Map
 	opts := accOpts{spaces: func(o *spaces.Options) {
+		p := pause{make(chan struct{}), make(chan struct{})}
+		pauses.Store(o.DataDir, p)
+		var once sync.Once
 		o.RecycleHook = func(s string) error {
 			if s == "purge:marked" {
-				once.Do(func() { close(held); <-release })
+				once.Do(func() { close(p.held); <-p.release })
 			}
 			return nil
 		}
 	}}
 	eachAccounts(t, opts, func(t *testing.T, a *acc) {
+		v, ok := pauses.Load(a.mgr.DataDir())
+		if !ok {
+			t.Fatal("no hook for this server")
+		}
+		held, release := v.(pause).held, v.(pause).release
 		admin := a.setup("kazuha", pw)
 		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Big"}).want(t, 201, "").body["id"].(string)
 		item := admin.do("DELETE", "/api/admin/spaces/"+sid, nil).want(t, 200, "").body["id"].(string)
