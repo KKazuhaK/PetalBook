@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 )
 
 // gitlab is gitlab.com and self-hosted GitLab (REST API v4, OAuth 2 with PKCE).
@@ -22,7 +24,7 @@ func (gitlab) typ() string                                { return "gitlab" }
 func (gitlab) scopes() []string                           { return []string{"api"} }
 func (gitlab) tokenPath() string                          { return "/oauth/token" }
 func (gitlab) revokePath() string                         { return "/oauth/revoke" }
-func (gitlab) gitUser() string                            { return "oauth2" }
+func (gitlab) gitUser() string                            { return connections.GitUsernameForType("gitlab") }
 func (gitlab) maxOwnerDepth() int                         { return 20 }
 func (gitlab) refreshExpires(string, time.Time) time.Time { return time.Time{} } // GitLab's refresh tokens do not expire
 

@@ -559,6 +559,8 @@ export interface Connection {
   refreshExpires?: string
   // How many spaces sync through this connection.
   spaces: number
+  // The host said the account is an administrator of the host (Gitea, Forgejo): the token carries those rights.
+  admin?: boolean
 }
 
 export interface ProviderCapabilities {

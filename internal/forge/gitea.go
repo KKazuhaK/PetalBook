@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/connections"
 )
 
 // gitea is Gitea and Forgejo, Codeberg included (codeberg.org runs Forgejo):
@@ -24,7 +26,7 @@ func (gitea) typ() string        { return "gitea" }
 func (gitea) scopes() []string   { return nil }
 func (gitea) tokenPath() string  { return "/login/oauth/access_token" }
 func (gitea) revokePath() string { return "" } // Gitea has no token revocation endpoint; people revoke the application in their settings
-func (gitea) gitUser() string    { return "oauth2" }
+func (gitea) gitUser() string    { return connections.GitUsernameForType("gitea") }
 func (gitea) maxOwnerDepth() int { return 1 }
 
 func (gitea) authorizeURL(base, clientID, redirect, state, challenge string) string {
@@ -85,8 +87,9 @@ func (gitea) version(context.Context, *client, string) (string, error) { return 
 
 func (gitea) user(ctx context.Context, c *client, tok string) (*account, error) {
 	var u struct {
-		ID    int64  `json:"id"`
-		Login string `json:"login"`
+		ID      int64  `json:"id"`
+		Login   string `json:"login"`
+		IsAdmin bool   `json:"is_admin"`
 	}
 	if _, err := c.do(ctx, request{method: http.MethodGet, path: "/api/v1/user", bearer: tok, kind: "user"}, &u); err != nil {
 		return nil, err
@@ -94,7 +97,7 @@ func (gitea) user(ctx context.Context, c *client, tok string) (*account, error) 
 	if u.ID == 0 || u.Login == "" {
 		return nil, errNotThisPlatform
 	}
-	return &account{ID: idString(u.ID), Login: u.Login}, nil
+	return &account{ID: idString(u.ID), Login: u.Login, Admin: u.IsAdmin}, nil
 }
 
 // owners lists the organisations the person has a team in that may create

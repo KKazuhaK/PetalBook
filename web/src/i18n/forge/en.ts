@@ -25,6 +25,9 @@ export const forgeEn = {
     usedByHelp: 'Spaces that sync through your connection.',
     expiredBody: (name: string) =>
       `${name} no longer accepts it (it expired or was revoked). Spaces that sync through it can still be read; changes wait, and drafts are kept, until you connect again.`,
+    adminTitle: 'This account is an administrator',
+    adminBody: (name: string) =>
+      `Your account is an administrator of ${name}, so the token this server holds for you carries administrator rights there, not only the rights of an ordinary account. Anyone who can use this server’s stored tokens could use them. Connect with an ordinary account if you can.`,
     disconnectTitle: (name: string) => `Disconnect ${name}?`,
     disconnectNone: (name: string) =>
       `No space syncs through this connection. The server also asks ${name} to revoke it, where ${name} allows that.`,

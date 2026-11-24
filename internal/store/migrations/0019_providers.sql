@@ -33,7 +33,9 @@ CREATE UNIQUE INDEX providers_owner_host ON providers(owner, host);
 
 -- A person's connection to an account on a provider's host. Tokens are sealed
 -- separately (access, refresh). One account on a host links to one user, and
--- a user has one connection per provider.
+-- a user has one connection per provider. is_admin is 1 when the host said, when
+-- the person connected, that the account is an administrator of the host (Gitea
+-- and Forgejo say it): the token then carries those rights.
 CREATE TABLE provider_authorizations (
   provider        TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
   user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -45,6 +47,7 @@ CREATE TABLE provider_authorizations (
   refresh_expires BIGINT NOT NULL DEFAULT 0,
   state           TEXT NOT NULL DEFAULT 'ok',
   version         BIGINT NOT NULL DEFAULT 1,
+  is_admin        BIGINT NOT NULL DEFAULT 0,
   connected       BIGINT NOT NULL,
   updated         BIGINT NOT NULL,
   PRIMARY KEY (provider, user_id),

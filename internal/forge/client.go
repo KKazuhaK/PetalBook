@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 )
@@ -69,7 +70,7 @@ type StatusError struct {
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("%s: %s: %d %s", e.Method, e.Kind, e.Status, e.Message)
+	return fmt.Sprintf("%s: %s: %d %s", e.Method, e.Kind, e.Status, quote(e.Message))
 }
 
 // RetryAfter is how long until a rate limit ends, at least one second.
@@ -98,9 +99,9 @@ type OAuthError struct{ Code, Description string }
 
 func (e *OAuthError) Error() string {
 	if e.Description != "" {
-		return "oauth: " + e.Code + ": " + e.Description
+		return "oauth: " + quote(e.Code) + ": " + quote(e.Description)
 	}
-	return "oauth: " + e.Code
+	return "oauth: " + quote(e.Code)
 }
 
 // isBadGrant reports whether err says a refresh token or a code is no good.
@@ -246,20 +247,24 @@ func sortStrings(s []string) {
 	}
 }
 
-var tokenLike = regexp.MustCompile(`(?i)\b(?:glpat-|gloas-|gho_|ghp_)[A-Za-z0-9_-]+|-----BEGIN[^-]*-----`)
+// tokenLike is what looks like a secret in text a host sent: the prefixes of
+// the tokens the hosts make, a private key, and anything shaped like a JWT (three
+// base64url parts with dots between them: Gitea's refresh tokens are one).
+var tokenLike = regexp.MustCompile(`(?i)\b(?:glpat-|gloas-|gho_|ghp_)[A-Za-z0-9_-]+|-----BEGIN[^-]*-----|[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)
 
-// quote makes something a host said fit on one log line: no control
-// characters, at most 300, and anything that looks like a token blanked out.
+// quote makes something a host said fit on one log line or in an error: no
+// line breaks or other control characters (a host cannot forge a line), at
+// most 300 bytes, and anything that looks like a token blanked out.
 func quote(s string) string {
 	s = tokenLike.ReplaceAllString(s, "[redacted]")
 	s = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 			return ' '
 		}
 		return r
 	}, s)
 	if len(s) > 300 {
-		s = s[:300] + "..."
+		s = strings.ToValidUTF8(s[:300], "") + "..."
 	}
 	return s
 }

@@ -321,6 +321,16 @@ function Connected({ provider, labels, installs }: { provider: string; labels: L
         </SettingsRow>
       </SettingsRows>
       {!expired && installs && <NeedsInstall provider={provider} login={a.login} />}
+      {!expired && a.admin && (
+        <div
+          role="alert"
+          data-testid="connection-admin-warning"
+          className="grid grid-cols-1 gap-1 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm"
+        >
+          <p className="font-medium">{tf.account.adminTitle}</p>
+          <p className="text-muted-foreground">{tf.account.adminBody(info.data?.name ?? '')}</p>
+        </div>
+      )}
       {expired && (
         <div
           role="alert"

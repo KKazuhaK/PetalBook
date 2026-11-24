@@ -133,7 +133,7 @@ func (p *Provider) connection(ctx context.Context, userID string) (*connections.
 	if err != nil {
 		return nil, err
 	}
-	return &connections.Connection{Login: a.Login, AccountID: a.AccountID, State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n}, nil
+	return &connections.Connection{Login: a.Login, AccountID: a.AccountID, State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n, Admin: a.Admin}, nil
 }
 
 func (p *Provider) leftovers(ctx context.Context, userID string) ([]connections.Leftover, error) {
@@ -306,6 +306,11 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "the body is not what this takes: %s", err.Error())
 	}
+	// Everything that follows works on the provider as it is when this save has
+	// the lock, and on nothing read earlier: a save that waited for another one
+	// must not write the other's old values back.
+	p.m.mu.Lock()
+	defer p.m.mu.Unlock()
 	row, secret := p.snap()
 	if (req.ID != nil && *req.ID != p.id) || (req.Type != nil && *req.Type != row.Type) || (req.Host != nil && p.sameHost(*req.Host) != nil) {
 		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "a provider's id, type and host cannot be changed: make a new provider and remove this one")
@@ -317,8 +322,9 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 		}
 		row.Name = n
 	}
-	newClient := false
+	newClient, otherApp := false, false
 	if req.ClientID != nil {
+		otherApp = *req.ClientID != row.ClientID
 		row.ClientID, newClient = *req.ClientID, true
 	}
 	if req.ClientSecret != nil {
@@ -327,8 +333,6 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	if !validClient(row.ClientID, secret) {
 		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "clientId and clientSecret are required")
 	}
-	p.m.mu.Lock()
-	defer p.m.mu.Unlock()
 	version, err := p.m.checkHost(ctx, p.d, p.c, row.ClientID, secret, p.CallbackURL())
 	if err != nil {
 		return nil, withProvider(err, p.id)
@@ -337,8 +341,18 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	row.SecretEnc, row.State, row.PlatformVersion = enc, stateOK, version
+	row.SecretEnc, row.State = enc, stateOK
+	if version != "" { // a host that does not say its version to anyone signed out does not make the known one unknown
+		row.PlatformVersion = version
+	}
 	row.Checked, row.Updated, row.UpdatedBy = p.m.opt.Now(), p.m.opt.Now(), connections.ActorOf(ctx)
+	if otherApp {
+		// Tokens of another application are not this one's to use: everyone
+		// connects again. (A new secret of the same application keeps them.)
+		if _, err := store.ExpireProviderAuthorizations(ctx, p.m.opt.Store.Q(), p.id, p.m.opt.Now()); err != nil {
+			return nil, err
+		}
+	}
 	if err := store.UpdateConnProviderRow(ctx, p.m.opt.Store.Q(), row); err != nil {
 		return nil, err
 	}
@@ -348,7 +362,7 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	p.secret = secret
 	p.mu.Unlock()
 	if newClient {
-		p.dropAllTokens() // tokens of another application are not this one's to use
+		p.dropAllTokens() // what was cached is read again (and, of another application, is gone from the database)
 	}
 	p.changed("")
 	return p.AdminView(ctx)
@@ -377,22 +391,36 @@ func (p *Provider) AdminCheck(ctx context.Context) (any, error) {
 	if err != nil {
 		var he *connections.Error
 		if errors.As(err, &he) && he.Reason != ReasonUnreachable { // a host that cannot be reached right now is not a verdict
-			p.setState(ctx, stateError, row.PlatformVersion, now)
+			p.setState(ctx, row, stateError, "", now)
 		}
 		return nil, withProvider(err, p.id)
 	}
-	p.setState(ctx, stateOK, version, now)
+	p.setState(ctx, row, stateOK, version, now)
 	return p.AdminView(ctx)
 }
 
-func (p *Provider) setState(ctx context.Context, state, version string, now time.Time) {
-	p.mu.Lock()
-	p.row.State, p.row.PlatformVersion, p.row.Checked = state, version, now
-	row := p.row
-	p.mu.Unlock()
-	if err := store.UpdateConnProviderRow(ctx, p.m.opt.Store.Q(), row); err != nil {
+// setState records what a check found of the host, for the application the
+// check was made with (seen: the row as the check began). It writes the state,
+// the version and the time and nothing else, and not at all when the
+// application was replaced meanwhile: what was found says nothing of the new
+// one. A version that is "" leaves the known one alone.
+func (p *Provider) setState(ctx context.Context, seen store.ConnProviderRow, state, version string, now time.Time) {
+	wrote, err := store.SetConnProviderState(ctx, p.m.opt.Store.Q(), p.id, seen.ClientID, seen.SecretEnc, state, version, now)
+	if err != nil {
 		p.m.log.Error("could not store the result of a provider's check", "provider", p.id, "error", err)
+		return
 	}
+	if !wrote {
+		return
+	}
+	p.mu.Lock()
+	if p.row.ClientID == seen.ClientID && p.row.SecretEnc == seen.SecretEnc {
+		p.row.State, p.row.Checked = state, now
+		if version != "" {
+			p.row.PlatformVersion = version
+		}
+	}
+	p.mu.Unlock()
 }
 
 // AdminDelete removes the provider; it must not be in use.

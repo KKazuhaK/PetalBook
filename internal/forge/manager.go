@@ -104,15 +104,23 @@ func NewManager(ctx context.Context, opt Options) (*Manager, error) {
 	return m, nil
 }
 
+// testHookReloadRead is called by Reload right after it has read the rows (tests).
+var testHookReloadRead func()
+
 // Reload adds the providers of the database that this process does not have yet
 // (set up by another process sharing the database, or a tenant's own).
 func (m *Manager) Reload(ctx context.Context) error {
+	// The rows are read with the lock held: a removal that finished meanwhile
+	// (it holds the lock) would otherwise be undone by what was read before it.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rows, err := store.ListConnProviderRows(ctx, m.opt.Store.Q())
 	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if h := testHookReloadRead; h != nil {
+		h()
+	}
 	for _, r := range rows {
 		if _, ok := m.provs[r.ID]; ok {
 			continue

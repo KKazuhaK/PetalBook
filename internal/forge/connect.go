@@ -107,7 +107,7 @@ func (p *Provider) CompleteConnect(ctx context.Context, binding, userID string, 
 		return fail(cbError)
 	}
 	if r.PlatformVersion == "" {
-		p.learnVersion(ctx, tok.Access)
+		p.learnVersion(ctx, r, tok.Access)
 	}
 	now := p.m.opt.Now()
 	db := p.m.opt.Store.Q()
@@ -122,7 +122,7 @@ func (p *Provider) CompleteConnect(ctx context.Context, binding, userID string, 
 		}
 	}
 	row := store.ProviderAuthorization{Provider: p.id, UserID: userID, AccountID: acct.ID, Login: acct.Login, State: store.GitHubOK,
-		AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires, Connected: now, Updated: now}
+		AccessExpires: tok.AccessExpires, RefreshExpires: tok.RefreshExpires, Admin: acct.Admin, Connected: now, Updated: now}
 	box := p.m.opt.Secrets
 	if row.AccessEnc, err = box.Seal(p.sealBinding(userID), purposeAccess, []byte(tok.Access)); err != nil {
 		p.m.log.Error("could not seal a token", "provider", p.id, "error", err)
@@ -407,19 +407,20 @@ func (p *Provider) expire(ctx context.Context, row *store.ProviderAuthorization)
 	p.dropToken(row.UserID)
 }
 
-// RenewDue renews, one at a time, the connections whose refresh token ends
-// within RenewWithin, so someone whose spaces sit closed for months stays
-// connected. It returns how many it renewed.
+// RenewDue renews, one at a time, the connections whose refresh token is in the
+// last tenth of its life (and ends within RenewWithin at the latest), so
+// someone whose spaces sit closed for months stays connected without the host
+// being asked every day. It returns how many it renewed.
 func (p *Provider) RenewDue(ctx context.Context) int {
 	if !p.configured() {
 		return 0
 	}
 	n := 0
-	before := p.m.opt.Now().Add(p.m.opt.RenewWithin)
+	now := p.m.opt.Now()
 	var cur store.DueCursor
 	tried := map[string]bool{}
 	for {
-		due, err := store.DueProviderRenewals(ctx, p.m.opt.Store.Q(), p.id, before, cur, 50)
+		due, err := store.DueProviderRenewals(ctx, p.m.opt.Store.Q(), p.id, now, p.m.opt.RenewWithin, cur, 50)
 		if err != nil {
 			p.m.log.Error("could not look for authorisations to renew", "provider", p.id, "error", err)
 			return n
@@ -452,7 +453,7 @@ func (p *Provider) Attempts() int { return p.attempts.len() }
 // say it to anyone signed out, and keeps it. A version that cannot do what this
 // server needs (PKCE) leaves the provider not set up until an administrator has
 // seen to it.
-func (p *Provider) learnVersion(ctx context.Context, access string) {
+func (p *Provider) learnVersion(ctx context.Context, seen store.ConnProviderRow, access string) {
 	v, err := p.d.version(ctx, p.c, access)
 	if err != nil || v == "" {
 		return
@@ -462,5 +463,5 @@ func (p *Provider) learnVersion(ctx context.Context, access string) {
 		state = stateError
 		p.m.log.Warn("a host is older than this server supports", "provider", p.id, "version", sanitize(v))
 	}
-	p.setState(ctx, state, v, p.m.opt.Now())
+	p.setState(ctx, seen, state, v, p.m.opt.Now())
 }

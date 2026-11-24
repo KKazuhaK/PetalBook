@@ -233,6 +233,19 @@ describe('the connected accounts of the account page', () => {
     )
   })
 
+  it('warns when the connected account is an administrator of the host, and only then', async () => {
+    await open()
+    forge({ provider: 'gitlab-acme', connect: 'tang-fg' })
+    await m!.qc.invalidateQueries()
+    await settle(() => panel()!.textContent!.includes('tang-fg'), 'the connection')
+    expect(panel()!.textContent).not.toContain(tf.account.adminTitle)
+    forge({ provider: 'gitlab-acme', connect: 'tang-fg', admin: true })
+    await m!.qc.invalidateQueries()
+    await settle(() => panel()!.textContent!.includes(tf.account.adminTitle), 'the warning')
+    expect(panel()!.textContent).toContain(tf.account.adminBody('Acme GitLab'))
+    expect(document.querySelector('[role="alert"]')).toBeTruthy()
+  })
+
   it('shows an expired connection with the words of its host and offers to connect again', async () => {
     await open()
     forge({ provider: 'gitlab-acme', connect: 'tang-fg' })

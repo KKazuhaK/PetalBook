@@ -126,12 +126,7 @@ func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
 	case CredConnection:
 		row := *r
 		prov := r.Provider
-		user := "x-access-token"
-		if p, ok := m.opt.Connections.Get(prov); ok {
-			if gu, ok := p.(connections.GitUser); ok {
-				user = gu.GitUsername()
-			}
-		}
+		user := m.connectionGitUser(prov)
 		return gitstore.Token{Username: user, URL: r.URL, Get: func() (string, error) {
 			p, ok := m.opt.Connections.Get(prov)
 			if !ok {
@@ -146,6 +141,29 @@ func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
 		}}
 	}
 	return nil
+}
+
+// connectionGitUser is the user name Git is given with a provider's token. A
+// provider that is not loaded (it is loaded after a start, or was removed) is
+// asked of what is stored about it, never answered with GitHub's name: GitLab
+// refuses that. For one nobody knows it is "": the token cannot be had either,
+// and says so.
+func (m *Manager) connectionGitUser(prov string) string {
+	if p, ok := m.opt.Connections.Get(prov); ok {
+		if gu, ok := p.(connections.GitUser); ok {
+			return gu.GitUsername()
+		}
+		return "x-access-token"
+	}
+	if prov == "" || prov == store.ProviderGitHub {
+		return connections.GitUsernameForType("github")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if row, err := store.GetConnProviderRow(ctx, m.opt.Store.Q(), prov); err == nil {
+		return connections.GitUsernameForType(row.Type)
+	}
+	return ""
 }
 
 func statusOf(r *store.Remote) space.RemoteStatus {

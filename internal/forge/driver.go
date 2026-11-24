@@ -13,6 +13,8 @@ import (
 type account struct {
 	ID    string
 	Login string
+	// Admin: the host says the account is an administrator of the host.
+	Admin bool
 }
 
 // ownerInfo is a place a repository can be created: the person's own

@@ -34,6 +34,7 @@ interface AuthRec {
   accountId: number
   state: 'ok' | 'expired'
   connected: number
+  admin?: boolean
 }
 interface Attempt {
   provider: string
@@ -215,6 +216,7 @@ export function createForgeBook(deps: {
       state: a.state,
       connected: iso(a.connected),
       spaces: deps.spacesUsing(userId, id),
+      ...(a.admin ? { admin: true } : {}),
     }
   }
 
@@ -351,9 +353,9 @@ export function createForgeBook(deps: {
   }
 
   // Mock only: connect a person without the round trip, or end their connection.
-  const connect = (id: string, userId: string, login: string) => {
+  const connect = (id: string, userId: string, login: string, admin = false) => {
     need(id)
-    authsOf(id).set(userId, { login, accountId: ++nextAccount, state: 'ok', connected: deps.now() })
+    authsOf(id).set(userId, { login, accountId: ++nextAccount, state: 'ok', connected: deps.now(), admin })
   }
   const expire = (id: string, userId: string) => {
     const a = authsOf(id).get(userId)

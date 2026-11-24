@@ -88,6 +88,8 @@ type connectionResp struct {
 	Connected      string `json:"connected"`
 	RefreshExpires string `json:"refreshExpires,omitempty"`
 	Spaces         int    `json:"spaces"`
+	// Admin is there (true) when the host said the account is an administrator of the host.
+	Admin bool `json:"admin,omitempty"`
 }
 
 type appResp struct {
@@ -123,7 +125,7 @@ func toConnection(a *connections.Connection) *connectionResp {
 	if a == nil {
 		return nil
 	}
-	r := &connectionResp{Login: a.Login, AccountID: a.AccountID, State: a.State, Connected: rfc3339(a.Connected), Spaces: a.Spaces}
+	r := &connectionResp{Login: a.Login, AccountID: a.AccountID, State: a.State, Connected: rfc3339(a.Connected), Spaces: a.Spaces, Admin: a.Admin}
 	if !a.RefreshExpires.IsZero() {
 		r.RefreshExpires = rfc3339(a.RefreshExpires)
 	}
@@ -314,19 +316,25 @@ func (s *server) connectRepos(c *call) {
 		return
 	}
 	q := c.r.URL.Query()
-	if d := p.Descriptor(); d.Type != connections.GitID && d.Capabilities.Installations {
+	d := p.Descriptor()
+	if !d.Capabilities.Installations && q.Has("installation") {
+		// Installations are GitHub's: a host has none to name, whatever the value.
+		s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "this provider has no installations")
+		return
+	}
+	if d.Type != connections.GitID && d.Capabilities.Installations {
 		var inst int64
 		if v := q.Get("installation"); v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil || n <= 0 {
-				s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "installation is a number")
+				s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "installation is a number")
 				return
 			}
 			inst = n
 		}
 		mine := q.Get("mine") == "true"
 		if (inst == 0) == !mine {
-			s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "give installation or mine=true, not both and not neither")
+			s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "give installation or mine=true, not both and not neither")
 			return
 		}
 	}

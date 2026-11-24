@@ -649,7 +649,11 @@ func TestTheDailyRenewalKeepsRefreshTokensThatWouldEnd(t *testing.T) {
 			t.Fatalf("the refresh token ends %v, want about %v", in.Connection.RefreshExpires, want)
 		}
 		before := h.f.Count("POST", "/login/oauth/access_token")
-		h.clk.Advance(20 * 24 * time.Hour) // 10 days to go: inside the 30 days
+		h.clk.Advance(20 * 24 * time.Hour) // 250 hours to go: not in the last tenth of its life
+		if n := p.RenewDue(ctx); n != 0 {
+			t.Fatalf("%d renewed early", n)
+		}
+		h.clk.Advance(180 * time.Hour) // 70 hours to go
 		if n := p.RenewDue(ctx); n != 1 {
 			t.Fatalf("%d renewed", n)
 		}
@@ -660,14 +664,12 @@ func TestTheDailyRenewalKeepsRefreshTokensThatWouldEnd(t *testing.T) {
 		if in.Connection.RefreshExpires.Sub(h.clk.Now().Add(730*time.Hour)).Abs() > time.Minute || in.Connection.State != "ok" {
 			t.Fatalf("%+v", in.Connection)
 		}
-		// The new refresh token ends 730 hours on, a little beyond the 30 days: not
-		// due now, and due again a day later, so it is renewed once a day for good.
-		if n := p.RenewDue(ctx); n != 0 {
-			t.Fatalf("%d renewed", n)
-		}
-		h.clk.Advance(24 * time.Hour)
-		if n := p.RenewDue(ctx); n != 1 {
-			t.Fatalf("%d renewed", n)
+		// The new refresh token has all its life ahead: no request again for weeks.
+		for _, d := range []time.Duration{24 * time.Hour, 10 * 24 * time.Hour} {
+			h.clk.Advance(d)
+			if n := p.RenewDue(ctx); n != 0 {
+				t.Fatalf("%d renewed", n)
+			}
 		}
 	})
 }

@@ -156,6 +156,9 @@ type Fake struct {
 	git     *cgi.Handler
 	// bad logins: a person whose account was deleted on the host.
 	gone map[string]bool
+	// admins are the accounts that are administrators of the host.
+	admins map[string]bool
+	hook   func(method, path string)
 }
 
 // NewGitLab starts a fake GitLab.
@@ -171,7 +174,7 @@ func newFake(t testing.TB, clock Clocker, kind string) *Fake {
 	}
 	f := &Fake{t: t, Clock: clock, Kind: kind, ClientID: "fake-client-id-" + kind, ClientSecret: "fake-client-secret-" + kind + "-0123456789", nextID: 100,
 		users: map[string]*User{}, groups: map[string]*Group{}, repos: map[string]*Repo{}, access: map[string]*accessToken{}, refresh: map[string]*refreshToken{},
-		codes: map[string]*code{}, gone: map[string]bool{}, gitRoot: t.TempDir()}
+		codes: map[string]*code{}, gone: map[string]bool{}, admins: map[string]bool{}, gitRoot: t.TempDir()}
 	switch kind {
 	case "gitlab":
 		f.Version, f.AccessTTL = "16.7.2", 2*time.Hour
@@ -311,6 +314,35 @@ func (f *Fake) RevokeUser(login string) {
 			r.revoked = true
 		}
 	}
+}
+
+// RevokeAccess revokes the access tokens of a person and leaves their refresh
+// tokens good (one access token was removed at the host).
+func (f *Fake) RevokeAccess(login string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.access {
+		if strings.EqualFold(a.login, login) {
+			a.revoked = true
+		}
+	}
+}
+
+// SetAdmin makes an account an administrator of the host (or not): Gitea says
+// so in the answer about the signed-in person.
+func (f *Fake) SetAdmin(login string, admin bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.admins[strings.ToLower(login)] = admin
+}
+
+// OnRequest sets a function called, outside the fake's lock, at the start of
+// every API and OAuth request, before it is answered (nil: none). A test uses
+// it to make something happen while a request is on its way.
+func (f *Fake) OnRequest(fn func(method, path string)) {
+	f.mu.Lock()
+	f.hook = fn
+	f.mu.Unlock()
 }
 
 // ExpireRefresh makes a person's refresh tokens end now.
@@ -482,7 +514,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	down, redirect := f.Down, f.Redirect
 	limited := f.Clock.Now().Before(f.limitTo)
 	until := f.limitTo
+	hook := f.hook
 	f.mu.Unlock()
+	if hook != nil && !isGit {
+		hook(r.Method, path)
+	}
 	if isGit {
 		f.serveGit(w, r)
 		return

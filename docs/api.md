@@ -8981,7 +8981,12 @@ What the server does where the text above leaves room, and where it differs.
   ```
 
   `PATCH` changes `name`, `clientId` and `clientSecret` (the host is checked with
-  them before they are kept; a changed client drops every cached access token);
+  them before they are kept). Giving the provider **another client id** ends every
+  connection to it (`state` becomes `expired`, the stored tokens are deleted, and
+  people connect again): a token of a replaced application is never used. A new
+  secret for the same client id keeps the connections. A check never replaces a
+  version the server already knows with an empty one (GitLab does not say its
+  version to anyone signed out);
   `id`, `type` and `host` cannot change (`400 invalid`). `configured` is `false`
   after a check that failed (version, platform, client), and then every call of
   the provider answers `409 provider_not_configured` until a check passes; a
@@ -9006,8 +9011,15 @@ What the server does where the text above leaves room, and where it differs.
   installation token is, so a space syncs with the connected person's token and
   nobody else's; `via` is always `user` (`"app"` is `400 invalid`). GitLab's
   refresh tokens do not end; Gitea's end at the `exp` they carry (read, not
-  verified), so `refreshExpires` is there for Gitea only. GitLab is asked to
-  revoke on disconnect (`/oauth/revoke`); Gitea has no such endpoint, and the
+  verified), so `refreshExpires` is there for Gitea only. A refresh token is
+  renewed in the last tenth of its life (and at the latest 30 days before it
+  ends), not on a fixed window: a Gitea token that lives 730 hours is renewed
+  once, about three days before it ends, not every day. A `401` from the host to
+  a call made with a person's token does not end the connection by itself: the
+  server renews the pair once (one renewal at a time per person; if another
+  request has already replaced the token, that one is used) and makes the call
+  again once; the connection becomes `expired` only when the host refuses the
+  refresh token itself. GitLab is asked to revoke on disconnect (`/oauth/revoke`); Gitea has no such endpoint, and the
   tokens are deleted here either way.
 - **Owners and repositories.** `GET /api/connections/{provider}/owners?q=&cursor=`
   lists the person's own namespace first (`type: "User"`, first page only), then
@@ -9016,11 +9028,19 @@ What the server does where the text above leaves room, and where it differs.
   repositories); `via` is `user`, `installationId` is `null`, `needsInstall` is
   `false`. `GET …/repos?q=&cursor=` lists the repositories the person's
   connection can push to (`mine=true` may be said, and is not needed;
-  `installation=` is `400 invalid`). Cursors are page numbers made by the server
+  `installation=`, with any value, is `400 invalid`). Cursors are page numbers made by the server
   (`400 invalid` otherwise); `q` is at most 100 characters. A GitLab group that
   lists the person but does not let them create projects passes `PlanCreate`
   and is refused when the project is made (`403 provider_refused`); a Gitea
   organisation is checked first (`403 owner_not_allowed`).
+- **Administrators of a Gitea.** When the person who connects is an
+  administrator of the Gitea or Forgejo instance (its user answer says
+  `is_admin`), `connection` has `"admin": true` (the field is absent otherwise,
+  and always for GitLab). The token the server then holds carries those
+  administrator rights, which a Gitea cannot narrow. The web app shows a
+  warning on that connection (in English and Chinese) and suggests an ordinary
+  account. It is read when the person connects and kept until they connect
+  again; it is not asked of the host at each renewal.
 - **Names.** A repository name is 1 to 100 of letters, digits, `.`, `_` and `-`,
   not `.`, `..` or ending in `.git` (GitLab: also not starting with `.` or `-`
   and not ending in `.atom`; Gitea: not ending in `.wiki`). A name that is taken
@@ -9043,7 +9063,15 @@ What the server does where the text above leaves room, and where it differs.
   for GitHub.
 - **Process.** Providers live in the memory of the process that serves them;
   one set up by another process of the same database is picked up by the daily
-  renewal pass or a restart.
+  renewal pass or a restart. Saving a provider, checking it and removing it
+  never write a stale copy of the row: a save reads the provider after it has
+  the lock; a check writes the state, the version and the time only, and not at
+  all if the client was replaced while it ran; a reload reads the rows with the
+  lock held, so it cannot bring back a provider that was just removed.
+- **Error text.** What a host says in an error (its message, an OAuth
+  description) reaches errors and logs with line breaks and control characters
+  replaced by spaces, at most 300 bytes, and anything that looks like a token
+  (a GitLab or GitHub token, a private key, a JWT) replaced by `[redacted]`.
 
 ## Avatars and brand icons
 

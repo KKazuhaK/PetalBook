@@ -207,6 +207,11 @@ func TestProvidersAreListedByCapability(t *testing.T) {
 		}
 		// Their routes: installations are GitHub's.
 		member.do("GET", "/api/connections/"+kind+"/repos?installation=1", nil).want(t, 400, "invalid")
+		// Whatever it says: a host has no installations to name.
+		for _, v := range []string{"x", "0", "-3", ""} {
+			member.do("GET", "/api/connections/"+kind+"/repos?installation="+v, nil).want(t, 400, "invalid")
+		}
+		member.do("GET", "/api/connections/"+kind+"/repos?mine=true", nil).want(t, 200, "")
 	})
 }
 
@@ -255,6 +260,23 @@ func TestConnectingAnAccountOnAHostThroughTheApi(t *testing.T) {
 		r2 := member.do("GET", "/api/connections/"+kind+"/owners", nil).want(t, 409, "not_connected")
 		if r2.body["provider"] != kind {
 			t.Fatalf("%s", r2.raw)
+		}
+	})
+}
+
+func TestAGiteaAdministratorsConnectionSaysItsTokenCarriesAdminRights(t *testing.T) {
+	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
+		_, member := fgSetup(t, a, kind, f)
+		if c := fgProvider(t, member, kind)["connection"].(map[string]any); c["admin"] == true {
+			t.Fatalf("%v", c)
+		}
+		boss := a.addUser("boss", pw, "member")
+		f.AddUser("boss-h")
+		f.SetAdmin("boss-h", true)
+		connectForge(t, a, boss, kind, f, "boss-h")
+		c := fgProvider(t, boss, kind)["connection"].(map[string]any)
+		if (c["admin"] == true) != (kind == "gitea") {
+			t.Fatalf("%v", c)
 		}
 	})
 }

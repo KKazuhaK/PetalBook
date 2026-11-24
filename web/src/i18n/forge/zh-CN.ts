@@ -24,6 +24,9 @@ export const forgeZhCN: ForgeMessages = {
     usedByHelp: '通过你这个连接同步的空间。',
     expiredBody: (name: string) =>
       `${name} 不再接受它（过期或被撤销了）。用它同步的空间仍然可以阅读；修改会先等着，草稿都在，重新连接后就会继续。`,
+    adminTitle: '这个账号是管理员',
+    adminBody: (name: string) =>
+      `你的账号是 ${name} 的管理员，所以这台服务器替你保管的令牌在那里带着管理员的权限，不只是普通账号的权限。能用到这台服务器所存令牌的人，也就能用这些权限。可以的话，请用普通账号连接。`,
     disconnectTitle: (name: string) => `断开 ${name}？`,
     disconnectNone: (name: string) => `没有空间通过这个连接同步。${name} 允许撤销的话，服务器也会请它撤销授权。`,
     disconnected: (name: string) => `已断开 ${name}`,

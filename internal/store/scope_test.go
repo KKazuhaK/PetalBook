@@ -118,6 +118,8 @@ var scopeAllowlist = map[string]string{
 	"CountConnProviderRows":        "how many providers an owner has, for the limit",
 	"InsertConnProviderRow":        "a provider set up by a site administrator",
 	"UpdateConnProviderRow":        "a provider changed by a site administrator",
+	"SetConnProviderState":         "what a check of a provider's host found, written only to the application it was made with",
+	"ExpireProviderAuthorizations": "the provider's application was replaced by a site administrator: every connection to it ends",
 	"SetConnProviderPartial":       "what a check of a provider's host found",
 	"DeleteConnProviderRow":        "a provider removed by a site administrator",
 	"DeleteTenantConnProviderRows": "a tenant is being deleted: its own providers go with it",

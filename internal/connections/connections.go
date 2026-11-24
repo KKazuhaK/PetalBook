@@ -142,6 +142,7 @@ type Connection struct {
 	Connected      time.Time
 	RefreshExpires time.Time
 	Spaces         int
+	Admin          bool
 }
 
 // Leftover is a reminder of an empty repository a failed attempt to make a
@@ -527,6 +528,20 @@ type Creator interface {
 // default one with its token (GitLab's is "oauth2").
 type GitUser interface {
 	GitUsername() string
+}
+
+// GitUsernameForType is the user name Git is given with a token of a kind of
+// provider, for when the provider itself is not loaded (a server that has not
+// read its providers yet): GitLab and Gitea want "oauth2", GitHub
+// "x-access-token". "" for a type this server does not know.
+func GitUsernameForType(typ string) string {
+	switch typ {
+	case "gitlab", "gitea":
+		return "oauth2"
+	case "github":
+		return "x-access-token"
+	}
+	return ""
 }
 
 // Connected is a provider that can say, cheaply, who a user is on the platform.

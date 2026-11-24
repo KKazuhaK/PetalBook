@@ -3516,7 +3516,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (method === 'POST' && path === '/_mock/forge') {
       const uid = typeof body.user === 'string' ? body.user : (ctx.user?.id ?? '')
       const id = typeof body.provider === 'string' ? body.provider : ''
-      if (typeof body.connect === 'string') forge.connect(id, uid, body.connect)
+      if (typeof body.connect === 'string') forge.connect(id, uid, body.connect, body.admin === true)
       if (body.expire === true) forge.expire(id, uid)
       if (typeof body.down === 'boolean') forge.setDown(id, body.down)
       return j({})

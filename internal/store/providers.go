@@ -105,6 +105,22 @@ func UpdateConnProviderRow(ctx context.Context, q Q, p ConnProviderRow) error {
 	return nil
 }
 
+// SetConnProviderState records what a check found of a provider's host: the
+// state, the version (never an empty one over a known one) and when. Only the
+// application the check was made with is written to: the client id and the
+// sealed secret it saw must still be the stored ones, or the verdict is
+// about another application and is dropped (it reports whether it was written).
+// Nothing else of the row, the secret least, is written from a copy.
+func SetConnProviderState(ctx context.Context, q Q, id, clientID, secretEnc, state, version string, checked time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE providers SET state = ?, platform_version = CASE WHEN ? = '' THEN platform_version ELSE ? END, checked = ?
+		WHERE id = ? AND client_id = ? AND secret_enc = ?`, state, version, version, syncOrZero(checked), id, clientID, secretEnc)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // SetConnProviderPartial records whether the provider's host can filter a fetch.
 func SetConnProviderPartial(ctx context.Context, q Q, id, partial string, at time.Time) error {
 	_, err := q.Exec(ctx, `UPDATE providers SET partial_sync = ?, partial_checked = ? WHERE id = ?`, partial, ms(at), id)
@@ -138,16 +154,18 @@ type ProviderAuthorization struct {
 	RefreshExpires time.Time // zero: there is no refresh token, or it does not expire
 	State          string
 	Version        int64
-	Connected      time.Time
-	Updated        time.Time
+	// Admin: the host said the account is an administrator of the host.
+	Admin     bool
+	Connected time.Time
+	Updated   time.Time
 }
 
-const pauthCols = `provider, user_id, account_id, login, access_enc, refresh_enc, access_expires, refresh_expires, state, version, connected, updated`
+const pauthCols = `provider, user_id, account_id, login, access_enc, refresh_enc, access_expires, refresh_expires, state, version, is_admin, connected, updated`
 
 func scanProviderAuthorization(row interface{ Scan(...any) error }) (*ProviderAuthorization, error) {
 	var a ProviderAuthorization
-	var ae, re, c, u int64
-	if err := row.Scan(&a.Provider, &a.UserID, &a.AccountID, &a.Login, &a.AccessEnc, &a.RefreshEnc, &ae, &re, &a.State, &a.Version, &c, &u); err != nil {
+	var ae, re, c, u, admin int64
+	if err := row.Scan(&a.Provider, &a.UserID, &a.AccountID, &a.Login, &a.AccessEnc, &a.RefreshEnc, &ae, &re, &a.State, &a.Version, &admin, &c, &u); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -159,6 +177,7 @@ func scanProviderAuthorization(row interface{ Scan(...any) error }) (*ProviderAu
 	if re > 0 {
 		a.RefreshExpires = fromMS(re)
 	}
+	a.Admin = admin != 0
 	a.Connected, a.Updated = fromMS(c), fromMS(u)
 	return &a, nil
 }
@@ -188,11 +207,11 @@ func PutProviderAuthorization(ctx context.Context, q Q, a ProviderAuthorization)
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	_, err := q.Exec(ctx, `INSERT INTO provider_authorizations(`+pauthCols+`) VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
+	_, err := q.Exec(ctx, `INSERT INTO provider_authorizations(`+pauthCols+`) VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?)
 		ON CONFLICT (provider, user_id) DO UPDATE SET account_id = excluded.account_id, login = excluded.login, access_enc = excluded.access_enc,
 		refresh_enc = excluded.refresh_enc, access_expires = excluded.access_expires, refresh_expires = excluded.refresh_expires,
-		state = excluded.state, version = provider_authorizations.version + 1, connected = excluded.connected, updated = excluded.updated`,
-		a.Provider, a.UserID, a.AccountID, a.Login, a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires), a.State, ms(a.Connected), ms(a.Updated))
+		state = excluded.state, version = provider_authorizations.version + 1, is_admin = excluded.is_admin, connected = excluded.connected, updated = excluded.updated`,
+		a.Provider, a.UserID, a.AccountID, a.Login, a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires), a.State, b2i(a.Admin), ms(a.Connected), ms(a.Updated))
 	if _, ok := UniqueOn(err); ok {
 		return ErrExists // another user connected the account since the check
 	}
@@ -231,14 +250,18 @@ func DeleteProviderAuthorization(ctx context.Context, q Q, provider, userID stri
 }
 
 // DueProviderRenewals lists the connections to a provider in good standing
-// whose refresh token ends before the given time, soonest first (then by user
-// id), at most limit of them, after the cursor.
-func DueProviderRenewals(ctx context.Context, q Q, provider string, before time.Time, after DueCursor, limit int) ([]ProviderAuthorization, error) {
+// whose refresh token is in the last tenth of its life (counted from when the
+// pair was made, which is when the row was last written) and ends before
+// within is up, soonest first (then by user id), at most limit of them, after
+// the cursor. A token's own life, not a fixed window, says when it is due: a
+// host whose tokens live 30 days is not asked about them every day.
+func DueProviderRenewals(ctx context.Context, q Q, provider string, now time.Time, within time.Duration, after DueCursor, limit int) ([]ProviderAuthorization, error) {
 	ae := syncOrZero(after.RefreshExpires)
 	rows, err := q.Query(ctx, `SELECT `+pauthCols+` FROM provider_authorizations
 		WHERE provider = ? AND state = 'ok' AND refresh_enc <> '' AND refresh_expires > 0 AND refresh_expires < ?
+		AND (refresh_expires - ?) * 10 <= (refresh_expires - updated)
 		AND (refresh_expires > ? OR (refresh_expires = ? AND user_id > ?))
-		ORDER BY refresh_expires, user_id LIMIT ?`, provider, ms(before), ae, ae, after.UserID, limit)
+		ORDER BY refresh_expires, user_id LIMIT ?`, provider, ms(now.Add(within)), ms(now), ae, ae, after.UserID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -252,6 +275,18 @@ func DueProviderRenewals(ctx context.Context, q Q, provider string, before time.
 		out = append(out, *a)
 	}
 	return out, rows.Err()
+}
+
+// ExpireProviderAuthorizations ends every connection to a provider that is in
+// good standing and drops its tokens (the provider's application was replaced:
+// tokens of the old one are not to be used). It returns how many it ended.
+func ExpireProviderAuthorizations(ctx context.Context, q Q, provider string, now time.Time) (int64, error) {
+	res, err := q.Exec(ctx, `UPDATE provider_authorizations SET state = 'expired', access_enc = '', refresh_enc = '',
+		access_expires = 0, refresh_expires = 0, version = version + 1, updated = ? WHERE provider = ? AND state = 'ok'`, ms(now), provider)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ListProviderAuthorizations returns every connection to a provider (it is being removed, to revoke them).

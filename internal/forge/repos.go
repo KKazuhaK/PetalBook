@@ -39,17 +39,77 @@ func (p *Provider) connected(ctx context.Context, userID string) (*store.Provide
 	return row, tok, nil
 }
 
-// userFailed turns an error of a call made with a user's token into an answer;
-// a token the host no longer accepts ends the connection.
-func (p *Provider) userFailed(ctx context.Context, userID string, err error) error {
+// userFailed turns an error of a call made with a user's token (after asUser
+// has had its say) into an answer.
+func (p *Provider) userFailed(err error) error {
 	var se *StatusError
 	if errors.As(err, &se) && se.Status == http.StatusUnauthorized && !se.RateLimited {
-		if row, gerr := store.GetProviderAuthorization(ctx, p.m.opt.Store.Q(), p.id, userID); gerr == nil {
-			p.expire(ctx, row)
-		}
 		return p.notConnected()
 	}
 	return p.wrap(err)
+}
+
+func isUnauthorized(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Status == http.StatusUnauthorized && !se.RateLimited
+}
+
+// asUser makes a call with a person's token. A 401 does not by itself end the
+// connection: the access token may be one the host dropped, or one a parallel
+// request has just replaced. So the token is renewed (once, one renewal at a
+// time) and the call made again, once. The connection ends only when the
+// renewal itself is refused as revoked, and then only the very row the token
+// came from (see afterUnauthorized).
+func (p *Provider) asUser(ctx context.Context, userID, tok string, call func(tok string) error) error {
+	err := call(tok)
+	if !isUnauthorized(err) {
+		return err
+	}
+	fresh, rerr := p.afterUnauthorized(ctx, userID, tok)
+	if rerr != nil {
+		return rerr
+	}
+	return call(fresh)
+}
+
+// afterUnauthorized is the token to try again with after the host refused tok.
+// If the stored token is no longer tok, someone renewed meanwhile: the stored
+// one is used and nothing is spent. Otherwise the stored pair is renewed; a
+// refresh token the host refuses ends that version of the connection, and a
+// token that has no refresh token to renew with is ended too, as it can do
+// nothing more.
+func (p *Provider) afterUnauthorized(ctx context.Context, userID, tok string) (string, error) {
+	row, err := store.GetProviderAuthorization(ctx, p.m.opt.Store.Q(), p.id, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", p.notConnected()
+	}
+	if err != nil {
+		return "", err
+	}
+	if row.State != store.GitHubOK {
+		return "", p.notConnected()
+	}
+	cur, err := p.m.opt.Secrets.Open(p.sealBinding(userID), purposeAccess, row.AccessEnc)
+	if err != nil {
+		return "", err
+	}
+	var fresh string
+	switch {
+	case string(cur) != tok:
+		fresh, err = p.UserToken(ctx, userID)
+	case row.RefreshEnc == "":
+		p.expire(ctx, row) // only if the row is still the one the token came from
+		return "", p.notConnected()
+	default:
+		fresh, err = p.renew(ctx, userID, true)
+	}
+	switch {
+	case errors.Is(err, ErrNoAuthorization), errors.Is(err, ErrAuthorizationExpired):
+		return "", p.notConnected()
+	case err != nil:
+		return "", p.wrap(err)
+	}
+	return fresh, nil
 }
 
 // ready is what every call made for a person needs: the provider is set up and
@@ -120,9 +180,14 @@ func (p *Provider) OwnersQ(ctx context.Context, userID, cursor, q string) ([]con
 	if page == 1 && (q == "" || strings.Contains(strings.ToLower(row.Login), strings.ToLower(q))) {
 		out = append(out, connections.Owner{Login: row.Login, Type: "User", Via: connections.ViaUser})
 	}
-	list, next, err := p.d.owners(ctx, p.c, tok, &account{ID: row.AccountID, Login: row.Login}, page, q)
+	var list []ownerInfo
+	var next int
+	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
+		list, next, err = p.d.owners(ctx, p.c, tok, &account{ID: row.AccountID, Login: row.Login}, page, q)
+		return err
+	})
 	if err != nil {
-		return nil, "", p.userFailed(ctx, userID, err)
+		return nil, "", p.userFailed(err)
 	}
 	for _, o := range list {
 		out = append(out, connections.Owner{Login: o.Login, Type: "Organization", Via: connections.ViaUser})
@@ -147,9 +212,14 @@ func (p *Provider) Repos(ctx context.Context, userID string, q connections.RepoQ
 	if err := p.checkQ(q.Q); err != nil {
 		return nil, "", err
 	}
-	list, next, err := p.d.repos(ctx, p.c, tok, page, strings.TrimSpace(q.Q))
+	var list []repoInfo
+	var next int
+	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
+		list, next, err = p.d.repos(ctx, p.c, tok, page, strings.TrimSpace(q.Q))
+		return err
+	})
 	if err != nil {
-		return nil, "", p.userFailed(ctx, userID, err)
+		return nil, "", p.userFailed(err)
 	}
 	out := make([]connections.RepoItem, len(list))
 	for i, r := range list {
@@ -177,9 +247,13 @@ func (p *Provider) PlanCreate(ctx context.Context, userID, owner string) (*conne
 	if strings.EqualFold(row.Login, owner) {
 		return &connections.Plan{Owner: row.Login, Via: connections.ViaUser, UserID: userID}, nil
 	}
-	o, err := p.d.findOwner(ctx, p.c, tok, &account{ID: row.AccountID, Login: row.Login}, owner)
+	var o *ownerInfo
+	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
+		o, err = p.d.findOwner(ctx, p.c, tok, &account{ID: row.AccountID, Login: row.Login}, owner)
+		return err
+	})
 	if err != nil {
-		return nil, p.userFailed(ctx, userID, err)
+		return nil, p.userFailed(err)
 	}
 	if o == nil {
 		return nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "you cannot create a repository for %s", owner)
@@ -204,9 +278,13 @@ func (p *Provider) CreateRepo(ctx context.Context, plan *connections.Plan, n con
 	if plan.Org != "" {
 		o = &ownerInfo{Login: plan.Org, Group: true, NamespaceID: plan.Ref}
 	}
-	r, err := p.d.createRepo(ctx, p.c, tok, o, n.Name, n.Description, n.Private)
+	var r *repoInfo
+	err = p.asUser(ctx, plan.UserID, tok, func(tok string) (err error) {
+		r, err = p.d.createRepo(ctx, p.c, tok, o, n.Name, n.Description, n.Private)
+		return err
+	})
 	if err != nil {
-		return nil, p.createError(ctx, plan, err)
+		return nil, p.createError(plan, err)
 	}
 	return repoOf(r), nil
 }
@@ -220,7 +298,7 @@ func (p *Provider) tokenError(err error) error {
 	return p.wrap(err)
 }
 
-func (p *Provider) createError(ctx context.Context, plan *connections.Plan, err error) error {
+func (p *Provider) createError(plan *connections.Plan, err error) error {
 	var se *StatusError
 	if !errors.As(err, &se) || se.RateLimited {
 		return p.wrap(err)
@@ -236,7 +314,7 @@ func (p *Provider) createError(ctx context.Context, plan *connections.Plan, err 
 	case http.StatusForbidden, http.StatusNotFound:
 		return p.errf(http.StatusForbidden, connections.CodeRefused, "%s refused to create the repository: %s", name, quote(said))
 	case http.StatusUnauthorized:
-		return p.userFailed(ctx, plan.UserID, err)
+		return p.userFailed(err)
 	}
 	return p.wrap(err)
 }
@@ -279,12 +357,16 @@ func (p *Provider) ResolveExistingIn(ctx context.Context, tenantID, userID, owne
 	if !p.d.validOwner(owner) || !nameRe.MatchString(name) {
 		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "the repository is written owner/name")
 	}
-	repo, err := p.d.getRepo(ctx, p.c, tok, owner, name)
+	var repo *repoInfo
+	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
+		repo, err = p.d.getRepo(ctx, p.c, tok, owner, name)
+		return err
+	})
 	if err != nil {
 		if isStatus(err, http.StatusNotFound, http.StatusForbidden) && !isLimited(err) {
 			return nil, nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "your connection cannot push to %s/%s", owner, name)
 		}
-		return nil, nil, p.userFailed(ctx, userID, err)
+		return nil, nil, p.userFailed(err)
 	}
 	if !repo.CanPush {
 		return nil, nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "your connection cannot push to %s", repo.FullName)

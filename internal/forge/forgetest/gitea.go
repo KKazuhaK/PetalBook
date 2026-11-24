@@ -38,7 +38,7 @@ func (f *Fake) serveGitea(w http.ResponseWriter, r *http.Request, path string) {
 	seg := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
 	case path == "/user" && r.Method == http.MethodGet:
-		writeJSON(w, 200, map[string]any{"id": me.ID, "login": me.Login, "username": me.Login})
+		writeJSON(w, 200, map[string]any{"id": me.ID, "login": me.Login, "username": me.Login, "is_admin": f.admins[strings.ToLower(me.Login)]})
 	case path == "/user/teams" && r.Method == http.MethodGet:
 		var gs []*Group
 		for _, g := range f.groups {
