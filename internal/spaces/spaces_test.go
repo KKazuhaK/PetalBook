@@ -815,7 +815,7 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		needGit(t)
 		dir := filepath.Join(t.TempDir(), "data")
-		opt := Options{Store: st, DataDir: dir, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour}
+		opt := Options{Store: st, DataDir: dir, Serve: true, Committer: "Svc <svc@example.test>", CloseWait: 200 * time.Millisecond, CommitIdle: time.Hour, CommitMax: time.Hour}
 		m, err := NewAccounts(opt)
 		if err != nil {
 			t.Fatal(err)
@@ -846,6 +846,13 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 		if err := os.MkdirAll(foreign, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		// A space with an attachment repository has its clone made before the row:
+		// the crashed one's is removed with it; the others' and a stranger's stay.
+		for _, id := range []string{crashed.ID(), fresh.ID(), recorded.ID(), "01FOREIGN0000000000000000"} {
+			if err := os.MkdirAll(filepath.Join(dir, "assetrepos", id), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
 		// The process "crashes": the staged spaces are closed but neither committed nor aborted.
 		crashed.sp.Close()
 		fresh.sp.Close()
@@ -875,6 +882,14 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 		for name, id := range map[string]string{"the real space": real.ID, "the space still being made": fresh.ID(), "the recorded space": recorded.ID()} {
 			if root, _ := m2.paths(id); !exists(filepath.Join(root, ".git")) {
 				t.Fatalf("%s was removed", name)
+			}
+		}
+		if exists(filepath.Join(dir, "assetrepos", crashed.ID())) {
+			t.Fatal("the attachment repository of the crashed staged space is still on disk")
+		}
+		for _, id := range []string{fresh.ID(), recorded.ID(), "01FOREIGN0000000000000000"} {
+			if !exists(filepath.Join(dir, "assetrepos", id)) {
+				t.Fatalf("the attachment repository of %s was removed", id)
 			}
 		}
 		if exists(filepath.Join(dir, "staging", recorded.ID())) {

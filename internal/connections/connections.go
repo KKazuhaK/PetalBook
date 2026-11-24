@@ -81,6 +81,9 @@ type Error struct {
 	Status   int
 	Msg      string
 	Repo     *RepoRef
+	// AssetsRepo is the attachment repository that was made with the space's
+	// (milestone 3.1) when a later step failed.
+	AssetsRepo *RepoRef
 	// Missing names the permissions the App or its installation lacks.
 	Missing []string
 	// InstallURL is where the App is installed (CodeAppNotInstalled).

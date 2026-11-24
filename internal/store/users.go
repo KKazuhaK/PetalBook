@@ -17,6 +17,9 @@ type User struct {
 	Role     string // "admin" or "member"
 	Disabled bool
 	Created  time.Time
+	// RemoteExempt: the storage policy does not ask the spaces this user owns
+	// for a remote (milestone 3.1).
+	RemoteExempt bool
 	// EmailVerified: the address came from a provider that vouched for it, or an
 	// administrator set or confirmed it (see EmailVerifiedBy for whether it
 	// counts for merging a sign-in).
@@ -33,19 +36,19 @@ type User struct {
 // LocalUserID is the built-in user of single-user mode.
 const LocalUserID = "local"
 
-const userCols = `id, username, name, email, role, disabled, created, email_verified, passkey_required, tenant_id, site_admin`
+const userCols = `id, username, name, email, role, disabled, created, email_verified, passkey_required, tenant_id, site_admin, remote_exempt`
 
 func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var disabled, created, verified, required, siteAdmin int64
-	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created, &verified, &required, &u.TenantID, &siteAdmin); err != nil {
+	var disabled, created, verified, required, siteAdmin, exempt int64
+	if err := sc.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &disabled, &created, &verified, &required, &u.TenantID, &siteAdmin, &exempt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	u.Disabled, u.Created, u.EmailVerified, u.PasskeyRequired = disabled != 0, fromMS(created), verified != 0, required != 0
-	u.SiteAdmin = siteAdmin != 0
+	u.SiteAdmin, u.RemoteExempt = siteAdmin != 0, exempt != 0
 	return &u, nil
 }
 
@@ -140,8 +143,8 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 	if u.TenantID == "" {
 		u.TenantID = DefaultTenantID
 	}
-	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin))
+	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin), b2i(u.RemoteExempt))
 	if err != nil {
 		return err
 	}
@@ -151,6 +154,12 @@ func InsertUser(ctx context.Context, q Q, u User) error {
 // UpdateProfile sets the name and email, and whether the email is verified.
 func UpdateProfile(ctx context.Context, q Q, id, name, email string, verified bool) error {
 	res, err := q.Exec(ctx, `UPDATE users SET name = ?, email = ?, email_verified = ? WHERE id = ?`, name, email, b2i(verified), id)
+	return oneRow(res, err)
+}
+
+// SetRemoteExempt sets whether the storage policy leaves this user's spaces out.
+func SetRemoteExempt(ctx context.Context, q Q, id string, exempt bool) error {
+	res, err := q.Exec(ctx, `UPDATE users SET remote_exempt = ? WHERE id = ?`, b2i(exempt), id)
 	return oneRow(res, err)
 }
 

@@ -519,13 +519,18 @@ func TestAdminSizerDoesNotWaitBetweenStaleSpaces(t *testing.T) {
 		for i := 0; i < 6; i++ {
 			a.addUser(fmt.Sprintf("user%d", i), pw, "member")
 		}
-		start := time.Now()
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() { a.mgr.Run(ctx); close(done) }()
 		t.Cleanup(func() { cancel(); <-done })
-		// Seven spaces are stale. If the sizer waited between them it would take
-		// seven ticks; all are done before the second one.
+		// Seven spaces are stale. If the sizer waited a tick between them, the
+		// last would be measured six ticks after the first. The test does not
+		// race the first tick against a deadline (which load can starve): it
+		// waits, with a generous deadline, for the first measurement, then
+		// requires that the rest follow within five ticks, far more than the
+		// walks need and less than the six waits would take.
+		giveUp := time.Now().Add(60 * time.Second)
+		var first time.Time
 		for {
 			n := 0
 			items := admin.do("GET", "/api/admin/spaces", nil).want(t, 200, "").body["items"].([]any)
@@ -534,13 +539,19 @@ func TestAdminSizerDoesNotWaitBetweenStaleSpaces(t *testing.T) {
 					n++
 				}
 			}
+			if n > 0 && first.IsZero() {
+				first = time.Now()
+			}
 			if n == len(items) && n == 7 {
 				break
 			}
-			if time.Since(start) > 2*every {
-				t.Fatalf("%d of %d spaces measured after two ticks", n, len(items))
+			if !first.IsZero() && time.Since(first) > 5*every {
+				t.Fatalf("%d of %d spaces measured %v after the first", n, len(items), time.Since(first))
 			}
-			time.Sleep(20 * time.Millisecond)
+			if time.Now().After(giveUp) {
+				t.Fatalf("%d of %d spaces measured, none started in time", n, len(items))
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	})
 }

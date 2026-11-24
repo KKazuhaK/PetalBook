@@ -25,6 +25,9 @@ The web app talks to the server only through this API.
   repository"; nothing was changed), `internal` (500). Signing in has codes
   of its own (see "Sign-in error codes"), as do some sections; a section's own
   code takes the place of the general one in `error`, with the status given.
+  Server storage (milestone 3.1, see "Server storage") adds
+  `remote_required` (409), `not_cached` and `restoring` (503, with
+  `Retry-After`) and `space_full` (507).
   Requests with an API token or an OAuth access token have codes of their
   own: `token_invalid`, `token_expired`, `token_revoked`,
   `token_owner_disabled` (401), `token_scope` and `tokens_off` (403); see
@@ -851,7 +854,9 @@ and of this answer have `quota`: `{"spaces": null, "bytes": null, "pages": null}
 `emailVerified: true` sent by a tenant administrator (not a site administrator)
 is stored and shown, but the address does not count for merging a sign-in by
 address (see "Which account an identity signs in to") until a site
-administrator confirms it or the person does.
+administrator confirms it or the person does. From milestone 3.1 the body may also have `remoteExempt`
+(site administrators only, `403 forbidden` for a tenant administrator; see
+"Server storage", "Exemptions").
 
 An administrator cannot open another user's space through the API. Whoever
 can read the server's disk can read every file.
@@ -942,6 +947,18 @@ administrator has switched the space off (see "Administration"): it stays in
 its members' lists, with the permissions they would have, but every request
 that opens it answers `403 space_disabled`.
 
+From milestone 3.1 a space also has `storage` (see "Server storage"):
+
+```json
+"storage": {"cache": "partial", "assets": "repository",
+            "remote": {"required": "github", "deadline": "2026-12-31T00:00:00Z", "overdue": false}}
+```
+
+`cache` is `local`, `full`, `partial`, `evicted` or `restoring`; `assets` is
+`space` (attachments are files of the space's repository) or `repository`
+(they are in an attachment repository). `remote` is `null` unless the storage
+policy requires something of this space that it does not have yet.
+
 ### `GET /api/spaces`
 
 `{"spaces": [{…}]}`: the caller's spaces, the personal one first, then by
@@ -971,6 +988,22 @@ commit (see "Connections", "Spaces and remotes", and "The GitHub provider",
 `201` with the space; its `sync` is then the state of its remote. When it
 fails, no space and no record is left on the server; what can be left on
 the provider, and how to retry, is described there.
+
+From milestone 3.1 (see "Server storage"):
+
+- `storage.sync.assets` asks for an attachment repository made with it, on the
+  same owner, with the same visibility and credential: `true` names it
+  `<name>-assets`, `{"name": "tang-notes-assets"}` names it, `false` makes
+  none, and leaving it out follows the administrators' `assets.newSpaces`.
+- `remote`, shaped like the body of `PUT …/remote` but with a `token`
+  credential only (an SSH key has to be added to the repository first, which
+  needs a space to hold it: `400 invalid`), connects the new space to an
+  existing repository on any allowed host before it becomes visible, under
+  the same all-or-nothing rule. This is the "other (by address)" choice of
+  "存在哪里". `remote` and `storage.sync` cannot both be given
+  (`400 invalid`).
+- While the storage policy requires a remote of new spaces, a request without
+  what it requires answers `409 remote_required`, before anything is made.
 
 ### `PATCH /api/spaces/{space}`
 
@@ -1422,6 +1455,16 @@ remote cannot be reached or refuses the credential (nothing is changed, and
 deleted. Nothing is changed on the remote. A `connection` credential has no secret
 of its own: the App and the user's GitHub authorisation stay as they are.
 
+From milestone 3.1: `409 remote_required` while the storage policy requires a
+remote of this space (see "Server storage"), and `409 conflict` while the
+space has an attachment repository. A space whose clone is partial or evicted
+is made whole first (everything is fetched, as for a pinned space), because a
+local space must be the complete copy; the answer waits for it like any
+restore, and `503 unavailable` when the remote cannot be reached leaves the
+space following it.
+`PUT …/remote` with a credential the policy does not accept (anything but
+`github` under `require: "github"`) also answers `409 remote_required`.
+
 ### `POST /api/spaces/{space}/remote/sync`
 
 Fetches now. `200` with the remote.
@@ -1548,9 +1591,12 @@ leftovers.
   ```
 
   Without `sync` the space is on this server. The fields are the GitHub
-  provider's, see "Creating a space with a repository". `provider: "git"` is
-  `400 invalid` here: a plain address is connected after the space is made, with
-  `PUT …/remote`. Failures that leave a repository behind answer with `repo`.
+  provider's, see "Creating a space with a repository"; from 3.1 it may also
+  have `assets` (see "Spaces", `POST /api/spaces`). `provider: "git"` is
+  `400 invalid` here: a plain address is given as `remote` (3.1, with a
+  token), or connected after the space is made with `PUT …/remote`. Failures
+  that leave a repository behind answer with `repo` (and, from 3.1,
+  `assetsRepo`).
 - The Remote object's credential is `{"type": "connection", "provider": "github",
   "via": "app" | "user", …}`; the other fields are the provider's (for GitHub
   `installationId`, `account`, `user`, `login`, `repoId`). `ssh` and `token` stay.
@@ -1916,8 +1962,9 @@ When a step fails:
   Codes: `409 repo_not_in_installation`, `502 push_failed`,
   `500 internal` (the transaction failed).
 - A crash between steps 3 and 6 is the same failure without an answer: the
-  directory on disk has no record and no one sees it (the next start removes
-  it once it is a quarter of an hour old), and the empty repository is on
+  directory on disk has no record and no one sees it (the next start of the
+  server removes it once it is a quarter of an hour old; `petalbook user …`
+  does not), and the empty repository is on
   GitHub, ready for `create: false`.
 
 Two requests for the same name: the second gets `409 name_taken`. The
@@ -2037,23 +2084,609 @@ The administrators' endpoints add `key_invalid`, `app_rejected`,
 `client_rejected`, `provider_in_use` and `public_url_needed`
 (see "Administration").
 
-### Reserved: a site policy for remotes (milestone 3.1)
+### A site policy for remotes (milestone 3.1)
 
-Not built in 2.7; the names are kept for it and not used for anything else.
+Reserved in 2.7, specified in "Server storage": `GET/PUT /api/admin/storage`
+and `409 remote_required`. 2.7 already makes a space and its repository in one
+step that either succeeds whole or leaves no space, so 3.1 adds a check before
+step 1 and nothing else to that order.
 
-- `GET /api/admin/storage`, `PUT /api/admin/storage` with
-  `{"remotes": {"require": null, "scope": "new", "graceDays": 30}}`: `require`
-  is `null` (no requirement), `"any"` (a space must follow some remote) or
-  a provider id (a repository through that provider); `scope` is
-  `"new"` (spaces made from now on) or `"all"`.
-- While a requirement applies, `POST /api/spaces` without what it requires,
-  and `DELETE …/remote`, answer `409 remote_required`. For `"any"`,
-  `POST /api/spaces` will take a `remote` field shaped like the body of
-  `PUT …/remote`. The personal space made at a user's first sign-in will be
-  made with a repository in their own account when they are connected.
-- 2.7 already makes a space and its repository in one step that either
-  succeeds whole or leaves no space, so 3.1 adds a check before step 1 and
-  nothing else to that order.
+## Server storage
+
+Milestone 3.1. Accounts mode; in single-user mode every endpoint here answers
+`404` and none of this applies (its one space is a directory the user owns).
+
+The server's disk should grow with what people are using, not with everything
+they have ever stored. Three things do that:
+
+- a **policy** that requires spaces to follow a remote, so that the server is
+  never the only copy and may drop its own;
+- **partial caching** of spaces that follow a remote: the server keeps the
+  current text and the index; old versions and attachments are fetched when
+  someone asks for them, and a space that nobody has used for a while is
+  **evicted** down to its index;
+- an **attachment repository**: a second remote that holds a space's
+  `assets/`, read through a cache of bounded size.
+
+A local space (`sync: "local"`) is the only copy of its pages. It is never
+partially cached or evicted; the policy can only limit its size.
+
+### What a space costs on disk
+
+For the 50 000-page corpus of `spikes/search-scale` (62.2 million characters).
+The text and the index are measured; the rest are estimates under stated
+assumptions (five versions per page, 250 000 commits; 5 GB of attachments in
+20 000 files), to be measured on that corpus before 3.1 is merged.
+
+| Part | Full clone (now) | Partial clone | Evicted |
+|---|---|---|---|
+| Index (`DATA/cache/<id>`) | 166 MB | 166 MB | 166 MB |
+| Text in the working tree | 192 MB | 192 MB | 0 |
+| Current text in `.git` (zlib) | ~100 MB | ~100 MB | 0 |
+| Commits and trees | ~60–120 MB | ~60–120 MB | 0 |
+| Older versions of the text | ~100–400 MB | only those someone looked at | 0 |
+| Attachments in `assets/` of the space | 5 GB in the working tree + ~5 GB in `.git` (images do not compress) + every older version | the current ones twice, older versions only when looked at | 0 |
+| Attachments in an attachment repository | — | the space's share of the attachment cache | 0 |
+
+So such a space takes about 11 GB as a full clone, about 0.6 GB as a partial
+clone with an attachment repository (plus what of it is in the attachment
+cache), and 166 MB evicted. A more usual space of 2 000 pages and 200 MB of
+attachments: about 450 MB full, about 25 MB partial with an attachment
+repository, about 7 MB evicted. A server with 1 000 such spaces of which 100
+are in use goes from about 450 GB to about 2.5 GB of clones, 7 GB of indexes
+and the attachment cache.
+
+What a request costs does not change for a space that is cached (`partial` or
+`full`): pages, lists, search, links, checks and current attachments are read
+from the working tree and the index exactly as now. Only reads of what is not
+on the server (an old version, an attachment not in the cache, any file of an
+evicted space) wait for the network.
+
+### `GET /api/admin/storage`, `PUT /api/admin/storage`
+
+Site administrators only (3.3: the server's disk, its policy and its cache are
+the server's own, not a tenant's; a tenant administrator gets `403 forbidden`).
+In the administrators' web page these settings are the storage part of
+"存储与同步" (Storage & sync), above the connections (see "Connections").
+
+```json
+{"remotes": {"require": "github", "scope": "all", "graceDays": 30, "since": "2026-12-01T00:00:00Z"},
+ "hosts": {"allowed": ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"], "fromFlag": false},
+ "localSpaces": {"maxBytes": 524288000},
+ "cache": {"partial": true, "evictAfterDays": 14, "minIdleHours": 24,
+           "clonesBytes": null, "minFreeBytes": 10737418240, "assetsBytes": 5368709120},
+ "assets": {"newSpaces": false},
+ "git": {"version": "2.53.0", "partialClone": true},
+ "affected": {"inGrace": 3, "overdue": 0, "exempt": 1}}
+```
+
+`PUT` takes any of `remotes`, `hosts`, `localSpaces`, `cache` and `assets`,
+each partly (what it leaves out stays), and answers as `GET`; `git` and
+`affected` are read only. The settings are in the state database and apply to
+the next request, without a restart. `400 invalid` for a value outside its
+range.
+
+- `remotes.require`: `null` (no requirement, the default), `"any"` (a space
+  must follow a remote on an allowed host) or the id of a provider, such as
+  `"github"` (a repository on that platform with a `connection` credential
+  through it, see "Connections"; `409 provider_not_configured`, with
+  `provider`, while the provider is not set up; `"git"` is `400 invalid`,
+  `"any"` is what takes a plain address).
+- `remotes.scope`: `"new"` (spaces made from now on; the default) or `"all"`.
+- `remotes.graceDays`: 0 to 365, default 30. How long an existing space has to
+  meet a requirement that `scope: "all"` puts on it. `since` is when the
+  requirement took its present form (`require` or `scope` changed), set by the
+  server; a space's deadline is `since + graceDays` (below).
+- `hosts.allowed`: the hosts a remote may be on, what `--remote-host` sets
+  today (`"*"` allows any). When the server was started with `--remote-host`,
+  the flag wins: `fromFlag` is `true` and a `PUT` of `hosts` answers
+  `409 conflict`. A connection's provider is held to the same list (its host,
+  as 2.7b checks `--remote-host`): a provider whose host is not allowed cannot
+  be used to connect or make a space.
+- `localSpaces.maxBytes`: `null` (no limit, the default) or at least 1 MiB.
+  See "A limit on local spaces".
+- `cache.partial`: whether spaces that follow a remote are cloned partially
+  (default `true` when `git.partialClone` is, see "Partial clones").
+- `cache.evictAfterDays`: 1 to 365, or `null` for never; default 14. A space
+  not used for that long is evicted.
+- `cache.minIdleHours`: 1 to 720, default 24. A space used more recently than
+  this is never evicted, also when the disk is short (no space is fetched and
+  dropped over and over).
+- `cache.clonesBytes`: `null` (no budget, the default) or at least 1 GiB: the
+  most that the clones of spaces that follow a remote may take together.
+- `cache.minFreeBytes`: `null` or at least 0; default 10 GiB. When the disk of
+  the data directory has less room than this, spaces are evicted as for an
+  exceeded budget.
+- `cache.assetsBytes`: at least 64 MiB, default 5 GiB: the attachment cache,
+  shared by all spaces with an attachment repository.
+- `assets.newSpaces`: when `true`, a space made with `storage.sync` gets an
+  attachment repository too unless the request says `"assets": false`. Default
+  `false`.
+- `git.version` is the Git the server runs; `git.partialClone` is `false` when
+  it is older than 2.44 (it cannot refuse to fetch on its own, see "Partial
+  clones"). Then `cache.partial` is `false` and a `PUT` of `true` answers
+  `409 conflict`. Eviction works with any Git.
+- `affected` counts the spaces the policy now asks something of: in their grace
+  period, past their deadline, and exempted.
+
+**Layers.** These settings are the site's, stored as one record of the state
+database and not in 3.3's layered settings (`GET /api/admin/settings`
+does not list them). Following "the layering of settings and locks", each has
+a default and says whether lower layers may change it; in 3.1 every one of
+them is locked at the site: they decide how the server uses its own disk and
+whom it trusts, and a space's settings live in `space.yml`, which anyone who
+can push to its remote can change. The tenant layer is reserved (see
+"Tenants, registration and mail"): a tenant's administrators will be able to
+make `remotes.require`, `remotes.graceDays` and `localSpaces.maxBytes`
+stricter (require a remote, a provider rather than `"any"`, a shorter grace
+period, a smaller limit) and never looser. The two per-space values below
+(pinned, exempt) are records of the state database, not settings of the
+space.
+
+### Requiring a remote
+
+While `require` applies to a space, it must follow a remote of that kind.
+Exempt users' spaces and exempt spaces (below) are left out.
+
+- **New spaces** (any `scope`): `POST /api/spaces` without what is required
+  answers `409 remote_required` before anything is made: under `"any"` it
+  needs `storage.sync` or `remote`, under a provider's id it needs
+  `storage.sync` with that `provider`. `remote` is the body of `PUT …/remote`
+  with a token (an SSH key needs the space first, to hold the key); it is
+  `400 invalid` together with `storage.sync`.
+- **The personal space** is made at a user's first sign-in, when they cannot
+  have connected anything yet. It is made local, as now, and is given a
+  deadline of its creation plus `graceDays`; the app offers the one step that
+  meets the requirement (connect the provider, then a private repository
+  `petalbook-<username>` in their account).
+- **Existing spaces**, with `scope: "all"`: a space that does not meet the
+  requirement gets the deadline `since + graceDays`. Until then nothing
+  changes but the notice: `storage.remote` in the space
+  (`{"required": "github", "deadline": "…", "overdue": false}`), shown to every
+  member, with the way to connect offered to those with `manage`.
+- **After the deadline** the space is read-only: it is listed, opened, read,
+  and searched as before; drafts keep being saved (they are in the
+  state database, not in the space). Every change to its files answers
+  `409 remote_required` with the deadline:
+
+  ```json
+  {"error": "remote_required", "message": "…", "require": "github", "deadline": "2026-12-31T00:00:00Z"}
+  ```
+
+  Connecting it (`PUT …/remote`, `POST …/remote/key`) always works, and once it
+  follows a remote of the required kind it is writable again, drafts are
+  committed as usual. **Nothing is deleted** at the deadline or after it: not
+  the space, not a page, not a draft, not a setting.
+- **Removing** a remote (`DELETE …/remote`) and switching to a credential the
+  requirement does not accept (`PUT …/remote`) answer `409 remote_required`.
+- **Changing the policy.** Relaxing it (`require: null`, `scope: "new"`)
+  clears the deadlines at once, and overdue spaces are writable again.
+  Tightening it (`"any"` to `"github"`, `"new"` to `"all"`) starts a new
+  `since`, so nobody's grace period starts in the past. A new `graceDays`
+  moves the deadlines of spaces still in their grace period; when it puts a
+  deadline in the past, that space is overdue at once, which `affected` in the
+  answer shows before anyone else sees it.
+- A space whose remote stops working (offline, `rewritten`, an `errorCode`)
+  still follows it and meets the requirement: those states are handled as in
+  "Remote repository" and "The GitHub provider".
+
+#### Exemptions
+
+- `PATCH /api/users/{id}` takes `{"remoteExempt": true}`: the spaces this user
+  owns are not asked for a remote (new ones included). Site administrators
+  only, as the requirement is the site's (`403 forbidden` for a tenant
+  administrator). The User object has `remoteExempt` (absent when `false`).
+- `PUT /api/admin/spaces/{space}/storage` takes `{"exempt": true}` for one
+  space (below).
+
+### A limit on local spaces
+
+With `localSpaces.maxBytes`, an upload (`POST …/assets`) or an import into a
+local space whose measured size (`sizeBytes`, see "Administration") plus the
+request's body would exceed it answers `507 space_full`. Saving text is never
+refused, so nobody loses typing; the measurement can be up to 6 hours old,
+and an upload or import measures the space again first when the stored size
+is within 10 % of the limit. Spaces that follow a remote are not limited by
+it: their copy on the server is a cache.
+
+### Partial clones
+
+A space that follows a remote is cloned with `--filter=blob:none` (from Git
+2.44; with `cache.partial` on). The server has every commit and every tree,
+and the contents of the files only of the current version, which it checks
+out as now. Older versions of a file are fetched when someone opens them, and
+kept until the space is evicted.
+
+- **Why not a shallow clone.** A shallow clone (only the latest commits)
+  would save the commits and trees too, about 60–120 MB at 50 000 pages, but
+  the history of a page, following a page through renames, detecting a
+  rewritten history, and counting what is not pushed all walk commits. Each
+  page of history would cost a `--deepen` round trip, which also brings every
+  file of those commits. With the commits local, all of that stays local and
+  only file contents are fetched, a few kilobytes each.
+- **Git never fetches on its own.** Every Git command on the server runs with
+  `GIT_NO_LAZY_FETCH=1`. A missing object is an error the server handles, not
+  a silent network request without credentials or a deadline in the middle of
+  a read. The server fetches missing contents itself, by their ids, through
+  the same credential, deadline and error handling as every pull, in one
+  request per batch (`git fetch --filter=blob:none --stdin` with the ids).
+  The restricted Git runner allows these options and nothing more.
+- **Pulls.** The pull every minute (open spaces only, as now) fetches the new
+  commits and trees; when they changed files, the new contents of those files
+  are fetched in one more request before the space moves forward. A pull that
+  brings nothing costs what it costs now.
+- **A host that cannot filter** (it says so, and Git fetches everything)
+  leaves the space a full clone: `cache: "full"`. Nothing else changes.
+- **Existing clones** stay full until they are evicted and restored, which
+  makes them partial; `POST /api/admin/spaces/{space}/evict` does it now.
+  Git cannot drop contents from a clone in place, and re-cloning a space in use
+  is a restore anyway.
+
+#### History and versions
+
+`GET …/history` and `GET …/versions/{commit}` (and `page_history`,
+`page_version` in MCP) read the commits locally. For each page of history the
+server lists the versions with their content ids (one `git log`, as now) and
+fetches those it does not have, at most `limit` plus half of it, in one
+request (a page of 30 versions of a 4 KB text is about 100–200 KB). A
+version, once fetched, is not fetched again. Following a page through renames
+uses Git's rename detection only for exact renames, which needs no content;
+the page's id recognises the rest, as it already does when Git's detection
+gives up (the heads of the files deleted in one commit, fetched in one
+request). The versions listed are the same as with a full clone.
+
+While the server fetches, the request waits, up to 15 seconds. When the
+remote cannot be reached, refuses the credential or takes longer:
+
+```json
+{"error": "not_cached", "message": "This version is not on the server and the remote repository cannot be reached.", "fetching": false}
+```
+
+`503`, with `Retry-After` (5 seconds when `fetching` is `true`: the fetch goes
+on and the next try usually finds it; 60 seconds otherwise). A page of
+history is complete or not given: there is no partial list. Versions already
+on the server are read as now, also while the remote is down. Repairing a
+settings file from its earlier versions (see "Settings files that cannot be
+used") looks only at versions on the server when the remote cannot be
+reached, and tries again at the next opening.
+
+### Eviction
+
+An evicted space has no clone on the server: `DATA/spaces/<id>` is removed. Its
+index, its records (members, remote, drafts) and its settings in the state
+database stay. Lists, the tree, tags, search (the space's and the global one),
+links and backlinks and the checks are answered from the index without
+fetching anything, as fast as for a cached space. What the index does not
+hold is left out rather than fetched: a backlink's `excerpt` is `""` (it is
+the paragraph, read from the file), a listing has no tag colours and no type
+a folder gives its pages (both are in files of the space). Everything that
+needs a file restores the space first.
+
+**Which spaces.** Only spaces that follow a remote, and only when all of this
+holds at the moment of eviction, checked while the space is closed and held
+so that nothing can open it:
+
+- its remote is `ok` (not `offline`, `rewritten` or `error`);
+- the committer has nothing pending, the journal is empty, and a fetch made
+  just then shows the remote's branch at the space's `HEAD`: every commit of
+  the space is on the remote;
+- it holds no rescued commits (`refs/petalbook/unpushed/…`): those exist
+  nowhere else;
+- it has no draft, in the state database, of anyone's (a draft is safe there,
+  but an eviction never sits between a person and what they were typing);
+- it is not pinned, and it was not used for `minIdleHours`.
+
+When any of these fails, the space stays and is tried again at the next
+round. A space is evicted when it has not been used for `evictAfterDays`,
+and earlier, the least recently used first, while the clones together exceed
+`clonesBytes` or the disk has less than `minFreeBytes` free. "Used" is any
+request that opens the space; a pull is not a use. The time of the last use
+is in the state database, written at most once an hour per space. One round
+runs every 10 minutes, evicts one space at a time and takes a few seconds per
+space (removing its files); the sizes it adds up are the stored measurements,
+one query. The attachment cache of an evicted space goes with it.
+
+**Restoring.** The first request that needs a file of an evicted space starts a
+restore and waits for it, up to 10 seconds:
+
+1. a partial clone of the remote's branch (commits, trees, and the current
+   contents of everything but an attachment repository's files);
+2. the checkout;
+3. the files whose content id is the one the index has get back the
+   modification time the index recorded, so the index sees them as unchanged
+   and the order "by update" is what it was; only the files that changed on
+   the remote meanwhile are read again, as after a pull;
+4. the space opens as usual.
+
+For a space of 2 000 pages that is about 10 MB to fetch and 1 to 3 seconds;
+for 50 000 pages about 200 MB and some 20 to 40 seconds on a 100 Mbit/s link.
+At most two restores run at a time; others wait their turn. Requests that are
+still waiting after 10 seconds answer:
+
+```json
+{"error": "restoring", "message": "…", "phase": "fetching"}
+```
+
+`503` with `Retry-After: 5`; the restore goes on. `phase` is `waiting`,
+`fetching`, `checkout` or `indexing`. The space's `storage.cache` is
+`restoring` meanwhile. When the remote cannot be reached or the credential
+does not work, the restore fails at once: `503 unavailable` with the remote's
+`errorCode` where there is one (a connection that expired is fixed as in
+"When a GitHub credential stops working"), and the index-only answers
+above go on working. One restore is given 5 minutes once it has its turn; a
+remote that does not answer in that time fails it the same way. After a
+failure the space is not tried again for a while (3 seconds, doubled with each
+failure in a row, at most 2 minutes): requests meanwhile answer `503
+unavailable` at once, with `Retry-After` set to the seconds left. A failed restore leaves no half clone: the clone is made
+in a directory of its own and moved into place when it is complete.
+
+What a crash leaves (an eviction cut short, a restore's directory) is finished
+or removed by the next start of the server, and by nothing else: `petalbook
+user …` run against the data directory of a running server touches none of
+it. The server holds `DATA/serve.lock` while it runs; a second server on the
+same data directory does not start.
+
+Drafts are not affected by any of this: they are in the state database, with
+the rev they started from, and are committed after the restore like any other
+draft.
+
+### The attachment cache
+
+The contents of attachments from an attachment repository live in
+`DATA/assetcache/<space>/<content id>`, one file each, named by the content id
+Git gave it, so the same file is stored once however many times it is
+referred to. All spaces share one budget, `cache.assetsBytes`; when it is
+exceeded, the least recently read files go first. A file's modification time
+is its last read (updated at most once an hour), so the order survives a
+restart without a database. The total is kept in memory and is exact: the
+server writes every file in the cache itself.
+
+### Attachment repository
+
+A space that follows a remote can keep its attachments in a second Git
+repository. The space's repository then holds only the text and stays small:
+fetched quickly, restored quickly, cheap to keep in a partial clone.
+
+**A plain Git repository, not Git LFS.** It works on every host a space can
+use, with the same kinds of credential (a `connection` too), the same
+restricted Git runner and the same provider; its files can be browsed on the
+platform like any others. LFS needs
+a second protocol and service beside Git, has its own storage and bandwidth
+quotas on GitHub billed apart from the repository, is not offered by every
+host, and puts pointer files in the space's repository that other clones show
+as text unless they have LFS installed.
+
+**Layout.** The repository's root is the content of `assets/`:
+`<page id>/<name>`, on `main`. Someone who clones the space's repository and
+then this one into its `assets/` folder has the same files as before, and every
+link works in any editor. Commits are made as in the space (the editor is the
+author, the service the committer), and are pushed before the request is
+answered.
+
+**Links do not change.** A page refers to `/assets/01JD3K8Q7Z/street-3f9a1c2b.jpg`
+or to a relative path that leads into `assets/`, as before; no page is
+rewritten. `GET …/files/assets/{page id}/{name}` finds the file in the
+attachment repository instead of the working tree: the path is looked up in
+a table of the repository's current files (path, content id, size) that the
+server keeps in memory, made when the space opens (20 000 files: about 2 MB,
+some 50 ms) and updated by each pull and upload; then the file is sent from
+the attachment cache. The size of a file is known to the table only once its
+contents have been in the cache (a partial clone cannot say how large a file
+it does not have); the answer's `Content-Length` is that of the cached file. A file that is not in the cache is fetched by its id
+first (as for an old version), and later readers share that fetch. The answer
+is the same as now except that it carries `ETag` (the content id) instead of
+`Last-Modified`, so a browser revalidates with `If-None-Match` and gets `304`
+(finding a file's last commit would cost a walk of the history); `Range` and
+the other headers are as now. A path under `assets/` that the
+table does not have is `404 not_found`, without asking the remote.
+
+**Checks** ("attachment reference to a file that does not exist") use the same
+table, so they cost what they cost now. While the attachment repository
+cannot be reached, the table is the last one the server had: an unreachable
+repository does not make attachments look missing.
+
+**Unreachable.** The page text is read and written as usual. Attachments in the
+cache are served. Others answer `503 not_cached` with `Retry-After`, as an old
+version does; a client shows a placeholder where an image would be. Uploads
+answer `503 unavailable` and store nothing. The attachment repository has a
+state of its own (`ok`, `offline`, `error` with `errorCode`, as a Remote); it
+does not pause the space.
+
+**Order of writes.** An upload is pushed to the attachment repository before
+the request is answered, so a page saved after it never refers to an attachment
+that is not on its remote. An import pushes its attachments first, in one
+commit, then the pages in one commit of the space; when the second step fails,
+the attachments stay on the remote, referred to by nothing, and the import
+answers as a failed import does now (no page made). Nothing is ever pushed
+with force or deleted on either remote.
+
+#### `GET /api/spaces/{space}/remote/assets`
+
+Needs `manage`. `200` with a Remote object (see "Remote repository") with one
+more field, `move` (below); `404 not_found` when the space has none.
+
+#### `PUT /api/spaces/{space}/remote/assets`
+
+Needs `manage`. The body of `PUT …/remote` (a `connection` credential
+included), or to make a repository on a provider:
+
+```json
+{"sync": {"provider": "github", "owner": "kazuhahub", "name": "tang-notes-assets", "private": true, "create": true}}
+```
+
+with the fields and rules of `storage.sync` in "Creating a space with a
+repository" (`via` as the provider chooses, unless given; a `via: "user"`
+connection syncs only spaces of its person's tenant, as for the space's own
+remote). A repository that was made and could not be connected is named in
+`repo` and is remembered as a leftover (see "Leftover repositories"). The space must follow a
+remote: `409 remote_required` otherwise. Connecting follows the rules of
+`PUT …/remote`: an empty repository is used as it is; one with content is
+accepted while the space has never used an attachment repository and its
+`assets/` is empty (the space takes its files); otherwise `409 conflict`. On a
+space that has one, `PUT` replaces its address and credential, the same
+repository with another credential. `200` with the Remote object. Connecting
+does not move anything: the space's existing attachments stay in `assets/`
+of the space and are served from there until they are moved; new uploads go
+to the attachment repository.
+
+#### `POST /api/spaces/{space}/remote/assets/move`
+
+Needs `manage`. Moves the attachments in `assets/` of the space into the
+attachment repository. `202` with the Remote object; the move runs in the
+background, and `move` says how far it is:
+
+```json
+"move": {"state": "copying", "files": 20000, "filesDone": 8000, "bytes": 5368709120, "bytesDone": 2147483648, "error": ""}
+```
+
+`state` is `copying`, `switching`, `done` or `failed`.
+
+1. **Copying.** The files of `assets/` at the current commit are committed to
+   the attachment repository and pushed, in commits of at most 500 MB
+   (GitHub refuses a push over 2 GB). The space stays writable; uploads still
+   go into `assets/` of the space meanwhile.
+2. **Switching.** With the space's writes held for a moment, whatever
+   `assets/` gained since the copy started is pushed too; then one commit of
+   the space removes `assets/` and adds `/assets/` to its `.gitignore`, and
+   is pushed. From that commit on, attachments are read from the attachment
+   repository.
+3. The server replaces its clone of the space's repository by a new partial
+   clone, as a restore does, while the old clone goes on serving; the disk the
+   attachments took is free when the new one is in place.
+
+The space's history still has the attachments, and so does its remote: history
+is never rewritten. A failure before the switch changes nothing in the space
+(`failed`, `error` says why; the files already pushed to the attachment
+repository stay there, and the next `POST …/move` goes on from them). Only one
+move at a time: `409 conflict` while one runs, and also for `PUT` or `DELETE`
+of the attachment repository. `200` with nothing to do when `assets/` is empty.
+
+#### `DELETE /api/spaces/{space}/remote/assets`
+
+Needs `manage`. `204` while no attachment has gone to it (nothing was uploaded
+or moved): the space keeps its attachments in `assets/`. Otherwise
+`409 conflict`: moving the attachments back into the space is not part of 3.1.
+
+#### With a new space
+
+`POST /api/spaces` with `storage.sync.assets` (`true`, `false` or
+`{"name": "…"}`; absent follows `assets.newSpaces`, and the name defaults to
+`<name>-assets`) makes the attachment repository right after the space's
+repository (step 3 of "Creating a space with a repository"), with the same
+owner, visibility and credential, and checks it in step 4 the same way (an
+installation with "only selected repositories" gets it added, or the request
+fails with `409 repo_not_in_installation`).
+Failures are those of that section; once either repository has been made,
+the answer names what was made, and the same request with `create: false`
+uses both. Each repository that was made is also remembered as a leftover
+until a space uses it:
+
+```json
+{"error": "push_failed", "provider": "github", "message": "…",
+ "repo": {"id": 881234567, "fullName": "kazuhahub/tang-notes", "htmlUrl": "…"},
+ "assetsRepo": {"id": 881234568, "fullName": "kazuhahub/tang-notes-assets", "htmlUrl": "…"}}
+```
+
+When the platform refuses to make the attachment repository after the space's
+was made, the answer is the provider's own refusal as step 3 gives it (`409
+name_taken`, `403 provider_refused`, `429 rate_limited` with its
+`Retry-After`, …), with `repo` naming the space's repository and no
+`assetsRepo`. The same request with `create: false` then finds the space's
+repository but not the attachment one, and fails with the error of
+connecting to it (`403 owner_not_allowed`, `409 repo_not_in_installation`,
+…), whose `message` names the attachment repository that is missing and whose
+`repo` names the space's: make that repository on the platform (or drop
+`storage.sync.assets`) and send the request again.
+
+### Administrators: per space
+
+Site administrators only, as `/api/admin/storage` (the pin keeps the server's
+disk, the exemption is from the site's requirement, eviction is the server's
+cache): a tenant administrator gets `403 forbidden`.
+
+#### `PUT /api/admin/spaces/{space}/storage`
+
+```json
+{"pin": true, "exempt": false}
+```
+
+Each optional. `pin` keeps everything of the space on the server: it is never
+evicted, its clone becomes a full one (all versions are fetched in the
+background, and from then on every pull brings every version) and its attachments are all kept in the cache, outside
+`assetsBytes`. A pinned local space is the same as an unpinned one.
+`exempt` leaves the space out of the requirement of a remote. `200` with the
+item of `GET /api/admin/spaces`. Pinning while the remote cannot be reached is
+accepted; the full fetch waits for the remote, and an evicted space is
+restored at the next working fetch.
+
+#### `POST /api/admin/spaces/{space}/evict`
+
+Evicts the space now, if it may be evicted (the conditions of "Eviction",
+except `minIdleHours`). `204`; `409 busy` while requests use it or it holds
+something not on the remote (`message` says what); `409 conflict` for a local or
+pinned space; `503 unavailable` when the remote cannot be reached (it is not
+evicted without checking that the remote has everything).
+
+#### In the list of spaces and the status
+
+`GET /api/admin/spaces` and `GET /api/admin/spaces/{space}` (a tenant
+administrator's included, for the spaces of their tenant) add to each item:
+
+```json
+"storage": {"cache": "partial", "pinned": false, "exempt": false, "lastUsed": "2026-11-22T02:10:00Z",
+            "cloneBytes": 41943040, "indexBytes": 7340032, "assetCacheBytes": 15728640,
+            "assets": "repository", "remote": {"required": "github", "deadline": "2026-12-31T00:00:00Z", "overdue": false}}
+```
+
+`cloneBytes` is the `sizeBytes` measured as now (the directory of the space,
+0 once evicted), `indexBytes` the index measured with it, `assetCacheBytes`
+the space's files in the attachment cache (exact). `?cache=evicted` (or any
+other `cache` value) and `?overdue=1` filter the list, in the same one query.
+
+`GET /api/admin/status` (site administrators) adds:
+
+```json
+"storage": {"spaces": {"local": 12, "full": 3, "partial": 41, "evicted": 156, "restoring": 0},
+            "cloneBytes": 2147483648, "indexBytes": 1288490188, "assetCacheBytes": 4831838208,
+            "clonesBudget": null, "assetsBudget": 5368709120, "restoresWaiting": 0,
+            "remotes": {"inGrace": 3, "overdue": 0}}
+```
+
+the sums of the stored measurements (one query) and of the cache in memory.
+
+### Offline and expired credentials
+
+| Situation | Cached space | Evicted space |
+|---|---|---|
+| Remote unreachable | reads as now; writes `503 unavailable`; old versions and attachments not on the server `503 not_cached` | lists and search from the index; anything needing a file `503 unavailable` |
+| Credential refused, a connection expired or missing (`connection_expired`, `connection_missing`) | the same, with the remote's `errorCode` | the same, with the remote's `errorCode` |
+| Attachment repository unreachable | text as usual; cached attachments served; others `503 not_cached`; uploads `503 unavailable` | as above once restored |
+
+A space is never evicted in any of these states, so a space in use when its
+remote goes away keeps working from its clone. Drafts keep being saved in every
+case.
+
+### Errors of this section
+
+| Code | Status | When |
+|---|---|---|
+| `remote_required` | 409 | the policy requires a remote this request would not have: a new space without one, removing one, a credential the policy does not accept, a change to an overdue space; an attachment repository for a space without a remote. The body has `require` and, for an existing space, `deadline` |
+| `not_cached` | 503 | an old version or an attachment is not on the server and cannot be fetched now; `fetching` says whether a fetch is still running; `Retry-After` |
+| `restoring` | 503 | an evicted space is still being restored after the request's wait; `phase`; `Retry-After` |
+| `space_full` | 507 | an upload or import would take a local space over `localSpaces.maxBytes` |
+| `unavailable` | 503 | as everywhere: the remote cannot be reached or refuses the credential; for an evicted space, it cannot be restored now (`Retry-After` while a failed restore is not tried again) |
+| `busy` | 409 | an eviction asked for while the space is in use or holds what its remote does not |
+| `conflict` | 409 | a second move; a change of the attachment repository during a move or after files went to it; `hosts` set by the flag; partial clones without Git 2.44 |
+| `invalid` | 400 | a setting outside its range, `remote` and `storage.sync` together |
+
+The codes of "Connections" apply to making an attachment repository as they
+do to making a space's, with `provider`.
+
+**Usage and quotas (3.3).** What the quotas count of a space (`usage_bytes`)
+is written only by a measurement of a whole copy: a partial clone or an
+evicted space is measured for the list (`sizeBytes`, `cloneBytes`) only, and
+its usage keeps the last full measurement, so neither shrinks what a person
+uses.
 
 ## Pages
 
@@ -2513,6 +3146,11 @@ The page as it was in that version: `{"commit", "time", "author", "path",
 "rev", "meta", "body"}`. `404 not_found` when that commit is not a version of
 this page (it is not possible to read any other file through this endpoint).
 
+In a space whose clone is partial (milestone 3.1), both endpoints may fetch
+the contents of old versions from the remote first, and answer
+`503 not_cached` (with `Retry-After`) when it cannot be reached; see "Server
+storage", "History and versions".
+
 Going back to an old version is an ordinary edit: the app loads the old
 content into the editor and it is stored and committed like anything typed, as
 a new version. History is never rewritten.
@@ -2565,7 +3203,8 @@ The pages that link to this one, the most recently changed first, 20 at a time:
 ```
 
 `excerpt` is the paragraph the link is in, as plain text, cut to about 240
-characters around the link (`""` when the file no longer has the link). A page
+characters around the link (`""` when the file no longer has the link, and
+while the space is evicted: see "Eviction"). A page
 that links several times is listed once. `next` is `""` at the end, else the
 `cursor` of the next request; a `cursor` that was not handed out is `400`. `404`
 for an unknown page.
@@ -3742,6 +4381,14 @@ inline`. A PDF is sent without the policy header, because browsers' PDF
 viewers do not start under it. Everything else is `application/octet-stream` and
 `Content-Disposition: attachment`.
 
+From milestone 3.1 a space may keep its attachments in an attachment
+repository (see "Server storage", "Attachment repository"). The paths and
+links stay the same; `assets/…` is then read from the attachment cache, an
+attachment not in it is fetched first, and `503 not_cached` (with
+`Retry-After`) is the answer while that repository cannot be reached. Uploads
+are pushed to the attachment repository, and a local space over the
+administrator's limit answers `507 space_full`.
+
 ## Import
 
 ### `POST /api/spaces/{space}/import?folder={folder}&name={file name}`
@@ -3805,7 +4452,10 @@ for every change in a space that follows a remote.
 
 The whole import is one change: one commit, and in a space that follows a
 remote one push, with nothing left behind if it fails. In a local space a
-failure half way (a full disk) can leave the pages created so far.
+failure half way (a full disk) can leave the pages created so far. With an
+attachment repository (milestone 3.1) the attachments are one commit and one
+push there first; if the pages then fail, those attachments stay on that
+remote, referred to by nothing.
 
 ## Folders and tags
 
@@ -4995,7 +5645,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -5124,11 +5774,14 @@ The settings of 3.3 (others join this table as they are made):
   with. The person layer is a site or tenant administrator's override on the
   user (`PATCH /api/users/{id}` with `quota`), not something people set for
   themselves.
-- **Reserved for 3.1** (on another branch; nothing here depends on its code):
-  `storage.remotes.require` (choice, ordered `null` < `any` < `github`),
-  `storage.remotes.graceDays` and `storage.localSpaces.maxBytes` (limits) join
-  with layers site and tenant, and the site's `lower` defaults to `lock`, as
-  3.1 decided; a tenant may only tighten them. **Reserved for 2.7**: none of
+- **Reserved for 3.1** (merged; its settings are still the site's own record,
+  `GET`/`PUT /api/admin/storage`, and not in this table yet):
+  `storage.remotes.require` (choice, ordered `null` < `any` < a provider's id,
+  2.7b), `storage.remotes.graceDays` and `storage.localSpaces.maxBytes`
+  (limits) join with layers site and tenant, and the site's `lower` defaults
+  to `lock`, as 3.1 decided; a tenant may only tighten them. 3.1's
+  `hosts.allowed` (what `--remote-host` sets) and its cache settings stay the
+  site's only. **Reserved for 2.7**: none of
   the GitHub App's settings have a tenant layer.
 - Security settings (`/api/admin/security`, providers, mail) are the site's
   only and are not in this table.
@@ -5825,6 +6478,9 @@ repository"), as the server knows it without opening the space. A space that
 has never been opened since the server started has the state it was last left
 in; nothing is opened to fill this in.
 
+Milestone 3.1 adds `storage` to each item, and the filters `cache` and
+`overdue` (see "Server storage", "Administrators: per space").
+
 ### `GET /api/admin/spaces/{space}`
 
 One space, the same object as an item of the list (same first owner, same
@@ -5893,6 +6549,7 @@ again. `409 personal_space` for a personal space, which goes with its person.
 in memory now (idle ones are closed, see `--space-idle`). `diskFreeBytes` is
 the room left for the server on the disk of the data directory; it is absent
 on platforms that cannot say (anything but Linux, macOS and FreeBSD).
+Milestone 3.1 adds `storage` (see "Server storage").
 
 ### Security settings
 
@@ -6402,7 +7059,10 @@ elsewhere. The redirect has no `pending` when nothing could be kept.
 `204`. The App's details are deleted, the users' connections with them
 (GitHub is asked to revoke each grant first, best effort), and what was shared of
 the installations. `409 provider_in_use` while any space has a `github`
-credential (`message` says how many): switch or disconnect those first.
+credential (`message` says how many): switch or disconnect those first. Also
+`409 provider_in_use` while `remotes.require` of the storage settings names the
+provider (`message` says to change the requirement first), because nobody could
+meet the requirement without it.
 
 #### `GET /api/admin/connections/github/installations?cursor={cursor}`
 

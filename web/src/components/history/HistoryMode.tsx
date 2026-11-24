@@ -21,6 +21,7 @@ import { ErrorState, Spinner } from '@/components/common'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { absoluteTime, clockTime, shortDate } from '@/lib/time'
 import { t } from '@/i18n'
+import { errorText } from '@/lib/storageErrors'
 import { DiffView, changeStops } from './DiffView'
 import { HeaderChanges } from './HeaderChanges'
 import { RawDiff } from './RawDiff'
@@ -292,7 +293,7 @@ export default function HistoryMode({ space, pageId, folder = '', getCurrent, sa
               {t.history.loading}
             </p>
           )}
-          {status === 'error' && <ErrorState message={t.fmt.labelled(t.history.loadFailed, history.error?.message ?? '')} onRetry={() => { askedFor.current = null; void history.refetch() }} />}
+          {status === 'error' && <ErrorState message={t.fmt.labelled(t.history.loadFailed, errorText(history.error))} onRetry={() => { askedFor.current = null; void history.refetch() }} />}
           {status === 'empty' && (
             <div className="py-12 text-center">
               <p className="text-sm">{t.history.empty}</p>

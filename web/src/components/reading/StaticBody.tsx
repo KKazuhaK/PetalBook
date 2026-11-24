@@ -1,6 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { markdownToDoc, type DocJSON } from '@/markdown'
 import { addressToUrl } from '@/lib/fileAddress'
+import { ts } from '@/i18n/storage'
 import { currentHighlighter, loadHighlighter, type HNode, type Root } from '@/components/editor/code/highlighter'
 import { isDiagramLanguage } from '@/components/editor/code/diagrams'
 import { highlightWord, languageLabel } from '@/components/editor/code/languages'
@@ -51,7 +52,7 @@ function text(node: Node, ctx: Ctx, key: number): ReactNode {
 function Image({ node, ctx }: { node: Node; ctx: Ctx }) {
   const [broken, setBroken] = useState(false)
   const src = String(node.attrs?.src ?? '')
-  return <img src={addressToUrl(ctx.space, ctx.folder, src)} alt={(node.attrs?.alt as string | null) ?? ''} title={(node.attrs?.title as string | null) ?? undefined} loading="lazy" data-broken={broken ? '' : undefined} onError={() => setBroken(true)} />
+  return <img src={addressToUrl(ctx.space, ctx.folder, src)} alt={(node.attrs?.alt as string | null) ?? ''} title={broken ? ts.assets.placeholder : ((node.attrs?.title as string | null) ?? undefined)} loading="lazy" data-broken={broken ? '' : undefined} onError={() => setBroken(true)} />
 }
 
 const kids = (node: Node, ctx: Ctx): ReactNode[] => (node.content ?? []).map((c, i) => render(c, ctx, i))

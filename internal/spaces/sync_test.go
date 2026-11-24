@@ -908,6 +908,128 @@ func TestWhatTheFirstPushTriesAgain(t *testing.T) {
 	}
 }
 
+// Milestone 3.1, part 2: a space made on GitHub can get its attachment
+// repository in the same request, by the same path and credential.
+func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		in, err := e.m.CreateWithSync(ctx, e.user.ID, "Tang", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: true, Assets: &SyncAssets{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.Assets != "repository" {
+			t.Fatalf("%+v", in)
+		}
+		ar := e.f.RepoByName("kazuhahub/tang-notes-assets")
+		if ar == nil || !ar.Private {
+			t.Fatalf("%+v", ar)
+		}
+		abare := e.f.BareDir("kazuhahub/tang-notes-assets")
+		gitCmd(t, abare, "config", "uploadpack.allowFilter", "true")
+		gitCmd(t, abare, "config", "uploadpack.allowAnySHA1InWant", "true")
+		row, err := store.GetAssetRemote(ctx, st.Q(), in.ID)
+		if err != nil || row.CredType != "connection" || row.Provider != "github" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != ar.ID ||
+			row.TokenEnc != "" || row.URL != e.f.URL+"/kazuhahub/tang-notes-assets.git" {
+			t.Fatalf("%+v %v", row, err)
+		}
+		h, err := e.m.Open(ctx, e.user, in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Release()
+		p, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "P"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		as, err := h.Space.PutAsset(space.Author{}, p.ID, "a.png", []byte("PNG"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := gitCmd(t, abare, "ls-tree", "-r", "--name-only", "main"); got != p.ID+"/"+as.Name {
+			t.Fatalf("the attachment repository has %q", got)
+		}
+		if strings.Contains(gitCmd(t, e.f.BareDir("kazuhahub/tang-notes"), "ls-tree", "-r", "--name-only", "main"), "assets/") {
+			t.Fatal("the space's repository has the attachment")
+		}
+		// After the cache loses it, it comes back by its id through the same credential.
+		e.m.AssetCache().DropSpace(in.ID)
+		if body, _, err := readAsset(t, h.Space, as.Rel); err != nil || body != "PNG" {
+			t.Fatalf("%q %v", body, err)
+		}
+		e.noLeak()
+	})
+}
+
+func TestTheAdministratorsDefaultAddsAnAttachmentRepositoryToNewSpaces(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Assets.NewSpaces = true; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		in, err := e.m.CreateWithSync(ctx, e.user.ID, "A", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "a", Private: true, Create: true, Assets: &SyncAssets{Default: true}})
+		if err != nil || in.Assets != "repository" || e.f.RepoByName("kazuhahub/a-assets") == nil {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// A request that says false makes none.
+		in, err = e.m.CreateWithSync(ctx, e.user.ID, "B", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "b", Private: true, Create: true})
+		if err != nil || in.Assets == "repository" || e.f.RepoByName("kazuhahub/b-assets") != nil {
+			t.Fatalf("%+v %v", in, err)
+		}
+		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Cache.AssetsBytes = 1 << 20; return nil }); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("a cache under 64 MiB: %v", err)
+		}
+	})
+}
+
+func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.f.AddOrg("sel", "tang")
+		sel := e.f.Install("sel", "selected")
+		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = true })
+		_, err := e.m.CreateWithSync(ctx, e.user.ID, "S", "", SyncCreate{Provider: "github", Owner: "sel", Name: "notes", Private: true, Create: true, Assets: &SyncAssets{}})
+		var he *connections.Error
+		if !errors.As(err, &he) || he.Code != connections.CodeRepoNotInInstall || he.Repo == nil && he.AssetsRepo == nil {
+			t.Fatalf("%v", err)
+		}
+		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 0 {
+			t.Fatalf("a space was left: %+v", l)
+		}
+		// The retry with create false uses what was made.
+		e.f.SetInstall(sel, func(i *githubapptest.Install) { i.NoAdd = false })
+		in, err := e.m.CreateWithSync(ctx, e.user.ID, "S", "", SyncCreate{Provider: "github", Owner: "sel", Name: "notes", Private: true, Create: false, Assets: &SyncAssets{}})
+		if err != nil || in.Assets != "repository" {
+			t.Fatalf("%+v %v", in, err)
+		}
+	})
+}
+
+// GitHub refuses to make the attachment repository after the space's was made:
+// the answer keeps GitHub's own error (and its wait), names the space's
+// repository, and the retry with create false says which repository is missing.
+func TestAFailureToMakeTheAttachmentRepositoryKeepsGitHubsError(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.hook = func(step string) {
+			if step == "repo-created" {
+				e.f.LimitUntil(e.clk.Now().Add(time.Minute))
+			}
+		}
+		_, err := e.m.CreateWithSync(ctx, e.user.ID, "Tang", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: true, Assets: &SyncAssets{}})
+		var he *connections.Error
+		if !errors.As(err, &he) || he.Code != connections.CodeRateLimited || he.RetryAfter <= 0 || he.Repo == nil || he.Repo.FullName != "kazuhahub/tang-notes" || he.AssetsRepo != nil {
+			t.Fatalf("%+v", err)
+		}
+		e.hook = nil
+		e.f.LimitUntil(time.Time{})
+		_, err = e.m.CreateWithSync(ctx, e.user.ID, "Tang", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: false, Assets: &SyncAssets{}})
+		if !errors.As(err, &he) || !strings.Contains(he.Msg, "kazuhahub/tang-notes-assets") || he.Repo == nil || he.Repo.FullName != "kazuhahub/tang-notes" {
+			t.Fatalf("the retry does not say which repository is missing: %+v", err)
+		}
+		e.nothingLeft()
+	})
+}
+
 // A repository left empty by a failure after it was made is remembered for the
 // person, until a space connects to it.
 func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
@@ -964,6 +1086,37 @@ func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
 		}
 		if l = leftovers(); len(l) != 1 || l[0].FullName != "kazuhahub/other" {
 			t.Fatalf("%+v", l)
+		}
+	})
+}
+
+// 2.7b with 3.1: remotes.require names a provider; only a connection through
+// that provider meets it, and the provider must be set up to be required.
+func TestARequirementOfAProviderTakesOnlyAConnectionThroughIt(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		r := "github"
+		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Remotes.Require = &r; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		var re *RequiredError
+		if _, err := e.m.Create(ctx, e.user.ID, "Local"); !errors.As(err, &re) || re.Require != "github" {
+			t.Fatalf("a local space under a requirement of github: %v", err)
+		}
+		if _, err := e.m.CreateWithRemote(ctx, e.user.ID, "Plain", "", ConnectRequest{URL: "https://example.test/x.git", CredType: CredToken, Token: "t"}); !errors.As(err, &re) {
+			t.Fatalf("a plain address under a requirement of github: %v", err)
+		}
+		in, err := e.create("Synced", "kazuhahub", "synced", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n, err := e.m.Notice(ctx, in.ID); err != nil || n != nil {
+			t.Fatalf("a space synced through github is asked for more: %+v %v", n, err)
+		}
+		// A provider the server does not have is not a value of the setting.
+		other := "gitlab"
+		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Remotes.Require = &other; return nil }); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%v", err)
 		}
 	})
 }

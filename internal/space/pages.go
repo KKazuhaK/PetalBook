@@ -137,12 +137,17 @@ func (s *Space) resync() bool {
 	return s.resyncNow()
 }
 
-// resyncNow runs the sync without the throttle.
+// resyncNow runs the sync without the throttle. An evicted space has no
+// files to sync from: its index stays as it was.
 func (s *Space) resyncNow() bool {
+	if s.evicted {
+		return false
+	}
 	s.syncMu.Lock()
 	s.lastSync = time.Now()
 	s.syncMu.Unlock()
 	s.walks.Add(1)
+	s.forgetAssetsDir() // the walk looks for changes made outside the server
 	if _, err := s.idx.Sync(s.src, false); err != nil {
 		s.log.Warn("re-sync of the index failed", "error", err)
 		return false
@@ -667,6 +672,11 @@ func (s *Space) CreateFolder(by Author, rel string) (string, error) {
 	if s.closed {
 		return "", ErrClosed
 	}
+	if s.gate != nil {
+		if err := s.gate(); err != nil {
+			return "", err
+		}
+	}
 	if s.rem.Load() != nil {
 		return s.createFolderRemoteLocked(rel)
 	}
@@ -742,6 +752,7 @@ func (s *Space) Reindex() (index.Stats, error) {
 		return index.Stats{}, ErrClosed
 	}
 	s.syncTypes() // the rules the rebuild checks against are the ones of now
+	s.forgetAssetsDir()
 	return s.idx.Sync(s.src, true)
 }
 

@@ -34,11 +34,11 @@ func EachAtVersion(t *testing.T, max int, fn func(t *testing.T, st *store.Store)
 }
 
 // EachWithoutVersion runs fn per available database, on a schema that has every
-// version but skip (see store.OpenWithoutVersion).
-func EachWithoutVersion(t *testing.T, skip int, fn func(t *testing.T, st *store.Store)) {
+// version but those of skip (see store.OpenWithoutVersion).
+func EachWithoutVersion(t *testing.T, skip []int, fn func(t *testing.T, st *store.Store)) {
 	t.Helper()
 	open := func(ctx context.Context, target string) (*store.Store, error) {
-		return store.OpenWithoutVersion(ctx, target, skip)
+		return store.OpenWithoutVersion(ctx, target, skip...)
 	}
 	t.Run("sqlite", func(t *testing.T) {
 		st, err := open(context.Background(), filepath.Join(t.TempDir(), "state.db"))

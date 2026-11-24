@@ -312,6 +312,8 @@ func (m *Manager) DeleteSpace(ctx context.Context, sc store.Scope, id string) (*
 	m.usageAdded(ctx, counted)
 	m.spaceChanged(id)
 	m.setSync(id, "")
+	m.assetsGone(id)
+	m.noteConnected(id, false)
 
 	res := &Deleted{}
 	root, state := m.paths(id)

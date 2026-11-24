@@ -55,6 +55,8 @@ var (
 	ErrBusy = errors.New("the space is in use; try again in a moment")
 	// ErrPersonalSpace: a personal space cannot be transferred or deleted.
 	ErrPersonalSpace = errors.New("a personal space belongs to one person")
+	// ErrDataDirInUse: another server runs on this data directory.
+	ErrDataDirInUse = errors.New("another server uses this data directory (DATA/serve.lock is held)")
 	// ErrUserDisabled: the user cannot sign in, so cannot own a space.
 	ErrUserDisabled = errors.New("that user is disabled")
 	errClosed       = errors.New("the server is shutting down")
@@ -89,6 +91,13 @@ type Info struct {
 	// Sync is "local", or the state of the remote the space follows (ok,
 	// offline, rewritten, error). It is read when the list is asked for, not cached.
 	Sync string
+	// Cache is what the space's copy on the server is: local, full, partial,
+	// evicted or restoring; RemoteNotice is what the storage policy asks of it
+	// that it does not have yet (nil if nothing). Both are read with Sync.
+	Cache        string
+	RemoteNotice *RemoteNotice
+	// Assets is "repository" when the space has an attachment repository, else "space".
+	Assets string
 }
 
 // Handle is an open space together with the caller's view of it. Release it
@@ -97,6 +106,9 @@ type Handle struct {
 	Space   *space.Space
 	Info    Info
 	release func()
+	// IndexOnly: the space is evicted and was opened for a request that only
+	// needs what its index answers (see OpenIndex); Space has no files.
+	IndexOnly bool
 }
 
 // Release says the caller is done with the space.
@@ -111,6 +123,13 @@ func (h *Handle) Release() {
 type Options struct {
 	Store   *store.Store
 	DataDir string // spaces live in DataDir/spaces/<id>, their index and journal in DataDir/cache/<id>
+	// Serve says the manager is the server's (petalbook serve): it holds the
+	// data directory's lock (DataDir/serve.lock) while it runs, and at its
+	// start finishes what a crash left (evictions cut short, half restored
+	// clones, half made spaces). A command run against the data directory of a
+	// running server (petalbook user …) leaves Serve false and touches none of
+	// that.
+	Serve bool
 	// Committer is the Git committer of commits ("Name <email>"): the service.
 	Committer             string
 	CommitIdle, CommitMax time.Duration
@@ -134,6 +153,22 @@ type Options struct {
 	CloseWait time.Duration
 	// OpenHook, if set, runs before a space is opened from disk (tests).
 	OpenHook func(id string)
+
+	// HostsFromFlag: the allowed hosts (RemotePolicy.Hosts) were given on the
+	// command line, which wins over the setting of the administration page.
+	HostsFromFlag bool
+	// GitSupportsPartial, when set, replaces what the server's Git version says
+	// about partial clones (tests).
+	GitSupportsPartial *bool
+	// EvictEvery is how often the eviction looks (default 10 minutes; negative
+	// turns it off). EvictHook, if set, is called at each step of an eviction
+	// and of a restore; an error it returns stops there as a crash would (tests).
+	EvictEvery time.Duration
+	EvictHook  func(step string) error
+	// AssetsHook is called at each step of moving a space's attachments into
+	// its attachment repository; an error ends the move there, without
+	// recording a failure, as a crash would (tests).
+	AssetsHook func(step string) error
 
 	// SizeEvery is how often the background sizer measures one space (default
 	// DefaultSizeEvery; negative turns it off), and SizeAge how old a space's
@@ -223,6 +258,12 @@ type Manager struct {
 	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
 	pullWake chan struct{}     // a space with a remote was just opened: pull it now
 
+	st        storageState // the storage policy (storage.go) and its caches
+	storageMu sync.Mutex   // one change of the settings at a time
+	ev        evictState   // eviction and restoring (evict.go)
+	cs        cacheStates  // cache states in memory (partial.go)
+	as        assetState   // attachment repositories and their cache (assets.go)
+
 	trimMu    sync.Mutex      // one trim at a time
 	trimming  bool            // a background trim is queued or running (guarded by mu)
 	createMu  sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
@@ -231,6 +272,11 @@ type Manager struct {
 	reservedT map[string]int  // the same, by tenant (guarded by createMu)
 
 	quota quotaHooks // see SetQuota
+
+	closeCtx    context.Context // ends when the manager is closed (background work stops with it)
+	closeCancel context.CancelFunc
+
+	lock *os.File // DataDir/serve.lock, held while a server's manager runs (Options.Serve)
 
 	// testHook, set by tests only, runs at named points inside transactions.
 	testHook func(point string)
@@ -266,11 +312,30 @@ func NewAccounts(opt Options) (*Manager, error) {
 	if opt.Secrets == nil {
 		opt.Secrets = secret.NewBox(abs)
 	}
+	var lock *os.File
+	if opt.Serve {
+		// Taken before anything is cleaned up, so that what one server has in
+		// progress is never taken for what a crash left by another.
+		if lock, err = lockDataDir(filepath.Join(abs, "serve.lock")); err != nil {
+			return nil, err
+		}
+	}
 	m := newManager(opt, nil)
-	if n, err := m.SweepStaged(context.Background()); err != nil {
-		m.log.Warn("could not remove the spaces a crash left half made", "error", err)
-	} else if n > 0 {
-		m.log.Info("removed spaces a crash left half made", "count", n)
+	m.lock = lock
+	m.initStorage(context.Background())
+	if opt.Serve {
+		if err := m.recoverEvictions(context.Background()); err != nil {
+			m.log.Warn("could not finish the evictions and restores a crash cut short", "error", err)
+		}
+		m.ResumeMoves(context.Background())
+		if n, err := m.SweepStaged(context.Background()); err != nil {
+			m.log.Warn("could not remove the spaces a crash left half made", "error", err)
+		} else if n > 0 {
+			m.log.Info("removed spaces a crash left half made", "count", n)
+		}
+	}
+	if err := m.loadEvicted(context.Background()); err != nil {
+		m.log.Warn("could not look at the spaces whose clone was removed", "error", err)
 	}
 	return m, nil
 }
@@ -399,6 +464,23 @@ func (m *Manager) OpenMember(ctx context.Context, user store.User, spaceID strin
 }
 
 func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, viaAdmin bool) (*Handle, error) {
+	return m.openForIndex(ctx, user, spaceID, viaAdmin, false)
+}
+
+// OpenIndex is Open for a request that only reads what the index answers (a
+// list, the tree, tags, links, checks): an evicted space is opened by its
+// index and is not restored. The handle says IndexOnly in that case.
+func (m *Manager) OpenIndex(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	return m.openForIndex(ctx, user, spaceID, true, true)
+}
+
+// OpenMemberIndex is OpenMember for such a request.
+func (m *Manager) OpenMemberIndex(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
+	return m.openForIndex(ctx, user, spaceID, false, true)
+}
+
+func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID string, viaAdmin, indexOnly bool) (*Handle, error) {
+	var err error
 	var in Info
 	var found bool
 	if m.single != nil {
@@ -432,11 +514,18 @@ func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, 
 		in = Info{ID: sp.ID, Name: sp.Name, Perms: perm.All, ViaAdmin: true, Personal: sp.Personal, Inbox: sp.Inbox}
 	}
 	in = m.withSync(ctx, []Info{in})[0]
-	sp, release, err := m.Acquire(ctx, spaceID)
+	var sp *space.Space
+	var release func()
+	if indexOnly {
+		sp, release, err = m.acquireIndex(ctx, spaceID)
+	} else {
+		sp, release, err = m.Acquire(ctx, spaceID)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return &Handle{Space: sp, Info: in, release: release}, nil
+	m.noteUse(spaceID)
+	return &Handle{Space: sp, Info: in, release: release, IndexOnly: sp != nil && sp.Evicted()}, nil
 }
 
 // OpenMembership is Open without opening the space: the handle carries what
@@ -483,7 +572,24 @@ func (m *Manager) Acquire(ctx context.Context, id string) (*space.Space, func(),
 
 // acquire is Acquire; admin lets the administration reach a disabled space.
 func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Space, func(), error) {
+	noClone := false // the space was found without its clone once: restored, and tried once more
 	for {
+		// An evicted space has no files: they are restored first, outside the
+		// lock (it waits for the network), and the request goes on as for any
+		// space once they are there.
+		if m.single == nil {
+			if err := m.loadEvicted(ctx); err != nil {
+				return nil, nil, err
+			}
+			m.mu.Lock()
+			disabled := m.disabled[id]
+			m.mu.Unlock()
+			if m.isEvicted(id) && !(admin && disabled) {
+				if err := m.ensureRestored(ctx, id); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
 		m.mu.Lock()
 		if m.closed {
 			m.mu.Unlock()
@@ -546,6 +652,17 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 			return nil, nil, ctx.Err()
 		}
 		if e.err != nil {
+			if errors.Is(e.err, errNoClone) && !noClone {
+				// It follows a remote and its clone is gone without being
+				// recorded as evicted: it is evicted, and restored as such.
+				noClone = true
+				m.ev.mu.Lock()
+				if m.ev.evicted != nil {
+					m.ev.evicted[id] = true
+				}
+				m.ev.mu.Unlock()
+				continue
+			}
 			return nil, nil, e.err
 		}
 		var once sync.Once
@@ -564,13 +681,21 @@ func (m *Manager) paths(id string) (root, state string) {
 	return filepath.Join(m.opt.DataDir, "spaces", id), filepath.Join(m.opt.DataDir, "cache", id)
 }
 
+// errNoClone: a space that follows a remote has no clone on disk, and is not
+// recorded as evicted. acquire restores it.
+var errNoClone = errors.New("the clone of a space that follows a remote is missing")
+
 func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error) {
 	if m.opt.OpenHook != nil {
 		m.opt.OpenHook(id)
 	}
 	root, state := m.paths(id)
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-		// space.Open would quietly make an empty repository here.
+		// space.Open would quietly make an empty repository here. A space that
+		// follows a remote is restored from it instead (see acquire).
+		if r, rerr := store.GetRemote(ctx, m.opt.Store.Q(), id); rerr == nil && r.Connected() && errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: space %s", errNoClone, id)
+		}
 		return nil, fmt.Errorf("the directory of space %s is missing", id)
 	}
 	owner, name, err := store.SpaceOwner(ctx, m.opt.Store.Q(), id)
@@ -588,10 +713,16 @@ func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error
 	case err != nil && !errors.Is(err, store.ErrNotFound):
 		return nil, err
 	}
-	return space.Open(space.Options{
+	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
+		WriteGate: func() error { return m.CheckWritable(id) },
 	})
+	if err == nil && rem != nil {
+		m.markCache(id, sp)
+		m.attachAssets(ctx, id, sp)
+	}
+	return sp, err
 }
 
 // ValidName checks a space name: 1-80 characters once trimmed, no control characters.
@@ -696,6 +827,7 @@ func (m *Manager) Stage(name string, author Identity) (*Staged, error) {
 	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author.String(),
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id),
+		WriteGate: func() error { return m.CheckWritable(id) },
 	})
 	if err != nil {
 		os.RemoveAll(root)
@@ -796,6 +928,9 @@ func (m *Manager) SweepStaged(ctx context.Context) (int, error) {
 		if err := os.RemoveAll(state); err != nil {
 			return n, err
 		}
+		if err := os.RemoveAll(m.assetsDir(id)); err != nil { // the attachment clone is made before the row
+			return n, err
+		}
 		os.Remove(m.stagedMark(id))
 		n++
 	}
@@ -813,6 +948,9 @@ func (m *Manager) Create(ctx context.Context, userID, name string) (Info, error)
 func (m *Manager) CreateWith(ctx context.Context, userID, name, inbox string) (Info, error) {
 	if m.single != nil {
 		return Info{}, errors.New("single-user mode has one space")
+	}
+	if err := m.CheckNewSpace(ctx, userID, "", ""); err != nil {
+		return Info{}, err
 	}
 	if inbox == "" {
 		inbox = store.DefaultInbox
@@ -965,6 +1103,9 @@ func (m *Manager) dropListsLocked(userIDs ...string) {
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	m.closed = true // from here on nothing new is acquired
+	if m.closeCancel != nil {
+		m.closeCancel()
+	}
 	m.mu.Unlock()
 	// Spaces that requests still hold are given a few seconds to be released:
 	// closing one under a running request would end it half done. If they are
@@ -987,11 +1128,13 @@ func (m *Manager) Close() error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	m.as.wg.Wait() // moves of attachments end when the manager is closed
 	m.mu.Lock()
 	open := m.open
 	m.open = map[string]*opening{}
 	m.mu.Unlock()
 	var errs []error
+	m.closeAssetRepos()
 	for _, e := range open {
 		if e.closing != nil {
 			<-e.closing // already on its way out
@@ -1003,6 +1146,13 @@ func (m *Manager) Close() error {
 				errs = append(errs, err)
 			}
 		}
+	}
+	m.mu.Lock()
+	lock := m.lock
+	m.lock = nil
+	m.mu.Unlock()
+	if lock != nil {
+		lock.Close() // releases the lock
 	}
 	return errors.Join(errs...)
 }
@@ -1019,6 +1169,9 @@ func (m *Manager) Run(ctx context.Context) {
 	go func() { defer close(sized); m.runSizer(ctx) }()
 	go func() { defer close(counted); m.runRecount(ctx) }()
 	defer func() { <-sized; <-counted }()
+	evicted := make(chan struct{})
+	go func() { defer close(evicted); m.RunEvict(ctx) }()
+	defer func() { <-evicted }()
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -1066,6 +1219,7 @@ func (m *Manager) Trim() {
 	if m.single != nil {
 		return
 	}
+	m.trimIndexOnly()
 	m.trimMu.Lock()
 	defer m.trimMu.Unlock()
 	now := m.opt.Now()

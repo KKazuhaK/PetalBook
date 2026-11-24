@@ -73,6 +73,21 @@ func (s *server) importMarkdown(c *call) {
 		}
 		items[i] = it
 	}
+	extra := int64(len(data))
+	var planned int64
+	for _, it := range items {
+		planned += int64(len(it.Body))
+		for _, a := range it.Assets {
+			planned += int64(len(a.Data))
+		}
+	}
+	if planned > extra {
+		extra = planned
+	}
+	if err := s.spaces.CheckRoom(c.r.Context(), c.sp, extra); err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	pages, files, err := c.sp.Space.Import(s.author(c), folder, items)
 	if err != nil {
 		s.fail(c.w, err)

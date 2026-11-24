@@ -171,6 +171,9 @@ type TypeResolver struct{ byFolder map[string]string }
 
 // TypeResolver reads the bindings once for a whole listing.
 func (s *Space) TypeResolver() TypeResolver {
+	if s.evicted {
+		return TypeResolver{} // the bindings are in a file of the space
+	}
 	_, m := s.readBindings()
 	return TypeResolver{m}
 }

@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
+import { ts } from '@/i18n/storage'
 import { tsec } from '@/i18n/security'
 import { tm } from '@/i18n/mail'
 import { mailLang } from '@/pages/auth/MailPages'
@@ -59,7 +60,7 @@ function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite
   // The security settings are the server's: only a site administrator may read them.
   const requireRoles = useSecuritySettings(meSite).data?.passkeys.requireRoles ?? []
 
-  const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean }) => {
+  const change = async (u: User, patch: { role?: Role; disabled?: boolean; passkeyRequired?: boolean; email?: string; emailVerified?: boolean; siteAdmin?: boolean; remoteExempt?: boolean }) => {
     setBusy(u.id)
     setError(null)
     try {
@@ -134,6 +135,10 @@ function UserList({ users, meId, meSite }: { users: User[]; meId: string; meSite
                   <option value="admin">{t.roles.admin}</option>
                 </NativeSelect>
               </div>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground" title={ts.users.remoteExemptHelp}>
+                <Switch aria-label={t.fmt.labelled(ts.users.remoteExempt, u.name)} checked={u.remoteExempt === true} disabled={busy === u.id} onCheckedChange={(on) => void change(u, { remoteExempt: on })} />
+                {ts.users.remoteExempt}
+              </label>
               <Button type="button" variant="outline" size="sm" disabled={busy === u.id} onClick={() => void change(u, { disabled: !u.disabled })} aria-label={t.fmt.labelled(u.disabled ? t.users.enable : t.users.disable, u.name)}>
                 {u.disabled ? t.users.enable : t.users.disable}
               </Button>

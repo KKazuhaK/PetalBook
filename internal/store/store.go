@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,10 +154,11 @@ func OpenAtVersion(ctx context.Context, target string, max int) (*Store, error) 
 }
 
 // OpenWithoutVersion is OpenAtVersion for a database that has every version
-// but skip, as one migrated on a branch that did not have that file yet; the
-// tenant state is not loaded. Migrate then applies the missing version, as the
-// first start after a merge does. It is for the tests of migrations.
-func OpenWithoutVersion(ctx context.Context, target string, skip int) (*Store, error) {
+// but those of skip, as one migrated on a branch that did not have those files
+// yet; the tenant state is not loaded. Migrate then applies the missing
+// versions, as the first start after a merge does. It is for the tests of
+// migrations.
+func OpenWithoutVersion(ctx context.Context, target string, skip ...int) (*Store, error) {
 	var s *Store
 	var err error
 	if strings.HasPrefix(target, "postgres://") || strings.HasPrefix(target, "postgresql://") {
@@ -167,7 +169,7 @@ func OpenWithoutVersion(ctx context.Context, target string, skip int) (*Store, e
 	if err != nil {
 		return nil, redact(err, target)
 	}
-	if err := s.migrateWhere(ctx, func(v int) bool { return v != skip }); err != nil {
+	if err := s.migrateWhere(ctx, func(v int) bool { return !slices.Contains(skip, v) }); err != nil {
 		s.Close()
 		return nil, redact(err, target)
 	}

@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { t } from '@/i18n'
 import { BrandIcon } from '@/components/brand/BrandIcon'
 import { tg } from '@/i18n/github'
+import { ts } from '@/i18n/storage'
 
 // A name for a repository from the name of a space: letters, digits and the few
 // marks GitHub keeps; everything else becomes a hyphen. Only a suggestion.
@@ -62,6 +63,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [where, setWhere] = useState('')
   const provider = providers.find((p) => p.id === where) ?? null
   const useRepo = provider !== null
+  const [withAssets, setWithAssets] = useState(false)
   const [owner, setOwner] = useState('')
   const [repo, setRepo] = useState('')
   const [repoTouched, setRepoTouched] = useState(false)
@@ -96,7 +98,7 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (!repoNameOk(repoName)) problems.repo = tg.newSpace.repoInvalid
       if (Array.from(description).length > 350 || Array.from(description).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) problems.description = tg.newSpace.descriptionInvalid
       if (ownerLogin === '') problems.repo ??= tg.newSpace.ownerNone
-      gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined }
+      gh = { provider: where, owner: ownerLogin, name: repoName, private: priv, ...(description.trim() ? { description: description.trim() } : {}), create: existing === undefined, assets: withAssets }
     }
     setFieldError(problems)
     if (Object.keys(problems).length > 0) return
@@ -214,6 +216,13 @@ function NewSpaceForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
             {useRepo && (
               <div className="grid min-w-0 grid-cols-1 gap-3">
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={withAssets} onChange={(e) => setWithAssets(e.target.checked)} />
+                  <span className="min-w-0">
+                    <span className="block font-medium">{ts.assets.newSpace}</span>
+                    <span className="block text-xs text-muted-foreground">{ts.assets.newSpaceHelp}</span>
+                  </span>
+                </label>
                 {owners.isPending ? (
                   <p className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Spinner />

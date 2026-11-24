@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -47,6 +48,9 @@ type Repo struct {
 
 	gdMu sync.Mutex
 	gd   string // the absolute git directory, once known
+
+	// ensureFn is set for a partial clone (see SetEnsure).
+	ensureFn atomic.Pointer[EnsureFunc]
 }
 
 // New returns a Repo.

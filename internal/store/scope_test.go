@@ -116,6 +116,25 @@ var scopeAllowlist = map[string]string{
 	"UpdateRemoteStatus":           "the remote of an open space, by its id",
 	"DeleteRemote":                 "the remote of a space already opened by the caller",
 	"RemoteStates":                 "the server's map of sync states, read by space id",
+	// --- 3.1: server storage. The disk, its policy and the cache of clones are the
+	// server's own (site administrators only, design.md 3.3's table); a space's
+	// records are reached by the id of a space already found ---
+	"GetSpaceStorage":          "the storage record of a space already found, by its id",
+	"TouchSpaceUsed":           "records the use of a space already opened, by its id",
+	"SetSpaceCache":            "the cache state of a space being evicted or restored, by its id (the eviction is the server's)",
+	"SetSpaceCacheKept":        "the cache state of an open space, by its id",
+	"SetSpacePinned":           "a site administrator keeps a space on the server's disk",
+	"SetSpaceExempt":           "a site administrator exempts a space from the site's requirement of a remote",
+	"SetSpaceIndexBytes":       "the size of the index of a space being evicted, by its id",
+	"SetRemoteExempt":          "a site administrator exempts a person already found in scope from the site's requirement of a remote",
+	"SpacesInCacheState":       "the server's map of cache states, read by space id",
+	"GetPolicyFacts":           "what the site's requirement of a remote looks at in a space already found, by its id",
+	"PolicyCounts":             "the site's requirement of a remote across the server, shown to site administrators only",
+	"SumStorage":               "the server's disk, shown to site administrators only",
+	"EvictionCandidates":       "background job: the eviction of idle spaces of every tenant from the server's disk",
+	"CloneBytesOfRemoteSpaces": "background job: the server's disk budget for clones",
+	"PinnedSpaceIDs":           "background job: the spaces kept on the server's disk, of every tenant",
+	"PutAssetRemote":           "the attachment repository of a space already opened, or one being made in the caller's tenant",
 }
 
 func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {

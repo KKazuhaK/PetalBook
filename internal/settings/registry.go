@@ -23,11 +23,12 @@ const (
 
 // Definitions are the settings that exist, in the order the pages show them.
 //
-// Reserved, not defined here because their code is on other branches or in a
-// later part of 3.3: 3.1's storage.remotes.require (choice, ordered null <
-// any < github), storage.remotes.graceDays and storage.localSpaces.maxBytes
-// (limits) join with layers site and tenant and a site Lower of lock, and a
-// tenant may only tighten them. 2.7's GitHub App settings have no tenant layer
+// Reserved, not defined here yet: 3.1's storage.remotes.require (choice,
+// ordered null < any < a provider's id), storage.remotes.graceDays and
+// storage.localSpaces.maxBytes (limits) join with layers site and tenant and a
+// site Lower of lock, and a tenant may only tighten them. Until then they are
+// the site's own record (internal/spaces, /api/admin/storage), as are 3.1's
+// hosts (what --remote-host sets) and cache settings, which stay site-only. 2.7's GitHub App settings have no tenant layer
 // and never appear here. The person layer of the quota.* limits is an
 // administrator's override on the user (users.quota), read by internal/quota,
 // not something a person sets for themselves.

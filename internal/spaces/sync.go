@@ -6,7 +6,9 @@ package spaces
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,11 +33,12 @@ func (m *Manager) provider(id string) (connections.Provider, error) {
 	return nil, connections.Errorf(id, http.StatusConflict, connections.CodeNotConfigured, "this server has no %s connection set up", name)
 }
 
-// hostAllowed holds a provider's host to --remote-host, as every other remote
-// is: a connection is no way around the administrator's list. Only the host is
-// checked here (the address itself is the provider's own).
+// hostAllowed holds a provider's host to the allowed hosts (--remote-host, or
+// the storage setting hosts), as every other remote is: a connection is no way
+// around the administrator's list. Only the host is checked here (the address
+// itself is the provider's own).
 func (m *Manager) hostAllowed(p connections.Provider) error {
-	_, err := gitstore.ParseURL("https://"+p.Descriptor().Host+"/owner/name.git", gitstore.Policy{Hosts: m.opt.RemotePolicy.Hosts})
+	_, err := gitstore.ParseURL("https://"+p.Descriptor().Host+"/owner/name.git", gitstore.Policy{Hosts: m.hostPolicy().Hosts})
 	var he *gitstore.HostError
 	if errors.As(err, &he) {
 		return he
@@ -88,6 +91,17 @@ type SyncCreate struct {
 	// Create makes the repository; false connects the space to the one that is
 	// there already.
 	Create bool
+	// Assets asks for an attachment repository made (or found) beside the
+	// space's, with the same owner, visibility and credential; nil asks for none.
+	Assets *SyncAssets
+}
+
+// SyncAssets is the attachment repository of a new space on a provider. Default
+// is for a request that did not say: the administrator's assets.newSpaces
+// decides. Name is "" for <name>-assets.
+type SyncAssets struct {
+	Name    string
+	Default bool
 }
 
 // CreateWithSync makes a space together with its repository on a provider, in
@@ -98,6 +112,9 @@ type SyncCreate struct {
 func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string, g SyncCreate) (Info, error) {
 	if m.single != nil {
 		return Info{}, ErrNotFound
+	}
+	if err := m.CheckNewSpace(ctx, userID, CredConnection, g.Provider); err != nil {
+		return Info{}, err
 	}
 	gh, err := m.provider(g.Provider)
 	if err != nil {
@@ -121,6 +138,16 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	if utf8.RuneCountInString(g.Description) > 350 || !utf8.ValidString(g.Description) ||
 		strings.IndexFunc(g.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.description is at most 350 characters, without control characters")
+	}
+	assetsName := ""
+	if a := g.Assets; a != nil && (!a.Default || m.Storage().Assets.NewSpaces) {
+		assetsName = a.Name
+		if assetsName == "" {
+			assetsName = g.Name + "-assets"
+		}
+		if !gh.ValidRepoName(assetsName) || strings.EqualFold(assetsName, g.Name) {
+			return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.assets names a repository other than the space's, in the form of storage.sync.name")
+		}
 	}
 	// The limit counts the spaces being made as well as the ones that exist.
 	// The space is the creator's tenant's, as Create's is.
@@ -196,25 +223,73 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		m.hook("repo-created")
 	}
 	// From here on the repository exists: a failure leaves it empty on GitHub
-	// and says so.
+	// and says so (the attachment repository too, when one was made).
+	var arepo *connections.Repo
+	var acred *connections.Cred
+	acreated := false
 	failed := func(code string, status int, err error) error {
-		if !created {
+		if !created && !acreated {
 			return err
 		}
-		// A reminder the person sees later, so the repository is not forgotten.
-		if rerr := gh.RecordLeftover(ctx, userID, repo, name); rerr != nil {
-			m.log.Warn("could not remember a repository left empty by a failed space", "repo", repo.FullName, "error", rerr)
+		// A reminder the person sees later, so the repository is not forgotten
+		// (each repository that was made: the space's and its attachments').
+		for _, r := range []*connections.Repo{repo, arepo} {
+			if r == nil || (r == repo && !created) || (r == arepo && !acreated) {
+				continue
+			}
+			if rerr := gh.RecordLeftover(ctx, userID, r, name); rerr != nil {
+				m.log.Warn("could not remember a repository left empty by a failed space", "repo", r.FullName, "error", rerr)
+			}
 		}
+		// The provider's own refusal (with its code and its wait) is passed on
+		// as it is; anything else is the step's failure.
+		var ge *connections.Error
 		var he *connections.Error
-		if errors.As(err, &he) && (he.Code == connections.CodeRepoNotInInstall || he.Code == connections.CodeMissingPermission) {
-			he.Repo = repo.Ref()
-			return he
+		if errors.As(err, &ge) {
+			c := *ge
+			he = &c
+		} else {
+			he = &connections.Error{Provider: g.Provider, Code: code, Status: status, Msg: err.Error(), Err: err}
 		}
-		return &connections.Error{Provider: g.Provider, Code: code, Status: status, Msg: err.Error(), Repo: repo.Ref(), Err: err}
+		if created && he.Repo == nil {
+			he.Repo = repo.Ref()
+		}
+		if acreated && he.AssetsRepo == nil {
+			he.AssetsRepo = arepo.Ref()
+		}
+		return he
+	}
+	// Both repositories are made before either is checked for the credential, so
+	// that a failure of the check names both and the retry can use them.
+	if assetsName != "" && g.Create {
+		if arepo, err = gh.CreateRepo(ctx, plan, connections.NewRepoSpec{Name: assetsName, Private: g.Private, Description: "Attachments of " + g.Name}); err != nil {
+			return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+		}
+		acreated = true
 	}
 	if created {
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
 			return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+		}
+	}
+	if assetsName != "" {
+		// The credential of the attachment repository is chosen the same way (an
+		// installation with selected repositories gets it added).
+		if g.Create {
+			if acred, err = gh.ChooseCredential(ctx, plan, arepo); err != nil {
+				return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+			}
+		} else if acred, arepo, err = gh.ResolveExistingIn(ctx, tenantID, userID, g.Owner, assetsName, ""); err != nil {
+			// The space's repository is there; say which one is not (a retry
+			// after the attachment repository could not be made).
+			var ge *connections.Error
+			if !errors.As(err, &ge) {
+				return Info{}, err
+			}
+			c := *ge
+			c.Msg = fmt.Sprintf("the attachment repository %s/%s cannot be used (%s); the space's repository %s can", g.Owner, assetsName, ge.Msg, repo.FullName)
+			c.Repo = repo.Ref()
+			return Info{}, &c
 		}
 	}
 	id := stg.ID()
@@ -229,6 +304,17 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
 	}
 	m.hook("connected")
+	var arow *store.Remote
+	if arepo != nil {
+		// The attachment repository is looked at with the credential it will keep:
+		// the first fetch proves it works, before the space is recorded.
+		arow = &store.Remote{SpaceID: id, URL: gh.RepoURL(arepo.Owner, arepo.Name), Branch: "main", CredType: CredConnection, Provider: g.Provider, State: store.RemoteOK,
+			GHVia: acred.Via, GHInstallationID: acred.InstallationID, GHRepoID: acred.RepoID, GHUserID: acred.UserID, Updated: m.opt.Now()}
+		if err := m.probeAssetsRepo(ctx, id, arow); err != nil {
+			os.RemoveAll(m.assetsDir(id))
+			return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+		}
+	}
 	st, _ := stg.sp.Remote()
 	row.State, row.LastGood, row.LastSync = st.State, st.LastGood, st.LastSync
 	now := m.opt.Now()
@@ -241,9 +327,15 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		if err := store.AddMember(ctx, q, id, userID, perm.Owner, now); err != nil {
 			return err
 		}
+		if arow != nil {
+			if err := store.PutAssetRemote(ctx, q, *arow); err != nil {
+				return err
+			}
+		}
 		return store.PutRemote(ctx, q, row)
 	})
 	if err != nil {
+		os.RemoveAll(m.assetsDir(id))
 		m.createMu.Unlock()
 		m.log.Error("could not record a space made with a repository on a provider", "error", err)
 		return Info{}, failed(connections.CodeInternal, http.StatusInternalServerError, errors.New("the space could not be recorded; nothing was kept"))
@@ -254,8 +346,15 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	stg.Commit(userID)
 	m.usageAdded(ctx, store.Touched{UserID: userID, TenantID: tenantID})
 	m.setSync(id, row.State)
+	m.markCache(id, stg.sp)
+	if arow != nil {
+		m.noteConnected(id, true)
+		if r, _, err := m.assetRepo(ctx, id); err == nil && r != nil {
+			stg.sp.SetAssets(backend{m, id, r})
+		}
+	}
 	m.schedulePull(id)
-	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil
+	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State, Assets: m.assetsModeOf(arow != nil)}, nil
 }
 
 func (m *Manager) hook(step string) {
@@ -368,4 +467,137 @@ func invalidAt(provider, format string, a ...any) error {
 	e := connections.Errorf(provider, http.StatusBadRequest, connections.CodeInvalid, format, a...)
 	e.Err = ErrInvalid
 	return e
+}
+
+// CreateWithRemote makes a space that follows an existing repository on an
+// allowed host from its first moment (milestone 3.1, POST /api/spaces with
+// "remote"): the repository is connected before the space becomes visible,
+// under the same all-or-nothing rule as a space made with a repository on a
+// provider. Only a token can be given here: an SSH key has to be added to the
+// repository first, which needs a space to hold the key.
+func (m *Manager) CreateWithRemote(ctx context.Context, userID, name, inbox string, req ConnectRequest) (Info, error) {
+	if m.single != nil {
+		return Info{}, ErrNotFound
+	}
+	if req.CredType != CredToken {
+		return Info{}, fmt.Errorf("%w: a new space can be connected with a token; make the space first to use an SSH key", ErrInvalid)
+	}
+	if err := m.CheckNewSpace(ctx, userID, CredToken, store.ProviderGit); err != nil {
+		return Info{}, err
+	}
+	box, err := m.box()
+	if err != nil {
+		return Info{}, err
+	}
+	if inbox == "" {
+		inbox = store.DefaultInbox
+	}
+	if inbox, err = ValidInbox(inbox); err != nil {
+		return Info{}, err
+	}
+	if name, err = ValidName(name); err != nil {
+		return Info{}, err
+	}
+	remote, err := gitstore.ParseURL(req.URL, m.hostPolicy())
+	if err != nil {
+		return Info{}, err
+	}
+	if remote.Scheme != "https" && remote.Scheme != "http" && remote.Scheme != "file" {
+		return Info{}, fmt.Errorf("%w: a token goes with an https address", ErrInvalid)
+	}
+	branch := strings.TrimSpace(req.Branch)
+	if branch == "" {
+		branch = "main"
+	}
+	if err := gitstore.ValidBranch(branch); err != nil {
+		return Info{}, fmt.Errorf("%w: %s is not a usable branch name", ErrInvalid, branch)
+	}
+	user := strings.TrimSpace(req.Username)
+	if user == "" {
+		user = "x-access-token"
+	}
+	if strings.ContainsAny(user, " \t\r\n:\x00") || req.Token == "" || strings.ContainsAny(req.Token, "\r\n\x00") || len(req.Token) > 4096 {
+		return Info{}, fmt.Errorf("%w: the user name or the token is not usable", ErrInvalid)
+	}
+	// The quota counts the spaces being made as well as the ones that exist;
+	// the space is the creator's tenant's, as Create's is.
+	m.createMu.Lock()
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.AllTenants(), userID) // the creator, by id
+	if err != nil {
+		m.createMu.Unlock()
+		return Info{}, err
+	}
+	if err := m.checkSpaceQuota(ctx, *u); err != nil {
+		m.createMu.Unlock()
+		return Info{}, err
+	}
+	tenantID := u.TenantID
+	m.reserved[userID]++
+	m.reservedT[tenantID]++
+	m.createMu.Unlock()
+	held := true
+	unreserve := func() { // under createMu
+		m.reserved[userID]--
+		if m.reserved[userID] == 0 {
+			delete(m.reserved, userID)
+		}
+		m.reservedT[tenantID]--
+		if m.reservedT[tenantID] == 0 {
+			delete(m.reservedT, tenantID)
+		}
+		held = false
+	}
+	defer func() {
+		if held {
+			m.createMu.Lock()
+			unreserve()
+			m.createMu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+	defer cancel()
+	stg, err := m.Stage(name, IdentityOf(*u))
+	if err != nil {
+		return Info{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			stg.Abort()
+		}
+	}()
+	id := stg.ID()
+	enc, err := box.Seal(id, "token", []byte(req.Token))
+	if err != nil {
+		return Info{}, err
+	}
+	row := store.Remote{SpaceID: id, URL: remote.URL, Branch: branch, CredType: CredToken, Provider: store.ProviderGit, Username: user, TokenEnc: enc, State: store.RemoteOK, Updated: m.opt.Now()}
+	if err := stg.sp.Connect(ctx, *m.remoteOptions(id, &row)); err != nil {
+		return Info{}, err
+	}
+	st, _ := stg.sp.Remote()
+	row.State, row.LastGood, row.LastSync = st.State, st.LastGood, st.LastSync
+	now := m.opt.Now()
+	m.createMu.Lock()
+	unreserve() // the row below takes the place
+	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
+		if err := store.InsertSpace(ctx, q, tenantID, id, stg.Name(), "", inbox, now); err != nil {
+			return err
+		}
+		if err := store.AddMember(ctx, q, id, userID, perm.Owner, now); err != nil {
+			return err
+		}
+		return store.PutRemote(ctx, q, row)
+	})
+	m.createMu.Unlock()
+	if err != nil {
+		return Info{}, err
+	}
+	committed = true
+	stg.Commit(userID)
+	m.usageAdded(ctx, store.Touched{UserID: userID, TenantID: tenantID})
+	m.setSync(id, row.State)
+	m.markCache(id, stg.sp)
+	m.schedulePull(id)
+	return Info{ID: id, Name: stg.Name(), Role: perm.Owner, DirectRole: perm.Owner, Perms: perm.All, Inbox: inbox, Sync: row.State}, nil
 }

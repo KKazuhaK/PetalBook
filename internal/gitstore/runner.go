@@ -94,7 +94,11 @@ func baseEnv(unsafe bool) []string {
 		// A path is a path. Without this git reads the paths it is given as
 		// patterns: committing "[ab].md" would also take "a.md" and "b.md".
 		"GIT_LITERAL_PATHSPECS=1",
-		"GIT_OPTIONAL_LOCKS=0")
+		"GIT_OPTIONAL_LOCKS=0",
+		// Git never goes to the network on its own: a partial clone's missing
+		// objects are an error the server handles, not a silent request without
+		// the server's credential or deadline (see FetchBlobs).
+		"GIT_NO_LAZY_FETCH=1")
 }
 
 // commitBuilding are the commands that stage and assemble a commit.

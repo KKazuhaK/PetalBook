@@ -12,7 +12,6 @@ import { GroupsPanel } from './GroupsPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { TenantsPanel } from './TenantsPanel'
 import { SpacesPanel } from './SpacesPanel'
-import { StoragePanel } from './StoragePanel'
 import { StatusPanel } from './StatusPanel'
 import { UsagePanel } from './UsagePanel'
 import { UsersPanel } from './UsersPanel'
@@ -20,6 +19,8 @@ import { UsersPanel } from './UsersPanel'
 // The daily text's page is a chunk of its own: it is the biggest of the administration's and the least visited.
 const DailyPanel = lazy(() => import('./DailyPanel').then((m) => ({ default: m.DailyPanel })))
 const AccessPanel = lazy(() => import('./AccessPanel').then((m) => ({ default: m.AccessPanel })))
+// "存储与同步" with 3.1's storage rules is another.
+const StoragePanel = lazy(() => import('./StoragePanel').then((m) => ({ default: m.StoragePanel })))
 // The security page, with the providers and the audit log, is another.
 const MailPanel = lazy(() => import('./MailPanel').then((m) => ({ default: m.MailPanel })))
 const SecurityPanel = lazy(() => import('./AdminSecurityPanel').then((m) => ({ default: m.AdminSecurityPanel })))
@@ -87,7 +88,11 @@ export default function AdminRoute() {
             <AccessPanel />
           </Suspense>
         )}
-        {section === 'storage' && <StoragePanel />}
+        {section === 'storage' && (
+          <Suspense fallback={<PageFallback />}>
+            <StoragePanel />
+          </Suspense>
+        )}
         {section === 'security' && (
           <Suspense fallback={<PageFallback />}>
             <SecurityPanel />

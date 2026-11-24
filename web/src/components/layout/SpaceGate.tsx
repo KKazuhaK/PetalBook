@@ -5,6 +5,7 @@ import { ErrorState, PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { t } from '@/i18n'
 import { SettingsNoticeBanner } from './SettingsNoticeBanner'
+import { StorageNoticeBanner } from './StorageNoticeBanner'
 import { SpaceDisabled } from './SpaceDisabled'
 
 // Only a space the person can open: anything else is the same "not found",
@@ -26,6 +27,7 @@ export function SpaceGate() {
   // A new key per space: nothing of the old one stays mounted.
   return (
     <>
+      <StorageNoticeBanner key={`storage:${space}`} />
       <SettingsNoticeBanner key={`notice:${space}`} />
       <Outlet key={space} />
     </>

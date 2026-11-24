@@ -130,7 +130,7 @@ func TestGitHubMigrationBeforeTheTenantsMigration(t *testing.T) {
 
 // A database of main before the merge: 0018 is there, 0013 comes last.
 func TestGitHubMigrationAfterTheTenantsMigration(t *testing.T) {
-	storetest.EachWithoutVersion(t, 13, func(t *testing.T, st *store.Store) {
+	storetest.EachWithoutVersion(t, []int{13}, func(t *testing.T, st *store.Store) {
 		if n := count(t, st, `SELECT COUNT(*) FROM schema_migrations WHERE version = 13`); n != 0 {
 			t.Fatal("0013 is applied already")
 		}

@@ -316,6 +316,51 @@ func TestConnectingAnAccountTakenMeanwhileIsErrExists(t *testing.T) {
 	})
 }
 
+// An attachment repository on GitHub depends on its installation or its user
+// as the space's own repository does: the counts include it, once per space.
+func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+		q := st.Q()
+		for _, id := range []string{"S1", "S2", "S3"} {
+			if err := store.InsertSpace(ctx, q, store.DefaultTenantID, id, id, "", "", now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rem := func(id string, r store.Remote) store.Remote {
+			r.SpaceID, r.URL, r.Branch, r.State, r.Updated, r.CredType = id, "https://github.com/o/"+id+".git", "main", "ok", now, "connection"
+			return r
+		}
+		// S1: the space on a token, its attachments through installation 10.
+		if err := store.PutRemote(ctx, q, store.Remote{SpaceID: "S1", URL: "https://example.test/s1.git", Branch: "main", State: "ok", Updated: now, CredType: "token"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutAssetRemote(ctx, q, rem("S1", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 11})); err != nil {
+			t.Fatal(err)
+		}
+		// S2: both through installation 10.
+		if err := store.PutRemote(ctx, q, rem("S2", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 2})); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PutAssetRemote(ctx, q, rem("S2", store.Remote{GHVia: "app", GHInstallationID: 10, GHRepoID: 21})); err != nil {
+			t.Fatal(err)
+		}
+		// S3: the attachments only, through user A.
+		if err := store.PutAssetRemote(ctx, q, rem("S3", store.Remote{GHVia: "user", GHUserID: "A", GHRepoID: 31})); err != nil {
+			t.Fatal(err)
+		}
+		if counts, err := store.GitHubSpaceCounts(ctx, q, []int64{10}); err != nil || counts[10] != 2 {
+			t.Fatalf("%v %v", counts, err)
+		}
+		if n, err := store.CountGitHubSpaces(ctx, q); err != nil || n != 3 {
+			t.Fatalf("%d %v", n, err)
+		}
+		if n, err := store.CountUserGitHubSpaces(ctx, q, "A"); err != nil || n != 1 {
+			t.Fatalf("%d %v", n, err)
+		}
+	})
+}
+
 // Forgetting the installations forgets who they were shared with; deleting a
 // tenant takes its shares.
 func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {

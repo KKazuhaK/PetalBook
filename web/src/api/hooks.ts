@@ -10,7 +10,7 @@ import { api, ApiError, spaceApi } from './client'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
-import type { MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Provider, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
+import type { AssetsRemote, ConnectAssetsInput, MembersResponse, CreateSpaceInput, BatchPagesInput, ChecksResponse, FixCheckInput, ConnectRemoteInput, DailyPrefs, DailySettings, Favorite, FavoriteList, FavoriteRef, CreatePageInput, GroupsParams, ListParams, Member, Page, PageList, PatchPropsInput, Permission, ProblemKind, PutTemplateInput, PutViewsInput, Provider, Remote, SessionInfo, SpaceInfo, SpaceRole, SyncState, TagColor, TagsResponse, TypeInput, User, ViewList, ViewScope } from './types'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -38,7 +38,8 @@ export const keys = {
   adminGrants: ['admin', 'grants'] as const,
   adminTokens: ['admin', 'tokens'] as const,
   adminSpaces: ['admin', 'spaces'] as const,
-  adminSpaceList: (q: string) => ['admin', 'spaces', 'list', q] as const,
+  adminSpaceList: (q: string, filter = '') => ['admin', 'spaces', 'list', q, filter] as const,
+  adminStorage: ['admin', 'storage'] as const,
   adminStatus: ['admin', 'status'] as const,
   tenancy: ['admin', 'tenancy'] as const,
   adminMail: ['admin', 'mail'] as const,
@@ -84,6 +85,7 @@ export const keys = {
   history: (space: string, id: string) => ['space', space, 'history', id, 'list'] as const,
   version: (space: string, id: string, commit: string) => ['space', space, 'history', id, 'version', commit] as const,
   remote: (space: string) => ['space', space, 'remote'] as const,
+  assetsRemote: (space: string) => ['space', space, 'remote', 'assets'] as const,
   members: (space: string) => ['space', space, 'members'] as const,
   effectiveMembers: (space: string, q: string) => ['space', space, 'members', 'effective', q] as const,
   groupSearch: (q: string) => ['groups', 'search', q] as const,
@@ -731,6 +733,52 @@ export function useAcceptRemote(space: string) {
       // Pages, lists and counts may all have moved with the remote's history.
       void invalidateListings(qc, space)
     },
+  })
+}
+
+// --- the attachment repository ------------------------------------------------------
+
+// The attachment repository of a space, or null when it has none. While a move
+// runs it is asked again every second, for the progress.
+export function useAssetsRemote(space: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.assetsRemote(space),
+    queryFn: async ({ signal }): Promise<AssetsRemote | null> => {
+      try {
+        return await spaceApi(space).getAssetsRemote(signal)
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'not_found') return null
+        throw e
+      }
+    },
+    enabled: enabled && space !== '',
+    staleTime: 10_000,
+    refetchInterval: (q) => {
+      const m = q.state.data?.move
+      return m && (m.state === 'copying' || m.state === 'switching') ? 1000 : false
+    },
+  })
+}
+function useAssetsCache(space: string) {
+  const qc = useQueryClient()
+  return (v: AssetsRemote | null) => {
+    qc.setQueryData(keys.assetsRemote(space), v)
+    qc.setQueryData<{ spaces: SpaceInfo[] }>(keys.spaces, (prev) => prev && { spaces: prev.spaces.map((s) => (s.id === space && s.storage ? { ...s, storage: { ...s.storage, assets: v ? 'repository' : 'space' } } : s)) })
+  }
+}
+export function useConnectAssets(space: string) {
+  const put = useAssetsCache(space)
+  return useMutation({ ...secretMutation, mutationFn: (input: ConnectAssetsInput) => spaceApi(space).connectAssets(input), onSuccess: put })
+}
+export function useDisconnectAssets(space: string) {
+  const put = useAssetsCache(space)
+  return useMutation({ mutationFn: () => spaceApi(space).disconnectAssets(), onSuccess: () => put(null) })
+}
+export function useMoveAssets(space: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => spaceApi(space).moveAssets(),
+    onSuccess: (v) => qc.setQueryData(keys.assetsRemote(space), v),
   })
 }
 

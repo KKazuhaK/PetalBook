@@ -153,6 +153,7 @@ func (m *Manager) remoteOptions(id string, r *store.Remote) *space.RemoteOptions
 		OnStatus:   m.persistStatus(id),
 		NetTimeout: m.opt.NetTimeout, FetchFresh: m.opt.FetchFresh, FailFast: m.opt.FailFast,
 		Runner: m.opt.RemoteRunner, AllowUnsafe: m.opt.RemotePolicy.AllowUnsafe,
+		Partial: m.single == nil && m.Storage().Cache.Partial,
 	}
 }
 
@@ -228,6 +229,13 @@ func (m *Manager) withSync(ctx context.Context, in []Info) []Info {
 		out[i] = x
 	}
 	m.mu.Unlock()
+	for i := range out {
+		out[i].Cache = m.cacheOf(out[i].ID, out[i].Sync != "local")
+		out[i].Assets = m.AssetsMode(ctx, out[i].ID)
+		if n, err := m.Notice(ctx, out[i].ID); err == nil {
+			out[i].RemoteNotice = n
+		}
+	}
 	return out
 }
 
@@ -350,6 +358,15 @@ func (m *Manager) sameTenant(ctx context.Context, provider, tenantID, userID str
 	return err
 }
 
+// providerOf is the provider a connect request goes through: its own for a
+// connection, "git" for a plain address.
+func providerOf(req ConnectRequest) string {
+	if req.CredType == CredConnection {
+		return req.Provider
+	}
+	return store.ProviderGit
+}
+
 // Connect makes the space follow a remote repository. It does not return
 // until the space and the remote agree (see space.Connect).
 func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*RemoteView, error) {
@@ -361,6 +378,9 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		return nil, err
 	}
 	id := h.Info.ID
+	if err := m.CheckCredential(ctx, id, req.CredType, providerOf(req)); err != nil {
+		return nil, err
+	}
 	var remote gitstore.Remote
 	var ghCred *connections.Cred
 	if req.CredType == CredConnection {
@@ -376,7 +396,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		if remote, ghCred, err = m.resolveConnection(ctx, sp.TenantID, req); err != nil {
 			return nil, err
 		}
-	} else if remote, err = gitstore.ParseURL(req.URL, m.opt.RemotePolicy); err != nil {
+	} else if remote, err = gitstore.ParseURL(req.URL, m.hostPolicy()); err != nil {
 		return nil, err
 	}
 	branch := strings.TrimSpace(req.Branch)
@@ -420,7 +440,7 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 			}
 		} else if old == nil || old.TokenEnc == "" {
 			return nil, fmt.Errorf("%w: a token is required", ErrInvalid)
-		} else if prev, perr := gitstore.ParseURL(old.URL, m.opt.RemotePolicy); perr != nil || prev.Scheme != remote.Scheme || prev.Host != remote.Host || gitstore.CredentialScope(prev.URL) != gitstore.CredentialScope(remote.URL) {
+		} else if prev, perr := gitstore.ParseURL(old.URL, m.hostPolicy()); perr != nil || prev.Scheme != remote.Scheme || prev.Host != remote.Host || gitstore.CredentialScope(prev.URL) != gitstore.CredentialScope(remote.URL) {
 			// A stored token was given for one host and port. It is not sent to
 			// another because the address was edited.
 			return nil, fmt.Errorf("%w: the address is on another host now; enter the token for it", ErrInvalid)
@@ -491,6 +511,8 @@ func (m *Manager) Connect(ctx context.Context, h *Handle, req ConnectRequest) (*
 		return nil, err
 	}
 	m.setSync(id, row.State)
+	m.dropFacts(id) // it follows a remote now: the requirement may be met
+	m.markCache(id, h.Space)
 	m.schedulePull(id)
 	return m.viewOf(h, &row), nil
 }
@@ -512,8 +534,22 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 		return ErrNotFound
 	}
 	id := h.Info.ID
+	if err := m.CheckRemoval(ctx, id); err != nil {
+		return err
+	}
 	m.remoteMu.Lock()
 	defer m.remoteMu.Unlock()
+	// Attachments in their own repository are read through the space's remote;
+	// without one the space could not serve them.
+	if row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id); err == nil && row.URL != "" {
+		return assetsConflict("the space has an attachment repository; disconnect that first")
+	}
+	// A local space is the complete copy: a partial clone is made whole first
+	// (it waits for the fetch like any restore, and fails with the space still
+	// following its remote).
+	if err := h.Space.MakeFull(ctx); err != nil {
+		return err
+	}
 	if err := h.Space.Disconnect(); err != nil {
 		return err
 	}
@@ -522,6 +558,7 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	}
 	os.Remove(m.knownHosts(id))
 	m.setSync(id, "")
+	m.dropFacts(id)
 	return nil
 }
 
@@ -606,12 +643,13 @@ func jittered(d time.Duration) time.Duration {
 func (m *Manager) pullDue(ctx context.Context) {
 	now := m.opt.Now()
 	var due []*opening
+	ids := map[*opening]string{}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return
 	}
-	for _, e := range m.open {
+	for id, e := range m.open {
 		if e.closing != nil || e.nextPull.IsZero() || now.Before(e.nextPull) {
 			continue
 		}
@@ -630,6 +668,7 @@ func (m *Manager) pullDue(ctx context.Context) {
 		e.nextPull = now.Add(jittered(m.opt.PullInterval))
 		e.refs++
 		due = append(due, e)
+		ids[e] = id
 	}
 	m.mu.Unlock()
 	if len(due) == 0 {
@@ -654,6 +693,9 @@ func (m *Manager) pullDue(ctx context.Context) {
 			var ue *space.UnavailableError
 			if err := e.sp.Pull(ctx, false); err != nil && !errors.As(err, &ue) && ctx.Err() == nil && !errors.Is(err, space.ErrClosed) {
 				m.log.Warn("pulling a remote failed", "error", err)
+			}
+			if e.sp.Assets() != nil {
+				m.refreshAssets(ids[e], e.sp)
 			}
 			// A space whose connection does not work is looked at again
 			// only now and then; fixing the cause wakes it (ConnectionFixed).

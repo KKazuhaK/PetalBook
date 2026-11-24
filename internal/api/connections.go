@@ -463,6 +463,11 @@ func (s *server) adminDeleteConnection(c *call) {
 	if !ok {
 		return
 	}
+	// A provider the site requires cannot go: nobody could meet the requirement.
+	if r := s.spaces.Storage().Remotes.Require; r != nil && *r == p.Descriptor().ID {
+		s.connError(c, *r, http.StatusConflict, connections.CodeInUse, "the site requires a remote on "+p.Descriptor().Name+": change remotes.require in the storage settings before removing it")
+		return
+	}
 	if err := a.AdminDelete(c.r.Context()); err != nil {
 		s.fail(c.w, err)
 		return

@@ -29,6 +29,25 @@ export interface SpaceInfo {
   // the space only through groups, and whether a group of theirs is a member.
   directRole?: SpaceRole | ''
   viaGroups?: boolean
+  // What the space's copy on the server is and what the storage policy asks of
+  // it (docs/api.md, "Server storage"). Absent in single-user mode.
+  storage?: SpaceStorage
+}
+
+// What a space's copy on the server is.
+export type CacheState = 'local' | 'full' | 'partial' | 'evicted' | 'restoring'
+// A requirement of the storage policy that the space does not meet yet: any
+// remote, or one through the provider of that id (2.7b's connections).
+export interface RemoteNotice {
+  required: string
+  deadline: string
+  overdue: boolean
+}
+export interface SpaceStorage {
+  cache: CacheState
+  assets: 'space' | 'repository'
+  // null unless the policy asks something of this space that it does not have yet.
+  remote: RemoteNotice | null
 }
 export interface MetaResponse {
   version: string
@@ -460,6 +479,25 @@ export interface Remote {
   rewritten: { lastGood: string; remote: string } | null
 }
 
+// How far moving the attachments of a space into its attachment repository has come.
+export type AssetMoveState = 'copying' | 'switching' | 'done' | 'failed'
+export interface AssetMove {
+  state: AssetMoveState
+  files: number
+  filesDone: number
+  bytes: number
+  bytesDone: number
+  error: string
+}
+// The attachment repository of a space: a Remote, and the move.
+export interface AssetsRemote extends Remote {
+  move: AssetMove | null
+}
+// What `PUT .../remote/assets` takes: a Remote's body, or a repository to make or find on a provider.
+export type ConnectAssetsInput =
+  | ConnectRemoteInput
+  | { sync: { provider: string; owner: string; name: string; private?: boolean; description?: string; create?: boolean; via?: ConnectionVia } }
+
 export interface RemoteKey {
   publicKey: string
   fingerprint: string
@@ -556,6 +594,9 @@ export interface NewSync {
   description?: string
   // False connects the space to the one that exists already.
   create?: boolean
+  // Also make an attachment repository, on the same owner and with the same credential (docs/api.md,
+  // "Server storage"): `true` names it `<name>-assets`. Left out, the administrator's default applies.
+  assets?: boolean | { name: string }
 }
 
 export interface CreateSpaceInput {
@@ -680,6 +721,10 @@ export type ErrorCode =
   | 'last_owner'
   | 'personal_space'
   | 'busy'
+  | 'remote_required'
+  | 'not_cached'
+  | 'restoring'
+  | 'space_full'
   | 'provider_not_configured'
   | 'not_connected'
   | 'owner_not_allowed'
@@ -740,6 +785,8 @@ export interface User {
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
   sso?: number
+  // The storage policy does not ask the spaces this user owns for a remote (absent when false).
+  remoteExempt?: boolean
 }
 
 export interface SessionInfo {
@@ -1080,6 +1127,47 @@ export interface AdminSpace {
   sizeBytes: number | null
   sizeAt: string | null
   sync: SyncState
+  // What the copy on the server is, per space (docs/api.md, "Server storage").
+  storage: AdminSpaceStorage
+}
+export interface AdminSpaceStorage {
+  cache: CacheState
+  pinned: boolean
+  exempt: boolean
+  lastUsed: string | null
+  cloneBytes: number
+  indexBytes: number
+  assetCacheBytes: number
+  assets: 'space' | 'repository'
+  remote: RemoteNotice | null
+}
+export interface AdminStorage {
+  // require: null, 'any', or the id of a provider (2.7b's connections, such as 'github').
+  remotes: { require: string | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
+  hosts: { allowed: string[]; fromFlag: boolean }
+  localSpaces: { maxBytes: number | null }
+  cache: { partial: boolean; evictAfterDays: number | null; minIdleHours: number; clonesBytes: number | null; minFreeBytes: number | null; assetsBytes: number }
+  assets: { newSpaces: boolean }
+  git: { version: string; partialClone: boolean }
+  affected: { inGrace: number; overdue: number; exempt: number }
+}
+// What a PUT may change: any of the sections, each partly.
+export interface PutAdminStorage {
+  remotes?: Partial<AdminStorage['remotes']>
+  hosts?: { allowed?: string[] }
+  localSpaces?: { maxBytes?: number | null }
+  cache?: Partial<AdminStorage['cache']>
+  assets?: Partial<AdminStorage['assets']>
+}
+export interface StorageStatus {
+  spaces: { local: number; full: number; partial: number; evicted: number; restoring: number }
+  cloneBytes: number
+  indexBytes: number
+  assetCacheBytes: number
+  clonesBudget: number | null
+  assetsBudget: number | null
+  restoresWaiting: number
+  remotes: { inGrace: number; overdue: number }
 }
 export interface AdminSpaceList {
   items: AdminSpace[]
@@ -1088,6 +1176,9 @@ export interface AdminSpaceList {
 }
 export interface AdminSpacesParams {
   q?: string
+  // Keeps the spaces in one cache state, or (overdue) those past their deadline for a remote.
+  cache?: CacheState
+  overdue?: boolean
   cursor?: string
   limit?: number
 }
@@ -1112,6 +1203,7 @@ export interface ServerStatus {
   // Absent where the platform cannot say.
   diskFreeBytes?: number
   goVersion: string
+  storage: StorageStatus
 }
 
 // --- home: the daily text and favourites (docs/api.md, "Home") ---------------------
