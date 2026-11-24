@@ -3588,25 +3588,19 @@ export function createMockServer(options: MockOptions = {}) {
     if (rest === '/views' && method === 'PUT') return { status: 200, body: st.putViews(body) }
     if (rest === '/daily' && method === 'GET') {
       const body = dailyText(space, url.searchParams)
-      // How long a browser may keep it: until the day ends where the asker is (tz, minutes east of UTC).
+      // A browser asks again each time (no-cache) and gets a 304 when the ETag still matches,
+      // so a change of the settings shows at once. tz is still checked (minutes east of UTC).
       const tzRaw = url.searchParams.get('tz')
-      let age = 300
       if (tzRaw !== null && tzRaw !== '') {
         const tz = Number(tzRaw)
         if (!/^-?\d+$/.test(tzRaw) || tz < -840 || tz > 840)
           throw new HttpError(400, 'invalid', 'tz 是东偏 UTC 的分钟数，-840 到 840')
-        const date = url.searchParams.get('date') ?? new Date(now()).toISOString().slice(0, 10)
-        age = Math.max(
-          60,
-          Math.min(86400, Math.floor((Date.parse(date + 'T00:00:00Z') + 86400_000 - tz * 60_000 - now()) / 1000)),
-        )
       }
-      if (body.page === null && body.quote === undefined) age = 60
       return {
         status: 200,
         body,
         headers: {
-          'Cache-Control': `private, max-age=${age}`,
+          'Cache-Control': 'private, no-cache',
           ETag: `"${gitBlobId(JSON.stringify(body)).slice(0, 24)}"`,
         },
       }
