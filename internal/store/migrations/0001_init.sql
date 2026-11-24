@@ -41,6 +41,19 @@ CREATE INDEX sessions_user ON sessions(user_id, last_used);
 CREATE INDEX sessions_last_used ON sessions(last_used);
 CREATE INDEX sessions_created ON sessions(created);
 
+-- Why a session ended without the person signing out (the sign-in page says so
+-- when they come back). One row is kept for 30 days with the SHA-256 of the
+-- session cookie value (never the value), the reason and the time. It is looked
+-- up only by the hash of a cookie the browser sent, so it tells nothing to a
+-- cookie that was never a session. No user column and no foreign key: nothing
+-- needs to know whose it was.
+CREATE TABLE session_ends (
+  id     TEXT PRIMARY KEY,
+  reason TEXT NOT NULL,
+  ended  BIGINT NOT NULL
+);
+CREATE INDEX session_ends_ended ON session_ends(ended);
+
 CREATE TABLE invites (
   id         TEXT PRIMARY KEY,
   token_hash TEXT NOT NULL UNIQUE,
