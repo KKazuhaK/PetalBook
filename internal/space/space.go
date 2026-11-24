@@ -307,10 +307,6 @@ func Open(opt Options) (*Space, error) {
 	stateDir := opt.StateDir
 	if stateDir == "" {
 		stateDir = stateDirIn(dirs.git)
-		tidyEarlier(stateDir)
-		if err := moveOldState(root, stateDir, g, log); err != nil {
-			return nil, err
-		}
 	}
 	if stateDir, err = filepath.Abs(stateDir); err != nil {
 		return nil, err
@@ -340,12 +336,6 @@ func Open(opt Options) (*Space, error) {
 	if err := g.excludeLine(tempPattern); err != nil {
 		return nil, err
 	}
-	// The temporary folder of earlier versions, when the repository has
-	// nothing in it, never through a link; and the one an earlier build kept
-	// in the Git directory.
-	removeOldTmp(root, g, log)
-	os.RemoveAll(filepath.Join(dirs.git, "petalbook-tmp"))
-
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
 	jrn, recs, err := openJournal(filepath.Join(stateDir, "pending.journal"))
@@ -620,31 +610,6 @@ func ensureLines(file string, lines ...string) (bool, error) {
 		return false, nil
 	}
 	return true, os.WriteFile(file, []byte(out), 0o644)
-}
-
-// removeOldTmp removes .petalbook/tmp, where versions before 2.2 wrote files
-// before they were renamed into place, when it is a folder reached through
-// folders and the repository has nothing in it: a file of the repository is
-// never removed. The repository is asked only when the folder is there.
-func removeOldTmp(root string, g *gitRepo, log *slog.Logger) {
-	const old = ".petalbook/tmp"
-	if !isRealDir(root, old) {
-		return
-	}
-	tracked, err := g.trackedLower()
-	if err != nil {
-		return
-	}
-	for p := range tracked {
-		if strings.HasPrefix(p, old+"/") {
-			log.Warn("the repository has files where an earlier version wrote its temporary files; they are left as they are", "folder", old)
-			return
-		}
-	}
-	if d, b, err := openDirIn(root, ".petalbook"); err == nil && b == "" && d != nil {
-		d.RemoveAll("tmp")
-		d.Close()
-	}
 }
 
 // readSpaceName is ensureSpaceConfig that never writes.

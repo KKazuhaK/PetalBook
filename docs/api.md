@@ -3514,22 +3514,7 @@ refused because of it:
   whatever a pull put anywhere else. Those names are not pages, are kept out
   of the repository by `info/exclude` and are never committed; one a crash
   left is removed when the space starts, unless the repository has a file of
-  that name. A space last opened by an earlier version, which kept its state
-  in `.petalbook/cache/`, has the server's own files moved there once when it
-  starts: the index, the journal, the notices and the state database, and
-  only those the repository does not have. A file of `.petalbook/cache/` that
-  is committed is the repository's: it is neither moved nor used, and neither
-  is the log or shared memory file SQLite keeps beside a database the
-  repository has, or beside none. A link there is neither followed nor moved.
-  When the state directory is in use already (an earlier version ran after
-  this one), the earlier journal is replayed, its state database is kept
-  beside the current one as `state-earlier-<UTC>.db` (copied with its log, the
-  database last, so a crash never leaves one without the other; what a crash
-  left of a copy is removed at the next start, which copies it again from the
-  originals) and its drafts are imported where
-  the current database has none for that page and person; one that differs
-  from the current draft stays in that file, held, for `petalbook draft list
-  --database <file>`.
+  that name.
 
 What happened is told in `settingsNotices` of `GET /api/spaces/{space}/types`,
 to callers who have `manage` in the space (in single-user mode, always); for

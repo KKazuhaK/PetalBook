@@ -219,7 +219,7 @@ func snapshot(t *testing.T, s *Space) state {
 		rel, _ := filepath.Rel(s.Root(), p)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == ".git" || rel == ".petalbook/tmp" || rel == ".petalbook/cache" {
+			if rel == ".git" {
 				return filepath.SkipDir
 			}
 			if rel != "." {

@@ -1,6 +1,7 @@
 package space
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,9 @@ import (
 	"path"
 	"strings"
 	"sync/atomic"
+	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
 // Every read and write under .petalbook goes through the functions here. A
@@ -433,4 +437,33 @@ func removeLeftTemps(root string, g *gitRepo, rels []string, log *slog.Logger) {
 	if n > 0 {
 		log.Info("removed half-written files a crash left", "files", n)
 	}
+}
+
+// trackedLower is every path the repository has, in the index or in HEAD,
+// lower-cased (a file system that folds case takes one for the other).
+func (g *gitRepo) trackedLower() (map[string]bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	run := hookRunner{g}
+	out := map[string]bool{}
+	add := func(s string) {
+		for _, p := range strings.Split(s, "\x00") {
+			if p != "" {
+				out[strings.ToLower(p)] = true
+			}
+		}
+	}
+	s, errOut, err := run.Run(ctx, gitstore.Cmd{Dir: g.dir, Args: []string{"ls-files", "-z"}})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", err, gitstore.Scrub(errOut))
+	}
+	add(s)
+	if g.r().Head(ctx) != "" {
+		s, errOut, err = run.Run(ctx, gitstore.Cmd{Dir: g.dir, Args: []string{"ls-tree", "-r", "-z", "--name-only", "HEAD"}})
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", err, gitstore.Scrub(errOut))
+		}
+		add(s)
+	}
+	return out, nil
 }

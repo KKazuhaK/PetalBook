@@ -40,11 +40,6 @@ func (f *draftFlags) open(ctx context.Context) (*store.Store, error) {
 			dir := f.stateDir
 			if dir == "" {
 				dir = space.DefaultStateDir(f.space)
-				// A space the server has not opened since before 2.2 still
-				// has it where it was then; the server moves it when it starts.
-				if _, err := os.Stat(filepath.Join(dir, "state.db")); err != nil && oldStateDB(f.space) {
-					dir = filepath.Join(f.space, ".petalbook", "cache")
-				}
 			}
 			target = filepath.Join(dir, "state.db")
 		}
@@ -140,19 +135,4 @@ func newDraftExport() *cobra.Command {
 	f.bind(cmd)
 	cmd.Flags().StringVar(&user, "user", "", "whose draft, when several people have one")
 	return cmd
-}
-
-// oldStateDB reports whether the space at root has a state database where
-// versions before 2.2 kept it, reached through folders only: a link there,
-// which could lead out of the space, is not followed.
-func oldStateDB(root string) bool {
-	p := root
-	for _, seg := range []string{".petalbook", "cache", "state.db"} {
-		p = filepath.Join(p, seg)
-		fi, err := os.Lstat(p)
-		if err != nil || (seg != "state.db" && !fi.IsDir()) || (seg == "state.db" && !fi.Mode().IsRegular()) {
-			return false
-		}
-	}
-	return true
 }
