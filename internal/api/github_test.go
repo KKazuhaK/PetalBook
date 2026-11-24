@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -684,6 +685,52 @@ func TestConnectingByInstallingAndThePersonalAccountNeedsTheApp(t *testing.T) {
 		}
 		if m := member.do("GET", "/api/github/owners", nil).want(t, 200, ""); m.body["items"].([]any)[0].(map[string]any)["needsInstall"] != false {
 			t.Fatalf("%s", m.raw)
+		}
+	})
+}
+
+// The administrator makes the App on GitHub in one click: the server hands
+// over the manifest, GitHub sends the browser back, the server saves the App.
+func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin := a.setup("root", pw)
+		member := a.addUser("tang", pw, "member")
+		member.do("POST", "/api/admin/github/manifest", map[string]any{}).want(t, 403, "forbidden")
+		admin.do("POST", "/api/admin/github/manifest", map[string]any{"organization": "a/b"}).want(t, 400, "invalid")
+		r := admin.do("POST", "/api/admin/github/manifest", map[string]any{"organization": "kazuhahub", "name": "Team notes"}).want(t, 200, "")
+		postURL := r.body["url"].(string)
+		m := r.body["manifest"].(map[string]any)
+		if !strings.Contains(postURL, "/organizations/kazuhahub/settings/apps/new?state=") || m["name"] != "Team notes" || m["public"] != true ||
+			m["request_oauth_on_install"] != true || m["redirect_url"] != "https://notes.example.test/api/github/manifest/callback" ||
+			m["hook_attributes"].(map[string]any)["active"] != false {
+			t.Fatalf("%s", r.raw)
+		}
+		manifest, _ := json.Marshal(m)
+		back, _ := url.Parse(a.fake.SubmitManifest(postURL, string(manifest)))
+		path := back.Path + "?" + back.RawQuery
+		// Someone else's browser (no cookie, or a member's session) finishes nothing.
+		if cb := member.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/github?github_app_error=expired" {
+			t.Fatalf("%d %q", cb.code, cb.resp.Header.Get("Location"))
+		}
+		if admin.do("GET", "/api/admin/github", nil).body["configured"] != false {
+			t.Fatal("a refused return configured the App")
+		}
+		cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site")
+		if cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/github?github_app=created" {
+			t.Fatalf("%d %q", cb.code, cb.resp.Header.Get("Location"))
+		}
+		got := admin.do("GET", "/api/admin/github", nil).want(t, 200, "")
+		if got.body["configured"] != true || got.body["appId"] != "424242" || got.body["userAuthorization"] != true || got.body["clientSecret"].(map[string]any)["set"] != true {
+			t.Fatalf("%s", got.raw)
+		}
+		for _, secret := range []string{a.fake.ClientSecret, "PRIVATE KEY", "fake-webhook-secret"} {
+			if strings.Contains(got.raw, secret) || strings.Contains(r.raw, secret) {
+				t.Fatalf("a secret is in a response: %q", secret)
+			}
+		}
+		// The state worked once.
+		if cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.resp.Header.Get("Location") != "/admin/github?github_app_error=expired" {
+			t.Fatalf("a replay: %q", cb.resp.Header.Get("Location"))
 		}
 	})
 }

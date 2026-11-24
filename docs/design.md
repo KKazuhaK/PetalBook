@@ -207,6 +207,22 @@ status: 定稿
     抛给人。
   - 管理页要提示「App 只能装在一个账号上」，因为个人账号的流程需要
     「Any account」；同时管理页可以一键用 App Manifest 流程建出这样的 App。
+  - 管理页有「在 GitHub 上建 App」按钮，走 GitHub 的 App Manifest 流程：
+    服务器给出清单（名称、`url` 为公开地址、`callback_urls` 为授权回调、
+    `redirect_url` 和 `setup_url` 为清单返回地址、`public` 为真、
+    `request_oauth_on_install` 为真、权限 administration 写 / contents 写 /
+    metadata 读、不要 webhook），浏览器把清单 POST 到
+    `https://github.com/settings/apps/new`（指定组织时是
+    `/organizations/{org}/settings/apps/new`），GitHub 带 `code` 回到
+    `/api/github/manifest/callback`，服务器用
+    `POST /app-manifests/{code}/conversions` 换出 App 的 ID、slug、client id、
+    client secret、私钥和 webhook secret，和手填的 App 一样加密保存。`state`
+    绑定管理员的会话和浏览器，只能用一次，10 分钟过期。手填仍然保留。
+  - 管理页的权限不再只是保存时的快照：「重新检查」按钮（也可以让被拒绝的令牌
+    请求自动触发，一分钟最多一次）重新向 GitHub 读 App 和各安装的权限，并列出
+    还没接受新权限的安装。
+  - 调用 GitHub 失败时，日志记状态码、GitHub 的原话和请求类型，不记令牌、
+    私钥、授权码。
   - App 缺权限和仓库不在安装范围里是两回事，错误码分开
     （`github_app_missing_permission` 带缺的权限名，对比
     `github_repo_not_in_installation`）。

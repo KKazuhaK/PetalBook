@@ -3,9 +3,11 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/github"
+	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 )
 
 // The GitHub endpoints (docs/api.md, "GitHub" and "Administration", "GitHub
@@ -14,8 +16,12 @@ import (
 
 const (
 	githubCallbackPath = "/api/github/authorization/callback"
+	githubManifestPath = github.ManifestCallbackPath
 	githubCookieBase   = "petalbook_github"
-	githubAttemptTTL   = 10 * time.Minute
+	// The manifest flow has a cookie of its own: it ties the return to the
+	// administrator's browser, and is not the one of connecting an account.
+	githubManifestCookieBase = "petalbook_github_manifest"
+	githubAttemptTTL         = 10 * time.Minute
 )
 
 func (s *server) gh(c *call) (*github.Service, bool) {
@@ -361,6 +367,61 @@ func (s *server) adminCheckGitHub(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, toAdminGitHub(v))
+}
+
+// adminGitHubManifest starts making the App on GitHub in one click: the answer
+// is the manifest and the address the browser posts it to.
+func (s *server) adminGitHubManifest(c *call) {
+	gh, ok := s.gh(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Organization string `json:"organization"`
+		Name         string `json:"name"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
+		return
+	}
+	start, err := gh.StartManifest(c.r.Context(), c.user().ID, req.Organization, req.Name)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	c.w.Header().Set("Cache-Control", "no-store")
+	http.SetCookie(c.w, s.auth.FlowCookie(githubManifestCookieBase, start.Binding, githubAttemptTTL))
+	writeJSON(c.w, http.StatusOK, struct {
+		URL      string             `json:"url"`
+		Manifest githubapp.Manifest `json:"manifest"`
+	}{start.URL, start.Manifest})
+}
+
+// githubManifestCallback is where GitHub sends the administrator's browser
+// after the App is made. Like githubAuthCallback it answers with a redirect and
+// changes nothing unless the state matches the attempt of this browser's
+// cookie and the session is of the site administrator who started it.
+func (s *server) githubManifestCallback(c *call) {
+	c.w.Header().Set("Cache-Control", "no-store")
+	if s.opt.GitHub == nil {
+		http.Redirect(c.w, c.r, "/admin/github?github_app_error=expired", http.StatusSeeOther)
+		return
+	}
+	binding := ""
+	if ck, err := c.r.Cookie(s.auth.FlowCookieName(githubManifestCookieBase)); err == nil {
+		binding = ck.Value
+	}
+	userID := ""
+	if c.p != nil && c.isSiteAdmin() {
+		userID = c.user().ID
+	}
+	to, clear := s.opt.GitHub.CompleteManifest(c.r.Context(), binding, userID, c.r.URL.Query())
+	if clear {
+		http.SetCookie(c.w, s.auth.ClearFlowCookie(githubManifestCookieBase))
+	}
+	if strings.HasSuffix(to, "github_app=created") {
+		s.spaces.GitHubFixed("") // spaces that were waiting for the App are fetched again at once
+	}
+	http.Redirect(c.w, c.r, to, http.StatusSeeOther)
 }
 
 func (s *server) adminDeleteGitHub(c *call) {

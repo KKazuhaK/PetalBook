@@ -34,8 +34,11 @@ const (
 // attempt is one authorisation between start and the callback.
 type attempt struct {
 	id, state, verifier, userID, ret string
-	expires                          time.Time
-	elem                             *list.Element
+	// kind is what the attempt is for: "" connecting an account, "manifest"
+	// making the App. One never finishes the other.
+	kind    string
+	expires time.Time
+	elem    *list.Element
 }
 
 // attemptStore keeps the authorisations in progress: in memory, bounded,
@@ -88,11 +91,11 @@ const (
 
 // take removes and returns the attempt of a browser if the state and the user
 // are the ones it was made for.
-func (p *attemptStore) take(id, state, userID string) (*attempt, takeResult) {
+func (p *attemptStore) take(kind, id, state, userID string) (*attempt, takeResult) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a, ok := p.items[id]
-	if !ok {
+	if !ok || a.kind != kind {
 		return nil, takeUnknown
 	}
 	if !p.now().Before(a.expires) {
@@ -219,7 +222,7 @@ func (s *Service) CompleteAuthorization(ctx context.Context, binding, userID str
 	if !ok1 || !ok2 || !ok3 || binding == "" || state == "" {
 		return failRedirect + cbExpired, false
 	}
-	a, res := s.attempts.take(binding, state, userID)
+	a, res := s.attempts.take("", binding, state, userID)
 	if res != takeOK {
 		return failRedirect + cbExpired, res == takeUnknown
 	}

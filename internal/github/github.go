@@ -36,7 +36,9 @@ const (
 	CodeMissingPermission = "github_app_missing_permission"
 	// CodeAppNotInstalled: the person has authorised the App but it is not
 	// installed on their own account, where a repository cannot be made without it.
-	CodeAppNotInstalled  = "github_app_not_installed"
+	CodeAppNotInstalled = "github_app_not_installed"
+	// CodePublicURLNeeded: making the App from a manifest needs the server's public address.
+	CodePublicURLNeeded  = "github_public_url_needed"
 	CodeRepoNotInInstall = "github_repo_not_in_installation"
 	CodePushFailed       = "github_push_failed"
 	CodeKeyInvalid       = "github_key_invalid"
@@ -180,17 +182,20 @@ const settingKey = "github_app"
 
 // appRecord is what is stored of the App; the key and the secret are sealed.
 type appRecord struct {
-	AppID       string            `json:"appId"`
-	ClientID    string            `json:"clientId,omitempty"`
-	KeyEnc      string            `json:"keyEnc"`
-	SecretEnc   string            `json:"secretEnc,omitempty"`
-	Fingerprint string            `json:"fingerprint"`
-	Slug        string            `json:"slug"`
-	Name        string            `json:"name"`
-	Owner       string            `json:"owner"`
-	HTMLURL     string            `json:"htmlUrl"`
-	Permissions map[string]string `json:"permissions"`
-	Checked     time.Time         `json:"checked"`
+	AppID     string `json:"appId"`
+	ClientID  string `json:"clientId,omitempty"`
+	KeyEnc    string `json:"keyEnc"`
+	SecretEnc string `json:"secretEnc,omitempty"`
+	// WebhookSecretEnc is the secret GitHub gives with an App made from a
+	// manifest; no webhook is used, so it is only kept, sealed.
+	WebhookSecretEnc string            `json:"webhookSecretEnc,omitempty"`
+	Fingerprint      string            `json:"fingerprint"`
+	Slug             string            `json:"slug"`
+	Name             string            `json:"name"`
+	Owner            string            `json:"owner"`
+	HTMLURL          string            `json:"htmlUrl"`
+	Permissions      map[string]string `json:"permissions"`
+	Checked          time.Time         `json:"checked"`
 	// Gaps are the installations that lack a permission the App needs (an
 	// App whose permissions grew, installed where nobody accepted that yet).
 	Gaps []gapRec `json:"gaps,omitempty"`
@@ -208,6 +213,7 @@ type gapRec struct {
 const (
 	purposeKey    = "github-app-key"
 	purposeSecret = "github-client-secret"
+	purposeHook   = "github-webhook-secret"
 	siteBinding   = "site"
 )
 

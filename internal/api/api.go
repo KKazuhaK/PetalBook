@@ -336,7 +336,7 @@ const oidcCallbackPath = "/api/auth/oidc/callback"
 // /api/auth/github/{slug}/callback, in fromIdentityProvider) and changes
 // nothing unless its state matches an attempt this browser started.
 func githubAuthorizationReturn(r *http.Request) bool {
-	return r.Method == http.MethodGet && r.URL.Path == githubCallbackPath
+	return r.Method == http.MethodGet && (r.URL.Path == githubCallbackPath || r.URL.Path == githubManifestPath)
 }
 
 // fromIdentityProvider is true for the requests an identity provider's site

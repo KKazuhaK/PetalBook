@@ -109,6 +109,8 @@ type SaveRequest struct {
 	PrivateKey   string
 	ClientID     *string
 	ClientSecret string
+	// WebhookSecret is kept sealed when given (an App made from a manifest has one).
+	WebhookSecret string
 }
 
 func appInUse(spaces, auths int) *Error {
@@ -233,6 +235,13 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		if rec.SecretEnc, err = s.opt.Secrets.Seal(siteBinding, purposeSecret, []byte(secret)); err != nil {
 			return nil, err
 		}
+	}
+	if req.WebhookSecret != "" {
+		if rec.WebhookSecretEnc, err = s.opt.Secrets.Seal(siteBinding, purposeHook, []byte(req.WebhookSecret)); err != nil {
+			return nil, err
+		}
+	} else if old != nil && old.rec.AppID == appID {
+		rec.WebhookSecretEnc = old.rec.WebhookSecretEnc
 	}
 	raw, _ := json.Marshal(rec)
 	if err := store.SetSiteSetting(ctx, s.opt.Store.Q(), settingKey, string(raw), s.opt.Now()); err != nil {

@@ -1878,7 +1878,8 @@ fixed (a user connects again, an administrator saves the App).
 | `unavailable` | 503 | GitHub cannot be reached; nothing was changed |
 
 The administrators' endpoints add `github_key_invalid`, `github_app_rejected`,
-`github_client_rejected` and `github_app_in_use` (see "Administration").
+`github_client_rejected`, `github_app_in_use` and `github_public_url_needed`
+(see "Administration").
 
 ### Reserved: a site policy for remotes (milestone 3.1)
 
@@ -6161,6 +6162,58 @@ now (`permissions`, `missing`, `gaps`, `anyAccount`, `checked`, and the App's
 name and page) and answers `200` as `GET /api/admin/github`. `409
 github_not_configured` without an App, or when GitHub no longer accepts its key;
 `503 unavailable` when GitHub cannot be reached (nothing is changed).
+
+#### `POST /api/admin/github/manifest`
+
+Makes the App on GitHub in one click (GitHub's App Manifest flow); entering an
+App by hand with `PUT` stays possible. `{"organization": "kazuhahub", "name":
+"PetalBook Notes"}`, both optional: with `organization` the App is made in that
+organisation (else in the administrator's own account), `name` is at most 34
+characters (default `PetalBook <host of --public-url>`; GitHub's names are
+unique, so the administrator may need another). `200`:
+
+```json
+{"url": "https://github.com/organizations/kazuhahub/settings/apps/new?state=…",
+ "manifest": {"name": "PetalBook Notes", "url": "https://notes.example.com",
+   "hook_attributes": {"url": "https://notes.example.com", "active": false},
+   "redirect_url": "https://notes.example.com/api/github/manifest/callback",
+   "callback_urls": ["https://notes.example.com/api/github/authorization/callback"],
+   "setup_url": "https://notes.example.com/api/github/manifest/callback",
+   "public": true, "request_oauth_on_install": true,
+   "default_permissions": {"administration": "write", "contents": "write", "metadata": "read"}}}
+```
+
+and a short-lived cookie that ties the attempt to this browser. The client
+posts the manifest to `url` from the administrator's browser, as a form with one
+field, `manifest`, holding the JSON (`/settings/apps/new` without
+`organization`). The App is public ("Any account"), asks for user authorisation
+during installation, and has no webhook.
+
+The `state` in `url` is 32 random bytes, held in memory for ten minutes, used
+once, bound to the cookie and to the signed-in site administrator. `409
+github_public_url_needed` without `--public-url`; `409 github_app_in_use` while
+any space has a `github` credential or any user is connected (an App in use is
+not replaced); `400 invalid` for a bad `organization` or `name`; `403
+forbidden` for anyone but a site administrator.
+
+#### `GET /api/github/manifest/callback`
+
+Where GitHub sends the administrator's browser after the App is made, with
+`code` and `state`. Like the callback of a user's connection it answers a
+redirect (`303`), never JSON, needs the cookie and the session of the
+administrator who started the attempt, and is a cross-site navigation by nature.
+The server trades the code (`POST /app-manifests/{code}/conversions`, which needs
+no other credential and works once) for the App's id, slug, client id, client
+secret, private key and webhook secret, then saves them as `PUT
+/api/admin/github` does (checked with GitHub, secrets sealed with the server's
+key; the webhook secret is only kept, sealed, since there is no webhook), and
+sends the browser to `/admin/github?github_app=created`. A failure goes to
+`/admin/github?github_app_error=<code>`: `expired` (no such attempt, used, older
+than ten minutes, another browser or user), `github_error` (GitHub did not turn
+the code into an App, or the App could not be saved), `app_in_use`,
+`unavailable`. A visit with `installation_id` or `setup_action` and no `code`
+(the manifest names this address as the post-installation page too) goes to
+`/settings/github`.
 
 #### `DELETE /api/admin/github`
 
