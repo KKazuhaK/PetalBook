@@ -73,6 +73,9 @@ type userDeletionResp struct {
 		Identities int  `json:"identities"`
 		GitHub     bool `json:"github"`
 		Sessions   int  `json:"sessions"`
+		// Connections: every provider the person is connected to (GitHub among
+		// them), each with its name.
+		Connections []revokedConnection `json:"connections"`
 	} `json:"revoke"`
 	Groups    int              `json:"groups"`
 	NeedsHeir []planSpaceResp  `json:"needsHeir"`
@@ -167,6 +170,7 @@ func (s *server) userDeletionOf(c *call, id, heir string, transfers map[string]s
 	}
 	out.Revoke.Tokens, out.Revoke.Grants, out.Revoke.Passkeys, out.Revoke.Identities, out.Revoke.GitHub, out.Revoke.Sessions =
 		plan.Tokens, plan.Grants, plan.Passkeys, plan.Identity, plan.GitHub, plan.Sessions
+	out.Revoke.Connections = s.revokedConnections(plan)
 	if out.Recycle == nil {
 		out.Recycle = []struct {
 			Space planSpaceResp `json:"space"`
@@ -386,6 +390,11 @@ func (s *server) revokeUserAccess(ctx context.Context, id string) {
 			s.log.Debug("a deleted person's account was not disconnected", "provider", p.Descriptor().ID, "error", err)
 		}
 	}
+	// A connection to a provider that is not up (or one that could not be
+	// ended) goes with the person all the same.
+	if err := store.DeleteUserProviderAuthorizations(ctx, s.opt.Store.Q(), id); err != nil {
+		s.log.Warn("could not remove the connections of a deleted person", "user", id, "error", err)
+	}
 }
 
 func (s *server) adminDeleteUser(c *call) {
@@ -463,6 +472,32 @@ func (s *server) restoreUser(c *call, it *store.RecycleItem) {
 		Transfers []store.UserTransfer   `json:"transfers"`
 		Left      []store.UserLeft       `json:"left"`
 	}{restored, skipped, res.Transfers, res.Left})
+}
+
+// revokedConnection is one provider a deleted person is disconnected from.
+type revokedConnection struct {
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+}
+
+// revokedConnections lists the providers the person is connected to: GitHub
+// first, then those of 3.8 by id.
+func (s *server) revokedConnections(plan *store.UserPlan) []revokedConnection {
+	out := []revokedConnection{}
+	add := func(id string) {
+		name := id
+		if p, ok := s.opt.Connections.Get(id); ok {
+			name = p.Descriptor().Name
+		}
+		out = append(out, revokedConnection{id, name})
+	}
+	if plan.GitHub {
+		add("github")
+	}
+	for _, id := range plan.Connections {
+		add(id)
+	}
+	return out
 }
 
 // deletionDecisions is what the preview of deleting a person decides, as one

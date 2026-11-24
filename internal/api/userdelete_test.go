@@ -1120,3 +1120,45 @@ func TestRestoringAPersonShowsATenantAdministratorNoPersonalSpace(t *testing.T) 
 		}
 	})
 }
+
+// A person's connections to the providers of 3.8 are counted in the preview of
+// deleting them, one line per provider, are ended with the deletion and are gone
+// when they are purged.
+func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		ctx := context.Background()
+		now := a.clock.Now()
+		connect := func(user string) {
+			t.Helper()
+			if _, err := store.GetConnProviderRow(ctx, a.st.Q(), "gl"); errors.Is(err, store.ErrNotFound) {
+				if err := store.InsertConnProviderRow(ctx, a.st.Q(), store.ConnProviderRow{ID: "gl", Type: "gitlab", Host: "gl.example.test", Scheme: "https", Name: "GitLab", Owner: store.ConnProviderSite,
+					State: "ok", Created: now, Updated: now}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := store.PutProviderAuthorization(ctx, a.st.Q(), store.ProviderAuthorization{Provider: "gl", UserID: user, AccountID: "9", Login: "olive", State: "ok", Connected: now, Updated: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		connect(f.ownerID)
+		pre := f.admin.do("GET", "/api/admin/users/"+f.ownerID+"/deletion", nil).want(t, 200, "")
+		conns, _ := pre.body["revoke"].(map[string]any)["connections"].([]any)
+		if len(conns) != 1 || conns[0].(map[string]any)["provider"] != "gl" {
+			t.Fatalf("the preview does not list the provider: %s", pre.raw)
+		}
+		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+		if n := a.countRows(t, `SELECT COUNT(*) FROM provider_authorizations WHERE user_id = '`+f.ownerID+`'`); n != 0 {
+			t.Fatalf("%d connections survive the deletion", n)
+		}
+		// Whatever is still there when they are purged goes with them.
+		connect(f.ownerID)
+		tok := confirmFor(t, f.admin, "purge", "items", item)
+		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
+		a.mgr.WaitPurges()
+		if n := a.countRows(t, `SELECT COUNT(*) FROM provider_authorizations WHERE user_id = '`+f.ownerID+`'`); n != 0 {
+			t.Fatalf("%d connections survive the purge", n)
+		}
+	})
+}

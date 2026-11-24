@@ -76,7 +76,9 @@ type UserPlan struct {
 	Passkeys  int
 	Identity  int
 	GitHub    bool
-	Sessions  int
+	// Connections: the providers of 3.8 the person is connected to, by id.
+	Connections []string
+	Sessions    int
 }
 
 // PlanUserDeletion works out what deleting the person would do, in a constant
@@ -235,6 +237,15 @@ func PlanUserDeletion(ctx context.Context, q Q, sc Scope, userID, heir string, t
 	p.Identity = one(`SELECT COUNT(*) FROM identities WHERE user_id = ?`, userID)
 	p.Sessions = one(`SELECT COUNT(*) FROM sessions WHERE user_id = ?`, userID)
 	p.GitHub = one(`SELECT COUNT(*) FROM github_authorizations WHERE user_id = ?`, userID) > 0
+	if rows, err := q.Query(ctx, `SELECT provider FROM provider_authorizations WHERE user_id = ? ORDER BY provider`, userID); err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				p.Connections = append(p.Connections, id)
+			}
+		}
+		rows.Close()
+	}
 	return p, nil
 }
 
@@ -651,6 +662,8 @@ func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Tim
 		`DELETE FROM oauth_grant_spaces WHERE grant_id IN (SELECT id FROM oauth_grants WHERE user_id = ?)`,
 		`DELETE FROM oauth_grants WHERE user_id = ?`,
 		`DELETE FROM github_authorizations WHERE user_id = ?`,
+		`DELETE FROM provider_authorizations WHERE user_id = ?`,
+		`DELETE FROM provider_leftovers WHERE user_id = ?`,
 		`DELETE FROM github_leftovers WHERE user_id = ?`,
 		`DELETE FROM usage WHERE kind = 'user' AND id = ?`,
 	} {

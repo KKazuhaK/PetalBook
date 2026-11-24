@@ -261,6 +261,17 @@ func DeleteProviderAuthorization(ctx context.Context, q Q, provider, userID stri
 	})
 }
 
+// DeleteUserProviderAuthorizations removes every connection a person has to a
+// provider of 3.8 (they are being deleted).
+func DeleteUserProviderAuthorizations(ctx context.Context, q Q, userID string) error {
+	return atomically(ctx, q, func(q Q) error {
+		if _, err := q.Exec(ctx, `DELETE FROM provider_authorizations WHERE user_id = ?`, userID); err != nil {
+			return err
+		}
+		return settleConnected(ctx, q, userID)
+	})
+}
+
 // deleteProviderRows deletes providers by a condition, their connections with
 // them (by cascade), and settles whether each person who had one is connected.
 func deleteProviderRows(ctx context.Context, q Q, where string, arg string) error {
