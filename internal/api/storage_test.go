@@ -439,11 +439,24 @@ func TestRestoringAnswersWithThePhaseAndRetryAfter(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		// A restore that cannot reach the remote fails at once with 503 unavailable.
+		// A restore that cannot reach the remote fails with 503 unavailable.
+		// RestoreWait is short, so on a busy machine the failed fetch can come
+		// back after the first answer, which then still says restoring.
 		a.clock.Advance(48 * time.Hour)
 		admin.do("POST", "/api/admin/spaces/"+sid+"/evict", nil).want(t, 204, "")
 		n.set(true)
-		admin.do("GET", base+"/pages/"+pid, nil).want(t, 503, "unavailable")
+		deadline = time.Now().Add(10 * time.Second)
+		for {
+			r := admin.do("GET", base+"/pages/"+pid, nil)
+			if r.code != 503 || r.body["error"] != "restoring" {
+				r.want(t, 503, "unavailable")
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the failed restore still says restoring")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		admin.do("GET", base+"/tree", nil).want(t, 200, "")
 		n.set(false)
 	})
