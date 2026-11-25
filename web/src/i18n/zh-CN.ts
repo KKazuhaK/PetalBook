@@ -182,6 +182,8 @@ export const zhCN = {
     createFailed: '新建失败',
     untitledHint: '无标题',
     blankPage: '空白页面',
+    taskDone: '已完成：',
+    taskTodo: '未完成：',
   },
   folder: {
     dialogTitle: '新建文件夹',

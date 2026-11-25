@@ -5,6 +5,7 @@ import { useBacklinks, useUrls } from '@/api/hooks'
 import { ErrorState } from '@/components/common'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
+import { ExcerptText } from '@/components/files/ExcerptText'
 
 // The pages that link to this one, on the right of the page: the page's name, the paragraph the link is in, and
 // twenty at a time. It is its own chunk and asks for nothing until it is opened.
@@ -102,7 +103,7 @@ export default function BacklinksPanel({
                       <span className="truncate">{b.untitled ? b.title || t.editor.untitled : b.title}</span>
                     </Link>
                     <p className="mt-0.5 line-clamp-4 text-xs text-muted-foreground">
-                      {b.excerpt || t.pageLinks.backlinksNoExcerpt}
+                      {b.excerpt ? <ExcerptText text={b.excerpt} /> : t.pageLinks.backlinksNoExcerpt}
                     </p>
                   </li>
                 ))}
