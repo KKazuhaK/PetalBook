@@ -67,9 +67,14 @@ func (s *server) putSourcePresets(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// What is stored: trimmed, without blanks and repeats; null when the space has chosen none.
+	var stored []string
+	if cur, set := c.sp.Space.SourcePresets(); set {
+		stored = cur
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Presets []string `json:"presets"`
-	}{p})
+	}{stored})
 }
 
 func (s *server) renameTypeField(c *call) {

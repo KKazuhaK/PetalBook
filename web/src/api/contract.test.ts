@@ -4723,6 +4723,99 @@ function suite(target: Target) {
     })
   })
 
+  describe('sources, icons and colours (3.10)', () => {
+    const folder = `${root}/style`
+    const titles = (items: PageSummary[]) => items.map((i) => i.title).sort()
+
+    it('the source is a list: filtered, sorted, counted, and the sources are listed by use', async () => {
+      await S.createFolder(folder)
+      await mk(folder, { title: 'sA', source: ['书', '电影'] })
+      await mk(folder, { title: 'sB', source: ['书'] })
+      await mk(folder, { title: 'sC' })
+      const all = await walk({ folder })
+      expect(all.find((i) => i.title === 'sA')?.source).toEqual(['书', '电影'])
+      expect(all.find((i) => i.title === 'sC')?.source).toEqual([])
+      const f = (values: string[]) => walk({ folder, filter: [{ key: 'source', op: 'in', values }] })
+      expect(titles(await f(['电影']))).toEqual(['sA'])
+      expect(titles(await f(['书']))).toEqual(['sA', 'sB'])
+      // Sorted by the first source, the pages with none last.
+      const sorted = await walk({ folder, sort: 'prop:source' })
+      expect(sorted.at(-1)?.title).toBe('sC')
+      const used = (await S.sources()).sources
+      expect(used.find((x) => x.source === '书')?.pages).toBeGreaterThanOrEqual(2)
+      expect(used.find((x) => x.source === '电影')?.pages).toBeGreaterThanOrEqual(1)
+      // The sources are not among the properties of the page.
+      const withProps = await walk({ folder, props: true })
+      expect(withProps.find((i) => i.title === 'sA')?.props ?? {}).not.toHaveProperty('source')
+    })
+
+    it('a folder has an icon and a colour that follow it when it moves; a page has them in its header', async () => {
+      const a = `${folder}/a${run}`
+      await S.createFolder(a)
+      await S.createFolder(`${a}/in`)
+      expect(await S.setFolderStyle(a, 'book-open', 'teal')).toMatchObject({
+        folder: a,
+        icon: 'book-open',
+        color: 'teal',
+      })
+      await S.setFolderStyle(`${a}/in`, '🌸', '')
+      const styles = (await S.appearance()).folders
+      expect(styles).toContainEqual({ folder: a, icon: 'book-open', color: 'teal' })
+      expect(styles).toContainEqual({ folder: `${a}/in`, icon: '🌸' })
+      expect((await failure(S.setFolderStyle(a, 'x', 'mauve' as never))).code).toBe('invalid')
+      expect((await failure(S.setFolderStyle(`${a}/nowhere`, 'x', ''))).code).toBe('not_found')
+      const b = `${folder}/b${run}`
+      await S.moveFolder(a, b)
+      const moved = (await S.appearance()).folders
+      expect(moved).toContainEqual({ folder: b, icon: 'book-open', color: 'teal' })
+      expect(moved).toContainEqual({ folder: `${b}/in`, icon: '🌸' })
+      expect(moved.some((x) => x.folder === a)).toBe(false)
+      await S.setFolderStyle(b, '', '')
+      expect((await S.appearance()).folders.some((x) => x.folder === b)).toBe(false)
+      const p = await mk(folder, { title: 'sI', icon: 'flower', color: 'pink' })
+      expect((await walk({ folder })).find((i) => i.id === p.id)).toMatchObject({ icon: 'flower', color: 'pink' })
+    })
+
+    it("the presets of the sources are the space's, and null goes back to the defaults", async () => {
+      expect((await S.appearance()).sourcePresets).toBeNull()
+      expect(await S.setSourcePresets([' 书 ', '电影', '书', ''])).toEqual({ presets: ['书', '电影'] })
+      expect((await S.appearance()).sourcePresets).toEqual(['书', '电影'])
+      await S.setSourcePresets(null)
+      expect((await S.appearance()).sourcePresets).toBeNull()
+    })
+
+    it('renames the key of a field of a type in the type and in the pages that have it', async () => {
+      const name = `rn${run}`
+      const rf = `${root}/rn-fields`
+      const t = await S.putType(name, {
+        title: 'R',
+        fields: [
+          { key: 'status', kind: 'text' },
+          { key: 'due', kind: 'date' },
+        ],
+      })
+      await S.createFolder(rf)
+      await S.bindFolder(rf, name)
+      const a = await mk(rf, { title: 'rA', status: 'open', due: '2026-12-01' })
+      await mk(`${root}/rn-other`, { title: 'rO', status: 'kept' })
+      const r = await S.renameTypeField(name, { baseRev: t.rev, from: 'status', to: 'state' })
+      expect(r.pages).toBe(1)
+      expect(r.type.fields.map((f) => f.key)).toEqual(['state', 'due'])
+      expect((await S.getPage(a.id)).meta).toMatchObject({ state: 'open', due: '2026-12-01' })
+      expect('status' in (await S.getPage(a.id)).meta).toBe(false)
+      expect((await failure(S.renameTypeField(name, { baseRev: r.type.rev, from: 'state', to: 'due' }))).code).toBe(
+        'invalid',
+      )
+      expect((await failure(S.renameTypeField(name, { baseRev: r.type.rev, from: 'nothing', to: 'x' }))).code).toBe(
+        'not_found',
+      )
+      expect((await failure(S.renameTypeField(name, { baseRev: t.rev, from: 'state', to: 'y' }))).code).toBe('conflict')
+      expect((await failure(S.renameTypeField(`nope${run}`, { baseRev: '', from: 'a', to: 'b' }))).code).toBe(
+        'not_found',
+      )
+    })
+  })
+
   describe('page types, properties and the table listing', () => {
     const folder = `${root}/types`
     const typeName = `task${run}`
