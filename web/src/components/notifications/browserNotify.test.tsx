@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act } from 'react'
 import { Route, Routes } from 'react-router'
 import { PreferencesPanel } from '@/components/settings/PreferencesPanel'
 import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
@@ -157,6 +158,11 @@ describe('the notice itself', () => {
       { signIn: true, server: { mode: 'accounts' } },
     )
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) !== undefined, 'the first count')
+    // The notifier has taken the first count in (its effect runs after the render that brings it), so the next one is
+    // a rise and not the first it sees, however slow the machine.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
     return f
   }
 
