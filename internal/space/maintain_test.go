@@ -130,32 +130,30 @@ func TestPackingStartsAtTheThresholdAndNeverOverlapsACommit(t *testing.T) {
 	}
 }
 
-// Closing the space packs what the commits since the last packing left loose,
-// and does nothing when there were none.
-func TestCloseRunsThePackingOnceWhenCommitsWereMade(t *testing.T) {
+// Closing the space packs only when enough commits were made since the last
+// packing: a space that is closed and reopened often (evicted when idle) must
+// not leave a pack behind every time.
+func TestCloseRunsThePackingOnlyAfterEnoughCommits(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
 	s := openTwoAuthors(t, root)
 	l := &gitLog{}
 	s.cm.git.before = l.hook
 	mustCreate(t, s, "", meta("title", "One"), "1\n")
-	if err := s.Close(); err != nil { // far below the default threshold
+	if err := s.Close(); err != nil { // one commit: not worth a pack
 		t.Fatal(err)
 	}
-	if n := l.count("repack"); n != 1 {
-		t.Fatalf("%d packings at Close, want 1", n)
+	if n := l.count("repack"); n != 0 {
+		t.Fatalf("%d packings at Close after one commit", n)
 	}
-	if n := looseCount(t, root); n != 0 {
-		t.Fatalf("%d loose objects after Close", n)
-	}
-	// Opening and closing again, with nothing committed, packs nothing.
 	s2 := openTwoAuthors(t, root)
 	l2 := &gitLog{}
 	s2.cm.git.before = l2.hook
+	s2.cm.sinceMaintain.Store(closeMaintainMin)
 	if err := s2.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if n := l2.count("repack"); n != 0 {
-		t.Fatalf("%d packings with no commits", n)
+	if n := l2.count("repack"); n != 1 {
+		t.Fatalf("%d packings at Close after %d commits, want 1", n, closeMaintainMin)
 	}
 }

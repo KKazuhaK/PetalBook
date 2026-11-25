@@ -9,9 +9,12 @@ import "context"
 //
 // It runs three commands:
 //
-//	repack -d -q       packs the loose objects that a ref (or the index) reaches
-//	                   into one new pack. No -a: existing packs are not rewritten,
-//	                   and nothing unreachable is dropped or packed away.
+//	repack -d -q --geometric=2
+//	                   packs the loose objects that a ref (or the index) reaches
+//	                   into a new pack, and merges small packs so that each is at
+//	                   least twice the size of the next (a few packs, never one per
+//	                   run). Every object of a merged pack is kept; no -a, so
+//	                   nothing unreachable is dropped.
 //	prune-packed -q    deletes the loose copies of objects a pack now holds.
 //	commit-graph write --reachable
 //	                   a cache that makes walking the history cheaper.

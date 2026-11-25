@@ -62,11 +62,12 @@ func TestMaintainPacksLooseObjectsAndKeepsHistory(t *testing.T) {
 	if n := packFiles(t, dir); n != 1 {
 		t.Fatalf("%d packs after Maintain", n)
 	}
-	if n := looseObjects(t, dir); n != 1 {
-		t.Fatalf("%d loose objects after Maintain, want only the unreferenced one", n)
+	if n := looseObjects(t, dir); n > 1 {
+		t.Fatalf("%d loose objects after Maintain", n)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".git", "objects", orphan[:2], orphan[2:])); err != nil {
-		t.Fatalf("the unreferenced object was removed: %v", err)
+	// Packed or still loose, the unreferenced object is not dropped.
+	if got := sh(t, dir, "cat-file", "-t", orphan); got != "blob" {
+		t.Fatalf("the unreferenced object is gone: %q", got)
 	}
 	_, e1 := os.Stat(filepath.Join(dir, ".git", "objects", "info", "commit-graph"))
 	m, _ := filepath.Glob(filepath.Join(dir, ".git", "objects", "info", "commit-graphs", "*"))
@@ -96,7 +97,7 @@ func TestMaintainPacksLooseObjectsAndKeepsHistory(t *testing.T) {
 // something Git has not been told is garbage are refused.
 func TestMaintainCommandFormsAreExact(t *testing.T) {
 	for _, args := range [][]string{
-		{"repack", "-d", "-q"},
+		{"repack", "-d", "-q", "--geometric=2"},
 		{"prune-packed", "-q"},
 		{"commit-graph", "write", "--reachable"},
 	} {
@@ -123,6 +124,11 @@ func TestMaintainCommandFormsAreExact(t *testing.T) {
 		{"repack", "-d", "-q", "--unpack-unreachable=now"},
 		{"repack", "-d", "-q", "--cruft"},
 		{"repack", "-d"},
+		{"repack", "-d", "-q"},
+		{"repack", "-d", "-q", "--geometric=1"},
+		{"repack", "-d", "-q", "--geometric=2", "-a"},
+		{"repack", "-d", "-q", "--geometric=2", "--write-midx", "-a"},
+		{"repack", "-q", "-d", "--geometric=2"},
 		{"prune-packed"},
 		{"prune-packed", "-n"},
 		{"prune-packed", "-q", "x"},
@@ -137,5 +143,38 @@ func TestMaintainCommandFormsAreExact(t *testing.T) {
 		if err := refuseDestructive(args); err == nil {
 			t.Errorf("git %s was allowed", strings.Join(args, " "))
 		}
+	}
+}
+
+// Each run packs the new loose objects into a pack of its own; a run that
+// only did that would leave one pack per run. The geometric form merges the
+// small ones, so the number of packs stays small, and no object is lost.
+func TestMaintainKeepsThePackCountSmall(t *testing.T) {
+	needGit(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	r := New(Options{Dir: dir})
+	if err := r.Init(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	const runs = 40
+	for i := 0; i < runs; i++ {
+		for j := 0; j < 3; j++ {
+			name := fmt.Sprintf("p%d.md", j)
+			write(t, dir, name, fmt.Sprintf("run %d file %d\n", i, j))
+			if _, err := r.CommitPaths(ctx, []string{name}, msg, person, svc); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := r.Maintain(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := packFiles(t, dir); n > 8 {
+		t.Fatalf("%d packs after %d runs", n, runs)
+	}
+	sh(t, dir, "fsck", "--strict")
+	if got := sh(t, dir, "rev-list", "--count", "HEAD"); got != fmt.Sprint(runs*3) {
+		t.Fatalf("%s commits", got)
 	}
 }

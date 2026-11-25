@@ -82,6 +82,11 @@ func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *jour
 // packings of the Git objects they leave loose.
 const DefaultMaintainEvery = 50
 
+// closeMaintainMin is how many commits since the last packing make Close pack.
+// Fewer are left for later: a space that is closed and opened again often must
+// not add a pack every time.
+const closeMaintainMin = 10
+
 // pauseMaintenance stops packing, for good until resumeMaintenance: a space
 // that follows a remote does its fetches, commits and pushes under the space
 // lock, not under runMu, so packing here could overlap a fetch of its own.
@@ -106,12 +111,12 @@ func (c *committer) every() int64 {
 }
 
 // maintain packs the loose objects now, if enough commits have been made
-// since the last time (or at all, when force is set and any were made). Under
+// since the last time (at Close: at least closeMaintainMin). Under
 // runMu, so never alongside a commit. A failure is only a warning: the commits
 // it follows are done.
-func (c *committer) maintain(force bool) {
+func (c *committer) maintain(atClose bool) {
 	n := c.sinceMaintain.Load()
-	if n == 0 || (!force && n < c.every()) {
+	if n == 0 || (!atClose && n < c.every()) || (atClose && n < closeMaintainMin) {
 		return
 	}
 	c.runMu.Lock()

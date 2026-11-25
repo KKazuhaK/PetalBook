@@ -101,7 +101,7 @@ func commitTreeArgs(tree, parent string) ([]string, error) {
 // refuseDestructive accepts exactly these shapes.
 func maintainArgs() [][]string {
 	return [][]string{
-		{"repack", "-d", "-q"},
+		{"repack", "-d", "-q", "--geometric=2"},
 		{"prune-packed", "-q"},
 		{"commit-graph", "write", "--reachable"},
 	}
@@ -196,7 +196,7 @@ func subcommand(args []string) (string, []string) {
 //	             out of its repository, is built without a work tree or an index.
 //	cat-file blob <id>: the contents of a file fetched by its id, copied to the cache.
 //
-//	repack -d -q, prune-packed -q, commit-graph write --reachable: Repo.Maintain
+//	repack -d -q --geometric=2, prune-packed -q, commit-graph write --reachable: Repo.Maintain
 //	             packs the loose objects commits leave behind. Exactly these three
 //	             forms (checked in refuseDestructive): repack without -a only packs
 //	             what is loose and reachable and never drops an unreachable object,
@@ -338,9 +338,11 @@ func refuseDestructive(args []string) error {
 			return fmt.Errorf("%w: bundle %s", errDestructive, strings.Join(rest, " "))
 		}
 	case "repack":
-		// Exactly: repack -d -q. No -a/-A (those rewrite every pack and, with
+		// Exactly: repack -d -q --geometric=2: loose objects are packed, and small
+		// packs merged into larger ones (every object of a merged pack is kept).
+		// No -a/-A (those rewrite every pack and, with
 		// -d, may drop unreachable objects), no -k, no cruft.
-		if len(rest) != 2 || rest[0] != "-d" || rest[1] != "-q" {
+		if len(rest) != 3 || rest[0] != "-d" || rest[1] != "-q" || rest[2] != "--geometric=2" {
 			return fmt.Errorf("%w: repack %s", errDestructive, strings.Join(rest, " "))
 		}
 	case "prune-packed":
