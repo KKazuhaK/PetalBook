@@ -253,3 +253,9 @@ toward quotas, so a local-only space grew without limit.
   that size every 50th change (remote) or every 50th commit (local, in the background)
   pays it; a split graph would make it incremental if that matters. Many users: spaces
   pack independently, one git process at a time per space, only after writing.
+- **Known issues (round 1).**
+  - On a remote space the pack runs under the space lock, so a slow first repack (up to
+    the 10-minute timeout) holds back the writes that follow it. Packing after the lock
+    is released would remove this.
+  - No test covers a geometric repack in a partial clone (promisor packs). Git releases
+    before about 2.49 may fail there; that is a logged warning, not data loss.
