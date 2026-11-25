@@ -134,6 +134,7 @@ describe('the folder listing', () => {
       t.manage.open,
       t.fav.addFolder,
       t.manage.rename,
+      t.icons.menu,
       t.manage.setType,
       t.manage.setTemplate,
       t.manage.select,
@@ -153,7 +154,14 @@ describe('the folder listing', () => {
     })
     await settle(() => menuItems().length > 0, 'page menu')
     // A page is not renamed here (that is its title, in the editor).
-    expect(menuItems()).toEqual([t.manage.open, t.fav.addFolder, t.manage.select, t.manage.move, t.manage.delete])
+    expect(menuItems()).toEqual([
+      t.manage.open,
+      t.fav.addFolder,
+      t.icons.menu,
+      t.manage.select,
+      t.manage.move,
+      t.manage.delete,
+    ])
   })
 
   it('opens a menu on empty space with New page and New folder', async () => {
@@ -324,6 +332,7 @@ describe('the sidebar tree', () => {
       t.manage.open,
       t.fav.addFolder,
       t.manage.rename,
+      t.icons.menu,
       t.manage.setType,
       t.manage.setTemplate,
       t.manage.move,

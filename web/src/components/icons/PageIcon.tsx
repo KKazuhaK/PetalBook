@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { iconColorVar } from '@/lib/icons/colors'
-import { isIconName, useIconComponent } from '@/lib/icons/useIcons'
+import type { LucideIcon } from 'lucide-react'
+import { CORE_ICONS } from '@/lib/icons/coreIcons'
+import { isIconName, useFullIcons } from '@/lib/icons/useIcons'
 
 // The icon of a folder or a page: a Lucide name or an emoji, in one of the eight colours (currentColor otherwise, so it
 // follows the theme). `fallback` is drawn when there is no icon, and while the full set loads for an uncommon one.
@@ -16,7 +18,9 @@ export function PageIcon({
   className?: string
 }) {
   const name = icon && isIconName(icon) ? icon : ''
-  const Lucide = useIconComponent(name)
+  const full = useFullIcons(name)
+  const set: Record<string, LucideIcon | undefined> = full ? full.ALL_ICONS : CORE_ICONS
+  const Lucide = set[name]
   const style = { color: iconColorVar(color) }
   if (icon && !name)
     return (

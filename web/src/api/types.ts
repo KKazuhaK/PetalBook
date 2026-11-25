@@ -93,6 +93,9 @@ export interface PageSummary {
   created?: string
   updated: string
   excerpt?: string
+  // The page's own icon (a Lucide name or an emoji) and colour, from its header.
+  icon?: string
+  color?: string
   // Only with `props: true` in the listing (the table view): the header's keys
   // that are not built in, as plain values, and the rev a change of them needs.
   props?: Record<string, unknown>
@@ -260,6 +263,9 @@ export interface PageType {
   // The Git blob id of the type's file: a change or a delete is made from it (`baseRev`).
   rev: string
   fields: TypeField[]
+  // The default icon and colour of the pages of the type (`x-icon`, `x-color` of its file).
+  icon?: string
+  color?: string
   // Set when the file cannot be used; the fields are then empty.
   error?: string
 }

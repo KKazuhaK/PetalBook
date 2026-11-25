@@ -55,7 +55,6 @@ import {
   Gem,
   Crown,
   Wand,
-  Infinity,
   Flower,
   Flower2,
   Leaf,
@@ -227,7 +226,6 @@ export const CORE_CATEGORIES: Record<string, readonly string[]> = {
     'gem',
     'crown',
     'wand',
-    'infinity',
   ],
   nature: [
     'flower',
@@ -402,7 +400,6 @@ export const CORE_ICONS: Record<string, LucideIcon> = {
   gem: Gem,
   crown: Crown,
   wand: Wand,
-  infinity: Infinity,
   flower: Flower,
   'flower-2': Flower2,
   leaf: Leaf,

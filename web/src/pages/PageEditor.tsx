@@ -83,6 +83,7 @@ import { findLink, LinkReport, pageLinksOf, type PageLinkTarget } from '@/compon
 import { PageLinkPicker } from '@/components/editor/PageLinkPicker'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
+import { PageHeaderIcon } from '@/components/icons/PageHeaderIcon'
 import { SourcesEditor } from '@/components/editor/SourceEditor'
 import { DEFAULT_SOURCES } from '@/lib/sources'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
@@ -1159,7 +1160,15 @@ function EditorSession({
                 </div>
               )}
 
-              <div className="mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
+              <div className="group/title mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
+                <PageHeaderIcon
+                  id={initial.id}
+                  folder={page.folder}
+                  label={fields.title || page.id}
+                  icon={typeof page.meta.icon === 'string' ? page.meta.icon : undefined}
+                  color={typeof page.meta.color === 'string' ? page.meta.color : undefined}
+                  effectiveType={page.effectiveType}
+                />
                 <AutoTextarea
                   value={fields.title}
                   readOnly={readOnly}

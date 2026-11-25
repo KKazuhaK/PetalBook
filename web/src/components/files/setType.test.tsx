@@ -138,6 +138,7 @@ describe('Set type… on a folder', () => {
       t.manage.open,
       t.fav.addFolder,
       t.manage.rename,
+      t.icons.menu,
       t.manage.select,
       t.manage.move,
       t.manage.delete,
