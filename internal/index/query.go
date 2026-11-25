@@ -129,6 +129,14 @@ type sortKey struct {
 // those ranges and not the number of pages looked up. With Text and no sort it
 // is bounded by the number of matching pages (ranking).
 func (x *Index) List(q Query) (Result, error) {
+	res, err := x.list(q)
+	if err != nil {
+		return Result{}, err
+	}
+	return res, x.fillExcerpts(res.Items)
+}
+
+func (x *Index) list(q Query) (Result, error) {
 	limit := q.Limit
 	if limit == 0 {
 		limit = defaultLimit
@@ -340,7 +348,7 @@ func (res *Result) fill(rows *sql.Rows, props bool, limit int, relevance bool, o
 // selectCols are the columns of a summary, in the order scanSummary reads them.
 func selectCols(props bool) string {
 	c := `p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
-		p.mtime_ns, p.excerpt, p.title_key, p.created_key, p.icon, p.color`
+		p.mtime_ns, p.title_key, p.created_key, p.icon, p.color`
 	if props {
 		c += `, p.props, p.rev, p.partial`
 	}
@@ -351,7 +359,7 @@ func selectCols(props bool) string {
 func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mtime, ckey int64, untitled int, titleKey string, err error) {
 	var tagsText, sourceText, propsText, partialText string
 	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &sourceText, &untitled, &s.Label, &s.Type,
-		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey, &s.Icon, &s.Color}
+		&tagsText, &s.Created, &mtime, &titleKey, &ckey, &s.Icon, &s.Color}
 	if props {
 		dest = append(dest, &propsText, &s.Rev, &partialText)
 	}

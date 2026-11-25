@@ -287,9 +287,13 @@ func (x *Index) SyncContext(slotCtx context.Context, src Source, full bool) (Sta
 // loadKnown fills into with what the index knows about each file. Problem
 // rows that depend on other files (duplicate ids) or on a transient failure
 // are returned in recheck instead, so they are evaluated again every time.
+// knownQuery is what loadKnown reads of the pages: the index pages_known holds
+// every column of it, so the rows of pages are not read.
+const knownQuery = `SELECT path, size, mtime_ns FROM pages`
+
 func (x *Index) loadKnown(ctx context.Context, into map[string]known) (recheck []string, err error) {
 	for _, q := range []string{
-		`SELECT path, size, mtime_ns FROM pages`,
+		knownQuery,
 		`SELECT path, size, mtime_ns FROM problems WHERE code NOT IN ('duplicate_id', 'unreadable')`,
 	} {
 		rows, err := x.wdb.QueryContext(ctx, q)
@@ -608,7 +612,7 @@ func (w *writer) queryRow(q string, args ...any) *sql.Row {
 }
 
 func (w *writer) clearAll() error {
-	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM links`, `DELETE FROM problems`, `DELETE FROM checks`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
+	for _, q := range []string{`DELETE FROM pages`, `DELETE FROM excerpts`, `DELETE FROM tags`, `DELETE FROM props`, `DELETE FROM links`, `DELETE FROM problems`, `DELETE FROM checks`, `INSERT INTO fts(fts) VALUES ('delete-all')`} {
 		if _, err := w.tx.ExecContext(w.ctx, q); err != nil {
 			return err
 		}
@@ -643,7 +647,7 @@ func (w *writer) deleteRow(rowid int64) error {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
+	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM excerpts WHERE rowid = ?`, `DELETE FROM pages WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
 		}
@@ -724,7 +728,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		return "", err
 	}
 	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, sourcesJSON(e.Sources), b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
-		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON, e.Icon, e.Color, seq}
+		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.PropsJSON, e.PartialJSON, e.Icon, e.Color, seq}
 	titleKey := strings.ToLower(e.Title)
 	if found {
 		w.markTitle(oldFolder, oldKey, oldUntitled)
@@ -736,11 +740,11 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 			return "", err
 		}
 		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, source=?, untitled=?, title_key=?, label=?, type=?,
-			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=?, partial=?, icon=?, color=?, seq=? WHERE rowid = ?`, append(args, rowid)...)
+			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, props=?, partial=?, icon=?, color=?, seq=? WHERE rowid = ?`, append(args, rowid)...)
 	} else {
 		var res sql.Result
 		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, source, untitled, title_key, label, type,
-			tags, created, created_key, mtime_ns, size, rev, excerpt, props, partial, icon, color, seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+			tags, created, created_key, mtime_ns, size, rev, props, partial, icon, color, seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			rowid, err = res.LastInsertId()
 		}
@@ -776,6 +780,9 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		w.markLinkTarget("", oldPath)
 		w.markLinkTarget("", e.Path)
 	}
+	if _, err := w.exec(`INSERT INTO excerpts(rowid, text) VALUES (?,?)`, rowid, e.Excerpt); err != nil {
+		return "", err
+	}
 	if _, err := w.exec(`INSERT INTO fts(rowid, title, subtitle, source, body) VALUES (?,?,?,?,?)`, rowid, e.ftsTitle, e.ftsSubtitle, e.ftsSource, e.ftsBody); err != nil {
 		return "", err
 	}
@@ -808,7 +815,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 
 // deleteRowKeepPage clears the dependent rows of a page that is about to be rewritten.
 func (w *writer) deleteRowKeepPage(rowid int64) error {
-	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`} {
+	for _, q := range []string{`DELETE FROM tags WHERE page = ?`, `DELETE FROM props WHERE page = ?`, `DELETE FROM links WHERE src = ?`, `DELETE FROM fts WHERE rowid = ?`, `DELETE FROM excerpts WHERE rowid = ?`} {
 		if _, err := w.exec(q, rowid); err != nil {
 			return err
 		}

@@ -24,6 +24,36 @@ time and rebuilt from the files.
   built-in tokenizer treats each character as one word, and at query time the
   query is turned into a phrase. A trigram tokenizer cannot find two-character
   words, and was ruled out.
+- **The excerpt is not in the table the index scans.** `pages` holds the
+  metadata a sync, a sort and a count touch; the excerpt (the first 400
+  characters of the body as plain text, about 1.2 KB of Chinese) is in
+  `excerpts(rowid, text)` and is read, in one query, only for the pages a
+  response shows (`fillExcerpts`). Before, it made a `pages` row about 2 KB, so
+  every open and every re-sync read 100 MB for a 50,000-page space to learn
+  three columns, and a search sorted by relevance carried the excerpt of every
+  match through the sorter. `pages_known(path, size, mtime_ns)` is a covering
+  index for that scan. The length stays 400: the card view (12 lines), the
+  search preview and the MCP `excerpt` show it all, and a 120-character excerpt
+  would cut them; only the folder table (one line) and the board (two lines)
+  use less, and they clip it themselves. Measured on a 50,000-page space of
+  about 1.9 KB a page (best of 15, a busy machine, so read the order and not the
+  last digit):
+
+  | | index size | known-files scan | first page, a folder of 900 | search, 1 character | search, 2 characters |
+  |---|---|---|---|---|---|
+  | 400 in `pages` (before) | 190 MB | 73 ms (21 ms with the covering index) | 0.2 ms | 120 ms | 72 ms |
+  | (a) 120 in `pages` | 151 MB | 35 ms | 0.3 ms | 94 ms | 66 ms |
+  | (b) 400 in `excerpts` (chosen) | 198 MB | 46 ms (21 ms covering) | 0.3 ms | 79 ms | 58 ms |
+  | (c) 120 in `excerpts` | 148 MB | 45 ms (22 ms covering) | 0.5 ms | 81 ms | 58 ms |
+
+  (b) costs about 4% more disk, one more query of about 0.3 ms per page of a
+  response, and leaves the hot table about a third of its size, so the page cache
+  holds three times as many rows of it; (a) and (c) save 40 MB but shorten what
+  the three displays above show. The offline feed sends no excerpt (the client
+  makes it from the body), so it is unchanged.
+  Known and accepted: the excerpts of a response are read in a second query
+  after the listing, so a page that changes between the two shows a newer
+  excerpt than its metadata, or an empty one when it was deleted in between.
 - Global search covers all spaces visible to the current user, and the results
   are filtered by space permissions.
 - Lists, the folder tree, tags and search all query the index; they do not walk
