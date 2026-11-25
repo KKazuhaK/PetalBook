@@ -191,6 +191,17 @@ type Index struct {
 	// shared and serial count the times a read had other connections share
 	// its snapshot, and the times it read in turn because none could (tests).
 	shared, serial atomic.Int64
+
+	// bigFiles is bigSyncFiles (tests make it smaller); slots are the big
+	// syncs the server runs at once (see SyncSlots); bigSyncHook, when a test
+	// sets it, is called inside a big sync's transaction.
+	bigFiles    int
+	slots       *SyncSlots
+	bigSyncHook func(*sql.Tx)
+	// wcache is the writer's cache size now (KiB, negative), pages the number
+	// of pages after the last sync: for MemoryCost.
+	wcache atomic.Int64
+	pages  atomic.Int64
 }
 
 // Open opens or creates the index at dbPath for the space at root. An index
@@ -287,25 +298,33 @@ func removeDB(p string) {
 var walCheckpointAt int64 = 16 << 20
 
 // The page caches of an index's connections. SQLite gives every connection a
-// cache of its own: at 64 MB each, the 15 connections of an index (1 writer, 8
-// readers, 6 aux) and the 64 indexes a server keeps open could hold about 61 GB
-// in the worst case. The writer keeps 64 MB (a commit of many pages is its
-// work); a reader keeps 8 MB and reads the file through a memory map
+// cache of its own, and a server keeps many indexes open, so each is kept
+// small: the writer 8 MB, raised to 64 MB only while a big sync runs (one that
+// reads more than bigSyncFiles files, or a rebuild: see Sync) and lowered
+// again after it; a reader 8 MB, reading the file through a memory map
 // (mmap_size; modernc's SQLite supports it, up to 2 GB), so the pages the
 // readers share live once, in the operating system's cache, and cost the
-// process nothing it has to keep. Negative cache sizes are in KiB.
+// process nothing it has to keep. Negative cache sizes are in KiB. See
+// docs/design.md, "Memory budget of open spaces", for what an index costs.
 const (
-	writeCacheKiB = -65536
-	readCacheKiB  = -8192
-	readMmapBytes = 256 << 20
+	writeCacheKiB    = -8192
+	bigWriteCacheKiB = -65536
+	readCacheKiB     = -8192
+	readMmapBytes    = 256 << 20
 )
 
 // readConns is the number of connections of db: the requests reading at the
-// same time, each on one (and maybe others of aux).
-const readConns = 8
+// same time, each on one (and maybe others of aux). Searches of one space
+// beyond that wait for a connection; requests are short.
+const readConns = 4
+
+// connIdle is how long a read connection stays open unused: an index nobody
+// reads holds its writer's connection only.
+const connIdle = 30 * time.Second
 
 func open(dbPath, root string) (*Index, error) {
-	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan, now: time.Now}
+	x := &Index{path: dbPath, root: root, walMax: walCheckpointAt, plan: defaultPlan, now: time.Now, bigFiles: bigSyncFiles, slots: bigSyncSlots.Load()}
+	x.wcache.Store(writeCacheKiB)
 	x.template = root == templateRoot
 	x.copied = !x.template && copyTemplate(dbPath)
 	base := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)" +
@@ -352,6 +371,7 @@ func open(dbPath, root string) (*Index, error) {
 	}
 	x.db.SetMaxOpenConns(readConns)
 	x.db.SetMaxIdleConns(readConns)
+	x.db.SetConnMaxIdleTime(connIdle)
 	if x.aux, err = sql.Open("sqlite", rdsn); err != nil {
 		x.db.Close()
 		x.wdb.Close()
@@ -359,6 +379,7 @@ func open(dbPath, root string) (*Index, error) {
 	}
 	x.aux.SetMaxOpenConns(auxConns)
 	x.aux.SetMaxIdleConns(auxConns)
+	x.aux.SetConnMaxIdleTime(connIdle)
 	x.auxFree = make(chan struct{}, auxConns)
 	for range auxConns {
 		x.auxFree <- struct{}{}

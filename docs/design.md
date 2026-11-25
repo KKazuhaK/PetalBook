@@ -421,6 +421,7 @@ status: 定稿
   modernc 的 SQLite 支持，上限 2 GB），共享的页只在操作系统缓存里存一份；私有缓存最坏是每个
   索引 176 MB、64 个约 11 GB。代价：映射的文件读出 I/O 错误时进程会收到 SIGBUS，索引库在本地
   盘上，可以接受。
+  (Superseded on 2026-11-24 by 5.5: the writer keeps 8 MB, 64 MB only during a big sync.)
 - **`session_ends` 的时间索引**（#39 加的表）已经有 `session_ends_ended`，每日清理
   `DELETE … WHERE ended < ?` 走它；测试用查询计划确认。
 - **测试**：每项行为改动都有测试；性能项各有 EXPLAIN 测试，两种库都跑，回退了就会失败：按邮箱
@@ -452,6 +453,84 @@ status: 定稿
   迁就。发布之后，兼容代码放在标明的边界后面，过一个大版本就删。
 - **只支持从上一个大版本升级。** 进入新的大版本时，新基线已经包含一切，上一个大版本的升级
   步骤可以整个删掉。
+
+### 5.5 Memory budget of open spaces and the rebuild limit (2026-11-24)
+
+The open-space cache used to count spaces (at most 64 open), whatever they cost, and every index kept a
+64 MB writer cache and up to 14 read connections. Nothing bounded rebuilds: after a schema change or a crash
+every large space someone opened rebuilt at once. The owner approved a redesign in two parts.
+
+**What an open space costs** (measured on a generated 50 000-page space, index file 92 MB, and a 200-page one;
+anonymous memory of a fresh process after a GC that gives the Go heap back, so SQLite's caches; the memory map
+of the index is file-backed and is not counted; `internal/space/measure_memory_test.go`):
+
+| | before | after |
+|---|---|---|
+| open an indexed 50 000-page space | +54 MB | +12 MB |
+| the same after 16 parallel searches | +59 MB | +15 MB |
+| the same after 40 s idle | +59 MB | +15 MB (read connections closed: about 0.5 MB each) |
+| open an indexed 200-page space | | +1.3 MB (+4.8 MB after 16 parallel searches) |
+| a full rebuild of 50 000 pages | 18–36 s, 1.7–2.2 cores, peak +150 MB | 27 s, 1.7 cores, peak +150 MB |
+| one search at a time (50 000 pages, common words) | p50 59–79 ms | p50 24–34 ms |
+| one folder listing at a time | p50 2.3–5 ms | p50 1.9–2.6 ms |
+| 16 searches at a time in one space, 400 in all | 5.2–7.2 s | 6.2–10.5 s |
+
+The timings are from a loaded 8-core development machine and vary by ±50 % between runs; the memory numbers are
+stable. A rebuild leaves about 75 MB that SQLite's allocator (modernc's libc) keeps for the process after the
+space is closed: it is reused by later work, not lost, and it is one reason rebuilds are bounded (below).
+
+**Per index** (`internal/index`):
+
+- The writer's page cache is 8 MB. A *big sync* — a rebuild (`Sync` with `full`), or a sync that reads more than
+  1000 files (the first open of a large space with no index, a pull that changed most of a space) — raises it to
+  64 MB with `PRAGMA cache_size` for its duration, and lowers it after (`cache_size` back to 8 MB, then
+  `PRAGMA shrink_memory`). Every sync scans the `pages` table (`loadKnown`), which is what filled the 64 MB
+  cache of an idle space before.
+- 4 read connections and 2 aux connections (were 8 and 6), closed after 30 s unused (`SetConnMaxIdleTime`).
+  Readers keep an 8 MB cache and map the file (`mmap_size` 256 MB); with the map, their caches stay nearly
+  empty, so a reader costs about 0.5 MB. One search at a time is as fast as before or faster; 16 concurrent
+  searches in one space lose up to a third of their throughput on 8 cores, and about nothing on the 4-core target,
+  where 4 readers already keep the cores busy.
+- `MemoryCost()` estimates what the index holds without a query: 0.5 MB for the writer's connection, its cache
+  as configured now (64 MB during a big sync) capped at the size of the file, 0.5 MB per open read connection,
+  and 64 bytes per page. `space.MemoryCost()` adds 1 MB for the rest of the space. On the 50 000-page space this
+  says 12.7 MB idle and 15.7 MB with every connection open; measured 12 and 15. The memory map is not counted:
+  it is file-backed, shared with the operating system's cache, and given back under pressure.
+
+**The budget** (`internal/spaces`):
+
+- Each open space carries its estimated cost, refreshed at every trim outside the manager's lock (a file stat
+  and two pool counters per open space: microseconds for hundreds of spaces).
+- While the open spaces together cost more than `--open-spaces-memory` (default 1024 MiB), or more than
+  `--max-open-spaces` (default 256, now only a safety limit for open files) are open, the least recently used
+  *idle* spaces are closed. A space with a request in flight is never closed, however much it costs; the
+  budget can be exceeded by spaces in use, and is enforced again as they are released.
+- A trim runs in the background after every open (`trimSoon`) and closes only over the budget or the cap; the
+  minute trim also closes spaces idle for `--space-idle`. An open during a background trim makes it run once
+  more, so a new space's cost is always counted.
+- Locks: a trim takes `trimMu`, then `mu` only to list, pick and mark spaces; costs are computed, spaces
+  flushed and closed, without `mu`. Opening (and so a big sync's wait for a slot) holds no manager lock. A
+  test runs requests, rebuilds and trims that close everything together under `-race`.
+- Why a fixed default and not a share of RAM: in a container the RAM the process sees is the host's, not its
+  limit, and the default should mean the same everywhere. 1 GiB on the 4-core, 6 GB target leaves room for
+  rebuilds, Git, the Go heap of requests and the file cache that serves the mapped indexes. It holds about 80
+  idle 50 000-page spaces, or 256 (the cap) small ones.
+
+**Rebuild limit:** at most `--max-rebuilds` (default 2) big syncs run at once, across all spaces of the
+process (`index.SyncSlots`). A big sync waits for a slot without holding its index's write lock, so writes and
+small syncs of that space go on; once it has the slot it walks the files again. Syncs that read 1000 files or
+fewer (the open of an indexed space, a pull of a few changed files, the sync after an edit) never take a slot.
+One rebuild of 50 000 pages keeps about 2 cores busy; two leave the 4-core target able to answer, and halve the
+time to recover from a schema change compared with one. Requests for a space whose open waits for a slot wait
+with their own context, as they already waited for its open; no API answer changed.
+
+**Cost at 50 000 pages and many users.** Memory of open spaces is bounded by the budget plus the spaces in use:
+1 GiB, plus at most 2 × 150 MB for rebuilds under way, plus about 75 MB per rebuild of high-water that the
+allocator keeps. Before, 64 such spaces could hold 3.5 GB idle and 6.4–15 GB in use. With many users each having
+a large space, about 80 stay open; the 81st opened closes the least recently used idle one, and reopening an
+indexed 50 000-page space costs 0.3–0.8 s (a walk and stat of its files, and the scan of its pages table) and
+12 MB. After a schema change, N large spaces rebuild 2 at a time: about N × 15 s in all, each request for one
+of them waiting until its own rebuild has run.
 
 ## 6. 登录与权限
 
@@ -4008,7 +4087,7 @@ SQLite 和 PostgreSQL 都测）。所有者问题按括号里的默认做（第 
 |---|---|
 | `--listen`、`--public-url`、`--data`、`--database`、`--state-dir` | 服务器本身的地址和存放位置 |
 | `--trusted-proxy`、`--allow-origin`、`--insecure-no-auth` | 整个进程对外的信任边界 |
-| `--max-open-spaces`、`--space-idle`、`--pull-interval`、`--remote-timeout`、`--commit-*`、`--draft-*` | 进程的内存、CPU 和网络节奏，所有租户共用 |
+| `--max-open-spaces`、`--open-spaces-memory`、`--max-rebuilds`、`--space-idle`、`--pull-interval`、`--remote-timeout`、`--commit-*`、`--draft-*` | 进程的内存、CPU 和网络节奏，所有租户共用 |
 | `secret.key` | 所有封存的密钥都靠它 |
 | 租户开关 `/api/admin/tenancy` | 决定这台服务器是不是多租户 |
 | 租户的建、删、停用、`slug` | 约束租户本身，不能自己给自己定 |

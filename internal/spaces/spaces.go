@@ -151,11 +151,15 @@ type Options struct {
 	// then, and what the tests of this package use.
 	MaxSpaces int
 	// IdleAfter is how long an open space may go unused before it is closed
-	// (default 15 minutes), and MaxOpen how many may be open at once (default
-	// 64); the least recently used go first. Closing flushes the committer;
-	// the next request reopens the space.
-	IdleAfter time.Duration
-	MaxOpen   int
+	// (default 15 minutes). MemoryBudget is the memory the open spaces may
+	// hold together, as space.MemoryCost estimates it (default
+	// DefaultMemoryBudget), and MaxOpen how many may be open at once whatever
+	// they cost (default DefaultMaxOpen); past either, the least recently used
+	// idle ones are closed. A space in use is never closed. Closing flushes the
+	// committer; the next request reopens the space.
+	IdleAfter    time.Duration
+	MemoryBudget int64
+	MaxOpen      int
 	// CloseWait is how long Close waits for spaces that requests still hold
 	// (default 5 seconds) before closing them anyway.
 	CloseWait time.Duration
@@ -245,7 +249,15 @@ type Options struct {
 // Defaults for closing spaces that are not in use.
 const (
 	DefaultIdleAfter = 15 * time.Minute
-	DefaultMaxOpen   = 64
+	// DefaultMemoryBudget is what the open spaces may hold together: a
+	// quarter of the 4 GB a small server (4 cores, 6 GB) can give the process
+	// beside the operating system's file cache and Git. An idle 50 000-page
+	// space costs about 12 MB in that sum, a 200-page one about 2 MB (see
+	// docs/design.md, "Memory budget of open spaces").
+	DefaultMemoryBudget = 1 << 30
+	// DefaultMaxOpen bounds the open spaces whatever they cost: each keeps a
+	// few files open.
+	DefaultMaxOpen = 256
 	// DefaultMaxSpaces is the flag's default; Options.MaxSpaces 0 is unlimited.
 	DefaultMaxSpaces = 20
 )
@@ -261,6 +273,7 @@ type opening struct {
 	last     time.Time     // when it was last acquired or released
 	closing  chan struct{} // set while it is being closed; closed when that is done
 	nextPull time.Time     // when the remote is pulled next; zero for a local space
+	cost     int64         // its memory as last estimated (see refreshCosts)
 }
 
 // Manager is safe for concurrent use.
@@ -302,8 +315,11 @@ type Manager struct {
 	exp       exportState  // exports (export.go)
 	problems  problemMemo  // what each space said of its problems last (problems.go)
 
-	trimMu    sync.Mutex      // one trim at a time
-	trimming  bool            // a background trim is queued or running (guarded by mu)
+	trimMu    sync.Mutex // one trim at a time
+	trimming  bool       // a background trim is queued or running (guarded by mu)
+	trimAgain bool       // a space was opened while it ran: it runs once more (guarded by mu)
+	// testCost, set by tests only, replaces space.MemoryCost.
+	testCost  func(id string, sp *space.Space) int64
 	createMu  sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
 	staging   map[string]bool // spaces being made with a repository on a provider, whose first push needs no member yet (guarded by mu)
 	reserved  map[string]int  // spaces being made with a repository on a provider, by owner (guarded by createMu)
@@ -414,6 +430,9 @@ func newManager(opt Options, single *space.Space) *Manager {
 	}
 	if opt.MaxOpen <= 0 {
 		opt.MaxOpen = DefaultMaxOpen
+	}
+	if opt.MemoryBudget <= 0 {
+		opt.MemoryBudget = DefaultMemoryBudget
 	}
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
@@ -1261,21 +1280,38 @@ func (m *Manager) OpenCount() int {
 	return len(m.open)
 }
 
-// trimSoon closes spaces over the cap in the background, so the request that
-// opened one does not wait for another to be flushed.
+// trimSoon, after a space was opened, closes in the background the least
+// recently used idle spaces while the open ones are over the memory budget or
+// the cap, so the request that opened one does not wait for another to be
+// flushed. It closes none for being idle long (Trim does). A space opened
+// while it runs makes it run once more: its cost was not counted yet.
 func (m *Manager) trimSoon() {
 	m.mu.Lock()
-	if m.trimming || len(m.open) <= m.opt.MaxOpen || m.closed {
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	if m.trimming {
+		m.trimAgain = true
 		m.mu.Unlock()
 		return
 	}
 	m.trimming = true
 	m.mu.Unlock()
 	if !m.goBg(func() {
-		m.Trim()
-		m.mu.Lock()
-		m.trimming = false
-		m.mu.Unlock()
+		for {
+			m.trim(false)
+			m.mu.Lock()
+			again := m.trimAgain && !m.closed
+			m.trimAgain = false
+			if !again {
+				m.trimming = false
+			}
+			m.mu.Unlock()
+			if !again {
+				return
+			}
+		}
 	}) {
 		m.mu.Lock()
 		m.trimming = false
@@ -1302,23 +1338,31 @@ func (m *Manager) goBg(f func()) bool {
 	return true
 }
 
-// Trim closes the spaces that have been idle for IdleAfter and, while more
-// than MaxOpen are open, the least recently used ones. A space with a request
-// in flight is never closed. Each is flushed first, and one whose pending
+// Trim closes the spaces that have been idle for IdleAfter and, while the open
+// spaces together cost more than MemoryBudget or more than MaxOpen are open,
+// the least recently used ones. A space with a request in flight is never
+// closed, however much it costs. Each is flushed first, and one whose pending
 // changes cannot be committed (the repository is in the middle of a merge, say)
 // stays open and is tried again at the next trim: nothing is closed with
 // uncommitted writes it could not flush.
-func (m *Manager) Trim() {
+func (m *Manager) Trim() { m.trim(true) }
+
+// trim is Trim; idle false closes spaces only while over the budget or the
+// cap (trimSoon).
+func (m *Manager) trim(idle bool) {
 	if m.single != nil {
 		return
 	}
-	m.trimIndexOnly()
+	if idle {
+		m.trimIndexOnly()
+	}
 	m.trimMu.Lock()
 	defer m.trimMu.Unlock()
+	m.refreshCosts()
 	now := m.opt.Now()
 	skip := map[*opening]bool{} // flush failed: not again in this trim
 	for {
-		id, e := m.pickIdle(now, skip)
+		id, e := m.pickIdle(now, idle, skip)
 		if e == nil {
 			return
 		}
@@ -1328,23 +1372,81 @@ func (m *Manager) Trim() {
 	}
 }
 
+// refreshCosts estimates again what each open space holds. The estimate reads
+// counters and stats a file, for each space; it runs outside mu, which it takes
+// only to list the spaces and to store the results.
+func (m *Manager) refreshCosts() {
+	type item struct {
+		id string
+		e  *opening
+	}
+	m.mu.Lock()
+	items := make([]item, 0, len(m.open))
+	for id, e := range m.open {
+		if e.closing == nil && opened(e) && e.sp != nil {
+			items = append(items, item{id, e})
+		}
+	}
+	m.mu.Unlock()
+	costs := make([]int64, len(items))
+	for i, it := range items {
+		if m.testCost != nil {
+			costs[i] = m.testCost(it.id, it.e.sp)
+		} else {
+			costs[i] = it.e.sp.MemoryCost()
+		}
+	}
+	m.mu.Lock()
+	for i, it := range items {
+		it.e.cost = costs[i]
+	}
+	m.mu.Unlock()
+}
+
+// opened reports whether the open of e has finished (e.sp and e.err are set).
+func opened(e *opening) bool {
+	select {
+	case <-e.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// OpenCost is the memory the open spaces hold together, as last estimated.
+func (m *Manager) OpenCost() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, e := range m.open {
+		n += e.cost
+	}
+	return n
+}
+
 // pickIdle chooses the next space to close and pins it (so nobody starts using
-// it while it is flushed); nil when there is none.
-func (m *Manager) pickIdle(now time.Time, skip map[*opening]bool) (string, *opening) {
+// it while it is flushed); nil when there is none. With idle, a space unused
+// for IdleAfter (or disabled) is closed whatever the budget.
+func (m *Manager) pickIdle(now time.Time, idle bool, skip map[*opening]bool) (string, *opening) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return "", nil
 	}
-	over := len(m.open) - m.opt.MaxOpen
+	over := len(m.open) > m.opt.MaxOpen
+	var total int64
+	for _, e := range m.open {
+		total += e.cost
+	}
+	over = over || total > m.opt.MemoryBudget
 	var bestID string
 	var best *opening
 	for id, e := range m.open {
-		if e.refs > 0 || e.closing != nil || e.sp == nil || skip[e] {
+		if e.refs > 0 || e.closing != nil || skip[e] || !opened(e) || e.sp == nil {
 			continue
 		}
-		idle := now.Sub(e.last) >= m.opt.IdleAfter || m.disabled[id]
-		if !idle && over <= 0 {
+		expired := idle && (now.Sub(e.last) >= m.opt.IdleAfter || m.disabled[id])
+		if !expired && !over {
 			continue
 		}
 		if best == nil || e.last.Before(best.last) {

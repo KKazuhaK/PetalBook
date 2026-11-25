@@ -513,6 +513,16 @@ func (s *Space) Flush() error {
 	return s.cm.Flush()
 }
 
+// spaceBytes is what an open space holds in memory beside its index: the
+// committer, the watchers, the caches of settings and types (measured: a
+// 200-page space costs about 2 MB in all).
+const spaceBytes = 1 << 20
+
+// MemoryCost estimates the memory the open space holds now, in bytes (see
+// index.MemoryCost): cheap, it runs no query. The spaces manager keeps the
+// sum over the open spaces under its budget.
+func (s *Space) MemoryCost() int64 { return spaceBytes + s.idx.MemoryCost() }
+
 // Evicted reports a space opened by OpenIndexOnly.
 func (s *Space) Evicted() bool { return s.evicted }
 
