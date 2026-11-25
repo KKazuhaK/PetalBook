@@ -355,6 +355,7 @@ type txMove struct {
 	from, to string
 	dir      bool
 	data     []byte // a page's content
+	dev, ino uint64 // a folder's identity (fileID), 0 when not known
 }
 
 // preparedEdits is a rewrite of files journaled and not yet written.
@@ -380,7 +381,7 @@ func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEd
 	}
 	var files []txFile
 	if mv != nil {
-		f := txFile{path: mv.to, from: mv.from, dir: mv.dir}
+		f := txFile{path: mv.to, from: mv.from, dir: mv.dir, dev: mv.dev, ino: mv.ino}
 		if !mv.dir {
 			f.old, f.rev, f.data = page.Rev(mv.data), page.Rev(mv.data), mv.data
 		}

@@ -247,3 +247,26 @@ func TestAPrepareWhoseAppendMayHaveReachedTheDiskIsGivenUp(t *testing.T) {
 		}
 	}
 }
+
+// A folder move journaled and not yet journaled applied when the process
+// stopped; then, while the server was down, the moved folder was renamed and
+// a new one made under the old name by hand. The next start does not take
+// the new folder for the moved one: it is another folder (inode).
+func TestAnUnfinishedFolderMoveDoesNotTakeAFolderMadeByHand(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s, _, _ := moveScene(t, root)
+	stopAt(s, "edits journaled", 1)
+	survive(t, func() { s.MoveFolder(Author{}, "Old", "New") })
+	crash(s)
+	if err := os.Rename(filepath.Join(root, "New"), filepath.Join(root, "Mine")); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(root, "Old"), 0o755)
+	os.WriteFile(filepath.Join(root, "Old", "hand.md"), []byte(pageText("HANDHAND01", "hand", "x\n")), 0o644)
+	s2 := openAt(t, root)
+	if !exists(s2, "Old/hand.md") || exists(s2, "New") {
+		t.Fatalf("the folder made by hand was moved: Old/hand.md %v, New %v", exists(s2, "Old/hand.md"), exists(s2, "New"))
+	}
+}

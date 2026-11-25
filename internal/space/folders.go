@@ -307,6 +307,11 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	var fmove *txMove
 	if !tx.remote {
 		fmove = &txMove{from: canonFrom, to: target, dir: true}
+		// The folder's identity, so that the next start never takes a
+		// folder made under the old name since for this one.
+		if fi, err := s.ops.Lstat(absTarget); err == nil {
+			fmove.dev, fmove.ino, _ = fileID(fi)
+		}
 	}
 	edits, perr := s.planLinks(mv, []stepMove{{From: canonFrom, To: target, Dir: true}})
 	if perr != nil {

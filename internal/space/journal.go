@@ -91,6 +91,10 @@ type jrec struct {
 	Bin     []byte `json:"db,omitempty"`
 	BlobAt  int64  `json:"bo,omitempty"`
 	BlobLen int64  `json:"bn,omitempty"`
+	// Dev and Ino are the identity of the folder of a folder move's "p"
+	// record (fileID), 0 when the system does not give one.
+	Dev uint64 `json:"dv,omitempty"`
+	Ino uint64 `json:"in,omitempty"`
 	// blob is the file a "p" record's content is staged in (set when the
 	// journal is read), "" for content in the record.
 	blob string
@@ -476,6 +480,7 @@ type txFile struct {
 	data           []byte
 	from           string
 	dir            bool
+	dev, ino       uint64 // a folder's identity (fileID), 0 when not known
 }
 
 // appendTx journals a transaction, durably: an "x" record by by, a "p" record
@@ -494,7 +499,7 @@ func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, err
 	var staged bytes.Buffer
 	inline := 0
 	for _, f := range files {
-		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev, From: f.from, Dir: f.dir}
+		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev, From: f.from, Dir: f.dir, Dev: f.dev, Ino: f.ino}
 		switch {
 		case f.dir:
 		case len(f.data) > txInline || inline+len(f.data) > txInlineTotal:
@@ -949,7 +954,7 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 				// One that was applied is done: whatever is at its two places
 				// now came after it, and is left alone.
 				if !applied[r.Tx] {
-					finishFolderMove(root, r.From, r.Path, log)
+					finishFolderMove(root, r, log)
 				}
 				continue
 			}
@@ -1164,12 +1169,22 @@ func takeBackFolder(root, from, to string) {
 // journaled, so it is normally at to already. Only if it is at from and
 // nothing is at to (the rename was lost with a power loss) is it renamed;
 // anything else is left as it is, and logged.
-func finishFolderMove(root, from, to string, log *slog.Logger) {
+//
+// Where the record has the folder's identity, the folder at from must be that
+// very folder: one made under the old name since (by hand, while the server
+// was down) is another.
+func finishFolderMove(root string, r jrec, log *slog.Logger) {
+	from, to := r.From, r.Path
 	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
 	ai, errA := os.Lstat(a)
 	_, errB := os.Lstat(b)
+	same := true
+	if errA == nil && r.Ino != 0 {
+		dev, ino, ok := fileID(ai)
+		same = !ok || (dev == r.Dev && ino == r.Ino)
+	}
 	switch {
-	case errA == nil && ai.IsDir() && errors.Is(errB, fs.ErrNotExist):
+	case errA == nil && ai.IsDir() && errors.Is(errB, fs.ErrNotExist) && same:
 		os.MkdirAll(filepath.Dir(b), 0o755)
 		os.Rename(a, b)
 	case errors.Is(errA, fs.ErrNotExist) && errB == nil:
