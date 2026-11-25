@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { toast } from 'sonner'
@@ -85,8 +86,23 @@ async function open(section: string, scene?: (server: MockServer) => void) {
   })
 }
 async function openMenu(name: string) {
-  await click(byLabel(ta.spaces.moreFor(name)))
-  await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the actions')
+  // The menu of the previous action may still be closing (and holding the
+  // pointer); on a slow runner a click in that moment is lost. Wait for it to
+  // go, then click again until the menu is there.
+  await settle(() => document.querySelectorAll('[role="menuitem"]').length === 0, 'the previous menu closed')
+  const open = () => document.querySelectorAll('[role="menuitem"]').length > 0
+  const until = Date.now() + 5_000
+  while (Date.now() < until) {
+    await click(byLabel(ta.spaces.moreFor(name)))
+    const retry = Date.now() + 1_000
+    while (!open() && Date.now() < retry) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+    if (open()) return
+  }
+  throw new Error('never happened: the actions')
 }
 // Ticks spaces by name and starts a bulk action.
 async function bulk(names: string[], action: string) {

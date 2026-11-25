@@ -53,8 +53,23 @@ const menuItem = (label: string) =>
 const adminCalls = () => m!.requests.filter((r) => r.url.startsWith('/api/admin') || r.url.startsWith('/api/users'))
 
 async function openMenu(name: string) {
-  await click(byLabel(ta.spaces.moreFor(name)))
-  await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the actions')
+  // The menu of the previous action may still be closing (and holding the
+  // pointer); on a slow runner a click in that moment is lost. Wait for it to
+  // go, then click again until the menu is there.
+  await settle(() => document.querySelectorAll('[role="menuitem"]').length === 0, 'the previous menu closed')
+  const open = () => document.querySelectorAll('[role="menuitem"]').length > 0
+  const until = Date.now() + 5_000
+  while (Date.now() < until) {
+    await click(byLabel(ta.spaces.moreFor(name)))
+    const retry = Date.now() + 1_000
+    while (!open() && Date.now() < retry) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+    if (open()) return
+  }
+  throw new Error('never happened: the actions')
 }
 
 describe('who can reach the administration', () => {
