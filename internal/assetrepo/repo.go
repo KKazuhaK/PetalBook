@@ -255,6 +255,12 @@ func (r *Repo) setStatus(f func(*space.RemoteStatus)) {
 	f(&r.st)
 	st := r.st
 	r.mu.Unlock()
+	// Once closed (replaced by a new connect, or the server stopping), what its
+	// cancelled commands say is not the state of the remote, and the row may
+	// already describe the repository that replaced this one.
+	if r.ctx.Err() != nil {
+		return
+	}
 	if r.o.OnStatus != nil && (st.State != before.State || st.Kind != before.Kind || st.Error != before.Error || before.LastSync.IsZero() || st.LastSync.Sub(before.LastSync) > 30*time.Second) {
 		r.o.OnStatus(st)
 	}
@@ -277,6 +283,8 @@ func (r *Repo) fail(err error) error {
 	msg = gitstore.Scrub(msg)
 	var ce *gitstore.CredentialError
 	switch {
+	case errors.Is(err, context.Canceled):
+		// Stopped by its caller or by Close: nothing is known of the remote.
 	case errors.As(err, &ce) && ce.Code != "" && !ce.Offline:
 		r.setStatus(func(st *space.RemoteStatus) { st.State, st.Kind, st.Error = space.RemoteError, ce.Code, msg })
 	case gitstore.KindOf(err) == gitstore.KindAuth:

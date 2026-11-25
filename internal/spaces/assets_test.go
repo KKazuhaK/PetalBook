@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -897,6 +898,93 @@ func TestTheAttachmentBytesOfATenantLookUpTheSpacesTogether(t *testing.T) {
 		}
 		if queries != 2 {
 			t.Fatalf("%d queries after three calls", queries)
+		}
+	})
+}
+
+// Connecting the attachment repository again (a new token, another repository)
+// swaps its directory for the one tried out. Something that opens the
+// repository meanwhile (the refresh after the last connect, the pull loop, a
+// status read) waits for the swap and gets the repository of the new row; it
+// used to make the directory again, and the swap failed.
+func TestReconnectingTheAttachmentRepositoryWhileItIsOpened(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		type opened struct {
+			r   any
+			row *store.AssetRemote
+			err error
+		}
+		var armed atomic.Bool
+		got := make(chan opened, 1)
+		a.m.testHook = func(point string) {
+			if point != "assets-swap" || !armed.CompareAndSwap(true, false) {
+				return
+			}
+			go func() {
+				r, row, err := a.m.assetRepo(ctx, a.in.ID)
+				got <- opened{r, row, err}
+			}()
+			// Given the time to open it, if it is let through.
+			select {
+			case o := <-got:
+				got <- o
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+		a.connectAssets()
+		other := filterBare(t)
+		armed.Store(true)
+		if _, err := a.m.ConnectAssets(ctx, a.h, fileTokenReq(other)); err != nil {
+			t.Fatalf("connecting again while the repository is opened: %v", err)
+		}
+		o := <-got
+		if o.err != nil || o.r == nil {
+			t.Fatalf("the opener: %v %v", o.r, o.err)
+		}
+		row, err := store.GetAssetRemote(ctx, st.Q(), a.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.row.URL != row.URL || row.URL == "" {
+			t.Fatalf("the opener read %q; the row is %q", o.row.URL, row.URL)
+		}
+		r, _, err := a.m.assetRepo(ctx, a.in.ID)
+		if err != nil || any(r) != o.r {
+			t.Fatalf("the opener got another repository than the one kept: %v", err)
+		}
+		if r.Status().State != "ok" {
+			t.Fatalf("%+v", r.Status())
+		}
+	})
+}
+
+// A refresh of the repository replaced by a new connect is cancelled; that is
+// not the repository being offline, and must not overwrite the new state.
+func TestARefreshCancelledByAReconnectLeavesTheStateAlone(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		a := newAssetFixture(t, st)
+		defer a.h.Release()
+		release, in := make(chan struct{}), make(chan struct{})
+		a.r.mu.Lock()
+		a.r.holdDir, a.r.holdOnce, a.r.heldIn = a.m.assetsDir(a.in.ID), release, in
+		a.r.mu.Unlock()
+		a.connectAssets()
+		select {
+		case <-in: // the refresh after the connect is on its way
+		case <-time.After(10 * time.Second):
+			t.Fatal("no refresh after the connect")
+		}
+		a.connectAssets() // the same repository again (a new token)
+		close(release)
+		a.m.Close() // waits for the refresh
+		row, err := store.GetAssetRemote(ctx, st.Q(), a.in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.State != store.RemoteOK {
+			t.Fatalf("the state is %q (%s) after connecting again", row.State, row.LastError)
 		}
 	})
 }

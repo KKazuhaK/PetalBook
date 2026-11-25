@@ -14,6 +14,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/assetcache"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 )
 
 // countRunner counts the fetches, how many run at once, and holds them while
@@ -206,5 +207,35 @@ func TestUsedIsRecordedAgainAfterAFailure(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("recorded %d times", calls)
+	}
+}
+
+// A command stopped by its caller (a request that went away, the server
+// stopping) or by the repository being closed says nothing about the remote:
+// the state stays as it was, and nothing is recorded.
+func TestACancelledRefreshLeavesTheStateAlone(t *testing.T) {
+	remote := remoteWith(t, 1)
+	var mu sync.Mutex
+	var told []space.RemoteStatus
+	r, err := Open(context.Background(), Options{Space: "c", Dir: filepath.Join(t.TempDir(), "meta"), URL: "file://" + remote, Cache: newCache(t), AllowUnsafe: true, FetchFresh: time.Nanosecond,
+		Status:   space.RemoteStatus{State: space.RemoteOK, LastSync: time.Now().UTC()},
+		OnStatus: func(st space.RemoteStatus) { mu.Lock(); told = append(told, st); mu.Unlock() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := r.Refresh(stopped, true); err == nil {
+		t.Fatal("a refresh with its context ended went through")
+	}
+	r.Close()
+	if _, _, err := r.Refresh(context.Background(), true); err == nil {
+		t.Fatal("a refresh of a closed repository went through")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if st := r.Status(); st.State != space.RemoteOK || len(told) > 0 {
+		t.Fatalf("the state is %+v; told %+v", st, told)
 	}
 }

@@ -53,6 +53,10 @@ type assetState struct {
 	pinned    map[string]bool
 	tenants   map[string]string // the tenant of each space the cache named, remembered (AssetBytesOfTenant)
 	connected map[string]bool   // spaces that have an attachment repository; nil until first needed
+	// opening holds a lock per space, taken to open its repository from its
+	// row and to replace or remove its directory: an open in the middle of a
+	// swap would make the directory again, from the row before it.
+	opening map[string]*sync.Mutex
 }
 
 func (m *Manager) assetsDir(id string) string { return filepath.Join(m.opt.DataDir, "assetrepos", id) }
@@ -275,6 +279,21 @@ func (m *Manager) openAssetRepo(ctx context.Context, id string, row *store.Asset
 	})
 }
 
+// assetOpenLock is the lock of the space's repository directory (assetState.opening).
+func (m *Manager) assetOpenLock(id string) *sync.Mutex {
+	m.as.mu.Lock()
+	defer m.as.mu.Unlock()
+	if m.as.opening == nil {
+		m.as.opening = map[string]*sync.Mutex{}
+	}
+	l := m.as.opening[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		m.as.opening[id] = l
+	}
+	return l
+}
+
 // assetRepo returns the attachment repository of the space, opened from its
 // row (no network), or nil when the space has none.
 func (m *Manager) assetRepo(ctx context.Context, id string) (*assetrepo.Repo, *store.AssetRemote, error) {
@@ -282,6 +301,28 @@ func (m *Manager) assetRepo(ctx context.Context, id string) (*assetrepo.Repo, *s
 		return nil, nil, nil
 	}
 	m.AssetCache()
+	row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && row.URL == "") {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	m.as.mu.Lock()
+	r := m.as.repos[id]
+	m.as.mu.Unlock()
+	if r != nil {
+		return r, row, nil
+	}
+	l := m.assetOpenLock(id)
+	l.Lock()
+	defer l.Unlock()
+	return m.assetRepoLocked(ctx, id)
+}
+
+// assetRepoLocked is assetRepo for a caller that holds the space's open lock:
+// the row is read again under it, as a swap may have changed it.
+func (m *Manager) assetRepoLocked(ctx context.Context, id string) (*assetrepo.Repo, *store.AssetRemote, error) {
 	row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && row.URL == "") {
 		return nil, nil, nil
@@ -632,28 +673,37 @@ func (m *Manager) finishConnectAssets(ctx context.Context, h *Handle, old *store
 			return nil, assetsConflict("That repository has files, and the space has attachments of its own in assets/.")
 		}
 	}
-	// Accepted: the trial directory becomes the repository's.
-	m.forgetAssetRepo(id)
-	repo.Close()
-	os.RemoveAll(m.assetsDir(id))
-	if err := os.MkdirAll(filepath.Dir(m.assetsDir(id)), 0o755); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(trial, m.assetsDir(id)); err != nil {
-		return nil, err
-	}
-	row.State, row.LastSync, row.Updated = store.RemoteOK, m.opt.Now(), m.opt.Now()
-	if err := store.PutAssetRemote(ctx, m.opt.Store.Q(), row); err != nil {
-		return nil, err
-	}
-	m.noteConnected(id, true)
-	r, arow, err := m.assetRepo(ctx, id)
+	// Accepted: the trial directory becomes the repository's. Nothing opens the
+	// repository until the row is the new one and it is open again.
+	r, arow, err := m.swapAssetRepo(ctx, id, trial, repo, row)
 	if err != nil || r == nil {
 		return nil, errors.Join(err, errors.New("the attachment repository could not be opened"))
 	}
 	h.Space.SetAssets(backend{m, id, r})
 	m.goBg(func() { m.refreshAssets(id, h.Space) })
 	return m.assetsView(h, arow), nil
+}
+
+func (m *Manager) swapAssetRepo(ctx context.Context, id, trial string, repo *assetrepo.Repo, row store.Remote) (*assetrepo.Repo, *store.AssetRemote, error) {
+	l := m.assetOpenLock(id)
+	l.Lock()
+	defer l.Unlock()
+	m.forgetAssetRepo(id)
+	repo.Close()
+	os.RemoveAll(m.assetsDir(id))
+	if err := os.MkdirAll(filepath.Dir(m.assetsDir(id)), 0o755); err != nil {
+		return nil, nil, err
+	}
+	m.at("assets-swap")
+	if err := os.Rename(trial, m.assetsDir(id)); err != nil {
+		return nil, nil, err
+	}
+	row.State, row.LastSync, row.Updated = store.RemoteOK, m.opt.Now(), m.opt.Now()
+	if err := store.PutAssetRemote(ctx, m.opt.Store.Q(), row); err != nil {
+		return nil, nil, err
+	}
+	m.noteConnected(id, true)
+	return m.assetRepoLocked(ctx, id)
 }
 
 // DisconnectAssets takes the attachment repository away from the space, while
@@ -684,6 +734,9 @@ func (m *Manager) DisconnectAssets(ctx context.Context, h *Handle) error {
 		return assetsConflict("The attachment repository has files; the space may refer to them.")
 	}
 	h.Space.SetAssets(nil)
+	l := m.assetOpenLock(id)
+	l.Lock()
+	defer l.Unlock()
 	m.forgetAssetRepo(id)
 	if err := store.DeleteAssetRemote(ctx, m.opt.Store.Q(), id); err != nil {
 		return err
@@ -710,8 +763,11 @@ func (m *Manager) assetsGone(id string) {
 	if m.single != nil {
 		return
 	}
+	l := m.assetOpenLock(id)
+	l.Lock()
 	m.forgetAssetRepo(id)
 	os.RemoveAll(m.assetsDir(id))
+	l.Unlock()
 	if c := m.AssetCache(); c != nil {
 		c.DropSpace(id)
 	}
