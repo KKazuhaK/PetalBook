@@ -537,8 +537,13 @@ once by the trim after the commit.
   the staged file through a buffered writer as it comes, the append is written a
   megabyte at a time, and the pages are written back reading the staged file through
   one handle.
-- **Only `space.yml` that has to be repaired first** (unusable, or the way to it not a
-  folder) is still edited on its own right after, as its own transaction.
+- **`space.yml` that has to be repaired first** (unusable, or the way to it not a
+  folder) is put right first, in transactions of its own (the copy kept aside, the way
+  cleared). The edit itself is still in the change's transaction, so no crash leaves the
+  bindings of a moved or deleted folder under its old key.
+- **A failed commit** keeps its paths in the journal by trimming them into transactions
+  of their own: content, removal, or a reference to a blob. Deletions and the old names
+  of moves are still committed after a restart.
 - **A rename through a third name (`r`)** is finished forwards only when the move's
   transaction is there, and otherwise taken back, with the `mr`/`md` take-backs run
   after it.

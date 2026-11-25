@@ -330,6 +330,13 @@ func TestALinkFromAPullIsPutRightAndPushed(t *testing.T) {
 			if st := git(t, f.root, "status", "--porcelain"); st != "" {
 				t.Errorf("the clone has changes:\n%s", st)
 			}
+			// Nothing of the repair's transactions is left with the committer.
+			s.cm.mu.Lock()
+			left := len(s.cm.txs)
+			s.cm.mu.Unlock()
+			if left != 0 {
+				t.Errorf("%d transactions left open", left)
+			}
 			consistent(t, s)
 		})
 	}

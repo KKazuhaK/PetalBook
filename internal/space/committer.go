@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -740,22 +741,35 @@ func (c *committer) commit() error {
 			}
 		}
 		c.mu.Lock()
-		again := make(map[string]Author, len(failed))
 		var retx []retainedTx
 		for _, p := range failed {
 			by, ok := c.paths[p]
 			if !ok {
 				continue
 			}
-			data, kept := keepBlob[p]
-			if cur, ok := c.revs[p]; kept && ok && cur.ID == takenRevs[p].ID {
-				retx = append(retx, retainedTx{by: by, file: txFile{path: p, rev: cur.ID, data: data}})
-				c.revs[p] = gitstore.Blob{ID: cur.ID, Data: func() ([]byte, error) { return data, nil }}
-				continue
+			cur, recorded := c.revs[p]
+			if recorded && cur.ID != takenRevs[p].ID {
+				continue // a newer change of the path: its records are kept
 			}
-			again[p] = by
+			f := txFile{path: p}
+			switch data, kept := keepBlob[p]; {
+			case recorded && cur.ID == "":
+				// A removal (a deletion, the old name of a move).
+			case recorded && kept:
+				f.rev, f.data = cur.ID, data
+				c.revs[p] = gitstore.Blob{ID: cur.ID, Data: func() ([]byte, error) { return data, nil }}
+			case recorded:
+				f.rev, f.ref = cur.ID, true // its content is in Git, or the file
+			default:
+				// Staged from the work tree: what the file is now, by
+				// reference, or gone.
+				if f.rev = revOf(filepath.Join(c.git.dir, filepath.FromSlash(p))); f.rev != "" {
+					f.ref = true
+				}
+			}
+			retx = append(retx, retainedTx{by: by, file: f})
 		}
-		err := c.j.trim(upTo, nil, again, retx...)
+		err := c.j.trim(upTo, nil, retx...)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)
@@ -773,7 +787,7 @@ func (c *committer) clearJournal() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.j.trim(c.j.lastSeq(), nil, nil)
+	return c.j.trim(c.j.lastSeq(), nil)
 }
 
 // Flush commits pending changes immediately.

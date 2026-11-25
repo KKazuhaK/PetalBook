@@ -390,16 +390,6 @@ func Open(opt Options) (*Space, error) {
 			return nil, err
 		}
 	}
-	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
-			// What the records asked for is done now; they must not be made
-			// again by a later crash, after the bindings may have changed.
-			if err := jrn.trim(jrn.lastSeq(), nil, recovered); err != nil {
-				return nil, err
-			}
-			break
-		}
-	}
 	if len(recovered) > 0 {
 		log.Info("recovered uncommitted changes from the journal", "paths", len(recovered))
 	}

@@ -421,15 +421,6 @@ func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove, extra []txFi
 		return nil, err
 	}
 	pe.id, pe.journaled = id, journaled
-	if !journaled {
-		recs := make([]jrec, len(edits))
-		for i, e := range edits {
-			recs[i] = jrec{Op: "w", Path: e.rel, Rev: page.Rev(e.data)}
-		}
-		if err := tx.record(recs...); err != nil {
-			return nil, err
-		}
-	}
 	if tx.remote && mv != nil && !mv.dir {
 		// Undoing the change puts both names back as the parent commit has
 		// them, whatever got done of the move.

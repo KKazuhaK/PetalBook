@@ -13,7 +13,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -819,7 +818,7 @@ type retainedTx struct {
 	file txFile
 }
 
-func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx ...retainedTx) error {
+func (j *journal) trim(upTo uint64, keep []jrec, retx ...retainedTx) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.guard != nil {
@@ -866,29 +865,22 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx
 		f := rt.file
 		recs := []jrec{
 			{Op: "x", Tx: tx, N: 1, AuthorName: rt.by.Name, AuthorEmail: rt.by.Email, Via: rt.by.Via},
-			{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev},
+			{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev, Ref: f.ref},
 			{Op: "a", Tx: tx},
 		}
 		// Inline whatever its size: it is rare, and the staged file of its
-		// first transaction goes with this trim.
-		if utf8.Valid(f.data) {
+		// first transaction goes with this trim. A removal, or a file by
+		// reference, has no content here.
+		switch {
+		case f.rev == "" || f.ref:
+		case utf8.Valid(f.data):
 			recs[1].Text = string(f.data)
-		} else {
+		default:
 			recs[1].Bin = f.data
 		}
 		for i := range recs {
 			encodeRec(&buf, &seq, &recs[i])
 		}
-	}
-	paths := make([]string, 0, len(pending))
-	for p := range pending {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		by := pending[p]
-		r := jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via}
-		encodeRec(&buf, &seq, &r)
 	}
 	tmp := j.path + ".new"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
@@ -1039,7 +1031,7 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 				// the new one as it was (unless a later entry of the
 				// transaction rewrote it).
 				abs := filepath.Join(root, filepath.FromSlash(r.Path))
-				if _, err := os.Lstat(abs); err == nil || applied[r.Tx] {
+				if _, err := os.Lstat(abs); r.From != "" && (err == nil || applied[r.Tx]) {
 					set[r.From] = authors[r.Tx]
 					revs[r.From] = gitstore.Blob{}
 				}

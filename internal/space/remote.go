@@ -1083,8 +1083,11 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		s.cm.SwitchTo(by)
 		defer s.cm.begin()()
 		tx := &txn{s: s, by: by}
-		defer tx.endWrites()
-		return op(tx)
+		// Not deferred: a panic is not an end of the change that gives its
+		// writes up (it is what a test's crash is).
+		res, err := op(tx)
+		tx.endWrites()
+		return res, err
 	}
 	ctx := s.ctx
 	for attempt := 1; attempt <= maxAttempts; attempt++ {

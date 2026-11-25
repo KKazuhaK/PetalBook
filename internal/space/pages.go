@@ -553,14 +553,9 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 	if !bytes.Equal(newData, data) {
 		// Journaled with its content, so a crash before the write is
 		// finished by writing it (if the file is still as it was).
-		id, journaled, err := tx.prepare([]txFile{{path: rel, old: page.Rev(data), rev: page.Rev(newData), data: newData}})
+		id, _, err := tx.prepare([]txFile{{path: rel, old: page.Rev(data), rev: page.Rev(newData), data: newData}})
 		if err != nil {
 			return nil, err
-		}
-		if !journaled {
-			if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
-				return nil, err
-			}
 		}
 		err = s.stepped("save journaled")
 		if err == nil {
@@ -810,11 +805,11 @@ func (s *Space) CreateFolder(by Author, rel string) (string, error) {
 	s.cm.SwitchTo(by)
 	defer s.cm.begin()()
 	tx := &txn{s: s, by: by}
-	defer tx.endWrites()
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", err
 	}
 	if err := s.writeFileIn(tx, canon+"/.gitkeep", nil); err != nil {
+		tx.endWrites()
 		return "", err
 	}
 	if err := s.idx.AddFolder(canon); err != nil {

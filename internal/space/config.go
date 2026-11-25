@@ -618,6 +618,44 @@ func settingsReason(err error) (reason string, ok bool) {
 	return "", false
 }
 
+// planSpaceInline is the content space.yml gets from edit, for a change that
+// writes it in its own transaction (a folder move or delete, a field rename).
+// What has to be put right first is done first, in transactions of its own:
+// what is in the way of the folder (clearWay), and a file that cannot be used
+// (kept aside). So the change's transaction holds the edit, and a crash after
+// it is journaled finishes the edit with the rest. after is called once the
+// file is written.
+func (s *Space) planSpaceInline(tx *txn, edit func(root *yaml.Node) (bool, error)) (data []byte, changed bool, after func(), err error) {
+	if blocked, err := wayBlocked(s.root, spaceFile); err != nil {
+		return nil, false, nil, err
+	} else if blocked != "" {
+		if _, err := s.clearWayIn(tx, spaceFile, spaceFile); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	data, changed, rep, err := planSpaceYAMLWith(s.heal, s.root, s.name, edit)
+	if err != nil || !changed {
+		return nil, false, nil, err
+	}
+	kept := ""
+	if rep != nil && s.heal != nil {
+		if kept, err = s.heal.keep(spaceSettings, s.keepIn(tx)); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	after = func() {
+		s.heal.wroteGood(spaceSettings, data)
+		if rep != nil && s.heal != nil {
+			s.heal.repaired(spaceSettings, rep, kept)
+		}
+		s.cfgMu.Lock()
+		s.cfg = configCache{}
+		s.cfgMu.Unlock()
+		s.typesDirty.Store(true)
+	}
+	return data, true, after, nil
+}
+
 // bindingsWouldFail makes the edit of space.yml that a move or a delete of a
 // folder will need, without writing it, and says why it cannot be made if so:
 // asked before the folder is touched, so that such a change is refused with

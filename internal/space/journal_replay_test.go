@@ -273,7 +273,7 @@ func TestATransactionReadsBackWhole(t *testing.T) {
 			t.Errorf("file %s: %+v %v", f.path, r, err)
 		}
 	}
-	if err := j.trim(j.lastSeq(), nil, nil); err != nil {
+	if err := j.trim(j.lastSeq(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if b := blobsIn(t, dir); len(b) != 0 {

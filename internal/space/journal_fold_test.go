@@ -3,6 +3,7 @@ package space
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -137,5 +138,151 @@ func TestAFieldRenameStoppedAfterItsTransactionIsFinished(t *testing.T) {
 	}
 	if st := uncommitted(t, root); st != "" {
 		t.Errorf("not committed:\n%s", st)
+	}
+}
+
+// One author's commit fails (the index is locked) while another's is made,
+// and the server stops before the retry: the deletion and the old name of a
+// move of the failed author are still committed by the next start.
+func TestADeletionAndAMoveWhoseCommitFailedAreCommittedAfterACrash(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s := openTwoAuthors(t, root)
+	a := mustCreateAs(t, s, ann, "Alpha")
+	gone := mustCreateAs(t, s, bo, "Gone")
+	moved := mustCreateAs(t, s, bo, "Moved")
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	// Two authors pending at once: the commit when the author switches fails.
+	lock := filepath.Join(root, ".git", "index.lock")
+	if _, err := s.Save(ann, a.ID, a.Rev, meta("title", "Alpha"), "a2\n"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(lock, nil, 0o644)
+	if err := s.Delete(bo, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.Move(bo, moved.ID, "Archive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(lock)
+	s.cm.git.before = func(args []string) {
+		if args[0] == "update-ref" { // Ann's commit is made: Bo's fails
+			os.WriteFile(lock, nil, 0o644)
+		}
+	}
+	if err := s.Flush(); err == nil {
+		t.Fatal("Bo's commit should have failed")
+	}
+	s.cm.git.before = nil
+	crash(s)
+	os.Remove(lock)
+	s2 := openTwoAuthors(t, root)
+	if err := s2.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	files := git(t, root, "ls-tree", "-r", "--name-only", "HEAD")
+	has := func(p string) bool { return strings.Contains("\n"+files+"\n", "\n"+p+"\n") }
+	if has(gone.Path) || has(moved.Path) || !has(m.Path) {
+		t.Errorf("committed (%s gone, %s moved to %s):\n%s\n%s", gone.Path, moved.Path, m.Path, files, git(t, root, "status", "--short"))
+	}
+}
+
+// A folder move or delete stopped by a crash once its transaction was
+// journaled, before anything else was written, also with a space.yml that
+// cannot be used (it is put right by the change): the next start finishes
+// it, and the bindings of the folder are where it is, or gone with it.
+func TestAFolderChangeStoppedAfterItsTransactionFinishesItsBindings(t *testing.T) {
+	needGit(t)
+	for _, c := range []struct {
+		name     string
+		del      bool
+		unusable bool
+		want     map[string]string
+	}{
+		{"move", false, false, map[string]string{"B": "t", "B/sub": "t"}},
+		{"move, space.yml unusable", false, true, map[string]string{"B": "t", "B/sub": "t"}},
+		{"delete", true, false, map[string]string{}},
+		{"delete, space.yml unusable", true, true, map[string]string{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			s := openAt(t, root)
+			if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
+				t.Fatal(err)
+			}
+			mustCreate(t, s, "A/sub", meta("title", "P"), "x\n")
+			for _, f := range []string{"A", "A/sub"} {
+				if _, err := s.BindFolder(Author{}, f, "t"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if c.unusable {
+				setSpaceYML(t, root, "folders: [unclosed\n")
+			}
+			stopAt(s, "edits journaled", 1)
+			survive(t, func() {
+				if c.del {
+					s.DeleteFolder(Author{}, "A", true)
+				} else {
+					s.MoveFolder(Author{}, "A", "B")
+				}
+			})
+			crash(s)
+			s2 := openAt(t, root)
+			if m := bindingMap(s2); !reflect.DeepEqual(m, c.want) {
+				t.Errorf("bindings after recovery: %v\n%s", m, spaceYML(root))
+			}
+		})
+	}
+}
+
+// A field rename stopped by a crash after the type's file and the first page
+// were written: the next start writes the rest from the journal.
+func TestAFieldRenameStoppedAfterItsFirstPageIsFinished(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s, rev, pages := renameScene(t, root)
+	stopAt(s, "rename written", 2)
+	survive(t, func() { s.RenameTypeField(Author{}, "task", rev, "status", "state") })
+	crash(s)
+	s2 := openAt(t, root)
+	if _, err := s2.Reindex(); err != nil {
+		t.Fatal(err)
+	}
+	checkRenamed(t, s2, pages)
+}
+
+// The things a repair of the way to the settings moves aside are journaled:
+// a crash before they are committed has the next start commit them.
+func TestWhatARepairOfTheWayMovesAsideIsCommittedAfterACrash(t *testing.T) {
+	t.Parallel()
+	s := settled(t)
+	root := s.Root()
+	os.RemoveAll(filepath.Join(root, ".petalbook"))
+	if err := os.WriteFile(filepath.Join(root, ".petalbook"), []byte("a file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stopAt(s, "way cleared", 1)
+	survive(t, func() { s.BindFolder(Author{}, "C", "wenan") })
+	crash(s)
+	copies := copiesAt(root, ".petalbook")
+	if len(copies) != 1 {
+		t.Fatalf("what was moved aside: %v", copies)
+	}
+	s2 := openAt(t, root)
+	if err := s2.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if files := git(t, root, "ls-tree", "-r", "--name-only", "HEAD"); !strings.Contains(files, copies[0]) {
+		t.Errorf("the copy is not committed:\n%s", files)
 	}
 }

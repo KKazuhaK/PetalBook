@@ -187,12 +187,10 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 			}
 		}
 		renameViews := func(root *yaml.Node) (bool, error) { return renameFieldInViews(root, typeName, from, to) }
-		yml, views, yrep, err := planSpaceYAMLWith(s.heal, s.root, s.name, renameViews)
+		yml, inline, ymlWritten, err := s.planSpaceInline(tx, renameViews)
 		if err != nil {
 			return FieldRename{}, err
 		}
-		blocked, _ := wayBlocked(s.root, spaceFile)
-		inline := views && yrep == nil && blocked == ""
 		if inline {
 			if err := b.add(txFile{path: spaceFile, old: revOf(filepath.Join(s.root, filepath.FromSlash(spaceFile))), rev: page.Rev(yml), data: yml}); err != nil {
 				return FieldRename{}, err
@@ -263,17 +261,19 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 				s.heal.wroteGood(typeSettings(typeName), out)
 				done()
 			}
+			if err := s.stepped("rename written"); err != nil {
+				if !tx.remote {
+					for _, w := range files[:i+1] {
+						tx.touch(w.Path)
+					}
+					s.cm.forget(id)
+				}
+				return FieldRename{}, err
+			}
 		}
 		s.cm.Applied(id)
 		if inline {
-			s.heal.wroteGood(spaceSettings, yml)
-			s.cfgMu.Lock()
-			s.cfg = configCache{}
-			s.cfgMu.Unlock()
-		} else if views {
-			if err := s.editSpaceFile(tx, renameViews); err != nil {
-				return FieldRename{}, err
-			}
+			ymlWritten()
 		}
 		if len(pages) > 0 {
 			if _, err := s.idx.Refresh(s.src, pages, nil); err != nil {

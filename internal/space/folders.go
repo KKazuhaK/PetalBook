@@ -307,9 +307,14 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// transaction. Only a file that has to be put right first (it cannot be
 	// used, or the way to it is not a folder) is edited on its own after.
 	extra := members
-	yml, ychanged, yrep, yerr := planSpaceYAMLWith(s.heal, s.root, s.name, moveSettings)
-	blocked, _ := wayBlocked(s.root, spaceFile)
-	inline := yerr == nil && ychanged && yrep == nil && blocked == ""
+	yml, inline, ymlWritten, err := s.planSpaceInline(tx, moveSettings)
+	if err != nil {
+		if !tx.remote {
+			tx.runUndo()
+			s.dropCreated(tx)
+		}
+		return "", err
+	}
 	if inline {
 		extra = append(extra, txFile{path: spaceFile, old: revOf(filepath.Join(s.root, filepath.FromSlash(spaceFile))), rev: page.Rev(yml), data: yml})
 	}
@@ -340,13 +345,6 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// it is as it was. (Finishing the edit instead would only repeat what just
 	// failed.) Should the rename not go back either, the "b" record above has
 	// the next start move the bindings to where the folder now is.
-	var refused string
-	if !inline && err == nil {
-		refused, err = s.editBindings(tx, moveSettings)
-	}
-	if err == nil && refused != "" {
-		err = notMoved(refused)
-	}
 	if err != nil {
 		pe.abort()
 		if !tx.remote {
@@ -371,11 +369,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// state), journaled above with the move.
 	edited, rerr := pe.apply()
 	if inline {
-		s.heal.wroteGood(spaceSettings, yml)
-		s.cfgMu.Lock()
-		s.cfg = configCache{}
-		s.cfgMu.Unlock()
-		s.typesDirty.Store(true)
+		ymlWritten()
 	}
 	if rerr == nil {
 		rerr = perr
@@ -532,6 +526,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		var first *writeTx
 		inTx := map[string]bool{}
 		var yml []byte
+		ymlWritten := func() {}
 		startU := func(pages []string) error {
 			if willGo != nil {
 				return nil
@@ -575,12 +570,18 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 				}
 				return nil
 			})
-			data, changed, rep, err := planSpaceYAMLWith(s.heal, s.root, s.name, forget(willGo))
-			if blocked, _ := wayBlocked(s.root, spaceFile); err == nil && changed && rep == nil && blocked == "" {
-				yml = data
+			data, changed, after, err := s.planSpaceInline(tx, forget(willGo))
+			if err != nil {
+				return err
+			}
+			if changed {
+				yml, ymlWritten = data, after
 				ws = append(ws, fileWrite{rel: spaceFile, data: data})
 			}
 			if first, err = tx.journalFiles(ws...); err != nil {
+				return err
+			}
+			if err := s.stepped("edits journaled"); err != nil {
 				return err
 			}
 			for _, w := range ws {
@@ -670,11 +671,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			if err := writeIn(s.root, spaceFile, yml); err != nil {
 				return struct{}{}, err
 			}
-			s.heal.wroteGood(spaceSettings, yml)
-			s.cfgMu.Lock()
-			s.cfg = configCache{}
-			s.cfgMu.Unlock()
-			s.typesDirty.Store(true)
+			ymlWritten()
 		}
 		first.applied()
 		tx.journaled = nil
