@@ -316,7 +316,9 @@ under "GitHub" are used as they are.
   created, a failed answer lists `repo` and `assetsRepo`, and repeating the same
   request with `create: false` can connect both. When the admin's
   `assets.newSpaces` is on, spaces newly created with GitHub get an asset
-  repository by default.
+  repository by default. (Round 2 replaced `assets.newSpaces` with the layered
+  setting `storage.assets`, separate by default; see "Where attachments go" in
+  phase-3-tenants.md.)
 
 **Error codes**: `409 remote_required` (with `require`, and for an existing
 space also `deadline`), `503 not_cached` (with `fetching` and `Retry-After`),
@@ -647,8 +649,8 @@ implementation:
   `AssetsRepo`), and the same request with `create: false` connects both (the
   test uses the fake GitHub of 2.7, including the case where the top-up of an
   installation limited to "selected repositories" fails). When `github.assets` is
-  not given, `assets.newSpaces` decides, and when `false` is given it is not
-  created.
+  not given, the default decides (3.1: `assets.newSpaces`; since round 2:
+  `storage.assets`), and when `false` is given it is not created.
 - **Pinned**: files in the asset cache that belong to a pinned space are not
   evicted and not counted in `assetsBytes` (the `Pinned` callback of
   `assetcache`), and when pinning, the background fetches all the files in the

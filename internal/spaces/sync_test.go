@@ -22,6 +22,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
+	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
@@ -960,12 +961,10 @@ func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
 	})
 }
 
-func TestTheAdministratorsDefaultAddsAnAttachmentRepositoryToNewSpaces(t *testing.T) {
+// A request that does not say gets an attachment repository: separate is the default.
+func TestAttachmentsGoToTheirOwnRepositoryByDefault(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
-		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Assets.NewSpaces = true; return nil }); err != nil {
-			t.Fatal(err)
-		}
 		in, err := e.m.CreateWithSync(ctx, e.user.ID, "A", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "a", Private: true, Create: true, Assets: &SyncAssets{Default: true}})
 		if err != nil || in.Assets != "repository" || e.f.RepoByName("kazuhahub/a-assets") == nil {
 			t.Fatalf("%+v %v", in, err)
@@ -977,6 +976,75 @@ func TestTheAdministratorsDefaultAddsAnAttachmentRepositoryToNewSpaces(t *testin
 		}
 		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Cache.AssetsBytes = 1 << 20; return nil }); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("a cache under 64 MiB: %v", err)
+		}
+	})
+}
+
+// Where a second repository cannot be had, the default falls back to attachments
+// inside the space, with no error; only a request that asks for one is refused.
+func TestTheDefaultFallsBackToTheSpaceWhereASecondRepositoryIsImpossible(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		// Connecting to an existing repository that has no <name>-assets beside it.
+		e.f.AddRepo("kazuhahub", "plain", true)
+		in, err := e.m.CreateWithSync(ctx, e.user.ID, "Plain", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "plain", Private: true, Create: false, Assets: &SyncAssets{Default: true}})
+		if err != nil || in.Assets == "repository" {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// The name of the attachment repository is taken.
+		e.f.AddRepo("kazuhahub", "taken-assets", true)
+		in, err = e.m.CreateWithSync(ctx, e.user.ID, "Taken", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "taken", Private: true, Create: true, Assets: &SyncAssets{Default: true}})
+		if err != nil || in.Assets == "repository" {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// The same request asking for one is an error, as before.
+		e.f.AddRepo("kazuhahub", "plain2", true)
+		if _, err := e.m.CreateWithSync(ctx, e.user.ID, "Plain2", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "plain2", Private: true, Create: false, Assets: &SyncAssets{}}); err == nil {
+			t.Fatal("a requested attachment repository that cannot be had was passed over")
+		}
+	})
+}
+
+func TestTheSettingsDecideWhatARequestThatDoesNotSayGets(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		var got AssetsPolicy
+		e.m.SetAssetsPolicy(func(_ context.Context, tenant string) (AssetsPolicy, error) { return got, nil })
+		create := func(name string, a *SyncAssets) (Info, error) {
+			return e.m.CreateWithSync(ctx, e.user.ID, name, "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: strings.ToLower(name), Private: true, Create: true, Assets: a})
+		}
+		// A default of "space" gives a request that does not say none.
+		got = AssetsPolicy{Default: "space", Allowed: []string{"space", "repository"}}
+		in, err := create("A", &SyncAssets{Default: true})
+		if err != nil || in.Assets == "repository" || e.f.RepoByName("kazuhahub/a-assets") != nil {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// The owner may still ask for one (and for none).
+		if in, err = create("B", &SyncAssets{}); err != nil || in.Assets != "repository" {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// A lock to the repository refuses a request for none, and a default makes it.
+		got = AssetsPolicy{Default: "repository", Allowed: []string{"repository"}, Locked: true}
+		_, err = create("C", nil)
+		var se *settings.Error
+		if !errors.As(err, &se) || se.Code != settings.CodeLocked || e.f.RepoByName("kazuhahub/c") != nil {
+			t.Fatalf("%v", err)
+		}
+		if in, err = create("D", &SyncAssets{Default: true}); err != nil || in.Assets != "repository" {
+			t.Fatalf("%+v %v", in, err)
+		}
+		// A lock to the space refuses a request for a repository; a restriction names what is left.
+		got = AssetsPolicy{Default: "space", Allowed: []string{"space"}, Locked: true}
+		if _, err = create("E", &SyncAssets{Name: "e-notes"}); !errors.As(err, &se) || se.Code != settings.CodeLocked || e.f.RepoByName("kazuhahub/e") != nil {
+			t.Fatalf("%v", err)
+		}
+		got = AssetsPolicy{Default: "space", Allowed: []string{"space"}}
+		if _, err = create("F", &SyncAssets{}); !errors.As(err, &se) || se.Code != settings.CodeRestricted {
+			t.Fatalf("%v", err)
+		}
+		// Nothing is left behind by a refusal.
+		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 3 {
+			t.Fatalf("%+v", l)
 		}
 	})
 }

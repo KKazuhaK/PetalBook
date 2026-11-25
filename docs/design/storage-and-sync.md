@@ -134,7 +134,12 @@ can be fetched on demand:
   used, only a cache with a size limit is kept locally; recently used ones are
   kept, and the others are fetched when the page is opened. The attachment
   repository is implemented with Git's partial clone (file contents are not
-  downloaded in advance).
+  downloaded in advance). A separate attachment repository is the default for
+  a new space on a provider (the layered setting `storage.assets`: site lock >
+  site lock for one tenant > site default > tenant default > the space's
+  owner); a space with no remote keeps its attachments in the space, and a
+  default that cannot get a second repository falls back to the space without
+  an error. See "Where attachments go" in milestones/phase-3-tenants.md.
 - **Git history**: a space repository can keep only the recent history, and
   earlier versions are fetched from the remote when the history is viewed.
 - **A future offline client**: it can choose which spaces to sync; text is synced

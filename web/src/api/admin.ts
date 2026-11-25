@@ -214,8 +214,11 @@ export const adminApi = {
     request<SiteSetting>(`/admin/settings/${enc(key)}`, { method: 'PUT', body: input }),
   tenantSettings: (tenant: string, signal?: AbortSignal) =>
     request<{ settings: TenantSetting[] }>(`/admin/tenants/${enc(tenant)}/settings`, { signal }),
-  putTenantSetting: (tenant: string, key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
-    request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
+  putTenantSetting: (
+    tenant: string,
+    key: string,
+    input: { value?: unknown; lower?: SettingLower | null; siteLock?: boolean },
+  ) => request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
 
   // --- groups ---
   adminGroups: (
@@ -602,6 +605,7 @@ export function usePutSetting() {
       key: string
       value?: unknown
       lower?: SettingLower | null
+      siteLock?: boolean
     }) => (tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input)),
     onSuccess: () =>
       Promise.all([

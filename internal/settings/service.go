@@ -133,6 +133,11 @@ type TenantView struct {
 	// InEffect is false while the site's lock or restriction forbids the value
 	// (kept, and in effect again when the rule is lifted).
 	InEffect bool `json:"inEffect"`
+	// SiteLocked is true when a site administrator set this value for the tenant
+	// and locked it: the tenant's administrators cannot change the value or the
+	// rule below it. It beats the site's own value, and the site's lock over
+	// everyone beats it.
+	SiteLocked bool `json:"siteLocked"`
 }
 
 // Effective is a setting as one tenant sees it.
@@ -224,6 +229,13 @@ func (s *Service) compute(ctx context.Context, tenant string) (map[string]*Effec
 						}
 					}
 					tv.InEffect = tv.Value == nil || e.Site.Lower.Allows(d, tv.Value)
+					// A value the site set for this tenant is not the tenant's to
+					// have forbidden by the site's rule for tenants, only by its lock
+					// over everyone.
+					if r.SiteLocked && tv.Value != nil {
+						tv.SiteLocked = true
+						tv.InEffect = e.Site.Lower.Mode != Lock
+					}
 				}
 				if r.Lower != "" {
 					var l Lower
@@ -240,9 +252,14 @@ func (s *Service) compute(ctx context.Context, tenant string) (map[string]*Effec
 			if tv.Lower != nil {
 				e.Below = e.Site.Lower.Combine(d, *tv.Lower)
 			}
+			if tv.SiteLocked && tv.InEffect {
+				e.Below = Lower{Mode: Lock}
+			}
 		}
 		switch {
 		case e.Site.Lower.Mode == Lock:
+			e.LockedBy = Site
+		case e.Tenant != nil && e.Tenant.SiteLocked && e.Tenant.InEffect:
 			e.LockedBy = Site
 		case e.Below.Mode == Lock:
 			e.LockedBy = Tenant
@@ -298,6 +315,11 @@ type Change struct {
 	Value    any
 	HasLower bool
 	Lower    *Lower // nil: back to the default (site) or to following (tenant)
+	// Site says a site administrator makes the change to a tenant's layer;
+	// without it the change is a tenant administrator's. HasSiteLock and
+	// SiteLock lock (or free) the tenant's value for the tenant: only a site
+	// administrator may, and only a value that is there can be locked.
+	Site, HasSiteLock, SiteLock bool
 }
 
 func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any, error) {
@@ -419,7 +441,10 @@ func (s *Service) affected(ctx context.Context, q store.Q, d *Def, lower *Lower)
 
 // SetTenant changes a tenant's layer. The site's rule decides: locked is
 // setting_locked (for a site administrator too: unlock at the site first), a
-// value or rule outside it is setting_restricted.
+// value or rule outside it is setting_restricted. A value a site administrator
+// locked for this tenant (Change.SiteLock) is the site's to change: the tenant's
+// own administrators get setting_locked, and what the site writes there is not
+// held to the site's rule for tenants, since it is the site's own choice.
 func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) error {
 	d, ok := s.byK[key]
 	if !ok || !d.Has(Tenant) {
@@ -430,15 +455,43 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 		return err
 	}
 	site := eff.Site.Lower
+	cur := eff.Tenant
+	if !ch.Site {
+		if ch.HasSiteLock {
+			return &Error{CodeLocked, key + ": only the site's administrators lock a value for a tenant"}
+		}
+		if cur != nil && cur.SiteLocked {
+			return &Error{CodeLocked, key + " is locked for this tenant by the site's administrators"}
+		}
+	}
+	// Whether the tenant's value ends up locked by the site, and what it is.
+	locking := cur != nil && cur.SiteLocked
+	if ch.HasSiteLock {
+		locking = ch.SiteLock
+	}
+	final := any(nil)
+	if cur != nil {
+		final = cur.Value
+	}
+	if ch.HasValue {
+		final = ch.Value
+	}
+	if final == nil {
+		if ch.HasSiteLock && ch.SiteLock {
+			return bad("%s: a lock for the tenant needs a value to lock", key)
+		}
+		locking = false
+	}
+	forced := ch.Site && locking
 	var val any
 	if ch.HasValue && ch.Value != nil {
-		if site.Mode == Lock {
+		if site.Mode == Lock && !forced {
 			return &Error{CodeLocked, key + " is locked by the site's administrators"}
 		}
 		if val, err = s.check(ctx, d, tenant, ch.Value); err != nil {
 			return err
 		}
-		if !site.Allows(d, val) {
+		if !forced && !site.Allows(d, val) {
 			return &Error{CodeRestricted, key + ": " + describe(d, site)}
 		}
 	}
@@ -448,11 +501,13 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 		if err != nil {
 			return err
 		}
-		if site.Mode == Lock && l.Mode != Lock {
-			return &Error{CodeLocked, key + " is locked by the site's administrators"}
-		}
-		if !l.Tightens(d, site) {
-			return &Error{CodeRestricted, key + ": the tenant's rule must be at least as strict as the site's"}
+		if !forced {
+			if site.Mode == Lock && l.Mode != Lock {
+				return &Error{CodeLocked, key + " is locked by the site's administrators"}
+			}
+			if !l.Tightens(d, site) {
+				return &Error{CodeRestricted, key + ": the tenant's rule must be at least as strict as the site's"}
+			}
 		}
 		lower = &l
 	}
@@ -481,6 +536,7 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 				row.Lower = string(raw)
 			}
 		}
+		row.SiteLocked = locking
 		row.Updated = s.now()
 		return store.PutLayered(ctx, q, *row)
 	})

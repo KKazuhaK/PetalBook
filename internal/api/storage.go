@@ -39,9 +39,6 @@ type storageResp struct {
 		MinFreeBytes   **int64 `json:"minFreeBytes,omitempty"` // the site's only; null inside is "no floor"
 		AssetsBytes    int64   `json:"assetsBytes"`
 	} `json:"cache"`
-	Assets struct {
-		NewSpaces bool `json:"newSpaces"`
-	} `json:"assets"`
 	Git struct {
 		Version      string `json:"version,omitempty"` // the site's only
 		PartialClone bool   `json:"partialClone"`
@@ -66,7 +63,7 @@ func (s *server) storageBody(set spaces.StorageSettings, aff spaces.Affected, si
 	r.LocalSpaces.MaxBytes = set.LocalSpaces.MaxBytes
 	c := set.Cache
 	r.Cache.Partial, r.Cache.EvictAfterDays, r.Cache.MinIdleHours, r.Cache.ClonesBytes = c.Partial, c.EvictAfterDays, c.MinIdleHours, c.ClonesBytes
-	r.Cache.AssetsBytes, r.Assets.NewSpaces = c.AssetsBytes, set.Assets.NewSpaces
+	r.Cache.AssetsBytes = c.AssetsBytes
 	version, partial := s.spaces.GitInfo()
 	r.Git.PartialClone = partial
 	if site {
@@ -151,7 +148,6 @@ func (s *server) adminPutStorage(c *call) {
 		Hosts       json.RawMessage `json:"hosts"`
 		LocalSpaces json.RawMessage `json:"localSpaces"`
 		Cache       json.RawMessage `json:"cache"`
-		Assets      json.RawMessage `json:"assets"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
@@ -160,8 +156,7 @@ func (s *server) adminPutStorage(c *call) {
 	hosts, err2 := section(req.Hosts, "allowed")
 	local, err3 := section(req.LocalSpaces, "maxBytes")
 	cache, err4 := section(req.Cache, "partial", "evictAfterDays", "minIdleHours", "clonesBytes", "minFreeBytes", "assetsBytes")
-	assets, err5 := section(req.Assets, "newSpaces")
-	for _, err := range []error{err1, err2, err3, err4, err5} {
+	for _, err := range []error{err1, err2, err3, err4} {
 		if err != nil {
 			s.fail(c.w, err)
 			return
@@ -249,15 +244,6 @@ func (s *server) adminPutStorage(c *call) {
 			}
 			if err != nil {
 				return err
-			}
-		}
-		for k, v := range assets {
-			if k == "newSpaces" {
-				b, err := decodeAs[bool](v, "assets.newSpaces")
-				if err != nil {
-					return err
-				}
-				st.Assets.NewSpaces = b
 			}
 		}
 		return nil

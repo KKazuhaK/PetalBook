@@ -254,6 +254,9 @@ func New(opt Options) *Handler {
 		s.auth.UseSettings(s.settings)
 		s.bindQuota()
 	}
+	if s.spaces != nil && !s.single {
+		s.bindAssetsPolicy()
+	}
 	mux := http.NewServeMux()
 	uploads := map[string]bool{}
 	for _, rt := range routeTable {
@@ -697,6 +700,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	var ghe *connections.Error
 	var req *spaces.RequiredError
 	var full *spaces.SpaceFullError
+	var setErr *settings.Error
 	var nc *space.NotCachedError
 	var rst *spaces.RestoringError
 	var rf *spaces.RestoreFailed
@@ -754,6 +758,13 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", strings.TrimPrefix(err.Error(), spaces.ErrNotEvictable.Error()+": "))
 	case errors.Is(err, spaces.ErrGitTooOld), errors.Is(err, spaces.ErrConflictFlag):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.As(err, &setErr):
+		// A rule of the layered settings that the request goes against.
+		status := http.StatusBadRequest
+		if setErr.Code == settings.CodeLocked || setErr.Code == settings.CodeRestricted {
+			status = http.StatusConflict
+		}
+		writeError(w, status, setErr.Code, setErr.Msg)
 	case errors.As(err, &coded):
 		writeCoded(w, coded)
 	case errors.As(err, &te):

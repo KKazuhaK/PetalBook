@@ -64,9 +64,6 @@ type StorageSettings struct {
 		MinFreeBytes   *int64 `json:"minFreeBytes"`
 		AssetsBytes    int64  `json:"assetsBytes"`
 	} `json:"cache"`
-	Assets struct {
-		NewSpaces bool `json:"newSpaces"`
-	} `json:"assets"`
 }
 
 // DefaultStorage is the policy of a server whose administrator has not

@@ -1142,7 +1142,10 @@ From milestone 3.1 (see "Server storage"):
 - `storage.sync.assets` asks for an attachment repository made with it, on the
   same owner, with the same visibility and credential: `true` names it
   `<name>-assets`, `{"name": "tang-notes-assets"}` names it, `false` makes
-  none, and leaving it out follows the administrators' `assets.newSpaces`.
+  none, and leaving it out follows the setting `storage.assets` (separate by
+  default; see "Where attachments go"). A request that goes against a lock or a
+  restriction of that setting answers `409 setting_locked` or
+  `409 setting_restricted`; nothing is made.
 - `remote`, shaped like the body of `PUT …/remote` but with a `token`
   credential only (an SSH key has to be added to the repository first, which
   needs a space to hold it: `400 invalid`), connects the new space to an
@@ -2316,12 +2319,11 @@ In the administrators' web page these settings are the storage part of
  "localSpaces": {"maxBytes": 524288000},
  "cache": {"partial": true, "evictAfterDays": 14, "minIdleHours": 24,
            "clonesBytes": null, "minFreeBytes": 10737418240, "assetsBytes": 5368709120},
- "assets": {"newSpaces": false},
  "git": {"version": "2.53.0", "partialClone": true},
  "affected": {"inGrace": 3, "overdue": 0, "exempt": 1}}
 ```
 
-`PUT` takes any of `remotes`, `hosts`, `localSpaces`, `cache` and `assets`,
+`PUT` takes any of `remotes`, `hosts`, `localSpaces` and `cache`,
 each partly (what it leaves out stays), and answers as `GET`; `git` and
 `affected` are read only. The settings are in the state database and apply to
 the next request, without a restart. `400 invalid` for a value outside its
@@ -2360,9 +2362,9 @@ range.
   exceeded budget.
 - `cache.assetsBytes`: at least 64 MiB, default 5 GiB: the attachment cache,
   shared by all spaces with an attachment repository.
-- `assets.newSpaces`: when `true`, a space made with `storage.sync` gets an
-  attachment repository too unless the request says `"assets": false`. Default
-  `false`.
+- Where a new space's attachments go is not here: it is the layered setting
+  `storage.assets` (see "Where attachments go"), which had been `assets.newSpaces`
+  in this record.
 - `git.version` is the Git the server runs; `git.partialClone` is `false` when
   it is older than 2.44 (it cannot refuse to fetch on its own, see "Partial
   clones"). Then `cache.partial` is `false` and a `PUT` of `true` answers
@@ -2734,7 +2736,7 @@ or moved): the space keeps its attachments in `assets/`. Otherwise
 #### With a new space
 
 `POST /api/spaces` with `storage.sync.assets` (`true`, `false` or
-`{"name": "…"}`; absent follows `assets.newSpaces`, and the name defaults to
+`{"name": "…"}`; absent follows `storage.assets`, and the name defaults to
 `<name>-assets`) makes the attachment repository right after the space's
 repository (step 3 of "Creating a space with a repository"), with the same
 owner, visibility and credential, and checks it in step 4 the same way (an
@@ -6416,7 +6418,10 @@ that has a tenant layer, with the site's part and the tenant's:
                "effective": true}]}
 ```
 
-`PUT` takes `{"value": …, "lower": {…}}`; `value: null` follows the site.
+`PUT` takes `{"value": …, "lower": {…}}`; `value: null` follows the site. A
+site administrator may also give `"siteLock": true` (or `false`): the value is
+then set for this tenant and its own administrators cannot change it (see
+"Where attachments go"); the tenant's part of the answer has `siteLocked`.
 `409 setting_locked` when the site locks the setting (a site administrator is
 refused too: unlock at the site first); `409 setting_restricted` for a value
 outside the site's `options` or above its `max`, or a `lower` looser than the
@@ -8572,7 +8577,8 @@ key protects.
 | `storage.remotes.graceDays` | limit, `lower` | site, tenant | — | 3.1's | `tighten` |
 | `storage.hosts` | list, `subset` | site, tenant | — | 3.1's `hosts.allowed` (or `--remote-host`) | `restrict` to the site's list, always |
 | `storage.localSpaces.maxBytes` | limit, `lower` | site, tenant | — | 3.1's | `tighten` |
-| `storage.assets` | choice `space` < `repository` | site, tenant, space | `sync.assetsRepository` (off: `space` only) | `space` | `allow` (the site may `lock` to force, or leave it a default) |
+| `storage.assets` | choice `space` < `repository` | site, tenant, space (the owner's request when the space is made) | `sync.assetsRepository` (off: `space` only) | `repository` | `allow` (the site may `lock` to force, or leave it a default; and force a value for one tenant, below) |
+| `storage.assets.ownStorageExempt` | boolean | site | — | `true` | `allow` |
 | `storage.partial.unsupported` | choice `allow` < `refuse`: remotes that cannot sync partially | site, tenant | — | `allow` | `allow` |
 | `files.maxBytes` | limit (3.5) | site, tenant | — (at most `storage.maxFileBytes`) | `--max-upload` | `restrict`, `max` = the site value |
 | `offline.copies` | boolean, `false` stricter (4.1, as built: no space or person layer) | site, tenant | `other.offline` | `true` | `allow` (4.1's; the site may `lock` it or `restrict` it to `[false]`) |
@@ -8611,6 +8617,55 @@ Notes:
   When the effective rule requires `repository`, it applies to new spaces and to
   a space when it connects a remote; an existing space keeps its attachments
   where they are and is shown the one-step move. Nothing is moved on its own.
+
+#### Where attachments go (`storage.assets`)
+
+Attachments are separate by default: a new space made with a repository on a
+provider also gets `<name>-assets`. A space with no remote (a `server` space)
+has nowhere to put a second repository and keeps its attachments in the space,
+with no error. The layers apply in the owner's order, strongest first:
+
+1. **The site's lock over everyone** (`PUT /api/admin/settings/storage.assets`
+   with `lower: {"mode": "lock"}`): the site's value is the value, and what
+   tenants and owners set is kept, `inEffect: false`.
+2. **The site's lock for one tenant**: a site administrator sets the tenant's
+   value and locks it with `PUT /api/admin/tenants/{tenant}/settings/storage.assets`
+   `{"value": "repository", "siteLock": true}`. The tenant's administrators get
+   `409 setting_locked` for the value, its rule, and `siteLock` itself;
+   `siteLock: false` (site administrators only) frees the value, which then
+   stays as the tenant's own. A lock needs a value (`400 invalid` otherwise).
+   `siteLock` exists only on the tenant's layer. The tenant's row answers
+   `siteLocked`.
+3. **The site's default** (`value`, with `lower` `allow`).
+4. **The tenant's default** (the tenant's `value`, which overrides the site's
+   when the site allows it).
+5. **The space's owner**, who may ask for either at creation
+   (`storage.sync.assets`) inside what is left: `lower` of the tenant's layer
+   (and the site's) says whether `space`, `repository` or only one of them
+   remains.
+
+A request that says nothing gets the value in effect; a request that asks for
+what the rules leave out is refused as above. A default of `repository` where
+the second repository cannot be had (the existing repository has no
+`<name>-assets` beside it, the name is taken, the credential cannot reach it)
+does not fail the creation: the space keeps its attachments in itself. Only a
+request that asked for one is an error. A repository the default made but could
+not use is remembered as a leftover, as other repositories left empty are.
+
+When the tenant's limits table turns `sync.assetsRepository` off, only `space`
+is possible, whatever the layers say.
+
+`storage.assets.ownStorageExempt` (site only, default `true`): when on, a tenant
+that stores on a target of its own (its own organisation or host connection,
+`storage.modes` `tenant`, 3.6) is not bound by the site's value or lock for
+`storage.assets`, including a lock the site made for that one tenant; it chooses
+freely, and its own layers (its value and its rule for owners) still apply. Off:
+such a tenant is bound like any other. **Status:** the setting is stored, read
+and edited now, and `settings.AssetsRule` honours the exemption, but no tenant
+has a target of its own until 3.6, so nothing is exempt yet; 3.6 passes
+`OwnStorage` when it makes `tenant` spaces (and `RepositoryOff` from the limits
+table). The `GET /api/admin/settings` and tenant settings answers give a choice
+setting's `choices` (loosest first).
 
 ### What stays the site's
 
@@ -9039,7 +9094,8 @@ Option A (owner, 2026-11-23). A space is stored in one of three modes:
   `storage.remotes.scope`, `.graceDays`, the exemptions and
   `storage.localSpaces.maxBytes` keep their meaning and concern `server` spaces.
   A `tenant` space follows a remote and so meets the requirement.
-- **The attachment repository.** With `storage.assets: repository`, a `tenant`
+- **The attachment repository.** With `storage.assets: repository` (the
+  default; see "Where attachments go"), a `tenant`
   space gets a second repository at the same target (`<name>-assets`), made with
   the first; an `own` space as 3.1; a `server` space keeps its attachments in
   the space.

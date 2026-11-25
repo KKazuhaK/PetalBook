@@ -330,7 +330,8 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		body := func(owner, name string, create bool) map[string]any {
-			return map[string]any{"name": "S", "storage": ghSync(map[string]any{"owner": owner, "name": name, "create": create})}
+			// No attachment repository (the default makes one): these are the failures of the space's own.
+			return map[string]any{"name": "S", "storage": ghSync(map[string]any{"owner": owner, "name": name, "create": create, "assets": false})}
 		}
 		dirsBefore := len(listDir(t, a.dir+"/spaces"))
 		a.fake.AddRepo("kazuhahub", "taken", false)
@@ -578,7 +579,7 @@ func TestDismissingALeftoverRepository(t *testing.T) {
 		other := a.addUser("other", pw, "member")
 		a.fake.HiddenGit = 100
 		repoID := func(owner, name string) float64 {
-			r := member.do("POST", "/api/spaces", map[string]any{"name": "Left", "storage": ghSync(map[string]any{"owner": owner, "name": name})}).want(t, 502, "push_failed")
+			r := member.do("POST", "/api/spaces", map[string]any{"name": "Left", "storage": ghSync(map[string]any{"owner": owner, "name": name, "assets": false})}).want(t, 502, "push_failed")
 			return r.body["repo"].(map[string]any)["id"].(float64)
 		}
 		id := repoID("kazuhahub", "left-a")

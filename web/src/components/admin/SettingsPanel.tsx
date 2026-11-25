@@ -17,6 +17,9 @@ import { tt } from '@/i18n/tenants'
 
 const ts = tt.settings
 
+// A switch is 20px tall; on a phone or tablet its touch area is stretched to 40px without moving anything.
+const HIT = "after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] lg:after:hidden"
+
 export function settingError(e: unknown): string {
   if (!(e instanceof ApiError)) return ts.errors.other
   const known = (ts.errors as Record<string, string>)[e.code]
@@ -44,23 +47,51 @@ function ValueEditor({
   value,
   disabled,
   label,
+  choices,
+  words,
   onChange,
 }: {
   kind: string
   value: unknown
   disabled: boolean
   label: string
+  choices?: string[]
+  words?: Record<string, string>
   onChange: (v: unknown) => void
 }) {
   switch (kind) {
+    case 'choice':
+      return (
+        <NativeSelect
+          className="h-10 w-full max-w-sm lg:h-8"
+          aria-label={label}
+          disabled={disabled}
+          value={typeof value === 'string' ? value : ''}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {(choices ?? []).map((c) => (
+            <option key={c} value={c}>
+              {words?.[c] ?? c}
+            </option>
+          ))}
+        </NativeSelect>
+      )
     case 'boolean':
-      return <Switch checked={value === true} disabled={disabled} aria-label={label} onCheckedChange={onChange} />
+      return (
+        <Switch
+          className={HIT}
+          checked={value === true}
+          disabled={disabled}
+          aria-label={label}
+          onCheckedChange={onChange}
+        />
+      )
     case 'limit':
       return (
         <Input
           type="number"
           inputMode="numeric"
-          className="h-8 w-28"
+          className="h-10 w-28 lg:h-8"
           aria-label={label}
           disabled={disabled}
           value={typeof value === 'number' ? String(value) : ''}
@@ -89,7 +120,7 @@ function ValueEditor({
     case 'text':
       return (
         <Input
-          className="h-8 w-full max-w-sm"
+          className="h-10 w-full max-w-sm lg:h-8"
           aria-label={label}
           disabled={disabled}
           value={typeof value === 'string' ? value : ''}
@@ -107,12 +138,16 @@ function RuleEditor({
   lower,
   disabled,
   label,
+  choices,
+  words,
   onChange,
 }: {
   kind: string
   lower: SettingLower
   disabled: boolean
   label: string
+  choices?: string[]
+  words?: Record<string, string>
   onChange: (l: SettingLower) => void
 }) {
   const canRestrict = kind === 'boolean' || kind === 'limit' || kind === 'choice'
@@ -123,14 +158,14 @@ function RuleEditor({
           ? { mode: 'restrict', options: [false] }
           : kind === 'limit'
             ? { mode: 'restrict', max: lower.max ?? 1 }
-            : lower,
+            : { mode: 'restrict', options: lower.options?.length ? lower.options : (choices ?? []).slice(0, 1) },
       )
     else onChange({ mode: mode as SettingLower['mode'] })
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
       <NativeSelect
-        className="h-8 w-28"
+        className="h-10 w-28 lg:h-8"
         aria-label={label}
         disabled={disabled}
         value={lower.mode}
@@ -145,13 +180,37 @@ function RuleEditor({
           <Label className="text-xs text-muted-foreground">{ts.maxLabel}</Label>
           <Input
             type="number"
-            className="h-8 w-24"
+            className="h-10 w-24 lg:h-8"
             aria-label={`${label}: ${ts.maxLabel}`}
             disabled={disabled}
             value={lower.max ?? ''}
             onChange={(e) => onChange({ mode: 'restrict', max: Number(e.target.value) })}
           />
         </>
+      )}
+      {lower.mode === 'restrict' && kind === 'choice' && (
+        <div
+          className="flex flex-wrap items-center gap-x-4 gap-y-1"
+          role="group"
+          aria-label={`${label}: ${ts.optionsLabel}`}
+        >
+          {(choices ?? []).map((c) => (
+            <label key={c} className="flex min-h-10 items-center gap-2 text-xs text-muted-foreground lg:min-h-0">
+              <input
+                type="checkbox"
+                className="size-4"
+                disabled={disabled}
+                checked={(lower.options ?? []).includes(c)}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  const next = (choices ?? []).filter((x) => (x === c ? on : (lower.options ?? []).includes(x)))
+                  if (next.length > 0) onChange({ mode: 'restrict', options: next })
+                }}
+              />
+              {words?.[c] ?? c}
+            </label>
+          ))}
+        </div>
       )}
       {lower.mode === 'restrict' && kind === 'boolean' && (
         <span className="text-xs text-muted-foreground">{ts.onlyOff}</span>
@@ -202,6 +261,8 @@ function SiteRow({ s }: { s: SiteSetting }) {
               value={value}
               disabled={!!s.site.fromFlag || put.isPending}
               label={name}
+              choices={s.choices}
+              words={ts.choices[s.key]}
               onChange={setValue}
             />
           </div>
@@ -213,13 +274,15 @@ function SiteRow({ s }: { s: SiteSetting }) {
             lower={lower}
             disabled={put.isPending}
             label={`${name}: ${ts.rule}`}
+            choices={s.choices}
+            words={ts.choices[s.key]}
             onChange={setLower}
           />
         </div>
         <Button
           type="button"
           size="sm"
-          className="self-end"
+          className="h-10 self-end lg:h-8"
           disabled={put.isPending || (!dirtyValue && !dirtyLower)}
           onClick={save}
         >
@@ -231,22 +294,34 @@ function SiteRow({ s }: { s: SiteSetting }) {
 }
 
 // One setting at a tenant's layer, with what the site above says about it.
-function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
+function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; isSite: boolean }) {
   const put = usePutSetting()
   const mine = s.tenant
   const [follow, setFollow] = useState(mine?.value == null)
   const [value, setValue] = useState<unknown>(mine?.value ?? s.site.value)
   const [lower, setLower] = useState<SettingLower>(mine?.lower ?? { mode: 'allow' })
+  const [siteLock, setSiteLock] = useState(mine?.siteLocked === true)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
   const name = nameOf(s.key)
   const doc = s.kind === 'doc'
-  const locked = s.site.lower.mode === 'lock'
+  // The site's lock over everyone, or its lock for this tenant when the person is the tenant's own administrator.
+  const forcedForTenant = mine?.siteLocked === true
+  const locked = s.site.lower.mode === 'lock' && !(isSite && forcedForTenant)
+  const frozen = forcedForTenant && !isSite
+  const canForce = isSite && !doc
+  const dirtySiteLock = canForce && siteLock !== forcedForTenant
   const dirtyValue = !doc && !same(follow ? null : value, mine?.value ?? null)
   const dirtyLower = !same(lower, mine?.lower ?? { mode: 'allow' })
   const save = () => {
     setMessage(null)
     put.mutate(
-      { tenant, key: s.key, ...(dirtyValue ? { value: follow ? null : value } : {}), ...(dirtyLower ? { lower } : {}) },
+      {
+        tenant,
+        key: s.key,
+        ...(dirtyValue ? { value: follow ? null : value } : {}),
+        ...(dirtyLower ? { lower } : {}),
+        ...(dirtySiteLock ? { siteLock } : {}),
+      },
       {
         onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),
         onError: (e) => setMessage({ tone: 'error', text: settingError(e) }),
@@ -259,6 +334,7 @@ function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium">{name}</span>
         <RuleText lower={s.site.lower} kind={s.kind} />
+        {forcedForTenant && <Badge variant="secondary">{ts.siteLockedByYou}</Badge>}
         {kept && (
           <Badge variant="outline" data-slot="not-in-effect" title={ts.keptHint}>
             {ts.notInEffect}
@@ -275,8 +351,9 @@ function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
             <div className="flex flex-wrap items-center gap-3">
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Switch
+                  className={HIT}
                   checked={follow}
-                  disabled={locked || put.isPending}
+                  disabled={locked || frozen || put.isPending}
                   aria-label={`${name}: ${ts.follow}`}
                   onCheckedChange={setFollow}
                 />
@@ -286,12 +363,29 @@ function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
                 <ValueEditor
                   kind={s.kind}
                   value={value}
-                  disabled={locked || put.isPending}
+                  disabled={locked || frozen || put.isPending}
                   label={name}
+                  choices={s.choices}
+                  words={ts.choices[s.key]}
                   onChange={setValue}
                 />
               )}
             </div>
+          </div>
+        )}
+        {canForce && (
+          <div className="grid gap-1">
+            <span className="text-xs text-muted-foreground">{ts.siteLockHelp}</span>
+            <label className="flex min-h-10 items-center gap-2 text-sm lg:min-h-0">
+              <Switch
+                className={HIT}
+                checked={siteLock}
+                disabled={put.isPending || (follow && !siteLock)}
+                aria-label={`${name}: ${ts.siteLock}`}
+                onCheckedChange={setSiteLock}
+              />
+              {ts.siteLock}
+            </label>
           </div>
         )}
         <div className="grid gap-1">
@@ -299,16 +393,18 @@ function TenantRow({ tenant, s }: { tenant: string; s: TenantSetting }) {
           <RuleEditor
             kind={s.kind}
             lower={lower}
-            disabled={put.isPending}
+            disabled={put.isPending || frozen}
             label={`${name}: ${ts.rule}`}
+            choices={s.choices}
+            words={ts.choices[s.key]}
             onChange={setLower}
           />
         </div>
         <Button
           type="button"
           size="sm"
-          className="self-end"
-          disabled={put.isPending || (!dirtyValue && !dirtyLower)}
+          className="h-10 self-end lg:h-8"
+          disabled={put.isPending || frozen || (!dirtyValue && !dirtyLower && !dirtySiteLock)}
           onClick={save}
         >
           {put.isPending ? ts.saving : ts.save}
@@ -333,7 +429,7 @@ function SiteLayer() {
   )
 }
 
-function TenantLayer({ tenant, name }: { tenant: string; name: string }) {
+function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; isSite: boolean }) {
   const q = useTenantSettings(tenant)
   if (q.isPending) return <PageFallback />
   if (q.isError) return <ErrorState message={ts.loadFailed} onRetry={() => void q.refetch()} />
@@ -341,7 +437,12 @@ function TenantLayer({ tenant, name }: { tenant: string; name: string }) {
     <SettingsSection title={ts.tenantLayer(name)} id="settings-tenant-heading" description={ts.tenantHelp}>
       <ul className="divide-y rounded-lg border">
         {q.data.settings.map((s) => (
-          <TenantRow key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`} tenant={tenant} s={s} />
+          <TenantRow
+            key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`}
+            tenant={tenant}
+            s={s}
+            isSite={isSite}
+          />
         ))}
       </ul>
     </SettingsSection>
@@ -370,7 +471,7 @@ export function SettingsPanel() {
           <Label htmlFor="settings-tenant-pick">{ts.tenantPick}</Label>
           <NativeSelect
             id="settings-tenant-pick"
-            className="h-8 w-56"
+            className="h-10 w-56 max-w-full lg:h-8"
             value={tenantId}
             onChange={(e) => setPicked(e.target.value)}
           >
@@ -382,7 +483,7 @@ export function SettingsPanel() {
           </NativeSelect>
         </div>
       )}
-      {tenantId && <TenantLayer tenant={tenantId} name={tenantName ?? ''} />}
+      {tenantId && <TenantLayer tenant={tenantId} name={tenantName ?? ''} isSite={isSite} />}
     </div>
   )
 }

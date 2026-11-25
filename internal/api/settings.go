@@ -36,6 +36,8 @@ type siteSettingResp struct {
 	Kind   settings.Kind     `json:"kind"`
 	Layers []settings.Layer  `json:"layers"`
 	Site   settings.SiteView `json:"site"`
+	// Choices are the values of a choice setting, loosest first.
+	Choices []string `json:"choices,omitempty"`
 }
 
 type tenantSettingResp struct {
@@ -45,6 +47,8 @@ type tenantSettingResp struct {
 	Site      tenantSiteView       `json:"site"`
 	Tenant    *settings.TenantView `json:"tenant"`
 	Effective any                  `json:"effective"`
+	// Choices are the values of a choice setting, loosest first.
+	Choices []string `json:"choices,omitempty"`
 }
 
 // tenantSiteView is what a tenant is shown of the site's layer: the value and
@@ -63,22 +67,23 @@ func (s *server) adminGetSettings(c *call) {
 	out := []siteSettingResp{}
 	for _, d := range s.settings.Defs() {
 		e := eff[d.Key]
-		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site})
+		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices})
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Settings []siteSettingResp `json:"settings"`
 	}{out})
 }
 
-// readChange reads {"value": …, "lower": {…}}: which of the two were given.
-func (s *server) readChange(c *call) (settings.Change, bool) {
+// readChange reads {"value": …, "lower": {…}} and, for a tenant's layer,
+// "siteLock": which of them were given.
+func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
 	var req map[string]json.RawMessage
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return settings.Change{}, false
 	}
 	var ch settings.Change
 	for k := range req {
-		if k != "value" && k != "lower" {
+		if k != "value" && k != "lower" && !(tenantLayer && k == "siteLock") {
 			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+".")
 			return ch, false
 		}
@@ -97,8 +102,15 @@ func (s *server) readChange(c *call) (settings.Change, bool) {
 			return ch, false
 		}
 	}
-	if !ch.HasValue && !ch.HasLower {
-		writeError(c.w, http.StatusBadRequest, "invalid", "Give value, lower or both.")
+	if raw, ok := req["siteLock"]; ok {
+		ch.HasSiteLock = true
+		if err := json.Unmarshal(raw, &ch.SiteLock); err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "SiteLock is true or false.")
+			return ch, false
+		}
+	}
+	if !ch.HasValue && !ch.HasLower && !ch.HasSiteLock {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give value, lower, siteLock or any of them.")
 		return ch, false
 	}
 	return ch, true
@@ -145,7 +157,7 @@ func (s *server) closedRegistration(ctx context.Context, key string) {
 
 func (s *server) adminPutSetting(c *call) {
 	key := c.r.PathValue("key")
-	ch, ok := s.readChange(c)
+	ch, ok := s.readChange(c, false)
 	if !ok {
 		return
 	}
@@ -181,7 +193,7 @@ func (s *server) adminPutSetting(c *call) {
 	out := struct {
 		siteSettingResp
 		Affected *int `json:"affected,omitempty"`
-	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site}}
+	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices}}
 	if ch.HasLower {
 		out.Affected = &affected
 	}
@@ -199,7 +211,7 @@ func (s *server) tenantSettingsOf(ctx context.Context, tenant string) ([]tenantS
 			continue
 		}
 		e := eff[d.Key]
-		out = append(out, tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, e.Tenant, e.Value})
+		out = append(out, tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, e.Tenant, e.Value, d.Choices})
 	}
 	return out, nil
 }
@@ -225,7 +237,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 		return
 	}
 	key := c.r.PathValue("key")
-	ch, ok := s.readChange(c)
+	ch, ok := s.readChange(c, true)
 	if !ok {
 		return
 	}
@@ -242,6 +254,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 			return
 		}
 	}
+	ch.Site = c.isSiteAdmin()
 	if err := s.settings.SetTenant(ctx, t.ID, key, ch); err != nil {
 		s.failSetting(c, err)
 		return
@@ -256,7 +269,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: t.ID,
 		Detail: map[string]any{"key": key, "layer": "tenant", "from": before.Tenant, "to": after.Tenant}})
 	d, _ := s.settings.Def(key)
-	writeJSON(c.w, http.StatusOK, tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{after.Site.Value, after.Site.Lower}, after.Tenant, after.Value})
+	writeJSON(c.w, http.StatusOK, tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{after.Site.Value, after.Site.Lower}, after.Tenant, after.Value, d.Choices})
 }
 
 // mySettings is GET /api/settings: what each setting that has a space or

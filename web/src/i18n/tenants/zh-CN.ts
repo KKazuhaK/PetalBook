@@ -94,6 +94,12 @@ export const tenantsZhCN = {
     onlyOff: '下面各层只能关掉它',
     atMost: (n: number) => `至多 ${n}`,
     fromFlag: '由命令行参数设定，这里只读',
+    choices: {
+      'storage.assets': { space: '放在空间自己的仓库里', repository: '放在单独的附件仓库里' },
+    } as Record<string, Record<string, string>>,
+    siteLock: '为这个租户强制',
+    siteLockHelp: '把这个值定给这个租户，租户的管理员不能改；它高于全站的默认，低于全站对所有租户的锁定。',
+    siteLockedByYou: '全站为这个租户强制了这个值',
     affected: (n: number) => `${n} 个租户已经设的值因此没有生效`,
     on: '开',
     off: '关',
@@ -126,6 +132,8 @@ export const tenantsZhCN = {
       'quota.pagesPerPerson': '每人的页面数上限',
       'files.maxBytes': '单个文件的大小上限（字节）',
       'recycle.days': '回收站保留的天数',
+      'storage.assets': '附件放在哪里',
+      'storage.assets.ownStorageExempt': '使用自己存储的组织不受此限制',
     } as Record<string, string>,
     helps: {
       'registration.open': '默认关，并且对租户锁定：要开，全站管理员先放开，再在租户上打开。需要已启用的发信。',
@@ -140,6 +148,10 @@ export const tenantsZhCN = {
       'files.maxBytes':
         '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',
       'recycle.days': '删除的空间和人先在回收站保留多少天，之后才真正清除。只有全站管理员能设。',
+      'storage.assets':
+        '新建并同步到平台的空间，附件是放在空间自己的仓库，还是放在单独的附件仓库（<名字>-assets）。默认是单独的仓库。顺序：全站锁定 > 全站为某个租户强制 > 全站默认 > 租户默认 > 空间所有者；没有远端的空间附件始终在空间里。租户的限额表关掉附件仓库时只能放在空间里。',
+      'storage.assets.ownStorageExempt':
+        '开着（默认）：把数据存在自己存储位置上的组织，不受全站对附件位置的默认和锁定约束，自己决定，只受自己这一层的规则管。这个存储位置功能随 3.6 一起到来，在那之前这个开关只是先存着。',
     } as Record<string, string>,
   },
 }

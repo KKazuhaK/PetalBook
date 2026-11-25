@@ -196,6 +196,15 @@ Decided:
     space gets an attachment repository (`<repository name>-assets`) created on
     the same target. `own` follows 3.1. `server` has no remote, and attachments
     stay in the space.
+  - **Wire the attachments rule** (round 2 built it, nothing passes its inputs
+    yet): `settings.AssetsRule(ctx, tenant, AssetsInput{OwnStorage, RepositoryOff})`
+    is called from `internal/api/assetspolicy.go` with both inputs `false`.
+    When this milestone makes `tenant` spaces, pass `OwnStorage: true` for a
+    tenant whose spaces use a target of its own (so the site's
+    `storage.assets.ownStorageExempt` takes effect), and pass `RepositoryOff`
+    from the limits table's `sync.assetsRepository`. The tenant-target code
+    should pass them per tenant, not per request, so the cached lookup stays one
+    map read.
   - **Partial cache and eviction**: a `tenant` space, like an `own` one, is
     subject to the partial clone, on-demand fetch, eviction and pinning of 3.1
     (pinning within the capability `storage.pinnedBytes`). A `server` space is
@@ -565,7 +574,11 @@ Decided:
   the same repository / a separate attachment repository, in three layers: site
   -> tenant -> space owner. The site can force it (`lock`) or only give a default
   (`allow`). When the tenant's limits table turns off `sync.assetsRepository`, only
-  the same repository is possible.
+  the same repository is possible. Since round 2 (2026-11-24) the default is the
+  separate repository, there is a site lock for one tenant, and a site switch
+  `storage.assets.ownStorageExempt` (default on) leaves tenants on their own
+  storage out of the site's value and lock; see phase-3-tenants.md, "Where
+  attachments go".
 - **Remotes that cannot sync partially** (`storage.partial.unsupported`, decided
   by the owner 2026-11-23): the only partial-sync policy, `allow` (the default,
   uses a full clone) or `refuse` (connecting such a remote answers

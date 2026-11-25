@@ -62,9 +62,7 @@ export const storageZhCN: StorageMessages = {
     },
     assets: {
       title: '附件仓库',
-      help: '空间可以把附件放在第二个仓库里，让自己的仓库保持很小。',
-      newSpaces: '给同步到平台的新空间默认带附件仓库',
-      newSpacesHelp: '在平台上建仓库的新空间会同时得到一个叫 <名字>-assets 的仓库，除非请求里说不要。',
+      help: '附件放在第二个叫 <名字>-assets 的仓库里，让空间自己的仓库保持很小。放在哪里（默认或强制）在「按层设置」里的 storage.assets 设。',
     },
     errors: {
       failed: '没能保存设置。',

@@ -106,15 +106,14 @@ describe('the storage page', () => {
     expect(puts()).toHaveLength(1)
   })
 
-  it('sets the attachment cache and the default for new spaces', async () => {
+  it('sets the attachment cache', async () => {
     m = await storagePage()
     await settle(() => byLabel(ts.admin.cache.assetsBytes) !== null, 'the form')
     expect((byLabel(ts.admin.cache.assetsBytes) as HTMLInputElement).value).toBe('5120')
     await type(byLabel(ts.admin.cache.assetsBytes) as HTMLInputElement, '2048')
-    await click(byLabel(ts.admin.assets.newSpaces))
     await click(buttonIn(document, ts.admin.save))
     await settle(() => puts().length === 1, 'the save')
-    expect(puts()[0]).toEqual({ cache: { assetsBytes: 2048 * 1024 ** 2 }, assets: { newSpaces: true } })
+    expect(puts()[0]).toEqual({ cache: { assetsBytes: 2048 * 1024 ** 2 } })
     await type(byLabel(ts.admin.cache.assetsBytes) as HTMLInputElement, '10')
     await click(buttonIn(document, ts.admin.save))
     await settle(() => text().includes(ts.admin.cache.invalid), 'the message')
