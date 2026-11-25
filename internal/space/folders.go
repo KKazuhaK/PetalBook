@@ -235,6 +235,19 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// space.yml as the move leaves it, planned (and put right first where it
+	// has to be, which commits at once) before anything moves.
+	yml, inline, ymlWritten, err := s.planSpaceInline(tx, moveSettings)
+	if err != nil {
+		if !tx.remote {
+			s.dropCreated(tx)
+		}
+		return "", err
+	}
+	var ymlFile txFile
+	if inline {
+		ymlFile = txFile{path: spaceFile, old: revOf(filepath.Join(s.root, filepath.FromSlash(spaceFile))), rev: page.Rev(yml), data: yml}
+	}
 	// The move is journaled as a move ("md"); the files that go with the
 	// folder, the links that follow it and the bindings in space.yml are one
 	// transaction with it, made after the rename. In a local space a crash
@@ -307,16 +320,8 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// transaction. Only a file that has to be put right first (it cannot be
 	// used, or the way to it is not a folder) is edited on its own after.
 	extra := members
-	yml, inline, ymlWritten, err := s.planSpaceInline(tx, moveSettings)
-	if err != nil {
-		if !tx.remote {
-			tx.runUndo()
-			s.dropCreated(tx)
-		}
-		return "", err
-	}
 	if inline {
-		extra = append(extra, txFile{path: spaceFile, old: revOf(filepath.Join(s.root, filepath.FromSlash(spaceFile))), rev: page.Rev(yml), data: yml})
+		extra = append(extra, ymlFile)
 	}
 	pe, err := s.prepareEdits(tx, edits, fmove, extra)
 	if err != nil {

@@ -286,3 +286,76 @@ func TestWhatARepairOfTheWayMovesAsideIsCommittedAfterACrash(t *testing.T) {
 		t.Errorf("the copy is not committed:\n%s", files)
 	}
 }
+
+// A folder move that has to clear the way to space.yml first, stopped by a
+// crash right after that repair was committed: the folder never moved, and
+// Git and the disk agree on it under its old name.
+func TestAFolderMoveStoppedAfterItsRepairLeavesTheFolderWhereItWas(t *testing.T) {
+	t.Parallel()
+	s := settled(t)
+	root := s.Root()
+	os.RemoveAll(filepath.Join(root, ".petalbook"))
+	if err := os.WriteFile(filepath.Join(root, ".petalbook"), []byte("a file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stopAt(s, "way cleared", 1)
+	survive(t, func() { s.MoveFolder(Author{}, "B", "E") })
+	crash(s)
+	s2 := openAt(t, root)
+	if err := s2.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !listed(root, "B") || listed(root, "E") {
+		t.Fatalf("the folder: B %v, E %v", listed(root, "B"), listed(root, "E"))
+	}
+	files := git(t, root, "ls-tree", "-r", "--name-only", "HEAD")
+	if !strings.Contains(files, "B/B.md") || strings.Contains(files, "E/") {
+		t.Errorf("committed:\n%s", files)
+	}
+	if st := git(t, root, "status", "--porcelain", "--", "B", "E"); st != "" {
+		t.Errorf("not committed: %q", st)
+	}
+}
+
+// A change that panics (a bug, not a crash) after it journaled a write it
+// never made gives that write up, so the next start does not make what the
+// client was told failed, and nothing of it stays with the committer.
+func TestAChangeThatPanicsGivesItsWritesUp(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	mustCreate(t, s, "A", meta("title", "P"), "x\n")
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	s.step = func(step string) error {
+		if step == "edits journaled" {
+			panic("a bug")
+		}
+		return nil
+	}
+	func() {
+		defer func() {
+			if r := recover(); r != "a bug" {
+				t.Fatalf("recovered %v", r)
+			}
+		}()
+		s.DeleteFolder(Author{}, "A", true)
+	}()
+	s.step = nil
+	gaveUp := false
+	data, _ := os.ReadFile(journalFile(root))
+	for _, r := range readJournal(data).recs {
+		gaveUp = gaveUp || r.Op == "k"
+	}
+	if !gaveUp {
+		t.Error("the journaled write was not given up")
+	}
+	s.cm.mu.Lock()
+	left := len(s.cm.txs)
+	s.cm.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d transactions left open", left)
+	}
+}

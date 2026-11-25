@@ -916,6 +916,10 @@ func (t *txn) prepareBuild(b *txBuild) (uint64, error) {
 	return tx, nil
 }
 
+// stopHere is what a test's step hook panics with to stop a change where a
+// crash would: no more is written after it.
+type stopHere interface{ stopHere() }
+
 // fileWrite is a file a change is about to write with data, or to remove
 // (del).
 type fileWrite struct {
@@ -1083,8 +1087,17 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		s.cm.SwitchTo(by)
 		defer s.cm.begin()()
 		tx := &txn{s: s, by: by}
-		// Not deferred: a panic is not an end of the change that gives its
-		// writes up (it is what a test's crash is).
+		defer func() {
+			// A panic ends the change as a failure: its writes not made are
+			// given up. Not a test's crash, which stands for the process
+			// gone, where nothing more is written.
+			if r := recover(); r != nil {
+				if _, crash := r.(stopHere); !crash {
+					tx.endWrites()
+				}
+				panic(r)
+			}
+		}()
 		res, err := op(tx)
 		tx.endWrites()
 		return res, err

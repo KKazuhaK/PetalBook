@@ -17,6 +17,8 @@ import (
 // crash would.
 type crashed struct{}
 
+func (crashed) stopHere() {}
+
 // stopAt makes the change running in s stop at the n-th time (from 1) it
 // reaches the step name, as a crash there would.
 func stopAt(s *Space, name string, n int) {
