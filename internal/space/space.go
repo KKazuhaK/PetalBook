@@ -75,6 +75,11 @@ type Options struct {
 
 // Space is safe for concurrent use.
 type Space struct {
+	// step, a test hook (nil otherwise), is told each step of a change that
+	// a crash could come after; a test panics in it to stop the change
+	// there, or returns an error to fail the step.
+	step func(name string) error
+
 	root     string // absolute, symlinks resolved
 	stateDir string
 	name     string

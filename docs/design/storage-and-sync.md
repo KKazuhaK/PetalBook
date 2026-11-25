@@ -366,6 +366,29 @@ pairs per change, with no I/O. The trim after a commit reads the journal once. T
 journal then holds only what came after the last commit, plus open records. Before
 round 2 the trim rewrote it from memory; both write it once and fsync.
 
+**What PR 2 does.** In a local space a save and `writeEdits` (link rewrites, field
+renames) journal one transaction before writing: `x`, then one `p` per file with the
+blob ids before and after and the new content. A save whose write fails writes `k`, so
+it is not replayed; after the writes comes `a`, without an fsync. Recovery replays
+every `p` whose transaction was not given up, by hash, in journal order among the older
+records, so replaying twice is replaying once. The `a` record is not read yet (PR 3).
+`writeEdits` also closes the change's open `l` records in the same append (an `ld` per
+record). Without that, a crash after the rewrite was journaled would leave `l` open, and
+the next start would plan the links again from files that are already rewritten: issue
+1 again. The `l`/`ld` records themselves go in PR 4. `finishLinkRecs` now closes its
+record through the same transaction. A space that follows a remote keeps the `w`
+records until PR 5. Staged `tx-<n>.blob` files go when the trim drops their
+transaction, and at startup when no record names them.
+
+**Cost (PR 2).** A save up to 64 KB still costs one journal fsync, plus the file's own,
+as before. The journal append now carries the content (its size plus about 250 bytes),
+and there is one more unsynced write for `a`. Content over 64 KB costs two fsyncs more
+(the staged file and its folder). A move that rewrites 1,000 files of about 1.5 KB each
+was measured three times each way. On disk it took 0.94 to 1.13 s before and 1.00 to
+1.18 s after, which is noise. On tmpfs, where an fsync costs nothing, it took 423 ms
+before and 489 ms after. The journal for that change grows from 116 KB to 1.7 MB, read
+once by the trim after the commit.
+
 **Notes for the later PRs.**
 
 - Frame numbers are not stable across restarts once the journal has been trimmed empty

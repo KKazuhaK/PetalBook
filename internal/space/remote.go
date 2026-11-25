@@ -791,6 +791,29 @@ func (t *txn) runUndo() {
 // record journals what the change is about to do, as the change of its author.
 func (t *txn) record(recs ...jrec) error { return t.s.cm.Record(t.by, recs...) }
 
+// prepare journals the files the change is about to write as one transaction
+// (committer.Prepare). With links, it closes the change's "l" records with
+// it: the transaction makes their links right, and a crash is finished by
+// replaying it. Only in a local space: one that follows a remote undoes a change from
+// Git, and journals it with "w" records (journaled says which way it went).
+func (t *txn) prepare(files []txFile, links bool) (tx uint64, journaled bool, err error) {
+	if t.remote || t.s.cm == nil || t.s.cm.j == nil {
+		return 0, false, nil
+	}
+	var closing []jrec
+	if links {
+		closing = t.links
+	}
+	tx, err = t.s.cm.Prepare(t.by, files, closing)
+	if err != nil {
+		return 0, false, err
+	}
+	if links {
+		t.links = nil
+	}
+	return tx, true, nil
+}
+
 func (t *txn) touch(paths ...string) {
 	if !t.remote {
 		t.s.cm.Touch(t.by, paths...)
