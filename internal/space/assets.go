@@ -124,9 +124,11 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 		return Asset{}, err
 	}
 	if !same {
-		// Journal the name before taking it; recovery only believes this record
-		// if the file has our content.
-		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(data)}); err != nil {
+		// Journaled before the name is taken, as a file that is new: the
+		// next start makes it only where nothing is, and never commits our
+		// content over another file that held the name.
+		w, err := tx.journalFiles(fileWrite{rel: rel, data: data, create: true})
+		if err != nil {
 			return Asset{}, err
 		}
 		tmp, err := newTempIn(dir, data, 0o644)
@@ -140,6 +142,7 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 			}
 			return Asset{}, err
 		}
+		w.applied()
 		out.Created = true
 	}
 	// Also when the file was there already: one an earlier attempt left behind

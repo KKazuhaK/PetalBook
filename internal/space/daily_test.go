@@ -239,15 +239,11 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 	if d := s.Daily(); *d.All.Folder != "B/sub" {
 		t.Fatalf("%+v", d)
 	}
-	// A crash after the rename, before space.yml was written.
+	// A crash after the move was journaled, before space.yml was written.
 	s.Flush()
+	stopAt(s, "edits journaled", 1)
+	survive(t, func() { s.MoveFolder(Author{}, "B", "C") })
 	crash(s)
-	if err := os.Rename(filepath.Join(root, "B"), filepath.Join(root, "C")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(journalFile(root), framed(`{"op":"b","f":"B","to":"C"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	s2 := openAt(t, root)
 	if d := s2.Daily(); d == nil || *d.All.Folder != "C/sub" {
 		t.Fatalf("after recovery: %+v\n%s", d, spaceYML(root))

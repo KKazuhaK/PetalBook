@@ -1001,7 +1001,7 @@ func TestTypeAndBindingWritesAreJournaled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`.petalbook/types/t.json`, `.petalbook/space.yml`, `"op":"w","p":"` + p.Path} {
+	for _, want := range []string{`"op":"p","p":".petalbook/types/t.json"`, `"op":"p","p":".petalbook/space.yml"`, `"op":"p","p":"` + p.Path + `"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("the journal does not name %s:\n%s", want, b)
 		}

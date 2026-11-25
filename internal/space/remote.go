@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // States of a remote (the state field of the API).
@@ -367,7 +368,6 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 			takeBackFolder(root, from, to)
 		}
 	}
-	settings := false
 	var old []string
 	for i := len(recs) - 1; i >= 0; i-- {
 		r := recs[i]
@@ -381,18 +381,11 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 			// files are journaled one by one ("t").
 			folder(r.From, r.To)
 			folder(r.From, r.Path)
-		case r.Op == "l" || r.Op == "ld" || r.Op == "m":
+		case r.Op == "l" || r.Op == "ld" || r.Op == "m" || r.Op == "t" || r.Op == "d" || r.Op == "w" ||
+			r.Op == "b" || r.Op == "bd" || r.Op == "u" || r.Op == "ud" || r.Op == "f" || r.Op == "fd" || r.Op == "fp":
 			// Records an earlier build wrote: what they name is not known
 			// to be files, and nothing of them is done.
 			old = append(old, r.Op)
-		case r.Op == "b" || r.Op == "u" || r.Op == "bd" || r.Op == "ud" || r.Op == "f" || r.Op == "fd":
-			settings = true
-			for _, p := range r.Pages {
-				add(p)
-			}
-			if r.Op == "f" || r.Op == "fd" {
-				add(r.Path)
-			}
 		case r.Op == "rp" || r.Op == "x" || r.Op == "a" || r.Op == "k" || r.Op == "mdd":
 		default:
 			add(r.Path)
@@ -402,9 +395,6 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 	}
 	if len(old) > 0 {
 		log.Warn("the journal has records an earlier build wrote; they are passed over", "records", old)
-	}
-	if settings {
-		add(spaceFile)
 	}
 	// Only files go to Discard: a name that is a folder on disk (a record
 	// that names one) is not one to put back.
@@ -880,40 +870,19 @@ type txn struct {
 	undo []func() []string
 	// parent is the commit the change started from (a remote space).
 	parent string
-	// bind are the "b" and "u" records of the change whose edit of space.yml
-	// is not yet final (see finishBindings).
-	bind []jrec
 	// assets are uploads that go to the attachment repository before the
 	// change is committed (attachments.go).
 	assets []pendingAsset
 	// txs are the journal transactions of the change: an undo gives them up.
 	txs []uint64
+	// writes are the transactions of journalFiles (see endWrites).
+	writes []*writeTx
+	// journaled are files a transaction of the change already holds: their
+	// writes are not journaled again.
+	journaled map[string]bool
 	// undoFailed is set by a step that could not do its part: what is wrong,
 	// for the administrator.
 	undoFailed string
-}
-
-// settleBindings is for a change that has made, or taken back, its edit of
-// space.yml. In a local space nothing can undo that edit later, so the records
-// are done now. In a space that follows a remote the commit or the push may
-// still fail and undo the edit, so they are done when the change is final
-// (finishBindings).
-func (t *txn) settleBindings() {
-	if !t.remote {
-		t.finishBindings()
-	}
-}
-
-// finishBindings tells the journal that the bindings the change was to move or
-// drop are as they are to stay: a crash from here on must not touch them.
-func (t *txn) finishBindings() {
-	if len(t.bind) > 0 {
-		t.s.typesDirty.Store(true) // folders moved or went: so did their types
-	}
-	for _, r := range t.bind {
-		t.s.cm.Done(r)
-	}
-	t.bind = nil
 }
 
 // runUndo takes back the steps of the change that the file system needs undone
@@ -928,6 +897,131 @@ func (t *txn) runUndo() {
 
 // record journals what the change is about to do, as the change of its author.
 func (t *txn) record(recs ...jrec) error { return t.s.cm.Record(t.by, recs...) }
+
+// prepareBuild journals a transaction put together file by file
+// (committer.PrepareBuild) as one of the change.
+func (t *txn) prepareBuild(b *txBuild) (uint64, error) {
+	tx, err := t.s.cm.PrepareBuild(t.by, b)
+	if err != nil {
+		return 0, err
+	}
+	t.txs = append(t.txs, tx)
+	return tx, nil
+}
+
+// fileWrite is a file a change is about to write with data, or to remove
+// (del).
+type fileWrite struct {
+	rel    string
+	data   []byte
+	del    bool
+	create bool // the file is new: made only where nothing is (Old "")
+}
+
+// writeTx is a transaction journaled by journalFiles: applied once its
+// writes are made.
+type writeTx struct {
+	t    *txn
+	id   uint64
+	done bool
+}
+
+// journalFiles journals, as one transaction of the change, what it is about
+// to do to these files: their content now (read here) and what they get.
+// Call applied on the result once the writes are made; one that never is,
+// because the change failed first, is given up when the change ends
+// (endWrites), so that the next start does not make it.
+func (t *txn) journalFiles(ws ...fileWrite) (*writeTx, error) {
+	files := make([]txFile, len(ws))
+	for i, w := range ws {
+		f := txFile{path: w.rel}
+		if !w.create {
+			f.old = revOf(filepath.Join(t.s.root, filepath.FromSlash(w.rel)))
+		}
+		if !w.del {
+			f.rev, f.data = page.Rev(w.data), w.data
+		}
+		files[i] = f
+	}
+	id, _, err := t.prepare(files)
+	if err != nil {
+		return nil, err
+	}
+	w := &writeTx{t: t, id: id}
+	t.writes = append(t.writes, w)
+	return w, nil
+}
+
+// applied journals the transaction applied: its files are written.
+func (w *writeTx) applied() {
+	if w == nil || w.done {
+		return
+	}
+	w.done = true
+	w.t.s.cm.Applied(w.id)
+}
+
+// endWrites gives up the transactions of journalFiles whose writes were never
+// made (the change failed before them).
+func (t *txn) endWrites() {
+	var left []uint64
+	for _, w := range t.writes {
+		if !w.done && w.id != 0 {
+			w.done = true
+			left = append(left, w.id)
+		}
+	}
+	t.writes = nil
+	if len(left) > 0 {
+		t.s.cm.AbortAll(left)
+	}
+}
+
+// keepIn is the record of healer.keep (and of the writing of a settings
+// file) for a change: the file is journaled with its content and taken into
+// the change; a thing that is no file (data nil) is taken in as it is.
+func (s *Space) keepIn(tx *txn) func(rel string, data []byte) (func(), error) {
+	return func(rel string, data []byte) (func(), error) {
+		tx.touch(rel)
+		if data == nil {
+			return func() {}, nil
+		}
+		w, err := tx.journalFiles(fileWrite{rel: rel, data: data})
+		if err != nil {
+			return nil, err
+		}
+		return w.applied, nil
+	}
+}
+
+// writeFileIn writes data to rel as a transaction of the change: journaled,
+// taken into the change, written.
+func (s *Space) writeFileIn(tx *txn, rel string, data []byte) error {
+	w, err := tx.journalFiles(fileWrite{rel: rel, data: data})
+	if err != nil {
+		return err
+	}
+	tx.touch(rel)
+	if err := writeIn(s.root, rel, data); err != nil {
+		return err
+	}
+	w.applied()
+	return nil
+}
+
+// removeFileIn removes rel as a transaction of the change.
+func (s *Space) removeFileIn(tx *txn, rel string) error {
+	w, err := tx.journalFiles(fileWrite{rel: rel, del: true})
+	if err != nil {
+		return err
+	}
+	tx.touch(rel)
+	if err := removeIn(s.root, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	w.applied()
+	return nil
+}
 
 // prepare journals the files the change is about to write as one transaction
 // (committer.Prepare). journaled is false only for a space with no journal.
@@ -981,7 +1075,9 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 	if r == nil {
 		s.cm.SwitchTo(by)
 		defer s.cm.begin()()
-		return op(&txn{s: s, by: by})
+		tx := &txn{s: s, by: by}
+		defer tx.endWrites()
+		return op(tx)
 	}
 	ctx := s.ctx
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -996,6 +1092,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		tx := &txn{s: s, by: by, remote: true, parent: parent}
 		res, err := op(tx)
+		tx.endWrites()
 		if err == nil {
 			// The attachments go first: a page committed after this never
 			// refers to one that is not on its remote.
@@ -1015,7 +1112,6 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		tx.paths = uniq(tx.paths)
 		if len(tx.paths) == 0 {
-			tx.finishBindings()
 			s.cm.clearJournal()
 			return res, nil
 		}
@@ -1030,14 +1126,12 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		s.heal.committed(tx.paths)
 		if !made { // the change netted out to nothing
-			tx.finishBindings()
 			s.cm.clearJournal()
 			return res, nil
 		}
 		perr := r.repo.Push(ctx, r.branch)
 		if perr == nil {
 			s.stepped("remote pushed")
-			tx.finishBindings()
 			s.pushedLocked(ctx, r)
 			s.packLocked(ctx, r)
 			return res, nil
@@ -1045,7 +1139,6 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		// The answer may have been lost although the push went through.
 		landed, lerr := s.landed(ctx, r)
 		if lerr == nil && landed {
-			tx.finishBindings()
 			s.pushedLocked(ctx, r)
 			s.packLocked(ctx, r)
 			return res, nil
@@ -1268,7 +1361,6 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	if !undone {
 		return
 	}
-	tx.finishBindings()
 	if err := s.cm.clearJournal(); err != nil {
 		s.log.Warn("could not clear the commit journal", "error", err)
 	}

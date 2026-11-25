@@ -426,49 +426,6 @@ func TestATagsFileThatCannotBeUsedIsRestoredToo(t *testing.T) {
 
 // --- recovery after a crash -------------------------------------------------------
 
-// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
-func TestRecoveryRestoresAFileThatCannotBeUsed(t *testing.T) {
-	s := settled(t)
-	root := s.Root()
-	crash(s)
-	// A was moved and A/Sub... D deleted on disk when the server stopped; the
-	// edits of space.yml were not made, and the file cannot be used.
-	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A2")); err != nil {
-		t.Fatal(err)
-	}
-	setSpaceYML(t, root, notYAML)
-	recs := `{"op":"b","f":"A","to":"A2"}` + "\n" + `{"op":"u","p":"D"}` + "\n"
-	if err := os.WriteFile(journalFile(root), framed(recs), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var s2 *Space
-	bounded(t, "opening the space", func() { s2 = openAt(t, root) })
-	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"A2": "wenan"}) {
-		t.Fatalf("after recovery: %v\n%s", m, spaceYML(root))
-	}
-	if got := viewNames(t, s2, folderScope("A2/Sub")); got != "one" {
-		t.Errorf("the views after recovery: %q", got)
-	}
-	kept := copiesOf(root, spaceSettings)
-	if len(kept) != 1 || readDisk(t, s2, kept[0]) != notYAML {
-		t.Fatalf("what the file was: %v", kept)
-	}
-	if n := noticeOf(s2, spaceFile, false); n == nil || n.Copy != kept[0] || n.RestoredFrom == nil {
-		t.Errorf("the notice: %+v", s2.SettingsNotices())
-	}
-	// Both files are committed with what recovery found.
-	if err := s2.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if st := git(t, root, "status", "--porcelain"); strings.Contains(st, "space.yml") {
-		t.Errorf("not committed:\n%s", st)
-	}
-	// And the space works.
-	if _, err := s2.MoveFolder(Author{}, "A2", "A3"); err != nil {
-		t.Error(err)
-	}
-}
-
 // --- a space that follows a remote ------------------------------------------------
 
 func TestAnUnusableFileThatAPullKeepsBringingIsPutRightAndPushed(t *testing.T) {

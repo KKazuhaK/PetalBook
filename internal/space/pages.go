@@ -588,16 +588,12 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 				s.log.Warn("could not rename page file", "from", rel, "stem", stem, "error", err)
 			} else {
 				newRel = path.Join(folderOf(rel), name)
-				// In a local space the new name is only taken: the rename and
-				// the links that follow it are one transaction (relink). Else
-				// the file is renamed already, and the old name is gone:
-				// whatever happens next, it is not committed with the content
-				// the save wrote there.
-				var move *txMove
-				if reserved {
-					move = &txMove{from: rel, to: newRel, data: newData}
-				} else {
-					tx.touch(rel)
+				// The new name is only taken: the rename and the links that
+				// follow it are one transaction (relink). A change of spelling
+				// is made already, and the transaction records it.
+				move := &txMove{from: rel, to: newRel, data: newData, renamed: !reserved}
+				if newRel == rel {
+					move = nil
 				}
 				// The pages that link to this one name the file: they follow it.
 				var rerr error
@@ -724,11 +720,9 @@ func (s *Space) moveLocked(tx *txn, id, folder, baseRev string) (*Page, error) {
 		return nil, err
 	}
 	newRel := path.Join(canon, name)
-	var move *txMove
-	if reserved {
-		// The name is taken; the move is one transaction with its links.
-		move = &txMove{from: rel, to: newRel, data: data}
-	}
+	// The name is taken (or the spelling changed already); the move is one
+	// transaction with its links.
+	move := &txMove{from: rel, to: newRel, data: data, renamed: !reserved}
 	// The pages that link to this one, and the links of this one, follow the file.
 	data, rerr := s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, data, move)
 	if err := s.afterRelink(tx, rerr); err != nil {
@@ -753,8 +747,11 @@ func (s *Space) deleteLocked(tx *txn, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := tx.record(jrec{Op: "d", Path: rel}); err != nil {
-		return err
+	var w *writeTx
+	if !tx.journaled[rel] { // else journaled already, with the folder it is in
+		if w, err = tx.journalFiles(fileWrite{rel: rel, del: true}); err != nil {
+			return err
+		}
 	}
 	// The file is part of the change from the moment it is removed: if the index
 	// refuses, undoing the change puts the file back.
@@ -762,6 +759,7 @@ func (s *Space) deleteLocked(tx *txn, id string) error {
 	if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	w.applied()
 	if err := s.idx.Remove(id); err != nil {
 		return err
 	}
@@ -811,19 +809,17 @@ func (s *Space) CreateFolder(by Author, rel string) (string, error) {
 	}
 	s.cm.SwitchTo(by)
 	defer s.cm.begin()()
+	tx := &txn{s: s, by: by}
+	defer tx.endWrites()
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", err
 	}
-	if err := s.cm.Record(by, jrec{Op: "t", Path: canon + "/.gitkeep"}); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(abs, ".gitkeep"), nil, 0o644); err != nil {
+	if err := s.writeFileIn(tx, canon+"/.gitkeep", nil); err != nil {
 		return "", err
 	}
 	if err := s.idx.AddFolder(canon); err != nil {
 		return "", err
 	}
-	s.cm.Touch(by, canon+"/.gitkeep")
 	return canon, nil
 }
 
@@ -991,12 +987,14 @@ func (s *Space) patchProps(by Author, id, baseRev string, set page.Meta, unset [
 		if err != nil {
 			return nil, err
 		}
-		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
+		w, err := tx.journalFiles(fileWrite{rel: rel, data: newData})
+		if err != nil {
 			return nil, err
 		}
 		if err := writeAtomic(abs, newData); err != nil {
 			return nil, err
 		}
+		w.applied()
 		return s.afterWrite(tx, rel, newData)
 	})
 }

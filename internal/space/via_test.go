@@ -46,7 +46,7 @@ func TestChangedViaTrailerAndSeparateCommits(t *testing.T) {
 
 func TestViaSurvivesTheJournal(t *testing.T) {
 	t.Parallel()
-	r := jrec{Op: "t", Path: "a.md", AuthorName: "A", AuthorEmail: "a@b", Via: ViaToken}
+	r := jrec{Op: "x", Tx: 1, AuthorName: "A", AuthorEmail: "a@b", Via: ViaToken}
 	if got := r.author(); got != (Author{Name: "A", Email: "a@b", Via: ViaToken}) {
 		t.Fatalf("%+v", got)
 	}

@@ -526,6 +526,31 @@ func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[stri
 	return made, left
 }
 
+// IndexBlobs is the blob id each of paths has in the index, by path (a path
+// the index does not have is left out).
+func (r *Repo) IndexBlobs(ctx context.Context, paths []string) (map[string]string, error) {
+	want := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		want[p] = true
+	}
+	ids := map[string]string{}
+	for rest := paths; len(rest) > 0; {
+		n := min(len(rest), maxArgPaths)
+		out, err := r.run(ctx, Cmd{Args: append([]string{"ls-files", "-s", "-z", "--"}, rest[:n]...)})
+		if err != nil {
+			return nil, err
+		}
+		rest = rest[n:]
+		for _, e := range strings.Split(out, "\x00") {
+			head, p, ok := strings.Cut(e, "\t")
+			if f := strings.Fields(head); ok && want[p] && len(f) >= 2 {
+				ids[p] = f[1]
+			}
+		}
+	}
+	return ids, nil
+}
+
 // indexModes is the mode each of paths has in the index, by path ("" for a
 // path the index does not have).
 func (r *Repo) indexModes(ctx context.Context, paths []string) (map[string]string, error) {

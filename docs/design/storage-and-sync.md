@@ -513,6 +513,56 @@ once by the trim after the commit.
 - A commit made outside the journal (the clone ahead of the remote) is still pushed by
   the first sync or set aside, as before.
 
+**What PR 6 does.**
+- **Every write is a transaction.** Pages, settings (`space.yml`, tags, preferences,
+  templates, types), attachments, created folders, deletions, the copies a repair keeps
+  aside, and the files a repair of the way to a folder puts back are all journaled as
+  transactions. A change journals what it is about to write (`txn.journalFiles`, with
+  `writeFileIn`/`removeFileIn` for the common case), then writes, then journals `a`. A
+  transaction that a failed change never got to is given up (`k`) when the change ends.
+  A removal is a `p` record with no new content; replay removes the file if it is still
+  at the old content.
+- **Folder moves** are one transaction:
+  - the folder (`Dir`);
+  - an entry for each file that moves with it (`Ref`: its content is not in the
+    journal, and its blob id comes from the content a change recorded for it, else
+    Git's index, else the file itself);
+  - the rewritten links;
+  - `space.yml` with the bindings moved, written first so that a failure takes the move
+    back.
+- **Folder deletes** journal one transaction up front with the pages, the placeholders
+  and `space.yml` without the bindings of what goes.
+- **Field renames** are one transaction with the type file, every page and the views.
+  It is put together page by page (`txBuild`): content past the inline bounds goes to
+  the staged file through a buffered writer as it comes, the append is written a
+  megabyte at a time, and the pages are written back reading the staged file through
+  one handle.
+- **Only `space.yml` that has to be repaired first** (unusable, or the way to it not a
+  folder) is still edited on its own right after, as its own transaction.
+- **A rename through a third name (`r`)** is finished forwards only when the move's
+  transaction is there, and otherwise taken back, with the `mr`/`md` take-backs run
+  after it.
+- **Removed:** `t`, `d`, `w`, `b`/`bd`, `u`/`ud` and `f`/`fd`/`fp`, with
+  `recoverBindings`, `recoverFieldRename`, the committer's open records (`Done`) and
+  `txn.bind`. The journal now holds only `x`, `p`, `a`, `k`, `mr`, `md`, `mdd`, `rp` and
+  `r`.
+- **What still falls back to the work tree:** the committer stages a path from the work
+  tree only where no blob can be recorded. That means a thing moved aside that is no
+  file, a file stuck under a third name after a failed rename, and repositories with
+  SHA-256 object names.
+- **Cost.** A field rename over 50,000 pages of about 400 bytes each, on a seeded space
+  on disk, was measured before and after:
+
+  | | Before | After |
+  |---|---|---|
+  | Rename | 22.9 s | 22.5 s |
+  | Commit | 46.7 s | 44.7 s |
+  | Journal | 14.8 MB | 10.5 MB |
+  | Sampled peak heap in use (includes garbage not yet collected) | 233 MB | 274 MB |
+
+  The page contents are no longer held in memory; what remains are the records (path
+  and blob ids, about 400 bytes a page) and the index's own work.
+
 **Known issues (PR 3).**
 - `contentAt` read and scanned the whole journal once per path whose file was changed
   outside PetalBook. Fixed in PR 4: the journal keeps where each frame is, and reads

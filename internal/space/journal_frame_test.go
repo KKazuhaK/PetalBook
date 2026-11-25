@@ -116,21 +116,14 @@ func TestTheTrimKeepsWhatCameAfterTheCommitAndWhatIsOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pages []string
-	for i := range 3000 {
-		pages = append(pages, fmt.Sprintf("Work/%s-%04d.md", strings.Repeat("p", 40), i))
-	}
 	recs := []jrec{
 		{Op: "t", Path: "a.md"},
 		{Op: "b", From: "A", To: "B"},
-		{Op: "f", Path: ".petalbook/types/task.json", From: "status", To: "state", Rev: "r", Pages: pages},
+		{Op: "f", Path: ".petalbook/types/task.json", From: "status", To: "state", Rev: "r"},
 		{Op: "t", Path: "c.md"},
 	}
 	if err := j.append(recs); err != nil {
 		t.Fatal(err)
-	}
-	if recs[2].first != 3 || recs[2].seq <= recs[2].first {
-		t.Fatalf("the rename's frames: %d to %d", recs[2].first, recs[2].seq)
 	}
 	upTo := j.lastSeq()
 	if err := j.append([]jrec{{Op: "w", Path: "later.md", Rev: "x"}}); err != nil {
@@ -143,10 +136,6 @@ func TestTheTrimKeepsWhatCameAfterTheCommitAndWhatIsOpen(t *testing.T) {
 	want := fmt.Sprintf("2 b A>B, %d f status>state, %d w later.md, %d t failed.md", recs[2].seq, last, last+1)
 	if got := strings.Join(journalOps(t, path), ", "); got != want {
 		t.Errorf("after the trim:\n%s\nwant\n%s", got, want)
-	}
-	data, _ := os.ReadFile(path)
-	if rd := readJournal(data); len(rd.recs[1].Pages) != len(pages) {
-		t.Errorf("the open rename kept %d pages of %d", len(rd.recs[1].Pages), len(pages))
 	}
 	// Numbers go on from there, also after the journal is opened again.
 	if err := j.append([]jrec{{Op: "t", Path: "next.md"}}); err != nil {

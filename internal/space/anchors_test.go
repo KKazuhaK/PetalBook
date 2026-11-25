@@ -828,41 +828,6 @@ func TestTagWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 
 // --- recovery ------------------------------------------------------------------
 
-// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
-func TestRecoveryCostsNoMoreThanTheFileIsLarge(t *testing.T) {
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	mustCreate(t, s, "A", meta("title", "x"), "x\n")
-	mustCreate(t, s, "G", meta("title", "y"), "y\n")
-	mustCreate(t, s, "Keep", meta("title", "z"), "z\n")
-	s.Flush()
-	crash(s)
-	// A delete and a move were made on disk; space.yml was not edited, and it
-	// is a file that used to take all memory to edit.
-	recs := `{"op":"u","p":"G"}` + "\n" + `{"op":"b","f":"A","to":"A2"}` + "\n"
-	for _, src := range []string{
-		"folders:\n  G:\n    type: wenan\n" + aliasBomb("    ", "views", 7) + "  A:\n    type: wenan\n    big: *l7\n  Keep: {type: wenan}\n",
-		aliasBomb("", "defs", 3) + "folders:\n  G: {type: &t wenan, big: *l3}\n  A: {type: *t, big: *l3}\n  Keep: {type: *t}\n",
-	} {
-		os.RemoveAll(filepath.Join(root, "G"))
-		os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A2"))
-		setSpaceYML(t, root, src)
-		if err := os.WriteFile(journalFile(root), framed(recs), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		var s2 *Space
-		bounded(t, "recovery", func() { s2 = openAt(t, root) })
-		if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"A2": "wenan", "Keep": "wenan"}) {
-			t.Errorf("after recovery: %v\n%.400s", m, spaceYML(root))
-		}
-		// Back to where it was, for the next file.
-		crash(s2)
-		os.Rename(filepath.Join(root, "A2"), filepath.Join(root, "A"))
-		os.MkdirAll(filepath.Join(root, "G"), 0o755)
-	}
-}
-
 // --- a delete that cannot take its settings out ------------------------------
 
 func TestADeleteWhoseSettingsCannotBeRemovedIsRefusedBeforeAnythingIsDeleted(t *testing.T) {

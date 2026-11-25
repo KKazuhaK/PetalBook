@@ -212,7 +212,7 @@ func TestAChangeWhoseCommitIsOnTheRemotePutsItsFilesBackToIt(t *testing.T) {
 	head := git(t, f.root, "rev-parse", "HEAD")
 	kept := readDisk(t, f.s, p.Path)
 	f.s.Close()
-	journal := `{"op":"rp","rev":"` + before + `"}` + "\n" + `{"op":"t","p":"` + p.Path + `"}` + "\n"
+	journal := `{"op":"rp","rev":"` + before + `"}` + "\n" + `{"op":"x","tx":2,"pn":1}` + "\n" + `{"op":"p","tx":2,"p":"` + p.Path + `"}` + "\n"
 	if err := os.WriteFile(journalFile(f.root), framed(journal), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -359,10 +359,11 @@ func TestStaleRowIsRepairedImmediately(t *testing.T) {
 }
 
 // A rename through a third name (Space.rename) that a crash stopped between
-// its two steps: the next start finishes it, and the page or folder is
-// committed under its new name, never as deleted. Where the new name has been
-// taken meanwhile, what is under the third name is committed there.
-func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
+// its two steps, before the transaction of the move: the next start takes it
+// back, and the page or folder is under its old name, as committed, never
+// lost and never left under the third name. A file that took the new name
+// meanwhile is left alone.
+func TestRespellingStoppedByACrashIsTakenBack(t *testing.T) {
 	t.Parallel()
 	needGit(t)
 	type step struct{ from, mid, to string }
@@ -373,9 +374,9 @@ func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
 		want     []string
 		wantGone []string
 	}{
-		{name: "page", want: []string{"apple.md"}, wantGone: []string{"Apple.md", "apple (renaming 1).md"}},
-		{name: "page whose new name was taken", take: true, want: []string{"apple (renaming 1).md", "apple.md"}, wantGone: []string{"Apple.md"}},
-		{name: "folder", folder: "notes", want: []string{"Notes/Apple.md"}, wantGone: []string{"notes/Apple.md", "Notes (renaming 1)/Apple.md"}},
+		{name: "page", want: []string{"Apple.md"}, wantGone: []string{"apple.md", "apple (renaming 1).md"}},
+		{name: "page whose new name was taken", take: true, want: []string{"Apple.md"}, wantGone: []string{"apple (renaming 1).md", "apple.md"}},
+		{name: "folder", folder: "notes", want: []string{"notes/Apple.md"}, wantGone: []string{"Notes/Apple.md", "Notes (renaming 1)/Apple.md"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -432,23 +433,6 @@ func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// A folder's names are not paths to commit: its files are journaled one by
-// one. Committing the folder itself would be a path Git cannot stage, and a
-// space that follows a remote refuses changes after that.
-func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	os.MkdirAll(filepath.Join(root, "Notes"), 0o755)
-	got := recoverPending(root, []jrec{
-		{Op: "t", Path: "notes/a.md"}, {Op: "t", Path: "Notes/a.md"},
-		{Op: "r", From: "notes", To: "Notes", Path: "Notes (renaming 1)", Dir: true},
-		{Op: "t", Path: "Notes (renaming 1)/a.md"},
-	})
-	if strings.Join(pathsOf(got), ",") != "Notes (renaming 1)/a.md,Notes/a.md,notes/a.md" {
-		t.Fatalf("%v", got)
 	}
 }
 
@@ -567,8 +551,9 @@ func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
 			if err := s2.Flush(); err != nil {
 				t.Fatal(err)
 			}
+			// No transaction of the move was journaled: it is taken back.
 			files, _ := gitTry(root, "ls-files", "--", "*.md")
-			if files != "apple.md" {
+			if files != "Apple.md" || !listed(root, "Apple.md") {
 				t.Fatalf("committed: %q", files)
 			}
 			if _, err := s2.Get(p.ID); err != nil {
@@ -594,7 +579,7 @@ func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
 			t.Fatal(err)
 		}
 		files, _ := gitTry(root, "ls-files", "--", "*.md")
-		if files != "Notes/Apple.md" {
+		if files != "notes/Apple.md" || !listed(root, "notes") {
 			t.Fatalf("committed: %q", files)
 		}
 		if _, err := s2.Get(p.ID); err != nil {

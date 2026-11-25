@@ -3,7 +3,6 @@ package space
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -231,43 +230,5 @@ func TestMovingAFolderWhoseAnchorAnotherFolderUsesKeepsBothViews(t *testing.T) {
 	}
 	if bl, err := s.Views(folderScope("B")); err != nil || len(bl.Views) != 1 || len(bl.Views[0].Filter) != 1 {
 		t.Fatalf("B lost its filter: %v %+v", err, bl)
-	}
-}
-
-func TestRecoveryOfAMoveWhoseSettingsDoNotFitMovesTheFolderBack(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
-		t.Fatal(err)
-	}
-	mustCreate(t, s, "A", meta("title", "x"), "x\n")
-	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
-		t.Fatal(err)
-	}
-	s.Flush()
-	crash(s)
-	// Pad space.yml to a few bytes below the limit: the longer key does not fit.
-	file := filepath.Join(root, ".petalbook", "space.yml")
-	b, _ := os.ReadFile(file)
-	pad := maxSpaceFile - len(b) - 4
-	if err := os.WriteFile(file, append([]byte("# "+strings.Repeat("x", pad-3)+"\n"), b...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The rename was made; the edit of space.yml never was.
-	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A-much-longer-name")); err != nil {
-		t.Fatal(err)
-	}
-	rec := `{"op":"b","f":"A","to":"A-much-longer-name"}` + "\n"
-	if err := os.WriteFile(journalFile(root), framed(rec), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s2 := openAt(t, root)
-	if _, err := os.Stat(filepath.Join(root, "A")); err != nil {
-		t.Errorf("the folder was left at the name its settings are not under: %v", err)
-	}
-	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"A": "t"}) {
-		t.Errorf("bindings: %v", m)
 	}
 }

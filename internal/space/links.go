@@ -340,7 +340,7 @@ func (s *Space) planLinks(mv []movedPage, moves []stepMove) ([]fileEdit, error) 
 // files (rebase.go). The index is not touched; the caller refreshes it for the
 // paths returned.
 func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
-	pe, err := s.prepareEdits(tx, edits, nil)
+	pe, err := s.prepareEdits(tx, edits, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -353,6 +353,7 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 type txMove struct {
 	from, to string
 	dir      bool
+	renamed  bool   // a page renamed already (a change of spelling): nothing to remove
 	data     []byte // a page's content
 	dev, ino uint64 // a folder's identity (fileID), 0 when not known
 }
@@ -366,15 +367,17 @@ type preparedEdits struct {
 	edits     []fileEdit
 	paths     []string
 	mv        *txMove
+	extra     []txFile        // more files of the transaction, written after the edits (see prepareEdits)
+	skip      map[string]bool // files of extra the caller writes itself
 	done      bool
 }
 
-// prepareEdits journals edits, and the move mv when there is one, as one
-// transaction (a space that follows a remote journals "w" records), and
-// writes nothing.
-func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEdits, error) {
-	pe := &preparedEdits{s: s, tx: tx, mv: mv}
-	if len(edits) == 0 && mv == nil {
+// prepareEdits journals edits, the move mv when there is one, and the files
+// of extra as one transaction, and writes nothing. extra are files written
+// after the edits (with data), or files that move with a folder (ref).
+func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove, extra []txFile) (*preparedEdits, error) {
+	pe := &preparedEdits{s: s, tx: tx, mv: mv, extra: extra}
+	if len(edits) == 0 && mv == nil && len(extra) == 0 {
 		pe.done = true
 		return pe, nil
 	}
@@ -397,6 +400,18 @@ func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEd
 		files = append(files, txFile{path: e.rel, old: e.old, rev: page.Rev(e.data), data: e.data})
 		pe.edits = append(pe.edits, e)
 	}
+	// Files that move with a folder go first: a later entry of the same
+	// path (its links rewritten) is what it ends up as.
+	var refs, after []txFile
+	for _, f := range extra {
+		if f.ref {
+			refs = append(refs, f)
+		} else {
+			after = append(after, f)
+		}
+	}
+	files = append(files[:min(len(files), moveEntries(mv))], append(refs, files[min(len(files), moveEntries(mv)):]...)...)
+	files = append(files, after...)
 	// One transaction with every file's content: a crash part way is
 	// finished by writing what is left of it (a local space) or taken back
 	// (one that follows a remote), never planned again from files that may
@@ -420,11 +435,26 @@ func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEd
 		// them, whatever got done of the move.
 		tx.touch(mv.from, mv.to)
 	}
+	if tx.remote {
+		for _, f := range extra {
+			if !f.ref && !f.dir {
+				tx.touch(f.path)
+			}
+		}
+	}
 	if err := s.stepped("edits journaled"); err != nil {
 		pe.stop()
 		return pe, err
 	}
 	return pe, nil
+}
+
+// moveEntries is how many entries of a transaction the move mv takes first.
+func moveEntries(mv *txMove) int {
+	if mv == nil {
+		return 0
+	}
+	return 1
 }
 
 // abort gives the transaction up before anything of it was written.
@@ -482,7 +512,24 @@ func (pe *preparedEdits) apply() ([]string, error) {
 			return paths, err
 		}
 	}
-	if mv := pe.mv; mv != nil && !mv.dir {
+	for _, f := range pe.extra {
+		if f.ref || f.dir || pe.skip[f.path] {
+			continue
+		}
+		var err error
+		if f.rev == "" {
+			err = removeIn(s.root, f.path)
+			if errors.Is(err, fs.ErrNotExist) {
+				err = nil
+			}
+		} else {
+			err = writeIn(s.root, f.path, f.data)
+		}
+		if err != nil {
+			return paths, err
+		}
+	}
+	if mv := pe.mv; mv != nil && !mv.dir && !mv.renamed {
 		from, err := s.abs(mv.from)
 		if err != nil {
 			return paths, err
@@ -561,7 +608,7 @@ func (s *Space) relink(tx *txn, mv []movedPage, moves []stepMove, own string, da
 			data = e.data
 		}
 	}
-	pe, err := s.prepareEdits(tx, edits, move)
+	pe, err := s.prepareEdits(tx, edits, move, nil)
 	if err != nil {
 		if move == nil {
 			return data, err

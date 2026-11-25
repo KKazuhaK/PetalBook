@@ -506,19 +506,32 @@ func sameFile(root, a, b string) bool {
 // A regular file gets a second name, so the file is whole under one of them
 // whenever this stops; whoever writes f next replaces the first. What is not
 // a regular file (a link, a folder) is moved away under the new name.
-func (h *healer) keep(f settingsFile, record func(rel string) error) (string, error) {
+//
+// record journals the copy before it is made, with its content (nil for a
+// thing that is no file), and returns what to call once it is made.
+func (h *healer) keep(f settingsFile, record func(rel string, data []byte) (func(), error)) (string, error) {
 	if b, err := wayBlocked(h.root, f.rel); err != nil || b != "" {
 		// clearWay is for that; nothing is moved through it.
 		return "", errors.Join(err, fmt.Errorf("%s is not a folder", b))
 	}
-	for _, c := range copiesOf(h.root, f) {
-		if sameFile(h.root, f.rel, c) {
-			return c, record(c)
-		}
-	}
 	fi, _, err := lstatIn(h.root, f.rel)
 	if err != nil {
 		return "", err
+	}
+	var data []byte
+	if fi.Mode().IsRegular() {
+		if data, err = os.ReadFile(filepath.Join(h.root, filepath.FromSlash(f.rel))); err != nil {
+			return "", err
+		}
+	}
+	for _, c := range copiesOf(h.root, f) {
+		if sameFile(h.root, f.rel, c) {
+			after, err := record(c, data)
+			if err == nil {
+				after()
+			}
+			return c, err
+		}
 	}
 	name := f.rel + unreadableMark + time.Now().UTC().Format("20060102T150405Z")
 	rel := name
@@ -528,13 +541,19 @@ func (h *healer) keep(f settingsFile, record func(rel string) error) (string, er
 		}
 		rel = fmt.Sprintf("%s-%d", name, n)
 	}
-	if err := record(rel); err != nil {
+	after, err := record(rel, data)
+	if err != nil {
 		return "", err
 	}
 	if !fi.Mode().IsRegular() {
-		return rel, renameIn(h.root, f.rel, rel)
+		err = renameIn(h.root, f.rel, rel)
+	} else {
+		err = linkIn(h.root, f.rel, rel)
 	}
-	return rel, linkIn(h.root, f.rel, rel)
+	if err == nil {
+		after()
+	}
+	return rel, err
 }
 
 // noticesFile is where the repairs made are written down, in the state
