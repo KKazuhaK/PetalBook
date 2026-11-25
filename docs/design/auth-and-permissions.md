@@ -1,76 +1,113 @@
 # Sign-in and permissions
 
-## 6. 登录与权限
+## 6. Sign-in and permissions
 
-### 6.1 登录方式
+### 6.1 Sign-in methods
 
-| 方式 | 说明 | 期 |
+| Method | Notes | Phase |
 |---|---|---|
-| 本地账号 | 密码，首次启动创建管理员，邀请链接加人，默认不开放注册 | 1 |
-| OIDC | authcore `oidc`，沿用 Rackbook 的配置形状 | 1 |
-| passkey | authcore `passkey`，本地账号和外部账号都能绑定 | 2 |
+| Local account | Password. The first start creates an administrator, people are added by invitation link, and registration is closed by default | 1 |
+| OIDC | authcore `oidc`, keeping Rackbook's configuration shape | 1 |
+| passkey | authcore `passkey`, can be bound to both local and external accounts | 2 |
 | SAML | authcore `saml` | 2 |
 
-管理员可以配置启用哪些方式。一个账号可以同时有几种（邮箱加密码、Google、GitHub、
-微软……），随时绑定和解绑；全站管理员除了预设模板，还可以加任意的 OIDC／OAuth 2.0
-提供方（所有者 2026-11-23 定，在 3.6 做，见「3.6 的约定」）。
+The administrator can configure which methods are enabled. One account can have
+several at once (email plus password, Google, GitHub, Microsoft, ...), and bind
+and unbind them at any time. Besides the preset templates, the site
+administrator can also add any OIDC / OAuth 2.0 provider (decided by the owner
+on 2026-11-23, done in 3.6, see the 3.6 contract in
+[phase-3-autonomy-and-providers.md](milestones/phase-3-autonomy-and-providers.md)).
 
-### 6.2 角色
+### 6.2 Roles
 
-- **实例级**：管理员、成员。
-- **空间级**：所有者、可编辑、只读。
-- **私人空间**：每个用户自动创建一个，只有本人是成员。
-- **管理员能看全部**（所有者 2026-11-22 的决定，取代原先「管理员在界面和
-  API 里看不到别人的私人空间」）：管理员可以查看和管理服务器上所有空间和其中
-  的内容。原因是它本来就挡不住能访问服务器磁盘的人，做成看不见只是假象。
-  真正对管理员保密要靠下面的加密空间。在 1.7 实现之前，接口仍是旧行为。
-- **预留：加密空间**。内容在浏览器里加解密，服务器和仓库里只有密文，管理员
-  物理上看不到。代价要写明：服务端搜索、历史对比、服务端渲染、找回密码都
-  做不了或要另想办法。现在不做，只守住两条：权限检查不假定服务器读得到
-  正文；页面的读写接口将来可以换一种「正文是密文」的形态。
-- **预留：自定义角色**。内置的所有者、可编辑、只读之外，以后可以自己定义
-  角色，由一组权限组成（看、编辑、删除、管理成员、管理同步和导入等）。所以
-  权限检查从一开始就按「这个人对这个空间有没有某项权限」来写，角色只是
-  权限的集合，不在代码里到处比较角色名。
-- **共享空间**：成员可以是用户或组。
-- **组**：来自 OIDC/SAML 的组声明（做映射），或在应用里手动建。
+- **Instance level**: administrator, member.
+- **Space level**: owner, editor, read-only.
+- **Private space**: one is created automatically for each user, and only that
+  user is a member.
+- **The administrator can see everything** (the owner's decision of
+  2026-11-22, replacing the earlier "the administrator cannot see other
+  people's private spaces in the UI and API"): the administrator can view and
+  manage all spaces on the server and the content in them. The reason is that
+  this could never keep out someone with access to the server's disk, so making
+  it invisible was only an illusion. Real secrecy from the administrator relies
+  on the encrypted space below. Until 1.7 is implemented, the API still has the
+  old behavior.
+- **Reserved: encrypted space.** Content is encrypted and decrypted in the
+  browser. The server and the repository hold only ciphertext, so the
+  administrator physically cannot see it. The costs must be stated: server-side
+  search, history comparison, server-side rendering and password recovery
+  cannot be done, or need another approach. Not done now, but two things are
+  held to: permission checks do not assume the server can read the body, and
+  the page read and write API can later be swapped for a form where "the body
+  is ciphertext".
+- **Reserved: custom roles.** Besides the built-in owner, editor and read-only,
+  roles can later be defined by the admin, each made of a set of permissions
+  (view, edit, delete, manage members, manage sync and import, and so on). So
+  permission checks are written from the start as "does this person have
+  permission X on this space". A role is only a set of permissions, and role
+  names are not compared all over the code.
+- **Shared space**: members can be users or groups.
+- **Groups**: from the group claims of OIDC/SAML (with a mapping), or created
+  manually in the app.
 
-### 6.3 机器访问
+### 6.3 Machine access
 
-- API token：限定到空间，分只读和读写。
-- MCP 在 `/mcp`，沿用 Rackbook 的实现，两种接入方式都支持：
-  1. **直接连接**：本服务自带 OAuth 授权服务，任何支持 MCP 的客户端填地址
-     就能连；也可以用 API token。
-  2. **经 MCPHub**：接受 MCPHub 签发的令牌，每个人用自己的身份调用。
-     MCPHub 的用户在本应用里作为一种外部身份绑定到账号上。
-- MCP 的权限和网页完全一致：只能看到自己有权访问的空间，只读成员不能写。
-- 工具：列出空间和文件夹、搜索、读取页面、新建、修改、移动、打标签、
-  查看历史。搜索和列表走同一个索引。写入同样走草稿与提交规则，提交的
-  作者是令牌对应的人，并在提交信息里注明来自 MCP。
+- API token: limited to a space, either read-only or read-write.
+- MCP is at `/mcp`, reusing Rackbook's implementation, and both ways of
+  connecting are supported:
+  1. **Direct connection**: this service has its own OAuth authorization
+     service, and any MCP-capable client can connect by entering the address.
+     An API token can also be used.
+  2. **Through MCPHub**: tokens issued by MCPHub are accepted, and each person
+     calls with their own identity. An MCPHub user is bound to an account in
+     this app as one kind of external identity.
+- MCP permissions are exactly the same as the web app's: it can only see
+  spaces the user has access to, and read-only members cannot write.
+- Tools: list spaces and folders, search, read a page, create, modify, move,
+  tag, view history. Search and listing use the same index. Writes also follow
+  the draft and commit rules. The commit author is the person the token
+  belongs to, and the commit message notes that it came from MCP.
 
-## 16. 预留：自定义角色和权限
+## 16. Reserved: custom roles and permissions
 
-目前不做（所有者 2026-11-23 要求预留）。将来管理员可以**自己建角色**（「身份」），给它勾选
-一组权限，比如「读某类内容」「查看用量和审计」「修改发信设置」「删人」，再把角色分给人或组。
-内置的角色（全站管理员、租户管理员、空间的所有者／编辑／只读）到时只是几条预设的角色。
+Not done for now (the owner asked on 2026-11-23 to reserve it). In the future
+the admin can **create roles themselves** ("identities"), tick a set of
+permissions for each, such as "read some kind of content", "view usage and
+audit", "change mail settings", "delete people", and then assign the role to
+people or groups. The built-in roles (site administrator, tenant administrator,
+and a space's owner / editor / read-only) would then be just a few preset
+roles.
 
-同时重申一条已定的规则：**全站管理员能管理、操作所有租户里的所有设置**（3.6 的租户详情页、
-`setBy`、`siteLock`）；内容照 3.5：查看和导出要走记审计的「查看」，个人空间对租户管理员
-永远不可见。
+Also restating a rule that is already decided: **the site administrator can
+manage and operate all settings in all tenants** (the tenant detail page of
+3.6, `setBy`, `siteLock`). For content, as in 3.5: viewing and exporting must go
+through a "view" that is recorded in the audit log, and personal spaces are
+never visible to the tenant administrator.
 
-为此现在就要守住的约定：
+The conventions to hold to now, for this purpose:
 
-- **检查按权限，不按角色名**：代码里问的是「这个人在这个范围有没有权限 X」，不是「他是不是
-  管理员」。空间这一层已经是这样（`perm.Set.Has`）；管理这一层从 3.6 第 1 部分起，每个
-  管理接口在路由表里登记它要的权限键（和 3.6 的管理项清单、能力用同一套键名，如
-  `tenant.settings.write`、`users.delete`、`data.view`、`audit.read`），检查走一个函数；
-  内置的全站管理员、租户管理员就是「这个范围内的全部键」。
-- **权限键是登记表**：新功能加接口时同时登记它的键、范围（全站／租户／空间）和说明，
-  测试检查每个管理路由都登记了；以后的自定义角色只从登记表里挑，界面也按它生成。
-- **角色和授予分开存**：现在的 `role` 字符串（空间成员）、管理员标记不改；到时加
-  `roles`（id、范围、名字、权限键的集合）和「把角色授给人或组、在哪个范围」的表，内置
-  角色作为不能删的几行。空间这一层的 `perm.Set` 现在是 4 位，到时放宽位数或改成键的集合。
-- **护栏**：自定义角色不能授出授予者自己没有的权限；租户里建的角色碰不到全站的键；
-  会把自己锁在外面的改动（去掉最后一个能管角色的人）拒绝；每次改角色、授予都记审计。
-- 隔离表（3.3）和 3.6 的「能力」照旧在前面：先问租户有没有这项能力，再问这个人有没有
-  这个权限。
+- **Check by permission, not by role name.** The code asks "does this person
+  have permission X in this scope", not "is he an administrator". The space
+  level is already like this (`perm.Set.Has`). At the admin level, from part 1
+  of 3.6, every admin endpoint registers the permission key it needs in the
+  route table (the same key names as the admin item list and the capabilities
+  of 3.6, such as `tenant.settings.write`, `users.delete`, `data.view`,
+  `audit.read`), and the check goes through one function. The built-in site
+  administrator and tenant administrator are "all keys in that scope".
+- **Permission keys are a registry.** When a new feature adds an endpoint, it
+  registers its key, scope (site / tenant / space) and description at the same
+  time, and a test checks that every admin route is registered. Future custom
+  roles only pick from the registry, and the UI is generated from it too.
+- **Roles and grants are stored separately.** The current `role` string (space
+  members) and the administrator flag do not change. Later, add `roles` (id,
+  scope, name, set of permission keys) and a table for "grant a role to a person
+  or group, in which scope", with the built-in roles as rows that cannot be
+  deleted. The space level's `perm.Set` is 4 bits now, and will then be widened
+  or changed to a set of keys.
+- **Guardrails.** A custom role cannot grant permissions the granter does not
+  have themselves. Roles created in a tenant cannot touch site-level keys.
+  Changes that would lock oneself out (removing the last person who can manage
+  roles) are rejected. Every role change and grant is audited.
+- The isolation table (3.3) and the "capabilities" of 3.6 stay in front as
+  before: first ask whether the tenant has the capability, then ask whether
+  this person has the permission.

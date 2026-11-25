@@ -1,15 +1,15 @@
 # Data model
 
-## 3. 数据模型
+## 3. Data model
 
-### 3.1 空间的目录结构
+### 3.1 Directory structure of a space
 
 ```
 <space>/
   .petalbook/
-    space.yml            # 空间配置：文件夹绑定的页面类型、默认视图
+    space.yml            # space config: page types bound to folders, default views
     types/
-      文案.json          # 页面类型：额外属性的 JSON Schema
+      文案.json          # page type: JSON Schema for the extra properties
   Tang/
     暮雪.md
     残阳.md
@@ -19,11 +19,11 @@
   收件箱/
     2026-11-21-k3f9.md
   assets/
-    01JD…/               # 按页面 ID 分目录
+    01JD…/               # one directory per page ID
       photo.jpg
 ```
 
-### 3.2 页面文件
+### 3.2 Page files
 
 ```markdown
 ---
@@ -39,64 +39,91 @@ status: 定稿
 你听得见今天屋檐滴水的声音么？……
 ```
 
-- **内置字段**：`id`、`title`、`subtitle`、`source`、`tags`、`created`。除 `id`
-  外都可以为空。零散随记可以没有标题。`source` 是来源（出处）：一个人、一本
-  书、一个网址，自由填写，参与搜索。
-- **类型字段**：`series`、`status` 这类由页面类型的 schema 定义。
-- **正文**：GFM Markdown。
-- **更新时间**不写进文件，由索引从 Git 提交时间得出。
-- **文件名**取自标题，去掉文件系统不允许的字符；没有标题时用日期加短 ID；
-  重名加后缀。改标题会重命名文件，`id` 不变。
-- **`《标题》｜副标题`** 只是文案类型的显示模板，不写进文字。
+- **Built-in fields**: `id`, `title`, `subtitle`, `source`, `tags`, `created`.
+  All except `id` may be empty. A loose, quick note may have no title.
+  `source` is the origin (where it came from): a person, a book, a URL, filled
+  in freely, and included in search.
+- **Type fields**: things like `series` and `status` are defined by the page
+  type's schema.
+- **Body**: GFM Markdown.
+- **Updated time** is not written into the file. The index derives it from the
+  Git commit time.
+- **File name** is taken from the title, with characters the file system does
+  not allow removed. With no title, it uses the date plus a short ID. A
+  duplicate name gets a suffix. Changing the title renames the file; `id` does
+  not change.
+- **`《title》｜subtitle`** is only the display template of the daily text type.
+  It is not written into the text.
 
-#### 没有标题的页面
+#### Pages without a title
 
-只有一句话或一小段的文案不需要标题，这是正常情况，不是残缺的页面：
+A piece of text that is only a sentence or a short paragraph does not need a
+title. This is normal, not a broken page:
 
-- 头部没有 `title` 字段（不是空字符串），文件名用日期加短 ID，例如
-  `2026-11-21-k3f9.md`。
-- 在列表、搜索结果、链接和浏览器标签里，用正文的第一行（截到约 30 字）
-  代替标题显示，并用较浅的颜色区别于真正的标题。
-- 卡片视图和连读视图里直接显示正文，不留标题的位置，也不显示
-  `《》｜` 模板。
-- 编辑时标题栏是一行浅色的占位，不填就不存在；光标默认落在正文。快速
-  记录创建的就是这种页面。
-- 以后补上标题时，文件改名为标题，`id` 不变，指向它的链接不受影响。
-- 按标题排序时，没有标题的排在最后，彼此按创建时间排。
-- 「同一文件夹内标题重复」的校验不看没有标题的页面。
+- The front matter has no `title` field (not an empty string), and the file
+  name uses the date plus a short ID, for example `2026-11-21-k3f9.md`.
+- In lists, search results, links and browser tabs, the first line of the body
+  (cut to about 30 characters) is shown in place of the title, in a lighter
+  color to tell it apart from a real title.
+- Card view and reading-in-sequence view show the body directly, leave no room
+  for a title, and do not show the `《》｜` template.
+- When editing, the title bar is a single light placeholder line. If left
+  empty, it does not exist. The cursor lands in the body by default. Quick
+  capture creates exactly this kind of page.
+- When a title is added later, the file is renamed to the title and `id` does
+  not change, so links pointing to it are unaffected.
+- When sorting by title, pages without a title go last, ordered among
+  themselves by creation time.
+- The "duplicate title in the same folder" validation ignores pages without a
+  title.
 
-### 3.3 组织方式
+### 3.3 Organization
 
-- **文件夹**：就是目录，可无限嵌套。一篇只在一个位置。
-- **标签**：一篇多个，跨文件夹。允许 `花/栀子` 这种层级写法。写在每篇的
-  头部；标签自身的属性（颜色、说明、排序）放在 `.petalbook/tags.yml`。
-  重命名标签会在一次提交里改所有用到它的文件。
-- **页面类型**：一个文件夹可以在 `space.yml` 里绑定类型，其下页面继承。
-  类型决定属性面板里有哪些字段（由 JSON Schema 生成表单，复用 Rackbook 的
-  rjsf 用法），以及文件夹有哪些视图。
-- **排序**：按名称、创建时间、更新时间。手动拖动排序第一版不做。
+- **Folders**: just directories, nestable without limit. A page lives in
+  exactly one place.
+- **Tags**: several per page, across folders. Hierarchical names such as
+  `花/栀子` are allowed. They are written in each page's front matter. The
+  properties of a tag itself (color, description, order) go in
+  `.petalbook/tags.yml`. Renaming a tag changes every file that uses it in a
+  single commit.
+- **Page types**: a folder can bind a type in `space.yml`, and the pages under
+  it inherit it. The type decides which fields appear in the properties panel
+  (the form is generated from the JSON Schema, reusing Rackbook's rjsf usage)
+  and which views the folder has.
+- **Sorting**: by name, creation time, or update time. Manual drag-to-sort is
+  not done in the first version.
 
-### 3.4 附件
+### 3.4 Attachments
 
-- 上传到 `assets/<页面 ID>/`，正文里用相对路径引用。
-- 默认单文件上限 10 MB，可配置。
-- 存储走接口，每个空间选一种后端：
-  1. **空间仓库内**（默认）：`assets/` 目录，最简单。
-  2. **独立的附件仓库**：另一个 Git 仓库，文字仓库保持小而快。用和空间
-     相同的凭据方式。页面提交前先确保它引用的附件已推送。
-  3. **S3 兼容存储**（之后）。
-- 无论哪种后端，私有内容的附件都由本服务读出并经过权限检查后返回，不直接
-  给出仓库或 CDN 的公开链接。公开链接只用于已发布的页面（第 14 节）。
-- 上传前在浏览器里可选压缩和转 WebP，文件名加内容哈希去重。
-- 页面删除或引用移除后，孤立附件由清理任务处理，不立即删。
+- Uploaded to `assets/<page ID>/`, and referenced in the body by relative
+  path.
+- The default limit is 10 MB per file, configurable.
+- Storage goes through an interface, and each space chooses one backend:
+  1. **Inside the space repository** (default): the `assets/` directory, the
+     simplest.
+  2. **A separate attachments repository**: another Git repository, which keeps
+     the text repository small and fast. It uses the same credential method as
+     the space. Before a page is committed, make sure the attachments it
+     references have been pushed.
+  3. **S3-compatible storage** (later).
+- Whatever the backend, attachments of private content are read out by this
+  service and returned after a permission check. No public repository or CDN
+  link is handed out directly. Public links are used only for published pages
+  (see [reserved.md §14](reserved.md#14-reserved-public-publishing)).
+- Before upload, the browser can optionally compress and convert to WebP, and
+  file names get a content hash for de-duplication.
+- When a page is deleted or a reference is removed, orphaned attachments are
+  handled by a cleanup task and not deleted immediately.
 
-### 3.5 校验
+### 3.5 Validation
 
-沿用 Rackbook `check` 的思路，对每个空间检查：
+Following the idea of Rackbook's `check`, each space is checked for:
 
-- `id` 缺失、重复、格式错误。
-- 头部不是合法 YAML，或类型字段不符合 schema。
-- 指向不存在页面的链接、指向不存在文件的附件引用。
-- 同一文件夹内标题重复（提示，不阻止）。
+- `id` missing, duplicated, or badly formatted.
+- The header is not valid YAML, or a type field does not match the schema.
+- Links to pages that do not exist, and attachment references to files that do
+  not exist.
+- Duplicate titles in the same folder (a warning, does not block).
 
-有问题的页面在界面上标出来让人修，不拒绝加载整个空间。
+Pages with problems are marked in the UI for people to fix. The whole space is
+not refused loading.

@@ -1,150 +1,212 @@
 # Storage and sync
 
-## 4. 存储与同步
+## 4. Storage and sync
 
-### 4.1 两种模式（每个空间单独选）
+### 4.1 Two modes (chosen per space)
 
-1. **仅本地**：仓库只在服务器上。
-2. **远端为准**：照搬 Rackbook。服务器持有一份克隆，定时 fetch 并快进；
-   每次写入是 fetch、重置到远端、提交、推送，被拒就重来。从不 force push。
-   检测到远端历史被改写就转只读，等管理员确认。本地克隆丢了可以重新拉。
+1. **Local only**: the repository exists only on the server.
+2. **Remote is authoritative**: copied from Rackbook. The server holds one
+   clone, fetches on a schedule and fast-forwards; each write is fetch, reset
+   to the remote, commit, push, and retry if rejected. Never force push.
+   If it detects that the remote history was rewritten, it switches to
+   read-only and waits for an admin to confirm. If the local clone is lost, it
+   can be pulled again.
 
-可选的第二个远端只作为「只推不拉」的镜像，不参与冲突判断。
+An optional second remote is only a "push only, never pull" mirror and takes no
+part in conflict decisions.
 
-### 4.2 创建空间
+### 4.2 Creating a space
 
-- 服务器自己 `git init` 并写入 `.petalbook/space.yml`，不需要模板仓库。
-- 选了远端时，按凭据类型自动建仓库或使用用户给的地址。
+- The server runs `git init` itself and writes `.petalbook/space.yml`; no
+  template repository is needed.
+- When a remote is chosen, it automatically creates the repository according to
+  the credential type, or uses the address the user gave.
 
-### 4.3 远端凭据（每个空间单独选）
+### 4.3 Remote credentials (chosen per space)
 
-| 方式 | 适用 | 来源 |
+| Method | Used for | Source |
 |---|---|---|
-| SSH 部署密钥 | 任何 Git 服务 | Rackbook 已有 |
-| GitHub App | 组织下自动建仓库 | Rackbook 已有，需扩展建仓库；权限见下 |
-| HTTPS 访问令牌 | GitHub、Gitea、GitLab | 新写，沿用 GitHub App 传令牌的方式 |
-| GitHub 用户授权 | 个人账号下建仓库 | 新写 |
+| SSH deploy key | Any Git service | Already in Rackbook |
+| GitHub App | Creating repositories automatically under an organization | Already in Rackbook, needs to be extended to create repositories; permissions below |
+| HTTPS access token | GitHub, Gitea, GitLab | New, reuses the way the GitHub App passes tokens |
+| GitHub user authorization | Creating repositories under a personal account | New |
 
-建仓库所需的权限（2026-11-21 查 GitHub 官方文档）：
+The permissions needed to create repositories (checked in GitHub's official
+documentation on 2026-11-21):
 
-- 组织下建仓库是 `POST /orgs/{org}/repos`，个人账号下是 `POST /user/repos`。
-  权限对照表把两者都列在 Administration 的 write 级别下，并标注安装令牌和
-  用户令牌都可用。
-- 用户令牌通过网页授权或设备码流程获得，默认 8 小时过期，刷新令牌 6 个月
-  过期，所以要存刷新令牌并自动续期。用户令牌的权限是「用户有的」和「App
-  有的」的交集。
-- 文档没有说明的两点，2026-11-23 用真实的 GitHub 实测过，结论如下（这些是
-  量出来的，不是文档推出来的）：
-  - **Administration 是仓库级权限就够了**：只给 App 仓库级的 Administration
-    写权限，用安装令牌 `POST /orgs/{org}/repos` 就能在组织下建仓库，不需要
-    组织级权限。
-  - **安装范围是「全部仓库」时，App 建出的新仓库马上能访问**。
-  - **安装范围是「仅选定仓库」时，App 建出的新仓库访问不到**，GitHub 不会
-    自动把它加进安装。服务器用用户令牌调
-    `PUT /user/installations/{id}/repositories/{repoId}` 把它加进去，之后就
-    能访问；没有用户令牌时答 `409 repo_not_in_installation`，并留一条
-    「空仓库提醒」，和设计一致。
-  - **用户网页授权带 PKCE 可以用**。
-  - **在个人账号下建仓库，App 没装在这个个人账号上就失败**：GitHub 答
-    `403 Resource not accessible by integration`。用户到服务器的令牌只能用在
-    App 已经装到的账号上，权限是「用户有的」「App 有的」「安装到的账号」三者
-    的交集，所以只授权、不安装，个人账号下建不了仓库。要让个人账号可用，App
-    必须能装到任意账号（「Any account」，即公开），并且用户要在自己的账号上
-    装一次。
-- 由此定下的做法（2.7 补丁）：
-  - 「连接 GitHub」把人带到 App 的安装页，并勾上「安装时请求用户授权」
-    （`request_oauth_on_install`），安装和授权在 GitHub 的同一趟流程里完成；
-    回调同时处理 `setup_action=install` 和普通授权。
-  - 已授权但 App 没装在自己账号上时，在个人账号下建仓库答
-    `409 app_not_installed`（带安装地址），不再把 GitHub 的 403 原样
-    抛给人。
-  - 管理页要提示「App 只能装在一个账号上」，因为个人账号的流程需要
-    「Any account」；同时管理页可以一键用 App Manifest 流程建出这样的 App。
-  - 管理页有「在 GitHub 上建 App」按钮，走 GitHub 的 App Manifest 流程：
-    服务器给出清单（名称、`url` 为公开地址、`callback_urls` 为授权回调、
-    `redirect_url` 和 `setup_url` 为清单返回地址、`public` 为真、
-    `request_oauth_on_install` 为真、权限 administration 写 / contents 写 /
-    metadata 读、不要 webhook），浏览器把清单 POST 到
-    `https://github.com/settings/apps/new`（指定组织时是
-    `/organizations/{org}/settings/apps/new`），GitHub 带 `code` 回到
-    `/api/connections/github/manifest/callback`，服务器用
-    `POST /app-manifests/{code}/conversions` 换出 App 的 ID、slug、client id、
-    client secret、私钥和 webhook secret，和手填的 App 一样加密保存。`state`
-    绑定管理员的会话和浏览器，只能用一次，10 分钟过期。手填仍然保留。
-  - 管理页的权限不再只是保存时的快照：「重新检查」按钮（也可以让被拒绝的令牌
-    请求自动触发，一分钟最多一次）重新向 GitHub 读 App 和各安装的权限，并列出
-    还没接受新权限的安装。
-  - 调用 GitHub 失败时，日志记状态码、GitHub 的原话和请求类型，不记令牌、
-    私钥、授权码。
-  - App 缺权限和仓库不在安装范围里是两回事，错误码分开
-    （`app_missing_permission` 带缺的权限名，对比
-    `repo_not_in_installation`）。
+- Under an organization, creating a repository is `POST /orgs/{org}/repos`;
+  under a personal account it is `POST /user/repos`. The permissions table lists
+  both at the write level of Administration, and notes that both installation
+  tokens and user tokens can be used.
+- A user token is obtained through web authorization or the device code flow. By
+  default it expires in 8 hours, and the refresh token expires in 6 months, so
+  the refresh token must be stored and renewed automatically. The permissions of
+  a user token are the intersection of "what the user has" and "what the App
+  has".
+- Two points that the documentation does not state were tested on real GitHub on
+  2026-11-23, with the following conclusions (these were measured, not derived
+  from the documentation):
+  - **Administration as a repository-level permission is enough**: if the App is
+    given only the repository-level Administration write permission, an
+    installation token with `POST /orgs/{org}/repos` can create a repository
+    under the organization; the organization-level permission is not needed.
+  - **When the installation scope is "all repositories", a new repository
+    created by the App is accessible immediately**.
+  - **When the installation scope is "selected repositories only", a new
+    repository created by the App is not accessible**, because GitHub does not
+    add it to the installation automatically. The server uses the user token to
+    call `PUT /user/installations/{id}/repositories/{repoId}` to add it, and
+    after that it is accessible; without a user token it answers
+    `409 repo_not_in_installation` and leaves an "empty repository reminder",
+    consistent with the design.
+  - **User web authorization with PKCE works**.
+  - **Creating a repository under a personal account fails if the App is not
+    installed on that personal account**: GitHub answers
+    `403 Resource not accessible by integration`. The user-to-server token can
+    only be used on accounts the App is already installed on, and the
+    permission is the intersection of three things: "what the user has", "what
+    the App has" and "the account installed on". So authorizing without
+    installing cannot create a repository under a personal account. To make
+    personal accounts usable, the App must be installable on any account ("Any
+    account", that is, public), and the user must install it once on their own
+    account.
+- The approach decided from this (2.7 patch):
+  - "Connect GitHub" takes the person to the App's installation page and ticks
+    "request user authorization during installation"
+    (`request_oauth_on_install`), so installation and authorization finish in
+    one flow on GitHub; the callback handles both `setup_action=install` and
+    plain authorization.
+  - When the user has authorized but the App is not installed on their own
+    account, creating a repository under the personal account answers
+    `409 app_not_installed` (with the installation address), and no longer
+    passes GitHub's 403 straight on to the person.
+  - The admin page must show a notice that "an App can only be installed on one
+    account", because the personal account flow needs "Any account"; the admin
+    page can also create such an App in one click with the App Manifest flow.
+  - The admin page has a "Create the App on GitHub" button, which goes through
+    GitHub's App Manifest flow: the server gives out the manifest (name, `url`
+    as the public address, `callback_urls` as the authorization callback,
+    `redirect_url` and `setup_url` as the manifest return address, `public` true,
+    `request_oauth_on_install` true, permissions administration write /
+    contents write / metadata read, no webhook), the browser POSTs the manifest
+    to `https://github.com/settings/apps/new` (when an organization is given, to
+    `/organizations/{org}/settings/apps/new`), GitHub returns with a `code` to
+    `/api/connections/github/manifest/callback`, and the server exchanges it with
+    `POST /app-manifests/{code}/conversions` for the App's ID, slug, client id,
+    client secret, private key and webhook secret, and saves them encrypted just
+    like a hand-filled App. `state` is bound to the admin's session and browser,
+    can be used only once, and expires in 10 minutes. Filling in by hand is still
+    kept.
+  - The permissions on the admin page are no longer just a snapshot from when
+    they were saved: a "Check again" button (which can also be triggered
+    automatically by a rejected token request, at most once a minute) reads the
+    App's and each installation's permissions from GitHub again, and lists the
+    installations that have not yet accepted the new permissions.
+  - When a call to GitHub fails, the log records the status code, GitHub's own
+    words and the request type, and does not record tokens, private keys or
+    authorization codes.
+  - An App missing a permission and a repository not being in the installation
+    scope are two different things, with separate error codes
+    (`app_missing_permission` with the name of the missing permission, versus
+    `repo_not_in_installation`).
 
-凭据存数据库，用服务器密钥加密。令牌只通过环境变量传给 `git`，不出现在
-命令行、远端地址、`.git/config` 或日志里。
+Credentials are stored in the database, encrypted with the server key. Tokens
+are passed to `git` only through environment variables, and do not appear on the
+command line, in the remote address, in `.git/config` or in logs.
 
-### 4.4 草稿与提交
+### 4.4 Drafts and commits
 
-- 编辑时内容持续保存为草稿（数据库，按页面和用户）。草稿记录它基于的版本。
-- 合并成 commit 的时机：停笔 2 分钟、离开页面、用户点「保存版本」，或距上次
-  提交超过 10 分钟。
-- commit 的作者是编辑者，提交者是服务。
+- While editing, the content is continuously saved as a draft (in the database,
+  per page and user). The draft records the version it is based on.
+- When it is merged into a commit: 2 minutes after the writer stops, when the
+  user leaves the page, when the user clicks "Save version", or when more than
+  10 minutes have passed since the last commit.
+- The commit's author is the editor, and the committer is the service.
 
-### 4.5 本地空间不够时：部分缓存
+### 4.5 When local space is not enough: partial cache
 
-占空间的主要是附件和 Git 历史，不是文字：5 万篇、6220 万字的文字只有
-192 MB，索引 166 MB。所以文字和索引始终完整留在本地，其余的可以按需取：
+What takes up space is mainly attachments and Git history, not text: the text of
+50,000 pages and 62.2 million characters is only 192 MB, and the index is
+166 MB. So the text and the index always stay complete locally, and the rest
+can be fetched on demand:
 
-- **附件**：用独立附件仓库或 S3 后端时，本地只留一个有大小上限的缓存，
-  最近用过的留着，其余的在打开页面时再取。附件仓库用 Git 的部分克隆
-  （不预先下载文件内容）实现。
-- **Git 历史**：空间仓库可以只保留最近的历史，更早的版本在查看历史时再向
-  远端取。
-- **以后的离线客户端**：可以选同步哪些空间；文字全量同步，附件按需下载并
-  有缓存上限。
+- **Attachments**: when a separate attachment repository or an S3 backend is
+  used, only a cache with a size limit is kept locally; recently used ones are
+  kept, and the others are fetched when the page is opened. The attachment
+  repository is implemented with Git's partial clone (file contents are not
+  downloaded in advance).
+- **Git history**: a space repository can keep only the recent history, and
+  earlier versions are fetched from the remote when the history is viewed.
+- **A future offline client**: it can choose which spaces to sync; text is synced
+  in full, and attachments are downloaded on demand with a cache limit.
 
-限制：仅本地的空间没有别的副本，不能做部分缓存；远端连不上时，没缓存到
-的附件和旧版本看不了，界面上要明确提示。部分克隆需要放宽受限 git 执行器
-允许的命令，这点待验证（做附件缓存时验证，不在第 0 期范围内）。
+Limits: a local-only space has no other copy, so it cannot use a partial cache;
+when the remote cannot be reached, attachments and old versions that were not
+cached cannot be viewed, and the UI must say so clearly. Partial clone requires
+loosening the commands the restricted git executor allows; this is pending
+verification (to be verified when the attachment cache is built, not in the
+scope of phase 0).
 
-所有者 2026-11-22 明确：用户多了以后本地一定放不下，**不能要求每个空间都
-在本地有完整克隆**。按收益从大到小，分四步（都只对跟随远端的空间成立，
-因为远端才是那份真的；只在本地的空间是唯一的一份，只能靠配额或把附件放到
-对象存储）：
+The owner stated clearly on 2026-11-22: once there are many users, local disk
+will certainly not be enough, so **we cannot require every space to have a full
+clone locally**. In order of benefit, from largest to smallest, in four steps
+(all of them hold only for spaces that follow a remote, because the remote is
+the real copy; a local-only space is the only copy, and can rely only on quotas
+or on putting attachments in object storage):
 
-1. **闲置的空间整个从本地删掉**，下次打开时再取回。现在闲置只是关闭，
-   克隆还留着。跟随远端的空间每次改动都已推送，本地没有独有的东西，删掉
-   是安全的；索引可以留着（它很小），这样列表和搜索不用等取回。
-2. **只取最近的历史**（浅克隆），看历史时再按需向远端要更早的提交。
-3. **不取大文件的内容**（Git 的部分克隆，`--filter=blob:none` 或按大小），
-   附件在有人打开页面时才取，本地只留一个有上限的缓存。
-4. **连正文也按需取**：本地只有索引和最近打开的页面。
+1. **An idle space is deleted from local disk entirely** and fetched back the
+   next time it is opened. Now idle only means closed, and the clone is still
+   kept. For a space that follows a remote, every change has already been
+   pushed, so there is nothing unique locally and deleting is safe; the index
+   can be kept (it is small), so the list and search do not wait for the fetch.
+2. **Fetch only the recent history** (shallow clone), and when history is viewed
+   ask the remote for earlier commits on demand.
+3. **Do not fetch the contents of large files** (Git's partial clone,
+   `--filter=blob:none` or by size); attachments are fetched only when someone
+   opens the page, and locally only a cache with a limit is kept.
+4. **Even the body text is fetched on demand**: locally there is only the index
+   and the recently opened pages.
 
-第 3、4 步要远端支持部分克隆（GitHub、GitLab 支持），也要放宽受限 git
-执行器允许的命令，都还没验证过；做之前先单独验证一次。打开一个被删掉的
-空间要等一次网络往返，远端连不上时这个空间就打不开，界面要说清楚。
+Steps 3 and 4 need the remote to support partial clone (GitHub and GitLab do),
+and also need the commands allowed by the restricted git executor to be loosened;
+neither has been verified. Verify them once on their own before doing it.
+Opening a deleted space has to wait for one network round trip, and when the
+remote cannot be reached this space cannot be opened; the UI has to say so
+clearly.
 
-3.1 的取舍（做第 1、3 步，第 2、4 步不做；用 `--filter=blob:none` 而不是
-浅克隆；附件缓存只给独立附件仓库）见第 11 节「3.1 的约定」。
+The 3.1 trade-offs (do steps 1 and 3, do not do steps 2 and 4; use
+`--filter=blob:none` rather than a shallow clone; the attachment cache only for
+a separate attachment repository) are in the 3.1 contract in
+[phase-3.md](milestones/phase-3.md).
 
-### 4.6 外部改动与冲突
+### 4.6 External changes and conflicts
 
-- fetch 到新提交后重建受影响页面的索引并跑校验。
-- 草稿提交时如果基于的版本已不是最新：先做三方文本合并；合不了就把草稿
-  存成一篇新的「冲突副本」，两边都不丢。
-- 同一套规则用于：GitHub 上直接改、另一个浏览器标签页、将来的离线客户端。
+- After a fetch brings new commits, rebuild the index of the affected pages and
+  run validation.
+- When a draft is committed and the version it is based on is no longer the
+  latest: first do a three-way text merge; if it cannot be merged, save the
+  draft as a new "conflict copy", so neither side is lost.
+- The same rules are used for: a direct edit on GitHub, another browser tab, and
+  a future offline client.
 
-### 4.7 两台设备用同一个自己的仓库（所有者 2026-11-23）
+### 4.7 Two devices using the same repository of their own (owner, 2026-11-23)
 
-不登录、直接连自己的仓库时（第 1 节），一个仓库可以在几台设备上用：
+When signing in is not used and your own repository is connected directly
+([overview.md §1](overview.md#1-goals-and-non-goals)), one repository can be used on several devices:
 
-- **每台设备是一份克隆**。同步就是 fetch、合并、push：打开应用时、定时、改完之后、
-  用户手动点，各做一次。
-- **按页三方合并**，页面靠头部的 id 认，不靠路径：一边改名、一边改内容也能对上。
-  合并规则和 4.2 的一样（头部按字段、正文按行，基础是两边共同的上一次提交里那一版）。
-- **合不了的存成冲突副本**，两边都不丢。**改动胜过删除**：一边删了、另一边改了，
-  留下改过的那一篇。
-- **push 被拒**就重新 fetch、合并、再试；**从不 force push**（和第 4.1 节的「远端为准」一样）。
-- 这不是实时协作：两台设备隔一会儿才看到对方的改动。要几个人一起实时编辑，用官方
-  服务器。
-- 合并的代码和 4.2 服务端的是同一份（在引擎包里，见第 10 节的边界），不写两套。
+- **Each device is a clone**. Sync is fetch, merge, push: once each when the app
+  is opened, on a timer, after an edit, and when the user taps it by hand.
+- **Three-way merge per page**, with pages recognized by the id in the header,
+  not by the path: it still lines up when one side renames and the other side
+  changes content. The merge rules are the same as in 4.2 (header by field, body
+  by line, and the base is the version in the last commit that both sides share).
+- **What cannot be merged is saved as a conflict copy**, so neither side is lost.
+  **A change beats a deletion**: if one side deleted and the other changed, the
+  changed page is kept.
+- **When a push is rejected**, fetch again, merge, and retry; **never force
+  push** (the same as "remote is authoritative" in [storage-and-sync.md §4.1](storage-and-sync.md#41-two-modes-chosen-per-space)).
+- This is not real-time collaboration: the two devices see each other's changes
+  only after a while. To have several people edit together in real time, use the
+  official server.
+- The merge code is the same as the server's in 4.2 (in the engine packages, see
+  the boundary in [overview.md §10](overview.md#10-reuse)); two copies are not written.

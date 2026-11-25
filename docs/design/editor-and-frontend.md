@@ -1,155 +1,217 @@
 # Editor and frontend
 
-## 7. 编辑器
+## 7. Editor
 
-- 所见即所得，`/` 命令菜单、选中文字弹出格式工具栏、拖动手柄调整块顺序。
-- 支持：标题、粗体、斜体、删除线、行内代码、链接、无序/有序/待办列表、
-  引用、代码块（带语言高亮）、表格、图片、附件、分割线、脚注。
-- 图片：粘贴、拖入、点击上传；可填说明文字。
-- 熟悉 Markdown 的人可以直接打 `#`、`-`、`>` 等快捷输入。
-- **链接**：光标在链接里时弹出小浮层，可以改地址、改文字、打开、去掉链接。
-- **表格**：加行、加列、删行、删列、删表、设置列对齐，从单元格旁的菜单
-  操作。Markdown 表格必须有且只有第一行是表头，所以表头行不能关掉；删掉
-  表头行后下一行自动成为表头。不支持合并单元格。
+- WYSIWYG, with a `/` command menu, a formatting toolbar that pops up when text
+  is selected, and drag handles to reorder blocks.
+- Supported: headings, bold, italic, strikethrough, inline code, links,
+  bulleted/numbered/task lists, quotes, code blocks (with language
+  highlighting), tables, images, attachments, horizontal rules, footnotes.
+- Images: paste, drag in, or click to upload; alt text can be filled in.
+- People who know Markdown can type shortcuts such as `#`, `-` and `>` directly.
+- **Links**: when the cursor is in a link, a small popover appears, where you can
+  change the address, change the text, open it, or remove the link.
+- **Tables**: add row, add column, delete row, delete column, delete table, set
+  column alignment, all from the menu next to the cell. A Markdown table must
+  have exactly one header row, the first row, so the header row cannot be turned
+  off; after the header row is deleted, the next row automatically becomes the
+  header. Merged cells are not supported.
 
-### 7.0 三种编辑模式
+### 7.0 Three editing modes
 
-每篇文档右上角可以切换，默认是所见即所得，选择按用户记住：
+Each document can be switched at its top right; the default is WYSIWYG, and the
+choice is remembered per user:
 
-1. **所见即所得**：默认，不需要懂 Markdown。
-2. **Markdown 原文**：直接编辑整个文件的文本，包括头部字段。这是保底手段：
-   编辑器处理不了或显示不对的内容，总能在这里改。用带 Markdown 高亮的
-   代码编辑器（CodeMirror）。
-3. **左右对照**：左边原文，右边所见即所得，两边都能改，互相同步，滚动联动。
+1. **WYSIWYG**: the default, and no need to know Markdown.
+2. **Markdown source**: edit the text of the whole file directly, including the
+   header fields. This is the fallback: content that the editor cannot handle or
+   displays wrongly can always be fixed here. It uses a code editor with
+   Markdown highlighting (CodeMirror).
+3. **Side by side**: source on the left, WYSIWYG on the right, both editable,
+   synchronized with each other, with linked scrolling.
 
-规则：
+Rules:
 
-- 在原文里打的字原样保留，保存的就是你写的文本。
-- 一旦从所见即所得一侧改动，正文会被重写成统一写法：内容不变，但比如
-  `*` 列表会变成 `-`，表格的分隔行会被规整。这是一次性的，之后稳定。
-- 原文里头部写坏了（不是合法 YAML、`id` 被删）时不能切回所见即所得，
-  界面指出是哪一行，改好再切。
-- 大文档在左右对照模式下，同步要做防抖（5 万字的文档一次转换约半秒）。
-- 不提供 Markdown 表达不了的功能，保证文件无损往返。
-- 第 2 期：`[[链接]]` 到其他页面，按 ID 存，显示标题。
+- What is typed in the source is kept as is, and what is saved is the text you
+  wrote.
+- Once a change is made from the WYSIWYG side, the body is rewritten into a
+  uniform style: the content does not change, but, for example, a `*` list
+  becomes `-`, and the separator row of a table is normalized. This happens once
+  and is stable afterwards.
+- When the header in the source is broken (not valid YAML, `id` deleted), you
+  cannot switch back to WYSIWYG; the UI points out which line, and you switch
+  after fixing it.
+- For large documents in side-by-side mode, synchronization must be debounced (a
+  50,000-character document takes about half a second to convert once).
+- Features that Markdown cannot express are not provided, to guarantee a
+  lossless round trip of the file.
+- Phase 2: `[[link]]` to other pages, stored by ID, displaying the title.
 
-### 7.1 往返验证的结论（2026-11-21）
+### 7.1 Conclusions of the round-trip validation (2026-11-21)
 
-验证代码和完整结果在 `spikes/markdown-roundtrip/`。
+The validation code and full results are in `spikes/markdown-roundtrip/`.
 
-- 编辑器用 Tiptap，但 Markdown 的读写不用官方扩展，自己基于 remark 实现
-  「编辑器文档 ↔ mdast ↔ Markdown 文本」。
-- 116 个用例里，官方扩展只过 75 个：中文标点旁的粗体会丢，行首的 `#`、`-`
-  不转义，含空格的图片地址写坏。自写转换层过 113 个。剩下 3 个里，2 个是
-  粗体边缘的空格被移到粗体外面，肉眼看不出；1 个是正文里的裸网址重新打开
-  后变成链接，这是看得见的变化，要改成把裸网址写成 `<网址>`。
-- 转换层只处理正文。文件头部要先切下来单独解析，这部分还没写。
-- 编辑器里没有对应形式的写法在读入时改写一次：引用式链接变成行内链接，
-  有序列表里的待办变成无序的。
-- 中文标点旁的强调用 `remark-cjk-friendly`。这不是标准 CommonMark：在
-  GitHub 网页上直接看原文件会显示出星号。本项目所有渲染 Markdown 的地方
-  （编辑器、服务端、公开发布）必须用同一套规则。
-- 看不懂的内容不丢：原始 HTML 作为不可编辑的块原样保留；脚注有专门节点。
-- 保存时丢掉看不见也存不下的东西：段落、标题、单元格末尾的空格和换行，
-  单元格开头的空格，文档结尾的空段落。全角空格保留。
-- 约定的写法：硬换行用行尾反斜杠，空段落写成单独一行的 `<br>`，表格不做
-  列对齐填充，单个 `~` 不算删除线，不提供下划线。
-- 性能：5 千字读入 74 ms、存出 20 ms；5 万字读入约 0.5 秒。自动保存要防抖。
+- The editor uses Tiptap, but reading and writing Markdown does not use the
+  official extension; we implement "editor document ↔ mdast ↔ Markdown text"
+  ourselves on top of remark.
+- Of the 116 cases, the official extension passed only 75: bold next to Chinese
+  punctuation is lost, a `#` or `-` at the start of a line is not escaped, and an
+  image address that contains spaces is written wrongly. The in-house conversion
+  layer passed 113. Of the remaining 3, 2 are spaces at the edge of bold being
+  moved outside the bold, which the eye cannot see; 1 is a bare URL in the body
+  that becomes a link when reopened, which is a visible change, and must be fixed
+  by writing bare URLs as `<URL>`.
+- The conversion layer handles only the body. The file header has to be cut off
+  first and parsed separately, and that part is not written yet.
+- Syntax that has no corresponding form in the editor is rewritten once on read:
+  a reference-style link becomes an inline link, and a task item inside an
+  ordered list becomes unordered.
+- Emphasis next to Chinese punctuation uses `remark-cjk-friendly`. This is not
+  standard CommonMark: viewing the original file directly on the GitHub web page
+  will show the asterisks. Every place in this project that renders Markdown
+  (editor, server, public publishing) must use the same rules.
+- Content it does not understand is not lost: raw HTML is kept as is as a
+  non-editable block; footnotes have a dedicated node.
+- On save, things that are invisible and cannot be stored are dropped: spaces and
+  line breaks at the end of a paragraph, heading or cell, spaces at the start of a
+  cell, and empty paragraphs at the end of the document. Full-width spaces are
+  kept.
+- Conventional forms: a hard line break uses a trailing backslash, an empty
+  paragraph is written as a `<br>` on its own line, tables get no column
+  alignment padding, a single `~` is not strikethrough, and underline is not
+  provided.
+- Performance: 5,000 characters take 74 ms to read in and 20 ms to write out;
+  50,000 characters take about 0.5 seconds to read in. Autosave must be debounced.
 
-### 7.2 浏览器实测的结论（2026-11-21）
+### 7.2 Conclusions of the browser measurements (2026-11-21)
 
-用真实键盘事件和粘贴在浏览器里测过（`spikes/markdown-roundtrip/browser/`），
-输入快捷写法、快捷键、富文本粘贴都正常，每一步「存出再读回」都一致。
-正式实现要补三件事：
+Tested in the browser with real keyboard events and paste
+(`spikes/markdown-roundtrip/browser/`): typing shortcut syntax, keyboard
+shortcuts and rich-text paste all work, and at every step "write out and read
+back" is identical. The real implementation has to add three things:
 
-- 自己写强调的输入规则。Tiptap 自带的要求 `**` 前面是空格或行首，紧跟汉字
-  时不触发。
-- 自定义纯文本粘贴：单个换行变成段内换行，空行才分段。默认行为把每一行
-  都变成段落，诗行和分行文案会被打散。
-- 粘贴 Markdown 源码时用转换层解析成排版后的内容。
+- Write our own input rule for emphasis. Tiptap's built-in one requires a space
+  or the start of the line before `**`, and does not fire when a Chinese
+  character follows right after.
+- A custom plain-text paste: a single line break becomes a line break within the
+  paragraph, and only a blank line starts a new paragraph. The default behavior
+  turns every line into a paragraph, and lines of a poem or text split into lines
+  get broken apart.
+- When pasting Markdown source, parse it into formatted content with the
+  conversion layer.
 
-### 7.3 服务端渲染（2026-11-21）
+### 7.3 Server-side rendering (2026-11-21)
 
-服务端用 goldmark 加 `goldmark-cjk-friendly` 扩展渲染 Markdown。拿编辑器
-实际写出的 116 份 Markdown 对比前端和 Go 的渲染结果，114 份一致；不加扩展
-是 106 份，不一致的主要是中文标点旁的强调。详见 `spikes/render-parity/`。
+The server renders Markdown with goldmark plus the `goldmark-cjk-friendly`
+extension. Comparing the frontend and Go rendering of the 116 Markdown documents
+the editor actually wrote, 114 are identical; without the extension it is 106,
+and the mismatches are mainly emphasis next to Chinese punctuation. See
+`spikes/render-parity/` for details.
 
-剩下 2 份要在转换层里改：粗体和斜体部分交叠时改用 `_` 表示斜体，避免连续
-四个星号的歧义；正文里的裸网址统一写成 `<网址>`。这份对比测试要进 CI。
+The remaining 2 have to be fixed in the conversion layer: when bold and italic
+partly overlap, use `_` for italic, to avoid the ambiguity of four asterisks in a
+row; and bare URLs in the body are always written as `<URL>`. This comparison test
+has to go into CI.
 
-还没验证的：真实文案的全量往返（测试里用的是编写的示例，等内容导入之后）；
-数学公式。
-中文输入法的组合输入也还没验证：自动化测试不经过输入法，需要真人用拼音
-输入法在测试页的列表、表格、行内代码里试。
+Not yet verified: a full-volume round trip of real texts (the tests use written
+samples; this waits until content is imported); math formulas.
+Composition input with Chinese input methods is also not yet verified: automated
+tests do not go through an input method, and a real person has to try a pinyin
+input method in the lists, tables and inline code of the test page.
 
-## 8. 前端
+## 8. Frontend
 
-### 8.1 技术
+### 8.1 Technology
 
-React、Vite、Tailwind、shadcn 组件、TanStack Query、react-router、cmdk，
-与 Rackbook 一致，外壳和 i18n 机制复制过来。不用 refine（它服务于表格式
-后台，这里用不上）。界面从第一期起支持中文和英文。
+React, Vite, Tailwind, shadcn components, TanStack Query, react-router, cmdk,
+consistent with Rackbook; the shell and the i18n mechanism are copied over.
+refine is not used (it serves table-style admin back ends, and is of no use
+here). The UI supports Chinese and English from the first phase.
 
-### 8.2 布局
+### 8.2 Layout
 
-- **左栏**：空间切换、快速记录、搜索（⌘K）、收件箱/最近/收藏、文件夹树、
-  标签。可收起。
-- **中间**：文件夹视图或编辑器。
-- **右栏**（按需展开）：属性、目录、反向链接、版本历史。
+- **Left column**: space switcher, quick capture, search (⌘K),
+  inbox/recent/favourites, folder tree, tags. Can be collapsed.
+- **Middle**: folder view or the editor.
+- **Right column** (expanded on demand): properties, outline, backlinks, version
+  history.
 
-### 8.3 页面编辑
+### 8.3 Page editing
 
-- 顶部是标题，下面一行副标题（空时显示浅色占位，文案类型默认展示），
-  再下面是标签和类型属性，然后是正文。
-- 正文限宽，按中文阅读调行高和字距；提供无衬线和衬线两种正文字体。
-- 右上角显示保存状态：「草稿已保存」「已提交」「离线」。
-- 专注模式：隐藏两侧栏，只留文字。
+- At the top is the title, below it a line for the subtitle (shown as a light
+  placeholder when empty, and shown by default for the text type), then the tags
+  and type properties, then the body.
+- The body has a limited width, with line height and letter spacing tuned for
+  reading Chinese; two body fonts are offered, sans-serif and serif.
+- The top right shows the save state: "Draft saved", "Version saved", "Offline".
+- Focus mode: hide the side columns and leave only the text.
 
-### 8.4 文件夹视图
+### 8.4 Folder view
 
-- **列表**：标题、副标题、标签、更新时间。
-- **卡片**：适合短文案，直接显示 `《标题》｜副标题` 和正文，一屏读很多条，
-  效果接近现在 Notion 那一页。
-- **表格**：绑定了类型的文件夹可用，列是类型属性，可筛选排序，单元格内
-  直接改枚举和日期（沿用 Rackbook 的做法）。
-- **连读**（第 2 期）：把一个文件夹或一个系列按顺序排成一篇长文，像翻一本
-  集子。
-- **看板**（第 2 期）：按某个枚举属性分列，比如状态或系列，拖动改值。
-- **时间线/日历**（之后）：按创建日期排布，适合日记和随记。
-- **画廊**（之后）：以页面里第一张图作封面。
+- **List**: title, subtitle, tags, updated time.
+- **Cards**: suited to short texts; they show `《Title》｜Subtitle` and the body
+  directly, many entries can be read in one screen, and the effect is close to
+  that Notion page now.
+- **Table**: available for a folder bound to a type; the columns are the type's
+  properties, it can be filtered and sorted, and enums and dates can be edited
+  directly in the cell (reusing Rackbook's approach).
+- **Reading in sequence** (phase 2): lay a folder or a series out in order as one
+  long article, like leafing through a collection.
+- **Board** (phase 2): columns by some enum property, for example status or
+  series, and dragging changes the value.
+- **Timeline/calendar** (later): laid out by creation date, suited to diaries and
+  quick notes.
+- **Gallery** (later): uses the first image in a page as the cover.
 
-视图只是「筛选、排序、分组、展示方式」的组合，同一批页面可以存多个视图，
-配置写在 `space.yml` 里。标签页和搜索结果也能用这些展示方式。
+A view is just a combination of "filter, sort, group, display mode"; the same set
+of pages can have several saved views, and the configuration is written in
+`space.yml`. Tag pages and search results can use these display modes too.
 
-### 8.5 快速记录
+### 8.5 Quick capture
 
-任何页面按快捷键或点按钮弹出一个小输入框，写完进收件箱，之后再归类。
-手机上是常驻的浮动按钮。
+On any page, a shortcut key or a button pops up a small input box; what is
+written goes into the inbox, to be sorted later. On a phone it is a permanent
+floating button.
 
-### 8.6 手机
+### 8.6 Phone
 
-单栏。左栏变成抽屉，底部是导航和快速记录；编辑时格式工具栏贴在键盘上方。
-第一期就做成可安装的 PWA（只是可安装，离线在第 4 期）。
+Single column. The left column becomes a drawer, with navigation and quick
+capture at the bottom; while editing, the formatting toolbar sticks above the
+keyboard. From the first phase it is made an installable PWA (installable only;
+offline is in phase 4).
 
-### 8.7 历史与差异高亮
+### 8.7 History and diff highlighting
 
-目标是 Google Docs 版本记录那样的体验：不懂 Markdown 的人一眼看出改了什么。
+The goal is an experience like Google Docs version history: someone who does not
+know Markdown can see at a glance what was changed.
 
-- **版本列表**在右栏，按天分组，显示时间和编辑者。一个版本就是一次提交。
-  可以给版本起名字（比如「初稿」「投稿版」），起了名字的版本置顶显示。
-- **差异直接标在排版后的正文上**：新增的字绿色底，删除的字红色加删除线，
-  留在原位。不是左右两栏的代码式对比。
-- **按字比较**。先按块（段落、标题、列表项）对齐，没变的块原样显示；变了
-  的块在内部按词和字比较。中文分词用浏览器自带的 `Intl.Segmenter`。
-- **格式变化也标出来**：只是加粗、改标题级别这类没有文字变化的修改，用
-  另一种颜色的下划线提示。
-- **头部字段的变化**（标题、副标题、标签、状态）在正文上方单独列出。
-- **图片和表格**：图片被替换时并排显示新旧两张；表格按单元格标色。
-- 默认和上一个版本比，也可以任选两个版本比。可以切换到原始 Markdown 的
-  逐行对比，给习惯看文本的人。
-- **恢复**到某一版是产生一个新提交，不改写历史。
-- 共享空间里按编辑者用不同颜色（第 3 期）。
+- The **version list** is in the right column, grouped by day, showing the time
+  and the editor. A version is one commit. A version can be given a name (for
+  example "First draft", "Submission version"), and named versions are shown at
+  the top.
+- **The diff is marked directly on the formatted body**: added text has a green
+  background, deleted text is red with a strikethrough, and stays in place. It is
+  not a code-style comparison in two side-by-side columns.
+- **Compared by character**. First blocks (paragraphs, headings, list items) are
+  aligned, and unchanged blocks are shown as they are; inside a changed block, the
+  comparison is by word and character. Chinese word segmentation uses the
+  browser's built-in `Intl.Segmenter`.
+- **Format changes are marked too**: modifications with no text change, such as
+  just adding bold or changing the heading level, are shown with an underline of
+  another color.
+- **Changes to header fields** (title, subtitle, tags, status) are listed
+  separately above the body.
+- **Images and tables**: when an image is replaced, the old and the new are shown
+  side by side; tables are colored by cell.
+- By default it compares with the previous version, and any two versions can also
+  be chosen. It can be switched to a line-by-line comparison of the raw Markdown,
+  for people used to reading text.
+- **Restoring** to a version produces a new commit and does not rewrite history.
+- In shared spaces, a different color per editor (phase 3).
 
-实现上，把两个版本的 Markdown 各自转成编辑器文档，在文档树上做比较，结果
-用只读编辑器加高亮装饰渲染。比较在浏览器里按需计算，只在打开历史面板并
-选中版本时发生；服务端只负责给出版本列表和某一版的文件内容。
+In implementation, the Markdown of the two versions is each converted into an
+editor document, the comparison is done on the document tree, and the result is
+rendered with a read-only editor plus highlight decorations. The comparison is
+computed in the browser on demand, only when the history panel is opened and a
+version is selected; the server only provides the version list and the file
+contents of a given version.

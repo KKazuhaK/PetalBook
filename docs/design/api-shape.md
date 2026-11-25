@@ -1,19 +1,21 @@
 # API shape
 
-## 9. API 形状
+## 9. API shape
 
-REST，前端只通过它与后端交互，将来的客户端复用。
+REST. The frontend talks to the backend only through it, and future clients
+reuse it.
 
-- `GET /api/spaces`，`POST /api/spaces`
-- `GET /api/spaces/{s}/tree`：文件夹树
+- `GET /api/spaces`, `POST /api/spaces`
+- `GET /api/spaces/{s}/tree`: the folder tree
 - `GET /api/spaces/{s}/pages?folder=&tag=&type=&q=`
-- `GET /api/spaces/{s}/pages/{id}`：返回内容和当前版本
-- `PUT /api/spaces/{s}/pages/{id}/draft`：带 `baseRev`
+- `GET /api/spaces/{s}/pages/{id}`: returns the content and the current version
+- `PUT /api/spaces/{s}/pages/{id}/draft`: carries `baseRev`
 - `POST /api/spaces/{s}/pages/{id}/commit`
 - `GET /api/spaces/{s}/pages/{id}/history`
 - `POST /api/spaces/{s}/assets`
-- `GET /api/spaces/{s}/changes?since={rev}`：某版本之后改了什么（同步用）
-- `GET /api/search?q=`：跨当前用户可见的所有空间
+- `GET /api/spaces/{s}/changes?since={rev}`: what changed after a given
+  version (used for sync)
+- `GET /api/search?q=`: across all spaces visible to the current user
 
-`baseRev` 和 `changes` 从第一期就按离线同步的需要设计，即使当时只有在线
-网页在用。
+`baseRev` and `changes` are designed from the first phase for offline sync,
+even though only the online web app uses them at that point.

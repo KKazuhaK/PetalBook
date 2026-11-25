@@ -1,140 +1,237 @@
 # Database
 
-## 5. 数据库
+## 5. Database
 
-### 5.1 状态库（SQLite 或 PostgreSQL）
+### 5.1 State database (SQLite or PostgreSQL)
 
-用户、外部身份（提供方加 subject）、密码和 passkey、组和成员、空间和成员、
-会话、API token、OAuth 授权、远端凭据（加密）、草稿、邀请。
+Users, external identities (provider plus subject), passwords and passkeys,
+groups and members, spaces and members, sessions, API tokens, OAuth grants,
+remote credentials (encrypted), drafts, invitations.
 
-- SQLite 用纯 Go 驱动，保持单个可执行文件。
-- 两种数据库从第一期起都在 CI 里跑测试，避免事后补兼容。
-- 接 PostgreSQL 的收益是托管备份和现成运维，不是横向扩展。
+- SQLite uses a pure Go driver, to keep a single executable.
+- Both databases run tests in CI from the first phase, to avoid patching in
+  compatibility afterwards.
+- The benefit of connecting PostgreSQL is managed backups and ready-made
+  operations, not horizontal scaling.
 
-### 5.2 索引库（始终本地 SQLite）
+### 5.2 Index database (always a local SQLite)
 
-页面元数据、全文索引、标签、链接关系。可以随时删掉，从文件重建。
+Page metadata, full-text index, tags, link relations. It can be deleted at any
+time and rebuilt from the files.
 
-- 中文全文搜索用「逐字切分」：入库前在每个汉字两边加空格，让 SQLite 自带
-  的分词器把每个字当成一个词，查询时转成短语。三字符分词查不了两个字的
-  词，已排除。
-- 全局搜索跨当前用户可见的所有空间，结果按空间权限过滤。
-- 列表、文件夹树、标签、搜索都查索引，不遍历磁盘，不逐个读文件。
-- 索引记录它对应的提交。每次 fetch 快进后，比较新旧两个提交之间改了哪些
-  文件，只重建这些页面的索引：新增的加入，删除的移除，改名的靠 `id` 认出是
-  同一篇。别人直接在 GitHub 上改动就是走这条路径，最多延迟一个 fetch 周期
-  （默认 60 秒）；配置了 webhook 时可以立即触发。
-- 只有索引缺失、版本不符，或记录的提交已不在历史里时才全量重建。
-- 不引入 Redis：服务是单实例，会话在状态库，热数据放进程内缓存即可。
-- 实测（5 万篇、6220 万字，见 `spikes/search-scale/`）：文件夹和标签列表
-  0.1 到 15 ms；搜索少见的词 0.2 ms，搜索命中上万篇的常见词约 200 ms；
-  保存一篇后更新索引 0.7 ms；全量重建 29 秒；索引大小是文本的 87%。
-- 已知要改进的：逐字切分会跨标点匹配，入库时要把标点换成占位词。
+- Chinese full-text search uses "per-character splitting": before storing, a
+  space is added on both sides of every Chinese character, so that SQLite's
+  built-in tokenizer treats each character as one word, and at query time the
+  query is turned into a phrase. A trigram tokenizer cannot find two-character
+  words, and was ruled out.
+- Global search covers all spaces visible to the current user, and the results
+  are filtered by space permissions.
+- Lists, the folder tree, tags and search all query the index; they do not walk
+  the disk or read files one by one.
+- The index records the commit it corresponds to. After every fetch
+  fast-forward, it compares which files changed between the old and the new
+  commit, and rebuilds the index only for those pages: added ones are added,
+  deleted ones are removed, and renamed ones are recognized as the same page by
+  their `id`. When someone else edits directly on GitHub, this is the path it
+  takes, with a delay of at most one fetch cycle (60 seconds by default); when a
+  webhook is configured, it can be triggered immediately.
+- A full rebuild happens only when the index is missing, the version does not
+  match, or the recorded commit is no longer in the history.
+- Redis is not introduced: the service is a single instance, sessions are in the
+  state database, and hot data can simply go into an in-process cache.
+- Measured (50,000 pages, 62.2 million characters, see `spikes/search-scale/`):
+  folder and tag lists 0.1 to 15 ms; searching a rare word 0.2 ms, searching a
+  common word that hits over ten thousand pages about 200 ms; updating the index
+  after saving one page 0.7 ms; full rebuild 29 seconds; the index size is 87% of
+  the text.
+- Known to be improved: per-character splitting matches across punctuation, so
+  punctuation has to be replaced by a placeholder word when storing.
 
-### 5.3 数据库基线（2026-11-24）
+### 5.3 Database baseline (2026-11-24)
 
-3.5 合并后按所有者的要求（第 17 节「数据库」）对状态库做了一次整体审查：在一个造出来的库上量
-（200 个租户、3 万用户、6 万空间、100 万条审计、一个 5 万篇的索引库），两种数据库都看了查询计划。
-这一节记下改了什么、为什么、量出来的数。**开发库和演示库都要删掉重建**：旧库启动时会被拒绝，
-不会被转换。
+After 3.5 was merged, at the owner's request (see
+[decisions-2026-11-24.md §17](decisions-2026-11-24.md#17-owner-decisions-of-2026-11-24-collected-placed-by-milestone), "Database"), the state
+database got one overall review: measured on a constructed database (200
+tenants, 30,000 users, 60,000 spaces, 1 million audit records, one index
+database of 50,000 pages), and the query plans of both databases were checked.
+This section records what was changed, why, and the numbers measured. **Both the
+development database and the demo database must be deleted and rebuilt**: an old
+database is rejected at startup and is not converted.
 
-- **一个基线，不写迁移。** 0001 到 0020 合成一个文件 `internal/store/schema.sql`，SQLite 和
-  PostgreSQL 共用；只在某一种库上跑的语句前面写一行 `-- dialect: postgres`（或 `sqlite`）。
-  `tenant_id` 现在是真正的外键（用户、空间、组、邀请、注册、登录提供方、用量、GitHub 安装的
-  共享、回收站、导出、批量任务）；审计日志的 `tenant_id` 故意不是外键，记录要比租户活得久。
-  删租户时：回收站里还有东西就拒绝（API 文档本来就这么写，代码之前漏了）；已清除的人的墓碑、
-  导出、批量任务移到默认租户，导出和任务变成全站管理员的（`site_only`），照常过期和清理。
-  只有一行的 `settings` 表并进 `site_settings`（键 `first_user`）。7 和 18 的 Go 步骤、
-  「关外键重建表」那套机制、`tenants_migrate.go` 和模拟旧库升级的测试都删了；默认租户在建库
-  时一起建。
-- **文本列一律 `COLLATE "C"`。** 原来 PostgreSQL 的排序和游标比较靠每条查询临时加
-  `COLLATE "C"`（`bytewise()`），列本身的索引是默认排序规则的，用不上：3 万用户上按用户名
-  翻页 14–18 ms（全表扫描再排序），列声明成 `COLLATE "C"` 后 0.04 ms；空间列表按 `name_key`
-  排序在 en_US 库里和 SQLite 的顺序还不一样。现在每个 TEXT 列都声明 `COLLATE "C"`（SQLite
-  上写成 `COLLATE BINARY`，就是它的默认），两边按字节排、游标含义一样，`bytewise()` 删掉。
-  启动时读 `pg_database` 的区域：不是 C、C.UTF-8 或 builtin 提供方就在日志里警告（不拒绝，
-  列已经是 C 了）；README 写了建库语句
-  `CREATE DATABASE … LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'`。
-- **按邮箱找人走索引。** `UsersByEmail`（登录、重置密码、SSO 按邮箱合并都用它）原来对租户里
-  每个人的地址做一次小写化再比，3 万人 88 ms。现在 `users` 有 `email_key`（Go 的 `EmailKey`，
-  非 ASCII 的地址是空串、谁也匹配不上）和 `name_key`（`FoldName`），每次写名字或地址都在同一条
-  语句里写键（有个测试读整个包的 SQL 检查这一点）；查找走部分索引
-  `users_email (tenant_id, email_key) WHERE email_key <> ''`。搜人（`SearchUsers`、存储页的
-  人员列表、组成员、空间可见的人）把查询词在 Go 里折叠后比 `username` 和 `name_key`，不再用
-  PostgreSQL 的 `LOWER()`（C 库里它不折叠非 ASCII），所以 `STRASSE` 能找到 `Straße`，两种库
-  结果一样；API 文档相应补了一句。
-- **索引的增删。** 补上删人时级联要用的子表索引 `drafts_user`、`invites_created_by`、
-  `provider_leftovers_user`。删掉重复的：`spaces_last_used`（`spaces_used` 已覆盖）、
-  `spaces_usage_user`（是 `spaces_owner` 的前缀）、`users_tenant`（`UsersWithQuota` 加上
-  `deleted_at IS NULL` 走 `users_live`；令牌和授权列表的租户条件改成按主键逐行查用户）；
-  `asset_remotes_move` 改成部分索引。用量表的 12 个列表索引只收人的行（`WHERE kind = 'user'`）：
-  按租户的去掉了开头的 `kind`；跨租户的保留 `kind` 在前，因为 SQLite 的规划器没有前导列上的
-  等值条件时把部分索引当全表扫描估价，宁可用主键再排序。
-- **PostgreSQL 的 fillfactor。** `usage`、`spaces`、`users`、`sessions`、`remotes` 设
-  `fillfactor = 85`：更新没碰索引列时可以是 HOT 更新。量过：默认 100 时 5000 次这样的更新
-  0 次 HOT，80 时 4891 次。
-- **锁行不写行。** `LockSpace`、`LockGroup`、`LockFavorites` 原来用 `UPDATE … SET id = id`：
-  SQLite 上每次 262 µs（改写 16 个索引项、查外键），PostgreSQL 上每次留下一个死元组，5000 次
-  689 ms 对 65 ms。现在 PostgreSQL 用 `SELECT … FOR NO KEY UPDATE`（和那条 UPDATE 同一级别的
-  锁：互斥不变，又不挡引用这一行的外键检查，`FOR UPDATE` 会挡），SQLite 只查行在不在（写事务
-  从开始就拿着唯一的写锁）。各开一个事务锁 5000 次：SQLite 每次 176 µs → 23 µs，PostgreSQL
-  156 µs → 136 µs（主要是往返），不再有死元组。
-- **后台测量的队列单独一张表。** 测量反复走遍每个空间，原来每次都写带索引的 `spaces.size_at`，
-  还给所有者和租户的用量行盖时间戳，什么都没变也写：PostgreSQL 上 1 万次更新 0 次 HOT，空间表
-  的索引从 57 MB 涨到 62 MB。现在队列是 `space_measure (space_id, tenant_id, size_at)`，索引
-  `(size_at, space_id)` 给「下一个该量谁」、`(tenant_id, size_at)` 给「租户最近一次测量」；
-  `spaces.size_at` 和它的索引删掉。只有字节数或页数变了才写 `spaces` 和用量行；人的行在变化时
-  盖时间，第一次量到他的空间时也盖一次；租户的行不再盖，`measuredAt` 取它的空间在队列里最新的
-  时间（一次索引查找）。建空间的每条路径都入队，恢复的空间重新入队，每日重算把漏掉的补上。
-  2000 个空间上 5000 次「什么都没变」的测量：PostgreSQL 每次 636 µs → 422 µs，空间表索引
-  1.68 MB → 2.04 MB 变成不涨，空间和用量行的新版本 10600 个变成 0；SQLite 每次 389 µs → 222 µs。
-- **审计日志按 id 范围分批删。** id 是 12 位十六进制的毫秒时间加序号，所以「早于某时」就是主键
-  的一段：`audit_log_at` 删掉，`TrimAudit` 每批删 5000 行、每批一条语句（不在事务里时各自是
-  一个事务）。原来一条语句删 67.6 万行要 8.2 s，一直占着 SQLite 唯一的写连接；现在 27 万行
-  SQLite 1.8 s（54 批，每批约 33 ms），PostgreSQL 0.66 s。新加 `audit_log_tenant_kind
-  (tenant_id, kind, id)`，租户按类型筛审计原来要读整个租户的日志（100 万行时 414 ms）。
-- **连接。** PostgreSQL `SetMaxIdleConns(20)`（Go 默认只留 2 个空闲，一阵请求过后刚开的连接就
-  被关掉，下一阵再重开）。SQLite 加一个 4 个连接的只读池（`query_only`）：`Store.Q()` 上不在
-  事务里的 SELECT 走它，其余语句（包括 PRAGMA 和带 RETURNING 的）走唯一的写连接。规则（写在
-  `Store.Q` 的注释里）：WAL 下一次读能看到它开始之前提交的所有写，所以先在 `Q` 上写、再在 `Q`
-  上读，读得到自己写的；要和某次写在同一状态下读的（读—判断—写，或者写和读之间不许插进别的
-  写）放进同一个 `Tx`，`Tx` 在写连接上，读也在里面；`Tx` 里只用它自己给的 `Q`。之前 SQLite
-  只有一个连接，`Tx` 里用外面的 `Q` 会卡死，所以现有代码里没有这种用法。
-- **`bulk_jobs` 定期清理。** 原来从不删。每日任务删结束（done、failed、interrupted）超过 30 天
-  的任务，走新索引 `bulk_jobs_updated`；排队中和运行中的永远不删。
-- **索引库的页缓存。** 每个连接 64 MB 页缓存，一个索引 15 个连接、最多同时开 64 个空间，最坏
-  约 61 GB。现在写连接保留 64 MB，读连接各 8 MB，并用 256 MB 的内存映射读文件（`mmap_size`，
-  modernc 的 SQLite 支持，上限 2 GB），共享的页只在操作系统缓存里存一份；私有缓存最坏是每个
-  索引 176 MB、64 个约 11 GB。代价：映射的文件读出 I/O 错误时进程会收到 SIGBUS，索引库在本地
-  盘上，可以接受。
-- **`session_ends` 的时间索引**（#39 加的表）已经有 `session_ends_ended`，每日清理
-  `DELETE … WHERE ended < ?` 走它；测试用查询计划确认。
-- **测试**：每项行为改动都有测试；性能项各有 EXPLAIN 测试，两种库都跑，回退了就会失败：按邮箱
-  查人、PostgreSQL 上的按字节排序翻页、审计按租户和类型、测量队列、级联用的子表索引、
-  `session_ends` 清理、批量任务清理（`internal/store/db_explain_test.go` 等）。
+- **One baseline, no migrations.** 0001 to 0020 were merged into one file,
+  `internal/store/schema.sql`, shared by SQLite and PostgreSQL; a statement that
+  runs on only one kind of database is preceded by a line
+  `-- dialect: postgres` (or `sqlite`). `tenant_id` is now a real foreign key
+  (users, spaces, groups, invitations, sign-ups, sign-in providers, usage, GitHub
+  installation sharing, trash, exports, bulk jobs); the audit log's `tenant_id`
+  is deliberately not a foreign key, because the records outlive the tenant.
+  When a tenant is deleted: if anything is still in the trash, it is refused (the
+  API document already said this, and the code had missed it); the tombstones of
+  purged people, the exports and the bulk jobs are moved to the default tenant,
+  and the exports and jobs become site-admin ones (`site_only`), expiring and
+  being cleaned up as usual. The single-row `settings` table is merged into
+  `site_settings` (key `first_user`). The Go steps of 7 and 18, the "turn off
+  foreign keys and rebuild the table" machinery, `tenants_migrate.go` and the
+  tests that simulate upgrading an old database were all deleted; the default
+  tenant is created together with the database.
+- **Text columns are all `COLLATE "C"`.** Before, PostgreSQL ordering and cursor
+  comparison relied on adding `COLLATE "C"` temporarily in each query
+  (`bytewise()`), and the index on the column itself used the default collation,
+  so it could not be used: paging by username over 30,000 users took 14-18 ms (a
+  full table scan and then a sort), and after the column was declared
+  `COLLATE "C"` it took 0.04 ms; listing spaces ordered by `name_key` in an
+  en_US database also gave a different order from SQLite. Now every TEXT column
+  is declared `COLLATE "C"` (written as `COLLATE BINARY` on SQLite, which is its
+  default), both sides sort by bytes and cursors mean the same, and `bytewise()`
+  was deleted. At startup it reads the locale from `pg_database`: if it is not C,
+  C.UTF-8 or a builtin provider, it warns in the log (it does not refuse, since
+  the columns are already C); the README gives the create-database statement
+  `CREATE DATABASE … LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'`.
+- **Finding people by email uses an index.** `UsersByEmail` (used by sign-in,
+  password reset, and SSO merging by email) used to lowercase the address of
+  every person in the tenant and then compare, taking 88 ms for 30,000 people.
+  Now `users` has `email_key` (Go's `EmailKey`; for a non-ASCII address it is the
+  empty string and matches nobody) and `name_key` (`FoldName`), and each write of
+  a name or address writes the key in the same statement (a test reads the SQL of
+  the whole package to check this); the lookup uses the partial index
+  `users_email (tenant_id, email_key) WHERE email_key <> ''`. Searching for
+  people (`SearchUsers`, the people list on the storage page, group members,
+  people visible to a space) folds the query term in Go and then compares it with
+  `username` and `name_key`, and no longer uses PostgreSQL's `LOWER()` (in a C
+  locale it does not fold non-ASCII), so `STRASSE` finds `Straße`, and both
+  databases give the same result; the API document got a sentence to match.
+- **Index additions and removals.** Added the child-table indexes needed by the
+  cascade when a person is deleted: `drafts_user`, `invites_created_by`,
+  `provider_leftovers_user`. Removed the duplicates: `spaces_last_used`
+  (`spaces_used` already covers it), `spaces_usage_user` (a prefix of
+  `spaces_owner`), `users_tenant` (`UsersWithQuota` with `deleted_at IS NULL`
+  uses `users_live`; the tenant conditions of the token and grant lists were
+  changed to look up the user row by primary key, row by row);
+  `asset_remotes_move` was made a partial index. The 12 list indexes of the usage
+  table include only people's rows (`WHERE kind = 'user'`): the per-tenant ones
+  dropped the leading `kind`; the cross-tenant ones keep `kind` first, because
+  when there is no equality condition on the leading column, SQLite's planner
+  costs a partial index like a full table scan, and prefers to use the primary key
+  and then sort.
+- **PostgreSQL fillfactor.** `usage`, `spaces`, `users`, `sessions` and `remotes`
+  are set to `fillfactor = 85`: an update that touches no indexed column can be
+  a HOT update. Measured: at the default 100, 5000 such updates gave 0 HOT; at 80,
+  4891.
+- **Lock the row, do not write the row.** `LockSpace`, `LockGroup` and
+  `LockFavorites` used `UPDATE … SET id = id`: on SQLite each one took 262 µs
+  (rewriting 16 index entries, checking foreign keys), and on PostgreSQL each one
+  left a dead tuple; 5000 times took 689 ms versus 65 ms. Now PostgreSQL uses
+  `SELECT … FOR NO KEY UPDATE` (a lock at the same level as that UPDATE: the
+  mutual exclusion is unchanged, and it does not block the foreign key checks
+  that reference the row, which `FOR UPDATE` would), and SQLite only checks that
+  the row exists (a write transaction has held the only write lock since it
+  began). With one transaction each locking 5000 times: SQLite 176 µs → 23 µs per
+  lock, PostgreSQL 156 µs → 136 µs (mostly the round trip), and no more dead
+  tuples.
+- **The background measurement queue is its own table.** Measurement walks every
+  space again and again, and used to write the indexed `spaces.size_at` every
+  time, and also stamp the usage rows of the owner and the tenant, even when
+  nothing had changed: on PostgreSQL 10,000 updates gave 0 HOT, and the index on
+  the spaces table grew from 57 MB to 62 MB. Now the queue is
+  `space_measure (space_id, tenant_id, size_at)`, with the index
+  `(size_at, space_id)` for "who to measure next" and `(tenant_id, size_at)` for
+  "the tenant's latest measurement"; `spaces.size_at` and its index were deleted.
+  `spaces` and the usage rows are written only when the byte count or page count
+  changed; a person's row is stamped when it changes, and also once the first time
+  his space is measured; the tenant's row is no longer stamped, and `measuredAt`
+  takes the latest time of its spaces in the queue (one index lookup). Every path
+  that creates a space enqueues it, a restored space is enqueued again, and the
+  daily recount fills in any that were missed. On 2000 spaces with 5000 "nothing
+  changed" measurements: PostgreSQL 636 µs → 422 µs each, the spaces table index
+  1.68 MB → 2.04 MB becomes no growth, and the new versions of space and usage
+  rows go from 10,600 to 0; SQLite 389 µs → 222 µs each.
+- **Audit log is deleted in batches by id range.** The id is a 12-digit hex
+  millisecond time plus a sequence number, so "older than some time" is a range
+  of the primary key: `audit_log_at` was deleted, and `TrimAudit` deletes 5000
+  rows per batch, one statement per batch (each is its own transaction when not
+  inside a transaction). Before, one statement deleting 676,000 rows took 8.2 s
+  and held SQLite's only write connection the whole time; now 270,000 rows take
+  1.8 s on SQLite (54 batches, about 33 ms each) and 0.66 s on PostgreSQL. Added
+  `audit_log_tenant_kind (tenant_id, kind, id)`; before, filtering a tenant's
+  audit by kind had to read the tenant's whole log (414 ms at 1 million rows).
+- **Connections.** PostgreSQL `SetMaxIdleConns(20)` (Go keeps only 2 idle by
+  default, so after a burst of requests the connections just opened are closed,
+  and reopened for the next burst). SQLite gets a read-only pool of 4
+  connections (`query_only`): a SELECT on `Store.Q()` that is not inside a
+  transaction goes to it, and all other statements (including PRAGMA and those
+  with RETURNING) go to the only write connection. The rule (written in the
+  comment of `Store.Q`): under WAL, a read sees all writes committed before it
+  began, so writing on `Q` and then reading on `Q` reads your own write; a read
+  that must be in the same state as a certain write (read, decide, write; or no
+  other write allowed between the write and the read) goes into the same `Tx`,
+  which is on the write connection, and the reads are inside it; inside a `Tx`,
+  use only the `Q` it gives. Before, SQLite had only one connection, and using the
+  outer `Q` inside a `Tx` would hang, so no existing code does this.
+- **`bulk_jobs` periodic cleanup.** It was never deleted before. A daily task
+  deletes jobs that ended (done, failed, interrupted) more than 30 days ago,
+  using the new index `bulk_jobs_updated`; queued and running ones are never
+  deleted.
+- **Page cache of the index database.** Each connection had a 64 MB page cache,
+  an index has 15 connections, and up to 64 spaces can be open at once, so the
+  worst case was about 61 GB. Now the write connection keeps 64 MB, each read
+  connection gets 8 MB, and files are read through a 256 MB memory map
+  (`mmap_size`, supported by modernc's SQLite, with an upper limit of 2 GB); the
+  shared pages are stored only once, in the operating system cache; the worst
+  case of private cache is 176 MB per index, and about 11 GB for 64. The cost:
+  when an I/O error happens while reading a mapped file, the process receives
+  SIGBUS; the index database is on local disk, so this is acceptable.
+- **The time index of `session_ends`** (the table added in #39) already has
+  `session_ends_ended`, and the daily cleanup `DELETE … WHERE ended < ?` uses it;
+  a test confirms this with the query plan.
+- **Tests**: every behavior change has a test; each performance item has an
+  EXPLAIN test, run on both databases, which fails if it regresses: finding people
+  by email, byte-order paging on PostgreSQL, audit by tenant and kind, the
+  measurement queue, the child-table indexes used by cascades, `session_ends`
+  cleanup, bulk job cleanup (`internal/store/db_explain_test.go` and others).
 
-和各自功能一起做的（3.6 及以后）：审计的类别和高频事件的 `activity_log`；`layered_settings` 的
-`set_by`、`site_lock` 和 `(layer, key)` 索引；3.7 的 `tenant_members` 排序索引、个人空间不进
-默认租户的列表索引；通知的表（3.10 第四部分：`notifications` 和 `notification_seen`）和自定义角色的表；3.10 给 `/admin/users` 分页。
+Done together with their own features (3.6 and later): the audit categories and
+the `activity_log` for high-frequency events; `set_by`, `site_lock` and the
+`(layer, key)` index of `layered_settings`; the `tenant_members` sort index of
+3.7, and the list index for personal spaces not entering the default tenant; the
+notification tables (3.10 part four: `notifications` and `notification_seen`)
+and the custom roles table; and 3.10 paginating `/admin/users`.
 
-### 5.4 结构变更的规则：正式发布前不写迁移
+### 5.4 Rule for schema changes: no migrations before the official release
 
-所有者 2026-11-24 定的规则。
+A rule the owner set on 2026-11-24.
 
-- **正式发布之前，一行迁移代码都不写。** 结构只有一个基线 `internal/store/schema.sql`，有改动
-  就直接改它，不加编号的增量文件，也没有 Go 的升级步骤。建库时把基线语句（不含注释）的哈希
-  记在 `schema_baseline` 的唯一一行里；启动时库里的哈希和这份代码的不一样（或者是还在用编号
-  迁移的旧版本建的，有 `schema_migrations` 表），就拒绝启动，提示「这个库是早先的开发版本建的，
-  请重建」，**从不尝试转换**。模拟旧库、模拟升级的测试一律不要。
-- **正式发布之后，升级代码和结构分开放。** 位置已经留好：`internal/store/upgrade/`（现在是空包，
-  只有说明规则的注释）。每个发布之间的升级一步一个文件放在那里，基线始终描述当前版本的新库，
-  升级步骤只负责把旧库带到它。
-- **其他升级和兼容代码也一样**（所有者 2026-11-24：「其他升级代码也是，要能在合适的时候丢掉」）。
-  发布前，我们自己的数据、设置、接口和客户端存储改了格式就直接改，不读旧格式。按这条删掉的有：
-  每日文案设置的升级和 `notices`、`PUT /api/admin/daily` 忽略的 `hosts`、按旧代码存的行、
-  一个字符串当列表读（默认的 `apis` 和 `sources`）、空间选择存成的纯 id 列表；2.2 之前放在
-  `.petalbook/cache` 的状态和 `.petalbook/tmp` 的搬迁、旧状态库草稿的导入；网页端 1.1 的旧地址、
-  旧的设置地址、本地草稿缺 `source` 的读法、首页记录里的纯数字、离线库的版本升级、对旧服务器的
-  迁就。发布之后，兼容代码放在标明的边界后面，过一个大版本就删。
-- **只支持从上一个大版本升级。** 进入新的大版本时，新基线已经包含一切，上一个大版本的升级
-  步骤可以整个删掉。
+- **Before the official release, not one line of migration code is written.**
+  The schema has a single baseline, `internal/store/schema.sql`; a change is made
+  directly in it, with no numbered incremental files and no Go upgrade steps.
+  When the database is created, the hash of the baseline statements (without
+  comments) is recorded in the single row of `schema_baseline`; at startup, if the
+  hash in the database differs from this code's (or the database was made by an
+  old version that still used numbered migrations, and has a `schema_migrations`
+  table), startup is refused with the message "this database was made by an
+  earlier development version, please recreate it", and **conversion is never
+  attempted**. Tests that simulate old databases or simulate upgrades are never
+  wanted.
+- **After the official release, upgrade code is kept apart from the schema.** The
+  place is already set aside: `internal/store/upgrade/` (an empty package for
+  now, with only a comment explaining the rule). The upgrade between each pair of
+  releases goes in one file each there; the baseline always describes a fresh
+  database of the current version, and an upgrade step is only responsible for
+  bringing an old database up to it.
+- **Other upgrade and compatibility code is the same** (the owner, 2026-11-24:
+  「其他升级代码也是，要能在合适的时候丢掉」 [Other upgrade code too; it must be
+  possible to drop it at the right time]). Before release, when our own data,
+  settings, interfaces and client storage change format, we change them directly
+  and do not read the old format. What was deleted under this rule: the upgrade of
+  the daily text settings and `notices`, the `hosts` that `PUT /api/admin/daily`
+  ignored, rows stored by old code, reading a single string as a list (the default
+  `apis` and `sources`), the space selection stored as a plain id list; the state
+  that was kept in `.petalbook/cache` before 2.2 and the moving of
+  `.petalbook/tmp`, the import of drafts from the old state database; on the web
+  side the old addresses of 1.1, the old settings addresses, the way of reading
+  local drafts that lack `source`, the plain numbers in the home page records, the
+  version upgrade of the offline database, and the accommodation of old servers.
+  After release, compatibility code goes behind a marked boundary, and is deleted
+  after one major version.
+- **Only upgrading from the previous major version is supported.** When a new
+  major version is entered, the new baseline already contains everything, and the
+  upgrade steps of the previous major version can be deleted entirely.

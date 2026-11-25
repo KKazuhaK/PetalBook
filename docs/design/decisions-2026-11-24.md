@@ -1,159 +1,319 @@
 # Owner decisions of 2026-11-24
 
-## 17. 所有者 2026-11-24 的决定（汇总，按里程碑归位）
+## 17. Owner decisions of 2026-11-24 (collected, placed by milestone)
 
-**3.10 的方向（界面重构）**
+**Direction of 3.10 (UI restructuring)**
 
-- **管理后台是独立页面**：左侧栏是大项（用户、组、空间、存储与同步、登录与安全、发信、每日文案、
-  设置分层、租户、用量、审计、服务器状态……），每一项里用顶部标签分子页面；左上角「← 返回
-  ⟨空间名⟩」。以后内容会越来越多，这个骨架要能装下。
-- **列表一律是表格**，按上百上千条设计：一行一个人（空间、组），显示的列由管理员自己选、列宽
-  可以拖，这些只存在浏览器里；最右边只放常用的一两个操作；其余在「查看／编辑」打开的**独立
-  页面**里（不用弹窗：审计这类内容很长），详情页分标签（资料、安全与登录、会话、空间与组、
-  用量、审计）。每页条数默认 50，可选 25／100／200，服务器分页；搜索、筛选、排序、勾选后批量。
-- **消息通知**（通用，现在就预留）：铃铛加红点、通知列表；先做应用内和网页通知（浏览器推送，
-  用户同意后），以后加邮件和手机推送。空间的「校验」问题是其中一类，**校验不再常驻侧边栏**；
-  以后的待办提醒、邀请、提到你都走它。
-- **收藏更显眼**：浏览文件的列表里，鼠标停在一行上，右侧淡入一个收藏按钮（有过渡动画，不生硬）。
-  **文件夹内置顶**：有编辑权限的人把一页钉在文件夹列表最上面，所有人看到的一样（个人置顶就是
-  收藏）。
-- **设置对话框**右上角的关闭按钮放在整个对话框的角上，不在右栏的标题行里。
-- **报错按代码翻译**：网页按错误代码显示中英文的提示，只有表里没有的代码才退回服务器的原文；
-  服务器原文也改成首字母大写、句末有句号；测试检查每个错误代码都有翻译。「Checks」改名。
-- **手机和平板**：页面永远不横向滚动（表格在自己的框里滚）；工具栏放不下收进「更多」；按钮
-  至少 40 像素；侧边栏在手机上是抽屉；对话框在手机上全屏。每个改界面的里程碑在 375 和 768
-  宽度下实际检查。
-- **新用户引导**：第一次登录时的基础教程，可以跳过、可以从帮助里再打开；全站或组织「建议」
-  或「强制」连接自己的仓库时，一步一步讲清楚为什么、去哪里点、授权什么、卡住了找谁。
-- **页面头部只改值**：源码模式只显示正文；头部用属性面板编辑，键来自类型、只能改值，新属性从
-  类型允许的里面选；`id`、`created` 等系统字段只读；属性改名是类型层面的操作，一次改全部页面；
-  原始 YAML 留作管理员的高级模式。
+- **The admin console is a separate page**: the left sidebar has the major items
+  (Users, Groups, Spaces, Storage & sync, Sign-in & security, Mail, Daily text,
+  Settings by layer, Tenants, Usage, Audit, Server status, ...), and inside each
+  item top tabs divide the sub-pages; at the top left is "← Back to ⟨space
+  name⟩". There will be more and more content later, and this skeleton has to be
+  able to hold it.
+- **Every list is a table**, designed for hundreds or thousands of rows: one row
+  per person (space, group), the columns shown are chosen by the admin and the
+  column widths can be dragged, and these live only in the browser; the far right
+  holds only the one or two common actions; the rest are in the **separate page**
+  opened by "View/Edit" (no dialogs: things like audit are very long), and the
+  detail page is divided into tabs (profile, security and sign-in, sessions,
+  spaces and groups, usage, audit). Rows per page is 50 by default, with 25/100/200
+  as options, paginated on the server; search, filter, sort, and batch actions
+  after ticking.
+- **Notifications** (general, reserved now): a bell with a red dot, and a
+  notification list; first in-app and web notifications (browser push, after the
+  user agrees), with email and phone push added later. A space's "validation"
+  problems are one kind of these, and **validation no longer sits permanently in
+  the sidebar**; later to-do reminders, invitations and mentions all go through
+  it.
+- **Favourites more visible**: in the list that browses files, when the mouse
+  rests on a row, a favourite button fades in on the right (with a transition, not
+  abrupt). **Pinning in a folder**: someone with edit permission pins a page at
+  the very top of the folder list, and everyone sees the same (a personal pin is a
+  favourite).
+- **The settings dialog**: the close button at the top right is placed at the
+  corner of the whole dialog, not in the title row of the right column.
+- **Errors are translated by code**: the web shows Chinese and English messages by
+  error code, and falls back to the server's original text only for codes that are
+  not in the table; the server's original text is also changed to start with a
+  capital letter and end with a full stop; a test checks that every error code has
+  a translation. "Checks" is renamed.
+- **Phones and tablets**: the page never scrolls horizontally (tables scroll in
+  their own box); a toolbar that does not fit folds into "More"; buttons are at
+  least 40 pixels; the sidebar is a drawer on phones; dialogs are full screen on
+  phones. Every milestone that changes the UI is actually checked at widths 375
+  and 768.
+- **New user onboarding**: a basic tutorial at first sign-in, which can be skipped
+  and can be opened again from help; when the whole site or an organization
+  "recommends" or "requires" connecting your own repository, it explains step by
+  step why, where to click, what to authorize, and who to ask when stuck.
+- **The page header only changes values**: source mode shows only the body; the
+  header is edited with a properties panel, where the keys come from the type and
+  only values can be changed, and a new property is chosen from those the type
+  allows; system fields such as `id` and `created` are read-only; renaming a
+  property is a type-level operation that changes all pages at once; raw YAML is
+  kept as an advanced mode for admins.
 
-**3.10 第二部分：管理后台（已做）**
+**3.10 part two: admin console (done)**
 
-- 地址是 `/admin/<大项>/<页>`，用户有自己的页 `/admin/user/<id>/<标签>`；旧的 `/admin/manage`、
-  `recycle`、`access`、`usage` 跳到新位置。GitHub 应用创建后回到 `/admin/storage/connections`。
-- `DataTable` 是所有长列表的表格：游标分页加每页条数，列的显示／顺序／宽度（按比例存，不存像素，
-  有最小宽度）、行高、每页条数只存在浏览器的 localStorage 里（读写都包 try/catch）；窄屏按优先级先收起
-  次要的列，其余在表格自己的框里滚；表头点击排序（服务器支持的列）；勾选加批量；右端只有「查看」和「⋯」。
-  用户列表、存储管理的人和空间的列表都用它。
-- `GET /api/users` 改成键集分页（`cursor`／`next`），有搜索、角色、状态、最近活跃的筛选和三种排序，
-  各有索引（`users_live*`）；通行密钥和已连接账号的计数只为本页的 id 查。新增 `GET /api/users/{id}` 和
-  `…/memberships`。
-- 会话记下浏览器的名字和登录方式（`sessions.user_agent`、`method`）。**全站管理员**能在用户页看会话、
-  结束一个或全部（记为 `signed_out_elsewhere`，审计 `sessions_ended`）、看并断开已连接的账号；组织管理员
-  对这些路由一律得到 404，像没有这个人一样。服务器不知道登录来自哪里，所以会话里没有「大致位置」。
-- 还没有的：「注册审批」页（还没有对应的界面）；「以此用户身份查看」是 3.6，按钮先停用。
+- The address is `/admin/<major item>/<page>`, and a user has their own page
+  `/admin/user/<id>/<tab>`; the old `/admin/manage`, `recycle`, `access` and
+  `usage` redirect to the new places. After a GitHub App is created, it returns to
+  `/admin/storage/connections`.
+- `DataTable` is the table for all long lists: cursor pagination plus rows per
+  page; the column visibility/order/width (stored as proportions, not pixels, with
+  a minimum width), row height and rows per page are stored only in the browser's
+  localStorage (reads and writes are wrapped in try/catch); on a narrow screen the
+  secondary columns are folded first by priority, and the rest scroll in the
+  table's own box; clicking the header sorts (for columns the server supports);
+  ticking plus batch actions; the right end has only "View" and "⋯". The user list
+  and the people and space lists of storage management all use it.
+- `GET /api/users` was changed to keyset pagination (`cursor`/`next`), with
+  filters for search, role, status and last active and three sort orders, each
+  with an index (`users_live*`); the counts of passkeys and connected accounts are
+  looked up only for the ids on this page. Added `GET /api/users/{id}` and
+  `…/memberships`.
+- A session records the browser's name and the sign-in method
+  (`sessions.user_agent`, `method`). **Site admins** can see the sessions on a
+  user's page, end one or all of them (recorded as `signed_out_elsewhere`, audit
+  `sessions_ended`), and see and disconnect connected accounts; an organization
+  admin always gets 404 on these routes, as if the person did not exist. The
+  server does not know where a sign-in came from, so a session has no
+  "approximate location".
+- Not there yet: the "sign-up approval" page (there is no corresponding UI yet);
+  "View as this user" is 3.6, and the button is disabled for now.
 
-**3.10 第三部分：文件夹和页面（已做，缺的见末尾）**
+**3.10 part three: folders and pages (done, what is missing is at the end)**
 
-- **文件夹是表格**：文件夹的默认视图（保存的视图里的 `list` 布局）是像 Finder 列表那样的表格，复用 `DataTable`：
-  标题（粗体，下面一行淡色的正文摘要）、副标题、标签、来源、创建、更新，加类型的属性列；表头点击排序（来源按
-  第一个来源排），子文件夹默认排在最前、可以切成按名字混排。列的显示、顺序和宽度（按比例）由人自己选，窄时按优先级
-  先收起。筛选（标签、来源、类型里的选择字段、创建和更新的日期范围）在「筛选」按钮（ListFilter 图标）后面，生效的
-  显示成可摘掉的标签。悬停一行，右端的星标用约 150ms 淡入，触屏上一直在但很淡。手机上不是表格，是标题加一行小字
-  （时间、标签、来源）的列表，排序和筛选合并成一个按钮。卡片、看板、连读照旧在上方切换；顶栏的排序下拉在桌面上
-  还在，所以 2.x 视图的排序和筛选一直找得到。
-- **个人的偏好放哪里**：列、宽度、顺序、文件夹是否混排，经一个 `PrefsStore` 接口读写，**现在只实现了浏览器的
-  localStorage**，不进数据库；共享的默认值是空间仓库里已有的保存的视图（`hidden` 是没有个人选择时的默认）。
-  写到本人个人空间的 `.petalbook/prefs.yml`（批量、安静的提交、不出现在页面历史里，没有个人空间或没登录时退回
-  localStorage）在第四部分做了（见下）。
-- **图标和颜色**：文件夹的在 `space.yml` 的 `folders: {路径: {icon, color}}`，随文件夹的移动在同一次提交里
-  搬走（`rebind` 搬整条）；页面的在页头 `icon`、`color`（系统字段，不是类型的属性）；类型可以给页面一个默认图标
-  （类型文件顶层的 `x-icon`、`x-color`）。图标是 Lucide 的名字或一个表情；颜色是八种（红橙琥珀绿青蓝紫粉），
-  各有调过的浅色和深色，图标用 `currentColor`。选择器按名字、Lucide 的标签和几百个常用图标的中文别名搜，最近用过
-  的在前，再是分类；**整套 Lucide 和它的标签是单独的一个 chunk**，只在选择器打开或要画一个不常用的图标时才从本
-  服务器取，从不联网。侧边栏、列表、表格和页头都显示；文件夹和页面的右键菜单有「图标和颜色」。
-- **来源是列表**：和标签一样（读时单个字符串算一个值，因为人会手写 YAML）。索引里是 `props` 表的行（键 `source`），
-  所以筛选、排序（`prop:source`）和看板的列（`key=source`）都不用另写代码；`pages.source` 存 JSON 列表给列表读；
-  用过的来源由 `GET …/sources` 给。预设在 `space.yml` 的 `sources:`，没写时用界面语言的默认（原创、互联网、书、电影、
-  音乐、对话）；管理员在来源输入旁的按钮里改。输入框和标签是同一个 `ChipInput`：先已用的、再预设，Tab 补全第一个，
-  方向键或鼠标选，Enter 加，空框里 Backspace 去掉最后一个，Esc 关闭；手机上列表在输入框下面。每日文案的署名把多个
-  来源用「、」（中文）或「, 」（英文）连起来。
-- **页头只改值**：源码模式只显示正文；管理员（`manage`）可以勾选「同时用 YAML 编辑页面头部（高级）」，原来的错误
-  保护照旧。属性面板的键来自类型，只能改值；`id`、`created` 只读地显示；属性改名是类型层面的动作
-  （`POST …/types/{name}/rename-field`，只有 `manage`），同一次提交里改类型文件和所有用到这个键的页面。
-- **还没有的**：表格行的拖拽只在标题格上；页头图标在编辑器里保存时，若同时有未保存的
-  草稿，会走一次冲突提示；不带类型的文件夹的看板按来源分组，但卡片不能拖着改来源（值是页面自己的）。
+- **A folder is a table**: the default view of a folder (the `list` layout in the
+  saved views) is a table like a Finder list, reusing `DataTable`: title (bold,
+  with a line of light-colored body excerpt below it), subtitle, tags, source,
+  created, updated, plus the property columns of the type; clicking the header
+  sorts (source sorts by the first source), subfolders are sorted first by default
+  and can be switched to be mixed in by name. The visibility, order and width (as
+  proportions) of the columns are chosen by the person, and when narrow they fold
+  by priority. The filters (tags, source, the choice fields in the type, date
+  ranges of created and updated) are behind a "Filter" button (ListFilter icon),
+  and active ones are shown as removable tags. When hovering over a row, the star
+  at the right end fades in over about 150ms; on touch screens it is always there
+  but faint. On a phone it is not a table but a list of the title plus one line of
+  small text (time, tags, source), and sorting and filtering are merged into one
+  button. Cards, board and reading in sequence are still switched above as before;
+  the sort dropdown in the top bar is still there on desktop, so the sorting and
+  filtering of the 2.x views can always be found.
+- **Where personal preferences go**: the columns, widths, order, and whether
+  folders are mixed in are read and written through a `PrefsStore` interface, and
+  **for now only the browser's localStorage is implemented**, not in the database;
+  the shared defaults are the saved views already in the space repository
+  (`hidden` is the default when there is no personal choice). Writing to the
+  person's own personal space `.petalbook/prefs.yml` (batched, quiet commits, not
+  appearing in page history, falling back to localStorage when there is no personal
+  space or not signed in) was done in part four (see below).
+- **Icons and colors**: for a folder they are in `folders: {path: {icon, color}}`
+  of `space.yml`, and move with the folder in the same commit (`rebind` moves the
+  whole entry); for a page they are `icon` and `color` in the page header (system
+  fields, not properties of the type); a type can give pages a default icon
+  (`x-icon` and `x-color` at the top level of the type file). An icon is a Lucide
+  name or an emoji; there are eight colors (red, orange, amber, green, cyan, blue,
+  purple, pink), each with a tuned light and dark version, and icons use
+  `currentColor`. The picker searches by name, by Lucide's tags, and by the Chinese
+  aliases of a few hundred common icons, with recently used first and then the
+  categories; **the whole Lucide set and its tags are one separate chunk**, fetched
+  from this server only when the picker is opened or an uncommon icon has to be
+  drawn, and never from the internet. The sidebar, lists, tables and page headers
+  all show them; the context menu of folders and pages has "Icon and colour".
+- **Source is a list**: like tags (when read, a single string counts as one value,
+  because people write YAML by hand). In the index it is a row of the `props` table
+  (key `source`), so filtering, sorting (`prop:source`) and the board's columns
+  (`key=source`) need no extra code; `pages.source` stores a JSON list for list
+  reads; sources that have been used are given by `GET …/sources`. The presets are
+  in `sources:` of `space.yml`, and when not written the default of the UI language
+  is used (Original, Internet, Book, Film, Music, Conversation); the admin changes
+  them with the button next to the source input. The input box and tags are the
+  same `ChipInput`: used ones first, then presets, Tab completes the first one,
+  arrow keys or the mouse choose, Enter adds, Backspace in an empty box removes the
+  last one, Esc closes; on a phone the list is below the input box. The credit line
+  of a daily text joins multiple sources with "、" (Chinese) or ", " (English).
+- **The header only changes values**: source mode shows only the body; an admin
+  (`manage`) can tick "Edit the header as YAML too (advanced)", and the original
+  error protection stays as before. The keys of the properties panel come from the
+  type, and only values can be changed; `id` and `created` are shown read-only;
+  renaming a property is a type-level action (`POST …/types/{name}/rename-field`,
+  `manage` only), which in one commit changes the type file and all pages that use
+  the key.
+- **Not there yet**: dragging table rows works only on the title cell; when the
+  page header icon is saved in the editor and there is also an unsaved draft, it
+  goes through one conflict prompt; the board of a folder with no type groups by
+  source, but a card cannot be dragged to change the source (the value belongs to
+  the page itself).
 
-**3.10 第四部分：通知、新手引导、个人偏好（已做，缺的见末尾）**
+**3.10 part four: notifications, onboarding, personal preferences (done, what is missing is at the end)**
 
-- **通知中心是通用的、预留好的系统。** 表 `notifications (id, user_id, tenant_id, kind, ref, payload, created, read_at)`，
-  索引 `(user_id, id DESC)` 给列表（一次范围扫描，键集分页），部分索引 `(user_id) WHERE read_at IS NULL` 给未读数（最多数到
-  100，徽标写「99+」）；`id` 是毫秒时间加序号，按时间排。服务器**不存句子**：一行只有种类、指向的东西（空间 id）和 JSON 的
-  事实，网页按种类和人的语言写句子（中英文）。种类是代码里的一张登记表（`store.NotifyKinds`）：`problems`（派生，没有行）、
-  `invite`（被加进一个空间）、`sync`（自己拥有的空间的远端要人管了，或者好了；只是断网会自己恢复，不通知）、`mention`、
-  `todo`、`system`（后三个只预留，没有谁产生）。每天的清理：超过半年的、已读超过 30 天的删，每人最多留最新的 500 条；人被删时
-  跟着删。
-- **空间的问题不复制给每个成员。** 列表和未读数被问到时，从这个人能写的空间（最多 50 个，停用的不算）的索引里现算：空间开着就读
-  它的索引（两条分组查询，20 秒内重复用），没开着就用它上次开着或关掉时说的（在内存里；重启后要等空间被打开）；**不会为这件事
-  打开一个空间**。每人每个空间一个已读游标（`notification_seen`，存「读的时候问题长什么样」的签名）：问题变了就重新变成未读，
-  都修好了就没了。
-- **接口**：`GET /api/notifications`（分页、按种类、只看未读）、`GET /api/notifications/unread`、`POST …/read`、
-  `POST …/read-all`，全是「自己的」：按会话里的人和租户查，没有哪个路由接受别人的 id；令牌和管理员的查看进不来。都在隔离表里
-  （`TestNotificationsAreTheCallersOwnAcrossTenants`）。
-- **界面**：每页顶栏右端一个铃铛，有未读就是红点（有过渡）。桌面和平板点开是个小面板（最新 5 条：标题、正文、时间、未读点，
-  「全部标为已读」和「查看全部通知 →」）；手机点铃铛直接进全屏的通知页（`/notifications`：按类型筛选——全部、未读、问题、邀请、
-  提到我、同步，能翻到更早的）。点一条跳到它指向的地方并标已读。铃铛每分钟问一次未读数，窗口在前面时才问。
-- **浏览器通知**：在偏好设置里的开关；打开前先说明要做什么，再由人点「继续」才让浏览器弹自己的授权框；被拒绝、浏览器不支持、
-  不是 https 都有说明。开着的标签页在没人看它时发现未读增加，就弹一条（Notifications API）。选择存在这个浏览器里
-  （授权本来就是浏览器的），不进个人偏好。**真正的推送（Web Push，VAPID）只预留了名字，没有做**：要有服务器的密钥和订阅表，
-  标签页都关了才用得着。
-- **新手引导**：第一次登录时自动出现的几步（新建页面、编辑器、收藏、搜索，管理员多一步：每日文案默认关闭、去哪里打开），可以
-  随时跳过，之后在侧边栏底部的「帮助」里再打开；手机上全屏。「做完」或「跳过」按人记在 `pb.onboarding.<用户 id>`，走 PrefsStore
-  （有个人空间就在那里，没有就在浏览器里），不进数据库。全站或组织要求自己的仓库时（3.1 的 `storage.remotes.require`），引导多出
-  一步「连接你自己的仓库」：为什么（建议到期日前，或者已经强制、空间只读）、要点什么、要授权什么（只授权这一个仓库）、卡住了找谁，
-  一步一步列出来；强制时空间顶上那条提示不只说「只读」，还说「还差：…」和「一步一步来」，连上账号后第一步打勾。
-- **个人偏好在个人空间里**：`GET`/`PATCH /api/prefs`，文件是本人个人空间的 `.petalbook/prefs.yml`（表格的列、顺序、宽度，文件夹是否
-  混排，引导的状态……）。路由不带空间也不带人，永远是调用的人自己的；令牌、管理员的查看都进不来；这个文件不是页面、附件，也
-  不是空间的设置：没有路由能读它（带点的路径一律 404），索引、离线同步的目录、`SettingsStamp` 都不看它，管理员导出个人空间时
-  不带它。写入先放在服务器内存里（读马上能读到），**每次突发的第一笔之后 3 分钟一起写一次**，一次小提交「Update prefs.yml」，
-  署本人的名，不出现在任何页面的历史里；关服务器时把没写的写掉。网页端读一次、缓存：登录后取一次存进浏览器，之后的读都是同步地读
-  这份拷贝；写先落浏览器，再 2 秒安静后（最长 15 秒）批量发给服务器；没有个人空间、没登录、离线时只用浏览器，联网后补发；换人登录时
-  清掉上一个人的拷贝，第一次登录会把旧版本留在浏览器里的列和宽度并进文件。
-- **还没有的**：（1）空间的问题只在空间开着或刚关过时才知道，重启后要等它被打开，所以还没人打开过的空间不会提醒；真要全覆盖，
-  要在索引更新时写一个按空间的摘要。（2）「邀请加入组织」没有对应的种类：现在的邀请是建账号，收件人还没有账号；等有了「已有账号的人
-  被邀请」再加。（3）提到我、待办、系统通知只预留了种类。（4）Web Push 和邮件、手机推送没做。（5）管理后台的页面顶上没有铃铛。
-  （6）个人排序（表头点出来的）仍在地址和保存的视图里，不进偏好。（7）管理员导出个人空间时若勾了「历史」，仓库的历史包里有
-  `prefs.yml` 的各次提交：这是全站管理员读任何文件的老办法，不另做洗刷。（8）「卡住了找谁」现在是一句通用的话，还没有组织管理员的
-  联系方式可以显示。（9）服务器崩溃最多丢最近 3 分钟还没写进文件的偏好（浏览器里那份还在）。
+- **The notification center is a general, reserved-ahead system.** The table
+  `notifications (id, user_id, tenant_id, kind, ref, payload, created, read_at)`,
+  with the index `(user_id, id DESC)` for the list (one range scan, keyset
+  pagination) and the partial index `(user_id) WHERE read_at IS NULL` for the
+  unread count (counting up to 100, with the badge showing "99+"); `id` is the
+  millisecond time plus a sequence number, ordered by time. The server **does not
+  store sentences**: a row has only the kind, the thing it points to (a space id)
+  and the facts as JSON, and the web writes the sentence by kind and by the
+  person's language (Chinese and English). The kinds are a registry in code
+  (`store.NotifyKinds`): `problems` (derived, has no rows), `invite` (added to a
+  space), `sync` (the remote of a space you own needs a person to look at it, or
+  is fine again; merely being offline recovers by itself and does not notify),
+  `mention`, `todo`, `system` (the last three are only reserved, and nothing
+  produces them). The daily cleanup: those older than half a year, and read ones
+  older than 30 days, are deleted, and each person keeps at most the latest 500;
+  they are deleted along with the person when the person is deleted.
+- **A space's problems are not copied to every member.** When the list and the
+  unread count are asked for, they are computed on the spot from the indexes of the
+  spaces this person can write to (at most 50, disabled ones not counted): if the
+  space is open, its index is read (two grouping queries, reused for 20 seconds);
+  if it is not open, what it said the last time it was open or was closed is used
+  (in memory; after a restart it waits until the space is opened); **a space is
+  never opened for this**. Each person has one read cursor per space
+  (`notification_seen`, which stores the signature of "what the problems looked
+  like when it was read"): if the problems change it becomes unread again, and when
+  all are fixed it is gone.
+- **API**: `GET /api/notifications` (paginated, by kind, unread only),
+  `GET /api/notifications/unread`, `POST …/read`, `POST …/read-all`, all "your
+  own": looked up by the person and tenant in the session, and no route accepts
+  someone else's id; tokens and the admin's "view as" cannot get in. All are in the
+  isolation table (`TestNotificationsAreTheCallersOwnAcrossTenants`).
+- **UI**: a bell at the right end of every page's top bar, with a red dot (with a
+  transition) when there is something unread. On desktop and tablet clicking it
+  opens a small panel (the latest 5: title, body, time, unread dot, "Mark all as
+  read" and "See all notifications →"); on a phone tapping the bell goes straight
+  to the full-screen notifications page (`/notifications`: filter by type, that
+  is all, unread, problems, invitations, mentions of me, sync, and it can scroll
+  back to earlier ones). Clicking an item jumps to where it points and marks it
+  read. The bell asks for the unread count once a minute, and only when the window
+  is in front.
+- **Browser notifications**: a switch in the preferences; before it is turned on,
+  it first explains what it will do, and only after the person clicks "Continue"
+  does the browser show its own authorization box; there are explanations for being
+  refused, for the browser not supporting it, and for not being on https. An open
+  tab that finds the unread count has gone up while nobody is looking at it pops up
+  one (the Notifications API). The choice is stored in this browser (the
+  authorization belongs to the browser anyway), not in the personal preferences.
+  **Real push (Web Push, VAPID) has only its name reserved and is not done**: it
+  needs the server's keys and a subscription table, and is only useful when all the
+  tabs are closed.
+- **Onboarding**: a few steps that appear automatically at first sign-in (new
+  page, the editor, favourites, search; admins get one more step: the daily text is
+  off by default, and where to turn it on), which can be skipped at any time and
+  then opened again from "Help" at the bottom of the sidebar; full screen on a
+  phone. "Done" or "Skipped" is remembered per person in
+  `pb.onboarding.<user id>`, going through PrefsStore (in the personal space if
+  there is one, otherwise in the browser), and not in the database. When the whole
+  site or an organization requires your own repository (`storage.remotes.require`
+  of 3.1), the onboarding has one more step, "Connect your own repository": why
+  (before the recommended due date, or already required and the space is
+  read-only), what to click, what to authorize (only this one repository), and who
+  to ask when stuck, listed step by step; when it is required, the notice at the top
+  of the space says not only "read-only" but also "Still to do: …" and "Step by
+  step", and after the account is connected the first step is ticked.
+- **Personal preferences are in the personal space**: `GET`/`PATCH /api/prefs`,
+  and the file is `.petalbook/prefs.yml` in the person's own personal space (the
+  table's columns, order and widths, whether folders are mixed in, the onboarding
+  state, ...). The route carries neither a space nor a person, and is always the
+  caller's own; tokens and the admin's "view as" cannot get in; this file is not a
+  page, not an attachment, and not the space's settings: no route can read it (a
+  path with a dot is always 404), and the index, the offline sync catalog and
+  `SettingsStamp` all ignore it, and an admin exporting a personal space does not
+  include it. A write first goes into the server's memory (a read sees it at once),
+  and **3 minutes after the first write of each burst everything is written
+  together**, as one small commit "Update prefs.yml", signed with the person's own
+  name, and not appearing in the history of any page; when the server shuts down,
+  what has not been written is written. The web side reads once and caches: it
+  fetches once after signing in and keeps it in the browser, and all later reads
+  read this copy synchronously; a write first lands in the browser, and then after
+  2 seconds of quiet (at most 15 seconds) it is sent to the server in a batch; with
+  no personal space, not signed in, or offline, only the browser is used, and it is
+  sent later when back online; when a different person signs in, the previous
+  person's copy is cleared, and the first sign-in merges the columns and widths
+  that an old version left in the browser into the file.
+- **Not there yet**: (1) A space's problems are known only when the space is open
+  or was just closed, and after a restart it waits until it is opened, so a space
+  nobody has opened yet will not remind; for full coverage, a per-space summary
+  would have to be written when the index is updated. (2) "Invited to join an
+  organization" has no corresponding kind: today an invitation creates an account,
+  and the recipient has no account yet; add it when "invite someone who already
+  has an account" exists. (3) Mentions, to-dos and system notifications have only
+  their kinds reserved. (4) Web Push, email and phone push are not done. (5) The
+  pages of the admin console have no bell at the top. (6) Personal sorting (the
+  kind clicked on the header) is still in the address and the saved view, and does
+  not go into the preferences. (7) When an admin exports a personal space with
+  "history" ticked, the repository's history bundle contains the commits of
+  `prefs.yml`: this is the old way in which a site admin reads any file, and no
+  scrubbing is done. (8) "Who to ask when stuck" is for now a generic sentence, and
+  there is no organization admin contact to show yet. (9) A server crash loses at
+  most the last 3 minutes of preferences not yet written to the file (the copy in
+  the browser is still there).
 
-**登录失效后的登录页**（单独的小 PR）：普通登录页上方说明原因（过期、在其他设备上退出、改了
-密码、被停用）；账号已经填好，按这个人上次的登录方式显示（密码框、passkey 按钮、「通过 X
-继续」并带上邮箱）；「使用其他账号」回到空白的登录页；登录后回到原来的页面。记住的账号只存在
-浏览器里，主动退出时清掉，停用时不显示。服务器为结束的会话留 30 天的原因记录。
+**The sign-in page after a sign-in expires** (a separate small PR): above the
+ordinary sign-in page it explains the reason (expired, signed out on another
+device, password changed, deactivated); the account is already filled in, shown
+according to this person's last sign-in method (a password box, a passkey button,
+"Continue with X" with the email carried over); "Use another account" goes back to
+a blank sign-in page; after signing in it returns to the original page. The
+remembered account is stored only in the browser, cleared on an active sign-out,
+and not shown when deactivated. The server keeps a record of the reason for an
+ended session for 30 days.
 
-**3.6 补充**
+**3.6 additions**
 
-- **以用户身份查看**（像 Canvas 的学生视图）：只读、顶部横幅、每次记审计；租户管理员只能以
-  本组织成员的身份看组织的空间，永远看不到个人空间；不包括这个人的草稿、令牌、会话、已连接的
-  账号。
-- **会话和已连接的账号**：**全站管理员**在用户详情页里能看、能踢下线、能断开；组织管理员始终
-  只能管组织自己的东西，不能管理或审计其他租户和任何人的个人区。
-- **日志**：核心审计（登录与安全、管理员操作、权限、删除、导出、查看）永远开着，谁都关不掉；
-  可选的类别（读了哪页、下载、每次成功登录、API 调用）按「全站默认／强制 → 租户」配置。全站
-  管理员设自动清理：超过 X 天、超过 Y 条，两者之间选「或」（有一个满足就删）或「且」（都满足
-  才删）；核心审计有最低保留期（例如 90 天）。
-- **对某个组织单独强制**是所有设置的通用规则：全站默认、全站强制，以及全站管理员对某一个组织
-  直接设值并锁住（`setBy`、`siteLock`）。
-- **默认值**：每人默认最多 **3** 个空间（原来是 20）；组织默认不允许自己建；「全站每小时最多
-  建几个」默认不启用，配置保留。
+- **View as a user** (like Canvas's student view): read-only, a banner at the top,
+  audited every time; a tenant admin can only see the organization's spaces as a
+  member of their own organization, and never sees personal spaces; it does not
+  include the person's drafts, tokens, sessions, or connected accounts.
+- **Sessions and connected accounts**: a **site admin** can see them, kick them
+  offline and disconnect them on the user detail page; an organization admin can
+  always manage only the organization's own things, and cannot manage or audit
+  other tenants or anyone's personal area.
+- **Logs**: the core audit (sign-in and security, admin actions, permissions,
+  deletions, exports, views) is always on and no one can turn it off; the optional
+  categories (which page was read, downloads, every successful sign-in, API calls)
+  are configured by "site default/enforced → tenant". The site admin sets automatic
+  cleanup: older than X days, more than Y records, and between the two chooses "or"
+  (delete when either is met) or "and" (delete only when both are met); the core
+  audit has a minimum retention period (for example 90 days).
+- **Enforcing for a single organization** is a general rule of all settings: the
+  site default, the site enforcement, and the site admin setting a value directly
+  for one organization and locking it (`setBy`, `siteLock`).
+- **Defaults**: at most **3** spaces per person by default (it was 20); an
+  organization is not allowed to create its own by default; "at most how many
+  created per hour on the whole site" is not enabled by default, and the
+  configuration is kept.
 
-**数据库**：正式部署前，凡是不合理（效率不高、可以优化）的地方直接改，现在成本最低；3.5 合并
-后做一次整体审查（索引、字段类型、表的拆合、两种数据库在大数据量下的查询计划），v0 不写迁移兼容。
+**Database**: before the official deployment, anything unreasonable (inefficient,
+or can be optimized) is changed directly, because now the cost is lowest; after 3.5
+is merged, do one overall review (indexes, column types, splitting and merging of
+tables, the query plans of both databases at large data volumes), and v0 writes no
+migration compatibility.
 
-**第 5 期补充**：侧边栏的**待办**，带应用内、邮件和手机提醒（走上面的消息通知）；以后再接日历
-（CalDAV、Google 日历）。不急，没有排期。
+**Phase 5 addition**: **to-dos** in the sidebar, with in-app, email and phone
+reminders (through the notifications above); a calendar to be connected later
+(CalDAV, Google Calendar). Not urgent, and not scheduled.
 
 
-**3.10 已知问题**（审查留下、不阻塞，2026-11-24）：
+**3.10 known issues** (left by the review, not blocking, 2026-11-24):
 
-- 编辑器里有存在服务器上的草稿时，用图标选择器改本页图标，会弹出一次冲突提示（图标接口的回答
-  不带 `draft`）；不丢内容。可以让缺少 `draft` 的回答算作「草稿没变」，或保存图标后重取一次页面。
-- 改名的日志里 `fp` 部分和 `f` 的页数对不上时（只在中间某行损坏时），记一条错误后仍按找到的页
-  重放；缺的页保留旧键，不丢值。
-- 冲突经 `rebaseOnto` 化解后，用户点过的「提交」不会恢复，要等服务器空闲后自动提交。
-- 改基线日志（`rebase.go`）仍按 1 MiB 一行读取。
-- 第 2–4 部分的审查留下的其他小项（会话设备信息不含地点、组织邀请和提到你只预留了种类、
-  管理后台里还没有铃铛、表格里只能拖标题那一格、按来源分列的看板不能拖卡片、个人设置在服务器
-  崩溃时最多丢 3 分钟内还没写进文件的改动，浏览器里仍有一份）留到对应的里程碑或清理轮。
+- When the editor has a draft stored on the server, changing this page's icon with
+  the icon picker pops up one conflict prompt (the icon endpoint's answer carries
+  no `draft`); nothing is lost. A reply that lacks `draft` could be counted as
+  "the draft did not change", or the page could be fetched again after the icon is
+  saved.
+- When the `fp` part in the rename log does not match the page count of `f` (only
+  when a line in the middle is damaged), log one error and still replay according
+  to the pages found; missing pages keep the old key, and no value is lost.
+- After a conflict is resolved through `rebaseOnto`, the "Commit" the user clicked
+  is not restored, and has to wait for the server to be idle and commit
+  automatically.
+- The base-rewriting log (`rebase.go`) is still read at 1 MiB per line.
+- Other small items left by the review of parts 2-4 (the session device info has
+  no location, organization invitations and mentions have only their kinds
+  reserved, the admin console has no bell yet, in a table only the title cell can
+  be dragged, the board grouped by source cannot drag cards, and when the server
+  crashes personal settings lose at most the changes of the last 3 minutes not yet
+  written to the file, with a copy still in the browser) are left to the
+  corresponding milestone or a cleanup round.

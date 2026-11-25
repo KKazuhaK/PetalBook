@@ -1,57 +1,81 @@
 # Reserved: public publishing and tables
 
-## 14. 预留：公开发布
+## 14. Reserved: public publishing
 
-目前不做。目标是把指定页面公开发布，发布目标可选：
+Not being done for now. The goal is to publish chosen pages publicly, with a
+choice of publishing targets:
 
-- **本服务直接提供**：只读页面，不需要登录，地址形如 `/p/<空间>/<slug>`。
-- **GitHub Pages**：把选中的页面生成静态 HTML，推到一个公开仓库。
+- **Served directly by this service**: read-only pages, no sign-in needed, with
+  addresses of the form `/p/<space>/<slug>`.
+- **GitHub Pages**: generate static HTML for the selected pages and push it to a
+  public repository.
 
-为此现在就要守住的约定：
+The conventions to be kept from now on for this:
 
-- 头部保留 `publish` 字段，它不存在或为 `false` 时页面永不公开。
-- 头部保留 `slug` 字段作为公开地址，缺省时由标题生成。
-- 页面之间的链接是相对路径加目标的 ID（写法见 2.4），发布时按 ID 换成公开
-  地址。指向未发布页面的链接降级为纯文字，不泄露标题以外的内容。
-- 附件用相对路径引用，地址里不带令牌，发布时才能原样复制到公开目标。
-- Markdown 转 HTML 的渲染要有一份不依赖编辑器的实现，服务端和静态生成共用。
-- `space.yml` 里保留 `publish` 配置段，记录发布目标和主题。
-- 发布是空间所有者的显式操作，并在界面上明确提示哪些页面当前是公开的。
+- The header keeps a `publish` field; when it is absent or `false`, the page is
+  never made public.
+- The header keeps a `slug` field as the public address; when it is missing, it
+  is generated from the title.
+- Links between pages are a relative path plus the target's ID (for the form see
+  the 2.4 contract in [phase-2.md](milestones/phase-2.md)), and on publishing they are
+  replaced by public addresses according to the ID. A link to an unpublished page
+  degrades to plain text, and does not leak anything beyond the title.
+- Attachments are referenced by relative path, and the address carries no token,
+  so that on publishing they can be copied unchanged to the public target.
+- The rendering of Markdown to HTML needs an implementation that does not depend
+  on the editor, shared by the server and static generation.
+- `space.yml` keeps a `publish` section, recording the publishing target and the
+  theme.
+- Publishing is an explicit action of the space owner, and the UI clearly shows
+  which pages are currently public.
 
-## 15. 预留：表格
+## 15. Reserved: tables
 
-目前不做。计划是在文档之外，把**表格**作为空间里的另一种内容：一张完整的
-电子表格（行、列、类型、排序筛选），不是文档正文里的 Markdown 表格，也不是
-8.4 节里「把一个文件夹的页面排成表格」的那种视图。
+Not being done for now. The plan is, apart from documents, to make **tables**
+another kind of content in a space: a complete spreadsheet (rows, columns,
+types, sorting and filtering), not a Markdown table in the body of a document,
+and not the view in [editor-and-frontend.md §8.4](editor-and-frontend.md#84-folder-view) that
+"lays out the pages of a folder as a table".
 
-方向（到时候再细化）：
+Direction (to be refined when the time comes):
 
-- **一张表格是空间里的一个文件**，和页面一样跟着 Git 走：有历史、能对比、
-  能在远端仓库里直接看。数据用按行的纯文本格式（倾向 CSV，一行一条记录，
-  改一格只动一行），列的定义（名称、类型、选项、宽度、顺序）放在旁边的
-  说明文件或文件头里，不混进数据。
-- **和页面平级**：出现在文件夹树、列表、搜索、最近、标签里；有自己的 ID，
-  地址和页面一样按 ID 定位；改名和移动不影响指向它的链接。
-- **编辑走同一套保存流程**：草稿、提交、`baseRev` 冲突检查、远端同步。
-  多人同时改一张表时，冲突按行、按格判断，而不是整个文件。
-- **页面可以引用表格**（嵌入一个视图或链接到它），发布时遵守第 14 节同样的
-  规则。
+- **A table is a file in the space**, and like a page it follows Git: it has
+  history, can be compared, and can be viewed directly in the remote repository.
+  The data uses a row-based plain text format (CSV is preferred, one record per
+  line, so changing one cell touches only one line), and the column definitions
+  (name, type, options, width, order) go in an accompanying description file or
+  in the file header, not mixed into the data.
+- **At the same level as pages**: it appears in the folder tree, lists, search,
+  recent, and tags; it has its own ID, its address is located by ID like a page's,
+  and renaming and moving do not affect the links pointing to it.
+- **Editing goes through the same save flow**: drafts, commits, the `baseRev`
+  conflict check, and remote sync. When several people change one table at the
+  same time, conflicts are judged per row and per cell, not for the whole file.
+- **Pages can reference tables** (embed a view or link to it), and on publishing
+  the same rules of [reserved.md §14](reserved.md#14-reserved-public-publishing) apply.
 
-为此现在就要守住的约定：
+The conventions to be kept from now on for this:
 
-- **「页面」不等于「空间里的内容」。** 接口和索引里凡是列出内容的地方
-  （页面摘要、搜索、文件夹计数）都要能再加一个种类字段；现在不加，但前端
-  不能假定列表里的每一项都是 Markdown 页面。页面摘要里已有的 `type` 是
-  页面类型（第 3.3 节），不拿来表示种类。
-- **ID 的格式和分配对所有种类通用**，一个空间里的 ID 在所有种类之间唯一。
-- **地址按 ID，不按种类**：`/s/<空间>/p/<id>` 之后可以打开任何种类；不为
-  表格另起一套地址。
-- **`.md` 以外的文件现在只当附件**（`GET …/files/…` 原样给出）。将来某个
-  扩展名成为表格后，它要像 `.md` 一样改由专门的接口读写；所以附件只放在
-  `assets/` 下，不鼓励把数据文件散放在文件夹里并依赖它们被当作附件。
-- **提交、日志、撤销、同步这一层只认路径，不认内容**（1.3 的 `txn` 已经是
-  这样，1.4 的附件也走它）。新种类只需要在其上加自己的读写和索引。
-- **保存流程里和正文格式有关的部分要留在边上**：草稿存的是「头部 + 正文」，
-  这是页面的形状；状态机（版本号、`prev`、提交、冲突）本身不依赖它，将来
-  换一种内容形状时应当能复用。
-- `.petalbook/` 下保留 `tables/` 这个名字。
+- **"Page" is not the same as "content in a space".** Everywhere in the API and
+  the index that lists content (page summaries, search, folder counts), it must
+  be possible to add a kind field later; it is not added now, but the frontend
+  must not assume that every item in a list is a Markdown page. The `type` that
+  already exists in the page summary is the page type
+  ([data-model.md §3.3](data-model.md#33-organization)), and is not used to express the kind.
+- **The format and allocation of IDs are common to all kinds**, and an ID in one
+  space is unique across all kinds.
+- **Addresses go by ID, not by kind**: `/s/<space>/p/<id>` can later open any
+  kind; no separate set of addresses is created for tables.
+- **Files other than `.md` are for now only attachments** (`GET …/files/…` gives
+  them as they are). When some extension becomes a table in the future, it will be
+  read and written through a dedicated interface like `.md`; so attachments are
+  placed only under `assets/`, and it is discouraged to scatter data files in
+  folders and rely on them being treated as attachments.
+- **The layer of commits, log, undo and sync knows only paths, not content** (the
+  `txn` of 1.3 is already like this, and the attachments of 1.4 also go through
+  it). A new kind only needs to add its own read/write and index on top of it.
+- **The parts of the save flow that depend on the body format must be kept to the
+  side**: a draft stores "header + body", which is the shape of a page; the state
+  machine itself (version number, `prev`, commit, conflict) does not depend on
+  it, and should be reusable when content of another shape comes along.
+- The name `tables/` under `.petalbook/` is reserved.
