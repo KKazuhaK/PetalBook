@@ -5009,7 +5009,7 @@ kinds (a registry in the server's code, `store.NotifyKinds`):
 |---|---|---|
 | `problems` | derived: the problems in the index of each space the person can write in; no row | `{"space": name, "total": n, "counts": {"no_id": 1, …}, "sig": "…"}` |
 | `invite` | adding the person to a space (`POST …/members`), unless they added themselves; a change of role is not one | `{"space", "role", "by"}` |
-| `sync` | the remote of a space the person owns needs attention (`error`, `rewritten`), and works again after it did; "offline" comes back by itself and is not told | `{"space", "event": "failed" \| "ok", "state", "kind"}` (`kind` is the error's kind: `auth`, `hostkey`, `clone`, a connection code) |
+| `sync` | the remote of a space the person owns needs attention (`error`, `rewritten`), and works again after it did; "offline" comes back by itself and is not told, and a state is compared with the last one that was not "offline" (error, offline, error is told once; error, offline, ok is told "ok") | `{"space", "event": "failed" \| "ok", "state", "kind"}` (`kind` is the error's kind: `auth`, `hostkey`, `clone`, a connection code) |
 | `mention` | reserved: there are no mentions yet | |
 | `todo` | reserved: the sidebar's reminders (5.x) | |
 | `system` | reserved: notices from the administrators | |
@@ -5020,18 +5020,21 @@ recipient who is signed in; the kind is added with the first invitation of an
 existing person.
 
 **The problems are not copied to the members.** They are read when the list or
-the count is asked for: for each space the person can write in (at most 50, a
-disabled one left out), from the live index when the space is open, else from
+the count is asked for: for each space the person can write in (a disabled one,
+and one reached only as an administrator, left out), from the live index when the space is open, else from
 what it said when it was last open or closed (in memory; a restart forgets it
-until the space is opened again). Nothing is opened for this, and a count of an
-open space is reused for 20 seconds. What the person has read is a cursor per
+until the space is opened again; a deleted space is forgotten). Nothing is
+opened for this, and a count of an open space is reused for 20 seconds. At most
+50 spaces with problems are listed; how many more have some is
+`moreProblems` of the list. What the person has read is a cursor per
 person and space (`notification_seen`): the signature of the problems then.
 When the problems change, the notice is unread again; when they are all fixed,
 it is gone.
 
 ### `GET /api/notifications?kind={kind}&unread=1&cursor={cursor}&limit={n}`
 
-Signed in. `{"items": [Notification], "next": "…", "unread": n}`, newest first
+Signed in. `{"items": [Notification], "next": "…", "unread": n, "moreProblems": n}`
+(`moreProblems` left out when 0, and on pages after the first), newest first
 (the derived `problems` first, on the first page only), `limit` 1 to 100
 (default 20). `next` is the cursor of the following page (`""` after the last),
 one range scan of the index `notifications (user_id, id DESC)`. `unread` is the
@@ -5056,8 +5059,9 @@ An id that is not the caller's, or not there, changes nothing. `{"unread": n}`.
 `{"kind": "sync"}` (optional: all kinds without it). Marks every unread row (of
 the kind) and the derived ones as read. `{"unread": n}`.
 
-Rows are kept for six months at most, read ones for 30 days, and at most 500
-for each person (the newest); the daily job trims them. A person's rows go with
+Rows are kept for six months at most, read ones for 30 days (the daily job
+deletes the older ones in batches), and at most 500 for each person (the
+newest: the oldest past that goes when a row is added). A person's rows go with
 them when they are deleted.
 
 ### Browser notices

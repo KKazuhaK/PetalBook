@@ -123,6 +123,21 @@ func InsertNotification(ctx context.Context, q Q, n Notification) (string, error
 	}
 	_, err := q.Exec(ctx, `INSERT INTO notifications(id, user_id, tenant_id, kind, ref, payload, created) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.UserID, n.Tenant, n.Kind, n.Ref, n.Payload, ms(n.Created))
+	if err != nil {
+		return "", err
+	}
+	// The cap per person is kept here, where a person's rows grow: one step
+	// down notifications_user finds the oldest row past it (rows are few to
+	// a person, inserts few to a day), so no clean-up has to group the table.
+	var cut string
+	err = q.QueryRow(ctx, `SELECT id FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?`, n.UserID, NotifyMaxPerUser).Scan(&cut)
+	if errors.Is(err, sql.ErrNoRows) {
+		return n.ID, nil
+	}
+	if err != nil {
+		return n.ID, err
+	}
+	_, err = q.Exec(ctx, `DELETE FROM notifications WHERE user_id = ? AND id <= ?`, n.UserID, cut)
 	return n.ID, err
 }
 
@@ -288,53 +303,31 @@ func ForgetSeen(ctx context.Context, q Q, userID string, keep []string) error {
 }
 
 // TrimNotifications is the daily clean-up, across tenants (a background job):
-// rows older than NotifyKeep go, read rows older than NotifyKeepRead go, and
-// each person keeps at most NotifyMaxPerUser of the rest (the newest). The ids
-// are times (see NewNotificationID), so "older than" is a range of the primary
-// key.
+// rows older than NotifyKeep go, and read rows older than NotifyKeepRead go,
+// in batches of AuditTrimBatch, the oldest first, as the audit log is trimmed,
+// so neither holds the database for long. (The cap of NotifyMaxPerUser rows a
+// person is kept when a row is added: see InsertNotification.) The ids are
+// times (see NewNotificationID), so "older than" is a range of the primary key.
 func TrimNotifications(ctx context.Context, q Q, now time.Time) (int64, error) {
+	total, err := trimNotificationsWhere(ctx, q, `id < ?`, AuditIDBefore(now.Add(-NotifyKeep)))
+	if err != nil {
+		return total, err
+	}
+	n, err := trimNotificationsWhere(ctx, q, `read_at IS NOT NULL AND read_at < ?`, ms(now.Add(-NotifyKeepRead)))
+	return total + n, err
+}
+
+func trimNotificationsWhere(ctx context.Context, q Q, cond string, bound any) (int64, error) {
 	var total int64
-	res, err := q.Exec(ctx, `DELETE FROM notifications WHERE id < ?`, AuditIDBefore(now.Add(-NotifyKeep)))
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	total += n
-	res, err = q.Exec(ctx, `DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < ?`, ms(now.Add(-NotifyKeepRead)))
-	if err != nil {
-		return total, err
-	}
-	n, _ = res.RowsAffected()
-	total += n
-	// The people over the cap: found by a scan of the index, rare.
-	rows, err := q.Query(ctx, `SELECT user_id FROM notifications GROUP BY user_id HAVING COUNT(*) > ?`, NotifyMaxPerUser)
-	if err != nil {
-		return total, err
-	}
-	var over []string
-	for rows.Next() {
-		var u string
-		if err := rows.Scan(&u); err != nil {
-			rows.Close()
-			return total, err
-		}
-		over = append(over, u)
-	}
-	rows.Close()
-	for _, u := range over {
-		var cut string
-		if err := q.QueryRow(ctx, `SELECT id FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?`, u, NotifyMaxPerUser).Scan(&cut); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			return total, err
-		}
-		res, err := q.Exec(ctx, `DELETE FROM notifications WHERE user_id = ? AND id <= ?`, u, cut)
+	for {
+		res, err := q.Exec(ctx, `DELETE FROM notifications WHERE id IN (SELECT id FROM notifications WHERE `+cond+` ORDER BY id LIMIT ?)`, bound, AuditTrimBatch)
 		if err != nil {
 			return total, err
 		}
-		n, _ = res.RowsAffected()
+		n, _ := res.RowsAffected()
 		total += n
+		if n < AuditTrimBatch || ctx.Err() != nil {
+			return total, ctx.Err()
+		}
 	}
-	return total, nil
 }

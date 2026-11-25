@@ -204,12 +204,10 @@ func TestTrimNotificationsKeepsTheRecentAndTheUnread(t *testing.T) {
 		if strings.Join(got, ",") != recent+","+oldUnread {
 			t.Fatalf("left %v; ancient %s oldRead %s", got, ancient, oldRead)
 		}
-		// The cap per person keeps the newest.
+		// The cap per person keeps the newest, as the rows come in: no clean-up
+		// has to count the rows of everyone.
 		for i := 0; i < store.NotifyMaxPerUser+20; i++ {
-			notify(t, st, "A", store.NotifySync, fmt.Sprint(i), now.Add(-time.Duration(i)*time.Second))
-		}
-		if _, err := store.TrimNotifications(ctx, st.Q(), now); err != nil {
-			t.Fatal(err)
+			notify(t, st, "A", store.NotifySync, fmt.Sprint(i), now.Add(-time.Duration(store.NotifyMaxPerUser+20-i)*time.Second))
 		}
 		var total int
 		if err := st.Q().QueryRow(ctx, `SELECT COUNT(*) FROM notifications WHERE user_id = 'A'`).Scan(&total); err != nil || total != store.NotifyMaxPerUser {
