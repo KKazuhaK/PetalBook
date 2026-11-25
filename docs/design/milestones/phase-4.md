@@ -1,351 +1,534 @@
 # Milestones: phase 4, offline and clients
 
-## 第 4 期：离线与客户端
+## Phase 4: offline and clients
 
-PWA 本地存储和同步；桌面版（同一个 Go 程序加壳，对本地仓库运行）；
-手机版。
+PWA local storage and sync; the desktop version (the same Go program in a shell,
+running against a local repository); the mobile version.
 
-**所有平台一套代码**（所有者 2026-11-23 定）：界面是同一份 React，引擎是同一份 Go
-（第 10 节「引擎和服务端的边界」里的那些包），外面各套一层薄壳：桌面用系统 webview
-（Wails 或类似的），手机用 webview，Go 用 gomobile 编进去。用哪一套壳，在 4.4 开工前
-做一次 spike 定（桌面和手机一起比：包的大小、启动时间、Go 和网页之间怎么通信、
-gomobile 在 iOS 上的限制、CI 能不能出包）。网页端（PWA）照旧有，4.1–4.3 的离线能力
-三处共用。
+**One codebase for all platforms** (decided by the owner, 2026-11-23): the UI is
+the same React, and the engine is the same Go (the packages in section 10, "The
+boundary between the engine and the server", see
+[overview.md §10](../overview.md#10-reuse)), with a thin shell around each: desktop uses the
+system webview (Wails or similar), and mobile uses a webview, with Go compiled in
+by gomobile. Which shell to use is decided before 4.4 starts, in one spike
+(desktop and mobile compared together: package size, startup time, how Go and the
+web page communicate, gomobile limits on iOS, whether CI can produce the
+packages). The web version (PWA) stays as before, and the offline abilities of
+4.1-4.3 are shared by all three.
 
-### 第 4 期的里程碑（计划，2026-11-23）
+### Phase 4 milestones (plan, 2026-11-23)
 
-排序的依据：先把「读」做成能离线（本地存储和变更流），它不改任何写入规则，风险
-最小，又是后面所有离线功能的底；再做「写」（离线改动、回到在线后的合并和冲突
-副本），它要动 1.x 的保存规则，单独审；Service Worker 只管让应用本身离线打得开，
-和数据无关，可以和 4.1 并行。桌面和手机都是在这三块之上包一层：桌面的「连接
-服务器」模式和手机都直接用网页端的离线能力，不另写一套同步。每个里程碑一个 PR，
-单用户模式下照旧能跑（见 1.7）。
+The basis of the order: first make "read" work offline (local storage and the
+change stream). It changes no write rule, has the least risk, and is the base of
+every later offline feature. Then "write" (offline changes, merging after coming
+back online, and conflict copies), which must change the save rules of 1.x and so
+is reviewed on its own. The Service Worker only makes the app itself open offline,
+has nothing to do with data, and can run in parallel with 4.1. Desktop and mobile
+both wrap a layer on top of these three: the desktop "connect to a server" mode
+and mobile both use the offline ability of the web version directly, and no
+second sync is written. One PR per milestone, and it still runs in single-user
+mode as before (see 1.7).
 
-| 里程碑 | 内容 | 依赖 | 并行 |
+| Milestone | Content | Depends on | In parallel |
 |---|---|---|---|
-| 4.1 | 本地存储和变更流：服务端的变更流、空间目录、按 id 批量取页面；浏览器用 IndexedDB 存选定空间的目录和范围内的正文；离线时能浏览、阅读、按标题和在本地正文里搜索。离线时只读 | 无（基于 `main`；只加索引的一列和一张表） | 和 4.3、4.4 并行；和第 3 期的 3.x 无关 |
-| 4.2 | 离线编辑和同步：离线改动的队列（改正文和属性、新建、快速记录、移动、删除、附件），回到在线后按顺序重放；服务端三方合并，合不了存成冲突副本（4.6 节一直没做的那条）；新建和重放的幂等键存状态库 | 4.1 | 和 4.3 的外壳部分、4.4 并行 |
-| 4.3 | Service Worker：应用外壳离线启动、新版本提示、附件按需缓存（有上限）、支持的浏览器里用后台同步触发 4.2 的重放 | 外壳和附件缓存不依赖 4.1；后台同步那一小块等 4.2 | 和 4.1 并行 |
-| 4.4 | 桌面版：同一个 Go 程序（单人形态）加系统 webview 窗口，对本机的仓库运行，可以跟随 Git 远端；另有「连接服务器」模式，窗口里就是网页端，离线靠 4.1–4.3。CI 出未签名的安装包 | 单人形态（1.7）；「连接服务器」的离线要 4.2、4.3 | 本机仓库部分和 4.1–4.3 并行 |
-| 4.5 | 手机：网页端在手机上的离线（存储持久化、iOS 的限制、键盘上方的工具栏、离线快速记录、从别的应用分享进收件箱）。不上应用商店 | 4.2、4.3 | 和 4.4 并行 |
+| 4.1 | Local storage and the change stream: the server's change stream, the space catalog, fetching pages in batches by id; the browser uses IndexedDB to store the catalog of selected spaces and the bodies within scope; offline you can browse, read, and search by title and in the local bodies. Read-only while offline | None (based on `main`; adds only one column and one table to the index) | In parallel with 4.3 and 4.4; unrelated to the 3.x of phase 3 |
+| 4.2 | Offline editing and sync: a queue of offline changes (edit body and properties, create, quick capture, move, delete, attachments), replayed in order after coming back online; three-way merge on the server, and what cannot be merged is saved as a conflict copy (the item of section 4.6, [storage-and-sync.md §4.6](../storage-and-sync.md#46-external-changes-and-conflicts), that was never done); idempotency keys for create and replay stored in the state database | 4.1 | In parallel with the shell part of 4.3 and with 4.4 |
+| 4.3 | Service Worker: the app shell starts offline, a new-version prompt, on-demand attachment cache (with a limit), and in browsers that support it, background sync triggers the 4.2 replay | The shell and the attachment cache do not depend on 4.1; the small background-sync piece waits for 4.2 | In parallel with 4.1 |
+| 4.4 | Desktop version: the same Go program (single-user form) plus a system webview window, running against the local repository, able to follow a Git remote; also a "connect to a server" mode, where the window is the web version and offline relies on 4.1-4.3. CI produces unsigned installers | The single-user form (1.7); offline in "connect to a server" needs 4.2 and 4.3 | The local repository part runs in parallel with 4.1-4.3 |
+| 4.5 | Mobile: offline for the web version on phones (persistent storage, iOS limits, a toolbar above the keyboard, offline quick capture, sharing from other apps into the inbox). Not in the app stores | 4.2, 4.3 | In parallel with 4.4 |
 
-上应用商店的手机应用、桌面版的代码签名和自动更新都要所有者先定（账号、证书、
-发布渠道），放在第 5 期（见下），不在第 4 期里。
+Mobile apps in the app stores, and code signing and auto-update for the desktop
+version, all need the owner to decide first (accounts, certificates, release
+channel). They are placed in phase 5 (see below), not in phase 4.
 
-**离线和保存规则的关系**（4.1 定方向，4.2 写合同）：
+**How offline relates to the save rules** (4.1 sets the direction, 4.2 writes the
+contract):
 
-- **离线不另立规则，只是「晚到的保存」**。1.x 的规则全部照旧：`rev` 是文件内容的
-  blob id；保存带 `baseRev`，对不上就是冲突；服务器从不隐式丢弃草稿；服务改写
-  链接不算冲突（2.4）。离线时的改动在设备上记着它开始时的 `rev`（`baseRev`）和它
-  上次知道的服务端草稿版本（`prev`），回到在线时作为一次带这两个值的写入交给
-  服务器，判断全在服务器做，设备不猜。
-- **一页在设备上只有一份待同步的内容**（整页的快照：头部字段加正文），离线时
-  反复修改就覆盖它，不记操作日志。重放的单位是「一页一次」，不是「一次按键一次」，
-  几百篇的离线改动也只有几百次请求。
-- **回到在线时**，服务器对每一份待同步的内容：
-  1. 文件还是 `baseRev`：照常写入并提交（和 1.2 的自动写入一样，人早就停笔了，
-     不再等 2 分钟）。
-  2. 文件变了：做三方合并，基础是 `baseRev` 那一版（按 blob id 从 Git 对象库取），
-     一边是设备上的，一边是现在的文件。头部按字段合（只有一边改了的字段用那一边，
-     两边改成不同的值算合不了），正文按行合。合得了就写入合并后的内容，答复里说
-     「已合并」；合不了就**存成一篇冲突副本**（同一个文件夹，新 id，标题后加
-     「（冲突副本）」，头部记着原页的 id），原页一个字不动，两边都不丢。
-  3. 基础那一版取不到（本地空间里写下后几秒就被覆盖、还没进提交的版本；被 Git
-     清理掉的对象）：直接存成冲突副本。为了少出这种情况，服务器每次写页面时把
-     内容也写进 Git 对象库（`hash-object -w`，一次几十微秒），所以它给出去的每个
-     `rev` 都能当合并的基础，直到 Git 自己清理没被引用的对象（默认两周）。
-- **和服务端草稿的关系**：设备离线前存过服务端草稿（版本 V），离线后接着写，
-  重放时带 `prev: V`。服务端草稿仍是 V，说明离线的内容是它的延续：写入成功后
-  这份草稿一起删掉。服务端草稿已经不是 V（另一台设备接着写过）：那份草稿不动，
-  写入后照 1.2 的规则成为「落后」，下次打开时让人选，所以「同一个人在两台设备上
-  写同一页」在离线时也不会互相覆盖。
-- **新建的页面**：设备离线时就要有 id（要能链接、能在本地打开），所以由设备按
-  页面 id 的格式生成；重放时服务器接受格式合法、空间里没人用的 id，撞上了就另发
-  一个并在答复里给出对应关系，设备把本地的引用改过来。新建和每一次重放都带
-  幂等键，存状态库 7 天，回应丢了再发不会建出两篇（顺带修 1.4 的「快速记录可能
-  存出两篇」）。
-- **移动和删除**：移动照常（重名加编号，链接照 2.4 跟着改）；删除带 `baseRev`，
-  页面在服务器上已经被改过就不删，告诉用户，不替他决定。
-- **附件**：离线时上传的文件先存在设备上（单个不超过 `maxUpload`，总量有上限），
-  正文里先用本地占位地址，重放时先传附件、拿到真地址、改好正文再写页面。
-- **离线的范围**（效率的关键，几万篇的空间不整个搬到设备上）：每个空间三档，
-  默认「不离线」；「只要目录」（全部页面的轻量摘要：id、路径、标题、标签、`rev`、
-  更新时间，5 万篇压缩后约 2 MB，目录树、列表、按标题找都能离线用）；「目录加
-  正文」（正文只取范围内的：收藏、收件箱、最近打开的 200 篇、手动选的文件夹和
-  标签，有总量上限，超了先丢最久没打开的「最近」，待同步的永远不丢）。之后靠
-  变更流只取改过的，一次轮询的代价按「改了多少」算，不按空间有多大算。
-- **1.1 的本地草稿**（`localStorage` 里的「还没确认的输入」）在 4.2 搬进同一个
-  IndexedDB 存储，变成待同步内容的一种，不再有两套。
+- **Offline does not set up its own rules; it is only a "late save"**. All the 1.x
+  rules stay as before: `rev` is the blob id of the file content; a save carries
+  `baseRev`, and a mismatch is a conflict; the server never silently discards a
+  draft; the service rewriting links is not a conflict (2.4). An offline change
+  records on the device the `rev` it started from (`baseRev`) and the server draft
+  version it last knew (`prev`). When back online, it is handed to the server as
+  one write carrying these two values, and all the judging is done on the server,
+  and the device does not guess.
+- **A page has only one pending content on the device** (a snapshot of the whole
+  page: header fields plus body). Repeated edits while offline overwrite it, and no
+  operation log is kept. The unit of replay is "one page, once", not "one
+  keystroke, once", so even hundreds of pages of offline changes are only hundreds
+  of requests.
+- **When back online**, for each pending content, the server does the following:
+  1. The file is still at `baseRev`: write and commit as usual (like the 1.2
+     automatic write; the person stopped writing long ago, so it no longer waits
+     2 minutes).
+  2. The file changed: do a three-way merge. The base is the `baseRev` version
+     (fetched from the Git object store by blob id), one side is the one on the
+     device, and the other is the file now. The header merges by field (a field
+     changed on only one side takes that side, and a field changed to different
+     values on both sides cannot be merged), and the body merges by line. If it can
+     be merged, the merged content is written and the response says "merged". If
+     it cannot, **it is saved as a conflict copy** (the same folder, a new id, the
+     title followed by "(conflict copy)", and the header records the id of the
+     original page), the original page is not changed by a single character, and
+     neither side is lost.
+  3. The base version cannot be fetched (a version in a local space that was
+     overwritten a few seconds after it was written and never reached a commit;
+     objects cleaned up by Git): save directly as a conflict copy. To make this
+     rarer, each time the server writes a page, it also writes the content into the
+     Git object store (`hash-object -w`, tens of microseconds), so every `rev` it
+     hands out can serve as a merge base until Git itself cleans up unreferenced
+     objects (two weeks by default).
+- **Relation to the server draft**: if the device saved a server draft (version V)
+  before going offline and kept writing offline, the replay carries `prev: V`. If
+  the server draft is still V, the offline content is its continuation: after the
+  write succeeds, that draft is deleted too. If the server draft is no longer V
+  (another device kept writing), that draft is not touched, and after the write it
+  becomes "behind" by the 1.2 rule, and the person chooses on the next open. So
+  "the same person writing the same page on two devices" does not overwrite each
+  other offline either.
+- **New pages**: the device needs an id while offline (so it can be linked and
+  opened locally), so the device generates it in the page id format. On replay, the
+  server accepts an id that has a valid format and that nobody in the space uses.
+  If it collides, another one is issued and the mapping is given in the response,
+  and the device changes its local references. Creates and every replay carry an
+  idempotency key, stored in the state database for 7 days, so resending after a
+  lost response does not create two pages (this also fixes the 1.4 issue "quick
+  capture may save two pages").
+- **Move and delete**: move works as usual (a name collision gets a number, and
+  links follow by 2.4). Delete carries `baseRev`, and if the page has already been
+  changed on the server it is not deleted and the user is told, and the decision
+  is not made for him.
+- **Attachments**: a file uploaded offline is first stored on the device (each at
+  most `maxUpload`, with a total limit). The body first uses a local placeholder
+  address. On replay, the attachment is uploaded first, the real address is
+  obtained, the body is fixed, and then the page is written.
+- **The offline scope** (the key to efficiency; a space of tens of thousands of
+  pages is not moved to the device whole): each space has three levels, default
+  "not offline"; "catalog only" (a light summary of all pages: id, path, title,
+  tags, `rev`, update time, about 2 MB compressed for 50,000 pages, so the folder
+  tree, lists, and finding by title all work offline); "catalog plus bodies"
+  (bodies only within scope: favourites, the inbox, the 200 most recently opened
+  pages, and folders and tags chosen by hand, with a total limit; when it is
+  exceeded, the "recent" ones not opened for the longest time go first, and pending
+  changes are never dropped). After that, the change stream fetches only what
+  changed, and the cost of one poll depends on "how much changed", not on how big
+  the space is.
+- **The 1.1 local draft** ("input not yet confirmed" in `localStorage`) moves into
+  the same IndexedDB store in 4.2 and becomes one kind of pending content, so there
+  are no longer two sets.
 
-**4.3 Service Worker 的方向**：
+**Direction of the 4.3 Service Worker**:
 
-- 只缓存应用外壳（构建出的带哈希的文件和 `index.html`），**从不缓存 `/api/*` 的
-  答复**：数据一律由应用代码按用户、空间存进 IndexedDB，SW 里没有按人区分的数据。
-  例外只有附件（`GET …/files/…`），按地址放进有上限的缓存（默认 500 MB，最久没用
-  的先丢），在线时照旧向服务器核对。
-- 导航请求在离线时回落到 `index.html`，但 `/api/`、`/oauth/`、`/mcp`、
-  `/.well-known/` 一律走网络：单点登录的回调、OAuth 授权页不能被 SW 截住。
-- 新版本的 SW 装好后等着，界面提示「有新版本，刷新」；重放离线改动之前先确认
-  外壳和服务器的接口版本对得上（`GET /api/meta` 的 `version`），对不上先刷新，免得
-  旧的客户端按旧合同写入。
-- 退出登录时清掉这个账号的附件缓存和 IndexedDB 里的数据（有待同步的改动时先问）。
+- It caches only the app shell (the built files with hashes, and `index.html`) and
+  **never caches `/api/*` responses**: data is always stored in IndexedDB by the app
+  code per user and space, and the SW holds no data that differs per person. The only
+  exception is attachments (`GET …/files/…`), which are put by address into a cache
+  with a limit (default 500 MB, least recently used dropped first), and online they
+  are still checked with the server as before.
+- A navigation request falls back to `index.html` when offline, but `/api/`,
+  `/oauth/`, `/mcp` and `/.well-known/` always go to the network: the single
+  sign-on callback and the OAuth authorization page must not be caught by the SW.
+- After a new SW version is installed, it waits, and the UI says "A new version is
+  available, refresh". Before replaying offline changes, check that the shell and
+  the server's API version match (the `version` of `GET /api/meta`), and if they do
+  not, refresh first, so an old client does not write under an old contract.
+- On sign-out, this account's attachment cache and the data in IndexedDB are
+  cleared (ask first if there are pending changes).
 
-**4.4 桌面版的方向**：
+**Direction of the 4.4 desktop version**:
 
-- 同一个 Go 程序，单人形态（`serve --space`）监听本机回环的随机端口，外面一个
-  用系统 webview 的原生窗口（macOS 的 WKWebView、Windows 的 WebView2、Linux 的
-  WebKitGTK），不带 Chromium，安装包小。Go 绑定在 Wails 和 webview_go（或类似的）之间，
-  在 4.4 开工前和手机的壳一起做一次 spike 定（见上面「所有平台一套代码」）。
-- 桌面版有三种用法，对应第 1 节：不登录的本地模式（本机的仓库，不备份）；连自己的
-  Git 仓库（几台设备同步，规则见 4.7 节）；登录官方服务器。**官方构建没有「服务器
-  地址」设置**，「连接服务器」只连官方服务器；想连自己的服务器的人改开源的客户端
-  自己构建。
-- 本机的服务每次启动生成一个随机口令，只有窗口拿得到；没有口令的请求一律拒绝，
-  这样同一台机器上的其他程序和浏览器里的网页用不了它（现在的回环模式只靠
-  `Host` 和 `Origin` 检查）。
-- 单人形态现在只有一个空间。桌面版要能开几个仓库，所以单人形态加「几个空间、
-  没有账号」：每个空间一个目录，仍然没有成员和权限这一层。
-- 跟随 Git 远端照 1.3（SSH 密钥、HTTPS 令牌）。GitHub 的设备码登录要一个公开的
-  OAuth 应用（所有者的账号），放第 5 期。
-- 「连接服务器」模式：窗口打开服务器的地址，就是网页端；离线靠 4.1–4.3。
-  WKWebView 里 Service Worker 能不能用要实测，用不了时这个模式只有 4.1 的离线。
+- The same Go program, in the single-user form (`serve --space`), listens on a
+  random loopback port on the machine, with a native window around it that uses the
+  system webview (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux), no
+  Chromium bundled, so the installer is small. The Go binding is chosen between
+  Wails and webview_go (or similar) in the spike before 4.4 starts, together with
+  the mobile shell (see "One codebase for all platforms" above).
+- The desktop version has three ways of use, matching section 1
+  ([overview.md §1](../overview.md#1-goals-and-non-goals)): local mode without signing in (the repository on
+  this machine, no backup); connecting to one's own Git repository (several devices
+  sync; for the rules see section 4.7, [storage-and-sync.md §4.7](../storage-and-sync.md#47-two-devices-using-the-same-repository-of-their-own-owner-2026-11-23));
+  and signing in to the official server. **The official build has no "server
+  address" setting**: "connect to a server" connects only to the official server,
+  and someone who wants to connect to their own server builds the open-source client
+  themselves.
+- The local service generates a random password at each start, and only the window
+  can get it. A request without the password is always refused, so other programs
+  on the same machine and web pages in a browser cannot use it (today's loopback
+  mode relies only on the `Host` and `Origin` checks).
+- The single-user form today has just one space. The desktop version must be able
+  to open several repositories, so the single-user form gets "several spaces, no
+  accounts": one directory per space, still without the layer of members and
+  permissions.
+- Following a Git remote follows 1.3 (SSH keys, HTTPS tokens). GitHub device-code
+  sign-in needs a public OAuth app (the owner's account), which goes in phase 5.
+- "Connect to a server" mode: the window opens the server's address, and it is the
+  web version. Offline relies on 4.1-4.3. Whether the Service Worker works in
+  WKWebView must be tested for real. If it does not, this mode has only the offline
+  of 4.1.
 
-**4.5 手机的方向**：
+**Direction of 4.5 mobile**:
 
-- 安装到主屏幕后，iOS 不会因为 7 天没用就清掉网站的存储（只对没安装的网站
-  清），所以离线的说明里写明「请安装到主屏幕」；安卓上开离线时申请持久存储
-  （`navigator.storage.persist()`）。
-- iOS 没有后台同步，回到前台、恢复网络时才同步。
-- 格式工具栏贴在键盘上方（`visualViewport`）；快速记录离线可用；安卓上用
-  Web Share Target 把别的应用分享的文字放进收件箱。
-- **以后的手机应用**（上架在第 5 期的 5.15）：同一份 React 界面放进系统 webview，
-  Go 引擎用 gomobile 编进应用，和桌面版一样有本地模式、连自己的仓库、登录官方服务器
-  三种用法，官方构建同样没有服务器地址设置。4.5 在网页端做的（键盘工具栏、离线快速
-  记录、分享进收件箱）原样用在里面；壳在 4.4 之前的 spike 里和桌面一起定。
+- After being installed to the home screen, iOS does not clear a site's storage
+  because of 7 days of no use (it does that only for sites that are not installed),
+  so the offline instructions say "please install to the home screen". On Android,
+  turning on offline requests persistent storage (`navigator.storage.persist()`).
+- iOS has no background sync, so sync happens only when coming back to the
+  foreground and when the network returns.
+- The format toolbar sticks above the keyboard (`visualViewport`); quick capture
+  works offline; on Android, Web Share Target puts text shared from other apps into
+  the inbox.
+- **The later mobile app** (listed in the stores in 5.15 of phase 5): the same React
+  UI in the system webview, with the Go engine compiled into the app by gomobile.
+  Like the desktop version, it has three ways of use: local mode, connecting to
+  one's own repository, and signing in to the official server, and the official build
+  likewise has no server address setting. What 4.5 builds on the web (keyboard
+  toolbar, offline quick capture, sharing into the inbox) is used inside it as it
+  is. The shell is decided with the desktop in the spike before 4.4.
 
-**4.1 的约定**（2026-11-23）：接口写在 `docs/api.md` 的「Offline sync」，前后端
-照它做。
+**The 4.1 contract** (2026-11-23): the endpoints are written in "Offline sync" in
+`docs/api.md`, and the frontend and backend follow it.
 
-定下来的：
+Decided:
 
-- **服务器不记设备**：没有设备注册、没有按设备的状态。变更流的游标在客户端
-  手里，服务器只回答「这个游标之后改了什么」。所以一万台设备不在服务器上占
-  任何东西，设备丢了也不用清理。
-- **变更序号在索引里**：`pages` 表加一列 `seq`，索引每写一页（新增、内容变、
-  改名移动、服务改写链接）就给它一个新的、比以前都大的序号；页面被删时在新表
-  `gone(id, seq)` 里留一条。查「某序号之后」是按 `seq` 索引的一次区间读，没有
-  改动时读不到任何行。同一页改了很多次只出现一次（只留最新的序号），所以离线
-  一周回来，取的也只是「改过的页数」条。
-- **游标** = 索引的纪元加序号。索引重建（升级、手动重建、文件对不上）换一个
-  纪元，旧游标答 `410 changes_expired`，客户端重新走一遍目录、比 `rev`，只取
-  `rev` 变了的正文。删除记录保留最近 10 万条或 180 天，更早的游标同样答 410。
-- **目录**：`GET …/sync/catalog` 按页面在索引里的顺序分批（每批最多 5000 条）
-  给出轻量摘要，第一批同时给出开始走之前的变更游标，走完后从它接着取变更，走的
-  过程中改了的页面不会漏。可以只走几个文件夹（含子文件夹）。
-- **取正文**：`GET …/sync/pages?ids=` 一次最多 100 篇，带调用者的草稿（一次查询），
-  一个答复最多 8 MiB，放不下的列在 `rest` 里再取。
-- **很多空间一次问**：`GET /api/sync/heads?space=…` 一次最多 100 个空间，只给每个
-  空间现在的游标，客户端只对变了的空间去取变更。答复来自内存，**不打开、不拉取**
-  关着的空间（3.1 清掉的空间也一样），所以离线设备的轮询不会让闲置的空间一直
-  开着；跟随远端、但关着的空间，要等有人在网页上打开它才会拉到远端的改动。
-- **目录树和设置**：变更流的答复带两个记号，`tree`（文件夹或文件夹里的页数变了
-  就变）和 `settings`（`.petalbook/` 下的设置、标签、类型、模板变了就变）；变了
-  客户端再取 `…/tree`、`…/tags`、`…/types`、`…/views` 这些已有的接口，不进变更流。
-- **权限**：都要 `read`；空间不能读了（被移出、空间被删）答 `404`，客户端删掉
-  这个空间在本机的数据。API 令牌能用（只读），OAuth 访问令牌照旧只能用在
-  `/mcp`。单人模式一样有，空间是 `default`。
-- **客户端**：数据存 IndexedDB，按「用户、空间」分库，换账号登录看不到别人的；
-  在线、页面可见时每 60 秒问一次 `heads`，回到前台、恢复网络时马上问一次。离线时
-  编辑器只读，界面标明「离线，只读」；1.1 的本地草稿保护照旧。本地搜索只在本机
-  有的正文里找，界面上说明「离线时只搜已下载的」。
-- **开销的目标**（5 万篇的造数上测）：没有改动的一次轮询 1 毫秒内；一批 2000 条
-  目录 20 毫秒内；100 篇正文 100 毫秒内（SSD）；索引多一列和一张小表，大小增加
-  不到 1%。索引版本加一，第一次启动全量重建一次（5 万篇约 30 秒），之后所有客户端
-  走一遍目录（只比 `rev`）。
+- **The server does not remember devices**: no device registration, no per-device
+  state. The cursor of the change stream is in the client's hands, and the server
+  only answers "what changed after this cursor". So ten thousand devices take
+  nothing on the server, and a lost device needs no cleanup.
+- **The change sequence is in the index**: the `pages` table gets a column `seq`.
+  Every time the index writes a page (added, content changed, renamed or moved,
+  link rewritten by the service), it gives it a new sequence number larger than all
+  before. When a page is deleted, a row is left in the new table `gone(id, seq)`.
+  Querying "after a sequence" is one range read on the `seq` index, and when there
+  are no changes it reads no rows. A page changed many times appears only once
+  (only the latest sequence is kept), so after a week offline, what is fetched is
+  only "the number of pages changed".
+- **Cursor** = the index epoch plus the sequence. When the index is rebuilt
+  (upgrade, manual rebuild, files not matching), the epoch changes, and an old
+  cursor answers `410 changes_expired`. The client walks the catalog again,
+  compares `rev`, and fetches only the bodies whose `rev` changed. Deletion records
+  are kept for the latest 100,000 entries or 180 days, and an older cursor likewise
+  answers 410.
+- **Catalog**: `GET …/sync/catalog` gives a light summary in batches (at most 5000
+  entries per batch) in the order of the pages in the index. The first batch also
+  gives the change cursor from before the walk started, and after the walk, changes
+  continue from it, so pages changed during the walk are not missed. It can walk
+  only some folders (including subfolders).
+- **Fetch bodies**: `GET …/sync/pages?ids=` takes at most 100 pages at a time,
+  carrying the caller's drafts (one query), and one response is at most 8 MiB, with
+  what does not fit listed in `rest` to be fetched again.
+- **Asking about many spaces at once**: `GET /api/sync/heads?space=…` takes at most
+  100 spaces, and gives only the current cursor of each space. The client fetches
+  changes only for spaces that changed. The response comes from memory, and **does
+  not open or fetch** closed spaces (the same for spaces cleared by 3.1), so polling
+  by an offline device does not keep idle spaces open. A space that follows a remote
+  but is closed gets the remote's changes only when someone opens it on the web.
+- **Folder tree and settings**: the change stream's response carries two marks:
+  `tree` (changes when the folders or the page count in a folder change) and
+  `settings` (changes when the settings, tags, types or templates under
+  `.petalbook/` change). When they change, the client fetches the existing
+  endpoints `…/tree`, `…/tags`, `…/types`, `…/views`, and they do not go into the
+  change stream.
+- **Permissions**: all need `read`. When the space can no longer be read (the person
+  was removed, or the space was deleted), the answer is `404`, and the client
+  deletes this space's data on the device. An API token can be used (read-only), and
+  an OAuth access token can still be used only on `/mcp`. Single-user mode has it too,
+  with the space `default`.
+- **Client**: data is stored in IndexedDB, with a database per "user, space", so
+  signing in with another account cannot see another person's data. When online and
+  the page is visible, it asks `heads` every 60 seconds, and asks at once when
+  returning to the foreground or when the network returns. While offline, the editor
+  is read-only, and the UI says "Offline, read-only"; the 1.1 local draft protection
+  is unchanged. Local search looks only in the bodies present on this machine, and
+  the UI says "Offline, only downloaded content is searched".
+- **Cost targets** (tested on a synthetic space of 50,000 pages): one poll with no
+  changes within 1 millisecond; a batch of 2000 catalog entries within 20
+  milliseconds; 100 page bodies within 100 milliseconds (SSD); the index gets one
+  more column and one small table, with a size increase of under 1%. The index
+  version goes up by one, and the first start rebuilds once in full (about 30
+  seconds for 50,000 pages), and after that every client walks the catalog once
+  (comparing only `rev`).
 
-不做的（括号里是理由）：
+Not doing (reasons in parentheses):
 
-- **服务器推送**（SSE、WebSocket）：要为每台在线设备占一个连接，2.6 的 MCP 也是
-  因此不开 SSE。轮询 `heads` 一次是几个内存查找，60 秒一次足够。
-- **离线时的属性查询和表格、看板视图**：要把 `props` 也搬到设备上；4.1 的离线只有
-  列表、卡片和阅读。
-- **离线的附件**：4.3 做。
-- **按设备的同步状态页**（「这台设备上次同步是什么时候」给管理员看）：要服务器
-  记设备，和第一条冲突。
-- **加密空间的离线**：加密空间还没有。
+- **Server push** (SSE, WebSocket): it would take a connection per online device,
+  and for the same reason the 2.6 MCP does not open SSE. Polling `heads` is a few
+  memory lookups once, and once every 60 seconds is enough.
+- **Property queries and table and board views while offline**: they need `props` to
+  be moved to the device too; the offline of 4.1 has only the list, cards and
+  reading.
+- **Offline attachments**: done in 4.3.
+- **A per-device sync status page** ("when did this device last sync", shown to
+  administrators): the server would have to remember devices, which conflicts with
+  the first item.
+- **Offline for encrypted spaces**: encrypted spaces do not exist yet.
 
-要所有者定的（先按括号里的默认做）：
+To be decided by the owner (build by the default in parentheses first):
 
-1. 服务器不记设备，游标只在客户端（是）。
-2. 「只要目录」时取整个空间的轻量摘要，几万篇也取（是；5 万篇压缩后约 2 MB，
-   可以改成只取选中的文件夹）。
-3. 「目录加正文」的默认范围：收藏、收件箱、最近打开的 200 篇，加上手动选的文件夹
-   和标签；本机正文总量上限 200 MB（按这些）。
-4. 轮询 `heads` 每 60 秒一次、只在页面可见时；不做服务器推送（是）。
-5. `heads` 不打开、不拉取关着的空间，远端的改动要等有人打开这个空间才到（是；
-   否则离线设备会让所有同步的空间一直开着、一直拉取）。
-6. 删除记录保留 10 万条或 180 天（是）；更早的设备回来时重走目录。
-7. 退出登录时清掉本机这个账号的离线数据（清；4.2 之后有待同步的改动时先问）。
-8. 离线数据在设备上不加密（不加密，和浏览器里其他网站的数据一样，说明里写明；
-   设备丢了靠吊销会话）。
-9. 4.1 离线时编辑器只读，离线编辑等 4.2（是）。
+1. The server does not remember devices, and the cursor is only in the client (yes).
+2. With "catalog only", fetch the light summary of the whole space, even for tens of
+   thousands of pages (yes; about 2 MB compressed for 50,000 pages,
+   it can be changed to fetch only the selected folders).
+3. The default scope of "catalog plus bodies": favourites, the inbox, the 200 most
+   recently opened pages, plus folders and tags chosen by hand; the total limit of
+   bodies on the machine is 200 MB (counted over these).
+4. Poll `heads` once every 60 seconds, only while the page is visible; no server
+   push (yes).
+5. `heads` does not open or fetch closed spaces, and a remote's changes arrive only
+   after someone opens the space (yes; otherwise offline devices would keep every
+   synced space open and fetching all the time).
+6. Deletion records are kept for 100,000 entries or 180 days (yes); a device that
+   returns after longer walks the catalog again.
+7. On sign-out, clear this account's offline data on the machine (clear; after 4.2,
+   ask first if there are pending changes).
+8. Offline data is not encrypted on the device (not encrypted, like the data of other
+   sites in the browser, and the instructions say so; if the device is lost, revoke
+   the session).
+9. In 4.1 the editor is read-only while offline, and offline editing waits for 4.2
+   (yes).
 
-**4.1 的现状（2026-11-23）**：上面的约定都做了，所有者问题按括号里的默认做。接口见
-`docs/api.md` 的「Offline sync」。实现时定下来的：
+**4.1 as built (2026-11-23)**: everything in the contract above was done, and the
+owner questions were handled by the defaults in parentheses. For the endpoints see
+"Offline sync" in `docs/api.md`. What was settled during implementation:
 
-- **离线副本的开关和加密（所有者的决定，照通行做法）**：设备上的离线数据**不在应用层
-  加密**，靠系统和浏览器自己的存储隔离；**退出登录时清掉**（已做）。管理员可以允许或
-  禁止离线副本：分层设置 `offline.copies`（全站 → 租户两层，没有空间和个人层，默认
-  允许）。租户可以给自己关掉；全站的值是没有表态的租户的默认，全站可以锁定它（锁定的 `false` 对所有租户都是关）或限制为只能关。关掉时
-  四个同步接口答 `403 offline_off`（登录和令牌本身的检查之后、打开空间之前：被拒的
-  请求不会恢复驱逐的空间；答案和空间无关，别的租户的空间、不存在的空间也答它，不泄露
-  什么）。网页端从 `GET /api/settings` 读有效值：关掉时不再同步和轮询，在下次启动
-  或轮询时删除本账号的离线副本，「离线」设置区显示成不可用并写一句说明。已经在设备
-  上的副本在客户端下次启动前仍在，服务端不会也没办法主动删设备上的数据。
-- **索引版本 10**（主线是 9）：`pages` 加 `seq` 列和 `pages_seq` 索引，新表
-  `gone(id, seq, at)`；第一次启动全量重建一次。别的分支如果也动索引版本，合并时要
-  重新排号（有分支停在 9 上）。
-- **和 3.1 的驱逐与恢复、#26 的索引模板（合并主线 c856f5a 时）**：
-  - 主线的索引版本合并时仍是 9，这里的 10 不变。
-  - 索引模板（`index.ReuseSchema()`，只在测试里用）不带任何 `meta` 行；4.1 新索引的
-    `meta`（`epoch`、`seq`、`tree`、`gone_n`、`gone_floor`）放进 `insertMeta`，新建的
-    索引和模板的副本走同一段代码，之后同样经过 `markOpen`（没有 `clean` 就再换一次纪元、
-    写 `clean=0`）。模板本身不跑 `markOpen`、`loadHead`，`Close` 也不给它写 `clean`。
-    `template_test.go` 测两个副本的纪元不同、其余 `meta` 和新建的一样，以及副本的
-    `clean`、`StoredHead`、干净重开保留纪元、不干净重开换纪元。
-  - 驱逐的空间索引留着、关着：`heads` 照旧读关着的索引（只读 `meta`），不打开、不恢复；
-    `Evict` 关空间时记下它的头（和 `closeIdle` 一样）；只读索引的句柄开着时（索引里
-    `clean=0`）用句柄的头。`sync/catalog`、`changes` 加进只读索引的路由；`settings`
-    记号在空间带着文件关闭时存进索引的 `meta`（`note_settings`，和 `clean` 同一次写），
-    驱逐的空间答这个。`sync/pages` 要读文件，和别的读正文一样先恢复，10 秒内没好答
-    `503 restoring`。
-  - 恢复保留索引：`restore` 在关掉只读句柄后、把克隆移到位之前调 `index.NoteRestored`，
-    只在索引干净关上时写 `restored=1`；下次打开（`markOpen`）读掉并删掉它，第一次
-    `Sync` 发现文件不同时不换纪元（这些是远端在驱逐期间的改动，按普通写给新序号）。
-    写不上或者索引没干净关上就照旧换纪元，客户端重走目录，安全。索引要重建的（没有、
-    坏了、版本不对）由 `insertMeta` 给新纪元。
-  - 3.1 的拉取和恢复都经 `Refresh`/`Sync` 写索引，序号由同一个 `writer` 发，没有别的写
-    路径。
-  - **驱逐的空间索引用不了时恢复，不重建成空的（合并后的审查）**：只读索引的句柄
-    （`space.OpenIndexOnly`）改用 `index.OpenExisting`：先用只读连接看文件在不在、
-    版本是不是 10、`root` 对不对，不对就答 `index.ErrUnusable`，什么都不删不建。
-    `acquireIndex` 遇到它（`space.ErrIndexUnusable`）走正常的恢复（`acquire` →
-    `ensureRestored`，10 秒内没好答 `503 restoring`）。以前 `index.Open` 会把 9 版的
-    索引删掉、重建成空的，列表、树、搜索、目录和变更都答空，恢复也读不到时间戳。旧索引
-    留到恢复把文件放好之后，由完整空间的 `index.Open` 从真文件重建（新纪元）。
-  - **恢复和只读句柄的竞争**：`restoreOp.indexClosed` 在盖完时间戳之后、
-    `closeIndexOnly` 之前（在 `ev.mu` 下）置上，此后 `acquireIndex` 不再给新的只读
-    句柄，答 `restoring`。正在打开的只读句柄先占住 `ev.idx` 里的位置（`ready` 通道），
-    所以 `closeIndexOnly` 会等它，不会漏掉。另外只读句柄关闭时写 `clean=1` 有个守卫
-    （`Index.SetCloseGuard`）：在写事务里、拿着 SQLite 的写锁时看空间目录，目录已经在了
-    （完整空间拥有索引）就不提交，所以超时的旧句柄最后关闭时不会在完整空间开着索引时写
-    `clean=1`。
-- **和 3.3 的租户**：同步的四个接口和读的权限一样。`heads` 只看本人的成员关系，
-  成员关系不跨租户，所以别的租户的空间只会在 `missing` 里；停用的租户的人和令牌在登录
-  和令牌那一层就被拒（401），它的空间谁都打不开（403 `space_disabled`），也不在
-  `heads` 里。四个接口都在隔离测试的路由表里（`isolation_test.go`），用另一个租户的
-  id 测；`heads` 要求另一个租户的空间和编出来的 id 答得一模一样。`sync/pages` 读草稿用
-  的 `store.UserDrafts` 只查 `drafts` 表，按已经打开的空间和调用者自己的 id，不碰租户
-  的五张表，不需要 Scope，也不在白名单上。设置记号按空间算，离线库按账号 id 和空间 id
-  分，两者的 id 在整个服务器上唯一，不用改。合并 3.3 时主线的索引版本还是 9，这里的 10
-  不变。
-- **序号和纪元存在索引的 `meta` 表里**（`epoch`、`seq`、`tree`、`gone_n`、
-  `gone_floor`），写事务里第一次要用时读一次，`finish` 里一起写回，提交成功后才更新内存里的
-  游标（`commitW`，在奇数的 `gen` 里），所以内存里的头和读到的快照不会错开。每个
-  `upsert` 给页面行一个新序号；`deleteRow` 在 `gone` 里留一条（同 id 再写入时
-  删掉这条，所以「删了又建回来」是目录项，不是删除）。全量重建（`clearAll`）换纪元、清
-  `gone`。文件夹增减、页面进出文件夹置 `tree` 记号。
-- **`gone` 的界限**：每次删除后按条数（10 万）和时间（180 天）剪，剪掉的最高序号记在
-  `gone_floor`；游标低于它就答 410，不用扫表。启动时的 `Sync` 也按时间剪一次。
-  `gone_n` 只是计数：减到 0 就停在 0（并在这次写里重新数一遍表）；按条数剪时在
-  OFFSET 处找不到行，也重新数表，不报错。所以计数偏了不会让写入或启动失败。
-- **新纪元**：索引用 `synchronous(NORMAL)`，断电可能丢掉最后几次提交而纪元不变，
-  序号就会被重新发出去。所以 `meta` 里记 `clean`：打开时写 `0`（这一次用
-  `synchronous(FULL)`，在任何别的写之前落盘），`Close` 的最后一次写是 `1`（拿着写锁，
-  之后不会再有写）。打开时不是 `1` 就换纪元、清 `gone`；打开后第一次 `Sync` 发现文件和
-  索引记的不一样（删掉的、大小或时间变了的、新的；每次都要重看的问题文件不算）也换纪元。
-  客户端拿到 410 就重走目录。
-- **文件夹移动是一次索引写**：`Index.Move` 在一个事务里先忘掉旧路径和旧文件夹，再读新的
-  （原来是 `Forget` 和 `Refresh` 两次提交，夹在中间的轮询会把搬走的页当成删了）。
-- **`changes` 的 `next`**：读到的快照的头（有更多时是最后一条的序号）；没有改动、`since`
-  已经是头时才原样返回 `since`。这样客户端追上后游标和 `heads` 给的头是同一个串，之后
-  的轮询只比较字符串。比契约里写的「没有改动时 next 就是 since」多走了一步，见
-  `docs/api.md`。
-- **`heads`**：`Manager.Heads` 只读成员表（缓存，未命中才一次查询）和内存。开着的空间
-  答自己的头（一次原子读），关掉的空间答关闭时记下的头（`closeIdle` 和 `Close` 记，
-  上限 20 万项）。服务器重启后内存里没有的，在锁外用只读连接读关着的索引的 `meta`
-  （`epoch`、`seq`、`clean`，约 1 毫秒，不遍历、不拉取、不打开空间，之后记在内存里），
-  所以重启后客户端不会把每个同步的空间都打开一遍。没有索引文件、索引没干净地关上
-  （下次打开要换纪元）、或者索引版本不对的，答 `""`，客户端因此去取变动，这一取就把它
-  打开了。只读连接按 SQLite 的 WAL 规矩加锁，可能留下空的 `-wal`、`-shm`，不影响之后
-  的打开。不是成员的管理员在 `missing` 里（不查状态库）。令牌只看它点名的空间。
-- **`settings` 记号**不放在索引里：索引看不见 `.petalbook/`。它是 `.petalbook/`、
-  `types/`、`templates/` 三个目录里文件的名字、大小、修改时间的摘要，三次目录列举，
-  不随页数变。
-- **`sync/pages`**：逐页读文件（`Space.Get`），草稿一次查询取（`store.UserDrafts`，
-  `IN` 列表；SQLite 和 PostgreSQL 都测了），超过 8 MiB 的从下一篇起进 `rest`，第一篇
-  永远放得下。
-- **客户端**：`web/src/lib/offline/`。每个账号每个空间一个 IndexedDB 库
-  （`petalbook-offline:<用户>:<空间>`，表 `meta`、`catalog`、`pages`、`textmeta`、
-  `opened`、`walk`），`localStorage` 里一张登记表（每个库的字节数，设备总量上限 200 MB
-  按它算，也靠它找到要清的库；它丢了就按 `indexedDB.databases()` 扫前缀）。
-  目录和游标在一个事务里写，同步在任何地方断掉都能接着走。走目录时每一批和「走到
-  哪了」（第一批的变更游标、下一批的游标、看过的 id 记在 `walk` 表）在一个事务里写，
-  断了下次从下一批接着走，走完再删掉没看到的；批次游标不被接受了（410、400）才从头
-  走。游标 410 时重走目录，只取 `rev` 变了的正文。页面从目录里删掉时，`opened` 里的
-  记录留着（它本身有 200 条的上限，范围只算目录里有的），所以搬回来的页仍算最近打开。范围里的正文每次最多 4 个请求同时取，一次 100 篇，
-  `rest` 排回队列；超过上限先丢「只因最近打开而留着」的、最久没开的，收藏、收件箱、
-  选定的文件夹和标签只在放得下时留。
-- **离线读**：`request()` 在 GET 连不上服务器时问 `readOffline`：页面列表（文件夹、
-  标签、日期、排序、标题和已保存正文里的搜索，翻页用偏移量当游标）、单页（带草稿）、
-  树和标签（服务器上次给的，没有就从目录数）。要属性、正文、看板、历史、类型的不答，
-  照旧报网络错误。整页没存正文时报 `not_offline`。离线的标志是「设备离线」事件、
-  心跳（`heads`）连不上、或一次读被本地数据回答了；任何一次成功的答复就清掉。编辑器
-  离线时只读（顶栏写着「离线，只读」，提示条也写明），输入到一半的内容仍由 1.1 的
-  浏览器草稿保管。离线打开的页面照常按服务器草稿和浏览器草稿恢复（离线只让编辑器只读，
-  不发任何请求）；网络回来时这个会话换成从服务器重新读的新会话，草稿先恢复好才能
-  输入。网络断开前已经开着的编辑器不换，没保存的内容留着，恢复后接着存。
-- **轮询**：`startPolling`，每 60 秒、只在页面可见时问一次 `heads`（一个请求，最多
-  100 个空间），回到前台和网络恢复时马上问；只对头和游标不同的空间取变动。`heads` 里
-  没有的空间：对它取一次变动，404 就删本机的副本，403 `space_disabled` 就留着、标成只读
-  并不再问，直到它又出现在 `heads` 里。同步出错（不是没网）的空间按空间退避：
-  等一个轮询周期，之后每次加倍，最多 30 分钟；成功一次就恢复正常，手动「立即同步」
-  不等。退出登录（`api.logout`）清掉这个账号的所有库，别的账号的不动。
-- **设置**：设置里新加「离线」一节（单人和账号模式都有，能读这个空间就有）：三档、
-  正文范围（收藏、收件箱、最近 200 篇三个开关，加选定的文件夹和标签）、占用显示（本空间
-  和整台设备对 200 MB）、立即同步、清除；页面上写明不加密、退出登录清掉。
-- **模拟服务器**（`web/src/api/mock/feedBook.ts`）：页面和上次不同就给新序号，行为和真
-  服务器一样（游标、410、`rest`、`heads`）；契约测试（`contract.test.ts` 的「offline sync」）
-  对模拟服务器和真实的单人服务器都跑过。
+- **The switch and encryption of offline copies (the owner's decision, following
+  common practice)**: offline data on the device is **not encrypted at the
+  application layer**, and relies on the storage isolation of the system and the
+  browser; it is **cleared on sign-out** (done). Administrators can allow or forbid
+  offline copies: the layered setting `offline.copies` (two layers, site and tenant,
+  no space or personal layer, default allow). A tenant can turn it off for itself.
+  The site value is the default for tenants that have not taken a position, and the
+  site can lock it (a locked `false` is off for all tenants) or limit it to
+  turn-off-only. When it is off, the four sync endpoints answer `403 offline_off`
+  (after the checks of sign-in and the token itself, before the space is opened: a
+  refused request does not restore an evicted space; the answer is unrelated to the
+  space, and the spaces of other tenants and nonexistent spaces also get it, so
+  nothing is leaked). The web version reads the effective value from
+  `GET /api/settings`: when it is off, it no longer syncs or polls, and at the next
+  start or poll it deletes this account's offline copies. The "Offline" settings
+  area shows as unavailable with one sentence of explanation. Copies already on the
+  device remain until the client's next start, and the server neither will nor can
+  delete data on the device by itself.
+- **Index version 10** (mainline is 9): `pages` gets a `seq` column and a `pages_seq`
+  index, and a new table `gone(id, seq, at)`; the first start rebuilds once in full.
+  If another branch also changes the index version, the numbers must be reassigned at
+  merge (a branch is stuck on 9).
+- **With the 3.1 eviction and restore, and the index template of #26 (when merging
+  mainline c856f5a)**:
+  - The mainline index version was still 9 at merge, and the 10 here is unchanged.
+  - The index template (`index.ReuseSchema()`, used only in tests) carries no `meta`
+    rows. The `meta` of a new 4.1 index (`epoch`, `seq`, `tree`, `gone_n`,
+    `gone_floor`) goes into `insertMeta`, and a newly created index and a copy of the
+    template take the same code, and after that both go through `markOpen` (without
+    `clean`, the epoch is changed once more and `clean=0` is written). The template
+    itself runs neither `markOpen` nor `loadHead`, and `Close` does not write `clean`
+    for it. `template_test.go` tests that two copies have different epochs and the
+    rest of `meta` is the same as a new one, and the copy's `clean`, `StoredHead`,
+    that a clean reopen keeps the epoch, and that an unclean reopen changes the epoch.
+  - The index of an evicted space is kept and closed: `heads` still reads the closed
+    index (reading only `meta`), without opening or restoring. `Evict` records the
+    head when it closes the space (the same as `closeIdle`); while a read-only index
+    handle is open (`clean=0` in the index), the handle's head is used.
+    `sync/catalog` and `changes` were added to the routes of the read-only index. The
+    `settings` mark is stored in the index's `meta` (`note_settings`, in the same
+    write as `clean`) when the space with its files closes, and an evicted space
+    answers with that. `sync/pages` needs to read files, so like other body reads it
+    restores first, and if it is not ready within 10 seconds it answers
+    `503 restoring`.
+  - Restore keeps the index: `restore` calls `index.NoteRestored` after closing the
+    read-only handle and before moving the clone into place, and writes `restored=1`
+    only if the index was closed cleanly. The next open (`markOpen`) reads and
+    deletes it, and the first `Sync`, when it finds the files different, does not
+    change the epoch (these are changes of the remote during the eviction, and get
+    new sequence numbers as ordinary writes). If it cannot be written, or the index
+    was not closed cleanly, the epoch is changed as before, the client walks the
+    catalog again, and that is safe. For an index that has to be rebuilt (missing,
+    broken, wrong version), `insertMeta` gives a new epoch.
+  - The 3.1 fetch and restore both write the index through `Refresh` / `Sync`, and
+    the sequence numbers are issued by the same `writer`; there is no other write
+    path.
+  - **When the index of an evicted space cannot be used, restore it; do not rebuild
+    it as empty (review after the merge)**: the read-only index handle
+    (`space.OpenIndexOnly`) now uses `index.OpenExisting`: with a read-only connection
+    it first looks at whether the file exists, whether the version is 10, and whether
+    `root` is right, and if not it answers `index.ErrUnusable`, deleting and creating
+    nothing. `acquireIndex`, on meeting it (`space.ErrIndexUnusable`), takes the
+    normal restore (`acquire` → `ensureRestored`; if not ready within 10 seconds, it
+    answers `503 restoring`). Before, `index.Open` would delete a version 9 index and
+    rebuild it as empty, so the list, tree, search, catalog and changes all answered
+    empty, and the restore could not read the timestamp either. The old index is kept
+    until the restore has put the files in place, and then the full space's
+    `index.Open` rebuilds it from the real files (a new epoch).
+  - **A race between restore and the read-only handle**: `restoreOp.indexClosed` is
+    set after the timestamp is stamped and before `closeIndexOnly` (under `ev.mu`),
+    and after that `acquireIndex` no longer hands out new read-only handles and
+    answers `restoring`. A read-only handle being opened first takes its place in
+    `ev.idx` (the `ready` channel), so `closeIndexOnly` waits for it and does not miss
+    it. In addition, writing `clean=1` when a read-only handle closes has a guard
+    (`Index.SetCloseGuard`): inside the write transaction, while holding SQLite's write
+    lock, it looks at the space directory, and if the directory is already there (a
+    full space owns the index) it does not commit, so an old handle that timed out
+    does not write `clean=1` at its last close while the full space has the index
+    open.
+- **With the 3.3 tenants**: the four sync endpoints have the same permissions as
+  reading. `heads` looks only at the person's own memberships, and memberships do not
+  cross tenants, so spaces of another tenant appear only in `missing`. People and
+  tokens of a deactivated tenant are refused at the sign-in and token layer (401), and
+  nobody can open its spaces (403 `space_disabled`), and they are not in `heads` either.
+  All four endpoints are in the route table of the isolation test (`isolation_test.go`),
+  tested with another tenant's id, and `heads` requires that a space of another tenant
+  and a made-up id get exactly the same answer. The `store.UserDrafts` used by
+  `sync/pages` to read drafts queries only the `drafts` table, by the space that is
+  already open and the caller's own id, and does not touch the tenant's five tables, so
+  it needs no Scope and is not on the allowlist. The `settings` mark is computed per
+  space, and the offline database is split by account id and space id, whose ids are
+  unique on the whole server, so no change is needed. When 3.3 was merged, the mainline
+  index version was still 9, and the 10 here is unchanged.
+- **The sequence and the epoch are stored in the index's `meta` table** (`epoch`,
+  `seq`, `tree`, `gone_n`, `gone_floor`). They are read once when first needed inside a
+  write transaction and written back together in `finish`, and the in-memory cursor is
+  updated only after the commit succeeds (`commitW`, inside an odd `gen`), so the head
+  in memory and the snapshot that is read never drift apart. Every `upsert` gives the
+  page row a new sequence number; `deleteRow` leaves a row in `gone` (when the same id
+  is written again, this row is deleted, so "deleted and created again" is a catalog
+  entry, not a deletion). A full rebuild (`clearAll`) changes the epoch and clears
+  `gone`. Folders added or removed, and pages entering or leaving a folder, set the
+  `tree` mark.
+- **The limits of `gone`**: after every deletion it is trimmed by count (100,000) and
+  by time (180 days), and the highest sequence trimmed is recorded in `gone_floor`. A
+  cursor below it answers 410, without scanning a table. The `Sync` at startup also
+  trims once by time. `gone_n` is only a count: when it drops to 0 it stays at 0 (and
+  the table is counted again in this write); when trimming by count finds no row at the
+  OFFSET, it also counts the table again and does not raise an error. So a wrong count
+  cannot make a write or a startup fail.
+- **New epoch**: the index uses `synchronous(NORMAL)`, and a power cut may lose the last
+  few commits while the epoch stays the same, so sequence numbers would be issued again.
+  So `meta` records `clean`: on open it writes `0` (this one with `synchronous(FULL)`,
+  flushed to disk before any other write), and the last write of `Close` is `1` (holding
+  the write lock, with no writes afterward). If it is not `1` on open, the epoch is
+  changed and `gone` is cleared. The first `Sync` after opening also changes the epoch
+  if it finds the files differ from what the index recorded (deleted ones, ones whose
+  size or time changed, new ones; problem files that must be looked at again every time
+  do not count). When the client gets 410 it walks the catalog again.
+- **A folder move is one index write**: `Index.Move` first forgets the old path and the
+  old folder in one transaction, and then reads the new one (it used to be two commits,
+  `Forget` and `Refresh`, and a poll in between would treat the moved page as deleted).
+- **The `next` of `changes`**: the head of the snapshot that was read (when there is
+  more, the sequence of the last entry); it returns `since` unchanged only when there
+  are no changes and `since` is already the head. So after the client catches up, its
+  cursor and the head given by `heads` are the same string, and later polls only
+  compare strings. This goes one step beyond the contract's "with no changes, next is
+  since"; see `docs/api.md`.
+- **`heads`**: `Manager.Heads` reads only the member table (cached; one query only on
+  a miss) and memory. An open space answers its own head (one atomic read), and a closed
+  space answers the head recorded when it closed (recorded by `closeIdle` and `Close`,
+  with a limit of 200,000 entries). For what is not in memory after a server restart, it
+  uses a read-only connection, outside the lock, to read the `meta` of the closed index
+  (`epoch`, `seq`, `clean`, about 1 millisecond, without walking, fetching, or opening
+  the space, and then remembers it in memory), so after a restart the client does not
+  open every synced space. If there is no index file, the index was not closed cleanly
+  (the epoch must change at the next open), or the index version is wrong, it answers
+  `""`, the client therefore goes to fetch changes, and that fetch opens it. The
+  read-only connection takes locks by SQLite's WAL rules and may leave an empty `-wal`
+  and `-shm`, which do not affect later opens. An administrator who is not a member is in
+  `missing` (the state database is not queried). A token looks only at the spaces it
+  names.
+- **The `settings` mark** is not in the index: the index cannot see `.petalbook/`. It is
+  a digest of the names, sizes and modification times of the files in the three
+  directories `.petalbook/`, `types/` and `templates/`, with three directory listings,
+  and does not change with the number of pages.
+- **`sync/pages`**: reads the files page by page (`Space.Get`), takes drafts in one query
+  (`store.UserDrafts`, an `IN` list; tested on both SQLite and PostgreSQL), and what
+  exceeds 8 MiB goes into `rest` from the next page on, and the first page always fits.
+- **Client**: `web/src/lib/offline/`. One IndexedDB database per account per space
+  (`petalbook-offline:<user>:<space>`, with the tables `meta`, `catalog`, `pages`,
+  `textmeta`, `opened`, `walk`), and a registry in `localStorage` (the byte count of each
+  database; the device total limit of 200 MB is counted from it, and it is also how the
+  databases to clear are found; if it is lost, the prefixes are scanned with
+  `indexedDB.databases()`). The catalog and the cursor are written in one transaction, so
+  sync can continue from wherever it broke. While walking the catalog, every batch and
+  "where the walk is" (the change cursor of the first batch, the cursor of the next batch,
+  and the ids seen, recorded in the `walk` table) are written in one transaction. After a
+  break the next time it continues from the next batch, and after the walk finishes, the
+  ones not seen are deleted; it walks from the beginning only if the batch cursor is no
+  longer accepted (410, 400). On a cursor 410, it walks the catalog again and fetches
+  only the bodies whose `rev` changed. When a page is deleted from the catalog, its
+  record in `opened` stays (it has its own limit of 200 entries, and the scope counts
+  only what is in the catalog), so a page that moves back still counts as recently
+  opened. The bodies in scope are fetched with at most 4 requests at a time, 100 pages
+  per request, and `rest` is put back in the queue. When over the limit, first drop those
+  "kept only because recently opened", the longest unopened first. Favourites, the inbox,
+  and selected folders and tags are kept only if they fit.
+- **Offline reading**: when a GET cannot reach the server, `request()` asks `readOffline`:
+  the page list (folder, tag, date, sort, title and search within the saved bodies, with
+  an offset as the paging cursor), a single page (with its draft), and the tree and tags
+  (what the server last gave, or counted from the catalog if none). It does not answer
+  requests for properties, bodies, boards, history, and types, which report a network
+  error as before. When a whole page has no stored body it reports `not_offline`. The
+  offline flag is the "device offline" event, the heartbeat (`heads`) failing to connect,
+  or a read being answered by local data; any successful response clears it. While
+  offline the editor is read-only (the top bar says "Offline, read-only" and the notice
+  bar says so too), and half-typed content is still kept by the 1.1 browser draft. A page
+  opened offline is restored from the server draft and the browser draft as usual
+  (offline only makes the editor read-only and sends no request). When the network
+  returns, this session is replaced by a new session read again from the server, and
+  input is possible only after the draft is restored. An editor that was already open
+  before the network went down is not replaced, unsaved content is kept, and saving
+  continues after it recovers.
+- **Polling**: `startPolling` asks `heads` once every 60 seconds, only while the page is
+  visible (one request, at most 100 spaces), and asks at once when returning to the
+  foreground and when the network recovers. It fetches changes only for spaces whose head
+  and cursor differ. For a space that is not in `heads`: fetch changes for it once, and on
+  404 delete the local copy, and on 403 `space_disabled` keep it, mark it read-only and
+  stop asking until it appears in `heads` again. A space whose sync fails (not for lack of
+  network) backs off per space: wait one poll period, and then double each time, up to 30
+  minutes; one success returns it to normal, and a manual "sync now" does not wait.
+  Sign-out (`api.logout`) clears all databases of this account and leaves other accounts'
+  alone.
+- **Settings**: a new "Offline" section was added to the settings (present in both
+  single-user and account modes, for anyone who can read this space): three levels, the
+  body scope (three switches for favourites, the inbox and the 200 most recent pages,
+  plus selected folders and tags), the usage display (this space and the whole device
+  against 200 MB), sync now, and clear. The page states that it is not encrypted and is
+  cleared on sign-out.
+- **Mock server** (`web/src/api/mock/feedBook.ts`): a page that differs from last time
+  gets a new sequence number, and the behavior is the same as the real server (cursor,
+  410, `rest`, `heads`). The contract test ("offline sync" in `contract.test.ts`) was run
+  against both the mock server and the real single-user server.
 
-**开销**（5 万篇的空间，`PETALBOOK_TIMING=1 go test -run TestChangeFeedInALargeSpace -v
-./internal/space/`，SSD，本机一次的数）：
+**Cost** (a space of 50,000 pages, `PETALBOOK_TIMING=1 go test -run
+TestChangeFeedInALargeSpace -v ./internal/space/`, SSD, one run on this machine):
 
-| 项目 | 目标 | 实测 |
+| Item | Target | Measured |
 |---|---|---|
-| 没有改动的一次 `changes` | 1 毫秒内 | 约 0.08 毫秒（中位数） |
-| 有 20 条改动的 `changes` | 按改动数算 | 约 0.3–0.4 毫秒 |
-| 一批 2000 条目录 | 20 毫秒内 | 15–19 毫秒（整个空间），按文件夹取 31 毫秒 |
-| 100 篇正文（一篇一篇读） | 100 毫秒内 | 约 20 毫秒 |
-| `heads`（单个空间的头） | 几微秒 | 约 0.15 微秒，不碰磁盘 |
-| `tree` 记号 / `settings` 记号 | | 0.12 微秒 / 约 57 微秒（三次目录列举） |
-| 索引大小 | 增加不到 1% | +0.63%（87.1 MB 到 87.7 MB，整理后） |
-| 第一次全量重建 | 约 30 秒 | 约 23–24 秒 |
+| One `changes` with no changes | within 1 millisecond | about 0.08 millisecond (median) |
+| `changes` with 20 changes | by the number of changes | about 0.3-0.4 millisecond |
+| A batch of 2000 catalog entries | within 20 milliseconds | 15-19 milliseconds (whole space), 31 milliseconds by folder |
+| 100 page bodies (read one by one) | within 100 milliseconds | about 20 milliseconds |
+| `heads` (the head of one space) | a few microseconds | about 0.15 microsecond, no disk |
+| `tree` mark / `settings` mark | | 0.12 microsecond / about 57 microseconds (three directory listings) |
+| Index size | an increase of under 1% | +0.63% (87.1 MB to 87.7 MB, after tidying) |
+| The first full rebuild | about 30 seconds | about 23-24 seconds |
 
-没有做、留给后面的：
+Not done, left for later:
 
-- 设置改动后只重取树和标签，没有重取 `types`、`views`、`templates`（4.1 的离线用不到）；
-  4.2 离线新建页面要模板和类型时再取。
-- 离线时首页（每日文字、收藏）、属性表、看板、历史打不开：这些请求没有本地数据可答，
-  照旧报错。应用外壳本身离线打开要等 4.3 的 Service Worker；4.1 只管应用已经开着时
-  断网。
-- 目录里没有摘要（excerpt）、副标题、来源：只存了正文的页面在列表里有摘要，其余是空的。
-- 搜索用子串匹配（不分词），所以和服务器的结果不会完全一样；界面上写明「离线时只搜
-  已下载的」。
+- After a settings change, only the tree and tags are fetched again, and not `types`,
+  `views`, `templates` (offline in 4.1 does not use them); they are fetched when 4.2
+  offline creation of pages needs templates and types.
+- While offline, the home page (daily text, favourites), the property table, the board
+  and history cannot be opened: these requests have no local data to answer with, and
+  still report an error. The app shell itself opening offline waits for the 4.3 Service
+  Worker; 4.1 only covers losing the network while the app is already open.
+- The catalog has no excerpt, subtitle, or source: a page that has only the body stored
+  has an excerpt in the list, and the others are empty.
+- Search uses substring matching (no tokenization), so the result is not exactly the same
+  as the server's; the UI says "Offline, only downloaded content is searched".
 
-第二轮审查记下的已知问题：
+Known issues recorded in the second round of review:
 
-- 服务器停着时有人在磁盘上直接改了文件，存着的头可能正好等于客户端的游标，客户端要等有人
-  打开这个空间才看到新的 epoch；和 `docs/api.md` 里「关着的空间晚一点才看到」是同一种延迟。
-- 升级前的索引没有 `clean` 键：每个空间第一次打开时换一次 epoch，在那之前它的头是空的；
-  所有离线客户端会把每个空间的目录各走一遍。
+- If someone changes a file directly on disk while the server is stopped, the stored head
+  may happen to equal the client's cursor, and the client sees the new epoch only after
+  someone opens the space; it is the same kind of delay as "a closed space is seen a bit
+  later" in `docs/api.md`.
+- An index from before the upgrade has no `clean` key: the first time each space is
+  opened, the epoch changes once, and before that its head is empty; all offline clients
+  will walk the catalog of every space once.

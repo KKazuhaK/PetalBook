@@ -1,424 +1,652 @@
 # Milestones: phases 0 and 1
 
-## 第 0 期：验证（2026-11-21 做完，遗留项见下）
+## Phase 0: Validation (finished 2026-11-21, leftovers below)
 
-| 项目 | 结论 | 位置 |
+| Item | Result | Where |
 |---|---|---|
-| Markdown 无损往返 | Tiptap 做编辑器，转换层自己用 remark 写；116 个用例过 113 个，其余 3 个已登记原因 | 7.1，`spikes/markdown-roundtrip/` |
-| 浏览器里的编辑 | 输入、快捷键、粘贴正常；三种编辑模式可行；找到三处正式实现要补的 | 7.0、7.2 |
-| 中文搜索和规模 | 本地 SQLite 加逐字切分；5 万篇够用，不需要 Redis | 5.2，`spikes/search-scale/` |
-| 服务端渲染一致性 | goldmark 加中文强调扩展，114/116 一致 | 7.3，`spikes/render-parity/` |
-| GitHub 建仓库权限 | 文档加 2026-11-23 的真实实测查清，见 4.3 | 4.3 |
-| 定名、许可证 | PetalBook，AGPL-3.0 | 13 |
+| Lossless Markdown round trip | Tiptap as the editor, with the conversion layer written by us on remark; 113 of 116 cases pass, the other 3 have their reasons recorded | [editor-and-frontend.md §7.1](../editor-and-frontend.md#71-conclusions-of-the-round-trip-validation-2026-11-21), `spikes/markdown-roundtrip/` |
+| Editing in the browser | Typing, shortcuts and pasting work; the three editing modes are feasible; three things found that the real implementation must add | [editor-and-frontend.md §7.0](../editor-and-frontend.md#70-three-editing-modes), [editor-and-frontend.md §7.2](../editor-and-frontend.md#72-conclusions-of-the-browser-measurements-2026-11-21) |
+| Chinese search and scale | Local SQLite with per-character splitting; 50,000 pages is fine, no Redis needed | [database.md §5.2](../database.md#52-index-database-always-a-local-sqlite), `spikes/search-scale/` |
+| Server-side rendering parity | goldmark with a Chinese emphasis extension, 114/116 identical | [editor-and-frontend.md §7.3](../editor-and-frontend.md#73-server-side-rendering-2026-11-21), `spikes/render-parity/` |
+| Permission to create GitHub repositories | The docs plus a real test on 2026-11-23 settled it, see [storage-and-sync.md §4.3](../storage-and-sync.md#43-remote-credentials-chosen-per-space) | [storage-and-sync.md §4.3](../storage-and-sync.md#43-remote-credentials-chosen-per-space) |
+| Name, license | PetalBook, AGPL-3.0 | [overview.md §13](../overview.md#13-decided-and-open) |
 
-第 0 期没有覆盖、仍然待验证的：中文输入法的组合输入；Tang 全量往返；
-Git 部分克隆（做附件缓存时）。
+Not covered by phase 0 and still pending verification: composition input with
+Chinese input methods; a full Tang round trip; Git partial clone (when the
+attachment cache is built).
 
-带到第 1 期的事项：
+Carried forward to phase 1:
 
-- 转换层：解析和写回文件头部；裸网址写成 `<网址>`；粗斜体交叠时避免四个星号；搜索入库时把
-  标点换成占位词。
-- 编辑器：不要求空格的强调输入规则；纯文本粘贴保留单个换行；粘贴
-  Markdown 源码时解析。
-- 导入全部 Tang 后重跑往返测试。
+- Conversion layer: parse and write back the file header; write bare URLs as
+  `<URL>`; avoid four asterisks when bold and italic overlap; replace
+  punctuation with placeholder words when pages go into the search index.
+- Editor: emphasis input rules that do not require a space; plain-text paste
+  keeps single line breaks; parse Markdown source when it is pasted.
+- Re-run the round-trip tests after all of Tang is imported.
 
-## 第 1 期：自己能日用
+## Phase 1: Usable for daily work myself
 
-本地账号和 OIDC；私人空间；仅本地和远端为准两种模式（SSH 密钥、HTTPS
-令牌）；编辑器全部语法；图片和附件；文件夹和标签；列表和卡片视图；搜索；
-草稿与提交；版本历史；快速记录和收件箱；Markdown 导入；中英文；可安装 PWA；
-SQLite 和 PostgreSQL。
+Local accounts and OIDC; private spaces; two modes, local-only and remote as
+the source of truth (SSH key, HTTPS token); all editor syntax; images and
+attachments; folders and tags; list and card views; search; drafts and commits;
+version history; quick capture and inbox; Markdown import; Chinese and English;
+installable PWA; SQLite and PostgreSQL.
 
-完成标准：Tang 全部导入，连续两周只用它写，不回 Notion。
+Completion criterion: all of Tang imported, and two weeks of writing only in
+it, with no going back to Notion.
 
-第 1 期分成这些里程碑，每个都能独立运行和验收：
+Phase 1 is split into these milestones, each of which can run and be accepted
+on its own:
 
-| 里程碑 | 内容 |
+| Milestone | Content |
 |---|---|
-| 1.1 | 单用户、本地空间、不登录。页面文件的读写（含头部）、文件夹和标签、索引和搜索、HTTP 接口（`docs/api.md`）；网页端的侧栏、列表、编辑器和自动保存 |
-| 1.2 | 登录（本地账号、OIDC）、状态库（SQLite 和 PostgreSQL）、私人空间、草稿存库 |
-| 1.3 | 远端为准模式（复制并解耦 Rackbook 的 Git 存储）、SSH 密钥和 HTTPS 令牌、版本历史与差异高亮 |
-| 1.4 | 图片和附件、卡片视图、快速记录和收件箱、三种编辑模式、编辑器的三处补强 |
-| 1.5 | Markdown 导入、中英文界面、可安装 PWA、发布用的构建和镜像 |
+| 1.1 | Single user, local space, no sign-in. Reading and writing page files (including the header), folders and tags, index and search, the HTTP API (`docs/api.md`); the web sidebar, list, editor and autosave |
+| 1.2 | Sign-in (local accounts, OIDC), the state database (SQLite and PostgreSQL), private spaces, drafts stored in the database |
+| 1.3 | Remote-as-source-of-truth mode (copy and decouple Rackbook's Git storage), SSH keys and HTTPS tokens, version history with diff highlighting |
+| 1.4 | Images and attachments, card view, quick capture and inbox, the three editing modes, the three editor improvements |
+| 1.5 | Markdown import, Chinese and English UI, installable PWA, build and image for release |
 
-1.1 里保存是直接写文件，服务端在停笔后合并成提交；草稿存库在 1.2 换上。
+In 1.1, saving writes the file directly, and the server merges the writes into
+a commit after the user stops typing; storing drafts in the database comes in
+1.2.
 
-### 里程碑 1.1 的现状（2026-11-21）
+### Milestone 1.1 as built (2026-11-21)
 
-已完成并通过提交前审查。实现上和上文不同或新增的地方：
+Done and passed the pre-commit review. Where the implementation differs from
+the text above, or adds to it:
 
-- **本地草稿**：编辑内容在改动后约 0.7 秒写入浏览器本地存储，页面隐藏、
-  刷新、关闭时再同步写一次；只有服务器确认存下同样内容后才清除。下次打开
-  时自动恢复，或在服务器版本已变时进入冲突对话框。30 天过期。它防的是还没
-  发到服务器的内容丢失，只在当前浏览器有效；跨设备的保护靠 1.2 的服务端
-  草稿。
-- **后台提交只包含服务器自己写过的文件**，待提交的路径记在状态目录的日志
-  里，崩溃后重启会接着提交。仓库处于合并、变基等操作中时暂缓提交。手动放
-  进空间的文件不会被自动提交。
-- **跨站请求**一律拒绝，规则见 `docs/api.md`。开发时要用 `--allow-origin`
-  列出网页的地址。
-- **不监视磁盘**：服务器之外的改动在重启或重建索引后出现在列表里；按 ID
-  访问单篇时总会核对文件。
-- `make contract` 把前端的接口测试对着真实服务器跑一遍，防止前端的模拟
-  服务器和真实行为不一致。
+- **Local draft**: about 0.7 seconds after a change, the edited content is
+  written to the browser's local storage; it is written once more,
+  synchronously, when the page is hidden, reloaded or closed. It is cleared
+  only after the server confirms it stored the same content. The next time the
+  page is opened it is restored automatically, or, if the server version has
+  changed, it leads to the conflict dialog. It expires after 30 days. It
+  guards against losing content that has not yet reached the server, and only
+  works in the current browser; protection across devices comes from the
+  server-side draft in 1.2.
+- **Background commits include only files the server itself wrote.** The paths
+  waiting to be committed are recorded in a log in the state directory, and
+  after a crash the restart carries on committing them. While the repository
+  is in the middle of a merge, rebase or similar, committing is put off. Files
+  placed in the space by hand are not committed automatically.
+- **Cross-site requests** are always rejected; the rules are in `docs/api.md`.
+  During development, list the web page's address with `--allow-origin`.
+- **The disk is not watched**: changes made outside the server show up in the
+  list after a restart or an index rebuild; when a single page is accessed by
+  ID, the file is always checked.
+- `make contract` runs the front end's API tests against a real server, so
+  that the front end's mock server and the real behavior cannot drift apart.
 
-审查留下、不阻塞的已知问题，带到 1.2：
+Known issues left by the review, not blocking, carried forward to 1.2:
 
-- 提交日志有三个窄窗口：保存与提交快照交错时可能漏记一条；崩溃打断追加后
-  下一条记录可能失效（需要连续两次崩溃）；服务器建的文件在恢复前被外部改过
-  时不会被自动提交。三种情况文件内容都完好，只是暂时不在 Git 历史里。
-- 仓库长时间处于变基中时，提交日志会一直增长。
-- 标签列表里的非文字项（如空值）在界面上删不掉。
-- 没有头部或头部损坏的 `.md` 文件只记在启动日志里，界面上看不到。
-- 对外监听（`--insecure-no-auth`）在有登录之前不安全，见 `docs/api.md`。
+- The commit log has three narrow windows: a save interleaved with a commit
+  snapshot may miss one entry; after a crash interrupts an append, the next
+  entry may become invalid (this needs two crashes in a row); a file the
+  server created and that was changed externally before recovery is not
+  committed automatically. In all three cases the file content is intact; it
+  is just temporarily not in Git history.
+- When the repository stays in the middle of a rebase for a long time, the
+  commit log keeps growing.
+- A non-text item in the tag list (such as an empty value) cannot be deleted
+  in the UI.
+- A `.md` file with no header or a damaged header is only recorded in the
+  startup log and cannot be seen in the UI.
+- Listening on an external address (`--insecure-no-auth`) is not safe until
+  there is sign-in, see `docs/api.md`.
 
-### 里程碑 1.2 的现状（2026-11-21）
+### Milestone 1.2 as built (2026-11-21)
 
-接口见 `docs/api.md`。实现上定下来的、上文没有写或写得不同的地方：
+The API is in `docs/api.md`. What was settled in the implementation, which the
+text above does not mention or words differently:
 
-- **两种启动方式**：`--space 目录` 是单人免登录（即 1.1）；`--data 目录` 是
-  账号模式，空间在 `目录/spaces/<空间 ID>/`，索引在 `目录/cache/`，状态库
-  默认是 `目录/petalbook.db`，用 `PETALBOOK_DATABASE` 换成 PostgreSQL。单人
-  模式也有状态库（放草稿），和账号模式走同一套代码。
-- **第一个管理员**：没有任何账号时，启动日志里打印一次性的设置链接；可以设
-  密码，也可以直接用 OIDC 登录来创建。没人能登录时用 `petalbook user
-  add|passwd` 直接改数据目录。
-- **加人**靠邀请链接（默认 7 天，用一次）。OIDC 首次登录自动建号要加
-  `--oidc-auto-create`。账号只按签发方加 `sub` 匹配，不看邮箱。
-- **空间**：每个账号自动有一个个人空间，可以再建，默认每人最多 20 个
-  （`--max-spaces`）。空间按需打开，闲置 15 分钟或同时打开超过 64 个时关闭
-  最久没用的。提交的作者是空间所有者，提交者是服务。
-- **草稿**（改了 4.4 的细节）：每份草稿有一个版本号，存草稿、提交、删除都要
-  带上自己上次看到的版本，对不上就拒绝，由界面弹出冲突对话框；同一个人在两台
-  设备上写同一页不会互相覆盖。**服务器从不隐式丢弃草稿**：直接保存页面文件
-  时草稿留着（变成过期，下次打开让人选），只有提交、点名版本的替换或删除、
-  删除页面本身才会让一份草稿消失。客户端因此不必猜“服务器上的是不是我的”：
-  没有未保存内容时，服务器上变了就直接显示服务器的；切回标签页时会主动看
-  一眼，在别的设备上改过的内容会直接出现。停笔 2 分钟或草稿存在满 10 分钟，服务器自己
-  写入文件；写入后几秒内提交到 Git（`--commit-idle` 的默认值因此从 2 分钟
-  改成 5 秒）。页面文件不在了的草稿不删除，用 `petalbook draft list|export`
-  取回。
-- **本地草稿**按用户、空间、页面三者存，换账号登录不会看到别人的。服务器确认
-  存下草稿后，本地副本标记为“已确认”，此后不参与任何判断（不会隔天把旧文字
-  当冲突弹出来），只在页面被别处删除时用来找回文字；文字进了文件就清掉。
-- **草稿状态机的验证**：客户端所有“服务器和我以为的不一样”的情况走同一张
-  规则表（`web/src/editor/reconcile.ts`）。`model.*.test.ts`（共用 `modelHarness.ts`）用随机序列驱动真实
-  的控制器和恢复逻辑，对着和真实服务器规则一致的模拟服务器跑（约九千种顺序，
-  含丢回应、服务器自动写入、第二台设备、离线、刷新），每步检查八条不变量。
-- **状态库**：SQLite 和 PostgreSQL 用同一份表结构和同一套测试
-  （`make test-postgres` 起一个临时的 PostgreSQL 来跑；CI 两种都跑）。
-  会话只存令牌的哈希，查询走进程内缓存。
+- **Two ways to start**: `--space <directory>` is single-user without sign-in
+  (that is, 1.1); `--data <directory>` is account mode, with spaces in
+  `<directory>/spaces/<space ID>/`, the index in `<directory>/cache/`, and the
+  state database by default at `<directory>/petalbook.db`; use
+  `PETALBOOK_DATABASE` to switch to PostgreSQL. Single-user mode also has a
+  state database (it holds the drafts) and runs the same code as account mode.
+- **The first administrator**: when there are no accounts, the startup log
+  prints a one-time setup link once; the person can set a password, or create
+  the account by signing in directly with OIDC. When nobody can sign in, use
+  `petalbook user add|passwd` to change the data directory directly.
+- **Adding people** is by invitation link (7 days by default, single use). To
+  have OIDC create an account automatically on first sign-in, add
+  `--oidc-auto-create`. Accounts are matched only by issuer plus `sub`, never
+  by email.
+- **Spaces**: each account automatically has one personal space and can create
+  more, up to 20 per person by default (`--max-spaces`). Spaces are opened on
+  demand; when one has been idle for 15 minutes, or more than 64 are open at
+  once, the least recently used is closed. The commit author is the space
+  owner and the committer is the service.
+- **Drafts** (changes a detail of [storage-and-sync.md §4.4](../storage-and-sync.md#44-drafts-and-commits)):
+  each draft has a version number; saving, committing or deleting a draft must
+  carry the version the client last saw, and a mismatch is rejected, so the UI
+  shows the conflict dialog. One person writing the same page on two devices
+  does not overwrite themselves. **The server never discards a draft
+  implicitly**: when the page file is saved directly, the draft stays (it
+  becomes stale, and the next time the page is opened the person chooses). A
+  draft disappears only through a commit, a replacement or deletion that names
+  its version, or deletion of the page itself. So the client does not have to
+  guess whether what is on the server is its own: with no unsaved content, if
+  the server changed it simply shows the server's version; on switching back to
+  the tab it takes a look on its own, so content changed on another device
+  shows up directly. After 2 minutes without typing, or when the draft has
+  existed for 10 minutes, the server writes it into the file itself; within a
+  few seconds of the write it is committed to Git (the default of
+  `--commit-idle` therefore changed from 2 minutes to 5 seconds). A draft whose
+  page file no longer exists is not deleted; get it back with `petalbook draft
+  list|export`.
+- **The local draft** is stored per user, space and page, so signing in with a
+  different account does not show someone else's. After the server confirms it
+  stored the draft, the local copy is marked "confirmed" and takes no further
+  part in any decision (it will not pop up an old text as a conflict the next
+  day); it is used only to recover the text when the page was deleted
+  elsewhere, and it is cleared once the text is in the file.
+- **Verifying the draft state machine**: every case where "the server differs
+  from what I thought" goes through one rule table in the client
+  (`web/src/editor/reconcile.ts`). `model.*.test.ts` (sharing
+  `modelHarness.ts`) drives the real controller and recovery logic with random
+  sequences against a mock server that follows the real server's rules (about
+  nine thousand orderings, including lost responses, server auto-writes, a
+  second device, offline and reload), checking eight invariants at every step.
+- **The state database**: SQLite and PostgreSQL use the same table schema and
+  the same tests (`make test-postgres` starts a temporary PostgreSQL to run
+  them; CI runs both). Sessions store only the hash of the token, and queries
+  go through an in-process cache.
 
-已知问题，带到后面：
+Known issues, carried forward:
 
-- 有人持续对某个用户名输错密码，可以让这个用户名一直无法用密码登录（每次
-  最多锁 5 分钟，但可以接着锁）。要彻底解决得区分可信的来源地址。
-- 命令行对账号的改动（改密码、加人）最多 5 分钟后才被运行中的服务看到。
-- 账号模式下改空间名只改数据库，不改 `space.yml`。
-- OIDC 没有对着真实的身份提供方跑过，只有用假提供方的自动化测试。
-- 头部里超过 2^53 的整数，编辑任何字段后会被改写成丢了精度的值（1.1 就有）。
-- 文件在应用之外被改、而编辑器内容等于它上次知道的文件时，要到下一次请求
-  才发现。
-- 两个标签页开同一页的行为只有单元测试，没有在真实浏览器里测过。
-- 页面头部超过 16 KB 时，历史读不到这页的版本（判断一个版本属于哪一页只读
-  文件开头这么多）。
-- 模型测试看不出“服务器隐式丢草稿”这条规则被破坏（它的第二台设备会不看
-  就替换草稿，所以相应的不变量放宽了）；这条规则靠单元测试和接口测试守住。
-- 命令行和单人模式的测试只在 SQLite 上跑；账号模式的测试两种数据库都跑。
-- 服务是单实例的：两个进程共用一个 PostgreSQL 时，草稿的自动写入和空间
-  数量上限没有跨进程的保护。
-- 1.1 留下的提交日志窗口、头部损坏的文件在界面上看不到，仍未处理。
+- Someone who keeps entering a wrong password for a user name can keep that
+  user name from signing in with a password (each time it locks for at most 5
+  minutes, but the lock can be renewed). A full fix requires telling trusted
+  source addresses apart.
+- Changes made to accounts from the command line (changing a password, adding
+  a person) are only seen by the running service after up to 5 minutes.
+- In account mode, renaming a space changes only the database, not
+  `space.yml`.
+- OIDC has not been run against a real identity provider, only in automated
+  tests with a fake provider.
+- An integer in the header larger than 2^53 is rewritten to a value that lost
+  precision after any field is edited (present since 1.1).
+- When a file is changed outside the application and the editor content equals
+  what the editor last knew of the file, this is not noticed until the next
+  request.
+- The behavior of two tabs open on the same page has only unit tests, and has
+  not been tested in a real browser.
+- When a page header is larger than 16 KB, history cannot read versions of that
+  page (deciding which page a version belongs to reads only this much of the
+  start of the file).
+- The model test cannot tell when the rule "the server implicitly discards a
+  draft" is broken (its second device replaces a draft without looking, so the
+  corresponding invariant is relaxed); this rule is guarded by unit tests and
+  API tests.
+- The command-line and single-user-mode tests run only on SQLite; the
+  account-mode tests run on both databases.
+- The service is single-instance: when two processes share one PostgreSQL,
+  there is no cross-process protection for automatic draft writes or for the
+  cap on the number of spaces.
+- The commit-log windows left by 1.1 and the damaged-header files that cannot
+  be seen in the UI are still not handled.
 
-### 里程碑 1.3 的现状（后端，2026-11-21）
+### Milestone 1.3 as built (backend, 2026-11-21)
 
-接口见 `docs/api.md`。实现上定下来的、上文没有写或写得不同的地方：
+The API is in `docs/api.md`. What was settled in the implementation, which the
+text above does not mention or words differently:
 
-- **Git 层**是 `internal/gitstore`，不依赖应用其他部分：受限执行器（每条 git
-  命令都先过 `safegit.go` 的白名单，推送永远是 `push --quiet origin
-  HEAD:refs/heads/<分支>`）、令牌和 SSH 密钥、取回/快进/只提交指定路径/推送/
-  撤销、改写检测、页面历史。本地空间的提交也走它，进程里只有一处启动 git。
-  白名单相对 Rackbook 多出的项目都在 `safegit.go` 里逐条写了理由。
-- **传输**只有 https 和 ssh（`GIT_ALLOW_PROTOCOL`，地址校验也拒绝其他形式）。
-  令牌经环境变量交给固定的凭据助手；SSH 私钥只在一条命令的时间里以 0600 文件
-  存在于 0700 临时目录；主机密钥首次连接时信任，之后变了就是 `error` 状态。
-  每条网络命令有超时，到点杀掉整个进程组。
-- **远端空间的写入**在空间锁里做完整一轮：取回（几秒内取过则跳过）、快进、
-  应用、只提交这次改的路径、推送；被拒就撤销（一个 `reset`、一个 `ls-tree`、
-  一个 `checkout`）再在新状态上重来，最多 4 次；回应丢了的推送先查远端是否已
-  收下。读不等网络：读不拿空间锁。草稿提交时不握着草稿锁等网络，所以远端慢
-  或断开时输入照常保存。
-- **崩溃恢复**不碰网络：打开空间时把日志里记着的未提交文件提交掉；之后第一次
-  同步（每次打开都会立刻排一次）推送它们，远端已前进则把没推送的提交留在
-  `refs/petalbook/unpushed/<时间>`，克隆移到远端，状态记为 `error`，说明里写
-  着这个引用。工作区里有不是服务器改的内容时拒绝写入（`error`，不动那些改动）。
-- **拉取放在管理器里**：一个循环，只看当前打开的、跟着远端的空间，按
-  `--pull-interval` 加抖动轮流取，同时最多 4 个。关闭的空间不拉（没人在看），
-  下次打开时立刻拉一次。拉取不算“使用”，所以只被拉取的空间照样会因闲置而关闭。
-- **索引**在快进后只更新两个提交之间改动的文件（`index.Refresh`），超过 2000
-  个文件才退回按修改时间的全量同步。
-- **历史**用 `git log --follow` 加页面 id 校验（每个版本里的文件头 id 必须是
-  这一页的），游标是“提交加路径”，下一页从那个提交往前读，不从头走。
+- **The Git layer** is `internal/gitstore`, with no dependency on the rest of
+  the application: a restricted executor (every git command first goes through
+  the allowlist in `safegit.go`, and a push is always `push --quiet origin
+  HEAD:refs/heads/<branch>`), tokens and SSH keys, fetch / fast-forward /
+  commit only the given paths / push / revert, rewrite detection, page history.
+  Local-space commits go through it as well, so there is exactly one place in
+  the process that starts git. The allowlist entries added relative to Rackbook
+  each have their reason written next to them in `safegit.go`.
+- **Transport** is only https and ssh (`GIT_ALLOW_PROTOCOL`; address validation
+  also rejects other forms). The token is handed to a fixed credential helper
+  through an environment variable; the SSH private key exists only for the
+  duration of one command, as a 0600 file in a 0700 temporary directory; the
+  host key is trusted on first connection, and if it changes afterwards the
+  state is `error`. Every network command has a timeout, and when it expires
+  the whole process group is killed.
+- **Writing to a remote space** does a full round inside the space lock: fetch
+  (skipped if fetched within a few seconds), fast-forward, apply, commit only
+  the paths changed this time, push; if rejected, revert (one `reset`, one
+  `ls-tree`, one `checkout`) and retry on the new state, at most 4 times; for a
+  push whose response was lost, first check whether the remote already took
+  it. Reads do not wait for the network: reads do not take the space lock.
+  When a draft is committed, the draft lock is not held while waiting for the
+  network, so typing is still saved as usual when the remote is slow or
+  disconnected.
+- **Crash recovery** does not touch the network: when a space is opened, the
+  uncommitted files recorded in the log are committed; the first sync after
+  that (one is queued immediately on every open) pushes them, and if the remote
+  has moved ahead, the unpushed commits are kept at
+  `refs/petalbook/unpushed/<time>`, the clone is moved to the remote, and the
+  state is set to `error`, with the note naming that ref. If the working tree
+  contains changes that were not made by the server, writing is refused
+  (`error`, and those changes are left alone).
+- **Pulling lives in the manager**: one loop that looks only at spaces that are
+  currently open and follow a remote, fetching in turn every `--pull-interval`
+  plus jitter, at most 4 at a time. Closed spaces are not pulled (nobody is
+  looking), and are pulled once immediately the next time they are opened. A
+  pull does not count as "use", so a space that is only being pulled is still
+  closed for being idle.
+- **The index**, after a fast-forward, updates only the files changed between
+  the two commits (`index.Refresh`), and falls back to a full sync by
+  modification time only when more than 2000 files changed.
+- **History** uses `git log --follow` plus a page id check (the id in the file
+  header in each version must be this page's); the cursor is "commit plus
+  path", and the next page reads backward from that commit rather than walking
+  from the start.
 
-已知问题，带到后面：
+Known issues, carried forward:
 
-- 改名同时内容改了一半以上，`--follow` 认不出是同一个文件，历史在那里断开。
-- 有合并提交的历史里，游标翻页可能漏掉在旁支上、之后才合进来的更早版本。
-- 本地克隆（`.git`）丢了不会自动重新拉：打开时报错，由管理员处理。
-- 第一次取回一个很大的仓库受 `InitialTimeout`（4 分钟）限制，必须短于服务的
-  响应超时。
-- GitHub App、自动建仓库、第二个只推不拉的镜像、webhook 都还没做。
+- When a rename comes with more than half of the content changed, `--follow`
+  cannot recognize it as the same file and the history breaks there.
+- In a history with merge commits, cursor paging may miss earlier versions that
+  were on a side branch and merged in later.
+- If the local clone (`.git`) is lost, it is not re-fetched automatically:
+  opening reports an error, and the administrator has to deal with it.
+- The first fetch of a very large repository is limited by `InitialTimeout` (4
+  minutes), which must be shorter than the service's response timeout.
+- The GitHub App, automatic repository creation, a second push-only mirror, and
+  webhooks are all not done yet.
 
-### 里程碑 1.4 的现状（2026-11-21）
+### Milestone 1.4 as built (2026-11-21)
 
-接口见 `docs/api.md`。定下来的、和上文不同或上文没写的地方：
+The API is in `docs/api.md`. What was settled, where it differs from the text
+above or the text above did not say:
 
-- **附件的引用写成从空间根开始的路径**（`/assets/<页面 ID>/<文件名>`），不是
-  3.4 节说的相对路径。相对路径在页面移动后会失效，得改正文，而正文可能正有
-  草稿；从根开始的写法移动和改名都不受影响，GitHub 和 GitLab 的网页上也能
-  直接显示。已有仓库里相对页面所在文件夹的写法照样能显示，规则见
-  `docs/api.md` 的「Files」。
-- **附件是普通文件，和页面走同一条写入路径**：本地空间进提交日志、由后台
-  提交；跟随远端的空间当场提交并推送，推送被拒就撤销。文件名带内容哈希的前
-  8 位，同样的内容再传一次不产生新文件。
-- **读附件要登录**，响应带禁止脚本的策略；图片、音视频、PDF、纯文本在浏览器
-  里直接显示，其余一律作为下载。
-- **上传前的压缩**：超过 300 KB 或边长超过 2560 的 PNG、JPEG 重画成 WebP，
-  小了两成以上才用；可以在浏览器里关掉（「上传原图」）。
-- **快速记录的快捷键**是 Option/Alt+Shift+N。浏览器把 Ctrl/⌘+Shift 加字母
-  的组合大多留给了自己，网页拦不住。
-- **一个文件暂存不了不再卡住之后的提交**：`git add` 整批失败时（文件被
-  `.gitignore` 或用户全局的忽略规则匹配、路径被服务器之外的东西换成了符号
-  链接或设备）改为逐个暂存，服务器自己写的文件不看忽略规则；仍然暂存不了的
-  那个留在提交之外。变成了目录的路径同样跳过。服务器自己不建以 `.md` 结尾的
-  文件夹。
-- 原文模式里上传的图片落进编辑器后，正文会由编辑器重写成统一写法（和在
-  所见即所得一侧打字一样）。
-- **没人引用的附件不清理**，删除页面也不删它的附件（历史版本还可能用到）。
-  清理任务留到后面。
-- **收件箱是一个文件夹名**，每个空间一个设置（`inbox`，默认 `Inbox`，网页上
-  新建空间时用界面语言的名字）。改设置不移动任何东西。
-- **卡片视图**的选择按「空间、列表种类、文件夹或标签」记在浏览器里，不写进
-  `space.yml`（8.4 节说的视图配置等页面类型一起做）。摘要从 200 字加到 400 字。
-- **三种编辑模式**（7.0 节）：
-  - 内容只有一份（头部字段和正文），两边都是它的编辑方式。在原文一侧打字，
-    正文就是那段文字，原样保存；在所见即所得一侧打字，正文由编辑器重写成
-    统一写法。最后在哪一侧打字，保存的就是哪一侧。
-  - **头部不是原样保存的**：原文里的头部被解析成字段后交给服务器，由服务器
-    写回文件。键的顺序、没改的值的写法都保留，但注释会丢，引号和列表的写法
-    可能被规整。这和 7.0 节「原文里打的字原样保留」不完全一致，只有正文做到
-    了原样。原文一侧显示的头部在没改动时是文件里的原文（接口的 `header`）。
-  - 头部写坏时（不是合法 YAML、`id` 被改或删掉、没有结束的 `---`）界面指出
-    是哪一行；这期间正文照常保存，头部停在上一次正确的内容，不能切回所见即
-    所得，左右对照里右边暂时不能编辑。写坏的原文单独存在浏览器里（它既不是
-    能进编辑器的内容，也存不到服务器），关闭页面前会提示。再打开这一页时，
-    或者开着的时候页面被别处更新了，这份原文不会自己接上去（页面或草稿可能
-    已经在别处变了），而是放到一边，界面问你接着改还是丢弃；放到一边的可以
-    有多份，互不覆盖。横幅上可以直接放弃这些改动。
-  - 左右对照时另一侧在停笔后跟上（按正文长短 0.15 到 0.6 秒）；在跟上之前
-    点到另一侧，会先同步再让你打字。同步只替换有变化的块，光标和正在上传的
-    图片的位置不动。滚动按块对应，对不上时按比例。
-  - 在原文里把正文改成编辑器自己的写法（比如把 `*` 列表改成 `-`）算改动，
-    会保存；编辑器一侧则不会因为只是写法不同就认为改过。
-  - 窄屏（小于 768 像素）没有左右对照。
-- **编辑器的三处补强**（7.2 节）都做了：紧跟汉字的 `**粗体**` 等输入规则；
-  纯文本粘贴时单个换行是段内换行、空行才分段；粘贴 Markdown 源码时解析成
-  排版后的内容。
+- **Attachment references are written as paths from the space root**
+  (`/assets/<page ID>/<file name>`), not the relative paths that
+  [data-model.md §3.4](../data-model.md#34-attachments) describes. A relative path breaks when
+  the page is moved, and the body would have to be rewritten, while the body
+  may have a draft right then; the form starting from the root is unaffected by
+  moves and renames, and GitHub and GitLab web pages can show it directly.
+  Existing repositories that write paths relative to the page's folder still
+  display; the rules are in "Files" in `docs/api.md`.
+- **An attachment is an ordinary file and goes through the same write path as
+  a page**: in a local space it goes into the commit log and is committed by
+  the background committer; in a space that follows a remote it is committed
+  and pushed on the spot, and if the push is rejected it is reverted. The file
+  name carries the first 8 characters of the content hash, so uploading the
+  same content again creates no new file.
+- **Reading an attachment requires sign-in**, and the response carries a policy
+  that forbids scripts; images, audio, video, PDF and plain text display
+  directly in the browser, and everything else is a download.
+- **Compression before upload**: a PNG or JPEG over 300 KB or with a side over
+  2560 is redrawn as WebP, and used only if it is more than 20% smaller; it can
+  be turned off in the browser ("Upload original pictures").
+- **The quick-capture shortcut** is Option/Alt+Shift+N. Browsers keep most
+  Ctrl/Cmd+Shift+letter combinations for themselves, and a web page cannot
+  intercept them.
+- **A file that cannot be staged no longer blocks later commits**: when
+  `git add` fails for the whole batch (a file matched by `.gitignore` or the
+  user's global ignore rules, or a path replaced by something outside the
+  server with a symlink or device), files are staged one by one instead, and
+  files the server wrote itself ignore the ignore rules; the one that still
+  cannot be staged is left out of the commit. A path that has become a
+  directory is skipped in the same way. The server itself does not create
+  folders whose names end in `.md`.
+- In raw-text mode, after an uploaded image lands in the editor, the editor
+  rewrites the body into its uniform style (the same as typing on the WYSIWYG
+  side).
+- **Attachments nobody references are not cleaned up**, and deleting a page
+  does not delete its attachments (older versions may still use them). A
+  cleanup task is left for later.
+- **The inbox is a folder name**, one setting per space (`inbox`, default
+  `Inbox`; when a space is created on the web page, the name in the UI
+  language is used). Changing the setting moves nothing.
+- **Card view**: the choice is remembered in the browser per "space, list kind,
+  folder or tag" and is not written into `space.yml` (the view configuration
+  mentioned in [editor-and-frontend.md §8.4](../editor-and-frontend.md#84-folder-view) is done
+  together with page types). The excerpt grew from 200 to 400 characters.
+- **The three editing modes** ([editor-and-frontend.md §7.0](../editor-and-frontend.md#70-three-editing-modes)):
+  - There is only one copy of the content (header fields and body), and both
+    sides are ways of editing it. Typing on the raw-text side makes the body
+    exactly that text, saved as is; typing on the WYSIWYG side makes the editor
+    rewrite the body into its uniform style. Whichever side was typed in last
+    is what gets saved.
+  - **The header is not saved as is**: the header in raw text is parsed into
+    fields and handed to the server, which writes it back to the file. Key
+    order and the way unchanged values are written are kept, but comments are
+    lost, and the way quotes and lists are written may be normalized. This is
+    not fully consistent with "what is typed in raw text is kept as is" in
+    [editor-and-frontend.md §7.0](../editor-and-frontend.md#70-three-editing-modes); only the body does
+    that. When unchanged, the header shown on the raw-text side is the original
+    text in the file (the API's `header`).
+  - When the header is written badly (not valid YAML, `id` changed or deleted,
+    a `---` with no end), the UI points out which line; meanwhile the body is
+    saved as usual, the header stays at the last correct content, switching
+    back to WYSIWYG is not possible, and the right side of the side-by-side
+    view cannot be edited for the time being. The badly written raw text is
+    stored separately in the browser (it is neither content that can enter the
+    editor nor something that can be saved to the server), and a prompt appears
+    before the page is closed. When the page is opened again, or when the page
+    is updated elsewhere while it is open, this raw text does not attach itself
+    again (the page or draft may have changed elsewhere); it is set aside, and
+    the UI asks whether to keep editing or discard; there can be several set
+    aside, and they do not overwrite each other. The banner has a button to
+    abandon these changes directly.
+  - In the side-by-side view, the other side catches up after typing stops
+    (0.15 to 0.6 seconds depending on body length); if you click into the other
+    side before it has caught up, it syncs first and then lets you type. Syncing
+    replaces only the blocks that changed, and the cursor and the position of
+    an image being uploaded do not move. Scrolling is matched block by block,
+    and by proportion when blocks cannot be matched.
+  - In raw text, changing the body to the editor's own style (for example
+    changing a `*` list to `-`) counts as a change and is saved; on the editor
+    side, a difference in style alone is not taken as a change.
+  - On a narrow screen (under 768 pixels) there is no side-by-side view.
+- **The three editor improvements** ([editor-and-frontend.md §7.2](../editor-and-frontend.md#72-conclusions-of-the-browser-measurements-2026-11-21))
+  are all done: input rules such as `**bold**` right after a Chinese character;
+  when pasting plain text, a single line break is a line break inside the
+  paragraph and only a blank line starts a new paragraph; when Markdown source
+  is pasted, it is parsed into formatted content.
 
-1.4 审查留下、不阻塞的已知问题：
+Known issues left by the 1.4 review, not blocking:
 
-- 浏览器的本地存储被禁用或已满时，头部没改好的原文只在屏幕上。关页面、站内
-  跳转、页面在别处被更新都会先问或提示；但这时如果登录恰好失效（被踢回登录
-  页），这段文字会丢。存储正常时不会。
-- 原文一侧的头部按数据保存，注释和引号写法不保留（上文已述）。
-- 在原文模式里恢复历史版本后点撤销，放回的是规整过的 Markdown。
-- 页面内容被整体替换时（别处更新、冲突里选对方、恢复历史版本），正在上传的
-  图片的落点可能跑到文末。
-- 从本地草稿把已删除的页面找回来时，没改过的其它头部字段不带回来。
-- 上传一个文件要整个读进内存再写盘；上限最多 256 MiB。
-- 快速记录在两个标签页同时保存、或请求成功但回应丢了时，可能存出两篇。
-- 左右对照里，窄窗口下工具栏最右边的按钮会被截掉。
-- 快速记录的快捷键、IME 输入、真实的文件选择框没有人手测过。
+- When the browser's local storage is disabled or full, raw text whose header
+  is not yet fixed exists only on screen. Closing the page, navigating within
+  the site, or the page being updated elsewhere will first ask or warn; but if
+  the sign-in happens to expire at that moment (kicked back to the sign-in
+  page), this text is lost. With working storage this does not happen.
+- The header on the raw-text side is saved as data, and comments and the way
+  quotes are written are not kept (stated above).
+- After restoring a history version in raw-text mode, undo puts back
+  normalized Markdown.
+- When the page content is replaced as a whole (updated elsewhere, choosing the
+  other side in a conflict, restoring a history version), the landing position
+  of an image being uploaded may end up at the end of the text.
+- When a deleted page is recovered from a local draft, other header fields that
+  were not changed are not brought back.
+- Uploading a file reads the whole of it into memory before writing to disk; the
+  limit is at most 256 MiB.
+- When quick capture is saved in two tabs at the same time, or the request
+  succeeds but the response is lost, two pages may be saved.
+- In the side-by-side view, on a narrow window the rightmost button of the
+  toolbar is cut off.
+- The quick-capture shortcut, IME input and the real file picker have not been
+  tested by hand.
 
-### 里程碑 1.5 的现状（2026-11-21）
+### Milestone 1.5 as built (2026-11-21)
 
-- **不做 Notion 专用的导入**（所有者 2026-11-21 的决定）：不识别 Notion 导出
-  包的文件名后缀、数据库属性，也不把一页里的大纲拆成很多页。只做通用的
-  Markdown 导入；表格等其它内容等第 15 节的表格支持。从 Notion 搬内容的办法
-  是先在那边整理成一篇一个 Markdown 文件，再导入。
-- **Markdown 导入**（`docs/api.md` 的「Import」）：一个 Markdown 文件，或一个
-  zip。每个 `.md` 是一页；已有的文件头保留（`id` 除外，每页都发新的）；标题取
-  文件头的 `title`，没有就取开头的 `# 标题`，再没有就用文件名；zip 里被页面
-  用相对路径引用的图片和文件成为该页的附件。已有的页面不会被覆盖。整个导入
-  是一次改动：一个提交，跟随远端的空间一次推送，失败就什么都不留。
+- **No Notion-specific import** (the owner's decision of 2026-11-21): it does
+  not recognize the file name suffixes or database properties of a Notion
+  export package, and does not split the outline inside a page into many pages.
+  Only a general Markdown import is done; tables and other content wait for the
+  table support of [reserved.md §15](../reserved.md#15-reserved-tables). The way to bring content
+  over from Notion is to first tidy it up there into one Markdown file per
+  page, then import.
+- **Markdown import** ("Import" in `docs/api.md`): one Markdown file, or one
+  zip. Each `.md` is one page; an existing file header is kept (except `id`; a
+  new one is issued for every page); the title is taken from the header's
+  `title`, otherwise from the leading `# heading`, otherwise from the file
+  name; images and files in the zip that a page references by relative path
+  become that page's attachments. Existing pages are not overwritten. The whole
+  import is one change: one commit, one push for a space that follows a remote,
+  and if it fails nothing is left behind.
 
-- **中英文界面**：全部文字在 `web/src/i18n/` 的两本词典里，类型保证两边的键
-  一致。语言在打开页面时定一次（存下的选择优先，否则看浏览器语言），切换
-  语言会重新载入页面。服务器返回的错误信息是英文，原样显示。
-- **一个程序**：`make release` 把网页端编进 Go 程序（`internal/webui`），同一个
-  地址既是界面也是接口；`make build` 仍然是只有接口的程序，不需要 Node。
-  界面的响应带内容安全策略，不允许内联脚本。
-- **可安装**：有应用清单和图标，没有 Service Worker（离线在第 4 期）。图标
-  由 `scripts/icons` 从同一套路径画出来。
-- **镜像和发布**：`Dockerfile` 做出带 git 和 ssh 的小镜像，默认以账号模式
-  监听 8080，数据在 `/data`；必须给 `--public-url`（或 `PETALBOOK_PUBLIC_URL`），
-  否则浏览器的请求会被跨站规则拒绝。打 `v*` 标签时 GitHub 工作流构建四个
-  平台的程序并推送镜像。
+- **Chinese and English UI**: all text is in the two dictionaries under
+  `web/src/i18n/`, and types guarantee that the keys on both sides match. The
+  language is decided once when the page is opened (a stored choice wins,
+  otherwise the browser language is used), and switching language reloads the
+  page. Error messages returned by the server are in English and shown as is.
+- **One program**: `make release` compiles the web front end into the Go
+  program (`internal/webui`), and the same address serves both the UI and the
+  API; `make build` is still the API-only program and does not need Node. UI
+  responses carry a content security policy that does not allow inline scripts.
+- **Installable**: there is an app manifest and icons, but no Service Worker
+  (offline comes in phase 4). The icons are drawn from one set of paths by
+  `scripts/icons`.
+- **Image and release**: the `Dockerfile` makes a small image with git and ssh,
+  which by default listens on 8080 in account mode, with data in `/data`;
+  `--public-url` (or `PETALBOOK_PUBLIC_URL`) must be given, otherwise the
+  browser's requests are rejected by the cross-site rules. When a `v*` tag is
+  pushed, the GitHub workflow builds the program for four platforms and pushes
+  the image.
 
-1.5 留下的已知问题：
+Known issues left by 1.5:
 
-- 镜像和发布工作流没有在本机跑过（没有 docker），靠 CI 里的构建任务检查；
-  发布工作流要到第一次打标签才会真正运行。
-- 导入一次只处理一个请求，位置在读请求体之前就占住：上传很慢的人会让别人
-  的导入排队（只影响导入）。
-- 导入时超过 64 KiB 的单行不检查其中的附件链接，那一页的相对链接保持原样。
-- 不能导入到已存在的、名字以 `.md` 结尾的文件夹。
-- 存储被禁用时切换语言没有任何提示（什么也不发生）。
-- 英文界面没有请母语者看过；Notion 里的内容需要自己先整理成 Markdown 文件。
+- The image and the release workflow have not been run on this machine (no
+  docker), and rely on the build job in CI for checking; the release workflow
+  will not actually run until the first tag is pushed.
+- Import handles one request at a time, and its place is taken before the
+  request body is read: someone uploading very slowly makes others' imports
+  queue (only imports are affected).
+- During import, attachment links in a single line over 64 KiB are not checked,
+  and the relative links on that page are left as they are.
+- Importing into an existing folder whose name ends in `.md` is not possible.
+- When storage is disabled, switching language gives no indication (nothing
+  happens).
+- The English UI has not been reviewed by a native speaker; content in Notion
+  needs to be tidied into Markdown files by oneself first.
 
-### 里程碑 1.6：文件管理和编辑器打磨（2026-11-21 所有者试用后提出）
+### Milestone 1.6: file management and editor polish (proposed by the owner after trying it on 2026-11-21)
 
-试用第 1 期之后定的。交互上参考 Notion 的做法。
+Decided after trying phase 1. The interaction follows Notion's approach.
 
-文件管理：
+File management:
 
-- 主区域像文件管理器：一个文件夹里的子文件夹和页面都列出来，文件夹在前，
-  图标不同；根目录也一样。顶栏是可点的面包屑，页面编辑器顶上也用它。
-- 新建文件夹只填名字，建在当前文件夹里；不让人填路径。
-- 页面和文件夹都能拖到别的文件夹里（列表里和侧栏的树上）；文件夹能改名。
-- 右键菜单（打开、重命名、移动、删除、在这里新建）；批量选择后移动或删除。
-- 侧栏：树的最上面是「根目录」一行（不在任何文件夹里的页面在这里找），
-  顶层文件夹缩进在它下面，不再和它并列；再点一次已选中的文件夹就展开或
-  收起；收件箱只出现一次；文件夹和标签很多时各自滚动。
-- 标签可以有颜色，存在 `.petalbook/tags.yml`。
-- 搜索：一个对话框，边输入边出结果，带预览；可按文件夹、标签、时间范围、
-  只搜标题筛选。
+- The main area works like a file manager: a folder lists its subfolders and
+  pages, folders first, with different icons; the top level is the same. The
+  top bar is a clickable breadcrumb, and the page editor uses it at its top
+  too.
+- Creating a folder asks only for a name and creates it in the current folder;
+  the person is not asked for a path.
+- Pages and folders can both be dragged into another folder (in the list and
+  on the sidebar tree); folders can be renamed.
+- A right-click menu (open, rename, move, delete, create here); after a bulk
+  selection, move or delete.
+- Sidebar: at the very top of the tree is a "Top level" row (pages that are
+  not in any folder are found here), with the top-level folders indented under
+  it, no longer alongside it; clicking an already selected folder again
+  expands or collapses it; the inbox appears only once; when there are many
+  folders and tags, each scrolls on its own.
+- Tags can have colors, stored in `.petalbook/tags.yml`.
+- Search: one dialog, with results as you type and a preview; it can be
+  filtered by folder, tag, time range, and title only.
 
-编辑器：
+Editor:
 
-- Markdown 支持的都支持。标题到 4 级（5、6 级不放进工具栏，文件里有的照常
-  显示）。粗体、斜体、删除线、行内代码、链接也放进顶部工具栏。
-- **不做下划线**（所有者同意）：Markdown 没有这个语法。
-- 表格：插入时用格子选大小；鼠标放到表格边缘出现加行、加列，行首列首有
-  菜单。
-- 代码块可以选语言，按语言上色。
-- ```` ```mermaid ```` 代码块在所见即所得里画成图，代码在原文里改。
-- 图片的浮层标明「说明」和「地址」，两样都能改。
+- Everything Markdown supports is supported. Headings go to level 4 (levels 5
+  and 6 are not put in the toolbar, and those already in a file display as
+  usual). Bold, italic, strikethrough, inline code and links are also put in
+  the top toolbar.
+- **No underline** (the owner agreed): Markdown has no such syntax.
+- Tables: when inserting, a grid is used to choose the size; when the mouse is
+  at a table's edge, add-row and add-column controls appear, and the first
+  cell of each row and column has a menu.
+- A code block can have its language chosen, and is colored by language.
+- A ```` ```mermaid ```` code block is drawn as a diagram in WYSIWYG, and the
+  code is edited in raw text.
+- The image popup labels "Description" and "Address", and both can be edited.
 
-设置：
+Settings:
 
-- 设置合成一处，做成 Notion 那样的样子：左边分组导航（账号：个人资料、
-  偏好；空间：常规、同步、导入；管理：用户和邀请），右边是内容。外观（明暗、
-  配色）、语言都在「偏好」里，每一项是「名称 + 一句说明 + 右侧控件」。现在
-  散在用户菜单、侧栏底部和几个独立页面里的入口都收进来。
+- Settings are merged into one place, made to look like Notion: grouped
+  navigation on the left (Account: Profile, Preferences; Space: General, Sync,
+  Import; Admin: users and invitations), content on the right. Appearance
+  (light/dark, color scheme) and language are in "Preferences", and each item
+  is "name + one line of explanation + a control on the right". The entry
+  points that are now scattered across the user menu, the bottom of the
+  sidebar and a few separate pages are all brought in.
 
-主题：
+Themes:
 
-- 除了明暗，还能换配色：预设几套公开的配色方案（Catppuccin、Nord、
-  Solarized、Gruvbox、Rosé Pine 等，各有明暗两套），加上现在的默认配色。
-  在设置里选，记在浏览器里。实现上只换 CSS 变量，不动组件。
+- Besides light and dark, the color scheme can be changed: a few public color
+  schemes are preset (Catppuccin, Nord, Solarized, Gruvbox, Rosé Pine and so
+  on, each with a light and a dark version), plus the current default scheme.
+  It is chosen in settings and remembered in the browser. In the implementation
+  only CSS variables change, and components are not touched.
 
-### 里程碑 1.7（计划）：共享空间、权限和管理后台
+### Milestone 1.7 (planned): shared spaces, permissions and the admin console
 
-所有者 2026-11-22 定的方向，1.6 之后做：
+Direction set by the owner on 2026-11-22, to be done after 1.6:
 
-- **共享空间**：一个空间可以有多个成员；内置角色所有者、可编辑、只读。
-  权限检查按权限项写，为自定义角色留好位置（见 6.2）。
-- **管理员能看全部**，并有单独的管理后台 `/admin`，和个人设置分开：所有
-  用户和邀请、所有空间（所有者、成员、大小、同步状态；转移所有权、停用、
-  删除）、服务器的状态。1.6 里放在设置里的「用户和邀请」搬到这里。
-- **单人用和多人服务器要能拆开**（所有者 2026-11-22）：以后有桌面和手机
-  应用，它们是一个人对着自己的仓库用，不需要账号、成员、角色、管理后台、
-  注册这一整层。所以这一层必须是可以不带的：
-  - 核心（页面文件、索引、Git 同步、导入、附件、历史）不依赖账号和权限；
-    现在的单用户模式（`serve --space`）就是只有核心的形态，要一直能跑、
-    一直在测试里。
-  - 多人的部分（账号、空间成员、角色、管理后台、以后的注册和配额）是叠在
-    核心上面的一层，只通过「谁在请求、对这个空间有哪些权限」这一个接口
-    和核心打交道。新功能先在单用户模式下成立，再加权限。
-  - 前端同理：管理后台、成员、账号设置是可以整块不加载的部分；单用户时
-    界面里看不到它们的入口。
-- **多种登录方式**（所有者 2026-11-22，后期）：现在只能配一个 OIDC 提供方。
-  以后要能同时配多个，登录页每个一个按钮，账号的「安全」里逐个关联和解除。
-  Google 和微软（Entra ID）是标准 OIDC，主要是把「一个」改成「多个」；
-  GitHub 不是 OIDC（没有 id_token，要用它的 OAuth 和用户接口），需要单独
-  写一个适配。同一个邮箱从不同提供方登录时不自动合并账号，除非该提供方
-  声明邮箱已验证并且管理员开了这个选项。
-- **多租户和公开注册**是再往后的阶段，以共享空间为前提：注册开关、邮件
-  （验证和找回密码）、每人的配额、防滥用、数据隔离强度的重新评估、条款和
-  隐私说明。加密空间也在那之后。
+- **Shared spaces**: a space can have several members; built-in roles owner,
+  editor and read-only. Permission checks are written by permission item,
+  leaving room for custom roles (see [auth-and-permissions.md §6.2](../auth-and-permissions.md#62-roles)).
+- **Administrators can see everything**, and there is a separate admin console
+  at `/admin`, apart from personal settings: all users and invitations, all
+  spaces (owner, members, size, sync state; transfer ownership, disable,
+  delete), and the server's status. The "users and invitations" that 1.6 puts
+  in settings moves here.
+- **Single-user use and the multi-user server must be separable** (the owner,
+  2026-11-22): later there will be desktop and phone apps, which are one person
+  using their own repository and do not need accounts, members, roles, an admin
+  console, sign-up, or that whole layer. So this layer must be optional:
+  - The core (page files, index, Git sync, import, attachments, history) does
+    not depend on accounts and permissions; the current single-user mode
+    (`serve --space`) is the form that has only the core, and must keep
+    running and keep being in the tests.
+  - The multi-user parts (accounts, space members, roles, the admin console,
+    later sign-up and quotas) are a layer on top of the core, and talk to the
+    core only through one interface, "who is making the request and what
+    permissions they have on this space". New features first hold in
+    single-user mode, then permissions are added.
+  - The front end likewise: the admin console, members and account settings
+    are parts that can be left out of loading as a whole; in single-user mode
+    the UI shows no entry point to them.
+- **Several sign-in methods** (the owner, 2026-11-22, later): at present only
+  one OIDC provider can be configured. Later it must be possible to configure
+  several at once, with one button each on the sign-in page, and linking and
+  unlinking one by one under the account's "Security". Google and Microsoft
+  (Entra ID) are standard OIDC, so it is mainly changing "one" to "several";
+  GitHub is not OIDC (no id_token; its OAuth and user API must be used), so a
+  separate adapter has to be written. When the same email signs in from
+  different providers, accounts are not merged automatically, unless that
+  provider declares the email verified and the administrator has turned on
+  this option.
+- **Multi-tenancy and public sign-up** are a later stage and presuppose shared
+  spaces: a sign-up switch, email (verification and password recovery),
+  per-person quotas, abuse prevention, re-evaluating how strong the data
+  isolation is, and terms and a privacy notice. Encrypted spaces come after
+  that too.
 
-**1.7 做什么、不做什么**（2026-11-22 定）：做共享空间、权限项、成员管理、
-按人记的提交作者、管理后台和单人形态的拆分。多种登录方式、组、注册、配额、
-加密空间不在 1.7。
+**What 1.7 does and does not do** (set 2026-11-22): it does shared spaces,
+permission items, member management, commit authors recorded per person, the
+admin console, and the split of the single-user form. Several sign-in methods,
+groups, sign-up, quotas and encrypted spaces are not in 1.7.
 
-**实现方案**（2026-11-22）：
+**Implementation plan** (2026-11-22):
 
-- **权限项，不比较角色名**。一个包里定义权限项：`read`（看页面、历史、
-  附件、搜索）、`write`（建、改、移动、删页面和文件夹，标签，附件，导入，
-  草稿）、`members`（管成员）、`manage`（改名、收件箱、远端和同步、重建
-  索引）。角色是权限项的集合，只在这一张表里定义：所有者 = 全部，可编辑 =
-  `read`+`write`，只读 = `read`。以后的自定义角色就是这张表多几行。
-- **接口只认「谁、对这个空间有哪些权限」**。每个路由声明它要的权限项，
-  `api` 的 `handle` 是唯一做决定的地方：不是成员（管理员除外）一律 404，
-  是成员但缺这项权限 403 `no_permission`（单独的错误码，不与跨站拒绝的 `forbidden` 混在一起）。核心（`space` 包）不知道账号和角色，只多收一个
-  「这次改动算谁的」。单人模式下唯一的本地用户拥有全部权限，不走成员表。
-- **判断不查库**：成员关系照旧按人缓存在内存里，一次请求的权限判断是查
-  一张小表；成员变动时只作废涉及的那几个人的缓存。
-- **管理员能看全部**：管理员对任何空间都有全部权限，但不算成员，自己的
-  空间列表里不出现别人的空间；要进别人的空间从管理后台点进去。
-- **成员管理**（需要 `members`）：按用户名加人并给角色、改角色、移除；
-  成员可以自己退出。空间至少留一个所有者。个人空间只能有本人，不能共享。
-- **提交按人记作者**：每次改动带上做改动的人，提交时按作者分组，一次提交
-  只含一个人的改动；作者是这个人，提交者仍是服务。日志里的记录也带作者，
-  崩溃恢复后的提交作者不丢。跟随远端的空间本来就一次改动一次提交，直接用
-  这个人。代价：同一个空闲窗口里两个人都改了，会是两次提交而不是一次。
-- **管理后台**（只有管理员；单人模式下这些接口不存在）：
-  - 用户和邀请：接口不变，界面从设置搬到 `/admin`。
-  - 所有空间：名称、是不是个人空间、所有者、成员数、大小、同步状态、是否
-    停用。一次查询带出所有者和成员数。**大小不在列表时现算**：几万篇的
-    空间每次遍历太贵，改成后台慢慢算好存进状态库（每个空间最多几小时算
-    一次，一次只算一个），列表只读存好的值，单个空间可以手动重算。
-  - 转移所有权：新所有者成为所有者，原所有者降为可编辑。个人空间不能转移。
-  - 停用和恢复：停用的空间仍在成员的列表里（带标记），但打不开、改不了；
-    已经打开的会被关掉。
-  - 删除：先关掉，数据库里的记录删掉，目录**移进 `数据目录/trash/`**，
-    不当场删文件，误删还能从磁盘找回。个人空间在本人还在时不能删。
-  - 服务器状态：版本、运行时长、数据库类型、空间和用户数、打开着的空间数、
-    数据目录所在磁盘的剩余空间。
-- **前端**：空间信息带上自己的角色和权限项，只读成员看不到新建、删除、
-  拖拽这些入口，编辑器只读。空间设置里多一个「成员」分区。管理后台在
-  `/admin`，单独一个按需加载的块，只有管理员会加载；单人模式下成员、账号、
-  管理后台的入口都不出现。
+- **Permission items, not comparing role names**. One package defines the
+  permission items: `read` (see pages, history, attachments, search), `write`
+  (create, change, move and delete pages and folders, tags, attachments,
+  import, drafts), `members` (manage members), `manage` (rename, inbox, remote
+  and sync, rebuild index). A role is a set of permission items and is defined
+  only in this one table: owner = all, editor = `read`+`write`, read-only =
+  `read`. A later custom role is just more rows in this table.
+- **The API recognizes only "who, and what permissions they have on this
+  space"**. Each route declares the permission item it needs, and `handle` in
+  `api` is the only place that decides: a non-member (except an administrator)
+  always gets 404; a member who lacks the permission gets 403 `no_permission`
+  (a separate error code, not mixed with the cross-site rejection's
+  `forbidden`). The core (the `space` package) knows nothing about accounts and
+  roles, and only receives one extra thing, "whose this change counts as".
+  In single-user mode the only local user has all permissions and does not go
+  through the member table.
+- **Decisions do not query the database**: membership is still cached in memory
+  per person, and a permission decision for one request is a lookup in a small
+  table; when members change, only the caches of the people involved are
+  invalidated.
+- **Administrators can see everything**: an administrator has all permissions on
+  any space, but is not counted as a member, and other people's spaces do not
+  appear in their own space list; to enter someone else's space, click in from
+  the admin console.
+- **Member management** (needs `members`): add a person by user name with a
+  role, change the role, remove; a member can leave on their own. A space keeps
+  at least one owner. A personal space can only have its own person and cannot
+  be shared.
+- **Commits record the author per person**: each change carries the person who
+  made it, commits group by author when they are made, and one commit contains
+  only one person's changes; the author is that person and the committer is
+  still the service. Entries in the log also carry the author, so the commit
+  author is not lost after crash recovery. A space that follows a remote
+  already makes one commit per change and just uses that person. The cost: when
+  two people both changed things in the same idle window, there are two commits
+  instead of one.
+- **The admin console** (administrators only; in single-user mode these APIs do
+  not exist):
+  - Users and invitations: the API does not change; the UI moves from settings
+    to `/admin`.
+  - All spaces: name, whether it is a personal space, owner, member count,
+    size, sync state, whether disabled. One query brings out the owner and the
+    member count. **The size is not computed when the list is requested**:
+    walking a space of tens of thousands of pages each time is too expensive,
+    so it is computed slowly in the background and stored in the state database
+    (each space at most once every few hours, one at a time), the list only
+    reads the stored value, and a single space can be recomputed manually.
+  - Transfer ownership: the new owner becomes owner and the original owner is
+    lowered to editor. A personal space cannot be transferred.
+  - Disable and restore: a disabled space is still in the members' lists (with
+    a mark), but cannot be opened or changed; those already open are closed.
+  - Delete: close it first, delete the record in the database, and **move the
+    directory into `<data directory>/trash/`** instead of deleting the files on
+    the spot, so a wrong deletion can still be recovered from disk. A personal
+    space cannot be deleted while its person still exists.
+  - Server status: version, uptime, database type, number of spaces and users,
+    number of spaces currently open, free space on the disk that holds the data
+    directory.
+- **Front end**: the space information carries the person's own role and
+  permission items; a read-only member does not see the entry points for
+  create, delete and drag, and the editor is read-only. Space settings gain a
+  "Members" section. The admin console is at `/admin`, a separate block loaded
+  on demand and loaded only by administrators; in single-user mode the entry
+  points for members, accounts and the admin console do not appear.
 
-**1.7 的现状（2026-11-22）**：上面的方案都做了，接口见 `docs/api.md` 的
-「Members」和「Administration」。实现时定下来的、方案里没写的：
+**1.7 as built (2026-11-22)**: everything in the plan above is done; the API is
+in "Members" and "Administration" in `docs/api.md`. What was settled during
+implementation and the plan does not mention:
 
-- 权限项在 `internal/perm`，一个字节的位集合；路由在 `internal/api/routes.go`
-  里声明要的权限项，缺权限答 403，错误码是 `no_permission`（和跨站拒绝的
-  `forbidden` 分开，前端按码区分）。
-- 成员关系的缓存带代数，成员变动前读到的列表不会在变动后被存进缓存；移除的
-  成员下一个请求就被拒绝。最后一个所有者的判断在事务里锁住空间那一行，只算
-  能登录的所有者。
-- 提交按人记作者：作者换人时，先把前一个人待提交的改动提交掉，再写这个人的
-  改动，所以一次提交只含一个人的改动，交错编辑时提交会多一些（每换一次人一次
-  提交）。
-- 草稿的自动写入先查作者现在还能不能写这个空间：被移除或降为只读的人的草稿
-  留着、不写入、10 分钟后再看，恢复权限后照常写入；自己的草稿只读成员也能
-  丢弃。删除空间时，所有人的草稿先存成 `trash/<id>-<时间>.drafts.json`。
-- 停用的空间仍在成员列表里，打不开；成员可以退出停用的空间。
-- 管理员查看别人的空间时，前端按 id 取这一个空间（`GET /api/admin/spaces/{id}`），
-  不翻整个列表；转移所有权的选人框按用户名或名字搜索，只列可用的账号（`GET /api/users?q=&enabled=1`）。
-- 管理后台的界面、文字和接口调用在单独的按需加载块里，非管理员不加载。
-- 浏览器里实测过：只读成员看到「只读」标记、编辑器不可编辑、没有新建和删除；
-  管理后台三页；管理员按地址打开别人的空间只发一个请求。
+- The permission items are in `internal/perm`, a one-byte bit set; routes
+  declare the permission items they need in `internal/api/routes.go`, a missing
+  permission is answered with 403, and the error code is `no_permission` (kept
+  apart from the cross-site rejection's `forbidden`; the front end tells them
+  apart by code).
+- The membership cache carries a generation, so a list read before a member
+  change is not stored in the cache after the change; a removed member is
+  rejected on the very next request. The check for the last owner locks the
+  space's row inside a transaction, and counts only owners who can sign in.
+- Commits record the author per person: when the author changes, the previous
+  person's pending changes are committed first and then this person's changes
+  are written, so one commit contains only one person's changes, and with
+  interleaved editing there are somewhat more commits (one per change of
+  person).
+- The automatic write of drafts first checks whether the author can still write
+  this space: the drafts of someone who was removed or lowered to read-only are
+  kept, not written, and looked at again after 10 minutes; they are written as
+  usual once permission is restored; a read-only member can still discard their
+  own drafts. When a space is deleted, everyone's drafts are first saved as
+  `trash/<id>-<time>.drafts.json`.
+- A disabled space is still in the members' list but cannot be opened; members
+  can leave a disabled space.
+- When an administrator looks at someone else's space, the front end fetches
+  just that space by id (`GET /api/admin/spaces/{id}`) and does not page through
+  the whole list; the person picker for transferring ownership searches by user
+  name or name and lists only usable accounts
+  (`GET /api/users?q=&enabled=1`).
+- The admin console's UI, text and API calls are in a separate on-demand block,
+  which non-administrators do not load.
+- Tested in a real browser: a read-only member sees the "Read only" mark, the
+  editor is not editable, and there is no create or delete; the three pages of
+  the admin console; an administrator opening someone else's space by address
+  sends only one request.
 
-已知问题，带到后面：
+Known issues, carried forward:
 
-- 两个人交替保存同一个空间时，每次换人都要等一次 Git 提交（约 60 毫秒），
-  期间这个空间的其他写入排队；Git 卡住会挡住这个空间的写入。
-- 删除失败（`os.Remove` 出错）时，这个路径上别人先前的改动会记到删除的人
-  名下；崩溃只在一个很窄的时间窗里会让某个路径的作者记错。都不丢内容。
-- 提交后的日志改写可能丢掉「已记日志、还没交给提交器」的记录（1.6 之前就有），
-  崩溃时那次改动要等下次碰到这个文件才提交。
-- PostgreSQL 上空间名搜索的大小写不敏感只对 ASCII 可靠（C 区域设置的库）。
-- 管理员把自己移出一个空间后，按地址仍能以管理员身份打开它。
+- When two people alternately save in the same space, every change of person
+  waits for one Git commit (about 60 milliseconds), during which other writes to
+  this space queue; a stuck Git blocks writes to this space.
+- When a deletion fails (`os.Remove` returns an error), earlier changes by other
+  people on this path are recorded under the person who deleted; a crash, only
+  in a very narrow time window, can make the author of some path recorded
+  wrongly. Neither loses content.
+- Rewriting the log after a commit may lose records that are "logged but not yet
+  handed to the committer" (present before 1.6); after a crash that change
+  waits until the next time this file is touched to be committed.
+- On PostgreSQL, the case-insensitivity of the space-name search is reliable
+  only for ASCII (a database with the C locale).
+- After an administrator removes themselves from a space, they can still open
+  it by address as an administrator.

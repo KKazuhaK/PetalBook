@@ -1,738 +1,1253 @@
 # Milestones: phase 3, tenant autonomy, providers and icons (3.6 to 3.9)
 
-**3.6 的约定**（2026-11-23）：接口和错误码写在 `docs/api.md` 新的「Tenant autonomy」
-一节。它把权限模型收尾：上面清单里的（b）全部按分层做，（c）全部归租户，每个租户
-能用哪些由它的能力决定。所有者同一天又加了几条：组织自助注册、把社交登录和 SSO
-分开、按邮箱域名找 SSO 的入口、每个租户的能力和套餐、存储方式、全站管理员能看能改
-任何租户的配置，都并在这里。
+**The 3.6 contract** (2026-11-23): the endpoints and error codes are written in
+the new "Tenant autonomy" section of `docs/api.md`. It finishes off the
+permission model: everything under (b) in the list above is done as layers,
+everything under (c) belongs to the tenant, and which of them a tenant can use
+is decided by its capabilities. The owner added several more things on the same
+day: self-service sign-up for organizations, separating social sign-in from SSO,
+finding the SSO entry point by email domain, per-tenant capabilities and plans,
+storage modes, and the site admin being able to see and change any tenant's
+configuration. All of them are folded in here.
 
-定下来的：
+Decided:
 
-- **每个租户的能力**（所有者 2026-11-23 定；能力是下面「限额表」里的开关项，计费
-  和支付见「计费的边界」，都不做）：
-  - 一套能力 = 全站默认 + 每个租户的覆盖，只有全站管理员能改；租户管理员只能看。
-    至少有这些（键名和默认值见 `docs/api.md`）：
-    - 登录：租户自己的 SSO 提供方（`signin.sso`）、域名验证（`signin.domains`）、
-      托管账号（`signin.managedAccounts`，3.7）、社交登录的取舍（`signin.socialChoice`）、
-      IdP 组映射到组织管理员（`signin.idpAdmins`，原来的全站开关 `auth.idpAdmins`）；
-    - 数据：**允许租户管理员查看和导出组织空间的内容**（`data.adminView`，3.5 的查看和
-      导出；个人空间照 3.7 永远看不到）、下载审计日志（`data.auditDownload`）；
-    - 集成：自己的 SMTP、验证码密钥、连接（GitHub App 等，2.7b）、每日文案接口
-      （`integrations.smtp`、`.captcha`、`.connections`、`.daily`）；API 令牌、MCP（`integrations.tokens`、`.mcp`）；
-    - 存储：允许的存储方式（`storage.modes`，见下）、单文件天花板
-      （`storage.maxFileBytes`）、租户总额（`storage.quota`，3.3 的租户 `quota` 搬到这里）、
-      每人配额的天花板（`storage.perPerson`）、固定额度（`storage.pinnedBytes`）；
-    - 其他：离线副本（`other.offline`，4.1）、开放注册进这个租户（`other.registration`）、
-      人数上限（`other.people`）。
-  - **能力管「有没有」，分层管「是多少」**：能力决定（c）的一项、或（b）的租户层在这个
-    租户里存不存在；存在时值照旧按分层定。清单的（b）和（c）每一项都标了对应的能力。
-  - 能力关着时：这个租户相关的设置和接口的写入答 `403 capability_off`，带能力的键名；
-    读照样答，多一个 `capability: {key, on: false}`，界面上灰掉，旁边写「需要全站开启」。
-    存着的东西（提供方、域名、SMTP、租户层的值）**不删**，只是不起作用；再打开就照旧。
-    存储是例外：已有的空间照常用它现在的方式和存储目标，只是新空间不能再用（见下面的
-    「存储方式」和问题 2）。
-    全站管理员不受能力限制，能力关着时也能替租户先配好。
-  - 关掉一项正在用的能力（有提供方、有域名、有存储方式在用的空间、托管着账号）要先看
-    预览（会停掉什么、影响几个人或几个空间），再用 3.5 的二次确认；没在用的直接改。
-  - **全部全站设置都能「默认」或「强制」**（所有者 2026-11-23 重申的通用规则）：每一个全站
-    设置都同时支持两种用法：只给默认（`allow`，下面可以改）、限定范围（`restrict`）、强制
-    （`lock`，下面改不了）；没有「只能默认」或「只能强制」的全站设置。新加的设置登记时必须
-    写明它在租户层和空间层是否存在、「更严」指哪一边。只在全站一层存在的设置（比如存储
-    预算、档位）照旧没有下层，自然也就是强制。
-  - **功能开关**（所有者 2026-11-23：比如以后上架中国内地时要关掉分享等功能，做成通用的）：
-    - 面向用户的每一项功能登记一个开关键 `features.*`，例如 `features.share.links`（分享链接）、
-      `features.share.public`（第 14 节的公开发布）、`features.invite.external`（邀请组织外的人）、
-      `features.signin.<提供方>`（每一种社交登录）、`features.connections.<提供方>`（每个存储和
-      同步的提供方）、`features.daily`、`features.mcp`、`features.export`、以后的协作和 AI 等。
-      登记表写明每个键管哪些接口和界面，新功能加接口时同时登记（和第 16 节的权限键同一套做法，
-      测试检查每个面向用户的路由都挂在某个开关或标明「总是开」）。
-    - **分层照旧**：全站 → 租户，用 3.3 的 `allow`／`restrict`／`lock` 加上面的 `tighten`；
-      全站 `lock` 成关就是**强制关**，租户改不了；全站只给默认时租户可以在允许的范围里自己
-      开关。默认全开（除了还没做完的功能）。
-    - **关着时**：界面不显示入口（不是灰掉；用户不需要知道有这项功能），接口答
-      `403 feature_off`（带键名），读不受影响的部分照常答；已经存在的东西（已发出的分享链接、
-      已连的账号）**不删**，只是失效，打开开关就恢复。关掉一项正在用的开关先看预览
-      （影响几个链接、几个人），再用 3.5 的二次确认。
-    - **分享的方式**（所有者 2026-11-23）：分享不只是开或关，按方式分档，从宽到严：
-      `public`（拿到链接的任何人，不用登录就能看）、`people`（只分享给指定的邮箱或账号，
-      对方必须登录，而且身份对得上才能看）、`off`。全站可以只给默认，也可以限定允许的档
-      （`restrict`，比如只允许 `people`）或强制一档（`lock`）；租户在全站允许的范围里再定
-      自己的默认或强制；分享的人只能选生效范围内的档。收紧时已经发出的、比现在更宽的分享
-      失效（不删，放宽后恢复），先预览影响几个，再二次确认。`people` 的分享发给还没有账号的
-      邮箱时，对方要先注册或登录这个邮箱才能看，受注册开关和加入规则约束。
-    - **地区预设**：全站可以选一个有名字的预设（`site.profile`，例如 `cn`），一次套上一组
-      开关的值和 `lock`；之后单项仍可调。预设只是一份值的清单，不是代码里的分支，代码只认
-      开关键。
-    - **生效的开关集合**随 `GET /api/meta`（登录后按租户）发给前端，前端按它显示入口，
-      App 同样用它；接口那边以服务器的判断为准。
-    - **上架中国内地另需**（到时写合同，这里只记下）：通常是一个独立部署（服务器在境内、
-      独立域名、ICP 备案），数据不出境（个人信息保护法）；公开分享要内容审核或者关掉；
-      Google、GitHub 等登录和存储在境内不稳定，换成境内可用的提供方（微信、手机号等），
-      这正是用 `features.signin.*`／`features.connections.*` 和 `cn` 预设来关、来换。
-  - **套餐**：「有名字的一组能力和限额」，属于内部计费模块（见「计费的边界」）；3.6 只做
-    它的存储和全站管理员的手动编辑。一个租户可以挂一个套餐；生效的能力 = 全站默认
-    → 套餐 → 这个租户自己的覆盖。换套餐就是换掉整套能力：清掉租户自己的覆盖，答复里列出
-    清掉了什么。套餐有全站管理员的增删改查；改一个套餐影响挂着它的全部租户（预览里给
-    个数，记审计）；有租户挂着的套餐不能删。没有价格、账单、试用期、续费，这些是计费
-    模块的事，不在 3.6。
-  - 组织自助注册建出的租户挂全站指定的套餐（`tenant.selfService.plan`，没有就用全站
-    默认）。
-  - **代价**：每个租户的生效能力在内存里一份（约 20 个键，一千个租户几百 KB），启动时
-    算、改了只重算那一个租户（改套餐或全站默认时重算挂着它的那些）；请求时一次映射查找，
-    不查库。
-- **全站管理员能看、能改任何租户**（所有者 2026-11-23 定）：
-  - 管理页有「租户详情」页（`/admin/tenants/<slug>`），分几栏：概览（套餐、用量、人数、
-    空间数、存储方式、最近的审计）、能力、设置（全部分层键，每个写明值来自哪一层）、存储
-    （方式、存储目标、等着搬的空间）、登录（SSO、社交登录的取舍、域名、加入方式、托管）、
-    发信和集成（SMTP、验证码、每日文案、连接）、限额表和用量、成员和管理员、审计。每一栏用的
-    是租户自己的那些接口，全站管理员对每个租户都能读写；`GET …/overview` 一次给出概览。
-  - 全站管理员可以直接写租户层的值，也可以锁住某个租户的某个值（`siteLock`），这个租户
-    的管理员就改不了。
-  - 租户管理员看得出哪些是全站定的：分层的值有 `reason`（全站强制、最低要求、限定范围）
-    和 `setBy`（这个租户层的值是全站管理员写的）、`siteLock`；能力和限额有来源（全站
-    默认、套餐、计费、手动）；租户自有的东西带 `updatedBy`（是不是全站管理员改的）。
-  - 每一次改动都记审计，带租户和操作者是全站还是租户管理员；租户管理员在本租户的审计里
-    看得到全站管理员对本租户的改动。
-- **存储方式**（方案 A，所有者 2026-11-23 定）：
-  - 三种：**服务器存储**（`server`，只在服务器上）；**自己连远端**（`own`，每个人或空间连
-    自己的远端，2.7／3.1）；**租户自己的存储目标**（`tenant`）：租户配好自己的 GitHub 组织
-    （自己的 App，或共享给它的安装），或自己的 GitLab／Gitea 主机和组（带凭据），之后
-    这个租户里的**每个空间自动在那里建一个自己的仓库**（2.7 的自动建仓库流程，目标换成
-    租户的地方）。一个空间一个仓库，**不是**一个租户一个大仓库。
-  - 全站定有哪几种（`storage.modes.available`），以及是强制一种（`storage.mode` 的
-    `lock`）还是只给默认（`restrict` 到有的那几种）。租户只能在全站给的、它的能力
-    `storage.modes` 也允许的方式里选自己的默认，也可以锁住不让空间换。建空间时按生效的
-    方式；能选时建空间的人在允许的里面选。
-  - **和 3.1 的远端要求**：3.1 的 `storage.remotes.require` 不再单独设，由方式推出：一个
-    空间能用 `server` 时是 `null`，不能时要远端（`storage.hosts` 只剩 `github.com` 时就是
-    `github`）。3.1 的 `scope`、`graceDays`、豁免、`localSpaces.maxBytes` 照旧，只管
-    `server` 的空间。`tenant` 的空间本来就跟随远端，满足要求。
-  - **附件仓库**：`storage.assets` 为 `repository` 时，`tenant` 的空间在同一个目标上再建
-    一个附件仓库（`<仓库名>-assets`）；`own` 照 3.1；`server` 没有远端，附件留在空间里。
-  - **部分缓存和清出**：`tenant` 的空间和 `own` 的一样，适用 3.1 的部分克隆、按需取、
-    清出和固定（固定在能力 `storage.pinnedBytes` 之内）；`server` 的空间从不清出。
-  - **凭据**：`tenant` 的空间用租户的凭据（`via: "tenant"`），不是某个人的，所以 3.5 删人
-    不会让它停在「凭据失效」；换租户的令牌一次对全部空间生效（空间引用同一条封存的记录，
-    不复制）。目标的主机要在 `storage.hosts` 里，连接时做公网检查；建仓库的 API 请求算
-    租户的出站份额，之后的拉取和推送照 3.1 的节奏，不算份额。
-  - 建空间时先建仓库，建不成就不建空间（`502 storage_target_error`，带目标答的原因）；
-    仓库名用空间的 `slug`，重名时加空间 id 的后 6 位；一律私有。删空间（3.5）照旧不动
-    远端仓库。
-  - **全站存储组织**（所有者 2026-11-23 定：要支持，风险已知）：全站管理员可以把一个
-    GitHub 组织（全站的 App 的安装）作为全站提供的存储，共享给全部租户（`"tenants": "all"`），
-    每个空间在那里自动建自己的仓库（仍是一个空间一个仓库）。命名：
-    - 空间：`<租户标识>-<空间标识>`，个人空间 `<用户名>-<空间标识>`；附件仓库再加 `-assets`；
-    - 只用小写字母、数字和 `-`，不能直接用的名字（如中文）转写或用空间 id，总长不超过
-      提供方的上限（GitHub 100）；重名时加空间 id 的后 6 位；
-    - 一律私有；仓库描述写空间名称、空间 id 和租户 id，加主题 `petalbook`；
-    - 空间或租户改名**不改仓库名**（服务器按记下的仓库 id 找，不按名字）；
-    - 删空间先进回收站，**清除时才删这个仓库**（全站存储组织里的仓库归服务器管，
-      和 `own`、`tenant` 的「一概不动」不同）。
-    风险（写在这里，不挡路）：GitHub 的使用条款不欢迎把它当成一个服务的通用存储，量大了可能
-    被限流或封停，所以它是可选的一种方式，不是唯一的一份；附件尽量放服务器或对象存储。
-  - **仓库自带身份，服务器的数据丢了也能认回来**（所有者 2026-11-23）：每个空间的
-    `.petalbook/space.yml` 写上空间 id 和租户 id（建空间时写，搬方式时补），远端仓库的
-    描述和主题再记一份。全站管理员有「从存储组织重建」：列出带 `petalbook` 主题的仓库，
-    按里面的 id 把空间建回来，页面和全部历史都在仓库里。账号、成员、权限、设置不在仓库里，
-    靠状态库的备份（见 5.17）。
-  - **换方式**（租户换默认、全站或能力去掉一种方式、租户换了存储目标）：新空间用新的；
-    已有的空间**原地不动、照常能用**，所有者和租户管理员看到「搬过去」的提示，什么都
-    不删。搬是后台任务：搬到 `tenant` 是在目标上建仓库、推全部历史、换远端；搬到
-    `server` 是取回全部内容、断开远端；搬到 `own` 是走 3.1 的连接流程。旧的远端仓库一概
-    不动。只有 `server` 不再允许时，才按 3.1 的 `scope` 和宽限期（过期只读，不删）。换了
-    存储目标时旧目标留着给还没搬的空间用，还有空间在用的目标不能删。批量搬走 3.5 的
-    批量和二次确认。
-  - **两个方向都要能搬**（所有者 2026-11-23）：全站存储组织 → 租户自己的组织或主机、
-    全站存储组织 → 个人自己的仓库，以及反过来（`tenant`／`own` → 全站存储组织），和上面
-    `server` 的进出一样，按单个空间或整个租户批量搬。搬一个空间的步骤，每步记进度、重启后
-    接着做或撤回：
-    1. **先补全历史**：3.1 之后服务器上常是部分克隆，搬之前从旧远端取回全部提交和文件；
-    2. **在新位置建仓库**（新方式的命名和凭据）并推全部历史，这期间空间照常能用；
-    3. **短暂只读**（秒级，界面说「正在搬家」）：推这期间新增的提交，再换远端；
-    4. **核对**：新仓库的头和服务器上的一致才算完成，否则撤回到旧远端；
-    5. **旧仓库**：用户或租户自己的一概不动；全站存储组织里的保留 `recycle.days` 的宽限期，
-       到期确认没有空间还指着它才删。
-    空间 id 不变，草稿、离线副本（4.1 的游标）、链接都不受影响；附件仓库跟着一起搬。
-    搬进全站存储组织前先查配额（在我们这里的才算用量），超了拒绝并说明；搬出去要求新位置
-    已经能写（租户配好了自己的 App 或连接，或本人连好了账号）；搬进来要全站允许这种方式。
-  - 只支持有建仓库接口的主机：GitHub（github.com）、GitLab、Gitea／Forgejo；只有 Git、
-    没有接口的主机不能当存储目标（仍可以用 `own` 连）。
-- **分层多一种「最低要求」**：`lower` 在 3.3 的 `allow`／`restrict`／`lock` 之外加
-  `tighten`（下面只能比全站自己的值更严）。每个键写明什么叫「更严」（布尔哪边严、
-  上限越小越严、选项的顺序、列表只能删减）；没有顺序的键不能选 `tighten`。全站可以
-  给每条规则写一句说明（最多 200 字符），租户管理员在灰掉的控件旁边看到「由全站
-  管理员统一设置」和这句说明。接口里是 `forced`、`reason`、`allowed`／`max`、`editable`。
-- **生效值仍按（租户、代数、空间设置版本）缓存**，请求时一次映射查找；新加的约 30 个
-  键，一千个租户也只是几 MB。能力变了也让这个租户的代数加一。权限判断（1.7／3.2 的
-  按人缓存）不变。
-- **全站的默认**按道理定，不按「和以前一样」定：安全类的键全站 `lower` 默认 `tighten`；
-  `storage.mode` 默认 `server`、`restrict` 到全站有的方式；「能否借全站资源」的键默认
-  `allow` 且为 `true`。
-- **哪些安全设置能到租户**：在密码核对之后才起作用的（`ssoOnly`、要求 passkey、
-  会话时长）可以，租户只能更严；登录前就起作用的（按地址的额度、失败上限、锁定、
-  登录页的验证码）只在全站，因为登录时还不知道租户，租户更严的值会泄露用户名在
-  哪个租户。
-- **社交登录和 SSO 分开**（取代 2.8 的 `legacyCallback` 和旧 `--oidc-*` 参数，3.6 把这两样
-  删掉）：
-  - 社交登录（Google、GitHub、微软个人账号、Apple、GitLab.com 等）由全站配，
-    每个是登录页上的「用 Google 继续」按钮；身份全站唯一，一个 Google 账号对应服务器
-    上的一个账号（和 2.7 的 GitHub 一样）；有能力 `signin.socialChoice` 的租户可以删减
-    本租户的人能用哪些。
-  - SSO（企业 OIDC／SAML）归租户（要能力 `signin.sso`）：只能登进、建出、合并本租户的
-    账号，组映射只指向本租户的组。全站也可以有自己的 SSO 提供方，给全部或指定的租户用。
-  - 每个提供方建的时候就定 `class`（`social` 或 `sso`）和归属（`site` 或某个租户）。
-  - 身份的键是（归属、签发方、主体），归属是 `site` 或租户；所以两家公司可以都用
-    Entra ID 而不共用身份。租户的 SSO 绝不登进全站管理员（租户管理员控制着这个提供方，
-    可以把它指向自己的身份提供方）；改签发方时解除它的旧身份。
-- **一个账号几种登录方式**（所有者 2026-11-23 定）：同一个账号可以同时有邮箱加密码、
-  Google、GitHub、微软……，在账号页「登录方式」里随时绑定和解绑，用哪一种都登进同一个
-  账号。这沿用 1.x／2.8 已有的做法（`intent: link` 绑定、`DELETE /api/account/identities/{id}`
-  解绑、没有密码的账号可以补设密码），3.6 补上：
-  - 账号页把密码、各个身份、passkey 列成一张「登录方式」表，每行写最后一次用它登录的
-    时间；解绑最后一种能登录的方式照旧拒绝（`409 conflict`）。
-  - **预设模板**：全站管理员加社交登录时先选模板（Google、微软、Apple、GitHub、
-    GitLab.com），模板填好签发方或各个地址、要的范围、`class: social` 和品牌图标，管理员
-    只填 client id 和 secret。模板随程序发布，不从网上取。
-    - **Apple**（所有者 2026-11-23 确认要）：iOS 版上架时，只要 App 里有第三方登录，App Store
-      就要求同时提供「通过 Apple 登录」，所以它是必备的模板。Apple 只在第一次登录时给名字，
-      邮箱可能是转发地址（`privaterelay.appleid.com`），按已验证的邮箱处理，但不拿它去做
-      邮箱域名的 SSO 路由和按域名加入组织。
-    - **模板分常用和更多**（所有者 2026-11-23）：「添加登录方式」默认只列常用的几个（Google、
-      微软、Apple、GitHub）；其余放在「更多模板」里，点开再选，按地区分组：
-      - 内地：微信（开放平台的网站应用扫码）、企业微信、钉钉、飞书、QQ、支付宝；
-      - 其他地区：LINE、Kakao、Naver、Yandex；
-      - 通用：GitLab.com、Discord、Slack、X、Facebook、Amazon。
-      模板带地区标签；地区预设 `site.profile` 决定哪些算「常用」（`cn` 时常用的是微信、企业微信、
-      钉钉、飞书和手机号，境外的几家放进「更多」）。多数内地平台不是标准的 OIDC：微信用
-      `appid` 而不是 `client_id`、令牌接口的参数和返回格式自成一套、主体用 `unionid`，所以
-      这些模板背后各有一个很小的适配（只在取令牌和取用户信息两步），不是纯配置；这些适配只用于
-      全站的社交登录。**租户自己的 SSO 只支持标准的 SAML 和 OIDC**（所有者 2026-11-23 定）：
-      企业微信、钉钉、飞书等企业版也走它们的标准 SAML／OIDC 接口，不为某一家写专门代码；
-      通讯录同步（SCIM 或各家的接口）以后再说。
-      申请这些平台的应用一般要国内的企业主体，到时由所有者办。
-    - **内地的登录方式**（内地部署时做，先预留）：微信登录（OAuth 2.0 的变体，没有邮箱，
-      主体用 `unionid`，账号要另行补邮箱或手机号）、手机号加短信验证码（一种新的登录方式
-      `kind: phone`，要短信服务商、按号码和 IP 的限速、验证码防刷）。所以「一个账号的登录
-      方式」不能假定每种都带邮箱；邮箱全站唯一的规则对没有邮箱的身份不适用。
-  - **自定义提供方**：模板以外，全站管理员可以加任意的 OpenID Connect 提供方（已有的
-    `kind: oidc`，按发现文档）和**只有 OAuth 2.0、没有 OIDC 的**提供方（新的
-    `kind: oauth2`：授权、令牌、用户信息三个地址，范围，以及从用户信息里取主体、邮箱、
-    名字的字段名）。`oauth2` 给的邮箱默认不算已验证（不参与按已验证邮箱合并），除非
-    管理员指明用户信息里哪个字段表示「已验证」。PKCE 照用。`oauth2` 只能是全站的
-    `social`；租户的 SSO 仍只有 OIDC 和 SAML。
-  - 接口见 `docs/api.md` 的「Sign-in: social providers and SSO」里的「Several sign-in
-    methods per account」。
-- **按邮箱域名找 SSO**（要能力 `signin.domains`）：
-  - 租户认领域名，用 DNS 验证（所有者 2026-11-23 定）；没验证的认领什么都不做。两种
-    记录，任选一种：TXT（默认）`_petalbook.<域名>` 值为 `petalbook-verify=<验证码>`；
-    或 CNAME `_petalbook.<域名>` 指向 `<验证码>.verify.<本站域名>`（本站域名是
-    `--public-url` 的主机名；只比对 CNAME 的目标，不去解析它）。验证码 7 天有效，过期
-    要重新生成。只认这一个域名（子域名各自认领）；公共邮箱域名不能认领。
-  - 已验证的认领每天自动复查一次；连续 7 天找不到记录就取消认领，通知租户管理员并记
-    审计。DNS 出错不算找不到。
-  - 「立即检查」按钮：同一个域名 1 分钟一次、每个租户每小时 20 次、全站每分钟
-    `domains.checksPerMinute`（默认 60）次；冷却中答 `429 rate_limited` 带
-    `Retry-After`，界面显示倒计时。结果当场显示（找到、没找到、值不对，值不对时给出
-    看到的值），每次都记审计。手动检查不影响每天的自动复查。
-  - **两个租户认领同一个域名**：没验证的认领可以有很多个；已验证的只有一个，先验证的
-    得到；后来的验证答 `409 domain_claimed`，不说是哪个租户（而且只有能改那个域名 DNS
-    的人才走得到这一步）。全站管理员可以移交。
-  - 登录页先问邮箱或用户名（服务器上有已验证的域名时）。`POST /api/auth/discover`
-    只看域名，不查账号，有没有账号答复都一样；用户名一律答「没有 SSO」；计入 2.8 的
-    按地址每分钟额度，从内存里答。域名所在的租户 `ssoOnly` 生效时，页面藏起密码框，
-    只给「用 <租户的身份提供方> 继续」，旁边仍有「用密码登录」（管理员的后门，2.8 的
-    `ssoOnly` 不拦管理员）。另有一个「用 SSO 登录」入口，只问邮箱，同样跳转。
-  - 邮箱只是提示（`login_hint`）：登进哪个账号由身份提供方返回的身份决定，所以按域名
-    路由不可能把人登进提供方所在租户以外的账号。
-  - 用户名照旧能用密码登录。和 2.8 的四种登录方式：`auth.loginMode` 变成分层的，带
-    `?tenant=` 的页用租户的；`dual`、`sso_first` 多了「先问邮箱」；`sso_redirect` 在
-    租户的页上直接去租户的 SSO；`local_only` 关掉按钮和 SSO 入口，不关密码后门。
-  - 租户强制 SSO 时，用已验证域名的地址注册密码账号答 `409 sso_required`，带 SSO 的
-    入口。
-- **邮箱全站唯一，以邮箱登录为主**（所有者 2026-11-23 定）：
-  - 用户名照旧是唯一的代号和 id（`@提及`、提交作者、链接里用它）。
-  - 登录框收邮箱或用户名，界面上以邮箱为主（「邮箱」写在前，用户名是次要的写法）。
-    `POST /api/login` 收 `identifier`（取代原来的 `username`）。
-  - 邮箱在全站所有账号之间唯一（含停用的和回收站里的，清除时才放出），比较按 3.3 的
-    规则：只把 ASCII 的 A–Z 变小写。存一列 `email_key` 和一个唯一索引，登录时一次索引
-    查找；**没有例外**。改成别人已用的地址答 `409 email_taken`；邀请和管理员建号同样。
-    注册时地址已被占用，照 3.3 答同样的 `202`，给那个账号发「你已经有账号了」（3.3 只在
-    本租户里查，现在全站查）。只被别的账号「未验证地」占着的地址，注册确认时归确认的人，
-    原来那个账号的邮箱清空并在站内告诉他。身份提供方给的地址已被别的账号占用时，按 2.8
-    的合并规则；不能合并就建一个没有邮箱的账号。
-  - 和上面的「先问邮箱」合在一起：登录页第一步问邮箱或用户名，`discover` 只看域名，
-    有 SSO 就去 SSO，否则第二步问密码（或 passkey）。
-- **加入组织**（所有者 2026-11-23 定）：每个组织自己选，几种可以同时开：
-  - (a) 只邀请：一直有。
-  - (b) 已验证域名的邮箱自动加入（`join.domain: auto`，默认关）：用这个域名的地址注册
-    （地址确认之后），或经社交登录建号且提供方担保了地址，账号建在这个租户里，告诉本人
-    加入了哪个租户。
-  - (c) 已验证域名的邮箱申请加入、管理员批准：注册确认后不立刻建号，变成一条加入申请
-    （占着用户名，30 天不处理就过期）；管理员在列表里批准（可以改角色）或拒绝，批准时
-    建号、拒绝时发信并放出用户名。
-  - (d) 经本组织自己的 SSO 登录就自动加入（即时建号，就是提供方的 `autoCreate`）；可以
-    只放行 IdP 里列出的组的人，别的人在登录时被拒（每次登录都查，不只是建号时）。
-  - (b)、(c) 要能力 `signin.domains`，(d) 要 `signin.sso`。域名上 (b) 和 (c) 二选一，
-    可以按域名覆盖组织的默认。
-  - 加入者的默认角色：`member` 或 `viewer`（邀请仍按邀请上写的角色）。组织里的
-    `viewer` 是新加的：不能在组织里建空间，在组织的空间里最多是只读，权限缓存多存一个
-    上限，判断仍是一次查找。
-  - IdP 组映射到组织的组，沿用 3.2 的 `groups.map`；IdP 组映射到组织管理员
-    （`groups.admins`）要这个租户有能力 `signin.idpAdmins`（全站默认关）；每次经它升成
-    管理员都记审计；只降经它升上去的人，手动设的管理员不动；从不给 `siteAdmin`。
-  - 从 IdP 的组里移出，下次登录时生效（同 3.2）；要立刻生效就停用这个人。SCIM 仍在
-    第 5 期（5.10）。
-  - 3.6 先按「一个人一个租户」做：(b)、(c)、(d) 都只对新账号。3.7 改成给账号加一个组织。
-- **组织自助注册**（照 Notion，所有者 2026-11-23 定）：全站开关 `tenant.selfService`，
-  默认关，要先开 `tenancy` 和发信。注册页多一个「建我自己的组织」；确认地址后建租户，
-  再在里面建账号，是这个租户的管理员（不是全站管理员），带个人空间；新租户从全站默认
-  起步、注册关着、能力用 `tenant.selfService.plan` 指定的套餐（没有就用全站默认）。上限
-  （全站，全站管理员可以改）：每人 3 个（`perPerson`，3.6 按确认过的地址数它建的、还在的
-  租户；3.7 起按账号数）、全站每小时 20 个、总数 1000 个；超了仍答同样的 `202`，发一封信
-  说没建成。个人照 3.3 的流程。
-  - 有已验证域名的组织可以打开「不许这个域名上的人另建组织」（`restrictOrgs`，按域名，
-    默认关）：用这个域名的地址建组织答 `409 domain_managed`，带这个组织的名字和加入的
-    路（自动加入、申请或 SSO），页面引导到这个组织。只拦建组织，不拦注册个人账号。
-  - 3.6 里一个地址只能有一个账号（邮箱全站唯一，账号只在一个租户），所以已有账号的
-    地址来建组织，照 3.3 只发「你已经有账号了」。已登录的人从切换菜单里再建组织在 3.7。
-- **每个租户的限额表**（所有者 2026-11-23 定）：全站管理员手动设，每个租户一张。上面的
-  能力是表里的开关项（键不变），表里另有数量上限：
-  - 人：人数（`other.people`）；
-  - 空间：总数和每人（`storage.quota.spaces`、`storage.perPerson.spaces`）；
-  - 存储：总额（`storage.quota.bytes`，就是 3.5 存储压力里这个租户的「存储分配」）、
-    单个文件（`storage.maxFileBytes`）、固定（`storage.pinnedBytes`）；
-  - 同步：允许的存储方式（`storage.modes`）、能不能用附件仓库（`sync.assetsRepository`，
-    新）；
-  - 用量（新）：API 和 MCP 每分钟的请求（`usage.apiPerMinute`、`usage.mcpPerMinute`）、
-    每天发信（`usage.mailPerDay`）、外部接口调用每分钟（`usage.outboundPerMinute`，
-    取代全站的 `outbound.tenantPerMinute` 给这个租户的份额，没设时仍用它）；
-  - 3.6 的全部能力。
-  - **每个值记来源**：`site`（全站默认）、`plan`（租户的套餐）、`billing`（计费模块写的，
-    现在没有）、`manual`（全站管理员手动写的）。**手动的优先**：生效值 = 手动 → 计费 →
-    套餐 → 全站默认，取第一个有的。原来的来源 `tenant` 就是 `manual`。
-  - **可以带起止日期**（`from`、`until`，都可选），比如临时多给一个月的额度：不在期间里的
-    值当作没有。内存里记着下一个起止的时间，到点只重算那一个租户，不轮询。
-  - **事件**：改动（包括带日期的值开始和结束）和超限（每个租户每个键每天最多一条）现在
-    写审计；以后加 webhook（只预留，不做）。超限时用量类的照常拒绝（API、MCP 答
-    `429 rate_limited`，发信排不进队），数量类照 3.3 的规则。
-  - **用量可以按租户导出**：每天一行汇总（`tenant_usage_daily`，每天的对账时写），
-    全站管理员和这个租户的管理员按日期范围导出 CSV 或 JSON Lines。
-- **附件放哪里**（`storage.assets`，所有者 2026-11-23 定）：同一个仓库／单独的附件仓库，
-  分三层：全站 → 租户 → 空间所有者。全站可以强制（`lock`）也可以只给默认（`allow`）；
-  租户的限额表关掉 `sync.assetsRepository` 时只能同一个仓库。
-- **不能部分同步的远端**（`storage.partial.unsupported`，所有者 2026-11-23 定）：唯一一条
-  部分同步策略，`allow`（默认，用完整克隆）或 `refuse`（连接这样的远端答
-  `409 partial_unsupported`，带主机）。分层：全站、租户，`refuse` 更严。是否支持由 3.5 的
-  自动检测决定；拒绝只对新连接，已经连着的照常用。
-- **计费的边界**（所有者 2026-11-23 定；**计费和支付现在什么都不做**）：
-  - 套餐、限额、计量、账单、续费属于一个**内部的计费模块**。它经一个内部接口（Go 的接口，
-    不是 HTTP）写限额表，来源是 `billing`；全站管理员的手动编辑照旧，而且手动优先。
-  - 只有**支付**是外部的（Stripe、支付宝、微信支付等），经支付适配器和它们的回调。
-    预留这个边界：适配器接口和回调的路径（`/api/billing/callbacks/{adapter}`）只写在
-    合同里，不建路由。
-  - 合同里没有「外部计费系统的令牌或接口」：外部系统不能直接改限额表，只能经支付回调
-    让内部的计费模块去改。
-  - 全站管理员手动改限额表的界面（租户详情页的「限额表和用量」）照做。
-- **租户自有的东西都在内存里**（SSO 提供方、域名表、SMTP、验证码密钥、每日文案
-  接口、GitHub App、存储目标），启动时读、改了只重读那一个租户的；请求时不为它们查库。
-  每个租户的上限：10 个 SSO、20 个域名、1 个发件人、1 套验证码、20 个接口、1000 条文案、
-  1 个 GitHub App、1 个在用的存储目标（加上还有空间没搬走的旧目标）。
-- **发信**：租户有自己的 SMTP 就用自己的（只能 `starttls`／`tls`，公网地址，端口
-  25／465／587／2525）；没有时按 `mail.useSite` 借全站的（发件地址是全站的，显示名
-  是租户名，不让租户冒用全站域名发信）；都没有就当发信关着。全站排队上限不变，每个
-  租户最多占 200 封。
-- **每日文案**：租户自己的接口有自己的封存密钥、`rps` 和缓存（键带租户），不占全站
-  的额度；能否用全站的接口看 `daily.useSiteApis`。
-- **GitHub**（经 2.7b 的提供方接口；路由在 `/api/admin/tenants/{tenant}/connections/github…`）：
-  租户可以登记自己的 App（只在 github.com，要能力 `integrations.connections`），
-  它的安装只在本租户里共享；全站 App 的安装按租户共享（全部或指定的几个）。连 GitHub
-  时先用租户的 App，没有再按 `connections.useSiteApps` 用全站的。一个 GitHub 账号仍只连服务器
-  上的一个人。`internal/githubapp` 把 App 当参数传，不用全局变量，所以 3.4 定接口时已经
-  是多 App 的。
-- **存储的其余设置**：3.1 的 `storage.remotes.scope`、`.graceDays`、`hosts`、
-  `localSpaces.maxBytes` 有了租户层，全站决定强制、最低要求还是只是默认。附件放哪里
-  （`storage.assets`）三层：全站、租户、空间所有者；要求附件仓库时只对新空间和刚连远端
-  的空间生效，已有的空间给一键搬，不自动搬。豁免按授予它的层算。固定（`pin`）占全站
-  磁盘，租户管理员只能在能力 `storage.pinnedBytes` 之内固定（默认 0）；清出缓存谁都可以。
-- **迁移** `0021_tenant_autonomy.sql`，SQLite 和 PostgreSQL 都测；只为开发和演示的库能
-  打开，不承诺保留数据的升级（同一个邮箱在开发库里有几个账号时，留给最早的那个，其余
-  清空）。
-- **对外的动作**：租户填的地址会让服务器向外连（身份提供方、SMTP、接口、DNS、存储
-  目标）；自助注册让任何人能建租户，所以默认关；租户的发件人会以租户的名义给真实的人
-  发信；存储目标会在租户的 GitHub 组织或 Git 主机上建仓库。测试一律用进程里的假服务
-  （假 SMTP、假 OIDC、假 DNS 解析器、假 GitHub 和 GitLab 接口），不碰外面。
+- **Per-tenant capabilities** (decided by the owner 2026-11-23; capabilities are
+  the switches in the "limits table" below; for billing and payment see "The
+  billing boundary", neither is done):
+  - A set of capabilities = the site default + a per-tenant override. Only the
+    site admin can change them; the tenant admin can only view them. At least
+    these exist (key names and defaults are in `docs/api.md`):
+    - Sign-in: the tenant's own SSO providers (`signin.sso`), domain
+      verification (`signin.domains`), managed accounts
+      (`signin.managedAccounts`, 3.7), the choice of social sign-in methods
+      (`signin.socialChoice`), IdP group mapping to organization admin
+      (`signin.idpAdmins`, formerly the site-wide switch `auth.idpAdmins`);
+    - Data: **letting tenant admins view and export the contents of organization
+      spaces** (`data.adminView`, the viewing and export of 3.5; personal spaces
+      are never visible, per 3.7), downloading the audit log
+      (`data.auditDownload`);
+    - Integrations: its own SMTP, captcha keys, connections (GitHub App etc.,
+      2.7b), the daily text endpoint (`integrations.smtp`, `.captcha`,
+      `.connections`, `.daily`); API tokens and MCP (`integrations.tokens`,
+      `.mcp`);
+    - Storage: the allowed storage modes (`storage.modes`, see below), the
+      per-file ceiling (`storage.maxFileBytes`), the tenant total
+      (`storage.quota`; the tenant `quota` of 3.3 moves here), the ceiling on
+      per-person quota (`storage.perPerson`), the pinned allowance
+      (`storage.pinnedBytes`);
+    - Other: offline copies (`other.offline`, 4.1), open sign-up into this tenant
+      (`other.registration`), the cap on people (`other.people`).
+  - **Capabilities decide "whether it exists", layers decide "how much"**: a
+    capability decides whether an item under (c), or the tenant layer of an item
+    under (b), exists in this tenant. When it exists, its value is still decided
+    by the layers as before. Every item under (b) and (c) in the list is marked
+    with its capability.
+  - When a capability is off: writes to this tenant's related settings and
+    endpoints answer `403 capability_off`, with the capability's key name. Reads
+    still answer, with an extra `capability: {key, on: false}`; the UI greys them
+    out, with the note "Needs to be turned on site-wide" next to them. What is
+    stored (providers, domains, SMTP, tenant-layer values) is **not deleted**, it
+    just has no effect; turning the capability on again restores it as it was.
+    Storage is the exception: existing spaces carry on using the mode and storage
+    target they have now, and only new spaces can no longer use it (see "Storage
+    modes" and problem 2 below).
+    The site admin is not bound by capabilities, and can set things up for a
+    tenant in advance even while a capability is off.
+  - Turning off a capability that is in use (there are providers, there are
+    domains, spaces using the storage mode, accounts being managed) first shows a
+    preview (what will stop, how many people or spaces are affected), then uses
+    the second confirmation of 3.5. If it is not in use, the change is made
+    directly.
+  - **Every site-wide setting can be "default" or "forced"** (a general rule the
+    owner restated on 2026-11-23): each site-wide setting supports both uses: only
+    giving a default (`allow`, which the layers below can change), limiting the
+    range (`restrict`), forcing (`lock`, which the layers below cannot change).
+    No site-wide setting is "default only" or "forced only". When a new setting
+    is registered it must state whether it exists at the tenant layer and the
+    space layer, and which side "stricter" means. A setting that exists only at
+    the site layer (such as the storage budget or tiers) has no lower layer as
+    before, and so is naturally forced.
+  - **Feature switches** (the owner, 2026-11-23: for example when listing in
+    mainland China later, sharing and other features will have to be turned off,
+    so make it general):
+    - Every user-facing feature registers a switch key `features.*`, for example
+      `features.share.links` (share links), `features.share.public` (public
+      publishing of [reserved.md §14](../reserved.md#14-reserved-public-publishing)), `features.invite.external` (inviting people outside the
+      organization), `features.signin.<provider>` (each social sign-in),
+      `features.connections.<provider>` (each storage and sync provider),
+      `features.daily`, `features.mcp`, `features.export`, and later
+      collaboration and AI and so on. The registry states which endpoints and
+      UI each key governs, and a new feature registers its switch at the same
+      time it adds endpoints (the same practice as the permission keys of
+      [auth-and-permissions.md §16](../auth-and-permissions.md#16-reserved-custom-roles-and-permissions); a test checks that every user-facing route hangs
+      off some switch or is marked "always on").
+    - **Layering as before**: site -> tenant, using the `allow` / `restrict` /
+      `lock` of 3.3 plus the `tighten` above. A site `lock` set to off is a
+      **forced off**, and the tenant cannot change it. When the site only gives a
+      default, the tenant can turn it on or off itself within the allowed range.
+      The default is everything on (except features that are not finished yet).
+    - **When off**: the UI does not show the entry point (it is not greyed out;
+      users do not need to know the feature exists), and the endpoint answers
+      `403 feature_off` (with the key name). The parts of a read that are not
+      affected answer as usual. What already exists (share links already sent,
+      accounts already connected) is **not deleted**, it just becomes invalid, and
+      turning the switch back on restores it. Turning off a switch that is in use
+      first shows a preview (how many links, how many people are affected), then
+      uses the second confirmation of 3.5.
+    - **Sharing modes** (the owner, 2026-11-23): sharing is not just on or off;
+      it has tiers by mode, from broad to strict: `public` (anyone with the link
+      can view, no sign-in), `people` (shared only with specified emails or
+      accounts, who must sign in and whose identity must match before they can
+      view), and `off`. The site can give only a default, or limit the allowed
+      tiers (`restrict`, for example allowing only `people`), or force one tier
+      (`lock`). A tenant sets its own default or forced tier within what the site
+      allows. The person sharing can only choose among the tiers in effect. When
+      things are tightened, shares already sent that are broader than the new
+      setting become invalid (not deleted, and restored if loosened again), with
+      a preview of how many are affected first, then the second confirmation. A
+      `people` share sent to an email that has no account yet requires the
+      recipient to sign up or sign in with that email before viewing, and is
+      bound by the sign-up switch and the joining rules.
+    - **Region presets**: the site can choose a named preset (`site.profile`, for
+      example `cn`) that applies a group of switch values and `lock`s in one go.
+      Individual items can still be adjusted afterwards. A preset is only a list
+      of values, not a branch in the code, and the code recognizes only the
+      switch keys.
+    - **The set of effective switches** is sent to the frontend with
+      `GET /api/meta` (per tenant after sign-in). The frontend shows entry points
+      according to it, and the app uses it too. On the API side, the server's own
+      decision is what counts.
+    - **What listing in mainland China also needs** (a contract will be written
+      then; only noted here): usually a separate deployment (servers in China, a
+      separate domain, ICP filing), with data not leaving the country (the
+      Personal Information Protection Law); public sharing needs content review
+      or must be turned off; sign-in and storage with Google, GitHub and so on are
+      unreliable inside China, so they are replaced with providers that work
+      there (WeChat, phone number and so on). This is exactly what
+      `features.signin.*` / `features.connections.*` and the `cn` preset are used
+      to turn off and to swap.
+  - **Plans**: "a named set of capabilities and limits", which belongs to the
+    internal billing module (see "The billing boundary"). 3.6 only does its
+    storage and manual editing by the site admin. A tenant can be attached to one
+    plan. The effective capabilities = the site default -> the plan -> the
+    tenant's own overrides. Changing the plan replaces the whole set of
+    capabilities: the tenant's own overrides are cleared, and the response lists
+    what was cleared. Plans have create, read, update and delete for the site
+    admin. Changing a plan affects all tenants attached to it (the preview gives
+    the count, and it is audited). A plan with tenants attached cannot be
+    deleted. There are no prices, bills, trial periods or renewals. Those belong
+    to the billing module, not 3.6.
+  - A tenant created through organization self-service sign-up is attached to the
+    plan the site designates (`tenant.selfService.plan`; without one, the site
+    default is used).
+  - **Cost**: each tenant's effective capabilities live in memory, one copy (about
+    20 keys, a few hundred KB for a thousand tenants). They are computed at
+    startup, and when something changes only that one tenant is recomputed (when a
+    plan or the site default changes, the tenants attached to it are recomputed).
+    At request time it is one map lookup, with no database query.
+- **The site admin can see and change any tenant** (decided by the owner
+  2026-11-23):
+  - The admin page has a "tenant detail" page (`/admin/tenants/<slug>`) with
+    several tabs: overview (plan, usage, number of people, number of spaces,
+    storage mode, recent audit), capabilities, settings (all layered keys, each
+    saying which layer its value comes from), storage (mode, storage target,
+    spaces waiting to be moved), sign-in (SSO, the choice of social sign-in,
+    domains, joining method, management), mail and integrations (SMTP, captcha,
+    daily text, connections), limits table and usage, members and admins, audit.
+    Each tab uses the tenant's own endpoints, and the site admin can read and
+    write them for every tenant. `GET …/overview` gives the overview in one call.
+  - The site admin can write tenant-layer values directly, and can also lock a
+    tenant's value (`siteLock`), so that tenant's admin cannot change it.
+  - The tenant admin can see which things the site decided: layered values have
+    `reason` (site-forced, minimum requirement, limited range) and `setBy` (this
+    tenant-layer value was written by the site admin), and `siteLock`.
+    Capabilities and limits have a source (site default, plan, billing, manual).
+    Things the tenant owns carry `updatedBy` (whether the site admin changed
+    them).
+  - Every change is audited, with the tenant and whether the actor was the site
+    admin or the tenant admin. The tenant admin can see, in the tenant's own
+    audit, the site admin's changes to this tenant.
+- **Storage modes** (plan A, decided by the owner 2026-11-23):
+  - Three: **server storage** (`server`, only on the server); **own remote**
+    (`own`, each person or space connects its own remote, 2.7 / 3.1); **the
+    tenant's own storage target** (`tenant`): the tenant configures its own
+    GitHub organization (its own App, or an installation shared with it), or its
+    own GitLab / Gitea host and group (with credentials), and after that
+    **every space in this tenant automatically gets a repository of its own
+    there** (the automatic repository creation flow of 2.7, with the target
+    replaced by the tenant's place). One repository per space, **not** one big
+    repository per tenant.
+  - The site decides which modes there are (`storage.modes.available`), and
+    whether one is forced (`lock` on `storage.mode`) or only a default is given
+    (`restrict` to the modes that are available). A tenant can only choose its
+    own default among the modes the site gives and that its capability
+    `storage.modes` also allows, and can also lock it so spaces cannot switch.
+    When a space is created, the mode in effect is used; where there is a choice,
+    the person creating the space chooses among the allowed ones.
+  - **And the remote requirement of 3.1**: `storage.remotes.require` of 3.1 is no
+    longer set separately, and is derived from the modes. When a space can use
+    `server` it is `null`, and when it cannot it requires a remote (when
+    `storage.hosts` is left with only `github.com`, it is `github`). The `scope`,
+    `graceDays`, exemptions and `localSpaces.maxBytes` of 3.1 stay as they are,
+    and only govern `server` spaces. A `tenant` space follows a remote by nature,
+    so it meets the requirement.
+  - **Attachment repository**: when `storage.assets` is `repository`, a `tenant`
+    space gets an attachment repository (`<repository name>-assets`) created on
+    the same target. `own` follows 3.1. `server` has no remote, and attachments
+    stay in the space.
+  - **Partial cache and eviction**: a `tenant` space, like an `own` one, is
+    subject to the partial clone, on-demand fetch, eviction and pinning of 3.1
+    (pinning within the capability `storage.pinnedBytes`). A `server` space is
+    never evicted.
+  - **Credentials**: a `tenant` space uses the tenant's credentials
+    (`via: "tenant"`), not any one person's, so deleting a person in 3.5 does not
+    leave it stuck at "credentials invalid". Replacing the tenant's token takes
+    effect for all spaces at once (the spaces reference the same sealed record,
+    which is not copied). The target's host must be in `storage.hosts`, with a
+    public network check when connecting. The API requests that create
+    repositories count against the tenant's outbound share, and later pulls and
+    pushes follow the 3.1 rhythm and do not count against the share.
+  - When a space is created, the repository is created first, and if that
+    cannot be done the space is not created (`502 storage_target_error`, with the
+    reason the target gave). The repository name is the space's `slug`; if it is
+    taken, the last 6 characters of the space id are added. Always private.
+    Deleting a space (3.5) still leaves the remote repository alone.
+  - **Site storage organization** (decided by the owner 2026-11-23: to be
+    supported, the risk is known): the site admin can make a GitHub organization
+    (an installation of the site's App) the storage the site provides, shared with
+    all tenants (`"tenants": "all"`), and every space automatically gets its own
+    repository there (still one repository per space). Naming:
+    - Space: `<tenant identifier>-<space identifier>`, and for a personal space
+      `<username>-<space identifier>`. An attachment repository adds `-assets`;
+    - Only lowercase letters, digits and `-`. Names that cannot be used directly
+      (such as Chinese) are transliterated or replaced with the space id, with a
+      total length no more than the provider's limit (GitHub 100). If the name is
+      taken, the last 6 characters of the space id are added;
+    - Always private. The repository description gives the space name, space id
+      and tenant id, and the topic `petalbook` is added;
+    - Renaming a space or tenant **does not rename the repository** (the server
+      finds it by the recorded repository id, not by name);
+    - Deleting a space goes to the recycle bin first, and **the repository is
+      deleted only on purge** (repositories in the site storage organization are
+      managed by the server, unlike the "never touch" of `own` and `tenant`).
+    Risk (written here, not blocking): GitHub's terms of use do not welcome using
+    it as general storage for a service, and at volume it could be rate limited or
+    suspended. So it is one optional mode, not the only copy, and attachments
+    should go on the server or in object storage where possible.
+  - **The repository carries its own identity, so it can be recognized again even
+    if the server's data is lost** (the owner, 2026-11-23): each space's
+    `.petalbook/space.yml` has the space id and tenant id written in (written when
+    the space is created, filled in when the mode is switched), and the remote
+    repository's description and topic record another copy. The site admin has
+    "rebuild from the storage organization": it lists the repositories with the
+    `petalbook` topic and rebuilds spaces from the ids inside, with the pages and
+    all the history in the repository. Accounts, members, permissions and
+    settings are not in the repository, and depend on the state database backup
+    (see 5.17).
+  - **Changing the mode** (the tenant changes its default, the site or a
+    capability removes a mode, the tenant changes its storage target): new spaces
+    use the new one. Existing spaces **stay as they are and keep working**, the
+    owner and tenant admin see a "move over" prompt, and nothing is deleted.
+    Moving is a background task: moving to `tenant` creates the repository on the
+    target, pushes the full history and switches the remote; moving to `server`
+    fetches all the content back and disconnects the remote; moving to `own` goes
+    through the connection flow of 3.1. Old remote repositories are never touched.
+    Only when `server` is no longer allowed does the `scope` and grace period of
+    3.1 apply (read-only when it expires, nothing deleted). When the storage
+    target is changed, the old target is kept for spaces not yet moved, and a
+    target still in use by spaces cannot be deleted. Moving many at once uses the
+    batching and second confirmation of 3.5.
+  - **Both directions must be movable** (the owner, 2026-11-23): site storage
+    organization -> the tenant's own organization or host, site storage
+    organization -> a person's own repository, and the reverse (`tenant` / `own`
+    -> site storage organization), the same as the `server` moves in and out
+    above, moved one space at a time or in bulk for a whole tenant. The steps to
+    move one space, each recording progress and continuing after a restart or
+    rolling back:
+    1. **Complete the history first**: after 3.1 the server often holds a partial
+       clone, so before moving, fetch all commits and files back from the old
+       remote;
+    2. **Create the repository in the new place** (naming and credentials of the
+       new mode) and push all the history, during which the space works as usual;
+    3. **Brief read-only** (seconds, the UI says "moving"): push the commits added
+       in the meantime, then switch the remote;
+    4. **Verify**: it counts as done only if the new repository's head equals the
+       one on the server, otherwise roll back to the old remote;
+    5. **Old repository**: the user's or tenant's own is never touched. One in the
+       site storage organization is kept for the `recycle.days` grace period, and
+       deleted when it expires after confirming no space points to it any more.
+    The space id does not change, and drafts, offline copies (the cursor of 4.1)
+    and links are unaffected. The attachment repository moves along with it.
+    Before moving into the site storage organization, the quota is checked (only
+    what is with us counts as usage), and if it would be exceeded the move is
+    refused with an explanation. Moving out requires that the new place is already
+    writable (the tenant has configured its own App or connection, or the person
+    has connected their account). Moving in requires the site to allow that mode.
+  - Only hosts with a repository-creation API are supported: GitHub
+    (github.com), GitLab, Gitea / Forgejo. Hosts with only Git and no API cannot be
+    a storage target (they can still be connected with `own`).
+- **Layering gets one more kind, "minimum requirement"**: `lower` adds `tighten`
+  (the layers below can only be stricter than the site's own value) to the
+  `allow` / `restrict` / `lock` of 3.3. Each key states what "stricter" means
+  (which side of a boolean is strict, a smaller upper limit is stricter, the order
+  of options, a list can only be pruned). Keys with no order cannot choose
+  `tighten`. The site can write a sentence of explanation for each rule (at most
+  200 characters), and the tenant admin sees "Set centrally by the site admin"
+  and this sentence next to the greyed-out control. In the API these are
+  `forced`, `reason`, `allowed` / `max`, `editable`.
+- **The effective value is still cached by (tenant, generation, space settings
+  version)**, with one map lookup at request time. The roughly 30 new keys come to
+  only a few MB even for a thousand tenants. When a capability changes, that
+  tenant's generation also goes up by one. The permission check (the per-person
+  cache of 1.7 / 3.2) does not change.
+- **Site defaults** are set by what makes sense, not by "same as before": for
+  security keys the site `lower` defaults to `tighten`; `storage.mode` defaults to
+  `server`, with `restrict` to the modes the site has; keys for "whether it may
+  borrow the site's resources" default to `allow` and `true`.
+- **Which security settings can reach the tenant**: those that take effect after
+  the password check (`ssoOnly`, requiring a passkey, session length) can, and the
+  tenant can only make them stricter. Those that take effect before sign-in
+  (per-address quotas, failure caps, lockout, the captcha on the sign-in page)
+  exist only at the site level, because at sign-in time the tenant is not yet
+  known, and a stricter tenant value would leak which tenant a username is in.
+- **Social sign-in and SSO are separate** (replacing the `legacyCallback` of 2.8
+  and the old `--oidc-*` parameters; 3.6 deletes both):
+  - Social sign-in (Google, GitHub, Microsoft personal accounts, Apple,
+    GitLab.com and so on) is configured by the site, and each is a "Continue with
+    Google" button on the sign-in page. Identities are unique site-wide, so one
+    Google account corresponds to one account on the server (the same as GitHub in
+    2.7). A tenant with the capability `signin.socialChoice` can prune which of
+    them the people in this tenant can use.
+  - SSO (enterprise OIDC / SAML) belongs to the tenant (needs the capability
+    `signin.sso`): it can only sign in to, create and merge this tenant's
+    accounts, and group mapping points only to this tenant's groups. The site can
+    also have its own SSO providers, for all or specified tenants.
+  - Each provider has its `class` (`social` or `sso`) and its ownership (`site` or
+    some tenant) set when it is created.
+  - The identity key is (ownership, issuer, subject), where ownership is `site` or
+    a tenant. So two companies can both use Entra ID without sharing identities. A
+    tenant's SSO never signs in the site admin (the tenant admin controls the
+    provider and could point it at their own identity provider). When the issuer
+    is changed, its old identities are unlinked.
+- **One account, several ways to sign in** (decided by the owner 2026-11-23): the
+  same account can have email plus password, Google, GitHub, Microsoft and so on
+  at once, bound and unbound at any time under "Sign-in methods" on the account
+  page, and whichever one is used signs in to the same account. This continues
+  the existing practice of 1.x / 2.8 (`intent: link` for binding,
+  `DELETE /api/account/identities/{id}` for unbinding, an account with no
+  password can set one later), and 3.6 adds:
+  - The account page lists the password, each identity and the passkeys as one
+    "Sign-in methods" table, and each row says when it was last used to sign in.
+    Unbinding the last method that can sign in is still refused (`409 conflict`).
+  - **Preset templates**: when the site admin adds social sign-in, they first
+    choose a template (Google, Microsoft, Apple, GitHub, GitLab.com). The template
+    fills in the issuer or the various addresses, the scopes needed, `class:
+    social` and the brand icon, and the admin only fills in the client id and
+    secret. Templates ship with the program and are not fetched from the web.
+    - **Apple** (confirmed as wanted by the owner 2026-11-23): when the iOS app is
+      listed, as soon as the app has third-party sign-in the App Store requires
+      "Sign in with Apple" to be offered as well, so it is a required template.
+      Apple gives the name only at the first sign-in, and the email may be a relay
+      address (`privaterelay.appleid.com`). It is treated as a verified email, but
+      is not used for email-domain SSO routing or for joining an organization by
+      domain.
+    - **Templates are split into common and more** (the owner, 2026-11-23): "Add
+      sign-in method" by default lists only the few common ones (Google,
+      Microsoft, Apple, GitHub). The rest are under "More templates", opened and
+      chosen from there, grouped by region:
+      - Mainland China: WeChat (QR scan for a website app on the open platform),
+        WeCom, DingTalk, Feishu, QQ, Alipay;
+      - Other regions: LINE, Kakao, Naver, Yandex;
+      - General: GitLab.com, Discord, Slack, X, Facebook, Amazon.
+      Templates carry a region label. The region preset `site.profile` decides
+      which count as "common" (with `cn`, the common ones are WeChat, WeCom,
+      DingTalk, Feishu and phone number, and the overseas ones go into "More").
+      Most mainland platforms are not standard OIDC: WeChat uses `appid` instead
+      of `client_id`, its token endpoint parameters and response format are its
+      own, and the subject is the `unionid`. So behind each of these templates is a
+      very small adapter (only in the two steps of fetching the token and fetching
+      user info), so it is not pure configuration. These adapters are used only
+      for site-wide social sign-in. **A tenant's own SSO supports only standard
+      SAML and OIDC** (decided by the owner 2026-11-23): the enterprise editions
+      of WeCom, DingTalk, Feishu and so on also go through their standard SAML /
+      OIDC interfaces, and no special code is written for any one of them.
+      Directory sync (SCIM or each vendor's API) comes later. Applying for apps on
+      these platforms generally needs a mainland company entity, which the owner
+      will arrange when the time comes.
+    - **Sign-in methods in mainland China** (done when deploying in mainland
+      China, reserved for now): WeChat sign-in (a variant of OAuth 2.0, no email,
+      the subject is the `unionid`, and an email or phone number must be added to
+      the account separately), phone number plus SMS code (a new sign-in method
+      `kind: phone`, needing an SMS provider, rate limits per number and per IP,
+      and code abuse protection). So "an account's sign-in methods" cannot assume
+      that each carries an email, and the rule that emails are unique site-wide
+      does not apply to identities with no email.
+  - **Custom providers**: besides templates, the site admin can add any OpenID
+    Connect provider (the existing `kind: oidc`, by discovery document) and
+    providers **that have only OAuth 2.0 and no OIDC** (the new `kind: oauth2`:
+    the three addresses for authorization, token and user info, the scopes, and
+    the field names for taking the subject, email and name from the user info). An
+    email given by `oauth2` is by default not counted as verified (it does not
+    take part in merging by verified email), unless the admin says which field in
+    the user info means "verified". PKCE is used as usual. `oauth2` can only be a
+    site-wide `social` provider; a tenant's SSO is still only OIDC and SAML.
+  - For the endpoints see "Several sign-in methods per account" in "Sign-in:
+    social providers and SSO" of `docs/api.md`.
+- **Finding SSO by email domain** (needs the capability `signin.domains`):
+  - A tenant claims a domain and verifies it by DNS (decided by the owner
+    2026-11-23). An unverified claim does nothing. There are two kinds of record,
+    either one: TXT (the default) `_petalbook.<domain>` with the value
+    `petalbook-verify=<verification code>`; or CNAME `_petalbook.<domain>` pointing
+    to `<verification code>.verify.<this site's domain>` (this site's domain is the
+    host name of `--public-url`; only the CNAME target is compared, it is not
+    resolved). The verification code is valid for 7 days, and after it expires it
+    must be generated again. Only this one domain is recognized (subdomains are
+    claimed separately). Public email domains cannot be claimed.
+  - Verified claims are rechecked automatically once a day. If the record cannot
+    be found for 7 days in a row, the claim is cancelled, the tenant admin is
+    notified and it is audited. A DNS error does not count as not found.
+  - The "Check now" button: once a minute per domain, 20 times an hour per tenant,
+    and `domains.checksPerMinute` (default 60) times a minute site-wide. During
+    cooldown it answers `429 rate_limited` with `Retry-After`, and the UI shows a
+    countdown. The result is shown on the spot (found, not found, wrong value, and
+    for a wrong value the value that was seen), and every check is audited. Manual
+    checks do not affect the daily automatic recheck.
+  - **Two tenants claim the same domain**: there can be many unverified claims,
+    but only one verified one, and whoever verifies first gets it. A later
+    verification answers `409 domain_claimed`, without saying which tenant (and
+    only someone who can change that domain's DNS can get to this step). The site
+    admin can transfer it.
+  - The sign-in page first asks for an email or username (when the server has
+    verified domains). `POST /api/auth/discover` looks only at the domain and does
+    not look up accounts, so the answer is the same whether or not an account
+    exists. A username always gets the answer "no SSO". It counts against the
+    per-address per-minute quota of 2.8, and is answered from memory. When
+    `ssoOnly` is in effect for the domain's tenant, the page hides the password
+    box and offers only "Continue with <the tenant's identity provider>", with
+    "Sign in with a password" still next to it (the admin's back door; the
+    `ssoOnly` of 2.8 does not block admins). There is also a "Sign in with SSO"
+    entry that asks only for the email and redirects in the same way.
+  - The email is only a hint (`login_hint`): which account is signed in is decided
+    by the identity the identity provider returns, so routing by domain cannot
+    sign a person in to an account outside the tenant the provider belongs to.
+  - Usernames can still sign in with a password as before. As for the four sign-in
+    modes of 2.8: `auth.loginMode` becomes layered, and a page with `?tenant=`
+    uses the tenant's; `dual` and `sso_first` gain "ask for the email first";
+    `sso_redirect` goes straight to the tenant's SSO on the tenant's page;
+    `local_only` turns off the buttons and the SSO entry, but not the password
+    back door.
+  - When a tenant forces SSO, signing up a password account with an address on a
+    verified domain answers `409 sso_required`, with the SSO entry point.
+- **Emails are unique site-wide, and email sign-in comes first** (decided by the
+  owner 2026-11-23):
+  - The username is still the unique handle and id (used in `@mentions`, commit
+    authors and links).
+  - The sign-in box takes an email or a username, and in the UI the email comes
+    first ("Email" is written first and the username is the secondary way of
+    writing it). `POST /api/login` takes `identifier` (replacing the old
+    `username`).
+  - An email is unique across all accounts site-wide (including disabled ones and
+    those in the recycle bin, released only on purge), and comparison follows the
+    rule of 3.3: only ASCII A to Z are lowercased. One `email_key` column and a
+    unique index are stored, with a single index lookup at sign-in. **There are no
+    exceptions.** Changing it to an address someone else already uses answers
+    `409 email_taken`, and invitations and admin account creation are the same.
+    When an address is already taken at sign-up, the same `202` as in 3.3 is
+    answered, and a "you already have an account" email is sent to that account
+    (3.3 only looked inside this tenant, now it looks site-wide). An address held
+    only "unverified" by another account goes, at sign-up confirmation, to the
+    person confirming it; the original account's email is cleared and the person
+    is told in the site. When the address an identity provider gives is already
+    used by another account, the merge rules of 2.8 apply, and if it cannot be
+    merged an account with no email is created.
+  - Together with "ask for the email first" above: the first step of the sign-in
+    page asks for an email or username, `discover` looks only at the domain, if
+    there is SSO it goes to SSO, and otherwise the second step asks for the
+    password (or passkey).
+- **Joining an organization** (decided by the owner 2026-11-23): each organization
+  chooses for itself, and several can be on at once:
+  - (a) Invitation only: always available.
+  - (b) Automatic join for emails on a verified domain (`join.domain: auto`, off by
+    default): someone who signs up with an address on this domain (after the
+    address is confirmed), or creates an account through social sign-in where the
+    provider vouches for the address, gets an account created in this tenant, and
+    the person is told which tenant they joined.
+  - (c) Emails on a verified domain apply to join, and an admin approves: after
+    sign-up confirmation the account is not created straight away, and becomes a
+    join request (holding the username, and expiring if not handled in 30 days).
+    The admin approves it in the list (and can change the role) or rejects it.
+    Approval creates the account, and rejection sends an email and releases the
+    username.
+  - (d) Signing in through the organization's own SSO joins automatically (the
+    account is created at once, which is the provider's `autoCreate`). It can let
+    through only people in the groups listed in the IdP, and others are refused at
+    sign-in (checked at every sign-in, not only when the account is created).
+  - (b) and (c) need the capability `signin.domains`, and (d) needs `signin.sso`.
+    On a domain, (b) and (c) are either-or, and can override the organization's
+    default per domain.
+  - The default role of someone who joins: `member` or `viewer` (invitations still
+    use the role written on the invitation). `viewer` in an organization is new:
+    it cannot create spaces in the organization and is at most read-only in the
+    organization's spaces. The permission cache stores one more ceiling, and the
+    check is still a single lookup.
+  - IdP groups map to the organization's groups, continuing the `groups.map` of
+    3.2. IdP groups mapping to organization admin (`groups.admins`) needs this
+    tenant to have the capability `signin.idpAdmins` (off site-wide by default).
+    Every promotion to admin through it is audited. Only people promoted through
+    it are demoted, and manually set admins are left alone. `siteAdmin` is never
+    given.
+  - Removal from an IdP group takes effect at the next sign-in (same as 3.2). To
+    take effect at once, disable the person. SCIM is still in phase 5 (5.10).
+  - 3.6 is first done as "one person, one tenant": (b), (c) and (d) apply only to
+    new accounts. 3.7 changes it to adding an organization to an account.
+- **Organization self-service sign-up** (following Notion, decided by the owner
+  2026-11-23): a site-wide switch `tenant.selfService`, off by default, requiring
+  `tenancy` and mail to be on first. The sign-up page gets one more option,
+  "Create my own organization". After the address is confirmed the tenant is
+  created, and then an account is created in it, as this tenant's admin (not the
+  site admin), with a personal space. The new tenant starts from the site
+  defaults, with sign-up closed, and its capabilities use the plan named by
+  `tenant.selfService.plan` (without one, the site default). The caps (site-wide,
+  changeable by the site admin): 3 per person (`perPerson`; 3.6 counts, by
+  confirmed address, the tenants it created that still exist; from 3.7 it counts
+  by account), 20 an hour site-wide, 1000 in total. When exceeded, the same `202`
+  is still answered, and an email is sent saying it was not created. Individuals
+  follow the flow of 3.3.
+  - An organization with a verified domain can turn on "do not let people on this
+    domain create another organization" (`restrictOrgs`, per domain, off by
+    default): creating an organization with an address on this domain answers
+    `409 domain_managed`, with this organization's name and the ways to join
+    (automatic join, application or SSO), and the page guides to this
+    organization. It blocks only creating organizations, not signing up personal
+    accounts.
+  - In 3.6 an address can have only one account (emails are unique site-wide, and
+    an account is in only one tenant), so an address that already has an account
+    that comes to create an organization gets, as in 3.3, only "you already have
+    an account". Creating an organization again from the switcher menu by someone
+    already signed in is in 3.7.
+- **Each tenant's limits table** (decided by the owner 2026-11-23): set manually
+  by the site admin, one table per tenant. The capabilities above are the switch
+  items in the table (the keys do not change), and the table also has count caps:
+  - People: the number of people (`other.people`);
+  - Spaces: total and per person (`storage.quota.spaces`,
+    `storage.perPerson.spaces`);
+  - Storage: the total (`storage.quota.bytes`, which is this tenant's "storage
+    allocation" in the 3.5 storage pressure), a single file
+    (`storage.maxFileBytes`), pinning (`storage.pinnedBytes`);
+  - Sync: the allowed storage modes (`storage.modes`), and whether the attachment
+    repository can be used (`sync.assetsRepository`, new);
+  - Usage (new): API and MCP requests per minute (`usage.apiPerMinute`,
+    `usage.mcpPerMinute`), mails per day (`usage.mailPerDay`), external interface
+    calls per minute (`usage.outboundPerMinute`, which replaces the site-wide
+    `outbound.tenantPerMinute` as this tenant's share, and when not set that is
+    still used);
+  - All the capabilities of 3.6.
+  - **Each value records its source**: `site` (the site default), `plan` (the
+    tenant's plan), `billing` (written by the billing module, which does not exist
+    now), `manual` (written by hand by the site admin). **Manual wins**: the
+    effective value = manual -> billing -> plan -> site default, taking the first
+    that exists. The former source `tenant` is `manual`.
+  - **It can carry start and end dates** (`from`, `until`, both optional), for
+    example to give extra quota temporarily for a month. A value outside its
+    period is treated as absent. The memory records the time of the next start or
+    end, and when it arrives only that one tenant is recomputed, with no polling.
+  - **Events**: changes (including the start and end of dated values) and going
+    over a limit (at most one per tenant per key per day) are now written to the
+    audit. Webhooks are added later (only reserved, not done). When a limit is
+    exceeded, usage-type limits reject as usual (API and MCP answer
+    `429 rate_limited`, and mail cannot be queued), and count-type limits follow
+    the rule of 3.3.
+  - **Usage can be exported per tenant**: one summary row per day
+    (`tenant_usage_daily`, written by the daily reconciliation). The site admin
+    and this tenant's admin export it as CSV or JSON Lines for a date range.
+- **Where attachments go** (`storage.assets`, decided by the owner 2026-11-23):
+  the same repository / a separate attachment repository, in three layers: site
+  -> tenant -> space owner. The site can force it (`lock`) or only give a default
+  (`allow`). When the tenant's limits table turns off `sync.assetsRepository`, only
+  the same repository is possible.
+- **Remotes that cannot sync partially** (`storage.partial.unsupported`, decided
+  by the owner 2026-11-23): the only partial-sync policy, `allow` (the default,
+  uses a full clone) or `refuse` (connecting such a remote answers
+  `409 partial_unsupported`, with the host). Layers: site and tenant, and
+  `refuse` is stricter. Whether it is supported is decided by the automatic
+  detection of 3.5. Refusal applies only to new connections, and ones already
+  connected keep working.
+- **The billing boundary** (decided by the owner 2026-11-23; **billing and
+  payment do nothing for now**):
+  - Plans, limits, metering, bills and renewals belong to one **internal billing
+    module**. It writes the limits table through an internal interface (a Go
+    interface, not HTTP), with the source `billing`. The site admin's manual edits
+    stay as they are, and manual wins.
+  - Only **payment** is external (Stripe, Alipay, WeChat Pay and so on), through
+    payment adapters and their callbacks. This boundary is reserved: the adapter
+    interface and the callback path (`/api/billing/callbacks/{adapter}`) are only
+    written in the contract, and no route is built.
+  - The contract has no "token or interface for an external billing system": an
+    external system cannot change the limits table directly, and can only have the
+    internal billing module do so through the payment callback.
+  - The UI for the site admin to edit the limits table by hand ("limits table and
+    usage" on the tenant detail page) is done as planned.
+- **Everything a tenant owns is in memory** (SSO providers, the domain table, SMTP,
+  captcha keys, daily text endpoints, GitHub App, storage target): read at
+  startup, and when changed only that one tenant's is read again. No database
+  query is made for them at request time. Per-tenant caps: 10 SSO, 20 domains, 1
+  sender, 1 captcha set, 20 endpoints, 1000 texts, 1 GitHub App, 1 storage target
+  in use (plus old targets that still have spaces not yet moved away).
+- **Mail**: if the tenant has its own SMTP it is used (only `starttls` / `tls`,
+  public addresses, ports 25 / 465 / 587 / 2525). If not, the site's is borrowed
+  according to `mail.useSite` (the sender address is the site's, the display name
+  is the tenant name, and the tenant is not allowed to pose as the site domain
+  when sending). If neither exists, mail is treated as off. The site-wide queue
+  limit does not change, and each tenant may take at most 200 mails.
+- **Daily text**: a tenant's own endpoint has its own sealed secret, `rps` and
+  cache (keys carry the tenant), and does not use the site's quota. Whether the
+  site's endpoints can be used depends on `daily.useSiteApis`.
+- **GitHub** (through the provider interface of 2.7b; the routes are under
+  `/api/admin/tenants/{tenant}/connections/github…`): a tenant can register its
+  own App (github.com only, needs the capability `integrations.connections`), and
+  its installations are shared only within this tenant. Installations of the
+  site's App are shared per tenant (all or a few specified ones). When connecting
+  to GitHub, the tenant's App is used first, and if there is none the site's is
+  used according to `connections.useSiteApps`. One GitHub account still connects
+  to only one person on the server. `internal/githubapp` takes the App as a
+  parameter and does not use global variables, so the interface defined in 3.4
+  was already multi-App.
+- **The other storage settings**: the `storage.remotes.scope`, `.graceDays`,
+  `hosts` and `localSpaces.maxBytes` of 3.1 get a tenant layer, and the site
+  decides whether it is forced, a minimum requirement or only a default. Where
+  attachments go (`storage.assets`) has three layers: site, tenant, space owner.
+  When the attachment repository is required, it applies only to new spaces and
+  spaces that have just connected a remote. Existing spaces get a one-click move,
+  with no automatic move. An exemption is counted at the layer that granted it.
+  Pinning (`pin`) takes up the site's disk, and a tenant admin can pin only within
+  the capability `storage.pinnedBytes` (default 0). Anyone can evict the cache.
+- **Migration** `0021_tenant_autonomy.sql`, tested on both SQLite and PostgreSQL.
+  Databases used only for development and demos can open it, and no upgrade that
+  keeps data is promised (when the same email has several accounts in a
+  development database, the earliest keeps it and the others are cleared).
+- **Outward actions**: the addresses a tenant fills in make the server connect out
+  (identity providers, SMTP, endpoints, DNS, storage targets). Self-service
+  sign-up lets anyone create a tenant, so it is off by default. A tenant's sender
+  sends mail to real people in the tenant's name. A storage target creates
+  repositories in the tenant's GitHub organization or Git host. Tests always use
+  in-process fakes (a fake SMTP, a fake OIDC, a fake DNS resolver, fake GitHub and
+  GitLab interfaces), and never touch the outside.
 
-不做的（括号里是理由）：
+Not doing (reasons in parentheses):
 
-- 一个账号在几个租户里、切换工作区（要重做「一个人一个租户」的全部假设；所有者
-  2026-11-23 提前到 3.7）。
-- 按主机名区分租户（同 3.3，进 5.14）。
-- 租户自己的按地址额度和锁定、登录页验证码（见上，会泄露用户名在哪个租户）。
-- 租户之间搬人、搬空间（同 3.3）。
-- 租户自己的 GitHub Enterprise Server App（同 2.7，只支持 github.com）。
-- 计费和支付：价格、账单、计量、试用、续费、到期自动降级、支付渠道（见「计费的边界」：
-  只留内部接口和支付适配器的位置，什么都不做）。
-- 一个租户一个大仓库的存储目标（所有者定的是一个空间一个仓库）；没有建仓库接口的
-  Git 主机当存储目标。
+- One account in several tenants, switching workspaces (it would redo all the
+  assumptions of "one person, one tenant"; the owner brought it forward to 3.7 on
+  2026-11-23).
+- Telling tenants apart by host name (same as 3.3, goes into 5.14).
+- A tenant's own per-address quotas and lockout, and the sign-in page captcha (see
+  above, they would leak which tenant a username is in).
+- Moving people and spaces between tenants (same as 3.3).
+- A tenant's own GitHub Enterprise Server App (same as 2.7, only github.com is
+  supported).
+- Billing and payment: prices, bills, metering, trials, renewals, automatic
+  downgrade on expiry, payment channels (see "The billing boundary": only the
+  internal interface and the place for payment adapters are kept, and nothing is
+  done).
+- A storage target with one big repository per tenant (what the owner decided is
+  one repository per space); Git hosts without a repository-creation API as a
+  storage target.
 
-所有者 2026-11-23 定的：
+Decided by the owner 2026-11-23:
 
-1. 租户管理员填的地址让服务器去连：照设计接受（连接时按解析出的地址做公网检查，计入
-   全站出站上限和租户份额，可以用能力和 `mail.useSite` 等开关关掉）。
-2. 组织自助注册照 Notion：全站开关默认关；开了以后每人默认 3 个（全站管理员可以改）、
-   全站每小时 20 个；有已验证域名的组织可以不许这个域名上的人另建组织，并引导到自己。
-3. 按域名自动加入：接受（租户自己打开，默认关）。
-4. 一个域名被两个租户认领时先验证者得（全站管理员可以移交，后来者看不到是谁）。
-5. 域名验证用 DNS：TXT（默认）或 CNAME，验证码 7 天有效，每天复查，连续 7 天没有记录
-   就取消并通知；「立即检查」有冷却和上限，结果当场显示并记审计。
-6. 登录：用户名仍是唯一的代号；登录收邮箱或用户名，以邮箱为主；邮箱全站唯一，靠唯一
-   索引，没有例外。
-7. 加入组织的四种方式（只邀请、域名自动、域名申请加审批、本组织 SSO 即时加入并可按 IdP
-   组放行）任意组合，加入者的默认角色，IdP 组映射到组和（有能力时）到组织管理员；
-   从 IdP 组移出下次登录生效，SCIM 仍在第 5 期。
-8. v0.x 不做升级兼容：3.5、3.6、3.7 里所有为「升级后照旧」写的要求都删掉，直接写新规则
-   （见上面「3.5、3.6 和 3.4 的先后」）。
-9. 每个租户一套能力，全站默认加按租户覆盖，只有全站管理员改；能力决定有没有，分层决定
-   是多少；能力关着时答 `403 capability_off`、界面灰掉写「需要全站开启」；预留套餐（一组
-   能力，换套餐换掉整套），不做计费。
-10. 存储方式用方案 A：全站定有哪几种、强制还是默认；租户在能力允许的里面选；租户自己的
-    存储目标是每个空间一个仓库；换方式时已有的空间给搬的选项，什么都不删。
-11. 全站管理员能看、能改任何租户的配置、能力和存储方式，每次改动都记审计；租户管理员
-    看得出哪些是全站定的或锁住的；有「租户详情」页。
-12. 每个租户一张限额表，全站管理员手动设：人、空间（总数和每人）、存储（总额、单文件、
-    固定）、同步（允许的方式、附件仓库）、用量（API／MCP 速率、每天发信、外部接口调用）
-    和 3.6 的能力；每个值记来源（手动／套餐／计费），手动优先；可以带起止日期；改动和
-    超限现在进审计，以后加 webhook；用量按租户导出。
-13. 附件放哪里分三层（全站 → 租户 → 空间所有者），全站可以强制或只给默认。
-14. 部分同步只留一条策略「不能部分同步的远端：允许（完整）／拒绝」，默认允许，分层。
-15. 计费留在内部：套餐、限额、计量、账单、续费属于内部的计费模块，经内部接口写限额表；
-    只有支付是外部的（支付适配器和回调），只预留边界；合同里不要外部计费系统的令牌或
-    接口；管理员手动编辑的界面保留；计费和支付现在都不做。
+1. Addresses that a tenant admin fills in make the server connect out: accepted as
+   designed (a public network check on the resolved address at connection time,
+   counted against the site-wide outbound cap and the tenant's share, and can be
+   turned off with the capabilities and switches such as `mail.useSite`).
+2. Organization self-service sign-up follows Notion: a site-wide switch, off by
+   default. When on, 3 per person by default (changeable by the site admin) and 20
+   an hour site-wide. An organization with a verified domain can forbid people on
+   that domain from creating another organization, and guide them to itself.
+3. Automatic join by domain: accepted (the tenant turns it on itself, off by
+   default).
+4. When a domain is claimed by two tenants, whoever verifies first gets it (the
+   site admin can transfer it, and the latecomer cannot see who).
+5. Domain verification uses DNS: TXT (the default) or CNAME, the verification code
+   is valid for 7 days, rechecked daily, cancelled with a notification after 7
+   days in a row with no record. "Check now" has a cooldown and caps, and the
+   result is shown on the spot and audited.
+6. Sign-in: the username is still the unique handle. Sign-in takes an email or a
+   username, with the email first. Emails are unique site-wide, relying on a unique
+   index, with no exceptions.
+7. Four ways to join an organization (invitation only, automatic by domain, domain
+   application plus approval, instant join through the organization's SSO with
+   admission by IdP group possible), in any combination; the default role of
+   those who join; IdP groups mapping to groups and (when the capability exists)
+   to organization admin. Removal from an IdP group takes effect at the next
+   sign-in, and SCIM is still in phase 5.
+8. v0.x does no upgrade compatibility: all the requirements in 3.5, 3.6 and 3.7
+   written for "still the same after upgrade" are deleted, and the new rules are
+   written directly (see "The order of 3.5, 3.6 and 3.4" above).
+9. Each tenant has one set of capabilities, the site default plus per-tenant
+   overrides, changed only by the site admin. Capabilities decide whether it
+   exists, layers decide how much. When a capability is off it answers
+   `403 capability_off` and the UI is greyed out with "Needs to be turned on
+   site-wide". Plans (a set of capabilities, where changing the plan replaces the
+   whole set) are reserved, and billing is not done.
+10. Storage modes use plan A: the site decides which modes there are and whether
+    they are forced or default. The tenant chooses among what its capabilities
+    allow. The tenant's own storage target is one repository per space. When the
+    mode is changed, existing spaces get the option to move, and nothing is
+    deleted.
+11. The site admin can see and change any tenant's configuration, capabilities and
+    storage modes, and every change is audited. The tenant admin can see which
+    things the site decided or locked. There is a "tenant detail" page.
+12. Each tenant has one limits table, set manually by the site admin: people,
+    spaces (total and per person), storage (total, single file, pinning), sync
+    (allowed modes, attachment repository), usage (API / MCP rate, mails per day,
+    external interface calls) and the capabilities of 3.6. Each value records its
+    source (manual / plan / billing), and manual wins. It can carry start and end
+    dates. Changes and going over a limit now go into the audit, and webhooks are
+    added later. Usage can be exported per tenant.
+13. Where attachments go has three layers (site -> tenant -> space owner), and the
+    site can force it or only give a default.
+14. Partial sync keeps only one policy, "remotes that cannot sync partially: allow
+    (full) / refuse", default allow, layered.
+15. Billing stays internal: plans, limits, metering, bills and renewals belong to
+    the internal billing module, which writes the limits table through an internal
+    interface. Only payment is external (payment adapters and callbacks), and only
+    the boundary is reserved. The contract has no token or interface for an
+    external billing system. The UI for admins to edit by hand stays. Billing and
+    payment are both not done now.
 
-要所有者定的（先按括号里的默认做）：
+For the owner to decide (do it by the default in parentheses for now):
 
-1. 全站默认的能力里，「租户管理员查看和导出组织空间的内容」（`data.adminView`）开还是
-   关（开：沿用 3.5 定的「管理员能看、每次留审计」；全站管理员可以按租户关掉。另一种是
-   默认关、按租户或套餐开，隐私更保守）。
-2. 一个租户失去能力或换到更小的套餐后，已经在用那项东西的空间怎么办（照常能用，只是
-   新的不行：存储目标上的空间照常同步，只是不能再建；另一种是给一个宽限期，过期变只读，
-   以后计费时更好用）。
+1. Among the site's default capabilities, whether "tenant admins view and export
+   the contents of organization spaces" (`data.adminView`) is on or off (on: it
+   continues what 3.5 decided, "admins can look, and every look leaves an audit
+   record", and the site admin can turn it off per tenant. The alternative is off
+   by default and turned on per tenant or plan, which is more conservative on
+   privacy).
+2. After a tenant loses a capability or switches to a smaller plan, what happens
+   to the spaces already using that thing (keep working as usual, and only new
+   ones cannot: spaces on a storage target keep syncing, and only cannot be
+   created any more. The alternative is a grace period, after which they become
+   read-only, which will work better once billing exists).
 
-**3.7 的约定**（2026-11-23）：接口和错误码写在 `docs/api.md` 新的「Several
-organisations per account」一节。所有者同一天把「一个账号在几个组织里」从第 5 期
-（原 5.14）提前到这里，照 Notion 的做法。设计按 3.6 合并之后写。
+**The 3.7 contract** (2026-11-23): the endpoints and error codes are written in
+the new "Several organisations per account" section of `docs/api.md`. On the same
+day the owner brought "one account in several organizations" forward from phase 5
+(formerly 5.14) to here, following Notion. The design is written after 3.6 is
+merged.
 
-定下来的：
+Decided:
 
-- **个人的家和组织**：每个账号有一个家（`users.tenant_id` 改称家，列名不变）和一张
-  成员表 `tenant_members`（租户、人、角色 `admin`／`member`／`viewer`、怎么进来的、
-  什么时候）。个人空间在家里；共享空间属于一个组织。一个账号可以是几个组织的成员：
-  邀请、按域名加入、经组织的 SSO 即时加入、自己建。界面左上角切换组织，「个人」是其中
-  一项；只有一个去处时不显示切换。
-- **组织强制 SSO 和按组织验证**（所有者 2026-11-24）：
-  - 组织管理员可以开「强制 SSO」（`signin.enforceSSO`，3.6 的租户 SSO 配好并测试通过才能开）：
-    访问这个组织的空间和数据，会话里必须有这个组织最近一次 SSO 验证；用密码、社交登录、
-    passkey 登录的会话进不了这个组织。**个人区和其他组织不受影响**。
-  - **不退出、不重新登录**：会话上多记「按组织的验证」（租户、提供方、验证时间、到期）。从
-    个人区切到这个组织时，切换列表里这个组织旁边是一把锁（不用叹号，叹号像出错）和
-    「需要验证」；点它弹出对话框：「Acme 要求通过公司账号登录」，说明个人空间不受影响、
-    不会退出，按钮左边「取消」、右边主按钮「通过 ⟨IdP 名称⟩ 继续」；IdP 的名称和图标由
-    租户配 SSO 时自己填。验证完回到刚才要去的地方。从链接直接打开组织里的页面，就地弹同一个
-    对话框，验证后打开这一页。接口答 `403 sso_required`（带 `tenant`、提供方的名称和图标、
-    发起验证的地址）。
-  - **有效期按客户端分开**（所有者 2026-11-24）：
-    - 默认**都是滑动的**：App **30 天**、网页 **7 天**（这期间用过就再续一段）；
-    - **只由全站管理员设**（`signin.orgVerify.app`、`.web`：滑动或固定、天数，以及一个可选的
-      「最长有效期」，默认不设）。**租户没有这一层**，照 OpenAI Business 等的做法，组织管理员
-      不能改；这是只在全站一层存在的设置（见「全部全站设置都能默认或强制」）。
-    滑动的代价写明：公司那边停用了人，只要他一直在用就不会自动掉线；应对是组织管理员在
-    PetalBook 里移出他（立刻生效）、全站设最长有效期，以后做 SCIM。客户端类型按会话怎么建的
-    （App 的登录流程和设备令牌），不按请求头；就算有人在浏览器里模仿 App，也只是用到全站
-    给 App 定的期限。
-  - **令牌按范围**：建令牌时选范围（只限个人区，或勾选几个组织）。个人区的令牌永远能用，
-    和任何组织的设置无关；要访问开了强制 SSO 的组织的数据，令牌要先经那个组织的 SSO
-    授权一次（照 GitHub 的做法），会话的那次验证过期不影响已授权的令牌，人被移出组织时
-    令牌对这个组织失效。组织关掉令牌能力（`integrations.tokens`）只影响这个组织。
-  - **紧急账号**：组织可以指定一两个所有者作为紧急账号，不走 SSO 进来修配置；每次使用
-    记审计并通知其他管理员。
-  - 站点管理员不受组织 SSO 的限制，内容照旧只能走记审计的「查看」。离线副本：验证过期时
-    App 里这个组织的副本停止同步、显示锁，重新验证后继续。
-  - 3.6 第 4 部分做强制 SSO 的设置和租户 SSO；按组织的验证、切换时的锁和对话框、令牌范围
-    在 3.7 做（它们都依赖一个账号属于几个组织）。
-- **账号归谁管**：`users.held` 为真时，家所在租户的管理员管这个账号本身（停用、重置
-  密码、改邮箱、删除，即 3.3、3.5 的那些）；为假时（个人账号）只有全站管理员和本人。
-  账号都是个人账号：家是默认租户，经邀请、注册、按域名或 SSO 进来的组织只加一行成员。
-  只有托管账号（下面）是 `held` 的。
-- **组织管理员只管组织的东西**：本组织的空间、组、成员（角色、移出）、加入方式和设置；
-  从不看成员的个人空间（所有者 2026-11-23 定，没有例外），也不能动不归本组织管的账号
-  本身。移出一个人按 3.5 删人的规则，
-  只在本组织的空间里做（独有的、没有别的成员的空间进本组织的回收站，有别的成员的转移，
-  其余退出），他在本组织的组成员、绑在本组织的令牌一起去掉。本人也可以退出一个组织
-  （最后一个管理员不能退）。全站管理员照旧看、管一切。
-- **请求带当前组织**：网页端每个请求带 `X-PetalBook-Tenant`（地址里也有组织的
-  `slug`），不带时用会话里上次用的；服务器拿它和内存里这个人的成员集合比一下（一次
-  查找），不是成员就当不存在。按 id 的空间接口不看它，按空间所在的组织判断。会话
-  不绑定组织，所以两个标签页可以开着不同的组织。
-- **权限缓存**：1.7／3.2 的按人缓存里每个空间多存它的组织，再加这个人的成员集合和
-  每个组织里的角色（`viewer` 的上限）；成员变动时作废这个人的缓存，和组变动一样。
-  每次请求的判断仍是一次查找，令牌多一次「空间的组织等于令牌的组织」的比较。
-- **令牌、OAuth、MCP**：API 令牌和 OAuth 授权在建立时绑定一个组织（或「个人」），之后
-  只到得了那里的空间；授权页让人选组织。MCP 的工具只看见那个组织的空间。这个组织没有
-  能力 `integrations.tokens`／`.mcp` 时，绑在它上面的令牌和授权答 `403 capability_off`。
-- **一个组织的安全要求只管它自己的内容**：组织的 `ssoOnly`、要求 passkey、会话时长在
-  这个人进这个组织时检查。会话里按组织记「用什么、什么时候证明过」：组织强制 SSO 而
-  这次会话没经它的 SSO 登录过，进这个组织时答 `403 tenant_sso_required` 带入口，经 SSO 登一次
-  就补上，不用重新登录整个账号；个人的家和别的组织不受影响。账号本身的登录规则（失败
-  上限、锁定）仍在全站，账号级的会话时长看家。
-- **用量和配额**：`usage` 行按（租户、人）记。空间算在它所在的组织和建它的人在这个
-  组织里的份额上；个人空间算在家。全站和租户的总额规则（3.3）不变。
-- **审计**：每一行带它说的那个组织。组织管理员看本组织的行（成员进出、角色、本组织
-  空间的事、经本组织 SSO 的登录）；账号本身的事（密码、passkey、改邮箱）写在家，由管
-  这个账号的人看。
-- **管理页**：组织的「成员」页读成员表，列出角色、怎么进来的、是否归本组织管、是否
-  托管；账号本身的操作只对归本组织管的人显示。全站管理员的「用户」页列出每个账号的家
-  和全部组织。
-- **3.6 的几样在这里变成多成员**（接口形状不变）：
-  - 按域名自动加入：已有的账号在下次登录（或验证了这个域名的地址）时加进组织，并告诉
-    本人；可以退出（托管账号除外）。
-  - 申请加入：已登录的人在「可加入的组织」里申请，管理员照 3.6 的列表批准或拒绝。
-  - SSO 即时加入：新账号照 3.6；已有账号见下面要所有者定的问题 1。
-  - 邀请：被邀请的地址已有账号时，接受邀请就加一行成员（3.6 答 `409 email_taken`）；
-    邀请的答复不再因地址有没有账号而不同。
-  - 自助建组织：已登录的人从切换菜单里建，每人 3 个按账号数（3.6 按地址），
-    `restrictOrgs` 按这个人已验证的邮箱的域名查。
-- **托管账号**（照 Notion 的 managed users）：按已验证的域名开，默认关；要这个组织有
-  能力 `signin.managedAccounts`（能力关掉时托管停下，账号变回个人账号），还要有一个路由
-  到这个域名、启用着的 SSO 提供方。开着时，已验证的邮箱在这个域名上的账号归
-  这个组织管（`held`，家是这个组织）：
-  - 不能建个人空间，也不能建别的组织（`403 managed_account`）；
-  - 必须经这个组织的 SSO 登录，密码、passkey、社交登录都不行（全站管理员不托管：开启
-    时跳过并记审计）；
-  - 加入按上面的规则；
-  - 已有的个人空间不删、组织管理员也看不到，本人选「搬进组织」（变成组织的空间，本人仍
-    是所有者）或「导出」（本人导出自己的个人空间，3.5 的导出，7 天）；
-  - 开启前有预览（会托管几个账号、几个归别的组织管的跳过），要 3.5 的二次确认；每个
-    被托管的账号记一条审计，本人下次登录时看到说明。关掉托管时账号变回个人账号，已有
-    的成员关系不动。
-  - 没开托管时，这个域名上的人保留自己的个人空间，同时是组织的成员（所有者的主要
-    用法）。
-- **迁移** `0022_memberships.sql`，SQLite 和 PostgreSQL 都测；只为开发和演示的库能
-  打开，不承诺保留数据的升级，也没有「迁移来的」成员或托管：规则就是上面写的。
-- **隔离**：3.3 的隔离表和三条测试照旧，`INSERT … SELECT` 的检查从「两行同一个
-  `tenant_id`」改成「这个人在空间所在的组织里有成员行」；个人空间只能分享给和所有者
-  同在某个组织的人。固定数据加一个「一人两个组织」的账号，每条路由都要按当前组织
-  分开答。
+- **A person's home and organizations**: each account has one home
+  (`users.tenant_id` is now called the home, with the column name unchanged) and a
+  membership table `tenant_members` (tenant, person, role
+  `admin` / `member` / `viewer`, how they joined, when). Personal spaces are in the
+  home, and a shared space belongs to one organization. An account can be a member
+  of several organizations: by invitation, by joining by domain, by instant join
+  through the organization's SSO, or by creating one itself. The organization is
+  switched at the top left of the UI, and "Personal" is one of the entries. When
+  there is only one place to go, the switcher is not shown.
+- **Organization-enforced SSO and per-organization verification** (the owner
+  2026-11-24):
+  - An organization admin can turn on "enforce SSO" (`signin.enforceSSO`, which can
+    be turned on only after the 3.6 tenant SSO is configured and has passed its
+    test): to access this organization's spaces and data, the session must carry
+    this organization's most recent SSO verification. A session signed in with a
+    password, social sign-in or a passkey cannot enter this organization. **The
+    personal area and other organizations are not affected.**
+  - **No sign-out, no signing in again**: the session additionally records
+    "per-organization verification" (tenant, provider, verification time, expiry).
+    When switching from the personal area to this organization, the organization
+    in the switcher list has a lock next to it (not an exclamation mark, which
+    looks like an error) and "Verification needed". Clicking it opens a dialog:
+    "Acme requires signing in with your company account", saying that the
+    personal space is not affected and the person will not be signed out, with
+    "Cancel" on the left of the buttons and the main button "Continue with
+    <IdP name>" on the right. The IdP's name and icon are filled in by the tenant
+    itself when configuring SSO. After verification the person returns to where
+    they were going. Opening a page in the organization directly from a link opens
+    the same dialog in place, and opens that page after verification. The API
+    answers `403 sso_required` (with `tenant`, the provider's name and icon, and
+    the address to start verification).
+  - **Validity periods differ by client** (the owner 2026-11-24):
+    - By default **all are sliding**: the app **30 days**, the web **7 days**
+      (used within the period, it is extended by another period);
+    - **Set only by the site admin** (`signin.orgVerify.app`, `.web`: sliding or
+      fixed, the number of days, and an optional "maximum validity", not set by
+      default). **Tenants have no such layer**, following the practice of OpenAI
+      Business and others, and organization admins cannot change it. This is a
+      setting that exists only at the site layer (see "Every site-wide setting can
+      be "default" or "forced"" above).
+    The cost of sliding is stated: if the company disables a person on its side,
+    they will not be signed out automatically as long as they keep using it. The
+    answers are that the organization admin removes them in PetalBook (effective
+    at once), the site sets a maximum validity, and SCIM later. The client type is
+    decided by how the session was created (the app's sign-in flow and device
+    token), not by request headers. Even if someone imitates the app in a browser,
+    they only get the period the site set for the app.
+  - **Tokens by scope**: when creating a token one chooses the scope (the personal
+    area only, or tick several organizations). A token for the personal area
+    always works, regardless of any organization's settings. To access the data of
+    an organization with enforced SSO, the token must first be authorized once
+    through that organization's SSO (following GitHub), and the expiry of the
+    session's verification does not affect an already authorized token. When a
+    person is removed from the organization, the token becomes invalid for that
+    organization. An organization turning off the token capability
+    (`integrations.tokens`) affects only that organization.
+  - **Emergency accounts**: an organization can designate one or two owners as
+    emergency accounts, which enter without SSO to fix the configuration. Every
+    use is audited and the other admins are notified.
+  - Site admins are not bound by organization SSO, and content still goes only
+    through the audited "view". Offline copies: when the verification expires, the
+    copy of this organization in the app stops syncing and shows a lock, and
+    continues after verification again.
+  - Part 4 of 3.6 does the enforced-SSO setting and tenant SSO. The per-organization
+    verification, the lock and dialog at switching, and token scopes are done in
+    3.7 (they all depend on an account belonging to several organizations).
+- **Who manages the account**: when `users.held` is true, the admin of the tenant
+  that is the home manages the account itself (disable, reset password, change
+  email, delete, that is, those of 3.3 and 3.5). When false (a personal account),
+  only the site admin and the person themselves can. All accounts are personal
+  accounts: the home is the default tenant, and an organization entered through
+  invitation, sign-up, by domain or by SSO adds only a membership row. Only
+  managed accounts (below) are `held`.
+- **An organization admin manages only the organization's things**: this
+  organization's spaces, groups, members (roles, removal), joining methods and
+  settings. They never look at members' personal spaces (decided by the owner
+  2026-11-23, no exceptions), and cannot touch the account itself of one that is
+  not managed by this organization. Removing a person follows the rules of 3.5 for
+  deleting a person, done only in this organization's spaces (spaces that are
+  theirs alone and have no other members go into this organization's recycle bin,
+  those with other members are transferred, and the rest are left), and their
+  group memberships in this organization and the tokens bound to this organization
+  are removed together. A person can also leave an organization themselves (the
+  last admin cannot leave). The site admin still sees and manages everything.
+- **Requests carry the current organization**: every request from the web client
+  carries `X-PetalBook-Tenant` (the organization's `slug` is also in the address).
+  When it is absent, the one last used in the session is used. The server compares
+  it with this person's membership set in memory (one lookup), and if the person
+  is not a member it is treated as nonexistent. Endpoints addressed by space id do
+  not look at it, and judge by the organization the space is in. The session is
+  not bound to an organization, so two tabs can be open on different
+  organizations.
+- **Permission cache**: in the per-person cache of 1.7 / 3.2, each space also
+  stores its organization, plus the person's membership set and the role in each
+  organization (the ceiling for `viewer`). When membership changes, this person's
+  cache is invalidated, the same as for group changes. The check on each request
+  is still one lookup, and tokens get one extra comparison, "the space's
+  organization equals the token's organization".
+- **Tokens, OAuth, MCP**: an API token and an OAuth authorization are bound to one
+  organization (or "Personal") when created, and afterwards reach only the spaces
+  there. The authorization page lets the person choose the organization. MCP tools
+  see only that organization's spaces. When the organization does not have the
+  capability `integrations.tokens` / `.mcp`, tokens and authorizations bound to it
+  answer `403 capability_off`.
+- **An organization's security requirements govern only its own content**: the
+  organization's `ssoOnly`, requiring a passkey and session length are checked
+  when this person enters this organization. The session records, per
+  organization, "what was used and when it was proven": if the organization
+  enforces SSO and this session was not signed in through its SSO, entering this
+  organization answers `403 tenant_sso_required` with the entry point, and signing
+  in once through SSO makes it up, without signing in to the whole account again.
+  The person's home and other organizations are not affected. The account's own
+  sign-in rules (failure cap, lockout) are still site-wide, and the account-level
+  session length follows the home.
+- **Usage and quota**: `usage` rows are recorded by (tenant, person). A space is
+  counted against the organization it is in and the share of the person who
+  created it in this organization, and a personal space is counted against the
+  home. The total rules for site and tenant (3.3) do not change.
+- **Audit**: each row carries the organization it speaks of. An organization admin
+  sees this organization's rows (members joining and leaving, roles, matters of
+  this organization's spaces, sign-ins through this organization's SSO). Matters of
+  the account itself (password, passkey, changing email) are written in the home
+  and seen by whoever manages this account.
+- **Admin page**: the organization's "Members" page reads the membership table and
+  lists the role, how they joined, whether they are managed by this organization,
+  and whether they are held. Operations on the account itself are shown only for
+  people managed by this organization. The site admin's "Users" page lists each
+  account's home and all its organizations.
+- **Several things from 3.6 become multi-membership here** (the shape of the API
+  does not change):
+  - Automatic join by domain: an existing account is added to the organization at
+    its next sign-in (or when an address on this domain is verified), and the
+    person is told. They can leave (except managed accounts).
+  - Applying to join: a signed-in person applies under "Organizations you can
+    join", and the admin approves or rejects from the list as in 3.6.
+  - Instant join through SSO: new accounts follow 3.6. For existing accounts see
+    open question 1 below for the owner.
+  - Invitation: when the invited address already has an account, accepting the
+    invitation adds a membership row (3.6 answers `409 email_taken`). The
+    invitation's response no longer differs by whether the address has an account.
+  - Creating an organization by oneself: a signed-in person creates it from the
+    switcher menu, 3 per person counted by account (3.6 counts by address), and
+    `restrictOrgs` is checked against the domain of this person's verified email.
+- **Managed accounts** (following Notion's managed users): turned on per verified
+  domain, off by default. It needs this organization to have the capability
+  `signin.managedAccounts` (when the capability is turned off, management stops and
+  the accounts become personal accounts again), and also an enabled SSO provider
+  that routes to this domain. When on, accounts whose verified email is on this
+  domain belong to this organization (`held`, with this organization as the home):
+  - They cannot create personal spaces, and cannot create other organizations
+    (`403 managed_account`);
+  - They must sign in through this organization's SSO, and password, passkey and
+    social sign-in do not work (the site admin is not managed: skipped when turning
+    on, and audited);
+  - Joining follows the rules above;
+  - Existing personal spaces are not deleted and the organization admin cannot see
+    them. The person chooses "move into the organization" (it becomes an
+    organization space, and the person is still its owner) or "export" (the person
+    exports their own personal space, the export of 3.5, 7 days);
+  - Before turning on there is a preview (how many accounts will be managed, how
+    many are skipped because they are managed by another organization), and the
+    second confirmation of 3.5 is needed. One audit record is written for each
+    managed account, and the person sees an explanation at their next sign-in.
+    When management is turned off the accounts become personal accounts again, and
+    existing memberships are left alone.
+  - When management is not turned on, people on this domain keep their own personal
+    spaces and are also members of the organization (the owner's main use).
+- **Migration** `0022_memberships.sql`, tested on both SQLite and PostgreSQL.
+  Databases used only for development and demos can open it. No upgrade that keeps
+  data is promised, and there are no "migrated" members or management: the rules
+  are as written above.
+- **Isolation**: the isolation table and three tests of 3.3 stay as they are, and
+  the check of `INSERT … SELECT` changes from "two rows with the same `tenant_id`"
+  to "this person has a membership row in the organization the space is in". A
+  personal space can be shared only with people who are in some organization
+  together with the owner. The fixed data adds an account that is in two
+  organizations, and every route must answer separately by the current
+  organization.
 
-不做的（括号里是理由）：
+Not doing (reasons in parentheses):
 
-- 按主机名区分组织（同 3.3，仍在 5.14）。
-- 组织之间搬空间（仍在 5.14；托管时的「搬进组织」只从个人的家搬到一个组织）。
-- 访客（不是成员、只进某几个空间的人；组织的 `viewer` 先顶上）。
-- SCIM（仍在 5.10）。
+- Telling organizations apart by host name (same as 3.3, still in 5.14).
+- Moving spaces between organizations (still in 5.14; the "move into the
+  organization" of managed accounts only moves from a person's home to an
+  organization).
+- Guests (people who are not members and enter only some spaces; the
+  organization's `viewer` stands in for now).
+- SCIM (still in 5.10).
 
-所有者 2026-11-23 定的：
+Decided by the owner 2026-11-23:
 
-1. 组织管理员只看得到组织的空间，看不到任何人的个人空间，没有例外；个人空间只有本人和
-   全站管理员看得到。
-2. 只有托管账号归组织管（`held`）；别的账号都是个人账号，组织只管成员关系。
+1. An organization admin sees only the organization's spaces, and cannot see
+   anyone's personal spaces, with no exceptions. Personal spaces can be seen only
+   by the person and the site admin.
+2. Only managed accounts are managed by the organization (`held`). All other
+   accounts are personal accounts, and the organization manages only membership.
 
-要所有者定的（先按括号里的默认做）：
+For the owner to decide (do it by the default in parentheses for now):
 
-1. 组织的 SSO 遇到一个已有的个人账号、它已验证的邮箱在组织已验证的域名上时，能不能
-   直接登进去并加成员（能，但这样得来的会话只到得了这个组织，进个人的家和别的组织要用
-   账号自己的登录方式；从不登进全站管理员。另一种是要本人先用自己的方式登录、确认关联
-   一次）。
-2. 托管账号能不能同时是别的组织的成员（能：开启托管时保留已有的成员关系，之后也能经
-   邀请加入别的组织，只是不能自己建组织。另一种是开启时移出别的组织并且以后不许加入，
-   公司对数据去向管得更严）。
+1. When an organization's SSO meets an existing personal account whose verified
+   email is on a domain the organization has verified, can it sign straight in and
+   add membership (yes, but the session obtained this way reaches only this
+   organization, and entering the person's home and other organizations requires
+   the account's own sign-in methods. It never signs in the site admin. The
+   alternative is that the person must first sign in by their own method and
+   confirm the link once).
+2. Whether a managed account can also be a member of other organizations (yes:
+   when management is turned on, existing memberships are kept, and later it can
+   join other organizations by invitation, but cannot create organizations itself.
+   The alternative is that turning it on removes them from other organizations and
+   forbids joining any later, which gives the company stricter control over where
+   data goes).
 
-**3.8 的约定**（2026-11-23）：GitLab 和 Gitea 的连接。接口和错误码写在 `docs/api.md`
-新的「Connections to GitLab and Gitea」一节。所有者 2026-11-23 加，设计按 2.7b 合并
-之后写。
+**The 3.8 contract** (2026-11-23): connections to GitLab and Gitea. The endpoints
+and error codes are written in the new "Connections to GitLab and Gitea" section
+of `docs/api.md`. Added by the owner 2026-11-23, and the design is written after
+2.7b is merged.
 
-定下来的：
+Decided:
 
-- **两个新的提供方类型**，都实现 2.7b 的提供方接口、跑同一套合同测试：
-  - `gitlab`：gitlab.com 和自托管的 GitLab；
-  - `gitea`：Gitea、Forgejo，以及 Codeberg（codeberg.org 上的 Forgejo）。
-- **每个主机一个 OAuth 应用，由管理员配**：主机地址、client id、client secret（用服务器
-  密钥封存，任何接口都不返回）。全站管理员配全站的；有能力 `integrations.connections`
-  的租户可以配自己的（只给本租户的人用）。保存前向主机核对一次（实例的版本接口、
-  用 client 凭据走一次换令牌的错误路径）；主机要在 `storage.hosts` 里，连接时按解析出
-  的地址做公网检查（同 3.6 的出站约束）。每台服务器最多 20 个这样的提供方，每个租户
-  最多 5 个。界面上给出要在 GitLab／Gitea 上填的回调地址和要勾的权限范围。
-- **用户连一次**：授权码加 PKCE，回调是 `/api/connections/{provider}/authorization/callback`
-  （和 GitHub 的同一条路，`{provider}` 不同）。访问令牌和刷新令牌分别封存；快到期时
-  续期，每人同一时间只续一次，新的一对先写库再用；每天续一次 30 天内要过期的。一个
-  外部账号（按主机和账号 id）只能连服务器上的一个人。断开时尽力向主机撤销。
-- **权限范围**：只要建仓库、读写仓库所需的最小范围，按各平台文档在实现时写定并写进
-  `docs/api.md`；测试用进程里的假 GitLab、假 Gitea，不连外面。
-- **没有「安装」**：同步用连接的那个人的令牌（`via: "user"`，规则同 2.7：那个人不能
-  登录、没了 `manage` 或断开时停下，空间进入 `connection_missing`，不丢东西）；租户的
-  存储目标用租户配的凭据（GitLab 的组访问令牌，Gitea 的组织里一个机器人账号的令牌，
-  `via: "tenant"`）。
-- **建仓库**：在这个人自己的命名空间，或他能建项目的组／组织里，一律私有，`slug` 重名时
-  照 3.6 加后缀；之后的流程和 2.7 一样（先在磁盘上建、建远端、推送、一个事务里写记录；
-  建了远端之后失败时远端留着不删，记一条空仓库提醒）。附件仓库照 3.1。
-- **部分同步**：照 3.5 自动检测，按主机记下；GitLab 和较新的 Gitea／Forgejo 一般支持，
-  以检测结果为准。
-- **列表都分页**，每页最多一次对主机的请求；GitLab 和 Gitea 能按名字筛，所以有 `q`。
+- **Two new provider types**, both implementing the provider interface of 2.7b and
+  running the same contract tests:
+  - `gitlab`: gitlab.com and self-hosted GitLab;
+  - `gitea`: Gitea, Forgejo, and Codeberg (Forgejo on codeberg.org).
+- **One OAuth app per host, configured by the admin**: the host address, client id
+  and client secret (sealed with the server key, and never returned by any
+  endpoint). The site admin configures the site's. A tenant with the capability
+  `integrations.connections` can configure its own (for use only by people in
+  this tenant). Before saving, the host is checked once (the instance's version
+  endpoint, and one run of the token-exchange error path with the client
+  credentials). The host must be in `storage.hosts`, and a public network check is
+  done on the resolved address at connection time (the same outbound restriction
+  as 3.6). There are at most 20 such providers per server and 5 per tenant. The UI
+  gives the callback address to enter on GitLab / Gitea and the scopes to tick.
+- **A user connects once**: authorization code plus PKCE, with the callback
+  `/api/connections/{provider}/authorization/callback` (the same route as GitHub's,
+  with a different `{provider}`). The access token and refresh token are sealed
+  separately. They are renewed when close to expiry, once at a time per person,
+  with the new pair written to the database before use, and once a day those
+  expiring within 30 days are renewed. One external account (by host and account
+  id) can connect to only one person on the server. On disconnect, a revocation is
+  sent to the host as best effort.
+- **Scopes**: only the minimum scopes needed to create repositories and to read
+  and write them, fixed at implementation time according to each platform's
+  documentation and written into `docs/api.md`. Tests use an in-process fake
+  GitLab and fake Gitea, and do not connect to the outside.
+- **No "installation"**: sync uses the token of the person who connected
+  (`via: "user"`, with the rules of 2.7: it stops when that person cannot sign in,
+  loses `manage`, or disconnects, and the space goes into `connection_missing`
+  with nothing lost). A tenant's storage target uses the credentials the tenant
+  configured (a GitLab group access token, or the token of a bot account in a
+  Gitea organization, `via: "tenant"`).
+- **Creating repositories**: in the person's own namespace, or in a group /
+  organization where they can create projects. Always private. When the `slug` is
+  taken, a suffix is added as in 3.6. The flow after that is the same as 2.7
+  (create on disk first, create the remote, push, and write the record in one
+  transaction; if it fails after the remote is created, the remote is kept and not
+  deleted, and an empty-repository reminder is recorded). The attachment
+  repository follows 3.1.
+- **Partial sync**: automatic detection as in 3.5, recorded per host. GitLab and
+  newer Gitea / Forgejo generally support it, and the detection result is what
+  counts.
+- **Lists are all paginated**, with at most one request to the host per page.
+  GitLab and Gitea can filter by name, so there is a `q`.
 
-3.8 不做的：GitHub Enterprise Server、Bitbucket（仍可以按地址用普通 Git）；webhook；
-设备码流程（第 4 期的客户端）。
+Not done in 3.8: GitHub Enterprise Server and Bitbucket (they can still be used as
+plain Git by address); webhooks; the device code flow (the client of phase 4).
 
-所有者 2026-11-23 定的：
+Decided by the owner 2026-11-23:
 
-1. GitLab（gitlab.com 和自托管）和 Gitea／Forgejo／Codeberg 在自己的里程碑里做：每个主机
-   一个管理员配的 OAuth 应用，用户连一次。
+1. GitLab (gitlab.com and self-hosted) and Gitea / Forgejo / Codeberg are done in
+   their own milestone: one OAuth app per host, configured by an admin, and each
+   user connects once.
 
-**3.8 的现状（2026-11-24）**：上面的约定做了，租户自己配提供方和租户存储目标留给 3.6（见
-下面「没做的」）。接口见 `docs/api.md` 的「Connections to GitLab and Gitea」和它的
-「As built」。
+**3.8 as built (2026-11-24)**: the contract above was done, and tenants
+configuring their own providers and the tenant storage target are left to 3.6
+(see "Not done" below). For the endpoints see "Connections to GitLab and Gitea" in
+`docs/api.md` and its "As built".
 
-- **代码**：新的包 `internal/forge`。一个 `Provider` 就是一台主机的一个 OAuth 应用，实现
-  2.7b 的 `connections.Provider` 和 `Administered`；两个平台只在 `driver`（`gitlab.go`、
-  `gitea.go`：授权地址、令牌地址、版本探测、用户、可建的地方、建和列和读仓库）上不同，
-  连接、续期、给 Git 的令牌、管理页都是同一份。`Manager` 在启动时从库里读出全部提供方放进
-  注册表，按管理员的请求新建（`connections.Creator`），每天续期一次。注册表因此改成
-  可以增删、加锁（`Add`、`Remove`、`GetFor`、`ListFor`）。`forgetest` 是进程里的假 GitLab
-  和假 Gitea（授权码加 PKCE、刷新令牌轮换、REST、`git http-backend` 上的 Git），在
-  `internal/forge/forgetest`；`conntest.Run` 对两者各跑一遍。
-- **状态库**（迁移 0019，SQLite 和 PostgreSQL 都测）：`providers`、`provider_authorizations`、
-  `provider_leftovers`。`providers.owner` 是 `site` 或租户 id，`(owner, host)` 唯一；GitHub 的
-  表不动。`remotes` 的 `provider` 列存提供方 id，`gh_via` 只会是 `user`。scope 测试的表名单
-  加了这三张表。
-- **主机检查**（保存前、`PATCH`、`POST …/check`）：版本接口按平台的样子答（GitLab 对没登录
-  的人答 `401 {"message": "401 Unauthorized"}`，也算它；Gitea 答版本号；Forgejo 的版本号
-  带 `+gitea-X.Y.Z`，按后者比），GitLab 至少 15、Gitea 至少 1.19（有 PKCE）；然后用假授权码走
-  一次令牌地址：`invalid_grant` 说明主机认得这个 client，`invalid_client` 就拒绝。拒绝是
-  `400 invalid` 加 `reason`（`host_invalid`、`host_not_public`、`host_unreachable`、
-  `not_this_platform`、`unsupported_version`、`client_rejected`、`type_invalid`）。GitLab 不对没登录
-  的人说版本，所以第一个人连上之后再读一次记下来；版本太旧就把提供方置为没配好。
-- **出站**：提供方对主机的每个请求都走同一个客户端：解析之后、连接之前检查地址是公网的
-  （复用每日文案的 `dailyfetch.Public`），不跟重定向，不走环境里的代理；`--remote-unsafe`
-  （测试用）才允许普通 http 和内网地址。主机还要过 `storage.hosts`（`spaces.Manager.HostAllowed`，
-  从原来的 `hostAllowed` 里提出来的）。
-- **权限范围**：GitLab 要 `api`（建项目只有它行；`read_repository`、`write_repository` 只管
-  Git 数据）。Gitea 的 OAuth 应用令牌和那个人自己的权限一样宽，授权请求不带范围，管理页
-  这样说。Git 用的用户名是 `oauth2`，令牌当密码。
-- **令牌和续期**：访问令牌和刷新令牌分开封存（用提供方 id 和人的 id 作绑定），续期照
-  GitHub 那一套：快到 5 分钟时续，每人同时一个，新的一对先写库再用，库里版本号防覆盖。
-  GitLab 的刷新令牌不过期；Gitea 的刷新令牌是 JWT，读它的 `exp`（不验签，只是为了每天续期
-  时知道哪些快到期）。刷新被拒（`invalid_grant`）就把连接置为 `expired`，用它的空间的远端
-  是 `connection_expired`，读照常、写 `503`，草稿留着。重新连接后 `ConnectionFixed` 叫醒空间。
-- **建仓库和给 Git 的凭据**：个人命名空间，或这个人有权建的组（GitLab 的组和子组，Gitea 的
-  组织，按团队的 `can_create_org_repo`）。`ChooseCredential` 一律是 `via: "user"`：OAuth 令牌
-  不能像 GitHub 安装令牌那样缩到一个仓库，所以这个人的令牌就是这个空间的凭据。同一个人的
-  连接只给这个人是管理者的空间用；别人的连接从不借用（有测试）。`via: "app"` 对它们是
-  `400 invalid`。
-- **部分同步**：每个提供方在第一次建仓库或连上已有仓库时，用那个人的令牌向仓库的
-  `info/refs?service=git-upload-pack` 要 Git 协议 v2 的广告，看 `fetch=` 里有没有 `filter`，
-  记在 `providers.partial_sync`，之后每 30 天重新看；`capabilities.partialSync` 和管理页的
-  `partialSync` 取它。3.5 的按主机表做出来后，这一栏由它取代。
-- **网页**：管理页「存储与同步」的连接部分，GitHub 卡片下面是「主机」：每台主机一张卡
-  （名字、主机、能不能用、版本、是否支持部分同步、回调地址、申请的范围、用量、检查、编辑、
-  移除）和「添加主机」的表单；账号页「已连接的账号」对这些提供方换成不带「安装」的一个
-  「连接 X」按钮，字都用服务器给的提供方名字（`src/i18n/forge`），界面只看
-  `capabilities.installations`。新建空间的「存在哪里」本来就是按能力列的，新的提供方直接
-  出现。品牌图标仍只有 GitHub（其余是 3.9）。
-- **审计**：`connection_provider_changed`（`created`、`saved`、`removed`）、`account_connected`、
-  `account_disconnected`，里面没有任何密钥。
+- **Code**: the new package `internal/forge`. A `Provider` is one OAuth app on one
+  host, and implements `connections.Provider` and `Administered` of 2.7b. The two
+  platforms differ only in the `driver` (`gitlab.go`, `gitea.go`: the
+  authorization address, token address, version probe, user, places where one can
+  create, and creating, listing and reading repositories). Connecting, renewal,
+  the token handed to Git and the admin page are all one copy. At startup the
+  `Manager` reads all the providers from the database into the registry, creates
+  new ones at the admin's request (`connections.Creator`), and renews once a day.
+  The registry was therefore changed so that entries can be added and removed, and
+  made locked (`Add`, `Remove`, `GetFor`, `ListFor`). `forgetest` is an in-process
+  fake GitLab and fake Gitea (authorization code plus PKCE, refresh token
+  rotation, REST, and Git over `git http-backend`), in `internal/forge/forgetest`.
+  `conntest.Run` runs once for each of the two.
+- **State database** (migration 0019, tested on both SQLite and PostgreSQL):
+  `providers`, `provider_authorizations`, `provider_leftovers`. `providers.owner`
+  is `site` or a tenant id, with `(owner, host)` unique. The GitHub tables are
+  untouched. The `provider` column of `remotes` stores the provider id, and
+  `gh_via` can only be `user`. The table list of the scope test gained these three
+  tables.
+- **Host check** (before saving, `PATCH`, `POST …/check`): the version endpoint
+  answers in each platform's own way (for someone not signed in GitLab answers
+  `401 {"message": "401 Unauthorized"}`, which also counts; Gitea answers the
+  version number; Forgejo's version number carries `+gitea-X.Y.Z`, and the latter
+  is what is compared). GitLab must be at least 15 and Gitea at least 1.19 (which
+  has PKCE). Then one run is made against the token address with a fake
+  authorization code: `invalid_grant` shows the host recognizes this client, and
+  `invalid_client` is refused. A refusal is `400 invalid` plus `reason`
+  (`host_invalid`, `host_not_public`, `host_unreachable`, `not_this_platform`,
+  `unsupported_version`, `client_rejected`, `type_invalid`). GitLab does not tell
+  the version to someone not signed in, so after the first person connects it is
+  read again and recorded. If the version is too old, the provider is set to not
+  configured.
+- **Outbound**: every request from a provider to the host goes through one client.
+  After resolution and before connecting, it checks that the address is public
+  (reusing `dailyfetch.Public` of the daily text), it does not follow redirects and
+  does not use a proxy from the environment. Only `--remote-unsafe` (for tests)
+  allows plain http and internal addresses. The host also has to pass
+  `storage.hosts` (`spaces.Manager.HostAllowed`, taken out of the old
+  `hostAllowed`).
+- **Scopes**: GitLab needs `api` (only that one can create projects;
+  `read_repository` and `write_repository` cover only Git data). A Gitea OAuth app
+  token is as broad as that person's own permissions, the authorization request
+  carries no scope, and the admin page says so. The username used for Git is
+  `oauth2`, with the token as the password.
+- **Tokens and renewal**: the access token and refresh token are sealed separately
+  (with the provider id and the person's id as the binding). Renewal follows the
+  GitHub scheme: renew when within 5 minutes, one at a time per person, the new
+  pair is written to the database before use, and a version number in the database
+  prevents overwriting. GitLab refresh tokens do not expire. A Gitea refresh token
+  is a JWT, and its `exp` is read (the signature is not verified, only so that the
+  daily renewal knows which are about to expire). If the refresh is refused
+  (`invalid_grant`), the connection is set to `expired`, and the remote of spaces
+  using it is `connection_expired`: reads work as usual, writes get `503`, and
+  drafts are kept. After reconnecting, `ConnectionFixed` wakes the space.
+- **Creating repositories and the credentials for Git**: a personal namespace, or a
+  group the person is allowed to create in (GitLab groups and subgroups, Gitea
+  organizations, by the team's `can_create_org_repo`). `ChooseCredential` is always
+  `via: "user"`: an OAuth token cannot be narrowed to one repository the way a
+  GitHub installation token can, so this person's token is the credential for the
+  space. A person's connection is used only for spaces where that person is a
+  manager, and another person's connection is never borrowed (there is a test).
+  `via: "app"` is `400 invalid` for them.
+- **Partial sync**: on the first repository creation or connecting to an existing
+  repository, each provider uses that person's token to request the Git protocol v2
+  advertisement from the repository's `info/refs?service=git-upload-pack`, looks at
+  whether `fetch=` has `filter`, and records it in `providers.partial_sync`, and
+  looks again every 30 days after that. `capabilities.partialSync` and the admin
+  page's `partialSync` take it. Once the per-host table of 3.5 is built, this column
+  is replaced by it.
+- **Web**: in the connection part of the admin page "Storage and sync", below the
+  GitHub card is "Hosts": one card per host (name, host, whether it is usable,
+  version, whether partial sync is supported, callback address, requested scopes,
+  usage, check, edit, remove) and an "Add host" form. On the account page "Connected
+  accounts", for these providers there is one "Connect X" button with no
+  "installation", and the wording all uses the provider name the server gives
+  (`src/i18n/forge`), and the UI looks only at `capabilities.installations`. The
+  "Where it is stored" of a new space is already listed by capability, so the new
+  providers appear directly. Brand icons are still only GitHub's (the rest is 3.9).
+- **Audit**: `connection_provider_changed` (`created`, `saved`, `removed`),
+  `account_connected`, `account_disconnected`, with no secrets in them.
 
-做出来时对合同的几处理解：
+How the contract was understood when it was built:
 
-- **租户自己配提供方没做**。合同里 `POST /api/admin/tenants/{tenant}/connections` 要
-  `integrations.connections` 这个能力，那是 3.6 的。3.8 做了它要的底子：`providers.owner`、
-  `Descriptor.TenantID`、`Registry.GetFor/ListFor`、提供方自己拒绝别的租户的人（`404`）、
-  `GET /api/connections` 里的 `owner` 是 `"site"` 或 `{"tenant": id}`、管理员列表看得到全部、
-  `(owner, host)` 唯一、秘密的 purpose 里带租户 id；测试把一行写进库里再 `Reload`
-  来验证。路由、5 个的上限（常量 `TenantLimit` 已有，没用）和 `tenant_connection_changed` 审计
-  留给 3.6。租户存储目标（`via: "tenant"`）同样是 3.6，`capabilities.storageTarget` 对两个
-  新提供方是 `true`。
-- **重名**：合同写「slug 重名时照 3.6 加后缀」，那是 3.6 的存储目标；这里照 2.7 的
-  `name_taken`（`409`），没有自动后缀。
-- **`PUT` 和 `PATCH`** 对 `/api/admin/connections/{provider}` 都收，都是「给哪个改哪个」
-  （GitHub 的 `PUT` 本来就是这样）；id、类型、主机不能改。重名的 id 或主机是 `409 exists`，
-  上限是 `409 provider_limit`，删除时有连接或空间用着是 `409 provider_in_use` 带
-  `connections` 和 `spaces`。
-- **公网检查只管服务器自己对主机的请求**（OAuth、REST、部分同步的探测）。`git` 子进程自己连
-  主机，不经过它；那一层仍只靠 `storage.hosts`，和别的远端一样。3.6 若要管 Git 的出站，
-  要在 gitstore 的运行器里做。
-- **提供方只在一个进程的内存里**。一个共用数据库的多个进程，新建的提供方在别的进程里要等
-  下一次每日的 `Reload`（或重启）才有；删除也一样。同一时间多进程不是 3.8 要解决的。
-- **迁移编号**用了 0019（现在 `main` 上下一个空着的）。3.5 若也用 0019，合并时后合的改号。
+- **Tenants configuring their own providers is not done**. In the contract,
+  `POST /api/admin/tenants/{tenant}/connections` needs the capability
+  `integrations.connections`, and that belongs to 3.6. 3.8 did the groundwork it
+  needs: `providers.owner`, `Descriptor.TenantID`, `Registry.GetFor/ListFor`, the
+  provider itself refusing people from other tenants (`404`), the `owner` in
+  `GET /api/connections` being `"site"` or `{"tenant": id}`, the admin list seeing
+  everything, `(owner, host)` unique, and the tenant id in the secret's purpose.
+  Tests write a row into the database and then `Reload` to verify. The routes, the
+  cap of 5 (the constant `TenantLimit` exists but is unused) and the
+  `tenant_connection_changed` audit are left to 3.6. The tenant storage target
+  (`via: "tenant"`) is likewise 3.6, and `capabilities.storageTarget` is `true` for
+  the two new providers.
+- **Name conflicts**: the contract says "when the slug is taken, add a suffix as in
+  3.6", and that is the storage target of 3.6. Here the `name_taken` (`409`) of 2.7
+  is followed, with no automatic suffix.
+- **`PUT` and `PATCH`** are both accepted on `/api/admin/connections/{provider}`,
+  and both are "change whichever is given" (GitHub's `PUT` was already like that).
+  The id, type and host cannot be changed. A duplicate id or host is `409 exists`,
+  the cap is `409 provider_limit`, and on deletion, if connections or spaces are
+  using it, it is `409 provider_in_use` with `connections` and `spaces`.
+- **The public network check covers only the server's own requests to the host**
+  (OAuth, REST, the partial sync probe). The `git` subprocess connects to the host
+  itself, and does not go through it. That layer still relies only on
+  `storage.hosts`, like other remotes. If 3.6 wants to govern Git's outbound
+  traffic, it has to be done in gitstore's runner.
+- **Providers live only in one process's memory**. With several processes sharing
+  one database, a newly created provider appears in the other processes only at the
+  next daily `Reload` (or restart), and deletion is the same. Several processes at
+  the same time is not something 3.8 is to solve.
+- **The migration number** used is 0019 (now the next free one on `main`). If 3.5
+  also uses 0019, the one merged later changes its number.
 
-3.8 评审之后改了的（2026-11-24，写在 `docs/api.md`「As built (3.8)」里）：
+Changed after the 3.8 review (2026-11-24, written in "As built (3.8)" of
+`docs/api.md`):
 
-- 主机对带令牌的调用答 `401` 时不再直接把连接置为过期：先续一次期（每人同时一个），续得上就用新令牌
-  把那个调用再做一遍；别的请求已经换了令牌的话用换好的，不再花一个刷新令牌。只有刷新令牌本身被
-  拒才过期，而且只过期令牌所属的那个版本。GitHub 那边（`internal/github` 的 `userFailed`）是同一个
-  写法，调用点有九处，这次没改，记在下面。
-- 保存、检查、重新加载提供方不再用旧的整行覆盖：保存拿到锁之后才读行；检查和第一次连接读到版本
-  只写状态、版本、时间三列，而且只在客户端没换的时候写；`Reload` 在锁里读行。检查不再把已知的版本
-  写成空。换了客户端 id，所有连接置为过期、令牌删掉，人重新连接；只换密钥不动连接。
-- Gitea 管理员连上来时，连接上有 `admin: true`，网页上有中英文的警告。续期按令牌自己的寿命：
-  最后十分之一才续，Gitea 默认 730 小时的刷新令牌大约提前三天续一次，不再每天一次。
-- 主机说的话进错误和日志之前去掉换行和控制字符，长度限制，像令牌的（包括 JWT）涂掉。
-  提供方没加载时，Git 的用户名按库里存的类型取（GitLab、Gitea 是 `oauth2`），不再回落到
-  `x-access-token`。
+- When the host answers `401` to a call with a token, the connection is no longer
+  set to expired directly. First one renewal is made (one at a time per person), and
+  if the renewal works, the call is made again with the new token. If another
+  request has already swapped the token, the swapped one is used, and no further
+  refresh token is spent. It expires only when the refresh token itself is refused,
+  and only the version the token belongs to expires. GitHub's side (`userFailed` of
+  `internal/github`) is written the same way. There are nine call sites, which were
+  not changed this time, and that is noted below.
+- Saving, checking and reloading providers no longer overwrite with the old whole
+  row: saving reads the row only after it has the lock. Checking and the first
+  connection that read the version write only the three columns status, version and
+  time, and only when the client has not been changed. `Reload` reads the row under
+  the lock. A check no longer writes a known version as empty. When the client id
+  is changed, all connections are set to expired and tokens are deleted, and people
+  connect again. Changing only the secret does not touch the connections.
+- When a Gitea admin connects, the connection carries `admin: true`, and the web
+  shows a warning in Chinese and English. Renewal follows the token's own lifetime:
+  it renews only in the last tenth, so Gitea's default 730-hour refresh token is
+  renewed about three days ahead, no longer once a day.
+- What the host says has line breaks and control characters removed before it goes
+  into errors and logs, its length is limited, and anything that looks like a token
+  (including JWTs) is blanked out. When the provider is not loaded, the Git username
+  is taken from the type stored in the database (`oauth2` for GitLab and Gitea), and
+  no longer falls back to `x-access-token`.
 
-3.8 的现状里仍然开着的（记着，没改）：
+Still open in the 3.8 as built (recorded, not changed):
 
-- **跨进程的续期**：一个共用数据库的多个进程可能各自续同一个刷新令牌，后到的会失败。设计上
-  就是一个进程，不处理。
-- **`provider_in_use` 不是原子的**：检查连接和空间的数目与删除之间，别的请求可以再连一个。
-- **审计里 `connection_provider_changed` 的 detail 措辞**没有定。
-- **`DeleteTenantConnProviderRows`**（租户被删时）归 3.6。
-- **`git` 子进程自己连主机**，不经过公网检查（SSRF），归 3.6；现在只靠 `storage.hosts`。
-- **GitHub 的 `userFailed`**（`internal/github/repos.go`）有同样的问题：一次 `401` 就过期并删刷新
-  令牌，过期的是当前那一行，不是令牌所属的版本。要像 `forge` 那样让九个调用点各自带着令牌重试一次，
-  不算小改动，另做。
+- **Renewal across processes**: with several processes sharing a database, each may
+  renew the same refresh token, and the later one fails. The design is one process,
+  and this is not handled.
+- **`provider_in_use` is not atomic**: between checking the number of connections
+  and spaces and the deletion, another request can connect one more.
+- **The wording of the detail** of `connection_provider_changed` in the audit has
+  not been fixed.
+- **`DeleteTenantConnProviderRows`** (when a tenant is deleted) belongs to 3.6.
+- **The `git` subprocess connects to the host itself**, without the public network
+  check (SSRF), and belongs to 3.6. For now it relies only on `storage.hosts`.
+- **GitHub's `userFailed`** (`internal/github/repos.go`) has the same problem: one
+  `401` expires it and deletes the refresh token, and the one expired is the current
+  row, not the version the token belongs to. As `forge` does, the nine call sites
+  would each have to retry once carrying their token. That is not a small change,
+  and is done separately.
 
-**3.9 的约定**（2026-11-23）：头像和品牌图标。接口和错误码写在 `docs/api.md` 新的
-「Avatars and brand icons」一节。所有者 2026-11-23 加，设计按 3.5 合并之后写（品牌图标
-那一部分不依赖别的）。
+**The 3.9 contract** (2026-11-23): avatars and brand icons. The endpoints and error
+codes are written in the new "Avatars and brand icons" section of `docs/api.md`.
+Added by the owner 2026-11-23, and the design is written after 3.5 is merged (the
+brand icon part depends on nothing else).
 
-定下来的：
+Decided:
 
-- **品牌图标**：
-  - GitHub 的图标 2.7b 已经做了（Simple Icons 的路径内联进网页）；3.9 照同样的做法补上其余的。
-  - GitHub、GitLab、Gitea、Forgejo、Codeberg、Google、Microsoft、Apple 用官方的品牌
-    图标：Simple Icons 那一套（CC0，单色 SVG，颜色用 `currentColor`，跟着主题变）。
-    某个品牌 Simple Icons 里没有（它会应品牌方的要求撤下图标）时，用品牌方自己发布的
-    图标，照同样的方式处理。商标仍是各品牌的，在 `NOTICE` 里写明。
-  - 用在：登录按钮、「已连接的账号」、空间的远端、「存储与同步」页、新空间的「存在
-    哪里」。
-  - 「用 X 登录」照各家的品牌规范（按钮的文字、颜色、留白、最小尺寸，比如 Google、
-    Microsoft、Apple 各自的登录按钮规范），不改品牌的颜色和形状。
-  - 图标随网页一起打包（只打包用到的这几个），**不从外面取**。
-- **人的头像**：本人设。默认是名字的首字加一个颜色（颜色按人的 id 从 12 种里取，深浅
-  两种主题都够对比度）。一键用某个已连接账号（2.7b、3.8）或登录身份（2.8 的社交登录）
-  的头像：服务器取一次（过出站的公网检查），照上传一样重新编码后存下，之后不再去取。
-  存服务器（状态库外的文件，`DATA/avatars/`），状态库只记版本。
-- **空间的图标**（团队空间的头像）：空间的管理者（`manage`）设。可以是一个 emoji、
-  一个内置图标的名字，或一张上传的图片。**存在空间自己的仓库里**：图片是
-  `.petalbook/icon.png` 或 `.petalbook/icon.webp`，emoji 和图标名写在 `space.yml` 的
-  `icon`，随导出、同步和搬家一起走；改图标就是一次普通的提交。另在状态库的空间那一行
-  存一个 64px 的小副本（最多 16 KB），所以空间被清出或归档时列表照样显示。
-- **组织的标志**：租户管理员设（全站管理员也能），存服务器，同人的头像。
-- **图片的规矩**：每次上传都在服务器上重新编码成 256px 的正方形 PNG 或 WebP（有透明的
-  用 PNG），收的原图最多 1 MB，只收 PNG、JPEG、WebP、GIF（取第一帧），**永远不收 SVG**；
-  解码前先看头里的尺寸，超过 4000 万像素直接拒绝（防解压炸弹）；元数据（EXIF 等）全部
-  丢掉。仓库里找到的图片（别人推上来的 `.petalbook/icon.*`）在显示前做同样的检查和重新
-  编码，不合格的就当没有图标，并在 2.5 的校验页报一条。
-- **发出去的方式**：`/api/avatars/…` 一个地址带版本号，长缓存；答复带
-  `Content-Type` 的图片类型、`X-Content-Type-Options: nosniff` 和
-  `Content-Security-Policy: default-src 'none'`。
-- **默认不用 Gravatar**（隐私：会把邮箱的哈希交给第三方）。
+- **Brand icons**:
+  - GitHub's icon was already done in 2.7b (the Simple Icons path inlined into the
+    web client). 3.9 adds the rest in the same way.
+  - GitHub, GitLab, Gitea, Forgejo, Codeberg, Google, Microsoft and Apple use the
+    official brand icons: the Simple Icons set (CC0, single-color SVG, with the
+    color using `currentColor` so that it follows the theme). When a brand is not in
+    Simple Icons (it takes icons down at a brand owner's request), the icon the
+    brand owner publishes itself is used, handled in the same way. Trademarks still
+    belong to each brand, and this is stated in `NOTICE`.
+  - Used in: sign-in buttons, "Connected accounts", a space's remote, the "Storage
+    and sync" page, and "Where it is stored" for a new space.
+  - "Sign in with X" follows each company's brand guidelines (button text, color,
+    spacing, minimum size, for example the sign-in button guidelines of Google,
+    Microsoft and Apple), and does not change the brand's colors and shapes.
+  - Icons are bundled with the web client (only the few that are used) and are
+    **not fetched from outside**.
+- **A person's avatar**: set by the person. The default is the first letter of the
+  name plus a color (the color is taken from 12 by the person's id, with enough
+  contrast in both the light and dark themes). One click can use the avatar of a
+  connected account (2.7b, 3.8) or of a sign-in identity (the social sign-in of
+  2.8): the server fetches it once (passing the outbound public network check),
+  re-encodes it as it would an upload and stores it, and does not fetch it again
+  afterwards. It is stored on the server (a file outside the state database,
+  `DATA/avatars/`), and the state database records only the version.
+- **A space's icon** (the avatar of a team space): set by the space's manager
+  (`manage`). It can be an emoji, the name of a built-in icon, or an uploaded
+  image. **It is stored in the space's own repository**: the image is
+  `.petalbook/icon.png` or `.petalbook/icon.webp`, and the emoji and icon name are
+  written in the `icon` of `space.yml`, and they travel with export, sync and
+  moving. Changing the icon is an ordinary commit. In addition, a 64px small copy
+  (at most 16 KB) is stored in the space's row in the state database, so when the
+  space is evicted or archived the list still shows it.
+- **An organization's logo**: set by the tenant admin (the site admin can too),
+  stored on the server, the same as a person's avatar.
+- **Rules for images**: every upload is re-encoded on the server as a 256px square
+  PNG or WebP (PNG when there is transparency). The original accepted is at most
+  1 MB, only PNG, JPEG, WebP and GIF are accepted (the first frame is taken), and
+  **SVG is never accepted**. Before decoding, the size in the header is checked,
+  and anything over 40 million pixels is rejected outright (to guard against
+  decompression bombs). All metadata (EXIF and so on) is dropped. An image found in
+  a repository (a `.petalbook/icon.*` that someone else pushed) goes through the
+  same check and re-encoding before display, and if it does not pass it is treated
+  as no icon, and one entry is reported on the validation page of 2.5.
+- **How it is served**: `/api/avatars/…`, one address carrying a version number,
+  with a long cache. The response carries the image type in `Content-Type`,
+  `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: default-src 'none'`.
+- **Gravatar is not used by default** (privacy: it would hand the hash of the email
+  to a third party).
 
-3.9 不做的：动图头像；按空间以外的东西（文件夹、页面）的图标；Gravatar。
+Not done in 3.9: animated avatars; icons for things other than spaces (folders,
+pages); Gravatar.
 
-所有者 2026-11-23 定的：
+Decided by the owner 2026-11-23:
 
-1. 品牌图标用官方的（Simple Icons，CC0，单色 SVG，可换主题色），用在登录按钮、连接、
-   远端和存储页；「用 X 登录」照各家规范；随网页打包，不从外面取。
-2. 人的头像本人设，默认首字加颜色，可以一键用已连接账号的头像，存服务器；空间的图标由
-   空间管理者设，可以是 emoji、图标或上传的图片，存在空间自己的仓库里，状态库里留一个
-   小副本；组织的标志由租户管理员设，存服务器。上传一律在服务器上重新编码成 256px 的
-   PNG／WebP，最多 1 MB，不收 SVG；仓库里的图片同样检查；默认不用 Gravatar。
+1. Brand icons use the official ones (Simple Icons, CC0, single-color SVG, themable
+   color), used in sign-in buttons, connections, remotes and the storage page.
+   "Sign in with X" follows each company's guidelines. They are bundled with the web
+   client and not fetched from outside.
+2. A person's avatar is set by the person, defaulting to the first letter plus a
+   color, with one click to use the avatar of a connected account, stored on the
+   server. A space's icon is set by the space manager, and can be an emoji, an icon
+   or an uploaded image, stored in the space's own repository, with a small copy
+   kept in the state database. An organization's logo is set by the tenant admin and
+   stored on the server. Every upload is re-encoded on the server as a 256px PNG /
+   WebP, at most 1 MB, with no SVG accepted. Images in a repository are checked in
+   the same way. Gravatar is not used by default.

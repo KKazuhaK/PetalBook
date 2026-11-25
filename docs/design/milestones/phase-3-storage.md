@@ -1,410 +1,702 @@
 # Milestones: phase 3, storage management (3.5)
 
-**3.5 的约定**（2026-11-23）：接口和错误码写在 `docs/api.md` 新的「Storage
-management」一节。设计按 2.7、3.1 都合并之后写。
+**The 3.5 contract** (2026-11-23): the endpoints and error codes are written in
+the new "Storage management" section of `docs/api.md`. The design was written
+after 2.7 and 3.1 were both merged.
 
-定下来的：
+Decided:
 
-- **只读存下的测量**：人和空间的列表、汇总都读 1.7 的测量、3.1 的 `cloneBytes`／
-  `indexBytes`／`lastUsed`、3.3 的 `usage` 行和内存里的附件缓存总数；请求里从不
-  遍历磁盘或仓库。列表一页一次查询，游标是「排序值:id」，不用偏移量。
-- **新加的测量**：`users.last_active`（会话或令牌被用到时，一小时最多写一次）、
-  `users.first_write`（第一次在空间里改东西，只写一次）；`usage` 行上按差值维护
-  服务器上占的字节、跟随远端的空间数、宽限期中和已过期的、被清掉的、归档的、固定的、是否连了
-  账号（2.7b 的任何连接），每天的对账一起纠正。「注册了但从没连过也没用过」是存下的 `dormant` 标记，
-  筛选是一段索引。
-- **3.1 留下的一条要在这里定**（合并时补，2026-11-23）：有附件仓库的空间测大小时工作区
-  不含附件，所以 `usage_bytes` 和配额少算了附件（见「3.1 合进 main」的「已知问题」）。
-  3.5 的测量第 4 部分开工前定：附件仓库的大小算不算进这个人的用量、怎么测（不在请求里
-  遍历）。没定之前照 3.1：只算文字仓库。
-  **已定（所有者 2026-11-23）：用量按「存在哪里」算**，配额限的是占我们的资源：
-  - 存在我们这里的全算：只在服务器上的空间（本地目录的字节）、全站存储组织里的仓库
-    （文字仓库和附件仓库都算）；
-  - 存在本人或租户自己的远端（`own`、`tenant`）的**不算配额**，只显示；服务器上为它们
-    留的缓存（部分克隆、附件缓存）由存储压力控制器管，不进个人或租户的配额；
-  - 怎么测：本地的照旧是后台测量写 `usage_bytes`；全站存储组织里的仓库问提供方的接口
-    （GitHub 仓库的 `size`，GitLab 的 statistics，3.8 起），后台、一次一个、每个仓库最多
-    几小时一次，**从不为了测大小去下载仓库**；附件仓库同样问接口。
-  - 字节是真实的字节数（MB／GB），另记页数和空间数；不单独按文件数算。
-- **回收站**：每次删除空间或人都进回收站，保留 `recycle.days`（全站，默认 30 天），
-  之后每小时一次的任务一次清一项。空间的记录整个存成一份 JSON、从活的表里删掉（所以
-  任何查询都看不到回收站里的空间，不用每处都加条件），目录挪到 `DATA/recycle/`；
-  恢复时按原来的 id、在原来的租户里用 `INSERT … SELECT` 插回去。远端仓库和附件仓库
-  **一概不动**。回收站里的空间不算配额；恢复从不因配额被拒。3.5 起删除只进回收站，
-  不再用 1.7 的 `trash/`。
-- **删人**：先停用（会话、令牌立刻失效），再转移、再退出、再回收，每步自己一个事务，
-  做到一半停下也只是「停用了、空间少了」，不会有没有所有者的空间。规则：个人空间和
-  「只有他一个所有者、也没有别的成员」的空间进回收站；「只有他一个所有者、有别的
-  成员」的转移；继承人依次是请求里按空间指定的、最早的直接成员里的编辑、请求里的
-  `heir`；只读成员和组成员从不自动升成所有者，没人可选就整个拒绝
-  （`409 heir_required`）。用他自己的令牌同步的空间转移后停在「凭据失效」，等新
-  所有者重连，不丢东西。
-- **人的记录什么时候真删**：进回收站时只标 `deleted_at`，用户名仍占着；清除时删掉
-  个人数据（密码、passkey、身份、邮箱、名字、偏好、草稿、会话），那一行留成墓碑
-  （id、租户、删除时间，用户名改成 `deleted-<id>`）；只要审计日志、他建的组或邀请
-  还引用它就一直留着，每天的任务删掉没人引用的墓碑。Git 历史从不改写。
-- **清除后用户名和邮箱空出来**（所有者 2026-11-23 定）：回收站的 30 天里仍占着；清除
-  时原来的用户名记进 `retired_usernames`（按大小写折叠后的形式），邮箱随个人数据删掉。
-  全站设置 `users.reuseUsernames`：`after_purge`（默认，清除后别人可以用）或 `never`
-  （记下的用户名永远不再发出）。不管设成哪个都照记，所以以后改成 `never` 也护得住之前
-  清除的名字。代价写明：正文里按用户名写的 `@提及` 和旧链接，名字被再用后会指向新的人；
-  按 id 存的引用（成员、作者记录、审计）不受影响。
-- **删掉的人看不见**：列表、选人、成员、组里都没有，他的 id 除回收站和审计以外一律
-  `404`。恢复人时恢复停用前的状态、组成员和随他进回收站的空间；转移和退出不撤回
-  （继承人可能已经改了东西），答复里列出来；吊销的令牌不恢复。
-- **删除前先看清**：单个删除有预览接口（会走什么、多大、远端不动、能否导出）；
-  批量和提前清空都要二次确认：先 `POST /api/admin/confirm` 拿一个绑定了操作者、
-  动作、id 集合和计划哈希的令牌（10 分钟、一次），界面上要求输入数量，再带令牌执行；
-  计划变了答 `409 confirm_stale`。批量在后台一项一项做，每项按单个操作的规则，失败的
-  列出来、其余继续；每个租户同时一个、全站同时两个；重启后没做完的标「中断」。
-- **管理员查看和导出**（所有者 2026-11-23 定）：管理员可以查看、导出任何空间，不只是
-  正在删除的。查看是先开一次「查看」（写明理由），之后一小时内这个管理员经普通的读接口
-  只读这个空间（从不能写）；开始查看记一条审计，看了哪一页也记（同一人同一页一小时
-  最多一条）。导出建立和下载都记审计，并通知空间的所有者。全站管理员看全部；租户管理员
-  只看本租户的组织空间，3.6 起还要这个租户有能力 `data.adminView`（3.7 起组织管理员
-  看不到成员的个人空间，见 3.7 的约定）。按地区或合规的细化（要不要先通知、要不要第二个
-  人批准、审计留多久）以后再做，记进 5.14。
-- **导出**：zip，每个空间一个文件夹：当前提交的文件、所有人的草稿、远端地址（不含
-  凭据）；附件仓库的文件也取进来（清掉的空间先恢复）。带 Git 历史（`git bundle`）
-  只给全站管理员。导出保留 7 天、全站总量 20 GiB。
-- **单个文件的大小**：`files.maxBytes`，全站和租户两层，全站的值就是
-  `--max-upload`，同时是天花板。在写入之前检查：上传、导入里的每个文件、保存页面和
-  草稿、MCP 写页面、4.2 的离线重放、附件仓库的提交；不查已有的和从远端来的（拉不
-  进来比拒绝更糟）。错误 `413 file_too_large`，带 `limit`、`size`、`name`。
-  `GET /api/meta` 的 `maxUpload` 变成调用者租户的生效值。3.6 起每个租户的天花板是它的
-  能力 `storage.maxFileBytes`（不超过 `--max-upload`）。
-- **租户管理员**：同样的列表、删除、恢复、批量、导出，只限本租户；看不到磁盘余量；
-  不能提前清空回收站。所有新路由进 3.3 的隔离表。
-- **审计**：删、恢复、清除（空间和人）、管理员的查看（开始和看过的页）、导出的建立和
-  下载、批量的开始和结束，都记。
-- **迁移** `0020_recycle.sql`（0019 留给第 4 期），SQLite 和 PostgreSQL 都测；只为
-  开发和演示的库能打开，新列从空开始（`last_active`、`first_write` 在下次用到时写），
-  不承诺保留数据的升级。
+- **Read only stored measurements**: the lists and totals for people and spaces
+  read the 1.7 measurements, the 3.1 `cloneBytes` / `indexBytes` / `lastUsed`,
+  the 3.3 `usage` row, and the attachment-cache total held in memory. A request
+  never walks the disk or a repository. A list is one query per page, and the
+  cursor is "sort value:id", not an offset.
+- **New measurements**: `users.last_active` (written when a session or token is
+  used, at most once an hour) and `users.first_write` (the first time the person
+  changes anything in a space, written once). On the `usage` row, these are
+  maintained by deltas: bytes held on the server, number of spaces that follow a
+  remote, spaces in the grace period and overdue, purged, archived, pinned, and
+  whether an account is connected (any 2.7b connection). The daily
+  reconciliation corrects them all together. "Registered but never connected and
+  never used" is a stored `dormant` flag, and the filter is a single index.
+- **One item 3.1 left open, to be settled here** (added at merge, 2026-11-23): when
+  a space with an attachment repository is measured, the working tree does not
+  include the attachments, so `usage_bytes` and the quota undercount them (see
+  the "known issues" of "3.1 merged into main" in [phase-3.md](phase-3.md)). Before part 4 of the 3.5
+  measurements starts, decide whether the size of the attachment repository
+  counts toward the person's usage, and how to measure it (not by walking in a
+  request). Until it is decided, follow 3.1: only the text repository counts.
+  **Decided (the owner, 2026-11-23): usage is counted by "where it lives"**; the
+  quota limits what takes our resources:
+  - Everything stored with us counts: spaces only on the server (the bytes of the
+    local directory), and repositories in a site-wide storage organization (both
+    the text repository and the attachment repository);
+  - What lives on the person's or the tenant's own remote (`own`, `tenant`) is
+    **not counted toward quota**, only shown. The cache the server keeps for them
+    (partial clones, attachment cache) is managed by the storage pressure
+    controller and does not enter a personal or tenant quota;
+  - How to measure: for local spaces, as before, the background measurement writes
+    `usage_bytes`. For repositories in a site-wide storage organization, ask the
+    provider's API (the `size` of a GitHub repository, the statistics of GitLab,
+    from 3.8), in the background, one at a time, at most once every few hours per
+    repository, and **never download a repository just to measure its size**. The
+    attachment repository is asked the same way.
+  - Bytes are real byte counts (MB / GB), with the number of pages and spaces
+    recorded separately; usage is not counted by number of files.
+- **Recycle bin**: every deletion of a space or a person goes to the recycle bin
+  and stays for `recycle.days` (site-wide, default 30 days). After that, an hourly
+  job purges one item at a time. The space's records are stored whole as one JSON
+  document and deleted from the live tables (so no query sees a space in the
+  recycle bin, and no condition has to be added everywhere). The directory is
+  moved to `DATA/recycle/`. On restore, the records are put back with
+  `INSERT … SELECT` under the original id and in the original tenant. Remote
+  repositories and attachment repositories are **never touched**. A space in the
+  recycle bin does not count toward quota, and a restore is never refused because
+  of quota. From 3.5 on, deletion only goes to the recycle bin and no longer uses
+  the 1.7 `trash/`.
+- **Deleting a person**: first deactivate (sessions and tokens stop working at
+  once), then transfer, then leave, then recycle. Each step is its own
+  transaction, so stopping halfway only leaves "deactivated, fewer spaces" and
+  never a space without an owner. The rules: personal spaces, and spaces where he
+  is the only owner and there are no other members, go to the recycle bin. Spaces
+  where he is the only owner and there are other members are transferred. The
+  heir is, in order: the one named per space in the request, the earliest direct
+  member who is an editor, or the `heir` in the request. Read-only members and
+  group members are never promoted to owner automatically, and if there is
+  nobody to choose, the whole request is refused (`409 heir_required`). A space
+  synced with his own token is left in "credentials invalid" after the transfer,
+  waiting for the new owner to reconnect, and nothing is lost.
+- **When a person's record is really deleted**: on entering the recycle bin only
+  `deleted_at` is set, and the username is still taken. On purge, the personal
+  data is deleted (password, passkey, identities, email, name, preferences,
+  drafts, sessions), and the row stays as a tombstone (id, tenant, deletion time,
+  username changed to `deleted-<id>`). It is kept as long as the audit log, or a
+  group or invitation he created, still refers to it. A daily job deletes
+  tombstones that nobody refers to. Git history is never rewritten.
+- **After a purge, the username and email become free** (decided by the owner,
+  2026-11-23): they stay taken during the 30 days in the recycle bin. At purge,
+  the old username is recorded in `retired_usernames` (in its case-folded form),
+  and the email is deleted with the personal data. The site-wide setting
+  `users.reuseUsernames` is `after_purge` (default; others may use it after the
+  purge) or `never` (a recorded username is never issued again). It is recorded
+  either way, so changing to `never` later still protects the names purged
+  before. The cost is stated: an `@mention` written by username in a body, and old
+  links, point to the new person once the name is reused. References stored by id
+  (members, author records, audit) are not affected.
+- **Deleted people are invisible**: they are not in lists, pickers, members or
+  groups, and apart from the recycle bin and the audit, his id gives `404`
+  everywhere. When a person is restored, the state before deactivation, the group
+  memberships and the spaces that went to the recycle bin with him are restored.
+  Transfers and leaves are not undone (the heir may have changed things already),
+  and the response lists them. Revoked tokens are not restored.
+- **See clearly before deleting**: a single deletion has a preview endpoint (what
+  will happen, how big, the remote is untouched, whether it can be exported).
+  Bulk operations and emptying early need a second confirmation: first
+  `POST /api/admin/confirm` to get a token bound to the operator, the action, the
+  set of ids and the plan hash (10 minutes, single use). The UI asks the operator
+  to type the count, and then the operation runs with the token. If the plan
+  changed, the answer is `409 confirm_stale`. A bulk operation runs in the
+  background one item at a time, each item following the rules of the single
+  operation. Failures are listed and the rest continue. One at a time per tenant
+  and two at a time site-wide. After a restart, anything unfinished is marked
+  "interrupted".
+- **Admin view and export** (decided by the owner, 2026-11-23): an administrator
+  may view and export any space, not only those being deleted. Viewing means
+  first opening a "view" (with a stated reason), and for the next hour that
+  administrator reads only that space through the ordinary read endpoints (never
+  writes). Starting a view writes an audit entry, and so does each page viewed
+  (at most one per person per page per hour). Creating and downloading an export
+  are both audited, and the owner of the space is notified. A site administrator
+  sees everything. A tenant administrator sees only the organization spaces of
+  their own tenant, and from 3.6 also needs the tenant to have the capability
+  `data.adminView` (from 3.7 organization administrators cannot see members'
+  personal spaces, see the 3.7 contract in
+  [phase-3-autonomy-and-providers.md](phase-3-autonomy-and-providers.md)). Refinements by region or compliance
+  (whether to notify first, whether a second person must approve, how long the
+  audit is kept) come later and are recorded in 5.14.
+- **Export**: a zip with one folder per space: the files of the current commit,
+  everyone's drafts, and the remote address (without credentials). The files of
+  the attachment repository are fetched in too (a purged space is restored
+  first). Including Git history (`git bundle`) is for site administrators only.
+  Exports are kept for 7 days, with a site-wide total of 20 GiB.
+- **Size of a single file**: `files.maxBytes`, two layers, site and tenant. The
+  site value is `--max-upload`, and is also the ceiling. It is checked before
+  writing: uploads, each file in an import, saving a page and a draft, MCP page
+  writes, the 4.2 offline replay, and commits to the attachment repository.
+  Existing files and files that come from a remote are not checked (failing to
+  pull them in is worse than refusing). The error is `413 file_too_large`, with
+  `limit`, `size`, and `name`. `maxUpload` in `GET /api/meta` becomes the
+  effective value for the caller's tenant. From 3.6 each tenant's ceiling is its
+  capability `storage.maxFileBytes` (not above `--max-upload`).
+- **Tenant administrators**: the same lists, deletion, restore, bulk operations
+  and export, limited to their own tenant. They cannot see the free disk space
+  and cannot empty the recycle bin early. All the new routes go into the 3.3
+  isolation table.
+- **Audit**: deletion, restore, purge (spaces and people), administrator views
+  (the start and the pages seen), the creation and download of exports, and the
+  start and end of bulk operations are all recorded.
+- **Migration** `0020_recycle.sql` (0019 is left for phase 4), tested on both
+  SQLite and PostgreSQL. Only databases used for development and demos can be
+  opened, new columns start empty (`last_active` and `first_write` are written
+  the next time they are used), and no data-preserving upgrade is promised.
 
-不做的（括号里是理由）：
+Not doing (reasons in parentheses):
 
-- 本人自己删账号、本人导出自己的数据（先给管理员；本人的流程要邮件确认和冷静期，
-  另写合同）。
-- 从回收站撤回转移（继承人可能已经改了东西）。
-- 删除远端仓库（我们从不删远端，见 3.1）。
+- A person deleting their own account, and a person exporting their own data
+  (administrators first; the personal flow needs email confirmation and a
+  cooling-off period, and gets its own contract).
+- Undoing a transfer from the recycle bin (the heir may have changed things
+  already).
+- Deleting remote repositories (we never delete remotes, see 3.1).
 
-所有者 2026-11-23 定的：
+Decided by the owner on 2026-11-23:
 
-1. 人清除之后用户名可以被别人再用（回收站的 30 天里仍占着）；这是全站设置
-   `users.reuseUsernames`，全站管理员可以改成「永不再用」。
-2. 删人时共享空间的默认继承人照上面写的：最早的直接编辑；没有就要管理员指定，只读
-   成员不自动升成所有者。
-3. 管理员可以查看、导出一切，不只是正在删除的空间；每次查看和导出都记审计。按地区
-   或合规的细化以后再做（5.14）。1.7 的「管理员不能经接口读别人的页面」由此改成
-   「能读，但每次都留审计」。
+1. After a person is purged, the username may be reused by others (it stays taken
+   during the 30 days in the recycle bin). This is the site-wide setting
+   `users.reuseUsernames`, which site administrators can change to "never reuse".
+2. When a person is deleted, the default heir of a shared space is as written
+   above: the earliest direct editor. If there is none, an administrator must
+   name one, and read-only members are not promoted to owner automatically.
+3. Administrators may view and export everything, not only the spaces being
+   deleted, and every view and export is audited. Refinements by region or
+   compliance come later (5.14). The 1.7 rule "an administrator cannot read other
+   people's pages through the API" thereby becomes "can read, but always leaves
+   an audit".
 
-**3.5 追加：归档、站点存储预算、存储压力控制器、自动的部分同步**（所有者
-2026-11-23 定；接口写在 `docs/api.md` 的「Storage management」新加的几小节）。所有者
-同一天先定了一组各自独立的清理阈值（索引闲置天数、索引总预算、磁盘余量下限、
-80／90／100% 三道线），随后改成**一个存储压力控制器**，取代它们；下面只写控制器，
-原来那几样都并进它的默认值和「高级」里。
+**3.5 addition: archive, site storage budget, storage pressure controller,
+automatic partial sync** (decided by the owner on 2026-11-23; the endpoints are
+written in the newly added subsections of "Storage management" in `docs/api.md`).
+The same day the owner first decided on a set of independent cleanup thresholds
+(idle days for the index, a total index budget, a minimum free disk space, and
+three lines at 80 / 90 / 100%), and then changed it to **one storage pressure
+controller** that replaces them. Only the controller is described below; those
+older items are folded into its defaults and its "Advanced" section.
 
-- **归档**（比清出更低的一档）：
-  - 空间的缓存状态从高到低：`full`、`partial`、`evicted`（3.1：只剩索引）、`archived`
-    （新）。归档的空间服务器上只留状态库里的那一行和小的元数据（名字、3.9 的图标小
-    副本、页数和大小的测量），**索引也删掉**。成员、权限、收藏、远端、草稿都在状态库
-    里，不受影响。
-  - **只有跟随远端的空间能归档**；只在本地的空间永远不归档（也永远不清出），手动归档
-    答 `409 archive_needs_remote`。归档前的检查和 3.1 清出的一样（远端 `ok`、没有待
-    提交和救下来的提交、当场 fetch 一次确认远端就在 `HEAD` 上），有一条不满足就不归档。
-  - **恢复** = 取回正文（部分克隆）再重建索引。归档期间：不在搜索里（全局搜索跳过它，
-    空间内搜索开始恢复并答 `503 restoring`）、不用来出每日文案、和它有关的反向链接不
-    显示；打开它的请求开始恢复，界面写「正在恢复，约 N 秒」（N 按存下的大小和最近测
-    到的取回速度估）。
-  - **分步恢复**：归档的空间和正文超过 50 MB 的空间分两步：先取目录和每篇的开头，建
-    一个轻的索引（标题、文件夹、标签、属性），列表和标题先能用；正文和全文索引在后台
-    补齐。这期间打开某一篇，先取这一篇。恢复完成后正文照旧全部留在本地（所有者之前
-    定的：正文一律留在本地，3.1 的第 4 步不做），分步只是恢复过程中的顺序。
-- **登录时的智能恢复**：
-  - 一个人登录（或带着有效会话打开应用，每人 6 小时最多算一次）时，服务器在后台把他
-    够得着的、清出了或归档了的空间排进预取队列，顺序：个人空间 → 收藏 → 最近 30 天
-    用过的 → 其余的（其余的每次最多 20 个）。
-  - 有人打开的恢复永远排在预取前面。预取只在压力的「正常」和「偏高」两档跑，「高」
-    及以上暂停；全服务器同时最多 2 个预取；预取不能用应急储备（见下）。
-  - 管理员可以关掉预取，或只给最近 N 天活跃过的人预取（分层，见下）。
-- **站点存储预算** `storage.siteBudget`（「站点存储预算」）：服务器的主人给 PetalBook
-  的总空间。**管理员只设这一个值**，其余都由它推出；没设时用数据目录所在磁盘总大小
-  的 80%。磁盘的实际余量比「预算还剩下的」小时，以磁盘为准。
-  - 「存储与同步」页（全站管理员）显示：预算 / 已分配（各租户限额表里存储总额之和，可以超分，超了
-    给警告）/ 已用（空间的副本、索引、附件缓存、回收站、导出、临时文件）。
-- **存储压力控制器**：
-  - **压力** = 已用 ÷ min(预算, 磁盘实际余量 + 已用)。每分钟算一次：已用来自存下的测量
-    和增量记账（写文件、取回、清出、回收时加减），磁盘余量是一次 `statfs`；**请求里
-    从不遍历磁盘**。
-  - **四档**（默认值，所有者 2026-11-23 定）：
-    - 正常（低于 70%）：只做无痛的清理：过期的导出、临时文件、附件缓存超出上限的部分；
-      按正常节奏清出长期闲置的空间（30 天没人打开）。
-    - 偏高（70–85%）：清出更快（14 天没人打开就清）；附件缓存缩到上限的一半。
-    - 高（85–95%）：归档最冷的空间（180 天平时，这一档 90 天）；暂停登录预取，只恢复
-      有人正在打开的空间。
-    - 危急（高于 95%）：暂停新附件和新空间（对普通人和租户管理员答中性的
-      `503 temporarily_unavailable`，见下面「危急时怎么说」），**保存文字永远成功**；
-      通知全站管理员。
-    - 回滞：到了一档的上沿才开始，降到大约低 10 个百分点才停，免得在边上来回抖。
-  - **回收顺序**（对人影响最小的先来）：1. 过期的导出和临时文件；2. 附件缓存，最久没读
-    的先删；3. 跟随远端的空间里取回来的旧版本内容；4. 清出闲置的空间（留索引）；
-    5. 归档最冷的空间（删索引）。同一步里按分数排：分数 = 腾出的字节 ÷（预计的恢复
-    代价 × 近期要用到的可能性）。可能性看最后打开时间、30 天打开次数、是否被收藏、成员
-    最近有没有登录；恢复代价按空间的大小算。
-  - **硬规则**：
-    - 正在打开或正在编辑的空间、24 小时内恢复过的空间，一概不碰；
-    - 固定的（`pin`）、豁免的、只在本地的空间不清出也不归档；
-    - **应急储备**：默认 max(预算的 5%, 2 GB)，只有保存文字和有人主动打开的恢复能用，
-      预取和后台任务不能用；
-    - 有人打开的恢复排在预取前面；预取只在正常和偏高两档跑，并发有上限；
-    - **按租户公平**：先从超出自己存储分配（限额表的存储总额）的租户回收，再在每个租户
-      里按分数。
-  - **其余的默认值**：附件缓存上限 = 预算的 10%（取代 3.1 的 `assetsBytes`）；清出 30 天、
-    偏高时 14 天；归档 180 天、高时 90 天；恢复后保护 24 小时（取代 3.1 的
-    `minIdleHours`）；登录预取全服务器 2 个，「高」及以上暂停。
-  - **只露一个旋钮**：管理页上只有预算；预设（保守／均衡（默认）／激进）和每个值都在
-    默认折叠、隐藏的「高级」里。预设改的是四档的百分比和清出、归档的天数；均衡就是上面
-    的默认值。接口是 `storage.siteBudget`（可选）加一个可选的 `storage.advanced` 对象。
-    「高级」里还有：自动或手动（手动时控制器只列出建议，由管理员点；危急档的拒绝照样
-    生效）、值得归档的最小索引大小（默认 1 MiB，更小的归档了也省不了什么）。
-  - **分层**：预算、四档、回滞、储备、附件缓存上限只在全站；本租户空间的清出和归档天数、
-    预取开关和「最近 N 天活跃的人」有租户层，租户只能在全站的范围内调（`tighten`：天数
-    只能更短，预取只能更少）。除外的照旧：固定、豁免、租户策略留着的（租户管理员可以
-    让本租户的某些空间不归档，它们的索引算进租户的存储分配）。
-  - **看得见**（全站管理员）：「存储与同步」页显示当前档位、最近的回收（回收了什么、腾出多少）、
-    下一批最可能被回收的空间；还记着人等了多久：30 天里打开时需要恢复的比例、恢复
-    等待的 p95。等待变多时（需要恢复的比例超过 5%，或 p95 超过 30 秒，持续一小时），
-    控制器自动放慢回收（清出、归档的天数加倍，「高」以下不归档），并提醒管理员调高
-    预算。
-  - 预算、已分配、已用、档位、等待都来自存下的测量和内存里的数，一次查询。
-  - **服务器一级的存储压力只给全站管理员看**（所有者 2026-11-23 定）：预算、已用、
-    压力、档位、磁盘余量、回收记录，任何别人的答复和页面里都不出现；租户管理员在
-    「存储与同步」页只看到本租户的用量和分配、本租户的等待统计和本租户下一批候选。
-  - **危急时怎么说**（所有者 2026-11-23 定）：
-    - 普通人和租户管理员得到中性的 `503 temporarily_unavailable`，带 `Retry-After`；答复里
-      没有存储、预算、容量一类的词，从答复里看不出服务器满了。
-    - 界面文案，只在这个人去做的时候显示，没有常驻的横幅：
-      - 上传附件：「暂时无法上传附件。请稍后再试。你正在写的内容会照常保存，也可以先
-        插入图片链接。」（英文："Can't upload attachments right now. Please try again
+- **Archive** (a level lower than eviction):
+  - The cache states of a space, from highest to lowest: `full`, `partial`,
+    `evicted` (3.1: only the index is left), `archived` (new). For an archived
+    space, the server keeps only the row in the state database and small
+    metadata (name, the small copy of the 3.9 icon, the page count and size
+    measurements), and **the index is deleted too**. Members, permissions,
+    favourites, remotes and drafts are all in the state database and are not
+    affected.
+  - **Only spaces that follow a remote can be archived**; a local-only space is
+    never archived (and never evicted either), and a manual archive answers
+    `409 archive_needs_remote`. The checks before archiving are the same as for
+    3.1 eviction (remote `ok`, no pending commits or rescued commits, and a
+    fetch on the spot to confirm the remote is at `HEAD`). If any one fails, the
+    space is not archived.
+  - **Restore** = fetch the body (a partial clone) and rebuild the index. While
+    archived: it is not in search (global search skips it, and a search within
+    the space starts a restore and answers `503 restoring`), it is not used to
+    produce the daily text, and backlinks that involve it are not shown. A
+    request that opens it starts the restore, and the UI says "Restoring, about
+    N seconds" (N estimated from the stored size and the recently measured fetch
+    speed).
+  - **Restore in steps**: archived spaces and spaces with more than 50 MB of body
+    are restored in two steps. First fetch the directory and the beginning of
+    each page, and build a light index (title, folder, tags, properties), so
+    that lists and titles work first. The body and the full-text index are filled
+    in in the background. If someone opens a certain page in the meantime, that
+    page is fetched first. After the restore is complete, all bodies stay local
+    as before (decided earlier by the owner: bodies always stay local, step 4 of
+    3.1 is not done). The steps are only the order during the restore.
+- **Smart restore on sign-in**:
+  - When a person signs in (or opens the app with a valid session, counted at most
+    once every 6 hours per person), the server queues, in the background, the
+    evicted or archived spaces he can reach into a prefetch queue, in this order:
+    personal space, then favourites, then used in the last 30 days, then the rest
+    (at most 20 of the rest each time).
+  - A restore that someone has opened always goes ahead of prefetch. Prefetch runs
+    only in the "normal" and "elevated" pressure levels and pauses at "high" and
+    above. At most 2 prefetches run at once server-wide, and prefetch cannot use
+    the emergency reserve (see below).
+  - Administrators can turn prefetch off, or prefetch only for people active in
+    the last N days (layered, see below).
+- **Site storage budget** `storage.siteBudget` ("Site storage budget"): the total
+  space the server's owner gives to PetalBook. **The administrator sets only this
+  one value** and everything else is derived from it. If it is not set, 80% of the
+  total size of the disk holding the data directory is used. When the actual free
+  space on the disk is less than what is "left in the budget", the disk wins.
+  - The "Storage & sync" page (site administrators) shows: budget / allocated (the
+    sum of the storage totals in the tenants' limits tables; it may be
+    oversubscribed, with a warning when it is) / used (the copies of spaces,
+    indexes, attachment cache, recycle bin, exports, temporary files).
+- **Storage pressure controller**:
+  - **Pressure** = used ÷ min(budget, actual free disk space + used). It is
+    computed once a minute. Used comes from stored measurements and incremental
+    accounting (added or subtracted when writing files, fetching, evicting,
+    recycling), and the free disk space is one `statfs`. **A request never walks
+    the disk.**
+  - **Four levels** (defaults, decided by the owner 2026-11-23):
+    - Normal (below 70%): only painless cleanup: expired exports, temporary
+      files, and the part of the attachment cache over its limit. Spaces idle for
+      a long time (nobody opened them for 30 days) are evicted at the normal pace.
+    - Elevated (70-85%): eviction is faster (evict when nobody opened it for 14
+      days). The attachment cache shrinks to half of its limit.
+    - High (85-95%): archive the coldest spaces (180 days normally, 90 days at
+      this level). Pause sign-in prefetch, and restore only spaces that someone is
+      opening.
+    - Critical (above 95%): pause new attachments and new spaces (answer ordinary
+      people and tenant administrators with a neutral
+      `503 temporarily_unavailable`, see "What is said when critical" below).
+      **Saving text always succeeds.** Notify the site administrators.
+    - Hysteresis: a level starts when its upper edge is reached and stops only
+      after dropping about 10 percentage points lower, so it does not flip back
+      and forth at the edge.
+  - **Reclaim order** (least impact on people first): 1. expired exports and
+    temporary files; 2. the attachment cache, least recently read first; 3. old
+    version content fetched in spaces that follow a remote; 4. evict idle spaces
+    (keep the index); 5. archive the coldest spaces (delete the index). Within
+    one step, rank by score: score = bytes freed ÷ (estimated restore cost ×
+    likelihood of being needed soon). The likelihood looks at the last open time,
+    the number of opens in 30 days, whether it is a favourite, and whether the
+    members have signed in recently. The restore cost is computed from the size
+    of the space.
+  - **Hard rules**:
+    - A space being opened or edited, and a space restored within 24 hours, is
+      never touched;
+    - Pinned (`pin`), exempt, and local-only spaces are neither evicted nor
+      archived;
+    - **Emergency reserve**: by default max(5% of the budget, 2 GB). Only saving
+      text and restores that someone actively opened can use it. Prefetch and
+      background jobs cannot;
+    - A restore that someone opened goes ahead of prefetch. Prefetch runs only at
+      the normal and elevated levels, with a concurrency limit;
+    - **Fair per tenant**: reclaim first from tenants that exceed their own storage
+      allocation (the storage total in the limits table), and then rank by score
+      inside each tenant.
+  - **Other defaults**: attachment cache limit = 10% of the budget (replaces the
+    3.1 `assetsBytes`); evict at 30 days, 14 days when elevated; archive at 180
+    days, 90 days when high; protection for 24 hours after a restore (replaces the
+    3.1 `minIdleHours`); sign-in prefetch 2 server-wide, paused at "high" and
+    above.
+  - **Only one knob is exposed**: the admin page has only the budget. The presets
+    (conservative / balanced (default) / aggressive) and every individual value are
+    in an "Advanced" section that is collapsed and hidden by default. A preset
+    changes the percentages of the four levels and the days for eviction and
+    archive; balanced is the defaults above. The interface is `storage.siteBudget`
+    (optional) plus an optional `storage.advanced` object. "Advanced" also has:
+    automatic or manual (in manual mode the controller only lists suggestions and
+    the administrator clicks; the refusals at the critical level still apply), and
+    the minimum index size worth archiving (default 1 MiB; archiving anything
+    smaller saves nothing).
+  - **Layers**: the budget, the four levels, hysteresis, reserve and attachment
+    cache limit exist only site-wide. The eviction and archive days for the
+    tenant's own spaces, the prefetch switch, and "people active in the last N
+    days" have a tenant layer, and a tenant can only adjust within the site range
+    (`tighten`: days can only be shorter, prefetch can only be less). The
+    exclusions stay as before: pinned, exempt, and those kept by tenant policy (a
+    tenant administrator can make some of the tenant's spaces not archive, and
+    their indexes count toward the tenant's storage allocation).
+  - **Visible** (site administrators): the "Storage & sync" page shows the current
+    level, recent reclaims (what was reclaimed, how much was freed), and the
+    spaces most likely to be reclaimed next. It also records how long people
+    waited: the share of opens in 30 days that needed a restore, and the p95 of
+    the restore wait. When waits grow (the share needing restore is above 5%, or
+    p95 is above 30 seconds, for one hour), the controller automatically slows
+    reclaiming (the days for eviction and archive double, and nothing is archived
+    below "high"), and reminds the administrator to raise the budget.
+  - The budget, allocated, used, level and waits all come from stored measurements
+    and numbers in memory, in one query.
+  - **Server-level storage pressure is shown only to site administrators**
+    (decided by the owner, 2026-11-23): budget, used, pressure, level, free disk
+    space, and the reclaim records do not appear in anyone else's responses or
+    pages. A tenant administrator sees on the "Storage & sync" page only the
+    tenant's usage and allocation, the tenant's wait statistics, and the tenant's
+    next candidates.
+  - **What is said when critical** (decided by the owner, 2026-11-23):
+    - Ordinary people and tenant administrators get a neutral
+      `503 temporarily_unavailable` with `Retry-After`. The response has no words
+      about storage, budget or capacity, so one cannot tell from the response that
+      the server is full.
+    - UI text, shown only when the person tries to do the thing, with no permanent
+      banner:
+      - Upload attachment: "Can't upload attachments right now. Please try again
         later. Everything you write is still saved; you can insert an image link
-        instead."）
-      - 新建空间：「暂时无法新建空间。请稍后再试。你已有的空间都可以正常使用。」（英文：
-        "Can't create a space right now. Please try again later. Your existing spaces
-        work as usual."）
-    - 租户管理员看到同样的中性文案，后面多一句「已通知全站管理员」（"The site
-      administrators have been notified."）。
-    - 只有全站管理员看到真正的原因：「存储与同步」页上的红色提示（「存储已用 N%，新附件
-      和新空间已暂停，正在回收闲置的空间；请调高站点存储预算或加磁盘」，附占用最多的
-      租户和空间）、一条审计，和一封提醒邮件（同一个状态 24 小时最多一封）。
-    - **配额照旧说清楚**，因为那是这个人或这个租户自己的上限：个人配额用完（已用／上限）、
-      租户配额用完（「请联系你所在组织的管理员」）、文件太大（给出上限）。分别是
-      `quota_exceeded`（`level` 说明是个人还是租户这一级，`quota` 说明是哪一项）和
-      `file_too_large`。为以后的计费预留一个「升级套餐」的动作（答复里的
-      `actions` 预留 `upgrade_plan`，现在从不出现）。
-- **部分同步是自动的**（所有者 2026-11-23 定）：
-  - 去掉 3.1 的 `cache.partial`，没有开、关、强制的开关。第一次连某个远端主机（自托管
-    的按主机和端口）时检测它支不支持按条件取（Git 协议 v2 的 `filter`），记在状态库
-    里；支持就用部分克隆，不支持就完整克隆。部分取被远端拒绝时重新检测，另外每 30 天
-    复查一次。服务器的 Git 低于 2.44 时一律完整克隆。
-  - 固定的空间照旧是完整的。
-  - 「存储与同步」页按平台和主机显示「支持部分同步：是／否」。
-  - 唯一的策略「不能部分同步的远端：允许（完整克隆）／拒绝」在 3.6（分层，默认允许）。
-  - 正文一律留在本地（所有者之前定的）。
+        instead."
+      - New space: "Can't create a space right now. Please try again later. Your
+        existing spaces work as usual."
+    - A tenant administrator sees the same neutral text, with one more sentence
+      after it: "The site administrators have been notified."
+    - Only site administrators see the real reason: a red notice on the "Storage &
+      sync" page ("Storage is N% used. New attachments and new spaces are paused
+      and idle spaces are being reclaimed. Raise the site storage budget or add
+      disk." with the tenants and spaces that use the most), an audit entry, and a
+      reminder email (at most one per 24 hours for the same state).
+    - **Quotas are still stated clearly**, because they are this person's or this
+      tenant's own limit: the personal quota is used up (used / limit), the tenant
+      quota is used up ("Please contact the administrator of your organization"),
+      and the file is too large (the limit is given). These are `quota_exceeded`
+      (`level` says whether it is the personal or the tenant level, and `quota`
+      says which item) and `file_too_large`. An "upgrade plan" action is reserved
+      for future billing (`upgrade_plan` is reserved in `actions` in the response
+      and never appears now).
+- **Partial sync is automatic** (decided by the owner, 2026-11-23):
+  - Remove the 3.1 `cache.partial`; there is no on, off or force switch. The first
+    time a remote host is connected (for self-hosted, by host and port), the
+    server detects whether it supports fetching by condition (the Git protocol v2
+    `filter`) and records it in the state database. If it is supported, a partial
+    clone is used, and if not, a full clone. When the remote rejects a partial
+    fetch, detection is redone, and it is also rechecked every 30 days. With a
+    server Git older than 2.44, a full clone is always used.
+  - Pinned spaces are still full.
+  - The "Storage & sync" page shows "Partial sync supported: yes / no" per
+    platform and host.
+  - The only policy, "Remotes that cannot do partial sync: allow (full clone) /
+    refuse", is in 3.6 (layered, default allow).
+  - Bodies always stay local (decided earlier by the owner).
 
-所有者 2026-11-23 又定的（接在上面三条之后）：
+Decided again by the owner on 2026-11-23 (following the three above):
 
-4. 归档是比清出更低的一档：只留状态库的一行和小的元数据，索引也删；只有跟随远端的
-   空间能归档；恢复是取回正文再重建索引；登录时按个人 → 收藏 → 最近用过 → 其余在
-   后台恢复，并发有上限；很旧的分步恢复；管理员可以关掉预取或只给最近活跃的人；归档
-   期间不能搜索、不出每日文案、反向链接不显示，界面写「正在恢复，约 N 秒」；收藏、
-   成员、权限不受影响。
-5. 服务器一级的存储压力只给全站管理员看；危急时普通人和租户管理员只得到中性的
-   `503 temporarily_unavailable` 和上面的文案，配额和文件大小照旧说清楚。
-6. 一个存储压力控制器取代各自独立的清理阈值：四档（70／85／95%）和 10 个百分点的回滞，
-   对人影响最小的先回收、同一步按分数，硬规则和应急储备，按租户公平，看得见的回收
-   和等待，等待变多时自动放慢；管理员只设站点存储预算，其余在隐藏的「高级」里；
-   3.5 里做一个确定性的模拟器来调默认值（见下）。
-7. 部分同步自动检测，按远端主机记下；没有开关；固定的空间完整；正文留在本地。
+4. Archive is a level lower than eviction: only a row in the state database and
+   small metadata are kept, and the index is deleted too. Only spaces that follow
+   a remote can be archived. Restore means fetching the body and rebuilding the
+   index. On sign-in, restore in the background in the order personal, then
+   favourites, then recently used, then the rest, with a concurrency limit. Very
+   old ones are restored in steps. Administrators can turn prefetch off, or
+   prefetch only for recently active people. While archived, a space cannot be
+   searched, gives no daily text, and shows no backlinks, and the UI says
+   "Restoring, about N seconds". Favourites, members and permissions are not
+   affected.
+5. Server-level storage pressure is shown only to site administrators. When
+   critical, ordinary people and tenant administrators get only the neutral
+   `503 temporarily_unavailable` and the text above, and quotas and file size are
+   still stated clearly.
+6. One storage pressure controller replaces the independent cleanup thresholds:
+   four levels (70 / 85 / 95%) and 10 percentage points of hysteresis, least
+   impact on people reclaimed first and ranked by score within a step, hard rules
+   and the emergency reserve, fairness per tenant, visible reclaims and waits,
+   and automatic slowing when waits grow. The administrator sets only the site
+   storage budget, and the rest is in the hidden "Advanced". A deterministic
+   simulator is built in 3.5 to tune the defaults (see below).
+7. Partial sync is detected automatically and recorded per remote host. There is
+   no switch. Pinned spaces are full. Bodies stay local.
 
-**模拟器**（3.5 的实现要求）：一个确定性的模拟器（固定的随机种子；合成的人、空间、
-登录和打开的规律，大小分布照 3.1 的估算），驱动真实的控制器代码（时钟和磁盘都是假的），
-用来调默认值。它的测试断言：除了应急储备，已用从不超过预算；预取和后台任务从不动用
-储备；在参考负载下，均衡预设的恢复等待 p95 低于 30 秒、需要恢复的比例低于 5%。这些
-测试跑在普通的 `go test` 里，几秒内跑完。
+**Simulator** (an implementation requirement of 3.5): a deterministic simulator
+(fixed random seed; synthetic people, spaces, and patterns of sign-in and
+opening, with the size distribution following the 3.1 estimate) that drives the
+real controller code (with a fake clock and a fake disk), used to tune the
+defaults. Its tests assert: apart from the emergency reserve, used never exceeds
+the budget; prefetch and background jobs never use the reserve; under the
+reference load, the balanced preset has a restore wait p95 below 30 seconds and a
+share of opens needing restore below 5%. These tests run in plain `go test` and
+finish in a few seconds.
 
-**3.5 的现状（2026-11-24，第 1 到 4 部分，只做后端）**：
+**3.5 as built (2026-11-24, parts 1 to 4, backend only)**:
 
-- **第 1 部分，单个文件的大小 `files.maxBytes`**：做了合同里列出的写入入口：上传、导入
-  里的每个页面和附件、`PUT`/`POST` 页面、草稿的保存和提交、MCP 的 `page_create` 和
-  `page_update`；附件仓库的提交只由上传和导入产生，所以随它们。检查在页面文件
-  「按它会被写成的样子」的大小上（头部加正文），错误是 `413 file_too_large`（MCP 里是同名的
-  `code`，细节在 `details`）。站点的值就是 `--max-upload`，只读；租户的值上限也是它，全站
-  管理员放宽 `lower` 之后实际生效的值仍不超过 `--max-upload`（读设置时再截一次）。
-  - 合同没写、按最安全的读法定的：**已经超出上限的页面可以改回不更大的大小**（上限降低后
-    页面照常能读，也能改小；只拒绝新建的、或让它更大的写入），否则降低上限会让人没法
-    编辑自己超限的旧页面。草稿放进去时按同样的规则检查，提交时再查一次（上限可能在这期
-    间降低了）；导入先整体检查，第一个超限的页面或附件被点名，一个文件也不写。
-  - 4.2 的离线重放还不存在，它将走同样的页面写入。
-  - 审查后补上（2026-11-23）：模板和类型的写入也按 `files.maxBytes` 检查（与页面同一规则）；
-    草稿的后台提交（清扫器，没有请求带上限）按草稿主人所在租户的上限检查，超限的不写，
-    草稿保留并标为 held，不会丢。
+- **Part 1, single-file size `files.maxBytes`**: done for the write entry points
+  listed in the contract: upload, each page and attachment in an import, `PUT` /
+  `POST` of pages, saving and committing drafts, MCP `page_create` and
+  `page_update`. Commits to the attachment repository come only from uploads and
+  imports, so they follow them. The check is on the size of the page file "as it
+  would be written" (header plus body), and the error is `413 file_too_large` (in
+  MCP it is a `code` of the same name, with the details in `details`). The site
+  value is `--max-upload`, read-only. A tenant value is also capped by it: after a
+  site administrator relaxes `lower`, the effective value is still no more than
+  `--max-upload` (cut once more when the setting is read).
+  - Not written in the contract, decided by the safest reading: **a page that is
+    already over the limit may be changed back to a size that is not larger**
+    (after the limit is lowered, such a page can still be read and made smaller;
+    only writes that create a new one or make it larger are refused). Otherwise
+    lowering the limit would stop people from editing their own old oversized
+    pages. A draft is checked by the same rule when it is put in, and again when
+    it is committed (the limit may have been lowered in between). An import is
+    checked as a whole first, the first page or attachment over the limit is
+    named, and no file is written.
+  - The 4.2 offline replay does not exist yet. It will go through the same page
+    write.
+  - Added after review (2026-11-23): writes of templates and types are also checked
+    against `files.maxBytes` (the same rule as pages). The background commit of
+    drafts (the sweeper, where no request carries a limit) is checked against the
+    limit of the tenant of the draft's owner. Anything over the limit is not
+    written, and the draft is kept and marked held, so nothing is lost.
 
-- **第 2 部分，回收站、删空间、管理员查看和导出**：
-  - 删空间把它的所有记录（空间行、成员、组、远端和附件远端的记录、收藏、草稿、每日文案
-    设置、文件夹移动记录）存成 `recycle_items.records` 的一份 JSON，同一个事务里从活的
-    表删掉；目录搬到 `DATA/recycle/<项>/space` 和 `/cache`。步骤和崩溃后怎么办写在
-    `internal/spaces/recycle.go` 的开头：事务提交后项是 `moving`，目录搬完才是 `ready`；
-    启动时 `moving` 的接着搬、`restoring` 的搬回去、`purging` 的接着清；每小时的任务也会
-    重试搬不动的。恢复和清除只动 `ready` 的项，所以两者不会同时跑。恢复把记录用
-    `INSERT … SELECT` 按租户连着人和组插回去（不存在或已删的人和组列在 `skipped`）；没有
-    所有者时要 `owner`（同租户、存在、没删、没停用）。恢复从不因配额被拒。
-  - 迁移 `0020_recycle.sql` 放了 `recycle_items`、`exports`、`users.deleted_at` 和
-    `users.recycle_item`（第 4 部分的列以后加进同一个文件）；租户里还有回收站的项时租户
-    删不掉（`tenant_not_empty` 多一个 `recycle`），这样恢复时租户一定在。
-  - **合同没写、按最安全的读法定的**：
-    1. 合同说「1.7 的管理员不能经接口读别人的页面」，但代码里管理员（会话）打开不是成员
-       的空间拿到全部权限，能读也能写。这样「查看」就没意义了，所以改成：不是成员的
-       管理员只有 `members` 和 `manage`（管成员、远端、设置、改名、转移），读要先开一次
-       带理由的查看，查看只加 `read`，永远不能写。列成员的两个接口（要 `read`）对管理员照旧
-       开着，因为管成员要用。
-    2. 合同写「个人空间 3.7 起组织管理员看不到」，任务要求「个人空间永远不给组织管理员
-       看」，按后者做：租户管理员对个人空间的查看、导出、打开一律答「不存在」；全站管理员
-       照旧能看（每次记审计）。
-    3. 个人空间不能单独恢复（`409 conflict`），要跟它的人一起（第 3 部分）；单独恢复会
-       得到一个属于已删的人的「个人」空间。
-    4. 3.1 的宽限期截止不是存下的值，是按创建时间和现行策略算出来的，所以恢复后的空间
-       自然是「照现行策略重算」，不必另存。
-    5. 预览里 `attachments.inSpace` 没有存下的数，答 `null`（预览只读存下的值）。
-    6. 导出的「通知空间的所有者」没做：现在没有账户内的通知通道可放；审计行记了导出和
-       它的空间。导出里附件仓库的文件逐个取进 zip，取不到的写进 `NOT-INCLUDED.txt` 和
-       `warnings`，不让导出整个失败；回收站里一个删除时就是「已清出」的空间没有文件可导，
-       导出只带草稿和远端地址。部分克隆里缺的对象不会自动去远端取（Git 的惰性取回关着），
-       导出会失败并说明。
-  - 确认令牌（`POST /api/admin/confirm`）在这一部分做了 `delete_spaces`、`purge`、
-    `restore`、`export`，其余动作和批量任务在第 3 部分。
+- **Part 2, recycle bin, deleting spaces, administrator view and export**:
+  - Deleting a space stores all its records (the space row, members, groups,
+    records of remotes and attachment remotes, favourites, drafts, daily-text
+    settings, folder-move records) as one JSON document in
+    `recycle_items.records`, and deletes them from the live tables in the same
+    transaction. The directories are moved to `DATA/recycle/<item>/space` and
+    `/cache`. The steps and what to do after a crash are written at the top of
+    `internal/spaces/recycle.go`: after the transaction commits, the item is
+    `moving`, and only when the directories are moved is it `ready`. On startup,
+    `moving` ones continue moving, `restoring` ones are moved back, and `purging`
+    ones continue purging. The hourly job also retries what could not be moved.
+    Restore and purge touch only `ready` items, so the two never run at the same
+    time. Restore puts the records back with `INSERT … SELECT`, linked by tenant
+    to people and groups (people and groups that do not exist or are deleted are
+    listed in `skipped`). If there is no owner, an `owner` is required (same
+    tenant, exists, not deleted, not deactivated). Restore is never refused
+    because of quota.
+  - Migration `0020_recycle.sql` holds `recycle_items`, `exports`,
+    `users.deleted_at` and `users.recycle_item` (the columns of part 4 are added
+    to the same file later). A tenant cannot be deleted while it still has items in
+    the recycle bin (`tenant_not_empty` gets an extra `recycle`), so the tenant is
+    always there on restore.
+  - **Not written in the contract, decided by the safest reading**:
+    1. The contract says "in 1.7 an administrator cannot read other people's
+       pages through the API", but in the code an administrator (session) who
+       opens a space they are not a member of gets all permissions, and can read
+       and write. That makes the "view" meaningless, so it was changed: an
+       administrator who is not a member has only `members` and `manage` (manage
+       members, remotes, settings, rename, transfer). Reading first needs a view
+       with a stated reason, and a view adds only `read` and can never write. The
+       two endpoints that list members (they need `read`) remain open to
+       administrators, because managing members needs them.
+    2. The contract says "from 3.7 organization administrators cannot see personal
+       spaces", while the task said "personal spaces are never shown to
+       organization administrators". The latter was followed: for a tenant
+       administrator, viewing, exporting and opening a personal space always
+       answer "does not exist". A site administrator can still see them (each time
+       is audited).
+    3. A personal space cannot be restored alone (`409 conflict`). It must come
+       with its person (part 3), because restoring it alone would give a
+       "personal" space belonging to a deleted person.
+    4. The 3.1 grace-period deadline is not a stored value. It is computed from the
+       creation time and the current policy, so a restored space naturally is
+       "recomputed under the current policy" and need not be stored separately.
+    5. In the preview, `attachments.inSpace` has no stored number and answers `null`
+       (the preview reads only stored values).
+    6. The export's "notify the owner of the space" is not done: there is no
+       in-account notification channel to put it in right now. The audit row
+       records the export and its space. The files of the attachment repository are
+       fetched into the zip one by one, and any that cannot be fetched are written
+       to `NOT-INCLUDED.txt` and `warnings`, so the export as a whole does not
+       fail. A space in the recycle bin that was already "evicted" at deletion has
+       no files to export, and the export has only the drafts and the remote
+       address. Objects missing from a partial clone are not fetched from the
+       remote automatically (Git's lazy fetch is off), and the export fails with
+       an explanation.
+  - The confirmation token (`POST /api/admin/confirm`) is done in this part for
+    `delete_spaces`, `purge`, `restore` and `export`. The other actions and the
+    bulk jobs are in part 3.
 
-- **第 3 部分，删人、确认令牌和批量任务**：
-  - 删人按合同的顺序：先停用（走 `PATCH /api/users/{id}` 同一个入口，所以「最后一个
-    管理员」「自己」照旧拒绝），再转移、退出、回收，最后一个事务做人的回收项、标记行、
-    取出组成员、把随他回收的空间挂到项下。中途失败留下「停用了、空间少了」，不会有没有
-    所有者的空间；再请求一次接着做，靠空间项的 `parent = u:<用户 id>` 记号把前面回收的
-    空间认回来。预览和执行都从记录算，常数个查询，不管他有多少空间。
-  - **合同没写、按最安全的读法定的**：
-    1. 转移之后他在那个空间里是编辑，所以删人时也要把这条成员关系去掉（记在 `left`
-       里），否则活的空间里会留着一个已删的人。
-    2. 个人空间原则上跟着人恢复；但人已经在（删人做到一半、或恢复做到一半），个人空间
-       可以单独恢复回给他，不然这样的个人空间永远卡在回收站里。
-    3. 恢复人时「随他进回收站的空间」恢复不了的（比如同 id 的空间又出现）留在回收站成为
-       独立的项，列在 `skipped`，不让整个恢复失败。
-    4. 人的项记录「停用前是否已停用」。审查后改为：第 1 步之前就把「停用前是否已停用」
-       记在他那一行（`users.delete_pending`），之后每次转移、每次退出也记进去，所以失败后
-       再请求时记下的是第一次请求时的状态和全部转移，恢复时照原样启用并列出所有转移。
-       第二轮审查后：管理员重新启用这个人会清掉这条记录；开始删除时这个人没有停用，旧记录
-       也作废重记，所以以后的删除不会沿用旧的「是否已停用」。
-    5. `users.reuseUsernames` 管邀请（带用户名的）、注册、接受邀请和 `autoCreate`；
-       以用户名登录的人找不到已删的人，他们的用户名靠那一行本身占着（唯一键）。
-    6. 租户的人数（`usage.people`）在删人时减一、恢复时加一，每天的对账不数已删的人。
-    7. 租户删除的拦截数里：已删人的行（墓碑）不算，回收站里还有项才算（`recycle`）。
-    8. 批量里的 `evict`、`pin`、`unpin` 只给全站管理员，租户管理员每一项都得 `403`；
-       `export` 是整个集合做一个导出，不是每项一个。批量的令牌永远要带（合同说「多于一项的
-       动作和任何清除」要令牌，但批量接口只收令牌，没有别的方式给 id，所以一律要）。
-    9. 任务不会在请求结束时停；任务行存在 `bulk_jobs`，重启后没做完的读作 `interrupted`。
-  - 隔离表：`GET /api/admin/users/{user}/deletion`、`DELETE /api/users/{id}`、
-    `GET /api/admin/jobs/{id}` 各一条（B 的 id 当作不存在）；`POST /api/admin/bulk` 标成
-    豁免，理由是它只收令牌，令牌里的 id 在要令牌时已经按调用者的范围查过（B 的 id 在那里
-    `404`）。store 的范围测试加了一条：读 `users` 的函数都得带 `deleted_at`，不带的要在
-    名单里写理由。
+- **Part 3, deleting people, confirmation tokens and bulk jobs**:
+  - Deleting a person follows the contract's order: first deactivate (through the
+    same entry as `PATCH /api/users/{id}`, so "the last administrator" and
+    "yourself" are still refused), then transfer, leave, recycle. The last
+    transaction does the person's recycle item, marks the row, takes out the group
+    memberships, and attaches the spaces recycled with him under the item. A
+    failure halfway leaves "deactivated, fewer spaces", never a space without an
+    owner. Requesting again continues, using the mark `parent = u:<user id>` on the
+    space items to recognize the spaces recycled earlier. The preview and the
+    execution both compute from records, with a constant number of queries, no
+    matter how many spaces he has.
+  - **Not written in the contract, decided by the safest reading**:
+    1. After a transfer he is an editor in that space, so deleting the person must
+       also remove this membership (recorded in `left`). Otherwise a deleted
+       person would stay in a live space.
+    2. A personal space in principle is restored with the person. But if the person
+       is already there (deletion stopped halfway, or restore stopped halfway), the
+       personal space can be restored on its own back to him. Otherwise such a
+       personal space would be stuck in the recycle bin forever.
+    3. When a person is restored, a space "that went to the recycle bin with him"
+       that cannot be restored (for example a space with the same id has appeared
+       again) stays in the recycle bin as an independent item and is listed in
+       `skipped`, so the whole restore does not fail.
+    4. The person's item records "whether he was already deactivated before". After
+       review, this was changed: before step 1, "whether he was already
+       deactivated before" is recorded on his row (`users.delete_pending`), and
+       every transfer and every leave is recorded in it afterward, so when
+       requesting again after a failure, what is recorded is the state at the first
+       request and all the transfers. On restore he is enabled as he was and all
+       transfers are listed. After the second round of review: an administrator
+       re-enabling the person clears this record. If the person was not deactivated
+       when the deletion started, an old record is also voided and re-recorded, so
+       later deletions do not reuse an old "already deactivated".
+    5. `users.reuseUsernames` governs invitations (with a username), registration,
+       accepting an invitation, and `autoCreate`. People who sign in by username
+       cannot find a deleted person, and his username is held by the row itself
+       (the unique key).
+    6. The tenant's number of people (`usage.people`) is decremented on deleting a
+       person and incremented on restore, and the daily reconciliation does not
+       count deleted people.
+    7. In the count that blocks tenant deletion: rows of deleted people
+       (tombstones) do not count, and items in the recycle bin count only if there
+       are any (`recycle`).
+    8. In bulk operations, `evict`, `pin` and `unpin` are for site administrators
+       only, and a tenant administrator gets `403` on every item. `export` is one
+       export for the whole set, not one per item. The bulk token is always
+       required (the contract says "actions on more than one item and any purge"
+       need a token, but the bulk endpoint accepts only the token and has no other
+       way to receive ids, so it is always required).
+    9. A job does not stop when the request ends. The job row is stored in
+       `bulk_jobs`, and after a restart an unfinished job reads as `interrupted`.
+  - Isolation table: `GET /api/admin/users/{user}/deletion`,
+    `DELETE /api/users/{id}` and `GET /api/admin/jobs/{id}` get one entry each
+    (B's id is treated as not existing). `POST /api/admin/bulk` is marked exempt,
+    because it accepts only the token, and the ids in the token were already
+    checked against the caller's scope when the token was requested (B's id gives
+    `404` there). One entry was added to the store's scope test: every function
+    that reads `users` must carry `deleted_at`, and one that does not must have a
+    reason in the list.
 
-- **第 4 部分，存储管理的列表和汇总**（2026-11-24）：
-  - **用量按「存在哪里」算，已做**：每个空间存一个 `location`——`server`（只在服务器上，全算）、
-    `own`（远端是本人的，只显示、测量，不算配额）、`tenant`、`site`（3.6；`site` 算，`tenant` 不算）。
-    `usage.bytes`、租户合计和所有配额只算 `server` 和 `site`；`own`、`tenant` 的空间仍然测大小、
-    仍然显示，它们在服务器上的部分克隆、索引和附件缓存算 `held_bytes`，归存储压力控制器，不进配额。
-    远端仓库的大小从不靠下载去量。**给 3.6 留的缝**：`locationOf`（空间在哪里，一处）和
-    `LocationCounts`（这个位置算不算）；3.6 加存储方式时改前者，并给 `site` 的空间从提供方的接口取
-    大小，其余不用动。远端来去时，空间的计入字节跟着变（去掉远端后按最后一次测量重新计入）。
-  - 列、差值和对账：`spaces` 加了 `location`、`remote_via`、`remote_state`，`users` 加了
-    `last_active`、`first_write`，`usage` 加了合同里的那些列，外加 `partial_spaces`（概要要分
-    完整和部分）和 `created`、`last_active` 的副本（人的列表只走一个索引）。一个空间的所有变化
-    （测量、索引大小、缓存状态、固定、远端的来去和状态、换所有者、删除、恢复）在同一个事务里先锁
-    空间，再把差值加到租户和「算在谁名下的人」两行；`dormant` 在远端数、连接或第一次写入变时
-    重算，租户的数跟着；每天的对账一次纠正全部（也纠正 `location` 等空间上的列）。
-  - **合同没写、按最安全的读法定的**：
-    1. `grace_spaces`、`overdue_spaces` 不能按差值维护：宽限期会随时间变成过期，策略也会变，
-       都不是一次写入。改成一条分组查询（只扫缺远端的空间）设置它们：每小时一次、改策略时、
-       每天的对账里。所以它们最多晚一小时；列表的 `deadline` 过滤是请求时按策略和 `created`
-       算的，不晚。
-    2. 列表的游标不透明，带排序和方向（`held.desc:<值>:<id>`），别的排序的游标答 `400`；没有排序值
-       （从没测过、从没用过）的排在后面，按 id，作为同一个索引的第二段。同值的空间按 id，
-       方向跟着索引。
-    3. `remote=error` 也包括「历史被改写」；`exempt=1` 只指空间自己的豁免，不含所有者的；
-       `cache=archived` 加上了（第 5 部分才会写进去，对账已经认）。
-    4. `last_active` 在会话、API 令牌和 OAuth 授权用到时写（一人一小时一次，内存里判断）；
-       `first_write` 记在「作者」这一处（每一次写入都经它），所以第一次写之前就记下，哪怕这次写
-       后来被拒绝。
-    5. 租户管理员看人的列表和人的条目时，**空间一律不含个人空间**（`AdminScopeOf`）；但人的
-       行（空间数、字节、持有）是配额读的那一行，含个人空间，不拆开：拆开要另一套计数器，
-       留给 3.7（组织的份额和个人的家分开）。租户管理员看到的合计可能比列出的空间多一个个人空间。
-    6. `GET /api/admin/storage` 的 `affected`：全站管理员仍是 3.1 的那一条聚合；租户管理员是存下的
-       宽限期和过期数（豁免数是全站的，不告诉他）。`PUT` 不带汇总。
-    7. 迁移要对着三个分支顺序测过的旧库：0020 不碰 0013 的列，所以 `remote_via` 的种子里连接
-       一律记作 `github`（那时唯一的提供方），对账再按真正的提供方纠正；三个「合并顺序」测试
-       把 0020 当成最后一个（它本来就是）。
-  - 索引和 EXPLAIN：每个排序在 `spaces` 上带租户和不带租户各一个索引（站点管理员不带租户），
-    `usage` 上人的每个排序同样，另有 `dormant`、有宽限期的人、被固定的和被豁免的空间等的索引。
-    `internal/store/storage_explain_test.go` 在 16,000 行的库上，SQLite 和 PostgreSQL 各问一遍
-    每个列表、排序和主要过滤的执行计划，出现整表扫描或对找到的行排序就失败（PostgreSQL 上先把
-    顺序扫描和排序标成昂贵，证明索引给出了顺序和范围）。游标条件写成「列 ≥ 值，并且（列 > 值
-    或 id 比较）」，不写成一个 OR，否则 SQLite 会取两个范围再排序。
-    **没有索引的只有 `q`（名字包含）**：按排序的顺序读名字，直到页满。
+- **Part 4, storage management lists and totals** (2026-11-24):
+  - **Usage counted by "where it lives", done**: each space stores a `location`:
+    `server` (only on the server, counted in full), `own` (the remote is the
+    person's own; only shown and measured, not counted toward quota), `tenant`, and
+    `site` (3.6; `site` counts, `tenant` does not). `usage.bytes`, tenant totals
+    and all quotas count only `server` and `site`. Spaces that are `own` or
+    `tenant` are still measured and still shown, and their partial clones, indexes
+    and attachment cache on the server count as `held_bytes`, belong to the storage
+    pressure controller, and do not enter quota. The size of a remote repository is
+    never measured by downloading. **A seam left for 3.6**: `locationOf` (where a
+    space lives, in one place) and `LocationCounts` (whether this location
+    counts). When 3.6 adds storage modes, change the former, and for spaces at
+    `site` take the size from the provider's API; nothing else needs to change.
+    When a remote comes or goes, the bytes counted for the space change with it
+    (after a remote is removed, they are counted again from the last measurement).
+  - Columns, deltas and reconciliation: `spaces` gets `location`, `remote_via` and
+    `remote_state`, `users` gets `last_active` and `first_write`, and `usage` gets
+    the columns listed in the contract, plus `partial_spaces` (the summary needs to
+    split full and partial) and copies of `created` and `last_active` (the list of
+    people goes through a single index). Every change of a space (measurement,
+    index size, cache state, pinning, a remote coming or going and its state,
+    changing owner, deletion, restore) first locks the space in the same
+    transaction, and then adds the delta to two rows: the tenant and "the person it
+    is counted under". `dormant` is recomputed when the number of remotes, the
+    connections, or the first write changes, and the tenant's number follows. The
+    daily reconciliation corrects everything in one pass (and also corrects
+    columns on the space such as `location`).
+  - **Not written in the contract, decided by the safest reading**:
+    1. `grace_spaces` and `overdue_spaces` cannot be maintained by deltas: a grace
+       period turns into overdue as time passes, and the policy can change, so
+       neither is a single write. Instead, one grouped query (scanning only spaces
+       that lack a remote) sets them: once an hour, when the policy changes, and in
+       the daily reconciliation. So they may lag by up to one hour. The `deadline`
+       filter of the list is computed at request time from the policy and
+       `created`, so it does not lag.
+    2. The list cursor is opaque and carries the sort and direction
+       (`held.desc:<value>:<id>`); a cursor from another sort answers `400`. Those
+       with no sort value (never measured, never used) are placed last, ordered by
+       id, as the second segment of the same index. Spaces with equal values go by
+       id, and the direction follows the index.
+    3. `remote=error` also includes "history was rewritten". `exempt=1` means only
+       the space's own exemption, not the owner's. `cache=archived` was added (it
+       will be written only in part 5, and the reconciliation already recognizes it).
+    4. `last_active` is written when a session, an API token, or an OAuth grant is
+       used (once per person per hour, decided in memory). `first_write` is
+       recorded at "the author", the one place (every write goes through it), so it
+       is recorded before the first write, even if that write is rejected later.
+    5. When a tenant administrator looks at the list of people and a person's
+       entry, **the spaces never include personal spaces** (`AdminScopeOf`). But
+       the person's row (number of spaces, bytes, held) is the row that the quota
+       reads, and it includes personal spaces and is not split. Splitting would
+       need another set of counters, which is left for 3.7 (the organization's share
+       and the person's home are separated). The totals a tenant administrator sees
+       may be one personal space more than the spaces listed.
+    6. `affected` of `GET /api/admin/storage`: for a site administrator it is still
+       the 3.1 aggregate. For a tenant administrator it is the stored grace and
+       overdue counts (the exempt count is site-wide and not told to him). `PUT`
+       carries no summary.
+    7. The migration has to be tested on old databases built in order from the
+       three branches. 0020 does not touch the 0013 columns, so in the seed of
+       `remote_via` every connection is recorded as `github` (the only provider
+       then), and the reconciliation corrects it to the real provider. The three
+       "merge order" tests treat 0020 as the last one (which it is anyway).
+  - Indexes and EXPLAIN: each sort has one index on `spaces` with the tenant and
+    one without (the site administrator has no tenant), and likewise for each sort
+    of people on `usage`, plus indexes for `dormant`, people with a grace period,
+    pinned spaces, exempt spaces and so on.
+    `internal/store/storage_explain_test.go`, on a database of 16,000 rows, asks
+    both SQLite and PostgreSQL for the execution plan of every list, sort and main
+    filter, and fails if a full table scan or a sort of the found rows appears (on
+    PostgreSQL, sequential scans and sorts are first marked expensive, to prove
+    that the index gives the order and the range). The cursor condition is written
+    as "column >= value, and (column > value or id comparison)", not as one OR,
+    otherwise SQLite would take two ranges and then sort. **Only `q` (name
+    contains) has no index**: it reads names in sort order until the page is full.
 
-- **审查后的修正（2026-11-24，第 4 部分和界面）**：
-  - `connected`（和 `dormant`）数的是任何提供方的连接：`github_authorizations` 或
-    `provider_authorizations`。实时判断和每天的对账都看两张表；连接 3.8 的账号、断开、删提供方
-    （连带的连接）都会重算那个人的 `connected`。只连了 GitLab 或 Codeberg 的人不再被当成休眠。
-  - 租户管理员恢复一个人时，答案里不出现个人空间（`skipped` 和 `restored.spaces` 都不带它的 id
-    和名字），只在 `restored.personal` 里给个数；审计行仍然完整。
-  - `GET /api/admin/storage`：`hosts.fromFlag`、`cache.minFreeBytes`、`git.version` 和概要里的
-    `spaces.restoring`（全服务器的）只给全站管理员。
-  - 删人的预览 `revoke.connections` 按提供方列出所有连接（含 3.8 的）；删人时也断开 3.8 的连接
-    （能撤销的向对方撤销），清除人时删掉 `provider_authorizations` 和提醒的行。
-  - 空间列表按名字排序的游标用存下的 `name_key`；对账把回到服务器上的空间的计入字节按最后一次
-    测量补回；`AssetBytesOfTenant` 一次查出冷表里所有缓存空间的租户。
-  - 界面：批量对话框里换掉或清掉继承人，会丢掉旧令牌并重新取计划（早到的回答不覆盖后问的）；
-    「管理员查看，只读，已记录」的横幅只在查看真的开着时显示。
+- **Corrections after review (2026-11-24, part 4 and the UI)**:
+  - `connected` (and `dormant`) counts a connection of any provider:
+    `github_authorizations` or `provider_authorizations`. The live check and the
+    daily reconciliation both look at the two tables. Connecting a 3.8 account,
+    disconnecting, and deleting a provider (with its connections) all recompute
+    that person's `connected`. A person who connected only GitLab or Codeberg is no
+    longer treated as dormant.
+  - When a tenant administrator restores a person, the answer does not include
+    personal spaces (neither `skipped` nor `restored.spaces` carries its id and
+    name), and only gives a count in `restored.personal`. The audit row is still
+    complete.
+  - `GET /api/admin/storage`: `hosts.fromFlag`, `cache.minFreeBytes`,
+    `git.version` and `spaces.restoring` in the summary (server-wide) are shown
+    only to site administrators.
+  - The preview of deleting a person, `revoke.connections`, lists all connections
+    by provider (including 3.8). Deleting a person also disconnects 3.8
+    connections (those that can be revoked are revoked at the other side), and
+    purging a person deletes `provider_authorizations` and the reminder rows.
+  - The cursor of the space list sorted by name uses the stored `name_key`. The
+    reconciliation restores the counted bytes of a space that has returned to the
+    server from the last measurement. `AssetBytesOfTenant` finds the tenants of all
+    cached spaces in the cold table in one query.
+  - UI: in the bulk dialog, replacing or clearing the heir drops the old token and
+    fetches the plan again (an answer that arrives early does not overwrite a later
+    question). The banner "Administrator view, read only, recorded" is shown only
+    when a view is really open.
 
-- **审查后的修正（2026-11-23，第 1 到 3 部分）**：
-  - 导出：全站管理员做的导出只给全站管理员看（列表、读、下载、删除），不论它的租户字段；
-    含历史、含个人空间、含多个租户空间的导出同样只给全站（`exports.site_only`）。租户管理员
-    做的导出照合同给该租户管理员和全站。
-  - 个人空间：租户管理员的管理范围（`store.AdminScopeOf`）在所有按空间和回收站项查询的
-    地方都排除个人空间，所以停用、启用、测大小、转移、删除、删除预览、查看、恢复、确认和
-    导出对个人空间一律答「不存在」，列表（空间、回收站，以及人的项里的 `with`）都不列。
-    隔离表旁边加了一张表：每个带空间或回收站项的管理路由（和每个空间路由）用个人空间和
-    虚构 id 各请求一次，回答必须一样。删人、恢复人仍走 `ScopeOf`，个人空间随人走。
-  - 回收站：读不到 `recycle.days` 时这一轮不清（不按默认值清）。每个动作在进程内持有它的项，
-    每小时的检查只接手崩溃或失败留下的项，不会接手还在跑的恢复或清除；恢复最后删项时要求
-    正好删掉一行，否则回滚、目录放回。每小时的检查拿到项之后按 id 重读一次，状态和列表里
-    不同（或已经 `ready`、已经没了）就不碰，所以中途完成的恢复不会被搬回回收站。跨文件
-    系统的移动改为复制（逐文件 fsync 并保留权限，写到目标旁的 `.partial`，完整后改名，
-    同步 `DATA/recycle`）再删源：删之前先在源自己的文件系统里改名为 `.moved` 并同步父目录，
-    所以「两边都在」时两边都完整，`.moved` 永远不当作完整的一份，恢复时直接删掉。中断后重来，
-    不会卡在 `moving`，也不会留下残缺的空间。删空间前停掉并等待
-    这个空间正在进行的 3.1 恢复、关闭 4.1 的只读索引句柄。提前清除（`DELETE
-    /api/admin/recycle/{item}`）改为后台进行，答 `202` 和项（合同写的是 `204`，已在 api.md
-    的 As built 说明），清完才记审计。
-  - 删人：清除一个人的项只清这个项自己的空间（不碰标记 `u:<id>` 下属于正在进行的删除的
-    空间），并且只有 `users.recycle_item` 正是这个项时才清他的数据，所以清除一个过期的项
-    （恢复做了一半）不会动已经回来或被后来的删除持有的人。恢复人的项也不再认领标记下的
-    空间。停用或已删的人不能被加进空间（语句本身拒绝）；已删的人不算「另一个所有者」；
-    最后一步把计划之后混进来的成员关系也去掉（列在 `left`），去掉会让空间没有所有者时这一步
-    拒绝（`409 conflict`），再请求会把那个空间纳入计划。`delete_users` 的确认哈希覆盖预览
-    决定的内容：回收哪些、每个转移给谁、退出哪些及角色、`needsHeir` 和阻止项。
-  - 批量任务：任务里的 panic 被接住，任务标为 `failed`（列出当时的项），进程不受影响；
-    进度写不进去会重试，最终写不进去的任务以 `failed` 结束。每一项都按发起人此刻的权限做
-    （已不是管理员的不再执行）。任务按它操作的租户排队（全站管理员对 B 的任务占 B 的名额），
-    任务行记在那个租户；全站管理员发起的任务只给全站看（`bulk_jobs.site_only`）。
-  - **留给 3.6 权限键的问题**（这次不改）：（1）「查看」可以被绕过：不是成员的管理员有
-    `members` 和 `manage`，可以把自己加成所有者再读，或改远端把内容推到自己的仓库；（2）有
-    `manage` 的管理员可以写模板（模板是空间里的文件）。两者都要等 3.6 把管理员的权限拆成
-    权限键时再收。
+- **Corrections after review (2026-11-23, parts 1 to 3)**:
+  - Export: an export made by a site administrator is shown only to site
+    administrators (list, read, download, delete), whatever its tenant field. An
+    export that includes history, includes personal spaces, or includes spaces of
+    several tenants is likewise only for the site (`exports.site_only`). An export
+    made by a tenant administrator goes, as in the contract, to that tenant's
+    administrators and the site.
+  - Personal spaces: the tenant administrator's management scope
+    (`store.AdminScopeOf`) excludes personal spaces in every query by space and by
+    recycle item. So deactivating, enabling, measuring, transferring, deleting,
+    the deletion preview, viewing, restoring, confirming and exporting a personal
+    space always answer "does not exist", and lists (spaces, recycle bin, and
+    `with` in a person's item) do not list them. A table was added next to the
+    isolation table: every admin route that carries a space or a recycle item (and
+    every space route) is requested once with a personal space and once with a
+    made-up id, and the answers must be the same. Deleting and restoring a person
+    still use `ScopeOf`, and personal spaces go with the person.
+  - Recycle bin: if `recycle.days` cannot be read, this round does not purge (it
+    does not purge by the default). Every action holds its item inside the process,
+    and the hourly check takes over only items left by a crash or a failure, never
+    a restore or purge that is still running. At the end of a restore, deleting the
+    item must delete exactly one row, otherwise it rolls back and the directory is
+    put back. After the hourly check gets an item, it rereads it once by id, and if
+    the state differs from the list (or it is already `ready`, or gone), it is not
+    touched, so a restore that completed meanwhile is not moved back to the
+    recycle bin. A move across file systems became a copy (fsync each file and keep
+    permissions, write to a `.partial` beside the target, rename when complete,
+    sync `DATA/recycle`) and then deleting the source. Before deleting, the source
+    is first renamed to `.moved` in its own file system and the parent directory is
+    synced, so when "both sides exist" both sides are complete, a `.moved` is never
+    treated as a complete copy, and on restore it is simply deleted. Retrying after
+    an interruption does not get stuck in `moving` and does not leave a broken
+    space. Before deleting a space, the 3.1 restore currently in progress for that
+    space is stopped and waited for, and the 4.1 read-only index handle is closed.
+    Early purge (`DELETE /api/admin/recycle/{item}`) became background work, and
+    answers `202` and the item (the contract says `204`; this is noted in the As
+    built note of api.md), and the audit is written only after the purge finishes.
+  - Deleting people: purging a person's item purges only the item's own spaces (it
+    does not touch spaces under the mark `u:<id>` that belong to a deletion in
+    progress), and purges his data only if `users.recycle_item` is exactly this
+    item, so purging a stale item (a restore half done) does not touch a person who
+    has already come back or is held by a later deletion. Restoring a person's item
+    also no longer claims the spaces under the mark. A deactivated or deleted
+    person cannot be added to a space (the statement itself refuses). A deleted
+    person does not count as "another owner". The last step also removes
+    memberships that slipped in after the plan (listed in `left`), and if removing
+    them would leave the space without an owner, this step refuses (`409 conflict`),
+    and requesting again brings that space into the plan. The confirmation hash of
+    `delete_users` covers what the preview decided: what is recycled, whom each
+    transfer goes to, what is left and with which roles, `needsHeir`, and the
+    blocking items.
+  - Bulk jobs: a panic in a job is caught and the job is marked `failed` (listing
+    the items at that moment), and the process is not affected. If progress cannot
+    be written, it is retried, and a job that finally cannot write ends as
+    `failed`. Every item is done with the initiator's permissions at that moment
+    (someone who is no longer an administrator no longer executes). Jobs are queued
+    by the tenant they operate on (a site administrator's job on B takes B's slot),
+    and the job row is recorded in that tenant. A job started by a site
+    administrator is shown only to the site (`bulk_jobs.site_only`).
+  - **Questions left for the 3.6 permission keys** (not changed this time): (1) the
+    "view" can be bypassed: an administrator who is not a member has `members` and
+    `manage`, and can add himself as an owner and then read, or change the remote
+    to push the content to his own repository; (2) an administrator with `manage`
+    can write templates (templates are files in the space). Both wait until 3.6
+    splits the administrator's permissions into permission keys.

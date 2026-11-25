@@ -1,580 +1,1030 @@
 # Milestones: phase 3, tenants (3.3)
 
-**3.3 的约定**（2026-11-23）：接口和错误码写在 `docs/api.md` 新的「Tenants,
-registration and mail」一节，以及「Signing in」（`GET /api/auth/providers` 的
-`register`、`forgot`，验证码的 `forgot`、`register` 上下文）、「Session」（User 的
-`siteAdmin`、`tenant`）、「Spaces」（空间数改答 `quota_exceeded`）和
-「Administration」（租户管理员的范围、`sso_only_with_registration`）里的补充。
+**The 3.3 contract** (2026-11-23): the endpoints and error codes are written in
+`docs/api.md`, in the new "Tenants, registration and mail" section, plus
+additions in "Signing in" (`register` and `forgot` in `GET /api/auth/providers`,
+and the `forgot` and `register` contexts of the captcha), "Session" (`siteAdmin`
+and `tenant` on User), "Spaces" (the space count now answers `quota_exceeded`)
+and "Administration" (the tenant administrator's scope,
+`sso_only_with_registration`).
 
-**范围和原计划不同的地方**：上面的方向写着 3.3 不做注册流程本身（邮件验证、找回
-密码、防滥用、条款）。所有者 2026-11-23 写合同时的要求把这些的基本面放进了 3.3：
-邮件验证、找回密码、条款链接、按地址的限制和发信上限都做；它们都要发邮件，所以
-连同发信的设置一起做。配额仍然「先有字段和测量，只告警不拒绝」，只有已经在拒绝的
-空间数照旧拒绝。
+**Where the scope differs from the original plan**: the direction above said
+3.3 would not do the registration flow itself (email verification, password
+recovery, abuse prevention, terms). The owner's requirements when the contract
+was written on 2026-11-23 brought the basics of these into 3.3: email
+verification, password recovery, terms links, per-address limits and a mail
+sending cap are all done. They all send email, so they are done together with
+the mail settings. Quotas are still "fields and measurement first, only warn,
+do not refuse". Only the space count, which already refuses, keeps refusing.
 
-定下来的：
+What was decided:
 
-- **只有一个租户时什么都不变、什么都不多花**：
-  - 升级后有一个默认租户（id 固定 `0000000000`，slug `default`），升级前的所有
-    用户、空间、组、邀请都在里面；升级前的管理员都成为全站管理员。
-  - 每个请求的权限判断不变：1.7／3.2 的按人缓存里只会有本租户的空间（成员关系
-    在写入时就保证同租户，见下），所以热路径上不加任何租户比较。租户是否停用是
-    内存里的一张小表，在读会话时查。
-  - 页面不在状态库里，所以页数多少和租户无关：几万篇的空间迁移时一行页面数据都
-    不碰。
-- **用户名仍然全站唯一**：登录（密码、passkey、SSO）不需要先选租户，由登出来的账号
-  决定租户，登录相关的代码和接口都不改。公开接口（注册、找回密码、
-  `GET /api/auth/providers`）用 `tenant` 参数（slug）选租户，不给就是默认租户。
-  按主机名区分租户只预留。
-- **3.3 开放到哪一步**：管道全做，外加全站管理员的租户增删改；「能不能建第二个
-  租户」是一个开关（`/api/admin/tenancy`），默认关。关着的时候只有默认租户，
-  界面上看不到租户的入口。租户之间搬人、搬空间不做（见「不做的」）。
-- **数据隔离怎么做**：
-  - `users`、`spaces`、`groups`、`invites`、`audit_log` 带 `tenant_id`；其余
-    （成员、草稿、远端、收藏、令牌、授权、passkey、身份）都挂在它们下面，经由
-    它们找到。
-  - 存储层里凡是按客户端给的东西读或列这五张表的方法，都要带一个「范围」参数
-    （一个租户，或全站管理员的全部），不带就编译不过；确实要跨租户的（按会话 id、
-    令牌、用户名、身份登录，后台任务）在代码旁写明理由，放进一张允许表。
-  - 两行之间的关联由写入语句本身把关：加成员、把组加进空间、往组里加人、转移
-    空间都是 `INSERT … SELECT`，把两边按同一个 `tenant_id` 连起来，API 层漏了
-    检查也建不出跨租户的关联，答复和 id 不存在一样。
-  - 别的租户的 id 一律当作不存在（`404`），不透露别的租户有什么。
-  - 隔离强度写明：同一个进程、同一个库，靠查询条件隔开；能读服务器磁盘或数据库
-    的人能读所有租户。不承诺更强的隔离。
-  - **怎么测**（SQLite 和 PostgreSQL 都跑）：一个两租户的夹具，`routes.go` 的每条
-    路由由 A 的管理员、成员、令牌拿 B 的 id 去调，都要像 id 不存在一样，列表里
-    不能出现 B 的 id；新加路由而没进这张表时测试失败。另一个测试列出存储层里碰
-    这五张表的导出方法，没带范围、又不在允许表里的就失败。夹具的每个测试结束时
-    一条查询断言没有跨租户的成员、组成员、空间组。原来的单租户测试原样跑。
-- **管理员分两种**：`role` 还是 `admin`／`member`，意思变成「在自己的租户里」；
-  另加 `siteAdmin`。租户管理员在本租户内有 3.3 之前管理员的一切，但没有服务器
-  自己的东西：安全、登录提供方、发信、机器访问、每日文案的全站设置、服务器状态、
-  全站设置、租户的建删和停用、3.1 的存储。1.7、2.8 的「至少一个启用的管理员」改为
-  数全站管理员。只有全站管理员能设 `siteAdmin`。
-- **登录提供方仍在全站一层**：所有租户的登录页列同样的提供方；提供方多一个
-  `tenant`，是 `autoCreate` 建号放进的租户。组映射可以指向任何租户的组，登录同步
-  时只应用指向这个人所在租户的那些。组名改成在租户内唯一。
-- **设置的分层**：照「设置的分层和锁定」做成接口：每一项设置有键、种类（布尔、
-  选项、上限）、所在的层；每层要么设值，要么跟随上一层（`null`）；每层给下面定
-  `allow`／`restrict`（选项的子集，或上限 `max`）／`lock`，下层只能更严。被锁住或
-  超出限制的值保留、标 `inEffect: false`，解锁后恢复。生效值按（租户、设置修订号、
-  空间设置文件的版本）缓存，请求时不逐层计算。3.3 里的设置：注册开关、注册允许的
-  邮箱域名、每小时注册数、条款和隐私链接、每人的空间数／磁盘／页数配额、每日文案
-  的 `own`／`api` 开关和**租户的每日文案默认**（2.3 说的「插在空间和全站之间」，
-  租户可以选本租户的空间或全站的外部接口，贴的文案仍只在全站）。`/api/admin/daily`
-  的 `allow` 和新接口写的是同一条记录。
-- **给 3.1、2.7 留的钩子**（它们在别的分支上，3.3 不依赖它们的代码）：
-  - 3.1 的 `storage.remotes.require`（按 `null` < `any` < `github` 排严格程度）、
-    `graceDays`、`localSpaces.maxBytes` 合进来时加进设置表，层是全站和租户，全站
-    默认对下层 `lock`（3.1 自己定的），租户只能收紧。
-  - 配额的字节数读 `spaces.usage_bytes`：3.3 由 1.7 的后台测量写；3.1 合进来后，
-    部分克隆和清掉的空间不改它（服务器上留了多少不是空间有多大），只有完整工作区
-    的测量才写。
-  - 2.7 的 GitHub App 设置没有租户层。
-  - 迁移编号用 `0018`：0013、0015 留给 2.7、3.1，0017 已被 3.1 的 `0017_assets.sql` 用掉
-    （2026-11-23 改，原来写的是 0017）。
-- **注册**：
-  - 每个租户一个开关，全站默认 `false` 并且对租户 `lock`：要开，全站管理员先放开，
-    再在租户上打开（或直接在全站打开）。
-  - 开注册的前提：发信已经启用、有 `--public-url`；`ssoOnly` 开着时不能开
-    （`sso_only_with_registration`）。2.8 留着的反方向检查也变成真的：有租户开着
-    注册时 `ssoOnly` 不能开。发信被关掉时注册实际关闭，设置不动。
-  - 流程：提交后只存一条「待确认的注册」（密码已经哈希、用户名先占住），发一封带
-    链接的信，24 小时有效；点了链接才建账号（`member`，邮箱已验证，带个人空间，
-    记下同意条款的时间和地址）。没人能收信的地址永远成不了账号。
-  - 回答永远是同一个 `202`：地址已经有账号时不建注册，改发「你已经有账号了」和
-    找回密码的链接；超了发信上限时什么都不发、也不说。用户名被占会直接说
-    （`409 exists`，用户名本来就会给同空间的人看到）。
-  - 关掉注册时，还没确认的注册一并作废。
-  - 经提供方 `autoCreate` 建号不算注册，规则不变。
-- **邮箱验证**：已登录的人给自己当前的邮箱要一个验证链接；链接在别的设备上也能用
-  （不要会话），邮箱改过之后旧链接作废。改邮箱时如果旧邮箱是验证过的，给旧邮箱发
-  一封不带链接的提醒。
-- **找回密码**：按用户名或邮箱，回答永远一样。只给启用的、邮箱已验证的账号发；
-  有密码的账号收到 1 小时有效、只能用一次的链接，再要一次让之前的链接作废；没有
-  密码（只经 SSO）或者被 `ssoOnly` 拒绝密码登录的账号只收到「请用某某登录」，
-  **重置永远不会给账号加上一个原本用不了的密码**（否则 IdP 里停用的人能靠邮箱绕
-  回来）。重置后结束这个人的所有会话、清掉按用户名的失败计数和锁定，不直接登录，
-  让 `ssoOnly`、要求 passkey 这些照常在登录时起作用。管理员也可以给某人发重置
-  链接。
-- **发信**：只在全站一层配一个 SMTP（主机、端口、`starttls`／`tls`，`none` 只允许
-  本机回环地址上的中继；证书总是校验，没有跳过的选项；用户名和密码只在 TLS 上用
-  `PLAIN`；密码用 `secret.key` 加密存库）。用 Go 标准库的 `net/smtp`，不加依赖。
-  信放在**内存里**的队列（最多 1000 封），一封试 3 次、10 分钟内发不出就丢弃并
-  写日志；重启会丢还没发的，但每封都是本人可以再要一次的链接，这样令牌也不会以
-  可读的形式落进数据库。信用请求的语言（`lang`、`Accept-Language`）的模板，模板在
-  i18n 文件里。
-- **配额**：
-  - 算谁的：空间算在它的第一个所有者（管理后台列表里的那个、提交的默认作者）和它
-    的租户头上，转移时跟着走；组成员、编辑、只读不算。
-  - 怎么测才便宜：空间数在建、删、转移时加减；字节和页数沿用 1.7 的后台测量
-    （一次一个空间、最多 6 小时一次），顺带对空间的索引做一次 `COUNT` 得到页数；
-    每次测量把差值在同一个事务里加到所有者和租户的那一行用量上，所以读任何人的
-    用量都是一行。每天一次分组查询重算全部，纠正漂移。
-  - 拒绝什么：只拒绝空间数（`--max-spaces` 变成设置 `quota.spacesPerPerson`，
-    给了参数时以参数为准；错误码从 `403 forbidden` 改成 `403 quota_exceeded`，旧
-    客户端看到的仍是 403）。字节、页数、租户人数只提示（本人和管理员看到，审计
-    记一次），以后要拒绝时字节用 `507 quota_exceeded`。
-- **防滥用的基本面**：新的公开接口都进 2.8 的「按 IP 每分钟」那一份额度；令牌错了
-  算 IP 的失败；验证码的 `register`、`forgot` 上下文成为真的（默认关）；同一个
-  收信地址一小时最多 3 封、同一个来源地址一小时最多触发 5 封、每个租户每小时注册
-  数（默认 50）、每个租户最多 1000 条待确认的注册、全服务器最多 1000 封排队；
-  可以限定注册邮箱的域名。令牌 32 字节随机，只放在链接的 `#` 后面（不进日志、
-  不进 `Referer`），库里只存 SHA-256，只能用一次。计数在内存里，和 2.8 一样。
-- **条款和隐私**：全站和租户各可以设条款、隐私两个 `https` 地址；设了任何一个，
-  注册页就有一个必须勾的框，账号上记同意的时间和当时的地址。
-- **迁移**（`0018_tenants.sql`，SQLite 和 PostgreSQL 都测）：
-  - 建 `tenants`，插入默认租户；五张表 `ADD COLUMN tenant_id … DEFAULT '0000000000'`。
-    带常量默认值的加列在 SQLite 上只改表结构，PostgreSQL 11 起只改元数据，都不重写
-    已有的行。
-  - `UPDATE users SET site_admin = 1 WHERE role = 'admin'` 只碰管理员那几行。
-  - 新建的索引在用户、空间、组、邀请上（几千行，毫秒级），审计日志最多 10 万行
-    （约百毫秒）。组名唯一改成租户内唯一：PostgreSQL 上删约束、建新索引；SQLite
-    上要重建 `groups` 表（最多 1 万行），而重建要先关外键、不能在事务里关，所以
-    `migrate.go` 加一种「在这个版本的事务之前单独跑」的步骤，跑完用
-    `PRAGMA foreign_key_check` 检查。
-  - 合起来：几万篇页面、很多用户的服务器，迁移在一秒以内，停机就是升级本身那次
-    重启；旧版本程序看到新的结构照旧拒绝启动（已有的行为）。
-- **单用户模式**：没有租户、注册、发信、配额，这些接口都答 `404`；设置按全站 →
-  空间 → 个人，没有租户层。
-- **对外的动作**（发到服务器之外、真实的人会收到的）：
-  - 发真实的邮件到真实的地址。**默认什么都不发**：发信默认关，管理员配好并启用
-    SMTP 之前，注册、验证、找回密码都是关着的，任何设置都打不开注册。启用后，
-    只有本人的请求（要链接）和管理员的测试会发信；3.3 不发任何通知、提醒、群发。
-  - 管理员的测试信发到管理员自己填的地址，发信设置未启用时也能测。
-  - 打开注册等于让服务器接受公开建号，所以默认关并且在全站锁着，要全站管理员
-    主动放开。
-  - 条款、隐私链接会出现在公开的注册页上。
+- **With a single tenant nothing changes and nothing costs more**:
+  - After the upgrade there is one default tenant (fixed id `0000000000`, slug
+    `default`), and all users, spaces, groups and invites from before the
+    upgrade are in it. All administrators from before the upgrade become site
+    administrators.
+  - The permission check of every request is unchanged. The per-person cache of
+    1.7 / 3.2 only holds spaces of this tenant (membership is guaranteed to be
+    in the same tenant at write time, see below), so the hot path adds no
+    tenant comparison. Whether a tenant is disabled is a small in-memory table,
+    checked when the session is read.
+  - Pages are not in the state database, so the number of pages has nothing to
+    do with tenants: a space with tens of thousands of pages touches not one
+    page row during the migration.
+- **Usernames are still unique across the whole site**: signing in (password,
+  passkey, SSO) does not need to pick a tenant first. The account that signs in
+  decides the tenant, so the sign-in code and endpoints do not change. Public
+  endpoints (registration, password recovery, `GET /api/auth/providers`) use a
+  `tenant` parameter (slug) to pick the tenant, and without it the default
+  tenant is used. Telling tenants apart by host name is only reserved.
+- **How far 3.3 opens up**: the whole plumbing is done, plus create, delete and
+  edit of tenants for the site administrator. "Whether a second tenant can be
+  created" is a switch (`/api/admin/tenancy`), off by default. While it is off,
+  there is only the default tenant, and no tenant entry point is visible in the
+  UI. Moving people or spaces between tenants is not done (see "Not doing").
+- **How data isolation is done**:
+  - `users`, `spaces`, `groups`, `invites` and `audit_log` carry `tenant_id`.
+    The rest (members, drafts, remotes, favourites, tokens, grants, passkeys,
+    identities) hang under them and are reached through them.
+  - In the storage layer, every method that reads or lists these five tables
+    based on something the client gave must take a "scope" parameter (one
+    tenant, or all of them for the site administrator). Without it, it does not
+    compile. Methods that really must cross tenants (by session id, token,
+    username, sign-in by identity, background jobs) state the reason next to the
+    code and go into an allow table.
+  - The link between two rows is guarded by the write statement itself: adding
+    a member, adding a group to a space, adding a person to a group and
+    transferring a space are all `INSERT … SELECT`, joining both sides on the
+    same `tenant_id`. Even if the API layer misses a check, no cross-tenant
+    link can be created, and the answer is the same as when the id does not
+    exist.
+  - An id from another tenant is always treated as nonexistent (`404`), and
+    nothing is revealed about what other tenants have.
+  - The strength of isolation is stated plainly: same process, same database,
+    separated by query conditions. Anyone who can read the server's disk or
+    database can read all tenants. No stronger isolation is promised.
+  - **How to test** (run on both SQLite and PostgreSQL): a two-tenant fixture.
+    For every route in `routes.go`, A's administrator, member and token call it
+    with B's id, and each must behave as if the id did not exist, and no id of
+    B may appear in any list. If a new route is added without being in this
+    table, the test fails. Another test lists the exported storage-layer
+    methods that touch these five tables, and fails for any that has no scope
+    and is not in the allow table. At the end of each test using the fixture, a
+    query asserts there are no cross-tenant members, group members or space
+    groups. The original single-tenant tests run unchanged.
+- **Two kinds of administrator**: `role` is still `admin` / `member`, and now
+  means "within their own tenant". `siteAdmin` is added. A tenant administrator
+  has everything the administrator had before 3.3, within their tenant, but not
+  the server's own things: security, sign-in providers, mail sending, machine
+  access, the site-wide settings of daily text, server status, site-wide
+  settings, creating, deleting and disabling tenants, and the storage of 3.1.
+  The "at least one enabled administrator" rule of 1.7 and 2.8 now counts site
+  administrators. Only a site administrator can set `siteAdmin`.
+- **Sign-in providers are still at the site level**: the sign-in page of every
+  tenant lists the same providers. A provider gains a `tenant`, the tenant that
+  accounts created by `autoCreate` are put into. A group mapping can point to a
+  group of any tenant, and at sign-in sync only those pointing to the person's
+  own tenant are applied. Group names become unique within a tenant.
+- **Layering of settings**: following "Layered settings and locking", made into
+  an interface. Each setting has a key, a kind (boolean, option, cap) and a
+  layer it lives in. Each layer either sets a value or follows the layer above
+  (`null`). Each layer sets `allow` / `restrict` (a subset of the options, or a
+  cap `max`) / `lock` for the layers below, and a lower layer can only be
+  stricter. A value that is locked or goes beyond a limit is kept and marked
+  `inEffect: false`, and is restored when unlocked. Effective values are cached
+  by (tenant, settings revision, version of the space settings file), and are
+  not computed layer by layer at request time. The settings in 3.3: the
+  registration switch, the email domains registration allows, registrations per
+  hour, the terms and privacy links, per-person quotas for number of spaces /
+  disk / pages, the `own` / `api` switch of daily text, and the **tenant's
+  daily text default** (what 2.3 called "inserted between space and site": the
+  tenant can pick this tenant's space or the site's external API, while pasted
+  text stays at the site level only). The `allow` of `/api/admin/daily` and the
+  new endpoint write the same record.
+- **Hooks left for 3.1 and 2.7** (they are on other branches, and 3.3 does not
+  depend on their code):
+  - 3.1's `storage.remotes.require` (strictness ordered `null` < `any` <
+    `github`), `graceDays` and `localSpaces.maxBytes` are added to the settings
+    table when they merge in. The layers are site and tenant, the site default
+    is `lock` for lower layers (decided by 3.1 itself), and a tenant can only
+    tighten.
+  - The byte count for quotas reads `spaces.usage_bytes`: in 3.3 it is written
+    by the background measurement of 1.7. After 3.1 merges in, partial clones
+    and cleaned-out spaces do not change it (what is left on the server is not
+    how big the space is), and only the measurement of a full working copy
+    writes it.
+  - 2.7's GitHub App settings have no tenant layer.
+  - The migration number is `0018`: 0013 and 0015 are left for 2.7 and 3.1, and
+    0017 is already used by 3.1's `0017_assets.sql` (changed on 2026-11-23; it
+    was originally written as 0017).
+- **Registration**:
+  - One switch per tenant. The site default is `false` and `lock` for tenants.
+    To turn it on, the site administrator first releases it, then it is turned
+    on at the tenant (or turned on directly at the site).
+  - Preconditions for opening registration: mail sending is enabled and there
+    is a `--public-url`. It cannot be turned on while `ssoOnly` is on
+    (`sso_only_with_registration`). The reverse check that 2.8 left behind also
+    becomes real: `ssoOnly` cannot be turned on while any tenant has
+    registration open. When mail sending is turned off, registration is
+    effectively closed, and the setting is not touched.
+  - Flow: after submission, only a "pending registration" is stored (the
+    password is already hashed, and the username is held first), and one email
+    with a link is sent, valid for 24 hours. The account is created only when
+    the link is clicked (`member`, email verified, with a personal space, and
+    the time and address of the agreement to the terms recorded). An address
+    nobody can receive mail at can never become an account.
+  - The answer is always the same `202`: if the address already has an
+    account, no registration is created, and instead an email "you already
+    have an account" with a password recovery link is sent. If the mail sending
+    cap is exceeded, nothing is sent and nothing is said. A taken username is
+    said outright (`409 exists`; usernames are visible to people in the same
+    space anyway).
+  - When registration is turned off, registrations not yet confirmed are
+    voided.
+  - Creating an account through a provider's `autoCreate` is not registration,
+    and the rules do not change.
+- **Email verification**: a signed-in person asks for a verification link for
+  their own current email. The link also works on another device (no session
+  needed), and old links are void after the email is changed. When the email is
+  changed and the old email was verified, a reminder without a link is sent to
+  the old email.
+- **Password recovery**: by username or email, and the answer is always the
+  same. Mail is only sent to enabled accounts with a verified email. An account
+  with a password receives a link valid for 1 hour and usable once, and asking
+  again voids the earlier link. An account with no password (SSO only), or one
+  whose password sign-in is refused by `ssoOnly`, only receives "please sign in
+  with such-and-such". **A reset never gives an account a password it could not
+  use before** (otherwise someone disabled in the IdP could get back in through
+  their email). After a reset, all of the person's sessions end, and the
+  per-username failure count and lockout are cleared. It does not sign in
+  directly, so that `ssoOnly` and the requirement of a passkey still apply as
+  usual at sign-in. An administrator can also send someone a reset link.
+- **Mail sending**: one SMTP is configured, at the site level only (host, port,
+  `starttls` / `tls`, with `none` allowed only for a relay on the local
+  loopback address; the certificate is always verified, and there is no option
+  to skip it; username and password are used only over TLS with `PLAIN`; the
+  password is stored encrypted in the database with `secret.key`). It uses Go's
+  standard library `net/smtp`, with no new dependency. Mail goes in a queue
+  **in memory** (at most 1000 messages). Each is tried 3 times, and if it cannot
+  be sent within 10 minutes it is dropped and logged. A restart loses mail not
+  yet sent, but each one is a link the person can ask for again, and this also
+  keeps tokens from landing in the database in readable form. Mail uses the
+  template for the request's language (`lang`, `Accept-Language`), and the
+  templates are in the i18n files.
+- **Quotas**:
+  - Whose they count: a space counts against its first owner (the one in the
+    admin console list, the default author of commits) and its tenant, and
+    follows along on transfer. Group members, editors and read-only members do
+    not count.
+  - How to measure cheaply: the space count is added and subtracted on create,
+    delete and transfer. Bytes and page count reuse 1.7's background
+    measurement (one space at a time, at most once every 6 hours), which also
+    does one `COUNT` on the space's index to get the page count. Each
+    measurement adds the difference, in the same transaction, to the usage row
+    of the owner and of the tenant, so reading anyone's usage is a single row.
+    Once a day a grouped query recomputes everything and corrects drift.
+  - What is refused: only the space count (`--max-spaces` becomes the setting
+    `quota.spacesPerPerson`, and when the flag is given the flag wins; the
+    error code changes from `403 forbidden` to `403 quota_exceeded`, and an old
+    client still sees a 403). Bytes, pages and tenant headcount only warn
+    (shown to the person and the administrator, with one audit entry). When
+    refusal is wanted later, bytes will use `507 quota_exceeded`.
+- **Basics of abuse prevention**: all new public endpoints fall under 2.8's
+  "per IP per minute" allowance. A wrong token counts as a failure for the IP.
+  The `register` and `forgot` contexts of the captcha become real (off by
+  default). At most 3 emails per hour to the same receiving address, at most 5
+  triggered per hour from the same source address, registrations per tenant per
+  hour (default 50), at most 1000 pending registrations per tenant, and at most
+  1000 queued emails across the whole server. The email domains for
+  registration can be restricted. Tokens are 32 random bytes, placed only after
+  the `#` of the link (so they do not go into logs or `Referer`), only the
+  SHA-256 is stored in the database, and a token can be used once. Counts are in
+  memory, as in 2.8.
+- **Terms and privacy**: the site and each tenant can each set two `https`
+  addresses, terms and privacy. If either is set, the registration page has a
+  checkbox that must be ticked, and the account records the time of agreement
+  and the address at that time.
+- **Migration** (`0018_tenants.sql`, tested on both SQLite and PostgreSQL):
+  - Create `tenants` and insert the default tenant. Add
+    `ADD COLUMN tenant_id … DEFAULT '0000000000'` to the five tables. Adding a
+    column with a constant default only changes the table definition on SQLite
+    and only metadata from PostgreSQL 11, and neither rewrites existing rows.
+  - `UPDATE users SET site_admin = 1 WHERE role = 'admin'` touches only the few
+    administrator rows.
+  - New indexes are on users, spaces, groups and invites (a few thousand rows,
+    milliseconds), and on the audit log, at most 100,000 rows (about a hundred
+    milliseconds). Making the group name unique per tenant: on PostgreSQL, drop
+    the constraint and create a new index. On SQLite the `groups` table (at most
+    10,000 rows) must be rebuilt, and a rebuild needs foreign keys turned off
+    first, which cannot be done inside a transaction. So `migrate.go` gains a
+    kind of step that "runs separately, before this version's transaction", and
+    afterwards the result is checked with `PRAGMA foreign_key_check`.
+  - Altogether: for a server with tens of thousands of pages and many users,
+    the migration takes under a second, and the downtime is the restart of the
+    upgrade itself. An old-version program that sees the new structure still
+    refuses to start (existing behavior).
+- **Single-user mode**: no tenants, registration, mail sending or quotas, and
+  these endpoints all answer `404`. Settings go site → space → personal, with
+  no tenant layer.
+- **Outward actions** (sent outside the server, received by real people):
+  - Sending real email to real addresses. **By default nothing is sent**: mail
+    sending is off by default. Until the administrator configures and enables
+    SMTP, registration, verification and password recovery are all off, and no
+    setting can turn registration on. After it is enabled, mail is sent only for
+    the person's own requests (asking for a link) and the administrator's test.
+    3.3 sends no notifications, reminders or bulk mail.
+  - The administrator's test email goes to the address the administrator
+    enters, and it can be tested even when mail sending is not enabled.
+  - Turning on registration means letting the server accept public account
+    creation, so it is off by default and locked at the site level, and the site
+    administrator must release it deliberately.
+  - The terms and privacy links appear on the public registration page.
 
-不做的（括号里是理由）：
+Not doing (the reason is in parentheses):
 
-- **按主机名区分租户**、每个租户自己的登录页地址（要动 cookie 的域、
-  `--public-url`、passkey 的 RP ID、SAML 的地址；先用 slug 参数）。
-- **租户自己配登录提供方、自己的安全设置**（同一个签发方只能有一个提供方，身份按
-  签发方加主体全站唯一；要拆开得重新设计身份的键）。
-- **租户之间搬人、搬空间**（成员、组、令牌、草稿都要跟着检查和搬；先没有需求）。
-- **每个租户一个库或加密**（隔离强度见上，不承诺更强）。
-- **每个租户自己的发件人**、退信处理、发信的持久队列、发信的统计页。
-- **字节、页数、人数配额的拒绝**（先看实测的用量再定规则）。
-- **条款更新后要求已有用户重新同意**。
-- **注册后等管理员审批**、邀请码式的注册、一次性邮箱黑名单。
-- **TOTP 等第二因子**（同 2.8）。
-- **多进程共享计数和缓存**（同 2.8、3.2，服务仍是单实例）。
+- **Telling tenants apart by host name**, and a separate sign-in page address
+  for each tenant (it would touch the cookie domain, `--public-url`, the
+  passkey RP ID and the SAML address; use the slug parameter for now).
+- **Tenants configuring their own sign-in providers and their own security
+  settings** (one issuer can have only one provider, and an identity is unique
+  across the site by issuer plus subject; separating them would need a redesign
+  of the identity key).
+- **Moving people or spaces between tenants** (members, groups, tokens and
+  drafts would all need checking and moving; no demand yet).
+- **A database per tenant, or encryption** (see the strength of isolation
+  above; nothing stronger is promised).
+- **A separate sender for each tenant**, bounce handling, a persistent mail
+  queue, a mail statistics page.
+- **Refusal for byte, page and headcount quotas** (decide the rule after
+  seeing the measured usage).
+- **Requiring existing users to agree again after the terms are updated.**
+- **Waiting for administrator approval after registration**, invite-code
+  registration, a blocklist of disposable email addresses.
+- **TOTP and other second factors** (same as 2.8).
+- **Counts and caches shared across processes** (same as 2.8 and 3.2; the
+  service is still a single instance).
 
-要所有者定的（先按括号里的默认做）：
+For the owner to decide (do the default in parentheses for now):
 
-1. 用户名全站唯一，登录不选租户（唯一；不然登录页、passkey、SSO 都要先知道租户）。
-2. 3.3 是只做默认租户的管道，还是也开放建更多租户（管道加全站管理员的增删改，
-   默认关的开关后面）。
-3. 公开接口用 `?tenant=slug` 选租户，主机名只预留（是）。
-4. 登录提供方在 3.3 仍只在全站一层，租户管理员不能自己配（是）。
-5. 注册必须验证邮箱，所以没配发信就开不了注册（是）。
-6. 只经 SSO 的账号不能用找回密码加上密码（不能，只收到「请用某某登录」）。
-7. 发信队列放内存、重启丢（是；都是本人能再要一次的链接）。
-8. SMTP 不提供跳过证书校验（不提供；自签名的中继放在本机回环地址上用 `none`）。
-9. 配额只拒绝空间数，字节、页数、人数只提示（是）。
-10. 空间的用量算在第一个所有者头上（是；和提交的默认作者是同一个人）。
-11. 关掉注册时作废还没确认的注册（作废）。
-12. 改邮箱时给验证过的旧邮箱发提醒（发，不带链接）。
-13. 管理员可以给某人发重置链接（可以）。
-14. 条款更新后不要求已有用户重新同意（不要求，只记同意的时间和地址）。
-15. 每个租户每小时注册数默认 50、同一地址每小时 3 封信（按这些）。
-16. 租户管理员能看本租户的审计日志，但看不到全站一类的条目（能）。
-17. 注册开关的全站默认是「关，并对租户锁定」（是；要全站管理员先放开）。
+1. Usernames are unique site-wide, and sign-in does not pick a tenant (the
+   only way; otherwise the sign-in page, passkeys and SSO would all need to
+   know the tenant first).
+2. Whether 3.3 only does the plumbing for the default tenant, or also opens
+   up creating more tenants (the plumbing plus create, delete and edit by the
+   site administrator, behind a switch that is off by default).
+3. Public endpoints use `?tenant=slug` to pick the tenant, and host name is only
+   reserved (yes).
+4. In 3.3 sign-in providers are still only at the site level, and the tenant
+   administrator cannot configure them (yes).
+5. Registration must verify the email, so registration cannot be turned on
+   without mail sending configured (yes).
+6. An SSO-only account cannot use password recovery to add a password (cannot;
+   it only receives "please sign in with such-and-such").
+7. The mail queue is in memory and lost on restart (yes; all are links the
+   person can ask for again).
+8. SMTP does not offer skipping certificate verification (not offered; a
+   self-signed relay is put on the local loopback address and uses `none`).
+9. Quotas only refuse the space count, and bytes, pages and headcount only warn
+   (yes).
+10. A space's usage counts against the first owner (yes; the same person as the
+    default commit author).
+11. When registration is turned off, unconfirmed registrations are voided
+    (voided).
+12. When the email is changed, a reminder is sent to the old verified email
+    (send it, without a link).
+13. An administrator can send someone a reset link (can).
+14. After the terms are updated, existing users are not required to agree again
+    (not required; only the time and address of agreement are recorded).
+15. Registrations per tenant per hour default to 50, and 3 emails per hour to
+    the same address (use these).
+16. A tenant administrator can see the audit log of their own tenant, but not
+    the site-wide kind of entries (can).
+17. The site default of the registration switch is "off, and locked for
+    tenants" (yes; the site administrator must release it first).
 
-**3.3 的现状（第一部分，2026-11-23）**：上面约定里的租户模型、分层设置和数据隔离做了，
-邮件、注册、邮箱验证、找回密码、配额留给下面几部分（接缝都留好了，见最后一条）。接口见
-`docs/api.md` 的「Tenants, registration and mail」（「Storage」下面写了这一部分做了什么、
-没做什么），迁移是 `0018_tenants.sql`（SQLite 和 PostgreSQL 都测）。所有者问题按括号里的默认做。
-实现时定下来的：
+**3.3 as built (part 1, 2026-11-23)**: the tenant model, layered settings and
+data isolation from the contract above are done. Mail, registration, email
+verification, password recovery and quotas are left for the parts below (the
+seams are all left in place, see the last item). For the endpoints see
+"Tenants, registration and mail" in `docs/api.md` (what this part does and does
+not do is written under "Storage"). The migration is `0018_tenants.sql` (tested
+on both SQLite and PostgreSQL). The owner's questions were done with the
+defaults in parentheses. What was decided during implementation:
 
-- **迁移**：
-  - 0017 已经是 3.1 的 `0017_assets.sql`，所以用 0018，文档里原来写 0017 的地方都改了。
-  - 整个里程碑一个迁移文件：这一部分只放租户表、五张表的 `tenant_id`、`users.site_admin`、
-    `invites.site_admin`（升级前的管理员邀请也置 1）、`users.email_verified_by`、`sign_in_providers.tenant_id`
-    和 `layered_settings`；后面几部分要的表和列
-    在合并前往同一个文件里加。
-  - SQLite 上组名改成「租户内唯一」要重建 `groups`，重建要先关外键。`PRAGMA foreign_keys` 在事务里
-    不起作用，所以 `migrate.go` 里凡是要这样的版本（`foreignKeysOff`），SQLite 就把整个迁移放到
-    **同一条固定的连接**上跑：事务之前关外键，Go 步骤重建表，事务结束前
-    `PRAGMA foreign_key_check`（有悬空的行就报错，整个迁移回滚），不管成败最后都把外键开回来。
-    PostgreSQL 不需要这些，走原来的单事务，`ALTER TABLE` 删约束、建新索引。
-  - 测试在一个 3.2 结构、带数据的库上跑迁移（`storetest.EachAtVersion`）：默认租户在、所有行在默认
-    租户、两个管理员成了全站管理员、成员没有、重建后组成员和组在空间里的位置一条没少、同名组可以在
-    另一个租户里再建、外键照样拦；另一个测试放进一行悬空的组成员，断言迁移失败、回滚、`foreign_keys`
-    开回来。
-- **范围（`Scope`）**：存储层的 `Scope` 是「一个租户」或「全部」，零值什么都看不到（忘了给就是空）。
-  凡是读、列、按 id 改那五张表的函数都带它；`store/scope_test.go` 用 `go/parser` 找出所有查询里碰这
-  五张表却没有 `Scope` 参数的导出函数，不在带理由的允许表里就失败，允许表里已经带了范围或者已经
-  不碰这些表的条目也失败，所以它不会过时。允许表里是：按用户名、身份、令牌哈希登录这类「账号决定
-  租户」的、后台任务、已经在范围内找到了的行再往下走的、写入时自己带租户的。
-- **关联由语句把关**：`AddMember`、`AddSpaceGroup`、`AddLocalMembers`、`ApplySynced`、
-  `TransferOwnership` 都是 `INSERT … SELECT`，两边按 `tenant_id` 连；跨租户的什么都不写，答复和 id 不
-  存在一样。`ApplySynced`（登录同步）里指向别的租户的组映射因此对这个人什么都不带来。
-- **每个请求的成本**：权限判断和 3.2 的按人缓存没动，没有租户比较。会话读出来之后只多一次
-  `TenantDisabled`：一次原子读，没有租户停用时直接返回。实测（`PETALBOOK_PERF=1 go test
-  ./internal/api -run PerRequestCost`，SQLite，一个租户，各跑两次，和 3.2 的提交 `64684cb` 比）：
-  `GET /api/spaces/{id}/tags`（会话加权限判断）75.4 / 76.2 µs 对 77.3 / 76.0 µs，108 次分配对 108 次，
-  内存 11.9 KB 对 12.0 KB，噪声以内；`GET /api/session` 35.7 / 35.1 µs 对 37.0 / 38.1 µs，多出来的
-  13 次分配和 1 KB 是答复里多了 `siteAdmin` 和 `tenant` 两个字段，不是判断。
-- **管理员**：
-  - `role` 的意思变成「在自己的租户里」，`siteAdmin` 另加；全站管理员才有 `kindSiteAdmin` 的路由
-    （安全、登录提供方、发信、机器访问、每日文案的全站设置、服务器状态、全站设置、租户的建删）。
-  - 没说「去哪个租户」的地方：`setup`、命令行 `user add --admin`、默认租户里由全站管理员邀请或升的管理员，
-    都是全站管理员（升级前的管理员本来就都是服务器的）；别的租户里、或者租户管理员邀请的不是。
-    `POST /api/invites` 因此多了 `tenant`、`siteAdmin`。这一条合同里没写，是实现时补的。
-  - 「至少一个可用的管理员」数全站管理员，不数停用租户里的（他们登不进来）；降级、停用、取消
-    `siteAdmin`、停用租户都要查；租户管理员碰全站管理员（包括删他的通行密钥）是 `403`。
-  - 2.8 按已验证邮箱合并只在提供方所在的租户里找；租户管理员自己设的「已验证」照样显示，但记成
-    `email_verified_by = 'tenant_admin'`，不算合并的依据（否则他可以给本租户的人填别人的地址，等那人
-    第一次单点登录时把身份合进来）。本人确认、提供方担保、全站管理员设的才算。
-  - 审计：每行有租户（按这行说的人，再按动手的人）；租户管理员看不到服务器自己的那些种类（包括升级前
-    写在默认租户里的 `security_changed` 之类，靠种类滤掉）。
-- **分层设置**（`internal/settings`）：
-  - 站点这一层放 `layered_settings`，租户这一层也在那里；空间层是 `space.yml`、个人层在各自的表里，
-    由各自的代码读（这一部分只有每日文案的两个开关有空间层）。生效值按（租户、代数）缓存成一张表，
-    任何写入把代数加一；请求时一次映射查找，不逐层走。
-  - 每日文案的 `daily.own`、`daily.api`、`daily.default` 的全站值**还放在原来的每日文案记录里**
-    （`SiteBinding`），所以 `/api/admin/daily` 和 `/api/admin/settings` 是同一条记录，2.3 的行为和原来
-    一样：既有的断言一条没改（测试只因为存储函数多了范围参数改了调用，管理路由的测试把「管理员」
-    放宽成「管理员或全站管理员」）。租户层的
-    `daily.default` 插在空间和全站之间；只能选本租户的空间或接口，贴的文案仍在全站。
-  - 布尔的 `restrict` 只能是「只许关」（`options: [false]`）。限制比较的是严格程度：租户的规则要比
-    全站的至少一样严；被挡住的值留着标 `inEffect: false`，规则放松后又生效；全站收紧时回答里的
-    `affected` 是受影响的租户数。
-  - 先查锁再查「能不能开」：租户改被全站锁住的 `registration.open` 是 `setting_locked`，解锁后才轮到
-    `mail_not_configured`（现在永远是它，见下）。
-  - `GET /api/settings` 多了 `source`（`site` 或 `tenant`）：是谁的锁、或谁的值把它关了，客户端灰掉
-    控件时写「由谁设定」。
-- **预留给 3.1、2.7**：注册表里没有它们的键（代码在别的分支上）：定义文件里的注释写了 3.1 的三个键的
-  层、种类、严格程度（`null` < `any` < `github`）和全站默认 `lock`，2.7 没有租户层。以后加进
-  `Definitions()` 就行，别的地方不用动。
-- **给后面几部分留的接缝**：
-  - 邮件：`registrationReady()` 现在永远是 `false`，所以开 `registration.open` 一律
-    `409 mail_not_configured`，租户的 `registration.open` 读出来永远是 `false`；`ssoOnly` 的反向检查和
-    它放在同一处（`beforeOpening`）。
-  - 注册、找回密码、邮箱验证的路由、`registrations`、`email_tokens`、`usage` 表、`users.quota` 等列、
-    `quota.*` 设置、`GET /api/auth/providers` 的 `register`/`forgot`（现在恒为 `false`，`?tenant=`
-    已经会校验）、租户对象的 `usage`、`POST /api/admin/tenants` 的 `admin` 预填邀请（现在只校验）都
-    还没做。
-  - `audit` 的事件可以直接指定租户（`"-"` 表示服务器自己的）。
-- **隔离测试**（SQLite 和 PostgreSQL 都跑）：`api/isolation_test.go` 的两个租户夹具有管理员、成员、
-  令牌、OAuth 授权、组、邀请、空间；`isolationRoutes` 对每条不是空间路由的路由写明怎么隔离（空间路由
-  按 `{space}` 自动全测），`TestEveryRouteIsInTheIsolationTable` 在路由表里多了没登记的路由时失败；
-  `TestTenantsAreIsolatedOnEveryRoute` 由 A 的租户管理员、成员、令牌拿 B 的 id 去调每一条，要求回答和
-  一个不存在的 id 完全一样（状态码和错误码），而且回答里不能出现 B 的任何 id 或名字，列表里也不能；
-  结束时断言 B 的东西没动、没有跨租户的成员、组成员、空间组、令牌空间。把 `ScopeOf` 临时改成总是
-  全部，这个测试立刻在审计、授权、组成员等十几处失败，所以它是真的在拦。
-- **界面**：管理后台多了「租户」（开关；开关打开或已经有多个租户时才有列表，能建、改名、停用、
-  删除、领第一个管理员的邀请链接）和「分层设置」（全站管理员看全站层，加上选一个租户的租户层；
-  租户管理员看自己租户的层；每项显示全站的锁／限制、没有生效的值和规则编辑）；用户行写明全站管理员
-  还是租户管理员，全站管理员能改；租户管理员看不到服务器自己的那几页。「租户」页对全站管理员一直在
-  导航里（开关就在里面），关着的时候页上没有列表；合同写的「关着的时候界面上看不到租户的入口」
-  指的是租户列表和各处的租户字样，开关本身总得有地方放。中英文、mock 服务器、契约测试（对 mock 和
-  真服务器都跑过）、手机宽度（行会换行、列可以缩）都做了。
-- **已知问题**：全站管理员在默认租户里升级或邀请管理员时，不带 `siteAdmin: false` 就得到全站管理员。
-  这是有意的（和升级前「管理员就是服务器的管理员」一致，`docs/api.md` 写了），但容易让人意外：想要
-  默认租户的租户管理员，必须明确发 `siteAdmin: false`。
-  另有两条：
-  - 停用租户时「停用后没有全站管理员留在租户之外就拒绝」这一条实际上走不到：能停用租户的只有
-    全站管理员，而且必须是在这个租户之外的，所以这样的人总是留着；而且这个检查在事务之外做。
-  - 停用租户时也没有检查：`ssoOnly` 开着的时候，剩下的全站管理员里还有没有带密码的。别的全站管理员
-    仍在，可以把租户再启用，所以没有人会被永久锁在外面。
-- **还没做的**见上面「给后面几部分留的接缝」。
+- **Migration**:
+  - 0017 is already 3.1's `0017_assets.sql`, so 0018 is used, and every place
+    in the docs that said 0017 was changed.
+  - One migration file for the whole milestone. This part only holds the
+    tenants table, `tenant_id` on the five tables, `users.site_admin`,
+    `invites.site_admin` (administrator invites from before the upgrade are
+    also set to 1), `users.email_verified_by`, `sign_in_providers.tenant_id` and
+    `layered_settings`. The tables and columns needed by the later parts are
+    added to the same file before merging.
+  - On SQLite, making group names "unique within a tenant" needs a rebuild of
+    `groups`, and a rebuild needs foreign keys off first. `PRAGMA foreign_keys`
+    has no effect inside a transaction, so for any version in `migrate.go` that
+    needs this (`foreignKeysOff`), SQLite runs the whole migration on **one
+    fixed connection**: foreign keys are turned off before the transaction, a Go
+    step rebuilds the table, and before the transaction ends
+    `PRAGMA foreign_key_check` runs (if any dangling row exists it reports an
+    error and the whole migration rolls back), and foreign keys are turned back
+    on at the end whether it succeeded or not. PostgreSQL needs none of this: it
+    uses the original single transaction, with `ALTER TABLE` to drop the
+    constraint and create the new index.
+  - The test runs the migration on a database with the 3.2 structure and data
+    in it (`storetest.EachAtVersion`): the default tenant is there, all rows
+    are in the default tenant, the two administrators became site
+    administrators and the members did not, after the rebuild not one group
+    member or group placement in a space is missing, a group with the same name
+    can be created again in another tenant, and foreign keys still block. A
+    second test puts in one dangling group-member row, and asserts that the
+    migration fails, rolls back, and `foreign_keys` is turned back on.
+- **Scope (`Scope`)**: the storage layer's `Scope` is "one tenant" or "all", and
+  the zero value sees nothing (forgetting to give one means empty). Every
+  function that reads, lists or changes by id the five tables takes it.
+  `store/scope_test.go` uses `go/parser` to find every exported function whose
+  queries touch these five tables but that has no `Scope` parameter, and fails
+  if it is not in the allow table with a reason. It also fails for allow-table
+  entries that already take a scope or no longer touch these tables, so it
+  cannot go stale. The allow table holds: sign-in by username, identity or
+  token hash, where "the account decides the tenant"; background jobs; steps
+  that continue from a row already found within scope; and writes that carry
+  their own tenant.
+- **Links are guarded by the statement**: `AddMember`, `AddSpaceGroup`,
+  `AddLocalMembers`, `ApplySynced` and `TransferOwnership` are all
+  `INSERT … SELECT`, joining both sides on `tenant_id`. Across tenants nothing
+  is written, and the answer is the same as when the id does not exist. A group
+  mapping in `ApplySynced` (sign-in sync) that points to another tenant
+  therefore brings this person nothing.
+- **Cost per request**: the permission check and 3.2's per-person cache are
+  untouched, with no tenant comparison. After the session is read there is only
+  one extra `TenantDisabled`: one atomic read that returns right away when no
+  tenant is disabled. Measured (`PETALBOOK_PERF=1 go test ./internal/api -run
+  PerRequestCost`, SQLite, one tenant, two runs each, compared with 3.2's
+  commit `64684cb`): `GET /api/spaces/{id}/tags` (session plus permission
+  check) 75.4 / 76.2 µs against 77.3 / 76.0 µs, 108 allocations against 108,
+  memory 11.9 KB against 12.0 KB, within noise; `GET /api/session` 35.7 / 35.1
+  µs against 37.0 / 38.1 µs, where the extra 13 allocations and 1 KB come from
+  the two extra fields `siteAdmin` and `tenant` in the answer, not from the
+  check.
+- **Administrators**:
+  - `role` now means "within their own tenant", and `siteAdmin` is added. Only a
+    site administrator has the routes of `kindSiteAdmin` (security, sign-in
+    providers, mail sending, machine access, the site-wide settings of daily
+    text, server status, site-wide settings, creating and deleting tenants).
+  - Where nothing says "to which tenant": `setup`, the command line
+    `user add --admin`, and an administrator invited or promoted in the default
+    tenant by a site administrator are all site administrators (administrators
+    from before the upgrade were all the server's anyway). In other tenants, or
+    when invited by a tenant administrator, they are not. `POST /api/invites`
+    therefore gained `tenant` and `siteAdmin`. The contract did not say this; it
+    was added during implementation.
+  - "At least one usable administrator" counts site administrators, and does not
+    count those in disabled tenants (they cannot sign in). Demoting, disabling,
+    removing `siteAdmin` and disabling a tenant all check it. A tenant
+    administrator touching a site administrator (including deleting their
+    passkey) gets `403`.
+  - 2.8's merge by verified email only looks within the provider's tenant. An
+    email that a tenant administrator set as "verified" still shows that way,
+    but it is recorded as `email_verified_by = 'tenant_admin'` and does not
+    count as grounds for merging (otherwise he could fill in someone else's
+    address for a person in his tenant, and when that person first signs in by
+    SSO, merge the identity in). Only confirmation by the person, a guarantee
+    from the provider, or one set by a site administrator counts.
+  - Audit: each row has a tenant (by the person the row speaks of, then by the
+    person who acted). A tenant administrator cannot see the kinds that belong
+    to the server itself (including things like `security_changed` written in
+    the default tenant before the upgrade, filtered out by kind).
+- **Layered settings** (`internal/settings`):
+  - The site layer lives in `layered_settings`, and the tenant layer is there
+    too. The space layer is `space.yml`, and the personal layer is in its own
+    tables, each read by its own code (in this part only the two daily text
+    switches have a space layer). Effective values are cached as one table by
+    (tenant, generation), and any write adds one to the generation. At request
+    time it is one map lookup, not a walk through the layers.
+  - The site-wide values of daily text's `daily.own`, `daily.api` and
+    `daily.default` **are still kept in the original daily text record**
+    (`SiteBinding`), so `/api/admin/daily` and `/api/admin/settings` are the
+    same record, and 2.3's behavior is as before: not one existing assertion was
+    changed (the tests were only changed in their calls because the storage
+    functions gained a scope parameter, and the admin route tests widened
+    "administrator" to "administrator or site administrator"). The tenant
+    layer's `daily.default` is inserted between space and site. It can only pick
+    this tenant's space or the API, and pasted text stays at the site level.
+  - A boolean `restrict` can only be "only allow off" (`options: [false]`).
+    Restrictions are compared by strictness: a tenant's rule must be at least as
+    strict as the site's. A blocked value is kept and marked `inEffect: false`,
+    and takes effect again once the rule is loosened. When the site tightens,
+    `affected` in the answer is the number of tenants affected.
+  - The lock is checked before "can it be turned on": a tenant changing
+    `registration.open`, which the site has locked, gets `setting_locked`, and
+    only after unlocking does `mail_not_configured` come into play (for now it
+    is always that one, see below).
+  - `GET /api/settings` gained `source` (`site` or `tenant`): whose lock, or
+    whose value, turned it off, so that when the client greys out a control it
+    can write "set by whom".
+- **Reserved for 3.1 and 2.7**: the registry has none of their keys (their code
+  is on other branches). A comment in the definitions file writes down the
+  layer, kind and strictness (`null` < `any` < `github`) of 3.1's three keys and
+  the site default `lock`, and 2.7 has no tenant layer. They only need to be
+  added to `Definitions()` later, with nothing to change elsewhere.
+- **Seams left for the later parts**:
+  - Mail: `registrationReady()` is always `false` for now, so opening
+    `registration.open` is always `409 mail_not_configured`, and a tenant's
+    `registration.open` always reads as `false`. The reverse check for `ssoOnly`
+    sits in the same place (`beforeOpening`).
+  - Not done yet: the routes for registration, password recovery and email
+    verification, the `registrations`, `email_tokens` and `usage` tables,
+    columns such as `users.quota`, the `quota.*` settings, `register` /
+    `forgot` of `GET /api/auth/providers` (for now always `false`, and `?tenant=`
+    already validates), the tenant object's `usage`, and the pre-filled invite
+    for `admin` in `POST /api/admin/tenants` (for now only validated).
+  - An `audit` event can name its tenant directly (`"-"` means the server's
+    own).
+- **Isolation tests** (run on both SQLite and PostgreSQL): the two-tenant
+  fixture of `api/isolation_test.go` has administrators, members, tokens, OAuth
+  grants, groups, invites and spaces. `isolationRoutes` states how each
+  non-space route is isolated (space routes are all tested automatically by
+  `{space}`). `TestEveryRouteIsInTheIsolationTable` fails when a route is added
+  to the route table without being registered. `TestTenantsAreIsolatedOnEveryRoute`
+  has A's tenant administrator, member and token call every route with B's id,
+  requires the answer to be exactly the same as for a nonexistent id (status
+  code and error code), and no id or name of B may appear in the answer or in
+  lists. At the end it asserts B's things did not change and there are no
+  cross-tenant members, group members, space groups or token spaces. When
+  `ScopeOf` was temporarily changed to always return all, this test immediately
+  failed in a dozen places such as audit, grants and group members, so it really
+  does block.
+- **UI**: the admin console gained "Tenants" (a switch; the list only appears
+  once the switch is on or there are already several tenants, and it can create,
+  rename, disable, delete, and get the invite link for the first administrator)
+  and "Layered settings" (a site administrator sees the site layer plus the
+  tenant layer of one chosen tenant; a tenant administrator sees the layer of
+  their own tenant; each item shows the site's lock / limit, values not in
+  effect, and a rule editor). A user row says whether the person is a site
+  administrator or tenant administrator, and a site administrator can change it.
+  A tenant administrator does not see the pages that belong to the server
+  itself. The "Tenants" page is always in the navigation for a site
+  administrator (the switch is inside it), and while the switch is off the page
+  has no list. The contract's "no tenant entry point is visible in the UI while
+  it is off" means the tenant list and the word "tenant" in various places; the
+  switch itself has to live somewhere. Chinese and English, the mock server,
+  contract tests (run against both the mock and the real server) and phone
+  width (rows wrap, columns can shrink) are all done.
+- **Known issues**: when a site administrator promotes or invites an
+  administrator in the default tenant, without `siteAdmin: false` the person
+  becomes a site administrator. This is intentional (consistent with the
+  pre-upgrade "an administrator is the server's administrator", and written in
+  `docs/api.md`), but easy to be surprised by: to get a tenant administrator in
+  the default tenant, `siteAdmin: false` must be sent explicitly.
+  Two more:
+  - When disabling a tenant, the check "refuse if, after disabling, no site
+    administrator remains outside the tenant" can in fact never be reached: only
+    a site administrator can disable a tenant, and must be outside this tenant,
+    so such a person always remains. Also, that check is done outside the
+    transaction.
+  - When disabling a tenant there is also no check, while `ssoOnly` is on, of
+    whether any of the remaining site administrators has a password. Other site
+    administrators are still there and can enable the tenant again, so nobody is
+    permanently locked out.
+- **Not done yet**: see "Seams left for the later parts" above.
 
-**3.3 的现状（第二部分，2026-11-23）**：发信、注册、邮箱验证、找回密码做了；配额和用量留给下一部分。接口
-见 `docs/api.md` 的「Tenants, registration and mail」（「Storage」下面「What the second part of 3.3 does」
-写了实现时定下来的细节），迁移仍是同一个 `0018_tenants.sql`（加了 `registrations`、`email_tokens`、
-`users.terms_accepted`，SQLite 和 PostgreSQL 都测）。所有者问题按括号里的默认做。顺带按协调者的要求补了
-第一部分的一个接缝：全站管理员对已经显示为「已验证」、却带着 `tenant_admin` 标记的邮箱再发一次
-`emailVerified: true`，现在也会清掉标记（先写了失败的测试），本人点验证链接同样清掉。实现时定下来的：
+**3.3 as built (part 2, 2026-11-23)**: mail sending, registration, email
+verification and password recovery are done. Quotas and usage are left for the
+next part. For the endpoints see "Tenants, registration and mail" in
+`docs/api.md` (the details decided during implementation are written under
+"Storage", in "What the second part of 3.3 does"). The migration is still the
+same `0018_tenants.sql` (with `registrations`, `email_tokens` and
+`users.terms_accepted` added, tested on both SQLite and PostgreSQL). The owner's
+questions were done with the defaults in parentheses. Also, at the
+coordinator's request, one seam of part 1 was filled in: when a site
+administrator sends `emailVerified: true` again for an email that already shows
+as "verified" but carries the `tenant_admin` mark, the mark is now cleared too
+(the failing test was written first), and the person clicking the verification
+link clears it the same way. What was decided during implementation:
 
-- **默认什么都不发**：
-  - 发信默认关，`PUT /api/admin/mail` 启用之前，`GET /api/register` 答 `open: false`、忘记密码答
-    `403 password_reset_off`、要验证邮件答 `409 mail_not_configured`，任何设置都打不开注册。
-  - 测试一律连进程里的假 SMTP 服务器（`internal/mail/mailtest`，只听回环地址，只留不转发），没有任何测试能
-    碰到别的邮件服务器；模拟服务器（web 的 mock）从不发信，「发出」的信只放进它的 `outbox`。
-  - 启用后只有本人的请求（要链接）、改邮箱时给旧地址的提醒、和管理员的测试信、管理员点的重置链接会发信。
-- **`internal/mail`**：只用标准库 `net/smtp`。`starttls` 要求服务器提供 STARTTLS（不提供就失败，绝不退回
-  明文），`tls` 从第一个字节起加密，两者都校验证书和主机名，没有跳过的选项（测试用的信任根只能由测试代码
-  传入，设置里没有）；`none` 只允许回环地址，而且连上之后还看对端地址是不是回环（防主机名解析到别处）。
-  `PLAIN` 只在 TLS 或回环上发。信头里的换行一律去掉，收件人只接受单纯的 `local@domain`。队列在内存里，
-  最多 1000 封，一封立刻试、1 分钟后再试、再 5 分钟后再试，第三次失败或超过 10 分钟就丢弃（日志里只写原因，
-  不写地址和正文，因为正文里有链接）。关掉发信时队列清空。状态里的错误文字去掉控制字符、截断，并把密码
-  换成 `***`。密码用 `secret.key` 封存（用途 `mail`），读接口只给 `hasPassword`，审计里只写 `"changed"`。
-- **令牌**：32 字节随机，放在链接 `#` 后面，库里只存 SHA-256（注册、验证、重置都是），比较用常数时间，
-  每次只能用一次（`UPDATE … WHERE used = 0` 是区分两个同时使用的唯一点）。重新要一次会作废之前的链接；改
-  邮箱作废旧的验证链接（链接也只认发信时的那个地址）；任何密码变更（本人改、命令行改、重置）作废重置链接。
-  四个带令牌的接口都先过「按地址每分钟」的额度，令牌不对记成这个地址的一次失败，对了就还回去。
-- **注册**：
-  - 按合同里的顺序检查，到第一个拒绝为止。每个租户每小时的数量和待确认上限对**每个**通过字段检查的请求都
-    计数，不管地址有没有账号，所以回答一样；密码在所有分支里都哈希，工作量也不泄露。
-  - 地址已经有已验证的启用账号时不建注册，发「你已经有账号」和重置链接（该账号不能用密码时发「请用某某
-    登录」）；同一地址一小时 3 封、同一来源 5 封，超了什么都不发、不存（没有信的链接就不存注册）。
-  - 条款：设了条款或隐私地址就要勾选，同意的时间和当时的地址存进 `registrations.terms`，建号时复制到
-    `users.terms_accepted`。账号、会话、个人空间和审计 `registered` 在确认时一次建好；删待确认的行和建
-    账号在同一个事务里，所以链接只能用一次。
-  - 关注册（改开关、改 `lower`、关发信、删租户、每小时一次的巡检）就**删除**待确认的注册，所以它们的链接
-    答 `404 not_found`；`403 registration_closed` 留给「行还在、租户已经不开放」的那一瞬间。
-  - 两个方向的 `sso_only_with_registration` 都是真的：开注册时看 `ssoOnly` 是否存着，`PUT /api/admin/security`
-    打开 `ssoOnly` 时看有没有租户的生效值是开着的（走遍租户表，在内存里）；全站解锁（`lower` 不再是
-    `lock`）而某个租户存着 `true` 时同样先检查邮件和 `ssoOnly`。
-- **找回密码**：回答永远是同一个 `202`，不管账号存不存在、有没有已验证的邮箱、有没有被停用；测试逐一对比
-  响应的字节。有密码、而且没被 `ssoOnly` 拒绝的账号才发链接；其余发「请用某某登录」，**重置不会给账号加一个
-  原本用不了的密码**，重置时也再查一次（链接发出之后 `ssoOnly` 开了，链接作废）。重置后结束这个人的所有
-  会话，清掉按用户名和按（地址，用户名）的失败计数和锁定（给 `failTable` 加了 `resetWhere`），不直接登录。
-  管理员发的重置链接在自己的范围内，租户管理员碰不到全站管理员，也不计入「某个来源 5 封」。
-- **接缝**：`registrationReady()` 现在是「发信已启用且有 `--public-url`」；`GET /api/auth/providers` 的
-  `register` 是该租户的生效规则、`forgot` 是发信已启用；验证码的 `forgot`、`register` 上下文进了
-  `CaptchaContexts`，默认关。
-- **界面**：
-  - 注册页（`/register?tenant=`）、注册确认页（`/register/confirm#令牌`，建好账号、登录、进应用）、邮箱确认页
-    （`/verify-email#令牌`）、忘记密码页（`/forgot`）、重置页（`/reset-password#令牌`，先检查链接再让输新密码）。
-  - 令牌从地址片段读一次就从地址栏拿掉；登录页上两个链接只在 `register`、`forgot` 为真时出现。
-  - 账号页的邮箱一行（已验证／没有验证，服务器能发信时有「发验证邮件」）；用户页里有已验证邮箱的人有「发重置
-    链接」；管理后台新增「发信」页（SMTP 设置、状态和队列、测试信），只有全站管理员看得到。
-  - 中英文都做了，模拟服务器和契约测试（对模拟服务器跑，对真服务器只断言「发信关着时」的那些回答）、手机
-    宽度（表单是单列、按钮会换行）。
-- **测试**：Go 的测试在 SQLite 和 PostgreSQL 上都跑：`internal/mail`（假 SMTP：证书校验、STARTTLS 必须、
-  `none` 只能回环、头注入、重试和丢弃、队列上限）、`internal/api` 里每个流程和每个错误码；web 用 Vitest。
-  只跑了相关的包，没有跑 `make check-full`。
-- **已知问题**：
-  - 找回密码的时间差：回答完全一样（测试逐字节比较），但账号存在时多一次写（存一行重置令牌）、多一次查
-    （`email_verified_by`），理论上能从响应时间猜出账号存不存在；没有做成固定耗时。
-  - 发信状态（`status`）在内存里，重启后是「还没有发过」。
-  - 邮件模板在 Go 代码里（`internal/mail/templates.go`），只有 `en` 和 `zh-Hans` 两种；合同说的「i18n 文件」
-    指这里，web 的 i18n 文件不管服务器发的信。
-  - 注册确认时若用户名在这期间被管理员占用，答 `409 exists`，待确认的行随事务回滚而保留，到期才清。
-- **第一轮审查的修复**（每条先写失败的测试，`internal/api/emailsafety_test.go` 等）：
-  - **邮箱地址只收 ASCII**：Go 的 `strings.ToLower` 把 `İ`（U+0130）变成 `i`、开尔文符号 `K`（U+212A）
-    变成 `k`，所以 `tom@gİthub.test` 能匹配上 `tom@github.test` 的账号，「你已经有账号」和重置链接会发到
-    长得像的地址；同样的折叠能绕过 `registration.domains`，也能经 2.8 的按邮箱合并接管账号。现在
-    `cleanEmail` 和注册拒绝任何非 ASCII 字符（`400 invalid`），比较一律用 `store.EmailKey`（只把 A–Z 变小写），
-    数据库里也只折叠 ASCII（PostgreSQL 用 `translate`，SQLite 用注册的 `petalbook_ascii_lower`，不受
-    数据库 locale 影响）；账号邮件一律发到库里存的 `u.Email`，不发到用户输入的地址。
-  - **已有的非 ASCII 地址**（2.8 及以前存下的）：不迁移、不改写，原样保留；但它们不匹配任何查找（注册、
-    找回、合并、域名白名单），也收不到任何账号邮件（找回链接、管理员发的重置答 `409 email_unverified`、
-    要验证邮件答 `400 invalid`、改邮箱的提醒不发）。本人或管理员改成 ASCII 地址后一切照常。只改名字时
-    地址不动。测试：`TestAStoredNonASCIIAddressGetsNoAccountMail`、`TestUsersByEmailNeverFoldsBeyondASCII`。
-  - **注册探测**：地址已有账号时也占住用户名（一行不发链接的待确认注册，同样 24 小时），所以「同一个用户名、
-    换个地址再来一次」在两种情况下都答 `409 exists`。先过地址的每小时额度再占用户名，两条路径顺序一样。
-  - **改邮箱作废重置链接**：本人改、管理员改都删掉这个人的全部邮件令牌；`findReset` 还要求令牌的地址等于
-    账号当前的地址。
-  - **租户管理员的标记不算**：`email_verified_by = tenant_admin` 的地址在找回、管理员发重置、「你已经有
-    账号」里都当成未验证，和 2.8 合并一样；否则租户管理员给成员设上自己的邮箱并标成已验证，就能重置密码。
-  - **每小时额度表满了就拒绝**，不再挤掉最久没用的那一项（挤掉会让被限的地址重新有额度）；一小时没用过的
-    项才腾出位置。
-  - `TestARetrySucceeds` 在 `-race` 下不稳：服务器收到信比发送方计数早，改成在期限内轮询 `Stats()`。
-  - **第二轮审查记下的**：只被租户管理员标成已验证的地址，本人去要验证邮件会答 `409 email_verified`，
-    而 `docs/api.md` 说本人可以用链接验证；不会卡死（全站管理员可以替他验证，或者他把地址改一下再改回来再验证），
-    以后让这种情况也能发验证邮件。
-- **还没做的**：配额和用量、`POST /api/admin/tenants` 的 `admin` 预填邀请，已在第三部分做完。
+- **By default nothing is sent**:
+  - Mail sending is off by default. Until `PUT /api/admin/mail` enables it,
+    `GET /api/register` answers `open: false`, forgot-password answers
+    `403 password_reset_off`, asking for a verification email answers
+    `409 mail_not_configured`, and no setting can turn on registration.
+  - Tests always connect to a fake SMTP server inside the process
+    (`internal/mail/mailtest`, listening only on the loopback address, keeping
+    mail and never forwarding it), so no test can reach any other mail server.
+    The mock server (the web mock) never sends mail, and "sent" mail is only
+    put in its `outbox`.
+  - After it is enabled, mail is sent only for the person's own requests
+    (asking for a link), the reminder to the old address when the email is
+    changed, the administrator's test email, and a reset link the administrator
+    clicks to send.
+- **`internal/mail`**: uses only the standard library `net/smtp`. `starttls`
+  requires the server to offer STARTTLS (if it does not, it fails, and never
+  falls back to plain text), and `tls` encrypts from the first byte. Both
+  verify the certificate and host name, with no option to skip (the trust root
+  used by tests can only be passed in by test code, and is not in the
+  settings). `none` is only allowed for loopback addresses, and after
+  connecting it also checks that the peer address is loopback (to guard against
+  a host name resolving elsewhere). `PLAIN` is only sent over TLS or loopback.
+  Line breaks in headers are always removed, and a recipient is only accepted as
+  plain `local@domain`. The queue is in memory, at most 1000 messages. A message
+  is tried right away, again after 1 minute, and again after another 5 minutes,
+  and is dropped when the third try fails or after 10 minutes (the log only
+  writes the reason, not the address or body, because the body holds a link).
+  Turning off mail sending empties the queue. Error text in the status has
+  control characters removed, is truncated, and has the password replaced with
+  `***`. The password is sealed with `secret.key` (purpose `mail`), the read
+  endpoint only gives `hasPassword`, and the audit only writes `"changed"`.
+- **Tokens**: 32 random bytes, placed after the `#` of the link, only the
+  SHA-256 stored in the database (for registration, verification and reset
+  alike), compared in constant time, and usable only once
+  (`UPDATE … WHERE used = 0` is the single point that tells apart two
+  simultaneous uses). Asking again voids the earlier link. Changing the email
+  voids the old verification link (a link is also only valid for the address it
+  was sent to). Any password change (by the person, by command line, by reset)
+  voids reset links. All four endpoints that carry a token first go through the
+  "per address per minute" allowance. A wrong token counts as one failure for
+  that address, and a correct one gives it back.
+- **Registration**:
+  - Checked in the order of the contract, up to the first refusal. The
+    per-tenant hourly count and the pending cap are counted for **every**
+    request that passes the field checks, whether or not the address has an
+    account, so the answer is the same. The password is hashed in all branches,
+    so the amount of work does not leak either.
+  - When the address already has a verified enabled account, no registration is
+    created, and "you already have an account" with a reset link is sent (when
+    that account cannot use a password, "please sign in with such-and-such" is
+    sent). 3 emails per hour to the same address and 5 from the same source.
+    Beyond that nothing is sent or stored (with no mail link, no registration
+    is stored).
+  - Terms: if a terms or privacy address is set, ticking is required, and the
+    time and address of the agreement are stored in `registrations.terms`, and
+    copied into `users.terms_accepted` when the account is created. The account,
+    session, personal space and the audit `registered` are all created at once
+    at confirmation. Deleting the pending row and creating the account are in
+    the same transaction, so the link can only be used once.
+  - Closing registration (changing the switch, changing `lower`, turning off
+    mail sending, deleting a tenant, the hourly sweep) **deletes** pending
+    registrations, so their links answer `404 not_found`.
+    `403 registration_closed` is left for the moment when "the row is still
+    there but the tenant is no longer open".
+  - `sso_only_with_registration` is real in both directions: when opening
+    registration it checks whether `ssoOnly` is set, and when
+    `PUT /api/admin/security` turns `ssoOnly` on it checks whether any tenant's
+    effective value is open (walking the tenant table, in memory). When the site
+    unlocks (`lower` is no longer `lock`) while some tenant has stored `true`,
+    mail and `ssoOnly` are checked first in the same way.
+- **Password recovery**: the answer is always the same `202`, whether or not the
+  account exists, has a verified email, or is disabled, and the tests compare
+  the bytes of the response one by one. Only an account that has a password and
+  is not refused by `ssoOnly` gets a link. The others get "please sign in with
+  such-and-such". **A reset does not give an account a password it could not use
+  before**, and it checks again at reset time (if `ssoOnly` was turned on after
+  the link was sent, the link is void). After a reset, all of the person's
+  sessions end, and the failure counts and lockouts by username and by (address,
+  username) are cleared (`failTable` gained `resetWhere`). It does not sign in
+  directly. A reset link sent by an administrator stays within the
+  administrator's own scope, a tenant administrator cannot touch a site
+  administrator, and it is not counted in the "5 from a source" cap.
+- **Seams**: `registrationReady()` is now "mail sending is enabled and there is
+  a `--public-url`". `register` of `GET /api/auth/providers` is that tenant's
+  effective rule, and `forgot` is whether mail sending is enabled. The `forgot`
+  and `register` contexts of the captcha entered `CaptchaContexts`, off by
+  default.
+- **UI**:
+  - The registration page (`/register?tenant=`), the registration confirmation
+    page (`/register/confirm#token`, which creates the account, signs in and
+    enters the app), the email confirmation page (`/verify-email#token`), the
+    forgot-password page (`/forgot`), and the reset page
+    (`/reset-password#token`, which checks the link first and then lets the
+    person enter a new password).
+  - The token is read from the address fragment once and then removed from the
+    address bar. The two links on the sign-in page only appear when `register`
+    and `forgot` are true.
+  - The email row on the account page (verified / not verified, with "send
+    verification email" when the server can send mail). On the users page, a
+    person with a verified email has "send reset link". The admin console gained
+    a "Mail" page (SMTP settings, status and queue, test email), visible only to
+    site administrators.
+  - Chinese and English are both done, along with the mock server, contract
+    tests (run against the mock server, and against the real server only
+    asserting the answers "when mail sending is off") and phone width (forms are
+    one column, buttons wrap).
+- **Tests**: the Go tests run on both SQLite and PostgreSQL: `internal/mail`
+  (fake SMTP: certificate verification, STARTTLS required, `none` loopback only,
+  header injection, retry and drop, queue cap), every flow and every error code
+  in `internal/api`; the web uses Vitest. Only the relevant packages were run,
+  not `make check-full`.
+- **Known issues**:
+  - A timing difference in password recovery: the answers are exactly the same
+    (the tests compare byte by byte), but when the account exists there is one
+    more write (storing a reset token row) and one more lookup
+    (`email_verified_by`), so in theory the response time could reveal whether
+    the account exists. It was not made constant-time.
+  - The mail status (`status`) is in memory, and after a restart it is "never
+    sent".
+  - The mail templates are in Go code (`internal/mail/templates.go`), with only
+    `en` and `zh-Hans`. The "i18n files" the contract mentions mean this; the
+    web i18n files do not handle mail the server sends.
+  - At registration confirmation, if the username was taken by an administrator
+    in the meantime, the answer is `409 exists`, and the pending row stays
+    because the transaction rolls back, until it expires.
+- **Fixes from the first review** (each started with a failing test,
+  `internal/api/emailsafety_test.go` and others):
+  - **Email addresses accept ASCII only**: Go's `strings.ToLower` turns `İ`
+    (U+0130) into `i` and the Kelvin sign `K` (U+212A) into `k`, so
+    `tom@gİthub.test` could match the account of `tom@github.test`, and "you
+    already have an account" and the reset link would be sent to a look-alike
+    address. The same folding could bypass `registration.domains`, and take over
+    an account through 2.8's merge by email. Now `cleanEmail` and registration
+    reject any non-ASCII character (`400 invalid`), comparison always uses
+    `store.EmailKey` (which only lowercases A-Z), and the database folds only
+    ASCII too (PostgreSQL uses `translate`, SQLite uses the registered
+    `petalbook_ascii_lower`, independent of the database locale). Account mail
+    is always sent to the `u.Email` stored in the database, never to the address
+    the user typed.
+  - **Existing non-ASCII addresses** (stored in 2.8 and earlier): not migrated
+    and not rewritten, kept as they are. But they match no lookup
+    (registration, recovery, merge, domain allowlist), and receive no account
+    mail (the recovery link; a reset sent by an administrator answers
+    `409 email_unverified`; asking for a verification email answers
+    `400 invalid`; the reminder on email change is not sent). Once the person or
+    an administrator changes it to an ASCII address, everything works as usual.
+    When only the name is changed, the address is untouched. Tests:
+    `TestAStoredNonASCIIAddressGetsNoAccountMail`,
+    `TestUsersByEmailNeverFoldsBeyondASCII`.
+  - **Registration probing**: when the address already has an account, the
+    username is also held (a pending registration row that sends no link, also
+    24 hours), so "the same username, again with another address" answers
+    `409 exists` in both cases. The hourly allowance of the address is checked
+    before the username is held, so both paths have the same order.
+  - **Changing the email voids reset links**: a change by the person or by an
+    administrator deletes all of that person's email tokens. `findReset` also
+    requires the token's address to equal the account's current address.
+  - **A tenant administrator's mark does not count**: an address with
+    `email_verified_by = tenant_admin` is treated as unverified in recovery, in
+    administrator-sent resets and in "you already have an account", the same as
+    2.8's merge. Otherwise a tenant administrator could set his own email on a
+    member, mark it verified, and reset the password.
+  - **When the hourly allowance table is full, refuse**, and no longer push out
+    the entry unused the longest (pushing out would give a limited address
+    allowance again). Only entries unused for an hour make room.
+  - `TestARetrySucceeds` was unstable under `-race`: the server received the mail
+    earlier than the sender counted it, so it was changed to poll `Stats()`
+    within the deadline.
+  - **Noted in the second review**: for an address that only a tenant
+    administrator marked as verified, the person asking for a verification email
+    gets `409 email_verified`, while `docs/api.md` says the person can verify
+    with a link. It does not get stuck (a site administrator can verify for them,
+    or they can change the address, change it back and verify), and later this
+    case will also be able to send a verification email.
+- **Not done yet**: quotas and usage, and the pre-filled invite for `admin` in
+  `POST /api/admin/tenants`, were finished in part 3.
 
-**3.3 的现状（第三部分，2026-11-23）**：配额和用量做完了，`POST /api/admin/tenants` 的 `admin` 也真的预填邀请了。
-接口见 `docs/api.md` 的「Quotas」和「What the third part of 3.3 does」，迁移仍是同一个 `0018_tenants.sql`
-（加了 `usage` 表、`users.quota`、`spaces.page_count`／`usage_bytes`／`usage_user`、`invites.username`／`name`／`email`，
-SQLite 和 PostgreSQL 都测）。所有者问题按括号里的默认做（第 9、10 条：只拒绝空间数，用量算在第一个所有者头上）。
-实现时定下来的：
+**3.3 as built (part 3, 2026-11-23)**: quotas and usage are done, and `admin` in
+`POST /api/admin/tenants` now really pre-fills the invite. For the endpoints see
+"Quotas" and "What the third part of 3.3 does" in `docs/api.md`. The migration is
+still the same `0018_tenants.sql` (with the `usage` table, `users.quota`,
+`spaces.page_count` / `usage_bytes` / `usage_user`, and `invites.username` /
+`name` / `email` added, tested on both SQLite and PostgreSQL). The owner's
+questions were done with the defaults in parentheses (items 9 and 10: only the
+space count is refused, and usage counts against the first owner). What was
+decided during implementation:
 
-- **用量怎么保持正确，而不在请求里数东西**：
-  - 每个人、每个租户一行 `usage`（空间数、字节、页数、人数、超出了什么、最近测量的时间）。读任何人的用量是按主键
-    查一行；建空间时的空间数检查是查这一行（租户有总额时再查租户那一行），和空间有多少无关。
-  - 改动由改动本身的语句带着做，在同一个事务里：建空间（租户加一）、加／改／删成员和转移所有权（空间改记到新的第一个
-    所有者名下）、删空间（两行各减去它占的）、建用户（租户人数加一）、每次测量（把和上次的差值加到所有者和租户两行）。
-    加减都是「当前值加差值」的 upsert，并且两行按固定顺序（先按种类和 id 排序）加锁，PostgreSQL 上两个事务不会互等。
-  - **合同没写的一列：`spaces.usage_user`**，记着这个空间现在算在谁名下。没有它，所有权一变，就不知道该从哪一行减、
-    减多少（测量可能在中间改过它的字节数）；有了它，`settleOwner` 是幂等的：算出第一个所有者，和记着的不一样才搬，
-    搬的恰好是当初加进去的。第一个所有者仍是 `ORDER BY created, user_id` 的第一个所有者成员，和提交的默认作者是同一个人。
-  - 对账：一组分组查询（每张表一个）读出应有的值，只写不一样的行。这些读必须看到同一个状态：SQLite 上事务占着唯一的
-    写连接，自然如此；PostgreSQL 上每条语句各有快照，两次读之间提交的写会被差值抵消、新行会被当成过期删掉（八个并发
-    写者下复现过），所以对账先 `LOCK TABLE usage IN SHARE ROW EXCLUSIVE MODE` 再读。每个改动都在自己的事务里写
-    usage，所以拿到锁时没有改了一半的，之后的改动等对账提交（约 0.2 s，和 SQLite 上排队一样）。对账在这之前不持有
-    别的锁（「空间算在谁名下」那一步会锁空间行，单独一个事务先做），所以和写者的顺序（空间、租户、人、usage）成不了环。
-    **服务器开始运行时跑一次**（崩溃可能留下差异，代价就是一天一次的代价），之后每天一次（`RecountEvery`）；
-    迁移里用两条集合语句直接生成（见下面的开销）。对账后会对所有人再看一遍是否超出。
-  - 页数：测量顺带数页数，空间开着就问它的索引（一次 `COUNT`），关着就直接读索引文件，**不为了数页数打开空间**
-    （打开会触发远端拉取，也会把别的空间挤出内存）；索引文件不存在（缓存被清过）就只更新字节，页数保持原值。
-  - 字节仍是 1.7 的那次目录遍历，`usage_bytes` 的第一个值是 `size_bytes`（迁移里一条 `UPDATE`）。
-- **拒绝和提醒**：
-  - 空间数是唯一拒绝的：个人上限（自己的，否则租户的 `quota.spacesPerPerson`，否则全站的）和租户的总额
-    `quota.spaces`，`403 quota_exceeded`，带 `quota`、`limit`、`used`。`--max-spaces` 给了就是全站值、只读
-    （`fromFlag`），没给就是存着的 20；0 是不限。
-  - **「算空间」的口径改了，按合同**：以前数「我是所有者成员的空间」，现在数「我是第一个所有者的空间」。所以被加为
-    第二所有者不占名额，转移后才占；原来那条测试（成员升为所有者就占）按合同改了，并且加了转移后占的断言。
-  - 字节、页数、租户人数只提醒：账号页「用量」里的提示、管理后台「用量」里的「超出」、租户的 `usage.over`，
-    和审计 `quota_exceeded`。**一次越线只记一次**：`usage.over` 存着这一行现在超出了什么，只有「新超出」的那些才写审计，
-    再测一遍、再看一遍都不会重复；降下来再超过算新的一次。「超出」指大于，等于不算。
-  - 改了限额马上看：改 `quota.*` 设置、人的 `quota`、租户的 `quota` 时，对受影响的人（全站设置是所有人）同步再看一遍，
-    所以 `over`、提示和审计不用等下一次测量。看的时候按 500 个一页读用量行，状态没变的不写。
-  - 个人上限只有「往下收」的权限规则：租户管理员不能把人的上限设得比租户的高（不限最高），`403 forbidden`；全站管理员可以。
-    上层锁了或限制了，租户管理员按全站和租户中更严的，全站管理员按全站的（`409 setting_locked`／`setting_restricted`）。
-    这条合同写得简略，是这样补全的。拒绝时整个请求什么都不改（`quota` 在别的字段之前检查）。
-- **对合同的补充**（都是加字段，不改旧的）：
-  - `GET /api/admin/usage` 的每一项还有 `tenant`、`own`（这个人自己的上限，编辑表单的起点，不用为此读整张用户表）
-    和 `measuredAt`；游标是 `字节数:id`。
-  - 租户的 `usage` 还有 `measuredAt` 和 `over`；管理员列表和 `PATCH /api/users/{id}` 的用户带 `quota`。
-  - `quota_exceeded` 带 `used`；审计行多一个 `scope`（`person`／`tenant`）。
-  - 邀请多了 `username`／`name`／`email`：`POST /api/admin/tenants` 的 `admin` 存进邀请，`POST /api/invites/check` 把它们
-    答出来，接受页用它们起头；接受时用户名或名字留空就用邀请里的，邮箱成为账号的邮箱（没验证）。没发任何邮件。
-  - `GET /api/settings`（人自己能改的设置）不列 `quota.*`：人没有自己改这一层的权利。
-- **给 3.1 的钩子，保持干净**：`store.RecordMeasurement` 是唯一写 `usage_bytes` 的地方（同时写 1.7 列表里的大小）。
-  3.1 合进来后，部分克隆和清掉的空间不要调它，只用 `SetSpaceSize` 写列表里的大小，`usage_bytes` 就保持上一次完整测量的值
-  （不会缩）；完整工作区的测量才调 `RecordMeasurement`。这个分支上没有 3.1，所以现在每次测量都是完整的。
-- **顺带修了一个已有的空指针**：每日文案的设置绑定在读取出错时（上下文已取消）会解引用一个空的 `Allow`；对账协程在
-  测试收尾时撞上了它。现在出错就返回错误。
-- **开销**（20,000 人、40,000 个空间，SQLite／PostgreSQL，`PETALBOOK_PERF=1` 的测试打出来的数）：
-  - 迁移里生成用量行的那一步 0.28 s／0.74 s（两条集合语句）；逐行 upsert 的对账从零开始要 0.74 s／1.5 s，所以迁移不用它。
-  - 每天一次的对账，没有差异：0.17 s／0.19 s；纠正 1,000 行：0.20 s／0.26 s。SQLite 上它持有唯一的写连接，期间别的写
-    请求排队 0.2 s 左右；PostgreSQL 上它锁住 usage 表（读不受影响），改用量的写同样排队 0.2 s 左右。
-  - 读一个人的用量 21 µs／59 µs；一页 50 个人（按字节排）0.2 ms／0.5 ms，翻过一万人之后那一页 1.3 ms／2.0 ms；
-    某个租户的一页 0.2 ms／0.3 ms。
-  - 记一次测量 0.25 ms／0.44 ms；建一个空间并加所有者（含用量）0.33 ms／0.64 ms；转移一个空间 0.38 ms／0.83 ms。
-  - 一个 2 万页的空间：数页数，开着时 0.15 ms，关着时读索引文件 0.5 ms；整个测量一轮（遍历文件 0.2～0.3 s，
-    1.7 原有的）不因页数变贵。打开它重建索引要 1.4 s，这是打开的代价，测量不触发它。
-  - 改了限额之后对所有人再看一遍：2 万人，没人变状态 21 ms／60 ms；一半人越线（写状态、写审计）0.3 s／0.7 s，
-    在改设置的那个请求里同步做完。
-  - 一个人的空间数检查：读他的用量行 21 µs，不再是原来按成员表数一遍。
-- **测试**：Go 的测试在 SQLite 和 PostgreSQL 上都跑。`internal/store`：用量随建／删／转移／成员变化／测量而变，
-  每个场景最后都断言「对账没有东西要纠正」；故意造漂移（改行、删行、多出已不存在的人、空间记在错的人名下）对账全部纠正，
-  再来一遍什么也不做；测量能纠正崩溃留下的差异；并发（6 个人同时建、测量、转移、删、再测，PostgreSQL 上真的并行）
-  之后计数和从头对账的结果完全一致；列表的顺序、游标、范围和 `over`；迁移从旧库起头对（第一个所有者、没有所有者的空间、
-  人数）。`internal/spaces`：个人和租户的空间数拒绝与删除后让出名额、并发创建不会越过上限、测量写字节和页数并通知钩子、
-  关着的空间和没有索引的空间、后台对账自己纠正并通知钩子。`internal/quota`：限额的层、「超出」的口径、
-  一次越线只审计一次、超过一页（500）的人也看全。`internal/api`：每条规则和每个错误码（账号用量、分层的空间限额、
-  `--max-spaces`、人的上限的规则和拒绝时什么都不改、提醒和审计一次、列表的范围和游标、租户用量和总额、预填的邀请）；
-  隔离表里加了两条路由。web 用 Vitest：模拟服务器、契约测试（对模拟服务器和真服务器都跑过）、账号用量页、
-  管理后台的用量页、用户和租户上的上限表单、预填的邀请页、手机宽度的类名。只跑了相关的包，没有跑 `make check-full`。
-- **已知问题**：
-  - 页数是索引里的页数：服务器停着时有人在磁盘上直接改了文件，索引到下次打开空间才跟上，那之前的测量会按旧的数；
-    字节是实测的，不受影响。
-  - 磁盘用量是目录大小（含 `.git`，硬链接各算一次），和 1.7 一致；没有按「人」去重，也不分页面和附件。
-  - 人数总额只提醒，邀请和注册仍然能超过它；已经超过的人不会被收回任何东西（合同本来就是只提醒）。
-  - 个人上限列表（管理后台「用量」）读 `own`，不读全体用户；但「用户和邀请」页原来就加载全体用户，没改。
-  - 改全站的限额时，对所有人再看一遍是在请求里同步做的（2 万人约 0.3 s）；更大的服务器可以改成后台做，
-    现在没做，因为请求要立刻看到新的 `over`。
-  - 停用租户时只检查「别处还剩一个启用的站点管理员」，没有检查剩下的那个有没有密码。打开 `ssoOnly` 的服务器上，
-    若那个租户里唯一有密码的管理员被停用，身份提供方一出故障，就只剩命令行救援这一条路。
-- **第二轮审查记下的**：
-  - 用量钩子在 `Transfer`、`DeleteSpace` 里是在 `adminMu` 下调用，在 `CreateWith` 里是在 `createMu` 下；恰好有一次
-    全站的再看一遍（对账后或改了全站限额）在跑时，这些请求要等它。不占数据库锁，钩子也不回调空间，不会死锁，只是延迟。
-  - `TestARecountDuringWritesLeavesTheCountersExact` 里在事务外调 `InsertUser`，PostgreSQL 上极少数时序下最后的对账会
-    报一行纠正；生产里只在建账号的事务里调它，只影响测试。
-- **还没做的**：这一部分合同里的都做了。字节、页数、人数的拒绝（`507 quota_exceeded`）仍留着，等看了实测的
-  用量再定规则；按人去重和附件单独计数没有做。
+- **How usage stays correct without counting anything in a request**:
+  - One `usage` row per person and per tenant (space count, bytes, pages,
+    headcount, what was exceeded, time of the latest measurement). Reading
+    anyone's usage is one lookup by primary key. The space count check when
+    creating a space reads this row (and the tenant's row when the tenant has a
+    total), independent of how many spaces exist.
+  - Changes are carried by the changing statement itself, in the same
+    transaction: creating a space (the tenant gets one more), adding / changing
+    / removing a member and transferring ownership (the space is re-recorded
+    under the new first owner), deleting a space (each of the two rows loses
+    what it held), creating a user (the tenant headcount gets one more), and
+    each measurement (the difference from last time is added to the owner and
+    tenant rows). Every add or subtract is an upsert of "current value plus
+    difference", and the two rows are locked in a fixed order (sorted by kind
+    and id first), so on PostgreSQL two transactions do not wait for each other.
+  - **A column the contract did not mention: `spaces.usage_user`**, which
+    records who the space currently counts against. Without it, once ownership
+    changes, it would not be known from which row to subtract or how much (a
+    measurement may have changed its byte count in the middle). With it,
+    `settleOwner` is idempotent: it works out the first owner, and only moves
+    when it differs from the recorded one, moving exactly what was added back
+    then. The first owner is still the first owner member by
+    `ORDER BY created, user_id`, the same person as the default commit author.
+  - Reconciliation: a set of grouped queries (one per table) reads out the
+    values that should be there and writes only the rows that differ. These
+    reads must see one consistent state: on SQLite the transaction holds the only
+    write connection, so this holds naturally. On PostgreSQL each statement has
+    its own snapshot, so a write committed between two reads would be cancelled
+    out by the difference, and a new row would be taken as stale and deleted
+    (reproduced with eight concurrent writers). So the reconciliation first runs
+    `LOCK TABLE usage IN SHARE ROW EXCLUSIVE MODE` and then reads. Every change
+    writes usage in its own transaction, so when the lock is obtained there is
+    nothing half-changed, and later changes wait for the reconciliation to
+    commit (about 0.2 s, the same as queuing on SQLite). Before this, the
+    reconciliation holds no other lock (the step "whose name does a space count
+    against" locks space rows, and is done first in a separate transaction), so
+    it cannot form a cycle with the writers' order (space, tenant, person,
+    usage). **It runs once when the server starts** (a crash may leave
+    differences, and the cost is the same as the once-a-day cost), and once a
+    day after that (`RecountEvery`). In the migration, the rows are generated
+    directly with two set statements (see the cost below). After the
+    reconciliation, everyone is looked at once more for whether they are over.
+  - Pages: the measurement counts pages along the way. If the space is open, it
+    asks its index (one `COUNT`). If it is closed, it reads the index file
+    directly, and **does not open the space just to count pages** (opening
+    triggers a remote fetch, and also pushes other spaces out of memory). If the
+    index file does not exist (the cache was cleared), only the bytes are
+    updated, and the page count keeps its old value.
+  - Bytes are still the directory walk of 1.7, and the first value of
+    `usage_bytes` is `size_bytes` (one `UPDATE` in the migration).
+- **Refusals and warnings**:
+  - The space count is the only thing refused: the personal limit (the person's
+    own, otherwise the tenant's `quota.spacesPerPerson`, otherwise the site's)
+    and the tenant's total `quota.spaces`, answering `403 quota_exceeded`, with
+    `quota`, `limit` and `used`. If `--max-spaces` is given, it is the site
+    value and read-only (`fromFlag`), and if not given it is the stored 20. 0
+    means unlimited.
+  - **The basis for "counting spaces" changed, following the contract**: it used
+    to count "spaces where I am an owner member", and now counts "spaces where I
+    am the first owner". So being added as a second owner takes no quota, and
+    only after a transfer does it count. The old test (a member promoted to owner
+    takes quota) was changed to follow the contract, and an assertion that it
+    counts after a transfer was added.
+  - Bytes, pages and tenant headcount only warn: the hint in "Usage" on the
+    account page, "Over" in the admin console's "Usage", the tenant's
+    `usage.over`, and the audit `quota_exceeded`. **A crossing is recorded only
+    once**: `usage.over` stores what this row is currently over, and only the
+    "newly over" ones write an audit entry, so measuring again or looking again
+    does not repeat it. Going down and then over again counts as a new one.
+    "Over" means greater than, and equal does not count.
+  - After a limit is changed, it is looked at immediately: when a `quota.*`
+    setting, a person's `quota` or a tenant's `quota` is changed, the affected
+    people (everyone for a site setting) are looked at again synchronously, so
+    `over`, the hint and the audit do not wait for the next measurement. While
+    looking, usage rows are read in pages of 500, and a row whose state did not
+    change is not written.
+  - A personal limit only has a "tighten downward" permission rule: a tenant
+    administrator cannot set a person's limit higher than the tenant's (unlimited
+    is the highest), `403 forbidden`, and a site administrator can. If the upper
+    layer has locked or restricted it, a tenant administrator follows the
+    stricter of the site and the tenant, and a site administrator follows the
+    site (`409 setting_locked` / `setting_restricted`). The contract wrote this
+    briefly, and this is how it was filled in. On refusal the whole request
+    changes nothing (`quota` is checked before the other fields).
+- **Additions to the contract** (all added fields, nothing old changed):
+  - Each item of `GET /api/admin/usage` also has `tenant`, `own` (the person's
+    own limit, the starting point of the edit form, so the whole user table need
+    not be read for it) and `measuredAt`. The cursor is `bytes:id`.
+  - A tenant's `usage` also has `measuredAt` and `over`. The user in the admin
+    list and in `PATCH /api/users/{id}` carries `quota`.
+  - `quota_exceeded` carries `used`. An audit row gains `scope`
+    (`person` / `tenant`).
+  - Invites gained `username` / `name` / `email`: the `admin` of
+    `POST /api/admin/tenants` is stored in the invite, and
+    `POST /api/invites/check` answers them back, and the accept page starts from
+    them. On accept, if the username or name is left empty the one in the invite
+    is used, and the email becomes the account's email (unverified). No email is
+    sent.
+  - `GET /api/settings` (settings a person can change themselves) does not list
+    `quota.*`: a person has no right to change this layer themselves.
+- **A hook for 3.1, kept clean**: `store.RecordMeasurement` is the only place
+  that writes `usage_bytes` (and it also writes the size in the 1.7 list). After
+  3.1 merges in, partial clones and cleaned-out spaces must not call it, and
+  only use `SetSpaceSize` to write the size in the list, so `usage_bytes` keeps
+  the value of the last full measurement (it does not shrink). Only a
+  measurement of a full working copy calls `RecordMeasurement`. This branch has
+  no 3.1, so every measurement is full for now.
+- **A nil pointer that already existed was fixed along the way**: when the daily
+  text settings binding hit an error on read (the context was cancelled), it
+  dereferenced a nil `Allow`. The reconciliation goroutine ran into it when a
+  test was finishing. Now it returns the error.
+- **Cost** (20,000 people, 40,000 spaces, SQLite / PostgreSQL, numbers printed
+  by the `PETALBOOK_PERF=1` test):
+  - The migration step that generates the usage rows takes 0.28 s / 0.74 s (two
+    set statements). A row-by-row upsert reconciliation starting from zero takes
+    0.74 s / 1.5 s, so the migration does not use it.
+  - The once-a-day reconciliation with no differences: 0.17 s / 0.19 s.
+    Correcting 1,000 rows: 0.20 s / 0.26 s. On SQLite it holds the only write
+    connection, and other write requests queue for about 0.2 s meanwhile. On
+    PostgreSQL it locks the usage table (reads are not affected), and writes
+    that change usage likewise queue for about 0.2 s.
+  - Reading one person's usage 21 µs / 59 µs. A page of 50 people (sorted by
+    bytes) 0.2 ms / 0.5 ms, and the page past ten thousand people 1.3 ms /
+    2.0 ms. A page for one tenant 0.2 ms / 0.3 ms.
+  - Recording one measurement 0.25 ms / 0.44 ms. Creating a space and adding an
+    owner (including usage) 0.33 ms / 0.64 ms. Transferring a space 0.38 ms /
+    0.83 ms.
+  - A space of 20,000 pages: counting pages takes 0.15 ms when it is open, and
+    0.5 ms reading the index file when it is closed. A whole measurement round
+    (walking files 0.2 to 0.3 s, existing in 1.7) does not get more expensive
+    with page count. Opening it to rebuild the index takes 1.4 s; that is the
+    cost of opening, and measurement does not trigger it.
+  - Looking at everyone again after a limit change: 20,000 people, nobody changes
+    state 21 ms / 60 ms. Half of the people crossing the line (writing state,
+    writing audit) 0.3 s / 0.7 s, done synchronously within the request that
+    changed the setting.
+  - The space count check for one person: reading his usage row takes 21 µs,
+    where before it counted over the member table.
+- **Tests**: the Go tests run on both SQLite and PostgreSQL. `internal/store`:
+  usage changes with create / delete / transfer / member changes /
+  measurement, and each scenario ends by asserting "the reconciliation has
+  nothing to correct". Drift made on purpose (editing a row, deleting a row,
+  extra rows for people who no longer exist, a space recorded under the wrong
+  person) is all corrected by the reconciliation, and running it again does
+  nothing. A measurement can correct a difference left by a crash. After
+  concurrency (6 people creating, measuring, transferring, deleting and
+  measuring again at the same time, really in parallel on PostgreSQL) the
+  counts are exactly the same as the result of reconciling from scratch. The
+  order of the list, cursor, scope and `over`. The migration is correct from an
+  old database (first owner, spaces without an owner, headcount).
+  `internal/spaces`: refusal of the space count for a person and a tenant, and
+  giving the quota back after deletion, concurrent creation cannot exceed the
+  limit, a measurement writes bytes and pages and notifies the hook, closed
+  spaces and spaces with no index, and the background reconciliation corrects
+  itself and notifies the hook. `internal/quota`: the layers of limits, the
+  basis of "over", auditing a crossing only once, and people beyond one page
+  (500) are also fully looked at. `internal/api`: every rule and every error
+  code (account usage, layered space limits, `--max-spaces`, the rules for a
+  person's limit and changing nothing on refusal, a warning and audit once, list
+  scope and cursor, tenant usage and totals, pre-filled invite). Two routes were
+  added to the isolation table. The web uses Vitest: the mock server, contract
+  tests (run against both the mock server and the real server), the account
+  usage page, the admin console's usage page, the limit form on users and
+  tenants, the pre-filled invite page, and phone-width class names. Only the
+  relevant packages were run, not `make check-full`.
+- **Known issues**:
+  - The page count is the page count in the index: if someone edits files
+    directly on the disk while the server is stopped, the index only catches up
+    the next time the space is opened, and measurements before that count the old
+    number. Bytes are measured, and not affected.
+  - Disk usage is the directory size (including `.git`, with each hard link
+    counted once), the same as 1.7. It is not de-duplicated per "person", and
+    does not separate pages from attachments.
+  - The headcount total only warns, and invites and registrations can still
+    exceed it. A person who is already over has nothing taken back (the contract
+    was only to warn in the first place).
+  - The personal limit list (admin console "Usage") reads `own`, not the whole
+    user table. But the "Users and invites" page always loaded the whole user
+    table, and that was not changed.
+  - When the site-wide limit is changed, looking at everyone again is done
+    synchronously in the request (about 0.3 s for 20,000 people). A larger
+    server could make it background work. It was not done now, because the
+    request must see the new `over` at once.
+  - When disabling a tenant, it only checks "one enabled site administrator
+    remains elsewhere", and does not check whether the remaining one has a
+    password. On a server with `ssoOnly` on, if the only administrator with a
+    password in that tenant is disabled, then when the identity provider fails
+    the only way left is command-line rescue.
+- **Noted in the second review**:
+  - The usage hook is called under `adminMu` in `Transfer` and `DeleteSpace`, and
+    under `createMu` in `CreateWith`. While exactly one site-wide look-again
+    (after a reconciliation or a site limit change) is running, these requests
+    wait for it. It does not hold a database lock and the hook does not call back
+    into spaces, so there is no deadlock, only delay.
+  - In `TestARecountDuringWritesLeavesTheCountersExact`, `InsertUser` is called
+    outside a transaction, and on PostgreSQL in rare timings the last
+    reconciliation reports one corrected row. In production it is only called
+    inside the account-creation transaction, so this only affects the test.
+- **Not done yet**: everything in the contract for this part is done. Refusal for
+  bytes, pages and headcount (`507 quota_exceeded`) is still left, to decide the
+  rule after seeing measured usage. De-duplication per person and counting
+  attachments separately were not done.
 
-**管理项清单（2026-11-23，3.5 和 3.6 的依据）**
+**List of admin items (2026-11-23, the basis of 3.5 and 3.6)**
 
-所有者 2026-11-23 定的原则：租户管理员可以有任何权限，只要不影响全站（不用全站的
-空间和资源）；全站管理员是最高一级，能管、能看、能改一切，包括任何租户的配置；凡是
-全站共用的东西，全站管理员决定「强制所有租户」还是「只是默认、可以自愿」，租户管理员
-可以配置，但不能违反全站的强制要求。照这个原则，产品里每一项管理员能设的东西分三类：
+The principle the owner set on 2026-11-23: a tenant administrator can have any
+permission as long as it does not affect the whole site (does not use the
+site's spaces and resources). The site administrator is the highest level, and
+can manage, see and change everything, including the configuration of any
+tenant. For anything shared by the whole site, the site administrator decides
+whether it is "enforced on all tenants" or "only a default, which can be taken
+up voluntarily". A tenant administrator can configure it, but cannot violate the
+site's enforcement. By this principle, every item an administrator can set in
+the product falls into three kinds:
 
-- **（a）只在全站**：真的影响整个系统或共用资源。
-- **（b）分层**：全站给值，并定下面「强制」（`lock`）、「最低要求」（`tighten`，
-  3.6 新加：下面只能更严）、「限定范围」（`restrict`）或「只是默认」（`allow`）；
-  租户在这个范围内设；该往下的再到空间和个人。
-- **（c）租户自有**：每个租户各有一份，互不相干，不用全站的资源（出站请求仍过全站
-  的检查和总上限，见下）。
+- **(a) Site only**: it truly affects the whole system or shared resources.
+- **(b) Layered**: the site gives a value, and decides for the layers below
+  "enforced" (`lock`), "minimum requirement" (`tighten`, new in 3.6: below, it
+  can only be stricter), "restricted range" (`restrict`) or "only a default"
+  (`allow`). The tenant sets within that range, and what should go lower goes on
+  to the space and the person.
+- **(c) Tenant-owned**: each tenant has its own copy, unrelated to the others,
+  using none of the site's resources (outbound requests still go through the
+  site's checks and total cap, see below).
 
-另有一层**能力**（所有者 2026-11-23 定，3.6 做，见「3.6 的约定」）：每个租户一套，
-全站给默认、全站管理员按租户覆盖，租户管理员只能看。能力管「有没有」，分层管「是多少」：
-（b）的租户层、（c）的每一项都标了由哪项能力决定它在这个租户里存不存在；能力关着时，
-（b）的租户层不存在（租户跟随上一层），（c）那一项存着但不起作用。标「—」的一直都有。
-能力本身和套餐是（a）。
+There is also a layer of **capabilities** (decided by the owner on 2026-11-23,
+done in 3.6, see the 3.6 contract in
+[phase-3-autonomy-and-providers.md](phase-3-autonomy-and-providers.md)): one
+set per tenant, with site defaults and the site administrator overriding per
+tenant, and the tenant administrator can only view. A capability governs
+"whether it exists", and layering governs "how much": for the tenant layer of
+(b) and every item of (c), the capability that decides whether it exists in this
+tenant is marked. When the capability is off, the tenant layer of (b) does not
+exist (the tenant follows the layer above), and the item of (c) is stored but
+has no effect. Those marked "—" always exist. Capabilities themselves and plans
+are (a).
 
-（a）只在全站，26 项：
+(a) Site only, 26 items:
 
-| 项 | 理由 |
+| Item | Reason |
 |---|---|
-| `--listen`、`--public-url`、`--data`、`--database`、`--state-dir` | 服务器本身的地址和存放位置 |
-| `--trusted-proxy`、`--allow-origin`、`--insecure-no-auth` | 整个进程对外的信任边界 |
-| `--max-open-spaces`、`--space-idle`、`--pull-interval`、`--remote-timeout`、`--commit-*`、`--draft-*` | 进程的内存、CPU 和网络节奏，所有租户共用 |
-| `secret.key` | 所有封存的密钥都靠它 |
-| 租户开关 `/api/admin/tenancy` | 决定这台服务器是不是多租户 |
-| 租户的建、删、停用、`slug` | 约束租户本身，不能自己给自己定 |
-| **每个租户的能力和限额表**（含租户总额、人数上限、固定额度、单文件天花板、允许的存储方式、用量上限）**和套餐** | 限额表决定租户能用多少全站的东西；套餐和计费是内部计费模块的事（3.6，不做） |
-| 授予 `siteAdmin` | 最高权限只能由最高一级给 |
-| 服务器状态 `/api/admin/status`、磁盘余量 | 整台机器的状态 |
-| `--max-upload`、`--max-import` 作为天花板 | 请求体和临时文件占全站内存和磁盘；单文件上限本身是（b） |
-| 3.5 的站点存储预算 `storage.siteBudget` 和存储压力控制器的全站值（`storage.advanced` 的档位、回滞、应急储备、附件缓存上限；取代 3.1 的 `cache.partial`、`evictAfterDays`、`minIdleHours`、`clonesBytes`、`minFreeBytes`、`assetsBytes`） | 全站磁盘怎么腾，所有租户共用 |
-| 全站提供哪些存储方式 `storage.modes.available`（3.6） | 服务器存储占全站磁盘；租户自己的存储目标让服务器替租户向外连 |
-| 按地址的请求额度、失败上限、锁定（`limits.*`、`lockout.*`） | 登录时还不知道租户；租户更严的上限会从「什么时候开始拒绝」泄露用户名存在、在哪个租户 |
-| 登录页和 `setup` 的验证码（提供方、密钥、`login`／`setup` 两处开关） | 同上，登录表单是全站的 |
-| `passkeys.enabled` | 依赖方是全站的主机名 |
-| 审计日志的保留（10 万行／90 天） | 一张全站的表 |
-| 发信的全站上限（排队 1000、同一地址每小时 3 封） | 内存里的全站队列和防滥用 |
-| 3.5 回收站的保留天数 `recycle.days` | 回收站占全站磁盘；所有者要的是统一的 30 天 |
-| 3.5 导出的保留和总量 `exports.*` | 占全站磁盘 |
-| 出站总上限 `outbound.perMinute`、每租户份额 `outbound.tenantPerMinute` | 全站的出站能力和对外的名声 |
-| 公共邮箱域名表（不能认领的域名） | 防止认领 `gmail.com` 一类 |
-| 已验证域名的仲裁（移交给另一个租户） | 两个租户之间的事，只能由上一级定 |
-| 组织自助注册 `tenant.selfService`、它的上限（每人几个、全站每小时几个）、新租户用的套餐 | 建租户就是占全站资源 |
-| 用户名全站唯一；3.6 起邮箱也全站唯一（规则，不是设置） | 登录不先选租户（3.3），邮箱是登录的主要方式（3.6） |
-| 清除后的用户名能否再用 `users.reuseUsernames`（3.5） | 用户名全站唯一，只能全站定 |
-| 域名「立即检查」的全站上限 `domains.checksPerMinute`（3.6） | 查 DNS 是全站的出站 |
+| `--listen`, `--public-url`, `--data`, `--database`, `--state-dir` | The address and storage location of the server itself |
+| `--trusted-proxy`, `--allow-origin`, `--insecure-no-auth` | The trust boundary of the whole process toward the outside |
+| `--max-open-spaces`, `--space-idle`, `--pull-interval`, `--remote-timeout`, `--commit-*`, `--draft-*` | The memory, CPU and network rhythm of the process, shared by all tenants |
+| `secret.key` | All sealed secrets depend on it |
+| The tenancy switch `/api/admin/tenancy` | Decides whether this server is multi-tenant |
+| Creating, deleting, disabling tenants, `slug` | It constrains the tenant itself, which cannot decide this for itself |
+| **Each tenant's table of capabilities and limits** (including the tenant total, headcount limit, fixed quota, per-file ceiling, allowed storage modes, usage cap) **and the plan** | The limits table decides how much of the site's things a tenant can use. Plans and billing belong to an internal billing module (3.6, not done) |
+| Granting `siteAdmin` | The highest permission can only be given by the highest level |
+| Server status `/api/admin/status`, disk headroom | The state of the whole machine |
+| `--max-upload`, `--max-import` as ceilings | Request bodies and temporary files take site-wide memory and disk. The per-file limit itself is (b) |
+| 3.5's site storage budget `storage.siteBudget` and the site values of the storage pressure controller (the tiers of `storage.advanced`, hysteresis, emergency reserve, attachment cache cap; replacing 3.1's `cache.partial`, `evictAfterDays`, `minIdleHours`, `clonesBytes`, `minFreeBytes`, `assetsBytes`) | How the site's disk is freed up is shared by all tenants |
+| Which storage modes the site offers `storage.modes.available` (3.6) | Server storage takes site disk. A tenant's own storage target makes the server connect outward on the tenant's behalf |
+| Per-address request allowance, failure cap, lockout (`limits.*`, `lockout.*`) | At sign-in the tenant is not yet known. A stricter tenant cap would leak that a username exists, and in which tenant, from "when refusal starts" |
+| The captcha on the sign-in page and `setup` (provider, keys, the `login` / `setup` switches) | Same as above: the sign-in form is site-wide |
+| `passkeys.enabled` | The relying party is the site's host name |
+| Audit log retention (100,000 rows / 90 days) | One site-wide table |
+| The site-wide mail sending cap (queue 1000, 3 per hour per address) | The in-memory site-wide queue and abuse prevention |
+| 3.5 recycle bin retention days `recycle.days` | The recycle bin takes site disk. What the owner wanted is a uniform 30 days |
+| 3.5 export retention and total `exports.*` | Takes site disk |
+| The total outbound cap `outbound.perMinute`, per-tenant share `outbound.tenantPerMinute` | The site's outbound capacity and its outside reputation |
+| The table of public email domains (domains that cannot be claimed) | Prevents claiming things like `gmail.com` |
+| Arbitration of verified domains (handing over to another tenant) | A matter between two tenants, which only the level above can decide |
+| Organization self-service sign-up `tenant.selfService`, its limits (how many per person, how many per hour site-wide), and the plan used for new tenants | Creating a tenant takes site resources |
+| Usernames are unique site-wide; from 3.6 emails are also unique site-wide (rules, not settings) | Sign-in does not pick a tenant first (3.3), and email is the main way to sign in (3.6) |
+| Whether a username can be reused after purge, `users.reuseUsernames` (3.5) | Usernames are unique site-wide, so only the site can decide |
+| The site-wide cap of "check now" for domains, `domains.checksPerMinute` (3.6) | DNS lookups are the site's outbound |
 
-3.6 起原来的 `auth.tenantSso`、`auth.idpAdmins` 和租户总额（含 `quota.pinnedBytes`）
-不再是单独的全站设置，变成能力（`signin.sso`、`signin.idpAdmins`、`storage.quota`、
-`storage.pinnedBytes`、`other.people`），可以按租户不同。
+From 3.6, the former `auth.tenantSso`, `auth.idpAdmins` and the tenant total
+(including `quota.pinnedBytes`) are no longer separate site settings. They
+become capabilities (`signin.sso`, `signin.idpAdmins`, `storage.quota`,
+`storage.pinnedBytes`, `other.people`), which can differ per tenant.
 
-（b）分层，28 项（键名见 `docs/api.md` 的「Tenant autonomy」）：
+(b) Layered, 28 items (for key names see "Tenant autonomy" in `docs/api.md`):
 
-| 项 | 层 | 租户层由哪项能力决定 | 理由 |
+| Item | Layers | Which capability decides the tenant layer | Reason |
 |---|---|---|---|
-| `registration.open`、`.domains`、`.perHour` | 全站、租户 | `other.registration` | 3.3 已有；开注册占全站发信，全站默认锁住 |
-| `legal.termsUrl`、`.privacyUrl` | 全站、租户 | — | 3.3 已有；各租户的条款可以不同 |
-| `quota.spacesPerPerson`、`.bytesPerPerson`、`.pagesPerPerson` | 全站、租户、个人 | — （租户的值不超过能力 `storage.perPerson`） | 3.3 已有 |
-| `daily.own`、`daily.api`、`daily.default` | 全站、租户（空间在下） | — | 3.3 已有 |
-| `daily.useSiteApis` | 全站、租户 | — | 租户能否用全站的外部接口（用的是全站的额度） |
-| `auth.ssoOnly` | 全站、租户 | `signin.sso` | 在密码核对之后才起作用，不泄露什么；租户只能更严 |
-| `auth.loginMode` | 全站、租户 | — | 带 `?tenant=` 的登录页用租户的 |
-| `auth.passkeys.requireRoles` | 全站、租户 | — | 在密码之后才要求，租户只能更严 |
-| `auth.social` | 全站、租户 | `signin.socialChoice` | 全站的社交登录里，本租户的人能用哪些（只能删减） |
-| `session.idleDays`、`.maxDays` | 全站、租户 | — | 读会话时按人的租户算，租户只能更短 |
-| 验证码的 `register`、`forgot`、`invite` 三处开关 | 全站、租户 | — | 这三个表单知道租户；租户只能更严 |
-| `mail.useSite` | 全站、租户 | — | 没有自己发件人的租户能否借全站的 SMTP |
-| `access.tokens`、`access.mcp` | 全站、租户 | `integrations.tokens`、`integrations.mcp`（关着时这个租户里就没有令牌或 MCP） | 全站关就全关；全站开时租户可以给自己的人关 |
-| `connections.useSiteApps`（2.7b 前叫 `github.useSiteApp`） | 全站、租户 | — | 能否经全站配的连接（GitHub App，3.8 起 GitLab／Gitea 的 OAuth 应用）连 |
-| **`storage.mode`**（存储方式，3.6） | 全站、租户、空间（建空间时） | 可选的方式是能力 `storage.modes` | 全站定默认或强制；租户在能力允许的方式里选 |
-| `storage.remotes.scope`、`.graceDays` | 全站、租户 | — | 3.1 的强制远端；3.6 起「要不要远端」由 `storage.mode` 推出 |
-| `storage.hosts`（`--remote-host`） | 全站、租户 | — | 服务器向哪些主机连；租户只能从全站的表里删减 |
-| `storage.localSpaces.maxBytes` | 全站、租户 | — | 只在本地的空间占全站磁盘，全站定上限 |
-| `storage.assets`（附件放空间仓库还是附件仓库） | 全站、租户、空间（所有者） | 限额表的 `sync.assetsRepository`（关着时只能放空间仓库） | 所有者定的三层：全站可以强制（`lock`），也可以只给默认（`allow`） |
-| `storage.partial.unsupported`（不能部分同步的远端：允许（完整克隆）／拒绝，3.6） | 全站、租户 | — | 所有者定的唯一一条部分同步策略，默认允许 |
-| 存储压力的租户可调值（`storage.advanced` 里本租户空间的清出、归档天数，登录预取开关和「最近 N 天活跃的人」，3.5） | 全站、租户 | — | 租户只能在全站的范围内调；档位、储备、预算只在全站 |
-| 豁免远端要求（3.1 的 `remoteExempt`、空间的 `exempt`） | 全站、租户 | — | 豁免只免掉授予它的那一层加上的要求 |
-| 固定在服务器上（3.1 的 `pin`） | 全站，租户在能力 `storage.pinnedBytes` 之内 | `storage.pinnedBytes`（0 就是不能固定） | 固定就是占全站磁盘 |
-| `files.maxBytes`（单个文件的大小） | 全站、租户 | — （租户的值不超过能力 `storage.maxFileBytes`） | 所有者定：租户配，全站定天花板 |
-| `offline.copies`（4.1 的允许离线副本） | 全站、租户（4.1 做成的两层，没有空间和个人层） | `other.offline`（关着时这个租户里没有离线副本） | 占的是设备，不是服务器；全站可以锁定或限制为只能关（4.1 已做）；3.6 只加能力 |
-| 组织自助注册建出的租户的默认设置 | 全站 → 新租户 | — | 新租户从全站默认起步 |
-| 预留：默认语言、配色、问好的花样 | 全站、租户、个人 | — | 「设置的分层和锁定」里列过，做到时加键 |
-| 预留：看板和视图能否由可编辑成员保存、空间能否开放加入 | 全站、租户、空间 | — | 同上 |
+| `registration.open`, `.domains`, `.perHour` | site, tenant | `other.registration` | Already in 3.3. Opening registration uses the site's mail sending, so the site default is locked |
+| `legal.termsUrl`, `.privacyUrl` | site, tenant | — | Already in 3.3. Each tenant's terms can differ |
+| `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | site, tenant, person | — (a tenant's value does not exceed the capability `storage.perPerson`) | Already in 3.3 |
+| `daily.own`, `daily.api`, `daily.default` | site, tenant (space below) | — | Already in 3.3 |
+| `daily.useSiteApis` | site, tenant | — | Whether a tenant can use the site's external APIs (using the site's allowance) |
+| `auth.ssoOnly` | site, tenant | `signin.sso` | It only takes effect after the password check, so leaks nothing. A tenant can only be stricter |
+| `auth.loginMode` | site, tenant | — | A sign-in page with `?tenant=` uses the tenant's |
+| `auth.passkeys.requireRoles` | site, tenant | — | Required only after the password. A tenant can only be stricter |
+| `auth.social` | site, tenant | `signin.socialChoice` | Of the site's social sign-ins, which ones people of this tenant can use (can only be cut down) |
+| `session.idleDays`, `.maxDays` | site, tenant | — | Computed by the person's tenant when the session is read. A tenant can only be shorter |
+| The captcha's three switches `register`, `forgot`, `invite` | site, tenant | — | These three forms know the tenant. A tenant can only be stricter |
+| `mail.useSite` | site, tenant | — | Whether a tenant with no sender of its own can borrow the site's SMTP |
+| `access.tokens`, `access.mcp` | site, tenant | `integrations.tokens`, `integrations.mcp` (when off, this tenant has no tokens or MCP) | If the site turns it off, it is off everywhere. When the site has it on, a tenant can turn it off for its own people |
+| `connections.useSiteApps` (called `github.useSiteApp` before 2.7b) | site, tenant | — | Whether it can connect through the connections the site configured (GitHub App, and from 3.8 the OAuth apps of GitLab / Gitea) |
+| **`storage.mode`** (storage mode, 3.6) | site, tenant, space (when creating a space) | The modes to choose from are the capability `storage.modes` | The site decides the default or enforces it. A tenant chooses among the modes the capability allows |
+| `storage.remotes.scope`, `.graceDays` | site, tenant | — | 3.1's enforced remote. From 3.6, "whether a remote is needed" is derived from `storage.mode` |
+| `storage.hosts` (`--remote-host`) | site, tenant | — | Which hosts the server connects to. A tenant can only cut down from the site's table |
+| `storage.localSpaces.maxBytes` | site, tenant | — | Local-only spaces take site disk, and the site sets the cap |
+| `storage.assets` (attachments in the space repository or the attachments repository) | site, tenant, space (owner) | `sync.assetsRepository` of the limits table (when off it can only be the space repository) | Three layers decided by the owner: the site can enforce (`lock`), or only give a default (`allow`) |
+| `storage.partial.unsupported` (remotes that cannot sync partially: allow (full clone) / refuse, 3.6) | site, tenant | — | The single partial-sync policy decided by the owner, default allow |
+| The tenant-adjustable values of storage pressure (in `storage.advanced`, evicting this tenant's spaces, days before archiving, the login prefetch switch and "people active in the last N days", 3.5) | site, tenant | — | A tenant can only adjust within the site's range. Tiers, reserve and budget are site only |
+| Exempting from the remote requirement (3.1's `remoteExempt`, a space's `exempt`) | site, tenant | — | An exemption only removes the requirement added by the layer that grants it |
+| Pinned on the server (3.1's `pin`) | site, a tenant within the capability `storage.pinnedBytes` | `storage.pinnedBytes` (0 means cannot pin) | Pinning takes site disk |
+| `files.maxBytes` (size of a single file) | site, tenant | — (a tenant's value does not exceed the capability `storage.maxFileBytes`) | Decided by the owner: the tenant configures it and the site sets the ceiling |
+| `offline.copies` (4.1's allowing offline copies) | site, tenant (two layers made in 4.1, no space or person layer) | `other.offline` (when off, this tenant has no offline copies) | It takes devices, not the server. The site can lock or restrict it to off only (done in 4.1). 3.6 only adds the capability |
+| Default settings of tenants created by organization self-service sign-up | site → new tenant | — | A new tenant starts from the site defaults |
+| Reserved: default language, color scheme, greeting styles | site, tenant, person | — | Listed in "Layered settings and locking", keys to be added when it is done |
+| Reserved: whether boards and views can be saved by editor members, and whether a space can open to joining | site, tenant, space | — | Same as above |
 
-（c）租户自有，16 项：
+(c) Tenant-owned, 16 items:
 
-| 项 | 由哪项能力决定 | 理由和安全上的约束 |
+| Item | Which capability decides it | Reason and security constraints |
 |---|---|---|
-| 本租户的用户、邀请、角色、停用、删除（3.5） | — | 3.3 起就是；碰不到全站管理员 |
-| 本地组、组成员 | — | 3.2、3.3 已是 |
-| 本租户的空间：停用、转移、删除、恢复、清出缓存（3.5） | — | 只动自己租户的；提前清空回收站只有全站能做（占的是全站的磁盘决定） |
-| 本租户的存储汇总、人和空间的列表（3.5 第 4 部分） | — | 只读自己租户存下的数；不告诉磁盘余量，列表里没有个人空间（`AdminScopeOf`）；全站管理员可按租户看 |
-| **查看和导出组织空间的内容**（3.5） | `data.adminView` | 每次都记审计；个人空间永远看不到（3.7） |
-| 租户名 | — | 3.3 已是 |
-| **SSO 提供方**（企业 OIDC／SAML）和它的组映射；IdP 组映射到组织管理员 | `signin.sso`；映射到管理员另要 `signin.idpAdmins` | 只能登进、建出、合并本租户的账号；绝不登进全站管理员；签发方变了就解除旧身份 |
-| **邮箱域名**（DNS 验证）和「不许这个域名上的人另建组织」 | `signin.domains` | 没验证的认领什么都不做；一个域名只有一个已验证的认领 |
-| **加入方式**（3.6）：只邀请、按域名自动加入、按域名申请加审批、经本组织 SSO 即时加入（可按 IdP 组放行），加入者的默认角色，IdP 组到组织的组的映射 | 邀请一直有；按域名要 `signin.domains`；经 SSO 要 `signin.sso` | 只影响进本组织的人 |
-| **托管账号**（3.7） | `signin.managedAccounts` | 要已验证的域名；只管这个域名的邮箱的账号，不碰别的组织 |
-| **发件人 SMTP** | `integrations.smtp` | 只能 `starttls`／`tls`、公网地址、限定端口；没有时按 `mail.useSite` 借全站的 |
-| **验证码的密钥** | `integrations.captcha` | 只用在知道租户的三个表单上 |
-| **每日文案的外部接口、贴的文案、语言** | `integrations.daily` | 自己的封存密钥、自己的 `rps` 和缓存，不占全站的额度；出站算全站总上限 |
-| **连接**（2.7b）：自己的 GitHub App 和它的安装的共享；3.8 起自己的 GitLab／Gitea OAuth 应用 | `integrations.connections`（2.7b 前叫 `integrations.github`） | 只在本租户里共享；全站 App 的安装由全站决定共享给哪些租户；主机过 `storage.hosts` 和公网检查 |
-| **组织的标志**（3.9） | — | 上传在服务器上重新编码，存服务器 |
-| **存储目标**（3.6）：一个提供方（2.7b）上的位置：租户自己的 GitHub 组织（自己的 App 或共享给它的安装），或自己的 GitLab／Gitea 主机和组（3.8），每个空间在那里自动建一个仓库 | 能力 `storage.modes` 里有 `tenant`；用自己的 App 另要 `integrations.connections` | 凭据封存、带租户 id；主机过全站的 `storage.hosts` 和公网检查 |
-| 本租户的审计日志（只读；下载要 `data.auditDownload`） | 看一直可以 | 3.3 已是，看不到全站的种类 |
+| This tenant's users, invites, roles, disabling, deleting (3.5) | — | Already so since 3.3. Cannot touch a site administrator |
+| Local groups, group members | — | Already so in 3.2 and 3.3 |
+| This tenant's spaces: disable, transfer, delete, restore, evict from cache (3.5) | — | Touches only its own tenant. Emptying the recycle bin early can only be done by the site (the decision involves the site's disk) |
+| This tenant's storage summary, list of people and spaces (3.5 part 4) | — | Reads only the numbers stored for its own tenant. It does not reveal disk headroom, and the list has no personal spaces (`AdminScopeOf`). A site administrator can view by tenant |
+| **Viewing and exporting the content of organization spaces** (3.5) | `data.adminView` | Audited every time. Personal spaces can never be seen (3.7) |
+| Tenant name | — | Already so in 3.3 |
+| **SSO providers** (enterprise OIDC / SAML) and their group mapping; mapping IdP groups to organization administrators | `signin.sso`; mapping to administrators also needs `signin.idpAdmins` | Can only sign in, create and merge accounts of this tenant. Never signs in a site administrator. When the issuer changes, the old identity is unlinked |
+| **Email domains** (DNS verification) and "do not allow people on this domain to create another organization" | `signin.domains` | An unverified claim does nothing. A domain has only one verified claim |
+| **Ways to join** (3.6): invite only, auto-join by domain, apply by domain with approval, instant join through this organization's SSO (can be let through by IdP group), the default role of joiners, mapping IdP groups to the organization's groups | Invites always exist. By domain needs `signin.domains`. Through SSO needs `signin.sso` | Only affects people entering this organization |
+| **Managed accounts** (3.7) | `signin.managedAccounts` | Needs a verified domain. Only manages accounts whose email is on this domain, and does not touch other organizations |
+| **Sender SMTP** | `integrations.smtp` | Only `starttls` / `tls`, public addresses, restricted ports. Without it, it borrows the site's through `mail.useSite` |
+| **Captcha keys** | `integrations.captcha` | Used only on the three forms that know the tenant |
+| **Daily text external API, pasted text, language** | `integrations.daily` | Its own sealed secret, its own `rps` and cache, not using the site's allowance. Outbound counts toward the site's total cap |
+| **Connections** (2.7b): its own GitHub App and sharing of its installations; from 3.8 its own GitLab / Gitea OAuth apps | `integrations.connections` (called `integrations.github` before 2.7b) | Shared only within this tenant. For the site's App, the site decides which tenants an installation is shared with. Hosts go through `storage.hosts` and the public-address check |
+| **Organization logo** (3.9) | — | The upload is re-encoded on the server and stored on the server |
+| **Storage target** (3.6): a location on a provider (2.7b): the tenant's own GitHub organization (its own App or an installation shared with it), or its own GitLab / Gitea host and group (3.8), where each space automatically gets a repository | The capability `storage.modes` includes `tenant`. Using its own App also needs `integrations.connections` | Credentials are sealed and carry the tenant id. Hosts go through the site's `storage.hosts` and the public-address check |
+| This tenant's audit log (read only; downloading needs `data.auditDownload`) | Viewing is always allowed | Already so in 3.3. It cannot see the site-wide kinds |
 
-**出站请求的约束**（凡是租户管理员填的地址：签发方、SAML 元数据、SMTP、每日文案
-接口、DNS 验证、存储目标）：在连接时按解析出来的地址做 2.3 的公网检查（不许回环、内网、
-链路本地等，重定向也查，最多 3 次）；计入全站的出站总上限和本租户的份额，超了就
-不发、按「远端不可达」答；答复大小和超时与全站的一样；密钥用全站的 `secret.key`
-封存，用途里带租户 id，挪到别的租户的记录上解不开。
+**Constraints on outbound requests** (every address a tenant administrator
+fills in: issuer, SAML metadata, SMTP, daily text interface, DNS verification,
+storage target): at connection time, 2.3's public-address check is done on the
+resolved address (no loopback, internal network, link-local and so on, and
+redirects are checked too, at most 3). It counts toward the site's total outbound
+cap and this tenant's share. When exceeded, it is not sent and answers as "remote
+unreachable". The answer size and timeout are the same as the site's. Secrets
+are sealed with the site's `secret.key`, with the tenant id in the purpose, so
+moved to another tenant's record they cannot be opened.

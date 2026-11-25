@@ -1,622 +1,968 @@
 # Milestones: phase 2, connections and sign-in (2.7, 2.8, 2.7b)
 
-**2.7 GitHub App、用户授权、自动建仓库**
+**2.7 GitHub App, user authorization, automatic repository creation**
 
-- 新建空间时选「在 GitHub 上建一个仓库」：组织下用 GitHub App 的安装令牌，
-  个人账号下用 GitHub 用户授权（网页授权，存刷新令牌并自动续期）。
-- 4.3 里文档没写清的两点，已在 2026-11-23 用真实 GitHub 实测，结论写在 4.3。
-- 凭据照旧加密存库，令牌只经环境变量交给 `git`。
+- When creating a space, choose "Create a repository on GitHub": under an
+  organization, use the GitHub App's installation token; under a personal
+  account, use GitHub user authorization (web authorization, storing a refresh
+  token and renewing it automatically).
+- The two points that [storage-and-sync.md §4.3](../storage-and-sync.md#43-remote-credentials-chosen-per-space) did not
+  state clearly were tested against real GitHub on 2026-11-23; the conclusions
+  are written in [storage-and-sync.md §4.3](../storage-and-sync.md#43-remote-credentials-chosen-per-space).
+- Credentials are stored encrypted in the database as before, and tokens reach
+  `git` only through environment variables.
 
-**2.7 的约定（2026-11-23）**：接口和错误码先写进 `docs/api.md` 的「GitHub」
-一节、「Spaces」的 `POST /api/spaces`、「Remote repository」的 Remote 对象和
-`PUT …/remote`，以及「Administration」的「GitHub App」，前后端照它并行做。
+**The 2.7 contract (2026-11-23)**: the API and error codes are written first
+into `docs/api.md`: the "GitHub" section, `POST /api/spaces` under "Spaces", the
+Remote object and `PUT …/remote` under "Remote repository", and "GitHub App"
+under "Administration"; the front end and back end are built in parallel from
+it.
 
-- **一个服务器一个 App，只支持 github.com**。App 的配置存状态库（不用命令行
-  参数，和 2.8 把 OIDC 搬进管理后台的方向一致）：App ID、私钥、client id、
-  client secret；私钥和 secret 用服务器密钥加密（`Seal("site", …)`），任何
-  接口都不返回，只显示「已保存」和私钥公钥部分的指纹。保存前向 GitHub 核对
-  （`GET /app` 验私钥和 App ID，用一个编造的令牌问
-  `POST /applications/{client_id}/token` 验 client id 和 secret，`404` 表示
-  这对是对的），核对不过就不存。App 缺少的权限（Contents 写、Metadata 读、
-  Administration 写）只提示不拒绝。换成另一个 App 时，只要还有空间或用户在用
-  就拒绝（`409 provider_in_use`）；同一个 App 换私钥或 secret 随时可以。
-- **令牌**：照搬 Rackbook `internal/githubapp`。安装令牌只在内存里，同步用的
-  按单个仓库收窄（`repository_ids`、`contents: write`），建仓库用的是
-  `administration: write`、不限仓库、只为这一次请求；到期前 5 分钟才换，同一
-  令牌的并发请求合成一次，网络请求时不持锁，缓存最多 1 万个。交给 `git` 的
-  方式和现有的 `token` 凭据完全一样（环境变量里的 credential helper，限定在
-  `https://github.com`），所以 `gitstore` 不用改。只有打开着的空间会被拉取，
-  一个在用的空间最多每 55 分钟换一次令牌，关着的空间不花钱。
-- **用户授权**：网页授权，`state` 加 PKCE（S256）。回调和 OIDC 回调一样是
-  跨站规则的例外，要求是同一个用户的会话。每个 PetalBook 用户最多一个连接，
-  一个 GitHub 账号只能连一个 PetalBook 用户。访问令牌和刷新令牌分别加密存库；
-  访问令牌在快到期（5 分钟内）用到时续期，每个用户同一时间只续一次，新的一对
-  先写库再用（GitHub 每次续期都换掉刷新令牌，旧的立即失效）；每天把 30 天内
-  要过期的刷新令牌续一次，所以几个月不打开空间的人也不会掉线。刷新令牌过期
-  或被撤销时，连接变成 `expired`，用它同步的空间进入 `error`、错误码
-  `connection_expired`：读照常，写回 `503` 不改动任何东西，草稿照存，
-  重新连接后立即重试并补提交，不丢东西。断开连接时尽力向 GitHub 撤销授权，
-  库里和内存里的令牌无论如何都删掉。
-- **谁的令牌建仓库**：能用用户自己的令牌就用（个人账号下 `POST /user/repos`、
-  用户连接能看到的组织下 `POST /orgs/{org}/repos`），这样 GitHub 自己会检查
-  这个人在这个组织里能不能建仓库、能不能建私有仓库。管理员可以把某个组织的
-  安装共享给某几个租户，这些租户的成员即使没连 GitHub，也能用安装令牌在那里
-  建仓库和连接仓库；默认不共享，否则任何成员都能借 App 在组织里建仓库。
-- **谁的令牌同步**：组织下的仓库用安装令牌（`via: "app"`），不依赖某个人一直
-  在、一直连着；个人账号下，App 装在这个账号上且能访问新仓库时也用安装令牌，
-  否则用这个人的用户令牌（`via: "user"`）。用户令牌同步的空间，绑定的人不能
-  登录、没了 `manage` 或断开连接后就停（`connection_missing`），
-  免得被移出空间的人的令牌还在被用。
-- **新建空间时建仓库**：扩展 `POST /api/spaces`，加 `storage.sync: {provider: "github", owner, name,
-  private, description, create}`（2.7b 前叫 `github`），不另开接口。顺序：不联网的检查（字段、
-  `--max-spaces`（3.3 起是空间数配额）、owner、令牌在不在）→ 在磁盘上建好空间（还没有记录、谁也
-  看不到）→ 在 GitHub 上建空仓库（`auto_init: false`，空间的第一个提交就是
-  仓库的第一个提交）→ 选定并验证同步用的凭据 → 推送 `main`（刚建的仓库有时
-  几秒内找不到，「找不到」和 5xx 在 15 秒内最多试 4 次，凭据被拒不重试）→
-  一个事务里写空间、所有者、远端，再让空间可见。建仓库之前失败：哪里都没留下
-  东西；建仓库之后失败：删掉磁盘上的空间，GitHub 上的空仓库**留着不删**
-  （从不删除远端的东西，而且可能本来就没有删除权限），错误回答里带 `repo`，
-  同一个请求改成 `create: false` 就能把新空间连到这个空仓库上。进程在中间崩溃
-  也一样，只是没有回答。
-- **留下的空仓库有提醒（所有者定，2026-11-23）**：建仓库之后失败时，仓库照旧
-  留着，同时给这个人记一条提醒，之后在账号页的 GitHub 一栏里看得到（也可以放
-  在空间列表旁），写着仓库名和链接，有两个动作：「连上它再试一次」（就是用
-  `POST /api/spaces` 带 `create: false`，名字和仓库取自提醒，不另开接口）和
-  「我已经删了」（`DELETE /api/connections/github/leftovers/{repoId}`，没有这条提醒也回
-  `204`）。按用户存：`github_leftovers(user_id, repo_id, full_name, html_url,
-  space_name, created)`，主键是 `(user_id, repo_id)`，用户删了跟着删；同一个
-  仓库再失败只换成新的一条；每人最多留最新的 20 条。清掉的时机：本人处理，
-  或者**任何空间连上了这个仓库**（`PutRemote` 在同一个事务里按 `gh_repo_id`
-  删掉所有人的这条提醒，所以重试成功、手动 `PUT …/remote` 都会清）。提醒放在
-  `GET /api/connections` 的 `leftovers` 里，这个接口本来就是账号页和建空间对话框
-  要读的，不多一次请求。崩溃没有回答，也记不下来，所以崩溃留下的仓库不在
-  其中（见上）。
-- **「仅选定仓库」的安装**：不赌 GitHub 会不会自动把 App 建的仓库加进安装。
-  建完就为新仓库单独换一次令牌试；够不着、而调用者的连接能看到这个安装时，
-  用用户令牌把仓库加进安装（`PUT /user/installations/{id}/repositories/{repoId}`）
-  再试；还不行时，个人账号退回 `via: "user"`，组织下回
-  `409 repo_not_in_installation`（带 `repo`）。Administration 是组织级
-  还是仓库级：也不赌，GitHub 拒绝建仓库时原样回 `403 provider_refused`，
-  `message` 转述 GitHub 的原因。两种结果下接口都不用改，实测只决定界面上
-  提示怎么写、默认走哪条路。
-- **已有空间切到 GitHub**：`PUT …/remote` 的凭据多一种
-  `{"type": "connection", "provider": "github", "via": "app" | "user"}`；已经在跟随远端的空间 `PUT` 时
-  原地换地址和凭据，同一个仓库历史相同，只换凭据，旧的密钥或令牌删掉。SSH
-  形式的 github.com 地址接受，存成 https 形式。`via: "app"` 要求调用者的连接
-  能推送到这个仓库或安装已共享给自己的租户，否则任何有 `manage` 的人都能把空间接到 App
-  够得着的任意仓库。
-- **Remote 对象**加 `errorCode`：把现有的内部分类（`auth`、`hostkey`、`clone`、
-  `rescued`）露出来，再加四个 GitHub 的（`connection_expired`、
-  `connection_missing`、`installation_gone`、
-  `provider_not_configured`）。处于这几种状态的空间每 10 分钟重试一次，原因
-  消除时（重新连接、管理员保存 App）立即重试。
-- **列表都分页，从不全取**：安装列表、可建仓库的账号、可连接的仓库，每页最多
-  一次 GitHub 请求（30 条），游标不透明；仓库列表 GitHub 不能按名字筛，所以
-  不提供 `q`，界面上可以直接输入 `owner/name`。
-- **状态库**（SQLite 和 PostgreSQL 都要测）：`remotes` 加 `cred_type = 'connection'`、`provider`
-  和 `gh_via`、`gh_installation_id`、`gh_repo_id`、`gh_user_id` 几列；新表
-  `github_authorizations`（每个用户一行，GitHub 账号 id 唯一，两个令牌加密，
-  过期时间、状态、版本号用来做「只替换续期前的那一对」）；
-  `github_installations`（安装 id、账号）和 `github_installation_tenants`（安装 ×
-  租户：共享给了哪些租户）；App 的配置放 `site_settings`。
-- **给 3.1 留的位置**：`GET/PUT /api/admin/storage` 的
-  `remotes: {require: null | "any" | 一个提供方 id, scope: "new" | "all", graceDays}`
-  和错误码 `409 remote_required` 只在 `docs/api.md` 里预留，不实现。建空间和
-  建仓库已经是「要么整个成功、要么不留空间」的一步，3.1 只要在第一步前加
-  检查。
-- **和 3.3 的租户合在一起（2026-11-23）**：
-  - App 的设置和安装列表是全站的：`/api/admin/connections/github…` 只给全站管理员，租户
-    管理员和其他全站专属的接口一样得到 `403 forbidden`；管理后台的「存储与同步」
-    页里的连接也只对全站管理员显示。设置照旧在 `site_settings`，没有租户层。
-  - **共享安装按租户算（所有者定，2026-11-23，取代之前的全站共享）**：全站管理员
-    把某个组织的安装共享给**挑出来的几个租户**（`PUT /api/admin/connections/github/installations/{id}`，
-    `{tenants: [id]}`，整组替换，`[]` 不共享），只有这些租户的成员能用安装令牌在
-    那里建仓库、连接仓库，也只有他们在 `GET /api/connections/github/owners` 和 `repos` 里看
-    得到它；别的租户只有自己的 GitHub 连接够得着时才能用这个组织。共享的决定
-    仍在全站管理员手里，租户管理员碰不到（`/api/admin/connections/github…` 全站专属）。
-    存在状态库里：0013 里 `github_installations` 没有共享列，另有
-    `github_installation_tenants(installation_id, tenant_id)`，主键是两列，
-    `tenant_id` 有索引，安装被忘掉时（删除 App）跟着删；`tenant_id` 不是外键，
-    因为 `tenants` 表在 0018 里，两个迁移顺序都要成立，删租户时由代码删它的
-    共享行（`DeleteTenant`）。SQLite 和 PostgreSQL 都测。库里的查询走
-    `Scope`（`ListGitHubInstallationsOf`、`GitHubInstallationOf`、
-    `GitHubInstallationShared`：零值作用域什么也看不到），服务按用户所在的租户
-    取作用域；作用域测试的白名单里旧的「全站共享」三条去掉，换成两条给全站
-    管理员用的写和读（`SetGitHubInstallationTenants`、`GitHubInstallationTenants`），
-    和 `UserTenant`；扫描的表里加了 `github_installation_tenants`。隔离测试
-    加了一个真正的跨租户用例：共享给 B 之后，B 的成员看得到、能建，A 的成员
-    看不到、建不了（`owner_not_allowed`）、列仓库 `404`，也没有仓库被建。
-    管理后台的安装行上挑租户。
-  - 用户的 GitHub 连接属于用户，所以跟着用户落在它的租户里，不另加
-    `tenant_id`。一个 GitHub 账号只能连一个 PetalBook 用户，这条**跨租户**
-    检查（GitHub 账号 id 在全站唯一）；回答只有 `account_in_use`，不说是谁、
-    在哪个租户。
-  - 带 GitHub 仓库新建的空间属于创建者的租户，和普通新建一样走 3.3 的空间数
-    配额（`403 quota_exceeded`，正在建的也算，按人、按租户各记一份）和用量
-    钩子。`via: "user"` 的凭据必须是空间所在租户的人：只有能打开任何空间的
-    全站管理员会碰到，`PUT …/remote` 在问 GitHub 之前就回 `403 forbidden`；
-    显示远端时也只在空间的租户里查这个人。
-  - 状态库里跨用户的方法（每天的续期、App 自己的计数、删除 App 时撤销全部
-    连接、安装列表）都是全站的，写进了作用域测试的白名单并注明原因；作用域
-    测试也把 `github_authorizations`、`github_installations`、`remotes` 算进去。
-  - 迁移：0013 不碰 0018 改的表（0018 给 users、spaces 加列、重建 groups），
-    所以两种顺序都对：本分支上迁移过的库合并后补跑 0014、0016、0018；main 上
-    迁移过的库补跑 0013。两种顺序都有测试（SQLite 和 PostgreSQL）。
-  - 隔离测试里每个 2.7 的路由都有条目：`/api/admin/connections/github…` 按全站专属测，
-    `/api/connections/github…` 是调用者自己的连接，或共享给调用者租户的安装。
+- **One App per server, github.com only**. The App's configuration is stored in
+  the state database (not in command-line flags, in line with 2.8's direction
+  of moving OIDC into the admin console): App ID, private key, client id,
+  client secret; the private key and the secret are encrypted with the server
+  key (`Seal("site", …)`) and returned by no API; only "saved" and a
+  fingerprint of the public part of the private key are shown. Before saving it
+  is checked against GitHub (`GET /app` validates the private key and App ID; a
+  made-up token is sent to `POST /applications/{client_id}/token` to validate
+  the client id and secret, where `404` means the pair is correct), and if the
+  check fails it is not stored. Missing App permissions (Contents write,
+  Metadata read, Administration write) only produce a warning and are not
+  rejected. Switching to a different App is rejected as long as any space or
+  user still uses the current one (`409 provider_in_use`); changing the private
+  key or secret of the same App is always allowed.
+- **Tokens**: copied from Rackbook's `internal/githubapp`. Installation tokens
+  live only in memory; the ones used for sync are narrowed to a single
+  repository (`repository_ids`, `contents: write`), and the one used to create
+  a repository is `administration: write`, not limited to a repository, and
+  used only for that one request; a token is replaced only within 5 minutes
+  before it expires, concurrent requests for the same token are merged into
+  one, no lock is held during network requests, and the cache holds at most
+  10,000 entries. The way the token is handed to `git` is exactly the same as
+  the existing `token` credential (a credential helper in an environment
+  variable, limited to `https://github.com`), so `gitstore` needs no change.
+  Only spaces that are open get pulled, a space in use replaces its token at
+  most every 55 minutes, and a closed space costs nothing.
+- **User authorization**: web authorization, with `state` plus PKCE (S256).
+  The callback, like the OIDC callback, is an exception to the cross-site rule,
+  and requires the session to be the same user's. Each PetalBook user has at
+  most one connection, and a GitHub account can connect to only one PetalBook
+  user. The access token and refresh token are stored encrypted separately; the
+  access token is renewed when it is used close to expiry (within 5 minutes),
+  only once at a time per user, and the new pair is written to the database
+  before it is used (GitHub replaces the refresh token on every renewal and the
+  old one is invalid at once); every day, refresh tokens that will expire
+  within 30 days are renewed once, so someone who does not open a space for
+  months is not dropped. When the refresh token expires or is revoked, the
+  connection becomes `expired`, and the spaces that sync with it enter `error`
+  with the error code `connection_expired`: reads work as usual, writes answer
+  `503` without changing anything, drafts are still saved, and after
+  reconnecting it retries at once and makes up the commits, losing nothing.
+  When a connection is disconnected, revoking the authorization at GitHub is
+  attempted on a best-effort basis, and the tokens in the database and in
+  memory are deleted regardless.
+- **Whose token creates the repository**: the user's own token is used if it
+  can be (`POST /user/repos` under a personal account, `POST /orgs/{org}/repos`
+  under an organization the user's connection can see), so GitHub itself checks
+  whether this person may create repositories in this organization and whether
+  they may create private ones. An administrator can share an organization's
+  installation with some tenants; members of those tenants can use the
+  installation token to create and connect repositories there even if they have
+  not connected GitHub; by default it is not shared, otherwise any member could
+  use the App to create repositories in the organization.
+- **Whose token syncs**: repositories under an organization use the
+  installation token (`via: "app"`), without depending on any one person being
+  there and connected; under a personal account, the installation token is also
+  used when the App is installed on that account and can reach the new
+  repository, otherwise this person's user token is used (`via: "user"`). For a
+  space synced with a user token, it stops (`connection_missing`) when the
+  bound person cannot sign in, has lost `manage`, or has disconnected, so that
+  the token of someone who was removed from the space is not still being used.
+- **Creating the repository when creating a space**: extend `POST /api/spaces`
+  with `storage.sync: {provider: "github", owner, name, private, description,
+  create}` (called `github` before 2.7b), with no separate API. Order: checks
+  that need no network (fields, `--max-spaces` (from 3.3 this is the space
+  quota), owner, whether the token exists) → create the space on disk (no
+  record yet, nobody can see it) → create an empty repository on GitHub
+  (`auto_init: false`, so the space's first commit is the repository's first
+  commit) → choose and verify the credential used for sync → push `main` (a
+  just-created repository sometimes cannot be found for a few seconds, so "not
+  found" and 5xx are retried up to 4 times within 15 seconds, and a rejected
+  credential is not retried) → in one transaction write the space, the owner
+  and the remote, then make the space visible. Failure before the repository
+  is created: nothing is left anywhere; failure after the repository is
+  created: the space on disk is deleted and the empty repository on GitHub is
+  **left, not deleted** (we never delete anything on the remote, and may not
+  even have permission to), the error response carries `repo`, and the same
+  request with `create: false` connects the new space to that empty
+  repository. A process crash in the middle is the same, except there is no
+  response.
+- **A reminder for the empty repository left behind (decided by the owner,
+  2026-11-23)**: when a failure after creating the repository happens, the
+  repository is still left, and at the same time a reminder is recorded for
+  this person, visible later in the GitHub row of the account page (it can also
+  go next to the space list), stating the repository name and link, with two
+  actions: "Sync to it and try again" (that is `POST /api/spaces` with
+  `create: false`, the name and repository taken from the reminder, no separate
+  API) and "I deleted it"
+  (`DELETE /api/connections/github/leftovers/{repoId}`, which also answers
+  `204` when there is no such reminder). Stored per user:
+  `github_leftovers(user_id, repo_id, full_name, html_url, space_name,
+  created)`, with primary key `(user_id, repo_id)`, deleted along with the
+  user; another failure for the same repository just replaces it with a new
+  one; each person keeps at most the latest 20. It is cleared when the person
+  handles it, or **when any space connects to this repository** (`PutRemote`,
+  in the same transaction, deletes this reminder for everyone by `gh_repo_id`,
+  so a successful retry and a manual `PUT …/remote` both clear it). The
+  reminders are in `leftovers` of `GET /api/connections`, which the account
+  page and the create-space dialog have to read anyway, so no extra request. A
+  crash gives no response and cannot be recorded, so repositories left by a
+  crash are not among them (see above).
+- **"Only select repositories" installations**: we do not bet on whether GitHub
+  automatically adds repositories created by an App to the installation. After
+  creating, a token is requested for the new repository separately as a test;
+  if it cannot reach it and the caller's connection can see this installation,
+  the user token is used to add the repository to the installation
+  (`PUT /user/installations/{id}/repositories/{repoId}`) and it is tried again;
+  if that still fails, a personal account falls back to `via: "user"`, and
+  under an organization it answers `409 repo_not_in_installation` (with
+  `repo`). Whether Administration is organization-level or repository-level: we
+  do not bet on that either; when GitHub refuses to create the repository, the
+  answer is passed on as it is, `403 provider_refused`, with `message`
+  relaying GitHub's reason. In both outcomes the API needs no change; the real
+  tests only decide how the UI hints are written and which path is the
+  default.
+- **Switching an existing space to GitHub**: the credential of `PUT …/remote`
+  gets one more kind,
+  `{"type": "connection", "provider": "github", "via": "app" | "user"}`; for a
+  space that already follows a remote, `PUT` replaces the address and
+  credential in place; the same repository has the same history, so only the
+  credential is replaced, and the old key or token is deleted. An SSH-form
+  github.com address is accepted and stored in https form. `via: "app"`
+  requires that the caller's connection can push to this repository, or that
+  the installation is shared with the caller's tenant; otherwise anyone with
+  `manage` could connect a space to any repository the App can reach.
+- **The Remote object** gains `errorCode`: it exposes the existing internal
+  classification (`auth`, `hostkey`, `clone`, `rescued`) and adds four GitHub
+  ones (`connection_expired`, `connection_missing`, `installation_gone`,
+  `provider_not_configured`). A space in one of these states retries every 10
+  minutes, and retries at once when the cause goes away (reconnecting, the
+  administrator saving the App).
+- **Lists are all paged, never fetched whole**: the installation list, the
+  accounts where repositories can be created, and the repositories that can be
+  connected, with at most one GitHub request (30 items) per page and an opaque
+  cursor; GitHub cannot filter the repository list by name, so `q` is not
+  offered, and in the UI one can type `owner/name` directly.
+- **State database** (test on both SQLite and PostgreSQL): `remotes` gains
+  `cred_type = 'connection'` and the columns `provider`, `gh_via`,
+  `gh_installation_id`, `gh_repo_id`, `gh_user_id`; a new table
+  `github_authorizations` (one row per user, GitHub account id unique, both
+  tokens encrypted, with expiry time, state and a version number used to
+  "replace only the pair from before the renewal"); `github_installations`
+  (installation id, account) and `github_installation_tenants` (installation ×
+  tenant: which tenants it is shared with); the App's configuration goes in
+  `site_settings`.
+- **A place kept for 3.1**: `remotes: {require: null | "any" | a provider id,
+  scope: "new" | "all", graceDays}` of `GET/PUT /api/admin/storage` and the
+  error code `409 remote_required` are only reserved in `docs/api.md`, not
+  implemented. Creating a space and creating a repository are already one step
+  that is "either wholly succeeds or leaves no space", so 3.1 only needs to add
+  a check before the first step.
+- **Merged with the tenants of 3.3 (2026-11-23)**:
+  - The App's settings and the installation list are site-wide:
+    `/api/admin/connections/github…` is for site administrators only; a tenant
+    administrator gets `403 forbidden`, as with other site-only APIs; the
+    connections on the admin console's "Storage & sync" page are also shown
+    only to site administrators. The settings are still in `site_settings`,
+    with no tenant layer.
+  - **Shared installations are counted per tenant (decided by the owner,
+    2026-11-23, replacing the earlier site-wide sharing)**: a site
+    administrator shares an organization's installation with **a few chosen
+    tenants** (`PUT /api/admin/connections/github/installations/{id}`,
+    `{tenants: [id]}`, replacing the whole set, `[]` means not shared); only
+    members of those tenants can use the installation token to create and
+    connect repositories there, and only they see it in
+    `GET /api/connections/github/owners` and `repos`; other tenants can use
+    that organization only when their own GitHub connection reaches it. The
+    decision to share stays with site administrators and tenant administrators
+    cannot touch it (`/api/admin/connections/github…` is site-only). Stored in
+    the state database: in 0013 `github_installations` has no sharing column,
+    and there is a separate `github_installation_tenants(installation_id,
+    tenant_id)` with a two-column primary key and an index on `tenant_id`,
+    deleted when the installation is forgotten (deleting the App); `tenant_id`
+    is not a foreign key, because the `tenants` table is in 0018 and both
+    migration orders must work, and when a tenant is deleted the code deletes
+    its sharing rows (`DeleteTenant`). Tested on both SQLite and PostgreSQL.
+    Queries in the database go through `Scope` (`ListGitHubInstallationsOf`,
+    `GitHubInstallationOf`, `GitHubInstallationShared`: a zero-value scope sees
+    nothing), and the service takes the scope from the tenant the user is in;
+    in the scope test's allowlist the old three "site-wide sharing" entries are
+    removed and replaced by two for site administrators, a write and a read
+    (`SetGitHubInstallationTenants`, `GitHubInstallationTenants`), and
+    `UserTenant`; `github_installation_tenants` is added to the tables that are
+    scanned. The isolation test gains a real cross-tenant case: after sharing
+    with B, B's members can see and create, A's members cannot see, cannot
+    create (`owner_not_allowed`), listing repositories gives `404`, and no
+    repository is created. The tenants are picked on the installation row in
+    the admin console.
+  - A user's GitHub connection belongs to the user, so it lives in the user's
+    tenant along with the user, with no extra `tenant_id`. A GitHub account can
+    connect to only one PetalBook user; this **cross-tenant** check (the GitHub
+    account id is unique site-wide); the answer is only `account_in_use`, not
+    saying who or in which tenant.
+  - A space created with a GitHub repository belongs to the creator's tenant,
+    and goes through 3.3's space quota like an ordinary new space
+    (`403 quota_exceeded`, ones being created also count, recorded once per
+    person and once per tenant) and the usage hook. A credential with
+    `via: "user"` must be from a person in the space's tenant: only a site
+    administrator, who can open any space, can run into this, and `PUT …/remote`
+    answers `403 forbidden` before asking GitHub; when showing the remote, this
+    person is also looked up only in the space's tenant.
+  - The cross-user methods in the state database (the daily renewal, the App's
+    own counts, revoking all connections when the App is deleted, the
+    installation list) are all site-wide, and are written into the scope test's
+    allowlist with the reason noted; the scope test also counts
+    `github_authorizations`, `github_installations` and `remotes`.
+  - Migrations: 0013 does not touch the tables changed by 0018 (0018 adds
+    columns to users and spaces and rebuilds groups), so both orders work:
+    a database migrated on this branch runs 0014, 0016 and 0018 after the merge;
+    a database migrated on main runs 0013. Both orders are tested (SQLite and
+    PostgreSQL).
+  - In the isolation test every 2.7 route has an entry:
+    `/api/admin/connections/github…` is tested as site-only, and
+    `/api/connections/github…` is the caller's own connection, or an
+    installation shared with the caller's tenant.
 
-**2.7 做出来的样子**：
+**2.7: what was built**:
 
-- 迁移是 `0013_github.sql`（`0011_api_tokens.sql`、`0012_oauth.sql` 是 feat/mcp
-  的）。迁移按各自的编号记录，缺的那几个在下次启动时补上，所以只在这个分支上
-  迁移过的库，合并后会补跑 0011、0012；编号本身不能撞，所以这里用 0013。
-  迁移条数的测试跟着文件走，不写死。SQLite 和 PostgreSQL 的测试都跑。
-- 代码分三层：`internal/githubapp` 是对 GitHub 的客户端（JWT、安装令牌缓存、
-  用户授权、REST 调用，基地址可配，默认 `api.github.com` 和 `github.com`，
-  测试用 `githubapptest` 里的假 GitHub，不连真的）；`internal/github` 是服务
-  器怎么用这个 App（设置、授权与续期、可建仓库的账号、选凭据、给 Git 的令牌）；
-  `internal/spaces` 里是建空间与切换（`CreateWithSync`）。给 Git 的令牌还是走
-  `gitstore.Token` 的环境变量 credential helper，`gitstore` 只多了一个能说明
-  「凭据本身拿不到」的错误类型。
-- 基地址有两个隐藏的启动参数 `--github-api-url`、`--github-url`，只给测试用
-  （只支持 github.com 这一条没变）。
-- 建空间时上限按「已有的加正在建的」算，所以并发请求不会越过上限（3.3 起是
-  空间数配额，按人和按租户都这样算）。
-  首次推送的重试间隔是 1、3、7 秒（最多四次），总共一个 15 秒的期限，等待和
-  每次推送本身都算在里面；期限到了正在进行的推送会被停下。只重试「not
-  found」、GitHub 的 5xx 和连不上；GitHub 对不认的凭据在私有仓库上也回
-  「Repository not found」，分不出来，靠期限兜住。其他认证失败不重试。
-- 暂存的空间有一个标记文件 `staging/<id>`（先于目录建，`Commit` 或 `Abort`
-  时删）。启动时，标记超过 15 分钟、又没有 `spaces` 行的，删掉它的目录和
-  标记；有行的（崩溃在事务之后）只删标记。只看有标记的 id，所以真正的空间、
-  不是这段代码暂存的目录都不会碰。
-- 要问所有者的六个问题，都按括号里的默认做了。
+- The migration is `0013_github.sql` (`0011_api_tokens.sql` and
+  `0012_oauth.sql` belong to feat/mcp). Migrations are recorded by their own
+  numbers, and missing ones are applied at the next start, so a database that
+  was migrated only on this branch will run 0011 and 0012 after the merge; the
+  numbers themselves must not collide, so 0013 is used here. The test on the
+  number of migrations follows the files and does not hard-code it. Tests run on
+  both SQLite and PostgreSQL.
+- The code has three layers: `internal/githubapp` is the client to GitHub (JWT,
+  installation token cache, user authorization, REST calls, with a configurable
+  base address that defaults to `api.github.com` and `github.com`; tests use the
+  fake GitHub in `githubapptest` and do not connect to the real one);
+  `internal/github` is how the server uses this App (settings, authorization
+  and renewal, accounts where repositories can be created, choosing the
+  credential, the token for Git); `internal/spaces` holds creating and
+  switching spaces (`CreateWithSync`). The token for Git still goes through the
+  environment-variable credential helper of `gitstore.Token`, and `gitstore`
+  gained only one error type that says "the credential itself cannot be
+  obtained".
+- There are two hidden start-up flags for the base addresses,
+  `--github-api-url` and `--github-url`, for tests only (that only github.com is
+  supported is unchanged).
+- When creating a space, the cap is counted as "existing plus being created", so
+  concurrent requests cannot exceed it (from 3.3 this is the space quota, and
+  it is counted this way per person and per tenant). The retry intervals for the
+  first push are 1, 3 and 7 seconds (at most four tries), within a total
+  deadline of 15 seconds, in which both the waiting and each push itself count;
+  when the deadline arrives, the push in progress is stopped. Only "not found",
+  GitHub 5xx and being unable to connect are retried; for a credential GitHub
+  does not recognize, a private repository also answers "Repository not found",
+  which cannot be told apart, and the deadline is the backstop. Other
+  authentication failures are not retried.
+- A space being staged has a marker file `staging/<id>` (created before the
+  directory, deleted on `Commit` or `Abort`). At start-up, for a marker older
+  than 15 minutes with no `spaces` row, its directory and the marker are
+  deleted; if there is a row (a crash after the transaction), only the marker is
+  deleted. Only ids that have a marker are looked at, so real spaces and
+  directories not staged by this code are never touched.
+- The six questions for the owner were all done with the defaults in brackets.
 
-已知问题：
+Known issues:
 
-- 两个进程连同一个 PostgreSQL 时，可能同时拿同一个刷新令牌去续期：GitHub 只
-  认第一次，另一个会被当成授权失效，连接就断了。现在服务只跑一个实例，所以
-  可以接受。以后要多进程，需要在「续期并替换」外面加一把按用户的锁（
-  `SELECT … FOR UPDATE`，或 advisory lock）。
-- 断开后马上重新连接，新行的 `version` 又从 1 开始；如果断开前开始的一次续期
-  还在等 GitHub 回复，它会通过版本检查，把新连接标成过期（通常要重新连一次），
-  在吊销旧授权也失败时还可能写回旧账号的令牌。要等一次续期跨过整个「断开 +
-  浏览器授权」才会发生。可以在写回前再看一次进程内的代数，或让版本号在重连后
-  继续递增。
-- 用某人的 GitHub 连接同步的空间，如果服务器的 App 的 client 没了（管理后台
-  在还有人连着时不让删，所以几乎碰不到），写入会答 `409 provider_not_configured`
-  而不是文档说的 `503 unavailable`：凭据错误里包着 GitHub 的错误，`fail()` 先
-  认出了后者。不丢东西；以后让凭据错误不再包这个错误，或者按场合排序。
+- When two processes connect to the same PostgreSQL, they may renew with the
+  same refresh token at the same time: GitHub honors only the first, and the
+  other is treated as an invalid authorization, so the connection is dropped.
+  The service now runs as a single instance, so this is acceptable. For multiple
+  processes later, a per-user lock must be added around "renew and replace"
+  (`SELECT … FOR UPDATE`, or an advisory lock).
+- When reconnecting right after disconnecting, the new row's `version` starts
+  again from 1; if a renewal begun before the disconnect is still waiting for
+  GitHub's reply, it passes the version check, marks the new connection
+  expired (usually requiring one more reconnect), and, when revoking the old
+  authorization also failed, may even write back the old account's token. It
+  happens only if one renewal spans the entire "disconnect + browser
+  authorization". The in-process generation could be checked once more before
+  writing back, or the version number could keep increasing after a reconnect.
+- For a space synced with someone's GitHub connection, if the server's App
+  client is gone (the admin console does not allow deleting it while anyone is
+  connected, so this is almost unreachable), a write answers
+  `409 provider_not_configured` instead of the `503 unavailable` the document
+  says: the credential error wraps GitHub's error, and `fail()` recognizes the
+  latter first. Nothing is lost; later, make the credential error stop wrapping
+  this error, or order by situation.
 
-2.7 不做的：
+Not doing in 2.7:
 
-- 设备码流程（网页用不上，留给第 4 期的客户端）。
-- Webhook（App 被卸载要等下次换令牌被拒时才发现）；用推送事件代替每分钟
-  拉取，留给 3.1 一起看。
-- GitHub Enterprise Server、多个 App、GitHub 登录（登录在 2.8，和这里的
-  「连接 GitHub 账号」是两回事，库里分开存）。
-- 单用户模式：没有账号，这一节全部 `404`。
+- The device code flow (the web does not need it; left for the phase 4
+  client).
+- Webhooks (an App being uninstalled is found only when a token renewal is
+  next refused); using push events in place of pulling every minute is left for
+  3.1 to look at together.
+- GitHub Enterprise Server, multiple Apps, GitHub sign-in (sign-in is in 2.8,
+  and it is a different thing from "connect a GitHub account" here, stored
+  separately in the database).
+- Single-user mode: there are no accounts, and this whole section answers `404`.
 
-要问所有者的（括号里是没回复时的默认）：
+Questions for the owner (in brackets is the default when there is no reply):
 
-1. **实测那两点**（4.3 留下的）：2026-11-23 已用真实 GitHub 实测，结论写回 4.3。
-2. 建仓库之后失败时，空仓库留着还是尽量删掉？（默认留着，回答里给出仓库，
-   用 `create: false` 重试；2026-11-23 定：留着，并给这个人留一条之后看得到
-   的提醒，见上。）
-3. 组织的安装默认不共享，只有自己连了 GitHub、GitHub 也允许的人才能在组织下
-   建仓库，可以吗？（默认不共享，管理员逐个打开；2026-11-23 定：共享按租户挑。）
-4. 新建仓库默认私有，是否允许建公开仓库？（默认允许选，默认私有。）
-5. 同步用的安装令牌按单个仓库收窄（更安全），而不是一个安装一个令牌（换得
-   更少）。空间很多时前者每个在用的空间每小时换一次。（默认按单个仓库。）
-6. 断开 GitHub 连接时，还有空间在用它也照样断开，只提前提示受影响的空间数，
-   可以吗？（默认可以：撤销是用户的权利，空间不丢东西。）
+1. **The two tested points** (left over from [storage-and-sync.md §4.3](../storage-and-sync.md#43-remote-credentials-chosen-per-space)):
+   tested on 2026-11-23 against real GitHub, and the conclusions are written
+   back to [storage-and-sync.md §4.3](../storage-and-sync.md#43-remote-credentials-chosen-per-space).
+2. When something fails after creating the repository, leave the empty
+   repository or try to delete it? (Default: leave it, give the repository in
+   the answer, and retry with `create: false`; decided 2026-11-23: leave it,
+   and keep a reminder for this person that can be seen later, see above.)
+3. An organization's installation is not shared by default, and only people who
+   have connected GitHub themselves and whom GitHub allows can create
+   repositories under the organization, is that OK? (Default: not shared, the
+   administrator turns it on one by one; decided 2026-11-23: sharing is picked
+   per tenant.)
+4. New repositories are private by default; may public repositories be created?
+   (Default: allowed to choose, private by default.)
+5. The installation token used for sync is narrowed to a single repository
+   (safer), rather than one token per installation (fewer renewals). When there
+   are many spaces, the former renews once an hour for each space in use.
+   (Default: per single repository.)
+6. When a GitHub connection is disconnected, it is disconnected even if spaces
+   still use it, with only an advance warning of how many spaces are affected,
+   is that OK? (Default: yes; revoking is the user's right, and the space loses
+   nothing.)
 
-**2.8 passkey、SAML、多个登录提供方、登录验证码**
+**2.8 passkey, SAML, multiple sign-in providers, sign-in CAPTCHA**
 
-- passkey 和 SAML 用 authcore 的 `passkey`、`saml`。passkey 本地账号和外部
-  账号都能绑；管理员可以要求某些人必须用 passkey。
-- 把「一个 OIDC 提供方」改成「多个」：登录页每个一个按钮，账号的「安全」
-  里逐个关联和解除；GitHub 登录单独写适配（见 1.7 的「多种登录方式」）。
-- 同一个邮箱从不同提供方登录时不自动合并，规则同 1.7。
-- **登录页、验证码、频率限制和锁定**（所有者 2026-11-22 提出：做成和
-  KazuhaHub 的 Report Portal、Passwall-Sub-Panel 一样，包括 SSO）。两个项目
-  的做法一致的地方照搬；不一致的地方以较新、也用 authcore 的 Report Portal
-  为准，再加上 Passwall-Sub-Panel 的按 IP 每分钟请求数限制。
-  - **登录页的四种状态**，由「登录方式」（`login_mode`）决定，只管页面怎么
-    显示：
-    1. `dual` 密码和 SSO（默认）：用户名、密码、（需要时）验证码、登录；下面
-       「或者用以下方式登录」，每个提供方一个按钮「用 {名称} 登录」；忘记
-       密码等链接。
-    2. `sso_first` SSO 优先：提供方按钮在上，密码表单收起成一个链接「改用
-       密码登录」，点了才展开。
-    3. `sso_redirect` 只用 SSO（自动跳转）：只有一个提供方时直接跳过去，
-       显示「正在前往 {名称}…」；有多个时不跳，列出按钮和「改用密码登录」。
-       地址带 `?local=1` 或 SSO 失败回来带 `?sso_error=` 时不跳，免得失败后
-       来回跳。
-    4. `local_only` 只用密码：只有表单，没有 SSO 那一块。
-    没有启用任何提供方时，不管设置成什么都按 `local_only` 显示。
-  - **拒绝密码登录**（`sso_only`）是另一个开关，管服务端收不收密码：开了以后
-    非管理员用密码登录一律拒绝（403 `local_login_refused`），管理员不受限，
-    作为 SSO 坏了时的后门。保存时检查：开放注册时不能开；没有一个能用密码
-    登录的管理员时不能开。这个开关不在公开接口里出现，免得别人知道哪些账号
-    值得猜。没有提供方时它不起作用。
-  - **提供方**可以有多个（OIDC 和 SAML），各有 `slug`、名称、图标；登录页读
-    `GET /api/auth/providers`（提供方列表、`login_mode`、算好的 `local` 和
-    `sso` 两个布尔值），点按钮是整页跳到 `/api/auth/{oidc|saml}/{slug}/start`。
-    SSO 失败回到 `/login?sso_error=<码>`，页面显示对应的原因。
-  - **验证码**用 authcore 的 `captcha`：自托管图片（默认，不出网）、
-    Turnstile、reCAPTCHA、hCaptcha。
-    - 用在哪：登录、接受邀请、首次设置管理员，以后的找回密码和公开注册；
-      每一处单独开关。**SSO 不加验证码**（交给身份提供方）。
-    - 什么时候要：每处可选「每次都要」或「错几次之后才要」（默认后者，
-      默认 3 次，按 IP 和按用户名各算，任一到了就要）。
-    - 页面向 `GET /api/captcha?ctx=login&account=<用户名>` 问要不要，要就同时
-      拿到题目（图片），用户名改了再问一次。答错回 400，错误码
-      `captcha_failed`，页面换一道题。验证码在算密码哈希之前查，答错不算
-      密码错。第三方校验出错按失败处理（宁可拦下）。
-    - 第三方的密钥加密存库，管理页只显示「已保存 · 更换」；换提供方时不沿用
-      旧密钥；选第三方时站点密钥和密钥都必填。第三方校验核对返回的主机名
-      是不是本服务的地址。
-    - 题目存在内存里，最多一万道，5 分钟过期，每道只能答一次。
-  - **频率限制和锁定**：
-    - 按 IP 每分钟请求数（默认 10），用在登录、接受邀请、首次设置、取验证码、
-      passkey 登录、SAML 回调上，超了 429，带 `Retry-After`。
-    - 失败次数上限：在一个时间窗内（默认 15 分钟）按 IP、按用户名、按
-      IP+用户名分别计数，上限默认 10；按 IP 的在算哈希之前查，按用户名的
-      只在密码错了之后查，所以密码对的人不会被别人的失败挡住。超了 429
-      `rate_limited`，带 `Retry-After`。现在的做法按这个改。
-    - 锁定（默认关）：到了上限后锁一段时间（默认 15 分钟），范围可选
-      「IP + 用户名」（默认，推荐）、「只按 IP」、「只按用户名」（会让别人
-      能锁住某个账号，界面上要警告）。
-    - 计数在内存里（单实例），重启清零；锁定和策略修改记审计日志。
-  - **管理后台「安全」页**：登录（登录方式、拒绝密码登录，没有提供方时提示）、
-    验证码（提供方、密钥、各处开关、触发方式和次数）、锁定（开关、时长、
-    范围）、限制（每分钟请求数、失败上限、时间窗、会话时长）。这些设置存在
-    状态库，改了立即生效，不用重启；现在只能用命令行参数配的 OIDC 也搬过来。
-  - 单用户模式没有登录，以上都不涉及。
+- passkey and SAML use authcore's `passkey` and `saml`. A passkey can be bound
+  to both local accounts and external accounts; an administrator can require
+  certain people to use a passkey.
+- Change "one OIDC provider" to "several": one button each on the sign-in page,
+  and linking and unlinking one by one under the account's "Security"; GitHub
+  sign-in gets its own adapter (see "Several sign-in methods" under milestone
+  1.7 in [phase-0-1.md](phase-0-1.md)).
+- When the same email signs in from different providers, accounts are not
+  merged automatically; the rule is the same as in 1.7.
+- **Sign-in page, CAPTCHA, rate limiting and lockout** (proposed by the owner,
+  2026-11-22: make it the same as KazuhaHub's Report Portal and
+  Passwall-Sub-Panel, SSO included). Where the two projects do the same thing,
+  copy it; where they differ, follow Report Portal, which is newer and also
+  uses authcore, and add Passwall-Sub-Panel's per-IP requests-per-minute limit.
+  - **The four states of the sign-in page**, decided by the "sign-in mode"
+    (`login_mode`), which only governs how the page is displayed:
+    1. `dual` password and SSO (default): user name, password, (when needed) a
+       CAPTCHA, sign in; below it "or sign in with", one button per provider,
+       "Sign in with {name}"; links such as forgotten password.
+    2. `sso_first` SSO first: the provider buttons are on top, the password form
+       is folded into a link "Use a password instead", and expands only when
+       clicked.
+    3. `sso_redirect` SSO only (automatic redirect): with only one provider it
+       jumps straight there, showing "Going to {name}…"; with several it does not
+       jump, and lists the buttons and "Use a password instead". It does not
+       jump when the address carries `?local=1` or when coming back from a failed
+       SSO with `?sso_error=`, to avoid bouncing back and forth after a failure.
+    4. `local_only` password only: just the form, with no SSO part.
+    When no provider is enabled, it is displayed as `local_only` whatever the
+    setting.
+  - **Refusing password sign-in** (`sso_only`) is a separate switch, governing
+    whether the server accepts passwords at all: once on, password sign-in by
+    any non-administrator is refused (403 `local_login_refused`), and
+    administrators are not restricted, as a back door for when SSO is broken.
+    It is checked on save: it cannot be turned on while registration is open;
+    it cannot be turned on if there is no administrator who can sign in with a
+    password. This switch does not appear in the public API, so others do not
+    learn which accounts are worth guessing. With no providers it has no effect.
+  - **Providers** can be several (OIDC and SAML), each with a `slug`, a name and
+    an icon; the sign-in page reads `GET /api/auth/providers` (the provider
+    list, `login_mode`, and two computed booleans `local` and `sso`), and
+    clicking a button navigates the whole page to
+    `/api/auth/{oidc|saml}/{slug}/start`. A failed SSO returns to
+    `/login?sso_error=<code>`, and the page shows the matching reason.
+  - **CAPTCHA** uses authcore's `captcha`: self-hosted image (default, no
+    traffic leaves the server), Turnstile, reCAPTCHA, hCaptcha.
+    - Where it is used: sign-in, accepting an invitation, first-time
+      administrator setup, and later password recovery and public sign-up; each
+      place has its own switch. **SSO gets no CAPTCHA** (left to the identity
+      provider).
+    - When it is required: each place can choose "every time" or "only after N
+      wrong attempts" (the latter by default, 3 by default, counted per IP and
+      per user name separately, and it is required when either one is reached).
+    - The page asks `GET /api/captcha?ctx=login&account=<user name>` whether one
+      is needed, and if so receives the challenge (an image) at the same time,
+      and asks again when the user name changes. A wrong answer returns 400 with
+      the error code `captcha_failed`, and the page gets a new challenge. The
+      CAPTCHA is checked before the password hash is computed, and a wrong
+      answer does not count as a wrong password. An error in third-party
+      verification is treated as failure (better to block).
+    - Third-party secrets are stored encrypted in the database, and the admin
+      page shows only "Saved · Change"; when the provider is switched, the old
+      secret is not carried over; when a third party is chosen, both the site
+      key and the secret are required. Third-party verification checks that the
+      returned host name is this service's address.
+    - Challenges live in memory, at most ten thousand, expire after 5 minutes,
+      and each can be answered only once.
+  - **Rate limiting and lockout**:
+    - A per-IP requests-per-minute limit (default 10), applied to sign-in,
+      accepting an invitation, first-time setup, fetching a CAPTCHA, passkey
+      sign-in and the SAML callback; exceeding it gives 429 with `Retry-After`.
+    - Failure count limit: within a time window (default 15 minutes), failures
+      are counted separately per IP, per user name and per IP+user name, with a
+      default limit of 10; the per-IP check is made before the hash is computed,
+      and the per-user-name check only after the password is wrong, so a person
+      with the right password is not blocked by someone else's failures. Beyond
+      the limit it is 429 `rate_limited` with `Retry-After`. The current
+      behavior is to be changed to match this.
+    - Lockout (off by default): after the limit is reached, lock for a period
+      (default 15 minutes), with a scope that can be chosen: "IP + user name"
+      (default, recommended), "IP only", "user name only" (which lets others lock
+      a given account, so the UI must warn).
+    - Counts are in memory (single instance) and reset on restart; lockouts and
+      policy changes are written to the audit log.
+  - **The admin console "Security" page**: sign-in (sign-in mode, refuse
+    password sign-in, with a hint when there are no providers), CAPTCHA
+    (provider, secrets, per-place switches, trigger mode and count), lockout
+    (switch, duration, scope), limits (requests per minute, failure limit, time
+    window, session duration). These settings are stored in the state database
+    and take effect at once when changed, with no restart; the OIDC that can
+    currently be configured only through command-line flags is moved here too.
+  - Single-user mode has no sign-in, so none of the above applies.
 
-**2.8 的约定**（2026-11-23）：接口和错误码写在 `docs/api.md` 的「Signing in」
-「Account」「Users and invites」和「Administration」的「Security settings」
-「Sign-in providers」里，前后端照它做。
+**The 2.8 contract** (2026-11-23): the API and error codes are written in
+`docs/api.md` under "Signing in", "Account", "Users and invites", and, within
+"Administration", "Security settings" and "Sign-in providers"; the front end and
+back end are built from it.
 
-定下来的：
+Settled:
 
-- **身份的键不变**：仍是「签发方 + 主体」（OIDC 的 issuer + `sub`，SAML 的
-  IdP entity ID + `NameID`，GitHub 的地址 + 数字 id，不用可改的登录名）。所以
-  现有的 `identities` 表不用迁移，命令行配的那个 OIDC 搬进库后，大家已绑的身份
-  照样能用。两个提供方不能用同一个签发方（`provider_issuer_in_use`），一个
-  身份只属于一个提供方；删了再用同一签发方加回来，身份也回来。
-- **旧接口保留**：`POST /api/auth/oidc/start` 和 `GET /api/auth/oidc/callback`
-  不变，只服务标了 `legacyCallback` 的那一个 OIDC 提供方，它的回调地址还是
-  旧的，IdP 那边不用改。2.8 第一次启动时，若带着 `--oidc-*` 且库里从没导入过，
-  就建一个 slug 为 `sso` 的提供方（密钥加密存库、`legacyCallback` 开、自动建号
-  沿用 `--oidc-auto-create`），登录方式保持 `dual`、`sso_only` 关，所以没人会被
-  挡在外面。之后以库为准：参数和库里不一致（或那个提供方被删了）只在日志和
-  安全页提示 `flags_ignored`，参数不再起作用，后面的版本删掉这些参数。
-- **开始登录两种写法**：登录页的按钮整页跳到
-  `GET /api/auth/{oidc|saml|github}/{slug}/start`（只用于登录，跨站规则照旧）；
-  首次设置、接受邀请、关联身份要带令牌或会话，用 `POST …/start` 拿地址（和
-  2.8 之前的 `POST /api/auth/oidc/start` 一样），令牌不进地址栏。
-- **SAML**：ACS 收的是 IdP 从别的站点提交的表单，`Lax` 的 cookie 不会带上，
-  所以这次登录的 cookie 是 `__Secure-petalbook_saml_<slug>`、`SameSite=None`、
-  只限 ACS 路径，SAML 因此必须是 `https` 的公开地址。ACS 不受「只收 JSON」和
-  跨站规则限制，靠 `RelayState` 等于 cookie、`InResponseTo` 对得上这次登录来防
-  伪造。临时（transient）`NameID` 拒绝。IdP 发起的登录默认关。
-- **GitHub 适配放进 2.8**：2.8 的计划里本来就写了，它也不依赖 2.7（只是一次
-  OAuth 授权码交换加读 `/user`、`/user/emails`、`/user/orgs`，用户令牌只在这次
-  请求里用）；2.7 先合进来的话共用它的 HTTP 客户端。GitHub 提供方开自动建号时
-  必须指定组织，否则任何有 GitHub 账号的人都能建号。
-- **邮箱合并**：默认从不按邮箱合并。提供方开了 `mergeVerifiedEmail` 时，只有
-  提供方声明已验证（OIDC 的 `email_verified`、GitHub 的已验证主邮箱；SAML 没有
-  这个声明，开了就等于管理员担保 IdP 给的每个邮箱），**而且本地账号的邮箱也是
-  已验证的**（来自担保过的提供方，或管理员设置、确认过；用户自己改邮箱会清掉
-  这个标记），才合并到唯一的那个账号；从不合并到管理员账号、停用的账号、已有
-  同一提供方身份的账号；对上两个账号时按 `no_account`。不然别人把自己账号的
-  邮箱改成某人的，等那人第一次用 SSO 登录就进了别人的账号。
-- **`sso_only`**：开了以后非管理员用密码**和 passkey** 都拒绝
-  （`local_login_refused`，在核对密码之后才判断），接受 `member` 邀请时也不能
-  用密码（否则建出来的账号永远登不进）。只有登录页真的给出了 SSO 按钮时才
-  生效（照 Report Portal：`local_only` 下按钮被藏起来，再拒绝密码就是把门锁死）。
-  开着的时候，改角色、停用导致没有「有密码的启用管理员」也拒绝（409）。
-- **passkey**：本地账号和外部账号都能用，单独就能登录（不是第二因子），所以
-  登录时要求用户验证（PIN 或生物识别），注册时优先可发现凭据。用户句柄就是
-  用户 id。每人最多 20 个。注册要求 10 分钟内登录过（照 Rackbook）。按用户名
-  开始时，不存在或没有 passkey 的用户返回一个由用户名和服务器密钥算出的假
-  凭据 id，看起来和有一个 passkey 的人一样。计数器倒退（疑似被复制）直接拒绝，
-  不更新存的计数，记审计日志。公开地址的主机名就是 RP ID，换了主机名旧的
-  passkey 都不能用，启动时提示。
-- **要求 passkey**：可以按人（`PATCH /api/users/{id}` 的 `passkeyRequired`）或按
-  角色（`passkeys.requireRoles`）。这样的人有 passkey 时，密码对了也回
-  `403 passkey_required`，登录页让他用 passkey；还没有 passkey 时，密码登录
-  进到一个被扣住的会话（`GET /api/session` 的 `hold: "passkey"`），只能注册
-  passkey 和退出，其他请求都是 `403 passkey_required`，注册第一个后立即放开。
-  经 SSO 登录不扣（由 IdP 决定怎么验证）。丢了 passkey 由管理员删掉，下次密码
-  登录再被扣住去注册新的。
-- **验证码**：四种提供方里自托管图片不出网，是默认。上下文是登录、接受邀请
-  （检查和接受都算）、首次设置，`forgot`、`register` 先占名字，一直回
-  `required: false`。每处单独开关，各自选「每次」或「错 N 次后」（默认后者、
-  3 次），按 IP 算，登录还按用户名算。默认都关（两个参考项目都是默认关）。
-- **频率限制和失败上限**：现在的 `failLimiter`（免费次数加翻倍等待）和
-  首次设置、邀请用的 120 次每分钟换成新的做法：按 IP 每分钟 10 次，登录、首次
-  设置、检查和接受邀请、取验证码、passkey 开始和完成、SAML ACS 共用一份额度；
-  失败按 IP、用户名、IP+用户名各数一份，固定窗口从第一次失败算起；SSO 的开始
-  沿用自己的每分钟 30 次。登录的判断顺序：每分钟次数 → 验证码 → IP 失败数 →
-  锁定 → 密码哈希 → 错了才看用户名和组合的失败数 → `sso_only` → 要求 passkey。
-  错的首次设置令牌、邀请令牌算 IP 的失败。
-- **内存有上限**：每分钟计数、三张失败表各最多 1 万个键，按最久未见先丢
-  （被锁定的最后才丢）；验证码题目、passkey 仪式各最多 1 万个、5 分钟；SSO
-  进行中的登录 1 万个、10 分钟；SAML 用过的断言 id 最多 65536 个。全在一个
-  进程里，重启清零。
-- **设置和提供方缓存在内存里**：启动读一次，管理员改了立刻重读，只重建改了的
-  那个提供方；命令行改的（`petalbook security reset`）最迟 5 分钟内生效（每 5
-  分钟查一次修订号，不是每个请求查）。`GET /api/auth/providers` 不查库。OIDC
-  发现文档和 SAML 元数据存库也放内存，登录时不去取；按地址配的元数据每 24 小时
-  后台重取一次。
-- **每次登录的查询**：passkey 登录一次查询（按凭据 id）加一次写（计数器和最后
-  使用时间），用户来自会话缓存；SAML 校验不查库（元数据、重放缓存在内存），
-  之后和 OIDC 一样一次身份查询。是否被要求 passkey、有没有 passkey 跟着缓存的
-  用户走，扣住会话不需要每个请求查库。
-- **审计日志是新加的**（之前没有）：状态库里一张表，登录成功和失败（不存在的
-  用户名也记）、超限（每个键每个窗口只记一次）、锁定、计数器倒退、身份绑定和
-  解除（注明是用户、邮箱匹配还是管理员）、passkey 增删、安全设置和提供方的
-  修改（只记改了的字段，密钥只写 `"changed"`）、管理员改用户。后台批量写，队列
-  最多 1 万条，满了丢弃并记一条 `dropped`；保留 10 万条或 90 天。
-  `GET /api/admin/audit` 分页读。
-- **保存时检查**：`sso_only` 没有带密码的启用管理员时拒绝
-  （`local_admin_required`），开放注册时拒绝（注册还没有，先留着这条）；第三方
-  验证码要站点密钥和密钥（换提供方要在同一次请求里给新密钥，不沿用旧的），
-  还要有 `--public-url`（核对主机名用）；passkey 用不了时不能要求 passkey，
-  有人被要求时不能关掉 passkey。所有字段先全部校验再存，超出范围拒绝而不是
-  改成边界值。
-- **救急命令** `petalbook security reset --data DIR`：登录方式改回 `dual`，关掉
-  `sso_only`、锁定、所有验证码，清空按角色的 passkey 要求；提供方和人不动。
-- JSON 字段按 `docs/api.md` 的惯例用 camelCase（`loginMode`、`ssoOnly`），取值
-  还是 `dual`、`sso_first` 这些；SSO 失败的参数从 `error=` 改成 `sso_error=`，
-  关联失败回 `/settings?sso_error=`。
+- **The identity key does not change**: it is still "issuer + subject" (OIDC's
+  issuer + `sub`, SAML's IdP entity ID + `NameID`, GitHub's address + numeric
+  id, never a changeable login name). So the existing `identities` table needs
+  no migration, and after the OIDC provider configured on the command line is
+  moved into the database, the identities everyone already bound still work.
+  Two providers cannot use the same issuer (`provider_issuer_in_use`), and an
+  identity belongs to only one provider; delete one and add it back with the
+  same issuer, and the identities come back too.
+- **The old API is kept**: `POST /api/auth/oidc/start` and
+  `GET /api/auth/oidc/callback` are unchanged and serve only the one OIDC
+  provider marked `legacyCallback`; its callback address is still the old one,
+  so nothing needs to change on the IdP side. At the first start of 2.8, if
+  `--oidc-*` is given and nothing has ever been imported into the database, a
+  provider with slug `sso` is created (secret stored encrypted, `legacyCallback`
+  on, automatic account creation following `--oidc-auto-create`), and the
+  sign-in mode stays `dual` with `sso_only` off, so nobody is locked out. After
+  that the database is authoritative: if the flags and the database disagree
+  (or that provider was deleted), only a log line and a `flags_ignored` notice
+  on the security page appear, the flags no longer take effect, and a later
+  version removes them.
+- **Two ways to start a sign-in**: the buttons on the sign-in page navigate the
+  whole page to `GET /api/auth/{oidc|saml|github}/{slug}/start` (for sign-in
+  only, the cross-site rule unchanged); first-time setup, accepting an
+  invitation and linking an identity must carry a token or a session, and use
+  `POST …/start` to get the address (the same as the pre-2.8
+  `POST /api/auth/oidc/start`), so the token does not go into the address bar.
+- **SAML**: the ACS receives a form that the IdP submits from another site, and
+  a `Lax` cookie is not sent along, so this sign-in's cookie is
+  `__Secure-petalbook_saml_<slug>`, `SameSite=None`, limited to the ACS path,
+  and SAML therefore requires a public `https` address. The ACS is not subject
+  to the "JSON only" and cross-site rules, and prevents forgery by requiring
+  `RelayState` to equal the cookie and `InResponseTo` to match this sign-in.
+  Transient `NameID` is rejected. IdP-initiated sign-in is off by default.
+- **The GitHub adapter goes into 2.8**: the 2.8 plan already had it, and it does
+  not depend on 2.7 either (it is only an OAuth authorization code exchange plus
+  reading `/user`, `/user/emails` and `/user/orgs`, and the user token is used
+  only within that one request); if 2.7 is merged first, it shares 2.7's HTTP
+  client. When a GitHub provider turns on automatic account creation, an
+  organization must be specified, otherwise anyone with a GitHub account could
+  create an account.
+- **Email merging**: by default, never merge by email. When a provider has
+  `mergeVerifiedEmail` on, merging into the one matching account happens only
+  if the provider declares the email verified (OIDC's `email_verified`, GitHub's
+  verified primary email; SAML has no such claim, so turning it on amounts to
+  the administrator vouching for every email the IdP gives), **and the local
+  account's email is also verified** (from a provider that was vouched for, or
+  set and confirmed by an administrator; the user changing their own email
+  clears this mark); it never merges into an administrator account, a disabled
+  account, or an account that already has an identity from the same provider;
+  when two accounts match, it answers `no_account`. Otherwise someone could
+  change their own account's email to somebody else's, and when that person
+  first signs in with SSO they would land in the other person's account.
+- **`sso_only`**: once on, non-administrators are refused for both password
+  **and passkey** (`local_login_refused`, decided after the password is
+  checked), and a password cannot be used when accepting a `member` invitation
+  either (otherwise the account created could never sign in). It takes effect
+  only when the sign-in page actually shows an SSO button (following Report
+  Portal: under `local_only` the buttons are hidden, and refusing passwords
+  too would lock the door). While it is on, changing a role or disabling someone
+  so that there is no "enabled administrator with a password" is also refused
+  (409).
+- **passkey**: both local accounts and external accounts can use it, and it
+  signs in by itself (it is not a second factor), so user verification (PIN or
+  biometrics) is required at sign-in, and discoverable credentials are
+  preferred at registration. The user handle is just the user id. At most 20 per
+  person. Registration requires a sign-in within the last 10 minutes (following
+  Rackbook). When starting by user name, for a user who does not exist or has no
+  passkey it returns a fake credential id computed from the user name and the
+  server key, looking the same as for a person who has one passkey. A counter
+  that goes backward (suspected copy) is rejected outright, the stored count is
+  not updated, and it is written to the audit log. The host name of the public
+  address is the RP ID; after the host name changes, all the old passkeys stop
+  working, and a notice is shown at start-up.
+- **Requiring a passkey**: can be by person (`passkeyRequired` of
+  `PATCH /api/users/{id}`) or by role (`passkeys.requireRoles`). For such a
+  person who has a passkey, even a correct password answers
+  `403 passkey_required` and the sign-in page has them use a passkey; for one
+  with no passkey yet, password sign-in leads to a held session (`hold:
+  "passkey"` in `GET /api/session`) that can only register a passkey and sign
+  out, all other requests are `403 passkey_required`, and it is released
+  immediately after the first one is registered. Signing in through SSO is not
+  held (the IdP decides how to verify). If the passkey is lost, an administrator
+  deletes it, and the next password sign-in is held again to register a new
+  one.
+- **CAPTCHA**: of the four providers, the self-hosted image keeps traffic inside
+  and is the default. The contexts are sign-in, accepting an invitation (both
+  checking and accepting count) and first-time setup; `forgot` and `register`
+  just reserve the names and always answer `required: false`. Each place has its
+  own switch and chooses "every time" or "after N wrong attempts" (the latter by
+  default, 3), counted per IP, and for sign-in per user name too. All are off by
+  default (both reference projects are off by default).
+- **Rate limiting and failure limits**: the existing `failLimiter` (free tries
+  followed by doubling waits) and the 120 per minute used for first-time setup
+  and invitations are replaced by the new approach: 10 per minute per IP, with
+  one quota shared by sign-in, first-time setup, checking and accepting
+  invitations, fetching a CAPTCHA, passkey start and finish, and the SAML ACS;
+  failures are counted in three separate counts by IP, user name and IP+user
+  name, with a fixed window counted from the first failure; the start of SSO
+  keeps its own 30 per minute. The order of decisions at sign-in: per-minute
+  count → CAPTCHA → failures per IP → lockout → password hash → only after a
+  wrong password look at the failures per user name and per combination →
+  `sso_only` → passkey required. A wrong first-time setup token or invitation
+  token counts as a failure for the IP.
+- **Memory is capped**: the per-minute counts and the three failure tables each
+  have at most 10,000 keys, dropping the longest-unseen first (locked ones
+  last); CAPTCHA challenges and passkey ceremonies each at most 10,000 and 5
+  minutes; SSO sign-ins in progress 10,000 and 10 minutes; SAML used assertion
+  ids at most 65,536. All of it is in one process and resets on restart.
+- **Settings and providers are cached in memory**: read once at start-up, and
+  re-read at once when an administrator changes them, rebuilding only the
+  provider that changed; changes made from the command line
+  (`petalbook security reset`) take effect within 5 minutes at the latest (the
+  revision number is checked every 5 minutes, not on every request).
+  `GET /api/auth/providers` does not query the database. OIDC discovery
+  documents and SAML metadata are stored in the database and also kept in
+  memory, and are not fetched at sign-in; metadata configured by address is
+  re-fetched in the background every 24 hours.
+- **Queries per sign-in**: a passkey sign-in is one query (by credential id)
+  plus one write (the counter and the last-used time), with the user coming from
+  the session cache; SAML validation does not query the database (metadata and
+  the replay cache are in memory), and then it is one identity query, like OIDC.
+  Whether a passkey is required and whether one exists travels with the cached
+  user, so a held session needs no database query per request.
+- **The audit log is new** (there was none before): one table in the state
+  database, recording sign-in successes and failures (unknown user names too),
+  limit hits (once per key per window), lockouts, counter regressions, identity
+  binding and unbinding (noting whether by the user, email match or an
+  administrator), passkey addition and deletion, changes to security settings
+  and providers (only the changed fields, with secrets written only as
+  `"changed"`), and administrators changing users. It is written in batches in
+  the background; the queue holds at most 10,000, and when full it drops and
+  records one `dropped`; it keeps 100,000 entries or 90 days.
+  `GET /api/admin/audit` reads it in pages.
+- **Checks on save**: `sso_only` is rejected when there is no enabled
+  administrator with a password (`local_admin_required`), and rejected when
+  registration is open (there is no registration yet, so the check is kept in
+  advance); a third-party CAPTCHA needs the site key and secret (switching
+  provider requires the new secret in the same request, and the old one is not
+  carried over), and also needs `--public-url` (used to check the host name);
+  when passkeys cannot be used, requiring a passkey is not allowed, and when
+  someone is required to have one, passkeys cannot be turned off. All fields
+  are validated first and then stored, and out-of-range values are rejected
+  rather than clamped to the boundary.
+- **The emergency command** `petalbook security reset --data DIR`: sets the
+  sign-in mode back to `dual`, turns off `sso_only`, lockout and all CAPTCHAs,
+  and clears the per-role passkey requirements; providers and people are not
+  touched.
+- JSON fields use camelCase following the convention of `docs/api.md`
+  (`loginMode`, `ssoOnly`), while the values are still `dual`, `sso_first` and
+  so on; the SSO failure parameter changes from `error=` to `sso_error=`, and a
+  failed link returns to `/settings?sso_error=`.
 
-照搬的：
+Copied:
 
-- **Report Portal**：登录方式和 `sso_only` 分成两个轴，及其退化规则（没有提供方
-  按 `local_only`、`sso_only` 不生效、管理员不受限）；`local_admin_required`、
-  `sso_only_with_registration` 两个保存检查；`GET /api/auth/providers` 的形状；
-  图标只能是内置的，不能是外部地址；`/api/auth/{oidc|saml}/{slug}/…` 的路径；
-  `sso_error` 的码（包括 `saml_*` 那一组）；SAML 的 `SameSite=None`、只限 ACS
-  路径的 cookie 和拒绝临时 `NameID`；`GET /api/captcha` 的形状、`captcha_failed`
-  回 400、验证码在哈希之前查、出错按失败处理、核对主机名、密钥不跨提供方沿用；
-  失败按 IP、用户名、组合三份计数，IP 的在哈希之前、用户名的在密码错之后；锁定
-  的三种范围和对「只按用户名」的警告；不存在的用户名也记审计；passkey 计数器
-  倒退时拒绝且不写回；「被要求但还没有」时扣住会话、只放行一张固定的路由表，
-  以及「要求了却没法满足」时拒绝保存；部分更新、先全部校验再存。
-- **Passwall-Sub-Panel**：按 IP 每分钟请求数，登录相关接口（含取验证码、
-  passkey、SAML ACS）共用一份，默认 10，改了立即生效。另外加了它没有的
-  `Retry-After`。
-- **Rackbook**：passkey 仪式 id 放在查询参数里、完成时请求体就是浏览器给的凭据；
-  要求可发现凭据和用户验证（无密码登录）；注册前要 10 分钟内登录过；用 authcore
-  自带的有上限的内存仪式存储。Rackbook 没有接 SAML，SAML 只参考 Report Portal。
-- 两个项目不一致、按 Report Portal 的：计数放内存（Passwall 每次登录查审计
-  事件表）；锁定沿用失败上限（Passwall 另有一个阈值）；验证码按处开关（Passwall
-  只有一个开关）；要求了却没有可用方式时不放行（Passwall 会自动放开）。和
-  Report Portal 不同、按本文上面所有者定的：验证码每处都能选「错 N 次后」
-  （Report Portal 只有登录能选）；锁定默认 15 分钟（Report Portal 是 30）。
+- **Report Portal**: the sign-in mode and `sso_only` split into two axes, with
+  their degradation rules (no provider means `local_only`, `sso_only` has no
+  effect, administrators are not restricted); the two save checks
+  `local_admin_required` and `sso_only_with_registration`; the shape of
+  `GET /api/auth/providers`; icons can only be built-in ones, not external
+  addresses; the paths `/api/auth/{oidc|saml}/{slug}/…`; the `sso_error` codes
+  (including the `saml_*` group); SAML's `SameSite=None` cookie limited to the
+  ACS path and rejection of transient `NameID`; the shape of
+  `GET /api/captcha`, `captcha_failed` answering 400, the CAPTCHA checked before
+  the hash, errors treated as failures, host name checking, secrets not carried
+  across providers; failures counted in three counts by IP, user name and
+  combination, with the IP one before the hash and the user name one after the
+  password is wrong; the three lockout scopes and the warning for "user name
+  only"; unknown user names also audited; a passkey counter regression rejected
+  without writing back; for "required but none yet", the session is held and
+  only a fixed route table is let through, and for "required but impossible to
+  satisfy", the save is rejected; partial updates, and validating everything
+  first before storing.
+- **Passwall-Sub-Panel**: the per-IP requests-per-minute limit, shared by the
+  sign-in related APIs (including fetching a CAPTCHA, passkey and the SAML ACS),
+  default 10, taking effect at once when changed. Also `Retry-After` was added,
+  which it does not have.
+- **Rackbook**: the passkey ceremony id goes in a query parameter, and at
+  completion the request body is just the credential from the browser;
+  discoverable credentials and user verification are required (passwordless
+  sign-in); a sign-in within the last 10 minutes is needed before registering;
+  authcore's own bounded in-memory ceremony store is used. Rackbook has no SAML
+  wired in, and for SAML only Report Portal is the reference.
+- Where the two projects disagree, follow Report Portal: counts in memory
+  (Passwall queries the audit event table on every sign-in); lockout reuses the
+  failure limit (Passwall has another threshold); CAPTCHA switches per place
+  (Passwall has only one switch); when something is required but there is no
+  available way, do not let it through (Passwall opens up automatically). Where
+  it differs from Report Portal, follow what the owner decided above in this
+  text: the CAPTCHA can be set to "after N wrong attempts" at every place
+  (Report Portal allows that only for sign-in); lockout is 15 minutes by default
+  (Report Portal's is 30).
 
-不做的：
+Not doing:
 
-- TOTP 等第二因子（passkey 在这里是独立的登录方式）；SCIM；SAML 单点登出、
-  加密断言、签名密钥轮换的接口；按 IdP 的组或属性分配角色（第 3 期的组）；按
-  提供方设会话时长；reCAPTCHA v3 的分数；OIDC 多租户的 `common` 签发方（要填
-  具体租户）；多实例之间共享计数；找回密码和公开注册本身（只占上下文名）。
+- TOTP and other second factors (a passkey here is an independent sign-in
+  method); SCIM; SAML single logout, encrypted assertions, an API for rotating
+  the signing key; assigning roles by the IdP's groups or attributes (groups of
+  phase 3); a session duration per provider; reCAPTCHA v3 scores; OIDC
+  multi-tenant `common` issuers (a specific tenant must be filled in); sharing
+  counts across several instances; password recovery and public sign-up
+  themselves (only the context names are reserved).
 
-待所有者确认（括号里是现在按的默认）：
+Pending the owner's confirmation (in brackets is the default now followed):
 
-1. `sso_only` 开着时，非管理员的 passkey 登录也拒绝吗？（拒绝：`sso_only` 的
-   意思是由 IdP 决定谁能进，passkey 会绕过 IdP 那边的停用。）
-2. 被要求 passkey 的人经 SSO 登录时也要扣住吗？（不扣，两个参考项目都只管
-   本地密码账号。）
-3. 按 IP 每分钟 10 次、这几个接口共用，办公室共用一个出口地址时会不会太紧？
-   一次登录是取验证码加提交两次请求。（按设计定的 10；`--trusted-proxy` 要配对。）
-4. 验证码各处默认关？（关，两个参考项目一致；开了以后默认错 3 次才要。）
-5. GitHub 登录放进 2.8？（放进，自动建号必须指定组织。）
-6. 邮箱合并还要求本地账号的邮箱是已验证的，并且从不合并到管理员账号？
-   （要求；这样现有账号要合并，得由管理员在用户管理里确认邮箱。）
-7. `--oidc-*` 导入一次后以库为准，参数只告警不生效？（是，后面的版本删参数。）
-8. 按用户名开始 passkey 登录时，有多个 passkey 的人能被看出数量，可以接受吗？
-   （接受；不接受的话只留免用户名的方式。）
-9. 审计日志保留 10 万条或 90 天？（是。）
-10. JSON 里用 `loginMode`、`ssoOnly` 而不是设计里写的 `login_mode`？
-    （用 camelCase，和其余接口一致。）
+1. When `sso_only` is on, are passkey sign-ins by non-administrators also
+   refused? (Refused: `sso_only` means the IdP decides who gets in, and a
+   passkey would bypass a deactivation on the IdP side.)
+2. Is a person required to have a passkey also held when signing in through SSO?
+   (Not held; both reference projects govern only local password accounts.)
+3. With 10 per minute per IP shared by these APIs, would it be too tight when an
+   office shares one exit address? A sign-in is two requests, fetching a CAPTCHA
+   plus the submission. (10 as designed; `--trusted-proxy` must be configured
+   correctly.)
+4. CAPTCHA off by default at every place? (Off, as in both reference projects;
+   once on, by default it is required only after 3 wrong attempts.)
+5. Put GitHub sign-in into 2.8? (Yes; automatic account creation must specify an
+   organization.)
+6. Email merging also requires the local account's email to be verified, and
+   never merges into an administrator account? (Required; so for an existing
+   account to be merged, an administrator must confirm the email in user
+   management.)
+7. After `--oidc-*` is imported once, the database is authoritative, and the
+   flags only warn and do not take effect? (Yes, and a later version removes the
+   flags.)
+8. When passkey sign-in is started by user name, the number of passkeys a
+   person with several has can be told; is that acceptable? (Acceptable; if not,
+   keep only the user-name-free way.)
+9. Audit log keeps 100,000 entries or 90 days? (Yes.)
+10. Use `loginMode` and `ssoOnly` in JSON rather than the `login_mode` written in
+    the design? (Use camelCase, consistent with the other APIs.)
 
-**2.8 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md` 的
-「Signing in」「Account」「Users and invites」和「Administration」。「待所有者
-确认」里的十条都按括号里的默认做了。实现时定下来的：
+**2.8 as built (2026-11-23)**: everything in the plan above is done; the API is
+in `docs/api.md` under "Signing in", "Account", "Users and invites" and
+"Administration". All ten items under "Pending the owner's confirmation" were
+done with the defaults in brackets. What was settled during implementation:
 
-- **库**：passkey、SAML、验证码、OIDC 都用 authcore 的 `passkey`、`saml`、
-  `captcha`、`oidc`，版本没变（`f3886de`）。authcore 的 `saml` 要求使用方在自己的
-  `go.mod` 里重复它对 `crewjam/saml` 的 `replace`（换成 `openctemio/saml` 的固定
-  提交），已经加上；测试里的虚拟认证器用 `descope/virtualwebauthn`，假 IdP 用
-  `crewjam/saml` 的 `IdentityProvider`。
-- **存储**：迁移 `0014_signin.sql`（主线到 0010，`feat/mcp` 用 0011、0012，
-  `feat/github-app` 用 0013）。新表 `sign_in_providers`（密钥用 `secret.Box` 加密，
-  发现文档和元数据存 `cache` 列）、`passkeys`（凭据 JSON、`rp_id`、`synced`）、
-  `audit_log`；`users` 加 `email_verified`、`passkey_required`，`sessions` 加
-  `held`。安全设置是 `site_settings` 里键为 `security` 的一行，它的 `updated` 就是
-  修订号：命令行改了之后，运行中的服务最迟 `CacheTTL`（5 分钟）读到，每个请求
-  只比较内存里的时间，不查库。迁移数量的测试改成数文件。
-- **旧参数**：第一次启动时 `--oidc-*` 建出 slug 为 `sso` 的提供方（`legacyCallback`
-  开、启用、`autoCreate` 沿用参数），并在 `site_settings` 记一行 `oidc_imported`。
-  以后参数和库里不一致、或那个提供方被删了，只写日志并在安全页提示
-  `flags_ignored`；删了之后再带着参数启动也不会重新建。身份表没改，原来绑定的
-  身份照样能用。登录方式保持 `dual`、`ssoOnly` 关，没有人会被挡在外面。
-- **登录的判断顺序**照合同：每分钟次数、验证码、IP 失败数、锁定、密码哈希、
-  错了才记用户名和组合的失败、`sso_only`、要求 passkey。IP 那一项是「先占位、
-  成功了退回」（和以前一样），所以一批同时来的错误密码最多只有上限个进到哈希。
-  验证码答错、要求 passkey、`sso_only` 都不算密码错。被锁住的请求在审计日志里记
-  `login_failed`，原因 `rate_limited`；锁定本身记 `lockout`。谁都能编出来的失败
-  不让它刷满审计日志：验证码答错、地址被锁或到了上限，每个地址（IPv6 按 /64）
-  每种原因每分钟最多记一行；没开始过的 passkey 仪式和对不上任何登录的 SSO 回调
-  不记。
-- **SAML**：元数据里只给签名证书，不给加密证书，因为我们拒绝加密断言，而 IdP
-  看到加密证书就会加密。关联（`link`）时 ACS 收到的是别的站点的 POST，会话
-  cookie（`Lax`）不会带上，所以由发起这次尝试的记录里的用户 id 决定是谁，那条
-  记录只有已登录的人才能建。尝试的 cookie 是 `__Secure-`，兄弟子域名也能种，
-  所以关联时另发一个只属于本主机的 `__Host-petalbook_saml_link_<slug>`
-  （`SameSite=None; Secure; Path=/`），记录里存它的哈希，ACS 对上了才关联。
-  按地址配的元数据每 24 小时（从启动算起）后台重取，取不到时继续用库里上一次
-  好的那份。
-- **passkey**：按用户名开始的仪式记在内存里（和仪式一样 5 分钟、最多一万条），
-  结束时才知道是哪个用户；假凭据 id 用 HMAC 算，密钥第一次用时随机生成并加密存
-  在 `site_settings`，重启后不变。计数器倒退由凭据存储的写回拒绝，写审计
-  `passkey_clone`，存的计数不动。每个 passkey 记着注册时的主机（`rp_id`），
-  换了主机名之后安全页提示 `passkey_host_changed`，启动时也写日志。
-- **用户的 `passkeyRequired`**：响应里是有效值（本人被要求，或者角色被要求），
-  `PATCH` 改的只是本人的标记。
-- **GitHub**：用授权码加 PKCE；组织只看 `/user/orgs` 的前 500 个（5 页）。
-- **提供方创建**：够得着就按请求里的 `enabled`（默认开）；够不着照合同存下来、
-  默认关。两个提供方不能用同一个签发方，SAML 的签发方在取到元数据之后才知道，
-  所以那时再检查。
-- **内存**：每分钟计数、三张失败表各一万个键（被锁的最后才丢）；验证码题目、
-  passkey 仪式各一万个、5 分钟（authcore 自带的有界存储）；SSO 进行中的登录
-  一万个、10 分钟；SAML 用过的断言 id 65536 个；审计队列一万条，满了丢弃并在
-  下一批写一行 `dropped`。
+- **Libraries**: passkey, SAML, CAPTCHA and OIDC all use authcore's `passkey`,
+  `saml`, `captcha` and `oidc`, with the version unchanged (`f3886de`).
+  authcore's `saml` requires the user to repeat, in its own `go.mod`, its
+  `replace` for `crewjam/saml` (swapped for a pinned commit of
+  `openctemio/saml`), which has been added; the virtual authenticator in tests
+  is `descope/virtualwebauthn`, and the fake IdP is `crewjam/saml`'s
+  `IdentityProvider`.
+- **Storage**: migration `0014_signin.sql` (main goes up to 0010, `feat/mcp`
+  uses 0011 and 0012, `feat/github-app` uses 0013). New tables
+  `sign_in_providers` (secrets encrypted with `secret.Box`, discovery documents
+  and metadata in the `cache` column), `passkeys` (credential JSON, `rp_id`,
+  `synced`) and `audit_log`; `users` gains `email_verified` and
+  `passkey_required`, and `sessions` gains `held`. The security settings are one
+  row in `site_settings` with the key `security`, whose `updated` is the
+  revision number: after a command-line change, the running service reads it at
+  the latest after `CacheTTL` (5 minutes), and each request only compares the
+  time in memory, with no database query. The migration-count test was changed
+  to count files.
+- **Old flags**: at the first start, `--oidc-*` creates a provider with slug
+  `sso` (`legacyCallback` on, enabled, `autoCreate` following the flag) and
+  records an `oidc_imported` row in `site_settings`. Afterwards, if the flags
+  disagree with the database, or that provider was deleted, it only writes a log
+  line and shows a `flags_ignored` notice on the security page; once deleted,
+  starting again with the flags does not re-create it. The identities table was
+  not changed, and the identities bound before still work. The sign-in mode
+  stays `dual` and `ssoOnly` off, so nobody is locked out.
+- **The order of decisions at sign-in** follows the contract: per-minute count,
+  CAPTCHA, failures per IP, lockout, password hash, only after a wrong password
+  record the user name and combination failures, `sso_only`, passkey required.
+  The IP one is "reserve a slot first, give it back on success" (as before), so
+  for a batch of wrong passwords arriving at once, at most the limit number get
+  to the hash. A wrong CAPTCHA, a required passkey and `sso_only` do not count as
+  a wrong password. A locked request is recorded in the audit log as
+  `login_failed` with reason `rate_limited`; the lockout itself is recorded as
+  `lockout`. Failures that anyone can fabricate are kept from flooding the audit
+  log: wrong CAPTCHA answers, and addresses that are locked or at the limit, are
+  recorded at most one row per address (IPv6 by /64) per reason per minute;
+  passkey ceremonies that never started and SSO callbacks matching no sign-in
+  are not recorded.
+- **SAML**: the metadata gives only the signing certificate and not an
+  encryption certificate, because we reject encrypted assertions, and an IdP
+  that sees an encryption certificate would encrypt. When linking (`link`), what
+  the ACS receives is a POST from another site, the session cookie (`Lax`) is
+  not sent along, so who it is is decided by the user id in the record of the
+  attempt that started it, and only a signed-in person can create that record.
+  The attempt's cookie is `__Secure-`, which sibling subdomains can also plant,
+  so for linking a second cookie that belongs only to this host,
+  `__Host-petalbook_saml_link_<slug>` (`SameSite=None; Secure; Path=/`), is sent
+  as well, its hash is stored in the record, and the link happens only if the
+  ACS matches it. Metadata configured by address is re-fetched in the background
+  every 24 hours (counted from start-up), and when it cannot be fetched, the
+  last good copy in the database continues to be used.
+- **passkey**: the ceremony started by user name is kept in memory (5 minutes and
+  at most ten thousand, like ceremonies), and only at the end is it known which
+  user it was; the fake credential id is computed with HMAC, and the key is
+  generated randomly at first use and stored encrypted in `site_settings`,
+  unchanged after restart. A counter regression is rejected by the credential
+  store's write-back, writing the audit entry `passkey_clone`, and the stored
+  count does not move. Each passkey remembers the host at registration
+  (`rp_id`); after the host name changes, the security page shows
+  `passkey_host_changed`, and a log line is written at start-up too.
+- **A user's `passkeyRequired`**: in the response it is the effective value (the
+  person is required, or their role is required), and what `PATCH` changes is
+  only the person's own mark.
+- **GitHub**: uses the authorization code plus PKCE; for organizations it looks
+  only at the first 500 of `/user/orgs` (5 pages).
+- **Creating a provider**: if it can be reached, it follows `enabled` in the
+  request (on by default); if it cannot be reached, it is stored as the contract
+  says, off by default. Two providers cannot use the same issuer; the issuer of
+  SAML is known only after the metadata is fetched, so the check is made then.
+- **Memory**: per-minute counts and the three failure tables each at ten thousand
+  keys (locked ones dropped last); CAPTCHA challenges and passkey ceremonies each
+  ten thousand and 5 minutes (authcore's own bounded store); SSO sign-ins in
+  progress ten thousand and 10 minutes; SAML used assertion ids 65,536; the audit
+  queue ten thousand, and when full it drops and writes one `dropped` row in the
+  next batch.
 
-测试：每条流程在 SQLite 和 PostgreSQL 上都跑（`scripts/test-postgres.sh`），
-用假的 OIDC 提供方、假的 SAML IdP、假的 GitHub、假的 siteverify 和虚拟认证器。
-覆盖：从旧参数升级不锁人、`sso_only` 的保存检查和各种拒绝、验证码在哈希之前、
-限制的顺序和三种锁定范围、SAML 的攻击用例（RelayState 或 cookie 不对、另一个
-`Destination`、没签名或被改过、SHA-1、两个或加密的断言、重复属性、临时或没有
-`NameID`、重放、IdP 发起）、邮箱合并的每个排除条件、要求 passkey 的扣住和放开、
-发现文档不在登录时去取。
+Tests: every flow runs on both SQLite and PostgreSQL
+(`scripts/test-postgres.sh`), with a fake OIDC provider, a fake SAML IdP, a fake
+GitHub, a fake siteverify and a virtual authenticator. Coverage: upgrading from
+the old flags without locking anyone out, the save checks and the various
+refusals of `sso_only`, the CAPTCHA before the hash, the order of the limits and
+the three lockout scopes, SAML attack cases (wrong RelayState or cookie, another
+`Destination`, unsigned or altered, SHA-1, two or encrypted assertions,
+duplicate attributes, transient or missing `NameID`, replay, IdP-initiated),
+every exclusion condition of email merging, holding and releasing for required
+passkeys, and the discovery document not being fetched at sign-in.
 
-**2.8 已知问题**
+**2.8 known issues**
 
-- 真浏览器里的 WebAuthn 和第三方验证码的真实脚本没有测过，只有虚拟认证器和
-  假的 siteverify。
-- `sso_only_with_registration` 这条保存检查先留着，公开注册还没有。
-- SAML 的签名密钥不能轮换（合同里本来就不做），证书 10 年后过期要重建提供方。
-- OIDC 提供方的发现文档存库之后不会自己更新，要点「刷新」。
-- `GET /api/captcha?account=` 的回答能看出某个用户名最近是不是错了好几次（要不要
-  验证码按用户名的失败数定）。透露的东西不多，接受。
-- `ssoOnly` 开着时新建一个会启用的提供方（`enabled` 没给或是 `true`），而且没有
-  带密码的启用管理员，会直接以 `400 local_admin_required` 拒绝，而不是先存成停用
-  的。用 `PATCH` 启用已有提供方的那条有测试，新建的这条没有。
-- 合并主线（2.6）时定下：被扣住的会话（要先注册 passkey）不能建 API 令牌，也不能
-  在授权页同意（都是 `403 passkey_required`）；之前建好的令牌和 OAuth 授权不受
-  扣住影响，照常可用，要停就撤销（见 `docs/api.md`「Held sessions, API tokens and
-  OAuth grants」）。这样令牌请求不用每次查 passkey。审计日志加了 `token_created`、
-  `token_revoked`、`grant_revoked`；OAuth 授权是在换令牌（`/oauth/token`）时才建的，
-  不在接口层，`grant_created` 留到以后。
-- 和 2.7 合在一起时定下：被扣住的会话碰不到 GitHub 的任何接口（查看、连接、
-  断开、列出所有者和仓库、GitHub 的回调、带仓库建空间，都是
-  `403 passkey_required`），扣住之前连好的 GitHub 账号不受影响。GitHub 登录
-  （`/api/auth/github/{slug}/…`）和为仓库连接 GitHub 账号（`/api/connections/github/…`）
-  在跨站例外里也分开列。审计日志的三个事件种类（`connection_provider_changed`、
-  `account_connected`、`account_disconnected`）在 2.7b 里加上了，连带前端的种类列表、
-  文案、模拟服务器和接口文档的表。
-- passkey 和单点登录把返回地址（`return`）交给服务器，服务器只收 2048 字节以内的，
-  超过就回首页（密码登录在页面里跳转，没有这个限制）。`/oauth/authorize`
-  的地址一般远短于此，但客户端用很长的 `client_id`（元数据文档地址）和 `state`
-  时可能超过，那时登录后不会回到授权流程，要在客户端重新开始。
+- WebAuthn in a real browser and the real scripts of third-party CAPTCHAs have
+  not been tested, only the virtual authenticator and a fake siteverify.
+- The `sso_only_with_registration` save check is kept in advance; public
+  registration does not exist yet.
+- SAML signing keys cannot be rotated (the contract was not going to do it
+  anyway); when the certificate expires after 10 years the provider must be
+  rebuilt.
+- After an OIDC provider's discovery document is stored in the database it does
+  not update by itself; click "Refresh".
+- The answer of `GET /api/captcha?account=` shows whether a given user name has
+  recently been wrong several times (whether a CAPTCHA is needed is decided by
+  the failure count per user name). It reveals little, and is accepted.
+- When `ssoOnly` is on and a new provider that would be enabled is created
+  (`enabled` not given or `true`) and there is no enabled administrator with a
+  password, it is rejected directly with `400 local_admin_required` rather than
+  first being stored as disabled. The case of enabling an existing provider with
+  `PATCH` has a test; this creation case does not.
+- Decided when merging main (2.6): a held session (one that must register a
+  passkey first) cannot create an API token or consent on the authorization page
+  (both `403 passkey_required`); tokens created earlier and OAuth grants are not
+  affected by the hold and work as usual, and to stop them, revoke them (see
+  "Held sessions, API tokens and OAuth grants" in `docs/api.md`). This way a
+  token request does not need to look up passkeys every time. The audit log
+  gained `token_created`, `token_revoked` and `grant_revoked`; an OAuth grant is
+  created only when the token is exchanged (`/oauth/token`), which is not at the
+  API layer, so `grant_created` is left for later.
+- Decided when merging with 2.7: a held session cannot touch any GitHub API
+  (viewing, connecting, disconnecting, listing owners and repositories, GitHub's
+  callback, creating a space with a repository, all `403 passkey_required`), and
+  GitHub accounts connected before the hold are not affected. GitHub sign-in
+  (`/api/auth/github/{slug}/…`) and connecting a GitHub account for repositories
+  (`/api/connections/github/…`) are also listed separately in the cross-site
+  exceptions. The three audit event kinds (`connection_provider_changed`,
+  `account_connected`, `account_disconnected`) were added in 2.7b, together with
+  the front end's list of kinds, the text, the mock server and the table in the
+  API document.
+- passkey and single sign-on hand the return address (`return`) to the server,
+  which accepts only up to 2048 bytes, and anything longer goes back to the home
+  page (password sign-in redirects within the page and has no such limit). The
+  address of `/oauth/authorize` is usually much shorter, but when a client uses
+  a very long `client_id` (a metadata document address) and `state` it may
+  exceed that, and then after sign-in it will not return to the authorization
+  flow, and the client has to start again.
 
-**2.7b 的约定（2026-11-23）**：通用的连接，以及「存储与同步」。接口和错误码写在
-`docs/api.md` 的「Connections」一节（2.7 的「GitHub」一节改成了「The GitHub provider」，
-管理员的那一节在「Administration」的「Connections」）。所有者 2026-11-23 定：这是 2.7 的
-修复之后、2.7 合并之前的一个里程碑，在 2.7 的分支上做，和 2.7 一起合并（作为 2.7 那个 PR 的
-最后一部分，在分支上单独审一次）。3.1 的约定在 `feat/storage` 里；那里的路由、错误码、
-`github` 字段按下面的对照表改名。
+**The 2.7b contract (2026-11-23)**: general connections, and "Storage & sync".
+The API and error codes are written in the "Connections" section of
+`docs/api.md` (the "GitHub" section of 2.7 was renamed "The GitHub provider",
+and the administrator part is under "Connections" in "Administration"). Decided
+by the owner on 2026-11-23: this is a milestone after the 2.7 fixes and before
+the 2.7 merge, done on the 2.7 branch and merged together with 2.7 (as the last
+part of the PR of 2.7, reviewed once separately on the branch). The 3.1 contract
+is in `feat/storage`; the routes, error codes and `github` field there are
+renamed according to the mapping below.
 
-定下来的：
+Settled:
 
-- **命名：「存储与同步」**（所有者 2026-11-23 定）。界面和文档里不再有「代码托管」
-  或单独的「GitHub」一节：
-  - 管理页「存储与同步」把 3.1 的「存储」页和 2.7 的「GitHub」管理页并成一页：
-    上半是「存在哪里」的规则（3.1 的要求远端、宽限期、只在本地的空间的上限、允许的
-    主机；3.5 的站点存储预算和存储压力，见「3.5 的约定」）；下半是「连接」：每个平台
-    一张卡片（品牌图标、配好没有、是否支持部分同步、GitHub 的 App 和安装列表、
-    以后 GitLab／Gitea 的 OAuth 应用）。2.7 和 3.1 谁后合并，谁负责把两页并起来。
-  - 账号页的那一栏叫「已连接的账号」，每个平台一行（GitHub 一行，以后 GitLab 等各
-    一行），2.7 的「空仓库提醒」放在对应平台那一行下面。
-  - 新建空间时的选择叫「存在哪里」：这台服务器／同步到 GitHub／同步到 GitLab／…
-    （只列出全站配好、这个人能用的平台），最后是「其他（按地址）」。
-  - 对普通用户界面上不说 Git 和仓库：说「同步到 GitHub」「在 GitHub 上的位置」
-    「同步出了问题」。管理页和「其他（按地址）」这个高级选项里照实说 Git、仓库、
-    部署密钥。
-- **后端一个提供方接口**：一个提供方说明自己（类型、主机、显示名、能力）、连接一个
-  人（开始授权、回调、续期、断开）、列出可建仓库的地方和已有的仓库、建仓库、给 Git
-  的凭据、检查自己的配置。服务器里的提供方在内存里一张表，按 id 查。
-  - **GitHub 是第一个实现**，2.7 的行为全部照旧：一键用 App Manifest 建 App、安装和
-    授权在 GitHub 的同一趟流程里完成、组织的安装按租户共享、令牌按单个仓库收窄。
-    `internal/githubapp` 不动，只在它上面加一层实现这个接口。
-  - **GitLab**（gitlab.com 和自托管）和 **Gitea／Forgejo／Codeberg** 在它们自己的
-    里程碑 3.8 里做：每个主机一个 OAuth 应用，由管理员配，用户连一次。
-  - **按地址的普通 Git**（部署密钥或令牌）保留，是类型 `git` 的提供方：没有「连接」，
-    凭据仍是每个空间一份。
-  - 能力（`capabilities`）每个提供方一组：能不能建仓库、有没有安装（只有 GitHub）、
-    能不能连个人账号、能不能当租户的存储目标、是否支持部分同步（3.5 起自动检测，
-    见下）。界面只按能力显示选项，不按平台名字写死。
-- **接口是通用的**（所有者 2026-11-23 定：还没发布，选干净的通用形状，不留别名）：
-  - `GET /api/connections` 列出提供方（类型、能力、这个人的连接状态、空仓库提醒）；
-    2.7 的 `/api/github/…` 变成 `/api/connections/github/…`，`/api/admin/github…`
-    变成 `/api/admin/connections/github…`；租户的（3.6）变成
-    `/api/admin/tenants/{tenant}/connections/{provider}…`。
-  - `POST /api/spaces` 的 `github` 变成 `storage.sync`：`{provider, owner, name,
-    private, create, assets}`；不带就是「这台服务器」。
-  - Remote 的凭据 `type: "github"` 变成 `type: "connection"`，带 `provider` 和 `via`
-    （`app`、`user`，3.6 加 `tenant`）。
-  - 错误码去掉 `github_` 前缀、带 `provider`：比如 `github_authorization_expired` 变成
-    `connection_expired`，`github_not_configured` 变成 `provider_not_configured`，
-    `github_repo_not_in_installation` 变成 `repo_not_in_installation`。对照表在
-    `docs/api.md`。
-  - 3.1 的 `remotes.require` 取 `null`、`"any"` 或一个提供方 id（取代 `"github"`）；
-    3.1 的 `github.assets` 变成 `storage.sync.assets`。
-- **3.6 的租户存储目标用同一个接口**：存储目标就是「一个提供方 + 一个位置（GitHub 的
-  组织、GitLab 的组、Gitea 的组织）+ 租户的凭据」。GitLab／Gitea 的目标要等 3.8。
-  3.6 的能力 `integrations.github` 改名 `integrations.connections`，分层键
-  `github.useSiteApp` 改名 `connections.useSiteApps`。
-- **状态库**：GitHub 自己的表（`github_authorizations`、`github_installations`、
-  `github_installation_tenants`）名字不变，是 GitHub 实现的；`remotes` 的
-  `cred_type` 取 `ssh`、`token`、`connection`，加一列 `provider`。迁移用合并时下一个
-  空着的编号，SQLite 和 PostgreSQL 都测；v0.x 不做升级兼容：2.7b 之前建的开发库
-  必须删掉重建，迁移不转换里面的旧行（例如 `cred_type = 'github'`）。
-- **测试**：提供方接口有一套共用的合同测试（假的提供方跑一遍，GitHub 实现跑一遍，
-  3.8 的两个实现以后也跑这一套）。
+- **Naming: "Storage & sync"** (decided by the owner, 2026-11-23). The UI and
+  the documents no longer have "code hosting" or a separate "GitHub" section:
+  - The admin page "Storage & sync" merges 3.1's "Storage" page and 2.7's
+    "GitHub" admin page into one page: the upper half is the rules for "where it
+    is stored" (3.1's require-remote, grace period, the cap for local-only
+    spaces, allowed hosts; 3.5's site storage budget and storage pressure, see
+    "the 3.5 contract" in [phase-3-storage.md](phase-3-storage.md)); the lower
+    half is "Connections": one card per platform (brand icon, whether it is
+    configured, whether partial sync is supported, GitHub's App and installation
+    list, later GitLab/Gitea OAuth applications). Whichever of 2.7 and 3.1 is
+    merged later is responsible for merging the two pages.
+  - The row on the account page is called "Connected accounts", with one line per
+    platform (one for GitHub, later one each for GitLab and so on), and 2.7's
+    "empty repository reminder" goes under the line of the matching platform.
+  - The choice when creating a space is called "Where it is stored": This
+    server / Sync with GitHub / Sync with GitLab / … (listing only the platforms
+    configured site-wide that this person can use), and last "Other (by
+    address)".
+  - The UI does not say Git and repository to ordinary users: it says "Sync with
+    GitHub", "Where it is on GitHub" and "Something went wrong with syncing". The
+    admin page and the advanced option "Other (by address)" say Git, repository
+    and deploy key as they are.
+- **One provider interface in the back end**: a provider describes itself (type,
+  host, display name, capabilities), connects a person (start authorization,
+  callback, renewal, disconnect), lists the places where repositories can be
+  created and the existing repositories, creates a repository, gives the
+  credential for Git, and checks its own configuration. The providers in the
+  server are one table in memory, looked up by id.
+  - **GitHub is the first implementation**, and all the behavior of 2.7 stays:
+    creating the App in one click with the App Manifest, installation and
+    authorization done in one GitHub flow, organization installations shared per
+    tenant, tokens narrowed to a single repository. `internal/githubapp` is not
+    touched, and only a layer implementing this interface is added on top of it.
+  - **GitLab** (gitlab.com and self-hosted) and **Gitea/Forgejo/Codeberg** are
+    done in their own milestone, 3.8: one OAuth application per host, configured
+    by an administrator, and users connect once.
+  - **Plain Git by address** (deploy key or token) is kept, as a provider of type
+    `git`: there is no "connection", and the credential is still one per space.
+  - Capabilities (`capabilities`) are one set per provider: whether it can create
+    repositories, whether it has installations (only GitHub), whether personal
+    accounts can be connected, whether it can serve as a tenant's storage target,
+    whether partial sync is supported (detected automatically from 3.5, see
+    below). The UI shows options only by capability, and does not hard-code
+    platform names.
+- **The API is general** (decided by the owner, 2026-11-23: not yet released,
+  choose the clean general shape, leave no aliases):
+  - `GET /api/connections` lists the providers (type, capabilities, this person's
+    connection state, empty repository reminders); 2.7's `/api/github/…` becomes
+    `/api/connections/github/…`, `/api/admin/github…` becomes
+    `/api/admin/connections/github…`; the tenant's (3.6) becomes
+    `/api/admin/tenants/{tenant}/connections/{provider}…`.
+  - The `github` of `POST /api/spaces` becomes `storage.sync`: `{provider, owner,
+    name, private, create, assets}`; without it, it means "this server".
+  - The Remote credential `type: "github"` becomes `type: "connection"`, with
+    `provider` and `via` (`app`, `user`, with `tenant` added in 3.6).
+  - Error codes drop the `github_` prefix and carry `provider`: for example
+    `github_authorization_expired` becomes `connection_expired`,
+    `github_not_configured` becomes `provider_not_configured`, and
+    `github_repo_not_in_installation` becomes `repo_not_in_installation`. The
+    mapping table is in `docs/api.md`.
+  - 3.1's `remotes.require` takes `null`, `"any"` or a provider id (replacing
+    `"github"`); 3.1's `github.assets` becomes `storage.sync.assets`.
+- **3.6's tenant storage targets use the same interface**: a storage target is
+  "one provider + one place (GitHub organization, GitLab group, Gitea
+  organization) + the tenant's credential". GitLab/Gitea targets have to wait
+  for 3.8. 3.6's capability `integrations.github` is renamed
+  `integrations.connections`, and the layered key `github.useSiteApp` is renamed
+  `connections.useSiteApps`.
+- **State database**: GitHub's own tables (`github_authorizations`,
+  `github_installations`, `github_installation_tenants`) keep their names and
+  belong to the GitHub implementation; `cred_type` of `remotes` takes `ssh`,
+  `token` and `connection`, with one more column `provider`. The migration uses
+  the next free number at merge time, tested on both SQLite and PostgreSQL;
+  v0.x does no upgrade compatibility: development databases created before 2.7b
+  must be deleted and rebuilt, and the migration does not convert old rows in it
+  (for example `cred_type = 'github'`).
+- **Tests**: the provider interface has one shared contract test (the fake
+  provider runs through it, the GitHub implementation runs through it, and the
+  two implementations of 3.8 will run this suite later too).
 
-2.7b 不做的：GitLab、Gitea 的实现（3.8）；GitHub 以外的品牌图标（3.9；GitHub 的图标 2.7b 里做，
-用 Simple Icons 的 CC0 路径内联进网页，不连外网）；提供方的自动发现（管理员手动加）。
+Not doing in 2.7b: the GitLab and Gitea implementations (3.8); brand icons other
+than GitHub's (3.9; GitHub's icon is done in 2.7b, inlined into the web page
+with the CC0 paths of Simple Icons, with no external network connection);
+automatic discovery of providers (administrators add them by hand).
 
-所有者 2026-11-23 定的：
+Decided by the owner on 2026-11-23:
 
-1. 「存储与同步」取代「代码托管」和单独的「GitHub」：管理页一页，账号页「已连接的
-   账号」，新空间「存在哪里」；对普通用户不说 Git 和仓库。
-2. 后端一个提供方接口，GitHub（2.7 的 App）是第一个实现；GitLab、Gitea／Forgejo／
-   Codeberg 在自己的里程碑（3.8）；按地址的普通 Git 保留；接口通用，GitHub 专属的
-   路由改成按提供方的，不留别名；3.6 的租户存储目标用同一个接口。
+1. "Storage & sync" replaces "code hosting" and the separate "GitHub": one page
+   in the admin console, "Connected accounts" on the account page, "Where it is
+   stored" for a new space; ordinary users are not told about Git and
+   repositories.
+2. One provider interface in the back end, with GitHub (2.7's App) as the first
+   implementation; GitLab and Gitea/Forgejo/Codeberg in their own milestone
+   (3.8); plain Git by address is kept; the API is general, GitHub-specific
+   routes become per-provider ones with no aliases; 3.6's tenant storage targets
+   use the same interface.
 
-**2.7b 做出来的样子**：
+**2.7b: what was built**:
 
-- **接口在 `internal/connections`**：`Provider` 接口、`Registry`（按 id 查，内存里一张表）、
-  通用的 `Error`（带 `Provider`）和一套共用的合同测试（`connections/conntest`：假的提供方跑一遍，
-  GitHub 实现跑一遍）。`git`（按地址的普通 Git）是一个没有连接的提供方，`repos` 回空列表。
-  GitHub 的实现是 `internal/github` 的 `Service`，在 `internal/githubapp` 上加一层，行为照旧。
-- **网页**：管理页「存储与同步」（`/admin/storage`）放连接，一个平台一张卡片，3.1 的存储规则和
-  3.5 的预算以后放在卡片上面；账号页「已连接的账号」（`/settings/connections`）；新建空间的
-  「存在哪里」。普通用户的界面上没有 Git、仓库这两个词；GitHub 的图标是 Simple Icons 的路径，
-  内联在网页里。
-- **迁移**：0013 还没合并，就地改：`remotes` 加 `provider`，`cred_type` 的值是 `connection`。
-  开发库里已经跑过旧的 0013 的，要删了重建（v0.x 不做升级兼容）。
-- **审计**：加了 `connection_provider_changed`、`account_connected`、`account_disconnected`。
-- **顺手修了 2.7 评审里的五个问题**：
-  1. 一键建 App 时，GitHub 已经换出了 App 但保存失败（GitHub 连不上）：不再说「什么都没存」。
-     换出的密钥和 secret 加密留在内存里十分钟，管理员可以点「再试一次保存」
-     （`POST /api/admin/connections/github/manifest/retry`）；过期了就告诉管理员 App 已经在
-     GitHub 上、名字和地址，让他手动填。
-  2. 自动重新检查 App 时，只在库里的记录还是读到的那条时才写回（比较并替换），
-     所以不会盖掉刚保存的新 App。
-  3. 「这个人没装 App」的结果缓存一分钟，列所有者不会用光 App 的速率限制，日志也不会每次都记。
-  4. 用户令牌在没装 App 的组织下建仓库被拒：答 `app_not_installed`（带 `installUrl`）或
-     `provider_refused`，不再答 `app_missing_permission`。
-  5. 一键建 App 的尝试有自己的小表（最多 64 条，满了最早的先走），连接账号的尝试挤不掉它。
+- **The interface is in `internal/connections`**: the `Provider` interface, the
+  `Registry` (looked up by id, one table in memory), the general `Error` (with
+  `Provider`) and one shared contract test (`connections/conntest`: the fake
+  provider runs through it, the GitHub implementation runs through it). `git`
+  (plain Git by address) is a provider with no connection, and `repos` returns
+  an empty list. The GitHub implementation is the `Service` of `internal/github`,
+  a layer added on `internal/githubapp`, with behavior unchanged.
+- **Web**: the admin page "Storage & sync" (`/admin/storage`) holds the
+  connections, one card per platform, with 3.1's storage rules and 3.5's budget
+  to be placed above the cards later; the account page "Connected accounts"
+  (`/settings/connections`); "Where it is stored" when creating a space. The
+  words Git and repository do not appear in the ordinary user's UI; GitHub's
+  icon is a Simple Icons path, inlined in the web page.
+- **Migration**: 0013 has not been merged yet, so it is changed in place:
+  `remotes` gains `provider`, and the value of `cred_type` is `connection`.
+  Development databases that have already run the old 0013 must be deleted and
+  rebuilt (v0.x does no upgrade compatibility).
+- **Audit**: added `connection_provider_changed`, `account_connected` and
+  `account_disconnected`.
+- **Five problems from the 2.7 review were fixed on the way**:
+  1. When creating the App in one click, GitHub has already handed out the App
+     but saving fails (GitHub cannot be reached): it no longer says "nothing
+     was saved". The handed-out key and secret stay in memory encrypted for ten
+     minutes, and the administrator can click "Try saving again"
+     (`POST /api/admin/connections/github/manifest/retry`); once expired, the
+     administrator is told that the App is already on GitHub, with its name and
+     address, to fill in by hand.
+  2. When the App is automatically re-checked, it writes back only if the record
+     in the database is still the one that was read (compare and swap), so it
+     will not overwrite a new App that was just saved.
+  3. The result "this person has not installed the App" is cached for one
+     minute, so listing owners does not use up the App's rate limit, and the log
+     is not written every time.
+  4. A user token refused when creating a repository under an organization where
+     the App is not installed: answers `app_not_installed` (with `installUrl`) or
+     `provider_refused`, no longer `app_missing_permission`.
+  5. Attempts to create the App in one click have their own small table (at most
+     64, the earliest going first when full), and attempts to connect accounts
+     cannot push it out.
 
-**第 2 期之外，但 1.7 之后要记着的**
+**Outside phase 2, but to remember after 1.7**
 
-- 1.7 的已知问题（见上文「1.7 的现状」），各自碰到相关代码时再处理。
-- 4.5 的「本地放不下」四步，和「强制跟随远端」「独立附件仓库」一起
-  作为第 3 期开头的里程碑 3.1（见下）。
+- The known issues of 1.7 (see "1.7 as built" in [phase-0-1.md](phase-0-1.md)), each to be handled when
+  the related code is touched.
+- The four steps of "does not fit locally" in 4.5 ([phase-4.md](phase-4.md)),
+  together with "force following the remote" and "separate attachment
+  repository", are milestone 3.1 at the start of phase 3 (see below).

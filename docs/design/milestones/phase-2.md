@@ -1,174 +1,229 @@
 # Milestones: phase 2, structure and AI (2.1 to 2.6)
 
-## 第 2 期：结构与 AI
+## Phase 2: structure and AI
 
-页面类型和表格视图；`[[链接]]` 和反向链接；模板；校验页；API token；MCP；
-GitHub App 和用户授权，自动建仓库；passkey；SAML。
+Page types and the table view; `[[links]]` and backlinks; templates; the
+validation page; API tokens; MCP; GitHub App and user authorization, automatic
+repository creation; passkey; SAML.
 
-### 第 2 期的里程碑（计划，2026-11-22）
+### Phase 2 milestones (planned, 2026-11-22)
 
-排序的依据：先做所有者每天写作马上用得上的（类型、视图、首页、链接），再做机器
-访问（MCP），最后是建仓库和登录方式这些「换个用法」才需要的。每个里程碑
-一个 PR，都要在单用户模式下先成立，再加权限（见 1.7）。
+The ordering: first what the owner needs right away when writing every day
+(types, views, home, links), then machine access (MCP), and last repository
+creation and sign-in methods, which are only needed when "used a different way".
+Each milestone is one PR, and each must first work in single-user mode, then
+add permissions (see 1.7).
 
-| 里程碑 | 内容 |
+| Milestone | Content |
 |---|---|
-| 2.1 | 页面类型、属性面板、表格视图 |
-| 2.2 | 保存的视图、看板、连读 |
-| 2.3 | 空间首页、收藏、每日文案 |
-| 2.4 | 页面链接和反向链接 |
-| 2.5 | 模板和校验页 |
-| 2.6 | API token 和 MCP |
-| 2.7 | GitHub App、GitHub 用户授权、自动建仓库 |
-| 2.7b | 通用的连接（一个提供方接口，GitHub 是第一个实现）；「存储与同步」的命名和管理页合并（所有者 2026-11-23 加，在 2.7 的修复之后、2.7 合并之前做，见「2.7b 的约定」） |
-| 2.8 | passkey、SAML、同时配多个登录提供方、登录验证码 |
+| 2.1 | Page types, the properties panel, the table view |
+| 2.2 | Saved views, the board, reading in sequence |
+| 2.3 | Space home, favourites, daily text |
+| 2.4 | Page links and backlinks |
+| 2.5 | Templates and the validation page |
+| 2.6 | API tokens and MCP |
+| 2.7 | GitHub App, GitHub user authorization, automatic repository creation |
+| 2.7b | Generic connections (one provider interface, GitHub is the first implementation); merge the naming of "storage and sync" with the management page (added by the owner on 2026-11-23, done after the 2.7 fixes and before the 2.7 merge, see the 2.7b contract in [phase-2-connections.md](phase-2-connections.md)) |
+| 2.8 | passkey, SAML, several sign-in providers configured at once, sign-in verification code |
 
-**2.1 页面类型、属性面板、表格视图**
+**2.1 Page types, the properties panel, the table view**
 
-- 类型是 `.petalbook/types/<名字>.json`，标准 JSON Schema，只用其中一个
-  子集：字符串、长文本、单选（`enum`）、多选（`array` + `enum`）、日期、
-  数字、勾选、网址。子集之外的关键字照样留在文件里，界面上该字段按原始
-  YAML 显示和编辑，不丢、不报错。
-- 文件夹在 `space.yml` 里绑定类型，子文件夹继承，可以单独改绑；页面头部
-  写了 `type` 的以头部为准。
-- 属性面板由 schema 生成，放在副标题和标签下面。不引入 rjsf：它为通用后台
-  表单设计，体积大，而这里只要上面几种控件；自己写一个小的渲染器，单独
-  按需加载，没有类型的页面不加载。
-- 空间设置里有「类型」分区：新建、改字段、删字段。改名或删掉一个字段不去
-  改已有页面的头部（几万篇一次全改既慢又是一次巨大的提交），旧字段在属性
-  面板里显示为「不在类型里」，可以一键清掉单篇。
-- **索引**：新加一张 `props(page, key, value)` 表，按 `(key, value)` 和
-  `page` 各建索引。单选、日期、数字存成可排序的形式，多选每个值一行。表格
-  视图的筛选和排序都在这张表上做，不读文件。几万篇时先用一个 5 万篇的造数
-  测一次筛选加排序的耗时再定方案，目标和现在的列表一样在几十毫秒内。
-- **表格视图**：绑定了类型的文件夹可用。列是类型字段加标题、标签、时间；
-  按列排序，按字段筛选；单选、多选、日期、勾选在格子里直接改（改的是页面
-  头部，走正常的草稿和提交，一次改一篇）。行数多时分页加载并虚拟滚动，不
-  一次拿全部。
-- 单用户模式、只读成员（格子不可改）都要测到。
+- A type is `.petalbook/types/<name>.json`, standard JSON Schema, using only a
+  subset: string, long text, single select (`enum`), multi select (`array` +
+  `enum`), date, number, checkbox, URL. Keywords outside the subset are still
+  kept in the file; the UI shows and edits that field as raw YAML, with nothing
+  lost and no error.
+- A folder is bound to a type in `space.yml`; subfolders inherit it and can be
+  re-bound on their own; if the page header has a `type`, the header wins.
+- The properties panel is generated from the schema and sits below the subtitle
+  and the tags. rjsf is not introduced: it is designed for generic admin forms,
+  is large, and here only the controls above are needed; we write a small
+  renderer of our own, loaded on demand separately, and not loaded for pages
+  without a type.
+- Space settings have a "Types" section: create, change fields, delete fields.
+  Renaming or deleting a field does not change the headers of existing pages
+  (changing tens of thousands at once is both slow and one huge commit); the old
+  field shows in the properties panel as "not in the type", and can be cleared
+  from a single page with one click.
+- **Index**: add a new table `props(page, key, value)`, with indexes on
+  `(key, value)` and on `page`. Single select, date and number are stored in a
+  sortable form, and a multi select has one row per value. The table view's
+  filtering and sorting are both done on this table, without reading files. With
+  tens of thousands of pages, first measure the time of filter plus sort once
+  with a synthetic set of 50,000 pages before deciding on the approach; the goal
+  is, as with the current list, within tens of milliseconds.
+- **Table view**: available for folders bound to a type. The columns are the
+  type's fields plus title, tags, time; sort by column, filter by field; single
+  select, multi select, date and checkbox are edited directly in the cell (what
+  changes is the page header, through the normal draft and commit, one page at a
+  time). With many rows, load by page with virtual scrolling, and do not fetch
+  everything at once.
+- Single-user mode and read-only members (cells not editable) must both be
+  tested.
 
-2.1 的实现方案（2026-11-22）：
+The 2.1 implementation plan (2026-11-22):
 
-- **类型文件**：`.petalbook/types/<名字>.json`，文件名（不含 `.json`）就是
-  页面头部 `type` 的值，建好后不改名（改名要动所有页面）；显示名是 schema
-  的 `title`，可以改。顶层是 `{"title", "properties": {…}}`，字段顺序就是
-  文件里 `properties` 的键顺序（读时保持顺序，不经过 Go 的 map）。
-- **字段种类**和 schema 的对应：
-  | 种类 | schema |
+- **Type file**: `.petalbook/types/<name>.json`; the file name (without `.json`)
+  is the value of the page header's `type`, and is not renamed once created
+  (renaming would touch every page); the display name is the schema's `title`,
+  which can be changed. The top level is `{"title", "properties": {…}}`, and the
+  field order is the key order of `properties` in the file (order is kept on
+  read, not going through a Go map).
+- The **field kinds** and their schema:
+  | Kind | schema |
   |---|---|
-  | 文字 | `{"type":"string"}` |
-  | 长文字 | `{"type":"string","x-multiline":true}` |
-  | 单选 | `{"type":"string","enum":[…]}` |
-  | 多选 | `{"type":"array","items":{"type":"string","enum":[…]},"uniqueItems":true}` |
-  | 日期 | `{"type":"string","format":"date"}` |
-  | 数字 | `{"type":"number"}` |
-  | 勾选 | `{"type":"boolean"}` |
-  | 网址 | `{"type":"string","format":"uri"}` |
-  每个字段可以有 `title`（显示名）。认不出的字段种类为「其他」，属性面板里按
-  原始 YAML 显示和编辑。服务端改类型时只改它认得的键，字段对象里其余的键
-  原样留着。
-- **字段的键**：不能是内置字段（`id`、`title`、`subtitle`、`source`、`tags`、
-  `created`、`type`）和预留的 `publish`、`slug`；非空，不超过 64 字节，没有
-  控制字符和 `:`。可以是中文。
-- **绑定**写在 `space.yml`：
+  | Text | `{"type":"string"}` |
+  | Long text | `{"type":"string","x-multiline":true}` |
+  | Single select | `{"type":"string","enum":[…]}` |
+  | Multi select | `{"type":"array","items":{"type":"string","enum":[…]},"uniqueItems":true}` |
+  | Date | `{"type":"string","format":"date"}` |
+  | Number | `{"type":"number"}` |
+  | Checkbox | `{"type":"boolean"}` |
+  | URL | `{"type":"string","format":"uri"}` |
+  Each field can have a `title` (display name). A field kind that is not
+  recognized is "other", and the properties panel shows and edits it as raw
+  YAML. When the server changes a type it only changes the keys it knows; the
+  other keys in the field object are left as they are.
+- **Field keys**: cannot be a built-in field (`id`, `title`, `subtitle`,
+  `source`, `tags`, `created`, `type`) or the reserved `publish` and `slug`;
+  non-empty, at most 64 bytes, no control characters and no `:`. It can be
+  Chinese.
+- The **binding** is written in `space.yml`:
   ```yaml
   folders:
     Tang:
       type: 文案
   ```
-  子文件夹继承最近的绑定；页面头部写了 `type` 的以头部为准。新建页面时**不**
-  往头部写 `type`，靠继承；页面响应和摘要里多一个 `effectiveType`。绑定按路径
-  记，所以文件夹改名、移动时同一次提交里改 `space.yml`。
-- **索引**：`pages` 表多一列 `props`（头部里内置字段以外的键，JSON，过长的
-  字符串截到 300 字）；新表 `props(page, key, pos, val, skey)`：标量一行，
-  数组每个元素一行（`pos` 是位置），对象不进。`skey` 是排序用的键：数字编码
-  成按字面能排序的文本，日期原样，文字同 `title_key` 的规则，勾选 0/1。
-  索引 `(key, skey, page)`、`(key, val, page)`、`(page)`。索引所有非内置的键，
-  不管属于哪个类型，所以改类型、改绑定都不用重建索引。索引版本加一，第一次
-  启动会全量重建一次（5 万篇约 30 秒）。
-- **列表接口**：`GET …/pages` 加：
-  - `props=1`：摘要里带 `props`（上面那列）和 `rev`，表格视图用；不带时摘要
-    不变，列表和卡片的流量不增加。
-  - `sort=prop:<键>` / `-prop:<键>`：按字段排序，没有这个字段的排最后，再按
-    `rowid`；多选按第一个值。游标照旧是键集分页。
-  - `filter`：JSON 数组，每项 `{"key","op","values"}`，`op` 是 `in`（等于其中
-    之一；多选是包含其中之一）、`range`（`values` 是 `[从, 到]`，任一端可为
-    空，数字和日期用）、`empty`、`notEmpty`、`contains`（文字包含，按
-    `val` 做子串，只在这个键的行里找）。多项之间是「且」。
-- **只改属性的接口**：`PATCH …/pages/{id}/props`，`{"baseRev", "set": {…},
-  "unset": [...]}`，只改头部，正文不经过网络；`baseRev` 不对答 409，同 PUT。
-  需要 `write`。表格格子里的修改走它。草稿的处理和 PUT 一样（不丢草稿）。
-- **类型接口**（读要 `read`，写要 `manage`）：
-  - `GET …/types`：每个类型的名字、显示名、按顺序的字段（键、显示名、种类、
-    选项、原始 schema），加上文件读不了时的错误说明；外加所有绑定。
-  - `PUT …/types/{name}`：建或改，带字段列表；服务端合并进原文件，保留认不出
-    的键。
-  - `DELETE …/types/{name}`：删文件，并在同一次提交里去掉指向它的绑定。页面
-    头部不动。
-  - `PUT …/folders/type`：`{"folder", "type"}`，`type` 为空是解除绑定。
-  类型文件写坏了（手改）就照 `tags.yml` 的做法：不覆盖，答 400 说要手修。
-  一个空间最多 100 个类型，每个文件最多 256 KiB、200 个字段。
-- **值的校验**：不拦保存。不符合 schema 的值照样存，属性面板标红；2.5 的
-  校验页列出来。
-- **前端**：
-  - 属性面板在副标题、标签下面，按字段种类给控件；值的修改进草稿，和标题
-    一样。面板是单独的按需加载块，页面没有类型时不加载。不在类型里的字段
-    另列一组，每个可以清掉。
-  - 空间设置多一个「类型」分区（有 `manage` 才能改）：建类型、加字段、改
-    显示名、改选项、调顺序、删字段、删类型；文件夹的右键菜单里有「设置
-    类型」。
-  - 文件夹视图多一个「表格」，有类型的文件夹才出现。列是标题加类型字段，
-    再加标签、更新时间；点列头排序；字段筛选；单选、多选、日期、勾选、
-    数字在格子里改（只读成员不能改）。按游标分批加载，滚到底再取下一批，
-    行用虚拟滚动，几千行也不卡。
-  - 选的视图（列表、卡片、表格）按文件夹记在浏览器里；2.2 再改成存进
-    `space.yml`。
+  A subfolder inherits the nearest binding; if the page header has a `type`, the
+  header wins. When a page is created, `type` is **not** written into the
+  header, and inheritance is used; the page response and the summary get one
+  more field, `effectiveType`. Bindings are recorded by path, so when a folder
+  is renamed or moved, `space.yml` is changed in the same commit.
+- **Index**: the `pages` table gets one more column `props` (the keys in the
+  header other than the built-in fields, JSON, with overly long strings cut to
+  300 characters); a new table `props(page, key, pos, val, skey)`: one row for a
+  scalar, one row per element for an array (`pos` is the position), objects are
+  not included. `skey` is the key used for sorting: a number is encoded as text
+  that sorts by its literal form, a date is kept as is, text follows the same
+  rule as `title_key`, a checkbox is 0/1. Indexes on `(key, skey, page)`,
+  `(key, val, page)`, `(page)`. All non-built-in keys are indexed, regardless of
+  which type they belong to, so changing a type or a binding never needs an
+  index rebuild. The index version is bumped by one, and the first start does one
+  full rebuild (about 30 seconds for 50,000 pages).
+- **List endpoint**: `GET …/pages` gets:
+  - `props=1`: the summary carries `props` (the column above) and `rev`, for the
+    table view; without it the summary is unchanged, and the traffic for the
+    list and the cards does not grow.
+  - `sort=prop:<key>` / `-prop:<key>`: sort by field; pages without this field
+    go last, then by `rowid`; a multi select uses the first value. The cursor is
+    keyset pagination as before.
+  - `filter`: a JSON array, each item `{"key","op","values"}`, where `op` is `in`
+    (equal to one of them; for a multi select, contains one of them), `range`
+    (`values` is `[from, to]`, either end may be empty, for numbers and dates),
+    `empty`, `notEmpty`, `contains` (text contains, a substring match on `val`,
+    looking only in the rows of this key). Several items are combined with
+    "and".
+- **Properties-only endpoint**: `PATCH …/pages/{id}/props`, `{"baseRev", "set":
+  {…}, "unset": [...]}`, which only changes the header; the body does not go over
+  the network; a wrong `baseRev` answers 409, same as PUT. Needs `write`. Edits
+  in the table cells go through it. Drafts are handled the same as for PUT (no
+  draft is lost).
+- **Type endpoints** (reading needs `read`, writing needs `manage`):
+  - `GET …/types`: for each type, the name, the display name, the fields in
+    order (key, display name, kind, options, raw schema), plus an error message
+    when the file cannot be read; plus all bindings.
+  - `PUT …/types/{name}`: create or change, with a field list; the server merges
+    it into the original file, keeping the keys it does not recognize.
+  - `DELETE …/types/{name}`: delete the file, and remove the bindings pointing to
+    it in the same commit. Page headers are not touched.
+  - `PUT …/folders/type`: `{"folder", "type"}`; an empty `type` removes the
+    binding.
+  If a type file is broken (edited by hand), do what is done for `tags.yml`: do
+  not overwrite, answer 400 saying it must be fixed by hand. A space has at most
+  100 types, and each file at most 256 KiB and 200 fields.
+- **Value validation**: does not block saving. A value that does not match the
+  schema is saved anyway, and the properties panel marks it red; the 2.5
+  validation page lists them.
+- **Frontend**:
+  - The properties panel is below the subtitle and the tags, with a control per
+    field kind; value changes go into the draft, like the title. The panel is a
+    separate load-on-demand chunk, not loaded when the page has no type. Fields
+    not in the type are listed in a separate group, and each can be cleared.
+  - Space settings get one more "Types" section (changing needs `manage`):
+    create a type, add a field, change a display name, change options, reorder,
+    delete a field, delete a type; the folder's context menu has "Set type".
+  - The folder view gets one more "Table", which only appears for folders with a
+    type. The columns are the title plus the type's fields, then tags and
+    update time; click a column header to sort; filter by field; single select,
+    multi select, date, checkbox and number are edited in the cell (read-only
+    members cannot edit). Load in batches by cursor, fetch the next batch when
+    scrolled to the bottom, with virtual scrolling for rows, so thousands of rows
+    do not lag.
+  - The chosen view (list, cards, table) is remembered per folder in the
+    browser; 2.2 changes it to be stored in `space.yml`.
 
-**2.1 的现状（2026-11-22）**：上面的方案都做了，接口见 `docs/api.md`。实现时
-定下来的、方案里没写的：
+**2.1 as built (2026-11-22)**: everything in the plan above was built; see
+`docs/api.md` for the endpoints. Decided during implementation and not written in
+the plan:
 
-- 实测（5 万篇在一个文件夹里）：按字段排序取一页约 0.3 毫秒，翻到第 400 页
-  也一样；筛选加排序 1 到 2 毫秒；最慢的是只命中很少几篇的范围筛选，约 40 到
-  60 毫秒。
-- 一篇最多索引 200 个字段，一个列表最多 100 项；空文字和空列表算没有这个
-  字段，按字段排序时排在最后。索引里存的值不完整（截断、对象、超出上限）时，
-  摘要的 `partialProps` 列出这些键，表格里这些格子只读，要打开页面改。
-- 类型带 `rev`，改和删都要带上读到的 `rev`，别人先改了就答 409，不会互相
-  覆盖。已有字段即使不符合新字段的命名规则也照样保留。
-- 文件夹移动、删除时，改目录和改 `space.yml` 的绑定记成一笔日志，崩溃后恢复
-  时一起做完；本地模式下绑定写不进去就把移动撤回。`space.yml` 只有注释时，
-  写绑定不会丢注释；同一个文件夹写了两条绑定时，以最后一条为准。
-- 头部里真的是日期的文字（`YYYY-MM-DD`）不加引号写，其余像日期的文字加引号，
-  从不写 `!!` 标签，别的 YAML 工具读得了。
-- 表格里的数字和文字格子在离开或按回车时才保存，Esc 取消；选择类的格子
-  点了就存。
-- 浏览器里实测过：表格的排序、格子里改值后文件和提交都对；属性面板的各种
-  控件、不在选项里的值标红保留、「不在这个类型里」一组；设置里的类型编辑和
-  文件夹绑定。
+- Measured (50,000 pages in one folder): sorting by a field and taking one page
+  takes about 0.3 ms, the same when paging to page 400; filter plus sort takes 1
+  to 2 ms; the slowest is a range filter that hits only a few pages, about 40 to
+  60 ms.
+- At most 200 fields are indexed per page, and at most 100 items in a list; empty
+  text and an empty list count as not having the field, and go last when sorting
+  by the field. When a value stored in the index is incomplete (truncated, an
+  object, over the limit), the summary's `partialProps` lists those keys, and
+  those cells in the table are read-only; open the page to edit.
+- A type carries a `rev`; changing and deleting both need the `rev` that was read,
+  and if someone else changed it first the answer is 409, so changes do not
+  overwrite each other. An existing field is kept even if it does not match the
+  new field naming rule.
+- When a folder is moved or deleted, changing the directory and changing the
+  binding in `space.yml` are recorded as one journal entry, and finished together
+  on crash recovery; in local mode, if the binding cannot be written, the move is
+  undone. When `space.yml` has only comments, writing a binding does not lose the
+  comments; when two bindings are written for the same folder, the last one wins.
+- Text in the header that really is a date (`YYYY-MM-DD`) is written without
+  quotes, other text that looks like a date is quoted, and a `!!` tag is never
+  written, so other YAML tools can read it.
+- Number and text cells in the table are saved only on blur or on Enter, and Esc
+  cancels; select-type cells are saved as soon as they are clicked.
+- Verified in the browser: sorting in the table, and that the file and the commit
+  are right after editing a value in a cell; the various controls of the
+  properties panel, a value not in the options being marked red and kept, the
+  "not in this type" group; type editing in settings and folder binding.
 
-已知问题，带到后面：
+Known issues, carried forward:
 
-- 按单选字段排序是按文字排，不是按选项的顺序（「修改中、定稿、草稿」而不是
-  「草稿、修改中、定稿」）。按选项顺序排要么每次查询现排（几万篇时慢），要么
-  改选项顺序时重算所有相关页面的排序键；放到 2.2 和保存的视图一起定。
-- 改字段的选项（改名、删掉一个选项）不会改已有页面里的值，旧值在属性面板和
-  表格里标红；批量改值以后再做。
-- 文字「包含」筛选只对 ASCII 字母不分大小写。
+- Sorting by a single select field sorts by text, not by option order ("In
+  revision, Final, Draft" rather than "Draft, In revision, Final"). Sorting by option order would either
+  sort fresh on every query (slow with tens of thousands of pages) or recompute
+  the sort keys of all related pages when the option order changes; to be decided
+  in 2.2 together with saved views.
+- Changing a field's options (renaming, deleting an option) does not change the
+  values in existing pages; the old values are marked red in the properties panel
+  and the table; bulk value changes come later.
+- The text "contains" filter is case-insensitive only for ASCII letters.
 
-**2.2 保存的视图、看板、连读**
+**2.2 Saved views, the board, reading in sequence**
 
-- 视图 = 筛选、排序、分组、展示方式的组合，存在 `space.yml` 的 `views`
-  里，按文件夹（或标签）记，可以有多个，有一个默认的。
-- **看板**：按一个单选字段分列，拖动卡片改值；每列分页加载，不一次拉全部
-  卡片。
-- **连读**：把一个文件夹或一组筛选结果按顺序排成一篇长文阅读，往下滚时
-  按批取正文；只读，点某一篇进入编辑。
-- 列表、卡片、表格、看板、连读在标签页和搜索结果上也能用。
+- A view = a combination of filter, sort, grouping and display mode, stored in the
+  `views` of `space.yml`, recorded per folder (or tag); there can be several, with
+  one default.
+- **Board**: columns by a single select field, and dragging a card changes the
+  value; each column is loaded by page, and not all cards are pulled at once.
+- **Reading in sequence**: a folder or a set of filter results is laid out in order
+  as one long text to read, with the body fetched in batches as you scroll down;
+  read-only, and clicking a page enters editing.
+- List, cards, table, board and reading in sequence are also usable on tag pages
+  and on search results.
 
-2.2 的实现方案（2026-11-22）：
+2.2 implementation plan (2026-11-22):
 
-- **视图存在哪**：文件夹的视图写在 `space.yml` 里这个文件夹的条目下，和绑定
-  放在一起，文件夹改名、移动、删除时随条目一起走（沿用 2.1 的日志和恢复）：
+- **Where views are stored**: a folder's views are written in `space.yml` under that
+  folder's entry, together with the binding, and go with the entry when the folder
+  is renamed, moved or deleted (reusing the 2.1 journal and recovery):
   ```yaml
   folders:
     文案:
@@ -181,729 +236,1133 @@ GitHub App 和用户授权，自动建仓库；passkey；SAML。
           sort: -prop:written
           filter: [{key: series, op: in, values: [冬季]}]
   ```
-  标签的视图写在 `tags.yml` 这个标签的条目下（和颜色在一起）。根目录的键是
-  `""`。
-- **一个视图**：`id`（服务端发，短随机串，空间内唯一）、`name`、`layout`
-  （`list`、`cards`、`table`、`board`、`read`）、`sort`、`filter`（同列表接口的
-  写法）、`group`（看板的分列字段）、`hidden`（表格里隐藏的列）。第一个视图是
-  默认视图。认不出的键原样保留。每个文件夹或标签最多 20 个视图。
-- **接口**：`GET …/views?folder=` 或 `?tag=`，返回视图列表和 `rev`；`PUT …/views`
-  带 `{folder 或 tag, baseRev, views}`，整列替换，`rev` 不对答 409（带 `current`）。
-  改视图要 `write`：视图是大家共用的排列方式，能写页面的人就能改。没有写权限
-  的人可以切换视图，也可以临时改排序和筛选，只是存不回去。
-- **前端**：文件夹页和标签页顶上一排视图标签；新建、改名、复制、删除、拖动
-  排顺序。在一个视图里改了排序、筛选、分列、隐藏的列，标签上出现「已修改」，
-  点「保存」才写回（不是每点一下就提交一次）；「还原」丢掉改动。每个文件夹
-  上次用的视图记在浏览器里。还没有存过视图的文件夹和现在一样（一个隐含的
-  默认视图）。2.1 存在浏览器里的列表、卡片、表格的选择作为隐含视图的起点。
-- **单选按选项顺序排**（2.1 遗留）：按字段排序、并且列表带了 `folder` 时，
-  如果这个字段在文件夹的类型里是单选（或多选，按第一个值），排序顺序是：
-  选项依次，然后不在选项里的值（按文字），最后没有这个字段的。实现上按组做
-  索引扫描（每个选项一组，用 `(key, val, page)` 索引），游标记着在第几组，
-  不做全表排序。和 2.1 一样用 5 万篇的造数测，目标在几十毫秒内。
-- **看板**：`group` 是一个单选字段。列依次是各个选项、「其他值」（不在选项里
-  的值，有才显示）、「空」。
-  - 每列单独分页：列表接口加筛选 `notIn`（有值且不在给的选项里），各列就是
-    `in [选项]`、`notIn [全部选项]`、`empty` 三种筛选，每次 20 张，滚到底再取。
-  - 列头的数量：新接口 `GET …/pages/groups?folder=&key=&filter=`，返回
-    `[{value, count}]` 加空值的数量；在 `props` 表上按值分组计数，不读文件。
-  - 卡片显示标题（没有标题的显示正文开头）、两行摘录、标签、视图里选的至多
-    3 个字段。拖到别的列就是改这个字段（拖到「空」是去掉它），走 2.1 的
-    `PATCH props`，带 `rev`，冲突时刷新这张卡并提示。列内的顺序跟视图的排序，
-    不能手动排（第一版不做手动排序）。只读成员不能拖。
-- **连读**：按视图的排序和筛选，把页面一篇接一篇排成长文。
-  - 列表接口加 `body=1`：摘要里带正文（Markdown），这时 `limit` 最多 20。
-    要读这么多个文件，所以只在连读用。
-  - 前端把正文渲染成只读的排版，**不**为每篇挂一个编辑器；用已有的
-    Markdown 解析得到文档再画成静态的 HTML（图片、表格、代码、mermaid 和
-    编辑器里的样子一致）。是单独的按需加载块。
-  - 每篇显示标题、副标题（文案类型照 `《标题》｜副标题` 的样子），没有标题
-    的直接是正文；点标题进入编辑。往下滚时按批取，离开视口很远的篇目从
-    页面上卸掉，几百篇也不卡。
-- **标签页**能用除表格以外的全部展示方式（标签下的页面不一定同一类型）；
-  标签页的看板只有在视图里选了分列字段时才有。搜索现在是对话框，不做视图。
-- 顺手修 2.1 时发现的：表格的菜单开着时整张表被替换，改对齐会报错（
-  `tableOps.ts` 的 `columnAlign`）。
+  A tag's views are written in `tags.yml` under that tag's entry (together with the
+  color). The key for the root directory is `""`.
+- **A view**: `id` (issued by the server, a short random string, unique within the
+  space), `name`, `layout` (`list`, `cards`, `table`, `board`, `read`), `sort`,
+  `filter` (written as in the list endpoint), `group` (the board's column field),
+  `hidden` (columns hidden in the table). The first view is the default view. Keys
+  that are not recognized are kept as they are. At most 20 views per folder or tag.
+- **Endpoints**: `GET …/views?folder=` or `?tag=`, returning the view list and
+  `rev`; `PUT …/views` with `{folder or tag, baseRev, views}`, replacing the whole
+  list, and a wrong `rev` answers 409 (with `current`). Changing views needs
+  `write`: views are an arrangement shared by everyone, and whoever can write pages
+  can change them. People without write permission can switch views, and can also
+  change the sort and filter temporarily, but cannot save them back.
+- **Frontend**: a row of view tabs at the top of the folder page and the tag page;
+  create, rename, duplicate, delete, drag to reorder. When the sort, filter, column
+  grouping or hidden columns are changed in a view, "Modified" appears on the tab,
+  and only clicking "Save" writes it back (not a commit for every click); "Revert"
+  drops the changes. The last view used in each folder is remembered in the
+  browser. A folder with no saved view is the same as now (one implicit default
+  view). The choice of list, cards or table that 2.1 stored in the browser is the
+  starting point of the implicit view.
+- **Single select sorted by option order** (left over from 2.1): when sorting by a
+  field and the list carries `folder`, if this field is a single select in the
+  folder's type (or a multi select, by the first value), the sort order is: the
+  options in turn, then values not in the options (by text), and last those without
+  this field. In the implementation it is an index scan by group (one group per
+  option, using the `(key, val, page)` index), the cursor remembers which group it
+  is in, and there is no full-table sort. As in 2.1, test with a synthetic set of
+  50,000 pages, with the goal within tens of milliseconds.
+- **Board**: `group` is a single select field. The columns are, in turn, the
+  options, "Other values" (values not in the options, shown only if present), and
+  "Empty".
+  - Each column is paged separately: the list endpoint gets the filter `notIn` (has
+    a value and is not in the given options), and the columns are the three filters
+    `in [option]`, `notIn [all options]` and `empty`, 20 cards each time, fetching
+    more when scrolled to the bottom.
+  - The count in a column header: a new endpoint
+    `GET …/pages/groups?folder=&key=&filter=`, returning `[{value, count}]` plus the
+    number of empty values; grouped and counted by value on the `props` table,
+    without reading files.
+  - A card shows the title (the beginning of the body when there is no title), a
+    two-line excerpt, tags, and up to 3 fields chosen in the view. Dragging to
+    another column changes this field (dragging to "Empty" removes it), through the
+    2.1 `PATCH props`, with `rev`, and on conflict the card is refreshed with a
+    prompt. The order within a column follows the view's sort and cannot be set by
+    hand (the first version has no manual ordering). Read-only members cannot drag.
+- **Reading in sequence**: following the view's sort and filter, pages are laid out
+  one after another as a long text.
+  - The list endpoint gets `body=1`: the summary carries the body (Markdown), and
+    then `limit` is at most 20. Since that many files must be read, it is used only
+    for reading in sequence.
+  - The frontend renders the body as a read-only layout, and does **not** mount an
+    editor for each page; it uses the existing Markdown parser to get the document
+    and then draws it as static HTML (images, tables, code and mermaid look the same
+    as in the editor). It is a separate load-on-demand chunk.
+  - Each page shows the title and the subtitle (a text of the "text" type looks like
+    `《标题》｜副标题`), and a page without a title is just the body; clicking the title
+    enters editing. As you scroll down, pages are fetched in batches, and pages far
+    from the viewport are unmounted from the page, so even hundreds of pages do not
+    lag.
+- **Tag pages** can use all display modes except the table (the pages under a tag
+  are not necessarily of the same type); the board on a tag page is available only
+  when a column field has been chosen in the view. Search is now a dialog, and has
+  no views.
+- Fixed along the way, found while working on 2.1: when a table's menu is open the
+  whole table is replaced, and changing the alignment reports an error
+  (`columnAlign` in `tableOps.ts`).
 
-**2.2 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md`。经过
-十一轮对抗式审查，实现时定下来的、方案里没写的：
+**2.2 as built (2026-11-23)**: everything in the plan above was built; see
+`docs/api.md` for the endpoints. After eleven rounds of adversarial review,
+decided during implementation and not written in the plan:
 
-- **原则（所有者定）**：系统层面的问题不交给用户修。设置文件（`space.yml`、
-  `tags.yml`、类型文件）读不了时，从 Git 历史里最近能读的版本恢复，能救的
-  条目逐个救回，下次写入时修好并把原文留成 `<文件>.unreadable-<时间>`，只给
-  管理者一条通知；`.petalbook` 或 `.petalbook/types` 被换成链接时挪开重建，
-  绝不跟进去。
-- **YAML 锚点和别名**：读时照常解析（每个锚点只解析一次，开销只看文件写了
-  多少），写时只复制要改的那段、改完核对其余别名的意思没变；服务器自己只在
-  一种情况下写别名（给很多文件夹共用的条目去掉类型时）。
-- **服务器自己的状态**（索引、日志、通知、单用户模式的草稿库）放在 Git 目录里
-  （`.git/petalbook-state`，worktree 用它自己的 Git 目录）；`.petalbook/` 只放仓库内容。
-  原来放在 `.petalbook/cache` 时的搬迁代码按 §5.4 的规则删掉了。写文件时临时文件放在目标旁边（`.petalbook-w-*`）。
-- **索引的查询**：每个条件（范围、标签、筛选）都能按页查也能按索引区间取，
-  每次从三种做法里挑最省的；一个请求只读一个快照（读事务，加一个版本号判断
-  并行查询是否同一时刻）；写入有自己的连接；WAL 超过 16 MB 时在读之间合并，
-  不会无限变大。加锁顺序写在 `internal/index/read.go` 开头。
-- **实测**（5 万篇）：API 允许的组合基本都在 100 毫秒以内；按选项顺序排序、
-  看板每列、看板计数多在几毫秒到几十毫秒。
-- **视图的「没保存的改动」**：一份工作副本，排序也在里面；改动只落在它所属的
-  视图上，不是本人的操作就不悄悄丢（会提示）；本人保存视图的那一下视图控件
-  锁住，保存后重新读一次列表，读失败就先用保存的回复。
-- 看板卡片可以用键盘「移动到…」；管理者在空间设置和顶部提示里看到设置文件
-  的恢复通知。
-- PostgreSQL 上也跑一遍契约测试（`make contract-postgres`，在 `check-full`
-  和 `main` 的 CI 里）。
+- **Principle (set by the owner)**: problems at the system level are not handed to
+  the user to fix. When a settings file (`space.yml`, `tags.yml`, a type file)
+  cannot be read, recover from the most recent readable version in the Git
+  history, rescue entries one by one where possible, fix it on the next write and
+  keep the original as `<file>.unreadable-<time>`, and give only the managers one
+  notification; when `.petalbook` or `.petalbook/types` has been replaced by a
+  link, move it aside and rebuild, and never follow it.
+- **YAML anchors and aliases**: parsed as usual on read (each anchor is parsed
+  only once, so the cost depends only on how much the file writes), and on write
+  only the part to be changed is copied, and after the change the meaning of the
+  other aliases is checked to be unchanged; the server itself writes an alias in
+  only one case (when removing the type from an entry shared by many folders).
+- **The server's own state** (index, journal, notifications, the single-user
+  mode draft store) lives in the Git directory (`.git/petalbook-state`; a
+  worktree uses its own Git directory); `.petalbook/` holds only repository
+  content. The migration code from when it lived in `.petalbook/cache` was
+  deleted under the §5.4 rule. When writing a file, the temporary file is placed
+  next to the target (`.petalbook-w-*`).
+- **Index queries**: every condition (range, tag, filter) can be looked up by
+  page or taken by index range, and each time the cheapest of the three methods
+  is picked; one request reads only one snapshot (a read transaction, plus a
+  version number to tell whether parallel queries are at the same moment); writes
+  have their own connection; when the WAL exceeds 16 MB it is merged between
+  reads, so it does not grow without bound. The lock order is written at the top
+  of `internal/index/read.go`.
+- **Measured** (50,000 pages): the combinations the API allows are mostly within
+  100 ms; sorting by option order, each board column, and the board counts are
+  mostly a few ms to tens of ms.
+- **A view's "unsaved changes"**: one working copy, with the sort inside it too;
+  changes land only on the view they belong to, and when the change is not the
+  user's own action it is not silently dropped (a prompt is shown); during the
+  moment the user saves the view the view controls are locked, and after saving
+  the list is read again, and if that read fails the saved reply is used first.
+- Board cards can use the keyboard "Move to…"; managers see the settings-file
+  recovery notification in space settings and in the top banner.
+- The contract tests are also run on PostgreSQL (`make contract-postgres`, in the
+  CI of `check-full` and `main`).
 
-已知问题，带到后面：
+Known issues, carried forward:
 
-- 同时用满 10 个标签和 10 个几乎不筛掉页面的筛选时，查询和计数约 95–150
-  毫秒；写入一直不停时会退回按顺序读，可能接近 200 毫秒。
-- 读请求很多（20 个以上一直不停）时，最慢的一次读约 250–330 毫秒，主要在排队
-  等 8 个读连接。
-- 1 万个文件夹用合并键（`<<: *模板`）共用一个模板时，给它们去掉类型若写出来
-  超过 1 MB 会被拒绝。
-- 文件有语法错误时，引用了别处锚点的条目算作丢失（列在通知里），没有救回。
-- 一次全套检查（`make check-full`）约 7–8 分钟，太慢；2.2 合并后单独提速。
+- With 10 tags and 10 filters that hardly drop any pages in use at the same time,
+  queries and counts take about 95-150 ms; when writes keep going without a break
+  it falls back to reading in order, and may come close to 200 ms.
+- With many reads (20 or more, non-stop), the slowest read takes about 250-330
+  ms, mainly queuing for the 8 read connections.
+- When 10,000 folders share one template through a merge key (`<<: *template`),
+  removing their type is rejected if what would be written exceeds 1 MB.
+- When a file has a syntax error, an entry that refers to an anchor elsewhere
+  counts as lost (listed in the notification) and is not rescued.
+- One full set of checks (`make check-full`) takes about 7-8 minutes, which is too
+  slow; to be sped up separately after 2.2 is merged.
 
-**2.3 空间首页、收藏、每日文案**（所有者 2026-11-22 提出）
+**2.3 Space home, favourites, daily text** (proposed by the owner on 2026-11-22)
 
-- **每个空间一个首页**（所有者定，不做跨空间的总首页），是进入空间后默认
-  打开的页面，地址 `/s/<空间>/`。从上到下：
-  1. **问好和每日文案**（所有者 2026-11-23：每日文案放最上面，和问好在
-     一起）：按浏览器时间说「早上好／下午好／晚上好，<名字>」，下面紧接着
-     是今天的文案（文案类型照 `《标题》｜副标题` 的样子），可以「换一条」，
-     点开进入编辑；没有设置来源时只有问好。
-  2. **快速记录**：首页上直接写一条，写完进这个空间的收件箱。
-  3. **继续写**：最近更新的 5 到 8 篇。
-  4. **收件箱**：还没归类的条数和最前面几条，带「去整理」。
-  5. **收藏**：自己收藏的页面、文件夹和视图。
-- **每日文案**：
-  - 从哪里抽在空间设置里选：一个文件夹、一个标签或一个类型（可以加筛选，
-    比如只抽「定稿」的）。没选时这一块不出现。设置存在 `space.yml`，大家
-    看到同一条。
-  - 同一天、同一个空间抽到的是同一篇：用日期（按浏览器所在时区，作为参数
-    传给服务端）和空间 ID 算出一个序号，在符合条件的页面里按序号取。数和
-    取都走索引（一次计数加一次按偏移取一条），不读别的文件。
-  - 「换一条」随机再取一篇，只在自己的浏览器里，不改别人看到的。
-- **收藏**是每个人自己的，存在状态库（不进仓库，不提交），按空间分；可以
-  收藏页面、文件夹、视图，能拖动排序。页面删除或被移出空间后，收藏里显示为
-  失效，可以清掉。单用户模式同样有（状态库本来就在）。侧栏也有「收藏」一组。
-- 首页每一块都只取前几条，查索引；首页一共几个请求，不随页面数增长。
-- **问好要有点意思**（所有者 2026-11-23）：不只是早上好／下午好／晚上好。
-  完全在浏览器里算，不发请求，按界面语言（中文、英文，以后加的语言各有
-  一套）从一组句子里挑：
-  - 按时段细分：清晨、上午、午后、傍晚、深夜（如「夜猫子，还在写呀」）、
-    凌晨（「天快亮了，记得睡一会儿」）。
-  - 按日子：周一、周五、周末；节日和节气（元旦、春节、清明、端午、中秋、
-    冬至等农历和节气用一张按年预先算好的小表，覆盖往后十年）；用户的
-    注册纪念日。
-  - 按情形：今天第一次打开、好久没来（「好久不见」）、刚写完一篇回到首页、
-    今天已经写了好几篇。
-  - 同一种情形有几句，按日期轮换，同一天里不跳来跳去；也可以在偏好里关掉
-    花样，只用简单的问候。
-  - 句子写在 i18n 文件里，好改好加，不写死在组件里。
-- **每日文案的来源，三层**（所有者 2026-11-23：「都要」）：
-  1. 空间自己的（上面的 `daily`）。
-  2. **管理员配的全站默认**：管理后台「每日文案」页，可选一个空间里的
-     文件夹、标签或类型，或者直接粘贴／上传一批（一行一条，或一个 Markdown
-     文件，存在状态库）。空间没设置时用它；所有者可以在空间里关掉。选一个
-     空间做全站来源时明确提示「这些内容会展示给所有人」。
-  3. **自定义外部接口**：管理员填网址和字段映射（正文、出处、作者的 JSON
-     路径），可以按语言填不同的接口（网址里可以用 `{lang}`），比如中文用
-     一言（hitokoto），英文用 FavQs。服务端去取，每个接口每天取一次并
-     缓存，大家看到同一条；「换一条」再取，有频率上限。防服务器被用来访问
-     内网：只允许管理员列出的主机，不连内网和本机地址（解析后再检查，防
-     DNS 重绑定），超时 5 秒、响应最多 64 KB、只接受 JSON；取不到时这一块
-     不出现，不影响首页。空间所有者可以选用管理员配好的接口，但不能自己填
-     网址。
-  - 优先级：空间自己的 > 空间选用的外部接口 > 全站默认。都没有时只显示
-    问好。
-  - **范围**（所有者 2026-11-23 确认）：管理员配的全站默认（贴的文案、
-    选作来源的空间）和外部接口是整台服务器共用的，所有用户、所有空间一样；
-    外部接口按（接口，语言，刷新周期）缓存，所以同一周期里用同一接口、同一
-    语言的人看到同一条。空间自己的来源只在这个空间里有效，内容也只给这个
-    空间的成员看。以后做多租户和公开注册时，在全站默认之下加一层「每个租户
-    的默认」，优先级插在空间和全站之间。
-  - **多语言**：文案跟着界面语言走。空间来源可以按语言分（比如
-    `daily: {zh: {folder: 文案}, en: {tag: quotes}}`，只写一种就所有语言都用
-    它）；全站的一批文案可以标语言；外部接口按语言各配一个。某种语言没有
-    就不显示（匹配按 BCP 47，简繁中文互相匹配，再加上「其他所有语言」那一项；
-    不会拿另一种语言的文案顶替，招呼语仍然显示）。
-  - **按语言配置，代码和界面都支持**：语言是一张表，不写死中文、英文；
-    界面上空间设置的「首页」分区和管理后台的「每日文案」页，都按语言分
-    标签页（「所有语言」一页加每种语言一页），每页可以选来源、贴文案、选
-    外部接口；以后界面多一种语言，这里自动多一页。
-  - **内置的外部接口预设**（2026-11-23 核对过各家文档）：随程序带着，默认
-    **不启用**（自托管的服务不应在管理员没同意时自己去连外网），管理员点一下
-    启用，主机自动加入允许名单：
-    - 中文：一言国际线路 `https://international.v1.hitokoto.cn/`（文档写 QPS
-      20，含 2 秒缓存；普通线路 `v1.hitokoto.cn` 只有 2）。免费、不要密钥，
-      公益服务；恳请带回链 `https://hitokoto.cn?uuid=<uuid>`，所以显示时
-      带「来自一言」的链接。默认 `max_length` 30，预设里调到 80。正文
-      `hitokoto`，出处 `from`，作者 `from_who`。预设的速率上限填 20。
-    - 英文：ZenQuotes 每日一句 `https://zenquotes.io/api/today`（免费、不要
-      密钥；**它的条款要求带回链，而首页不显示外链，所以不在任何默认里**，管理员
-      自己判断要不要打开；每个 IP 每 30 秒 5 次，所以速率上限填 0.1）。正文 `[0].q`，作者 `[0].a`。一天只给一条，
-      所以不跳过新的（`skipNew` 关）。
-    - 英文：FavQs 每日一句 `https://favqs.com/api/qotd`（免费、不要密钥）。
-      正文 `quote.body`，作者 `quote.author`，回链
-      `https://favqs.com/quotes/{quote.author_permalink}/{quote.id}`。速率上限
-      填 1，每天刷新，不跳过新的。
-    - Quotable（`api.quotable.io`）已经不能用：域名的 DNSSEC 校验失败，解析不
-      出地址，所以不再内置。
-    - 一言可以选类型（全部、单选、多选）：内置接口可以声明「选项」，选了的值跟着选择一起存（空间、租户、全站默认各自存），空就是全部；值加到网址后面（`&c=d&c=i`），不同类型是不同的缓存项，限速仍按接口算。
-    - 一种语言可以选多个来源（外部接口、我们的文案、一个空间的页面），混着用也行：按天轮换，出错或没有内容时自动用下一个，一次只显示一条：轮换的起点由当天和范围（空间、租户、全站）决定，同一范围里的人看到同一条；「换一条」换到下一个。
-    - 其他内置接口：Animechan（动漫台词，每天 100 次，所以每分钟最多 1 次）、
-      DummyJSON（约 1400 条，给开发者测试用的，质量参差）、今日诗词（古诗词，
-      旧接口，可以选分类，用路径选项）、扇贝每日一句和金山词霸每日一句（英文
-      加中文，按读者的语言各取一边，一次只显示一条，不会两种一起显示）。
-      **扇贝用的是它小程序自己的接口，不是公开的 API，可能随时变**；词霸把 JSON
-      标成 text/html，所以只对这个内置接口放宽 Content-Type（内容仍要严格是 JSON）。
-      都不在任何默认里。
-    - **作者和出处**：每条文案不管来自哪里都有同样的字段（正文、作者、出处、链接），
-      显示为正文下面一行较小的灰字：中文 `—— 作者《出处》`，英文 `— Author, Source`，
-      只显示有的部分，不画链接。我们自己的文案：粘贴时行尾 ` —— 作者《出处》`
-      （也认 ` — `、` -- `；只拆最后一个，后面要像一个名字，并且破折号前面是一句话的结尾
-      （。！？…」』” . ! ? " '）或者后面有《出处》，所以句子中间的破折号不会被拆）在保存前拆开，管理员在预览里能看到并改；CSV 三列（文案、作者、出处，
-      表头可有可无）。空间的页面：作者取页面的 `author`/`作者` 属性，出处取页面的
-      `source`（内置的「来源」字段）或 `出处` 属性，没有就不显示，出处没有时用标题。
-    - 空间自己也能这样列：每种语言一个有顺序的来源列表（外部接口、管理员的文案、这个空间自己的页面），规则和管理员的一样；管理员锁住「选用外部接口」时列表里的接口跳过不用，锁住「用自己的来源」时空间自己的页面跳过不用，旧的接口 id 列表照旧读。租户的默认可以用同样的列表（接口、租户自己的空间），目前只能通过设置接口改，编辑界面留到 3.6。
-    - 空间选的接口被管理员停用后不会在保存时丢掉：设置页里灰着标出原因，读的时候跳过；接口已经不存在（比如旧的 Quotable）时，空间不显示文案（原因 `unavailable`），不会改用租户或全站默认，并在设置页提示。扇贝和词霸只服务 `zh-Hans` 和 `en`（`zh-Hant` 按现有匹配规则归到 `zh-Hans`），其他语言的读者跳过它们，用列表里的下一个来源。「换一条」从实际给出今天这条的来源之后接着走。
-    - **首页不显示外链**：接口给的链接（一言的 uuid 链接、ZenQuotes 的回链）可以存，
-      但绝不画成链接，首页不把人送到站外；作者和出处只是普通文字 `—— 作者《出处》`。
-      英文默认用 FavQs（它不要求回链）。一言只有中文，不会给英文读者用，也不能放在
-      英文这一项下面；放在「其他所有语言」下面时只对中文读者生效。
-    - 想完全不受限：QuoteSlate 是 MIT 开源，可以自己部署一份，在后台自己填
-      地址。
-    - 改内置接口时，跑一遍 `make test-live-daily`：用 `Probe` 真的请求每个内置
-      接口，有一个不通或路径取不到值就失败。它要联网，不在 CI 和
-      `make check` 里。
-    - 服务器统一取并缓存，每个周期只请求一次，正常使用远低于这些上限。
-    - **回链**：接口可以配一个「出处链接」模板（如一言的 `uuid`），显示在文案
-      下面；预设里填好。
-  - **管理员完全自己配置接口**（所有者 2026-11-23 强调）：预设只是起点，
-    管理员可以新建、改、删任意多个接口，每个接口：
-    - 名称、语言（或「所有语言」）、网址（`GET`，可用 `{lang}`、`{date}`）；
-    - 请求头（比如 `X-Api-Key: …`），值加密存库，界面上只显示「已保存 ·
-      更换」；
-    - 正文、出处、作者的 JSON 路径（如 `hitokoto`、`[0].q`、`data.content`），
-      正文必填；
-    - **刷新频率**（所有者 2026-11-23）：大家看到的那一条多久换一次——
-      每天（默认）、每小时、每 N 分钟；「换一条」是否每次都向对方要新的；
-    - **对外请求速率上限**：每秒最多几次（令牌桶，比如一言国际接口可以填
-      20），所有用户的请求合起来不超过它；超了就用缓存里的一条，不排队等；
-    - 「试一下」按钮：立即请求一次，显示原始返回（截断）和按路径取出的
-      结果，路径错了当场看得到；
-    - 启用／停用。
-    保存时把网址的主机加入允许名单；内网、本机地址始终不允许。
-  - **服务器统一取、再分发，并且缓存**（所有者 2026-11-23）：浏览器从不
-    直接请求外部接口。理由：密钥不出服务器；每个接口每天只请求一次，不会
-    因为人多被对方限流；所有人看到同一条；不受对方跨域设置影响；内网防护
-    只需要在一处做。缓存分三层：
-    1. **服务器内存**：按（接口，语言，刷新周期，skip）记住结果，周期内直接用。
-    2. **状态库**：同样的结果写进状态库（只留最近 7 天），服务重启后不用再
-       请求；多个进程或以后多实例时也共用。
-    3. **浏览器**：`GET …/daily` 带 `Cache-Control`（到当天结束为止，按请求
-       里的日期算），同一天反复打开首页不再请求服务器；「换一条」的结果只
-       缓存在页面里。
-    外部接口失败时用最近一次成功的结果（标明是哪天的），再失败才不显示；
-    失败后按指数退避重试，不会每次打开首页都去敲对方。空间来源和全站文案
-    的结果也走第 1、3 层缓存（它们本来就只查索引，很便宜）。
+- **One home per space** (decided by the owner; no cross-space master home), the
+  page opened by default on entering a space, at the address `/s/<space>/`. From
+  top to bottom:
+  1. **Greeting and daily text** (the owner, 2026-11-23: the daily text goes at
+     the very top, together with the greeting): by browser time it says "Good
+     morning / Good afternoon / Good evening, <name>", and right below is
+     today's text (a text of the "text" type looks like `《标题》｜副标题`), with "Another", and clicking it opens it
+     for editing; when no source is set there is only the greeting.
+  2. **Quick note**: write a note right on the home page, and when done it goes
+     into this space's inbox.
+  3. **Continue writing**: the 5 to 8 most recently updated pages.
+  4. **Inbox**: the number of items not yet sorted and the first few, with "go
+     and sort".
+  5. **Favourites**: the pages, folders and views you have favourited yourself.
+- **Daily text**:
+  - Where to draw from is chosen in space settings: a folder, a tag or a type
+    (a filter may be added, for example drawing only the "Final" ones). When none
+    is chosen this block does not appear. The setting is stored in `space.yml`,
+    and everyone sees the same one.
+  - On the same day, in the same space, the same page is drawn: the date (in the
+    browser's time zone, passed to the server as a parameter) and the space ID
+    give a sequence number, and the page at that number is taken among the pages
+    that qualify. Both the count and the fetch go through the index (one count
+    plus one fetch by offset), without reading other files.
+  - "Another" draws another page at random, only in your own browser, and does
+    not change what others see.
+- **Favourites** are per person, stored in the state database (not in the
+  repository, not committed), split by space; pages, folders and views can be
+  favourited, and they can be reordered by dragging. After a page is deleted or
+  moved out of the space, it shows in the favourites as stale, and can be
+  cleared. Single-user mode has them too (the state database is there anyway).
+  The sidebar also has a "Favourites" group.
+- Each block on the home page takes only the first few items, by querying the
+  index; the number of requests the home page makes does not grow with the number
+  of pages.
+- **The greeting should have some charm** (the owner, 2026-11-23): not just good
+  morning / good afternoon / good evening. It is computed entirely in the
+  browser, with no request, and picked from a set of sentences according to the
+  UI language (Chinese and English, and each language added later has its own
+  set):
+  - Finer by time of day: early morning, morning, early afternoon, evening, late
+    night (such as "Night owl, still writing?"), before dawn ("Dawn is near,
+    remember to get some sleep").
+  - By day: Monday, Friday, the weekend; holidays and solar terms (the lunar
+    calendar and solar terms for New Year's Day, Spring Festival, Qingming,
+    Dragon Boat, Mid-Autumn, Winter Solstice and so on use a small table
+    precomputed by year, covering the next ten years); the user's sign-up
+    anniversary.
+  - By situation: first open today, away for a long time ("Long time no see"),
+    back on the home page right after finishing a page, already written several
+    pages today.
+  - One situation has several sentences, rotated by date, so they do not jump
+    around within the same day; the flourishes can also be turned off in
+    preferences, using only plain greetings.
+  - The sentences are written in the i18n files, easy to change and add, and not
+    hard-coded in components.
+- **The daily text source, three layers** (the owner, 2026-11-23: 「都要」 [All
+  of them]):
+  1. The space's own (the `daily` above).
+  2. **A site-wide default configured by the administrator**: the admin console
+     "Daily text" page, where one can pick a folder, tag or type in a space, or
+     paste/upload a batch directly (one per line, or a Markdown file, stored in
+     the state database). It is used when a space has no setting; the owner can
+     turn it off in the space. When a space is chosen as the site-wide source, a
+     clear warning says "this content will be shown to everyone".
+  3. **A custom external interface**: the administrator fills in a URL and a
+     field mapping (the JSON paths for text, source and author), and can fill in
+     different interfaces by language (`{lang}` may be used in the URL), for
+     example Hitokoto for Chinese and FavQs for English. The server
+     fetches it, each interface once a day, and caches it, and everyone sees the
+     same one; "Another" fetches again, with a frequency limit. To keep the
+     server from being used to reach the internal network: only hosts the
+     administrator lists are allowed, internal and local addresses are not
+     connected to (checked after resolving, to stop DNS rebinding), timeout 5
+     seconds, response at most 64 KB, only JSON accepted; when nothing can be
+     fetched this block does not appear and the home page is not affected. A
+     space owner can choose an interface the administrator has configured, but
+     cannot fill in a URL themselves.
+  - Priority: the space's own > the external interface the space chose >
+    the site-wide default. When there is none of them only the greeting is shown.
+  - **Scope** (confirmed by the owner, 2026-11-23): the site-wide default the
+    administrator configures (pasted texts, a space chosen as the source) and the
+    external interfaces are shared by the whole server, the same for all users
+    and all spaces; external interfaces are cached by (interface, language,
+    refresh period), so people using the same interface and the same language
+    within the same period see the same one. A space's own source is valid only
+    in that space, and its content is shown only to that space's members. When
+    multi-tenant and open registration come later, a layer "each tenant's
+    default" is added under the site-wide default, with a priority between the
+    space and the site.
+  - **Multiple languages**: the text follows the UI language. A space source can
+    be split by language (for example `daily: {zh: {folder: 文案}, en: {tag:
+    quotes}}`; if only one is written, all languages use it); a batch of
+    site-wide texts can be tagged with a language; external interfaces are
+    configured one per language. If a language has none, nothing is shown
+    (matching follows BCP 47, Simplified and Traditional Chinese match each
+    other, plus the "all other languages" entry; text in another language is not
+    substituted, and the greeting is still shown).
+  - **Configured by language, supported in both code and UI**: the languages are
+    a table, and Chinese and English are not hard-coded; in the UI the "Home"
+    section of space settings and the admin console "Daily text" page are both
+    split into tabs by language (one "All languages" page plus one page per
+    language), and each page can pick a source, paste texts, and pick external
+    interfaces; when the UI gains one more language later, one more page appears
+    here automatically.
+  - **Built-in external interface presets** (the documentation of each was
+    checked on 2026-11-23): shipped with the program, **not enabled** by default
+    (a self-hosted service should not connect to the outside network by itself
+    without the administrator's consent); the administrator enables one with a
+    click, and the host is added to the allow list automatically:
+    - Chinese: Hitokoto international line `https://international.v1.hitokoto.cn/`
+      (the docs say QPS 20, including a 2-second cache; the ordinary line
+      `v1.hitokoto.cn` only has 2). Free, no key needed, a public-interest
+      service; a backlink `https://hitokoto.cn?uuid=<uuid>` is earnestly
+      requested, so a link "from Hitokoto" is shown on display. The default
+      `max_length` is 30, raised to 80 in the preset. Text `hitokoto`, source
+      `from`, author `from_who`. The preset's rate limit is set to 20.
+    - English: ZenQuotes daily quote `https://zenquotes.io/api/today` (free, no
+      key needed; **its terms require a backlink, and the home page does not
+      show external links, so it is in no default**, and the administrator
+      decides whether to turn it on; 5 times per 30 seconds per IP, so the rate
+      limit is set to 0.1). Text `[0].q`, author `[0].a`. It gives only one a
+      day, so new ones are not skipped (`skipNew` off).
+    - English: FavQs daily quote `https://favqs.com/api/qotd` (free, no key
+      needed). Text `quote.body`, author `quote.author`, backlink
+      `https://favqs.com/quotes/{quote.author_permalink}/{quote.id}`. The rate
+      limit is set to 1, refreshed daily, new ones not skipped.
+    - Quotable (`api.quotable.io`) can no longer be used: the domain's DNSSEC
+      validation fails and no address can be resolved, so it is no longer built
+      in.
+    - Hitokoto can choose a category (all, single select, multi select): a
+      built-in interface can declare "options", and the chosen values are stored
+      together with the choice (stored separately for space, tenant and site-wide
+      default), and empty means all; the values are added after the URL
+      (`&c=d&c=i`), different categories are different cache entries, and the rate
+      limit is still counted per interface.
+    - One language can pick several sources (external interfaces, our texts, the
+      pages of a space), and mixing them is fine: they rotate by day, and when
+      one errors or has no content the next one is used automatically, with only
+      one shown at a time: the starting point of the rotation is decided by the
+      day and the scope (space, tenant, site-wide), so people in the same scope
+      see the same one; "Another" moves to the next.
+    - Other built-in interfaces: Animechan (anime quotes, 100 a day, so at most 1
+      per minute), DummyJSON (about 1,400 entries, for developer testing, uneven
+      quality), Jinri Shici (classical Chinese poetry, an old interface, a
+      category can be chosen, using a path option), and Shanbay daily sentence and
+      Kingsoft iCiba daily sentence (English plus Chinese; one side is taken
+      according to the reader's language, only one shown at a time, never both
+      together). **Shanbay uses its mini-program's own interface, not a public
+      API, and it may change at any time**; iCiba labels its JSON as text/html, so
+      the Content-Type check is relaxed only for this built-in interface (the
+      content must still be strictly JSON). None of them is in any default.
+    - **Author and source**: every text, wherever it comes from, has the same
+      fields (text, author, source, link), shown as a smaller grey line below the
+      text: in Chinese `—— 作者《出处》`, in
+      English `— Author, Source`, showing only the parts that exist, with no link
+      drawn. Our own texts: when pasting, a line-ending ` —— 作者《出处》` (` — `
+      and ` -- ` are also recognized; only the last one is split off, what follows
+      must look like a name, and what is before the dash must be the end of a
+      sentence (。！？…」』” . ! ? " ') or what follows has a 《出处》, so a dash
+      in the middle of a sentence is not split) is split off before saving, and the
+      administrator can see and change it in the preview; CSV with three columns
+      (text, author, source; the header row optional). Pages of a space: the author
+      is taken from the page's `author`/`作者` property, and the source from the page's `source` (the
+      built-in "Source" field) or `出处` property, and when there is none it is not shown; when there is no source
+      the title is used.
+    - A space can also list this itself: one ordered list of sources per language
+      (external interfaces, the administrator's texts, this space's own pages),
+      with the same rules as the administrator's; when the administrator locks
+      "use external interfaces", the interfaces in the list are skipped, and when
+      "use its own sources" is locked, the space's own pages are skipped, and the
+      old list of interface ids is still read as before. A tenant's default can
+      use the same list (interfaces, the tenant's own spaces); for now it can be
+      changed only through the settings endpoint, and the editing UI is left to
+      3.6.
+    - An interface a space chose that the administrator later disables is not
+      dropped on save: the settings page shows it greyed out with the reason, and
+      it is skipped on read; when the interface no longer exists (such as the old
+      Quotable), the space shows no text (reason `unavailable`), does not switch to
+      the tenant or site-wide default, and the settings page shows a prompt.
+      Shanbay and iCiba serve only `zh-Hans` and `en` (`zh-Hant` falls under
+      `zh-Hans` by the existing matching rules), and readers of other languages
+      skip them and use the next source in the list. "Another" continues from the
+      source that actually gave today's text.
+    - **The home page shows no external links**: links the interface gives
+      (Hitokoto's uuid link, ZenQuotes' backlink) may be stored, but are never
+      drawn as links, and the home page does not send people off the site; author
+      and source are plain text `—— 作者《出处》`. English defaults to FavQs (which
+      does not require a backlink). Hitokoto is Chinese only, is not used for
+      English readers, and cannot be put under the English entry; when put under
+      "all other languages" it takes effect only for Chinese readers.
+    - To be completely unrestricted: QuoteSlate is MIT open source, and you can
+      deploy your own copy and fill in the address yourself in the console.
+    - When changing a built-in interface, run `make test-live-daily`: it uses
+      `Probe` to really request every built-in interface, and fails if one is
+      unreachable or a path gets no value. It needs the network, and is not in CI
+      or in `make check`.
+    - The server fetches and caches in one place, with one request per period, far
+      below these limits in normal use.
+    - **Backlink**: an interface can be configured with a "source link" template
+      (such as Hitokoto's `uuid`), shown below the text; filled in in the preset.
+  - **The administrator configures interfaces completely themselves** (stressed by
+    the owner, 2026-11-23): the presets are only a starting point, and the
+    administrator can create, change and delete any number of interfaces, each
+    with:
+    - name, language (or "all languages"), URL (`GET`, `{lang}` and `{date}` can be
+      used);
+    - request headers (such as `X-Api-Key: …`), values stored encrypted in the
+      database, and the UI shows only "saved · replace";
+    - the JSON paths for text, source and author (such as `hitokoto`, `[0].q`,
+      `data.content`), text required;
+    - **refresh frequency** (the owner, 2026-11-23): how often the one everyone
+      sees changes: every day (default), every hour, every N minutes; whether
+      "Another" asks the other side for a new one each time;
+    - **rate limit on outgoing requests**: at most how many per second (a token
+      bucket, for example the Hitokoto international interface can be set to 20),
+      with all users' requests together not exceeding it; when exceeded the one
+      in the cache is used, with no queuing;
+    - a "Try it" button: request once immediately, and show the raw response
+      (truncated) and the result taken out by the paths, so a wrong path is seen
+      on the spot;
+    - enable / disable.
+    On save, the URL's host is added to the allow list; internal and local
+    addresses are never allowed.
+  - **The server fetches in one place, redistributes, and caches** (the owner,
+    2026-11-23): browsers never request external interfaces directly. Reasons:
+    keys do not leave the server; each interface is requested only once a day, so
+    it is not rate-limited by the other side because there are many people;
+    everyone sees the same one; cross-origin settings of the other side do not
+    matter; and the internal network protection only has to be done in one place.
+    The cache has three layers:
+    1. **Server memory**: results are remembered by (interface, language, refresh
+       period, skip), and used directly within the period.
+    2. **State database**: the same results are written to the state database
+       (only the most recent 7 days are kept), so after a service restart there
+       is no need to request again; also shared by several processes or, later,
+       several instances.
+    3. **Browser**: `GET …/daily` carries `Cache-Control` (until the end of the
+       day, computed from the date in the request), so opening the home page
+       again and again on the same day does not request the server again; the
+       result of "Another" is cached only in the page.
+    When an external interface fails, the most recent successful result is used
+    (marked with which day it is from), and only if it fails again is nothing
+    shown; after a failure it retries with exponential backoff, and does not knock
+    on the other side every time the home page is opened. The results of space
+    sources and site-wide texts also use caches 1 and 3 (they only query the index
+    anyway, which is cheap).
 
-2.3 的实现方案（2026-11-23）：
+2.3 implementation plan (2026-11-23):
 
-- **首页**：地址 `/s/<空间>/`，进入空间（包括登录后、切换空间后）默认打开
-  它，原来的「最近」仍在侧栏。首页只拼已有和新加的几个小接口，一共不超过
-  5 个请求：
-  - 快速记录：沿用现有的快速记录接口，首页上直接是一个输入框，写完清空并
-    提示「已放进收件箱」，收件箱那一块随即刷新。
-  - 继续写：`GET …/pages?sort=-updated&limit=8`（已有）。
-  - 收件箱：条数取自文件夹树里收件箱那一行的计数（已有，O(文件夹数)），最前
-    面 5 条用 `GET …/pages?folder=<收件箱>&limit=5`。
-  - 每日文案、收藏：见下。
-  - 只读成员看到的首页没有快速记录。单用户模式同样有首页。
-- **每日文案的来源**写在 `space.yml` 顶层：
+- **Home page**: the address `/s/<space>/`; entering a space (including after
+  sign-in and after switching spaces) opens it by default, and the old "Recent"
+  stays in the sidebar. The home page only assembles a few existing and new small
+  endpoints, no more than 5 requests in all:
+  - Quick note: reuse the existing quick-note endpoint; on the home page it is
+    directly an input box, which is cleared after writing, with the prompt "Put
+    in the inbox", and the inbox block refreshes right away.
+  - Continue writing: `GET …/pages?sort=-updated&limit=8` (existing).
+  - Inbox: the count comes from the count on the inbox row in the folder tree
+    (existing, O(number of folders)), and the first 5 use
+    `GET …/pages?folder=<inbox>&limit=5`.
+  - Daily text and favourites: see below.
+  - The home page a read-only member sees has no quick note. Single-user mode has
+    a home page too.
+- **The daily text source** is written at the top level of `space.yml`:
   ```yaml
   daily:
-    folder: 文案        # 或 tag: … 或 type: …，三选一
-    filter: [{key: status, op: in, values: [定稿]}]   # 可选，同列表接口
+    folder: 文案        # or tag: … or type: …, pick one of the three
+    filter: [{key: status, op: in, values: [定稿]}]   # optional, same as the list endpoint
   ```
-  走 2.2 的设置文件规则（自愈、锚点、链接防护都一样）。改它要 `manage`，在
-  空间设置新加的「首页」分区里选。
-- **每日文案接口**：`GET …/daily?date=2026-11-23&skip=0`（要 `read`）。
-  - 服务端用 `hash(空间 ID, date)` 加上 `skip` 算出序号 n，在符合条件的页面
-    里取第 n 篇（`n mod 总数`）：一次带条件的计数加一次按 `rowid` 排序、偏移
-    n 的读取，都走索引；用 5 万篇的造数测，目标几十毫秒内。
-  - 同一天的结果在内存里按 `(空间, date, skip)` 记住，当天新加或删了页面也
-    不会让大家看到的那一条变来变去；那一篇被删了才重新取。
-  - 返回页面摘要加正文（只读这一个文件），正文超过 2000 字时截断并标明。
-  - 没设置来源，或没有符合条件的页面时，返回 `{"page": null}`，首页那一块
-    不出现（设置了但没抽到时给管理者一句提示）。
-  - 「换一条」是浏览器里把 `skip` 加一，只影响自己。
-- **收藏**：状态库新表 `favorites(user_id, space_id, kind, target, position,
-  created)`，`kind` 是 `page`（target 是页面 id）、`folder`（路径）、`view`
-  （`folder:<路径>#<视图 id>` 或 `tag:<标签>#<视图 id>`）；主键
-  `(user_id, space_id, kind, target)`，删空间、删用户时一起删。SQLite 和
-  PostgreSQL 各一个迁移，两边都要测。
-  - 接口（都要 `read`，只动自己的）：`GET …/favorites` 返回按顺序的列表，
-    每项带显示名和 `missing`（页面不在了、文件夹不在了、视图不在了）；
-    `POST …/favorites` 加一项（已在就不重复）；`DELETE …/favorites` 去一项；
-    `PUT …/favorites/order` 给出新的顺序。每人每空间最多 200 项。
-  - 显示名和 `missing` 用索引和设置文件判断，一次请求里按 id 批量查，不逐个
-    读文件。
-  - 文件夹改名、移动时，收藏里的路径跟着改（和绑定一样随文件夹走，但收藏在
-    状态库里，所以在移动成功后由服务端更新这个空间里所有人的这一项）。
-  - 被移出空间的人，收藏留在库里但不返回；重新加入后还在。
-  - 入口：页面编辑器顶栏一个星标，文件夹右键菜单「收藏」，视图标签菜单
-    「收藏这个视图」；侧栏「收藏」一组（可收起），和首页同一份数据。
-- **顺带修 PostgreSQL 的空间名搜索**（1.7 的已知问题）：`spaces` 表加一列
-  `name_key`，存 Go 里做的 Unicode 大小写折叠（`cases.Fold`）结果，搜索
-  只比这一列；迁移时回填。两种数据库行为一致，测试覆盖中文、德语 ß、土耳其
-  语 İ 等。
-- **前端**：首页是一个按需加载的块；每日文案那块在没有来源时不请求；收藏的
-  拖动排序沿用视图标签的做法，并有键盘「上移/下移」。文字中英文齐全。
-- **测试**：后端单元测试（每日文案的确定性、跨日、`skip`、删页后重取、筛选；
-  收藏的增删排序、`missing`、文件夹移动后跟随、权限、上限；两种数据库）、
-  接口契约测试、前端组件测试，5 万篇下每日文案的计时。
+  It follows the 2.2 settings-file rules (self-healing, anchors, link guards are
+  all the same). Changing it needs `manage`, and it is chosen in the newly added
+  "Home" section of space settings.
+- **Daily text endpoint**: `GET …/daily?date=2026-11-23&skip=0` (needs `read`).
+  - The server computes a sequence number n from `hash(space ID, date)` plus
+    `skip`, and takes the n-th page among the pages that qualify (`n mod total`):
+    one count with the condition plus one read ordered by `rowid` with offset n,
+    both through the index; measured with a synthetic set of 50,000 pages, the
+    goal is within tens of milliseconds.
+  - The result of the same day is remembered in memory by `(space, date, skip)`,
+    so pages added or deleted during the day do not make the one everyone sees
+    change back and forth; it is fetched again only when that page has been
+    deleted.
+  - It returns the page summary plus the body (reading only this one file), and
+    when the body is over 2000 characters it is truncated and marked as such.
+  - When no source is set, or no page qualifies, it returns `{"page": null}` and
+    that block of the home page does not appear (when it is set but nothing was
+    drawn, the managers get a one-line hint).
+  - "Another" is the browser adding one to `skip`, and affects only the user.
+- **Favourites**: a new state database table `favorites(user_id, space_id, kind,
+  target, position, created)`, where `kind` is `page` (target is the page id),
+  `folder` (the path), `view` (`folder:<path>#<view id>` or
+  `tag:<tag>#<view id>`); primary key `(user_id, space_id, kind, target)`, and
+  deleted together when a space or a user is deleted. One migration each for
+  SQLite and PostgreSQL, and both must be tested.
+  - Endpoints (all need `read`, and only touch your own): `GET …/favorites`
+    returns the ordered list, each item with a display name and `missing` (the
+    page is gone, the folder is gone, the view is gone); `POST …/favorites` adds
+    one (not duplicated if already there); `DELETE …/favorites` removes one;
+    `PUT …/favorites/order` gives the new order. At most 200 items per person per
+    space.
+  - The display name and `missing` are decided from the index and the settings
+    files, looked up in a batch by id within one request, without reading files
+    one by one.
+  - When a folder is renamed or moved, the paths in the favourites change with it
+    (they go with the folder like bindings, but the favourites are in the state
+    database, so after a successful move the server updates this item for
+    everyone in the space).
+  - For a person who has been removed from the space, the favourites stay in the
+    database but are not returned; they are still there after rejoining.
+  - Entry points: a star in the page editor's top bar, "Favourite" in the folder
+    context menu, "Favourite this view" in the view tab menu; a "Favourites" group
+    in the sidebar (collapsible), the same data as the home page.
+- **Also fix the PostgreSQL space-name search** (a known issue from 1.7): the
+  `spaces` table gets a `name_key` column, storing the result of the Unicode case
+  folding done in Go (`cases.Fold`), and search compares only this column;
+  backfilled at migration. The two databases behave the same, and tests cover
+  Chinese, German ß, Turkish İ and so on.
+- **Frontend**: the home page is a load-on-demand chunk; the daily text block
+  makes no request when there is no source; drag-and-drop ordering of favourites
+  follows what the view tabs do, and also has keyboard "Move up / Move down".
+  Text is complete in Chinese and English.
+- **Tests**: backend unit tests (determinism of the daily text, across days,
+  `skip`, refetch after a page is deleted, filters; favourites add, delete,
+  ordering, `missing`, following a folder move, permissions, the limit; both
+  databases), endpoint contract tests, frontend component tests, and the timing
+  of the daily text at 50,000 pages.
 
-**2.3 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md`。经过
-三轮对抗式审查，实现时定下来的、方案里没写的：
+**2.3 as built (2026-11-23)**: everything in the plan above was built; see
+`docs/api.md` for the endpoints. After three rounds of adversarial review,
+decided during implementation and not written in the plan:
 
-- **外部接口的密钥**只和填写它时的那个请求绑定（接口、请求头名、完整网址
-  模板的散列）；网址改了任何一处就要重新填，所以没有密钥的管理员没法把它
-  引到别处。链接模板不能引用请求头；所有显示出去的值按「取值 → 解码 →
-  检查（大小写不敏感，密钥里任意连续 8 个字符）→ 截断 → 转义」处理，
-  「试一下」的原始返回逐个值检查，有一处像密钥就整段不显示。剩下的只有
-  一个长度侧信道（对着会回显的服务能推出密钥长度）。
-- **对外请求**：连接时才检查地址（防域名改指），内网、本机、CGNAT（含
-  tailscale 的 100.x）、元数据地址一律拒绝；不跟随跳转，5 秒，64 KB，只收
-  JSON；读者断开不算失败；语言按接口归一、日期只收前后一天，读者没法让
-  服务器反复去请求；内存和缓存行数都有上限。
-- **错误码**放在错误体的 `error` 字段（`host_not_allowed`、
-  `header_reenter`、`path_reveals_secret` 等），前端按码显示中英文。
-- **收藏跟着文件夹走**：移动前记下这次移动（迁移 0010），之后不论成败、
-  顺序，下次读收藏时一起结算；在旧位置新建的同名文件夹不会接手旧收藏。
-  已知缺口：记下移动和真正移动之间恰好崩溃、而目标文件夹又已存在时，会
-  被当成已移动。
-- **每日文案**：空间来源匹配不到时不退回全站默认（所有者认同）；作来源的
-  文件夹被删后设置留着、这一块不显示；当天大家看到的那一条和「换一条」的
-  分开缓存，「换一条」最多 1000 次。
-- **问好**在浏览器里算，当天的那句连同它依据的条件一起记住，条件变了才
-  重算；「刚写完」「今天写了几篇」只算这个浏览器里自己保存过的页面（按页面
-  去重），导入的不算。
-- **管理员锁定**：「空间能否用自己的来源」「能否选用外部接口」两项；锁住
-  时空间的值留在原处不生效。
-- 5 万篇时抽每日文案：整个空间约 8 毫秒，文件夹约 14 毫秒，标签约 2 毫秒。
+- The **key of an external interface** is bound only to the request in which it
+  was entered (the interface, the header name, and a hash of the full URL
+  template); if any part of the URL is changed it must be entered again, so an
+  administrator who does not have the key cannot lead it elsewhere. A link
+  template cannot refer to a request header; every value shown goes through
+  "take the value → decode → check (case-insensitive, any 8 consecutive
+  characters of the key) → truncate → escape", and the raw response of "Try it" is
+  checked value by value, and if one place looks like the key the whole section is
+  not shown. What remains is only a length side channel (against a service that
+  echoes, the key length can be inferred).
+- **Outgoing requests**: the address is checked only at connect time (against a
+  domain being repointed), and internal, local, CGNAT (including tailscale's
+  100.x) and metadata addresses are all refused; redirects are not followed, 5
+  seconds, 64 KB, JSON only; a reader disconnecting does not count as a failure;
+  the language is normalized per interface and the date accepts only the day
+  before and after, so a reader cannot make the server request over and over;
+  memory and cache rows both have limits.
+- **Error codes** are in the `error` field of the error body (`host_not_allowed`,
+  `header_reenter`, `path_reveals_secret` and so on), and the frontend shows them
+  in Chinese and English by code.
+- **Favourites follow the folder**: the move is recorded before it happens
+  (migration 0010), and then, regardless of success or order, settled together the
+  next time favourites are read; a same-named folder newly created at the old
+  location does not take over the old favourites. A known gap: if a crash happens
+  exactly between recording the move and actually moving, and the target folder
+  already exists, it is treated as moved.
+- **Daily text**: when a space source matches nothing it does not fall back to the
+  site-wide default (the owner agreed); when the folder used as the source is
+  deleted the setting stays and this block is not shown; the one everyone sees that
+  day and the "Another" ones are cached separately, with "Another" at most 1000
+  times.
+- **The greeting** is computed in the browser, and that day's sentence is
+  remembered together with the conditions it was based on, and recomputed only
+  when the conditions change; "just finished writing" and "wrote several pages
+  today" count only pages this browser itself saved (deduplicated by page), and
+  imported ones do not count.
+- **Administrator locks**: two items, "whether spaces may use their own sources"
+  and "whether they may choose external interfaces"; when locked, the space's
+  value stays where it is and does not take effect.
+- Drawing the daily text at 50,000 pages: about 8 ms for the whole space, about
+  14 ms for a folder, about 2 ms for a tag.
 
-**2.3 之后的每日文案补充（2026-11-23，所有者提出）**：
+**Daily text additions after 2.3 (2026-11-23, proposed by the owner)**:
 
-- 全站默认也可以是外部接口，并且可以按语言各选一个（`""` 是其他语言的兜底）。
-- 语言代码一律用规范的 BCP 47 写法（`zh-Hans`、`pt-BR`），按 IANA 注册表检查，
-  按 BCP 47 的规则匹配；旧值 `zh`、`pt-br` 读入时换成规范写法。
-- 内置一言（国际接口，简繁中文，每秒最多 20 次）、ZenQuotes（英文，每日一句，
-  每 30 秒最多 5 次）和 FavQs（英文，每日一句，每秒 1 次），默认关闭，管理员打开就能用，不能改它们的网址。
-- 不再有「信任的网址」列表：每个接口只能连它自己网址里的主机和端口，
-  `host_not_allowed` 去掉。
-- 表单里必填的字段标 `*`，作者、出处、链接这类可能没有的标「可选」，接口
-  没返回这些也不算错。管理后台在手机宽度下不再被压缩。
-- 2.3 存下的设置的升级（预设换成内置接口、`<id>-custom` 改名、丢掉不合规的语言代码、
-  `notices` 提示、按旧代码存的行）在 2026-11-24 按「发布前不写升级代码」的规则删掉了（见 §5.4）。
+- The site-wide default can also be an external interface, and one can be chosen
+  per language (`""` is the fallback for other languages).
+- Language codes always use the canonical BCP 47 form (`zh-Hans`, `pt-BR`),
+  checked against the IANA registry and matched by the BCP 47 rules; the old
+  values `zh` and `pt-br` are converted to the canonical form on read.
+- Built in are Hitokoto (the international interface, Simplified and Traditional
+  Chinese, at most 20 per second), ZenQuotes (English, daily quote, at most 5 per
+  30 seconds) and FavQs (English, daily quote, 1 per second), off by default and
+  usable once the administrator turns them on, and their URLs cannot be changed.
+- There is no longer a "trusted URLs" list: each interface can connect only to
+  the host and port in its own URL, and `host_not_allowed` is removed.
+- Required fields in the form are marked `*`, and those that may be absent, such
+  as author, source and link, are marked "optional", and an interface not
+  returning them is not an error. The admin console is no longer squeezed at phone
+  width.
+- The upgrade of settings stored by 2.3 (presets replaced by built-in interfaces,
+  renaming `<id>-custom`, dropping non-conforming language codes, the `notices`
+  hints, rows stored by the old code) was deleted on 2026-11-24 under the rule "no
+  upgrade code before release" (see [database.md §5.4](../database.md#54-rule-for-schema-changes-no-migrations-before-the-official-release)).
 
-**设置的分层和锁定**（所有者 2026-11-23 定的通用规则，2.3 起逐步用上）：
+**Layered settings and locking** (a general rule set by the owner on 2026-11-23,
+used step by step from 2.3):
 
-- 偏好和行为类的设置分四层：**全站**（管理员）→ **租户**（以后做多租户
-  时加）→ **空间**（所有者）→ **个人**（每个人自己的偏好）。下一层没设置
-  时跟随上一层，默认就是跟随全站。
-- 管理员给每一项设置定两件事：默认值，以及**下面几层能不能改**——三种：
-  「可以改」「只能在给定的几个选项里选」「锁定，不能改」。以后有租户时，
-  租户管理员在全站允许的范围内，对空间和个人再做同样的限制。
-- 被锁定或限制时，下层已有的值保留在原处（空间的写在 `space.yml`，不删、
-  不改），只是不生效；界面上这一项显示为灰色并写明「由管理员统一设置」，
-  解锁后原来的值重新生效。所以锁定不会丢任何人的设置。
-- 存放位置不变：全站和租户的存数据库；空间的仍在仓库文件里（跟着 Git 走，
-  见 2.2）；个人的存数据库。服务端读设置时按层合并，结果按设置文件和数据库
-  的版本缓存，不每次重新算。
-- 适用的设置（逐步接入）：每日文案的来源和外部接口（2.3）、问好的花样、
-  默认语言和配色、上传大小、空间能否开放注册加入、看板和视图能否由可编辑
-  成员保存、以后的发布（第 14 节）等。安全类的（登录方式、验证码、锁定，
-  见 2.8）只在全站或租户一层，不下放到空间和个人。
-- 2.3 里先把每日文案按这个规则做：管理员可以设「空间能否用自己的来源」和
-  「空间能否选用外部接口」。
+- Preference and behavior settings have four layers: **site-wide** (administrator)
+  → **tenant** (added when multi-tenant is built later) → **space** (owner) →
+  **personal** (each person's own preferences). When the next layer has no setting
+  it follows the previous layer, and the default is to follow site-wide.
+- For each setting the administrator decides two things: the default value, and
+  **whether the layers below can change it**, in three modes: "can change", "can
+  only choose among the given options", "locked, cannot change". Later, when there
+  are tenants, a tenant administrator applies the same restrictions to spaces and
+  individuals within what the site allows.
+- When locked or restricted, the value the lower layer already has stays where it
+  is (a space's is written in `space.yml`, not deleted and not changed), and just
+  does not take effect; in the UI this item shows grey with "set centrally by the
+  administrator", and after unlocking the original value takes effect again. So
+  locking never loses anyone's settings.
+- The storage places do not change: site-wide and tenant are stored in the
+  database; a space's is still in repository files (it goes with Git, see 2.2);
+  personal is stored in the database. When the server reads settings it merges by
+  layer, and the result is cached by the version of the settings files and the
+  database, not recomputed each time.
+- Settings it applies to (connected step by step): the daily text source and
+  external interfaces (2.3), the greeting flourishes, default language and color
+  scheme, upload size, whether a space may open registration to join, whether
+  boards and views may be saved by editing members, later publishing (see
+  [reserved.md §14](../reserved.md#14-reserved-public-publishing)) and so on. Security ones (sign-in methods,
+  verification code, lockout, see 2.8) are at the site-wide or tenant layer only,
+  and are not delegated to spaces and individuals.
+- In 2.3 the daily text is done by this rule first: the administrator can set
+  "whether spaces may use their own sources" and "whether spaces may choose
+  external interfaces".
 
-**2.4 页面链接和反向链接**
+**2.4 Page links and backlinks**
 
-- 编辑器里输入 `[[` 弹出页面选择（走现有搜索接口），选中后插入一个链接；
-  链接显示为目标页面当前的标题，点击打开。
-- **链接在文件里的写法**（所有者 2026-11-22 定）：标准的相对路径链接，目标
-  的 `id` 放在链接的标题位置：`[暮雪](../Tang/暮雪.md "01JD3K8Q7Z")`。
-  - 在 GitHub 和别的编辑器里照常能点，`id` 只在悬停时显示。
-  - 在 PetalBook 里改名或移动一篇时，同一次提交里改掉所有链到它的文件的
-    路径；这些文件从 `links` 表查出来，不扫磁盘。
-  - 在外面直接改名或移动的，fetch 到改动后按 `id` 找到新位置，自动改回
-    链接的路径（作为服务的一次提交）；找不到的在校验页列为断链。
-  - 链接标题只有恰好是一个 `id` 时才当作 `id`；别的标题文字原样保留，
-    这种链接只按路径认。
-  - 只写路径、没带 `id` 的链接（手写或从别处导入的）照样认，按路径解析；
-    PetalBook 下次保存这篇时补上 `id`。
-  - 以后链到某个小标题用 `#锚点`，和 `id` 不冲突。
-  - 编辑器里的显示文字是写进文件时的标题；目标改标题后，链接文字不自动
-    改（改别人的正文要谨慎），反向链接和悬停提示里显示新标题。
-- **索引**：新加 `links(src, dst)`，两个方向都建索引；保存一篇时只重算这一
-  篇的出链。反向链接、断链都从这张表查，不扫文件。
-- 右栏「反向链接」：哪些页面链到了这一篇，带上下文摘录。
-- 页面被删除后，指向它的链接在编辑器里标成断链，不自动改别的文件。
+- Typing `[[` in the editor pops up a page picker (using the existing search
+  endpoint), and after one is chosen a link is inserted; the link is shown as the
+  target page's current title, and clicking it opens it.
+- **How a link is written in the file** (decided by the owner, 2026-11-22): a
+  standard relative-path link, with the target's `id` placed in the link title
+  position: `[暮雪](../Tang/暮雪.md "01JD3K8Q7Z")`.
+  - It is clickable as usual on GitHub and in other editors, and the `id` shows
+    only on hover.
+  - When a page is renamed or moved in PetalBook, the paths in all the files that
+    link to it are changed in the same commit; those files are found from the
+    `links` table, not by scanning the disk.
+  - When it is renamed or moved directly outside, after the changes are fetched the
+    new location is found by `id`, and the link path is changed back automatically
+    (as one commit by the service); the ones that cannot be found are listed as
+    broken links on the validation page.
+  - A link title is treated as an `id` only if it is exactly one `id`; other title
+    text is kept as is, and such a link is recognized by path only.
+  - A link with only a path and no `id` (handwritten or imported from elsewhere)
+    is still recognized, and resolved by path; the next time PetalBook saves this
+    page it adds the `id`.
+  - Later, linking to a subheading uses `#anchor`, which does not conflict with
+    `id`.
+  - The display text in the editor is the title at the time it was written to the
+    file; when the target's title changes, the link text does not change
+    automatically (changing someone else's body needs care), and the backlinks
+    and the hover tip show the new title.
+- **Index**: add `links(src, dst)`, indexed in both directions; when a page is
+  saved, only the outgoing links of that page are recomputed. Backlinks and broken
+  links are both queried from this table, without scanning files.
+- The right-column "Backlinks": which pages link to this one, with a context
+  excerpt.
+- After a page is deleted, links pointing to it are marked as broken in the
+  editor, and other files are not changed automatically.
 
-2.4 的实现方案（2026-11-23）：
+2.4 implementation plan (2026-11-23):
 
-- **认链接**：页面正文里的 Markdown 链接，目标是空间内的相对路径（`.md`
-  结尾，可带 `#锚点`），或标题恰好是一个页面 `id`。外链、图片、附件不算。
-  代码块和行内代码里的不算。解析用服务端已有的 Markdown 解析（goldmark），
-  和编辑器的转换层对同一组用例的结果要一致（加到往返测试里）。
-- **索引**：`links(src INTEGER, dst_id TEXT, dst_path TEXT, anchor TEXT,
-  text TEXT, pos INTEGER)`；`dst_id` 有就用它，没有就按路径解析到 id，解析
-  不到的 `dst_id` 为空、记为断链。索引 `(dst_id)`、`(dst_path)`、`(src)`。
-  建索引和每次保存时只重算这一篇的出链。索引版本加一（第一次启动重建一次）。
-- **接口**：
-  - `GET …/pages/{id}/backlinks?cursor=`：链到这一篇的页面，带链接所在的那
-    一段摘录（只读这几个来源文件，分页每次 20 个）。
-  - `GET …/pages/{id}/links`：这一篇的出链，每个标明目标现在的标题、是否
-    断链（编辑器标断链、悬停提示用）。
-  - 页面选择沿用现有搜索接口。
-- **改名和移动时改链接**：`space` 包里改名、移动页面或文件夹的写入，在同一
-  次提交、同一个日志事务里，把 `links` 表查出的引用文件里的路径改掉（只改
-  路径部分，保留链接文字、`#锚点` 和其他内容；顺便给没带 `id` 的补上）。
-  引用很多时（上限比如 500 个文件）照样一次做完，测耗时。远端空间同样一次
-  提交推送。崩溃恢复：改链接属于这次移动的日志，恢复时一起做完。
-- **外部改名的修复**：拉取后，按 `id` 发现目标换了位置，而引用文件里还是旧
-  路径的，由服务自动改回（作为一次提交）；同一个 `id` 有两篇或找不到的不改，
-  在 2.5 的校验页列出来。
-- **保存时补 `id`**：保存一篇时，它的出链里能解析到页面、但没带 `id` 的，
-  把 `id` 写进链接标题位置（原来有别的标题文字的不动）。
-- **前端**：编辑器输入 `[[` 弹出页面选择（键盘可用），选中后插入
-  `[标题](相对路径 "id")`；链接显示为普通链接，断链用不同样式，悬停显示
-  目标当前标题；点击在应用里打开。右栏新增「反向链接」面板（按需加载）。
-- **开销**：保存一篇只多解析它自己；改名、移动多改「链到它的那些文件」，
-  从索引查，不扫磁盘；反向链接分页。5 万篇、单篇被 1 千篇引用时测改名的
-  耗时。
-- **服务改写链接不算冲突**：别人正开着、或服务端存着草稿的页面，如果只是
-  因为服务改写了其中的链接路径（链到的页面改名或移动了、或它自己移动了）
-  而落后，保存和草稿照常接受，把同样的改写做到这份文字上，不弹冲突、不把
-  旧路径写回去。改写的记录存在状态目录（最多 2 万条，重启后仍在）。
+- **Recognizing links**: a Markdown link in the page body whose target is a
+  relative path inside the space (ending in `.md`, may carry `#anchor`), or whose
+  title is exactly a page `id`. External links, images and attachments do not
+  count. Those in code blocks and inline code do not count. Parsing uses the
+  server's existing Markdown parser (goldmark), and its results must agree with the
+  editor's conversion layer on the same set of cases (added to the round-trip
+  tests).
+- **Index**: `links(src INTEGER, dst_id TEXT, dst_path TEXT, anchor TEXT, text
+  TEXT, pos INTEGER)`; `dst_id` is used if present, and otherwise the path is
+  resolved to an id, and one that cannot be resolved has an empty `dst_id` and is
+  recorded as a broken link. Indexes `(dst_id)`, `(dst_path)`, `(src)`. When
+  building the index and on each save, only that page's outgoing links are
+  recomputed. The index version is bumped by one (rebuilt once on first start).
+- **Endpoints**:
+  - `GET …/pages/{id}/backlinks?cursor=`: the pages that link to this one, with an
+    excerpt of the paragraph where the link is (reading only those source files,
+    20 per page of results).
+  - `GET …/pages/{id}/links`: the outgoing links of this page, each marked with the
+    target's current title and whether it is broken (used by the editor to mark
+    broken links and for the hover tip).
+  - The page picker reuses the existing search endpoint.
+- **Changing links on rename and move**: in the `space` package, the write that
+  renames or moves a page or folder, in the same commit and the same journal
+  transaction, changes the paths in the referring files found in the `links` table
+  (only the path part, keeping the link text, the `#anchor` and everything else;
+  incidentally adding an `id` where there was none). When there are many
+  references (a limit of, say, 500 files) it is still done in one go, and the time
+  is measured. A remote space is likewise pushed as one commit. Crash recovery:
+  changing the links belongs to the journal of this move, and is finished together
+  on recovery.
+- **Repair of external renames**: after a pull, when by `id` the target is found
+  to have changed location while the referring file still has the old path, the
+  service changes it back automatically (as one commit); when one `id` has two
+  pages or cannot be found, nothing is changed, and it is listed on the 2.5
+  validation page.
+- **Adding `id` on save**: when a page is saved, among its outgoing links those
+  that can be resolved to a page but carry no `id` get the `id` written into the
+  link title position (those that already have other title text are left alone).
+- **Frontend**: typing `[[` in the editor pops up a page picker (usable by
+  keyboard), and after a choice inserts `[title](relative path "id")`; a link is
+  shown as an ordinary link, a broken link in a different style, and hover shows
+  the target's current title; clicking opens it within the app. The right column
+  gets a new "Backlinks" panel (load on demand).
+- **Cost**: saving a page only adds parsing of itself; rename and move change more
+  of "the files that link to it", found from the index, without scanning the disk;
+  backlinks are paged. Measure the rename time at 50,000 pages with one page
+  referenced by 1,000 pages.
+- **A service rewrite of links is not a conflict**: for a page that someone else
+  has open, or that has a draft stored on the server, if it fell behind only
+  because the service rewrote link paths in it (a linked page was renamed or
+  moved, or it was moved itself), saves and drafts are accepted as usual, the same
+  rewrite is applied to this text, no conflict pops up, and the old path is not
+  written back. The rewrite records are stored in the state directory (at most
+  20,000, still there after a restart).
 
-**2.4 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md`。按新的
-审查规矩审了两轮（第一轮全面、第二轮只看修复），实现时定下来的：
+**2.4 as built (2026-11-23)**: everything in the plan above was built; see
+`docs/api.md` for the endpoints. Reviewed for two rounds under the new review
+rule (the first round comprehensive, the second looking only at the fixes), and
+decided during implementation:
 
-- 解析链接用 goldmark（去掉了用不上的自动链接扩展），和编辑器的转换层用
-  同一组 53 个用例对照，结果一致；引用式定义（`[r]: y.md`）也会改写。
-- 只写路径、没带 `id` 的链接在读的时候按路径解析，所以目标新建、移动、删除
-  后都对；带 `id` 的链接只认 `id`。
-- 改名、移动时改写引用文件，和这次移动同一个事务、同一次提交（远端空间一次
-  推送），日志记录 `w`/`l`，崩溃后启动时补完。
-- 服务改写了链接的页面，别人正开着或存着草稿的，保存和草稿照常接受，同样的
-  改写套到这份文字上（改写记录存在状态目录，最多 2 万条），不弹冲突。
-- 保存时补上缺的 `id`，`id` 指向别处时顺手改对路径。
-- 编辑器：`[[`／`【【` 选页面（输入法拼字时不弹），改链接地址时跟着换或去掉
-  `id`；直接写 `Other.md` 当作页面路径；2000 个链接的页面每次按键约 1 毫秒；
-  右侧「反向链接」面板，窄屏下是可关闭的浮层。
-- 实测（5 万篇，一篇被 1000 篇引用）：改名 348 毫秒、移动 332 毫秒（各改写
-  1000 个文件），提交 513 毫秒，反向链接第一页 5 毫秒。
+- Link parsing uses goldmark (the unused autolink extension removed), and was
+  compared against the editor's conversion layer on the same set of 53 cases, with
+  identical results; reference-style definitions (`[r]: y.md`) are also rewritten.
+- A link with only a path and no `id` is resolved by path at read time, so it is
+  right after the target is created, moved or deleted; a link with an `id`
+  recognizes only the `id`.
+- Rewriting the referring files on rename or move is in the same transaction and
+  the same commit as the move (one push for a remote space), the journal records
+  `w`/`l`, and it is completed at startup after a crash.
+- For a page whose links the service rewrote, if someone else has it open or has a
+  stored draft, saves and drafts are accepted as usual, and the same rewrite is
+  applied to this text (the rewrite records are stored in the state directory, at
+  most 20,000), with no conflict popping up.
+- On save the missing `id` is added, and when the `id` points elsewhere the path is
+  corrected along the way.
+- Editor: `[[` / `【【` choose a page (not popping up while an input method is
+  composing), when the link address is changed the `id` is swapped or removed along
+  with it; writing `Other.md` directly is taken as a page path; a page with 2,000
+  links takes about 1 ms per keystroke; the right-side "Backlinks" panel, which at
+  narrow widths is a closable overlay.
+- Measured (50,000 pages, one page referenced by 1,000 pages): rename 348 ms, move
+  332 ms (each rewriting 1,000 files), commit 513 ms, first page of backlinks 5
+  ms.
 
-2.4 已知问题，带到后面（都要好几个不常见的条件同时出现）：
+2.4 known issues, carried forward (each needs several uncommon conditions at once):
 
-- **崩溃后重做 `l` 记录不是幂等的**：被移动的页面自己的链接已经改写、但
-  `ld` 还没写下时进程崩溃，下次启动会把已改写的内容按旧位置再解析一遍，
-  没带 `id` 的相对链接会被改错（如 `A/B/A/B/y.md`）。远端空间里被撤销的
-  移动、改名时试过又被占用的文件名，`l` 记录也会留着不关，下次启动时可能
-  误改。要恰好在这几步之间崩溃才会出现。
-- **改写一半时后台提交**：本地空间里 `writeEdits` 先把文件交给提交器再逐个
-  写，若空闲提交恰好在写的过程中触发，一次改名会分成两个提交（内容不丢，
-  只是历史不整齐）。要改很多文件、提交间隔又恰好到点时才会出现。
-- **修复提交推送被拒**：拉取后服务做的链接修复提交，若推送前远端又有人推了
-  新提交，下一轮会当作历史分叉，把这次修复另存为「救回的提交」并把远端标成
-  出错，需要管理员看。要两边在几秒内先后推送才会出现。
-- **保存途中又在打字**：保存请求发出后又继续打字，而服务端在这次保存上做了
-  链接改写时，编辑器仍保留自己那份旧文字，下一次保存会按新版本号写回去，
-  不再套用改写。带 `id` 的链接会在保存时按 `id` 修正；没带 `id` 的链接（在
-  PetalBook 之外写的、或自己写了标题的）会写回旧路径，成为断链。
-- **`Equivalent` 不检查改写链的终点**：改名后又改回来时，判断草稿是否和
-  文件相同会多套用几步改写，结果是本可丢弃的草稿被留着；不丢内容。
-- **改写记录的日志文件只在启动时压缩**：内存里最多 2 万条，但磁盘上的
-  记录只在运行时追加，长时间运行、又有大量文件夹移动时会一直变大，启动时
-  要全部读一遍。
-- **一次改写超过 2 万个文件**：一次文件夹移动改写的文件超过 2 万个时，最早
-  的几步会被挤出记录，这些文件上的草稿会显示为「落后」，和这次修复之前一样。
+- **Redoing an `l` record after a crash is not idempotent**: if the process
+  crashes after the moved page's own links have been rewritten but before `ld` is
+  written, the next start parses the already-rewritten content again against the
+  old location, and relative links without an `id` get changed wrongly (such as
+  `A/B/A/B/y.md`). In a remote space, for a move that was undone, or a rename
+  whose file name was tried and then taken, the `l` record is also left unclosed
+  and may change things wrongly at the next start. It appears only when the crash
+  happens exactly between these steps.
+- **A background commit during a half-done rewrite**: in a local space,
+  `writeEdits` first hands files to the committer and then writes them one by one;
+  if the idle commit fires right in the middle of writing, one rename is split into
+  two commits (no content is lost, only the history is not tidy). It appears only
+  when many files must be changed and the commit interval happens to come due.
+- **A repair commit's push is rejected**: for a link-repair commit made by the
+  service after a pull, if someone pushes a new commit to the remote before the
+  push, the next round treats it as a history fork, saves this repair as a
+  "rescued commit" and marks the remote as in error, which needs an administrator
+  to look. It appears only when both sides push within a few seconds of each
+  other.
+- **Still typing during a save**: if the user keeps typing after the save request
+  is sent, and the server made a link rewrite on this save, the editor still keeps
+  its own old text, and the next save writes it back at the new version number,
+  no longer applying the rewrite. Links with an `id` are corrected by `id` on
+  save; links without an `id` (written outside PetalBook, or with a title the user
+  wrote) are written back with the old path and become broken links.
+- **`Equivalent` does not check the end of the rewrite chain**: after a rename
+  and a rename back, deciding whether a draft is the same as the file applies a
+  few more rewrite steps, with the result that a draft that could have been
+  discarded is kept; no content is lost.
+- **The rewrite-record log file is compacted only at startup**: at most 20,000
+  entries in memory, but the records on disk are only appended while running, so
+  with a long run and a lot of folder moves it keeps growing, and at startup all of
+  it is read.
+- **One rewrite over 20,000 files**: when one folder move rewrites more than
+  20,000 files, the earliest steps are pushed out of the records, and the drafts
+  on those files show as "behind", as before this repair.
 
-**2.5 模板和校验页**
+**2.5 Templates and the validation page**
 
-- 模板是 `.petalbook/templates/` 下的普通页面，可带类型字段和正文；变量只
-  支持日期和时间（`{{date}}`、`{{time}}`）。新建页面时选模板；文件夹可以
-  设默认模板，快速记录也可以指定一个。
-- **校验页**：列出空间里有问题的页面：没有或重复的 `id`、头部不是合法
-  YAML、类型字段不符合 schema、断链、找不到的附件、同一文件夹标题重复。
-  数据全部来自索引（`problems`、`props`、`links`），只在建索引时检查一次，
-  打开校验页不扫磁盘。能直接修的给出按钮（补 `id`、清掉不在类型里的字段），
-  其余点进去手修。
+- A template is an ordinary page under `.petalbook/templates/`, which may carry
+  type fields and a body; the variables support only date and time (`{{date}}`,
+  `{{time}}`). A template is chosen when creating a page; a folder can set a
+  default template, and a quick note can also specify one.
+- **The validation page**: lists the pages in the space that have problems: a
+  missing or duplicate `id`, a header that is not valid YAML, a type field that
+  does not match the schema, a broken link, an attachment that cannot be found, a
+  duplicate title in the same folder. All the data comes from the index
+  (`problems`, `props`, `links`), checked only once when the index is built, and
+  opening the validation page does not scan the disk. Those that can be fixed
+  directly get a button (add an `id`, clear a field not in the type), and the rest
+  are opened and fixed by hand.
 
-2.5 的实现方案（2026-11-23）：接口和错误码先写进 `docs/api.md` 的
-「Templates」「Checks」两节，前后端照它并行做。
+2.5 implementation plan (2026-11-23): the endpoints and error codes are first
+written into the "Templates" and "Checks" sections of `docs/api.md`, and the
+frontend and backend are built in parallel from it.
 
-- 分两块做、各自审：先做模板（不依赖 2.4），再做校验页；校验页里的「断链」
-  一项等 2.4 合进 `main` 后再接上（已合进来，索引版本是 9）。
-- 模板放在 `.petalbook/templates/`，按普通页面文件读写，不进页面列表和搜索；
-  默认模板写在 `space.yml`（`templates:`），走 2.2 的设置文件规则；文件夹
-  改名、移动时跟着改（和绑定、视图一样）。
-- 变量只有 `{{date}}`、`{{time}}`、`{{datetime}}`，按客户端的时区。
-- 校验结果在建索引时记下（扩展现有的 `problems` 表，加种类、页面、细节），
-  打开校验页只查索引。能直接修的两种：补 `id`、去掉不在类型里的字段。
-- 断链（2.4 合进来之后）：`links` 表每条链接多记一列 `line`（所在行），
-  断链和其他问题一样存在 `checks` 表里（`seq` 是链接在页面里的序号，每页
-  最多 20 条）。一条链接断不断取决于别的页面，所以写索引时记下两类「脏」：
-  链接变了的页面，和出现或消失的 id、路径；提交前按 `links` 的两个索引找出
-  链到它们的页面，逐页重算（超过 2000 页、或整个重建时，一条 SQL 全部重算，
-  5 万页约 10 万条链接要 40 来毫秒）。保存、改名移动的改写、拉取、重建都走
-  这条写路径，打开校验页不碰链接。
-- 每个问题带上文件当前的 `rev`（`checks/fix` 的 `baseRev`）：没有 `id` 的
-  文件不是页面，客户端没有别处能读到它的 `rev`。
-- 前端：新建页面时可选模板（文件夹有默认模板时预选）；空间设置里「模板」
-  分区（列表、编辑、设为文件夹默认、快速记录默认）；侧栏或空间设置里进入
-  「校验」页，按种类分组、计数、分页，能修的给按钮。
+- Done in two parts, each reviewed: templates first (not dependent on 2.4), then
+  the validation page; the "broken link" item of the validation page is connected
+  after 2.4 is merged into `main` (it has been merged, the index version is 9).
+- Templates live in `.petalbook/templates/`, read and written as ordinary page
+  files, not in the page list or search; the default template is written in
+  `space.yml` (`templates:`), following the 2.2 settings-file rules; when a folder
+  is renamed or moved it changes along (like bindings and views).
+- The variables are only `{{date}}`, `{{time}}`, `{{datetime}}`, in the client's
+  time zone.
+- Validation results are recorded when the index is built (extending the existing
+  `problems` table, adding kind, page, detail), and opening the validation page
+  queries only the index. Two kinds can be fixed directly: adding an `id`, and
+  removing a field not in the type.
+- Broken links (after 2.4 is merged): the `links` table records one more column
+  `line` (the line it is on) for each link, and broken links, like other problems,
+  are stored in the `checks` table (`seq` is the link's ordinal within the page,
+  at most 20 per page). Whether a link is broken depends on other pages, so when
+  writing the index two kinds of "dirty" are recorded: pages whose links changed,
+  and ids and paths that appeared or disappeared; before commit the pages linking
+  to them are found through the two indexes on `links` and recomputed page by page
+  (over 2,000 pages, or on a whole rebuild, one SQL statement recomputes all of
+  them, and about 100,000 links for 50,000 pages takes about 40 ms). Saving, the
+  rewrite on rename and move, pulling and rebuilding all go through this write
+  path, and opening the validation page does not touch the links.
+- Each problem carries the file's current `rev` (the `baseRev` of `checks/fix`):
+  a file without an `id` is not a page, and the client has no other place to read
+  its `rev`.
+- Frontend: a template can be chosen when creating a page (preselected when the
+  folder has a default template); a "Templates" section in space settings (list,
+  edit, set as folder default, quick-note default); the "Checks" page is entered
+  from the sidebar or space settings, grouped by kind, with counts and paging, and
+  a button for those that can be fixed.
 
-**2.5 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md` 的
-「Templates」「Checks」。按边写边审：模板后端、模板界面、校验页后端各审一次，
-最后整体审查只看衔接。实现时定下来的：
+**2.5 as built (2026-11-23)**: everything in the plan above was built; see
+"Templates" and "Checks" in `docs/api.md`. Reviewed as it was written: the
+template backend, the template UI and the validation page backend each reviewed
+once, and the final overall review looked only at how they join up. Decided during
+implementation:
 
-- 快速记录指「在收件箱里新建且没指定模板」，先用快速记录默认模板，再用收件箱
-  文件夹的默认模板；文件夹默认模板只对这个文件夹本身，不往子文件夹继承；根目录
-  不能设默认模板。请求里有值的字段覆盖模板，模板的类型保留。默认模板指向的模板
-  被删后，新建时跳过，不报错。
-- `.petalbook/templates` 被换成链接或文件时，和类型目录一样自己恢复（挪开、
-  重建）。
-- 校验在建索引时记下，保存、移动、删除、拉取时只重算受影响的页面；断链用 2.4
-  的链接表；每条问题带 `rev`，一键修复（补 `id`、去掉不在类型里的字段）走正常
-  保存，保留草稿。打开校验页只查索引：5 万篇时一页约 2 毫秒。
-- 校验页入口在侧栏和空间设置的「常规」里。
+- Quick note means "created in the inbox with no template specified"; it first
+  uses the quick-note default template, then the inbox folder's default template;
+  a folder default template applies only to that folder itself and is not
+  inherited by subfolders; the root cannot have a default template. Fields with a
+  value in the request override the template, and the template's type is kept.
+  When the template a default points to has been deleted, it is skipped on
+  creation without an error.
+- When `.petalbook/templates` has been replaced by a link or a file, it recovers
+  itself like the types directory (moved aside, rebuilt).
+- Validation is recorded when the index is built, and on save, move, delete and
+  pull only the affected pages are recomputed; broken links use the 2.4 link
+  table; every problem carries a `rev`, and one-click fixes (add an `id`, remove a
+  field not in the type) go through a normal save and keep drafts. Opening the
+  validation page queries only the index: about 2 ms per page of results at 50,000
+  pages.
+- The validation page is entered from the sidebar and from "General" in space
+  settings.
 
-**2.5 已知问题**
+**2.5 known issues**
 
-- 只有标题、副标题、来源、类型、标签、创建日期这几个字段「请求里为空就沿用
-  模板」；其他字段（比如 `status: ""`）会用空值覆盖模板里的值，而前端的
-  模拟服务器对所有字段都沿用模板，两边不一致。
-- 超过 256 KiB 的模板文件（只可能从拉取得到）不能被覆盖（503）也不能删除
-  （没有默认模板引用它时 404），只有这一个名字卡住。
-- 模板编辑保存时遇到冲突（409），会重新读入模板并提示 12 秒「修改没有保存」，
-  但刚才填的内容不保留；别的管理员同时保存同一个模板时，编辑框也会被刷新。
-- 手改过的模板里标题、副标题不是文字（比如 `title: 2026`）或标签里有非文字项
-  时，表单当它为空，再保存会丢掉这个字段。
-- 文件夹名的大小写和 `space.yml` 里的不一致时，新建页面不会预选这个文件夹的
-  默认模板（服务端按不分大小写匹配，前端按原样匹配）。
-- 附件被删或从拉取得到时，「找不到附件」要等引用它的页面再保存或重建索引后
-  才更新。
-- 模板文件本身不进索引，所以模板里带了类型之外的字段时，校验页不会指出模板，
-  只会把每篇由它生成的页面列为「不在类型里的字段」，修一篇只清这一篇。
-- 校验页里「正在修复」按路径标记哪一行；目前只有「断链」会在同一路径出现多行，
-  它没有修复按钮，所以没有影响。
+- Only the fields title, subtitle, source, type, tags and creation date "keep the
+  template's value when empty in the request"; other fields (such as `status: ""`)
+  overwrite the template's value with an empty value, while the frontend's mock
+  server keeps the template's value for all fields, so the two sides disagree.
+- A template file over 256 KiB (which can only come from a pull) can be neither
+  overwritten (503) nor deleted (404 when no default template refers to it), and
+  only that one name is stuck.
+- When saving a template edit meets a conflict (409), the template is read in
+  again and the prompt "The changes were not saved" is shown for 12 seconds, but
+  what was just filled in is not kept; when another administrator saves the same
+  template at the same time, the edit box is also refreshed.
+- When in a hand-edited template the title or subtitle is not text (such as
+  `title: 2026`) or the tags contain a non-text item, the form treats it as empty,
+  and saving again drops this field.
+- When the case of a folder name differs from the one in `space.yml`, creating a
+  page does not preselect this folder's default template (the server matches
+  case-insensitively, the frontend matches exactly).
+- When an attachment is deleted or comes from a pull, "attachment not found" is
+  updated only after the page that references it is saved again or the index is
+  rebuilt.
+- Template files themselves are not in the index, so when a template carries
+  fields outside the type, the validation page does not point at the template, and
+  only lists every page generated from it as "field not in the type", and fixing
+  one page clears only that one.
+- On the validation page "being fixed" marks which row by path; currently only
+  "broken link" appears in several rows on the same path, and it has no fix
+  button, so there is no effect.
 
-**2.6 API token 和 MCP**
+**2.6 API tokens and MCP**
 
-- API token 按 Rackbook `internal/tokens` 的做法：只存哈希，限定到一个或
-  几个空间，分只读和读写，有过期时间，可随时吊销。token 的权限不会超过
-  签发人在这个空间的权限，签发人被移出或降级后立即生效（走 1.7 的成员缓存）。
-- MCP 在 `/mcp`，复制 Rackbook 的 `mcpserver`、`oauthserver`、`mcpauth`。
-  工具按 6.3 列的做：列出空间和文件夹、搜索、读页面、新建、修改、移动、
-  打标签、看历史；加上 2.1 之后的按类型字段查询。列表和搜索走索引并分页，
-  一次返回的条数和正文长度有上限，几万篇的空间也不会一次吐出全部。
-- 写入走草稿和提交，作者是 token 的主人，提交信息末尾注明来自 MCP。
-- 单用户模式没有账号：用命令行生成一个本地 token（`petalbook token`），
-  MCP 用它连。
-- 经 MCPHub 的接入放在这之后，单独确认 MCPHub 那边的令牌格式再做。
+- API tokens follow Rackbook's `internal/tokens`: only the hash is stored, scoped
+  to one or several spaces, read-only or read-write, with an expiry time, and
+  revocable at any time. A token's permissions never exceed the issuer's
+  permissions in that space, and if the issuer is removed or demoted it takes
+  effect immediately (through the 1.7 member cache).
+- MCP is at `/mcp`, copying Rackbook's `mcpserver`, `oauthserver` and `mcpauth`.
+  The tools follow the list in [auth-and-permissions.md §6.3](../auth-and-permissions.md#63-machine-access):
+  list spaces and folders, search, read a page, create, change, move, tag, view
+  history; plus the query by type fields after 2.1. Lists and search go through the
+  index and are paged, the number of items and the body length returned at once
+  have limits, and even a space with tens of thousands of pages will not spit out
+  everything at once.
+- Writes go through drafts and commits, the author is the token's owner, and the
+  commit message ends by noting it came from MCP.
+- Single-user mode has no accounts: generate a local token with the command line
+  (`petalbook token`), and MCP connects with it.
+- Access through MCPHub comes after this, to be done after separately confirming
+  the token format on the MCPHub side.
 
-2.6 的约定（2026-11-23）：接口、工具和错误码先写进 `docs/api.md` 的「API tokens」
-「OAuth for MCP clients」「MCP」三节和「Administration」里的「Machine access」，
-前后端照它做。定下来的：
+The 2.6 contract (2026-11-23): the endpoints, tools and error codes are first
+written into the "API tokens", "OAuth for MCP clients" and "MCP" sections of
+`docs/api.md` and "Machine access" under "Administration", and the frontend and
+backend are built from it. What was decided:
 
-- **token**：`pbk_` 加 32 字节随机数（base62），状态库只存 SHA-256 和前 12 个
-  字符；一个 token 限定 1～100 个空间（没有「全部空间」），`read` 或 `write`，
-  默认 90 天过期（1～365 天，或不过期），每人最多 50 个有效的。吊销和过期的保留
-  90 天再删，期间答 `token_revoked`／`token_expired`。
-- **权限**：每次请求取主人现在在这个空间的权限（1.7 的成员缓存，不查库），和
-  token 的 `access` 取交集；token 永远拿不到 `members`、`manage`，也不走管理员
-  进入非成员空间的路。不在 token 里的空间答 `403 token_scope`，主人已不是成员的
-  答 `404`，和网页一致；主人被停用答 `401 token_owner_disabled`。
-- **查找的开销**：和会话一样，哈希后先查内存；没见过的哈希一次唯一索引查询，
-  查不到的记 30 秒；内存里的记录最多 30 秒重读一次（命令行在另一个进程里吊销，
-  30 秒内生效；经服务吊销立即生效）；最后使用时间每小时最多写一次。缓存命中的
-  请求不查库。连续失败按客户端地址限速（每分钟 10 次）。
-- **token 能用的接口**：空间内要 `read`／`write` 的路由、`GET /api/spaces`、
-  `/api/meta`、`/api/session`（多一个 `token` 字段）和 `/mcp`；账号、用户、管理、
-  token 自身的管理都不行，所以 token 不能再签 token。
-- **单用户模式**：只有命令行 `petalbook token create|list|revoke`，直接读写状态库，
-  服务运行时也能用；不带 token 的 `/api` 请求照旧，`/mcp` 必须带 token。OAuth 只在
-  账号模式、且给了 `--public-url` 时有。
-- **OAuth**：照搬 Rackbook 的授权服务（OAuth 2.1、只支持 S256 的 PKCE、RFC 8707、
-  RFC 9207、客户端元数据文档优先、动态注册兜底、公开客户端），客户端和授权记录从
-  JSON 文件改存状态库（SQLite 和 PostgreSQL 都测）。签名密钥也在状态库里，用
-  服务器密钥（`secret.key`）封存，和别的凭据一样，不单独放文件；换了服务器密钥
-  就打不开，服务不启动，而不是悄悄换一把把所有授权作废。scope 只有 `read`、`write`，
-  空间在同意页上勾选（默认只勾个人空间）；一次授权之后的行为和同样范围的 token
-  完全一样。访问令牌是 10 分钟的 ES256 JWT，只在本进程里验，验过的按哈希缓存到
-  过期；刷新令牌每次轮换，60 秒内重发拿到同一个答复，之后重用就结束整个授权；
-  90 天没刷新的授权失效。OAuth 访问令牌只能用在 `/mcp`（`/api` 答 `403 token_scope`）。
-  机器访问里的 MCP 开关关掉时，授权服务的所有端点答 `404`，但授权记录保留，
-  账号页和管理页仍可列出、吊销。主人被停用时刷新答 `invalid_grant`，授权保留，
-  账号启用后继续有效。回调地址除 `https` 和本机回环的 `http` 外，也接受原生应用
-  的私有协议（`cursor://` 之类，RFC 8252），Cursor、VS Code 要用。
-  同一人同时等待决定的授权请求最多 20 个，全服务器最多 1000 个，超过的在错误页上
-  显示 `temporarily_unavailable`（个人的答 `429`，全服务器的答 `503`）。
-- **授权请求出错不再跳回客户端**（2.6 第二部分审查时改，**改了上面最初的约定，
-  待所有者确认**）：最初约定 `client_id`、`redirect_uri` 以外的参数错误带 `error`
-  跳回客户端的 `redirect_uri`；现在照 RFC 9700 第 4.11.2 节，用户同意之前的一切
-  错误（`response_type`、`scope`、PKCE、`resource` 不对，请求过多）都只显示本服务器
-  的错误页，不跳转，免得自行注册的客户端或任意元数据文档把本服务器当成开放跳转。
-  只有在 `redirect_uri` 已核对、请求本身也合格之后，用户在同意页上拒绝时才带
-  `access_denied` 跳回。
-- **MCP 传输**：Streamable HTTP，无状态、只回 JSON（不开 SSE，没有 MCP 会话），
-  空闲的客户端不占任何资源。`Origin` 检查照旧，防 DNS 重绑定。
-- **工具**：`spaces_list`、`folders_list`、`tags_list`、`types_list`、
-  `pages_search`、`pages_query`（2.1 的按类型字段过滤和排序，参数同 REST 列表）、
-  `page_get`、`page_history`、`page_version`、`page_create`、`page_update`、
-  `page_move`、`page_tag`。列表全部分页、走索引；搜索每次最多 50 条，查询最多
-  200 条，条目不带正文、摘录最多 400 字；正文每次最多 128 KiB，按字节偏移续读；
-  一个结果最多 1 MiB，超了答 `too_large` 并给出建议的条数。写入正文最多 1 MiB。
-- **改正文**：`page_update` 可以整篇替换，也可以给一串「原文→新文」的精确替换
-  （每段原文必须恰好出现一次），这样改一篇几十万字的长文不用把全文传来传去。
-- **写入和草稿**：MCP 的写入和 REST 的保存一样（`baseRev` 冲突检查、记日志、
-  提交、远端空间先推送再回答），**不经过主人的草稿**：一页一人只有一份草稿，
-  MCP 写进去会和本人正在打的字互相覆盖，所以照 `PUT` 的规矩不碰草稿，草稿在网页
-  里显示为落后。`page_tag`、`page_move` 的 `baseRev` 可选（加减标签、移动不会
-  覆盖别人的文字）；`page_update` 必须带。`page_create` 可带 `requestId`，一小时内
-  重发不会建两篇（只在内存里）。
-- **提交信息**：作者是主人；MCP 的改动不和别的来源的改动合在一次提交里（来源
-  变了就先提交，和 1.7 换作者一样），提交信息末尾加 trailer `Changed-via: MCP`；
-  用 API token 走 `/api` 的改动加 `Changed-via: API token`。历史条目多一个
-  `via` 字段（`mcp`／`token`）。trailer 里不写 token 的名字（名字是用户随便起的）。
-- **管理员**：`/api/admin/access` 两个开关（token、MCP，默认都开；关掉不删数据），
-  列出和吊销所有人的 token、授权。单用户模式用 `serve --mcp=false` 关 MCP。
+- **Token**: `pbk_` plus 32 random bytes (base62); the state database stores only
+  the SHA-256 and the first 12 characters; one token is scoped to 1 to 100 spaces
+  (there is no "all spaces"), `read` or `write`, expires in 90 days by default (1
+  to 365 days, or never), and each person can have at most 50 valid ones. Revoked
+  and expired ones are kept 90 days and then deleted, and in that time answer
+  `token_revoked` / `token_expired`.
+- **Permissions**: each request takes the owner's current permission in this space
+  (the 1.7 member cache, no database query) and intersects it with the token's
+  `access`; a token can never get `members` or `manage`, and does not take the
+  administrator's route into spaces they are not a member of. A space not in the
+  token answers `403 token_scope`, an owner who is no longer a member answers
+  `404`, the same as the web; an owner who has been disabled answers
+  `401 token_owner_disabled`.
+- **Lookup cost**: like sessions, hash first and check memory; a hash not seen
+  before does one unique-index query, and a miss is remembered for 30 seconds;
+  records in memory are re-read at most every 30 seconds (revoking from the command
+  line in another process takes effect within 30 seconds; revoking through the
+  service takes effect immediately); the last-used time is written at most once an
+  hour. A request that hits the cache does not query the database. Consecutive
+  failures are rate-limited by client address (10 per minute).
+- **The endpoints a token can use**: routes in a space that need `read` / `write`,
+  `GET /api/spaces`, `/api/meta`, `/api/session` (with one more field, `token`) and
+  `/mcp`; accounts, users, administration and the management of tokens themselves
+  are all off limits, so a token cannot issue another token.
+- **Single-user mode**: only the command line `petalbook token create|list|revoke`,
+  reading and writing the state database directly, and usable while the service is
+  running; `/api` requests without a token are as before, and `/mcp` must carry a
+  token. OAuth exists only in account mode and when `--public-url` is given.
+- **OAuth**: copies Rackbook's authorization service (OAuth 2.1, PKCE with S256
+  only, RFC 8707, RFC 9207, client metadata document first, dynamic registration as
+  fallback, public clients), with the clients and the authorization records moved
+  from JSON files to the state database (both SQLite and PostgreSQL tested). The
+  signing key is also in the state database, sealed with the server key
+  (`secret.key`) like other credentials, and not kept in a separate file; if the
+  server key is changed it cannot be opened, and the service does not start,
+  rather than quietly swapping in a new key that invalidates all authorizations.
+  The scopes are only `read` and `write`, and the spaces are ticked on the consent
+  page (by default only the personal space is ticked); after one authorization the
+  behavior is exactly the same as a token of the same scope. The access token is a
+  10-minute ES256 JWT, verified only within this process, and verified ones are
+  cached by hash until expiry; the refresh token is rotated every time, a resend
+  within 60 seconds gets the same reply, and reusing it after that ends the whole
+  authorization; an authorization not refreshed for 90 days becomes invalid. An
+  OAuth access token can be used only on `/mcp` (`/api` answers
+  `403 token_scope`). When the MCP switch under machine access is turned off, all
+  endpoints of the authorization service answer `404`, but the authorization
+  records are kept, and the account page and the administration page can still list
+  and revoke them. When the owner is disabled, refresh answers `invalid_grant` and
+  the authorization is kept, and continues to be valid after the account is
+  enabled. Besides `https` and loopback `http`, a callback address also accepts the
+  private schemes of native apps (`cursor://` and the like, RFC 8252), which Cursor
+  and VS Code need. The same person can have at most 20 authorization requests
+  waiting for a decision at once, and the whole server at most 1000; those over the
+  limit show `temporarily_unavailable` on the error page (the personal limit
+  answers `429`, the whole-server one `503`).
+- **An authorization request error no longer redirects back to the client** (changed
+  in the review of 2.6 part two, **this changes the original contract above, pending
+  confirmation by the owner**): the original contract was that errors in parameters
+  other than `client_id` and `redirect_uri` carry `error` and redirect back to the
+  client's `redirect_uri`; now, following RFC 9700 section 4.11.2, every error
+  before the user consents (a bad `response_type`, `scope`, PKCE or `resource`, too
+  many requests) shows only this server's own error page and does not redirect, so
+  that a self-registered client or an arbitrary metadata document cannot use this
+  server as an open redirect. Only after the `redirect_uri` has been verified and
+  the request itself is valid, when the user refuses on the consent page, does it
+  redirect back with `access_denied`.
+- **MCP transport**: Streamable HTTP, stateless, replying only with JSON (no SSE,
+  no MCP session), so an idle client takes no resources. The `Origin` check is as
+  before, against DNS rebinding.
+- **Tools**: `spaces_list`, `folders_list`, `tags_list`, `types_list`,
+  `pages_search`, `pages_query` (the 2.1 filtering and sorting by type field, with
+  the same parameters as the REST list), `page_get`, `page_history`,
+  `page_version`, `page_create`, `page_update`, `page_move`, `page_tag`. All lists
+  are paged and go through the index; search returns at most 50 items each time and
+  query at most 200, items carry no body and the excerpt is at most 400
+  characters; the body is at most 128 KiB each time, continued by byte offset; one
+  result is at most 1 MiB, and over that it answers `too_large` with a suggested
+  count. A written body is at most 1 MiB.
+- **Changing the body**: `page_update` can replace the whole page, or give a series
+  of exact "original text → new text" replacements (each original text must appear
+  exactly once), so that changing a long text of hundreds of thousands of
+  characters does not mean passing the whole text back and forth.
+- **Writes and drafts**: an MCP write is the same as a REST save (`baseRev`
+  conflict check, journaled, committed, and for a remote space push first and then
+  answer), and **does not go through the owner's draft**: a page has only one draft
+  per person, and MCP writing into it would overwrite what the person is typing, so
+  following the `PUT` rule it does not touch the draft, and the draft shows as
+  behind in the web. The `baseRev` of `page_tag` and `page_move` is optional
+  (adding or removing tags and moving do not overwrite anyone's text);
+  `page_update` must carry it. `page_create` can carry a `requestId`, and a resend
+  within an hour will not create two pages (in memory only).
+- **Commit message**: the author is the owner; an MCP change is not merged into one
+  commit with changes from other sources (when the source changes it commits first,
+  like switching author in 1.7), and the commit message gets the trailer
+  `Changed-via: MCP` at the end; a change through `/api` with an API token gets
+  `Changed-via: API token`. A history entry gets one more field `via`
+  (`mcp` / `token`). The trailer does not contain the token's name (the name is
+  whatever the user chose).
+- **Administrator**: `/api/admin/access` has two switches (token, MCP; both on by
+  default; turning off does not delete data), and lists and revokes everyone's
+  tokens and authorizations. Single-user mode turns MCP off with
+  `serve --mcp=false`.
 
-故意不做的：删除页面和文件夹、移动文件夹、改类型／模板／设置／成员的工具；MCP
-的资源（resources）和提示（prompts）；反向链接工具；JWKS 端点（只有本进程验令牌）；
-按 token 的请求频率限制（只限失败）；「所有空间」的 token；单用户模式下的 token
-接口和设置页；经 MCPHub 的接入（2.6 之后）。
+Deliberately not done: tools to delete pages and folders, move folders, or change
+types / templates / settings / members; MCP resources and prompts; a backlinks
+tool; a JWKS endpoint (only this process verifies tokens); request rate limiting
+per token (only failures are limited); an "all spaces" token; the token endpoints
+and settings page in single-user mode; access through MCPHub (after 2.6).
 
-要所有者定的（先按括号里的默认做）：
+For the owner to decide (do what is in parentheses first):
 
-- token 能不能不过期（能，要明确选；默认 90 天）。
-- 单用户模式的 token 默认只读还是读写（默认只读）。
-- MCP 写入不经草稿（按上面做）；还是要先存成主人的草稿再提交。
-- trailer 的写法 `Changed-via: MCP`／`Changed-via: API token`。
-- 要不要按 token 限制请求频率（先不限）。
+- Whether a token may never expire (yes, it must be chosen explicitly; default 90
+  days).
+- Whether a single-user mode token is read-only or read-write by default (default
+  read-only).
+- MCP writes do not go through drafts (done as above); or should it first be saved
+  as the owner's draft and then committed.
+- The trailer wording `Changed-via: MCP` / `Changed-via: API token`.
+- Whether to limit the request rate per token (not for now).
 
-已知问题（2.6 第一部分审查时记下，暂不处理）：
+Known issues (noted in the review of 2.6 part one, not handled for now):
 
-- PostgreSQL 上，同一人在同一时刻建两个 token，可能都通过「最多 50 个有效的」
-  的检查，结果多出一两个。限制是先数后写，没有加锁；SQLite 只有一个写入者，
-  不受影响。超出的不影响使用，吊销一个即可。
-- 只要提交带 `Changed-via` trailer，历史里就会显示 `via`，包括从远端拉下来的
-  提交：别人（或另一台 PetalBook）写的 trailer 在这里也会显示成 MCP 或 API token。
-  `via` 只说明提交信息里写了什么，不是本服务器验证过的来源。
+- On PostgreSQL, when the same person creates two tokens at the same moment, both
+  may pass the "at most 50 valid" check, with the result of one or two too many. The
+  limit counts first and writes after, without a lock; SQLite has only one writer
+  and is not affected. The excess does not affect use, and revoking one is enough.
+- Whenever a commit carries a `Changed-via` trailer, the history shows `via`,
+  including commits pulled from the remote: a trailer written by someone else (or
+  by another PetalBook) also shows here as MCP or API token. `via` only says what
+  the commit message says, and is not a source this server has verified.
 
-已知问题（2.6 第二部分，OAuth 服务审查时记下，暂不处理）：
+Known issues (noted in the review of 2.6 part two, the OAuth service, not handled
+for now):
 
-- 授权码重放的检测有空档：第一次兑换还在保存授权记录时来的重放发现不了；兑换
-  60 秒以后再来的重放也不再认作重放（只答 `invalid_grant`，不结束授权）。PKCE
-  仍然保护着：没有 `code_verifier` 的人拿到授权码也换不到令牌。
-- 被换掉的刷新令牌只记最近 8 个；更早的旧令牌再来时认不出是重用，只答
-  `invalid_grant`，不会结束整个授权。
-- 刷新用一把锁管所有授权（同一时刻只做一次刷新）。SQLite 本来就只有一个写入者，
-  没有影响；PostgreSQL 上不同授权的刷新本可以并行，这把锁会限制吞吐。
-- 60 秒宽限期内重发拿到同一个答复，这份答复只在内存里。PostgreSQL 上跑多个进程
-  时，重试落到另一个进程就拿不到，答 `invalid_grant`（客户端要重新授权）。
+- The detection of authorization code replay has a gap: a replay that arrives while
+  the first exchange is still saving the authorization record is not detected; and a
+  replay arriving 60 seconds after the exchange is no longer recognized as a replay
+  (it only answers `invalid_grant` and does not end the authorization). PKCE still
+  protects: someone without the `code_verifier` cannot exchange the code for a token
+  even if they get it.
+- Refresh tokens that have been replaced are remembered only for the most recent 8;
+  when an older old token comes again it cannot be recognized as reuse, and only
+  answers `invalid_grant`, not ending the whole authorization.
+- Refresh uses one lock for all authorizations (only one refresh at a time). SQLite
+  has only one writer anyway, so there is no effect; on PostgreSQL the refreshes of
+  different authorizations could run in parallel, and this lock limits throughput.
+- The same reply obtained by a resend within the 60-second grace period exists only
+  in memory. When several processes run on PostgreSQL, a retry that lands on another
+  process does not get it and answers `invalid_grant` (the client must authorize
+  again).
 
-**2.6 的现状（2026-11-23）**：上面的方案都做了，接口见 `docs/api.md` 的
-「API tokens」「OAuth for MCP clients」「MCP」和「Administration」里的「Machine
-access」。分三部分各审了一次（token、授权服务、MCP）。第三部分（MCP）实现时定下
-来的：
+**2.6 as built (2026-11-23)**: everything in the plan above was built; see "API
+tokens", "OAuth for MCP clients", "MCP" and "Machine access" under
+"Administration" in `docs/api.md`. Each of three parts was reviewed once (tokens,
+the authorization service, MCP). Decided during the implementation of part three
+(MCP):
 
-- **位置和 SDK**：工具在 `internal/api/mcp*.go`，和 REST 共用同一套查询解析
-  （`parseListQuery`）、错误映射和摘要，所以同一个失败在两边是同一个码和同一句
-  话（工具的错误就是 `fail` 写出的那个）。MCP SDK 用 v1.8.0（和 Rackbook 同一个
-  版本，写本文时的最新正式版），无状态、只回 JSON，GET／DELETE 等一律 405。
-- **挂载**：`/mcp` 单独挂在 mux 上，不走 `handle`。`handle` 对只读 token 拒绝
-  一切非 GET（`routes.go` 里），而 `/mcp` 每次都是 POST。认证（API token、OAuth
-  访问令牌）在 `serveMCP` 里做一次，之后每个工具自己判断读还是写
-  （`mcpCall.open`）。空间权限和网页是同一条路：`OpenMember` 取主人现在的成员权限，
-  与凭据的 `access` 取交集，永远没有 `members`／`manage`。
-- **错误**：工具失败返回 `isError` 加结构化内容。SDK 自己的参数校验失败也是
-  `isError` 结果，但没有结构化内容；中间件把这种结果改成 JSON-RPC 的 `-32602`，
-  合同要的就是这样。参数类型对、取值不行的（`limit` 越界、游标坏了）是 `invalid`。
-- **`tools/list`**：凭据在自己的所有空间里都不能写时（`read` 的 token，或主人在
-  这些空间都只是查看者），不列写工具；这一步查一次成员缓存，不查库。
-- **上限**：结果在序列化后量一次，超过 1 MiB 就改答 `too_large`，列表类的附上
-  `suggestedLimit`（按比例再打九折，且一定小于这次返回的条数，照着做一定有进展）。
-  正文按字节偏移分块（128 KiB，在字符边界上截；头很大时按 1 MiB 减去其余部分
-  剩下的空间截得更小，头本身就放不下任何正文时答 `too_large`）。写入的 `body` 最多 1 MiB；
-  `edits` 只限制 `old` 和 `new` 加起来的大小，所以几十万字的长文也能改。
-- **改正文**：新增 `space.Update`，在持有空间锁的那一次里读文件、交给调用方改、
-  再写，所以 `edits` 总是对当前的文件做，没有「先读后写」之间的空档；`baseRev`
-  冲突检查和 `Save` 一样（只有服务自己改写链接造成的差别不算冲突）。整篇换掉
-  `body` 时用 `space.UpdateBody`：调用方的正文是按 `baseRev` 写的，服务之后做的
-  链接改写也照 `Save` 那样做到这份正文上，结果和网页保存一样。
-  `page_move` 的 `baseRev` 用新增的 `space.MoveIf`，`page_create`／`page_update`
-  的其他字段用 `space.PatchMeta`（`PATCH …/props` 的规则，只是写整个头）。
-  `drafts.Service.Write` 让这类写入和 `PUT` 一样排在同一页的草稿锁里，主人的草稿
-  不动，网页里显示为落后；草稿写出来的内容正好和文件一样时才顺手删掉。
-- **提交和来源**：作者是主人，`Changed-via: MCP` 在最后一行；MCP 的改动不和
-  别的来源合在一起，但连着的几次 MCP 改动（同一个人）仍是一次提交，和同一个人
-  连着打字一样。
-- **`requestId`**：一小时、最多 1 万条、只在内存里；同一个键同时来两次，第二次
-  等第一次做完再拿同一个答复（等待时跟着自己请求的 context 走）；失败或 panic
-  的不记。重放之前照常检查一次权限，降级或移出的主人拿到的是拒绝。键里有凭据的 id，所以换一个 token
-  不会拿到别人的答复。
-- **单用户**：`serve --mcp=false` 关掉 `/mcp`（答 404）；账号模式下给了这个选项
-  会报错，因为开关是管理员在界面里的。
-- **测试**：第二部分的 `NewWithMCPStandIn`（让 `/api` 收 OAuth 访问令牌）去掉了，
-  它的权限测试改成走 `/mcp`；`/api` 收到访问令牌仍然答 `403 token_scope`。
+- **Location and SDK**: the tools are in `internal/api/mcp*.go`, sharing with REST
+  the same query parsing (`parseListQuery`), error mapping and summaries, so the
+  same failure is the same code and the same sentence on both sides (a tool's error
+  is the one `fail` writes). The MCP SDK is v1.8.0 (the same version as Rackbook,
+  and the latest stable release at the time of writing), stateless and replying only
+  with JSON, with GET / DELETE and so on all answering 405.
+- **Mounting**: `/mcp` is mounted separately on the mux, not through `handle`.
+  `handle` rejects every non-GET for a read-only token (in `routes.go`), while
+  `/mcp` is a POST every time. Authentication (API token, OAuth access token) is
+  done once in `serveMCP`, and after that each tool decides by itself whether it is
+  reading or writing (`mcpCall.open`). Space permission takes the same path as the
+  web: `OpenMember` takes the owner's current member permission, intersects it with
+  the credential's `access`, and there is never `members` / `manage`.
+- **Errors**: a tool failure returns `isError` plus structured content. The SDK's
+  own parameter validation failure is also an `isError` result, but without
+  structured content; the middleware changes such a result into JSON-RPC `-32602`,
+  which is just what the contract asks for. Where the parameter type is right and
+  the value is not (`limit` out of range, a bad cursor) it is `invalid`.
+- **`tools/list`**: when the credential cannot write in any of its spaces (a `read`
+  token, or the owner is only a viewer in all those spaces), the write tools are not
+  listed; this step checks the member cache once, without a database query.
+- **Limits**: the result is measured once after serialization, and if it exceeds 1
+  MiB it answers `too_large` instead, and list kinds attach `suggestedLimit`
+  (proportionally another 10% lower, and always smaller than the count returned this
+  time, so following it always makes progress). The body is chunked by byte offset
+  (128 KiB, cut on a character boundary; when the header is large it is cut smaller
+  by the space left after subtracting the rest from 1 MiB, and when the header alone
+  leaves no room for any body it answers `too_large`). A written `body` is at most 1
+  MiB; `edits` limits only the combined size of `old` and `new`, so a long text of
+  hundreds of thousands of characters can also be changed.
+- **Changing the body**: a new `space.Update`, which within one hold of the space
+  lock reads the file, hands it to the caller to change, and writes it, so `edits`
+  always act on the current file, with no gap between "read first, write after";
+  the `baseRev` conflict check is the same as `Save` (a difference caused only by the
+  service rewriting links is not a conflict). When the whole `body` is replaced it
+  uses `space.UpdateBody`: the caller's body was written at `baseRev`, and link
+  rewrites the service did later are applied to this body as `Save` does, with the
+  same result as a web save. The `baseRev` of `page_move` uses the new
+  `space.MoveIf`, and the other fields of `page_create` / `page_update` use
+  `space.PatchMeta` (the rules of `PATCH …/props`, except it writes the whole
+  header). `drafts.Service.Write` makes such writes queue in the same page's draft
+  lock as `PUT`, the owner's draft is left alone and shows as behind in the web; the
+  draft is deleted along the way only when what it would write out is exactly the
+  same as the file.
+- **Commits and source**: the author is the owner, and `Changed-via: MCP` is on the
+  last line; MCP changes are not merged with other sources, but several consecutive
+  MCP changes (by the same person) are still one commit, like the same person typing
+  continuously.
+- **`requestId`**: an hour, at most 10,000 entries, in memory only; when the same
+  key arrives twice at the same time, the second waits for the first to finish and
+  takes the same reply (the wait follows the context of its own request); failed or
+  panicked ones are not recorded. Before a replay the permission is checked as
+  usual, and an owner who was demoted or removed gets a refusal. The key contains
+  the credential's id, so switching to another token will not get someone else's
+  reply.
+- **Single-user**: `serve --mcp=false` turns off `/mcp` (answers 404); in account
+  mode giving this option is an error, because the switch is the administrator's in
+  the UI.
+- **Tests**: part two's `NewWithMCPStandIn` (which let `/api` accept an OAuth access
+  token) was removed, and its permission tests now go through `/mcp`; `/api`
+  receiving an access token still answers `403 token_scope`.
 
-偏离或补充合同的地方：`types_list` 的结果是 `{"types": [...]}`（合同没写键名，
-已补进 `docs/api.md`）；所有非 `POST` 的方法在看凭据之前就答 405；`folders_list`
-的 `parent` 像网页一样不分大小写找文件夹；`page_update` 的 `edits` 的大小限制
-改成只算 `old`＋`new`（合同只说了 `body`）。SDK 会把响应头 `Cache-Control` 写成
-`no-cache, no-transform`，没有 `no-store`；结果里没有密钥，所以没有改它。
+Where it deviates from or adds to the contract: the result of `types_list` is
+`{"types": [...]}` (the contract did not give the key name, and it has been added to
+`docs/api.md`); all non-`POST` methods answer 405 before the credential is looked
+at; the `parent` of `folders_list` finds the folder case-insensitively like the web;
+the size limit of `page_update`'s `edits` was changed to count only `old` + `new`
+(the contract only mentioned `body`). The SDK writes the response header
+`Cache-Control` as `no-cache, no-transform`, without `no-store`; there are no keys
+in the result, so it was not changed.
 
-2.6 第三部分（MCP）的已知问题，暂不处理：
+2.6 part three (MCP) known issues, not handled for now:
 
-- `tags_list`、`folders_list` 每一页都重读整张表再切（和 `GET …/tags`、`…/tree`
-  同样的一次查询，按标签数、文件夹数算，不按页数算）。实测 5 万页、5 千个标签／
-  文件夹时，每次调用约 11 ms 和 6 ms。以后可以把分页挪进 SQL。
-- 结果的结构化内容和文本各带一份 JSON，1 MiB 上限只管结构化内容，传输上约是它
-  的两倍（文本再转义一次，最坏三倍），`docs/api.md` 已照此写明。
-- `/oauth/*` 上「只允许 localhost」的拒绝和 404／405 的兜底仍用 API 的错误格式
-  答复；跨站请求被拒的那个分支没有测试。
-- 中间件把「`isError` 而没有结构化内容」都当成参数错误。现在只有 SDK 的校验会
-  这样；将来 SDK 在别处返回这种结果会被误报成 `-32602`。
-- `page_tag` 遇到 `tags` 里有非文字项（手改过的文件）时，写回会丢掉这些项；
-  `tags: x`（单个文字）写回成列表。
-- `requestId` 只在本进程内存里：PostgreSQL 上跑多个进程时，重试落到另一个进程
-  就不认得，会建第二篇。
-- `page_get` 按 `path` 找页面靠索引：在服务之外改过文件的，要重建索引后才找得到
-  （按 `id` 取时会像 REST 一样先修索引）。
-- 远端空间里一次写入可能重试几次，`page_update` 的改动函数因此会被调用多次
-  （结果相同，只是重复算一遍）。
+- `tags_list` and `folders_list` re-read the whole table on every page and then slice
+  it (the same single query as `GET …/tags` and `…/tree`, counted by the number of
+  tags and folders, not by the number of pages). Measured at 50,000 pages and 5,000
+  tags / folders, each call takes about 11 ms and 6 ms. Later the paging can be moved
+  into SQL.
+- The structured content and the text of a result each carry a copy of the JSON; the
+  1 MiB limit covers only the structured content, so on the wire it is about twice
+  that (the text escaped once more, three times in the worst case), and
+  `docs/api.md` states it accordingly.
+- On `/oauth/*` the "localhost only" refusal and the 404 / 405 fallbacks still answer
+  in the API's error format; the branch where a cross-site request is refused has no
+  test.
+- The middleware treats every "`isError` without structured content" as a parameter
+  error. For now only the SDK's validation does this; if in future the SDK returns
+  such a result elsewhere it would be wrongly reported as `-32602`.
+- When `page_tag` meets a non-text item in `tags` (a hand-edited file), writing back
+  drops these items; `tags: x` (a single string) is written back as a list.
+- `requestId` is only in this process's memory: when several processes run on
+  PostgreSQL, a retry that lands on another process is not recognized and creates a
+  second page.
+- `page_get` finds a page by `path` through the index: for a file changed outside the
+  service it can be found only after the index is rebuilt (taking by `id` repairs the
+  index first, like REST).
+- In a remote space one write may be retried several times, so `page_update`'s change
+  function is called several times (with the same result, just computed again).
 
-第二轮审查记下的已知问题，暂不处理：
+Known issues noted in the second-round review, not handled for now:
 
-- 重放 `requestId` 时，检查的是请求里写的那个空间，不是记下的那条答复所属的
-  空间。重放只会还给同一个凭据它自己的那份答复，所以不是安全问题。
-- 正文不到 1000 字节时，`page_get` 对剩余空间的估算可能差 3 个字节，所以头的
-  大小几乎正好卡在上限上时，仍可能答 `too_large`。
-- JSON-RPC 批量请求的响应走普通的 `json.Marshal`，`<>&` 各转义成 6 个字节。
-  正常使用时不走这条路。
+- When replaying a `requestId`, what is checked is the space named in the request,
+  not the space the recorded reply belongs to. A replay only gives the same credential
+  its own reply back, so it is not a security issue.
+- When the body is under 1000 bytes, `page_get`'s estimate of the remaining space may
+  be off by 3 bytes, so when the header size lands almost exactly on the limit it may
+  still answer `too_large`.
+- The response to a JSON-RPC batch request goes through the ordinary `json.Marshal`,
+  which escapes each of `<>&` into 6 bytes. It does not take this path in normal use.
 
-整体审查（三块之间的衔接）记下的：
+Noted in the overall review (how the three parts join):
 
-- 前端的契约测试和模拟服务器只覆盖管理令牌、授权、同意页和开关，没有用
-  bearer 令牌去调 `/api`（`token_scope`、`tokens_off`、只读令牌）或 `/mcp`
-  的用例；这些只在 Go 测试里。网页本身不用令牌，所以先这样。
-- 关掉「API 令牌」时，已连接的应用（OAuth）仍能用 `/mcp`，要停掉它们得关 MCP；
-  文档和管理页的说明已经改成这样。
-- 令牌和 OAuth 的失败次数分开算，同一个地址每分钟各能试 10 次；已写进文档。
-- 凭据只在请求进来时检查一次，处理中的请求在吊销后仍会做完（最多一次写入）；
-  已写进文档。
+- The frontend's contract tests and mock server cover only the administration of
+  tokens, authorization, the consent page and the switches, and have no cases that
+  call `/api` with a bearer token (`token_scope`, `tokens_off`, a read-only token) or
+  `/mcp`; those are only in the Go tests. The web itself does not use tokens, so it
+  stays like this for now.
+- When "API tokens" is turned off, connected apps (OAuth) can still use `/mcp`; to
+  stop them MCP must be turned off; the documentation and the administration page's
+  text have been changed to say so.
+- Token failures and OAuth failures are counted separately, and the same address can
+  try 10 times a minute for each; written into the documentation.
+- A credential is checked only once when the request comes in, and a request in
+  progress is still finished after revocation (at most one write); written into the
+  documentation.

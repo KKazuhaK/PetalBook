@@ -1,861 +1,1364 @@
 # Milestones: phase 3, teams (3.1 to 3.4)
 
-## 第 3 期：团队
+## Phase 3: teams
 
-组（IdP 映射和本地组）；本地放不下时的部分缓存（4.5 的四步）；多租户和
-公开注册的准备（见 1.7）；Git 存储抽成独立模块并让 Rackbook 切过去。共享
-空间和管理后台已经在 1.7 提前做了。
+Groups (IdP mapping and local groups); partial cache for when everything does
+not fit locally (the four steps of
+[storage-and-sync.md §4.5](../storage-and-sync.md#45-when-local-space-is-not-enough-partial-cache)); preparation for multi-tenancy
+and open registration (see 1.7 in [phase-0-1.md](phase-0-1.md)); extracting Git storage into a standalone module and
+switching Rackbook over to it. Shared spaces and the admin console were already
+done early in 1.7.
 
-**里程碑 3.1：省服务器空间——强制远端、部分缓存、独立附件仓库**
-（所有者 2026-11-22 提出），排在第 3 期开头，依赖 2.7（GitHub App、GitHub
-用户授权、自动建仓库）。所有者的要求：
+**Milestone 3.1: save server space: mandatory remote, partial cache, separate
+asset repository** (proposed by the owner on 2026-11-22). It comes at the start
+of phase 3 and depends on 2.7 (GitHub App, GitHub user authorization,
+automatic repository creation). The owner's requirements:
 
-- 管理员可以要求空间跟随远端（不要求、新空间必须、所有空间都必须），配了
-  GitHub 时一键建仓库；已有的本地空间有宽限期，过期后只读，不删不丢；可以
-  给个别用户或空间例外，可以限制本地空间的大小；`--remote-host` 搬到同一页。
-- 部分缓存（4.5 的四步，只对跟随远端的空间）：闲置的空间删掉本地克隆、留
-  索引；只取最近的历史；附件按需取、有上限的缓存；连正文也按需取
-  （`--filter=blob:none`，「只拉取一部分，不用全部拉下来」）。管理员设磁盘
-  预算。
-- 独立的附件仓库（3.4 的第 2 种后端）：文字一个仓库，附件另一个，页面提交前
-  先确保它引用的附件已推送。
-- 目标：服务器上每个空间只留索引、最近打开的内容和有上限的附件缓存，磁盘
-  按「活跃的部分」算。
+- An admin can require spaces to follow a remote (no requirement, required for
+  new spaces, required for all spaces). When GitHub is configured, a repository
+  is created in one click. Existing local spaces get a grace period and become
+  read-only after it expires, with nothing deleted or lost. Individual users or
+  spaces can be exempted, and the size of local spaces can be limited.
+  `--remote-host` moves to the same page.
+- Partial cache (the four steps of
+  [storage-and-sync.md §4.5](../storage-and-sync.md#45-when-local-space-is-not-enough-partial-cache), only for spaces that follow a remote):
+  idle spaces have their local clone deleted and keep only the index; only the
+  recent history is fetched; assets are fetched on demand into a capped cache;
+  even the body text is fetched on demand (`--filter=blob:none`,
+  「只拉取一部分，不用全部拉下来」 [fetch only a part, do not pull everything
+  down]). The admin sets a disk budget.
+- A separate asset repository (the second backend of
+  [data-model.md §3.4](../data-model.md#34-attachments)): one repository for
+  text, another for assets, and before a page is committed, the assets it
+  references are first made sure to be pushed.
+- Goal: for each space the server keeps only the index, the recently opened
+  content and a capped asset cache, so disk use is counted by the "active
+  part".
 
-**3.1 的约定（2026-11-23）**：接口和错误码写在 `docs/api.md` 新的「Server
-storage」一节，以及「Spaces」（Space 对象的 `storage`、`POST /api/spaces` 的
-`remote` 和 `github.assets`）、「Remote repository」的 `DELETE …/remote`、
-「History」「Files」「Import」「Users」「Administration」里的补充。2.7 在
-「GitHub」里预留的名字照用。
+**The 3.1 contract (2026-11-23)**: the endpoints and error codes are written in
+a new "Server storage" section of `docs/api.md`, plus additions in "Spaces"
+(the `storage` field of the Space object, and `remote` and `github.assets` of
+`POST /api/spaces`), `DELETE …/remote` under "Remote repository", and "History",
+"Files", "Import", "Users" and "Administration". The names that 2.7 reserved
+under "GitHub" are used as they are.
 
-- **省下的是什么**（5 万篇的语料，文字和索引是实测，其余是估算，合并前在
-  `spikes/search-scale` 的语料上实测后写回这里）：索引 166 MB，工作区文字
-  192 MB，`.git` 里当前版本的文字约 100 MB，提交和目录树约 60–120 MB（按每篇
-  五个版本、25 万个提交算），旧版本文字约 100–400 MB；附件放在空间仓库里时
-  **占两份**（工作区一份，`.git` 一份，图片压不小），5 GB 附件就是 10 GB 加上
-  所有旧版本。所以这样一个空间：完整克隆约 11 GB，部分克隆加附件仓库约
-  0.6 GB（另加附件缓存里属于它的那部分），清掉后 166 MB。常见的 2000 篇、
-  200 MB 附件的空间：约 450 MB、约 25 MB、约 7 MB。1000 个这样的空间、
-  100 个在用：克隆从约 450 GB 降到约 2.5 GB，另有 7 GB 索引和附件缓存。
-- **缓存着的空间每个请求的代价不变**：页面、列表、搜索、链接、校验和当前
-  附件仍然读工作区和索引。只有读服务器上没有的东西（旧版本、不在缓存里的
-  附件、被清掉的空间的文件）才等网络。
+- **What is saved** (a corpus of 50,000 pages; text and index are measured,
+  the rest is estimated, and before merging it is measured on the
+  `spikes/search-scale` corpus and written back here): index 166 MB, workspace
+  text 192 MB, text of the current versions in `.git` about 100 MB, commits and
+  trees about 60-120 MB (at five versions per page and 250,000 commits), text
+  of old versions about 100-400 MB. When assets live in the space repository
+  they **take two copies** (one in the workspace, one in `.git`, and images do
+  not compress well), so 5 GB of assets is 10 GB plus all the old versions. So
+  for such a space: full clone about 11 GB; partial clone plus asset repository
+  about 0.6 GB (plus the part of the asset cache that belongs to it); after
+  eviction 166 MB. For a common space of 2000 pages and 200 MB of assets: about
+  450 MB, about 25 MB, about 7 MB. With 1000 such spaces, 100 of them in use,
+  clones drop from about 450 GB to about 2.5 GB, plus 7 GB of index and asset
+  cache.
+- **The per-request cost of a cached space does not change**: pages, lists,
+  search, links, validation and current assets still read the workspace and the
+  index. Only reading something the server does not have (old versions, assets
+  not in the cache, files of an evicted space) waits for the network.
 
-**强制远端**
+**Mandatory remote**
 
-- `GET/PUT /api/admin/storage` 的 `remotes: {require, scope, graceDays}`，
-  `require` 是 `null`（默认）、`"any"`、`"github"`（`github` 凭据，App 或用户
-  授权；没配 App 时设不了）；`scope` 是 `"new"`（默认）或 `"all"`；`graceDays`
-  0–365，默认 30。服务器记下要求最近一次变成现在这样的时间 `since`，已有空间
-  的期限是 `since + graceDays`。
-- 新空间：`POST /api/spaces` 不带要求的东西时，在做任何事之前回
-  `409 remote_required`。`"any"` 时可以带 `remote`（形状同 `PUT …/remote`），
-  同样「要么整个成功、要么不留空间」。
-- **个人空间**是第一次登录时建的，那时用户什么都还没连，所以照旧建成本地
-  空间，期限是建成时间加 `graceDays`；界面上给一步完成的办法（连 GitHub，在
-  他自己的账号下建私有仓库 `petalbook-<用户名>`）。
-- 宽限期内只有提示：Space 对象的 `storage.remote`（要求、期限、是否已过期），
-  所有成员都能看到，有 `manage` 的人看到一键连接。
-- **过期后只读**：照常列出、打开、阅读、搜索；草稿照存（草稿在状态库，不在
-  空间里）；改动文件的请求回 `409 remote_required`，带期限。连接远端永远可以，
-  连上要求的那种远端后立即恢复可写，草稿照常提交。**任何时候都不删东西**：
-  空间、页面、草稿、设置都不删。
-- 要求生效时，`DELETE …/remote`、换成要求不接受的凭据都回 `409 remote_required`。
-- 放宽要求时期限立即清掉，过期的空间立即可写；收紧时重新计 `since`，谁的
-  宽限期都不会从过去开始；改 `graceDays` 时移动宽限期内的期限，改到已经过去的
-  会立即过期，`PUT` 的回答里的 `affected` 先让管理员看到影响了多少。
-- 远端出问题（连不上、`rewritten`、2.7 的各种 `errorCode`）的空间仍然算跟随
-  远端，满足要求，按原来的规则处理。
-- 例外：`PATCH /api/users/{id}` 的 `remoteExempt`（这个人拥有的空间都不要求），
-  `PUT /api/admin/spaces/{space}/storage` 的 `exempt`（单个空间）。
-- **本地空间的大小上限** `localSpaces.maxBytes`（默认不限）：只拒绝上传和导入
-  （`507 space_full`），从不拒绝保存文字，所以不会丢正在写的东西。大小用后台
-  测量的值（最多 6 小时前），接近上限 10% 以内时先重新测一次。
-- `hosts.allowed` 就是现在的 `--remote-host`，搬进这一页，存状态库；启动时给了
-  这个参数就以参数为准，页面上只读。
-- **分层和锁定**：这些都是全站一层的设置，3.1 里一律锁在全站，不下放到空间：
-  它们决定服务器怎么用自己的磁盘、信任哪些主机；而空间一层的设置在
-  `space.yml` 里，能推送到远端的任何人都能改。租户一层预留：租户管理员只能
-  在全站的基础上收紧（要求远端、`"github"` 比 `"any"` 严、更短的宽限期、更小
-  的预算），不能放宽。每个空间的「常驻」「例外」是管理员在状态库里的记录，
-  不是空间的设置。
+- `remotes: {require, scope, graceDays}` of `GET/PUT /api/admin/storage`.
+  `require` is `null` (default), `"any"`, or `"github"` (a `github` credential,
+  App or user authorization; it cannot be set when no App is configured).
+  `scope` is `"new"` (default) or `"all"`. `graceDays` is 0-365, default 30. The
+  server records `since`, the time the requirement last changed to its current
+  value, and the deadline of an existing space is `since + graceDays`.
+- New spaces: when `POST /api/spaces` does not carry what the requirement
+  asks for, it answers `409 remote_required` before doing anything. With
+  `"any"` it may carry `remote` (same shape as `PUT …/remote`), again "either
+  everything succeeds or no space is left behind".
+- The **personal space** is created at first sign-in, when the user has not
+  connected anything yet, so it is created as a local space as before, and its
+  deadline is the creation time plus `graceDays`. The UI offers a one-step way
+  to finish (connect GitHub, and create the private repository
+  `petalbook-<username>` under their own account).
+- During the grace period there is only a notice: the `storage.remote` field of
+  the Space object (the requirement, the deadline, whether it has expired),
+  visible to all members, and people with `manage` see a one-click connect.
+- **Read-only after expiry**: the space is still listed, opened, read and
+  searched; drafts are still saved (drafts are in the state database, not in
+  the space); requests that change files answer `409 remote_required` with the
+  deadline. Connecting a remote is always allowed, and as soon as a remote of
+  the required kind is connected the space is writable again and drafts are
+  committed as usual. **Nothing is ever deleted**: not spaces, pages, drafts or
+  settings.
+- While a requirement is in force, `DELETE …/remote` and switching to a
+  credential the requirement does not accept both answer `409 remote_required`.
+- When the requirement is relaxed, deadlines are cleared at once and expired
+  spaces are writable at once. When it is tightened, `since` is counted again,
+  so nobody's grace period starts in the past. When `graceDays` is changed,
+  deadlines still in their grace period are moved, and one moved to a time that
+  has already passed expires at once; `affected` in the answer to `PUT` lets
+  the admin see first how many are affected.
+- A space whose remote has a problem (unreachable, `rewritten`, any of the
+  `errorCode`s of 2.7) still counts as following a remote, satisfies the
+  requirement, and is handled by the existing rules.
+- Exceptions: `remoteExempt` of `PATCH /api/users/{id}` (none of the spaces
+  this person owns are required), and `exempt` of
+  `PUT /api/admin/spaces/{space}/storage` (a single space).
+- **Size limit of local spaces** `localSpaces.maxBytes` (default unlimited): it
+  only rejects uploads and imports (`507 space_full`) and never rejects saving
+  text, so what is being written is never lost. The size is the value measured
+  in the background (at most 6 hours old), and within 10% of the limit it is
+  measured again first.
+- `hosts.allowed` is the current `--remote-host`, moved to this page and stored
+  in the state database. When the flag is given at startup, the flag wins and
+  the page is read-only.
+- **Layering and locking**: these are all site-wide settings, and in 3.1 they
+  are all locked at the site level and not delegated to spaces: they decide how
+  the server uses its own disk and which hosts it trusts, whereas settings at
+  the space level are in `space.yml`, which anyone who can push to the remote
+  can change. The tenant level is reserved: a tenant admin may only tighten on
+  top of the site settings (require a remote, `"github"` is stricter than
+  `"any"`, a shorter grace period, a smaller budget) and may not relax them.
+  The "pinned" and "exempt" flags of each space are admin records in the state
+  database, not space settings.
 
-**部分缓存**
+**Partial cache**
 
-- 3.1 做 4.5 的第 1 步（清掉闲置空间）和第 3 步（文件内容按需取），**第 2 步
-  （浅克隆）不做，第 4 步（正文按需取）不做**，理由见下。
-- **用 `--filter=blob:none`，不用浅克隆**：服务器有全部提交和目录树，只有当前
-  版本的文件内容（照旧检出到工作区），旧版本打开时再取，取到的留到空间被清掉。
-  浅克隆多省的只是提交和目录树（5 万篇约 60–120 MB），但页面历史、跟着改名
-  找历史、检测远端历史被改写、数没推送的提交都要走提交；浅克隆下每翻一页
-  历史都要一次 `--deepen`，还会把那些提交的所有文件都带回来。
-- **Git 自己从不联网**：服务器上所有 Git 命令都带 `GIT_NO_LAZY_FETCH=1`。缺的
-  对象是一个由服务器处理的错误，不是读到一半、不带凭据也没有期限的一次网络
-  请求。缺的内容由服务器按 id 批量去取（`git fetch --filter=blob:none --stdin`），
-  走和拉取同一套凭据、期限和错误分类。受限 git 执行器只多放开这几个选项。
-  要 Git 2.44 以上（有 `--no-lazy-fetch`）；更旧的 Git 关掉部分克隆，清掉闲置
-  空间照样能用（取回来时是完整克隆）。
-- **拉取**：每分钟拉取（仍然只拉打开着的空间）取新的提交和目录树；改了文件时
-  多一次请求取这些文件的新内容，然后再快进。没有新东西的拉取代价不变。
-- 远端不支持过滤（Git 会提示并全部取回）时就是完整克隆，`cache: "full"`，
-  别的都不变。
-- 已有的完整克隆不就地转换（Git 不能从克隆里就地丢掉内容），等它被清掉再取回
-  时就成了部分克隆；管理员可以 `POST /api/admin/spaces/{space}/evict` 立即做。
-- **历史和旧版本**：每页历史照旧一次 `git log` 列出版本和内容 id，把没有的
-  （最多 `limit` 的一倍半）一次请求取回（30 个 4 KB 的版本约 100–200 KB）。
-  跟着改名找历史时，Git 的改名检测只用精确改名（不需要内容），其余的靠页面
-  `id` 认出来，就是现在 Git 认不出时 `Predecessor` 的做法（那一个提交里删掉的
-  文件的开头，一次请求取回）。列出的版本和完整克隆一样，实现时拿同一段历史在
-  两种克隆上对比测试。
-- 取的时候请求等着，最多 15 秒。连不上、凭据被拒或超时：`503 not_cached`，
-  `fetching` 说明是否还在取，`Retry-After` 是 5 秒（还在取，下次多半就有了）
-  或 60 秒。一页历史要么完整要么不给，不给残缺的列表。服务器上已有的版本在
-  远端连不上时照常读。设置文件从旧版本修复（2.2）在连不上时只看服务器上有的
-  版本，下次打开再试。
-- **清掉闲置的空间**：删掉 `DATA/spaces/<id>`，索引、状态库里的记录（成员、
-  远端、草稿）留着。列表、文件夹树、标签、搜索（空间内和全局）、链接和反向
-  链接、校验列表直接查索引，和缓存着的空间一样快；要读文件的请求先取回。
-  - 只有同时满足这些才清（空间关着、被按住、没人能打开时检查）：远端是 `ok`；
-    提交器没有待提交的、日志是空的，并且当场 fetch 一次确认远端分支就在空间的
-    `HEAD` 上（空间的每个提交远端都有）；没有救下来的提交
-    （`refs/petalbook/unpushed/…`，那是唯一的一份）；没有常驻；至少
-    `minIdleHours` 没用过。有一条不满足就留着，下一轮再看。
-  - 什么时候清：`evictAfterDays`（默认 14 天）没用过；或者克隆加起来超过
-    `clonesBytes`、磁盘剩余不到 `minFreeBytes`（默认 10 GiB）时，按最久没用的
-    先清，但 `minIdleHours`（默认 24 小时）内用过的永远不清，免得反复取回又清掉。
-    「用」是打开空间的请求，拉取不算；最后使用时间存状态库，每个空间每小时最多
-    写一次。每 10 分钟一轮，一次清一个，每个几秒（删文件），大小用已存的测量值，
-    一次查询。附件缓存里属于它的一起清掉。
-  - **取回**：第一个要读文件的请求开始取回并等最多 10 秒：部分克隆远端分支 →
-    检出 → 内容 id 和索引记录一致的文件把修改时间改回索引记下的值（索引就认为
-    它们没变，「按更新时间」的顺序也和原来一样；只有这期间在远端改过的文件重新
-    读，和拉取后一样）→ 照常打开。2000 篇约 10 MB、1–3 秒；5 万篇约 200 MB、
-    100 Mbit/s 下 20–40 秒。同时最多两个取回，其余排队。10 秒后还没好的请求回
-    `503 restoring`（`phase`：`waiting`、`fetching`、`checkout`、`indexing`，
-    `Retry-After: 5`），取回继续。克隆在单独的目录里做，完整了再挪到位置上，
-    失败不留半个克隆。远端连不上或凭据不行时立即失败，回 `503 unavailable`，
-    带远端的 `errorCode`，只查索引的请求照常。草稿不受影响。
-- **附件缓存**：`DATA/assetcache/<space>/<内容 id>`，一个文件一份，按 Git 的
-  内容 id 命名，同一个文件被引用多少次都只存一份。所有空间共用一个预算
-  `cache.assetsBytes`（默认 5 GiB），超了按最久没读的先删。文件的修改时间就是
-  最后一次读的时间（每小时最多改一次），重启后顺序还在，不需要数据库；总量在
-  内存里，是准的，因为缓存里的文件都是服务器自己写的。
-- **常驻**：`PUT /api/admin/spaces/{space}/storage` 的 `pin`，只有管理员能设。
-  常驻的空间不被清掉，后台把所有旧版本取全变成完整克隆，附件全部留在缓存里、
-  不算进 `assetsBytes`。
-- **管理后台**：`GET /api/admin/spaces` 每项加 `storage`（`cache`、常驻、例外、
-  最后使用、`cloneBytes`、`indexBytes`、`assetCacheBytes`、附件在哪、远端要求），
-  可以按 `cache` 和 `overdue` 筛（同一次查询）；`GET /api/admin/status` 加各状态
-  的空间数、三种占用的总和、预算、排队的取回数、宽限期内和已过期的空间数。
-  都是已存的测量值加内存里的数，一次查询。
-- **离线**：缓存着的空间照常读，写回 `503 unavailable`，服务器上没有的旧版本和
-  附件回 `503 not_cached`；被清掉的空间只能查索引，要读文件的回
-  `503 unavailable`。2.7 的授权过期、缺失也一样，带 `errorCode`。处在这些状态
-  的空间永远不会被清掉，所以正在用的空间远端没了还能接着用自己的克隆。
+- 3.1 does step 1 of [storage-and-sync.md §4.5](../storage-and-sync.md#45-when-local-space-is-not-enough-partial-cache) (evict idle
+  spaces) and step 3 (fetch file contents on demand). **Step 2 (shallow clone) is not done, and step 4 (fetch body text on
+  demand) is not done**; the reasons are below.
+- **Use `--filter=blob:none`, not a shallow clone**: the server has all commits
+  and trees but only the file contents of the current version (still checked
+  out into the workspace). Old versions are fetched when opened, and what is
+  fetched stays until the space is evicted. All a shallow clone would save in
+  addition is commits and trees (about 60-120 MB for 50,000 pages), but page
+  history, finding history across renames, detecting that the remote history
+  was rewritten, and counting unpushed commits all have to walk commits. With a
+  shallow clone every page of history needs a `--deepen`, which also brings
+  back all the files of those commits.
+- **Git itself never touches the network**: every Git command on the server
+  carries `GIT_NO_LAZY_FETCH=1`. A missing object is an error handled by the
+  server, not a network request made halfway through a read, without
+  credentials and without a deadline. The server fetches missing contents in a
+  batch by id (`git fetch --filter=blob:none --stdin`), using the same
+  credentials, deadlines and error classification as a pull. The restricted git
+  executor allows only these few extra options. Git 2.44 or later is required
+  (it has `--no-lazy-fetch`); with an older Git, partial clone is turned off,
+  and evicting idle spaces still works (it comes back as a full clone).
+- **Pull**: the per-minute pull (still only for spaces that are open) fetches
+  new commits and trees; when files changed, there is one more request to fetch
+  the new contents of those files, and then it fast-forwards. A pull with
+  nothing new costs the same.
+- When the remote does not support filtering (Git warns and fetches
+  everything), it is a full clone, `cache: "full"`, and nothing else changes.
+- An existing full clone is not converted in place (Git cannot drop contents
+  from a clone in place); when it is evicted and later fetched back it becomes a
+  partial clone. An admin can do this at once with
+  `POST /api/admin/spaces/{space}/evict`.
+- **History and old versions**: each page of history still lists versions and
+  content ids with one `git log`, and fetches the ones that are missing (at most
+  one and a half times `limit`) in one request (30 versions of 4 KB are about
+  100-200 KB). When following renames to find history, Git's rename detection
+  uses only exact renames (which need no contents), and the rest is recognized
+  by the page `id`, which is what `Predecessor` does now when Git cannot tell
+  (the start of the file deleted in that one commit, fetched in one request).
+  The versions listed are the same as in a full clone; at implementation time
+  the same history is compared in tests on both kinds of clone.
+- While fetching, the request waits for at most 15 seconds. If the remote is
+  unreachable, the credential is refused or it times out: `503 not_cached`,
+  where `fetching` says whether it is still being fetched, and `Retry-After` is
+  5 seconds (still fetching, so probably there next time) or 60 seconds. A page
+  of history is either complete or not given; an incomplete list is never
+  given. Versions already on the server are read as usual when the remote is
+  unreachable. Repairing the settings file from an old version (2.2) looks only
+  at the versions on the server when the remote is unreachable, and tries again
+  the next time the space is opened.
+- **Evicting idle spaces**: delete `DATA/spaces/<id>`, and keep the index and
+  the records in the state database (members, remote, drafts). Lists, the folder
+  tree, tags, search (within a space and global), links and backlinks, and the
+  validation list query the index directly, as fast as for a cached space;
+  requests that need to read a file fetch it back first.
+  - Only when all of these hold is a space evicted (checked when the space is
+    closed, held, and nobody can open it): the remote is `ok`; the committer has
+    nothing pending, its log is empty, and a fetch done on the spot confirms
+    that the remote branch is at the space's `HEAD` (the remote has every commit
+    of the space); there are no rescued commits (`refs/petalbook/unpushed/…`,
+    which are the only copy); it is not pinned; and it has been unused for at
+    least `minIdleHours`. If any one fails it stays, and the next round looks
+    again.
+  - When to evict: unused for `evictAfterDays` (default 14 days); or, when the
+    clones together exceed `clonesBytes` or the free disk space is below
+    `minFreeBytes` (default 10 GiB), the least recently used first, but a space
+    used within `minIdleHours` (default 24 hours) is never evicted, so it is not
+    fetched back and evicted again and again. "Use" means a request that opens
+    the space; a pull does not count. The last-used time is stored in the state
+    database, written at most once per hour per space. A round runs every 10
+    minutes and evicts one space at a time, each in a few seconds (deleting
+    files), using the stored size measurement, in one query. The part of the
+    asset cache that belongs to it is evicted together.
+  - **Restore**: the first request that needs to read a file starts the restore
+    and waits for up to 10 seconds: partial-clone the remote branch → check out
+    → for files whose content id matches the index record, set the modification
+    time back to the value the index recorded (so the index considers them
+    unchanged, and the "by update time" order is the same as before; only files
+    changed on the remote in the meantime are read again, as after a pull) →
+    open as usual. 2000 pages are about 10 MB and take 1-3 seconds; 50,000 pages
+    are about 200 MB and take 20-40 seconds at 100 Mbit/s. At most two restores
+    run at the same time and the rest queue. A request that is still not ready
+    after 10 seconds answers `503 restoring` (`phase`: `waiting`, `fetching`,
+    `checkout`, `indexing`; `Retry-After: 5`), and the restore continues. The
+    clone is made in a separate directory and moved into place once complete,
+    so a failure leaves no half clone. When the remote is unreachable or the
+    credential does not work it fails at once with `503 unavailable` and the
+    remote's `errorCode`, and requests that only query the index work as usual.
+    Drafts are not affected.
+- **Asset cache**: `DATA/assetcache/<space>/<content id>`, one file per copy,
+  named by the Git content id, so a file is stored once however many times it
+  is referenced. All spaces share one budget `cache.assetsBytes` (default
+  5 GiB), and when it is exceeded the least recently read are deleted first. The
+  modification time of a file is the time of the last read (changed at most once
+  per hour), so the order survives a restart and no database is needed; the
+  total is kept in memory and is accurate, because the files in the cache are
+  all written by the server itself.
+- **Pinned**: `pin` of `PUT /api/admin/spaces/{space}/storage`, which only an
+  admin can set. A pinned space is not evicted, the background job fetches all
+  old versions so it becomes a full clone, and all its assets stay in the cache
+  and are not counted in `assetsBytes`.
+- **Admin console**: each item of `GET /api/admin/spaces` gets `storage`
+  (`cache`, pinned, exempt, last used, `cloneBytes`, `indexBytes`,
+  `assetCacheBytes`, where the assets are, the remote requirement), and can be
+  filtered by `cache` and `overdue` (in the same query); `GET /api/admin/status`
+  adds the number of spaces in each state, the sum of the three kinds of use,
+  the budgets, the number of queued restores, and the number of spaces in their
+  grace period and expired. All of these are stored measurements plus numbers
+  in memory, in one query.
+- **Offline**: a cached space is read as usual, writes answer
+  `503 unavailable`, and old versions and assets the server does not have
+  answer `503 not_cached`; an evicted space can only be queried through the
+  index, and anything that needs to read a file answers `503 unavailable`. An
+  expired or missing authorization from 2.7 is the same, with `errorCode`. A
+  space in these states is never evicted, so a space in use whose remote has
+  gone can keep using its own clone.
 
-**独立的附件仓库**
+**Separate asset repository**
 
-- **普通的第二个 Git 仓库，不用 Git LFS**：任何空间能用的主机都能用，凭据种类、
-  受限 git 执行器、GitHub App 都一样，在 GitHub 上能像别的文件一样浏览。LFS 是
-  Git 之外的另一套协议和服务，在 GitHub 上有单独计费的存储和流量额度，不是每个
-  主机都提供，还会在空间仓库里放指针文件，别人没装 LFS 时看到的是一段文本。
-- **布局**：附件仓库的根就是 `assets/` 的内容，`<页面 id>/<文件名>`，分支 `main`。
-  把空间仓库克隆下来、再把附件仓库克隆进它的 `assets/` 目录，文件和以前完全
-  一样，任何编辑器里链接都能用。提交的作者和提交者同空间，回答之前推送。
-- **链接不变**：页面里照旧写 `/assets/01JD3K8Q7Z/x.jpg` 或指向 `assets/` 的相对
-  路径，不改任何页面。`GET …/files/assets/…` 改为在附件仓库里找：服务器内存里
-  有一张附件仓库当前文件的表（路径、内容 id、大小），打开空间时建（2 万个文件
-  约 2 MB、约 50 毫秒），拉取和上传时更新；找到后从附件缓存发出，不在缓存里就
-  先按 id 取，同时读同一个文件的请求共用一次取。回答带 `ETag`（内容 id）代替
-  `Last-Modified`（要找文件最后一次提交得走历史），`If-None-Match` 回 `304`，
-  `Range` 和其他头照旧。表里没有的路径直接 `404`，不问远端。
-- 校验（附件引用指向不存在的文件）用同一张表，代价不变；附件仓库连不上时用
-  最后一张表，不会因为连不上就把附件都报成缺失。
-- **连不上**：文字照常读写；缓存里的附件照常发；别的回 `503 not_cached`，界面上
-  图片的位置显示占位；上传回 `503 unavailable`，不存任何东西。附件仓库有自己的
-  状态（同 Remote），不会让空间暂停。
-- **写入顺序**：上传在回答之前推送到附件仓库，所以之后保存的页面引用的附件一定
-  已经在远端。导入先把附件一次提交推到附件仓库，再把页面一次提交推到空间仓库；
-  第二步失败时附件留在远端、没人引用，导入照旧算失败（没有页面）。两边都从不
-  强推、从不删除。
-- 接口：`GET/PUT/DELETE /api/spaces/{space}/remote/assets`（Remote 对象多一个
-  `move`），`PUT` 可以带 `github: {owner, name, private, create}` 直接在 GitHub 上建；
-  空间本身必须跟随远端，否则 `409 remote_required`。连接不搬东西：已有附件留在
-  空间的 `assets/` 照旧从那里读，新上传的进附件仓库。
-- **搬过去**：`POST …/remote/assets/move` 回 `202`，后台做：
-  1. 复制：把当前提交里 `assets/` 的文件提交并推送到附件仓库，每个提交最多
-     500 MB（GitHub 拒绝超过 2 GB 的推送）。这期间空间照常可写，上传照旧进
-     空间的 `assets/`。
-  2. 切换：短暂按住空间的写入，把复制开始后 `assets/` 新增的也推过去，然后空间
-     仓库一个提交删掉 `assets/`、在 `.gitignore` 里加 `/assets/`，推送。从这个
-     提交起附件从附件仓库读。
-  3. 服务器像取回一样重新做一个空间仓库的部分克隆，旧克隆照常服务到新的就位，
-     附件占的磁盘这时才腾出来。
-  空间的历史和远端里仍有这些附件（历史从不改写）。切换前失败空间什么都没变，
-  已推到附件仓库的留着，下次接着搬。同时只能有一次搬迁。
-- `DELETE …/remote/assets` 只在还没有附件进过附件仓库时可以；搬回空间仓库不在
-  3.1 里（`409 conflict`）。
-- **GitHub 自动建**：可以。`POST /api/spaces` 的 `github.assets`（`true` 时名字是
-  `<name>-assets`）在建完空间仓库后接着建附件仓库，同一个 owner、可见性和凭据，
-  第 4 步同样检查（「仅选定仓库」的安装照样补加，补不上回
-  `409 github_repo_not_in_installation`）。只要建出了一个仓库，失败的回答就列出
-  `repo` 和 `assetsRepo`，同一个请求改成 `create: false` 两个都能接上。管理员的
-  `assets.newSpaces` 打开时，用 GitHub 新建的空间默认带附件仓库。
+- **An ordinary second Git repository, not Git LFS**: any host a space can use
+  works, the credential kinds, the restricted git executor and the GitHub App
+  are all the same, and on GitHub it can be browsed like any other file. LFS is
+  a separate protocol and service outside Git, with separately billed storage
+  and traffic quotas on GitHub, not every host offers it, and it puts pointer
+  files in the space repository, so someone without LFS installed sees a piece
+  of text.
+- **Layout**: the root of the asset repository is the content of `assets/`,
+  `<page id>/<file name>`, branch `main`. Clone the space repository, then
+  clone the asset repository into its `assets/` directory, and the files are
+  exactly as before and links work in any editor. The author and committer of
+  commits are the same as for the space, and the push happens before the
+  answer.
+- **Links do not change**: pages still write `/assets/01JD3K8Q7Z/x.jpg` or a
+  relative path to `assets/`, and no page is changed. `GET …/files/assets/…`
+  now looks in the asset repository: the server keeps in memory a table of the
+  current files of the asset repository (path, content id, size), built when
+  the space is opened (20,000 files take about 2 MB and about 50 ms) and updated
+  on pull and upload. Once found, the file is served from the asset cache, and
+  if it is not in the cache it is first fetched by id, and requests reading the
+  same file at the same time share one fetch. The answer carries `ETag` (the
+  content id) in place of `Last-Modified` (finding the last commit of a file
+  would need walking the history), `If-None-Match` answers `304`, and `Range`
+  and the other headers are as before. A path not in the table answers `404`
+  directly, without asking the remote.
+- Validation (an asset reference pointing at a file that does not exist) uses
+  the same table at the same cost; when the asset repository is unreachable it
+  uses the last table, so assets are not all reported missing just because
+  the repository is unreachable.
+- **Unreachable**: text is read and written as usual; assets in the cache are
+  served as usual; others answer `503 not_cached`, and the UI shows a
+  placeholder where the image would be; an upload answers `503 unavailable` and
+  stores nothing. The asset repository has its own status (same as Remote) and
+  does not pause the space.
+- **Write order**: an upload is pushed to the asset repository before the
+  answer, so the assets referenced by a page saved afterwards are certainly on
+  the remote already. An import first pushes the assets as one commit to the
+  asset repository, then pushes the pages as one commit to the space
+  repository; if the second step fails the assets stay on the remote with
+  nobody referencing them, and the import still counts as failed (no pages).
+  Neither side is ever force-pushed or deleted from.
+- Endpoints: `GET/PUT/DELETE /api/spaces/{space}/remote/assets` (the Remote
+  object gets one more field, `move`). `PUT` may carry
+  `github: {owner, name, private, create}` to create directly on GitHub; the
+  space itself must follow a remote, otherwise `409 remote_required`.
+  Connecting moves nothing: existing assets stay in the space's `assets/` and
+  are read from there as before, and new uploads go to the asset repository.
+- **Move over**: `POST …/remote/assets/move` answers `202` and works in the
+  background:
+  1. Copy: commit and push the files of `assets/` in the current commit to the
+     asset repository, at most 500 MB per commit (GitHub rejects pushes over
+     2 GB). During this the space is writable as usual, and uploads still go
+     into the space's `assets/`.
+  2. Switch: briefly hold the space's writes, push also what was added to
+     `assets/` since the copy began, then make one commit in the space
+     repository that deletes `assets/` and adds `/assets/` to `.gitignore`, and
+     push it. From this commit on, assets are read from the asset repository.
+  3. The server makes a new partial clone of the space repository, as in a
+     restore; the old clone serves as usual until the new one is in place, and
+     only then is the disk the assets occupied freed.
+  The history of the space and the remote still contain these assets (history
+  is never rewritten). If it fails before the switch, nothing has changed for
+  the space, what was already pushed to the asset repository stays, and the next
+  move continues from there. Only one move can run at a time.
+- `DELETE …/remote/assets` is allowed only if no asset has ever entered the
+  asset repository; moving back to the space repository is not in 3.1
+  (`409 conflict`).
+- **Automatic creation on GitHub**: yes. `github.assets` of `POST /api/spaces`
+  (when `true` the name is `<name>-assets`) creates the asset repository right
+  after the space repository, with the same owner, visibility and credential,
+  and step 4 is checked in the same way (an installation limited to "selected
+  repositories" is still topped up, and if that fails it answers
+  `409 github_repo_not_in_installation`). As soon as one repository has been
+  created, a failed answer lists `repo` and `assetsRepo`, and repeating the same
+  request with `create: false` can connect both. When the admin's
+  `assets.newSpaces` is on, spaces newly created with GitHub get an asset
+  repository by default.
 
-**错误码**：`409 remote_required`（带 `require`，已有空间还带 `deadline`）、
-`503 not_cached`（带 `fetching` 和 `Retry-After`）、`503 restoring`（带 `phase`
-和 `Retry-After`）、`507 space_full`；沿用 `503 unavailable`、`409 busy`（清空间时
-正在用或有远端没有的东西）、`409 conflict`（第二次搬迁、搬迁中或已有附件后改
-附件仓库、`hosts` 由参数设定、Git 太旧开不了部分克隆）、`400 invalid`。GitHub 的
-错误码照 2.7。
+**Error codes**: `409 remote_required` (with `require`, and for an existing
+space also `deadline`), `503 not_cached` (with `fetching` and `Retry-After`),
+`503 restoring` (with `phase` and `Retry-After`), `507 space_full`; reused:
+`503 unavailable`, `409 busy` (when evicting, the space is in use or has
+something the remote does not), `409 conflict` (a second move, changing the
+asset repository during a move or after assets exist, `hosts` set by a flag,
+Git too old to enable partial clone), `400 invalid`. The GitHub error codes are
+as in 2.7.
 
-**状态库**（SQLite 和 PostgreSQL 都要测，迁移用合并时下一个空着的编号）：
-`spaces` 加最后使用时间、缓存状态、期限、`pinned`、`exempt`；`users` 加
-`remote_exempt`；`remotes` 加一列区分空间仓库和附件仓库（每个空间最多各一行）；
-搬迁进度一张小表；策略放 `site_settings`。
+**State database** (test on both SQLite and PostgreSQL; the migration uses the
+next free number at merge time): `spaces` gets last-used time, cache state,
+deadline, `pinned`, `exempt`; `users` gets `remote_exempt`; `remotes` gets a
+column to tell the space repository from the asset repository (at most one row
+of each per space); one small table for move progress; the policy goes in
+`site_settings`.
 
-3.1 不做的：
+Not done in 3.1:
 
-- 第 4 步「连正文也按需取」（见要问所有者的第 1 条）和第 2 步浅克隆。
-- 空间仓库内 `assets/` 的按需缓存（要稀疏检出，和现在的提交、重置、快进代码
-  牵扯太多）：想要附件缓存就搬到附件仓库。
-- S3 兼容存储、Git LFS。
-- 把附件从附件仓库搬回空间仓库；删除已有附件的附件仓库；清理没人引用的附件。
-- Webhook 和推送事件代替每分钟拉取（2.7 留下的），仍然只拉打开着的空间。
-- 租户一层（只预留）；按用户的配额；每个空间单独的克隆预算。
-- 宽限期的邮件通知（还没有发邮件的功能），只有界面上的提示。
-- 多进程共享一份缓存（服务仍然是单实例）。
-- 第 4 期的离线客户端。
+- Step 4 "fetch body text on demand too" (see item 1 of the questions for the
+  owner) and step 2, the shallow clone.
+- An on-demand cache of `assets/` inside the space repository (it would need
+  sparse checkout, which touches too much of the current commit, reset and
+  fast-forward code): for an asset cache, move to an asset repository.
+- S3-compatible storage, Git LFS.
+- Moving assets from the asset repository back to the space repository;
+  deleting the asset repository of a space that already has assets; cleaning up
+  assets nobody references.
+- Webhooks and push events in place of the per-minute pull (left over from 2.7);
+  it still only pulls spaces that are open.
+- The tenant level (only reserved); per-user quotas; a separate clone budget
+  per space.
+- Email notification for the grace period (there is no email feature yet); only
+  a notice in the UI.
+- Several processes sharing one cache (the service is still a single instance).
+- The offline client of phase 4.
 
-要问所有者的（括号里是没回复时的默认）：
+Questions for the owner (the default if there is no reply is in parentheses):
 
-1. **正文按需取（第 4 步）**：所有者 2026-11-22 明确要过。这次没做，因为文字
-   本身小（5 万篇 192 MB），而且建索引、全文搜索、改名时改链接、校验都要读
-   正文，按需取会让打开没缓存的页面、移动页面这些请求多等网络，违背「缓存着的
-   空间每个请求代价不变」；规模上省空间的大头是清掉闲置空间（它连正文一起清）
-   和附件。（默认：3.1 不做，实测清空间和附件仓库的效果后再定。）
-2. 宽限期过了是只读，还是像管理员停用那样整个打不开？（默认只读，能读能搜，
-   草稿照存。）
-3. 个人空间在「必须跟随远端」下照旧先建成本地、给宽限期，而不是登录时就要求
-   先连 GitHub，可以吗？（默认可以。）
-4. 搬附件时空间仓库删掉 `assets/`：远端省了地方，但在 GitHub 网页上看空间仓库
-   时图片不显示了（要把附件仓库克隆进 `assets/` 才行）。（默认删掉。）
-5. 默认值：闲置 14 天清掉、24 小时内用过的不清、磁盘剩余少于 10 GiB 时提前清、
-   附件缓存 5 GiB、宽限期 30 天。（默认就是这些。）
-6. 常驻只有管理员能设，空间所有者不能自己要求。（默认只有管理员。）
-7. 用 GitHub 新建的空间默认不带附件仓库。（默认不带，管理员可以打开。）
-8. `--remote-host` 给了时以参数为准、页面只读。（默认如此。）
-9. 需要 Git 2.44 以上才做部分克隆，更旧时只清闲置空间。（默认如此，启动时检查
-   并在设置页显示。）
+1. **Fetch body text on demand (step 4)**: the owner explicitly asked for this
+   on 2026-11-22. It was not done this time, because the text itself is small
+   (192 MB for 50,000 pages), and building the index, full-text search,
+   rewriting links on rename, and validation all need to read body text, so
+   fetching on demand would make requests such as opening an uncached page or
+   moving a page wait for the network, against "the per-request cost of a cached
+   space does not change"; at scale the big saving is evicting idle spaces (which
+   evicts the body text too) and the assets. (Default: not done in 3.1; decide
+   after measuring the effect of eviction and the asset repository.)
+2. After the grace period, is the space read-only, or does it become unopenable
+   as a whole, as when an admin disables it? (Default: read-only, readable and
+   searchable, drafts still saved.)
+3. Under "must follow a remote", is it fine for the personal space to still be
+   created as local first with a grace period, instead of requiring GitHub to be
+   connected at sign-in? (Default: yes.)
+4. When assets are moved, the space repository deletes `assets/`: the remote
+   saves room, but when viewing the space repository on the GitHub web UI the
+   images no longer show (the asset repository must be cloned into `assets/`).
+   (Default: delete.)
+5. Defaults: evict after 14 idle days, never evict a space used within 24 hours,
+   evict early when free disk is below 10 GiB, asset cache 5 GiB, grace period
+   30 days. (The default is these values.)
+6. Only an admin can pin; the owner of a space cannot request it for themselves.
+   (Default: admin only.)
+7. Spaces newly created with GitHub do not get an asset repository by default.
+   (Default: not by default; an admin can turn it on.)
+8. When `--remote-host` is given, the flag wins and the page is read-only.
+   (Default: so.)
+9. Git 2.44 or later is needed for partial clone; with an older one only idle
+   spaces are evicted. (Default: so; checked at startup and shown on the
+   settings page.)
 
-和 2.7 实测的关系：接口不依赖实测结果。自动建附件仓库走和空间仓库同一条路，
-「仅选定仓库」的安装照样补加，补不上就是已有的 `409
-github_repo_not_in_installation`；实测只影响一个空间要不要多一次补加。另外两点
-3.1 自己要验证：GitHub 用安装令牌和用户令牌时按 id 取单个内容
-（`--filter=blob:none --stdin`）都能用；取回和按需取会让关着的空间也换令牌，
-数量要在测试里看（令牌缓存按仓库，一个在用的空间每 55 分钟最多一次）。
+Relation to the 2.7 measurements: the endpoints do not depend on the measured
+results. Automatic creation of the asset repository takes the same path as the
+space repository, an installation limited to "selected repositories" is still
+topped up, and if that fails it is the existing `409
+github_repo_not_in_installation`; the measurements only affect whether a space
+needs one more top-up. 3.1 has two more points to verify itself: that fetching
+single contents by id (`--filter=blob:none --stdin`) works with both the
+installation token and the user token of GitHub; and that restore and fetching
+on demand make closed spaces swap tokens too, and the count has to be examined
+in a test (the token cache is per repository, at most once every 55 minutes for
+a space in use).
 
-**3.1 的现状（第一部分，2026-11-23）**：做了存储策略、部分克隆、旧版本按需取、
-清掉闲置空间和取回，以及管理后台；独立的附件仓库（第二部分）还没做。接口按
-`docs/api.md` 的「Server storage」，迁移是 `0015_storage.sql`，SQLite 和
-PostgreSQL 都跑了测试。和约定不一样的地方和实现时定下的细节：
+**3.1 as built (part one, 2026-11-23)**: the storage policy, partial clone,
+fetching old versions on demand, evicting idle spaces and restore, and the
+admin console are done; the separate asset repository (part two) is not done
+yet. The endpoints follow "Server storage" in `docs/api.md`, and the migration
+is `0015_storage.sql`; tests were run on both SQLite and PostgreSQL. Where it
+differs from the contract, and details settled during implementation:
 
-- **哪些空间会成为部分克隆**：这个代码库里空间不是「克隆」出来的，而是先在本地
-  `git init` 再连接远端。所以只有两种情况：连接时空间还是全新的（没有自己的
-  提交）、远端有内容，这时 `fetch --filter=blob:none`、取回当前版本的全部内容再
-  检出；以及清掉后取回。自己有历史的空间连接时仍是完整克隆，已有的完整克隆也
-  不动。设置 `cache.partial` 关着或 Git 低于 2.44 时一律完整克隆。
-- **按需取旧版本**：`git log --follow` 在部分克隆里要读内容比较相似度，缺内容
-  会失败，所以部分克隆里改用 `-M100%`（只认完全相同的改名，不用内容）加
-  `--raw --no-abbrev`，先从提交列表里拿到每个版本的内容 id，用
-  `cat-file --batch-check` 找出缺的，一次 `fetch --filter=blob:none --stdin` 取回，
-  再照旧读。改名并同时改了内容的页面靠页面 `id` 接上（`Predecessor`），在
-  那个提交里被删文件的开头也是一次请求取回。同一段历史在完整克隆和部分克隆上
-  列出的提交、`rev`、路径一致，有测试对比。同一个内容 id 同时被多个请求要时共用
-  一次取；取的时候请求最多等 15 秒，超时回 `not_cached`（`fetching: true`），取
-  失败回 `fetching: false`，连续失败的 3 秒内直接回同样的失败。
-- **拉取**：快进、重置到远端提交（分叉、接受改写的历史、连接）之前，先用
-  `diff --raw` 算出要检出的文件里缺的内容，一次取回；没有新东西的拉取代价不变。
-  Git 命令一律带 `GIT_NO_LAZY_FETCH=1`，受限执行器只多放开了这些选项：
-  `fetch --filter=blob:none --stdin --no-write-fetch-head`、`cat-file --batch-check`、
-  `log/diff --raw --no-abbrev`、`log -M100%`、`rev-list --objects --missing=print`、
-  `status --untracked-files=normal`、`for-each-ref --format=*`、`version`。
-- **清掉**：先 `holdForEviction`（把空间标成正在关闭，新请求等着；有请求、草稿
-  清扫或拉取在用就回 `busy`）、提交并关闭、再核对：日志为空、没有改动或没有提交
-  的文件、没有 `refs/petalbook/unpushed/…`、远端是 `ok`、`fetch` 一次之后 `HEAD`
-  在远端分支里且远端历史没被改写。比约定多一条：**有草稿（不管是谁的）就不清**，
-  草稿在状态库里清了也不丢，但这样即使取回失败也不会出现「写到一半的东西在一个
-  没有克隆的空间里」。顺序是：标 `evicting` → 一次 `rename` 挪到
-  `DATA/evicting/` → 标 `evicted` → 删挪走的目录；启动时 `recoverEvictions` 按
-  状态库和磁盘收尾（标了 `evicting` 但目录还在：原样恢复；目录没了：算清掉），
-  测试在每一步之后「崩溃」（钩子返回错误，换一个新的管理器），空间要么完整要么
-  是能取回的清掉状态，两种都读得出全部页面。取回同样在
-  `DATA/restoring/` 里做完才 `rename` 到位，崩溃或失败不留半个克隆。
-- **取回要在远端被改写时保持警觉**：取回后只有状态库里的 `last_good` 是新克隆
-  的祖先时才写 `.git/petalbook-last-good`，否则空间打开时照常检测到「远端被改
-  写」，等所有者决定。
-- **取回的期限和退避**：一次取回轮到之后最多 5 分钟，远端卡住也不会一直占着两个
-  名额中的一个。失败后同一个空间先不再试：`FailFast`（默认 3 秒），连续失败一次
-  翻一倍，最多 2 分钟；这期间的请求直接回 `503 unavailable` 和 `Retry-After`。
-- **启动时收尾只在 `serve` 里做**：`recoverEvictions`（清掉做到一半、取回留下的
-  目录）和 `SweepStaged`（建到一半的空间）只在 `Options.Serve` 时跑，并且先拿到
-  `DATA/serve.lock` 的独占锁（`flock`，进程退出就释放）；`petalbook user …` 对着
-  正在运行的服务器的数据目录打开时什么都不动，第二个 `serve` 拿不到锁就不启动。
-  收尾时还会把「跟着远端、磁盘上没有克隆、却没标 `evicted`」的空间标成
-  `evicted`；运行中打开这样的空间也会取回，而不是回 500。
-- **克隆状态的记录不会盖掉清掉**：打开空间后在后台记「部分 / 完整」，写的时候用
-  `WHERE cache_state NOT IN ('evicted','evicting')`，由数据库判断，所以中间开始
-  的清掉不会被盖成 `partial`。
-- **只查索引的请求**（列表、文件夹树、标签、反向链接、链接、校验列表、分组）在
-  被清掉的空间上用 `space.OpenIndexOnly`，不取回，`GET …/pages?body=1` 要读文件
-  所以会取回。已知的小缺口：被清掉的空间的列表里，页面的「有效类型」只看头部的
-  `type`（文件夹绑定在 `space.yml` 里，要等取回），标签的颜色也一样要等取回；
-  反向链接没有 `excerpt`（是从文件里读的段落），回 `""`。链接和反向链接按索引
-  里的路径找页面，不去核对文件。有一个测试把 `indexOnlyRoutes` 里的每个路由都在
-  被清掉的空间上调一遍。
-- **常驻**：设了就在后台把缺的旧版本取全（`rev-list --objects --missing=print`
-  列出缺的，分批取），空间被清掉时先取回；远端连不上时这次不成功，下次打开这个
-  空间时再试，没有单独的重试线程。取全的顺序是：先去掉 `remote.origin.partialclonefilter`
-  （在拉取用的锁里，之后的拉取都带内容），再取缺的，最后在锁里用
-  `rev-list --all` 确认什么都不缺，才去掉 `remote.origin.promisor` 和
-  `extensions.partialclone`，克隆从此是完整克隆。受限执行器为此只放开了
-  `config --local --unset-all` 这三个键和 `rev-list --all`。
-- **宽限期和期限不存**：期限是 `since`（或空间的创建时间）加 `graceDays` 算出来
-  的，所以改 `graceDays` 立即移动所有期限，放宽要求立即清掉它们；列表的
-  `?overdue=1` 和 `affected` 是同一个条件写成的一次 SQL。写文件的请求在
-  `space.mutate` 里统一检查（`WriteGate`），所以 MCP、草稿提交、导入都一样回
-  `remote_required`，草稿本身照存。热路径上没有要求时只是一次原子读。
-- **`POST /api/spaces` 的 `remote`** 只收令牌凭据：SSH 密钥要先加到仓库里，而那
-  需要一个已经存在的空间。要求远端时想用 SSH 的人得先用 GitHub 或令牌建空间，
-  再改凭据。
-- **本地空间的大小上限**用已存的测量值，超过 90% 时先重量一次；导入按解压后的
-  页面加附件的字节数算。
-- 每 10 分钟一轮，一次一个空间，候选来自一次查询（`last_used` 的索引）；`last_used`
-  在内存里记最新的一次使用，每个空间每小时最多写一次库；升级后没有记录的空间
-  取启动时间，免得一升级就全被当作闲置。
+- **Which spaces become partial clones**: in this codebase a space is not
+  "cloned"; it is first `git init`ed locally and then connected to the remote.
+  So there are only two cases: when connecting, the space is still brand new
+  (no commits of its own) and the remote has content, in which case it does
+  `fetch --filter=blob:none`, fetches the full contents of the current version
+  and then checks out; and restoring after eviction. A space with its own
+  history is still a full clone when connected, and existing full clones are
+  left alone. When `cache.partial` is off or Git is older than 2.44, it is
+  always a full clone.
+- **Fetching old versions on demand**: `git log --follow` in a partial clone
+  has to read contents to compare similarity, and fails when contents are
+  missing, so in a partial clone it uses `-M100%` (only exact renames, no
+  contents needed) plus `--raw --no-abbrev`. It first takes the content id of
+  each version from the commit list, finds the missing ones with
+  `cat-file --batch-check`, fetches them back with one
+  `fetch --filter=blob:none --stdin`, and then reads as before. A page that was
+  renamed and changed in content at the same time is joined up by the page `id`
+  (`Predecessor`), and the start of the file deleted in that commit is also
+  fetched in one request. The same history lists the same commits, `rev` and
+  paths on a full clone and a partial clone, and a test compares them. When
+  several requests want the same content id at the same time they share one
+  fetch; the request waits at most 15 seconds while fetching and on timeout
+  answers `not_cached` (`fetching: true`); when the fetch fails it answers
+  `fetching: false`, and within 3 seconds of consecutive failures it answers the
+  same failure directly.
+- **Pull**: before a fast-forward or a reset to the remote commit (divergence,
+  accepting rewritten history, connecting), it first computes with
+  `diff --raw` the contents missing from the files to be checked out and fetches
+  them in one request; a pull with nothing new costs the same. Git commands all
+  carry `GIT_NO_LAZY_FETCH=1`, and the restricted executor allows only these
+  extra options: `fetch --filter=blob:none --stdin --no-write-fetch-head`,
+  `cat-file --batch-check`, `log/diff --raw --no-abbrev`, `log -M100%`,
+  `rev-list --objects --missing=print`, `status --untracked-files=normal`,
+  `for-each-ref --format=*`, `version`.
+- **Eviction**: first `holdForEviction` (mark the space as closing, new requests
+  wait; if a request, a draft sweep or a pull is using it, answer `busy`),
+  commit and close, then check: the log is empty, there are no changes or
+  uncommitted files, there is no `refs/petalbook/unpushed/…`, the remote is
+  `ok`, and after one `fetch` the `HEAD` is in the remote branch and the remote
+  history was not rewritten. One more condition than the contract: **if there is
+  a draft (anyone's) it is not evicted**. Drafts are in the state database and
+  would not be lost, but this way even a failed restore never leaves "something
+  half written in a space with no clone". The order is: mark `evicting` → one
+  `rename` moves it to `DATA/evicting/` → mark `evicted` → delete the moved
+  directory. At startup `recoverEvictions` finishes by the state database and
+  the disk (marked `evicting` but the directory is still there: restore it as it
+  was; the directory is gone: count it as evicted). Tests "crash" after each
+  step (the hook returns an error, and a new manager is swapped in), and the
+  space is either complete or in an evicted state that can be restored, and in
+  both all pages can be read. Restore likewise finishes in `DATA/restoring/`
+  before `rename` into place, so a crash or failure leaves no half clone.
+- **Restore stays alert when the remote was rewritten**: after a restore,
+  `.git/petalbook-last-good` is written only if the `last_good` in the state
+  database is an ancestor of the new clone; otherwise the space, when opened,
+  detects "remote rewritten" as usual and waits for the owner to decide.
+- **Restore deadline and backoff**: once its turn comes, a restore takes at most
+  5 minutes, so a stuck remote does not hold one of the two slots forever. After
+  a failure the same space is not tried again at first: `FailFast` (default 3
+  seconds), doubling with each consecutive failure up to 2 minutes; requests in
+  this time answer `503 unavailable` and `Retry-After` directly.
+- **Startup cleanup is done only in `serve`**: `recoverEvictions` (directories
+  left by half-done evictions and restores) and `SweepStaged` (half-built
+  spaces) run only with `Options.Serve`, and only after taking the exclusive
+  lock on `DATA/serve.lock` (`flock`, released when the process exits);
+  `petalbook user …` opened against the data directory of a running server
+  touches nothing, and a second `serve` that cannot get the lock does not start.
+  During cleanup, a space that "follows a remote, has no clone on disk, and is
+  not marked `evicted`" is also marked `evicted`; opening such a space while
+  running also restores it, instead of answering 500.
+- **Recording the clone state does not overwrite an eviction**: after a space is
+  opened, "partial / full" is recorded in the background, with
+  `WHERE cache_state NOT IN ('evicted','evicting')` when writing, decided by the
+  database, so an eviction that started in between is not overwritten to
+  `partial`.
+- **Requests that only query the index** (lists, the folder tree, tags,
+  backlinks, links, the validation list, groups) use `space.OpenIndexOnly` on an
+  evicted space and do not restore; `GET …/pages?body=1` has to read files, so
+  it restores. Known small gaps: in the list of an evicted space, the "effective
+  type" of a page only looks at the `type` in the header (folder bindings are in
+  `space.yml` and wait for the restore), and tag colors likewise wait for the
+  restore; backlinks have no `excerpt` (a paragraph read from the file) and
+  answer `""`. Links and backlinks find pages by the path in the index and do
+  not check the files. One test calls every route in `indexOnlyRoutes` on an
+  evicted space.
+- **Pinned**: once set, the background job fetches all missing old versions
+  (`rev-list --objects --missing=print` lists what is missing, fetched in
+  batches), and an evicted space is restored first; if the remote is unreachable
+  it does not succeed this time and is tried again the next time the space is
+  opened, with no separate retry thread. The order of completion is: first
+  remove `remote.origin.partialclonefilter` (under the pull lock, so later pulls
+  bring contents), then fetch what is missing, and finally, under the lock,
+  confirm with `rev-list --all` that nothing is missing, and only then remove
+  `remote.origin.promisor` and `extensions.partialclone`, and from then on the
+  clone is a full clone. For this the restricted executor allows only
+  `config --local --unset-all` on these three keys and `rev-list --all`.
+- **The grace period and deadline are not stored**: the deadline is computed as
+  `since` (or the creation time of the space) plus `graceDays`, so changing
+  `graceDays` moves all deadlines at once and relaxing the requirement clears
+  them at once; `?overdue=1` of the list and `affected` are one SQL written from
+  the same condition. Requests that write files are checked in one place in
+  `space.mutate` (`WriteGate`), so MCP, draft commits and import all answer
+  `remote_required` the same way, and the draft itself is still saved. On the
+  hot path, with no requirement, it is only one atomic read.
+- **`remote` of `POST /api/spaces`** accepts only token credentials: an SSH key
+  must first be added to the repository, and that needs a space that already
+  exists. Someone who wants SSH when a remote is required must first create the
+  space with GitHub or a token, and then change the credential.
+- **Size limit of local spaces** uses the stored measurement, and measures again
+  first above 90%; import counts the bytes of the unpacked pages plus assets.
+- A round every 10 minutes, one space at a time, the candidates from one query
+  (the index on `last_used`); `last_used` keeps the latest use in memory and
+  writes to the database at most once per hour per space; after an upgrade,
+  spaces with no record take the startup time, so they are not all taken as idle
+  right after the upgrade.
 
-实测（`PETALBOOK_MEASURE=3000 go test ./internal/spaces -run MeasureStorage -v`，
-3000 页、每页 5 个版本、每个约 4 KB 的中文文字，`fast-import` 生成，本机 SSD；
-文字是重复的，压缩比比真实的好得多，所以 `.git` 一栏只能看比例）：
+Measurement (`PETALBOOK_MEASURE=3000 go test ./internal/spaces -run MeasureStorage -v`,
+3000 pages, 5 versions per page, each about 4 KB of Chinese text, generated by
+`fast-import`, local SSD; the text is repetitive, so the compression ratio is
+far better than real data, and the `.git` row is only good for proportions):
 
-| 项 | 完整克隆 | 部分克隆 | 清掉后 |
+| Item | Full clone | Partial clone | After eviction |
 |---|---|---|---|
-| 工作区文字 | 8.9 MB | 8.9 MB | 0 |
-| `.git` | 2.4 MB | 1.3 MB（少的是旧版本） | 0 |
-| 索引 | 11.1 MB | 11.1 MB | 11.1 MB |
-| 合计 | 11.3 MB（不含索引） | 10.2 MB（不含索引） | 11.1 MB（只有索引） |
+| Workspace text | 8.9 MB | 8.9 MB | 0 |
+| `.git` | 2.4 MB | 1.3 MB (the saving is old versions) | 0 |
+| Index | 11.1 MB | 11.1 MB | 11.1 MB |
+| Total | 11.3 MB (without index) | 10.2 MB (without index) | 11.1 MB (index only) |
 
-时间：连接时做部分克隆、检出并建索引 1.3 秒；清掉（按住、核对远端、挪走、删除）
-69 毫秒；清掉后的搜索加列表（含打开只有索引的空间）8 毫秒；取回（部分克隆、检出、
-把修改时间改回、打开，索引认为没有变化所以不重读）256 毫秒。5 万页时的估算和
-实测要在 `spikes/search-scale` 的语料上再做，这里只证明量级和流程，没有证明
-200 MB 的那个数字。
+Times: partial clone, checkout and build the index at connect 1.3 seconds;
+eviction (hold, check the remote, move away, delete) 69 ms; search plus list
+after eviction (including opening a space with only the index) 8 ms; restore
+(partial clone, checkout, set modification times back, open; the index sees no
+change so nothing is re-read) 256 ms. The estimate and measurement for 50,000
+pages still have to be done on the `spikes/search-scale` corpus; this only proves
+the order of magnitude and the flow, not the 200 MB figure.
 
-已知问题：空间被清掉期间远端被强推（改写了历史）的话，旧的历史只有远端还留着时
-才在；服务器上除了索引什么都没有，取回的是远端现在的样子，空间显示
-`rewritten`，由所有者接受。被改写掉、只在旧历史里的版本就找不回了。
+Known issue: if the remote is force-pushed (history rewritten) while a space is
+evicted, the old history exists only if the remote still keeps it; the server
+has nothing but the index, what is restored is the remote as it is now, and the
+space shows `rewritten` for the owner to accept. Versions that were rewritten
+away and exist only in the old history cannot be found again.
 
-**3.1 的现状（第二部分，2026-11-23）**：做了独立的附件仓库和附件缓存：
-`GET/PUT/DELETE /api/spaces/{space}/remote/assets`、`POST …/remote/assets/move`
-（后台、`202`、断电后接着做）、`github.assets`（`POST /api/spaces` 和
-`PUT …/remote/assets` 的 `github`）、`cache.assetsBytes` 和 `assets.newSpaces`、
-Space 和管理后台里的 `assets` / `assetCacheBytes`、`ETag`、`503 not_cached`，
-以及设置页、管理后台、新建空间里的界面。问题 4 照默认：搬完后空间仓库不再有
-`assets/`。和约定不一样的地方和实现时定下的细节：
+**3.1 as built (part two, 2026-11-23)**: the separate asset repository and the
+asset cache are done: `GET/PUT/DELETE /api/spaces/{space}/remote/assets`,
+`POST …/remote/assets/move` (background, `202`, continues after a power cut),
+`github.assets` (the `github` of `POST /api/spaces` and of
+`PUT …/remote/assets`), `cache.assetsBytes` and `assets.newSpaces`, `assets` /
+`assetCacheBytes` in Space and the admin console, `ETag`, `503 not_cached`, and
+the UI in the settings page, the admin console and new-space creation. Question
+4 takes the default: after the move, the space repository no longer has
+`assets/`. Where it differs from the contract, and details settled during
+implementation:
 
-- **状态库用新表 `asset_remotes`，不是给 `remotes` 加一列**：`remotes` 的主键是
-  `space_id`，一堆查询（管理后台的计数、GitHub 安装的引用数、`UPDATE … WHERE
-  space_id`）都靠它，改主键两个数据库都要改动所有这些查询。新表是同样的列加
-  `used`（有附件进过它）和搬迁进度的几列，迁移是 `0017_assets.sql`（0016 留给 3.2
-  的组）。删空间时一起删。
-- **表里没有文件大小**：部分克隆里读不到没取过的文件的大小（`ls-tree -l` 在缺内容
-  时给 `BAD`），所以表是（路径、内容 id），大小在内容进缓存时才知道（上传时就知道）。
-  `Lookup` 的大小是 `-1` 表示不知道；发出文件时用缓存文件自己的大小。
-- **服务器上的附件仓库**：`DATA/assetrepos/<空间>`，一个只有提交和目录树的克隆
-  （`--filter=blob:none`），工作区永远是空的。内容不进这个克隆：上传和搬迁在一个
-  借用它的对象的临时仓库（`objects/info/alternates`）里用 Git 的底层命令做提交
-  （`hash-object -w`、`ls-tree`、`mktree --missing`、`commit-tree`、`update-ref HEAD`），
-  推送完就删掉；读缺的内容时按 id 取进另一个临时仓库，复制进缓存后删掉。所以
-  服务器上附件的内容只在缓存里一份，受 `cache.assetsBytes` 约束。受限 git 执行器
-  只多放开了 `hash-object -w --no-filters --stdin-paths`、`mktree -z --missing` 和
-  `cat-file blob <id>`。没有 `write-tree`：它在缺内容时报「invalid object」。
-- **表**：打开空间时由本地克隆的目录树建（2 万个文件：50 毫秒，3.2 MB 内存），
-  拉取（每分钟）时用 `diff --raw` 的差异增量更新，上传后重新取一次；一个请求不会
-  走全部附件。校验用同一张表（`assetExists` 先查表，再看空间自己的 `assets/`），
-  附件仓库连不上时表仍是最后一张。
-- **上传**：回答前推送（一次提交，推送被拒绝说明远端动了就在新的头上重做，最多 4 次）；
-  导入在页面那次提交之前把附件推完（`mutate` 里 `op` 之后、提交之前），页面推送失败
-  时附件留在远端、没人引用（有测试用 `pre-receive` 拒绝页面那次推送）。**所以「页面提交前
-  先确保附件已推送」靠顺序成立，没有别的待推送队列**：附件仓库里从来没有没推送的东西。
-- **搬迁的步骤和崩溃**（`internal/spaces/assets_move.go`，在每一步之间有 `AssetsHook`，
-  测试在每一步「崩溃」，换一个新的管理器，空间照常打开、搬迁接着做、没有附件丢失；
-  每一步之后都检查每个附件至少在一个远端里，内容 id 对得上）：复制（分块，每块最多
-  `MaxCommitBytes`）→ 切换时按住空间的写入、再复制新增的、**`refresh` 之后按内容 id
-  逐个核对附件仓库的远端有这些文件**，才用底层命令做删掉 `assets/` 的提交（不碰
-  文件）→ `reset --hard` 让工作区跟上 → 推送。提交之后推送之前崩溃：下次打开时
-  那个提交按「从没推送的提交」推出去；提交后、`reset` 前崩溃：`RecoverSwitch` 认出
-  HEAD 就是切换提交（按消息和 `assets/` 已不在树里）才收尾。推送失败：`reset --hard` 回到
-  原来的提交，文件原样回来。第 3 步（新的部分克隆）用清掉空间来做：搬完后试一次
-  `Evict`，空间在用就留给以后的清掉，下次取回时就是不含附件的部分克隆。
-  搬的时候上传进空间自己的 `assets/`（`Direct()` 为假），读先看空间自己的文件，
-  不走网络；切换一完成（还按着空间的写入时）就改为直接上传到仓库。
-- **清掉空间要多查的**（`verifyAssets`）：搬迁没在进行、附件仓库的状态是 `ok`、搬完后
-  克隆的 `assets/` 里没有文件（被 `.gitignore` 忽略的文件，普通的「没有提交的文件」检查
-  看不到，删克隆时会一起没）、没有正在推送的上传、没有上次上传留下的临时仓库、附件
-  仓库的远端当场 fetch 得通；连不上回 `503 unavailable`，不清。清掉时一起清掉
-  缓存里这个空间的文件。测试：每一步崩溃之后所有附件还读得出，并且两个远端里都有。
-- **连接**：令牌、SSH（用空间自己的那对密钥，要把公钥也加到附件仓库）、GitHub（已有的
-  仓库，或 `github: {create: true}` 现建）。先在一个试用目录里 fetch 一次（证明凭据能用），
-  再套用有内容仓库的规则，通过了才存库、挪到位置上，所以连不上或不能收留的什么都不改。
-  **约定之外加的**：空间有附件仓库时 `DELETE …/remote`（断开空间的远端）回
-  `409 conflict`，因为断开后本地空间读不到附件。
-- **GitHub 自动建**：空间仓库和附件仓库先都建出来，再分别做第 4 步的检查，所以失败的回答
-  同时列 `repo` 和 `assetsRepo`（`github.Error` 多了 `AssetsRepo`），同一个请求
-  `create: false` 两个都接上（测试用 2.7 的假 GitHub，包括「仅选定仓库」的安装补加不上）。
-  `github.assets` 没给时看 `assets.newSpaces`，给了 `false` 就不建。
-- **常驻**：附件缓存里属于常驻空间的文件不被清掉、不算进 `assetsBytes`（`assetcache` 的
-  `Pinned` 回调），常驻时在后台把表里的文件都取进缓存。
-- **缓存**：一个文件一份，按内容 id 命名，修改时间是最后一次读（每小时最多改一次）；
-  总量在内存里，启动时数一次（只有这一次；同时把每个文件读一遍，大小和内容 id 对不上
-  的删掉，所以是 O(缓存字节数)）；写入时先 `fsync` 临时文件再改名；超出预算按最久没读的先删，
-  清到 90%，免得满了之后每加一个文件就扫一遍。同一个文件同时被多个请求要时共用一次取。
+- **The state database uses a new table `asset_remotes`, not a new column on
+  `remotes`**: the primary key of `remotes` is `space_id`, and many queries
+  (counts in the admin console, reference counts of GitHub installations,
+  `UPDATE … WHERE space_id`) depend on it, and changing the primary key would
+  change all those queries in both databases. The new table has the same columns
+  plus `used` (an asset has entered it) and a few columns for move progress, and
+  the migration is `0017_assets.sql` (0016 is left for the groups of 3.2). It is
+  deleted together with the space.
+- **The table has no file size**: in a partial clone the size of a file that was
+  never fetched cannot be read (`ls-tree -l` gives `BAD` when contents are
+  missing), so the table is (path, content id), and the size is known only when
+  the content enters the cache (on upload it is known at once). A size of `-1`
+  from `Lookup` means unknown; when serving a file the size of the cached file
+  itself is used.
+- **The asset repository on the server**: `DATA/assetrepos/<space>`, a clone
+  with only commits and trees (`--filter=blob:none`) whose workspace is always
+  empty. Contents do not enter this clone: uploads and moves make commits with
+  low-level Git commands (`hash-object -w`, `ls-tree`, `mktree --missing`,
+  `commit-tree`, `update-ref HEAD`) in a temporary repository that borrows its
+  objects (`objects/info/alternates`), and delete it after pushing; when reading
+  missing contents, they are fetched by id into another temporary repository,
+  copied into the cache, and then deleted. So the contents of assets on the
+  server exist as one copy only, in the cache, bounded by `cache.assetsBytes`.
+  The restricted git executor allows only these extra options:
+  `hash-object -w --no-filters --stdin-paths`, `mktree -z --missing` and
+  `cat-file blob <id>`. There is no `write-tree`: it reports "invalid object"
+  when contents are missing.
+- **The table**: built when the space is opened from the tree of the local clone
+  (20,000 files: 50 ms, 3.2 MB of memory), updated incrementally on pull (every
+  minute) from the differences of `diff --raw`, and fetched again after an
+  upload; a request never walks all assets. Validation uses the same table
+  (`assetExists` first looks in the table and then at the space's own `assets/`),
+  and when the asset repository is unreachable the table is still the last one.
+- **Upload**: push before answering (one commit; if the push is rejected, which
+  means the remote moved, redo on the new head, at most 4 times). Import pushes
+  the assets before the commit of the pages (in `mutate`, after `op` and before
+  the commit), and when the pages' push fails the assets stay on the remote with
+  nobody referencing them (a test rejects the page push with `pre-receive`).
+  **So "make sure assets are pushed before the page is committed" holds by
+  order, with no separate queue of things to push**: the asset repository never
+  has anything unpushed.
+- **Steps of the move and crashes** (`internal/spaces/assets_move.go`, with an
+  `AssetsHook` between steps, and tests "crash" after each step, swap in a new
+  manager, and the space opens as usual, the move continues, and no asset is
+  lost; after each step it is checked that every asset is in at least one
+  remote with matching content ids): copy (in chunks, each at most
+  `MaxCommitBytes`) → at the switch, hold the space's writes, copy what was
+  added, and **after `refresh`, check one by one by content id that the remote
+  of the asset repository has these files**, and only then make the commit that
+  deletes `assets/` with low-level commands (without touching files) →
+  `reset --hard` so the workspace catches up → push. Crash after the commit and
+  before the push: the next time the space is opened that commit is pushed as a
+  "commit that was never pushed"; crash after the commit and before `reset`:
+  `RecoverSwitch` finishes only if it recognizes that HEAD is the switch commit
+  (by the message and `assets/` no longer being in the tree). Push failure:
+  `reset --hard` back to the original commit, and the files come back as they
+  were. Step 3 (a new partial clone) is done by evicting the space: after the
+  move it tries one `Evict`, and if the space is in use it is left for a later
+  eviction, and the next restore is a partial clone without assets. During the
+  move, uploads go into the space's own `assets/` (`Direct()` is false), and
+  reads look at the space's own files first without using the network; as soon
+  as the switch completes (still holding the space's writes), uploads go directly
+  to the repository.
+- **Extra checks when evicting a space** (`verifyAssets`): no move in progress,
+  the status of the asset repository is `ok`, after a move there are no files in
+  the clone's `assets/` (files ignored by `.gitignore` are invisible to the
+  ordinary "uncommitted files" check, and would vanish when the clone is
+  deleted), no upload being pushed, no temporary repository left by a previous
+  upload, and a fetch of the asset repository's remote done on the spot works;
+  if it is unreachable it answers `503 unavailable` and does not evict. When
+  evicting, this space's files in the cache are evicted together. Test: after a
+  crash at each step, all assets can still be read, and both remotes have them.
+- **Connecting**: token, SSH (using the key pair of the space itself, and the
+  public key must also be added to the asset repository), GitHub (an existing
+  repository, or created on the spot with `github: {create: true}`). First a
+  fetch in a trial directory (proving the credential works), then the rules for
+  a repository that has contents are applied, and only if it passes is it stored
+  in the database and moved into place, so if it is unreachable or cannot be
+  accepted nothing is changed. **Added beyond the contract**: when a space has an
+  asset repository, `DELETE …/remote` (disconnect the space's remote) answers
+  `409 conflict`, because after disconnecting a local space cannot read the
+  assets.
+- **Automatic creation on GitHub**: both the space repository and the asset
+  repository are created first, and then the checks of step 4 are done for each,
+  so a failed answer lists both `repo` and `assetsRepo` (`github.Error` gained
+  `AssetsRepo`), and the same request with `create: false` connects both (the
+  test uses the fake GitHub of 2.7, including the case where the top-up of an
+  installation limited to "selected repositories" fails). When `github.assets` is
+  not given, `assets.newSpaces` decides, and when `false` is given it is not
+  created.
+- **Pinned**: files in the asset cache that belong to a pinned space are not
+  evicted and not counted in `assetsBytes` (the `Pinned` callback of
+  `assetcache`), and when pinning, the background fetches all the files in the
+  table into the cache.
+- **Cache**: one copy per file, named by content id, with the modification time
+  being the last read (changed at most once per hour); the total is kept in
+  memory and counted once at startup (only then; it also reads every file once
+  and deletes those whose size and content id do not match, so it is
+  O(cache bytes)); a write first does `fsync` on a temporary file and then
+  renames it; when over budget the least recently read are deleted first, down to
+  90%, so that once full it does not scan on every added file. When several
+  requests want the same file at the same time they share one fetch.
 
-接口以外没有变：`503 not_cached` 带 `fetching` 和 `Retry-After`，`ETag` 是内容 id
-（`If-None-Match` 回 `304`），表里没有的路径 `404` 而且不问远端。
+Nothing else changed beyond the endpoints: `503 not_cached` carries `fetching`
+and `Retry-After`, `ETag` is the content id (`If-None-Match` answers `304`), and
+a path not in the table gets `404` without asking the remote.
 
-测试：`internal/spaces/assets_test.go`（上传、离线、搬迁、搬迁每一步崩溃、清掉每一步崩溃
-和各种不清的理由、导入的顺序）、`github_test.go`（自动建）、`internal/api/assets_test.go`、
-`internal/assetcache`、`internal/gitstore/assets_test.go`；SQLite 和 PostgreSQL 都跑
-（`scripts/test-postgres.sh`）。前端：`assets.test.tsx`、`storage.test.tsx`、`github.test.tsx`、
-contract 测试（mock 一步一步播放搬迁）。
+Tests: `internal/spaces/assets_test.go` (upload, offline, move, a crash at each
+step of the move, a crash at each step of eviction and the various reasons not
+to evict, the order of import), `github_test.go` (automatic creation),
+`internal/api/assets_test.go`, `internal/assetcache`,
+`internal/gitstore/assets_test.go`; both SQLite and PostgreSQL are run
+(`scripts/test-postgres.sh`). Frontend: `assets.test.tsx`, `storage.test.tsx`,
+`github.test.tsx`, and the contract test (the mock plays the move back step by
+step).
 
-实测（`PETALBOOK_MEASURE=20000 go test ./internal/assetrepo -run Measure -v`，2 万个
-100 KiB 的文件放在 2000 个文件夹里，本机 SSD，`file://` 远端，内容是重复的所以远端和
-克隆的磁盘大小没有参考价值）：
+Measurement (`PETALBOOK_MEASURE=20000 go test ./internal/assetrepo -run Measure -v`,
+20,000 files of 100 KiB in 2000 folders, local SSD, a `file://` remote, with
+repetitive content, so the disk sizes of the remote and the clone are not a
+useful reference):
 
-| 项 | 实测 |
+| Item | Measured |
 |---|---|
-| 第一次取提交和目录树并建表 | 145 毫秒 |
-| 重新打开（从本地克隆建表） | 49 毫秒，表占 3.2 MB 内存 |
-| 在表里查一个路径 | 27 纳秒 |
-| 读一个在缓存里的文件（打开） | 11 微秒 |
-| 读一个不在缓存里的 100 KiB 文件（按 id 取，包括建临时仓库） | 44 毫秒 |
-| 上传一个 100 KiB 的文件（哈希、改树、提交、推送、刷新表） | 172 毫秒 |
+| First fetch of commits and trees and building the table | 145 ms |
+| Reopening (building the table from the local clone) | 49 ms, the table takes 3.2 MB of memory |
+| Looking up one path in the table | 27 ns |
+| Reading a file that is in the cache (open) | 11 µs |
+| Reading a 100 KiB file not in the cache (fetch by id, including building a temporary repository) | 44 ms |
+| Uploading one 100 KiB file (hash, change the tree, commit, push, refresh the table) | 172 ms |
 
-缓存里的附件和以前读工作区一样（一次 `open`），不在缓存里的第一次多一次网络请求。
-还没在 `spikes/search-scale` 的 5 万篇语料上量过空间的大小，还欠一次 5 GB 附件的
-搬迁时间。
+An asset in the cache is read as before from the workspace (one `open`), and the
+first read of one not in the cache costs one more network request. The size of a
+space has not yet been measured on the 50,000-page corpus of
+`spikes/search-scale`, and the time to move 5 GB of assets is still owed.
 
-已知问题，带到后面：
+Known issues, carried forward:
 
-- 复制推送了一部分之后，空间里的某个附件又变了（外部改动，或 `.gitattributes` 的 eol
-  规则让检出的内容和提交的不一样），搬迁每次都会停在「附件仓库里有一个不同的文件」上。
-  不会丢东西，但要手动处理。
-- 每次拉取都会对附件仓库先 `ls-remote` 再 `fetch`，即使什么都没变。
-- 搬完之后，外部的提交又在 `assets/` 下加回被跟踪的文件，会挡住清掉空间。不会丢东西。
-- 第二轮审查记下的：
-  - 附件仓库的分支没了的时候，真正挡住搬迁删掉 `assets/` 的是「强制刷新时清空表」；
-    `Missing` 里新加的目录树核对单独用拦不住（旧的远端跟踪引用还指着旧的提交）。以后
-    改这里的人别只靠 `Missing`。
-  - 启动时要把附件缓存的每个文件都算一遍散列，在服务开始响应之前同步做：5 GiB 在 SSD 上
-    约 7 秒，冷的机械盘半分钟到一分钟；固定的空间也要算、又不计入 `assetsBytes`，量大时
-    可能拖到几分钟。以后改成后台核对（先服务，核对完之前读到的文件再按 id 校验一次）。
-  - 换附件仓库地址的检查读的是本地的表；推送成功、三次记「已用」都失败、推送后的刷新也
-    失败、接着又重启，这一串都发生时表是空的，换地址会被放行。远端什么都不会被删，但
-    空间会指向错的仓库。
+- After the copy has pushed part of the assets, if an asset in the space changes
+  again (an outside change, or an eol rule in `.gitattributes` makes the
+  checked-out content differ from the committed one), the move stops every time
+  at "the asset repository has a different file". Nothing is lost, but it has to
+  be handled by hand.
+- Every pull does `ls-remote` and then `fetch` on the asset repository, even
+  when nothing changed.
+- After the move, an outside commit that adds tracked files back under
+  `assets/` blocks evicting the space. Nothing is lost.
+- Noted in the second round of review:
+  - When the branch of the asset repository is gone, what really stops the move
+    from deleting `assets/` is "clear the table on a forced refresh"; the new
+    tree check in `Missing` alone cannot stop it (the old remote-tracking ref
+    still points to the old commit). Whoever changes this later should not rely
+    on `Missing` alone.
+  - At startup a hash is computed for every file of the asset cache,
+    synchronously before the service starts to answer: about 7 seconds for
+    5 GiB on an SSD, half a minute to a minute on a cold spinning disk; pinned
+    spaces also have to be computed and are not counted in `assetsBytes`, so with
+    a large volume it may drag to several minutes. Later change it to a
+    background check (serve first, and until the check finishes validate a file
+    that was read once more by id).
+  - The check for changing the address of the asset repository reads the local
+    table; if the push succeeded, the three attempts to record "used" all failed,
+    the refresh after the push also failed, and then a restart followed, all
+    together, the table is empty and changing the address is let through. Nothing
+    on the remote is deleted, but the space would point to the wrong repository.
 
-和 2.7、第一部分留下的、这里仍然没做的：
-`GET /api/admin/status` 的各个计数仍是已存的测量值加内存里的数；
-`cloneBytes` 不含 `DATA/assetrepos`（每个只有几百 KB 到几 MB 的提交和目录树）；
-GitHub 安装被引用的仓库数（`github_installations` 的统计）不算附件仓库。
+Left over from 2.7 and part one, and still not done here: the counts in
+`GET /api/admin/status` are still stored measurements plus numbers in memory;
+`cloneBytes` does not include `DATA/assetrepos` (each is only a few hundred KB to
+a few MB of commits and trees); the count of repositories a GitHub installation
+is referenced by (the statistics of `github_installations`) does not count the
+asset repositories.
 
-**3.1 第一部分第二轮审查的修复（2026-11-23）**：`MakeFull` 先 `StopFilter`、最后才
-`LeavePartial`，而 `IsPartial` 原来只看 `remote.origin.partialclonefilter`：在两者之间
-被打断（取不到、空间关了、重启）的克隆缺着旧版本却被当成完整的，重新打开后没有按需取，
-旧版本读不出来，`MakeFull` 又直接返回，永远补不回来；断开远端重试时会在缺历史的情况下
-成功，是丢数据。现在 `IsPartial` 看 `remote.origin.promisor`／`extensions.partialclone`
-（只有 `LeavePartial` 在 `MissingAll` 为空之后才去掉），受限的 Git 只多放行这一种
-`git config --local --get-regexp`。测试：`TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater`
-（远端断开让断开远端停在 `StopFilter` 之后，重启后仍是部分克隆、旧版本可取，重试的断开
-把历史补全后才变成本地空间）和 gitstore 的 `TestAClonePartialUntilItLeavesPartialModeNotUntilTheFilterStops`。
+**Fixes from the second review of 3.1 part one (2026-11-23)**: `MakeFull` first
+does `StopFilter` and only at the end `LeavePartial`, while `IsPartial` used to
+look only at `remote.origin.partialclonefilter`: a clone interrupted between the
+two (fetch failed, space closed, restart) was missing old versions but was
+taken as complete, so after reopening it did not fetch on demand, old versions
+could not be read, `MakeFull` returned at once and could never fill them in;
+and retrying a disconnect from the remote would succeed with the history
+missing, which is data loss. Now `IsPartial` looks at
+`remote.origin.promisor` / `extensions.partialclone` (removed only by
+`LeavePartial`, after `MissingAll` is empty), and the restricted Git allows only
+this one more kind of `git config --local --get-regexp`. Tests:
+`TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater` (the remote is
+disconnected so that the disconnect stops after `StopFilter`, after a restart it
+is still a partial clone and old versions can be fetched, and the retried
+disconnect becomes a local space only after the history is filled in) and the
+gitstore test `TestAClonePartialUntilItLeavesPartialModeNotUntilTheFilterStops`.
 
-**3.1 合进 main（2.7b、3.3 之后，2026-11-23）**：按上面「2.7b 的约定」和 3.3 的钩子：
+**3.1 merged into main (after 2.7b and 3.3, 2026-11-23)**: following the 2.7b
+contract (see the 2.7b contract in
+[phase-2-connections.md](phase-2-connections.md)) and the hooks of 3.3:
 
-- **连接**：`POST /api/spaces` 的 `github` 和 `github.assets` 变成 `storage.sync` 和
-  `storage.sync.assets`；3.1 的 `remote`（按地址、带令牌）留在顶层，就是「存在哪里」的
-  「其他（按地址）」，和 `storage.sync` 一起给是 `400 invalid`。`PUT …/remote/assets` 的
-  `github` 变成 `sync`（带 `provider`），凭据类型 `connection` 带 `provider`；
-  `asset_remotes` 也有 `provider` 列（就地改 `0017_assets.sql`，和 2.7 改 0013 一样，
-  还没发布）。错误码用通用的（`push_failed`、`repo_not_in_installation`……带 `provider`），
-  `connections.Error` 多了 `AssetsRepo`。建空间或附件仓库失败后留下的空仓库两个都记成
-  提醒；附件仓库接上时也清掉它的提醒。GitHub 的计数（安装、用户、全部）和 `git` 提供方的
-  计数都把附件仓库算进去，一个空间算一次。
-- **要求远端**：`remotes.require` 取 `null`、`"any"` 或一个提供方 id；服务器没有的 id
-  是 `400 invalid`，有但没配好是 `409 provider_not_configured`；只有经过这个提供方的
-  连接算满足。查询里按 `cred_type = 'connection' AND provider = ?` 判断。
-- **允许的主机**：2.7b 的 `hostAllowed` 改用 3.1 的 `hostPolicy()`，也就是设置里的
-  `hosts.allowed`（给了 `--remote-host` 时还是旗标说了算）。3.1 的设置仍是全站的一条记录，
-  不进 3.3 的分层设置表；`require`、`graceDays`、`localSpaces.maxBytes` 的租户层照 3.3
-  的预留以后再加。
-- **租户**：`/api/admin/storage`、`PUT /api/admin/spaces/{space}/storage`、
-  `POST /api/admin/spaces/{space}/evict` 和用户的 `remoteExempt` 只给全站管理员（服务器的
-  磁盘、全站的要求）；`/api/admin/spaces` 的 `storage` 块照 3.3 的范围（租户管理员看自己
-  租户的）。3.1 新的存储查询都是全站的后台任务、全站管理员的统计或按已找到的空间 id，
-  进了范围白名单并写了理由；附件仓库的连接和空间自己的一样检查 `via: "user"` 的人在
-  空间的租户里。
-- **用量**：部分克隆、清掉和正在清掉的空间测大小时只写列表的 `size_bytes`
-  （`SetSpaceSize`），不调 `RecordMeasurement`，`usage_bytes` 保留上一次完整测量的值；
-  测试 `TestMeasuringAPartialCloneLeavesItsUsageAlone`。附件仓库的空间测到的工作区不含附件，
-  仍走 `RecordMeasurement`，这一点留给 3.5 的测量一起定。
-- **迁移**：0015、0017 和 main 的 0016、0018 两种顺序都测了（`storage_migrate_test.go`）；
-  迁移数的测试本来就数文件。
-- **已知问题**：有附件仓库的空间，测大小时不含它的附件（工作区里没有），所以
-  用量和配额少算了附件；留到 3.5 定。
-- **开发用的数据库要重建**：用旧的 feat/storage 或 2.7 构建建出来的开发数据库，
-  迁移（0013、0017）已经就地改过，旧库跑不起来，要删了重建。
+- **Connect**: `github` and `github.assets` of `POST /api/spaces` become
+  `storage.sync` and `storage.sync.assets`; the 3.1 `remote` (by address, with a
+  token) stays at the top level, and is the "Other (by address)" of "where it is
+  stored"; giving it together with `storage.sync` is `400 invalid`. The `github`
+  of `PUT …/remote/assets` becomes `sync` (with `provider`), and the credential
+  type `connection` carries `provider`; `asset_remotes` also has a `provider`
+  column (`0017_assets.sql` changed in place, like 2.7 changing 0013, since it
+  has not been released). The error codes are the generic ones (`push_failed`,
+  `repo_not_in_installation`, … with `provider`), and `connections.Error` gained
+  `AssetsRepo`. After creating a space or asset repository fails, the empty
+  repositories left behind are both recorded as reminders; when the asset
+  repository is connected its reminder is also cleared. The GitHub counts
+  (installation, user, all) and the counts of the `git` provider both count the
+  asset repository, once per space.
+- **Requiring a remote**: `remotes.require` takes `null`, `"any"` or a provider
+  id; an id the server does not have is `400 invalid`, and one it has but is not
+  configured is `409 provider_not_configured`; only connections through this
+  provider count as satisfying it. The queries decide by
+  `cred_type = 'connection' AND provider = ?`.
+- **Allowed hosts**: the `hostAllowed` of 2.7b now uses `hostPolicy()` of 3.1,
+  that is `hosts.allowed` in the settings (when `--remote-host` is given the flag
+  still decides). The 3.1 settings are still one site-wide record and do not go
+  into the layered settings table of 3.3; the tenant layer of `require`,
+  `graceDays` and `localSpaces.maxBytes` will be added later following the
+  reservation of 3.3.
+- **Tenants**: `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`,
+  `POST /api/admin/spaces/{space}/evict` and the user's `remoteExempt` are for
+  site admins only (the server's disk, the site-wide requirement); the `storage`
+  block of `/api/admin/spaces` follows the scope of 3.3 (a tenant admin sees
+  their own tenant). The new storage queries of 3.1 are all site-wide
+  background jobs, statistics for site admins, or by an already found space id;
+  they went into the scope allowlist with a written reason; the connection of
+  the asset repository is checked like the space's own: the person with
+  `via: "user"` is in the space's tenant.
+- **Usage**: when measuring the size of partial clones and of evicted and
+  being-evicted spaces, only the list's `size_bytes` is written
+  (`SetSpaceSize`), `RecordMeasurement` is not called, and `usage_bytes` keeps
+  the value of the last full measurement; the test is
+  `TestMeasuringAPartialCloneLeavesItsUsageAlone`. The workspace measured for a
+  space with an asset repository does not include assets and still goes through
+  `RecordMeasurement`; this point is left to be decided together with the
+  measurements of 3.5.
+- **Migrations**: both orders of 0015 and 0017 with main's 0016 and 0018 were
+  tested (`storage_migrate_test.go`); the test of the number of migrations
+  counts files anyway.
+- **Known issue**: for a space with an asset repository, the size measurement
+  does not include its assets (they are not in the workspace), so usage and
+  quota undercount the assets; left for 3.5 to decide.
+- **Development databases must be rebuilt**: a development database created with
+  the old feat/storage or a 2.7 build has had its migrations (0013, 0017) changed
+  in place, so the old database cannot run and has to be deleted and rebuilt.
 
-### 第 3 期的里程碑（计划，2026-11-23）
+### Milestones of phase 3 (plan, 2026-11-23)
 
-排序的依据：先做团队马上用得上、又是后面几步前提的（组），再做多租户和注册的
-准备（租户要把组、提供方、设置都归到租户下，所以排在组之后），最后是 Git 存储
-模块（它要等 2.7 和 3.1 对 `gitstore` 的改动都合进来、接口不再动，才值得定型）。
-每个里程碑一个 PR，单用户模式下照旧能跑（见 1.7）。
+The basis for the order: first what teams can use right away and what is a
+prerequisite for the later steps (groups), then the preparation for multi-tenancy
+and registration (a tenant puts groups, providers and settings under it, so it
+comes after groups), and last the Git storage module (it is worth fixing its
+shape only after the changes of both 2.7 and 3.1 to `gitstore` are merged and
+the interface no longer moves). One PR per milestone, and it still runs in
+single-user mode (see 1.7 in [phase-0-1.md](phase-0-1.md)).
 
-| 里程碑 | 内容 | 依赖 |
+| Milestone | Content | Depends on |
 |---|---|---|
-| 3.1 | 省服务器空间：强制远端、部分缓存、独立附件仓库（见上） | 2.7 |
-| 3.2 | 组：本地组、按提供方映射 IdP 的组声明、组作为空间成员 | 2.8（提供方）；和 3.1 无关，可以并行 |
-| 3.3 | 多租户和公开注册的准备：设置里的租户一层、数据按租户隔离、配额预留、注册开关（默认关） | 3.2（组归到租户下）、3.1（配额和磁盘预算共用测量） |
-| 3.4 | Git 存储模块：先在本仓库里定好包的边界和接口；发布成 KazuhaHub 下的模块、Rackbook 切过去要所有者点头 | 2.7、3.1（两者都改 `gitstore`） |
-| 3.5 | 存储管理：按人、按空间看占用和状态（只读存下的测量）、回收站、删人和转移、批量和二次确认、管理员查看和导出（都记审计）、每个租户的单文件上限；**归档**（比清出更低的一档）和登录时的智能恢复；**站点存储预算和存储压力控制器**（取代各自独立的清理阈值）；部分同步自动检测 | 3.1（缓存状态、清理、`lastUsed`）、2.7b（删人时断开连接、按提供方记是否支持部分同步）；3.3 |
-| 3.6 | 租户自治，权限模型收尾：每个租户的能力和**限额表**（全站管理员手动设，每个值记来源，可以带起止日期；预留套餐和计费的边界，计费和支付都不做）；附件放哪里和「不能部分同步的远端」两条分层策略；全部管理项按清单分三类；分层加「最低要求」和原因；全站管理员的租户详情页；存储方式（服务器、自己的远端、租户自己的存储目标）；租户自己的 SSO、邮箱域名（DNS 验证）和按域名的 SSO 入口、发件人、验证码、每日文案接口、自己的连接（GitHub App 等）；社交登录和 SSO 分开；一个账号几种登录方式、社交登录的预设模板和自定义的 OIDC／OAuth 2.0 提供方（所有者 2026-11-23 加）；邮箱全站唯一、以邮箱登录为主；加入组织的四种方式；组织自助注册 | 3.5（同一套管理页和隔离表、存储压力的租户份额）、2.7b（提供方接口、多 App、自动建仓库）、3.1（存储设置的租户层、部分缓存）；GitLab／Gitea 的存储目标要 3.8 |
-| 3.7 | 一个账号在几个组织里（从第 5 期提前）：个人的家和组织成员表、界面切换组织、组织管理员只管组织的东西、托管账号；3.6 的按域名加入和自助建组织在这里变成多成员 | 3.6（加入方式、域名、自助注册都先按「一人一个租户」做；能力） |
-| 3.8 | GitLab（gitlab.com 和自托管）和 Gitea／Forgejo／Codeberg 的连接：每个主机一个管理员配的 OAuth 应用，用户连一次；建仓库、同步、当租户的存储目标（所有者 2026-11-23 加） | 2.7b（提供方接口）；可以和 3.5 并行，排在 3.6 的存储目标那一部分之前 |
-| 3.9 | 头像和品牌图标：人的头像、空间的图标（存在空间自己的仓库里）、组织的标志；上传一律在服务器上重新编码；登录按钮、连接、远端和存储页用官方品牌图标，随网页打包（所有者 2026-11-23 加） | 2.7b（连接，用连接的头像）、3.5（归档时留着图标的小副本）、3.3（组织） |
-| 3.10 | **界面重构**（所有者 2026-11-24，排在 3.5 之后、3.6 之前，见「3.10 的方向」）：独立的管理后台（左侧栏分大项、顶部标签分子页、表格、独立的详情页）；消息通知的骨架；校验移出侧边栏；收藏的悬停按钮和文件夹内置顶；设置对话框的关闭按钮；报错按代码翻译；手机和平板的全面检查；新用户引导；页面头部只改值 | 3.5（管理页、表格的样板） |
+| 3.1 | Save server space: mandatory remote, partial cache, separate asset repository (see above) | 2.7 |
+| 3.2 | Groups: local groups, mapping IdP group claims by provider, groups as space members | 2.8 (providers); unrelated to 3.1, can run in parallel |
+| 3.3 | Preparation for multi-tenancy and open registration: a tenant layer in the settings, data isolated by tenant, quota reservation, a registration switch (off by default) | 3.2 (groups go under tenants), 3.1 (quotas and the disk budget share the measurement) |
+| 3.4 | Git storage module: first settle the package boundary and interface inside this repository; publishing it as a module under KazuhaHub and switching Rackbook over needs the owner's nod | 2.7, 3.1 (both change `gitstore`) |
+| 3.5 | Storage management: usage and status by person and by space (read-only stored measurements), recycle bin, deleting and transferring people, batch actions and second confirmation, admin viewing and export (all audited), a per-tenant single-file limit; **archive** (a tier below eviction) and smart restore at sign-in; **a site storage budget and a storage-pressure controller** (replacing the separate cleanup thresholds); automatic detection of partial sync | 3.1 (cache state, cleanup, `lastUsed`), 2.7b (disconnect connections when deleting a person, record per provider whether partial sync is supported); 3.3 |
+| 3.6 | Tenant autonomy, finishing the permission model: each tenant's capabilities and **limit table** (set by hand by the site admin, each value records its source, can have a start and end date; the boundary for plans and billing is reserved, and neither billing nor payment is done); two layered policies, where assets go and "remotes that cannot do partial sync"; all admin items sorted by list into three kinds; layering gets a "minimum requirement" and a reason; the site admin's tenant detail page; storage mode (server, own remote, the tenant's own storage target); a tenant's own SSO, email domains (DNS verification) and the per-domain SSO entry, sender, captcha, daily-text interface, own connections (GitHub App, etc.); social sign-in separate from SSO; several sign-in methods for one account, preset templates for social sign-in and custom OIDC / OAuth 2.0 providers (added by the owner 2026-11-23); email unique site-wide and sign-in mainly by email; four ways to join an organization; organization self-registration | 3.5 (the same admin pages and isolation table, the tenant share of storage pressure), 2.7b (the provider interface, multiple Apps, automatic repository creation), 3.1 (the tenant layer of the storage settings, partial cache); the GitLab / Gitea storage targets need 3.8 |
+| 3.7 | One account in several organizations (moved up from phase 5): a personal home and an organization membership table, switching organizations in the UI, an organization admin manages only the organization's things, managed accounts; join-by-domain and self-service organization creation of 3.6 become multi-member here | 3.6 (the ways to join, domains and self-registration are all first done as "one person, one tenant"; capabilities) |
+| 3.8 | Connections for GitLab (gitlab.com and self-hosted) and Gitea / Forgejo / Codeberg: one admin-configured OAuth app per host, and the user connects once; create repositories, sync, and serve as a tenant's storage target (added by the owner 2026-11-23) | 2.7b (the provider interface); can run in parallel with 3.5, and goes before the storage-target part of 3.6 |
+| 3.9 | Avatars and brand icons: people's avatars, space icons (stored in the space's own repository), organization logos; every upload is re-encoded on the server; the sign-in buttons, connections, remote and storage pages use the official brand icons, bundled with the web app (added by the owner 2026-11-23) | 2.7b (connections, using the connection's avatar), 3.5 (archiving keeps a small copy of the icon), 3.3 (organizations) |
+| 3.10 | **UI overhaul** (the owner, 2026-11-24, placed after 3.5 and before 3.6, see "The 3.10 direction" in [decisions-2026-11-24.md](../decisions-2026-11-24.md)): a separate admin console (a left sidebar of major items, tabs at the top for sub-pages, tables, separate detail pages); the skeleton of message notifications; validation moved out of the sidebar; hover buttons for favourites and pinning inside folders; a close button for the settings dialog; errors translated by code; a full check on phone and tablet; onboarding for new users; the page header only changes values | 3.5 (the admin pages, the table template) |
 
-**3.5、3.6 和 3.4 的先后**（2026-11-23）：
+**The order of 3.5, 3.6 and 3.4** (2026-11-23):
 
-- 3.5、3.6 都等 2.7 和 3.1 合进 `main` 之后再开工写代码（合同按两者都合并之后写；两者 2026-11-23 都已合并，4.1 也已合并）。
-  3.5 在 3.6 前面：3.6 的「更新后的管理员表」和隔离表要包括 3.5 的路由，3.5 的单文件
-  上限也是 3.6 要分层的键之一。
-- 3.4 和它们可以并行：3.4 在本仓库里的第 1、3、4 步不受影响；第 2 步（定模块接口）
-  等 3.6 的 GitHub 部分合进来，因为 3.6 让 `internal/githubapp` 支持多个 App（App 当
-  参数传），接口定在那之后才不用再改。所以推荐的顺序是 3.5 → 3.6，3.4 穿插，3.4 的
-  第 2 步最后。
-- **3.5 分成几部分审**（同一个 PR，每部分在分支上审一次）：
-  1. 单文件上限 `files.maxBytes`（小，只碰写入的几个入口）；
-  2. 回收站和删空间、管理员查看和导出（`recycle_items`、搬目录、恢复、清除任务、查看的
-     审计）；
-  3. 删人：预览、转移规则、墓碑、用户名能否再用、恢复；确认令牌和批量任务；
-  4. 存储管理的列表和汇总（新测量列、`usage` 的新列、索引、筛选和排序）和界面；
-  5. 部分同步自动检测（按远端主机记下、去掉 3.1 的 `cache.partial` 开关）；
-  6. 归档和恢复：新状态 `archived`、删索引、分步恢复、登录时的预取；
-  7. 存储压力控制器：测量（存下的、增量记的加 `statfs`）、四档和回滞、回收顺序和
-     打分、硬规则和应急储备、危急时拒绝新附件和新空间；连同确定性的模拟器和它的
-     测试；
-  8. 「存储与同步」页上的预算、当前档位、最近的回收、下一批候选、恢复等待的统计。
-  第 6、7 部分会删服务器上的东西，各自单独过一次审查。
-- **3.6 分成几部分审**（能力排第一：后面每一部分都要先问「这个租户有没有这项能力」）：
-  1. 能力、限额表和套餐（含第 16 节预留的「管理接口登记它要的权限键、检查走一个函数」）：能力的登记表、全站默认、每个租户的限额表（来源、起止日期、
-     改动和超限的审计事件、用量导出）、套餐、计费的边界（只留内部接口）、内存里的生效集合、
-     `403 capability_off`、关掉能力时的预览和二次确认；全站管理员的租户详情页和
-     `overview`、全站给租户设的值和锁（`setBy`、`siteLock`）；
-  2. 分层的通用化：`tighten`、严格程度、说明和原因、全部（b）键的注册（每个键写明由哪项
-     能力决定租户层在不在）；功能开关 `features.*` 的登记表、`403 feature_off`、地区预设
-     `site.profile`（所有者 2026-11-23 加）；
-  3. 出站的约束（公网检查、全站上限和租户份额）、租户的发件人、验证码、每日文案接口；
-  4. 社交登录和 SSO 分开、租户的 SSO、身份的归属；账号的「登录方式」表、预设模板和
-     `kind: oauth2`；
-  5. 邮箱域名的认领和 DNS 验证（TXT、CNAME、每日复查、「立即检查」的冷却）、`discover`、
-     登录页先问邮箱；
-  6. 邮箱全站唯一（唯一索引）和用邮箱登录；
-  7. 加入组织：四种方式、加入申请和审批、默认角色和 `viewer`、SSO 的按组放行、IdP 组
-     映射到组织管理员；
-  8. 租户自己的连接（GitHub App）和按租户共享安装（要 2.7b 的提供方接口）；
-  9. 存储方式和租户的存储目标：`storage.mode`、按空间自动建仓库（2.7 的建仓库流程，
-     指向租户的地方）、附件仓库、换方式时的搬移（要 2.7、3.1）；
-  10. 组织自助注册（每人 3 个、限制域名上的人另建组织、新租户的套餐）；
-  11. 两条分层的存储策略：附件放哪里（全站 → 租户 → 空间所有者）和「不能部分同步的
-     远端：允许（完整）／拒绝」（要 3.5 的自动检测）。
-  第 1、4、5、7、9 部分是安全上最要紧的，各自单独过一次审查。第 9 部分里 GitLab／Gitea
-  的存储目标要 3.8 已经合并；没合并时第 9 部分先只做 GitHub 的目标。
-- **3.7 在 3.6 之后**：3.6 的按域名加入、加入申请、SSO 即时加入和自助建组织都先按
-  3.3 的「一个人一个租户」做（新账号建在那个租户里）；3.7 把「人和租户」改成成员表之后，
-  这几样变成「给账号加一个组织」，接口形状不变。3.7 的合同在 3.6 合并之前写好，开工在
-  3.6 合并之后（它改的正是 3.6 刚定下的隔离和会话，托管账号也要查 3.6 的能力）。
-- **3.7 分成几部分审**：
-  1. 成员表和家（隔离表、`INSERT … SELECT` 的检查改成按成员表）；
-  2. 会话、令牌、OAuth 和 MCP 带当前组织，权限缓存加租户；
-  3. 用量和配额按（租户、人）记；管理页和审计按组织；
-  4. 托管账号（开启、登录要求、个人空间的搬走或导出）；
-  5. 界面：切换组织、个人的家、可加入的组织。
-  第 1、2、4 部分各自单独过一次审查。
-- **2.7b、3.8、3.9 放在哪里**（所有者 2026-11-23 加）：
-  - 2.7b 在 2.7 的修复之后、在 2.7 的分支上做，和 2.7 一起合并，所以 3.5、3.6 开工时
-    提供方接口已经在 `main` 上；3.4 第 2 步定的模块接口不含提供方（它在应用里）。
-  - 3.8 只要 2.7b，可以和 3.5 并行（各自的工作区）；要排在 3.6 的第 9 部分之前，
-    租户才能把 GitLab／Gitea 当存储目标。
-  - 3.9 在 3.5 之后（归档时要留着空间图标的小副本，表上已有这一列），和 3.6、3.7
-    无关，可以并行。品牌图标那一部分不依赖别的，可以最先做。
-  - 推荐的顺序：2.7 + 2.7b → 3.1 → 3.5（3.8 并行）→ 3.6 → 3.7；3.9 在 3.5 之后穿插；
-    3.4 照上面。
-- **3.8 分成几部分审**：
-  1. GitLab 提供方：OAuth 应用的配置和检查、用户连接（PKCE、续期、断开）、列出组和
-     项目、建项目、给 Git 的凭据；
-  2. Gitea／Forgejo 提供方（Codeberg 是一台 Forgejo），同上；
-  3. 当租户的存储目标（租户的组和凭据，`via: "tenant"`）。
-  第 1 部分单独过一次审查（第一次把外部的 OAuth 应用交给管理员配，出站和凭据都在这里）。
-- **3.9 分成几部分审**：
-  1. 品牌图标：打包、组件、各家「用 X 登录」按钮的规范；
-  2. 图片的接收和重新编码（大小、像素、格式、拒绝 SVG），以及仓库里的图片在显示前的
-     同样检查；
-  3. 人的头像和组织的标志（存服务器）；
-  4. 空间的图标（存进空间的仓库、状态库里的小副本）。
-  第 2 部分单独过一次审查（解码不受信的图片）。
-- **v0.x 不做升级兼容**（所有者 2026-11-23 定）：PetalBook 还没有发布，3.5、3.6、3.7
-  不为「已有的部署或数据升级后照旧」写任何要求：没有「升级后行为不变」、没有把旧设置
-  原样搬到全站层、没有 2.8 的 `legacyCallback` 和旧 `--oidc-*` 的兼容（3.6 的提供方
-  拆分取代它们）、没有 3.7 的旧可见性和迁移来的托管、没有重复邮箱的特殊处理。合同里
-  直接写新规则。迁移文件照旧有（编号不变），只为让开发和演示用的库能打开，不承诺保留
-  数据的升级路径。
+- 3.5 and 3.6 both wait until 2.7 and 3.1 are merged into `main` before coding
+  starts (the contract is written after both are merged; both were merged on
+  2026-11-23, and 4.1 is also merged). 3.5 comes before 3.6: the "updated admin
+  table" and isolation table of 3.6 have to include the routes of 3.5, and the
+  single-file limit of 3.5 is also one of the keys 3.6 has to layer.
+- 3.4 can run in parallel with them: steps 1, 3 and 4 of 3.4 inside this
+  repository are not affected; step 2 (settling the module interface) waits until
+  the GitHub part of 3.6 is merged, because 3.6 makes `internal/githubapp`
+  support several Apps (the App is passed as a parameter), and only after that
+  does the interface no longer need to change. So the recommended order is
+  3.5 → 3.6, with 3.4 interleaved, and step 2 of 3.4 last.
+- **3.5 is reviewed in several parts** (the same PR, each part reviewed once on
+  the branch):
+  1. The single-file limit `files.maxBytes` (small, touches only a few entry
+     points of writing);
+  2. The recycle bin and deleting spaces, admin viewing and export
+     (`recycle_items`, moving directories, restore, the purge job, the audit of
+     viewing);
+  3. Deleting people: preview, transfer rules, tombstones, whether the username
+     can be reused, restore; confirmation tokens and batch jobs;
+  4. The list and summary of storage management (new measurement columns, new
+     columns of `usage`, indexes, filtering and sorting) and the UI;
+  5. Automatic detection of partial sync (recorded by remote host, and removing
+     the `cache.partial` switch of 3.1);
+  6. Archive and restore: the new state `archived`, deleting the index, stepwise
+     restore, prefetching at sign-in;
+  7. The storage-pressure controller: measurement (stored ones, incrementally
+     recorded ones plus `statfs`), four tiers with hysteresis, the order and
+     scoring of reclaim, hard rules and an emergency reserve, refusing new assets
+     and new spaces in a critical state; together with the deterministic
+     simulator and its tests;
+  8. The budget, current tier, recent reclaims, next candidates and restore-wait
+     statistics on the "Storage & sync" page.
+  Parts 6 and 7 delete things on the server, and each gets its own review.
+- **3.6 is reviewed in several parts** (capabilities come first: every later part
+  has to ask first "does this tenant have this capability"):
+  1. Capabilities, the limit table and plans (including what section 16
+     reserves, "admin interfaces register the permission keys they need, and the
+     check goes through one function", see
+     [auth-and-permissions.md §16](../auth-and-permissions.md#16-reserved-custom-roles-and-permissions)): the registry of
+     capabilities, site defaults, each tenant's limit table (source, start and end
+     dates, audit events for changes and for exceeding a limit, usage export),
+     plans, the billing boundary (only an internal interface is kept), the
+     effective set in memory, `403 capability_off`, the preview and second
+     confirmation when a capability is turned off; the site admin's tenant detail
+     page and `overview`, values and locks the site sets for a tenant (`setBy`,
+     `siteLock`);
+  2. Generalizing layering: `tighten`, strictness, explanation and reason,
+     registration of all (b) keys (each key says which capability decides whether
+     the tenant layer exists); the registry of feature switches `features.*`,
+     `403 feature_off`, the region preset `site.profile` (added by the owner
+     2026-11-23);
+  3. Outbound restrictions (the public-network check, the site cap and tenant
+     shares), a tenant's sender, captcha, daily-text interface;
+  4. Social sign-in separate from SSO, a tenant's SSO, who owns an identity; the
+     account's "sign-in methods" table, preset templates and `kind: oauth2`;
+  5. Claiming email domains and DNS verification (TXT, CNAME, a daily recheck, a
+     cooldown on "check now"), `discover`, the sign-in page asking for the email
+     first;
+  6. Email unique site-wide (a unique index) and sign-in by email;
+  7. Joining an organization: four ways, join requests and approval, the default
+     role and `viewer`, SSO admission by group, mapping IdP groups to organization
+     admins;
+  8. A tenant's own connection (GitHub App) and sharing an installation per
+     tenant (needs the provider interface of 2.7b);
+  9. Storage mode and the tenant's storage target: `storage.mode`, automatic
+     per-space repository creation (the repository creation flow of 2.7, pointing
+     at the tenant's place), the asset repository, moving when the mode changes
+     (needs 2.7 and 3.1);
+  10. Organization self-registration (3 per person, people on a restricted domain
+      create a separate organization, the plan of a new tenant);
+  11. Two layered storage policies: where assets go (site → tenant → space owner)
+      and "a remote that cannot do partial sync: allow (full) / refuse" (needs the
+      automatic detection of 3.5).
+  Parts 1, 4, 5, 7 and 9 matter most for security, and each gets its own review.
+  In part 9, the GitLab / Gitea storage targets need 3.8 to be already merged;
+  if it is not merged, part 9 first does only the GitHub target.
+- **3.7 comes after 3.6**: the join-by-domain, join requests, instant SSO join
+  and self-service organization creation of 3.6 are all first done following the
+  "one person, one tenant" of 3.3 (a new account is created in that tenant); after
+  3.7 changes "person and tenant" into a membership table, these become "add an
+  organization to the account", and the shape of the interfaces does not change.
+  The 3.7 contract is written before 3.6 is merged, and work starts after 3.6 is
+  merged (it changes exactly the isolation and sessions that 3.6 just settled, and
+  managed accounts also have to check the capabilities of 3.6).
+- **3.7 is reviewed in several parts**:
+  1. The membership table and the home (the isolation table, the checks of
+     `INSERT … SELECT` changed to go by the membership table);
+  2. Sessions, tokens, OAuth and MCP carry the current organization, and the
+     permission cache adds the tenant;
+  3. Usage and quota recorded by (tenant, person); admin pages and audit by
+     organization;
+  4. Managed accounts (turning on, sign-in requirements, moving away or exporting
+     the personal space);
+  5. UI: switching organizations, the personal home, organizations that can be
+     joined.
+  Parts 1, 2 and 4 each get their own review.
+- **Where 2.7b, 3.8 and 3.9 go** (added by the owner 2026-11-23):
+  - 2.7b is done after the fixes of 2.7, on the branch of 2.7, and merged
+    together with 2.7, so when 3.5 and 3.6 start the provider interface is
+    already on `main`; the module interface settled in step 2 of 3.4 does not
+    include providers (they are in the application).
+  - 3.8 needs only 2.7b and can run in parallel with 3.5 (each in its own
+    workspace); it comes before part 9 of 3.6, so that a tenant can use GitLab /
+    Gitea as a storage target.
+  - 3.9 comes after 3.5 (archiving has to keep a small copy of the space icon, and
+    the table already has this column), is unrelated to 3.6 and 3.7, and can run
+    in parallel. The brand icon part depends on nothing else and can be done
+    first.
+  - Recommended order: 2.7 + 2.7b → 3.1 → 3.5 (3.8 in parallel) → 3.6 → 3.7; 3.9
+    interleaved after 3.5; 3.4 as above.
+- **3.8 is reviewed in several parts**:
+  1. The GitLab provider: configuring and checking the OAuth app, the user
+     connection (PKCE, renewal, disconnect), listing groups and projects,
+     creating projects, the credential given to Git;
+  2. The Gitea / Forgejo provider (Codeberg is one Forgejo), the same;
+  3. Serving as a tenant's storage target (the tenant's group and credential,
+     `via: "tenant"`).
+  Part 1 gets its own review (the first time an external OAuth app is handed to an
+  admin to configure, with outbound requests and credentials all here).
+- **3.9 is reviewed in several parts**:
+  1. Brand icons: bundling, components, the guidelines of each "Sign in with X"
+     button;
+  2. Receiving and re-encoding images (size, pixels, format, rejecting SVG), and
+     the same checks for images in the repository before they are shown;
+  3. People's avatars and organization logos (stored on the server);
+  4. Space icons (stored in the space's repository, with a small copy in the
+     state database).
+  Part 2 gets its own review (decoding untrusted images).
+- **No upgrade compatibility in v0.x** (decided by the owner on 2026-11-23):
+  PetalBook has not been released, so 3.5, 3.6 and 3.7 write no requirement for
+  "existing deployments or data keep working after an upgrade": no "behavior
+  unchanged after the upgrade", no moving old settings as they are to the
+  site-wide layer, no compatibility with the `legacyCallback` of 2.8 and the old
+  `--oidc-*` (the provider split of 3.6 replaces them), no old visibility and
+  managed accounts brought by migration in 3.7, and no special handling of
+  duplicate emails. The contracts directly state the new rules. Migration files
+  still exist (numbers unchanged), only so that the databases used for
+  development and demos can be opened, with no promise of an upgrade path that
+  preserves data.
 
-注意编号：3.1 里写的「3.4 的第 2 种后端」指第 3.4 节（附件）的第 2 种后端，
-不是里程碑 3.4。
+Note the numbering: the "second backend of 3.4" written in 3.1 means the second
+backend of section 3.4 (assets) in [data-model.md §3.4](../data-model.md#34-attachments), not
+milestone 3.4.
 
-**3.3 多租户和注册的准备**（只列方向；合同见下面的「3.3 的约定」，范围比这里大）：
+**3.3 preparation for multi-tenancy and registration** (only the direction is
+listed; for the contract see the 3.3 contract in
+[phase-3-tenants.md](phase-3-tenants.md), whose scope is larger than here):
 
-- **租户一层**：「设置的分层和锁定」里预留的租户层做出来：全站 → 租户 → 空间 →
-  个人，租户管理员只能在全站允许的范围内收紧。现有的服务器就是一个默认租户，
-  升级后什么都不变。
-- **数据隔离**：用户、空间、组、登录提供方、邀请、令牌、审计日志带上租户；
-  一次请求只看得到自己租户的东西（缓存的键也带租户）。管理员分成全站管理员和
-  租户管理员。隔离强度（同一个进程、同一个库，靠查询条件隔开）写明，不承诺
-  更强的隔离。
-- **配额预留**：每个租户、每个人的空间数、磁盘、成员数，先有字段和测量（沿用
-  1.7 的后台测大小和 3.1 的磁盘预算），只告警不拒绝，拒绝的规则以后定。
-- **注册开关**：全站和租户各一个，默认关，3.3 里不做注册流程本身（邮件验证、
-  找回密码、防滥用、条款），只把开关、2.8 留着的 `sso_only_with_registration`
-  检查和验证码的 `register` 上下文接上。
+- **The tenant layer**: build the tenant layer reserved in "Layering and locking
+  of settings": site → tenant → space → personal, and a tenant admin can only
+  tighten within what the site allows. The existing server is one default
+  tenant, and after the upgrade nothing changes.
+- **Data isolation**: users, spaces, groups, sign-in providers, invitations,
+  tokens and the audit log carry the tenant; a request sees only its own tenant's
+  things (cache keys carry the tenant too). Admins are split into site admins and
+  tenant admins. The strength of isolation (the same process, the same database,
+  separated by query conditions) is written down, and no stronger isolation is
+  promised.
+- **Quota reservation**: per tenant and per person, the number of spaces, disk,
+  and number of members, with fields and measurement first (reusing the background
+  size measurement of 1.7 and the disk budget of 3.1), warning only and not
+  refusing; the rules for refusing are decided later.
+- **Registration switch**: one for the site and one for each tenant, off by
+  default; 3.3 does not build the registration flow itself (email verification,
+  password recovery, abuse prevention, terms), and only wires up the switch, the
+  `sso_only_with_registration` check that 2.8 left behind, and the `register`
+  context of the captcha.
 
-**3.4 Git 存储模块**：
+**3.4 Git storage module**:
 
-- **在本仓库里先做的**（不需要所有者另外点头）：
-  1. `internal/gitstore` 现在已经不依赖应用的其他包；2.7 加的 `internal/githubapp`
-     也整理成同样不依赖应用代码。加一条测试（`go list -deps`）守住：这两个包
-     只依赖标准库和它们自己的第三方依赖，应用的包一个都不能引。
-  2. 定下模块的接口：受限的 git 执行器、凭据（SSH 部署密钥、HTTPS 令牌、
-     GitHub App 安装令牌）、fetch／只提交给定路径／推送／重试、历史改写检测、
-     只读镜像、3.1 的部分克隆和按需取。草稿、合并、冲突副本、建仓库流程留在
-     `space` 包。写下哪些是公开接口，其余的不导出。
-  3. 把这两个包挪到本仓库里一个单独的 Go 模块目录（自己的 `go.mod`，主模块用
-     `replace` 指过去），让它真的能单独编译、单独跑测试。仍在本仓库里，不发布。
-  4. 和 Rackbook 的 `internal/gitstore` 逐个文件对比，列出两边的差别（特别是
-     `safegit.go`），写进本节。只读 Rackbook，不改它。
-- **要等所有者点头的**（对外的动作，到时先问）：
-  1. 在 KazuhaHub 组织下建新仓库（名字、许可证 Apache-2.0 还是 AGPL-3.0，要
-     所有者定：Rackbook 是 Apache-2.0，本项目是 AGPL-3.0，给两边共用的模块
-     应当用 Apache-2.0）。
-  2. 推送代码、打第一个版本标签。
-  3. 本项目去掉 `replace`，改依赖发布的版本。
-  4. 改 Rackbook 仓库：换成这个模块，删掉它自己的副本，开 PR。
-  前两步之前本项目不受影响；第 4 步是另一个仓库的事，可以晚于本项目切换。
+- **Done first inside this repository** (needs no separate nod from the owner):
+  1. `internal/gitstore` already no longer depends on the other packages of the
+     application; the `internal/githubapp` that 2.7 added is also tidied to depend
+     on no application code in the same way. Add a test (`go list -deps`) to hold
+     the line: these two packages depend only on the standard library and their own
+     third-party dependencies, and may import none of the application's packages.
+  2. Settle the module interface: the restricted git executor, credentials (SSH
+     deploy keys, HTTPS tokens,
+     GitHub App installation tokens), fetch / commit only the given paths / push /
+     retry, detection of rewritten history, read-only mirrors, and the partial
+     clone and fetch on demand of 3.1. Drafts, merging, conflict copies and the
+     repository creation flow stay in the `space` package. Write down which
+     things are public interface, and do not export the rest.
+  3. Move these two packages into a separate Go module directory in this
+     repository (its own `go.mod`, with the main module pointing to it by
+     `replace`), so that it really can be compiled and tested on its own. Still in
+     this repository, not published.
+  4. Compare file by file with Rackbook's `internal/gitstore`, list the
+     differences on both sides (especially `safegit.go`), and write them into this
+     section. Only read Rackbook, do not change it.
+- **Waiting for the owner's nod** (outward actions, to be asked about first when
+  the time comes):
+  1. Create a new repository under the KazuhaHub organization (the name, and the
+     license, Apache-2.0 or AGPL-3.0, are for the owner to decide: Rackbook is
+     Apache-2.0 and this project is AGPL-3.0, and a module shared by both should
+     use Apache-2.0).
+  2. Push the code and tag the first version.
+  3. This project drops `replace` and depends on the published version.
+  4. Change the Rackbook repository: switch to this module, delete its own copy,
+     and open a PR.
+  Before the first two steps this project is not affected; step 4 is a matter for
+  another repository and may come later than this project's switch.
 
-**3.2 组**（所有者在第 3 期的计划里定的方向）：
+**3.2 Groups** (the direction the owner set in the phase 3 plan):
 
-- 组有两种来源：在应用里手动建的**本地组**（管理员管成员），和由登录提供方的
-  组声明映射过来的**同步组**（成员只由登录时的同步决定）。
-- 共享空间的成员可以是用户或组，组也有角色；一个人的有效权限是直接角色和他所在
-  各组角色的并集（内置角色是一层套一层，并集就是取最高）。
-- 权限检查仍然是 1.7 的那张按人缓存的表：组在缓存未命中时展开一次，存进这个人
-  的缓存；组或成员关系变了，只作废受影响的人。请求时从不现算组。
-- 2.6 的令牌和 OAuth 授权「不超过主人现在的权限」，主人现在的权限从此包括组。
-- 合同在 `docs/api.md` 的「Groups」和「Administration」的「Groups」，前后端照它做。
+- Groups have two sources: **local groups** made by hand in the application
+  (an admin manages the members), and **synced groups** mapped from the group
+  claims of a sign-in provider (members are decided only by the sync at sign-in).
+- A member of a shared space can be a user or a group, and groups have roles; a
+  person's effective permission is the union of the direct role and the roles of
+  all the groups they are in (built-in roles nest one inside the next, so the
+  union is taking the highest).
+- The permission check is still the per-person cached table of 1.7: groups are
+  expanded once on a cache miss and stored into this person's cache; when a group
+  or a membership changes, only the affected people are invalidated. Groups are
+  never computed at request time.
+- The "no more than the owner's current permission" of the tokens and OAuth
+  grants of 2.6 now includes groups in the owner's current permission.
+- The contract is in "Groups" and the "Groups" of "Administration" in
+  `docs/api.md`, and the frontend and backend follow it.
 
-**3.2 的约定**（2026-11-23）：
+**The 3.2 contract** (2026-11-23):
 
-定下来的：
+Settled:
 
-- **两种组，不混用**：组建好后来源（`local` 或 `synced`）不能改。本地组的成员
-  只能由管理员加减；同步组的成员只由登录时的同步写入，手动改答
-  `409 group_synced`；映射只能指向同步组（`409 group_not_synced`）。不混用的原因：
-  一个人在 IdP 里被移出组时，我们要能确定地把他移出，而不用猜哪些成员是手动加的。
-- **映射写在提供方上**：提供方多一个 `groups`：开关、声明名（OIDC 默认 `groups`，
-  SAML 是属性名，GitHub 固定是所在的组织）、声明缺失时怎么办、一张「声明里的值 →
-  组」的表。同一个组可以被几个提供方、几个值映射；同一个提供方里一个值只映射一个
-  组。映射和提供方一起在内存里（2.8 的缓存），登录时不为映射查库。
-- **登录时同步**：经某个提供方登录（以及用它关联身份、接受邀请）成功后，用这次
-  的声明算出这个人应在的组，和他现有的、**由这个提供方带来的**成员关系比较，多的
-  删、少的加，别的提供方带来的不动。一次查询读出现有的，有变化才写，有变化才作废
-  这个人的缓存。声明里的值最多读 1000 个，每个最长 256 字节，没映射的值忽略。
-- **声明消失**：
-  - 声明里少了某个值：这个人在下一次登录时离开对应的组。两次登录之间他仍在组里，
-    已有的会话、令牌、授权照旧按组的权限用。要立即拿掉，管理员停用这个人，或把组
-    从空间里移掉。
-  - 整个声明都没有（IdP 没发、或 Entra ID 组太多改发 `_claim_names` 的「超量」
-    情况）：默认**不动**现有的组，记审计 `groups_claim_missing`；提供方可以改成
-    `clear`（当成空列表，移出全部）。声明在、但是空列表：移出全部。
-  - 映射表里删掉一项（或改了它指向的组）：经这一项带来的成员关系当场删掉。成员
-    关系上记着是哪个提供方、哪个值带来的，所以同一个人经另一个值进同一个组的那一行
-    不受影响。
-  - 提供方被删除：它带来的所有组成员关系一起删（身份照 2.8 保留）；提供方只是
-    停用时不动。
-- **组作为空间成员**：需要 `members` 权限，和加人一样给角色（`owner`、`editor`、
-  `viewer`）。个人空间不能加组（`409 personal_space`）。**空间至少一个所有者的规则
-  只数直接成员**：组里的人可能被 IdP 一次清空，不能让空间因此没有所有者；同理，
-  提交的默认作者仍是第一个直接所有者。
-- **有效权限 = 并集**：直接角色的权限集合和各组角色的权限集合按位或（`perm.Set`
-  一个字节，或一下就是）。内置角色一层套一层，并集就是「取最高」；以后的自定义
-  角色也按并集，不需要排序。显示的 `role` 是权限集合等于并集的那个内置角色（三个
-  内置角色下总有一个）；另给 `directRole`，只经组进来的人它是空的。
-- **缓存**（效率的关键）：
-  - 仍是 1.7 的按人缓存，键是用户 id，值是这个人能进的每个空间的「空间 id →
-    权限集合、直接角色」。缓存未命中时一次查询（直接成员和经组的成员 `UNION ALL`，
-    按空间合并），存进缓存；之后的每个请求只查内存里这一个人的那张小表，不碰库、
-    不现算组，和现在一样。
-  - 缓存里不再存空间的名字和收件箱：这些放进一张按空间 id 的共享小表。这样一个
-    「全体员工」组能进几百个空间时，每个人的缓存只多几百对「id → 一个字节」；空间
-    改名也只改共享表，不用再作废所有成员的缓存。缓存的上限从「最多 1 万个人」改成
-    按条目数算（默认 200 万对，约几十 MB），超了按最久没用先丢。
-  - 作废只针对受影响的人：一个人进出本地组或同步结果有变化，作废这个人；组被加进
-    空间、改角色、移出，或组被删除，作废这个组的所有成员（一次按组的索引查询拿到
-    用户 id，然后在锁里逐个删掉，5 万人的组也是毫秒级）；空间删除，作废直接成员和
-    各组成员。1.7 的代数（`listGen`）照旧，防止变动前读到的结果在变动后被存回去。
-  - 和 1.7 一样只在一个进程里；PostgreSQL 上跑多个进程时，另一个进程的缓存不会
-    被作废，这是 1.7 就有的限制，3.2 不改。
-- **令牌、授权和草稿**：2.6 的令牌和 OAuth 授权按主人现在的权限取交集，这个权限从
-  此是有效权限（含组），所以不用改它们的代码：经组进来的空间可以签进令牌；离开组、
-  组被移出空间后，下一个请求就是 `404`（和被移出的成员一样）。草稿的自动写入、
-  MCP 的 `tools/list` 看的也是同一个有效权限。
-- **列成员**：`GET …/members` 照旧列直接成员，再加一个 `groups` 数组（组的名字、
-  角色、人数），不展开，数量有上限所以不分页。展开成「每个能进这个空间的人和他的
-  有效角色、经由哪里」另走一个分页接口 `GET …/members/effective`：这是列表，不是
-  权限检查，每页一次带连接的查询，按用户名翻页。
-- **离开空间**：只经组进来的人不能自己「退出」（`409 member_via_group`），要请组的
-  管理员或空间的所有者处理；既是直接成员又在组里的人退出后，仍按组的角色能进。
-- **找组**：空间的所有者加组时要能按名字找组，所以任何登录的人可以按名字搜组
-  （`GET /api/groups?q=`，只返回 id、名字、来源，不返回成员和映射），每次最多
-  20 条，`q` 必填。组的成员只有管理员看得到（和它所在空间的 `members/effective`
-  里能看到的那部分）。
-- **上限**：全服务器最多 1 万个组；每个组最多 10 万人（本地组一次最多加 500 人）；
-  每个人最多在 1000 个组里（同步时超出的忽略并记审计）；每个空间最多 200 个组；
-  每个提供方的映射最多 1000 项。组名 1 到 80 个字符，不分大小写唯一（照空间名的
-  `name_key`，SQLite 和 PostgreSQL 一样）。列表都分页，一页一次查询。
-- **审计**：组的建、改、删；本地组的加人、减人（由谁）；登录同步有变化时一行
-  `groups_synced`（加了哪些、去了哪些、哪个提供方）；声明缺失、超出上限各一行；
-  组被加进空间、改角色、移出。没有变化的同步不写。
-- **存储**：迁移 `0016_groups.sql`（0013 是 2.7、0014 是 2.8、0015 是 3.1）。
-  `groups`、`group_members(group_id, user_id, provider, value)`（本地组的
-  `provider` 是空的；按 `user_id` 和 `group_id` 各一个索引）、`space_groups`
-  （按 `group_id` 一个索引）；映射存进 `sign_in_providers` 的配置。SQLite 和
-  PostgreSQL 都测。
-- **单用户模式**：没有账号也没有组，这些接口都答 `404`。
+- **Two kinds of group, not mixed**: after a group is created, its source
+  (`local` or `synced`) cannot change. The members of a local group can only be
+  added or removed by an admin; the members of a synced group are written only by
+  the sync at sign-in, and changing them by hand answers `409 group_synced`; a
+  mapping can only point to a synced group (`409 group_not_synced`). The reason
+  for not mixing: when a person is removed from a group in the IdP, we must be
+  able to remove them for sure, without guessing which members were added by
+  hand.
+- **The mapping is written on the provider**: the provider gets a `groups`: a
+  switch, the claim name (`groups` by default for OIDC, the attribute name for
+  SAML, and for GitHub fixed to the organizations the person is in), what to do
+  when the claim is missing, and a table of "value in the claim → group". The same
+  group can be mapped by several providers and several values; within one
+  provider a value maps to only one group. The mapping is kept in memory together
+  with the provider (the cache of 2.8), and sign-in does not query the database
+  for the mapping.
+- **Sync at sign-in**: after a successful sign-in through a provider (and linking
+  an identity with it, or accepting an invitation), the groups this person should
+  be in are computed from this claim, compared with their existing memberships
+  **brought by this provider**, extra ones are deleted and missing ones added, and
+  those brought by other providers are left alone. One query reads the existing
+  ones; it writes only if there is a change, and invalidates this person's cache
+  only if there is a change. At most 1000 values are read from the claim, each at
+  most 256 bytes, and values with no mapping are ignored.
+- **When the claim disappears**:
+  - A value is missing from the claim: at the next sign-in this person leaves the
+    corresponding group. Between two sign-ins they are still in the group, and
+    existing sessions, tokens and grants keep working by the group's permission. To
+    take it away at once, an admin disables the person or removes the group from
+    the space.
+  - The whole claim is missing (the IdP did not send it, or the "overage" case of
+    Entra ID where there are too many groups and it sends `_claim_names`
+    instead): by default **leave** the existing groups alone and record the audit
+    `groups_claim_missing`; the provider can be changed to `clear` (treat it as an
+    empty list and remove from all). The claim is present but an empty list:
+    remove from all.
+  - An entry is deleted from the mapping table (or the group it points to is
+    changed): the memberships brought by this entry are deleted on the spot. A
+    membership records which provider and which value brought it, so a row of the
+    same person entering the same group by another value is not affected.
+  - The provider is deleted: all the group memberships it brought are deleted
+    together (identities are kept as in 2.8); when a provider is only disabled
+    nothing is touched.
+- **Groups as space members**: needs the `members` permission, and gives a role
+  (`owner`, `editor`, `viewer`) as when adding a person. A personal space cannot
+  take a group (`409 personal_space`). **The rule that a space has at least one
+  owner counts only direct members**: the people in a group may be cleared by the
+  IdP all at once, and that must not leave the space without an owner; likewise
+  the default author of commits is still the first direct owner.
+- **Effective permission = union**: the permission set of the direct role and the
+  permission sets of the group roles are ORed bit by bit (`perm.Set` is one byte,
+  so just OR it). Built-in roles nest one inside the next, so the union is
+  "take the highest"; later custom roles also use the union, with no need for an
+  order. The displayed `role` is the built-in role whose permission set equals the
+  union (among the three built-in roles there is always one); `directRole` is given
+  in addition, and for a person who got in only through groups it is empty.
+- **Cache** (the key to efficiency):
+  - It is still the per-person cache of 1.7, with the user id as the key and as
+    the value, for each space the person can enter, "space id → permission set,
+    direct role". A cache miss is one query (direct members and members through
+    groups `UNION ALL`, merged by space) and is stored in the cache; after that
+    each request only looks at this one person's small table in memory, without
+    touching the database or computing groups, as now.
+  - The cache no longer stores the space's name and inbox: these go into a shared
+    small table by space id. This way, when an "all staff" group can enter several
+    hundred spaces, each person's cache grows only by a few hundred pairs of "id →
+    one byte"; renaming a space changes only the shared table, and there is no need
+    to invalidate the caches of all members. The cache limit changes from "at most
+    10,000 people" to counting by entries (default 2 million pairs, about a few
+    dozen MB), and when exceeded the least recently used are dropped first.
+  - Invalidation targets only the affected people: when a person enters or leaves
+    a local group or the sync result changes, invalidate this person; when a group
+    is added to a space, its role changes, it is removed, or the group is deleted,
+    invalidate all members of this group (one query by the index on group gets the
+    user ids, and they are deleted one by one under the lock, which takes
+    milliseconds even for a group of 50,000); when a space is deleted, invalidate
+    the direct members and the members of each group. The generation counter of
+    1.7 (`listGen`) is kept, to prevent a result read before a change from being
+    stored back after the change.
+  - As in 1.7, it is in one process only; when several processes run on
+    PostgreSQL, the cache of another process is not invalidated. This limit has
+    existed since 1.7, and 3.2 does not change it.
+- **Tokens, grants and drafts**: the tokens and OAuth grants of 2.6 intersect with
+  the owner's current permission, and this permission is from now on the effective
+  permission (including groups), so their code does not need to change: a space
+  entered through a group can be signed into a token; after leaving the group or
+  the group being removed from the space, the next request is `404` (the same as a
+  removed member). The automatic writing of drafts and the `tools/list` of MCP also
+  look at the same effective permission.
+- **Listing members**: `GET …/members` still lists the direct members, with one
+  more `groups` array (the group's name, role, and number of people), not
+  expanded, and not paginated because the number is capped. Expanding into "every
+  person who can enter this space, their effective role, and through what" goes
+  through a separate paginated endpoint `GET …/members/effective`: this is a list,
+  not a permission check, with one query with a join per page, paged by username.
+- **Leaving a space**: a person who got in only through a group cannot "leave" by
+  themselves (`409 member_via_group`) and has to ask the group's admin or the
+  space's owner; a person who is both a direct member and in a group can still get
+  in by the group's role after leaving.
+- **Finding groups**: when the owner of a space adds a group they must be able to
+  find it by name, so any signed-in person can search groups by name
+  (`GET /api/groups?q=`, returning only id, name and source, and not members or
+  mappings), at most 20 per call, with `q` required. The members of a group are
+  visible only to admins (and the part visible in the `members/effective` of a
+  space it is in).
+- **Limits**: at most 10,000 groups on the whole server; at most 100,000 people
+  per group (a local group takes at most 500 people added at a time); each person
+  in at most 1000 groups (extras are ignored in a sync and audited); at most 200
+  groups per space; at most 1000 mapping entries per provider. A group name is 1
+  to 80 characters, unique without regard to case (following the `name_key` of
+  space names, the same on SQLite and PostgreSQL). All lists are paginated, one
+  query per page.
+- **Audit**: creating, changing and deleting groups; adding and removing people of
+  a local group (by whom); one line `groups_synced` when a sign-in sync changes
+  something (which were added, which removed, which provider); one line each for a
+  missing claim and for exceeding a limit; a group added to a space, its role
+  changed, removed. A sync with no change writes nothing.
+- **Storage**: the migration `0016_groups.sql` (0013 is 2.7, 0014 is 2.8, 0015 is
+  3.1). `groups`, `group_members(group_id, user_id, provider, value)` (the
+  `provider` of a local group is empty; one index each on `user_id` and
+  `group_id`), `space_groups` (one index on `group_id`); the mapping is stored in
+  the configuration of `sign_in_providers`. Both SQLite and PostgreSQL are tested.
+- **Single-user mode**: there are no accounts and no groups, and these endpoints
+  all answer `404`.
 
-不做的（括号里是理由）：
+Not done (the reasons are in parentheses):
 
-- **嵌套组**（组里套组）：展开要递归、要防环，作废时要沿着树找人；IdP 那边一般
-  已经把嵌套展开了（Entra ID、Keycloak 都能发展开后的组）。以后要做，也是在写入时
-  展开成平的成员关系，不在请求时递归。
-- **SCIM**：IdP 主动推用户和组，能解决「两次登录之间不同步」，但要一套新的接口
-  和令牌，放到以后单独做。
-- **没映射的值自动建组**：Entra ID 发的是组的 GUID，自动建出来的组名是一串 GUID；
-  而且任何能改 IdP 组的人都能在这里造组。只做显式映射。
-- **GitHub 的团队**：要多读 `/user/teams` 并翻页，团队改名后映射就失效；3.2 只用
-  2.8 已经读到的组织。
-- **按组定实例角色**（IdP 组里的人自动成为管理员）：管理员权限太大，仍只由管理员
-  手动给。
-- **组的管理员**（让非管理员管某个本地组）：先只有管理员管。
-- **直接成员变动的审计**：1.7 以来空间里加人、改角色、移人不记审计，3.2 只给组
-  加，直接成员的以后一起补。
-- **两次登录之间的过期**（同步来的成员关系过 N 天没再登录就失效）：见下面的
-  问题 2。
+- **Nested groups** (a group inside a group): expanding needs recursion and cycle
+  prevention, and invalidation has to follow the tree to find people; the IdP
+  side has generally already expanded nesting (Entra ID and Keycloak can both
+  send expanded groups). If done later, it would also be expanded at write time
+  into flat memberships, not recursed at request time.
+- **SCIM**: the IdP actively pushes users and groups, which solves "not synced
+  between two sign-ins", but needs a new set of endpoints and tokens, and is left
+  for a separate job later.
+- **Automatically creating groups for unmapped values**: Entra ID sends the GUID of
+  the group, so the automatically created group name would be a string of GUID;
+  and anyone who can change IdP groups could make groups here. Only explicit
+  mapping is done.
+- **GitHub teams**: it needs reading `/user/teams` with extra pagination, and a
+  mapping breaks when a team is renamed; 3.2 uses only the organizations that 2.8
+  already reads.
+- **Instance roles by group** (people in an IdP group automatically become
+  admins): admin permission is too powerful, and is still given only by an admin
+  by hand.
+- **Group admins** (letting a non-admin manage some local group): for now only
+  admins manage.
+- **Audit of direct member changes**: since 1.7 adding, changing the role of, and
+  removing people in a space has not been audited; 3.2 adds it only for groups,
+  and direct members will be filled in together later.
+- **Expiry between two sign-ins** (a synced membership becomes invalid if there is
+  no sign-in for N days): see question 2 below.
 
-要所有者定的（先按括号里的默认做）：
+For the owner to decide (do it first by the default in parentheses):
 
-1. 本地组和同步组分开、不能混（分开；混在一起时 IdP 里移出的人删不干净）。
-2. 两次登录之间，同步来的组成员关系要不要过期？比如 30 天没经这个提供方登录就
-   自动移出（不过期：只靠下一次登录同步；不然只用令牌的脚本和长会话会在某天突然
-   失去权限）。
-3. 声明整个没有时不动现有的组（不动，记审计；可按提供方改成清空）。
-4. 空间至少一个所有者只数直接成员，组里的所有者不算（只数直接成员）。
-5. 任何登录的人能按名字搜到组名（能，只给名字，`q` 必填、每次最多 20 条；不然
-   空间所有者没法自己加组，得找管理员）。
-6. 只经组进来的人不能自己退出空间（不能，答 `409 member_via_group`）。
-7. 提供方删除时它带来的组成员关系一起删（删；身份照旧保留）。
-8. 上限：1 万个组、每组 10 万人、每人 1000 个组、每空间 200 个组（按这些）。
+1. Local groups and synced groups are separate and cannot be mixed (separate;
+   mixed together, people removed in the IdP cannot be deleted cleanly).
+2. Between two sign-ins, should synced group memberships expire? For example,
+   removed automatically if there has been no sign-in through this provider for 30
+   days (no expiry: rely only on the sync at the next sign-in; otherwise scripts
+   that use only tokens and long sessions would suddenly lose permission one
+   day).
+3. When the whole claim is missing, leave existing groups alone (leave them, audit
+   it; can be changed to clearing per provider).
+4. A space's at-least-one-owner counts only direct members, and an owner in a
+   group does not count (only direct members).
+5. Any signed-in person can find group names by name (yes, only names are given,
+   `q` required, at most 20 per call; otherwise the owner of a space could not add
+   a group by themselves and would have to ask an admin).
+6. A person who got in only through a group cannot leave the space by themselves
+   (cannot, answers `409 member_via_group`).
+7. When a provider is deleted, the group memberships it brought are deleted
+   together (delete; identities are still kept).
+8. Limits: 10,000 groups, 100,000 people per group, 1000 groups per person, 200
+   groups per space (as these).
 
-**3.2 的现状（2026-11-23）**：上面的约定都做了，所有者问题按括号里的默认做。接口见
-`docs/api.md` 的「Groups」和「Administration」的「Groups」，迁移是
-`0016_groups.sql`（SQLite 和 PostgreSQL 都测）。实现时定下来的：
+**3.2 as built (2026-11-23)**: everything in the contract above is done, and the
+owner questions follow the defaults in parentheses. For the endpoints see "Groups"
+and the "Groups" of "Administration" in `docs/api.md`, and the migration is
+`0016_groups.sql` (both SQLite and PostgreSQL are tested). Settled during
+implementation:
 
-- **缓存**：每个人一张按空间 id 排好序的小表，每项是「空间 id、权限一个字节、直接角色
-  的权限、有没有经组」，请求时在这张表上二分查找；空间的名字、收件箱、是不是个人空间
-  放在另一张按空间 id 的共享表里。上限按条目数算（默认 200 万项，每项约 24 字节，满了
-  约 50 MB），超了先丢最久没用的人；一个人的表比整个上限还大时只返回、不存。
-  `listGen` 照旧：变动前读到的结果不会在变动后被存回去。空间改名只改共享表，不作废任何人。
-- **一次未命中**：一条查询把直接成员和经组的成员 `UNION ALL`，经组的那一半先按空间和
-  角色分组（一个人最多每个空间三行），再和 `spaces` 连；Go 里按空间合并成并集。
-- **作废**：个人进出本地组、同步有变化——作废这个人；组加进空间、改角色（角色没变不作废）、
-  移出、组被删除——先在事务里按组的索引取出所有人的 id，提交后在一把锁里逐个删；空间被
-  删除——直接成员和各组的人。5 万人的组一次作废是毫秒级。读组里的人之前先锁住这个组的行
-  （先空间后组；同步一次锁多个组时按组 id 排序），往组里加人（手动或同步）也锁它，所以
-  PostgreSQL 的 READ COMMITTED 下不会有人在「读了名单」和「提交」之间加进来、带着旧权限
-  留在缓存里。
-- **同步**：现有的成员关系用一条查询读出（`user_id` 加 `provider` 的索引），和这次的声明
-  比较，有变化才开事务写，并且只那时作废这个人、写 `groups_synced`。每个人 1000 个组的
-  上限在写的事务里数（先删后加），超出的不加，写 `groups_claim_truncated`（`limit` 是
-  `group_limit`）。映射表在提供方对象里，登录时不为映射查库。
-- **映射改动**：改提供方时，旧表里有而新表里没有（或指向别的组）的项，当场删掉它带来的
-  成员关系；删组时先把各提供方里指向它的项去掉，再删组。删提供方时删掉它带来的所有关系。
-  这些删除和提供方那一行的写在同一个事务里，失败就整个请求失败。提供方每次写都把
-  `groups_version` 加一；登录的同步先锁提供方那一行，而且只有版本还是它读映射时的那个才
-  写，否则跳过（下次登录再同步），所以拿着旧映射的登录不会把刚删掉的关系加回来。
-- **和合同不同、或合同没写明的**：
-  - OIDC 的组声明只读身份令牌里的，没有再去读 userinfo（所用的 OIDC 库不取 userinfo；
-    Entra ID 的超量本来就是「不读，当作缺失」，这样做没有损失）。合同里「再读 userinfo」
-    这一句已改。
-  - GitHub：打开组同步时每次登录多读 `/user/orgs`（最多 5 页、500 个组织）；没设组织限制，
-    或者限制要的组织已经在前面的页里读到了，后面的页读失败不拒绝登录，当作声明缺失。
-  - 加成员、改角色的答复里的 Member 还是原来的五个字段；`viaGroups`、`effectiveRole`
-    只在成员列表里（旧的客户端和契约测试不受影响）。
-  - 路径里的组不存在答 `not_found`，请求体里的组不存在答 `group_not_found`（合同的
-    写法，实现时分开了）。
-  - 没有变化的加人（全是「已经在」）不写 `group_member_added`。
-- **令牌、授权、草稿**：没有改它们的代码，加的测试证明令牌和 OAuth 授权随主人加入、离开
-  组、组的角色变化、组离开空间、组被删除而得到、失去权限，草稿的自动写入看的也是并集。
-- **界面**：管理里多了「组」一页（列表、按名字和来源筛选、新建、改名、删除——在用时先问
-  再强制、成员列表、从搜索里挑人或粘贴用户名一次最多 500 人、所在的空间）；提供方表单里
-  多了「组」映射（开关、声明名、缺失时怎么办、值到同步组的表）；空间设置的成员页里多了
-  组（加、改角色、移出、按名字搜）和「谁能进这个空间」（分页、可搜索，点开才读）；账号
-  设置里多了「我的组」。窄屏下都是可换行的竖排，表格横向滚动。
-- **实测**（SQLite，本机，`go test -bench` 见 `internal/spaces/groups_test.go`）：
-  - 一个人在 1000 个组里、这些组一共在 200 个空间里：缓存未命中一次（一条查询加建表、
-    排序，含 200 个空间的名字）约 **4.7 毫秒**；
-  - 命中（一个人在 200 个空间里问其中一个）约 **96 纳秒**，和 1.7 的一次表查找同一量级，
-    不碰数据库、不展开组。
-  - 一个组加进空间后它的 N 个人各多读一次库，每次就是上面那一条查询。
+- **Cache**: each person has a small table sorted by space id, each entry being
+  "space id, permission as one byte, the permission of the direct role, whether it
+  came through a group", and a request does a binary search on this table; the
+  space's name, inbox and whether it is a personal space are in another shared
+  table by space id. The limit is counted by entries (default 2 million entries,
+  about 24 bytes each, about 50 MB when full), and when exceeded the least
+  recently used person is dropped first; when one person's table is bigger than
+  the whole limit it is only returned and not stored. `listGen` is kept: a result
+  read before a change is not stored back after the change. Renaming a space
+  changes only the shared table and invalidates nobody.
+- **One miss**: one query does `UNION ALL` of the direct members and the members
+  through groups, the half through groups is first grouped by space and role (at
+  most three rows per space for one person) and then joined with `spaces`; in Go
+  they are merged by space into the union.
+- **Invalidation**: a person entering or leaving a local group or a sync change:
+  invalidate this person; a group added to a space, its role changed (no
+  invalidation if the role is unchanged), removed, or the group deleted: first take
+  all the people's ids by the index on group within a transaction, and after the
+  commit delete them one by one under one lock; a space deleted: the direct members
+  and the people of each group. Invalidating a group of 50,000 once takes
+  milliseconds. Before reading the people in a group, the row of this group is
+  locked (space first and then group; when a sync locks several groups at once,
+  they are sorted by group id), and adding people to a group (by hand or by sync)
+  also locks it, so under READ COMMITTED on PostgreSQL nobody can be added between
+  "reading the list" and "commit" and stay in the cache with the old permission.
+- **Sync**: the existing memberships are read with one query (an index on
+  `user_id` plus `provider`) and compared with this claim; a transaction is opened
+  to write only if there is a change, and only then this person is invalidated and
+  `groups_synced` written. The limit of 1000 groups per person is counted inside
+  the writing transaction (delete first, then add), extras are not added, and
+  `groups_claim_truncated` is written (`limit` is `group_limit`). The mapping table
+  is in the provider object, and sign-in does not query the database for the
+  mapping.
+- **Changing a mapping**: when a provider is changed, entries that are in the old
+  table but not in the new one (or point to another group) have the memberships
+  they brought deleted on the spot; when a group is deleted, the entries pointing
+  to it in each provider are first removed, and then the group is deleted. When a
+  provider is deleted, all the relations it brought are deleted. These deletions
+  and the write of the provider's row are in the same transaction, and if it fails
+  the whole request fails. Every write of the provider adds one to
+  `groups_version`; the sign-in sync first locks the provider's row, and writes only
+  if the version is still the one when it read the mapping, otherwise skips (syncs
+  again at the next sign-in), so a sign-in holding an old mapping does not add back
+  a relation that was just deleted.
+- **Different from the contract, or not stated in the contract**:
+  - The group claim of OIDC reads only the ID token, and does not go on to read
+    userinfo (the OIDC library used does not fetch userinfo; the Entra ID overage is
+    "do not read, treat as missing" anyway, so nothing is lost). The sentence "then
+    read userinfo" in the contract has been changed.
+  - GitHub: when group sync is on, each sign-in reads `/user/orgs` additionally (at
+    most 5 pages, 500 organizations); if no organization restriction is set, or the
+    organization the restriction needs was already read in the earlier pages, a
+    failure to read later pages does not refuse the sign-in, and is treated as a
+    missing claim.
+  - The Member in the replies of adding a member and changing a role still has the
+    original five fields; `viaGroups` and `effectiveRole` are only in the member
+    list (old clients and the contract test are not affected).
+  - A group in the path that does not exist answers `not_found`, and a group in the
+    request body that does not exist answers `group_not_found` (the wording of the
+    contract, separated during implementation).
+  - Adding people with no change (all "already in") does not write
+    `group_member_added`.
+- **Tokens, grants, drafts**: their code was not changed, and the tests added prove
+  that tokens and OAuth grants gain and lose permission as the owner joins and
+  leaves a group, as a group's role changes, as a group leaves a space, and as a
+  group is deleted, and the automatic writing of drafts also looks at the union.
+- **UI**: administration gets a "Groups" page (list, filter by name and source,
+  create, rename, delete, asking first and then forcing when in use, the member
+  list, picking people from a search or pasting usernames, at most 500 at a time,
+  and the spaces it is in); the provider form gets a "Groups" mapping (the switch,
+  the claim name, what to do when missing, the table of value to synced group); the
+  members page of space settings gets groups (add, change role, remove, search by
+  name) and "Who can enter this space" (paginated, searchable, read only when
+  opened); account settings gets "My groups". On narrow screens everything is
+  vertical and wrappable, and tables scroll horizontally.
+- **Measured** (SQLite, local, `go test -bench`, see
+  `internal/spaces/groups_test.go`):
+  - One person in 1000 groups, which together are in 200 spaces: one cache miss (one
+    query plus building and sorting the table, including the names of 200 spaces)
+    takes about **4.7 ms**;
+  - A hit (one person in 200 spaces asking about one of them) takes about **96 ns**,
+    the same order as one table lookup of 1.7, without touching the database or
+    expanding groups.
+  - After a group is added to a space, each of its N people reads the database once
+    more, each being the single query above.
 
-3.2 已知问题，带到后面：
+3.2 known issues, carried forward:
 
-- **多进程**：和 1.7 一样，缓存只在一个进程里；PostgreSQL 上跑多个进程时，另一个进程
-  的缓存要等条目被挤出才会更新。组让这个限制更显眼了（一个人的访问权可能同时来自好几处
-  变动）。要真正多进程，得有作废的广播，放到以后。
-- **`members` 列表里每个组的人数**：每个组一次按组索引的计数，一个空间最多 200 个组、
-  每组最多 10 万人，最坏情况下一次列表是 200 次大计数。要是成了问题，给 `groups` 存一个
-  人数。
-- **同步在两次登录之间不更新**：令牌和长会话照旧用组的权限，直到下一次登录；要立即拿掉权限
-  见上面「声明消失」。SCIM 放到以后。
-- **OIDC 的 userinfo、Entra ID 的超量展开**没做（见上）；超量时只能靠 `missing` 的设置。
-- **GitHub 的组织值是登录名**：映射和组织限制比的都是组织的 login。组织改名或删掉以后，
-  原来的 login 可以被别人注册，注册的人的成员就会被映射进来。按组织 id 映射放到以后。
-- **一次作废很多人**：作废 10 万个缓存里的人要在缓存的锁里约 8.7 毫秒，这段时间别的请求
-  等着；之后这些人下一次请求各多一条查询。
-- **管理员在只读组里**：管理员要是在一个空间的查看者组里，在那个空间里拿到的就是查看者
-  权限，和 1.7 以来管理员作为直接成员时一样（管理员身份本身不给空间里的权限）。
-- **第二轮审查记下的**：
-  - 一次改提供方时去掉两条映射到同一个组的条目，恰好同时强制删除这个组，PostgreSQL 上
-    可能在 `group_members` 的行上死锁；数据库会发现并报错，不会卡住，修之前也有。
-  - 同一个提供方有改动的登录同步现在要持有提供方那一行直到提交，所以它们一个接一个；是
-    吞吐的代价，不是死锁。
-  - 改提供方提交后要是 `reloadProviders` 失败，这个提供方的同步会跳过，直到下次重新读取；
-    不是永久的，也不丢东西。
+- **Multiple processes**: as in 1.7, the cache is in one process only; when
+  several processes run on PostgreSQL, the cache of another process updates only
+  when entries are pushed out. Groups make this limit more noticeable (one
+  person's access may come from several changes at once). Real multi-process
+  needs an invalidation broadcast, left for later.
+- **The number of people of each group in the `members` list**: one count by the
+  group index per group, at most 200 groups per space and at most 100,000 people
+  per group, so in the worst case one list is 200 large counts. If it becomes a
+  problem, store a head count in `groups`.
+- **The sync does not update between two sign-ins**: tokens and long sessions
+  still use the group's permission until the next sign-in; to take permission away
+  at once see "When the claim disappears" above. SCIM is left for later.
+- **OIDC userinfo and the Entra ID overage expansion** are not done (see above);
+  for overage the only recourse is the `missing` setting.
+- **The GitHub organization value is the login name**: the mapping and the
+  organization restriction both compare the organization's login. After an
+  organization is renamed or deleted, the old login can be registered by someone
+  else, and the members of the person who registered would be mapped in. Mapping by
+  organization id is left for later.
+- **Invalidating many people at once**: invalidating 100,000 people in the cache
+  takes about 8.7 ms under the cache's lock, and other requests wait during that
+  time; after that, each of these people does one more query at their next
+  request.
+- **An admin in a read-only group**: if an admin is in a space's viewer group, what
+  they get in that space is viewer permission, as when an admin was a direct member
+  since 1.7 (admin status itself gives no permission in a space).
+- **Noted in the second round of review**:
+  - When one change of a provider removes two entries mapped to the same group, and
+    it happens to forcibly delete this group at the same time, there may be a
+    deadlock on the rows of `group_members` on PostgreSQL; the database detects it
+    and reports an error, and does not hang, and it existed before the fix.
+  - A sign-in sync of the same provider that has changes now has to hold the
+    provider's row until the commit, so they go one after another; this is a
+    throughput cost, not a deadlock.
+  - If `reloadProviders` fails after a provider change is committed, the sync of
+    this provider is skipped until it is read again; it is not permanent, and
+    nothing is lost.
