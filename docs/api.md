@@ -3819,8 +3819,15 @@ entry of the folder in `space.yml` is not a list of settings. Pages are not chan
 A folder has an icon and a colour, written under its entry in
 `.petalbook/space.yml` next to its type and views, and a page has `icon` and
 `color` in its header (fields of every page, not properties of a type). An icon
-is a Lucide name (`book-open`) or an emoji, at most 64 bytes; a colour is one
-of `red`, `orange`, `amber`, `green`, `teal`, `blue`, `purple`, `pink`. The
+is the name of a Lucide icon the web app ships (`book-open`; the list is
+`internal/icons/lucide.txt`) or one emoji, one grapheme cluster of at most 64
+bytes with no control character, space or markup (`<`, `>`, `&`, quotes); a
+colour is one of eight: `red`, `orange`, `amber`, `green`, `teal`, `blue`,
+`purple`, `pink`. A folder style, a page save or create, and a type's default
+that is none of these is `400 invalid`. An icon or colour that is none, read
+from a `space.yml`, a header or a type file written by hand, is read as no icon
+(no colour), and a save that leaves such a value in a header as it was is not
+refused for it. The
 entry of a folder moves with the folder, in the same commit (see Moving a
 folder), so its icon and colour follow it.
 
@@ -3837,7 +3844,7 @@ own defaults.
 `PUT /api/spaces/{space}/folders/style` (write) takes
 `{"folder", "icon", "color"}`; `""` takes one away. `200` with the same,
 the folder as spelled on disk; `404 not_found` for a folder that is not there;
-`400 invalid` for a colour that is none of the eight or an icon that is too long.
+`400 invalid` for a colour that is none of the eight or an icon that is none (see above).
 
 `GET /api/spaces/{space}/sources` (read) answers
 `{"sources": [{"source", "pages"}]}`, the sources the pages use, most used first

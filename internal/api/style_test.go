@@ -41,3 +41,22 @@ func TestAppearanceSourcesAndFieldRename(t *testing.T) {
 		t.Fatal(code, raw)
 	}
 }
+
+func TestIconsAreCheckedAndEmptyPresetsStayEmpty(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	if code, _, raw := f.do("POST", "/api/spaces/default/folders", map[string]any{"path": "Tang"}); code != 201 {
+		t.Fatal(raw)
+	}
+	for _, icon := range []string{"constructor", "__proto__", "not-an-icon", "<b>"} {
+		if code, r, raw := f.do("PUT", "/api/spaces/default/folders/style", map[string]any{"folder": "Tang", "icon": icon}); code != 400 || r["error"] != "invalid" {
+			t.Errorf("icon %q: %d %s", icon, code, raw)
+		}
+	}
+	if code, r, raw := f.do("POST", "/api/spaces/default/pages", map[string]any{"folder": "Tang", "meta": map[string]any{"title": "A", "icon": "constructor"}, "body": "x\n"}); code != 400 || r["error"] != "invalid" {
+		t.Errorf("a page with the icon constructor: %d %s", code, raw)
+	}
+	if code, r, raw := f.do("PUT", "/api/spaces/default/types/poem", map[string]any{"baseRev": "", "title": "Poem", "icon": "constructor"}); code != 400 || r["error"] != "invalid" {
+		t.Errorf("a type with the icon constructor: %d %s", code, raw)
+	}
+}

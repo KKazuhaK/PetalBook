@@ -16,7 +16,7 @@ import type {
 } from '../types.ts'
 import { BUILTIN_KEYS, RESERVED_KEYS, partialPropsOf, propsOfMeta } from '../../lib/pageTypes.ts'
 import { matches, parseFilter, sortValue, valuesOf } from './propQuery.ts'
-import { createStyleBook } from './styleBook.ts'
+import { createStyleBook, isIcon, isIconColor } from './styleBook.ts'
 import { createTypeBook } from './typeBook.ts'
 import { createHomeBook } from './homeBook.ts'
 import { createViewBook } from './viewBook.ts'
@@ -327,8 +327,9 @@ export function createSpaceStore({
       ...(title ? { title } : {}),
       ...(subtitle ? { subtitle } : {}),
       source,
-      ...(typeof p.meta.icon === 'string' && p.meta.icon ? { icon: p.meta.icon } : {}),
-      ...(typeof p.meta.color === 'string' && p.meta.color ? { color: p.meta.color } : {}),
+      // What a file written by hand has that is no icon or colour is read as none.
+      ...(typeof p.meta.icon === 'string' && isIcon(p.meta.icon.trim()) ? { icon: p.meta.icon.trim() } : {}),
+      ...(typeof p.meta.color === 'string' && isIconColor(p.meta.color.trim()) ? { color: p.meta.color.trim() } : {}),
       // "" for an untitled page with nothing in it.
       label: title ?? Array.from(firstLine(p.body)).slice(0, 30).join(''),
       untitled: !title,
@@ -675,11 +676,28 @@ export function createSpaceStore({
     return raw
   }
 
+  // An icon or a colour in a header must be one, unless the file has it already (written by hand: read as none).
+  const checkStyle = (old: PageMeta, given: PageMeta) => {
+    for (const k of ['icon', 'color'] as const) {
+      const v = given[k]
+      if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) continue
+      if (JSON.stringify(old[k]) === JSON.stringify(v)) continue
+      const ok = typeof v === 'string' && (k === 'icon' ? isIcon(v.trim()) : isIconColor(v.trim()))
+      if (!ok)
+        throw new HttpError(
+          400,
+          'invalid',
+          k === 'icon' ? '图标是一个 Lucide 图标的名字或一个表情，不超过 64 字节' : '颜色要是八种之一',
+        )
+    }
+  }
+
   const create = (body: Record<string, unknown>): Page => {
     guard()
     const folder = typeof body.folder === 'string' ? body.folder : ''
     if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
     let given = parseMeta(body.meta)
+    checkStyle({}, given)
     if (body.body !== undefined && typeof body.body !== 'string')
       throw new HttpError(400, 'invalid', 'body 必须是字符串')
     // A page made in the inbox is a quick note.
@@ -754,6 +772,7 @@ export function createSpaceStore({
     const cur = lookup(id)
     guard()
     const { baseRev, meta, body } = checkInput(id, input)
+    checkStyle(cur.meta, meta)
     const s = writeFile(cur, baseRev, meta, body)
     // A save never takes a draft away (its text may exist nowhere else), except
     // one that says exactly what was just saved.

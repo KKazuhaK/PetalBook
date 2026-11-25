@@ -5,7 +5,7 @@ import { CORE_CATEGORIES } from '@/lib/icons/coreIcons'
 import { ICON_COLORS, iconColorVar } from '@/lib/icons/colors'
 import { ALL_ICONS, ALL_NAMES, SEARCH_TEXT } from '@/lib/icons/lucideAll'
 import { readRecent } from '@/lib/icons/recent'
-import { isIconName } from '@/lib/icons/useIcons'
+import { isIconName, isTextIcon } from '@/lib/icons/useIcons'
 import { t } from '@/i18n'
 import { PageIcon } from './PageIcon'
 
@@ -24,7 +24,10 @@ export default function IconPickerBody({
 }) {
   const [query, setQuery] = useState('')
   const [shown, setShown] = useState(PAGE)
-  const recent = useMemo(() => readRecent().filter((n) => !isIconName(n) || n in ALL_ICONS), [])
+  const recent = useMemo(
+    () => readRecent().filter((n) => (isIconName(n) ? Object.hasOwn(ALL_ICONS, n) : isTextIcon(n))),
+    [],
+  )
   const q = query.trim().toLowerCase()
   // Every word has to be in the name, a tag or an alias.
   const found = useMemo(() => {

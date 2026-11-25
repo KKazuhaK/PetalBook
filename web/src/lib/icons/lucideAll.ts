@@ -5,12 +5,7 @@ import { icons } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import tags from './iconTags.json'
 import { ZH_ALIASES } from './zhAliases'
-
-const kebab = (s: string) =>
-  s
-    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .replace(/([A-Za-z])(\d)/g, '$1-$2')
-    .toLowerCase()
+import { kebab } from './check'
 
 export const ALL_ICONS: Record<string, LucideIcon> = Object.fromEntries(
   Object.entries(icons).map(([name, icon]) => [kebab(name), icon]),

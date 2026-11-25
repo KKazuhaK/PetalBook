@@ -6,15 +6,17 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/KKazuhaK/PetalBook/internal/icons"
 )
 
 // IconColors are the colours an icon may have: eight, each with a light and a
 // dark shade the client has tuned. Empty is the colour of the text.
-var IconColors = []string{"red", "orange", "amber", "green", "teal", "blue", "purple", "pink"}
+var IconColors = icons.Colors
 
 // MaxIconBytes is the longest icon: a Lucide name (`book-open`) or an emoji,
 // which may be several code points long.
-const MaxIconBytes = 64
+const MaxIconBytes = icons.MaxBytes
 
 // MaxSourcePresets is the most presets a space may list, and MaxSourceBytes the
 // longest one.
@@ -38,27 +40,20 @@ type FolderStyle struct {
 	Color  string `json:"color,omitempty"`
 }
 
-// CheckIcon refuses what cannot be an icon: blank, too long, with a control
-// character. Which names exist is the client's business (the icon set is its own).
+// CheckIcon refuses what cannot be an icon ("" is none): an icon is the name
+// of a Lucide icon the web app ships, or one emoji (one grapheme cluster) of at
+// most MaxIconBytes with no control character, space or markup.
 func CheckIcon(icon string) error {
-	if icon == "" {
+	if icon == "" || icons.Valid(icon) {
 		return nil
 	}
-	if len(icon) > MaxIconBytes || !utf8.ValidString(icon) || strings.IndexFunc(icon, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 || strings.TrimSpace(icon) != icon {
-		return invalidf("An icon is a name or an emoji of at most %d bytes.", MaxIconBytes)
-	}
-	return nil
+	return invalidf("An icon is the name of a Lucide icon or one emoji of at most %d bytes.", MaxIconBytes)
 }
 
 // CheckIconColor refuses a colour that is not one of IconColors ("" is none).
 func CheckIconColor(color string) error {
-	if color == "" {
+	if color == "" || icons.ValidColor(color) {
 		return nil
-	}
-	for _, c := range IconColors {
-		if c == color {
-			return nil
-		}
 	}
 	return invalidf("The colour must be one of %s.", strings.Join(IconColors, ", "))
 }

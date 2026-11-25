@@ -6,6 +6,8 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { AppShell } from '@/components/layout/AppShell'
 import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
 import { PageIcon } from './PageIcon'
+import IconPickerBody from './IconPickerBody'
+import { ALL_NAMES } from '@/lib/icons/lucideAll'
 import { ICON_COLORS } from '@/lib/icons/colors'
 import { readRecent } from '@/lib/icons/recent'
 import { t } from '@/i18n'
@@ -53,6 +55,43 @@ describe('the icon of a name', () => {
       expect(index).toMatch(light)
       expect(index).toMatch(dark)
     }
+  })
+})
+
+describe('a name that is a key of every object', () => {
+  // `constructor` looks like a Lucide name; read from a plain object it would be Object's own constructor, which React
+  // cannot draw. Such a name, from a file written by hand, is no icon.
+  const names = ['constructor', 'valueof', 'tostring', '__proto__', 'toString', 'hasOwnProperty', 'isprototypeof']
+
+  it('is drawn as no icon, and the fallback is drawn instead', async () => {
+    m = await mount(
+      <>
+        {names.map((n) => (
+          <PageIcon key={n} icon={n} fallback={<span data-fallback={n} />} />
+        ))}
+        <PageIcon icon="book-open" color="constructor" />
+        <PageIcon icon="drum" />
+      </>,
+    )
+    await settle(() => document.querySelector('svg[data-icon="drum"]') !== null, 'the whole set')
+    expect(document.querySelector('svg[data-icon="constructor"]')).toBeNull()
+    expect(document.querySelector('[data-fallback="constructor"]')).not.toBeNull()
+    expect(document.querySelector('[data-fallback="valueof"]')).not.toBeNull()
+    expect((document.querySelector('[data-icon="book-open"]') as SVGElement).style.color).toBe('')
+  })
+
+  it('in the recent icons does not break the picker', async () => {
+    localStorage.setItem('pb.icons.recent', JSON.stringify(['constructor', 'valueof', 'book-open']))
+    m = await mount(<IconPickerBody icon="" color="" onChange={() => {}} />)
+    const recent = document.querySelector('[data-slot="icon-picker"] section [role="listbox"]')!
+    const titles = [...recent.querySelectorAll('[role="option"]')].map((o) => o.getAttribute('title'))
+    expect(titles).toEqual(['book-open'])
+  })
+
+  it('is refused by the server, whose list of names is the one the app ships', () => {
+    const server = readFileSync('../internal/icons/lucide.txt', 'utf8').trim().split('\n')
+    expect(server, 'run `node scripts/lucide-names.mjs > ../internal/icons/lucide.txt`').toEqual(ALL_NAMES)
+    expect(server).not.toContain('constructor')
   })
 })
 

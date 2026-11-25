@@ -3,8 +3,16 @@
 
 import type { Appearance, FolderStyle, IconColor } from '../types.ts'
 import { HttpError } from './store.ts'
+import { icons } from 'lucide-react'
+import { isIconName, isTextIcon, kebab } from '../../lib/icons/check.ts'
 
 export const ICON_COLORS: readonly IconColor[] = ['red', 'orange', 'amber', 'green', 'teal', 'blue', 'purple', 'pink']
+// The names of the Lucide icons the app ships, as the server knows them (internal/icons/lucide.txt).
+const LUCIDE = new Set(Object.keys(icons).map(kebab))
+export const isIcon = (v: unknown): v is string =>
+  typeof v === 'string' && (isIconName(v) ? LUCIDE.has(v) : isTextIcon(v))
+export const isIconColor = (v: unknown): v is IconColor =>
+  typeof v === 'string' && (ICON_COLORS as readonly string[]).includes(v)
 const isUnder = (path: string, parent: string) => path === parent || path.startsWith(parent + '/')
 const invalid = (m: string) => new HttpError(400, 'invalid', m)
 
@@ -18,14 +26,9 @@ export function createStyleBook(folderExists: (path: string) => string | null) {
       iconColors: [...ICON_COLORS],
     }),
     setStyle(folder: string, icon: string, color: string): FolderStyle {
-      if (
-        typeof icon !== 'string' ||
-        new TextEncoder().encode(icon).length > 64 ||
-        /[\p{Cc}]/u.test(icon) ||
-        icon.trim() !== icon
-      )
-        throw invalid('图标是一个名字或表情，不超过 64 字节')
-      if (color !== '' && !(ICON_COLORS as readonly string[]).includes(color)) throw invalid('颜色要是八种之一')
+      if (typeof icon !== 'string' || (icon !== '' && !isIcon(icon)))
+        throw invalid('图标是一个 Lucide 图标的名字或一个表情，不超过 64 字节')
+      if (color !== '' && !isIconColor(color)) throw invalid('颜色要是八种之一')
       if (folder === '') throw invalid('根目录没有图标')
       const spelled = folderExists(folder)
       if (spelled === null) throw new HttpError(404, 'not_found', '找不到这个文件夹')

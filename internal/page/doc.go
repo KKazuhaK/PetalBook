@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/KKazuhaK/PetalBook/internal/icons"
 )
 
 // bomText is the UTF-8 byte order mark some editors put at the start of a file.
@@ -504,11 +506,12 @@ func (m Meta) Sources() []string { return m.listOf("source", true) }
 // Type returns the page type, or "".
 func (m Meta) Type() string { return strings.TrimSpace(m.String("type")) }
 
-// Icon returns the icon of the page (a Lucide name or an emoji), or "".
-func (m Meta) Icon() string { return strings.TrimSpace(m.String("icon")) }
+// Icon returns the icon of the page (a Lucide name or an emoji), or "". What
+// is not one (a header written by hand) is no icon.
+func (m Meta) Icon() string { return icons.Of(strings.TrimSpace(m.String("icon"))) }
 
-// Color returns the color of the page (one of Colors), or "".
-func (m Meta) Color() string { return strings.TrimSpace(m.String("color")) }
+// Color returns the colour of the page (one of icons.Colors), or "".
+func (m Meta) Color() string { return icons.ColorOf(strings.TrimSpace(m.String("color"))) }
 
 // Created returns the created date as written (YYYY-MM-DD), or "".
 func (m Meta) Created() string { return strings.TrimSpace(m.String("created")) }

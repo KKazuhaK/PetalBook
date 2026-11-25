@@ -4909,6 +4909,11 @@ function suite(target: Target) {
       expect(styles).toContainEqual({ folder: a, icon: 'book-open', color: 'teal' })
       expect(styles).toContainEqual({ folder: `${a}/in`, icon: '🌸' })
       expect((await failure(S.setFolderStyle(a, 'x', 'mauve' as never))).code).toBe('invalid')
+      // A name the icons do not have (and `constructor`, a key of every object) is refused, so is more than one emoji.
+      for (const icon of ['constructor', '__proto__', 'not-an-icon', '🌸🌸', '<b>'])
+        expect((await failure(S.setFolderStyle(a, icon, ''))).code).toBe('invalid')
+      expect((await failure(mk(folder, { title: 'sX', icon: 'constructor' }))).code).toBe('invalid')
+      expect((await failure(mk(folder, { title: 'sX', color: 'mauve' }))).code).toBe('invalid')
       expect((await failure(S.setFolderStyle(`${a}/nowhere`, 'x', ''))).code).toBe('not_found')
       const b = `${folder}/b${run}`
       await S.moveFolder(a, b)
