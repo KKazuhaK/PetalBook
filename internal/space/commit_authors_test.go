@@ -267,28 +267,6 @@ func TestRemoteChangesAreCommittedAsTheirAuthor(t *testing.T) {
 	}
 }
 
-func TestRemoteRecoveryCommitsEachRecordedAuthor(t *testing.T) {
-	t.Parallel()
-	f := newRemoteSpace(t)
-	write := func(by Author, title, id string) {
-		data := []byte(pageText(id, title, "written\n"))
-		if err := f.s.cm.Record(by, jrec{Op: "w", Path: title + ".md", Rev: page.Rev(data)}); err != nil {
-			f.t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(f.root, title+".md"), data, 0o644); err != nil {
-			f.t.Fatal(err)
-		}
-	}
-	write(ann, "FromAnn", "ANNPAGE001")
-	write(bo, "FromBo", "BOPAGE0001")
-	crash(f.s)
-	f.reopen()
-	log := commitLog(t, f.root)
-	if len(log) < 2 || !strings.HasPrefix(log[0], "Bo Chen|Service|Add FromBo|") || !strings.HasPrefix(log[1], "Ann Lee|Service|Add FromAnn|") {
-		t.Fatalf("%q", log)
-	}
-}
-
 func TestRecoveredAuthorOfAPathIsTheLastRecordOfIt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

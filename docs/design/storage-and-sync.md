@@ -473,11 +473,45 @@ once by the trim after the commit.
   given up (`k`) at once, and if even that fails, it is logged as a change that may be
   made at the next start.
 - **Remote spaces** still journal `m` and `l` and finish them forwards, until PR 5 rolls
-  their changes back instead. Until then, `finishLinkRecs` and `pendingLinkRecs` serve
-  only them.
+  their changes back instead (done in PR 5).
 - **Known issue.** The files of a moved folder that are not rewritten are still staged
   from the work tree (their `t` records). Reading every file to record its blob would
   cost as much as the folder is large.
+
+**What PR 5 does.**
+- **Same transactions.** A space that follows a remote uses the same transactions as a
+  local one, for saves, rewrites, created pages, and page and folder moves (`mr`/`md`
+  and their transaction). `Applied` journals `a` there but hands nothing to the
+  background committer, because the change commits and pushes itself. `l`, `ld` and
+  `m` are gone everywhere, with `finishLinkRecs`, `pendingLinkRecs` and `finishMove`.
+- **The parent commit.** Each remote change journals the commit it starts from (`rp`),
+  and journals it again after a repair of the way to a folder has been pushed.
+- **Undo** gives the change's transactions up (`k`) in one append before the files are
+  put back from that commit.
+- **Startup (owner decision 2).** A remote space does not replay its journal. The
+  journal holds at most the one change that was not finished: it is cleared once a
+  change is pushed or undone. If HEAD has moved past the parent and is on the remote as
+  the clone last saw it, the push went through and the change stays. Otherwise the
+  folders it renamed go back, and `Discard` puts HEAD and every file the records name
+  (with `space.yml` when bindings or a field rename were involved) back to the parent
+  commit. Nothing reaches the network. A commit whose push went through unseen comes
+  back with the next sync. When the change stays, its files are still put back to HEAD,
+  so nothing half written remains of a step after the push (a crash between a pushed
+  repair of the way to a folder and its `rp`). Folders a record names (`md`, a folder
+  `p`, a folder respelling `r`) are renamed back, and never passed to `Discard`, which
+  gets only files. `l`, `ld` and `m` left by an earlier build are logged and passed
+  over. A rollback that cannot be done never stops the start: the space opens and
+  refuses changes, keeps the journal, and takes the change back when the notice is
+  cleared (or at the next start) before it lets changes in again. Folders are looked for
+  by their exact names in the listing of their parent. A rename to another spelling of
+  the same name goes through a third name, because a case-folding Linux file system
+  takes a direct one for nothing.
+- **Known issue (PR 5).** When the change stays (its commit is on the remote), its
+  files are put back to HEAD. An edit made outside PetalBook to one of them while the
+  server was down, between the push and the clearing of the journal, is overwritten.
+- **Answers after the push**, as before.
+- A commit made outside the journal (the clone ahead of the remote) is still pushed by
+  the first sync or set aside, as before.
 
 **Known issues (PR 3).**
 - `contentAt` read and scanned the whole journal once per path whose file was changed

@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -130,6 +132,9 @@ const (
 )
 
 type remote struct {
+	// rollbackDue says the change the journal holds still has to be taken
+	// back (the start could not): changes are refused until it is (under s.mu).
+	rollbackDue bool
 	repo        *gitstore.Repo
 	url, branch string
 	freshFor    time.Duration
@@ -249,8 +254,12 @@ func (s *Space) newRemote(o *RemoteOptions) *remote {
 // network: what a crash left behind is committed here, and what has to be
 // pushed (or, if the remote moved, set aside) is done by the first sync, which
 // every change and every pull starts with.
-func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error {
+func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author, rollback string) error {
 	r := s.newRemote(o)
+	r.blocked = rollback
+	// The journal of a change that could not be taken back stays: the next
+	// start, or clearing the notice, takes it back before changes are let in.
+	r.rollbackDue = rollback != ""
 	ctx := s.ctx
 	if r.st.LastGood = r.repo.ReadLastGood(ctx, r.branch); r.st.LastGood == "" {
 		if r.st.LastGood = o.Status.LastGood; r.st.LastGood == "" {
@@ -269,7 +278,7 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 			return err
 		}
 	}
-	if what, err := r.repo.Busy(ctx); err == nil && what != "" {
+	if what, err := r.repo.Busy(ctx); err == nil && what != "" && r.blocked == "" {
 		r.blocked = "the clone is in the middle of a " + what
 	}
 	// Files written but never committed: the journal says which. They are
@@ -301,7 +310,124 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 		s.log.Error("changes are refused: the clone is not in the state the server left it in", "reason", r.blocked)
 		r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, r.blocked })
 	}
+	if r.rollbackDue {
+		return nil
+	}
 	return s.cm.clearJournal()
+}
+
+// rollbackRemote takes back the change of a space that follows a remote that
+// an earlier run journaled and did not finish (the journal of such a space
+// holds one change at most: it is cleared once the change is pushed or
+// undone). Its commit stays when it is on the remote already, as far as the
+// clone last saw it: the push went through, the person was just not told.
+// Otherwise the clone goes back to the commit the change started from ("rp"),
+// and the files the change named to what that commit has; a folder it
+// renamed goes back first. Nothing here reaches the network. A later sync
+// brings back a commit whose push did go through unseen.
+func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root string, recs []jrec, log *slog.Logger) (problem string) {
+	if len(recs) == 0 {
+		return ""
+	}
+	head := repo.Head(ctx)
+	parent := ""
+	for _, r := range recs {
+		if r.Op == "rp" {
+			parent = r.Rev
+		}
+	}
+	if parent == "" {
+		parent = head
+	}
+	// The change stays when its commit is on the remote: then its files go
+	// back to that commit (HEAD), so that nothing half written is left of a
+	// step after it (a crash between the push of a repair of the way to a
+	// folder and the record of the commit the change then started from).
+	to, stays := parent, false
+	if head != "" && head != parent {
+		if tip := repo.RemoteTip(ctx, branch); tip != "" {
+			if on, err := repo.IsAncestor(ctx, head, tip); err == nil && on {
+				to, stays = head, true
+			}
+		}
+	}
+	ok := func(p string) bool {
+		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
+	}
+	seen := map[string]bool{}
+	var paths []string
+	add := func(p string) {
+		if ok(p) && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	folder := func(from, to string) {
+		if !stays && ok(from) && ok(to) {
+			takeBackFolder(root, from, to)
+		}
+	}
+	settings := false
+	var old []string
+	for i := len(recs) - 1; i >= 0; i-- {
+		r := recs[i]
+		switch {
+		case r.Op == "md":
+			folder(r.From, r.To)
+		case r.Op == "p" && r.Dir:
+			folder(r.From, r.Path)
+		case r.Op == "r" && r.Dir:
+			// A folder renamed through a third name: back from either. Its
+			// files are journaled one by one ("t").
+			folder(r.From, r.To)
+			folder(r.From, r.Path)
+		case r.Op == "l" || r.Op == "ld" || r.Op == "m":
+			// Records an earlier build wrote: what they name is not known
+			// to be files, and nothing of them is done.
+			old = append(old, r.Op)
+		case r.Op == "b" || r.Op == "u" || r.Op == "bd" || r.Op == "ud" || r.Op == "f" || r.Op == "fd":
+			settings = true
+			for _, p := range r.Pages {
+				add(p)
+			}
+			if r.Op == "f" || r.Op == "fd" {
+				add(r.Path)
+			}
+		case r.Op == "rp" || r.Op == "x" || r.Op == "a" || r.Op == "k" || r.Op == "mdd":
+		default:
+			add(r.Path)
+			add(r.From)
+			add(r.To)
+		}
+	}
+	if len(old) > 0 {
+		log.Warn("the journal has records an earlier build wrote; they are passed over", "records", old)
+	}
+	if settings {
+		add(spaceFile)
+	}
+	// Only files go to Discard: a name that is a folder on disk (a record
+	// that names one) is not one to put back.
+	files := paths[:0]
+	for _, p := range paths {
+		if fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p))); err == nil && fi.IsDir() {
+			continue
+		}
+		files = append(files, p)
+	}
+	if to == "" || len(files) == 0 && head == to {
+		return ""
+	}
+	if err := repo.Discard(ctx, to, files); err != nil {
+		// The space opens; changes are refused until someone looks.
+		return "could not take back the change an earlier run did not push: " + gitstore.Scrub(err.Error())
+	}
+	if stays {
+		log.Info("the change an earlier run left in the journal was pushed; it stays", "commit", head)
+	} else {
+		log.Info("took back a change an earlier run did not push", "files", len(files), "to", to)
+	}
+	return ""
 }
 
 func firstN(l []string, n int) []string {
@@ -623,6 +749,9 @@ func (s *Space) ClearNotice() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if r.rollbackDue && !s.retryRollbackLocked(r) {
+		return
+	}
 	if r.blocked != "" {
 		if mod, err := r.repo.ModifiedTracked(s.ctx); err == nil && len(mod) == 0 {
 			if what, err := r.repo.Busy(s.ctx); err == nil && what == "" {
@@ -640,6 +769,33 @@ func (s *Space) ClearNotice() {
 			st.State, st.Kind, st.Error = RemoteOK, "", ""
 		}
 	})
+}
+
+// retryRollbackLocked takes back the change that the start could not take
+// back (rollbackRemote) and reports whether it is done: then the journal is
+// cleared and the files are indexed as they are now.
+func (s *Space) retryRollbackLocked(r *remote) bool {
+	recs, err := s.cm.j.records()
+	problem := ""
+	if err != nil {
+		problem = "could not read the journal: " + err.Error()
+	} else {
+		problem = rollbackRemote(s.ctx, r.repo, r.branch, s.root, recs, s.log)
+	}
+	if problem != "" {
+		r.blocked = problem
+		r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, problem })
+		return false
+	}
+	r.rollbackDue = false
+	if err := s.cm.clearJournal(); err != nil {
+		s.log.Warn("could not clear the commit journal", "error", err)
+	}
+	if _, err := s.idx.Sync(s.src, false); err != nil {
+		s.log.Error("could not index the files of a change taken back", "error", err)
+	}
+	s.typesDirty.Store(true)
+	return true
 }
 
 // Accept accepts the remote's rewritten history: the space moves to that
@@ -730,9 +886,8 @@ type txn struct {
 	// assets are uploads that go to the attachment repository before the
 	// change is committed (attachments.go).
 	assets []pendingAsset
-	// links are the "l" records of the change: the moves whose links have to
-	// be made right (see relink). They are done when the change is final.
-	links []jrec
+	// txs are the journal transactions of the change: an undo gives them up.
+	txs []uint64
 	// undoFailed is set by a step that could not do its part: what is wrong,
 	// for the administrator.
 	undoFailed string
@@ -759,23 +914,6 @@ func (t *txn) finishBindings() {
 		t.s.cm.Done(r)
 	}
 	t.bind = nil
-	t.finishLinks()
-}
-
-// settleLinks is settleBindings for the "l" records: a local space is done with
-// them as soon as the links are right; one that follows a remote, when the
-// change is final.
-func (t *txn) settleLinks() {
-	if !t.remote {
-		t.finishLinks()
-	}
-}
-
-func (t *txn) finishLinks() {
-	for _, r := range t.links {
-		t.s.cm.Done(r)
-	}
-	t.links = nil
 }
 
 // runUndo takes back the steps of the change that the file system needs undone
@@ -792,25 +930,16 @@ func (t *txn) runUndo() {
 func (t *txn) record(recs ...jrec) error { return t.s.cm.Record(t.by, recs...) }
 
 // prepare journals the files the change is about to write as one transaction
-// (committer.Prepare). With links, it closes the change's "l" records with
-// it: the transaction makes their links right, and a crash is finished by
-// replaying it. Only in a local space: one that follows a remote undoes a change from
-// Git, and journals it with "w" records (journaled says which way it went).
-func (t *txn) prepare(files []txFile, links bool) (tx uint64, journaled bool, err error) {
-	if t.remote || t.s.cm == nil || t.s.cm.j == nil {
+// (committer.Prepare). journaled is false only for a space with no journal.
+func (t *txn) prepare(files []txFile) (tx uint64, journaled bool, err error) {
+	if t.s.cm == nil || t.s.cm.j == nil {
 		return 0, false, nil
 	}
-	var closing []jrec
-	if links {
-		closing = t.links
-	}
-	tx, err = t.s.cm.Prepare(t.by, files, closing)
+	tx, err = t.s.cm.Prepare(t.by, files)
 	if err != nil {
 		return 0, false, err
 	}
-	if links {
-		t.links = nil
-	}
+	t.txs = append(t.txs, tx)
 	return tx, true, nil
 }
 
@@ -860,6 +989,11 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			return zero, err
 		}
 		parent := r.repo.Head(ctx)
+		// The commit the change starts from: a crash before its push has
+		// the next start put the files of the change back to it.
+		if err := s.cm.Record(by, jrec{Op: "rp", Rev: parent}); err != nil {
+			return zero, err
+		}
 		tx := &txn{s: s, by: by, remote: true, parent: parent}
 		res, err := op(tx)
 		if err == nil {
@@ -887,6 +1021,9 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		author, committer := s.cm.git.identities(by)
 		made, err := r.repo.CommitPaths(ctx, tx.paths, messageVia(by.Via), author, committer)
+		if err == nil {
+			err = s.stepped("remote committed")
+		}
 		if err != nil {
 			s.undoLocked(ctx, r, tx, tx.parent)
 			return zero, err
@@ -899,6 +1036,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		perr := r.repo.Push(ctx, r.branch)
 		if perr == nil {
+			s.stepped("remote pushed")
 			tx.finishBindings()
 			s.pushedLocked(ctx, r)
 			s.packLocked(ctx, r)
@@ -1055,6 +1193,11 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	paths := uniq(tx.paths)
+	// Given up first: a crash from here on has the next start take the change
+	// back from its parent commit, never finish it.
+	s.cm.AbortAll(tx.txs)
+	tx.txs = nil
+	s.stepped("remote undoing")
 	// What the change wrote is taken back: it is not newer than the history.
 	defer s.heal.committed(paths)
 	settled := map[string]bool{}
