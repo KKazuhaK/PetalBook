@@ -118,15 +118,16 @@ export function FilterBar({
   const dates = (name: 'created' | 'updated', title: string) =>
     section(
       title,
-      <div className="flex items-center gap-2">
+      // One row each: a date field is about as wide as the popover's half, so side by side they overflowed.
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5">
         {(['from', 'to'] as const).map((side) => (
-          <label key={side} className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground">
-            {t.ftable[side]}
+          <label key={side} className="contents text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground">{t.ftable[side]}</span>
             <input
               type="date"
               value={filters[name][side]}
               onChange={(e) => onChange({ ...filters, [name]: { ...filters[name], [side]: e.target.value } })}
-              className="h-9 min-w-0 flex-1 rounded-md border bg-transparent px-2 text-sm text-foreground"
+              className="h-9 w-full min-w-0 rounded-md border bg-transparent px-2 text-sm text-foreground"
             />
           </label>
         ))}
@@ -150,7 +151,7 @@ export function FilterBar({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="max-h-[min(32rem,calc(100dvh-6rem))] w-80 max-w-[calc(100vw-1rem)] gap-4 overflow-y-auto p-3"
+          className="max-h-[min(32rem,calc(100dvh-6rem))] w-80 max-w-[calc(100vw-1rem)] gap-4 overflow-x-hidden overflow-y-auto p-3"
         >
           {showSort &&
             section(
