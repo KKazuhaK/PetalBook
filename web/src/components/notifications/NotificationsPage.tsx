@@ -28,6 +28,7 @@ export default function NotificationsPage() {
   const markAll = useMarkAllNotificationsRead()
   const items = useMemo(() => list.data?.pages.flatMap((p) => p.items) ?? [], [list.data])
   const unread = list.data?.pages[0]?.unread ?? 0
+  const moreProblems = list.data?.pages[0]?.moreProblems ?? 0
   const pick = (f: Filter) =>
     setParams(
       (p) => {
@@ -99,6 +100,11 @@ export default function NotificationsPage() {
               </div>
             ))}
           </div>
+        )}
+        {moreProblems > 0 && (
+          <p className="mt-2 px-1 text-sm text-muted-foreground" data-slot="more-problems">
+            {tn.moreProblems(moreProblems)}
+          </p>
         )}
         {list.hasNextPage && (
           <div className="mt-4 flex justify-center">

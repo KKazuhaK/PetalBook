@@ -24,6 +24,11 @@ export interface DerivedProblems {
 }
 
 const CAP = 100
+// The most spaces with problems a list names (the server's problemMax); the rest are counted.
+export const PROBLEMS_MAX = 50
+// A person's file of preferences holds at most this many keys and bytes (the server's).
+const MAX_PREF_KEYS = 100
+const MAX_PREFS_BYTES = 256 << 10
 const KEY_RE = /^[A-Za-z0-9._:/-]{1,120}$/
 
 const sigOf = (counts: Record<string, number>) =>
@@ -39,11 +44,16 @@ export function createNotifyBook(opts: { now: () => number }) {
   const seen = new Map<string, Map<string, string>>()
   const prefs = new Map<string, Record<string, unknown>>()
 
-  const derivedItems = (userId: string, derived: DerivedProblems[]): NotificationItem[] => {
-    const mine = seen.get(userId)
-    return derived
+  // Only the spaces with problems count towards the cap; how many more there are is moreOf.
+  const withProblems = (derived: DerivedProblems[]) =>
+    derived
       .map((d) => ({ ...d, counts: Object.fromEntries(Object.entries(d.counts).filter(([, n]) => n > 0)) }))
       .filter((d) => Object.keys(d.counts).length > 0)
+  const moreOf = (derived: DerivedProblems[]) => Math.max(0, withProblems(derived).length - PROBLEMS_MAX)
+  const derivedItems = (userId: string, derived: DerivedProblems[]): NotificationItem[] => {
+    const mine = seen.get(userId)
+    return withProblems(derived)
+      .slice(0, PROBLEMS_MAX)
       .map((d): NotificationItem => {
         const sig = sigOf(d.counts)
         const total = Object.values(d.counts).reduce((a, b) => a + b, 0)
@@ -116,7 +126,8 @@ export function createNotifyBook(opts: { now: () => number }) {
             read: r.readAt !== null,
           })
       }
-      return { items, next, unread: unreadOf(userId, all) }
+      const more = cursor === '' && (kind === '' || kind === 'problems') ? moreOf(derived) : 0
+      return { items, next, unread: unreadOf(userId, all), ...(more > 0 ? { moreProblems: more } : {}) }
     },
 
     unread(userId: string, derived: DerivedProblems[]) {
@@ -164,25 +175,34 @@ export function createNotifyBook(opts: { now: () => number }) {
     },
 
     // --- the person's own preferences (a file of their personal space on the real server) ---
-    getPrefs(userId: string) {
-      return { personal: true, prefs: { ...(prefs.get(userId) ?? {}) } }
+    // `personal`: whether the person has a personal space that can hold them now (as the server answers).
+    getPrefs(userId: string, personal: boolean) {
+      return personal ? { personal: true, prefs: { ...(prefs.get(userId) ?? {}) } } : { personal: false, prefs: {} }
     },
-    patchPrefs(userId: string, body: Record<string, unknown>) {
+    patchPrefs(userId: string, body: Record<string, unknown>, personal: boolean) {
       const set = body.set
       if (!set || typeof set !== 'object' || Array.isArray(set))
         throw new HttpError(400, 'invalid', 'Set from 1 to 100 preferences.')
       const entries = Object.entries(set as Record<string, unknown>)
       if (entries.length < 1 || entries.length > 100)
         throw new HttpError(400, 'invalid', 'Set from 1 to 100 preferences.')
-      const mine = prefs.get(userId) ?? {}
       for (const [k, v] of entries) {
         if (!KEY_RE.test(k) || k.includes('..'))
           throw new HttpError(400, 'invalid', "A preference's name is up to 120 letters, digits and . _ : / -.")
         if (JSON.stringify(v ?? null).length > 32 << 10)
           throw new HttpError(400, 'invalid', 'A preference is at most 32 KiB.')
+      }
+      // Nowhere to keep them: nothing is kept, and the browser keeps them.
+      if (!personal) return { personal: false }
+      const mine = { ...(prefs.get(userId) ?? {}) }
+      for (const [k, v] of entries) {
         if (v === null) delete mine[k]
         else mine[k] = v
       }
+      if (Object.keys(mine).length > MAX_PREF_KEYS)
+        throw new HttpError(400, 'prefs_full', `A person keeps at most ${MAX_PREF_KEYS} preferences.`)
+      if (new TextEncoder().encode(JSON.stringify(mine)).length > MAX_PREFS_BYTES)
+        throw new HttpError(400, 'prefs_full', `The preferences would be larger than ${MAX_PREFS_BYTES} bytes.`)
       prefs.set(userId, mine)
       return { personal: true }
     },

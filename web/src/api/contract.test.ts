@@ -2084,6 +2084,23 @@ function suite(target: Target) {
           expect(mine.personal).toBe(true)
           expect(mine.prefs).toEqual({ 'pb.table.users': { pageSize: 100 }, tour: 'done' })
           expect((await call(b.browser, 'GET', '/api/prefs')).json.prefs).toEqual({})
+          // A write that would take the file past 100 keys is refused, and nothing of it is kept.
+          const many = Object.fromEntries(Array.from({ length: 99 }, (_, i) => [`k.${i}`, i]))
+          const full = await call(a.browser, 'PATCH', '/api/prefs', { set: many })
+          expect([full.status, full.json.error]).toEqual([400, 'prefs_full'])
+          expect(Object.keys((await call(a.browser, 'GET', '/api/prefs')).json.prefs)).toHaveLength(2)
+          // A personal space that is switched off holds nothing: the answer says so.
+          const own = (await call(b.browser, 'GET', '/api/spaces')).json.spaces.find(
+            (x: { personal: boolean }) => x.personal,
+          )
+          await as(admin, () => adminApi.adminDisableSpace(own.id))
+          try {
+            const r = await call(b.browser, 'PATCH', '/api/prefs', { set: { k: 1 } })
+            expect([r.status, r.json.personal]).toEqual([200, false])
+            expect((await call(b.browser, 'GET', '/api/prefs')).json).toEqual({ personal: false, prefs: {} })
+          } finally {
+            await as(admin, () => adminApi.adminEnableSpace(own.id))
+          }
         })
       })
 

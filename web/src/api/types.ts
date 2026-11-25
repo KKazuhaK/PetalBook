@@ -2199,6 +2199,8 @@ export interface NotificationList {
   next: string
   // Counted up to 100.
   unread: number
+  // How many more spaces have problems than the list names (at most 50 are); absent when none.
+  moreProblems?: number
 }
 export interface NotificationsParams {
   kind?: string

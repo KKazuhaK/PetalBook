@@ -28,6 +28,7 @@ export const notifyEn: NotifyMessages = {
     sync: 'Sync',
   },
   unreadMark: 'Unread',
+  moreProblems: (n: number) => (n === 1 ? 'And 1 more space has problems.' : `And ${n} more spaces have problems.`),
   ongoing: 'Still open',
   markRead: 'Mark as read',
   historyHelp: 'Earlier notifications are here. Read ones are kept for 30 days, and every one for six months at most.',

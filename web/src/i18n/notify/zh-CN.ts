@@ -21,6 +21,7 @@ export const notifyZhCN = {
   filterLabel: '按类型筛选',
   filters: { all: '全部', unread: '未读', problems: '问题', invite: '邀请', mention: '提到我', sync: '同步' },
   unreadMark: '未读',
+  moreProblems: (n: number) => `还有 ${n} 个空间有问题。`,
   ongoing: '仍未解决',
   markRead: '标为已读',
   historyHelp: '这里能看到更早的通知。已读的通知保留 30 天，所有通知最多保留半年。',

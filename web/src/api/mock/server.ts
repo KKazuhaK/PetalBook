@@ -438,7 +438,12 @@ export function createMockServer(options: MockOptions = {}) {
     book: () => book,
   })
   const notifyBook = createNotifyBook({ now })
-  // The spaces a person writes in that have problems: what the real server reads from their indexes.
+  // Whether the person's own personal space can hold their preferences now (switched off, it cannot): what `personal`
+  // answers. A server of one person keeps them in its one space.
+  const prefsHome = (u: UserRec): boolean =>
+    !accounts || [...spaces.values()].some((s) => s.personal && !s.disabled && s.members.get(u.id)?.role === 'owner')
+  // The spaces a person writes in that have problems: what the real server reads from their indexes. Only the person's
+  // own reach counts (a member or through a group): a space an administrator only views is not theirs to be told about.
   const derivedProblems = (u: UserRec): DerivedProblems[] =>
     callerSpaces(u)
       .filter(
@@ -4417,8 +4422,8 @@ export function createMockServer(options: MockOptions = {}) {
         return j(notifyBook.read(me.id, derivedProblems(me), body.ids))
       if (path === '/notifications/read-all' && method === 'POST')
         return j(notifyBook.readAll(me.id, derivedProblems(me), body.kind))
-      if (path === '/prefs' && method === 'GET') return j(notifyBook.getPrefs(me.id))
-      if (path === '/prefs' && method === 'PATCH') return j(notifyBook.patchPrefs(me.id, body))
+      if (path === '/prefs' && method === 'GET') return j(notifyBook.getPrefs(me.id, prefsHome(me)))
+      if (path === '/prefs' && method === 'PATCH') return j(notifyBook.patchPrefs(me.id, body, prefsHome(me)))
       throw new HttpError(404, 'not_found', '没有这个接口')
     }
 
