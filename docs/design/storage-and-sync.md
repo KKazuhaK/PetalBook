@@ -398,6 +398,12 @@ was measured three times each way. On disk it took 0.94 to 1.13 s before and 1.0
 before and 489 ms after. The journal for that change grows from 116 KB to 1.7 MB, read
 once by the trim after the commit.
 
+**Known issue (PR 2, accepted).** The `a` record is not synced. After a power loss (a
+process crash does not lose it), the last transaction may be replayed although it was
+applied. If an edit made outside PetalBook restored that file's exact old bytes in the
+same window, the replay writes the new bytes over that edit. It takes both events
+together, so it is accepted.
+
 **Notes for the later PRs.**
 
 - Frame numbers are not stable across restarts once the journal has been trimmed empty
