@@ -597,9 +597,17 @@ once by the trim after the commit.
 - **Cost.** One field in two answers. A save that rewrote nothing does what it did
   before. A rebased save hashes the sent text once per step and logs as many steps
   more in the rebase log (one short line each); the rewrites are made once, as before.
+- **A closed tab.** The local draft written after such a commit is on `textRev`, and
+  its sent list holds the committed file with `onto = rev`. Opened again while the
+  file is still at `rev`, the text is restored on `textRev` without a conflict
+  (`planRestore`, seed `textBase`) and stored on it.
+- **An older version as the sent text.** The steps of the sent text are logged with
+  `addNew`: a rev that already has a step keeps it (the sent text can be an older
+  version of the file, which a draft may still be based on). A save on that
+  `textRev` is then a conflict, as without these steps.
 - **Not covered.** A commit the server makes by itself (the idle draft commit) answers
-  nobody: an editor that finds its own text committed with rewrites (`adoptFile`) and
-  kept typing still bases on `rev`. Links with an id are put right on save as before.
+  nobody: an editor that kept typing finds a file that is not its own text (it has
+  the rewrites) and shows the conflict dialog. Nothing is lost.
 
 **Known issues (PR 3).**
 - `contentAt` read and scanned the whole journal once per path whose file was changed

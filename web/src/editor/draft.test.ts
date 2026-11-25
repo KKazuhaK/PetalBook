@@ -1171,3 +1171,51 @@ describe('local drafts of a person, a space and a page', () => {
     expect(plan(page({ rev: 'revElse', body: '别人写的\n' }), d).kind).toBe('conflict')
   })
 })
+
+describe('a commit whose links the server rewrote, with typing during it', () => {
+  // The commit came back with `textRev` (the rev the sent text stands for) and a
+  // rewritten `rev`; the person typed while it was out, and the tab closed before
+  // the next store. Opening the page again finds the file at `rev`: the text is
+  // restored on `textRev` without a conflict, and stored on it.
+  it('a tab closed before the next store restores the text on textRev, without a conflict', async () => {
+    const storage = new FakeStorage()
+    const s = session({ storage })
+    s.type({ title: '原标题', body: '旧链接' })
+    void s.controller.commit()
+    await vi.advanceTimersByTimeAsync(0)
+    s.answerPut()
+    await vi.advanceTimersByTimeAsync(0)
+    s.type({ title: '原标题', body: '旧链接 又写' })
+    const file = page({ rev: 'revW', body: '新链接\n' })
+    s.pending.commit.at(-1)!({ ...file, textRev: 'revT' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(s.puts).toHaveLength(1) // the next store has not left yet
+    const d = loadDraft(ID, storage)!
+    expect(d.baseRev).toBe('revT')
+
+    const p = plan(file, d)
+    expect(p.kind).toBe('local')
+    expect(p.seed).toMatchObject({ lineage: 'revT', textBase: { rev: 'revW', base: 'revT' } })
+    // The reopened editor stores the text on textRev: the server rewrites it again.
+    const puts: SavePageInput[] = []
+    const c = new SaveController({
+      page: file,
+      seed: p.seed,
+      read: () => ({ title: '原标题', subtitle: '', source: [], tags: [], body: '旧链接 又写\n', bodyTyped: true }),
+      api: {
+        putDraft: (_id, input) => {
+          puts.push(input)
+          return new Promise<DraftReceipt>(() => {})
+        },
+        deleteDraft: () => Promise.resolve(),
+        commit: () => new Promise<Page>(() => {}),
+        getPage: () => new Promise<Page>(() => {}),
+      },
+      normalizeBody: fromMdNorm,
+    })
+    c.attach()
+    c.markDirty()
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(puts.map((x) => x.baseRev)).toEqual(['revT'])
+  })
+})

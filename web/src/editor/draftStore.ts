@@ -31,8 +31,9 @@ export interface DraftContent {
   // server since that revision was adopted, and of the one it was opened on. When this text
   // comes back after the page was closed, a file or draft that is exactly one of
   // them is the person's own text (the server committed it), not someone else's:
-  // see reconcile.ts.
-  sent?: { baseRev: string; digest: string }[]
+  // see reconcile.ts. An entry with `onto` is the file a commit wrote with link
+  // rewrites (its rev `onto`): the text in hand is on `baseRev`, its `textRev`.
+  sent?: { baseRev: string; digest: string; onto?: string }[]
   // Set when the server confirmed holding exactly this text as its draft of this
   // version. Such a copy is no longer what protects the text (the server does not
   // drop a draft on its own); it is kept only so the text can be offered back if
@@ -143,7 +144,13 @@ export function loadDraft(
       (d.confirmed === undefined || typeof d.confirmed === 'string') &&
       (d.sent === undefined ||
         (Array.isArray(d.sent) &&
-          d.sent.every((x) => x && typeof x.baseRev === 'string' && typeof x.digest === 'string')))
+          d.sent.every(
+            (x) =>
+              x &&
+              typeof x.baseRev === 'string' &&
+              typeof x.digest === 'string' &&
+              (x.onto === undefined || typeof x.onto === 'string'),
+          )))
     ) {
       if (now - d.savedAt <= DRAFT_MAX_AGE_MS) return d
       // Too old to be what anyone still means to recover.

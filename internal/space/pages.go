@@ -560,7 +560,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 
 	wantRename := old.Title() != newMeta.Title()
 	if bytes.Equal(newData, data) && !wantRename {
-		s.rb.add(textSteps...)
+		s.rb.addNew(textSteps...)
 		p := s.pageFrom(rel, data, mtime)
 		p.TextRev = textRev
 		return p, nil
@@ -587,7 +587,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		}
 		s.cm.Applied(id)
 	}
-	s.rb.add(textSteps...)
+	s.rb.addNew(textSteps...)
 	newRel := rel
 	if wantRename {
 		stem := page.FileStem(newMeta.Title())

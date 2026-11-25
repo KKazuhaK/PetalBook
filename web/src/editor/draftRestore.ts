@@ -13,7 +13,7 @@
 import type { Page } from '@/api/types'
 import type { DocJSON } from '@/markdown'
 import type { StoredDraft } from './draftStore'
-import { oursOf, reconcile, type Ours } from './reconcile'
+import { contentDigest, oursOf, reconcile, type Ours } from './reconcile'
 import { buildSave, draftAsPage, fieldsOf, type ConflictInfo, type Draft, type Fields } from './saveController'
 
 // What the editor is loaded with. `doc` is a local draft's document;
@@ -33,6 +33,9 @@ export interface Content {
 export interface Seed {
   lineage: string
   ours: Ours[]
+  // The text is on a commit's `textRev` while the file is at its rewritten `rev`
+  // (see SaveController.textBase).
+  textBase?: { rev: string; base: string }
 }
 
 export type RestorePlan =
@@ -132,6 +135,17 @@ export function planRestore(
   const known = { fileRev: local.baseRev, ours: local.sent ?? [] }
 
   if (!server) {
+    // Typed during a commit of ours that the server wrote with link rewrites, and the
+    // file is still that one: the text is on the commit's textRev, and is stored on
+    // it (the server makes the rewrites again).
+    const pageDigest = contentDigest(page)
+    if (known.ours.some((o) => o.onto === page.rev && o.baseRev === local.baseRev && o.digest === pageDigest))
+      return {
+        kind: 'local',
+        content: localContent(page.body),
+        token: local.token,
+        seed: { lineage: local.baseRev, ours: known.ours, textBase: { rev: page.rev, base: local.baseRev } },
+      }
     const mine: Draft = { ...typed, body: typed.body ?? page.body }
     // Same as the file (a commit landed after the draft was taken, or the edit
     // was undone): the file, as just observed, is the text. Nothing to restore.

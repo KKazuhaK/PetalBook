@@ -144,7 +144,7 @@ export interface SaveControllerOptions {
   // shows its content, so it is what the content is compared with.
   draft?: PageDraft
   // What the controller starts out knowing, from the restore plan (draftRestore.ts).
-  seed?: { lineage: string; ours: Ours[] }
+  seed?: { lineage: string; ours: Ours[]; textBase?: { rev: string; base: string } }
   read: () => Draft
   api: DraftApi
   // Space id, so that a page opened again right after leaving waits for the
@@ -463,6 +463,7 @@ export class SaveController {
     this.ours = opts.seed ? [...opts.seed.ours] : opts.draft ? [oursOf(opts.draft.baseRev, opts.draft)] : []
     this.openBody = opts.draft ? opts.draft.body : opts.page.body
     this.draftToken = opts.draftToken
+    this.textBase = opts.seed?.textBase
     this.snapshot = { state: this.serverDraft && !this.stale ? 'drafted' : 'saved' }
   }
 
@@ -1423,12 +1424,15 @@ export class SaveController {
       // nobody edited still stands for that (`openBody` stays).
       this.textBase = { rev: page.rev, base: page.textRev! }
       this.lineage = page.textRev!
+      // So that the browser's copy, if the tab closes before the next store, is
+      // restored on textRev and not met as a change made elsewhere.
+      this.setOurs([{ ...oursOf(page.textRev!, file), onto: page.rev }])
     } else this.openBody = page.body
     // Text typed while the commit was out is not in the file. Its local draft
     // is rewritten on top of the new rev, and the loop stores it next.
     if (typing) {
       if (!this.detached) this.persistNow()
-      else if (this.draftToken !== undefined) this.opts.drafts?.rebase(this.draftToken, this.lineage, [])
+      else if (this.draftToken !== undefined) this.opts.drafts?.rebase(this.draftToken, this.lineage, this.knownOurs())
     } else this.clearLocal()
     this.opts.onCommitted?.(file)
     this.announce(page.rev, null)
