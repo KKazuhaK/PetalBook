@@ -27,6 +27,7 @@ type Entry struct {
 	Size             int64
 	Rev              string
 	Excerpt          string
+	Icon, Color      string // the page's own, from its header, or ""
 	// PropsJSON is the JSON object of the header's properties (see propsOf),
 	// "" for none.
 	PropsJSON string
@@ -65,7 +66,8 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 		Title: title, Subtitle: m.Subtitle(), Label: label, Untitled: untitled,
 		Type: m.Type(), Tags: m.Tags(), Created: m.Created(),
 		MtimeNs: mtimeNs, Size: int64(len(data)), Rev: page.Rev(data),
-		Excerpt:  page.Excerpt(doc.Body),
+		Excerpt: page.Excerpt(doc.Body),
+		Icon:    m.Icon(), Color: m.Color(),
 		ftsTitle: Fold(title), ftsSubtitle: Fold(m.Subtitle()), ftsSource: Fold(strings.Join(m.Sources(), " ")), ftsBody: Fold(plain),
 	}
 	if e.Tags == nil {

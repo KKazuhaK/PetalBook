@@ -34,6 +34,8 @@ type Summary struct {
 	Created  string    `json:"created,omitempty"`
 	Updated  time.Time `json:"updated"`
 	Excerpt  string    `json:"excerpt"`
+	Icon     string    `json:"icon,omitempty"`
+	Color    string    `json:"color,omitempty"`
 	// Props and Rev are filled only when the query asks for them (Query.Props):
 	// the page's properties as a JSON object, and the rev of its file.
 	Props json.RawMessage `json:"props,omitempty"`
@@ -338,7 +340,7 @@ func (res *Result) fill(rows *sql.Rows, props bool, limit int, relevance bool, o
 // selectCols are the columns of a summary, in the order scanSummary reads them.
 func selectCols(props bool) string {
 	c := `p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
-		p.mtime_ns, p.excerpt, p.title_key, p.created_key`
+		p.mtime_ns, p.excerpt, p.title_key, p.created_key, p.icon, p.color`
 	if props {
 		c += `, p.props, p.rev, p.partial`
 	}
@@ -349,7 +351,7 @@ func selectCols(props bool) string {
 func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mtime, ckey int64, untitled int, titleKey string, err error) {
 	var tagsText, sourceText, propsText, partialText string
 	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &sourceText, &untitled, &s.Label, &s.Type,
-		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey}
+		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey, &s.Icon, &s.Color}
 	if props {
 		dest = append(dest, &propsText, &s.Rev, &partialText)
 	}

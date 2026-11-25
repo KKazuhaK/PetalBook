@@ -73,7 +73,9 @@ type TypeInfo struct {
 	Name   string
 	Title  string
 	Fields []TypeField
-	Error  string
+	// Icon and Color are the default icon of the pages of the type (`x-icon`, `x-color` of the file), "" for none.
+	Icon, Color string
+	Error       string
 	// Rev is the Git blob id of the file's bytes, as the rev of a page is:
 	// it changes whenever the file does, and PutType and DeleteType must be
 	// given the one they were based on. A file too large or not a regular
@@ -128,6 +130,8 @@ type FieldInput struct {
 type TypeInput struct {
 	Title  string
 	Fields []FieldInput
+	// Icon and Color give the type's default icon (nil keeps what the file has; "" takes it away).
+	Icon, Color *string
 }
 
 // errTypeFile says a type's file is there but cannot be used as it is.
@@ -375,6 +379,12 @@ func parseType(name string, data []byte) (TypeInfo, []kv, error) {
 	}
 	t := TypeInfo{Name: name}
 	t.Title, _ = stringOf(top, "title")
+	if v, ok := stringOf(top, "x-icon"); ok && CheckIcon(v) == nil {
+		t.Icon = v
+	}
+	if v, ok := stringOf(top, "x-color"); ok && CheckIconColor(v) == nil {
+		t.Color = v
+	}
 	if raw, _ := lookup(top, "properties"); raw != nil {
 		props, err := decodeObject(raw)
 		if err != nil || len(props) > MaxTypeFields {
@@ -697,6 +707,16 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 	if err := validLabel("the title", in.Title); err != nil {
 		return TypeInfo{}, err
 	}
+	if in.Icon != nil {
+		if err := CheckIcon(*in.Icon); err != nil {
+			return TypeInfo{}, err
+		}
+	}
+	if in.Color != nil {
+		if err := CheckIconColor(*in.Color); err != nil {
+			return TypeInfo{}, err
+		}
+	}
 	if len(in.Fields) > MaxTypeFields {
 		return TypeInfo{}, invalidf("A type has at most %d fields.", MaxTypeFields)
 	}
@@ -794,6 +814,18 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			top = append([]kv{{"title", jsonText(in.Title)}}, top...)
 		}
 		top = set(top, "properties", encodeObject(next))
+		for _, k := range []struct {
+			key string
+			v   *string
+		}{{"x-icon", in.Icon}, {"x-color", in.Color}} {
+			switch {
+			case k.v == nil:
+			case *k.v == "":
+				top = del(top, k.key)
+			default:
+				top = set(top, k.key, jsonText(*k.v))
+			}
+		}
 		var out bytes.Buffer
 		if err := json.Indent(&out, encodeObject(top), "", "  "); err != nil {
 			return TypeInfo{}, err

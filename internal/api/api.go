@@ -967,6 +967,9 @@ type summaryResp struct {
 	Created  string   `json:"created,omitempty"`
 	Updated  string   `json:"updated"`
 	Excerpt  string   `json:"excerpt"`
+	// Icon and Color are the page's own (a Lucide name or an emoji, one of the eight colours), from its header.
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
 	// EffectiveType is the type the page has: its header's, else its folder's.
 	EffectiveType string `json:"effectiveType"`
 	// Props and Rev are there when the listing was asked for them (props=1).
@@ -982,7 +985,7 @@ type summaryResp struct {
 
 func toSummary(s index.Summary, types space.TypeResolver) summaryResp {
 	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: nonNil(s.Sources), Label: s.Label,
-		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt,
+		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt, Icon: s.Icon, Color: s.Color,
 		EffectiveType: types.For(s.Folder, s.Type), Props: s.Props, Rev: s.Rev, PartialProps: s.PartialProps}
 }
 

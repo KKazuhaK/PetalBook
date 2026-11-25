@@ -2867,7 +2867,8 @@ among `props`.
 of the body cut to about 30 characters (`untitled` says which). It is an
 empty string for an untitled page with an empty body. `created` is absent
 when the header has none. `updated` is when the file was last written.
-`excerpt` keeps the line breaks of the text as single `\n`; blank lines
+`icon` and `color` are the page's own, from its header, and are left out when it has none (see
+"Icons, colours and the presets of the sources"). `excerpt` keeps the line breaks of the text as single `\n`; blank lines
 between paragraphs are not kept.
 
 `type` is what the header says (`""` when it says nothing). `effectiveType` is
@@ -3822,6 +3823,10 @@ is a Lucide name (`book-open`) or an emoji, at most 64 bytes; a colour is one
 of `red`, `orange`, `amber`, `green`, `teal`, `blue`, `purple`, `pink`. The
 entry of a folder moves with the folder, in the same commit (see Moving a
 folder), so its icon and colour follow it.
+
+A page type may give the default icon of its pages: `x-icon` and `x-color` at the top of its file,
+answered as `icon` and `color` of the type, and written by `PUT …/types/{name}` with `icon` and `color`
+(left out keeps what the file has; `""` takes it away). A page with no icon of its own is drawn with its type's.
 
 `GET /api/spaces/{space}/appearance` (read) answers
 `{"folders": [{"folder", "icon", "color"}], "sourcePresets": [...] | null,

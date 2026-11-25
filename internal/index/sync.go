@@ -677,7 +677,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 		return "", err
 	}
 	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, sourcesJSON(e.Sources), b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
-		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON, seq}
+		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON, e.Icon, e.Color, seq}
 	titleKey := strings.ToLower(e.Title)
 	if found {
 		w.markTitle(oldFolder, oldKey, oldUntitled)
@@ -689,11 +689,11 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 			return "", err
 		}
 		_, err = w.exec(`UPDATE pages SET id=?, path=?, folder=?, title=?, subtitle=?, source=?, untitled=?, title_key=?, label=?, type=?,
-			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=?, partial=?, seq=? WHERE rowid = ?`, append(args, rowid)...)
+			tags=?, created=?, created_key=?, mtime_ns=?, size=?, rev=?, excerpt=?, props=?, partial=?, icon=?, color=?, seq=? WHERE rowid = ?`, append(args, rowid)...)
 	} else {
 		var res sql.Result
 		res, err = w.exec(`INSERT INTO pages(id, path, folder, title, subtitle, source, untitled, title_key, label, type,
-			tags, created, created_key, mtime_ns, size, rev, excerpt, props, partial, seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+			tags, created, created_key, mtime_ns, size, rev, excerpt, props, partial, icon, color, seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			rowid, err = res.LastInsertId()
 		}

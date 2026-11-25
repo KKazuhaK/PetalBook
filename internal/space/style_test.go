@@ -79,6 +79,11 @@ func TestPageIconAndColorAreKeptInTheHeader(t *testing.T) {
 	if !strings.Contains(p.Header, "icon: flower") {
 		t.Fatalf("header:\n%s", p.Header)
 	}
+	// A listing shows them (the sidebar, lists and tables draw the icon).
+	r, err := s.List(index.Query{})
+	if err != nil || len(r.Items) != 1 || r.Items[0].Icon != "flower" || r.Items[0].Color != "pink" {
+		t.Fatalf("%+v %v", r, err)
+	}
 	// They are fields of every page, not properties a type may declare.
 	if err := checkPropKey("icon"); err == nil {
 		t.Fatal("icon is not a property")
@@ -175,5 +180,27 @@ func TestRenameTypeFieldRewritesTheTypeAndItsPagesInOneCommit(t *testing.T) {
 	}
 	if _, _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "state", "id"); err == nil {
 		t.Fatal("a field of every page")
+	}
+}
+
+func TestATypeGivesItsPagesADefaultIcon(t *testing.T) {
+	s := open(t)
+	icon, color := "book-open", "teal"
+	ti, err := s.PutType(Author{}, "poem", "", TypeInput{Title: "Poem", Icon: &icon, Color: &color})
+	if err != nil || ti.Icon != "book-open" || ti.Color != "teal" {
+		t.Fatalf("%+v %v", ti, err)
+	}
+	// A save that says nothing about the icon keeps it; "" takes it away; a bad colour is refused.
+	ti, err = s.PutType(Author{}, "poem", ti.Rev, TypeInput{Title: "Poem 2"})
+	if err != nil || ti.Icon != "book-open" {
+		t.Fatalf("%+v %v", ti, err)
+	}
+	none := ""
+	if ti, err = s.PutType(Author{}, "poem", ti.Rev, TypeInput{Title: "Poem 2", Icon: &none}); err != nil || ti.Icon != "" || ti.Color != "teal" {
+		t.Fatalf("%+v %v", ti, err)
+	}
+	mauve := "mauve"
+	if _, err = s.PutType(Author{}, "poem", ti.Rev, TypeInput{Color: &mauve}); err == nil {
+		t.Fatal("a colour that is none of the eight")
 	}
 }
