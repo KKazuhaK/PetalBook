@@ -1,6 +1,6 @@
-// The look every control in the top bar shares, so the pages cannot drift apart: a 40 px bordered, rounded button
-// (icon only, or with a label), and the segmented group that holds a few views or modes side by side (40 px in all).
-// The bar itself is 56 px tall, so these sit 8 px from its lines. Kept apart from TopBar so the bell can use it too.
+// The look every control in the top bar shares, so the pages cannot drift apart: a bordered, rounded button (icon
+// only, or with a label), and the segmented group that holds a few views or modes side by side. 36 px for a mouse
+// (the owner asked for a little smaller), 40 px on a touch screen (the tap area). The bar is 56 px tall. Kept apart from TopBar so the bell can use it too.
 const base =
   'relative inline-flex shrink-0 items-center justify-center rounded-lg border border-input bg-background text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60 aria-pressed:bg-muted data-popup-open:bg-accent'
 
@@ -18,14 +18,14 @@ export function topBarRoom(el: Element | null): number {
   return inner / parseFloat(getComputedStyle(document.documentElement).fontSize)
 }
 
-/** A 40 px square icon button. */
-export const topBarButton = `${base} size-10`
-/** A 40 px button with a label (and usually an icon). */
-export const topBarTextButton = `${base} h-10 gap-1.5 px-3 text-sm font-medium`
+/** A square icon button: 36 px, 40 px to touch. */
+export const topBarButton = `${base} size-9 pointer-coarse:size-10`
+/** A button with a label (and usually an icon): 36 px tall, 40 px to touch. */
+export const topBarTextButton = `${base} h-9 gap-1.5 px-3 text-sm font-medium pointer-coarse:h-10`
 /** The bordered group of a segmented switch; add `flex` or a container-query `display` to show it. */
 export const topBarGroup = 'items-center rounded-lg border border-input p-0.5'
-/** One 34 px item of the group; the chosen one is filled. */
+/** One item of the group (30 px, 34 px to touch, so the group is as tall as a button); the chosen one is filled. */
 export const topBarGroupItem = (on: boolean) =>
-  `flex size-[34px] items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 ${on ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`
-/** A status in the bar (not a button): the same 40 px line, plain text, no border. */
-export const topBarStatus = 'inline-flex h-10 items-center gap-1 text-xs text-muted-foreground'
+  `flex size-[30px] pointer-coarse:size-[34px] items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 ${on ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`
+/** A status in the bar (not a button): the same line as the buttons, plain text, no border. */
+export const topBarStatus = 'inline-flex h-9 pointer-coarse:h-10 items-center gap-1 text-xs text-muted-foreground'

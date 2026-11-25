@@ -543,11 +543,11 @@ function Listing({ source }: { source: ListSource }) {
               {/* In a table the headers of the columns sort. */}
               {/* As wide as its longest choice (a select sizes itself so when its width is auto), so no choice is cut. */}
               {!isTable && !filesPhone && (
-                <div className="relative max-sm:size-10 max-sm:shrink-0 max-sm:rounded-lg max-sm:border max-sm:[&>div>svg]:hidden @max-[26rem]/topbar:hidden">
+                <div className="relative max-sm:size-9 max-sm:pointer-coarse:size-10 max-sm:shrink-0 max-sm:rounded-lg max-sm:border max-sm:[&>div>svg]:hidden @max-[26rem]/topbar:hidden">
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
                     wrapperClassName="w-auto max-sm:size-full"
-                    className="h-10 w-auto text-[0.8rem] pointer-coarse:text-base! max-sm:size-full max-sm:opacity-0"
+                    className="h-9 pointer-coarse:h-10 w-auto text-[0.8rem] pointer-coarse:text-base! max-sm:size-full max-sm:opacity-0"
                     aria-label={t.list.sort}
                     disabled={busy}
                     value={sortValue}
@@ -595,7 +595,7 @@ function Listing({ source }: { source: ListSource }) {
                   onClick={newPage}
                   disabled={creating}
                   aria-label={t.list.newPage}
-                  className="h-10 max-sm:w-10 max-sm:px-0"
+                  className="h-9 pointer-coarse:h-10 max-sm:w-9 max-sm:pointer-coarse:w-10 max-sm:px-0"
                 >
                   {creating ? <Spinner /> : <FilePlus2 />}
                   <span className="max-sm:hidden">{creating ? t.list.creating : t.list.newPage}</span>
