@@ -48,6 +48,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { buildFolderTree, ancestorsOf, isSameOrUnder, pathAfter, type FileItem, type FolderNode } from '@/lib/folders'
 import { t } from '@/i18n'
 import { SidebarFavorites } from '@/components/favorites/SidebarFavorites'
+import { HelpMenu } from '@/components/onboarding/HelpMenu'
 import { useQuickCapture } from './QuickCapture'
 import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
@@ -529,6 +530,7 @@ export function AppSidebar() {
           >
             <Settings className="size-4" />
           </Button>
+          <HelpMenu />
           <ThemeToggle />
         </div>
       </SidebarFooter>

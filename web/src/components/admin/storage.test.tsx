@@ -273,7 +273,7 @@ describe('the notice of a space that needs a remote', () => {
     expect(note.dataset.overdue).toBe('false')
     expect(note.textContent).toContain(ts.notice.graceTitle)
     expect(note.querySelector('a')!.getAttribute('href')).toBe('/settings/sync')
-    await click(note.querySelector('button'))
+    await click(note.querySelector(`button[aria-label="${ts.notice.dismiss}"]`))
     await settle(() => document.querySelector('[data-slot="storage-notice"]') === null, 'the notice put away')
   })
 
@@ -283,7 +283,8 @@ describe('the notice of a space that needs a remote', () => {
     const note = document.querySelector<HTMLElement>('[data-slot="storage-notice"]')!
     expect(note.dataset.overdue).toBe('true')
     expect(note.textContent).toContain(ts.notice.overdueTitle)
-    expect(note.querySelector('button')).toBeNull()
+    // Nothing puts it away (the step-by-step button is not that).
+    expect(note.querySelector(`button[aria-label="${ts.notice.dismiss}"]`)).toBeNull()
   })
 
   it('shows nothing to someone who is not asked: a space that follows a remote, or one that is exempt', async () => {

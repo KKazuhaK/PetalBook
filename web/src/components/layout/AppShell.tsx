@@ -4,6 +4,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sideb
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { SearchDialogProvider } from '@/components/search/SearchDialog'
+import { OnboardingHost } from '@/components/onboarding/OnboardingHost'
 import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
 import { AppSidebar } from './AppSidebar'
 import { QuickCaptureProvider } from './QuickCapture'
@@ -28,6 +29,7 @@ export function AppShell() {
             <CloseMobileOnNavigate />
             <OfflineSync />
             <BrowserNotifier />
+            <OnboardingHost />
             {!inAdmin && <AppSidebar />}
             <SidebarInset className="min-w-0">
               <OfflineBanner />
