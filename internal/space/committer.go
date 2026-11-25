@@ -188,6 +188,67 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 	return nil
 }
 
+// Prepare journals a transaction by by, durably, before any of its files is
+// written: the files with their content before and after, and the closing of
+// the open records in closing ("l" records whose links the transaction makes
+// right), all in one append with one sync. From then on a crash is finished
+// by replaying the transaction, never by planning its work again. It returns
+// the transaction's number (0 with no journal).
+func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, error) {
+	if c == nil || c.j == nil {
+		return 0, nil
+	}
+	extra := make([]jrec, len(closing))
+	for i, r := range closing {
+		r.Op += "d"
+		r.Pages, r.N = nil, 0
+		extra[i] = r
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tx, err := c.j.appendTx(by, files, extra)
+	if err != nil {
+		return 0, err
+	}
+	for _, rec := range closing {
+		for i, r := range c.open {
+			if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path && r.Rev == rec.Rev {
+				c.open = append(c.open[:i:i], c.open[i+1:]...)
+				break
+			}
+		}
+	}
+	if hook := c.recorded; hook != nil {
+		c.mu.Unlock()
+		hook()
+		c.mu.Lock()
+	}
+	return tx, nil
+}
+
+// Applied journals that transaction tx is written, without a sync: the replay
+// does not need it, so losing it costs nothing.
+func (c *committer) Applied(tx uint64) {
+	if c == nil || c.j == nil || tx == 0 {
+		return
+	}
+	if err := c.j.appendNoSync([]jrec{{Op: "a", Tx: tx}}); err != nil {
+		c.log.Warn("could not journal that a change was written", "error", err)
+	}
+}
+
+// Abort journals that transaction tx was given up before any of its files
+// was written (its first write failed, and the change was answered with an
+// error), so that the next start does not make it after all.
+func (c *committer) Abort(tx uint64) {
+	if c == nil || c.j == nil || tx == 0 {
+		return
+	}
+	if err := c.j.append([]jrec{{Op: "k", Tx: tx}}); err != nil {
+		c.log.Error("could not journal that a change was given up; the next start may make it", "error", err)
+	}
+}
+
 // hold keeps records that an earlier run left open, until Done says they are
 // finished (a commit's trim of the journal keeps them).
 func (c *committer) hold(recs ...jrec) {

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/page"
 )
@@ -43,6 +44,19 @@ import (
 //	   list is written as parts before the record (in the same append, so a
 //	   readable "f" record has every part before it), and the record says how
 //	   many pages there are in all
+//	x  transaction Tx begins (Tx is the number of this frame): the "p"
+//	   records that follow it in the same append are its files
+//	p  file Path of transaction Tx goes from the content whose blob id is Old
+//	   ("" for none) to the content whose blob id is Rev. The new content is in
+//	   the record (D, or DB when it is not text) up to txInline bytes, else at
+//	   BlobAt in the file tx-<Tx>.blob beside the journal, BlobLen bytes. At
+//	   recovery a file at Rev is left as it is, a file at Old gets the new
+//	   content, and a file at anything else was changed outside PetalBook and
+//	   is left alone: nothing is planned again
+//	a  transaction Tx is applied (not synced: the replay does not need it)
+//	k  transaction Tx was given up before it was applied: it is not replayed
+//	ld the links of the "l" record with the same fields are dealt with, or
+//	   will be by the transaction it was journaled with
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -67,6 +81,18 @@ type jrec struct {
 	Pages []string `json:"ps,omitempty"`
 	// N is how many pages an "f" record rewrites, all its parts together.
 	N int `json:"pn,omitempty"`
+
+	// Tx, Old and the content are those of the "x", "p", "a" and "k"
+	// records (see above).
+	Tx      uint64 `json:"tx,omitempty"`
+	Old     string `json:"old,omitempty"`
+	Text    string `json:"d,omitempty"`
+	Bin     []byte `json:"db,omitempty"`
+	BlobAt  int64  `json:"bo,omitempty"`
+	BlobLen int64  `json:"bn,omitempty"`
+	// blob is the file a "p" record's content is staged in (set when the
+	// journal is read), "" for content in the record.
+	blob string
 
 	// seq is the sequence number of the record's frame in the journal, and
 	// first that of its first frame (an "f" record's first "fp" part; else
@@ -201,7 +227,13 @@ func scanFrames(data []byte) (frames []frame, end int, cut string) {
 // leaves *seq at the last number used, and r's first and seq at its frames.
 func encodeRec(buf *bytes.Buffer, seq *uint64, r *jrec) {
 	put := func(x jrec) {
-		b, _ := json.Marshal(x)
+		// Not escaped for HTML: page text is full of < and &, and the
+		// content of a "p" record would grow sixfold for each.
+		var enc bytes.Buffer
+		e := json.NewEncoder(&enc)
+		e.SetEscapeHTML(false)
+		e.Encode(x)
+		b := bytes.TrimSuffix(enc.Bytes(), []byte("\n"))
 		*seq++
 		if r.first == 0 || r.first > *seq {
 			r.first = *seq
@@ -299,6 +331,37 @@ func readJournal(data []byte) journalRead {
 		}
 		out.recs = append(out.recs, r)
 	}
+	out.recs = wholeTransactions(out.recs)
+	return out
+}
+
+// wholeTransactions drops the records of a transaction that is not all
+// there: its append was cut short, so none of its files was written yet (they
+// are written once it is durable), and the closing of its "l" records is lost
+// with it, so their links are planned again from untouched files.
+func wholeTransactions(recs []jrec) []jrec {
+	want, got := map[uint64]int{}, map[uint64]int{}
+	for _, r := range recs {
+		switch {
+		case r.Op == "x":
+			want[r.Tx] = r.N
+		case r.Tx != 0 && r.Op != "a" && r.Op != "k":
+			got[r.Tx]++
+		}
+	}
+	whole := true
+	for tx, n := range want {
+		whole = whole && got[tx] == n
+	}
+	if whole {
+		return recs
+	}
+	out := recs[:0:0]
+	for _, r := range recs {
+		if r.Tx == 0 || want[r.Tx] == got[r.Tx] {
+			out = append(out, r)
+		}
+	}
 	return out
 }
 
@@ -318,6 +381,9 @@ type journal struct {
 	size   int64
 	seq    uint64
 	broken bool
+	// blobs are the staged content files of the transactions in the
+	// journal, by transaction.
+	blobs map[uint64]string
 	// guard, when set, says whether the folder of the journal can be written
 	// in: it is not, through something that is not a folder (settingspath.go).
 	guard func() error
@@ -357,11 +423,149 @@ func openJournal(path string, log *slog.Logger) (*journal, []jrec, error) {
 			return nil, nil, err
 		}
 	}
-	j := &journal{path: path, size: int64(rd.end), seq: rd.seq}
+	j := &journal{path: path, size: int64(rd.end), seq: rd.seq, blobs: map[uint64]string{}}
+	for i, r := range rd.recs {
+		if r.Op == "p" && r.BlobLen > 0 {
+			rd.recs[i].blob = j.blobPath(r.Tx)
+			j.blobs[r.Tx] = rd.recs[i].blob
+		}
+	}
+	// Staged content no record names: a crash after a trim, before the file
+	// went, or during the append that was to name it.
+	stale, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "tx-*.blob"))
+	for _, f := range stale {
+		named := false
+		for _, b := range j.blobs {
+			named = named || b == f
+		}
+		if !named {
+			os.Remove(f)
+		}
+	}
 	if j.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644); err != nil {
 		return nil, nil, err
 	}
 	return j, rd.recs, nil
+}
+
+func (j *journal) blobPath(tx uint64) string {
+	return filepath.Join(filepath.Dir(j.path), fmt.Sprintf("tx-%d.blob", tx))
+}
+
+// txInline is the most content a "p" record carries itself; more is staged in
+// a file of the transaction's.
+const txInline = 64 << 10
+
+// txInlineTotal bounds the content one transaction carries in the journal.
+const txInlineTotal = 1 << 20
+
+// txFile is a file of a transaction: its path, the blob ids of its content
+// before and after (Old "" for a file that is not there), and the new content.
+type txFile struct {
+	path, old, rev string
+	data           []byte
+}
+
+// appendTx journals a transaction, durably: an "x" record by by, a "p" record
+// for each file, and the records in extra, in one append. It returns the
+// transaction's number. Content over txInline bytes is written to the
+// transaction's staged file first (synced, with its folder), so an append
+// with such content costs two syncs more.
+func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	tx := j.seq + 1 // the number of the "x" frame
+	recs := make([]jrec, 0, len(files)+1+len(extra))
+	// N counts the frames of the transaction after its "x": a transaction
+	// that is not all there (an append cut short) is not replayed at all.
+	recs = append(recs, jrec{Op: "x", Tx: tx, N: len(files) + len(extra), AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
+	var staged bytes.Buffer
+	inline := 0
+	for _, f := range files {
+		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev}
+		switch {
+		case len(f.data) > txInline || inline+len(f.data) > txInlineTotal:
+			r.BlobAt, r.BlobLen = int64(staged.Len()), int64(len(f.data))
+			staged.Write(f.data)
+		case utf8.Valid(f.data):
+			r.Text = string(f.data)
+			inline += len(f.data)
+		default:
+			r.Bin = f.data
+			inline += len(f.data)
+		}
+		recs = append(recs, r)
+	}
+	for _, r := range extra {
+		r.Tx = tx
+		recs = append(recs, r)
+	}
+	blob := ""
+	if staged.Len() > 0 {
+		blob = j.blobPath(tx)
+		if err := writeSynced(blob, staged.Bytes()); err != nil {
+			os.Remove(blob)
+			return 0, err
+		}
+	}
+	if err := j.appendLocked(recs, true); err != nil {
+		if blob != "" {
+			os.Remove(blob)
+		}
+		return 0, err
+	}
+	if blob != "" {
+		j.blobs[tx] = blob
+	}
+	return tx, nil
+}
+
+// writeSynced writes data to the new file name, and syncs it and its folder.
+func writeSynced(name string, data []byte) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+// content is the new content of a "p" record.
+func (r jrec) content() ([]byte, error) {
+	if r.BlobLen == 0 {
+		if r.Bin != nil {
+			return r.Bin, nil
+		}
+		return []byte(r.Text), nil
+	}
+	if r.blob == "" {
+		return nil, errors.New("the staged content of the record is not known")
+	}
+	f, err := os.Open(r.blob)
+	if err != nil {
+		return nil, fmt.Errorf("the staged content of %s cannot be read: %w", r.Path, err)
+	}
+	defer f.Close()
+	b := make([]byte, r.BlobLen)
+	if _, err := f.ReadAt(b, r.BlobAt); err != nil {
+		return nil, fmt.Errorf("the staged content of %s cannot be read: %w", r.Path, err)
+	}
+	return b, nil
 }
 
 // lastSeq is the number of the last frame appended.
@@ -377,6 +581,18 @@ func (j *journal) lastSeq() uint64 {
 func (j *journal) append(recs []jrec) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	return j.appendLocked(recs, true)
+}
+
+// appendNoSync is append without the sync: for a record that a crash may
+// lose ("a"). The next synced append, or the system, makes it durable.
+func (j *journal) appendNoSync(recs []jrec) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.appendLocked(recs, false)
+}
+
+func (j *journal) appendLocked(recs []jrec, synced bool) error {
 	if j.broken {
 		if err := j.f.Truncate(j.size); err != nil {
 			return fmt.Errorf("the journal cannot be cut back after a failed append: %w", err)
@@ -396,7 +612,7 @@ func (j *journal) append(recs []jrec) error {
 		sync = j.sync
 	}
 	_, err := write(j.f, buf.Bytes())
-	if err == nil {
+	if err == nil && synced {
 		err = sync(j.f)
 	}
 	if err != nil {
@@ -497,6 +713,14 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) erro
 	for i, r := range again {
 		keep[i].seq, keep[i].first = r.seq, r.first
 	}
+	// A transaction's frames are one append, never open: at or before upTo
+	// they are all gone, and so is what was staged for them.
+	for tx, b := range j.blobs {
+		if tx <= upTo {
+			os.Remove(b)
+			delete(j.blobs, tx)
+		}
+	}
 	j.f.Close()
 	j.size, j.seq, j.broken = int64(buf.Len()), seq, false
 	j.f, err = os.OpenFile(j.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
@@ -527,9 +751,30 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
 	var bindRecs, fieldRecs []jrec
+	given := map[uint64]bool{}   // transactions given up ("k")
+	applied := map[uint64]bool{} // and written ("a")
+	authors := map[uint64]Author{}
+	for _, r := range recs {
+		switch r.Op {
+		case "k":
+			given[r.Tx] = true
+		case "a":
+			applied[r.Tx] = true
+		case "x":
+			authors[r.Tx] = r.author()
+		}
+	}
+	var log *slog.Logger
+	if h != nil {
+		log = h.log
+	}
 	for _, r := range recs {
 		by := r.author()
 		switch r.Op {
+		case "p":
+			if ok(r.Path) && !given[r.Tx] && replay(root, r, !applied[r.Tx], log) {
+				set[r.Path] = authors[r.Tx]
+			}
 		case "t", "d":
 			if ok(r.Path) {
 				set[r.Path] = by
@@ -596,6 +841,52 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 		}
 	}
 	return set
+}
+
+// replay brings the file of a "p" record to its new content, if it is at the
+// old one and write is set, and reports whether the file has the new content
+// now. A file at any other content was changed outside PetalBook: it is left
+// alone. Nothing is planned again, so replaying twice is replaying once.
+//
+// A transaction that was applied ("a") is not written again: its files were
+// written, and whatever they hold now came after it (a later change, or one
+// made outside, maybe back to the old bytes). The "a" goes to the journal
+// unsynced, but the next synced append makes it durable, so only the last
+// transaction before a crash can lack it although it was applied; its files
+// are then at the new content, or untouched, and the replay is right either way.
+func replay(root string, r jrec, write bool, log *slog.Logger) bool {
+	abs := filepath.Join(root, filepath.FromSlash(r.Path))
+	cur := ""
+	switch data, err := os.ReadFile(abs); {
+	case err == nil:
+		cur = page.Rev(data)
+	case !errors.Is(err, fs.ErrNotExist):
+		return false
+	}
+	switch cur {
+	case r.Rev:
+		return true
+	case r.Old:
+		if !write {
+			return false
+		}
+		data, err := r.content()
+		if err == nil && page.Rev(data) != r.Rev {
+			err = errors.New("the content does not match the record")
+		}
+		if err == nil {
+			err = writeAtomic(abs, data)
+		}
+		if err != nil {
+			if log != nil {
+				log.Error("a change an earlier run journaled cannot be finished; the file stays as it was",
+					"path", r.Path, "transaction", r.Tx, "staged", r.blob, "error", err)
+			}
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // listed reports whether dir has an entry named exactly name.

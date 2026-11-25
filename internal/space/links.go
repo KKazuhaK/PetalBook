@@ -156,6 +156,7 @@ type movedPage struct{ id, from, to string }
 // fileEdit is the new content of a page file.
 type fileEdit struct {
 	rel  string
+	old  string // the blob id of the content the edit was made from
 	data []byte
 	// step is the rewrite, for the drafts and open editors of the file (see
 	// rebase.go); nil when the file is not a page's.
@@ -326,7 +327,7 @@ func (s *Space) planLinks(mv []movedPage, moves []stepMove) ([]fileEdit, error) 
 		}
 		if edits := rl.edits(data, oldAt, newAt, true); len(edits) > 0 {
 			nd := links.Apply(data, edits)
-			out = append(out, fileEdit{rel: newAt, data: nd, step: &rebaseStep{
+			out = append(out, fileEdit{rel: newAt, old: page.Rev(data), data: nd, step: &rebaseStep{
 				ID: src.ID, Old: page.Rev(data), New: page.Rev(nd), OldAt: oldAt, NewAt: newAt, Moves: moves,
 			}})
 		}
@@ -343,20 +344,37 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 	if len(edits) == 0 {
 		return nil, nil
 	}
-	recs := make([]jrec, len(edits))
+	files := make([]txFile, len(edits))
 	paths := make([]string, len(edits))
 	for i, e := range edits {
-		recs[i] = jrec{Op: "w", Path: e.rel, Rev: page.Rev(e.data)}
+		files[i] = txFile{path: e.rel, old: e.old, rev: page.Rev(e.data), data: e.data}
 		paths[i] = e.rel
 	}
-	if err := tx.record(recs...); err != nil {
+	// One transaction with every file's content: a crash part way is
+	// finished by writing what is left of it, never by planning it again
+	// from files that may already be rewritten. It closes the change's "l"
+	// records: their links are this transaction's.
+	id, journaled, err := tx.prepare(files, true)
+	if err != nil {
 		return nil, err
+	}
+	if !journaled {
+		recs := make([]jrec, len(edits))
+		for i, e := range edits {
+			recs[i] = jrec{Op: "w", Path: e.rel, Rev: page.Rev(e.data)}
+		}
+		if err := tx.record(recs...); err != nil {
+			return nil, err
+		}
 	}
 	// The files are part of the change from the first replacement: an undo
 	// takes them back.
 	tx.touch(paths...)
 	var steps []rebaseStep
 	defer func() { s.rb.add(steps...) }()
+	if err := s.stepped("edits journaled"); err != nil {
+		return paths, err
+	}
 	for _, e := range edits {
 		abs, err := s.abs(e.rel)
 		if err != nil {
@@ -368,8 +386,21 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 		if e.step != nil {
 			steps = append(steps, *e.step)
 		}
+		if err := s.stepped("edit written"); err != nil {
+			return paths, err
+		}
 	}
+	s.cm.Applied(id)
 	return paths, nil
+}
+
+// stepped tells the test hook step, if there is one, that the change got to
+// the step name.
+func (s *Space) stepped(name string) error {
+	if s.step == nil {
+		return nil
+	}
+	return s.step(name)
 }
 
 // pageMoves says, for the rebase steps, which pages moved.
@@ -528,7 +559,7 @@ func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
 				moves = append(moves, stepMove{ID: id, To: p})
 			}
 			sort.Slice(moves, func(i, j int) bool { return moves[i].ID < moves[j].ID })
-			edits = append(edits, fileEdit{rel: src, data: nd, step: &rebaseStep{
+			edits = append(edits, fileEdit{rel: src, old: page.Rev(data), data: nd, step: &rebaseStep{
 				ID: bySrc[src].id, Old: page.Rev(data), New: page.Rev(nd), OldAt: src, NewAt: src, Moves: moves,
 			}})
 		}
@@ -583,15 +614,20 @@ func (s *Space) finishLinkRecs(recs []jrec) {
 			if r.Dir {
 				moves = []stepMove{{From: r.From, To: r.To, Dir: true}}
 			}
-			_, err = s.relink(tx, mv, moves, "", nil)
-			return struct{}{}, err
+			// The record is the change's: the transaction of its rewrites
+			// closes it, so that a crash from then on replays them.
+			tx.links = append(tx.links, r)
+			if _, err = s.relink(tx, mv, moves, "", nil); err != nil {
+				return struct{}{}, err
+			}
+			// Nothing to rewrite, or done (a space that follows a remote
+			// closes it once the change is pushed).
+			tx.settleLinks()
+			return struct{}{}, nil
 		}
 		if _, err := mutate(s, r.author(), do); err != nil {
 			s.log.Error("could not finish updating the links of a move an earlier run began", "from", r.From, "to", r.To, "error", err)
-			continue
 		}
-		// Only now is it done: until then the journal keeps it.
-		s.cm.Done(r)
 	}
 }
 

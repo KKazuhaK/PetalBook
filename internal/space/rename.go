@@ -152,7 +152,7 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 						res.Skipped = append(res.Skipped, SkippedPage{ID: it.ID, Path: it.Path, Reason: "has_key"})
 					}
 				case !bytes.Equal(nd, pdata):
-					edits = append(edits, fileEdit{rel: it.Path, data: nd})
+					edits = append(edits, fileEdit{rel: it.Path, old: page.Rev(pdata), data: nd})
 				}
 			}
 			if r.Next == "" {
