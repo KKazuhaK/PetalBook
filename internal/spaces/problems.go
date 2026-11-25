@@ -28,7 +28,6 @@ import (
 // asked for every minute by everyone who has the app open.
 const problemFresh = 20 * time.Second
 
-
 // problemMax is the most spaces with problems one answer lists; the rest are
 // counted (a variable for the tests).
 var problemMax = 50
