@@ -176,6 +176,7 @@ export const adminZhCN = {
     apisHelp:
       '可以新建任意多个。服务器去取并缓存，请求头的值加密保存，只显示「已保存」。每个接口只会连它自己网址里的主机和端口。',
     noApis: '还没有接口。',
+    allOffHint: '每日文案默认关闭。打开内置接口或添加自己的文案后，首页就会显示。',
     builtinTitle: '内置接口',
     builtinHelp: '服务器已经知道怎么请求的服务：打开开关就行，不用填网址、路径或语言代码。打开之前不会请求对方。',
     builtinLanguages: (l: string) => `语言：${l}`,

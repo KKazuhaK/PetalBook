@@ -9,6 +9,7 @@ import { dayOf, keys, useDaily, useSpaceId, useSpacePermissions, useUrls } from 
 import type { DailyAnswer, DailyQuote } from '@/api/types'
 import { useOpenSettings } from '@/components/settings/useSettings'
 import { Button } from '@/components/ui/button'
+import { touchHit } from '@/lib/touch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { lang as uiLang } from '@/i18n'
 import { canonicalTag } from '@/lib/langTags'
@@ -135,6 +136,7 @@ export function DailyBlock({ now }: { now: Date }) {
           <Button
             variant="ghost"
             size="xs"
+            className={touchHit}
             onClick={() => void another()}
             disabled={waiting || skipLimit}
             data-slot="daily-another"

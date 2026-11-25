@@ -156,6 +156,18 @@ describe('favourites in the sidebar and on the home page', () => {
     // (a fresh mount starts a fresh server, so ask the one just used)
   })
 
+  it('has a hit area of 40 px on a phone or a touch screen for the arrows, and looks the same on a desktop', async () => {
+    m = await open(seed)
+    await settle(() => sideRows().length === 3, 'rows')
+    for (const a of sideRows()[1].querySelectorAll<HTMLElement>('[data-fav-action]')) {
+      // 24 px wide and high for the mouse; 40 wide by layout and 40 high by a box around it on a coarse pointer.
+      expect(a.className).toContain('size-6')
+      expect(a.className).toContain('pointer-coarse:w-10')
+      expect(a.className).toContain('pointer-coarse:before:-inset-y-2')
+      expect(a.className).toContain('max-md:w-10')
+    }
+  })
+
   it('the first can not go up and the last can not go down', async () => {
     m = await open(seed)
     await settle(() => sideRows().length === 3, 'rows')

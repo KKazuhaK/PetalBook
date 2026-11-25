@@ -2,10 +2,10 @@ import { ArrowDown, ArrowUp, X } from 'lucide-react'
 import type { Favorite } from '@/api/types'
 import { favoriteKey } from '@/api/hooks'
 import { favoriteName } from '@/lib/favorites'
+import { touchHitTall } from '@/lib/touch'
 import { t } from '@/i18n'
 
-const btn =
-  'flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-30'
+const btn = `flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-30 ${touchHitTall}`
 
 // The buttons at the end of a favourite: up, down, and (for one that is gone) clear. Up and down are the keyboard's
 // way of ordering the list, so they are reachable by tabbing, and only drawn faintly until the row is in use.
