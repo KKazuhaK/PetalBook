@@ -81,6 +81,8 @@ export const notifyZhCN = {
       cancel: '以后再说',
     },
     granted: '浏览器通知已开启',
-    shown: (n: number) => (n === 1 ? 'PetalBook：1 条新通知' : `PetalBook：${n} 条新通知`),
+    count: (n: number) => `你有 ${n} 条新通知`,
+    details: '通知里显示具体内容',
+    detailsHelp: '关掉时，提示只说有几条新通知，不在屏幕上显示空间名和人名。',
   },
 }

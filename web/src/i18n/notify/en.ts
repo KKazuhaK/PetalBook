@@ -89,6 +89,8 @@ export const notifyEn: NotifyMessages = {
       cancel: 'Not now',
     },
     granted: 'Browser notifications are on',
-    shown: (n: number) => (n === 1 ? 'PetalBook: 1 new notification' : `PetalBook: ${n} new notifications`),
+    count: (n: number) => (n === 1 ? 'You have 1 new notification' : `You have ${n} new notifications`),
+    details: 'Show what the notification is about',
+    detailsHelp: 'Off: a notice only says how many came, so names of spaces and people are not shown on the screen.',
   },
 }

@@ -12,9 +12,11 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { SettingsRow } from '@/components/settings/SettingsParts'
 import {
+  browserNoticeDetails,
   browserNotifyState,
   disableBrowserNotify,
   enableBrowserNotify,
+  setBrowserNoticeDetails,
   type BrowserNotifyState,
 } from '@/lib/browserNotify'
 import { tn } from '@/i18n/notify'
@@ -24,6 +26,7 @@ import { tn } from '@/i18n/notify'
 export function BrowserNotifySetting() {
   const [state, setState] = useState<BrowserNotifyState>(browserNotifyState)
   const [asking, setAsking] = useState(false)
+  const [details, setDetails] = useState(browserNoticeDetails)
   const blocked = state === 'unsupported' || state === 'insecure' || state === 'denied'
   const note =
     state === 'unsupported'
@@ -48,6 +51,18 @@ export function BrowserNotifySetting() {
           </span>
         </div>
       </SettingsRow>
+      {state === 'on' && (
+        <SettingsRow title={tn.browser.details} help={tn.browser.detailsHelp} controlId="pref-browser-notify-details">
+          <Switch
+            id="pref-browser-notify-details"
+            checked={details}
+            onCheckedChange={(on) => {
+              setBrowserNoticeDetails(on)
+              setDetails(on)
+            }}
+          />
+        </SettingsRow>
+      )}
       {note && (
         <p role="status" className="-mt-2 px-1 text-xs text-muted-foreground">
           {note}

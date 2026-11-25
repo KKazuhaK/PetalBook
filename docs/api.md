@@ -5066,9 +5066,14 @@ them when they are deleted.
 
 ### Browser notices
 
-The opt-in is a setting of the browser (the permission is too), kept in the
-browser's own storage, and works through the Notifications API: an open tab
-shows a notice when the unread count goes up while nobody is looking. There is
+The opt-in is the person's, one of their preferences (`pb.notify.browser`, see
+"Preferences"), so another person who signs in on the same browser gets none for
+it; the permission is the browser's, and both are needed. It works through the
+Notifications API: an open tab shows a notice when the unread count goes up
+while nobody is looking. By default the notice only says how many came ("You
+have N new notifications"), so no space or person is named on a screen others
+may see; with the preference `pb.notify.details` it says what the newest event
+is (not a problem of a space that was there before). There is
 no push server yet. **Reserved:** Web Push with a VAPID key would reach a
 browser with no tab open: a `GET /api/notifications/push` that gives the public
 key, and `PUT`/`DELETE` of a subscription. Nothing of it is built; email and

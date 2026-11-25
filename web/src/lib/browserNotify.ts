@@ -1,30 +1,33 @@
-// Browser notifications (the Notifications API), only after the person opts in. The choice is this browser's (the
-// permission is too), so it is kept here in localStorage and is not one of the person's synced preferences. There is no
-// push server yet: a notice is shown by an open tab of the app when the bell finds a new notification (a real Web Push,
-// with a VAPID key, would also reach a browser with no tab open; it is reserved, see docs/api.md).
+// Browser notifications (the Notifications API), only after the person opts in. The opt-in is the person's, one of their
+// preferences (prefsStore: their personal space when they have one), so the next person who signs in on this browser does
+// not get notices for themselves because someone else said yes; the permission is the browser's, and both are needed.
+// By default a notice says only how many came, not whose space or who: the screen may be seen by others. The person can
+// ask for the details (DETAILS_KEY). There is no push server yet: a notice is shown by an open tab of the app when the
+// bell finds a new notification (a real Web Push, with a VAPID key, would also reach a browser with no tab open; it is
+// reserved, see docs/api.md).
+
+import { prefsStore } from './prefsStore'
 
 const KEY = 'pb.notify.browser'
+const DETAILS_KEY = 'pb.notify.details'
 
 export type BrowserNotifyState = 'unsupported' | 'insecure' | 'denied' | 'on' | 'off'
 
 const api = (): typeof Notification | null =>
   typeof window !== 'undefined' && 'Notification' in window ? window.Notification : null
 
-function wanted(): boolean {
-  try {
-    return localStorage.getItem(KEY) === '1'
-  } catch {
-    return false
-  }
-}
+const wanted = (): boolean => prefsStore().read(KEY) === true
 
 function remember(on: boolean) {
-  try {
-    if (on) localStorage.setItem(KEY, '1')
-    else localStorage.removeItem(KEY)
-  } catch {
-    // Not kept: it is off again the next time the page loads.
-  }
+  if (on) prefsStore().write(KEY, true)
+  else prefsStore().remove(KEY)
+}
+
+// Whether a notice names the space and the person (off unless the person asks).
+export const browserNoticeDetails = (): boolean => prefsStore().read(DETAILS_KEY) === true
+export function setBrowserNoticeDetails(on: boolean): void {
+  if (on) prefsStore().write(DETAILS_KEY, true)
+  else prefsStore().remove(DETAILS_KEY)
 }
 
 // What the setting is now: it can only be on while the browser allows notifications.

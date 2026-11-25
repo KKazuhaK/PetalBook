@@ -6,6 +6,7 @@ import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
 import { browserNotifyState, disableBrowserNotify, enableBrowserNotify } from '@/lib/browserNotify'
 import { tn } from '@/i18n/notify'
 import { click, installDomShims, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { browserPrefs, setPrefsStore, type PrefsStore } from '@/lib/prefsStore'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
@@ -120,10 +121,33 @@ describe('the opt-in in the preferences', () => {
   })
 })
 
+describe('the opt-in follows the person', () => {
+  it('is kept in the person’s preferences, not in this browser alone', async () => {
+    fakeNotification('granted')
+    const kept: Record<string, unknown> = {}
+    const store: PrefsStore = {
+      read: (k) => (k in kept ? kept[k] : null),
+      write: (k, v) => void (kept[k] = v),
+      remove: (k) => void delete kept[k],
+    }
+    setPrefsStore(store)
+    try {
+      expect(await enableBrowserNotify()).toBe('on')
+      expect(kept['pb.notify.browser']).toBe(true)
+      expect(localStorage.getItem('pb.notify.browser')).toBeNull()
+      // Another person signs in on this browser: their preferences say nothing, so it is off for them.
+      for (const k of Object.keys(kept)) delete kept[k]
+      expect(browserNotifyState()).toBe('off')
+    } finally {
+      setPrefsStore(browserPrefs)
+    }
+  })
+})
+
 describe('the notice itself', () => {
-  it('is shown when the unread count goes up while nobody is looking, and not before the opt-in', async () => {
+  const scene = async () => {
     const f = fakeNotification('granted')
-    localStorage.setItem('pb.notify.browser', '1')
+    browserPrefs.write('pb.notify.browser', true)
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
     m = await mount(
       <>
@@ -133,12 +157,34 @@ describe('the notice itself', () => {
       { signIn: true, server: { mode: 'accounts' } },
     )
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) !== undefined, 'the first count')
+    return f
+  }
+
+  it('says only how many came, by default: no names of spaces or people on the screen', async () => {
+    const f = await scene()
     expect(f.shown).toHaveLength(0)
-    shareSpace(m.server, 'editor', '团队')
-    await m.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
+    shareSpace(m!.server, 'editor', '团队')
+    await m!.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => f.shown.length === 1, 'the notice')
-    expect(f.shown[0].title).toContain('把你加入了「团队」')
-    expect(f.shown[0].body).toContain('编辑者')
+    expect(f.shown[0].title).toBe(tn.browser.count(1))
+    expect(f.shown[0].title).not.toContain('团队')
+    expect(f.shown[0].body ?? '').not.toContain('团队')
+    expect(f.shown[0].body ?? '').not.toContain('sharer')
+  })
+
+  it('shows the newest event, with its details when the person asked for them, not an older problem', async () => {
+    browserPrefs.write('pb.notify.details', true)
+    const f = await scene()
+    // A problem in a space the person writes in, there before.
+    const own = shareSpace(m!.server, 'editor', '旧的', 'first')
+    m!.server.addOrphan(own.space, { path: 'stray.md', kind: 'no_id', meta: { title: '无 id' }, body: 'x\n' })
+    await m!.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
+    await settle(() => f.shown.length === 1, 'the first notice')
+    shareSpace(m!.server, 'editor', '团队')
+    await m!.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
+    await settle(() => f.shown.length === 2, 'the notice')
+    expect(f.shown[1].title).toContain('把你加入了「团队」')
+    expect(f.shown[1].body).toContain('编辑者')
   })
 
   it('is not shown without the opt-in, nor while the page is in front', async () => {
@@ -149,7 +195,7 @@ describe('the notice itself', () => {
     await m.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) === 1, 'the count')
     expect(f.shown).toHaveLength(0)
-    localStorage.setItem('pb.notify.browser', '1')
+    browserPrefs.write('pb.notify.browser', true)
     shareSpace(m.server, 'viewer', '另一个', 'third')
     await m.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) === 2, 'two')
