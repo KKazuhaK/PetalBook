@@ -304,9 +304,14 @@ func (s *Service) siteView(ctx context.Context, q store.Q, d *Def, r *store.Laye
 		}
 	}
 	if r != nil && r.Lower != "" {
-		if err := json.Unmarshal([]byte(r.Lower), &v.Lower); err != nil {
+		// Into a value of its own: v.Lower starts as a copy of d.Lower, whose
+		// Max and Options point at memory every request shares (for files.maxBytes,
+		// the --max-upload ceiling itself).
+		var l Lower
+		if err := json.Unmarshal([]byte(r.Lower), &l); err != nil {
 			return v, err
 		}
+		v.Lower = l
 	}
 	return v, nil
 }
