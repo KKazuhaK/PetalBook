@@ -49,12 +49,28 @@ const navLinks = () => [...document.querySelectorAll(`nav[aria-label="${tc.nav}"
 const rows = () => [...document.querySelectorAll<HTMLElement>('tbody tr[data-space]')]
 const rowOf = (name: string) => rows().find((r) => r.querySelector('th')?.textContent?.includes(name))!
 const menuItem = (label: string) =>
-  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((e) => e.textContent?.trim() === label)!
+  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].findLast((e) => e.textContent?.trim() === label)!
 const adminCalls = () => m!.requests.filter((r) => r.url.startsWith('/api/admin') || r.url.startsWith('/api/users'))
 
 async function openMenu(name: string) {
-  await click(byLabel(ta.spaces.moreFor(name)))
-  await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the actions')
+  // On a slow runner the menu of the previous action can still be mounted, and
+  // a click can be lost: click the trigger until it says it is open, then wait
+  // for its items.
+  const trigger = byLabel(ta.spaces.moreFor(name)) as HTMLElement
+  const open = () =>
+    trigger.getAttribute('aria-expanded') === 'true' && document.querySelectorAll('[role="menuitem"]').length > 0
+  const until = Date.now() + 5_000
+  while (Date.now() < until) {
+    if (open()) return
+    if (trigger.getAttribute('aria-expanded') !== 'true') await click(trigger)
+    const retry = Date.now() + 1_000
+    while (!open() && Date.now() < retry) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+  }
+  if (!open()) throw new Error('never happened: the actions')
 }
 
 describe('who can reach the administration', () => {

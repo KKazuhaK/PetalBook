@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { toast } from 'sonner'
@@ -58,7 +59,7 @@ const rowOf = (name: string) => rows().find((r) => r.querySelector('th')?.textCo
 const personRows = () => [...document.querySelectorAll<HTMLElement>('tbody tr[data-person]')]
 const select = (label: string) => document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!
 const menuItem = (label: string) =>
-  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((e) => e.textContent?.trim() === label)!
+  [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].findLast((e) => e.textContent?.trim() === label)!
 const queries = (prefix: string) =>
   m!.requests.filter((r) => r.url.startsWith(prefix)).map((r) => new URL(r.url, 'http://x').searchParams)
 const sent = (method: string, prefix: string) =>
@@ -85,8 +86,24 @@ async function open(section: string, scene?: (server: MockServer) => void) {
   })
 }
 async function openMenu(name: string) {
-  await click(byLabel(ta.spaces.moreFor(name)))
-  await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the actions')
+  // On a slow runner the menu of the previous action can still be mounted, and
+  // a click can be lost: click the trigger until it says it is open, then wait
+  // for its items.
+  const trigger = byLabel(ta.spaces.moreFor(name)) as HTMLElement
+  const open = () =>
+    trigger.getAttribute('aria-expanded') === 'true' && document.querySelectorAll('[role="menuitem"]').length > 0
+  const until = Date.now() + 5_000
+  while (Date.now() < until) {
+    if (open()) return
+    if (trigger.getAttribute('aria-expanded') !== 'true') await click(trigger)
+    const retry = Date.now() + 1_000
+    while (!open() && Date.now() < retry) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+  }
+  if (!open()) throw new Error('never happened: the actions')
 }
 // Ticks spaces by name and starts a bulk action.
 async function bulk(names: string[], action: string) {
