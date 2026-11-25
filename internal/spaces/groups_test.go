@@ -91,6 +91,7 @@ func cachedUser(m *Manager, id string) bool {
 }
 
 func TestEffectivePermissionIsTheUnionOfDirectAndGroupRoles(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -164,6 +165,7 @@ func TestEffectivePermissionIsTheUnionOfDirectAndGroupRoles(t *testing.T) {
 }
 
 func TestAtLeastOneOwnerCountsDirectOwnersOnly(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -186,6 +188,7 @@ func TestAtLeastOneOwnerCountsDirectOwnersOnly(t *testing.T) {
 }
 
 func TestLeavingASpaceReachedThroughAGroup(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -223,6 +226,7 @@ func TestLeavingASpaceReachedThroughAGroup(t *testing.T) {
 }
 
 func TestAPersonalSpaceHasNoGroups(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -240,6 +244,7 @@ func TestAPersonalSpaceHasNoGroups(t *testing.T) {
 }
 
 func TestSpaceGroupRefusals(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -275,6 +280,7 @@ func TestSpaceGroupRefusals(t *testing.T) {
 }
 
 func TestGroupLimits(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -342,6 +348,7 @@ func TestGroupLimits(t *testing.T) {
 }
 
 func TestEditingGroupsByHandRules(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		f.user("ann")
@@ -390,6 +397,7 @@ func strp(s string) *string { return &s }
 
 // A change drops exactly the people it touches and nobody else.
 func TestChangesDropOnlyTheAffectedPeople(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -482,6 +490,7 @@ func TestChangesDropOnlyTheAffectedPeople(t *testing.T) {
 }
 
 func TestDeletingASpaceDropsItsGroupsPeople(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -516,6 +525,7 @@ func TestDeletingASpaceDropsItsGroupsPeople(t *testing.T) {
 }
 
 func TestTheCacheIsBoundedByEntries(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	f := newGfix(t, st)
 	f.m.cache.max = 5
@@ -550,6 +560,7 @@ func TestTheCacheIsBoundedByEntries(t *testing.T) {
 // Requests keep reading while groups, roles and people change: run with -race.
 // Afterwards every person's answer equals what the database says.
 func TestConcurrentChangesAndReads(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		boss := f.user("boss")
@@ -640,6 +651,7 @@ func dbPerms(t *testing.T, st *store.Store, user, space string) perm.Set {
 }
 
 func TestSyncTouchesOnlyWhatTheProviderBrought(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		f.user("ann")
@@ -800,6 +812,7 @@ func BenchmarkCacheHit(b *testing.B) {
 // The newcomer must not keep the access (on PostgreSQL, READ COMMITTED lets the
 // add through unless the group is locked; SQLite has one writer at a time).
 func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
+	t.Parallel()
 	type grant struct {
 		name, source string
 		add          func(f *gfix, g string) error
@@ -906,6 +919,7 @@ func (f *gfix) provider(slug string) store.ProviderRow {
 // transaction as the provider's row, and a sign-in that still holds the old
 // mapping cannot bring it back afterwards.
 func TestASignInWithTheOldMappingCannotReAdd(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		f.user("ann")
@@ -969,6 +983,7 @@ func TestASignInWithTheOldMappingCannotReAdd(t *testing.T) {
 // A new group whose random id is taken gets another id; only a taken name is
 // "exists".
 func TestCreateGroupRetriesAnIDClash(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		first := f.group("First", "local")
@@ -997,6 +1012,7 @@ func TestCreateGroupRetriesAnIDClash(t *testing.T) {
 // MaxGroups is a tenant's: one tenant at the limit leaves the others free, and
 // the refusal says how many that tenant has.
 func TestTheGroupLimitIsPerTenant(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newGfix(t, st)
 		now := time.Now()

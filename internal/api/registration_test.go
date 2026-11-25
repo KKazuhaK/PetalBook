@@ -171,6 +171,7 @@ func TestRegistrationAnswersTheSameWhetherOrNotAMessageGoes(t *testing.T) {
 		for i := 0; i < 6; i++ {
 			reg(c, map[string]any{"username": "v" + string(rune('a'+i)), "email": "v" + string(rune('a'+i)) + "@example.test"}).want(t, 202, "")
 		}
+		srv.Wait(10) // 2 + 3 earlier, and 5 from this caller; the sixth is never sent
 		settle()
 		sent := 0
 		for _, m := range srv.Messages() {

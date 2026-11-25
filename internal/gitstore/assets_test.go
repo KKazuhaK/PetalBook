@@ -10,6 +10,7 @@ import (
 )
 
 func TestAttachmentRepositoryBuiltWithoutAWorkTree(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	remote := filterRemote(t)
 	ctx := context.Background()

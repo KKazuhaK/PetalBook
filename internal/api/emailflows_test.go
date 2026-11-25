@@ -311,6 +311,7 @@ func TestResetMailIsCappedPerAddressAndPerCaller(t *testing.T) {
 			verifiedUser(t, a, "p"+n, "p"+n+"@example.test")
 			forgot(a.newClient("198.51.100.200"), "p"+n).want(t, 202, "")
 		}
+		srv.Wait(9) // 4 earlier, and 5 from this caller; the others are never sent
 		settle()
 		sent := 0
 		for _, m := range srv.Messages() {

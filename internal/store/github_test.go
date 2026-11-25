@@ -12,6 +12,7 @@ import (
 )
 
 func TestGitHubAuthorizations(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -101,6 +102,7 @@ func TestGitHubAuthorizations(t *testing.T) {
 }
 
 func TestGitHubInstallationsAndSpaces(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
@@ -259,6 +261,7 @@ func TestGitHubInstallationsAndSpaces(t *testing.T) {
 
 // Due renewals page by (refresh end, user id), ties included.
 func TestDueGitHubRenewalsPageByKeyset(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
@@ -297,6 +300,7 @@ func TestDueGitHubRenewalsPageByKeyset(t *testing.T) {
 // Two users connecting one GitHub account at once: the one that loses the race
 // gets ErrExists from the unique index, not a database error.
 func TestConnectingAnAccountTakenMeanwhileIsErrExists(t *testing.T) {
+	// Not parallel: it sets a hook for the whole package.
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -324,6 +328,7 @@ func TestConnectingAnAccountTakenMeanwhileIsErrExists(t *testing.T) {
 // An attachment repository on GitHub depends on its installation or its user
 // as the space's own repository does: the counts include it, once per space.
 func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		q := st.Q()
@@ -369,6 +374,7 @@ func TestGitHubSpaceCountsIncludeAttachmentRepositories(t *testing.T) {
 // Forgetting the installations forgets who they were shared with; deleting a
 // tenant takes its shares.
 func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q := st.Q()
 		now := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
@@ -402,6 +408,7 @@ func TestGitHubInstallationSharesGoWithTheirOwners(t *testing.T) {
 }
 
 func TestGitHubLeftovers(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")

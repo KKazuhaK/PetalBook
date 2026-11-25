@@ -20,6 +20,7 @@ func commit(t testing.TB, r *Repo, paths ...string) {
 }
 
 func TestChangePushFetchAndAheadBehind(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := bareRemote(t)
@@ -82,6 +83,7 @@ func TestChangePushFetchAndAheadBehind(t *testing.T) {
 }
 
 func TestDiscardRestoresOnlyTheNamedFiles(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -135,6 +137,7 @@ func TestDiscardRestoresOnlyTheNamedFiles(t *testing.T) {
 }
 
 func TestDiscardNeverFollowsASymlinkOutOfTheTree(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -155,6 +158,7 @@ func TestDiscardNeverFollowsASymlinkOutOfTheTree(t *testing.T) {
 }
 
 func TestRewrittenHistoryAndAccept(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := bareRemote(t)
@@ -240,6 +244,7 @@ func TestRewrittenHistoryAndAccept(t *testing.T) {
 }
 
 func TestTouchesOutside(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -264,6 +269,7 @@ func TestTouchesOutside(t *testing.T) {
 }
 
 func TestErrorsAreScrubbed(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"fatal: unable to access 'https://user:s3cret@github.com/a/b.git/': error": "https://github.com/a/b.git",
 		"remote: token ghp_abcdef rejected":                                        "remote: token *** rejected",
@@ -278,6 +284,7 @@ func TestErrorsAreScrubbed(t *testing.T) {
 // A path is taken literally. Read as a pattern, "[ab].md" would also match
 // "a.md" and "b.md" and sweep them into the commit.
 func TestPathsAreNotPatterns(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	r := newClone(t, bareRemote(t), nil)
 	write(t, r.Dir(), "a.md", "a1\n")
@@ -310,6 +317,7 @@ func TestPathsAreNotPatterns(t *testing.T) {
 // system that ignores case the two names are one file, and the undo must end
 // with it there, not deleted.
 func TestDiscardOfACaseOnlyRenameKeepsTheFile(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -361,6 +369,7 @@ func tree(t testing.TB, r *Repo) string {
 // An ordinary rename (file and folder) is committed as one: the old names go
 // and the new ones come, on any file system.
 func TestRenameIsCommitted(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	r := newClone(t, bareRemote(t), nil)
 	write(t, r.Dir(), "apple.md", "fruit\n")
@@ -383,6 +392,7 @@ func TestRenameIsCommitted(t *testing.T) {
 // spelling it knows unless the old one is taken out first: the commit must
 // hold the new names and only them.
 func TestRenameByCaseIsCommitted(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -431,6 +441,7 @@ func TestRenameByCaseIsCommitted(t *testing.T) {
 // rename is committed like any change, and theirs stays staged and
 // uncommitted.
 func TestRenameByCaseLeavesForeignStagedChangesAlone(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	r := newClone(t, bareRemote(t), nil)
 	write(t, r.Dir(), "Apple.md", "fruit\n")
@@ -453,6 +464,7 @@ func TestRenameByCaseLeavesForeignStagedChangesAlone(t *testing.T) {
 // Renamed by case and rewritten in the same change: to Git a deletion and a
 // new file. Later changes of the file, and deleting it, commit as usual.
 func TestRenameByCaseWithNewContent(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -485,6 +497,7 @@ func TestRenameByCaseWithNewContent(t *testing.T) {
 // for letter in lower case: ß and ss, the Greek sigmas. Whatever the disk
 // thinks, the commit has the new names and only them.
 func TestRenameAcrossUnicodeFolds(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	for _, c := range [][2]string{{"Straße", "Strasse"}, {"ΟΔΟΣ", "οδος"}, {"Ünïcode", "ünïcode"}} {
@@ -519,6 +532,7 @@ func TestRenameAcrossUnicodeFolds(t *testing.T) {
 // A directory of the change that cannot be listed is an error, not a
 // deletion of everything in it.
 func TestCommitDoesNotTakeAnUnreadableDirectoryForAnEmptyOne(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	if os.Getuid() == 0 {
 		t.Skip("root reads everything")

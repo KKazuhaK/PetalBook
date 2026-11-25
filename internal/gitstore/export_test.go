@@ -14,6 +14,7 @@ import (
 // An export reads a repository: the files of a commit as a tar, and the whole
 // history as a bundle. The runner allows those two shapes and no other.
 func TestArchiveAndBundleReadARepository(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	dir := t.TempDir()
 	ctx := context.Background()

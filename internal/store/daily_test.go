@@ -12,6 +12,7 @@ import (
 )
 
 func TestSiteSettings(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if _, ok, err := store.GetSiteSetting(ctx, st.Q(), "daily"); ok || err != nil {
 			t.Fatalf("%v %v", ok, err)
@@ -31,6 +32,7 @@ func TestSiteSettings(t *testing.T) {
 }
 
 func TestDailyLines(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		replace := func(lang string, bodies ...string) (int, error) {
 			var total int
@@ -99,6 +101,7 @@ func TestDailyLines(t *testing.T) {
 }
 
 func TestSpaceDailyChoice(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkSpace(t, st, "S1", "one")
 		d, err := store.GetSpaceDaily(ctx, st.Q(), "S1")
@@ -126,6 +129,7 @@ func TestSpaceDailyChoice(t *testing.T) {
 }
 
 func TestDailyCache(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		at := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
 		put := func(key, lang, period string, skip int, body string, when time.Time) {
@@ -197,6 +201,7 @@ func TestDailyCache(t *testing.T) {
 // A setting is locked for the rest of a transaction: concurrent changes that
 // read, change and write it lose nothing.
 func TestLockSiteSetting(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		const n = 8
 		errs := make(chan error, n)
@@ -227,6 +232,7 @@ func TestLockSiteSetting(t *testing.T) {
 }
 
 func TestCompareAndSetSiteSetting(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q, now := st.Q(), time.Now()
 		if ok, err := store.CompareAndSetSiteSetting(ctx, q, "k", "a", "b", now); err != nil || ok {
@@ -249,6 +255,7 @@ func TestCompareAndSetSiteSetting(t *testing.T) {
 }
 
 func TestSpaceChoiceKeepsItsOptionsAndSources(t *testing.T) {
+	t.Parallel()
 	c := store.ParseSpaceChoice(`{"apis":["a","b"]}`)
 	if len(c.APIs) != 2 || c.Options != nil || c.JSON() != `{"apis":["a","b"]}` {
 		t.Fatalf("%+v %s", c, c.JSON())

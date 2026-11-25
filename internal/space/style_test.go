@@ -9,6 +9,7 @@ import (
 )
 
 func TestFolderStyleFollowsTheFolderInTheSameCommit(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "随笔/2026", meta("title", "A"), "x\n")
 	if _, err := s.SetFolderStyle(Author{}, "随笔/2026", "book-open", "teal"); err != nil {
@@ -51,6 +52,7 @@ func TestFolderStyleFollowsTheFolderInTheSameCommit(t *testing.T) {
 }
 
 func TestFolderStyleIsRemovedWithTheFolderAndChecked(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "A", meta("title", "A"), "x\n")
 	if _, err := s.SetFolderStyle(Author{}, "A", "star", "red"); err != nil {
@@ -71,6 +73,7 @@ func TestFolderStyleIsRemovedWithTheFolderAndChecked(t *testing.T) {
 }
 
 func TestPageIconAndColorAreKeptInTheHeader(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "A", "icon", "flower", "color", "pink"), "x\n")
 	if p.Meta.Icon() != "flower" || p.Meta.Color() != "pink" {
@@ -91,6 +94,7 @@ func TestPageIconAndColorAreKeptInTheHeader(t *testing.T) {
 }
 
 func TestSourcePresetsAreKeptInSpaceYml(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, set := s.SourcePresets(); set {
 		t.Fatal("a new space chooses none")
@@ -111,6 +115,7 @@ func TestSourcePresetsAreKeptInSpaceYml(t *testing.T) {
 }
 
 func TestSourceFilterAndUsedSources(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "", meta("title", "A", "source", []any{"书", "电影"}), "x\n")
 	mustCreate(t, s, "", meta("title", "B", "source", "书"), "x\n") // written by hand as one text
@@ -146,6 +151,7 @@ func TestSourceFilterAndUsedSources(t *testing.T) {
 }
 
 func TestRenameTypeFieldRewritesTheTypeAndItsPagesInOneCommit(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	writeType(t, s.Root(), "task", `{"title":"Task","properties":{"status":{"type":"string"},"due":{"type":"string"}}}`)
 	mustCreate(t, s, "Work", meta("title", "A", "type", "task", "status", "open", "due", "2026-11-30"), "x\n")
@@ -197,6 +203,7 @@ func TestRenameTypeFieldRewritesTheTypeAndItsPagesInOneCommit(t *testing.T) {
 }
 
 func TestATypeGivesItsPagesADefaultIcon(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	icon, color := "book-open", "teal"
 	ti, err := s.PutType(Author{}, "poem", "", TypeInput{Title: "Poem", Icon: &icon, Color: &color})

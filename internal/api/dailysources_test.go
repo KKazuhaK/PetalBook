@@ -21,6 +21,7 @@ func (x *extFixture) setSources(sources map[string]any) (int, map[string]any) {
 }
 
 func TestLinesKeepTheirAuthorAndSource(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.putLines("", "人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nThe best way out is always through. — Robert Frost\nI think — therefore I am\nPlain line\nWith tab\tA Book", "lines")
@@ -62,6 +63,7 @@ func TestLinesKeepTheirAuthorAndSource(t *testing.T) {
 }
 
 func TestSourcesOfSeveralKindsTakeTurnsAndFallBack(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		svc := &twoServices{}
@@ -128,6 +130,7 @@ func TestSourcesOfSeveralKindsTakeTurnsAndFallBack(t *testing.T) {
 }
 
 func TestFallbackFromAnInterfaceToOurLines(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		svc := &twoServices{}
@@ -156,6 +159,7 @@ func TestFallbackFromAnInterfaceToOurLines(t *testing.T) {
 }
 
 func TestSourcesAreChecked(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -206,6 +210,7 @@ func TestSourcesAreChecked(t *testing.T) {
 // A space lists sources of several kinds as the other layers do: its own pages, the
 // administrators' lines, an interface with options. Old choices (a list of ids) read as before.
 func TestASpaceListsSourcesOfSeveralKinds(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		svc := &twoServices{}
@@ -286,6 +291,7 @@ func TestASpaceListsSourcesOfSeveralKinds(t *testing.T) {
 // "Another" starts after the source that answered, not after the one the day started with: when
 // the first of the day failed, the first "another" must not show what is already there.
 func TestAnotherFollowsTheSourceThatAnswered(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		svc := &twoServices{}
@@ -312,6 +318,7 @@ func TestAnotherFollowsTheSourceThatAnswered(t *testing.T) {
 // An interface the administrators switched off stays in what the space chose, marked, and a save
 // from the settings page keeps it; one that no longer exists is left out, and the answer says so.
 func TestASpacesSwitchedOffInterfaceIsKeptAndMarked(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -355,6 +362,7 @@ func TestASpacesSwitchedOffInterfaceIsKeptAndMarked(t *testing.T) {
 }
 
 func TestAChosenInterfaceThatIsGoneIsToldAndNothingElseIsPicked(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -395,6 +403,7 @@ func TestAChosenInterfaceThatIsGoneIsToldAndNothingElseIsPicked(t *testing.T) {
 // A bilingual interface serves the two languages it has, one text for each; a reader of another
 // language is not given the Chinese side, and the next source answers.
 func TestABilingualInterfaceSkipsLanguagesItDoesNotServe(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -435,6 +444,7 @@ func TestABilingualInterfaceSkipsLanguagesItDoesNotServe(t *testing.T) {
 // The daily text is in the reader's language only: no source for it, no text, and the lines or
 // interfaces of another language are not given in its place.
 func TestNoTextInAnotherLanguage(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -477,6 +487,7 @@ func TestNoTextInAnotherLanguage(t *testing.T) {
 // Hitokoto has Chinese only: it is never put under another language, and under "all other languages"
 // it is not used for an English reader.
 func TestHitokotoIsNeverUsedForEnglish(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})

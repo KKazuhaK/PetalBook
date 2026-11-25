@@ -15,6 +15,7 @@ import (
 // before found writes the queue's row and nothing else; the tenant's row is never
 // stamped, its time is read from the queue.
 func TestMeasurementQueue(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 		q := st.Q()
@@ -131,6 +132,7 @@ func TestMeasurementQueue(t *testing.T) {
 
 // The queue's two questions and the tenant's time are lookups of its indexes.
 func TestMeasurementQueueUsesItsIndexes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now().UnixMilli()
 		const n = 3000
@@ -173,6 +175,7 @@ func TestMeasurementQueueUsesItsIndexes(t *testing.T) {
 // A measurement that failed moves the space to the back of the queue and is not
 // a measurement: the tenant's time (and the scope's) stays where it was.
 func TestFailedMeasurementIsNotCounted(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 		q := st.Q()

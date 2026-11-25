@@ -7,6 +7,7 @@ import (
 
 // The token is configured for the remote's own scheme and host only.
 func TestTokenIsScopedToTheRemoteHost(t *testing.T) {
+	t.Parallel()
 	env, _, cleanup, err := Token{Username: "u", URL: "https://Git.Example.com/a/b.git", Get: func() (string, error) { return "s3cret", nil }}.prepare()
 	if err != nil {
 		t.Fatal(err)

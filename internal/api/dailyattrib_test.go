@@ -3,6 +3,7 @@ package api
 import "testing"
 
 func TestParseAttribution(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ in, text, author, source string }{
 		{"人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》", "人到情多情转薄，而今真个不多情。", "纳兰性德", "山花子"},
 		{"The best way out is always through. — Robert Frost", "The best way out is always through.", "Robert Frost", ""},

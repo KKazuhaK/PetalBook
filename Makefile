@@ -47,8 +47,14 @@ GOTEST_TIMEOUT ?= 30m
 # smaller size there (see raceDetector in internal/index and internal/space).
 # PKGS narrows the run; CI's go job splits the packages into four groups.
 PKGS ?= ./cmd/... ./internal/...
+# The race detector also turns on checkptr, which checks every unsafe pointer
+# conversion. modernc.org/sqlite is C translated to Go and does pointer
+# arithmetic on almost every line, so checkptr there took about half the CPU of
+# a whole test run. It is turned off for modernc.org packages only: our own code
+# keeps checkptr, and memory accesses inside SQLite are still race-checked.
+RACEFLAGS := -race -gcflags=modernc.org/...=-d=checkptr=0
 test:
-	go test -race -timeout $(GOTEST_TIMEOUT) $(PKGS)
+	go test $(RACEFLAGS) -timeout $(GOTEST_TIMEOUT) $(PKGS)
 
 # The full-size stress tests: index and space use a smaller size under -race
 # (raceDetector), so this runs them without it. Main runs it in the compat job.

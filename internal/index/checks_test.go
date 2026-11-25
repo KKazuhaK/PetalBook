@@ -74,6 +74,7 @@ func detailOf(t *testing.T, c Check) map[string]any {
 }
 
 func TestCheckKindsOfFilesThatAreNotPages(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	m := newMem()
 	m.put("noid.md", "---\ntitle: x\n---\nbody\n")
@@ -161,6 +162,7 @@ func TestCheckKindsOfFilesThatAreNotPages(t *testing.T) {
 }
 
 func TestCheckTypeMismatchAndNotInType(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	x.UseTypes(poemRules("a"))
 	m := newMem()
@@ -239,6 +241,7 @@ func TestCheckTypeMismatchAndNotInType(t *testing.T) {
 }
 
 func TestCheckStrayFieldsOfADoc(t *testing.T) {
+	t.Parallel()
 	rule := &TypeRule{Fields: map[string]FieldRule{"status": {Kind: FieldText}}}
 	doc := page.Parse([]byte(page8("0000000001", "T", "status: a\ncolour: red\nslug: s\nobj:\n  a: 1\nnone:\n", "x")))
 	if got := fmt.Sprint(StrayFields(doc, rule)); got != "[colour obj]" {
@@ -250,6 +253,7 @@ func TestCheckStrayFieldsOfADoc(t *testing.T) {
 }
 
 func TestCheckMissingAssets(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	have := map[string]bool{"assets/0000000001/a.png": true}
 	x.SetAssetExists(func(rel string) bool { return have[rel] })
@@ -291,6 +295,7 @@ func TestCheckMissingAssets(t *testing.T) {
 }
 
 func TestCheckDuplicateTitles(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	m := newMem()
 	m.put("a/one.md", page8("0000000001", "Same", "", "x"))
@@ -343,6 +348,7 @@ func TestCheckDuplicateTitles(t *testing.T) {
 }
 
 func TestCheckListingPagesAndOrder(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	x.UseTypes(poemRules("a"))
 	m := newMem()
@@ -421,6 +427,7 @@ func kindRank(k string) int {
 }
 
 func TestCheckRowsFollowAPageThatMoves(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	x.UseTypes(poemRules("a"))
 	m := newMem()
@@ -455,6 +462,7 @@ func brokenOf(t *testing.T, x *Index) []string {
 }
 
 func TestCheckBrokenLinksFollowTheLinksIndex(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	m := newMem()
 	m.put("a.md", page8("0000000001", "A", "", "x\n"))

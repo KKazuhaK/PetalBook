@@ -12,6 +12,7 @@ import (
 // a remote with its deadlines, the filters of the administration's list, the
 // sums of the status and the candidates of the eviction.
 func TestStoragePolicyQueries(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q := st.Q()
 		day := 24 * time.Hour

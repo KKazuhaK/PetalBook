@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
@@ -189,10 +190,17 @@ func (g *gitRepo) r() *gitstore.Repo {
 	return g.repo
 }
 
+// gitObserver, if set, is called with the directory and arguments of every git
+// command of every space before it runs. Tests use it to count commands.
+var gitObserver atomic.Pointer[func(dir string, args []string)]
+
 // hookRunner calls the test hook and then the real runner.
 type hookRunner struct{ g *gitRepo }
 
 func (h hookRunner) Run(ctx context.Context, c gitstore.Cmd) (string, string, error) {
+	if f := gitObserver.Load(); f != nil {
+		(*f)(c.Dir, c.Args)
+	}
 	if h.g.before != nil {
 		sub, rest := gitstore.Subcommand(c.Args)
 		h.g.before(append([]string{sub}, rest...))

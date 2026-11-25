@@ -69,6 +69,7 @@ func (x *extFixture) enableAll() {
 }
 
 func TestSeveralInterfacesTakeTurnsByDay(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -101,6 +102,7 @@ func TestSeveralInterfacesTakeTurnsByDay(t *testing.T) {
 }
 
 func TestAnInterfaceThatFailsIsPassedOverForTheNext(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		svc := &twoServices{}
@@ -142,6 +144,7 @@ func TestAnInterfaceThatFailsIsPassedOverForTheNext(t *testing.T) {
 }
 
 func TestADefaultOfOneInterfaceIsAListOfOne(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})
@@ -165,6 +168,7 @@ func TestADefaultOfOneInterfaceIsAListOfOne(t *testing.T) {
 
 // A space's own list takes the turns too, and each interface keeps its own options; the lock keeps it unused.
 func TestSeveralInterfacesInASpaceAndTheLock(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&twoServices{})

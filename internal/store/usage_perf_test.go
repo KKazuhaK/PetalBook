@@ -14,6 +14,7 @@ import (
 // timings (the design notes quote them): set PETALBOOK_PERF=1 to run it, on
 // SQLite and, with scripts/test-postgres.sh, on PostgreSQL.
 func TestUsageCosts(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("PETALBOOK_PERF") == "" {
 		t.Skip("set PETALBOOK_PERF=1 to measure")
 	}

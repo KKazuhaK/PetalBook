@@ -69,6 +69,7 @@ func quoteText(r map[string]any) string {
 }
 
 func TestDailyFromTheAdministrators(t *testing.T) {
+	t.Parallel()
 	qs := newQuoteServer(t)
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// Each database gets a fetcher, a clock and a count of its own.
@@ -249,6 +250,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 
 // Without accounts there are no administrators, so no settings of theirs.
 func TestSingleUserHasNoSiteDailySettings(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for _, c := range [][2]string{{"GET", "/api/admin/daily"}, {"PUT", "/api/admin/daily"}, {"PUT", "/api/admin/daily/lines"}, {"PUT", "/api/admin/daily/apis/x"}, {"POST", "/api/admin/daily/try"}, {"GET", base + "/daily/prefs"}, {"PUT", base + "/daily/prefs"}} {
 		if code, r, raw := f.do(c[0], c[1], "{}"); code != 404 || r["error"] != "not_found" {
@@ -265,6 +267,7 @@ func TestSingleUserHasNoSiteDailySettings(t *testing.T) {
 }
 
 func TestDailyLangIsChecked(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	for _, l := range []string{"中文", "x", "en_US", "toolongcode", "en-", "cn", "english", "zh_CN"} {
 		if code, _, raw := f.do("GET", base+"/daily?date=2026-11-23&lang="+url.QueryEscape(l), nil); code != 400 || !strings.Contains(raw, `"bad_language"`) {
@@ -280,6 +283,7 @@ func TestDailyLangIsChecked(t *testing.T) {
 
 // A space's source per language, through the API.
 func TestDailySettingsPerLanguageThroughTheAPI(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	c := asFixture(f)
 	for _, p := range []struct{ folder, title string }{{"zh", "中文"}, {"en", "English"}} {
@@ -365,6 +369,7 @@ func (x *extFixture) choose(ids ...string) {
 }
 
 func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		qs := x.qs
@@ -513,6 +518,7 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 }
 
 func TestAdministratorsTryAnInterface(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		qs := x.qs
@@ -640,6 +646,7 @@ func TestAdministratorsTryAnInterface(t *testing.T) {
 
 // Administrators who save at the same moment each keep their change.
 func TestAdministratorsSaveAtOnce(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		const n = 8
@@ -672,6 +679,7 @@ func TestAdministratorsSaveAtOnce(t *testing.T) {
 // The browser is told to ask every time, so a change of what the administrators
 // chose is seen at once: the ETag it holds from before no longer matches.
 func TestDailyDefaultChangeIsSeenThroughTheETag(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		// The space's owner writes the pages: an administrator who is not a
@@ -723,6 +731,7 @@ func TestDailyDefaultChangeIsSeenThroughTheETag(t *testing.T) {
 // The server is the only one to ask, once for each period, keeps it in memory and in
 // the database, and uses the last thing said when the interface fails.
 func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		qs := x.qs
@@ -885,6 +894,7 @@ func TestExternalInterfacesAreCachedAndFallBack(t *testing.T) {
 }
 
 func TestExternalRefreshIntervalAndRateLimit(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		qs := x.qs
@@ -943,6 +953,7 @@ func TestExternalRefreshIntervalAndRateLimit(t *testing.T) {
 
 // The real fetcher, with the rules it keeps whatever an administrator types.
 func TestPrivateAddressesAreNeverConfigured(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		boss := asClient(a.setup("kazuha", pw))
 		put := func(url string) (int, map[string]any) {
@@ -970,6 +981,7 @@ func TestPrivateAddressesAreNeverConfigured(t *testing.T) {
 // --- what the administrators let the spaces do ----------------------------------------------
 
 func TestDailyAdminLocks(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		day := "date=2026-11-23&lang=en"
 		origin := func() string { return quoteOf(t, x.viewer, x.base, day)["origin"].(string) }
@@ -1124,6 +1136,7 @@ func TestDailyAdminLocks(t *testing.T) {
 // header), and not through a path, a trial or the readers' daily text when
 // the service the key is for says it back itself.
 func TestAKeptKeyCannotBeReadBack(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		const key = "Bearer sk-live-0123456789abcdef"

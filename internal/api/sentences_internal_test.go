@@ -8,6 +8,7 @@ import (
 
 // Whatever a message was made from, it leaves as a sentence.
 func TestErrorsLeaveAsSentences(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"No such page.":            "No such page.",
 		"bad input":                "bad input.",

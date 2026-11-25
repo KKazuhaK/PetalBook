@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,7 +27,38 @@ func mustDaily(t *testing.T, s *Space, spaceID, date string, skip int) *DailyPic
 	return p
 }
 
+// askMany asks for n daily texts, ask(i) giving the day and skip of the i-th, from
+// several goroutines at once; each must be answered.
+func askMany(t *testing.T, s *Space, n int, ask func(i int) (string, int)) {
+	t.Helper()
+	var wg sync.WaitGroup
+	next := make(chan int)
+	errs := make(chan error, n)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				date, skip := ask(i)
+				if p, none, err := s.DailyText("S", date, skip, ""); err != nil || p == nil {
+					errs <- fmt.Errorf("daily %s/%d: %v %v", date, skip, none, err)
+				}
+			}
+		}()
+	}
+	for i := range n {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
 func TestDailyIsTheSameForADayAndMovesWithTheDayAndSkip(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	ids := map[string]bool{}
 	for i := 0; i < 7; i++ {
@@ -82,6 +114,7 @@ func TestDailyIsTheSameForADayAndMovesWithTheDayAndSkip(t *testing.T) {
 }
 
 func TestDailyKeepsTheDaysPickWhilePagesComeAndGo(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for i := 0; i < 5; i++ {
 		mustCreate(t, s, "f", meta("title", fmt.Sprint("p", i)), "x\n")
@@ -133,6 +166,7 @@ func TestDailyKeepsTheDaysPickWhilePagesComeAndGo(t *testing.T) {
 // Readers asking for many other texts, or for many other days, never push
 // today's shared pick out of the memory; skip has a sane bound.
 func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for i := 0; i < 5; i++ {
 		mustCreate(t, s, "f", meta("title", fmt.Sprint("p", i)), "x\n")
@@ -145,12 +179,10 @@ func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
 	s.daily.today = func() time.Time { return today }
 	s.dailyMu.Unlock()
 	was := mustDaily(t, s, "S", "2026-11-23", 0)
-	for skip := 1; skip <= maxDailySkip; skip++ {
-		mustDaily(t, s, "S", "2026-11-23", skip)
-	}
-	for d := 0; d < 3*dailyMemoMax; d++ {
-		mustDaily(t, s, "S", today.AddDate(0, 0, -2-d).Format("2006-01-02"), 0)
-	}
+	// Every ask is made, from several readers at once: the memo drops picks by their
+	// distance from today, not by the order they came in.
+	askMany(t, s, maxDailySkip, func(i int) (string, int) { return "2026-11-23", i + 1 })
+	askMany(t, s, 3*dailyMemoMax, func(i int) (string, int) { return today.AddDate(0, 0, -2-i).Format("2006-01-02"), 0 })
 	s.dailyMu.Lock()
 	kept := false
 	for k, e := range s.daily.shared {
@@ -169,6 +201,7 @@ func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
 }
 
 func TestDailyBodyIsCutAt2000Characters(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "f", meta("title", "long"), strings.Repeat("字", 2001))
 	if _, err := s.SetDaily(Author{}, dailyFolder(s, "f")); err != nil {
@@ -181,6 +214,7 @@ func TestDailyBodyIsCutAt2000Characters(t *testing.T) {
 }
 
 func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -221,6 +255,7 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 }
 
 func TestDailyTypeCountsTheFoldersBoundToIt(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
 		t.Fatal(err)
@@ -267,6 +302,7 @@ func TestDailyTypeCountsTheFoldersBoundToIt(t *testing.T) {
 }
 
 func TestDailySourceInTheSettingsFile(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -331,6 +367,7 @@ func TestDailySourceInTheSettingsFile(t *testing.T) {
 }
 
 func TestDailyIsRefusedWhenNotMade(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "f", meta("title", "P"), "x\n")
 	tooMany := make([]ViewFilter, index.MaxViewFilters+1)
@@ -361,6 +398,7 @@ func TestDailyIsRefusedWhenNotMade(t *testing.T) {
 }
 
 func TestDailyConfigByLanguage(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -478,6 +516,7 @@ func mustDailyLang(t *testing.T, s *Space, lang string) *DailyPick {
 }
 
 func TestDailyConfigJSON(t *testing.T) {
+	t.Parallel()
 	var c DailyConfig
 	for in, ok := range map[string]bool{
 		`{"folder":"a"}`:                         true,
@@ -500,6 +539,7 @@ func TestDailyConfigJSON(t *testing.T) {
 }
 
 func TestDailyLanguagesAreBCP47Tags(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -557,6 +597,7 @@ func TestDailyLanguagesAreBCP47Tags(t *testing.T) {
 // is written back with one key: the entry under the canonical key stays, the
 // other spelling goes.
 func TestDailyTwoSpellingsOfALanguageAreMergedOnSave(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -587,6 +628,7 @@ func TestDailyTwoSpellingsOfALanguageAreMergedOnSave(t *testing.T) {
 // cannot is dropped and named, and the rest is kept.
 // A pick says who wrote the page and where it is from, only when the page does.
 func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "有", meta("title", "山花子", "author", "纳兰性德", "source", "纳兰词"), "人到情多情转薄\n")
 	mustCreate(t, s, "没有", meta("title", "无名"), "只有正文\n")
@@ -609,6 +651,7 @@ func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
 // A source by language is for that language (matched the BCP 47 way) or for all the others, and for no other:
 // a reader of a language with none gets nothing, not the first source there is.
 func TestDailyConfigHasNoFallbackToAnotherLanguage(t *testing.T) {
+	t.Parallel()
 	folder := "x"
 	zh := DailySource{Folder: &folder}
 	only := DailyConfig{ByLang: map[string]DailySource{"zh-Hans": zh}}

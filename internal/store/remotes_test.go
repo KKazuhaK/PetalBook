@@ -9,6 +9,7 @@ import (
 )
 
 func TestRemotes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		now := time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
@@ -81,6 +82,7 @@ func TestRemotes(t *testing.T) {
 // The upsert and the clearing of the reminders are one step: when the second
 // fails, the row is not left changed.
 func TestPutRemoteIsAtomic(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
 		if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S1", "S1", "", "", now); err != nil {

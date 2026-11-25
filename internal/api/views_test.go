@@ -441,6 +441,7 @@ func TestAViewIsWrittenWithEveryKey(t *testing.T) {
 // A body of many tiny views is refused before they are all built: the body is
 // capped to what the limits allow, and the list is read until the first one
 // beyond the most a folder may have.
+// Not parallel: it measures the memory of the whole process.
 func TestAViewsRequestIsBoundedBeforeItIsBuilt(t *testing.T) {
 	f := newFixture(t)
 	f.do("POST", base+"/folders", map[string]any{"path": "F"})

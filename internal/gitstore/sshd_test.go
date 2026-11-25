@@ -117,6 +117,7 @@ func (s *testSSHD) stop() {
 }
 
 func TestSSHEndToEnd(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	if _, err := exec.LookPath("ssh"); err != nil {
 		t.Skip("ssh is not installed")

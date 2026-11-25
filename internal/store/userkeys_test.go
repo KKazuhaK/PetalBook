@@ -19,6 +19,7 @@ import (
 // and the address, and the searches and lookups read them: both databases find
 // the same people, whatever their idea of lower case.
 func TestPeopleAreFoundByTheirKeys(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		q := st.Q()
@@ -106,6 +107,7 @@ func TestPeopleAreFoundByTheirKeys(t *testing.T) {
 // Every statement of the package that writes users.name or users.email writes
 // the key that goes with it (name_key, email_key) in the same statement.
 func TestEveryWriteOfANameOrAnAddressWritesItsKey(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
 	if err != nil {

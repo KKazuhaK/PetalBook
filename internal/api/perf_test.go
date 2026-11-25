@@ -12,6 +12,7 @@ import (
 // (opening a space), the two places the contract says tenants add nothing. It
 // prints ns/op and allocs/op; set PETALBOOK_PERF=1 to run it, on this tree and
 // on the one before tenants, and compare.
+// Not parallel: it is a measurement of cost, which other tests running would distort.
 func TestPerRequestCostOfOneTenant(t *testing.T) {
 	if os.Getenv("PETALBOOK_PERF") == "" {
 		t.Skip("set PETALBOOK_PERF=1 to measure")

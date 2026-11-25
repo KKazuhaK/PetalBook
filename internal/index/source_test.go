@@ -6,6 +6,7 @@ import (
 )
 
 func TestSourceIsIndexedAndSearchable(t *testing.T) {
+	t.Parallel()
 	data := []byte("---\nid: 01JD3K8Q7Z\ntitle: 暮雪\nsource: 《雪国》第三章\n---\n正文。\n")
 	e, p := BuildEntry("暮雪.md", data, 1)
 	if p != nil {
@@ -21,6 +22,7 @@ func TestSourceIsIndexedAndSearchable(t *testing.T) {
 }
 
 func TestSourcesAreAListLikeTags(t *testing.T) {
+	t.Parallel()
 	data := []byte("---\nid: 01JD3K8Q7Z\ntitle: x\nsource: [书, 电影, 书]\n---\nb\n")
 	e, p := BuildEntry("x.md", data, 1)
 	if p != nil {

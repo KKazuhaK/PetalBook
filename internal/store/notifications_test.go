@@ -21,6 +21,7 @@ func notify(t *testing.T, st *store.Store, user, kind, ref string, at time.Time)
 }
 
 func TestNotificationsListNewestFirstInPages(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -62,6 +63,7 @@ func TestNotificationsListNewestFirstInPages(t *testing.T) {
 }
 
 func TestNotificationsReadStateAndTheUnreadCount(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -114,6 +116,7 @@ func TestNotificationsReadStateAndTheUnreadCount(t *testing.T) {
 }
 
 func TestNotificationKindsAreARegistry(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		for _, k := range []string{"", "bogus", store.NotifyProblems} {
@@ -148,6 +151,7 @@ func TestNotificationKindsAreARegistry(t *testing.T) {
 }
 
 func TestTheSeenCursorOfADerivedNotification(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -181,6 +185,7 @@ func TestTheSeenCursorOfADerivedNotification(t *testing.T) {
 }
 
 func TestTrimNotificationsKeepsTheRecentAndTheUnread(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		now := time.Date(2026, 11, 24, 8, 0, 0, 0, time.UTC)
@@ -217,6 +222,7 @@ func TestTrimNotificationsKeepsTheRecentAndTheUnread(t *testing.T) {
 }
 
 func TestNotificationQueriesUseTheirIndexes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		// Many people, most of what they have read: the shape the indexes are for.
@@ -245,6 +251,7 @@ func TestNotificationQueriesUseTheirIndexes(t *testing.T) {
 }
 
 func TestADeletedPersonTakesTheirNotificationsAlong(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		notify(t, st, "A", store.NotifyInvite, "1", time.Now())

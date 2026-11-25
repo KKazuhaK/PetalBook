@@ -129,6 +129,7 @@ func TestTemplateCopiesHaveTheirOwnMeta(t *testing.T) {
 // Places of one new path at once: the file is put there whole by one of them,
 // and no other file is left beside it. (The losers find the winner's file.)
 func TestPlaceIsAtomic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	data := []byte("0123456789")
 	target := filepath.Join(dir, "x.db")

@@ -340,6 +340,7 @@ func init() {
 }
 
 func TestEveryRouteIsInTheIsolationTable(t *testing.T) {
+	t.Parallel()
 	seen := map[string]bool{}
 	for _, r := range api.Routes() {
 		key := r.Method + " " + r.Pattern

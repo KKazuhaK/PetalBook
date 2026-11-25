@@ -70,6 +70,7 @@ func spaceRow(t *testing.T, st *store.Store, id string) store.AdminSpace {
 // controller's); the counted bytes follow the remote as it comes and goes, and the
 // rows agree with the recount at every step.
 func TestUsageCountsWhereTheStorageLives(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -193,6 +194,7 @@ func mkSameTenantUser(t *testing.T, st *store.Store, id, tenant string) {
 // A person is dormant until they change something, connect an account or follow a
 // remote; the tenant counts them, and the recount agrees.
 func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -285,6 +287,7 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 
 // A person's last use is written at most once an hour, from memory.
 func TestLastActiveIsWrittenOnceAnHour(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		t0 := time.Now().Truncate(time.Millisecond)
@@ -316,6 +319,7 @@ func TestLastActiveIsWrittenOnceAnHour(t *testing.T) {
 // The counts of spaces in their grace period and past it are set from the policy and
 // agree with what the list's filter says.
 func TestSettleDeadlinesAgreesWithTheFilter(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -548,6 +552,7 @@ func idsOf(rows []store.AdminSpace) string {
 // Every sort, both orders, any page size: each space once, in the order the sort
 // says, the ones without a value last, whatever the ties.
 func TestSpaceListPagesByKeysetInEverySort(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		fx := listFixture(t, st)
 		sc := store.InTenant(tenA)
@@ -619,6 +624,7 @@ func derefOr(p *int64) int64 {
 
 // A cursor of one sort or order is no cursor of another, and unknown values are refused.
 func TestSpaceListRefusesWhatItDoesNotKnow(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		listFixture(t, st)
 		sc := store.InTenant(tenA)
@@ -648,6 +654,7 @@ func TestSpaceListRefusesWhatItDoesNotKnow(t *testing.T) {
 // A page of a list is not changed by spaces made, renamed or removed while someone
 // pages through it: every space that was there throughout is listed exactly once.
 func TestCursorStaysStableWhileSpacesAreInsertedAndRemoved(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		fx := listFixture(t, st)
 		sc := store.InTenant(tenA)
@@ -725,6 +732,7 @@ func TestCursorStaysStableWhileSpacesAreInsertedAndRemoved(t *testing.T) {
 
 // Each filter keeps exactly what it says, and they combine.
 func TestSpaceListFilters(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		fx := listFixture(t, st)
 		sc := store.InTenant(tenA)
@@ -794,6 +802,7 @@ func TestSpaceListFilters(t *testing.T) {
 // A list of one tenant never holds another's, a tenant administrator's scope leaves
 // out personal spaces, and a site administrator's does not.
 func TestListsAreScopedAndHidePersonalSpaces(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		listFixture(t, st)
 		now := time.Now()
@@ -852,6 +861,7 @@ func TestListsAreScopedAndHidePersonalSpaces(t *testing.T) {
 // The people's list: its sorts, its filters, a deleted person left out, and the
 // ones never active last.
 func TestPeopleListSortsFiltersAndPages(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -999,6 +1009,7 @@ func deleteSpace(st *store.Store, id string) error {
 // order, leaves the counters where the daily recount would put them: the
 // differences added along the way and the recount from the rows agree.
 func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -1095,6 +1106,7 @@ func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
 // folded again: a key that differs from the fold (an older folding, a repair)
 // still pages in order, with nothing skipped or shown twice.
 func TestTheNameCursorIsTheStoredKey(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		for id, name := range map[string]string{"S1": "Zed", "S2": "Bee", "S3": "Cee"} {
 			mkSpace(t, st, id, name)
@@ -1128,6 +1140,7 @@ func TestTheNameCursorIsTheStoredKey(t *testing.T) {
 // The recount that finds a space back on the server counts its last measurement
 // again, as the change of the remote does.
 func TestTheRecountRefillsTheBytesOfASpaceBackOnTheServer(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		putRemote(t, st, "Sa", "ok")
@@ -1156,6 +1169,7 @@ func TestTheRecountRefillsTheBytesOfASpaceBackOnTheServer(t *testing.T) {
 // locked before the connections are looked at, so the later one sees the
 // earlier one's change.
 func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()

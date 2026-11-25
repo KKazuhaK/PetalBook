@@ -38,6 +38,9 @@ func plansOf(t *testing.T, x *Index, f func()) []queryPlan {
 	return newPlansOf(t, x, map[string]bool{}, f)
 }
 
+// seenMu guards the maps of queries seen, which tests may share between goroutines.
+var seenMu sync.Mutex
+
 // newPlansOf is plansOf for the queries that are not in seen, which it adds
 // them to.
 func newPlansOf(t *testing.T, x *Index, seen map[string]bool, f func()) []queryPlan {
@@ -46,15 +49,14 @@ func newPlansOf(t *testing.T, x *Index, seen map[string]bool, f func()) []queryP
 		query string
 		args  []any
 	}
-	var mu sync.Mutex
 	var all []ran
 	x.trace = func(query string, args []any) {
-		mu.Lock()
+		seenMu.Lock()
 		if !seen[query] {
 			seen[query] = true
 			all = append(all, ran{query, args})
 		}
-		mu.Unlock()
+		seenMu.Unlock()
 	}
 	f()
 	x.trace = nil
@@ -86,7 +88,6 @@ func newPlansOf(t *testing.T, x *Index, seen map[string]bool, f func()) []queryP
 // or scanned comes out of its index already in order.
 func TestEveryQueryOfAListingOrACountReadsAnIndexRange(t *testing.T) {
 	t.Parallel()
-	x := equivIndex(t, rand.New(rand.NewSource(3)), 220)
 	f := func(key, op string, v ...any) Filter { return Filter{Key: key, Op: op, Values: v} }
 	many := make([]any, 100)
 	for i := range many {
@@ -105,7 +106,76 @@ func TestEveryQueryOfAListingOrACountReadsAnIndexRange(t *testing.T) {
 	scopes := []scope{{}, {folder: strp("a")}, {folder: strp("a"), recursive: true}, {tags: []string{"x"}}, {folder: strp("a"), recursive: true, tags: []string{"x", "y", "z"}}}
 	sorts := []string{"", "updated", "created", "-created", "title", "-title", "prop:points", "-prop:points", "prop:status", "-prop:status"}
 	seen := map[string]bool{}
-	check := func(what string, run func()) {
+	plans := equivPlans[:6]
+	if raceDetector { // as served, walked, as sets: the queries of the others are among theirs
+		plans, sorts = plans[:3], []string{"", "-title", "-prop:points", "prop:status"}
+	}
+	// Each way of reading is checked on an index of its own (the same pages), beside
+	// the others; a query that one has checked is not checked again by another.
+	t.Run("ways", func(t *testing.T) {
+		for _, plan := range plans {
+			t.Run(plan.name, func(t *testing.T) {
+				t.Parallel()
+				x := equivIndex(t, rand.New(rand.NewSource(3)), 220)
+				check := checker(t, x, seen)
+				setPlan(t, x, plan.lead, plan.set, plan.budget)
+				for si, sc := range scopes {
+					for fi := -1; fi < len(filters); fi++ {
+						var fs []Filter
+						if fi >= 0 {
+							fs = []Filter{filters[fi], filters[(fi+3)%len(filters)]}
+						}
+						if fi >= 0 && fi%len(scopes) != si && si > 0 {
+							continue // every filter with no scope, and with one of the others
+						}
+						what := fmt.Sprintf("%s, scope %d, filters %d", plan.name, si, fi)
+						for _, s := range sorts {
+							q := Query{Folder: sc.folder, Recursive: sc.recursive, Tags: sc.tags, Filters: fs, Sort: s, Limit: 3}
+							if strings.HasSuffix(s, "prop:status") {
+								q.PropOptions = equivOptions
+							}
+							check(what+", sort "+s, func() {
+								// The first page, and one from a cursor.
+								res, err := x.List(q)
+								if err != nil {
+									t.Fatal(err)
+								}
+								if q.Cursor = res.Next; q.Cursor != "" {
+									if _, err := x.List(q); err != nil {
+										t.Fatal(err)
+									}
+								}
+							})
+						}
+						for _, key := range []string{"status", "name"} { // few distinct values, and many
+							check(what+", groups of "+key, func() {
+								if _, err := x.countGroups(GroupQuery{Folder: sc.folder, Recursive: sc.recursive, Tags: sc.tags, Filters: fs, Key: key}); err != nil {
+									t.Fatal(err)
+								}
+							})
+						}
+					}
+				}
+			})
+		}
+	})
+	x := equivIndex(t, rand.New(rand.NewSource(3)), 220)
+	check := checker(t, x, seen)
+	// Ten filters and three tags at once: more ranges than are read at a time.
+	setPlan(t, x, 0, 0, 0)
+	check("many conditions", func() {
+		if _, err := x.List(Query{Folder: strp("a"), Recursive: true, Tags: []string{"x", "y", "z"}, Filters: filters, Limit: 3}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if len(seen) < 60 && !raceDetector {
+		t.Errorf("only %d different queries were looked at", len(seen))
+	}
+}
+
+// checker returns the function that runs f on x and looks at the plan of each query that has not been seen.
+func checker(t *testing.T, x *Index, seen map[string]bool) func(what string, run func()) {
+	return func(what string, run func()) {
 		t.Helper()
 		for _, p := range newPlansOf(t, x, seen, run) {
 			few := strings.Contains(p.query, "json_each(?)") // the pages are handed over, at most a few thousand
@@ -132,59 +202,5 @@ func TestEveryQueryOfAListingOrACountReadsAnIndexRange(t *testing.T) {
 				}
 			}
 		}
-	}
-	plans := equivPlans[:6]
-	if raceDetector { // as served, walked, as sets: the queries of the others are among theirs
-		plans, sorts = plans[:3], []string{"", "-title", "-prop:points", "prop:status"}
-	}
-	for _, plan := range plans {
-		setPlan(t, x, plan.lead, plan.set, plan.budget)
-		for si, sc := range scopes {
-			for fi := -1; fi < len(filters); fi++ {
-				var fs []Filter
-				if fi >= 0 {
-					fs = []Filter{filters[fi], filters[(fi+3)%len(filters)]}
-				}
-				if fi >= 0 && fi%len(scopes) != si && si > 0 {
-					continue // every filter with no scope, and with one of the others
-				}
-				what := fmt.Sprintf("%s, scope %d, filters %d", plan.name, si, fi)
-				for _, s := range sorts {
-					q := Query{Folder: sc.folder, Recursive: sc.recursive, Tags: sc.tags, Filters: fs, Sort: s, Limit: 3}
-					if strings.HasSuffix(s, "prop:status") {
-						q.PropOptions = equivOptions
-					}
-					check(what+", sort "+s, func() {
-						// The first page, and one from a cursor.
-						res, err := x.List(q)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if q.Cursor = res.Next; q.Cursor != "" {
-							if _, err := x.List(q); err != nil {
-								t.Fatal(err)
-							}
-						}
-					})
-				}
-				for _, key := range []string{"status", "name"} { // few distinct values, and many
-					check(what+", groups of "+key, func() {
-						if _, err := x.countGroups(GroupQuery{Folder: sc.folder, Recursive: sc.recursive, Tags: sc.tags, Filters: fs, Key: key}); err != nil {
-							t.Fatal(err)
-						}
-					})
-				}
-			}
-		}
-	}
-	// Ten filters and three tags at once: more ranges than are read at a time.
-	setPlan(t, x, 0, 0, 0)
-	check("many conditions", func() {
-		if _, err := x.List(Query{Folder: strp("a"), Recursive: true, Tags: []string{"x", "y", "z"}, Filters: filters, Limit: 3}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if len(seen) < 60 && !raceDetector {
-		t.Errorf("only %d different queries were looked at", len(seen))
 	}
 }

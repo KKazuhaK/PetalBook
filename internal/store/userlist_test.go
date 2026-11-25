@@ -13,6 +13,7 @@ import (
 // The administration's list of people (3.10): keyset pages in each sort, the
 // filters, the scope, and the counts read for the page alone.
 func TestUserRowsSortFilterAndPage(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st) // Ua in tenant A, Ub in tenant B
 		q := st.Q()
@@ -181,6 +182,7 @@ func TestUserRowsSortFilterAndPage(t *testing.T) {
 // A person's sessions: listed by last use, ended one at a time or together with
 // the reason recorded, and only the owner's can be ended through their id.
 func TestUserSessionsAreListedAndEnded(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "alice", "member")
 		mkUser(t, st, "B", "bob", "member")

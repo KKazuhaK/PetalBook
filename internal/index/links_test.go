@@ -10,6 +10,7 @@ func linkPage(id, title, body string) string {
 }
 
 func TestLinksAreKeptPerPage(t *testing.T) {
+	t.Parallel()
 	x, src := openIndex(t), newMem()
 	src.put("a.md", linkPage("0000000001", "A", "x\n"))
 	src.put("d/b.md", linkPage("0000000002", "B", "[a](../a.md \"0000000001\") [a2](../a.md#h) [none](nope.md) [self](b.md) [ext](https://e.com/z.md)\n"))
@@ -50,6 +51,7 @@ func TestLinksAreKeptPerPage(t *testing.T) {
 }
 
 func TestStaleLinksFindMovedTargets(t *testing.T) {
+	t.Parallel()
 	x, src := openIndex(t), newMem()
 	src.put("a.md", linkPage("0000000001", "A", "x\n"))
 	src.put("r.md", linkPage("0000000002", "R", "[a](a.md \"0000000001\")\n"))
