@@ -26,6 +26,7 @@ type netRunner struct {
 	down       bool
 	losePush   bool   // run the push, then report it as failed (the answer was lost)
 	beforePush func() // runs before every push
+	afterPush  func() // runs after every push that went through
 	beforeNet  func(sub string)
 	subs       []string
 	pushes     [][]string // the arguments of every push
@@ -68,6 +69,12 @@ func (n *netRunner) Run(ctx context.Context, c gitstore.Cmd) (string, string, er
 		return "", "fatal: unable to access 'https://example.test/x.git/': Could not resolve host: example.test", errors.New("exit status 128")
 	}
 	out, errOut, err := gitstore.RunReal(ctx, c)
+	n.mu.Lock()
+	ap := n.afterPush
+	n.mu.Unlock()
+	if sub == "push" && err == nil && ap != nil {
+		ap()
+	}
 	if sub == "push" && lose && err == nil {
 		return out, "fatal: the remote end hung up unexpectedly", errors.New("exit status 128")
 	}

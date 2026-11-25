@@ -618,6 +618,11 @@ What stays as it was:
 - **Commit messages:** a move is found by its content, or as the only page gone and the
   only page come.
 - **Case:** a change of case is a path gone and a path come, as before.
+- **Modes and attributes:** a path hashed from the work tree takes the file's mode, as
+  `git add` does. When a `.gitattributes` file (along the paths, or in `.git/info`) has
+  git change a file on the way in (a filter, line ends, an encoding, per `check-attr`),
+  the commit goes the index way. The global attributes are never read: the runner has
+  git ignore the global and system configuration.
 - **Old way:** a path that is a link or no regular file, or a repository that is not SHA-1,
   still goes the index way. Packing is unchanged.
 
@@ -626,11 +631,17 @@ under the space lock up to its commit. Then it waits for a push that has its com
 change that finds nobody pushing pushes for all (`pushLocked`). It lets the lock go while
 git pushes, so changes that come meanwhile are made and committed on top, without
 fetching, and go out in the next push.
+- The pusher pushes only until its own commit is out. A change still waiting then takes
+  over the pushing, so no request waits on writers that keep coming.
 - Each change is answered once a push has its commit.
+- A push whose outcome cannot be told (what the remote has cannot be read after it) is
+  a failed push: no change of it is answered as done.
 - The journal is trimmed up to the last change pushed.
 - A refused push takes back every waiting change, last first, from its parent commit, and
   each is made again on the new tip. A failed push answers each with the failure.
-- A repair of the way to a folder (which pushes on its own) waits until the group is out.
+- A repair of the way to a folder (which pushes on its own) drains the group first: no new
+  change joins it while it goes out, so the repair cannot be starved.
+- Accept, Connect and Disconnect wait for a push under way, as `Close` does.
 - The next start takes back an unpushed group to the commit its first change started
   from (the first `rp` in the journal).
 - `Close` waits for a push under way.
@@ -643,7 +654,10 @@ fetching, and go out in the next push.
 | Local commit, mean (p90) | 114 ms (118 ms) | 20 ms (24 ms) |
 | Git commands per commit | 11 | 7 |
 | Remote space, sequential changes | 6.3/s | 15.1/s |
-| Remote space, 8 writers at once | 6.2/s | 30.8/s |
+| Remote space, 8 writers at once | 6.2/s | 15.5 to 30.8/s |
+
+The 8-writer figure spans runs on a loaded machine (load average up to 13 on 8 cores);
+after the starter is answered at its own push, pushing passes from change to change.
 
 A commit's cost grows with the folders it changes: the trees on the way to each changed
 path, about 40 bytes an entry. It does not grow with the number of pages. Memory is those

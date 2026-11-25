@@ -166,9 +166,10 @@ type remote struct {
 	// order, each waiting for a push that has its commit; pushing is set
 	// while one change pushes for them all (pushLocked); idle is signalled
 	// when none is left.
-	pending []*pendingChange
-	pushing bool
-	idle    *sync.Cond
+	pending  []*pendingChange
+	pushing  bool
+	draining int // changes waiting for the group to go out before their repair
+	idle     *sync.Cond
 }
 
 // pendingChange is a change of a space that follows a remote, committed and
@@ -835,6 +836,7 @@ func (s *Space) Accept(ctx context.Context, commit string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.waitPushLocked(r)
 	if s.closed {
 		return ErrClosed
 	}
@@ -1135,6 +1137,9 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 	}
 	ctx := s.ctx
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		for r.draining > 0 {
+			r.idleCond(&s.mu).Wait() // a repair waits for the changes before it
+		}
 		if err := s.syncTipLocked(ctx, r); err != nil {
 			return zero, err
 		}
@@ -1158,10 +1163,18 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			s.undoLocked(ctx, r, tx, tx.parent)
 			if errors.Is(err, errPushPending) {
 				// A repair that has to be pushed first, with changes of
-				// others waiting for their push: once they are out.
+				// others waiting for their push: no new change joins them
+				// (draining), they go out, and this change is made again.
+				r.draining++
 				for len(r.pending) > 0 {
+					if !r.pushing {
+						s.pushLocked(ctx, r, nil)
+						continue
+					}
 					r.idleCond(&s.mu).Wait()
 				}
+				r.draining--
+				r.idleCond(&s.mu).Broadcast()
 				attempt--
 				continue
 			}
@@ -1196,10 +1209,13 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		// answer waits for a push that has this commit.
 		pc := &pendingChange{tx: tx, commit: r.repo.Head(ctx), mark: s.cm.j.lastSeq()}
 		r.pending = append(r.pending, pc)
-		if !r.pushing {
-			s.pushLocked(ctx, r)
-		}
 		for !pc.done {
+			// Nobody pushing: this change pushes, for all waiting, until its
+			// own commit is out.
+			if !r.pushing && len(r.pending) > 0 {
+				s.pushLocked(ctx, r, pc)
+				continue
+			}
 			r.idleCond(&s.mu).Wait()
 		}
 		switch {
@@ -1231,13 +1247,27 @@ func (r *remote) idleCond(mu *sync.Mutex) *sync.Cond {
 // on top, and go out together in the next push. A push that the remote
 // refuses, or that fails, takes back every change waiting (last first), and
 // each is made again on the new tip, or answered with the failure.
-func (s *Space) pushLocked(ctx context.Context, r *remote) {
+func (s *Space) pushLocked(ctx context.Context, r *remote, own *pendingChange) {
 	r.pushing = true
 	defer func() {
 		r.pushing = false
 		r.idleCond(&s.mu).Broadcast()
 	}()
-	for len(r.pending) > 0 {
+	// fail takes back every change waiting, last first: each is made again
+	// on the new tip (err nil), or answered with err.
+	fail := func(err error) {
+		batch := r.pending
+		r.pending = nil
+		for i := len(batch) - 1; i >= 0; i-- {
+			s.undoLocked(ctx, r, batch[i].tx, batch[i].tx.parent)
+		}
+		for _, pc := range batch {
+			pc.done, pc.retry, pc.err = true, err == nil, err
+		}
+	}
+	// Pushes until the change of the caller is answered (own nil: until none
+	// waits); a change still waiting then takes over (see mutate).
+	for len(r.pending) > 0 && (own == nil || !own.done) {
 		parent := r.pending[0].tx.parent
 		top := r.pending[len(r.pending)-1].commit
 		s.mu.Unlock()
@@ -1264,27 +1294,21 @@ func (s *Space) pushLocked(ctx context.Context, r *remote) {
 			default:
 				r.noteFetched() // landedAt has just looked at the remote
 			}
-			batch := r.pending
-			r.pending = nil
-			for i := len(batch) - 1; i >= 0; i-- {
-				s.undoLocked(ctx, r, batch[i].tx, batch[i].tx.parent)
-			}
-			for _, pc := range batch {
-				pc.done, pc.retry, pc.err = true, err == nil, err
-			}
-			r.idleCond(&s.mu).Broadcast()
+			fail(err)
 			return
 		}
 		// Every change whose commit the push has is answered.
 		n := 0
-		for n < len(r.pending) {
+		for pushed != "" && n < len(r.pending) {
 			if ok, err := r.repo.IsAncestor(ctx, r.pending[n].commit, pushed); err != nil || !ok {
 				break
 			}
 			n++
 		}
 		if n == 0 {
-			n = len(r.pending) // the push had them all (HEAD went no further)
+			// What went out cannot be told: no change is answered as done.
+			fail(unavailable(nil, "could not tell what the push brought to the remote; try again"))
+			return
 		}
 		done := r.pending[:n]
 		r.pending = append([]*pendingChange(nil), r.pending[n:]...)
@@ -1294,6 +1318,18 @@ func (s *Space) pushLocked(ctx context.Context, r *remote) {
 			s.packLocked(ctx, r)
 		}
 		r.idleCond(&s.mu).Broadcast()
+	}
+}
+
+// waitPushLocked waits, under s.mu, for a push of waiting changes that let
+// the lock go: what comes next (connecting, accepting a history, letting go
+// of the remote) must not be taken back from under it by that push's undo.
+func (s *Space) waitPushLocked(r *remote) {
+	if r == nil {
+		return
+	}
+	for r.pushing {
+		r.idleCond(&s.mu).Wait()
 	}
 }
 
@@ -1550,6 +1586,7 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.waitPushLocked(s.rem.Load())
 	if s.closed {
 		return ErrClosed
 	}
@@ -1762,6 +1799,7 @@ func (s *Space) ensureConfigLocked(ctx context.Context, r *remote) error {
 func (s *Space) Disconnect() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.waitPushLocked(s.rem.Load())
 	if s.closed {
 		return ErrClosed
 	}

@@ -533,11 +533,7 @@ func (s *Space) Close() error {
 	s.closed = true
 	// A push of waiting changes (group commit) lets the lock go while it
 	// runs: it ends (cancelled above) before the space does.
-	if r := s.rem.Load(); r != nil {
-		for r.pushing {
-			r.idleCond(&s.mu).Wait()
-		}
-	}
+	s.waitPushLocked(s.rem.Load())
 	s.mu.Unlock()
 	var err error
 	if s.cm != nil {

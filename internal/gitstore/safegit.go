@@ -235,6 +235,7 @@ var allowedOptions = map[string][]string{
 	"update-ref":   {},
 	"hash-object":  {"-w", "--no-filters", "--stdin-paths", "--stdin"},
 	"mktree":       {"-z", "--missing", "--batch"},
+	"check-attr":   {"-z", "--stdin"},
 	"version":      {},
 	"for-each-ref": {"--format=*"},
 	"reset":        {"--quiet", "--hard"},

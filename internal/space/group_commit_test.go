@@ -190,8 +190,8 @@ func TestAGroupNotPushedIsTakenBackWhole(t *testing.T) {
 	if head := git(t, f.root, "rev-parse", "HEAD"); head != tip {
 		t.Errorf("HEAD %s, the remote %s", head, tip)
 	}
-	for _, p := range []*Page{a, b} {
-		if got := readDisk(t, f.s, p.Path); strings.Contains(got, "2\n") {
+	for p, body := range map[*Page]string{a: "a1\n", b: "b1\n"} {
+		if got := readDisk(t, f.s, p.Path); !strings.HasSuffix(got, "---\n"+body) {
 			t.Errorf("%s was not taken back:\n%s", p.Path, got)
 		}
 	}

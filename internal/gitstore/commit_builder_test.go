@@ -93,3 +93,37 @@ func TestACommitBuiltFromFoldersHandlesFoldersComingAndGoing(t *testing.T) {
 		t.Errorf("status: %q", st)
 	}
 }
+
+// A new file that is executable on disk is committed executable, as git add
+// would commit it.
+func TestANewExecutableFileIsCommittedExecutable(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	r := newClone(t, bareRemote(t), nil)
+	write(t, r.Dir(), "a.md", "a\n")
+	commit(t, r, "a.md")
+	write(t, r.Dir(), "run.sh", "echo\n")
+	if err := os.Chmod(filepath.Join(r.Dir(), "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, r, "run.sh")
+	if got := sh(t, r.Dir(), "ls-tree", "HEAD", "run.sh"); !strings.HasPrefix(got, "100755 ") {
+		t.Errorf("committed as %q", got)
+	}
+}
+
+// A file whose attributes have git change it on the way in (here line ends)
+// is committed as git add commits it.
+func TestAFileWithAttributesIsCommittedAsGitWould(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	r := newClone(t, bareRemote(t), nil)
+	write(t, r.Dir(), ".gitattributes", "*.md text\n")
+	write(t, r.Dir(), "a.md", "a\n")
+	commit(t, r, ".gitattributes", "a.md")
+	write(t, r.Dir(), "a.md", "one\r\ntwo\r\n")
+	commit(t, r, "a.md")
+	if got := sh(t, r.Dir(), "cat-file", "-p", "HEAD:a.md"); strings.Contains(got, "\r") {
+		t.Errorf("committed with CR: %q", got)
+	}
+}
