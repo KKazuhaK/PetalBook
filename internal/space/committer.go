@@ -89,8 +89,15 @@ type committer struct {
 // its files, with the blob id each gets (the content is in the journal).
 type preparedTx struct {
 	by    Author
-	paths []string
-	revs  []string
+	files []txFileRef
+}
+
+// txFileRef is a file of a prepared transaction: its place among the files,
+// its path, the blob id it gets and, for a moved page, its old name.
+type txFileRef struct {
+	i         int
+	path, rev string
+	from      string
 }
 
 // newCommitter starts the committer. initial are paths recovered from an
@@ -234,11 +241,22 @@ func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, 
 	defer c.mu.Unlock()
 	tx, err := c.j.appendTx(by, files, extra)
 	if err != nil {
+		var u *uncertainAppend
+		if errors.As(err, &u) && tx != 0 {
+			// The change fails, but the transaction may be in the journal:
+			// given up now, the next start does not make it.
+			if kerr := c.j.append([]jrec{{Op: "k", Tx: tx}}); kerr != nil {
+				c.log.Error("a change that failed may be in the journal and be made at the next start",
+					"transaction", tx, "error", errors.Join(err, kerr))
+			}
+		}
 		return 0, err
 	}
 	pt := preparedTx{by: by}
-	for _, f := range files {
-		pt.paths, pt.revs = append(pt.paths, f.path), append(pt.revs, f.rev)
+	for i, f := range files {
+		if !f.dir {
+			pt.files = append(pt.files, txFileRef{i: i, path: f.path, rev: f.rev, from: f.from})
+		}
 	}
 	c.txs[tx] = pt
 	for _, rec := range closing {
@@ -268,14 +286,17 @@ func (c *committer) Applied(tx uint64) {
 	pt, ok := c.txs[tx]
 	delete(c.txs, tx)
 	if ok {
-		for i, p := range pt.paths {
-			seq := tx + 1 + uint64(i) // the "p" frames follow the "x"
-			b := gitstore.Blob{ID: pt.revs[i], Data: func() ([]byte, error) { return c.j.contentAt(seq) }}
-			c.touchLocked(pt.by, p, &b)
+		for _, f := range pt.files {
+			seq := tx + 1 + uint64(f.i) // the "p" frames follow the "x"
+			b := gitstore.Blob{ID: f.rev, Data: func() ([]byte, error) { return c.j.contentAt(seq) }}
+			c.touchLocked(pt.by, f.path, &b)
+			if f.from != "" {
+				c.touchLocked(pt.by, f.from, &gitstore.Blob{}) // gone
+			}
 		}
 	}
 	c.mu.Unlock()
-	if ok && len(pt.paths) > 0 {
+	if ok && len(pt.files) > 0 {
 		c.wakeUp()
 	}
 	if err := c.j.appendNoSync([]jrec{{Op: "a", Tx: tx}}); err != nil {
@@ -438,6 +459,10 @@ func (c *committer) covers(p, rev string) bool {
 	b, ok := c.heldRevs[p]
 	return ok && c.depth > 0 && b.ID == rev
 }
+
+// gone reports whether the change running has applied the removal of p (the
+// old name of a page it moved), so that touching p again is not needed.
+func (c *committer) gone(p string) bool { return c.covers(p, "") }
 
 // FlushChange commits now what is pending, with what the change running has
 // done so far: for a change that needs a commit of its own first (a repair of

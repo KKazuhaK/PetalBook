@@ -341,23 +341,72 @@ func (s *Space) planLinks(mv []movedPage, moves []stepMove) ([]fileEdit, error) 
 // files (rebase.go). The index is not touched; the caller refreshes it for the
 // paths returned.
 func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
-	if len(edits) == 0 {
-		return nil, nil
+	pe, err := s.prepareEdits(tx, edits, nil)
+	if err != nil {
+		return nil, err
 	}
-	files := make([]txFile, len(edits))
-	paths := make([]string, len(edits))
-	for i, e := range edits {
-		files[i] = txFile{path: e.rel, old: e.old, rev: page.Rev(e.data), data: e.data}
-		paths[i] = e.rel
+	return pe.apply()
+}
+
+// txMove is the move that a transaction of link rewrites makes in a local
+// space: a page whose new name to is already a second name of its file (see
+// moveNamed), with its content, or a folder already renamed (dir).
+type txMove struct {
+	from, to string
+	dir      bool
+	data     []byte // a page's content
+	dev, ino uint64 // a folder's identity (fileID), 0 when not known
+}
+
+// preparedEdits is a rewrite of files journaled and not yet written.
+type preparedEdits struct {
+	s         *Space
+	tx        *txn
+	id        uint64
+	journaled bool
+	edits     []fileEdit
+	paths     []string
+	mv        *txMove
+	done      bool
+}
+
+// prepareEdits journals edits, and the move mv when there is one, as one
+// transaction (a space that follows a remote journals "w" records), and
+// writes nothing.
+func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEdits, error) {
+	pe := &preparedEdits{s: s, tx: tx, mv: mv}
+	if len(edits) == 0 && mv == nil {
+		pe.done = true
+		return pe, nil
+	}
+	var files []txFile
+	if mv != nil {
+		f := txFile{path: mv.to, from: mv.from, dir: mv.dir, dev: mv.dev, ino: mv.ino}
+		if !mv.dir {
+			f.old, f.rev, f.data = page.Rev(mv.data), page.Rev(mv.data), mv.data
+		}
+		files = append(files, f)
+	}
+	for _, e := range edits {
+		pe.paths = append(pe.paths, e.rel)
+		if mv != nil && !mv.dir && e.rel == mv.to {
+			// The moved page's own links change: its entry gets that content.
+			files[0].rev, files[0].data = page.Rev(e.data), e.data
+			pe.edits = append(pe.edits, e)
+			continue
+		}
+		files = append(files, txFile{path: e.rel, old: e.old, rev: page.Rev(e.data), data: e.data})
+		pe.edits = append(pe.edits, e)
 	}
 	// One transaction with every file's content: a crash part way is
 	// finished by writing what is left of it, never by planning it again
-	// from files that may already be rewritten. It closes the change's "l"
-	// records: their links are this transaction's.
+	// from files that may already be rewritten. In a space that follows a
+	// remote it closes the change's "l" records.
 	id, journaled, err := tx.prepare(files, true)
 	if err != nil {
 		return nil, err
 	}
+	pe.id, pe.journaled = id, journaled
 	if !journaled {
 		recs := make([]jrec, len(edits))
 		for i, e := range edits {
@@ -367,6 +416,43 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 			return nil, err
 		}
 	}
+	if err := s.stepped("edits journaled"); err != nil {
+		pe.stop()
+		return pe, err
+	}
+	return pe, nil
+}
+
+// abort gives the transaction up before anything of it was written.
+func (pe *preparedEdits) abort() {
+	if pe.done {
+		return
+	}
+	pe.done = true
+	pe.s.cm.Abort(pe.id)
+}
+
+// stop is the end of a transaction whose writing stopped part way: the files
+// written are handed to the commit as they are, and the next start replays
+// the rest.
+func (pe *preparedEdits) stop() {
+	if pe.done {
+		return
+	}
+	pe.done = true
+	if pe.journaled {
+		pe.tx.touch(pe.paths...)
+		pe.s.cm.forget(pe.id)
+	}
+}
+
+// apply writes the files of the transaction, removes the old name of a page
+// it moves, and journals it applied.
+func (pe *preparedEdits) apply() ([]string, error) {
+	if pe.done {
+		return pe.paths, nil
+	}
+	s, tx, edits, paths, journaled, id := pe.s, pe.tx, pe.edits, pe.paths, pe.journaled, pe.id
 	// In a space that follows a remote the files are part of the change
 	// from the first replacement: an undo takes them back. In a local one
 	// they are handed to the commit once all are written, with the content
@@ -375,17 +461,8 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 		tx.touch(paths...)
 	}
 	var steps []rebaseStep
-	applied := false
-	defer func() {
-		if journaled && !applied {
-			tx.touch(paths...)
-			s.cm.forget(id)
-		}
-	}()
+	defer pe.stop()
 	defer func() { s.rb.add(steps...) }()
-	if err := s.stepped("edits journaled"); err != nil {
-		return paths, err
-	}
 	for _, e := range edits {
 		abs, err := s.abs(e.rel)
 		if err != nil {
@@ -401,10 +478,41 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 			return paths, err
 		}
 	}
+	if mv := pe.mv; mv != nil && !mv.dir {
+		from, err := s.abs(mv.from)
+		if err != nil {
+			return paths, err
+		}
+		if err := s.ops.Remove(from); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return paths, &moveError{err}
+		}
+	}
+	pe.done = true
 	s.cm.Applied(id)
-	applied = true
 	return paths, nil
 }
+
+// takeBackName removes the new name of a page move that was only taken (a
+// second name of the file, see moveNamed) and will not be made.
+func (s *Space) takeBackName(mv *txMove) {
+	from, err1 := s.abs(mv.from)
+	to, err2 := s.abs(mv.to)
+	if err1 != nil || err2 != nil {
+		return
+	}
+	fa, errA := s.ops.Lstat(from)
+	fb, errB := s.ops.Lstat(to)
+	if errA == nil && errB == nil && s.ops.SameFile(fa, fb) && !strings.EqualFold(from, to) {
+		s.ops.Remove(to)
+	}
+}
+
+// moveError is a move whose old name could not be removed: the change fails,
+// in a local space too (the next start finishes it from the journal).
+type moveError struct{ err error }
+
+func (e *moveError) Error() string { return e.err.Error() }
+func (e *moveError) Unwrap() error { return e.err }
 
 // stepped tells the test hook step, if there is one, that the change got to
 // the step name.
@@ -429,20 +537,50 @@ func pageMoves(mv []movedPage) []stepMove {
 // moves says what moved (nil: the pages of mv). own is the file of a moved
 // page that the caller is about to index with data; when the plan changes it,
 // the new content is returned.
-func (s *Space) relink(tx *txn, mv []movedPage, moves []stepMove, own string, data []byte) ([]byte, error) {
+//
+// move, in a local space, is the move of the page own (its new name already
+// taken, see moveNamed): it is one transaction with the rewrites, and is made
+// even if the links cannot be planned.
+func (s *Space) relink(tx *txn, mv []movedPage, moves []stepMove, own string, data []byte, move *txMove) ([]byte, error) {
 	if moves == nil {
 		moves = pageMoves(mv)
 	}
-	edits, err := s.planLinks(mv, moves)
-	if err != nil {
-		return data, err
+	edits, perr := s.planLinks(mv, moves)
+	if perr != nil {
+		if move == nil {
+			return data, perr
+		}
+		edits = nil
 	}
 	for _, e := range edits {
 		if e.rel == own {
 			data = e.data
 		}
 	}
-	paths, err := s.writeEdits(tx, edits)
+	pe, err := s.prepareEdits(tx, edits, move)
+	if err != nil {
+		if move == nil {
+			return data, err
+		}
+		if pe == nil {
+			// Nothing journaled: the name taken for the move goes again.
+			s.takeBackName(move)
+		}
+		return data, &moveError{err}
+	}
+	paths, err := pe.apply()
+	if err != nil && move != nil {
+		// Part of the move is made: the change fails, and the next start
+		// finishes it from the journal.
+		var me *moveError
+		if !errors.As(err, &me) {
+			err = &moveError{err}
+		}
+		return data, err
+	}
+	if err == nil {
+		err = perr
+	}
 	if err != nil {
 		return data, err
 	}
@@ -469,7 +607,8 @@ func (s *Space) afterRelink(tx *txn, err error) error {
 		tx.settleLinks()
 		return nil
 	}
-	if tx.remote {
+	var me *moveError
+	if tx.remote || errors.As(err, &me) {
 		return err
 	}
 	s.log.Error("could not update the links to a moved page; the next start will try again", "error", err)
@@ -629,7 +768,7 @@ func (s *Space) finishLinkRecs(recs []jrec) {
 			// The record is the change's: the transaction of its rewrites
 			// closes it, so that a crash from then on replays them.
 			tx.links = append(tx.links, r)
-			if _, err = s.relink(tx, mv, moves, "", nil); err != nil {
+			if _, err = s.relink(tx, mv, moves, "", nil, nil); err != nil {
 				return struct{}{}, err
 			}
 			// Nothing to rewrite, or done (a space that follows a remote

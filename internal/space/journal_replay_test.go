@@ -110,9 +110,9 @@ func TestARewriteCutShortBeforeItsWritesIsReplayed(t *testing.T) {
 	stopAt(s, "edits journaled", 1)
 	survive(t, func() { s.Move(Author{}, target.ID, "Archive") })
 	crash(s)
-	// Moved, nothing rewritten yet; one of the files is changed outside.
-	if exists(s, "Target.md") || !exists(s, "Archive/Target.md") {
-		t.Fatal("test setup: the page should have moved")
+	// The new name taken, nothing written yet; one of the files is changed outside.
+	if !exists(s, "Archive/Target.md") {
+		t.Fatal("test setup: the new name should be taken")
 	}
 	outside := filepath.Join(root, filepath.FromSlash(from[2].Path))
 	b, _ := os.ReadFile(outside)
@@ -347,11 +347,10 @@ func TestAnAppliedSaveIsNotReplayed(t *testing.T) {
 	}
 }
 
-// A rewrite whose append a crash cut short (the last frames, with the
-// closing of its "l" record, never reached the disk): none of it is
-// replayed, and the move's links are planned again from the files, which
-// nothing has touched. Half a replay under a new plan would make the moved
-// page's link relative to its old place twice.
+// A move whose append a crash cut short (its last frames never reached the
+// disk): none of it is replayed, and the move is taken back, files and name,
+// since nothing of it was written. Half a replay would have rewritten some
+// files for a move that is not there.
 func TestARewriteWhoseJournalIsCutShortIsNotHalfReplayed(t *testing.T) {
 	t.Parallel()
 	needGit(t)
@@ -377,11 +376,14 @@ func TestARewriteWhoseJournalIsCutShortIsNotHalfReplayed(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)
-	if got := readDisk(t, s2, "p.md"); !strings.Contains(got, "[y](A/B/y.md)\n") {
-		t.Errorf("the moved page's link:\n%s", got)
+	if exists(s2, "p.md") || !exists(s2, "A/B/p.md") {
+		t.Fatalf("the move was not taken back")
 	}
-	if got := readDisk(t, s2, "z.md"); !strings.Contains(got, "[p](p.md ") {
-		t.Errorf("the link to the moved page:\n%s", got)
+	if got := readDisk(t, s2, "A/B/p.md"); !strings.Contains(got, "[y](y.md)\n") {
+		t.Errorf("the page's link:\n%s", got)
+	}
+	if got := readDisk(t, s2, "z.md"); !strings.Contains(got, "[p](A/B/p.md ") {
+		t.Errorf("the link to the page:\n%s", got)
 	}
 }
 

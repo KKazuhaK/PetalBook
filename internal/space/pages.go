@@ -370,17 +370,16 @@ func (s *Space) afterWrite(tx *txn, rel string, data []byte, touched ...string) 
 	// refuses it, undoing the change takes the file back too. A file the
 	// change's transaction wrote with this content is already handed over,
 	// with it.
-	if s.cm.covers(rel, page.Rev(data)) {
-		var others []string
-		for _, p := range touched {
-			if p != rel {
-				others = append(others, p)
-			}
+	// So is the old name of a page it moved (as gone).
+	covered := s.cm.covers(rel, page.Rev(data))
+	var paths []string
+	for _, p := range append(touched, rel) {
+		if (p == rel && covered) || (p != rel && s.cm.gone(p)) {
+			continue
 		}
-		tx.touch(others...)
-	} else {
-		tx.touch(append(touched, rel)...)
+		paths = append(paths, p)
 	}
+	tx.touch(paths...)
 	if _, err := s.idx.Put(rel, data, st.ModTime().UnixNano()); err != nil {
 		return nil, err
 	}
@@ -583,18 +582,26 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		cur := strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 		if !page.SameStem(cur, stem) {
 			dirAbs := filepath.Dir(abs)
-			name, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx, rel, folderOf(rel)))
+			name, reserved, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx, rel, folderOf(rel)), !tx.remote)
 			if err != nil {
 				// The content is saved; only the name is left as it was.
 				s.log.Warn("could not rename page file", "from", rel, "stem", stem, "error", err)
 			} else {
 				newRel = path.Join(folderOf(rel), name)
-				// The old name is gone: whatever happens next, it is not
-				// committed with the content the save wrote there.
-				tx.touch(rel)
+				// In a local space the new name is only taken: the rename and
+				// the links that follow it are one transaction (relink). Else
+				// the file is renamed already, and the old name is gone:
+				// whatever happens next, it is not committed with the content
+				// the save wrote there.
+				var move *txMove
+				if reserved {
+					move = &txMove{from: rel, to: newRel, data: newData}
+				} else {
+					tx.touch(rel)
+				}
 				// The pages that link to this one name the file: they follow it.
 				var rerr error
-				if newData, rerr = s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, newData); s.afterRelink(tx, rerr) != nil {
+				if newData, rerr = s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, newData, move); s.afterRelink(tx, rerr) != nil {
 					return nil, rerr
 				}
 			}
@@ -712,13 +719,18 @@ func (s *Space) moveLocked(tx *txn, id, folder, baseRev string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	name, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx, rel, canon))
+	name, reserved, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx, rel, canon), !tx.remote)
 	if err != nil {
 		return nil, err
 	}
 	newRel := path.Join(canon, name)
+	var move *txMove
+	if reserved {
+		// The name is taken; the move is one transaction with its links.
+		move = &txMove{from: rel, to: newRel, data: data}
+	}
 	// The pages that link to this one, and the links of this one, follow the file.
-	data, rerr := s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, data)
+	data, rerr := s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, data, move)
 	if err := s.afterRelink(tx, rerr); err != nil {
 		return nil, err
 	}

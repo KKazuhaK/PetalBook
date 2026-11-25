@@ -179,7 +179,7 @@ func TestRenameNeverReplacesAnotherFile(t *testing.T) {
 	// Case-sensitive: A.md is page X (inode 1) and a.md is page Y (inode 2).
 	cs := &fakeFS{files: map[string]int{"A.md": 1, "a.md": 2}}
 	s := &Space{ops: cs.ops()}
-	name, err := s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil)
+	name, _, err := s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,33 +193,33 @@ func TestRenameNeverReplacesAnotherFile(t *testing.T) {
 	// Case-sensitive, nothing in the way: a case-only rename is fine.
 	cs = &fakeFS{files: map[string]int{"A.md": 1}}
 	s = &Space{ops: cs.ops()}
-	if name, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || cs.files["a.md"] != 1 || len(cs.files) != 1 {
+	if name, _, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil, false); err != nil || name != "a.md" || cs.files["a.md"] != 1 || len(cs.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, cs.files)
 	}
 
 	// Case-insensitive: "a.md" is the same file as "A.md", so renaming is allowed.
 	ci := &fakeFS{fold: true, files: map[string]int{"A.md": 1}}
 	s = &Space{ops: ci.ops()}
-	if name, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
+	if name, _, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil, false); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
 	}
 	// The same where a rename onto the same entry changes nothing (Linux):
 	// the file is still respelled, and nothing else is left.
 	ci = &fakeFS{fold: true, selfNoop: true, files: map[string]int{"A.md": 1}}
 	s = &Space{ops: ci.ops()}
-	if name, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
+	if name, _, err = s.moveNamed(Author{}, "/d/A.md", "/d", "a", nil, false); err != nil || name != "a.md" || ci.files["a.md"] != 1 || len(ci.files) != 1 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
 	}
 	// ... but a different file with the folded name is never replaced.
 	ci = &fakeFS{fold: true, files: map[string]int{"B.md": 1, "a.md": 2}}
 	s = &Space{ops: ci.ops()}
-	if name, err = s.moveNamed(Author{}, "/d/B.md", "/d", "A", nil); err != nil || name != "A 2.md" || ci.files["a.md"] != 2 {
+	if name, _, err = s.moveNamed(Author{}, "/d/B.md", "/d", "A", nil, false); err != nil || name != "A 2.md" || ci.files["a.md"] != 2 {
 		t.Fatalf("%q %v %v", name, err, ci.files)
 	}
 	// A move into another folder skips taken names, whatever their spelling.
 	cs = &fakeFS{files: map[string]int{"x.md": 1, "X.md": 2, "X 2.md": 3}}
 	s = &Space{ops: cs.ops()}
-	if name, err = s.moveNamed(Author{}, "/src/x.md", "/d", "X", nil); err != nil || name != "X 3.md" {
+	if name, _, err = s.moveNamed(Author{}, "/src/x.md", "/d", "X", nil, false); err != nil || name != "X 3.md" {
 		t.Fatalf("%q %v %v", name, err, cs.files)
 	}
 }
