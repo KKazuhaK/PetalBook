@@ -123,10 +123,26 @@ accounts `auth`, billing, multi-user permissions `perm` and the like). This way
 the client (local mode, connecting your own repository, see
 [overview.md §1](overview.md#1-goals-and-non-goals)) can be split out on its own later. Checked once
 on 2026-11-23: `internal/space` depends only on `gitstore`, `page`, `links`,
-`index` and `langtag`, and keeps to this rule. Later, add a test (a `go list
--deps` check on the engine packages) so that CI guards it; when new code needs
-something from the server, wrap it in the server layer and do not pull it into
-the engine packages.
+`index` and `langtag`, and keeps to this rule. When new code needs something
+from the server, wrap it in the server layer and do not pull it into the
+engine packages.
+
+The rule is now guarded by a test, `internal/boundary/boundary_test.go`. It
+runs `go list -deps -json` on the engine set and fails, naming the import
+chain, if any engine package reaches a package outside the set:
+
+- **Engine packages:** `space`, `gitstore`, `index`, `page`, `links`, plus the
+  leaf helpers they use, `langtag`, `sentence` and `icons`.
+- **Server-only packages:** every other package under `internal/` (`api`,
+  `spaces`, `store`, `settings`, `auth`, `perm`, `mail`, `quota`, `tokens`,
+  `oauth`, `connections`, and so on). A new package is server-only until it is
+  added to the engine list on purpose.
+- **Also forbidden below the engine:** `net/http`, `net/smtp`, `net/rpc` and
+  the PostgreSQL drivers (`pgx`, `lib/pq`). The embedded SQLite driver is
+  allowed, because the index is a local SQLite file on the client too.
+- **Known exceptions:** none when the test was written. An exception goes in
+  the test's `knownExceptions` map with a reason and is listed here, so the
+  owner decides on it.
 
 ## 12. Risks
 
