@@ -32,19 +32,25 @@ type notificationResp struct {
 	Derived bool    `json:"derived,omitempty"`
 }
 
-// derivedItems are the problems of the spaces the caller writes in, as items,
-// with what the caller last read of each.
-func (s *server) derivedItems(c *call) ([]notificationResp, error) {
-	probs, err := s.spaces.SpaceProblems(c.r.Context(), c.user().ID)
+// derived are the problems of the spaces the caller writes in, as items, with
+// what the caller last read of each, and how many more spaces have problems
+// than are listed. It is built once per request and handed on.
+type derived struct {
+	items []notificationResp
+	more  int
+}
+
+func (s *server) derivedItems(c *call) (derived, error) {
+	probs, more, err := s.spaces.SpaceProblems(c.r.Context(), c.user().ID)
 	if err != nil {
-		return nil, err
+		return derived{}, err
 	}
 	if len(probs) == 0 {
-		return nil, nil
+		return derived{more: more}, nil
 	}
 	seen, err := store.ListSeen(c.r.Context(), s.opt.Store.Q(), c.user().ID)
 	if err != nil {
-		return nil, err
+		return derived{}, err
 	}
 	out := make([]notificationResp, len(probs))
 	for i, p := range probs {
@@ -52,7 +58,28 @@ func (s *server) derivedItems(c *call) ([]notificationResp, error) {
 		out[i] = notificationResp{ID: key, Kind: store.NotifyProblems, Ref: p.ID, Derived: true, Read: seen[key] == p.Sig,
 			Payload: map[string]any{"space": p.Name, "total": p.Total, "counts": p.Counts, "sig": p.Sig}}
 	}
-	return out, nil
+	return derived{out, more}, nil
+}
+
+// derivedUnread is how many of the derived items the caller has not read, for
+// the badge asked for every minute: no items are built, and the marks are only
+// read when some space has problems.
+func (s *server) derivedUnread(c *call) (int, error) {
+	probs, _, err := s.spaces.SpaceProblems(c.r.Context(), c.user().ID)
+	if err != nil || len(probs) == 0 {
+		return 0, err
+	}
+	seen, err := store.ListSeen(c.r.Context(), s.opt.Store.Q(), c.user().ID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, p := range probs {
+		if seen[derivedPrefix+p.ID] != p.Sig {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *server) listNotifications(c *call) {
@@ -75,13 +102,15 @@ func (s *server) listNotifications(c *call) {
 	cursor := q.Get("cursor")
 	items := []notificationResp{}
 	// The derived ones come first, on the first page only.
-	derived, err := s.derivedItems(c)
+	der, err := s.derivedItems(c)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
+	more := 0
 	if cursor == "" && (kind == "" || kind == store.NotifyProblems) {
-		for _, d := range derived {
+		more = der.more
+		for _, d := range der.items {
 			if !unreadOnly || !d.Read {
 				items = append(items, d)
 			}
@@ -104,7 +133,7 @@ func (s *server) listNotifications(c *call) {
 			items = append(items, notificationResp{ID: n.ID, Kind: n.Kind, Ref: n.Ref, Payload: json.RawMessage(n.Payload), At: &at, Read: n.Read})
 		}
 	}
-	count, err := s.unreadCount(c, derived)
+	count, err := s.unreadCount(c, unreadOf(der.items))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -113,32 +142,38 @@ func (s *server) listNotifications(c *call) {
 		Items  []notificationResp `json:"items"`
 		Next   string             `json:"next"`
 		Unread int                `json:"unread"`
-	}{items, next, count})
+		// MoreProblems is how many more spaces have problems than are listed.
+		MoreProblems int `json:"moreProblems,omitempty"`
+	}{items, next, count, more})
 }
 
-// unreadCount is the stored unread rows (one index range, counted up to
-// unreadCap) and the derived ones the caller has not read as they are now.
-func (s *server) unreadCount(c *call, derived []notificationResp) (int, error) {
-	n, err := store.UnreadCapped(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.user().TenantID, unreadCap)
-	if err != nil {
-		return 0, err
-	}
-	for _, d := range derived {
+func unreadOf(items []notificationResp) int {
+	n := 0
+	for _, d := range items {
 		if !d.Read {
 			n++
 		}
 	}
-	return min(n, unreadCap), nil
+	return n
+}
+
+// unreadCount is the stored unread rows (one index range, counted up to
+// unreadCap) and the derived ones the caller has not read as they are now.
+func (s *server) unreadCount(c *call, derivedUnread int) (int, error) {
+	n, err := store.UnreadCapped(c.r.Context(), s.opt.Store.Q(), c.user().ID, c.user().TenantID, unreadCap)
+	if err != nil {
+		return 0, err
+	}
+	return min(n+derivedUnread, unreadCap), nil
 }
 
 func (s *server) getUnreadNotifications(c *call) {
-	// The derived ones are only looked at when there is something to look at.
-	derived, err := s.derivedItems(c)
+	d, err := s.derivedUnread(c)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	n, err := s.unreadCount(c, derived)
+	n, err := s.unreadCount(c, d)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -178,34 +213,37 @@ func (s *server) markNotificationsRead(c *call) {
 			return
 		}
 	}
+	der, err := s.derivedItems(c)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	if len(keys) > 0 {
-		if err := s.seeProblems(c, keys, now); err != nil {
+		if err := s.seeProblems(c, der.items, keys, now); err != nil {
 			s.fail(c.w, err)
 			return
 		}
 	}
-	s.answerUnread(c)
+	s.answerUnread(c, der.items)
 }
 
 // seeProblems records that the caller read the derived items with these keys as
-// they are now (a key that is not one of the caller's has nothing to record).
-func (s *server) seeProblems(c *call, keys []string, now time.Time) error {
-	derived, err := s.derivedItems(c)
-	if err != nil {
-		return err
-	}
+// they are now (a key that is not one of the caller's has nothing to record),
+// and marks them read in items.
+func (s *server) seeProblems(c *call, items []notificationResp, keys []string, now time.Time) error {
 	want := map[string]bool{}
 	for _, k := range keys {
 		want[k] = true
 	}
-	for _, d := range derived {
-		if !want[d.ID] {
+	for i, d := range items {
+		if !want[d.ID] || d.Read {
 			continue
 		}
 		sig, _ := d.Payload.(map[string]any)["sig"].(string)
 		if err := store.SetSeen(c.r.Context(), s.opt.Store.Q(), c.user().ID, d.ID, sig, now); err != nil {
 			return err
 		}
+		items[i].Read = true
 	}
 	return nil
 }
@@ -228,36 +266,36 @@ func (s *server) markAllNotificationsRead(c *call) {
 			return
 		}
 	}
-	if req.Kind == "" || req.Kind == store.NotifyProblems {
-		derived, err := s.derivedItems(c)
-		if err != nil {
-			s.fail(c.w, err)
-			return
-		}
-		keys := make([]string, 0, len(derived))
-		for _, d := range derived {
-			keys = append(keys, d.ID)
-		}
-		if err := s.seeProblems(c, keys, now); err != nil {
-			s.fail(c.w, err)
-			return
-		}
-		// What is no longer a problem needs no cursor.
-		if err := store.ForgetSeen(ctx, s.opt.Store.Q(), c.user().ID, keys); err != nil {
-			s.fail(c.w, err)
-			return
-		}
-	}
-	s.answerUnread(c)
-}
-
-func (s *server) answerUnread(c *call) {
-	derived, err := s.derivedItems(c)
+	der, err := s.derivedItems(c)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	n, err := s.unreadCount(c, derived)
+	if req.Kind == "" || req.Kind == store.NotifyProblems {
+		keys := make([]string, 0, len(der.items))
+		for _, d := range der.items {
+			keys = append(keys, d.ID)
+		}
+		if err := s.seeProblems(c, der.items, keys, now); err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		// What is no longer a problem needs no cursor. The spaces past the cap
+		// keep theirs: they are problems still.
+		if der.more == 0 {
+			if err := store.ForgetSeen(ctx, s.opt.Store.Q(), c.user().ID, keys); err != nil {
+				s.fail(c.w, err)
+				return
+			}
+		}
+	}
+	s.answerUnread(c, der.items)
+}
+
+// answerUnread answers the badge after a mark, from the derived items the
+// request built (marked as they are now).
+func (s *server) answerUnread(c *call, items []notificationResp) {
+	n, err := s.unreadCount(c, unreadOf(items))
 	if err != nil {
 		s.fail(c.w, err)
 		return

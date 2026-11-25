@@ -29,7 +29,7 @@ func TestProblemsAreReadFromOpenSpacesAndRememberedWhenTheyClose(t *testing.T) {
 			t.Fatal(err)
 		}
 		// A space with nothing wrong says nothing.
-		if got, err := m.SpaceProblems(ctx, owner.ID); err != nil || len(got) != 0 {
+		if got, _, err := m.SpaceProblems(ctx, owner.ID); err != nil || len(got) != 0 {
 			t.Fatalf("%v %v", got, err)
 		}
 		root, _ := m.paths(a.ID)
@@ -41,13 +41,13 @@ func TestProblemsAreReadFromOpenSpacesAndRememberedWhenTheyClose(t *testing.T) {
 		}
 		// The count of an open space is reused for a few seconds, then read again.
 		clk.add(time.Minute)
-		got, err := m.SpaceProblems(ctx, owner.ID)
+		got, _, err := m.SpaceProblems(ctx, owner.ID)
 		if err != nil || len(got) != 1 || got[0].ID != a.ID || got[0].Name != "Notes" || got[0].Total != 1 || got[0].Counts["no_id"] != 1 || got[0].Sig == "" {
 			t.Fatalf("%+v %v", got, err)
 		}
 		sig := got[0].Sig
 		// Only someone who can write in the space is told.
-		if got, err := m.SpaceProblems(ctx, viewer.ID); err != nil || len(got) != 0 {
+		if got, _, err := m.SpaceProblems(ctx, viewer.ID); err != nil || len(got) != 0 {
 			t.Fatalf("a viewer is told: %v %v", got, err)
 		}
 		// Nothing is opened for this: closed, the space still answers, from memory.
@@ -57,7 +57,7 @@ func TestProblemsAreReadFromOpenSpacesAndRememberedWhenTheyClose(t *testing.T) {
 		if m.OpenCount() != 0 {
 			t.Fatal("the space did not close")
 		}
-		got, _ = m.SpaceProblems(ctx, owner.ID)
+		got, _, _ = m.SpaceProblems(ctx, owner.ID)
 		if len(got) != 1 || got[0].Sig != sig {
 			t.Fatalf("after closing: %+v", got)
 		}
@@ -75,7 +75,7 @@ func TestProblemsAreReadFromOpenSpacesAndRememberedWhenTheyClose(t *testing.T) {
 			t.Fatal(err)
 		}
 		clk.add(time.Minute)
-		if got, _ := m.SpaceProblems(ctx, owner.ID); len(got) != 0 {
+		if got, _, _ := m.SpaceProblems(ctx, owner.ID); len(got) != 0 {
 			t.Fatalf("still told: %+v", got)
 		}
 	})
@@ -136,9 +136,59 @@ func TestOwnersAreToldWhenARemoteNeedsAttention(t *testing.T) {
 		if len(l) != 3 || l[0].Payload != `{"event":"ok","kind":"","space":"Notes","state":"ok"}` {
 			t.Fatalf("%+v", l)
 		}
+		// A remote that flaps is told once; one that comes back after being
+		// offline is told it works.
+		report(space.RemoteStatus{State: space.RemoteError, Kind: space.KindAuth})
+		report(space.RemoteStatus{State: space.RemoteOffline})
+		report(space.RemoteStatus{State: space.RemoteError, Kind: space.KindAuth})
+		report(space.RemoteStatus{State: space.RemoteOffline})
+		report(space.RemoteStatus{State: space.RemoteError, Kind: space.KindAuth})
+		if l = told(owner); len(l) != 4 {
+			t.Fatalf("a flapping remote: %d notices", len(l))
+		}
+		report(space.RemoteStatus{State: space.RemoteOffline})
+		report(space.RemoteStatus{State: space.RemoteOK})
+		if l = told(owner); len(l) != 5 || l[0].Payload != `{"event":"ok","kind":"","space":"Notes","state":"ok"}` {
+			t.Fatalf("back after offline: %+v", l)
+		}
 		// Only the owners.
 		if n := len(told(editor)); n != 0 {
 			t.Fatalf("an editor was told: %d", n)
+		}
+	})
+}
+
+// The cap is on spaces with problems: spaces without any do not use it up,
+// and those past it are counted, not dropped without a word. A deleted space
+// is forgotten.
+func TestProblemsCapCountsOnlySpacesWithProblems(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		was := problemMax
+		problemMax = 2
+		defer func() { problemMax = was }()
+		m, clk := limitedManager(t, st, func(o *Options) { o.MaxSpaces = 0 })
+		owner := addUser(t, st, "U1", "owner")
+		var ids []string
+		for _, name := range []string{"A", "B", "C", "D", "E"} {
+			sp, err := m.Create(ctx, owner.ID, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, sp.ID)
+		}
+		// The first two have none; the last three have one each.
+		for _, id := range ids[2:] {
+			m.problems.put(id, map[string]int{"no_id": 1}, clk.now())
+		}
+		got, more, err := m.SpaceProblems(ctx, owner.ID)
+		if err != nil || len(got) != 2 || more != 1 {
+			t.Fatalf("%d listed, %d more, %v", len(got), more, err)
+		}
+		if _, err := m.RecycleSpace(ctx, store.AllTenants(), ids[4], RecycleOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := m.problems.get(ids[4]); ok {
+			t.Error("a deleted space is still remembered")
 		}
 	})
 }

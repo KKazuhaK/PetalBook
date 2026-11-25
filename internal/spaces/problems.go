@@ -28,8 +28,10 @@ import (
 // asked for every minute by everyone who has the app open.
 const problemFresh = 20 * time.Second
 
-// problemMax is the most spaces one answer looks at.
-const problemMax = 50
+
+// problemMax is the most spaces with problems one answer lists; the rest are
+// counted (a variable for the tests).
+var problemMax = 50
 
 type problemEntry struct {
 	counts map[string]int
@@ -46,6 +48,13 @@ func (p *problemMemo) get(id string) (problemEntry, bool) {
 	defer p.mu.Unlock()
 	e, ok := p.m[id]
 	return e, ok
+}
+
+// forget drops what a space said (it was deleted).
+func (p *problemMemo) forget(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.m, id)
 }
 
 func (p *problemMemo) put(id string, counts map[string]int, at time.Time) {
@@ -107,16 +116,19 @@ func (m *Manager) peekOpen(id string) (sp *space.Space, release func(), ok bool)
 }
 
 // SpaceProblems lists the spaces the person can write in that have problems, from
-// memory and the indexes of the spaces that are open (see above). Spaces
-// switched off are left out.
-func (m *Manager) SpaceProblems(ctx context.Context, userID string) ([]SpaceProblems, error) {
+// memory and the indexes of the spaces that are open (see above), at most
+// problemMax of them in the order of the person's list; more is how many more
+// have problems. Spaces switched off, and those the person reaches only as an
+// administrator, are left out. Only the spaces with problems count towards the
+// cap: looking at one costs a lookup in memory, or the count of an open index
+// reused for problemFresh.
+func (m *Manager) SpaceProblems(ctx context.Context, userID string) (list []SpaceProblems, more int, err error) {
 	l, err := m.list(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	m.loadDisabled(ctx) // on failure nothing is shown as disabled; the space cannot be opened anyway
 	var out []SpaceProblems
-	n := 0
 	for _, in := range l {
 		if !in.Perms.Has(perm.Write) || in.ViaAdmin {
 			continue
@@ -127,15 +139,16 @@ func (m *Manager) SpaceProblems(ctx context.Context, userID string) ([]SpaceProb
 		if off {
 			continue
 		}
-		if n++; n > problemMax {
-			break
-		}
 		counts := m.problemCounts(in.ID)
 		if sp := problemsOf(in.ID, in.Name, counts); sp != nil {
+			if len(out) == problemMax {
+				more++
+				continue
+			}
 			out = append(out, *sp)
 		}
 	}
-	return out, nil
+	return out, more, nil
 }
 
 // problemCounts is what the space says now (open), or said last.

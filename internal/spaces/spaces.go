@@ -282,13 +282,16 @@ type Manager struct {
 
 	authors authorCache // names for commits, by user id (see AuthorByID)
 
-	heads    map[string]string // space id -> the change cursor it had when it was last closed (guarded by mu; see heads.go)
-	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
-	disabled map[string]bool   // ids of the disabled spaces, and of deleted ones, which stay refused (guarded by mu; nil until first needed)
-	adminMu  sync.Mutex        // one administrator action (disable, transfer, delete) at a time
-	sizeSem  chan struct{}     // one directory walk at a time (see Resize)
-	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
-	pullWake chan struct{}     // a space with a remote was just opened: pull it now
+	heads map[string]string // space id -> the change cursor it had when it was last closed (guarded by mu; see heads.go)
+	syncs map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
+	// settled is the last state of each space's remote that was not "offline",
+	// what a notice is told against (notify.go; guarded by mu).
+	settled  map[string]string
+	disabled map[string]bool // ids of the disabled spaces, and of deleted ones, which stay refused (guarded by mu; nil until first needed)
+	adminMu  sync.Mutex      // one administrator action (disable, transfer, delete) at a time
+	sizeSem  chan struct{}   // one directory walk at a time (see Resize)
+	remoteMu sync.Mutex      // one connect, disconnect or key change at a time
+	pullWake chan struct{}   // a space with a remote was just opened: pull it now
 
 	st        storageState // the storage policy (storage.go) and its caches
 	storageMu sync.Mutex   // one change of the settings at a time

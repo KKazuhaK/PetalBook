@@ -252,6 +252,7 @@ func (m *Manager) recycleLocked(ctx context.Context, sc store.Scope, id string, 
 	m.assetsGone(id)
 	m.noteConnected(id, false)
 	m.forgetCacheState(id)
+	m.forgetNotices(id)
 	if err := m.recycleStep("recycle:rows"); err != nil {
 		return res.Item, err
 	}
