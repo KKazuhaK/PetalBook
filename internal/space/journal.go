@@ -2,9 +2,11 @@ package space
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -65,26 +67,151 @@ type jrec struct {
 	Pages []string `json:"ps,omitempty"`
 	// N is how many pages an "f" record rewrites, all its parts together.
 	N int `json:"pn,omitempty"`
+
+	// seq is the sequence number of the record's frame in the journal, and
+	// first that of its first frame (an "f" record's first "fp" part; else
+	// seq). Zero for a record that was never journaled. Not part of the body.
+	seq, first uint64
 }
 
 // journalPart bounds the bytes of the page paths (as JSON) in one "fp" record,
-// so that no line this server writes is longer than maxJournalLine (a path is
-// at most a few kilobytes). Lines are read whatever their length.
+// so that no frame this server writes is longer than maxJournalLine (a path is
+// at most a few kilobytes). Frames are read whatever their length.
 const (
 	journalPart    = 64 << 10
 	maxJournalLine = journalPart + 64<<10
 )
 
-// encodeRec writes r as the lines of the journal: one, or for an "f" record
-// with pages, its "fp" parts and then the record.
-func encodeRec(buf *bytes.Buffer, r jrec) {
-	line := func(r jrec) {
-		b, _ := json.Marshal(r)
-		buf.Write(b)
-		buf.WriteByte('\n')
+// The journal is a sequence of frames, one record each, one per line:
+//
+//	LLLLLLLL CCCCCCCC SSSSSSSSSSSSSSSS {json}\n
+//
+// L is the length of the JSON body, C the CRC-32C of the sequence number (8
+// bytes, big-endian) followed by the body, S the sequence number; all three in
+// fixed-width lower-case hex. The sequence numbers rise by one with every frame
+// appended and never go down while the server runs: they name a position in
+// the journal that a trim can keep everything after (committer.commit). A
+// frame that is cut short, whose sum or end does not match, or whose number
+// does not rise ends what is read: the rest is the tail of an append that never
+// finished (or damage), and is cut off at startup.
+const frameHead = 8 + 1 + 8 + 1 + 16 + 1
+
+var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+func frameSum(seq uint64, body []byte) uint32 {
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], seq)
+	return crc32.Update(crc32.Checksum(b[:], castagnoli), castagnoli, body)
+}
+
+func appendHex(b []byte, v uint64, width int) []byte {
+	const digits = "0123456789abcdef"
+	for i := width - 1; i >= 0; i-- {
+		b = append(b, digits[(v>>(4*uint(i)))&0xf])
 	}
+	return b
+}
+
+// putFrame writes body as the frame numbered seq.
+func putFrame(buf *bytes.Buffer, seq uint64, body []byte) {
+	var h [frameHead]byte
+	b := appendHex(h[:0], uint64(len(body)), 8)
+	b = append(b, ' ')
+	b = appendHex(b, uint64(frameSum(seq, body)), 8)
+	b = append(b, ' ')
+	b = appendHex(b, seq, 16)
+	b = append(b, ' ')
+	buf.Write(b)
+	buf.Write(body)
+	buf.WriteByte('\n')
+}
+
+// frame is one frame read back: its number, its body and where it is.
+type frame struct {
+	seq        uint64
+	body       []byte
+	start, end int
+}
+
+func parseHex(b []byte) (uint64, bool) {
+	var v uint64
+	for _, c := range b {
+		switch {
+		case '0' <= c && c <= '9':
+			v = v<<4 | uint64(c-'0')
+		case 'a' <= c && c <= 'f':
+			v = v<<4 | uint64(c-'a'+10)
+		default:
+			return 0, false
+		}
+	}
+	return v, true
+}
+
+// scanFrames reads the frames of data, in order, up to the first that is not
+// whole and sound. end is where the good frames end; cut says why the bytes
+// after it were not read: "" when there are none, "torn" for a frame cut short
+// (an append a stop interrupted), "corrupt" for one that is all there but does
+// not check out.
+func scanFrames(data []byte) (frames []frame, end int, cut string) {
+	var last uint64
+	// A file system may leave the blocks of an append that a stop
+	// interrupted as zeros: that is an append cut short, not damage.
+	// A frame cut short is the last thing in the file: its body has no
+	// line end (JSON has none), so whole lines after the cut are damage.
+	corrupt := func(rest []byte) string {
+		if len(bytes.Trim(rest, "\x00")) == 0 {
+			return "torn"
+		}
+		return "corrupt"
+	}
+	short := func(rest []byte) string {
+		if bytes.IndexByte(rest, '\n') >= 0 {
+			return "corrupt"
+		}
+		return "torn"
+	}
+	for end < len(data) {
+		rest := data[end:]
+		if len(rest) < frameHead {
+			return frames, end, short(rest)
+		}
+		n, ok1 := parseHex(rest[:8])
+		sum, ok2 := parseHex(rest[9:17])
+		seq, ok3 := parseHex(rest[18:34])
+		if !ok1 || !ok2 || !ok3 || rest[8] != ' ' || rest[17] != ' ' || rest[34] != ' ' {
+			return frames, end, corrupt(rest)
+		}
+		if uint64(len(rest)-frameHead) < n+1 {
+			return frames, end, short(rest)
+		}
+		body := rest[frameHead : frameHead+int(n)]
+		if rest[frameHead+int(n)] != '\n' || uint32(sum) != frameSum(seq, body) || seq <= last {
+			return frames, end, "corrupt"
+		}
+		last = seq
+		frames = append(frames, frame{seq: seq, body: body, start: end, end: end + frameHead + int(n) + 1})
+		end += frameHead + int(n) + 1
+	}
+	return frames, end, ""
+}
+
+// encodeRec writes r as frames of the journal, numbered from *seq + 1 on: one,
+// or for an "f" record with pages, its "fp" parts and then the record. It
+// leaves *seq at the last number used, and r's first and seq at its frames.
+func encodeRec(buf *bytes.Buffer, seq *uint64, r *jrec) {
+	put := func(x jrec) {
+		b, _ := json.Marshal(x)
+		*seq++
+		if r.first == 0 || r.first > *seq {
+			r.first = *seq
+		}
+		putFrame(buf, *seq, b)
+	}
+	r.first = 0
 	if r.Op != "f" || len(r.Pages) == 0 {
-		line(r)
+		put(*r)
+		r.seq = *seq
 		return
 	}
 	part := jrec{Op: "fp", Path: r.Path, From: r.From, To: r.To, Rev: r.Rev}
@@ -92,151 +219,256 @@ func encodeRec(buf *bytes.Buffer, r jrec) {
 	for _, p := range r.Pages {
 		q, _ := json.Marshal(p)
 		if size > 0 && size+len(q)+1 > journalPart {
-			line(part)
+			put(part)
 			part.Pages, size = nil, 0
 		}
 		part.Pages = append(part.Pages, p)
 		size += len(q) + 1
 	}
-	line(part)
-	r.N, r.Pages = len(r.Pages), nil
-	line(r)
+	put(part)
+	whole := *r
+	whole.N, whole.Pages = len(r.Pages), nil
+	put(whole)
+	r.seq = *seq
 }
 
-// journalDamage is a line of the journal that could not be read.
+// journalDamage is a frame of the journal whose body is not a record.
 type journalDamage struct {
-	Line int
-	Len  int
-	Why  string
+	Seq uint64
+	Len int
+	Why string
 }
 
-// readJournal reads the records of a journal. A line that cannot be read is
-// damage, reported and passed over: the records after it still count. A last
-// line with no end is not damage: the append it began never finished, so the
-// write it announced was never made; torn is its offset, or -1.
-func readJournal(data []byte) (recs []jrec, damage []journalDamage, torn int) {
-	torn = -1
+// journalRead is what readJournal found.
+type journalRead struct {
+	recs []jrec
+	// damage are sound frames whose body is not a record: passed over, the
+	// records after them still count.
+	damage []journalDamage
+	// end is where the good frames end, and cut why the rest was not read
+	// (see scanFrames).
+	end int
+	cut string
+	// seq is the number of the last good frame, 0 if there is none.
+	seq uint64
+}
+
+// readJournal reads the records of a journal.
+func readJournal(data []byte) journalRead {
+	frames, end, cut := scanFrames(data)
+	out := journalRead{end: end, cut: cut}
 	type key struct{ path, from, to, rev string }
-	parts := map[key][]string{}
-	for n, at := 1, 0; at < len(data); n++ {
-		end := bytes.IndexByte(data[at:], '\n')
-		if end < 0 {
-			torn = at
-			break
-		}
-		line := data[at : at+end]
-		at += end + 1
-		if len(line) == 0 {
-			continue
-		}
+	type parts struct {
+		first uint64
+		pages []string
+	}
+	pending := map[key]*parts{}
+	for _, f := range frames {
+		out.seq = f.seq
 		var r jrec
-		switch err := json.Unmarshal(line, &r); {
+		switch err := json.Unmarshal(f.body, &r); {
 		case err != nil:
-			damage = append(damage, journalDamage{n, len(line), err.Error()})
+			out.damage = append(out.damage, journalDamage{f.seq, len(f.body), err.Error()})
 			continue
 		case r.Op == "":
-			damage = append(damage, journalDamage{n, len(line), "no op"})
+			out.damage = append(out.damage, journalDamage{f.seq, len(f.body), "no op"})
 			continue
 		}
+		r.seq, r.first = f.seq, f.seq
 		k := key{r.Path, r.From, r.To, r.Rev}
 		switch r.Op {
 		case "fp":
-			parts[k] = append(parts[k], r.Pages...)
+			p := pending[k]
+			if p == nil {
+				p = &parts{first: f.seq}
+				pending[k] = p
+			}
+			p.pages = append(p.pages, r.Pages...)
 			continue
 		case "f":
 			if r.N > 0 {
-				r.Pages = append(parts[k], r.Pages...)
+				if p := pending[k]; p != nil {
+					r.Pages, r.first = append(p.pages, r.Pages...), p.first
+				}
 				if len(r.Pages) != r.N {
-					damage = append(damage, journalDamage{n, len(line), fmt.Sprintf("the rename names %d pages, %d were found", r.N, len(r.Pages))})
+					out.damage = append(out.damage, journalDamage{f.seq, len(f.body), fmt.Sprintf("the rename names %d pages, %d were found", r.N, len(r.Pages))})
 				}
 			}
 			r.N = 0
-			delete(parts, k)
+			delete(pending, k)
 		}
-		recs = append(recs, r)
+		out.recs = append(out.recs, r)
 	}
-	return recs, damage, torn
+	return out
 }
 
 func (r jrec) author() Author { return Author{Name: r.AuthorName, Email: r.AuthorEmail, Via: r.Via} }
 
 // journal is an append-only file in the state directory. Every append is
 // fsynced before the write it announces. After a successful commit it is
-// replaced by the paths still pending.
+// trimmed to what is still pending (trim).
 type journal struct {
 	path string
 	mu   sync.Mutex
 	f    *os.File
+	// size is the length of the good frames in the file, and seq the number
+	// of the last one (0 when there is none). An append that fails is cut
+	// back to size; broken says that cut failed too, and the next append
+	// tries it again first.
+	size   int64
+	seq    uint64
+	broken bool
 	// guard, when set, says whether the folder of the journal can be written
 	// in: it is not, through something that is not a folder (settingspath.go).
 	guard func() error
+	// write and sync, when set, stand in for the file's Write and Sync: a
+	// test makes an append fail part way with them.
+	write func(f *os.File, b []byte) (int, error)
+	sync  func(f *os.File) error
+	// replace, when set, stands in for the rename that puts a trimmed
+	// journal in place: a test makes a trim fail with it.
+	replace func(tmp, path string) error
 }
 
 // openJournal reads the records an earlier run left and opens the file for
-// appending. A damaged line is logged as an error and passed over (see
-// readJournal); a torn last line is cut off, so that the next record appended
-// starts a line of its own.
+// appending. A frame that is cut short or does not check out ends the
+// journal: it and anything after it are logged and cut off, so that the next
+// record appended is read back. Nothing is refused: a journal that cannot be
+// read at all is an empty one.
 func openJournal(path string, log *slog.Logger) (*journal, []jrec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, err
 	}
-	recs, damage, torn := readJournal(data)
-	for _, d := range damage {
-		log.Error("a line of the journal cannot be read; what it recorded may not be committed or finished",
-			"journal", path, "line", d.Line, "bytes", d.Len, "problem", d.Why)
+	rd := readJournal(data)
+	for _, d := range rd.damage {
+		log.Error("a record of the journal cannot be read; what it recorded may not be committed or finished",
+			"journal", path, "seq", d.Seq, "bytes", d.Len, "problem", d.Why)
 	}
-	if torn >= 0 {
-		log.Warn("the journal ends in a record cut short by a stop; it is dropped", "journal", path, "bytes", len(data)-torn)
-		if err := os.Truncate(path, int64(torn)); err != nil {
+	switch rd.cut {
+	case "torn":
+		log.Warn("the journal ends in a record cut short by a stop; it is dropped", "journal", path, "bytes", len(data)-rd.end)
+	case "corrupt":
+		log.Error("the journal is damaged from a point on; the rest is dropped, and what it recorded may not be committed or finished",
+			"journal", path, "at", rd.end, "bytes", len(data)-rd.end)
+	}
+	if rd.cut != "" {
+		if err := os.Truncate(path, int64(rd.end)); err != nil {
 			return nil, nil, err
 		}
 	}
-	j := &journal{path: path}
+	j := &journal{path: path, size: int64(rd.end), seq: rd.seq}
 	if j.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644); err != nil {
 		return nil, nil, err
 	}
-	return j, recs, nil
+	return j, rd.recs, nil
 }
 
-func (j *journal) append(recs ...jrec) error {
-	var buf bytes.Buffer
-	for _, r := range recs {
-		encodeRec(&buf, r)
-	}
+// lastSeq is the number of the last frame appended.
+func (j *journal) lastSeq() uint64 {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if _, err := j.f.Write(buf.Bytes()); err != nil {
-		return err
-	}
-	return j.f.Sync()
+	return j.seq
 }
 
-// rewrite replaces the journal by the pending paths, each with its author, and
-// the records in keep, atomically.
-func (j *journal) rewrite(pending map[string]Author, keep []jrec) error {
-	paths := make([]string, 0, len(pending))
-	for p := range pending {
-		paths = append(paths, p)
+// append journals recs, durably, and sets their seq and first. If it fails,
+// what it wrote is cut off again, so that the next append starts a frame of
+// its own right after the last good one.
+func (j *journal) append(recs []jrec) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.broken {
+		if err := j.f.Truncate(j.size); err != nil {
+			return fmt.Errorf("the journal cannot be cut back after a failed append: %w", err)
+		}
+		j.broken = false
 	}
-	sort.Strings(paths)
 	var buf bytes.Buffer
-	for _, p := range paths {
-		by := pending[p]
-		b, _ := json.Marshal(jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
-		buf.Write(b)
-		buf.WriteByte('\n')
+	seq := j.seq
+	for i := range recs {
+		encodeRec(&buf, &seq, &recs[i])
 	}
-	// Records of bindings still to be changed are not "done" by a commit.
-	for _, r := range keep {
-		encodeRec(&buf, r)
+	write, sync := (*os.File).Write, (*os.File).Sync
+	if j.write != nil {
+		write = j.write
 	}
+	if j.sync != nil {
+		sync = j.sync
+	}
+	_, err := write(j.f, buf.Bytes())
+	if err == nil {
+		err = sync(j.f)
+	}
+	if err != nil {
+		for i := range recs {
+			recs[i].seq, recs[i].first = 0, 0
+		}
+		if terr := j.f.Truncate(j.size); terr != nil {
+			j.broken = true
+		}
+		return err
+	}
+	j.size += int64(buf.Len())
+	j.seq = seq
+	return nil
+}
+
+// trim replaces the journal, atomically, by the frames after number upTo and
+// those of the records in keep (records still open: they stay whatever their
+// place), in their order, followed by a "t" record for each path in pending,
+// with its author. A record of keep whose frames are not in the journal any
+// more is journaled again, at the end.
+func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.guard != nil {
 		if err := j.guard(); err != nil {
 			return err
 		}
+	}
+	data, err := os.ReadFile(j.path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if int64(len(data)) > j.size {
+		data = data[:j.size]
+	}
+	frames, _, _ := scanFrames(data)
+	kept := func(seq uint64) bool {
+		for _, r := range keep {
+			if r.first <= seq && seq <= r.seq {
+				return true
+			}
+		}
+		return false
+	}
+	var buf bytes.Buffer
+	found := map[uint64]bool{}
+	for _, f := range frames {
+		if f.seq > upTo || kept(f.seq) {
+			buf.Write(data[f.start:f.end])
+			found[f.seq] = true
+		}
+	}
+	// A record journaled again gets its new numbers only once the new
+	// journal is in place: after a failed trim the next append uses them.
+	seq := j.seq
+	again := map[int]jrec{}
+	for i, r := range keep {
+		if r.seq == 0 || !found[r.seq] {
+			encodeRec(&buf, &seq, &r)
+			again[i] = r
+		}
+	}
+	paths := make([]string, 0, len(pending))
+	for p := range pending {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		by := pending[p]
+		r := jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via}
+		encodeRec(&buf, &seq, &r)
 	}
 	tmp := j.path + ".new"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
@@ -245,17 +477,28 @@ func (j *journal) rewrite(pending map[string]Author, keep []jrec) error {
 	}
 	if _, err := f.Write(buf.Bytes()); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return err
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return err
 	}
 	f.Close()
-	if err := os.Rename(tmp, j.path); err != nil {
+	replace := os.Rename
+	if j.replace != nil {
+		replace = j.replace
+	}
+	if err := replace(tmp, j.path); err != nil {
+		os.Remove(tmp)
 		return err
 	}
+	for i, r := range again {
+		keep[i].seq, keep[i].first = r.seq, r.first
+	}
 	j.f.Close()
+	j.size, j.seq, j.broken = int64(buf.Len()), seq, false
 	j.f, err = os.OpenFile(j.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	return err
 }

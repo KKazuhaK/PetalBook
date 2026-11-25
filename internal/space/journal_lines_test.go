@@ -240,7 +240,7 @@ func TestAFieldRenameStoppedBeforeItWasClosedChangesNothingMore(t *testing.T) {
 	}
 }
 
-// A line of the journal that cannot be read, however long, is reported, and the records after it still count.
+// A record of the journal that cannot be read, however long, is reported, and the records after it still count.
 func TestADamagedJournalLineIsReportedAndTheRestIsKept(t *testing.T) {
 	t.Parallel()
 	needGit(t)
@@ -257,7 +257,7 @@ func TestADamagedJournalLineIsReportedAndTheRestIsKept(t *testing.T) {
 		strings.Repeat("x", 2<<20), // longer than any record
 		`{"op":"t","p":"b.md"}`, ``,
 	}, "\n")
-	os.WriteFile(filepath.Join(state, "pending.journal"), []byte(journal), 0o644)
+	os.WriteFile(filepath.Join(state, "pending.journal"), framed(journal), 0o644)
 	var logs logBuffer
 	s := openAt(t, root, withLog(&logs))
 	if err := s.Flush(); err != nil {
@@ -270,7 +270,7 @@ func TestADamagedJournalLineIsReportedAndTheRestIsKept(t *testing.T) {
 		}
 	}
 	out := logs.String()
-	for _, line := range []string{"line=2", "line=3"} {
+	for _, line := range []string{"seq=2", "seq=3"} {
 		if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, line) {
 			t.Errorf("the damaged %s is not reported:\n%.2000s", line, out)
 		}
@@ -288,7 +288,7 @@ func TestATornLastJournalLineDoesNotSwallowTheNextRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	crash(s)
-	if err := os.WriteFile(journalFile(root), []byte(`{"op":"t","p":"ne`), 0o644); err != nil {
+	if err := os.WriteFile(journalFile(root), framed(`{"op":"t","p":"new.md"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)

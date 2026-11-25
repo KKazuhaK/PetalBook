@@ -211,7 +211,7 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "B"), filepath.Join(root, "C")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalFile(root), []byte(`{"op":"b","f":"B","to":"C"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(journalFile(root), framed(`{"op":"b","f":"B","to":"C"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)

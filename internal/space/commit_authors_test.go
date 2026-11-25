@@ -1,7 +1,6 @@
 package space
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,10 +181,9 @@ func TestJournalAfterACommitKeepsTheAuthorsOfWhatIsStillPending(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(filepath.Join(s.StateDir(), "pending.journal"))
-	var r jrec
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(b))), &r); err != nil || r.Path != late.Path || r.author() != bo {
-		t.Fatalf("journal %q: %v", b, err)
+	recs := journalRecords(t, root)
+	if len(recs) != 1 || recs[0].Path != late.Path || recs[0].author() != bo {
+		t.Fatalf("journal: %+v", recs)
 	}
 }
 
@@ -238,7 +236,7 @@ func TestOldJournalWithoutAuthorsRecoversAsTheDefaultAuthor(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := `{"op":"w","p":"Old.md","rev":"` + page.Rev(data) + `"}` + "\n"
-	if err := os.WriteFile(filepath.Join(state, "pending.journal"), []byte(line), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "pending.journal"), framed(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s2 := openTwoAuthors(t, root)

@@ -371,7 +371,7 @@ func Open(opt Options) (*Space, error) {
 		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
 			// What the records asked for is done now; they must not be made
 			// again by a later crash, after the bindings may have changed.
-			if err := jrn.rewrite(recovered, linkRecs); err != nil {
+			if err := jrn.trim(jrn.lastSeq(), linkRecs, recovered); err != nil {
 				return nil, err
 			}
 			break
@@ -481,10 +481,15 @@ func Open(opt Options) (*Space, error) {
 		for i, p := range ours {
 			recs[i] = jrec{Op: "t", Path: p}
 		}
-		if err := s.cm.Record(Author{}, recs...); err != nil {
+		end := s.cm.begin()
+		err := s.cm.Record(Author{}, recs...)
+		if err == nil {
+			s.cm.Touch(Author{}, ours...) // commit the files we just made, and nothing else
+		}
+		end()
+		if err != nil {
 			return nil, err
 		}
-		s.cm.Touch(Author{}, ours...) // commit the files we just made, and nothing else
 	}
 	return s, nil
 }

@@ -684,7 +684,7 @@ func TestCrashAfterAFolderRenameFinishesTheViewsAtRecovery(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B")); err != nil {
 		t.Fatal(err)
 	}
-	rec := []byte(`{"op":"b","f":"A","to":"B"}` + "\n")
+	rec := framed(`{"op":"b","f":"A","to":"B"}` + "\n")
 	if err := os.WriteFile(journalFile(root), rec, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +712,7 @@ func TestCrashAfterAFolderRenameFinishesTheViewsAtRecovery(t *testing.T) {
 	// A move that never happened (the old folder is there) moves nothing.
 	crash(s3)
 	os.Rename(filepath.Join(root, "B"), filepath.Join(root, "A"))
-	os.WriteFile(journalFile(root), []byte(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
+	os.WriteFile(journalFile(root), framed(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
 	s4 := openAt(t, root)
 	if viewsAt(s4, "B") != "top" || viewsAt(s4, "A") != "" {
 		t.Errorf("%s", spaceYML(root))
@@ -739,7 +739,7 @@ func TestCrashAfterAFolderDeleteDropsItsViewsAtRecovery(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, "G")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalFile(root), []byte(`{"op":"u","p":"G"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(journalFile(root), framed(`{"op":"u","p":"G"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)
@@ -752,7 +752,7 @@ func TestCrashAfterAFolderDeleteDropsItsViewsAtRecovery(t *testing.T) {
 		os.MkdirAll(filepath.Join(root, "Keep"), 0o755)
 	}
 	mustCreate2()
-	os.WriteFile(journalFile(root), []byte(`{"op":"u","p":"Keep"}`+"\n"), 0o644)
+	os.WriteFile(journalFile(root), framed(`{"op":"u","p":"Keep"}`+"\n"), 0o644)
 	s3 := openAt(t, root)
 	if viewsAt(s3, "Keep") != "Keep" {
 		t.Errorf("%s", spaceYML(root))

@@ -259,3 +259,119 @@ toward quotas, so a local-only space grew without limit.
     is released would remove this.
   - No test covers a geometric repack in a partial clone (promisor packs). Git releases
     before about 2.49 may fail there; that is a logged warning, not data loss.
+
+### 4.9 The write journal and how commits are cut (approved 2026-11-24)
+
+A local space commits in the background (4.4), so every change is first written to a
+journal in the state directory (`pending.journal`, `internal/space/journal.go`) and
+fsynced before the files are touched. A crash between the write and its commit is then
+recovered at the next start. This section is the redesign the owner approved on
+2026-11-24. It ships as seven PRs (round 2), and each part below names the PR that
+delivers it. On-disk formats change freely before the first release: there is no
+compatibility or migration code for older journals.
+
+**Where it stood before round 2.** The journal recorded intents: `w path rev` (a file
+written with this content), `l from to` (a move whose links must follow), `b`/`bd`,
+`u`/`ud` (bindings in `space.yml`), `f`/`fp`/`fd` (a type field rename), `m`, `r`, `t`,
+`d`. Recovery re-derived the work from whatever was on disk. The committer staged the
+working tree when its timer fired (`git add -A` on the pending paths) and, after a
+commit, rewrote the journal from its in-memory map of pending paths instead of by
+position in the journal.
+
+**Known issues this fixes.**
+
+1. Redoing `l` after a crash is not idempotent. `finishLinkRecs` runs `relink` again on
+   content that may already be rewritten, so relative links without an `id` can become
+   wrong (`A/B/A/B/y.md`). A remote `moveIntent` records `l` for every name it tries,
+   and the undo paths never close them.
+2. A background commit can split one rename in two: `tx.touch` comes before the write
+   loop of `writeEdits`, and the commit's `add -A` stages whatever is on disk when its
+   timer fires.
+3. The commit log has three narrow windows:
+   - (a) a save appends `w` but hands its path to the committer only later, in
+     `afterWrite`; a commit in between rewrote the journal from the pending map and
+     dropped the record;
+   - (b) a failed or partial append at runtime was not cut back, so the next record was
+     glued onto the fragment and both became unreadable;
+   - (c) a file the server created and that was changed outside PetalBook before
+     recovery is skipped (its `w` no longer matches), so it is never committed.
+4. "Still typing during a save": when a save rewrites links, an editor that kept typing
+   still holds the old text, and its next save writes the old paths back.
+
+**The design.**
+
+- **Framed records** (PR 1). Each record is one frame, one per line:
+  `LLLLLLLL CCCCCCCC SSSSSSSSSSSSSSSS {json}\n`. L is the length of the JSON body, C
+  the CRC-32C of the sequence number (8 bytes, big-endian) followed by the body, and S
+  a sequence number that rises by one per frame. All three are fixed-width hex, so the
+  file stays readable with `less` and `grep`. An append that fails (a short write or a
+  failed fsync) is truncated back to the last good offset; if that truncation fails
+  too, the next append retries it first. At startup the journal is read up to the first
+  frame that is cut short, whose sum or end does not match, or whose number does not
+  rise. The rest is logged (a warning for an interrupted append, including a block of
+  zeros a file system left, an error for damage) and cut off. Nothing is refused, and a
+  sound frame whose body is not a record is reported and passed over. Numbers continue
+  across trims while the server runs, and from the last frame after a restart.
+- **Trim by position** (PR 1). When a commit takes the pending paths it also takes a
+  journal position S. That is the last frame number, or, if a change is running (it has
+  journaled but not yet handed its paths over: `committer.begin`, called by `mutate`),
+  the number just before that change began. After the commit the journal keeps every
+  frame after S byte for byte, the frames of records still open (`b`, `u`, `l`, `f`
+  until their `…d`), and a fresh `t` record for each path whose commit failed. This
+  fixes 3a.
+- **Record types** (PRs 2 to 6). These replace the intent records:
+  - `x tx author`: a transaction begins;
+  - `p tx path oldHash newHash [moveFrom]`: one per file. Content up to 64 KB is inline;
+    larger content goes into one staged file per transaction, `tx-<n>.blob`;
+  - `a tx`: applied. It is not fsynced, because replay is idempotent;
+  - `c tx`: the transaction is in Git;
+  - `k tx`: aborted.
+- **Prepare, then apply** (PR 2 for save and `writeEdits`; PR 4 for moves and relinks).
+  Under the space lock the whole change is planned first: the save, the moves, every
+  link rewrite. Then `x` and the `p` entries are written with one fsync, and only then
+  is the change applied.
+- **Redo is a pure replay** (PR 2). A file already at newHash is skipped. A file at
+  oldHash gets the new content. A file at any other hash was changed outside PetalBook
+  and is left alone. Nothing is parsed again, and `l`/`ld` go away (PR 4). This fixes
+  1 for local spaces.
+- **A consistent commit snapshot** (PR 3). The committer takes only the applied
+  transactions up to S, builds the tree from their recorded blob hashes with
+  `update-index --index-info` instead of `add -A`, and after the commit keeps the
+  records after S. Touch moves after apply. This fixes 2 and 3c.
+- **Owner decision 1.** When a file was changed outside PetalBook before recovery, Git
+  records the server's version. The outside edit stays in the working tree as an
+  uncommitted change and is never lost.
+- **Remote spaces** (PR 5) use the same unit. Undo writes `k`, and old contents come
+  from the parent commit. This fixes 1 for remote spaces.
+- **Owner decision 2.** A remote change that a crash cut short before its push is rolled
+  back at startup, unless HEAD is already on the remote. The user never got a success
+  reply, because remote mutations answer only after the push.
+- **Fold-in** (PR 6). `b`/`u`/`f` become extra `p` entries for `space.yml` and the type
+  files.
+- **Issue 4** (PR 7, API and web). The save response adds `textRev`: the rev of the file
+  as the client's text produced it, before this save's link rewrites. If its text
+  changed since it sent the save, the editor sends `baseRev = textRev`, and the server
+  rebases through the step it already logged.
+
+**The seven PRs.** 1: framing, sequence numbers and trim by position (3b, 3a).
+2: prepare/apply/replay for save and `writeEdits` (1, local). 3: the committer cuts by
+transaction from blob hashes, with touch after apply (2, 3c). 4: moves and relinks as
+one transaction, removing `l`/`ld`. 5: the remote path, with `k` and the rollback at
+startup (1, remote). 6: fold in `b`/`u`/`f`. 7: issue 4, API and web.
+
+**Cost (PR 1).** One save is still one append: one `write` and one fsync. The frame adds
+35 bytes of header to the JSON body (about 120 bytes for a `w` record with an author),
+plus a CRC-32C over it (hardware-accelerated). `begin` and its end are two short lock
+pairs per change, with no I/O. The trim after a commit reads the journal once. The
+journal then holds only what came after the last commit, plus open records. Before
+round 2 the trim rewrote it from memory; both write it once and fsync.
+
+**Notes for the later PRs.**
+
+- Frame numbers are not stable across restarts once the journal has been trimmed empty
+  (they start again from 0). A transaction id that names a file, such as
+  `tx-<n>.blob`, must either be removed when its transaction is trimmed, or be cleaned
+  up at startup if no frame names it.
+- `append` always fsyncs. The unsynced `a` record needs a variant that does not.
+- The "change still running" mark of PR 1 becomes "the first transaction not yet
+  applied" in PR 3.

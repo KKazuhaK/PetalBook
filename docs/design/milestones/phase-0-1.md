@@ -84,7 +84,9 @@ Known issues left by the review, not blocking, carried forward to 1.2:
   entry may become invalid (this needs two crashes in a row); a file the
   server created and that was changed externally before recovery is not
   committed automatically. In all three cases the file content is intact; it
-  is just temporarily not in Git history.
+  is just temporarily not in Git history. Being fixed in round 2, see
+  [storage-and-sync.md §4.9](../storage-and-sync.md#49-the-write-journal-and-how-commits-are-cut-approved-2026-11-24): the first two by framed records and the trim by
+  position (PR 1, done), the third by commits cut from blob hashes (PR 3).
 - When the repository stays in the middle of a rebase for a long time, the
   commit log keeps growing.
 - A non-text item in the tag list (such as an empty value) cannot be deleted
