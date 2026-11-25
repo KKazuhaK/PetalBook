@@ -300,7 +300,7 @@ function Listing({ source }: { source: ListSource }) {
 
   // What the layouts need: the table and the board a folder with a type (the board a single-choice field of it), a tag's
   // board a field a view named, reading any folder or tag. While the types are on their way the choice is kept.
-  const groupFields = groupFieldsOf(type)
+  const groupFields = groupFieldsOf(type, source.kind === 'folder' ? t.ftable.columns.source : '')
   const group = state.group || groupFields[0]?.key || ''
   const typesPending = source.kind === 'folder' && types.isPending
   const tableOk = typeName !== ''

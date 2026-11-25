@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
-import { byLabel, click, installDomShims, mount, press, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, press, settle, shareSpace, type Mounted } from '@/testing/harness'
 import { listShell, putViews, seedWork, sender, TASK, type Send } from '@/testing/listKit'
-import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
 
 // The board of a folder or a tag against the mock server: its columns, their paging, and moving cards.
@@ -545,21 +544,22 @@ describe('a board with many columns', () => {
   })
 })
 
-describe('a view that has no field to group by', () => {
-  it('says so instead of showing a board', async () => {
+describe('a folder that has no type', () => {
+  it('has a board too: grouped by the source, with a column for each value the pages have', async () => {
     m = await mount(listShell, {
       entries: (server) => {
         const send = sender(server)
         send('POST', '/folders', { path: 'Plain' })
-        send('POST', '/pages', { folder: 'Plain', meta: { title: 'p' }, body: '' })
+        send('POST', '/pages', { folder: 'Plain', meta: { title: 'p', source: ['书', '电影'] }, body: '' })
+        send('POST', '/pages', { folder: 'Plain', meta: { title: 'q', source: ['书'] }, body: '' })
         putViews(send, { folder: 'Plain' }, [{ name: '看板', layout: 'board' }])
         return ['/s/default/f/Plain']
       },
     })
-    await settle(() => byLabel(t.view.list) !== null, 'the listing')
-    await settle(() => document.querySelector('[data-slot="view-bar"]') !== null, 'tabs')
-    // Not a board without a type: the layout falls back to the list.
-    await settle(() => byLabel(t.view.list)!.getAttribute('aria-pressed') === 'true', 'list')
-    expect(document.querySelector('[data-slot="board-view"]')).toBeNull()
+    await settle(() => document.querySelector('[data-slot="board-view"]') !== null, 'the board')
+    await settle(() => document.body.textContent!.includes('电影'), 'a column for each source')
+    expect(document.body.textContent).toContain('书')
+    // The values are the pages' own, so a card cannot be dragged to set one.
+    expect(document.body.textContent).toContain(tb.board.valuesReadOnly)
   })
 })

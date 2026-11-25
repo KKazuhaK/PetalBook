@@ -127,6 +127,18 @@ func TestSourceFilterAndUsedSources(t *testing.T) {
 	if err != nil || len(r.Items) != 3 || r.Items[2].Title != "C" {
 		t.Fatalf("sorted by source: %+v %v", r, err)
 	}
+	// A board is grouped by the source like by any list property: a column for each value.
+	g, err := s.Groups(index.GroupQuery{Key: "source"})
+	if err != nil || len(g.Groups) != 2 {
+		t.Fatalf("%+v %v", g, err)
+	}
+	counts := map[string]int{}
+	for _, x := range g.Groups {
+		counts[x.Value] = x.Count
+	}
+	if counts["书"] != 2 || counts["电影"] != 1 {
+		t.Fatalf("%+v", g)
+	}
 	used, err := s.UsedSources()
 	if err != nil || len(used) != 2 || used[0].Source != "书" || used[0].Pages != 2 {
 		t.Fatalf("%+v %v", used, err)

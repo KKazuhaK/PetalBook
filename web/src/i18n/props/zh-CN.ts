@@ -26,6 +26,19 @@ export const propsZhCN = {
     clear: '清除',
     loadFailed: '读不到类型的定义。',
     missingType: (name: string) => `找不到类型“${name}”。页面头部里的属性都列在下面。`,
+    system: '页面信息',
+    systemHelp: '这些是系统字段，只读。',
+    systemId: '页面编号',
+    systemCreated: '创建日期',
+    renameKey: (key: string) => `重命名属性“${key}”的键`,
+    renameTitle: '重命名属性的键',
+    renameHelp: (key: string, type: string) =>
+      `这会改掉类型“${type}”里“${key}”的键，并在同一次提交里改写所有使用这个类型、并且有这个属性的页面。值不变。只有管理员和所有者能做。`,
+    renameNew: '新的键',
+    renameConfirm: '重命名',
+    renameDone: (n: number) => `已重命名，改写了 ${n} 个页面。`,
+    renameFailed: '没能重命名这个属性。',
+    cancel: '取消',
   },
   // Settings, "Types".
   types: {

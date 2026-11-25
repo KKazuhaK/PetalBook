@@ -24,7 +24,7 @@ export function PageHeaderIcon({
 }) {
   const ops = useFileOps()
   const { write } = useSpacePermissions()
-  const style = usePageStyle()({ icon, color, effectiveType })
+  const style = usePageStyle(!!effectiveType && !icon)({ icon, color, effectiveType })
   const open = () => ops?.setStyle({ kind: 'page', id, folder, label })
   if (style.icon) {
     const glyph = <PageIcon icon={style.icon} color={style.color} className="size-9 text-3xl" />

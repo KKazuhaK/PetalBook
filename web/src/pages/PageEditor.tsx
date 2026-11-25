@@ -84,6 +84,7 @@ import { PageLinkPicker } from '@/components/editor/PageLinkPicker'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
 import { PageHeaderIcon } from '@/components/icons/PageHeaderIcon'
+import { SystemFields } from '@/components/editor/SystemFields'
 import { SourcesEditor } from '@/components/editor/SourceEditor'
 import { DEFAULT_SOURCES } from '@/lib/sources'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
@@ -344,7 +345,9 @@ function EditorSession({
   const presets = appearance.data?.sourcePresets ?? DEFAULT_SOURCES
   // Without `write` the page is shown and nothing about it can be changed: no
   // typing, no draft, no move or delete, no going back to a version.
-  const { write } = useSpacePermissions()
+  const { write, manage } = useSpacePermissions()
+  // The source view shows the body only; an administrator of the space can bring the header's YAML into it.
+  const [withHeader, setWithHeader] = useState(false)
   // Offline the page can be read and not changed (4.2 makes offline editing); what was typed stays in the browser's
   // own draft.
   const offline = useOffline()
@@ -697,6 +700,7 @@ function EditorSession({
     richScroller,
     source: sourceRef,
     draftRef: ref,
+    withHeader,
   })
   if (narrowTo !== (sv.broken ? 'source' : 'rich') && (sv.broken || mode !== 'source'))
     setNarrowTo(sv.broken ? 'source' : 'rich')
@@ -739,6 +743,8 @@ function EditorSession({
       return
     }
     sv.resumeStale(raw)
+    // Text left with a header in it comes back with the header.
+    setWithHeader(true)
     saveMode('source')
     setRawLeft((dropOldSource(ref, raw), takeOldSource(ref)))
     setSourceKey((k) => k + 1)
@@ -747,6 +753,21 @@ function EditorSession({
   const dropRaw = () => {
     if (rawLeft[0]) setRawLeft(dropOldSource(ref, rawLeft[0]))
   }
+  // The advanced mode: the header's YAML in the source view. Leaving it is refused while the header does not read.
+  const toggleHeader = () => {
+    if (withHeader && sv.canLeaveSource()) return
+    setWithHeader(!withHeader)
+  }
+  const firstRender = useRef(true)
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    // The text is made again for the new way of showing it (the header is in it, or not).
+    sourceRef.current?.setText(sv.currentText())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withHeader])
   // Source text that does not read as a page is in no draft and on no server:
   // closing the tab asks first (the browser keeps the text for next time).
   useEffect(() => {
@@ -1115,10 +1136,22 @@ function EditorSession({
           >
             {mode !== 'rich' && (
               <div
-                className="min-h-0 min-w-0"
+                className="flex min-h-0 min-w-0 flex-col"
                 onPointerDownCapture={() => sv.settle('source')}
                 onFocusCapture={() => sv.settle('source')}
               >
+                {manage && !readOnly && (
+                  <label className="flex min-h-10 items-center gap-2 border-b px-3 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      data-slot="source-header-toggle"
+                      checked={withHeader}
+                      onChange={toggleHeader}
+                      className="size-4 accent-[var(--color-primary)]"
+                    />
+                    {t.modes.withHeader}
+                  </label>
+                )}
                 <Suspense fallback={<PageFallback />}>
                   <SourceEditor
                     key={sourceKey}
@@ -1202,7 +1235,12 @@ function EditorSession({
                     onChange={setSources}
                     used={sourceList.data?.sources ?? []}
                     presets={presets}
+                    chosen={appearance.data?.sourcePresets != null}
                     readOnly={readOnly}
+                  />
+                  <SystemFields
+                    id={initial.id}
+                    created={typeof page.meta.created === 'string' ? page.meta.created : undefined}
                   />
                   {typeName !== '' && (
                     <Suspense fallback={null}>

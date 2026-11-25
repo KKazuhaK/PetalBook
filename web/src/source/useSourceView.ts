@@ -149,9 +149,23 @@ interface Deps {
   source: RefObject<SourceHandle | null>
   // Whose page this is (the local draft's reference): where unreadable source text is kept.
   draftRef: string
+  // The header is part of the text (the advanced mode of an administrator). Otherwise the source shows the body only:
+  // the header is edited in the properties panel, by value, and what is typed here is the body.
+  withHeader: boolean
 }
 
-export function useSourceView({ id, mode, live, controller, editor, setFields, richScroller, source, draftRef }: Deps) {
+export function useSourceView({
+  id,
+  mode,
+  live,
+  controller,
+  editor,
+  setFields,
+  richScroller,
+  source,
+  draftRef,
+  withHeader,
+}: Deps) {
   const [problem, setProblem] = useState<HeaderProblem | null>(null)
   // True from the first keystroke that breaks the header (the banner waits a moment).
   const [broken, setBroken] = useState(false)
@@ -174,6 +188,10 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
   const kept = useRef<string | null>(null)
   // Text left on an older file that the person asked to take up again.
   const takeStale = useRef<RawSource | null>(null)
+  const withHeaderRef = useRef(withHeader)
+  useEffect(() => {
+    withHeaderRef.current = withHeader
+  }, [withHeader])
   const modeRef = useRef(mode)
   useEffect(() => {
     modeRef.current = mode
@@ -234,6 +252,10 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
       return raw.text
     }
     const b = currentBody()
+    if (!withHeaderRef.current) {
+      body.current = { text: b, line: 1 }
+      return b
+    }
     const h = currentHeader()
     body.current = { text: b, line: h.split('\n').length + 2 - (h.endsWith('\n') || h === '' ? 1 : 0) }
     headerStale.current = false
@@ -251,6 +273,19 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
   // The person typed in the source view.
   const onSourceChange = useCallback(
     (text: string) => {
+      if (!withHeaderRef.current) {
+        // The text is the body, as typed: the header is not in it, so it cannot be wrong.
+        if (body.current?.text !== text) {
+          live.setBodyText(text)
+          richStale.current = true
+          clearTimeout(richTimer.current)
+          richTimer.current = setTimeout(syncRich, pauseFor(text.length))
+        }
+        body.current = { text, line: 1 }
+        report(null)
+        controller.markDirty()
+        return
+      }
       const sp = splitFile(text)
       if (!sp.ok) {
         // Not a file with a header: nothing of it can be taken as content yet.
@@ -303,6 +338,11 @@ export function useSourceView({ id, mode, live, controller, editor, setFields, r
         // rewritten from outside (the editor side is out of reach meanwhile).
         if (!s || problemNow.current) return
         const b = currentBody()
+        if (!withHeaderRef.current) {
+          body.current = { text: b, line: 1 }
+          s.setText(b)
+          return
+        }
         const typed = splitFile(s.getText())
         const keepHeader = typed.ok && !headerStale.current
         const h = keepHeader ? typed.header : currentHeader()

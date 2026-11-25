@@ -1,6 +1,7 @@
-import { useId } from 'react'
-import { ChevronRight, X } from 'lucide-react'
-import { useTypes } from '@/api/hooks'
+import { useId, useState } from 'react'
+import { ChevronRight, PenLine, X } from 'lucide-react'
+import { useSpacePermissions, useTypes } from '@/api/hooks'
+import { RenameFieldDialog } from './RenameFieldDialog'
 import type { PageMeta } from '@/api/types'
 import { FieldControl, isWrong, WrongNote } from '@/components/props/PropControls'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -29,6 +30,8 @@ export default function PropertyPanel({
   readOnly: boolean
 }) {
   const types = useTypes()
+  const { manage } = useSpacePermissions()
+  const [renaming, setRenaming] = useState<string | null>(null)
   const idBase = useId()
   const type = types.data?.types.find((x) => x.name === typeName)
   const fields = type?.fields ?? []
@@ -72,13 +75,27 @@ export default function PropertyPanel({
                 const wrong = isWrong(f, values[f.key])
                 return (
                   <div key={f.key} data-field={f.key} data-kind={f.kind} className="contents">
-                    <label
-                      htmlFor={id}
-                      className="truncate pt-1.5 text-xs text-muted-foreground max-sm:pt-0"
-                      title={label}
-                    >
-                      {label}
-                    </label>
+                    <div className="group/key flex min-w-0 items-start gap-1">
+                      <label
+                        htmlFor={id}
+                        className="min-w-0 flex-1 truncate pt-1.5 text-xs text-muted-foreground max-sm:pt-0"
+                        title={label}
+                      >
+                        {label}
+                      </label>
+                      {manage && !readOnly && (
+                        <button
+                          type="button"
+                          data-slot="rename-key"
+                          aria-label={tp.panel.renameKey(f.key)}
+                          title={tp.panel.renameKey(f.key)}
+                          onClick={() => setRenaming(f.key)}
+                          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity outline-none group-focus-within/key:opacity-100 group-hover/key:opacity-100 pointer-coarse:opacity-60 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
+                        >
+                          <PenLine className="size-3" />
+                        </button>
+                      )}
+                    </div>
                     <div className="min-w-0">
                       <FieldControl
                         field={f}
@@ -128,6 +145,7 @@ export default function PropertyPanel({
           )}
         </>
       )}
+      {renaming && type && <RenameFieldDialog type={type} field={renaming} onClose={() => setRenaming(null)} />}
     </section>
   )
 }

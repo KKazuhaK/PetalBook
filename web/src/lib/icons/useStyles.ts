@@ -14,8 +14,9 @@ export function useFolderStyle(): (path: string) => Style {
 }
 
 // The icon and colour of a page: its own, else the default of its type.
-export function usePageStyle(): (p: { icon?: string; color?: string; effectiveType?: string }) => Style {
-  const types = useTypes()
+// `enabled` false does not ask for the types (a page with no type has no default to find).
+export function usePageStyle(enabled = true): (p: { icon?: string; color?: string; effectiveType?: string }) => Style {
+  const types = useTypes(enabled)
   const by = useMemo(() => new Map((types.data?.types ?? []).map((ty) => [ty.name, ty])), [types.data])
   return (p) => {
     const ty = p.effectiveType ? by.get(p.effectiveType) : undefined

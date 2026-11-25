@@ -72,6 +72,15 @@ export const en: Messages = {
     subfolder: 'Folder',
     loadMore: 'Load more',
   },
+  // The sources of a page (3.10).
+  sources: {
+    presetsTitle: 'Presets for sources',
+    presetsHelp: 'When a source is typed, the ones pages already use come first, then these. One to a line.',
+    useDefaults: 'Use the defaults',
+    editPresets: 'Edit the source presets',
+    saved: 'Saved',
+    failed: 'Could not save the source presets',
+  },
   // Icons and colours of folders and pages (3.10).
   icons: {
     menu: 'Icon and colour',
@@ -1129,6 +1138,7 @@ export const en: Messages = {
     },
   },
   modes: {
+    withHeader: 'Edit the header as YAML too (advanced)',
     label: 'Edit mode',
     rich: 'Visual',
     source: 'Markdown source',

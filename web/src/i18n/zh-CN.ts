@@ -70,6 +70,15 @@ export const zhCN = {
     subfolder: '文件夹',
     loadMore: '加载更多',
   },
+  // The sources of a page (3.10).
+  sources: {
+    presetsTitle: '来源的预设',
+    presetsHelp: '输入来源时，先给出页面里已经用过的，再给出这里的预设。一行一个。',
+    useDefaults: '恢复默认',
+    editPresets: '编辑来源预设',
+    saved: '已保存',
+    failed: '没能保存来源预设',
+  },
   // Icons and colours of folders and pages (3.10).
   icons: {
     menu: '图标和颜色',
@@ -1087,6 +1096,7 @@ export const zhCN = {
   },
   // The three ways to edit a page (docs/design.md, 7.0).
   modes: {
+    withHeader: '同时用 YAML 编辑页面头部（高级）',
     label: '编辑模式',
     rich: '所见即所得',
     source: 'Markdown 原文',
