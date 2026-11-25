@@ -381,6 +381,9 @@ func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[stri
 	if err != nil {
 		return false, err
 	}
+	if made, err := r.commitPathsByFolders(ctx, paths, known, asKnown, message, author, committer); !errors.Is(err, errNotHere) {
+		return made, err
+	}
 	// Present means present under exactly this name. Asking the file system
 	// is not enough: one that ignores case answers for "Apple.md" when the file
 	// is now "apple.md", and the old name would never be recorded as gone.
@@ -576,6 +579,124 @@ func (r *Repo) indexModes(ctx context.Context, paths []string) (map[string]strin
 	return modes, nil
 }
 
+// attributesApply reports whether git's attributes change any of paths on
+// the way into the repository (a filter, line ends, an encoding). Without an
+// attributes file in the repository (looked for along the paths, and in the
+// git directory) that is never so, and git is not asked; else check-attr
+// says, in one command. (The global attributes are not read: the runner has
+// git ignore the global and system configuration.)
+func (r *Repo) attributesApply(ctx context.Context, paths []string) (bool, error) {
+	any := false
+	seen := map[string]bool{}
+	if gd, err := r.absGitDir(ctx); err == nil {
+		if _, err := os.Lstat(filepath.Join(gd, "info", "attributes")); err == nil {
+			any = true
+		}
+	}
+	for _, p := range paths {
+		for d := path.Dir(p); !any; d = path.Dir(d) {
+			if d == "." {
+				d = ""
+			}
+			if !seen[d] {
+				seen[d] = true
+				if _, err := os.Lstat(filepath.Join(r.opt.Dir, filepath.FromSlash(d), ".gitattributes")); err == nil {
+					any = true
+				}
+			}
+			if d == "" {
+				break
+			}
+		}
+	}
+	if !any {
+		return false, nil
+	}
+	out, err := r.run(ctx, Cmd{Args: []string{"check-attr", "-z", "--stdin", "filter", "text", "eol", "ident", "working-tree-encoding"}, Stdin: nulList(paths)})
+	if err != nil {
+		return false, err
+	}
+	f := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(f); i += 3 {
+		if v := f[i+2]; v != "unspecified" && v != "unset" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// commitPathsByFolders is CommitPathsAs by commitByFolders: every path has
+// its blob (recorded, or hashed here from the file under exactly that name)
+// or is gone. errNotHere when a path is something else (a link, a device):
+// the index way stages those as git does.
+func (r *Repo) commitPathsByFolders(ctx context.Context, paths []string, known map[string]Blob, asKnown map[string]string, message func([]Change) string, author, committer Identity) (bool, error) {
+	changes := make(map[string]pathChange, len(paths))
+	var skipped, toHash, toHashAbs []string
+	modes := map[string]string{}
+	names := exactNames{root: r.opt.Dir, dirs: map[string]dirNames{}}
+	for _, p := range paths {
+		if id, ok := asKnown[p]; ok {
+			changes[p] = pathChange{id: id}
+			continue
+		}
+		if b, ok := known[p]; ok && b.ID == "" {
+			changes[p] = pathChange{}
+			continue
+		}
+		e, err := names.entry(p)
+		switch {
+		case err != nil:
+			return false, err
+		case e == nil:
+			changes[p] = pathChange{}
+		case e.IsDir():
+			skipped = append(skipped, p) // see CommitPathsAs
+		case e.Type().IsRegular() && !strings.ContainsAny(p, "\n\x00"):
+			toHash, toHashAbs = append(toHash, p), append(toHashAbs, filepath.Join(r.opt.Dir, filepath.FromSlash(p)))
+			// The mode is the file's, as git add takes it.
+			modes[p] = "100644"
+			if fi, err := e.Info(); err == nil && fi.Mode().Perm()&0o111 != 0 {
+				modes[p] = "100755"
+			}
+		default:
+			return false, errNotHere
+		}
+	}
+	if len(toHash) > 0 {
+		// The contents are hashed as they are (--no-filters). Where the
+		// repository's attributes would have git change a file on the way in
+		// (line ends, a filter), it is staged the index way, as git add does.
+		if filtered, err := r.attributesApply(ctx, toHash); err != nil {
+			return false, err
+		} else if filtered {
+			return false, errNotHere
+		}
+		ids, err := r.HashFiles(ctx, toHashAbs)
+		if err != nil {
+			return false, err
+		}
+		for i, p := range toHash {
+			changes[p] = pathChange{id: ids[i], mode: modes[p]}
+		}
+	}
+	var left error
+	if len(skipped) > 0 {
+		left = &SkippedError{Paths: skipped}
+	}
+	if len(changes) == 0 {
+		return false, left
+	}
+	env := []string{
+		"GIT_AUTHOR_NAME=" + author.Name, "GIT_AUTHOR_EMAIL=" + author.Email,
+		"GIT_COMMITTER_NAME=" + committer.Name, "GIT_COMMITTER_EMAIL=" + committer.Email,
+	}
+	made, err := r.commitByFolders(ctx, changes, message, env)
+	if err != nil {
+		return false, err
+	}
+	return made, left
+}
+
 // writeBlobs puts the contents known gives the paths into the object store,
 // and returns the blob id of each it could: from the work tree, in one
 // process, where the file there has that content; else from Data, one
@@ -760,6 +881,13 @@ func (r *Repo) tempIndexDir(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	clearOldIndexes(gd)
+	return os.MkdirTemp(gd, tempIndexPrefix)
+}
+
+// clearOldIndexes removes the index directories of commits a crash left in
+// the git directory gd (older than any commit takes).
+func clearOldIndexes(gd string) {
 	if old, _ := filepath.Glob(filepath.Join(gd, tempIndexPrefix+"*")); len(old) > 0 {
 		for _, d := range old {
 			if fi, err := os.Lstat(d); err == nil && fi.IsDir() && time.Since(fi.ModTime()) > time.Hour {
@@ -767,7 +895,6 @@ func (r *Repo) tempIndexDir(ctx context.Context) (string, error) {
 			}
 		}
 	}
-	return os.MkdirTemp(gd, tempIndexPrefix)
 }
 
 const tempIndexPrefix = "petalbook-index-"

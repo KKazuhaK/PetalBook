@@ -180,18 +180,16 @@ func TestCommitOfManyPathsAsksForThemInParts(t *testing.T) {
 		if c.Dir != r.Dir() {
 			continue
 		}
-		sub, rest := subcommand(c.Args)
-		if sub != "ls-files" {
-			continue
+		// No command gets the paths on its command line past the bound
+		// (the commit built from its folders gives them on stdin).
+		_, rest := subcommand(c.Args)
+		if i := slices.Index(rest, "--"); i >= 0 && len(rest)-i-1 > maxArgPaths {
+			t.Fatalf("%d paths on a command line", len(rest)-i-1)
 		}
 		lists++
-		i := slices.Index(rest, "--")
-		if i < 0 || len(rest)-i-1 == 0 || len(rest)-i-1 > maxArgPaths {
-			t.Fatalf("ls-files with %v", rest)
-		}
 	}
-	if want := (len(paths) + maxArgPaths - 1) / maxArgPaths; lists != want {
-		t.Fatalf("%d ls-files commands, want %d", lists, want)
+	if lists == 0 {
+		t.Fatal("no command")
 	}
 	if got := sh(t, r.Dir(), "diff", "--name-only", "HEAD~1", "HEAD"); strings.Count(got, "\n")+1 != len(paths) {
 		t.Fatalf("the commit has %d files", strings.Count(got, "\n")+1)

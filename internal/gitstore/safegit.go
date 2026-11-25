@@ -192,6 +192,8 @@ func subcommand(args []string) (string, []string) {
 //	             where it is, become a blob (an attachment repository, below). The
 //	             same, and --stdin, for the files of a commit that is cut from the
 //	             contents the server wrote, not the work tree (CommitPathsAs).
+//	mktree       --batch, with -z --missing: the new trees of a commit built from the
+//	             folders it changes (commitByFolders), all in one command.
 //	mktree       -z --missing: a tree made of entries whose contents this clone does not
 //	             have; with ls-tree (no -r), commit-tree and update-ref HEAD, the commit that
 //	             adds files to an attachment repository, or takes a space's attachments
@@ -232,7 +234,8 @@ var allowedOptions = map[string][]string{
 	"remote":       {},
 	"update-ref":   {},
 	"hash-object":  {"-w", "--no-filters", "--stdin-paths", "--stdin"},
-	"mktree":       {"-z", "--missing"},
+	"mktree":       {"-z", "--missing", "--batch"},
+	"check-attr":   {"-z", "--stdin"},
 	"version":      {},
 	"for-each-ref": {"--format=*"},
 	"reset":        {"--quiet", "--hard"},

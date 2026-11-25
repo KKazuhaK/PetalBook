@@ -778,6 +778,18 @@ func (c *committer) commit() error {
 	return errors.Join(errs...)
 }
 
+// trimJournal drops the journal's frames up to upTo: for a space that
+// follows a remote, whose changes up to there are pushed while others still
+// wait for their push.
+func (c *committer) trimJournal(upTo uint64) error {
+	if c == nil || c.j == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.j.trim(upTo, nil)
+}
+
 // clearJournal empties the journal: for a space that follows a remote, whose
 // changes are committed and pushed (or undone) before the request is answered,
 // so nothing is ever pending between two changes.

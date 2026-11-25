@@ -393,6 +393,9 @@ var errRemoteMoved = errors.New("the remote moved on; the change is made again")
 // change is then made again, from the new tip (which may not need the repair
 // any more); a network failure fails the change, as any change fails then.
 func (s *Space) repairWayLocked(ctx context.Context, r *remote, rel string) (string, error) {
+	if len(r.pending) > 0 {
+		return "", errPushPending // pushed on its own, once theirs are out
+	}
 	parent := r.repo.Head(ctx)
 	author, committer := s.cm.git.identities(Author{})
 	var paths, all []string
