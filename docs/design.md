@@ -24,7 +24,7 @@ Markdown. See the overview for the status and the goals.
 - [storage-and-sync.md](design/storage-and-sync.md): storage and sync
   - [§4 Storage and sync](design/storage-and-sync.md#4-storage-and-sync): local and remote modes, credentials, drafts and commits, partial cache, conflicts, two devices
 - [database.md](design/database.md): the databases
-  - [§5 Database](design/database.md#5-database): state database, index database, the database baseline (5.3), the no-migration rule (5.4)
+  - [§5 Database](design/database.md#5-database): state database, index database, the database baseline (5.3), the no-migration rule (5.4), the memory budget of open spaces and the rebuild limit (5.5)
 - [auth-and-permissions.md](design/auth-and-permissions.md): sign-in, roles and permissions
   - [§6 Sign-in and permissions](design/auth-and-permissions.md#6-sign-in-and-permissions): sign-in methods, roles, machine access
   - [§16 Reserved: custom roles and permissions](design/auth-and-permissions.md#16-reserved-custom-roles-and-permissions)

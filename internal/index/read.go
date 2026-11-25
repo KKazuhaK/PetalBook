@@ -49,7 +49,7 @@ import (
 
 // auxConns is the number of connections the reads of all requests share for
 // reading ranges at the same time as their own.
-const auxConns = 6
+const auxConns = 2
 
 // querier is what a read's queries run on: a read transaction.
 type querier interface {

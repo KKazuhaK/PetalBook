@@ -229,6 +229,11 @@ export const storageEn = {
       checkout: 'checking out',
       indexing: 'reading the files',
     },
+    // A space waiting for its turn (a restore, or a rebuild of its index) or whose index is being rebuilt.
+    preparing: {
+      waiting: 'Waiting to prepare this space…',
+      rebuilding: 'Preparing this space: its index is being built…',
+    },
     spaceFull:
       'This would take the space over the size limit the administrator set for spaces that are not on a remote repository. Saving text still works.',
   },

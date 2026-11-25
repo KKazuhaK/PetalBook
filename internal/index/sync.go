@@ -73,56 +73,99 @@ type known struct{ size, mtimeNs int64 }
 // start-up, on a reindex, and when a lookup misses (throttled), never per
 // request otherwise.
 func (x *Index) Sync(src Source, full bool) (Stats, error) {
+	return x.SyncContext(context.Background(), src, full)
+}
+
+// SyncContext is Sync whose wait for a slot of the server's for big syncs ends
+// with ctx (with ctx's error, and nothing synced). Once it has its slot the
+// sync runs to its end.
+func (x *Index) SyncContext(slotCtx context.Context, src Source, full bool) (Stats, error) {
 	start := time.Now()
 	ctx := context.Background()
 
-	disk := map[string]FileInfo{}
-	dirSet := map[string]bool{"": true}
-	err := src.Walk(
-		func(f FileInfo) error { disk[f.Rel] = f; return nil },
-		func(rel string) error {
-			for ; rel != "" && rel != "."; rel = path.Dir(rel) {
-				dirSet[rel] = true
-			}
-			return nil
-		})
-	if err != nil {
-		return Stats{}, err
-	}
-
-	x.wmu.Lock()
-	defer x.unlockWrite()
-
-	have := map[string]known{}
-	var recheck []string
-	if !full {
-		if recheck, err = x.loadKnown(ctx, have); err != nil {
+	var (
+		disk    map[string]FileInfo
+		dirSet  map[string]bool
+		have    map[string]known
+		recheck []string
+		removed []string
+		todo    []FileInfo
+		gone    int
+		differs bool
+		big     bool // holds one of the server's slots for big syncs
+		err     error
+	)
+	for {
+		disk = map[string]FileInfo{}
+		dirSet = map[string]bool{"": true}
+		err = src.Walk(
+			func(f FileInfo) error { disk[f.Rel] = f; return nil },
+			func(rel string) error {
+				for ; rel != "" && rel != "."; rel = path.Dir(rel) {
+					dirSet[rel] = true
+				}
+				return nil
+			})
+		if err != nil {
 			return Stats{}, err
 		}
-	}
-	var removed []string
-	for p := range have {
-		if _, ok := disk[p]; !ok {
-			removed = append(removed, p)
-		}
-	}
-	gone := len(removed)
-	for _, p := range recheck {
-		if _, ok := disk[p]; !ok {
-			removed = append(removed, p)
-		}
-	}
-	var todo []FileInfo
-	// differs: the files are not what the index recorded (files looked at again on
-	// every sync do not count).
-	differs := gone > 0
-	for p, f := range disk {
-		if k, ok := have[p]; !ok || k.size != f.Size || k.mtimeNs != f.MtimeNs {
-			todo = append(todo, f)
-			if !differs && (ok || !slices.Contains(recheck, p)) {
-				differs = true
+
+		x.wmu.Lock()
+		have = map[string]known{}
+		recheck = nil
+		if !full {
+			if recheck, err = x.loadKnown(ctx, have); err != nil {
+				x.wmu.Unlock()
+				return Stats{}, err
 			}
 		}
+		removed = nil
+		for p := range have {
+			if _, ok := disk[p]; !ok {
+				removed = append(removed, p)
+			}
+		}
+		gone = len(removed)
+		for _, p := range recheck {
+			if _, ok := disk[p]; !ok {
+				removed = append(removed, p)
+			}
+		}
+		todo = nil
+		// differs: the files are not what the index recorded (files looked at again on
+		// every sync do not count).
+		differs = gone > 0
+		for p, f := range disk {
+			if k, ok := have[p]; !ok || k.size != f.Size || k.mtimeNs != f.MtimeNs {
+				todo = append(todo, f)
+				if !differs && (ok || !slices.Contains(recheck, p)) {
+					differs = true
+				}
+			}
+		}
+		if big || !full && len(todo) <= x.bigFiles {
+			break
+		}
+		// A big sync (a rebuild, or the first sync of a large space) waits for
+		// a slot of the server's without holding the write lock, so writes and
+		// small syncs of this index go on meanwhile; then the files are looked
+		// at again, since they may have changed while it waited.
+		x.wmu.Unlock()
+		if !x.slots.tryAcquire() {
+			x.tell(PhaseWaiting)
+			if err := x.slots.acquire(slotCtx); err != nil {
+				return Stats{}, err
+			}
+		}
+		defer x.slots.release()
+		x.tell(PhaseRebuilding)
+		big = true
+	}
+	defer x.unlockWrite()
+	if big {
+		// The writer's cache is large only for as long as a big sync needs it.
+		x.setWriteCache(ctx, bigWriteCacheKiB)
+		defer x.setWriteCache(ctx, writeCacheKiB)
 	}
 	// A fixed order makes the outcome independent of map order, e.g. which of
 	// two files with the same id is kept.
@@ -138,6 +181,9 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	defer w.close()
 	w.fd.pruneAge = true
 	rules := x.rules.Load()
+	if big && x.bigSyncHook != nil {
+		x.bigSyncHook(tx)
+	}
 
 	st := Stats{}
 	if full {
@@ -233,6 +279,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 	}
 	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
 	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
+	x.pages.Store(int64(st.Pages))
 	st.Elapsed = time.Since(start)
 	return st, nil
 }
@@ -1040,6 +1087,7 @@ func (x *Index) refresh(src Source, forget, forgetDirs, paths, dirs []string) (S
 	}
 	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM pages`).Scan(&st.Pages)
 	x.wdb.QueryRowContext(ctx, `SELECT count(*) FROM problems`).Scan(&st.Problems)
+	x.pages.Store(int64(st.Pages))
 	st.Elapsed = time.Since(start)
 	return st, nil
 }
