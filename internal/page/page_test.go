@@ -3,6 +3,7 @@ package page
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -336,6 +337,35 @@ func TestLabelAndExcerpt(t *testing.T) {
 	}
 	if Excerpt("") != "" {
 		t.Fatal("empty excerpt")
+	}
+}
+
+func TestExcerptKeepsTaskState(t *testing.T) {
+	// The same cases run in the web app's offline reader (web/src/lib/offline/reader.test.ts).
+	raw, err := os.ReadFile("testdata/excerpts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct{ Name, Body, Excerpt string }
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if got := Excerpt(c.Body); got != c.Excerpt {
+			t.Errorf("%s: %q, want %q", c.Name, got, c.Excerpt)
+		}
+	}
+	// The plain text for the index and the label keep no marker.
+	if got := PlainText("- [x] 完成"); got != "完成" {
+		t.Errorf("PlainText: %q", got)
+	}
+	if l, _ := Label("", "- [ ] 标题行"); l != "标题行" {
+		t.Errorf("Label: %q", l)
+	}
+	// The marker counts toward the cap.
+	ex := Excerpt("- [x] " + strings.Repeat("花", 600))
+	if n := utf8.RuneCountInString(ex); n != 400 || !strings.HasPrefix(ex, "[x] 花") {
+		t.Errorf("%d runes", n)
 	}
 }
 

@@ -5,6 +5,7 @@
 import { ApiError } from '@/api/client'
 import type { CatalogEntry, Page, PageList, PageSummary, TagsResponse, TreeResponse } from '@/api/types'
 import { t } from '@/i18n'
+import { excerptOf } from '@/lib/excerpt'
 import { existingStore } from './manager'
 import type { OfflineStore } from './store'
 
@@ -13,23 +14,7 @@ const MAX_LIMIT = 200
 
 const under = (folder: string, root: string) => root === '' || folder === root || folder.startsWith(root + '/')
 
-// The text of a page for a listing: up to 400 characters, one line per non-blank line of the body.
-export function excerptOf(markdown: string): string {
-  const lines = markdown
-    .replace(/```[^\n]*\n([\s\S]*?)```/g, '$1')
-    .split('\n')
-    .map((l) =>
-      l
-        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-        .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.|- \[[ x]\])\s+/, '')
-        .replace(/[*_`~|]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim(),
-    )
-    .filter(Boolean)
-  return Array.from(lines.join('\n')).slice(0, 400).join('')
-}
+export { excerptOf }
 
 const compareCodePoints = (a: string, b: string) => {
   const x = Array.from(a)
