@@ -921,6 +921,28 @@ export class SaveController {
     this.noticeExternalSave(moved.rev)
   }
 
+  // An action of the person's own changed the header of the file on the server (a field of its type got another key),
+  // and the caller has made the same change to the header being edited: the new file becomes the base of the text, as
+  // if it had been read with it. The body being typed stays (the action changes no body); a draft the server holds is
+  // on the old file now and is replaced by the next store. Without this the next save meets a newer file, and keeping
+  // one's own text there would write the old key back.
+  async rebaseOnto(page: Page) {
+    if (this.inflight) await this.inflight.catch(() => {})
+    if (this.closed || this.conflict) return
+    this.activity++
+    const { draft, ...file } = page
+    this.file = file
+    this.lineage = file.rev
+    this.serverDraft = draft ? toServerDraft(draft) : null
+    this.stale = !!draft?.stale
+    this.setOurs(draft ? [oursOf(draft.baseRev, draft)] : [])
+    this.uncertain = false
+    this.announce(file.rev, this.serverDraft?.version ?? null)
+    // What is typed, and a draft on the old file, are stored again on the new one.
+    if (this.hasUnsaved() || this.serverDraft) this.markDirty()
+    else this.settle()
+  }
+
   // Replace everything this controller knows with what the server has (the
   // caller shows the same in the editor).
   resetTo(page: Page) {

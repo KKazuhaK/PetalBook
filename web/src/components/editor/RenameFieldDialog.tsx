@@ -15,14 +15,27 @@ import { tp } from '@/i18n/props'
 
 // The key of a property is the type's, not a page's: renaming it is one action for the type and every page that uses it,
 // made in one commit. Only for those who manage the space.
-export function RenameFieldDialog({ type, field, onClose }: { type: PageType; field: string; onClose: () => void }) {
+export function RenameFieldDialog({
+  type,
+  field,
+  onClose,
+  onRenamed,
+}: {
+  type: PageType
+  field: string
+  onClose: () => void
+  // Told the keys once the server has renamed them (the open page takes its new header).
+  onRenamed?: (from: string, to: string) => void
+}) {
   const rename = useRenameTypeField()
   const [key, setKey] = useState(field)
   const [error, setError] = useState('')
   const submit = async () => {
     setError('')
     try {
-      const r = await rename.mutateAsync({ name: type.name, baseRev: type.rev, from: field, to: key.trim() })
+      const to = key.trim()
+      const r = await rename.mutateAsync({ name: type.name, baseRev: type.rev, from: field, to })
+      onRenamed?.(field, to)
       toast.success(tp.panel.renameDone(r.pages))
       onClose()
     } catch (e) {

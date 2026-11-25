@@ -677,6 +677,19 @@ function EditorSession({
   }
   const typeName = page.effectiveType ?? ''
   const propValues = fields.others ?? othersOf(page.meta)
+  // A key of the type was renamed from the panel: the server rewrote this page's header. The header being edited gets
+  // the same change (the key keeps its place) and the rewritten file becomes the base of the text, so the next save is
+  // not a conflict that "keep mine" would settle by writing the old key back. The body being typed stays.
+  const fieldRenamed = async (from: string, to: string) => {
+    const others = live.fields.others
+    if (others && from in others && !(to in others))
+      setFields(live.setOthers(Object.fromEntries(Object.entries(others).map(([k, v]) => [k === from ? to : k, v]))))
+    try {
+      await controller.rebaseOnto(await client.getPage(page.id))
+    } catch {
+      // Not read: the next save meets the newer file and asks, as for any change made elsewhere.
+    }
+  }
 
   // --- the three ways to edit (docs/design.md, 7.0) ---
   const wide = useSyncExternalStore(subscribeWide, isWide)
@@ -1244,7 +1257,13 @@ function EditorSession({
                   />
                   {typeName !== '' && (
                     <Suspense fallback={null}>
-                      <PropertyPanel typeName={typeName} values={propValues} onChange={setProps} readOnly={readOnly} />
+                      <PropertyPanel
+                        typeName={typeName}
+                        values={propValues}
+                        onChange={setProps}
+                        readOnly={readOnly}
+                        onFieldRenamed={(from, to) => void fieldRenamed(from, to)}
+                      />
                     </Suspense>
                   )}
                 </div>

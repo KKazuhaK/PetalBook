@@ -23,11 +23,14 @@ export default function PropertyPanel({
   values,
   onChange,
   readOnly,
+  onFieldRenamed,
 }: {
   typeName: string
   values: PageMeta
   onChange: (next: PageMeta) => void
   readOnly: boolean
+  // A key of the type was renamed from here: the server rewrote this page's header too.
+  onFieldRenamed?: (from: string, to: string) => void
 }) {
   const types = useTypes()
   const { manage } = useSpacePermissions()
@@ -145,7 +148,9 @@ export default function PropertyPanel({
           )}
         </>
       )}
-      {renaming && type && <RenameFieldDialog type={type} field={renaming} onClose={() => setRenaming(null)} />}
+      {renaming && type && (
+        <RenameFieldDialog type={type} field={renaming} onClose={() => setRenaming(null)} onRenamed={onFieldRenamed} />
+      )}
     </section>
   )
 }

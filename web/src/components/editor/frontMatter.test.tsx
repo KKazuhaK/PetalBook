@@ -123,6 +123,33 @@ describe('the properties of a page', () => {
     expect(get(b).meta).toMatchObject({ state: 'done' })
     expect(t.modes.withHeader).toBeTruthy()
   })
+
+  it('takes the renamed header of the open page as its base, keeping what is typed, so no save brings the old key back', async () => {
+    const [a] = await open()
+    await settle(() => document.querySelector('[data-field="points"] input') !== null, 'the panel')
+    // A value typed and not yet in the file.
+    await type(document.querySelector<HTMLInputElement>('[data-field="points"] input')!, '3')
+    await click(document.querySelector('[data-slot="rename-key"]'))
+    await settle(() => document.querySelector('[role="dialog"] input') !== null, 'the dialog')
+    await type(document.querySelector<HTMLInputElement>('[role="dialog"] input')!, 'state')
+    await click(
+      [...document.querySelectorAll('[role="dialog"] button')].find((x) => x.textContent === tp.panel.renameConfirm),
+    )
+    await settle(() => document.querySelector('[role="dialog"]') === null, 'renamed')
+    // The panel shows the new key with the page's value, and the typed value is still there.
+    await settle(() => document.querySelector('[data-field="state"]') !== null, 'the new key in the panel')
+    expect(document.querySelector<HTMLInputElement>('[data-field="points"] input')!.value).toBe('3')
+    // What is stored next is typed on the renamed file: the new key, never the old one.
+    await settle(() => {
+      const p = get(a)
+      const meta = p.draft && !p.draft.stale ? p.draft.meta : null
+      return !!meta && meta.points === 3 && meta.state === 'todo'
+    }, 'the draft on the renamed file')
+    const p = get(a)
+    expect(p.draft.meta.status).toBeUndefined()
+    expect(p.draft.baseRev).toBe(p.rev)
+    expect(document.querySelector('[role="alertdialog"], [data-slot="conflict"]')).toBeNull()
+  })
 })
 
 describe('the presets of the sources', () => {
