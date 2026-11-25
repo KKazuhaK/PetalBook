@@ -260,7 +260,7 @@ func TestRecoveryOfAMoveWhoseSettingsDoNotFitMovesTheFolderBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := `{"op":"b","f":"A","to":"A-much-longer-name"}` + "\n"
-	if err := os.WriteFile(journalFile(root), []byte(rec), 0o644); err != nil {
+	if err := os.WriteFile(journalFile(root), framed(rec), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s2 := openAt(t, root)

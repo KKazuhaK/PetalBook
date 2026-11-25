@@ -913,7 +913,10 @@ decided during implementation:
   332 ms (each rewriting 1,000 files), commit 513 ms, first page of backlinks 5
   ms.
 
-2.4 known issues, carried forward (each needs several uncommon conditions at once):
+2.4 known issues, carried forward (each needs several uncommon conditions at once).
+The first, second and fourth are being fixed by the journal redesign of round 2,
+[storage-and-sync.md §4.9](../storage-and-sync.md#49-the-write-journal-and-how-commits-are-cut-approved-2026-11-24) (redo as a pure replay in PRs 2, 4 and 5; commits cut
+by transaction in PR 3; `textRev` in PR 7):
 
 - **Redoing an `l` record after a crash is not idempotent**: if the process
   crashes after the moved page's own links have been rewritten but before `ld` is

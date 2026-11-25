@@ -435,7 +435,7 @@ func TestRecoveryRestoresAFileThatCannotBeUsed(t *testing.T) {
 	}
 	setSpaceYML(t, root, notYAML)
 	recs := `{"op":"b","f":"A","to":"A2"}` + "\n" + `{"op":"u","p":"D"}` + "\n"
-	if err := os.WriteFile(journalFile(root), []byte(recs), 0o644); err != nil {
+	if err := os.WriteFile(journalFile(root), framed(recs), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var s2 *Space

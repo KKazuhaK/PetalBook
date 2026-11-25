@@ -177,7 +177,7 @@ func TestJournalWithMissingOrForeignPathsIsTolerated(t *testing.T) {
 		`{"op":"t","p":"../escape.md"}`, `{"op":"t","p":"/etc/passwd"}`, `{"op":"t","p":".git/config"}`,
 		`not json at all`, `{"op":""}`, ``,
 	}, "\n")
-	os.WriteFile(filepath.Join(state, "pending.journal"), []byte(journal), 0o644)
+	os.WriteFile(filepath.Join(state, "pending.journal"), framed(journal), 0o644)
 
 	s := openAt(t, root)
 	p := mustCreate(t, s, "", meta("title", "新页"), "x\n")
@@ -394,7 +394,7 @@ func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
 			if c.take {
 				os.WriteFile(filepath.Join(root, st.to), []byte("someone else's\n"), 0o644)
 			}
-			os.WriteFile(filepath.Join(DefaultStateDir(root), "pending.journal"), []byte(strings.Join(recs, "\n")+"\n"), 0o644)
+			os.WriteFile(filepath.Join(DefaultStateDir(root), "pending.journal"), framed(strings.Join(recs, "\n")+"\n"), 0o644)
 
 			s2 := openAt(t, root)
 			defer s2.Close()

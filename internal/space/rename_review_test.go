@@ -158,11 +158,11 @@ func journalRecords(t *testing.T, root string) []jrec {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recs, damage, torn := readJournal(data)
-	if len(damage) > 0 || torn >= 0 {
-		t.Fatalf("the journal is damaged: %+v (torn at %d)", damage, torn)
+	rd := readJournal(data)
+	if len(rd.damage) > 0 || rd.cut != "" {
+		t.Fatalf("the journal is damaged: %+v (%s at %d)", rd.damage, rd.cut, rd.end)
 	}
-	return recs
+	return rd.recs
 }
 
 func TestFieldRenameIsJournaledWholeBeforeItsFirstWrite(t *testing.T) {
@@ -238,7 +238,8 @@ func TestCrashDuringAFieldRenameIsFinishedOrUndoneAsOne(t *testing.T) {
 				writeType(t, root, "task", strings.TrimSuffix(oldType, "\n"))
 			}
 			var line bytes.Buffer
-			encodeRec(&line, f)
+			var seq uint64
+			encodeRec(&line, &seq, &f)
 			if err := os.WriteFile(journalFile(root), line.Bytes(), 0o644); err != nil {
 				t.Fatal(err)
 			}

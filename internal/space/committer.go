@@ -46,6 +46,13 @@ type committer struct {
 	open  []jrec     // "b" and "u" records whose edit of space.yml is not done yet (under mu)
 	runMu sync.Mutex // one git run at a time
 
+	// active counts the changes running now (begin) by the number of the
+	// last journal frame before each began (under mu). A change journals its
+	// records before it writes and hands its paths over only after, so a
+	// commit must keep in the journal every record from the earliest of them
+	// on: what such a change journaled is not in the commit.
+	active map[uint64]int
+
 	// Packing (see maintain). A commit leaves its objects loose; after
 	// maintainEvery commits the loop packs them, under runMu so that it never
 	// runs at the same time as a commit.
@@ -56,6 +63,11 @@ type committer struct {
 	// onCommit is told the paths of each commit made (under mu).
 	onCommit func(paths []string)
 
+	// Test hooks, nil otherwise: recorded runs after a Record has journaled
+	// its records, snapshotted after a commit has taken the pending paths.
+	// Both are read under mu.
+	recorded, snapshotted func()
+
 	wake chan struct{}
 	stop chan struct{}
 	done chan struct{}
@@ -65,7 +77,7 @@ type committer struct {
 // newCommitter starts the committer. initial are paths recovered from an
 // earlier run's journal.
 func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *journal, initial map[string]Author) *committer {
-	c := &committer{git: g, idle: idle, max: max, log: log, j: j, paths: map[string]Author{},
+	c := &committer{git: g, idle: idle, max: max, log: log, j: j, paths: map[string]Author{}, active: map[uint64]int{},
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	if len(initial) > 0 {
 		now := time.Now()
@@ -160,13 +172,18 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 	// was never journaled does not stay open for the life of the process.
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := c.j.append(recs...); err != nil {
+	if err := c.j.append(recs); err != nil {
 		return err
 	}
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" || r.Op == "l" || r.Op == "f" {
 			c.open = append(c.open, r)
 		}
+	}
+	if hook := c.recorded; hook != nil {
+		c.mu.Unlock()
+		hook()
+		c.mu.Lock()
 	}
 	return nil
 }
@@ -199,8 +216,29 @@ func (c *committer) Done(rec jrec) {
 	done.Op += "d"
 	// The fields name the record; its pages are not needed to close it.
 	done.Pages, done.N = nil, 0
-	if err := c.j.append(done); err != nil {
+	if err := c.j.append([]jrec{done}); err != nil {
 		c.log.Error("could not journal that the bindings were changed", "error", err)
+	}
+}
+
+// begin marks the start of a change that will journal records and then hand
+// the paths it wrote to Touch; the function it returns marks its end. Until
+// then no commit trims the records the change journals (see active). Call it
+// under the space lock, after SwitchTo.
+func (c *committer) begin() (end func()) {
+	if c == nil || c.j == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	mark := c.j.lastSeq()
+	c.active[mark]++
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		if c.active[mark]--; c.active[mark] <= 0 {
+			delete(c.active, mark)
+		}
+		c.mu.Unlock()
 	}
 }
 
@@ -329,7 +367,22 @@ func (c *committer) commit() error {
 	}
 	taken := c.paths
 	c.paths = map[string]Author{}
+	// The journal's records up to upTo are of the paths taken: what the
+	// changes before this point journaled, and handed over. A change still
+	// running may have journaled records without handing its paths over yet:
+	// upTo stops before the first of them.
+	var upTo uint64
+	if c.j != nil {
+		upTo = c.j.lastSeq()
+		for mark := range c.active {
+			upTo = min(upTo, mark)
+		}
+	}
+	hook := c.snapshotted
 	c.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 
 	var errs []error
 	var failed []string
@@ -399,11 +452,19 @@ func (c *committer) commit() error {
 		default:
 		}
 	}
-	// Everything journaled so far is in Git now, except what failed and what
-	// was written during the commit, which are pending again.
+	// Everything journaled up to upTo is in Git now, except what failed, which
+	// is pending again and journaled anew. Records after upTo stay, at their
+	// place: they are of changes this commit did not take, whether or not
+	// their paths are pending yet.
 	if c.j != nil {
 		c.mu.Lock()
-		err := c.j.rewrite(c.paths, c.open)
+		again := make(map[string]Author, len(failed))
+		for _, p := range failed {
+			if by, ok := c.paths[p]; ok {
+				again[p] = by
+			}
+		}
+		err := c.j.trim(upTo, c.open, again)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)
@@ -421,7 +482,7 @@ func (c *committer) clearJournal() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.j.rewrite(nil, c.open)
+	return c.j.trim(c.j.lastSeq(), c.open, nil)
 }
 
 // Flush commits pending changes immediately.

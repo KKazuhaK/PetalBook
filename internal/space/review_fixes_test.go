@@ -297,7 +297,7 @@ func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B")); err != nil {
 		t.Fatal(err)
 	}
-	rec := []byte(`{"op":"b","f":"A","to":"B"}` + "\n")
+	rec := framed(`{"op":"b","f":"A","to":"B"}` + "\n")
 	if err := os.WriteFile(journalFile(root), rec, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {
 	// A move that never happened (the old folder is there) moves no bindings.
 	crash(s3)
 	os.Rename(filepath.Join(root, "B"), filepath.Join(root, "A"))
-	os.WriteFile(journalFile(root), []byte(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
+	os.WriteFile(journalFile(root), framed(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
 	s4 := openAt(t, root)
 	if m := bindingMap(s4); !reflect.DeepEqual(m, map[string]string{"B": "t", "B/sub": "t"}) {
 		t.Errorf("%v", m)
@@ -346,7 +346,7 @@ func TestCrashAfterAFolderDeleteDropsItsBindingsAtRecovery(t *testing.T) {
 	s.Flush()
 	crash(s)
 	os.RemoveAll(filepath.Join(root, "G"))
-	os.WriteFile(journalFile(root), []byte(`{"op":"u","p":"G"}`+"\n"), 0o644)
+	os.WriteFile(journalFile(root), framed(`{"op":"u","p":"G"}`+"\n"), 0o644)
 	s2 := openAt(t, root)
 	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"Keep": "t"}) {
 		t.Errorf("%v", m)
@@ -442,7 +442,7 @@ func TestRecoveryOfAMoveDropsStaleBindingsAtTheTargetToo(t *testing.T) {
 	crash(s)
 	setSpaceYML(t, root, spaceYML(root)+"  B:\n    type: stale\n  B/x:\n    type: stale\n")
 	os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B"))
-	os.WriteFile(journalFile(root), []byte(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
+	os.WriteFile(journalFile(root), framed(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
 	s2 := openAt(t, root)
 	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t"}) {
 		t.Errorf("%v\n%s", m, spaceYML(root))

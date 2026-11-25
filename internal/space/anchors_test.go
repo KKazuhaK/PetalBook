@@ -842,7 +842,7 @@ func TestRecoveryCostsNoMoreThanTheFileIsLarge(t *testing.T) {
 		os.RemoveAll(filepath.Join(root, "G"))
 		os.Rename(filepath.Join(root, "A"), filepath.Join(root, "A2"))
 		setSpaceYML(t, root, src)
-		if err := os.WriteFile(journalFile(root), []byte(recs), 0o644); err != nil {
+		if err := os.WriteFile(journalFile(root), framed(recs), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		var s2 *Space
