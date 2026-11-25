@@ -440,11 +440,41 @@ once by the trim after the commit.
   git process.
 - **Remote spaces** are unchanged (PR 5).
 
+**What PR 4 does.**
+- **Page moves.** A page move (`Move`, and a save that renames) first takes the new name
+  as a second name of the file (a hard link, `moveNamed` with reserve), journaled as `mr
+  From To`. It then plans the links and journals one transaction. That transaction holds
+  the move as a `p` record of the new name with `From` set, the page's content (its own
+  links rewritten when they change), and every other rewritten file. After that the
+  files are written, the old name is removed, and `a` follows.
+- **Recovery of page moves.** Replay writes the new name if it is still at the old
+  content (or makes it from the old name's content if the second name was lost). It
+  then removes the old name if that is still the same file or the old content. An `mr`
+  that no transaction (one not given up) completes is taken back: the new name goes if
+  it is still a second name of the same file. Nobody was told that move was made.
+- **Folder moves.** A folder move journals `md From To`, then renames the folder. It
+  plans the links and journals the transaction, with a `p` record of the folder (`Dir`)
+  and the rewritten files, before `space.yml` is edited, and writes the files after.
+  Recovery finishes the rename forwards if the transaction is there. Without it, the
+  folder goes back (`mdd` closes an `md` whose rename failed), so the bindings, edited
+  only after the transaction, never point at a folder that went back.
+- **No more `l`/`ld` in local spaces.** Nothing is planned again at recovery.
+- **Commits.** The moved page's new name is committed from its recorded blob, and its
+  old name as gone (a known path with no blob id is committed as a deletion, without
+  looking at the work tree).
+- **Failures.** A move that fails after its transaction was journaled fails the change,
+  and the next start finishes it. One that fails before has its name taken back.
+- **Remote spaces** still journal `m` and `l` and finish them forwards, until PR 5 rolls
+  their changes back instead. Until then, `finishLinkRecs` and `pendingLinkRecs` serve
+  only them.
+- **Known issue.** The files of a moved folder that are not rewritten are still staged
+  from the work tree (their `t` records). Reading every file to record its blob would
+  cost as much as the folder is large.
+
 **Known issues (PR 3).**
-- `contentAt` reads and scans the whole journal once per path whose file was changed
-  outside PetalBook, under `runMu`: O(paths × journal) when many files of a large pending
-  rewrite are edited outside at once. Fixed in PR 4 or later, by reading the journal once
-  per commit, indexed by frame number.
+- `contentAt` read and scanned the whole journal once per path whose file was changed
+  outside PetalBook. Fixed in PR 4: the journal keeps where each frame is, and reads
+  only that frame.
 - In a repository using SHA-256 object names no recorded blob id (SHA-1, `page.Rev`)
   matches, so every path falls back to the work tree, and owner decision 1 does not hold
   there.

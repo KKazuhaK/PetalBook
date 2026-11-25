@@ -385,6 +385,8 @@ type journal struct {
 	// blobs are the staged content files of the transactions in the
 	// journal, by transaction.
 	blobs map[uint64]string
+	// at is where each frame of the file is, by number: start and end.
+	at map[uint64][2]int64
 	// guard, when set, says whether the folder of the journal can be written
 	// in: it is not, through something that is not a folder (settingspath.go).
 	guard func() error
@@ -424,7 +426,8 @@ func openJournal(path string, log *slog.Logger) (*journal, []jrec, error) {
 			return nil, nil, err
 		}
 	}
-	j := &journal{path: path, size: int64(rd.end), seq: rd.seq, blobs: map[uint64]string{}}
+	j := &journal{path: path, size: int64(rd.end), seq: rd.seq, blobs: map[uint64]string{}, at: map[uint64][2]int64{}}
+	j.index(data[:rd.end], 0)
 	for i, r := range rd.recs {
 		if r.Op == "p" && r.BlobLen > 0 {
 			rd.recs[i].blob = j.blobPath(r.Tx)
@@ -462,9 +465,15 @@ const txInlineTotal = 1 << 20
 
 // txFile is a file of a transaction: its path, the blob ids of its content
 // before and after (Old "" for a file that is not there), and the new content.
+//
+// from, for a page that moves, is its old name (path is the new one, already
+// taken as a second name of the file); with dir, the entry is a folder renamed
+// from from to path, whose files are journaled one by one.
 type txFile struct {
 	path, old, rev string
 	data           []byte
+	from           string
+	dir            bool
 }
 
 // appendTx journals a transaction, durably: an "x" record by by, a "p" record
@@ -483,8 +492,9 @@ func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, err
 	var staged bytes.Buffer
 	inline := 0
 	for _, f := range files {
-		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev}
+		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev, From: f.from, Dir: f.dir}
 		switch {
+		case f.dir:
 		case len(f.data) > txInline || inline+len(f.data) > txInlineTotal:
 			r.BlobAt, r.BlobLen = int64(staged.Len()), int64(len(f.data))
 			staged.Write(f.data)
@@ -549,32 +559,49 @@ func writeSynced(name string, data []byte) error {
 // contentAt is the new content of the "p" record in the frame numbered seq,
 // read back from the journal: for a commit of a file that was changed
 // outside PetalBook after the server wrote it.
+//
+// Only that frame is read: the journal knows where each frame is (at).
 func (j *journal) contentAt(seq uint64) ([]byte, error) {
 	j.mu.Lock()
-	data, err := os.ReadFile(j.path)
-	size := j.size
+	loc, ok := j.at[seq]
+	var body []byte
+	var err error
+	if ok {
+		body = make([]byte, loc[1]-loc[0])
+		var f *os.File
+		if f, err = os.Open(j.path); err == nil {
+			_, err = f.ReadAt(body, loc[0])
+			f.Close()
+		}
+	}
 	j.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("frame %d is not in the journal any more", seq)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > size {
-		data = data[:size]
+	frames, _, _ := scanFrames(body)
+	if len(frames) != 1 || frames[0].seq != seq {
+		return nil, fmt.Errorf("frame %d of the journal cannot be read", seq)
 	}
+	var r jrec
+	if err := json.Unmarshal(frames[0].body, &r); err != nil || r.Op != "p" {
+		return nil, fmt.Errorf("frame %d of the journal is not a file of a change", seq)
+	}
+	if r.BlobLen > 0 {
+		r.blob = j.blobPath(r.Tx)
+	}
+	return r.content()
+}
+
+// index notes where the frames of data, which starts at offset base of the
+// journal, are (at).
+func (j *journal) index(data []byte, base int64) {
 	frames, _, _ := scanFrames(data)
 	for _, f := range frames {
-		if f.seq != seq {
-			continue
-		}
-		var r jrec
-		if err := json.Unmarshal(f.body, &r); err != nil || r.Op != "p" {
-			return nil, fmt.Errorf("frame %d of the journal is not a file of a change", seq)
-		}
-		if r.BlobLen > 0 {
-			r.blob = j.blobPath(r.Tx)
-		}
-		return r.content()
+		j.at[f.seq] = [2]int64{base + int64(f.start), base + int64(f.end)}
 	}
-	return nil, fmt.Errorf("frame %d is not in the journal any more", seq)
 }
 
 // content is the new content of a "p" record.
@@ -656,6 +683,7 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 		}
 		return err
 	}
+	j.index(buf.Bytes(), j.size)
 	j.size += int64(buf.Len())
 	j.seq = seq
 	return nil
@@ -781,6 +809,8 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx
 	}
 	j.f.Close()
 	j.size, j.seq, j.broken = int64(buf.Len()), seq, false
+	j.at = map[uint64][2]int64{}
+	j.index(buf.Bytes(), 0)
 	j.f, err = os.OpenFile(j.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	return err
 }
@@ -834,6 +864,9 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 	given := map[uint64]bool{}   // transactions given up ("k")
 	applied := map[uint64]bool{} // and written ("a")
 	authors := map[uint64]Author{}
+	type pair struct{ from, to string }
+	moved := map[pair]bool{}  // moves a transaction makes
+	closed := map[pair]bool{} // folder renames that did not happen ("mdd")
 	for _, r := range recs {
 		switch r.Op {
 		case "k":
@@ -842,6 +875,13 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			applied[r.Tx] = true
 		case "x":
 			authors[r.Tx] = r.author()
+		case "mdd":
+			closed[pair{r.From, r.To}] = true
+		}
+	}
+	for _, r := range recs {
+		if r.Op == "p" && r.From != "" && !given[r.Tx] {
+			moved[pair{r.From, r.Path}] = true
 		}
 	}
 	var log *slog.Logger
@@ -851,7 +891,7 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 	for _, r := range recs {
 		by := r.author()
 		switch r.Op {
-		case "x", "a", "k", "p":
+		case "x", "a", "k", "p", "mr", "md", "mdd":
 		default:
 			// Any other record of a path leaves it to the work tree.
 			delete(revs, r.Path)
@@ -859,8 +899,27 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			delete(revs, r.To)
 		}
 		switch r.Op {
+		case "mr":
+			// A name taken for a move as a second name of the page: without
+			// a transaction that makes the move, nobody was told it was
+			// made, and the name goes again.
+			if ok(r.From) && ok(r.To) && !moved[pair{r.From, r.To}] {
+				takeBackName(root, r.From, r.To)
+			}
+			continue
+		case "md":
+			// A folder renamed for a move: the same, the folder goes back.
+			if ok(r.From) && ok(r.To) && !moved[pair{r.From, r.To}] && !closed[pair{r.From, r.To}] {
+				takeBackFolder(root, r.From, r.To)
+			}
+			continue
 		case "p":
-			if !ok(r.Path) || given[r.Tx] {
+			if !ok(r.Path) || given[r.Tx] || (r.From != "" && !ok(r.From)) {
+				continue
+			}
+			if r.Dir {
+				// The folder of a move: its files are journaled one by one.
+				finishFolderMove(root, r.From, r.Path)
 				continue
 			}
 			// The file is the server's if the replay leaves it at the new
@@ -874,6 +933,11 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 				r := r
 				set[r.Path] = authors[r.Tx]
 				revs[r.Path] = gitstore.Blob{ID: r.Rev, Data: r.content}
+				if r.From != "" {
+					// The old name of a moved page is committed as gone.
+					set[r.From] = authors[r.Tx]
+					revs[r.From] = gitstore.Blob{}
+				}
 			case !gaveUp[r.Tx]:
 				gaveUp[r.Tx] = true
 				giveUp = append(giveUp, r.Tx)
@@ -960,6 +1024,10 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 // unsynced, but the next synced append makes it durable, so only the last
 // transaction before a crash can lack it although it was applied; its files
 // are then at the new content, or untouched, and the replay is right either way.
+//
+// A record of a moved page (From set) has its new name already taken, as a
+// second name of the old file: the new name gets the new content, and then
+// the old name goes, if it is still that file or that content.
 func replay(root string, r jrec, write bool, log *slog.Logger) bool {
 	abs := filepath.Join(root, filepath.FromSlash(r.Path))
 	cur := ""
@@ -969,8 +1037,18 @@ func replay(root string, r jrec, write bool, log *slog.Logger) bool {
 	case !errors.Is(err, fs.ErrNotExist):
 		return false
 	}
+	from := ""
+	if r.From != "" {
+		from = filepath.Join(root, filepath.FromSlash(r.From))
+		if cur == "" && revOf(from) == r.Old {
+			cur = r.Old // the second name was lost: made again from the content
+		}
+	}
 	switch cur {
 	case r.Rev:
+		if from != "" && write {
+			dropOldName(from, abs, r.Old)
+		}
 		return true
 	case r.Old:
 		if !write {
@@ -983,6 +1061,9 @@ func replay(root string, r jrec, write bool, log *slog.Logger) bool {
 		if err == nil {
 			err = writeAtomic(abs, data)
 		}
+		if err == nil && from != "" {
+			dropOldName(from, abs, r.Old)
+		}
 		if err != nil {
 			if log != nil {
 				log.Error("a change an earlier run journaled cannot be finished; the file stays as it was",
@@ -993,6 +1074,70 @@ func replay(root string, r jrec, write bool, log *slog.Logger) bool {
 		return true
 	}
 	return false
+}
+
+// revOf is the blob id of the file at abs, "" when there is none.
+func revOf(abs string) string {
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return ""
+	}
+	return page.Rev(data)
+}
+
+// dropOldName removes from, the old name of a page moved to to, if it is
+// still a second name of that file or has the content the page had (old):
+// anything else there is someone else's, and stays.
+func dropOldName(from, to, old string) {
+	if strings.EqualFold(from, to) {
+		return // another spelling of the same name: never two files
+	}
+	fa, errA := os.Lstat(from)
+	if errA != nil || !fa.Mode().IsRegular() {
+		return
+	}
+	if fb, err := os.Lstat(to); err == nil && os.SameFile(fa, fb) || revOf(from) == old {
+		os.Remove(from)
+	}
+}
+
+// takeBackName undoes the taking of the name to for the page at from: to goes
+// if it is a second name of that very file.
+func takeBackName(root, from, to string) {
+	if strings.EqualFold(from, to) {
+		return
+	}
+	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
+	fa, errA := os.Lstat(a)
+	fb, errB := os.Lstat(b)
+	if errA == nil && errB == nil && fa.Mode().IsRegular() && os.SameFile(fa, fb) {
+		os.Remove(b)
+	}
+}
+
+// takeBackFolder renames the folder to back to from, if it is at to and
+// nothing is at from.
+func takeBackFolder(root, from, to string) {
+	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
+	if _, err := os.Lstat(a); !errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if fi, err := os.Lstat(b); err == nil && fi.IsDir() {
+		os.Rename(b, a)
+	}
+}
+
+// finishFolderMove renames the folder from to to, if it is still at from and
+// nothing is at to: the rename the transaction of the move is about.
+func finishFolderMove(root, from, to string) {
+	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
+	if _, err := os.Lstat(b); !errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if fi, err := os.Lstat(a); err == nil && fi.IsDir() {
+		os.MkdirAll(filepath.Dir(b), 0o755)
+		os.Rename(a, b)
+	}
 }
 
 // listed reports whether dir has an entry named exactly name.
