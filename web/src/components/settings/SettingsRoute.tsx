@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, type ReactNode } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
-import { X } from 'lucide-react'
+import { ArrowLeft, X } from 'lucide-react'
 import { useActiveSpace, useSession } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import { PageFallback } from '@/components/common'
@@ -15,6 +15,7 @@ import { ImportPanel } from './ImportPanel'
 import { PreferencesPanel } from './PreferencesPanel'
 import { ProfilePanel } from './ProfilePanel'
 import { SecurityPanel } from './SecurityPanel'
+import { ProblemDot } from './ProblemDot'
 import { SectionIcon } from './SettingsParts'
 import { groupsOf, resolveSection, settingsPath, visibleSections, type Visibility } from './sections'
 import type { SettingsState } from './useSettings'
@@ -168,12 +169,15 @@ export default function SettingsRoute() {
           className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background text-sm text-foreground outline-none duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 md:inset-auto md:top-1/2 md:left-1/2 md:h-[min(46rem,calc(100dvh-4rem))] md:w-[min(64rem,calc(100vw-4rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:flex-row md:rounded-xl md:shadow-2xl md:ring-1 md:ring-foreground/10 md:data-open:zoom-in-95"
         >
           <aside className="flex shrink-0 flex-col border-b md:w-60 md:border-r md:border-b-0 md:bg-sidebar md:text-sidebar-foreground">
-            <div className="flex items-center justify-between px-4 pt-3 pb-1 md:px-5 md:pt-5 md:pb-3">
-              <DialogTitle className="text-base font-semibold">{t.settingsUi.title}</DialogTitle>
-              <DialogPrimitive.Close render={<Button variant="ghost" size="icon-sm" className="md:hidden" />}>
-                <X />
-                <span className="sr-only">{t.settingsUi.close}</span>
+            <div className="flex items-center gap-1 py-1 pr-14 pl-2 md:px-5 md:pt-5 md:pr-14 md:pb-3">
+              {/* On a phone the dialog is a screen of its own: a way back, where the thumb expects it. */}
+              <DialogPrimitive.Close
+                render={<Button variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" />}
+              >
+                <ArrowLeft />
+                <span className="sr-only">{t.settingsUi.back}</span>
               </DialogPrimitive.Close>
+              <DialogTitle className="text-base font-semibold">{t.settingsUi.title}</DialogTitle>
             </div>
             <nav
               aria-label={t.settingsUi.nav}
@@ -198,10 +202,11 @@ export default function SettingsRoute() {
                           replace
                           state={location.state}
                           aria-current={s.id === section ? 'page' : undefined}
-                          className={`flex h-8 items-center gap-2 rounded-md px-2.5 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${s.id === section ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground'}`}
+                          className={`flex h-10 items-center md:h-8 gap-2 rounded-md px-2.5 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${s.id === section ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground'}`}
                         >
                           <SectionIcon id={s.id} name={session?.user?.name} />
                           {t.settingsUi.sections[s.id]}
+                          {s.id === 'general' && <ProblemDot />}
                         </Link>
                       </li>
                     ))}
@@ -211,17 +216,27 @@ export default function SettingsRoute() {
             </nav>
           </aside>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="flex h-12 shrink-0 items-center justify-between border-b px-4 md:px-8">
+            <header className="flex h-12 shrink-0 items-center border-b px-4 md:px-8 md:pr-14">
               <h2 className="truncate text-sm font-semibold">{t.settingsUi.sections[section]}</h2>
-              <DialogPrimitive.Close render={<Button variant="ghost" size="icon-sm" className="max-md:hidden" />}>
-                <X />
-                <span className="sr-only">{t.settingsUi.close}</span>
-              </DialogPrimitive.Close>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <div className="mx-auto w-full max-w-2xl px-4 py-5 md:px-8 md:py-7">{body}</div>
             </div>
           </div>
+          {/* The dialog's own corner, not the right pane's header row. */}
+          <DialogPrimitive.Close
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                data-slot="settings-close"
+                className="absolute top-1 right-2 z-10 size-11 md:top-3 md:right-3 md:size-8"
+              />
+            }
+          >
+            <X />
+            <span className="sr-only">{t.settingsUi.close}</span>
+          </DialogPrimitive.Close>
         </DialogPrimitive.Popup>
       </DialogPortal>
     </DialogPrimitive.Root>

@@ -20,7 +20,6 @@ export const en: Messages = {
     inbox: 'Inbox',
     quickNote: 'Quick note',
     recent: 'Recent',
-    check: 'Check',
     folders: 'Folders',
     tags: 'Tags',
     rootFolder: 'Top level',
@@ -503,6 +502,7 @@ export const en: Messages = {
   settingsUi: {
     title: 'Settings',
     close: 'Close settings',
+    back: 'Back',
     nav: 'Settings sections',
     groups: { account: 'Account', space: 'Space' },
     sections: {
@@ -547,10 +547,13 @@ export const en: Messages = {
     nameSaved: 'Space name changed',
     nameReadOnly: 'In single-user mode the space name cannot be changed here.',
     noManage: 'Only an owner can change the name and the inbox of the space.',
-    checkTitle: 'Check',
+    checkTitle: 'Problems',
     checkHelp:
       'Files with a problem: no or repeated ids, headers that cannot be read, fields that do not fit, broken links, missing attachments and titles that repeat.',
-    checkLink: 'Open the check page…',
+    checkLink: 'See the problems…',
+    checkCount: (n) => (n === 1 ? 'There is 1 problem now.' : `There are ${n} problems now.`),
+    checkNone: 'No problems found now.',
+    checkDot: 'Has problems',
   },
   // The search dialog (⌘K) and the tag colour menu.
   search: {

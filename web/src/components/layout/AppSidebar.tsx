@@ -9,7 +9,6 @@ import {
   Home,
   House,
   Inbox,
-  ListChecks,
   MoreHorizontal,
   PenLine,
   Search,
@@ -472,12 +471,6 @@ export function AppSidebar() {
                 <SidebarMenuButton isActive={pathname === urls.recent()} render={<NavLink to={urls.recent()} />}>
                   <Clock />
                   <span>{t.nav.recent}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton isActive={pathname === urls.check()} render={<NavLink to={urls.check()} />}>
-                  <ListChecks />
-                  <span>{t.nav.check}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

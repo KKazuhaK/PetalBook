@@ -1611,6 +1611,22 @@ export function useChecks(kind: ProblemKind | '') {
   })
 }
 
+// How many problems the space has, for the red dot that says so: the counts the index already keeps, read with the
+// first page of the list (one indexed read on the server). Not for those who may not read the space.
+export function useProblemCount() {
+  const id = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: ['space', id, 'checks', 'count'] as const,
+    queryFn: async ({ signal }) => {
+      const r = await spaceApi(id).checks({}, signal)
+      return Object.values(r.counts).reduce((n, c) => n + (c ?? 0), 0)
+    },
+    staleTime: 60_000,
+    enabled: id !== '' && read,
+  })
+}
+
 // A fix writes a file: the problems, the pages and the tree all change (a file without an id becomes a page). A 409
 // or a 404 says the file is not as it was listed: read the problems again.
 export function useFixCheck() {

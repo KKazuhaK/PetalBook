@@ -1,11 +1,11 @@
 import type { ChecksMessages } from '../checksTypes.ts'
 
 export const checksEn: ChecksMessages = {
-  title: 'Check',
-  pageTitle: (space: string) => `${space} · Check`,
+  title: 'Problems',
+  pageTitle: (space: string) => `${space} · Problems`,
   intro:
     'The files of the space that have a problem. The result is noted when the index is built; opening this page does not scan the disk.',
-  loadFailed: 'Could not read the result of the check.',
+  loadFailed: 'Could not read the list of problems.',
   empty: 'No problems found',
   emptyHelp: 'The headers, type fields, links and attachments of every page are fine.',
   emptyKind: 'No problems of this kind left.',

@@ -1,8 +1,8 @@
 export const checksZhCN = {
-  title: '校验',
-  pageTitle: (space: string) => `${space} · 校验`,
+  title: '问题',
+  pageTitle: (space: string) => `${space} · 问题`,
   intro: '这里列出空间里有问题的文件。结果在建索引时记下，打开这一页不会扫描磁盘。',
-  loadFailed: '读不到校验结果。',
+  loadFailed: '读不到问题列表。',
   empty: '没有发现问题',
   emptyHelp: '每个页面的头部、类型字段、链接和附件都没有问题。',
   emptyKind: '这一类没有问题了。',
