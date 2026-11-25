@@ -86,7 +86,7 @@ func checkServerCommitted(t *testing.T, root, rel, server, outside string) {
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))); string(got) != outside {
 		t.Errorf("the work tree lost the edit made outside:\n%s", got)
 	}
-	if git(t, root, "diff", "--name-only", "--", rel) != rel || git(t, root, "diff", "--cached", "--name-only", "--", rel) != "" {
+	if git(t, root, "-c", "core.quotepath=off", "diff", "--name-only", "--", rel) != rel || git(t, root, "diff", "--cached", "--name-only", "--", rel) != "" {
 		t.Errorf("the edit made outside should be an uncommitted change:\n%s", git(t, root, "status", "--short"))
 	}
 }
@@ -128,8 +128,10 @@ func TestAChangeEditedOutsideBeforeRecoveryIsCommittedAsTheServerWroteIt(t *test
 	}
 }
 
-// A save that renames the page, whose rewrite of the links to it then fails:
-// the old name is committed as gone, not put back with the new content.
+// A save that renames the page, whose rename and rewrite of the links to it
+// then stops after it was journaled: the save fails, and the next start
+// finishes the rename, so the old name is committed as gone, never put back
+// with the new content.
 func TestARenamingSaveWhoseRelinkFailsDoesNotCommitTheOldName(t *testing.T) {
 	t.Parallel()
 	needGit(t)
@@ -146,17 +148,21 @@ func TestARenamingSaveWhoseRelinkFailsDoesNotCommitTheOldName(t *testing.T) {
 		}
 		return nil
 	}
-	n, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "New"), "v2\n")
-	s.step = nil
-	if err != nil {
-		t.Fatal(err)
+	if _, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "New"), "v2\n"); err == nil {
+		t.Fatal("the save should have failed")
 	}
-	if err := s.Flush(); err != nil {
+	s.step = nil
+	crash(s)
+	s2 := openAt(t, root)
+	if err := s2.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	files := git(t, root, "ls-files")
-	if strings.Contains(files, "Old.md") || !strings.Contains(files, n.Path) {
+	if strings.Contains(files, "Old.md") || !strings.Contains(files, "New.md") {
 		t.Errorf("committed files:\n%s", files)
+	}
+	if got := git(t, root, "show", "HEAD:New.md"); !strings.Contains(got, "v2") {
+		t.Errorf("committed:\n%s", got)
 	}
 }
 

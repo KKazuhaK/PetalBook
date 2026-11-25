@@ -238,22 +238,37 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// part of the move, so it is journaled with it and a crash between the
 	// rename and the edit of space.yml is finished at recovery (see "b").
 	bind := jrec{Op: "b", From: canonFrom, To: target}
-	// The links of the pages that moved are part of it as well (see "l"): a
-	// crash after the rename has the next start make them right.
-	linkRec := jrec{Op: "l", From: canonFrom, To: target, Dir: true}
-	recs = append(recs, bind, linkRec)
+	// The links of the pages that moved are part of it as well. In a local
+	// space the rename is journaled as a move ("md") and the links are one
+	// transaction with it, made after the rename: a crash before that
+	// transaction has the next start rename the folder back. A space that
+	// follows a remote journals an "l" record, which the next start finishes.
+	moveRec := jrec{Op: "md", From: canonFrom, To: target}
+	if tx.remote {
+		moveRec = jrec{Op: "l", From: canonFrom, To: target, Dir: true}
+	}
+	recs = append(recs, bind, moveRec)
 	if err := tx.record(recs...); err != nil {
 		return "", err
 	}
 	tx.bind = append(tx.bind, bind)
-	tx.links = append(tx.links, linkRec)
+	if tx.remote {
+		tx.links = append(tx.links, moveRec)
+	}
 	inside := make([]string, 0, len(ours))
 	for f := range ours {
 		inside = append(inside, f)
 	}
 	sort.Strings(inside)
 	if err := s.rename(tx.by, absFrom, absTarget, inside); err != nil {
+		if !tx.remote {
+			// Not renamed: the next start must not rename anything back.
+			tx.record(jrec{Op: "mdd", From: canonFrom, To: target})
+		}
 		tx.settleBindings() // nothing moved (or the rename is stuck: its own records say so)
+		return "", err
+	}
+	if err := s.stepped("folder moved"); err != nil {
 		return "", err
 	}
 	// The folder is part of the change from here on. Undoing it renames the
@@ -284,6 +299,33 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 			return nil
 		})
 	}
+	// The links to the pages of the folder, and the links of those pages to
+	// the pages outside it, are planned now and journaled with the move as
+	// one transaction (a local space), before space.yml is edited: once it
+	// is journaled the next start finishes the move, bindings and all; before,
+	// it takes the rename back, and the bindings were not touched.
+	var fmove *txMove
+	if !tx.remote {
+		fmove = &txMove{from: canonFrom, to: target, dir: true}
+		// The folder's identity, so that the next start never takes a
+		// folder made under the old name since for this one.
+		if fi, err := s.ops.Lstat(absTarget); err == nil {
+			fmove.dev, fmove.ino, _ = fileID(fi)
+		}
+	}
+	edits, perr := s.planLinks(mv, []stepMove{{From: canonFrom, To: target, Dir: true}})
+	if perr != nil {
+		edits = nil
+	}
+	pe, err := s.prepareEdits(tx, edits, fmove)
+	if err != nil {
+		if !tx.remote {
+			tx.runUndo()
+			s.dropCreated(tx)
+			tx.settleBindings()
+		}
+		return "", err
+	}
 	// What was bound to the folder, and to the folders in it, follows it.
 	//
 	// If that edit fails the folder must not stay at its new place with its
@@ -300,6 +342,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		err = notMoved(refused)
 	}
 	if err != nil {
+		pe.abort()
 		if !tx.remote {
 			tx.runUndo()
 			s.dropCreated(tx)
@@ -321,11 +364,11 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		tx.dirs = append(append(tx.dirs, oldDirs...), newDirs...)
 	}
 	// The links to the pages of the folder, and the links of those pages to
-	// the pages outside it, in the same change (the index still has the old state).
-	edits, rerr := s.planLinks(mv, []stepMove{{From: canonFrom, To: target, Dir: true}})
-	var edited []string
+	// the pages outside it, in the same change (the index still has the old
+	// state), journaled above with the move.
+	edited, rerr := pe.apply()
 	if rerr == nil {
-		edited, rerr = s.writeEdits(tx, edits)
+		rerr = perr
 	}
 	if err := s.afterRelink(tx, rerr); err != nil {
 		return "", err

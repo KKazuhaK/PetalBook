@@ -111,17 +111,22 @@ func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (s
 // is src's own folder the file may be renamed to another spelling of its own
 // name (a case change), which is allowed only if the target really is the same
 // file or does not exist.
-func (s *Space) moveNamed(by Author, src, dir, stem string, intent func(name string) error) (string, error) {
+//
+// With reserve, the new name is only taken, as a second name of the file, and
+// src stays: the caller journals the move as a transaction and removes src
+// itself (reserved is then true). A change of spelling is made at once, and
+// reserved is false.
+func (s *Space) moveNamed(by Author, src, dir, stem string, intent func(name string) error, reserve bool) (name string, reserved bool, err error) {
 	if intent == nil {
 		intent = func(string) error { return nil }
 	}
 	taken, err := s.takenKeys(dir)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	srcInfo, err := s.ops.Lstat(src)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	ownName := filepath.Base(src)
 	sameDir := filepath.Clean(filepath.Dir(src)) == filepath.Clean(dir)
@@ -130,52 +135,59 @@ func (s *Space) moveNamed(by Author, src, dir, stem string, intent func(name str
 		dst := filepath.Join(dir, name)
 		if sameDir && page.NameKey(name) == page.NameKey(ownName) {
 			if name == ownName {
-				return name, nil
+				return name, false, nil
 			}
 			// Another spelling of our own name. On a file system that folds
 			// case this is the same file; on one that does not, it may be a
 			// different page's file, which must not be replaced.
 			if err := intent(name); err != nil {
-				return "", err
+				return "", false, err
 			}
 			fi, err := s.ops.Lstat(dst)
 			switch {
 			case err == nil && s.ops.SameFile(srcInfo, fi):
 			case err != nil && errors.Is(err, fs.ErrNotExist):
 			case err != nil:
-				return "", err
+				return "", false, err
 			default:
 				continue
 			}
 			if err := s.rename(by, src, dst, nil); err != nil {
-				return "", err
+				return "", false, err
 			}
-			return name, nil
+			return name, false, nil
 		}
 		if taken[page.NameKey(name)] {
 			continue
 		}
 		if err := intent(name); err != nil {
-			return "", err
+			return "", false, err
 		}
 		err := s.ops.Link(src, dst)
 		if errors.Is(err, fs.ErrExist) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		// The target is now a second name for the file (a copy on file systems
 		// without hard links); check it is there before the old name goes.
 		if fi, err := s.ops.Lstat(dst); err != nil || fi.Size() != srcInfo.Size() {
-			return "", fmt.Errorf("%w: %s was taken while moving", ErrExists, name)
+			return "", false, fmt.Errorf("%w: %s was taken while moving", ErrExists, name)
+		}
+		if reserve {
+			if err := s.stepped("name reserved"); err != nil {
+				s.ops.Remove(dst)
+				return "", false, err
+			}
+			return name, true, nil
 		}
 		if err := s.ops.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", err
+			return "", false, err
 		}
-		return name, nil
+		return name, false, nil
 	}
-	return "", noFreeName(stem)
+	return "", false, noFreeName(stem)
 }
 
 // rename renames from to to, also when to is another spelling of from's own
@@ -300,6 +312,12 @@ func (s *Space) journalRespell(by Author, from, mid, to string, inside []string)
 func (s *Space) moveIntent(tx *txn, rel, folder string) func(name string) error {
 	return func(name string) error {
 		to := path.Join(folder, name)
+		if !tx.remote {
+			// The name is taken as a second name of the page; the move and
+			// its links are one transaction after that. Without it, the next
+			// start takes the name back ("mr").
+			return tx.record(jrec{Op: "mr", From: rel, To: to})
+		}
 		l := jrec{Op: "l", From: rel, To: to}
 		if err := tx.record(jrec{Op: "m", From: rel, To: to}, l); err != nil {
 			return err

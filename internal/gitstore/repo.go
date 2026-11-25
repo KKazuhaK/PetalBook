@@ -301,7 +301,8 @@ type Blob struct {
 // content known gives them, not with what the work tree has (which may have
 // been changed by someone else since, or be about to change): the index gets
 // that blob, and a file that differs stays an uncommitted change of the work
-// tree. A path whose content cannot be had is staged from the work tree.
+// tree. A path whose content cannot be had is staged from the work tree. A
+// known path with no ID is committed as gone.
 func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[string]Blob, message func([]Change) string, author, committer Identity) (bool, error) {
 	if what, err := r.Busy(ctx); err != nil {
 		return false, err
@@ -320,6 +321,12 @@ func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[stri
 	names := exactNames{root: r.opt.Dir, dirs: map[string]dirNames{}}
 	for _, p := range paths {
 		if _, ok := asKnown[p]; ok {
+			continue
+		}
+		if b, ok := known[p]; ok && b.ID == "" {
+			// Known to be gone (the old name of a moved file): whatever the
+			// work tree has there now is not this change's.
+			gone = append(gone, p)
 			continue
 		}
 		e, err := names.entry(p)
