@@ -171,6 +171,37 @@ describe('the spaces list and the copy of each space', () => {
     return id
   }
 
+  it("says why a space in use is not evicted, in the page's words and then the server's reason, once each", async () => {
+    m = await open()
+    await settle(() => rows().length === 2, 'the spaces')
+    await connect(m.server, '团队空间')
+    await m.qc.invalidateQueries({ queryKey: ['admin', 'spaces'] })
+    await settle(
+      () =>
+        rowOf('团队空间').querySelector('[data-slot="space-cache"]')!.textContent!.includes(ts.spaces.caches.partial),
+      'a partial clone',
+    )
+    const real = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
+      if (/\/evict$/.test(url))
+        return new Response(JSON.stringify({ error: 'busy', message: 'The space is not evicted: it has drafts.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      return real(input, init)
+    }
+    await openMenu('团队空间')
+    await click(menuItem(ts.spaces.evict))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the confirmation')
+    await click(buttonIn(document.querySelector('[role="alertdialog"]'), ts.spaces.evictConfirm))
+    const dialog = () => document.querySelector('[role="alertdialog"]')!.textContent ?? ''
+    await settle(() => dialog().includes('it has drafts'), 'the reason')
+    expect(dialog().split(ts.spaces.errors.busy)).toHaveLength(2)
+    expect(dialog().split('it has drafts')).toHaveLength(2)
+    globalThis.fetch = real
+  })
+
   it('says what each copy is, keeps a local space out of eviction, and evicts one that follows a remote', async () => {
     m = await open()
     await settle(() => rows().length === 2, 'the spaces')

@@ -92,4 +92,16 @@ describe('the close button of the settings dialog', () => {
     await click(close)
     await settle(() => dialog() === null, 'closed')
   })
+
+  it('keeps clear of the notch and the home bar of a phone: the dialog and its corner button are padded by the safe area', async () => {
+    m = await mount(routes, { entries: ['/', '/settings/profile'], signIn: true, server: { mode: 'accounts' } })
+    await settle(() => dialog() !== null, 'dialog')
+    for (const side of ['top', 'right', 'bottom', 'left'])
+      expect(dialog()!.className, side).toContain(`env(safe-area-inset-${side})`)
+    const close = dialog()!.querySelector<HTMLElement>('[data-slot="settings-close"]')!
+    expect(close.className).toContain('env(safe-area-inset-top)')
+    expect(close.className).toContain('env(safe-area-inset-right)')
+    // On a desktop it is a window with no inset.
+    expect(dialog()!.className).toContain('md:p-0')
+  })
 })
