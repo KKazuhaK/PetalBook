@@ -142,7 +142,13 @@ describe('403 forbidden', () => {
     const err = await api.createPage({}).catch((e) => e)
     offOrigin()
     offAccess()
-    expect(err).toMatchObject({ status: 403, code: 'no_permission', message })
+    // By its code: the Chinese sentence, not the server's English one.
+    expect(err).toMatchObject({
+      status: 403,
+      code: 'no_permission',
+      message: '你在这个空间里的角色不允许这样做。',
+      serverMessage: message,
+    })
     expect(origin).toEqual([])
     expect(access).toBe(1)
   })
@@ -214,13 +220,40 @@ describe('403 forbidden', () => {
     ])
   })
 
-  it('other errors keep the server message', async () => {
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ error: 'invalid', message: '不对' }), { status: 400 }),
-      )) as typeof fetch
+  const answer = (status: number, body: unknown, headers?: Record<string, string>) =>
+    (() => Promise.resolve(new Response(JSON.stringify(body), { status, headers }))) as typeof fetch
+
+  it('an invalid request says what the code says, and the server sentence after it', async () => {
+    globalThis.fetch = answer(400, { error: 'invalid', message: '不对' })
     const err = await api.createPage({}).catch((e) => e)
-    expect(err.message).toBe('不对')
+    expect(err.message).toBe('请求的内容不对，请检查后再试。（不对）')
+    expect(err.serverMessage).toBe('不对')
+  })
+
+  it('shows the text of the code, not the server English, and fills in what the answer says it is about', async () => {
+    globalThis.fetch = answer(401, { error: 'unauthenticated', message: 'wrong username or password' })
+    expect((await accountApi.login({ username: 'a', password: 'b' }).catch((e) => e)).message).toBe(
+      '用户名或密码不对，或者登录已失效。',
+    )
+    globalThis.fetch = answer(413, {
+      error: 'file_too_large',
+      message: 'x',
+      name: 'a.png',
+      size: 12582912,
+      limit: 10485760,
+    })
+    expect((await api.createPage({}).catch((e) => e)).message).toBe('“a.png”（12 MB）超过了单个文件的上限 10 MB。')
+    globalThis.fetch = answer(403, { error: 'quota_exceeded', message: 'x', quota: 'spaces', limit: 3, used: 3 })
+    expect((await api.createPage({}).catch((e) => e)).message).toBe('空间数量已达上限（最多 3 个，已有 3 个）。（x）')
+    globalThis.fetch = answer(503, { error: 'not_cached', message: 'x' }, { 'Retry-After': '5' })
+    expect((await api.createPage({}).catch((e) => e)).message).toBe('这个空间的内容还不在服务器上，请 5 秒后再试。')
+  })
+
+  it('shows the server message only for a code it has no text for', async () => {
+    globalThis.fetch = answer(400, { error: 'brand_new_code', message: 'Something new.' })
+    expect((await api.createPage({}).catch((e) => e)).message).toBe('Something new.')
+    globalThis.fetch = answer(400, {})
+    expect((await api.createPage({}).catch((e) => e)).message).toBe('请求失败（400）')
   })
 })
 
@@ -396,7 +429,13 @@ describe('429 and 403 that are not about the origin', () => {
         }),
       )) as typeof fetch
     const e = await accountApi.login({ username: 'a', password: 'b' }).catch((x) => x)
-    expect(e).toMatchObject({ status: 429, code: 'rate_limited', retryAfter: 42, message: '慢一点' })
+    expect(e).toMatchObject({
+      status: 429,
+      code: 'rate_limited',
+      retryAfter: 42,
+      message: '尝试次数太多，请 42 秒后再试。',
+      serverMessage: '慢一点',
+    })
   })
 
   it('a 403 on account, user, invite and setup requests keeps the server message and does not raise the origin notice', async () => {
@@ -415,7 +454,9 @@ describe('429 and 403 that are not about the origin', () => {
       accountApi.createSpace('第十一个').catch((x) => x),
     ])
     off()
-    for (const e of results) expect(e).toMatchObject({ status: 403, code: 'forbidden', message: '当前密码不对' })
+    // A forbidden stands for many refusals, so the server's sentence follows the text of the code.
+    for (const e of results)
+      expect(e).toMatchObject({ status: 403, code: 'forbidden', message: '没有权限这样做。（当前密码不对）' })
     expect(seen).toEqual([])
   })
 
@@ -450,7 +491,12 @@ describe('a remote that cannot be reached', () => {
     off()
     expect(e).toBeInstanceOf(ApiError)
     expect(isUnavailable(e)).toBe(true)
-    expect(e).toMatchObject({ status: 503, code: 'unavailable', message: '远端仓库现在连不上' })
+    expect(e).toMatchObject({
+      status: 503,
+      code: 'unavailable',
+      message: '暂时连不上，你的内容没有丢，请稍后再试。（远端仓库现在连不上）',
+      serverMessage: '远端仓库现在连不上',
+    })
     expect(told).toBe(1)
   })
 
@@ -462,7 +508,11 @@ describe('a remote that cannot be reached', () => {
       .connectRemote({ url: 'https://example.org/a.git', credential: { type: 'ssh' } })
       .catch((x: unknown) => x)
     off()
-    expect(e).toMatchObject({ status: 403, code: 'forbidden', message: '管理员没有允许连接 example.org' })
+    expect(e).toMatchObject({
+      status: 403,
+      code: 'forbidden',
+      message: '没有权限这样做。（管理员没有允许连接 example.org）',
+    })
     expect(seen).toEqual([])
   })
 

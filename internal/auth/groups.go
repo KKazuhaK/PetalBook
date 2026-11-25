@@ -96,10 +96,10 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 	if in.Claim != nil {
 		c := strings.TrimSpace(*in.Claim)
 		if kind == KindGitHub && c != "" {
-			return providerInvalid("a GitHub provider's groups are the organisations: groups.claim cannot be set")
+			return providerInvalid("A GitHub provider's groups are the organisations: groups.claim cannot be set.")
 		}
 		if len(c) > maxClaimBytes || !utf8.ValidString(c) || badControl(c) {
-			return providerInvalid("groups.claim is at most %d bytes of text", maxClaimBytes)
+			return providerInvalid("groups.claim is at most %d bytes of text.", maxClaimBytes)
 		}
 		if c != g.Claim {
 			mark("claim")
@@ -112,7 +112,7 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		case "":
 			*in.Missing = missingKeep
 		default:
-			return providerInvalid("groups.missing is keep or clear")
+			return providerInvalid("groups.missing is keep or clear.")
 		}
 		if *in.Missing != orKeep(g.Missing) {
 			mark("missing")
@@ -122,22 +122,22 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 	if in.Map != nil {
 		list := *in.Map
 		if len(list) > maxGroupMap {
-			return providerInvalid("groups.map has at most %d entries", maxGroupMap)
+			return providerInvalid("groups.map has at most %d entries.", maxGroupMap)
 		}
 		seen := map[string]bool{}
 		var ids []string
 		for _, e := range list {
 			if e.Value == "" || len(e.Value) > maxClaimBytes || !utf8.ValidString(e.Value) || badControl(e.Value) {
-				return providerInvalid("a groups.map value is 1 to %d bytes of text", maxClaimBytes)
+				return providerInvalid("A groups.map value is 1 to %d bytes of text.", maxClaimBytes)
 			}
 			if !validGroupID(e.GroupID) {
-				return coded(404, "group_not_found", "a groups.map entry names a group that does not exist")
+				return coded(404, "group_not_found", "A groups.map entry names a group that does not exist.")
 			}
 			ids = append(ids, e.GroupID)
 		}
 		for _, e := range list {
 			if seen[e.Value] {
-				return coded(409, "exists", "the value %q is mapped twice", e.Value)
+				return coded(409, "exists", "The value %q is mapped twice.", e.Value)
 			}
 			seen[e.Value] = true
 		}
@@ -148,10 +148,10 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		for _, e := range list {
 			src, ok := sources[e.GroupID]
 			if !ok {
-				return coded(404, "group_not_found", "a groups.map entry names a group that does not exist")
+				return coded(404, "group_not_found", "A groups.map entry names a group that does not exist.")
 			}
 			if src != store.GroupSynced {
-				return coded(409, "group_not_synced", "only a synced group can be mapped; %s is local", e.GroupID)
+				return coded(409, "group_not_synced", "Only a synced group can be mapped; %s is local.", e.GroupID)
 			}
 		}
 		if !slices.Equal(list, g.Map) {
@@ -160,7 +160,7 @@ func (s *Service) applyGroups(ctx context.Context, b *built, in *groupsInput) er
 		g.Map = slices.Clone(list)
 	}
 	if g.Enabled && kind == KindSAML && g.Claim == "" {
-		return providerInvalid("groups.claim is the name of the SAML attribute that holds the groups")
+		return providerInvalid("groups.claim is the name of the SAML attribute that holds the groups.")
 	}
 	if g.Enabled || b.cfg.Groups != nil || in.Map != nil || in.Claim != nil || in.Missing != nil {
 		b.cfg.Groups = &g

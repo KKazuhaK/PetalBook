@@ -267,6 +267,7 @@ export const securityZhCN = {
       passkey_clone: 'Passkey 计数倒退',
       identity_linked: '绑定身份',
       identity_unlinked: '解除身份',
+      sessions_ended: '结束会话',
       passkey_added: '添加 passkey',
       passkey_removed: '删除 passkey',
       security_changed: '安全设置修改',

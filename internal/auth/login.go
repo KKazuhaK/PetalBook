@@ -166,11 +166,11 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		}
 		if n > 0 {
 			s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "passkey_required"}})
-			return nil, coded(403, "passkey_required", "your account signs in with a passkey")
+			return nil, coded(403, "passkey_required", "Your account signs in with a passkey.")
 		}
 		held = true
 	}
-	tok, err := s.issueSession(ctx, u.ID, held)
+	tok, err := s.issueSession(ctx, u.ID, held, "password")
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 }
 
 func errLocalRefused() *Error {
-	return coded(403, "local_login_refused", "signing in with a password or a passkey is not allowed here; use single sign-on")
+	return coded(403, "local_login_refused", "Signing in with a password or a passkey is not allowed here; use single sign-on.")
 }
 
 // wrongPassword counts a failed password against the name and the pair (the
@@ -257,10 +257,10 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 		return nil, "", err
 	}
 	if !open {
-		return nil, "", errf(Exists, "setup is already done")
+		return nil, "", errf(Exists, "Setup is already done.")
 	}
 	if !s.setupTokenOK(token) {
-		return nil, "", errf(Forbidden, "the setup token is wrong")
+		return nil, "", errf(Forbidden, "The setup token is wrong.")
 	}
 	good = true
 	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Role: "admin", Password: password, Setup: true})
@@ -268,7 +268,7 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 		return nil, "", err
 	}
 	// A new account has no passkey: held when one is required of it.
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "setup")
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	}
@@ -310,11 +310,11 @@ func (s *Service) CheckInvite(ctx context.Context, token, ip string, cap *Captch
 
 func (s *Service) findInvite(ctx context.Context, token string) (*store.Invite, error) {
 	if token == "" || len(token) > 256 {
-		return nil, errf(NotFound, "that invite is not valid")
+		return nil, errf(NotFound, "That invite is not valid.")
 	}
 	inv, err := store.FindUsableInvite(ctx, s.st.Q(), hashToken(token), s.now())
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, errf(NotFound, "that invite is not valid")
+		return nil, errf(NotFound, "That invite is not valid.")
 	}
 	return inv, err
 }
@@ -343,7 +343,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 		return nil, "", err
 	}
 	// A new account has no passkey: held when one is required of it.
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "invite")
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	}

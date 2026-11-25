@@ -43,7 +43,7 @@ func (s *Space) Backlinks(id, cursor string) (items []Backlink, next string, tot
 	rows, next, total, err := s.idx.Backlinks(id, cursor, BacklinksPageSize)
 	if err != nil {
 		if errors.Is(err, index.ErrBadCursor) {
-			return nil, "", 0, invalidf("bad cursor")
+			return nil, "", 0, invalidf("Bad cursor.")
 		}
 		return nil, "", 0, err
 	}

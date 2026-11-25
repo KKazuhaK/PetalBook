@@ -101,11 +101,11 @@ func (s *server) adminCreateExport(c *call) {
 		return
 	}
 	if n := len(req.Spaces) + len(req.Items); n == 0 || n > maxConfirmIDs {
-		writeError(c.w, http.StatusBadRequest, "invalid", "name from 1 to "+strconv.Itoa(maxConfirmIDs)+" spaces or recycle items to export")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Name from 1 to "+strconv.Itoa(maxConfirmIDs)+" spaces or recycle items to export.")
 		return
 	}
 	if req.History && !c.isSiteAdmin() {
-		writeError(c.w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may export the history")
+		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may export the history.")
 		return
 	}
 	sc := store.AdminScopeOf(c.user())
@@ -129,7 +129,7 @@ func (s *server) adminCreateExport(c *call) {
 	for _, id := range req.Items {
 		it, ok := items[id]
 		if !ok || it.Kind != store.RecycleSpace || (it.Personal && !c.isSiteAdmin()) {
-			writeError(c.w, http.StatusNotFound, "not_found", "no such item in the recycle bin")
+			writeError(c.w, http.StatusNotFound, "not_found", "No such item in the recycle bin.")
 			return
 		}
 		sources = append(sources, store.ExportSource{Item: it.ID, SpaceID: it.SpaceID, Name: it.Name})
@@ -180,7 +180,7 @@ func (s *server) adminListExports(c *call) {
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > maxAdminLimit {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit is a number from 1 to "+strconv.Itoa(maxAdminLimit)+".")
 			return
 		}
 		limit = n
@@ -191,7 +191,7 @@ func (s *server) adminListExports(c *call) {
 	}
 	rows, next, err := store.ListExports(c.r.Context(), s.opt.Store.Q(), sc, q.Get("cursor"), limit)
 	if errors.Is(err, store.ErrBadCursor) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "that cursor is not one this list gave")
+		writeError(c.w, http.StatusBadRequest, "invalid", "That cursor is not one this list gave.")
 		return
 	}
 	if err != nil {
@@ -212,7 +212,7 @@ func (s *server) adminListExports(c *call) {
 func (s *server) exportFound(c *call) (*store.Export, bool) {
 	e, err := store.GetExport(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such export")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such export.")
 		return nil, false
 	}
 	if err != nil {
@@ -239,7 +239,7 @@ func (s *server) adminDeleteExport(c *call) {
 		return
 	}
 	if e.State == store.ExportRunning || e.State == store.ExportQueued {
-		writeError(c.w, http.StatusConflict, "busy", "the export is being made")
+		writeError(c.w, http.StatusConflict, "busy", "The export is being made.")
 		return
 	}
 	s.spaces.DeleteExportFile(e)
@@ -257,12 +257,12 @@ func (s *server) adminDownloadExport(c *call) {
 		return
 	}
 	if e.State != store.ExportReady || s.spaces.ExportPath(e) == "" {
-		writeError(c.w, http.StatusConflict, "busy", "the export is not ready")
+		writeError(c.w, http.StatusConflict, "busy", "The export is not ready.")
 		return
 	}
 	f, err := os.Open(s.spaces.ExportPath(e))
 	if err != nil {
-		writeError(c.w, http.StatusNotFound, "not_found", "the file of the export is gone")
+		writeError(c.w, http.StatusNotFound, "not_found", "The file of the export is gone.")
 		return
 	}
 	defer f.Close()
@@ -290,7 +290,7 @@ func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user st
 	sc := store.AdminScopeOf(c.user())
 	st, err := store.GetUserState(ctx, q, user)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !sc.All() && sc.Tenant() != st.Tenant) {
-		writeError(c.w, http.StatusNotFound, "user_not_found", "there is no such user")
+		writeError(c.w, http.StatusNotFound, "user_not_found", "There is no such user.")
 		return false
 	}
 	if err != nil {

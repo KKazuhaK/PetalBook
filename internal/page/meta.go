@@ -273,10 +273,10 @@ func ValuesEqual(a, b any) bool { return valuesEqual(a, b) }
 
 // builtinKeys are the header fields the application itself gives a meaning
 // to; every other key of a header is a property a page type may describe.
-var builtinKeys = map[string]bool{"id": true, "title": true, "subtitle": true, "source": true, "tags": true, "created": true, "type": true}
+var builtinKeys = map[string]bool{"id": true, "title": true, "subtitle": true, "source": true, "tags": true, "created": true, "type": true, "icon": true, "color": true}
 
 // IsBuiltinKey reports whether key is one of the header fields with a meaning
-// of its own (id, title, subtitle, source, tags, created, type).
+// of its own (id, title, subtitle, source, tags, created, type, icon, color).
 func IsBuiltinKey(key string) bool { return builtinKeys[key] }
 
 // IsReservedKey reports whether key is kept for later use by the application

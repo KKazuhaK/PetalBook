@@ -10,7 +10,19 @@ describe('SaveIndicator when the remote cannot be reached', () => {
   it('says the draft is safe on the server, not that saving failed', () => {
     const html = renderToStaticMarkup(
       <SaveIndicator
-        snapshot={failed(new ApiError(503, 'unavailable', '远端仓库现在连不上'))}
+        snapshot={failed(
+          new ApiError(
+            503,
+            'unavailable',
+            '暂时连不上',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            '远端仓库现在连不上',
+          ),
+        )}
         draftSafe
         onRetry={noop}
         onOpenConflict={noop}

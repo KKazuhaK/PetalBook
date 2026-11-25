@@ -23,7 +23,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
@@ -45,8 +45,9 @@ async function open(section: string, scene?: (server: MockServer) => unknown, se
     signIn: true,
     server: { mode: 'accounts', empty: true, ...server },
     entries: (s) => {
-      scene?.(s)
-      return [`/admin/${section}`]
+      const where = scene?.(s)
+      // A scene may send the page to one person's own address.
+      return [typeof where === 'string' ? where : `/admin/${section}`]
     },
   })
 }
@@ -66,7 +67,7 @@ function sized(server: MockServer, username: string, chars: number, role: 'membe
 
 describe('the Usage page', () => {
   it('lists people with the most disk first, their numbers against their limits, and says when nothing was measured; the tenant list is not shown while there is one tenant', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
       sized(server, 'bob', 9000)
       makePerson(server, 'cat')
@@ -88,7 +89,7 @@ describe('the Usage page', () => {
   })
 
   it('narrows to the people over a limit and says so when nobody is', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
       const admin = adminRequests(server)
       admin('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 1 })
@@ -107,7 +108,7 @@ describe('the Usage page', () => {
   })
 
   it("loads more people on request, and edits one person's own limits in a dialog", async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       for (let i = 1; i <= 55; i++) makePerson(server, `p${String(i).padStart(2, '0')}`)
     })
     await settle(() => people().length === 50, 'the first page')
@@ -133,7 +134,7 @@ describe('the Usage page', () => {
   })
 
   it('refuses what is not a number, before asking the server', async () => {
-    await open('usage', (server) => makePerson(server, 'amy'))
+    await open('storage/usage', (server) => makePerson(server, 'amy'))
     await settle(() => people().length === 2, 'two people')
     await click(button(tu.admin.editLimitsFor('名 amy')))
     await settle(() => dlg()?.querySelector('[data-slot="own-limits"]') !== null, 'the form')
@@ -144,7 +145,7 @@ describe('the Usage page', () => {
   })
 
   it("shows a site administrator the tenants with what each uses, and a tenant's people when it is picked", async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       const admin = adminRequests(server)
       admin('PUT', '/api/admin/tenancy', { enabled: true })
       admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
@@ -168,7 +169,7 @@ describe('the Usage page', () => {
   })
 
   it('nothing on it can be wider than a phone: rows wrap and shrink, the numbers stack in one column', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
       adminRequests(server)('PUT', '/api/admin/tenancy', { enabled: true })
       adminRequests(server)('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
@@ -195,7 +196,7 @@ describe('the Usage page', () => {
   })
 
   it('shows a tenant administrator only their people, with no tenant list', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       const admin = adminRequests(server)
       sized(server, 'amy', 100)
       makePerson(server, 'second', 'admin') // another site administrator must remain
@@ -213,12 +214,7 @@ describe('the Usage page', () => {
 
 describe('limits on a user, and the usage of a tenant', () => {
   it("the user's details have the person's own limits, which are saved with the other details of the person unchanged", async () => {
-    await open('users', (server) => makePerson(server, 'amy'))
-    await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
-    const edit = [...document.querySelectorAll('button')].find(
-      (b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑',
-    )!
-    await click(edit)
+    await open('users', (server) => `/admin/user/${makePerson(server, 'amy').id}`)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     const fields = [...document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')]
     await type(fields[2], '5000')
@@ -233,12 +229,8 @@ describe('limits on a user, and the usage of a tenant', () => {
     await open('users', (server) => {
       const amy = makePerson(server, 'amy')
       adminRequests(server)('PATCH', `/api/users/${amy.id}`, { quota: { spaces: 7, bytes: exact } })
+      return `/admin/user/${amy.id}`
     })
-    await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
-    const edit = [...document.querySelectorAll('button')].find(
-      (b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑',
-    )!
-    await click(edit)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     const fields = [...document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')]
     expect(fields.map((f) => f.value)).toEqual(['7', '1.15', ''])
@@ -261,19 +253,15 @@ describe('limits on a user, and the usage of a tenant', () => {
   it('says what a refusal means: only a site administrator goes above the tenant', async () => {
     await open('users', (server) => {
       const admin = adminRequests(server)
-      makePerson(server, 'amy')
+      const amy = makePerson(server, 'amy')
       admin('PUT', '/api/admin/settings/quota.spacesPerPerson', { value: 3 })
       const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
         (u) => u.username === 'admin',
       )!
       makePerson(server, 'boss', 'admin')
       admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
+      return `/admin/user/${amy.id}`
     })
-    await settle(() => button(t.fmt.labelled(t.users.disable, '名 amy')) !== null, 'the users')
-    const edit = [...document.querySelectorAll('button')].find(
-      (b) => b.getAttribute('aria-label')?.includes('名 amy') && b.textContent === '编辑',
-    )!
-    await click(edit)
     await settle(() => document.querySelector('[data-slot="own-limits"]') !== null, 'the limits form')
     await type(document.querySelectorAll<HTMLInputElement>('[data-slot="own-limits"] input')[0], '9')
     await click(button(tu.own.save))

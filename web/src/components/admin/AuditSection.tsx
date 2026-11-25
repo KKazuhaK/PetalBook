@@ -21,6 +21,7 @@ const KINDS = [
   'passkey_clone',
   'identity_linked',
   'identity_unlinked',
+  'sessions_ended',
   'passkey_added',
   'passkey_removed',
   'security_changed',

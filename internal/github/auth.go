@@ -169,7 +169,7 @@ func (s *Service) needUserAuth(ctx context.Context) (*appState, error) {
 		return nil, err
 	}
 	if !st.userAuth(s.opt.PublicURL) {
-		return nil, errf(http.StatusConflict, CodeNotConfigured, "users cannot connect GitHub accounts: the App's client id and secret and the server's --public-url are needed")
+		return nil, errf(http.StatusConflict, CodeNotConfigured, "Users cannot connect GitHub accounts: the App's client id and secret and the server's --public-url are needed.")
 	}
 	return st, nil
 }
@@ -187,7 +187,7 @@ func (s *Service) StartInstall(ctx context.Context, userID, ret string) (install
 	}
 	page := installURL(st.rec.HTMLURL)
 	if page == "" {
-		return "", "", errf(http.StatusConflict, CodeNotConfigured, "GitHub did not say where the App is installed")
+		return "", "", errf(http.StatusConflict, CodeNotConfigured, "GitHub did not say where the App is installed.")
 	}
 	state := githubapp.RandomState()
 	binding = s.attempts.put(attempt{state: state, userID: userID, ret: safeReturn(ret)})
@@ -589,7 +589,7 @@ func (s *Service) doRenew(ctx context.Context, userID string, force bool) (strin
 		s.cacheToken(userID, gen, tok.Access, tok.AccessExpires, row.Version+1)
 		return tok.Access, nil
 	}
-	return "", errf(http.StatusServiceUnavailable, CodeUnavailable, "the GitHub authorisation keeps changing; try again")
+	return "", errf(http.StatusServiceUnavailable, CodeUnavailable, "The GitHub authorisation keeps changing; try again.")
 }
 
 func (s *Service) expire(ctx context.Context, row *store.GitHubAuthorization) {

@@ -133,6 +133,15 @@ export function usePeople(params: Omit<PeopleParams, 'cursor' | 'limit'>, enable
     staleTime: 10_000,
   })
 }
+// One page of the people list, as the server cuts it for this search, filter, sort and page size.
+export function usePeoplePage(params: PeopleParams) {
+  return useQuery({
+    queryKey: [...PEOPLE_KEY, 'page', JSON.stringify(params)],
+    queryFn: ({ signal }) => manageApi.people(params, signal),
+    staleTime: 10_000,
+    placeholderData: (prev) => prev,
+  })
+}
 export function usePerson(id: string, tenant?: string) {
   return useQuery({
     queryKey: [...PEOPLE_KEY, 'one', id, tenant ?? ''],

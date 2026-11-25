@@ -6,6 +6,9 @@ import { settingsPath } from '@/components/settings/sections'
 import type { SettingsState } from '@/components/settings/useSettings'
 import { absoluteTime } from '@/lib/time'
 import { ts } from '@/i18n/storage'
+import { to } from '@/i18n/onboard'
+import { requestOnboarding } from '@/lib/onboarding'
+import { useRepoGuide } from '@/components/onboarding/useRepoGuide'
 
 // A line above the pages of a space that the storage policy asks to follow a
 // remote repository and that does not yet (docs/api.md, "Server storage"): it
@@ -36,6 +39,7 @@ export function StorageNoticeBanner() {
   // A requirement of a provider (2.7b's connections) is shown by the platform's name.
   const byProvider = !!note && note.required !== 'any'
   const connections = useConnections(byProvider)
+  const guide = useRepoGuide()
   if (!note) return null
   const providerName = connections.data?.providers.find((p) => p.id === note.required)?.name ?? note.required
   const when = absoluteTime(note.deadline)
@@ -64,6 +68,21 @@ export function StorageNoticeBanner() {
         <span className="font-medium">{overdue ? ts.notice.overdueTitle : ts.notice.graceTitle}.</span>{' '}
         {overdue ? ts.notice.overdueHelp(when) : ts.notice.graceHelp(when)}
         {note.required !== 'any' && <> {ts.notice.providerHelp(providerName)}</>}{' '}
+        {/* What remains is shown, not only that the space is blocked: the step to take now, and the way through them. */}
+        {guide.note && (
+          <span data-slot="storage-notice-step">
+            {to.repo.bannerLeft(
+              guide.current === 'connect' ? to.repo.connect.title(guide.providerName || '…') : to.repo.repo.title,
+            )}{' '}
+            <button
+              type="button"
+              onClick={() => requestOnboarding({ kind: 'repo' })}
+              className="font-medium underline underline-offset-2 max-md:inline-block max-md:py-2.5"
+            >
+              {to.repo.bannerAction}
+            </button>{' '}
+          </span>
+        )}
         {manage && (
           <Link
             to={settingsPath('sync')}

@@ -148,10 +148,12 @@ describe('the table option', () => {
     await settle(() => byLabel(t.view.table) !== null, 'the table option')
   })
 
-  it('is remembered for the folder, in the browser, and the list and cards are not asked for props', async () => {
+  it('is remembered for the folder, in the browser; the folder table asks for props for its field columns only', async () => {
     await openWork()
     await settle(() => rowOfList() !== null, 'the list')
-    expect(listRequests().every((r) => !r.url.includes('props=1'))).toBe(true)
+    // The listing of a folder with a type shows the fields as columns, so it reads props; the property table reads
+    // them a hundred at a time, as its own query.
+    expect(listRequests().every((r) => new URL(r.url, 'http://x').searchParams.get('limit') !== '100')).toBe(true)
     await showTable()
     expect(localStorage.getItem(viewKey('default', 'folder', 'Work'))).toBe('table')
     expect(listRequests().some((r) => r.url.includes('props=1'))).toBe(true)
@@ -551,6 +553,8 @@ describe('a long folder', () => {
       listRequests()
         .filter((r) => r.url.includes('props=1'))
         .map((r) => new URL(r.url, 'http://x').searchParams.get('limit'))
+        // The folder table read the first page of the list before the property table was chosen: not what is counted.
+        .filter((l) => l === '100')
     expect(limits()).toEqual(['100'])
     // Far fewer rows than are loaded are in the page, and the footer says how many are.
     expect(rowEls().length).toBeLessThan(40)

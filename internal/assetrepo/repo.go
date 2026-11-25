@@ -286,7 +286,7 @@ func (r *Repo) fail(err error) error {
 	default:
 		r.setStatus(func(st *space.RemoteStatus) { st.State, st.Kind, st.Error = space.RemoteOffline, "", msg })
 	}
-	return &space.UnavailableError{Msg: "the attachment repository: " + msg, Err: err}
+	return &space.UnavailableError{Msg: "The attachment repository: " + msg + ".", Err: err}
 }
 
 func isNet(err error) bool {
@@ -549,7 +549,7 @@ func (r *Repo) Put(ctx context.Context, files []File, author, committer gitstore
 		}
 		return err
 	}
-	return &space.UnavailableError{Msg: "the attachment repository keeps changing; try again in a moment"}
+	return &space.UnavailableError{Msg: "The attachment repository keeps changing; try again in a moment."}
 }
 
 func (r *Repo) putOnce(ctx context.Context, files []File, author, committer gitstore.Identity, message string) (bool, error) {

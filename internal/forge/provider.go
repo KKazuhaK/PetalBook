@@ -47,11 +47,11 @@ func (p *Provider) errf(status int, code, format string, a ...any) *connections.
 }
 
 func (p *Provider) notConfigured() *connections.Error {
-	return p.errf(http.StatusConflict, connections.CodeNotConfigured, "this provider is not set up, or its host did not pass the last check (an administrator looks at it in the administration)")
+	return p.errf(http.StatusConflict, connections.CodeNotConfigured, "This provider is not set up, or its host did not pass the last check (an administrator looks at it in the administration).")
 }
 
 func (p *Provider) notConnected() *connections.Error {
-	return p.errf(http.StatusConflict, connections.CodeNotConnected, "connect your account on %s first", p.name())
+	return p.errf(http.StatusConflict, connections.CodeNotConnected, "Connect your account on %s first.", p.name())
 }
 
 // snap is the provider's row and secret as they are now.
@@ -193,7 +193,7 @@ func (p *Provider) visibleTo(ctx context.Context, userID string) error {
 		return err
 	}
 	if err != nil || t != r.Owner {
-		return p.errf(http.StatusNotFound, connections.CodeNotFound, "no such provider")
+		return p.errf(http.StatusNotFound, connections.CodeNotFound, "No such provider.")
 	}
 	return nil
 }
@@ -213,10 +213,10 @@ func (p *Provider) wrap(err error) error {
 	if errors.As(err, &se) {
 		switch {
 		case se.RateLimited:
-			return &connections.Error{Provider: p.id, Code: connections.CodeRateLimited, Status: http.StatusTooManyRequests, Msg: name + " is limiting this server; try again in a moment",
+			return &connections.Error{Provider: p.id, Code: connections.CodeRateLimited, Status: http.StatusTooManyRequests, Msg: name + " is limiting this server; try again in a moment.",
 				RetryAfter: se.RetryAfter(p.m.opt.Now()), Err: err}
 		case se.Status >= 500:
-			return &connections.Error{Provider: p.id, Code: connections.CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: name + " cannot be reached right now", Err: err}
+			return &connections.Error{Provider: p.id, Code: connections.CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: name + " cannot be reached right now.", Err: err}
 		}
 		return err
 	}
@@ -224,7 +224,7 @@ func (p *Provider) wrap(err error) error {
 	if errors.As(err, &oe) || errors.Is(err, context.Canceled) {
 		return err
 	}
-	return &connections.Error{Provider: p.id, Code: connections.CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: name + " cannot be reached right now", Err: err}
+	return &connections.Error{Provider: p.id, Code: connections.CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: name + " cannot be reached right now.", Err: err}
 }
 
 // Check reads the provider's configuration from the host again.
@@ -304,7 +304,7 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 		ClientSecret *string `json:"clientSecret"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "the body is not what this takes: %s", err.Error())
+		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "The body is not what this takes: %s.", err.Error())
 	}
 	// Everything that follows works on the provider as it is when this save has
 	// the lock, and on nothing read earlier: a save that waited for another one
@@ -313,12 +313,12 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	defer p.m.mu.Unlock()
 	row, secret := p.snap()
 	if (req.ID != nil && *req.ID != p.id) || (req.Type != nil && *req.Type != row.Type) || (req.Host != nil && p.sameHost(*req.Host) != nil) {
-		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "a provider's id, type and host cannot be changed: make a new provider and remove this one")
+		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "A provider's id, type and host cannot be changed: make a new provider and remove this one.")
 	}
 	if req.Name != nil {
 		n := strings.TrimSpace(*req.Name)
 		if !validName(n) {
-			return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "name is at most 80 characters, without control characters")
+			return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "Name is at most 80 characters, without control characters.")
 		}
 		row.Name = n
 	}
@@ -331,7 +331,7 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 		secret, newClient = *req.ClientSecret, true
 	}
 	if !validClient(row.ClientID, secret) {
-		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "clientId and clientSecret are required")
+		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "clientId and clientSecret are required.")
 	}
 	version, err := p.m.checkHost(ctx, p.d, p.c, row.ClientID, secret, p.CallbackURL())
 	if err != nil {
@@ -432,7 +432,7 @@ func (p *Provider) AdminDelete(ctx context.Context) error {
 		return err
 	}
 	if n > 0 || sp > 0 {
-		e := p.errf(http.StatusConflict, connections.CodeInUse, "%d people are connected and %d spaces sync through %s: disconnect them and move the spaces first", n, sp, p.name())
+		e := p.errf(http.StatusConflict, connections.CodeInUse, "%d people are connected and %d spaces sync through %s: disconnect them and move the spaces first.", n, sp, p.name())
 		e.Counts = map[string]int{"connections": n, "spaces": sp}
 		return e
 	}

@@ -15,6 +15,7 @@ import {
 import { spaceUrls } from '@/lib/urls'
 import { t } from '@/i18n'
 import { settingsPath } from '@/components/settings/sections'
+import { ProblemDot } from '@/components/settings/ProblemDot'
 import { useOpenSettings, type SettingsState } from '@/components/settings/useSettings'
 import { NameDialog } from './NameDialog'
 import { NewSpaceDialog } from './NewSpaceDialog'
@@ -46,6 +47,7 @@ export function SpaceSwitcher() {
             className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left text-sm font-semibold outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <span className="truncate">{current?.name ?? t.appName}</span>
+            <ProblemDot />
             <ChevronsUpDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-56">
@@ -71,6 +73,7 @@ export function SpaceSwitcher() {
             {/* Everyone sees the settings (the members, at least); what they may change there depends on the permissions. */}
             <DropdownMenuItem disabled={!current} onClick={() => id && openSettings('general')}>
               {t.spaces.settings}
+              <ProblemDot className="ml-auto" />
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -78,7 +78,7 @@ export function DeletePersonDialog({ id, username, onClose }: { id: string; user
                 className={tapTarget}
                 type="button"
                 variant="outline"
-                render={<Link to={adminPath('recycle')} onClick={onClose} />}
+                render={<Link to={adminPath('users', 'deleted')} onClick={onClose} />}
               >
                 {tg.del.space.goBin}
               </Button>

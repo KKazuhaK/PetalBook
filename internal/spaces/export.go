@@ -28,6 +28,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
@@ -425,6 +426,11 @@ func (m *Manager) zipArchive(ctx context.Context, zw *zip.Writer, repo *gitstore
 		// Names come from a repository anyone with write access can shape: never
 		// out of the folder, never absolute.
 		if path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			continue
+		}
+		// A person's own preferences are theirs, not the space's: an export an administrator
+		// makes of a personal space does not carry them.
+		if name == space.PrefsFile {
 			continue
 		}
 		switch h.Typeflag {

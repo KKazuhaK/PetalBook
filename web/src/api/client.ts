@@ -1,6 +1,8 @@
 // Typed functions for every endpoint of docs/api.md.
 
 import { t } from '@/i18n'
+import { apiErrorText, type ErrorParams } from '@/i18n/apiErrors'
+import { formatBytes } from '@/lib/bytes'
 import { noteNetworkOk } from '@/lib/offline/status'
 import { forgetLastAccount } from '@/lib/lastAccount'
 
@@ -71,6 +73,9 @@ import type {
   ChecksParams,
   ChecksResponse,
   FixCheckInput,
+  NotificationList,
+  NotificationsParams,
+  PrefsAnswer,
   PageTemplate,
   PutTemplateInput,
   TemplateDefaults,
@@ -83,10 +88,15 @@ import type {
   SessionInfo,
   SpaceInfo,
   SpaceRole,
+  Appearance,
+  FolderStyle,
+  IconColor,
+  SourceCount,
   TagColor,
   TagsResponse,
   TypeInput,
   PageType,
+  FieldRename,
   TypesResponse,
   FolderBinding,
   GroupsParams,
@@ -140,6 +150,9 @@ export class ApiError extends Error {
   readonly reason?: ReasonCode
   // The parsed answer, when it had a body: some refusals carry more than a code (the daily trial's `result`).
   readonly body?: unknown
+  // What the server said, in its own words (English, for API users). `message` is the text for people, in the language
+  // of the page, chosen by `code`; it is this only when the client has no text for the code.
+  readonly serverMessage?: string
   constructor(
     status: number,
     code: ErrorCode,
@@ -149,6 +162,7 @@ export class ApiError extends Error {
     draft?: PageDraft | null,
     reason?: ReasonCode,
     body?: unknown,
+    serverMessage?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -159,6 +173,32 @@ export class ApiError extends Error {
     this.draft = draft
     this.reason = reason
     this.body = body
+    this.serverMessage = serverMessage
+  }
+}
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+const count = (v: unknown): string | undefined => (typeof v === 'number' && Number.isFinite(v) ? String(v) : undefined)
+
+// What an error answer is about, written for people: the fields the server puts next to `error` (docs/api.md), and
+// Retry-After as a wait.
+export function errorParams(code: string, body: unknown, retryAfter: number | undefined): ErrorParams {
+  const b = (body ?? {}) as Record<string, unknown>
+  const bytes = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? formatBytes(v) : undefined)
+  const size = code === 'file_too_large'
+  return {
+    limit: size ? bytes(b.limit) : count(b.limit),
+    used: count(b.used),
+    size: bytes(b.size),
+    name: str(b.name),
+    provider: str(b.provider),
+    permission: str(b.permission),
+    header: str(b.header),
+    field: str(b.field),
+    quota: str(b.quota),
+    spaces: count(b.spaces),
+    accounts: count(b.accounts),
+    wait: retryAfter ? t.auth.wait(retryAfter) : undefined,
   }
 }
 
@@ -413,17 +453,21 @@ export async function request<T>(
         accessListeners.forEach((fn) => fn(space ? decodeURIComponent(space) : null, err.error === 'not_found'))
     }
     const retry = Number(res.headers.get('Retry-After'))
+    const wait = Number.isFinite(retry) && retry > 0 ? retry : undefined
+    // The text for people is by code; only a code the client has no text for shows what the server said.
+    const text = err.error ? apiErrorText(err.error, errorParams(err.error, json, wait), err.message) : undefined
     throw new ApiError(
       res.status,
       (err.error as ErrorCode) || 'unknown',
-      err.message || t.errors.requestFailed(res.status),
+      text || err.message || t.errors.requestFailed(res.status),
       err.current,
-      res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
+      res.status === 429 && wait ? wait : undefined,
       err.draft,
       typeof err.error === 'string' && DAILY_CODES.has(err.error)
         ? reasonOf(err as { error: string; header?: unknown; field?: unknown })
         : undefined,
       json ?? undefined,
+      err.message,
     )
   }
   return json as T
@@ -574,6 +618,21 @@ export function spaceApi(space: string) {
       request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { folder, template } }),
     setQuickNoteTemplate: (quickNote: string) =>
       request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { quickNote } }),
+    // The icons and colours of folders, and the presets of the sources (docs/api.md, "Icons, colours...").
+    appearance: (signal?: AbortSignal) => request<Appearance>(base('/appearance'), { signal }),
+    // "" for the icon and the colour takes them away. Needs `write`.
+    setFolderStyle: (folder: string, icon: string, color: IconColor | '') =>
+      request<FolderStyle>(base('/folders/style'), { method: 'PUT', body: { folder, icon, color } }),
+    sources: (signal?: AbortSignal) => request<{ sources: SourceCount[] }>(base('/sources'), { signal }),
+    // null goes back to the defaults. Needs `manage`.
+    setSourcePresets: (presets: string[] | null) =>
+      request<{ presets: string[] | null }>(base('/sources/presets'), { method: 'PUT', body: { presets } }),
+    // Gives a field of a type another key, in the type and in every page of it. Needs `manage`.
+    renameTypeField: (name: string, input: { baseRev: string; from: string; to: string }) =>
+      request<FieldRename>(base(`/types/${enc(name)}/rename-field`), {
+        method: 'POST',
+        body: input,
+      }),
     // `type` "" removes the binding.
     bindFolder: (folder: string, type: string) =>
       request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),
@@ -778,6 +837,26 @@ export const api = {
   createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) =>
     request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
   revokeToken: (id: string) => request<void>(`/account/tokens/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- the notification centre and the person's own preferences ---
+  notifications: (params: NotificationsParams = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.kind) q.set('kind', params.kind)
+    if (params.unread) q.set('unread', '1')
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<NotificationList>(`/notifications${qs ? `?${qs}` : ''}`, { signal })
+  },
+  unreadNotifications: (signal?: AbortSignal) => request<{ count: number }>('/notifications/unread', { signal }),
+  markNotificationsRead: (ids: string[]) =>
+    request<{ unread: number }>('/notifications/read', { method: 'POST', body: { ids } }),
+  markAllNotificationsRead: (kind?: string) =>
+    request<{ unread: number }>('/notifications/read-all', { method: 'POST', body: kind ? { kind } : {} }),
+  // The person's own preferences, kept in their personal space (never the database); null values remove a key.
+  prefs: (signal?: AbortSignal) => request<PrefsAnswer>('/prefs', { signal }),
+  patchPrefs: (set: Record<string, unknown>) =>
+    request<{ personal: boolean }>('/prefs', { method: 'PATCH', body: { set } }),
 
   // --- connected apps (OAuth grants) and the consent page ---
   // 404 when the server has no authorization server (no public address, or MCP is off).

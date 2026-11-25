@@ -40,14 +40,14 @@ func (s *server) importMarkdown(c *call) {
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(c.w, http.StatusRequestEntityTooLarge, "invalid", "the file is larger than "+sizeText(max)+", the most this server imports at once")
+			writeError(c.w, http.StatusRequestEntityTooLarge, "invalid", "The file is larger than "+sizeText(max)+", the most this server imports at once.")
 		} else {
-			writeError(c.w, http.StatusBadRequest, "invalid", "could not read the file")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Could not read the file.")
 		}
 		return
 	}
 	if len(data) == 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "the file is empty")
+		writeError(c.w, http.StatusBadRequest, "invalid", "The file is empty.")
 		return
 	}
 	var plan *importer.Plan

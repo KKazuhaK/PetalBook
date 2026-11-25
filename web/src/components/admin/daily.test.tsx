@@ -4,6 +4,7 @@ import { act } from 'react'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
@@ -21,7 +22,7 @@ const d = ta.daily
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div data-testid="elsewhere" />} />
     </Routes>
   </SidebarProvider>
@@ -67,8 +68,8 @@ const GOOD = {
 describe("the administrators' daily text page", () => {
   it('is a section of the administration with its own address, for administrators only', async () => {
     await open()
-    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(
-      ta.sections.daily,
+    expect(document.querySelector('nav[aria-label="' + tc.nav + '"] [aria-current="page"]')?.textContent).toBe(
+      tc.sections.daily,
     )
     await m!.unmount()
     // A member never gets it, nor fetches it.
@@ -681,5 +682,17 @@ describe("the administrators' daily text page", () => {
         refreshMinutes: 15,
       })
     })
+  })
+})
+
+describe('the hint on a server where nothing is switched on', () => {
+  const hint = () => document.querySelector('[data-slot="daily-off-hint"]')
+
+  it('says the daily text is off by default, until a built-in interface is switched on', async () => {
+    await open()
+    expect(hint()?.textContent).toBe('每日文案默认关闭。打开内置接口或添加自己的文案后，首页就会显示。')
+    const hitokoto = document.querySelector<HTMLElement>('[data-slot="builtin"] [role="switch"]')!
+    await click(hitokoto)
+    await settle(() => hint() === null, 'the hint to go')
   })
 })

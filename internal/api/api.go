@@ -30,6 +30,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/quota"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -106,6 +107,9 @@ type Options struct {
 	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
 	// accounts mode the administrators' setting decides.
 	NoMCP bool
+	// PrefsQuiet is how long a person's first preference write waits for others
+	// before they are committed together (DefaultPrefsQuiet when 0).
+	PrefsQuiet time.Duration
 }
 
 type server struct {
@@ -132,6 +136,8 @@ type server struct {
 	views    *viewTable
 	// jobs runs the bulk jobs (see bulk.go).
 	jobs *jobRunner
+	// prefs holds the preferences written and not committed yet (see prefs.go).
+	prefs prefsHub
 	// Background work (the bulk jobs) is started with goBg: it runs with bgCtx,
 	// which Close cancels, and Close waits for it on bg.
 	bgCtx    context.Context
@@ -180,6 +186,7 @@ func (s *server) goBg(f func(ctx context.Context)) bool {
 }
 
 func (s *server) close() {
+	s.flushAllPrefs()
 	s.bgMu.Lock()
 	s.bgClosed = true
 	s.bgMu.Unlock()
@@ -265,10 +272,10 @@ func New(opt Options) *Handler {
 		if methods := s.methodsFor(r.URL.Path); len(methods) > 0 {
 			allow := strings.Join(methods, ", ")
 			w.Header().Set("Allow", allow)
-			writeError(w, http.StatusMethodNotAllowed, "invalid", "method "+r.Method+" is not allowed here; use "+allow)
+			writeError(w, http.StatusMethodNotAllowed, "invalid", "Method "+r.Method+" is not allowed here; use "+allow+".")
 			return
 		}
-		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+		writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 	})
 	// The body of a request that changes something must be JSON, or, on an
 	// upload route, a file: asked of the mux, so the route table decides.
@@ -346,14 +353,14 @@ func (s *server) wrap(next http.Handler, bodyType func(*http.Request) string) ht
 				}
 				s.log.Error("panic in handler", "path", r.URL.Path, "panic", v)
 				if sw.status == 0 {
-					writeError(sw, http.StatusInternalServerError, "internal", "internal error")
+					writeError(sw, http.StatusInternalServerError, "internal", "Internal error.")
 				}
 			}
 			s.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", time.Since(start).Milliseconds())
 		}()
 		sw.Header().Set("X-Content-Type-Options", "nosniff")
 		if s.opt.RestrictHost && !loopbackHost(r.Host) && !s.originHosts[strings.ToLower(r.Host)] {
-			writeError(sw, http.StatusForbidden, "forbidden", "this server only answers requests addressed to localhost")
+			writeError(sw, http.StatusForbidden, "forbidden", "This server only answers requests addressed to localhost.")
 			return
 		}
 		// The identity provider's redirect is a cross-site navigation by
@@ -514,12 +521,25 @@ func loopbackHost(hostport string) bool {
 
 // --- JSON -------------------------------------------------------------------
 
+// oneStop is a message with one full stop at its end: an error made of another
+// error's sentence and a full stop of its own would end with two.
+func oneStop(m string) string {
+	if strings.HasSuffix(m, "..") && !strings.HasSuffix(m, "...") {
+		return m[:len(m)-1]
+	}
+	return m
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if e, ok := v.(errorBody); ok {
+		e.Message = oneStop(e.Message)
+		v = e
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(v); err != nil {
-		http.Error(w, `{"error":"internal","message":"could not encode the response"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"internal","message":"Could not encode the response."}`, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -599,7 +619,8 @@ type draftConflictBody struct {
 }
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, errorBody{Error: code, Message: msg})
+	// Whatever the message was made from, it goes out as a sentence.
+	writeJSON(w, status, errorBody{Error: code, Message: sentence.End(msg)})
 }
 
 // readJSON decodes the request body into v. An empty body is accepted when
@@ -615,9 +636,9 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("the request body is larger than %d bytes", max))
+			writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("The request body is larger than %d bytes.", max))
 		} else {
-			writeError(w, http.StatusBadRequest, "invalid", "could not read the request body")
+			writeError(w, http.StatusBadRequest, "invalid", "Could not read the request body.")
 		}
 		return false
 	}
@@ -625,11 +646,11 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 		return true
 	}
 	if mt, _, err := mime.ParseMediaType(ct); err != nil || mt != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "invalid", "send the body as application/json")
+		writeError(w, http.StatusUnsupportedMediaType, "invalid", "Send the body as application/json.")
 		return false
 	}
 	if !utf8.Valid(raw) {
-		writeError(w, http.StatusBadRequest, "invalid", "the request body is not valid UTF-8")
+		writeError(w, http.StatusBadRequest, "invalid", "The request body is not valid UTF-8.")
 		return false
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -639,11 +660,11 @@ func (s *server) readJSONMax(w http.ResponseWriter, r *http.Request, v any, opti
 			writeCoded(w, &codedError{code: inv.Code, msg: inv.Msg})
 			return false
 		}
-		writeError(w, http.StatusBadRequest, "invalid", "the request body is not valid JSON for this endpoint: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid", "The request body is not valid JSON for this endpoint: "+err.Error()+".")
 		return false
 	}
 	if dec.More() {
-		writeError(w, http.StatusBadRequest, "invalid", "the request body has data after the JSON value")
+		writeError(w, http.StatusBadRequest, "invalid", "The request body has data after the JSON value.")
 		return false
 	}
 	return true
@@ -683,15 +704,15 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &hre):
 		s.failHeir(w, hre)
 	case errors.Is(err, spaces.ErrExportsFull):
-		writeError(w, http.StatusInsufficientStorage, "exports_full", "the exports already take the room they may; delete some, or wait for them to expire")
+		writeError(w, http.StatusInsufficientStorage, "exports_full", "The exports already take the room they may; delete some, or wait for them to expire.")
 	case errors.Is(err, spaces.ErrOwnerRequired):
-		writeError(w, http.StatusConflict, "owner_required", "nobody who owned the space can be put back: name an owner")
+		writeError(w, http.StatusConflict, "owner_required", "Nobody who owned the space can be put back: name an owner.")
 	case errors.Is(err, spaces.ErrBusyItem):
-		writeError(w, http.StatusConflict, "busy", "the item is being moved, restored or purged right now")
+		writeError(w, http.StatusConflict, "busy", "The item is being moved, restored or purged right now.")
 	case errors.Is(err, spaces.ErrRestoreConflict):
-		writeError(w, http.StatusConflict, "conflict", "a space with that id exists")
+		writeError(w, http.StatusConflict, "conflict", "A space with that id exists.")
 	case errors.Is(err, spaces.ErrNeedsPerson):
-		writeError(w, http.StatusConflict, "conflict", "a personal space is restored with its person: restore the person")
+		writeError(w, http.StatusConflict, "conflict", "A personal space is restored with its person: restore the person.")
 	case errors.As(err, &nrs):
 		writeError(w, http.StatusConflict, "conflict", nrs.Error())
 	case errors.As(err, &ftl):
@@ -745,7 +766,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 			draft = toDraftResp(dc.Draft)
 		}
 		writeJSON(w, http.StatusConflict, draftConflictBody{Error: "conflict",
-			Message: "the draft on the server is not the one you meant; here is what there is", Draft: draft, Current: toPage(dc.Current)})
+			Message: "The draft on the server is not the one you meant; here is what there is.", Draft: draft, Current: toPage(dc.Current)})
 	case errors.As(err, &ue):
 		writeError(w, http.StatusServiceUnavailable, "unavailable", ue.Msg)
 	case errors.As(err, &urle):
@@ -753,11 +774,11 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &hoste):
 		writeError(w, http.StatusForbidden, "forbidden", hoste.Error())
 	case errors.Is(err, spaces.ErrNoAssets):
-		writeError(w, http.StatusNotFound, "not_found", "this space has no attachment repository")
+		writeError(w, http.StatusNotFound, "not_found", "This space has no attachment repository.")
 	case errors.Is(err, space.ErrNoRemote):
-		writeError(w, http.StatusNotFound, "not_found", "this space has no remote repository")
+		writeError(w, http.StatusNotFound, "not_found", "This space has no remote repository.")
 	case errors.Is(err, space.ErrDiverged):
-		writeError(w, http.StatusConflict, "conflict", "both the space and the repository have content of their own, and the server will not merge two histories; make a new space for that repository")
+		writeError(w, http.StatusConflict, "conflict", "Both the space and the repository have content of their own, and the server will not merge two histories; make a new space for that repository.")
 	case errors.Is(err, space.ErrNotTip), errors.Is(err, space.ErrNothingToAccept):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, spaces.ErrConnected):
@@ -769,45 +790,45 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), spaces.ErrLimit.Error()+": "))
 	case s.failGroup(w, err):
 	case errors.Is(err, spaces.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "no such space")
+		writeError(w, http.StatusNotFound, "not_found", "No such space.")
 	case errors.Is(err, spaces.ErrDisabled):
-		writeError(w, http.StatusForbidden, "space_disabled", "this space has been disabled by an administrator")
+		writeError(w, http.StatusForbidden, "space_disabled", "This space has been disabled by an administrator.")
 	case errors.Is(err, spaces.ErrBusy):
-		msg := "the space is in use right now; try again in a moment"
+		msg := "The space is in use right now; try again in a moment."
 		if why := spaces.BusyMessage(err); why != "" {
 			msg = "The space is not evicted: " + why + "."
 		}
 		writeError(w, http.StatusConflict, "busy", msg)
 	case errors.Is(err, spaces.ErrPersonalSpace):
-		writeError(w, http.StatusConflict, "personal_space", "a personal space belongs to one person and cannot be transferred or deleted")
+		writeError(w, http.StatusConflict, "personal_space", "A personal space belongs to one person and cannot be transferred or deleted.")
 	case errors.Is(err, spaces.ErrUserDisabled):
-		writeError(w, http.StatusConflict, "user_disabled", "that user is disabled and cannot own a space")
+		writeError(w, http.StatusConflict, "user_disabled", "That user is disabled and cannot own a space.")
 	case errors.Is(err, spaces.ErrForbidden):
-		writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that")
+		writeError(w, http.StatusForbidden, "no_permission", "Your role in this space does not allow that.")
 	case errors.Is(err, spaces.ErrUserNotFound):
-		writeError(w, http.StatusNotFound, "user_not_found", "there is no such user")
+		writeError(w, http.StatusNotFound, "user_not_found", "There is no such user.")
 	case errors.Is(err, spaces.ErrNotMember):
-		writeError(w, http.StatusNotFound, "not_found", "that user is not a member of this space")
+		writeError(w, http.StatusNotFound, "not_found", "That user is not a member of this space.")
 	case errors.Is(err, spaces.ErrAlreadyMember):
-		writeError(w, http.StatusConflict, "exists", "that user is a member of this space already")
+		writeError(w, http.StatusConflict, "exists", "That user is a member of this space already.")
 	case errors.Is(err, spaces.ErrPersonal):
-		writeError(w, http.StatusConflict, "personal_space", "a personal space belongs to one person and cannot be shared")
+		writeError(w, http.StatusConflict, "personal_space", "A personal space belongs to one person and cannot be shared.")
 	case errors.Is(err, spaces.ErrLastOwner):
-		writeError(w, http.StatusConflict, "last_owner", "a space needs at least one owner; make someone else an owner first")
+		writeError(w, http.StatusConflict, "last_owner", "A space needs at least one owner; make someone else an owner first.")
 	case errors.Is(err, spaces.ErrInvalid):
 		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), spaces.ErrInvalid.Error()+": "))
 	case errors.Is(err, space.ErrClosed):
-		writeError(w, http.StatusInternalServerError, "internal", "the server is shutting down; try again when it is back")
+		writeError(w, http.StatusInternalServerError, "internal", "The server is shutting down; try again when it is back.")
 	case errors.Is(err, space.ErrNoVersion):
-		writeError(w, http.StatusNotFound, "not_found", "that commit is not a version of this page")
+		writeError(w, http.StatusNotFound, "not_found", "That commit is not a version of this page.")
 	case errors.Is(err, space.ErrNoFolder):
-		writeError(w, http.StatusNotFound, "not_found", "no such folder")
+		writeError(w, http.StatusNotFound, "not_found", "No such folder.")
 	case errors.Is(err, space.ErrNotEmpty):
-		writeError(w, http.StatusConflict, "conflict", "the folder holds pages; remove them first, or ask for them to go with it")
+		writeError(w, http.StatusConflict, "conflict", "The folder holds pages; remove them first, or ask for them to go with it.")
 	case errors.Is(err, space.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "no such page")
+		writeError(w, http.StatusNotFound, "not_found", "No such page.")
 	case errors.Is(err, space.ErrExists), errors.Is(err, fs.ErrExist):
-		writeError(w, http.StatusConflict, "exists", "it already exists")
+		writeError(w, http.StatusConflict, "exists", "It already exists.")
 	case errors.As(err, &vce):
 		writeJSON(w, http.StatusConflict, viewsConflict(vce))
 	case errors.As(err, &fixe):
@@ -815,20 +836,20 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.As(err, &tple):
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: tple.Code, Message: tple.Msg})
 	case errors.As(err, &tpce):
-		body := errorBody{Error: "conflict", Message: "the template changed since you opened it, or is not there; here is how it is now"}
+		body := errorBody{Error: "conflict", Message: "The template changed since you opened it, or is not there; here is how it is now."}
 		if tpce.Current != nil {
 			body.Current = toTemplate(*tpce.Current, true)
 		}
 		writeJSON(w, http.StatusConflict, body)
 	case errors.As(err, &tce):
-		body := errorBody{Error: "conflict", Message: "the type changed since you opened it, or is not there; here is how it is now"}
+		body := errorBody{Error: "conflict", Message: "The type changed since you opened it, or is not there; here is how it is now."}
 		if tce.Current != nil {
 			body.Current = toType(*tce.Current)
 		}
 		writeJSON(w, http.StatusConflict, body)
 	case errors.As(err, &ce):
 		writeJSON(w, http.StatusConflict, errorBody{Error: "conflict",
-			Message: "the page changed since you opened it; here is the current version", Current: toPage(ce.Current)})
+			Message: "The page changed since you opened it; here is the current version.", Current: toPage(ce.Current)})
 	case errors.As(err, &bq):
 		writeError(w, http.StatusBadRequest, "invalid", bq.Error())
 	case errors.As(err, &inv):
@@ -841,7 +862,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))
 	default:
 		s.log.Error("request failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal", "something went wrong on the server")
+		writeError(w, http.StatusInternalServerError, "internal", "Something went wrong on the server.")
 	}
 }
 
@@ -944,7 +965,7 @@ type summaryResp struct {
 	Folder   string   `json:"folder"`
 	Title    string   `json:"title,omitempty"`
 	Subtitle string   `json:"subtitle,omitempty"`
-	Source   string   `json:"source,omitempty"`
+	Source   []string `json:"source"`
 	Label    string   `json:"label"`
 	Untitled bool     `json:"untitled"`
 	Tags     []string `json:"tags"`
@@ -952,6 +973,9 @@ type summaryResp struct {
 	Created  string   `json:"created,omitempty"`
 	Updated  string   `json:"updated"`
 	Excerpt  string   `json:"excerpt"`
+	// Icon and Color are the page's own (a Lucide name or an emoji, one of the eight colours), from its header.
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
 	// EffectiveType is the type the page has: its header's, else its folder's.
 	EffectiveType string `json:"effectiveType"`
 	// Props and Rev are there when the listing was asked for them (props=1).
@@ -966,7 +990,14 @@ type summaryResp struct {
 }
 
 func toSummary(s index.Summary, types space.TypeResolver) summaryResp {
-	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source, Label: s.Label,
-		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt,
+	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: nonNil(s.Sources), Label: s.Label,
+		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt, Icon: s.Icon, Color: s.Color,
 		EffectiveType: types.For(s.Folder, s.Type), Props: s.Props, Rev: s.Rev, PartialProps: s.PartialProps}
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

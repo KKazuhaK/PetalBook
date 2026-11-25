@@ -33,6 +33,9 @@ func (s *Space) Checks(kind, cursor string) (map[string]int, []index.Check, stri
 	return s.idx.Checks(kind, cursor)
 }
 
+// CheckCounts is how many problems of each kind the space has (see index.CheckCounts).
+func (s *Space) CheckCounts() (map[string]int, error) { return s.idx.CheckCounts() }
+
 // PageIDByPath is the id of the page whose file is at rel, from the index.
 func (s *Space) PageIDByPath(rel string) (string, bool) { return s.idx.IDByPath(rel) }
 
@@ -175,7 +178,7 @@ func (s *Space) FixNoID(by Author, rel, baseRev string) (*Page, error) {
 			}
 		}
 		if err := doc.SetMeta(meta); err != nil {
-			return nil, invalidf("%v", err)
+			return nil, invalidf("%v.", err)
 		}
 		newData := doc.Bytes()
 		if bytes.Equal(newData, data) {

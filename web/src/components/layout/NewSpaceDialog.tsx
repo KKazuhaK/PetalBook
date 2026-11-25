@@ -171,7 +171,7 @@ function NewSpaceForm({
               : t.spaces.failed,
         )
       case 'provider_refused':
-        return setError(tg.newSpace.errors.noPermission(err.message))
+        return setError(tg.newSpace.errors.noPermission(err.serverMessage ?? err.message))
       case 'app_not_installed':
         return setError(tg.newSpace.errors.notInstalled(chosen?.login ?? ''))
       case 'app_missing_permission':

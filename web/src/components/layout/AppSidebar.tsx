@@ -9,7 +9,6 @@ import {
   Home,
   House,
   Inbox,
-  ListChecks,
   MoreHorizontal,
   PenLine,
   Search,
@@ -19,6 +18,8 @@ import {
 } from 'lucide-react'
 import { useActiveSpace, useSession, useSpacePermissions, useTagColors, useTags, useTree, useUrls } from '@/api/hooks'
 import type { TagColor } from '@/api/types'
+import { PageIcon } from '@/components/icons/PageIcon'
+import { useFolderStyle } from '@/lib/icons/useStyles'
 import { TAG_ATTR, TagColorMenu, useOpenTagColorMenu } from '@/components/TagColorMenu'
 import { isTagColor } from '@/lib/tagColors'
 import { tagPillClass, tagPillStyle } from '@/components/TagChip'
@@ -47,6 +48,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { buildFolderTree, ancestorsOf, isSameOrUnder, pathAfter, type FileItem, type FolderNode } from '@/lib/folders'
 import { t } from '@/i18n'
 import { SidebarFavorites } from '@/components/favorites/SidebarFavorites'
+import { HelpMenu } from '@/components/onboarding/HelpMenu'
 import { useQuickCapture } from './QuickCapture'
 import { SidebarToggle } from './SidebarToggle'
 import { SpaceSwitcher } from './SpaceSwitcher'
@@ -166,6 +168,7 @@ function FolderRow({
   const hasChildren = node.children.length > 0
   const open = hasChildren && isOpen(node.path)
   const Icon = open ? FolderOpen : Folder
+  const style = useFolderStyle()(node.path)
   // A dragged item resting on a closed folder opens it, so it can be dropped deeper.
   const drop = useDropTarget(
     node.path,
@@ -211,7 +214,7 @@ function FolderRow({
           className={drop.over ? DROP_CLASS : undefined}
           style={{ paddingLeft: 24 + depth * 12 }}
         >
-          <Icon />
+          <PageIcon icon={style.icon} color={style.color} fallback={<Icon />} className="size-4" />
           <span className="truncate">{node.name}</span>
         </SidebarMenuButton>
         <SidebarMenuBadge>{node.total}</SidebarMenuBadge>
@@ -474,12 +477,6 @@ export function AppSidebar() {
                   <span>{t.nav.recent}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton isActive={pathname === urls.check()} render={<NavLink to={urls.check()} />}>
-                  <ListChecks />
-                  <span>{t.nav.check}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -533,6 +530,7 @@ export function AppSidebar() {
           >
             <Settings className="size-4" />
           </Button>
+          <HelpMenu />
           <ThemeToggle />
         </div>
       </SidebarFooter>

@@ -92,9 +92,9 @@ func (s *server) failGroup(w http.ResponseWriter, err error) bool {
 	case errors.As(err, &via):
 		writeError(w, http.StatusConflict, "member_via_group", via.Error())
 	case errors.Is(err, spaces.ErrGroupNotFound):
-		writeError(w, http.StatusNotFound, "group_not_found", "there is no such group")
+		writeError(w, http.StatusNotFound, "group_not_found", "There is no such group.")
 	case errors.Is(err, spaces.ErrGroupExists):
-		writeError(w, http.StatusConflict, "exists", "a group with that name exists already")
+		writeError(w, http.StatusConflict, "exists", "A group with that name exists already.")
 	case errors.Is(err, spaces.ErrGroupSynced):
 		writeError(w, http.StatusConflict, "group_synced", err.Error())
 	case errors.Is(err, spaces.ErrGroupNotSynced):
@@ -118,7 +118,7 @@ func (s *server) failGroup(w http.ResponseWriter, err error) bool {
 // in a body).
 func (s *server) failAdminGroup(w http.ResponseWriter, err error) {
 	if errors.Is(err, spaces.ErrGroupNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "there is no such group")
+		writeError(w, http.StatusNotFound, "not_found", "There is no such group.")
 		return
 	}
 	s.fail(w, err)
@@ -132,7 +132,7 @@ func listLimit(c *call, def, max int) (int, bool) {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 || n > max {
-		writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(max))
+		writeError(c.w, http.StatusBadRequest, "invalid", "Limit is a number from 1 to "+strconv.Itoa(max)+".")
 		return 0, false
 	}
 	return n, true
@@ -165,7 +165,7 @@ func (s *server) adminListGroups(c *call) {
 	}
 	src := q.Get("source")
 	if src != "" && src != store.GroupLocal && src != store.GroupSynced {
-		writeError(c.w, http.StatusBadRequest, "invalid", "source is local or synced")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Source is local or synced.")
 		return
 	}
 	sc, ok := s.adminScope(c)
@@ -224,7 +224,7 @@ func (s *server) adminPatchGroup(c *call) {
 		return
 	}
 	if req.Source != nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "the source of a group cannot change")
+		writeError(c.w, http.StatusBadRequest, "invalid", "The source of a group cannot change.")
 		return
 	}
 	g, changed, err := s.spaces.UpdateGroup(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("group"), req.Name, req.Description)
@@ -252,7 +252,7 @@ func (s *server) adminDeleteGroup(c *call) {
 			force = true
 		case "0":
 		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "force is 1 or 0")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Force is 1 or 0.")
 			return
 		}
 	}
@@ -380,7 +380,7 @@ func (s *server) adminGroupSpaces(c *call) {
 func (s *server) findGroups(c *call) {
 	q := c.r.URL.Query().Get("q")
 	if n := utf8.RuneCountInString(q); n < 1 || n > 80 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "q is 1 to 80 characters")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Q is 1 to 80 characters.")
 		return
 	}
 	limit, ok := listLimit(c, 20, 20)

@@ -25,8 +25,8 @@ const (
 	// maxAppName is GitHub's limit for an App's name.
 	maxAppName = 34
 	// Where the browser goes when it is over: the administration's GitHub section.
-	manifestDone = "/admin/storage?connection_app=created"
-	manifestFail = "/admin/storage?connection_app_error="
+	manifestDone = "/admin/storage/connections?connection_app=created"
+	manifestFail = "/admin/storage/connections?connection_app_error="
 )
 
 // manifestReturn is where GitHub sends the browser back to; "" without a public URL.
@@ -56,17 +56,17 @@ func defaultAppName(publicURL string) string {
 func (s *Service) StartManifest(ctx context.Context, userID string, req connections.ManifestRequest) (*connections.ManifestStart, error) {
 	org, name := req.Organization, req.Name
 	if s.opt.PublicURL == "" {
-		return nil, errf(http.StatusConflict, CodePublicURLNeeded, "making the App needs the server's public address (--public-url): GitHub sends the browser back to it")
+		return nil, errf(http.StatusConflict, CodePublicURLNeeded, "Making the App needs the server's public address (--public-url): GitHub sends the browser back to it.")
 	}
 	org, name = strings.TrimSpace(org), strings.TrimSpace(name)
 	if org != "" && !validOwner(org) {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "organization is not a GitHub account name")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "Organization is not a GitHub account name.")
 	}
 	if name == "" {
 		name = defaultAppName(s.opt.PublicURL)
 	}
 	if utf8.RuneCountInString(name) > maxAppName || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "name is at most %d characters on one line", maxAppName)
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "Name is at most %d characters on one line.", maxAppName)
 	}
 	// An App in use is not replaced: stop before anything is made on GitHub.
 	if st, err := s.state(ctx); err != nil {
@@ -218,7 +218,7 @@ func (s *Service) RetryManifest(ctx context.Context, userID string) (any, error)
 	delete(s.pending, userID)
 	s.mu.Unlock()
 	if p == nil || !now.Before(p.expires) {
-		return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
+		return nil, errf(http.StatusNotFound, CodeNotFound, "No App is waiting to be saved.")
 	}
 	raw, err := s.opt.Secrets.Open(userID, pendingPurpose, p.sealed)
 	var creds githubapp.AppCredentials
@@ -226,7 +226,7 @@ func (s *Service) RetryManifest(ctx context.Context, userID string) (any, error)
 		err = json.Unmarshal(raw, &creds)
 	}
 	if err != nil {
-		return nil, errf(http.StatusNotFound, CodeNotFound, "no App is waiting to be saved")
+		return nil, errf(http.StatusNotFound, CodeNotFound, "No App is waiting to be saved.")
 	}
 	v, err := s.saveMade(ctx, &creds)
 	var he *connections.Error

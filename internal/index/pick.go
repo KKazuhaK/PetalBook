@@ -124,7 +124,7 @@ func (x *Index) Summaries(ids []string) (map[string]Summary, error) {
 		return out, nil
 	}
 	if len(ids) > 500 {
-		return nil, invalid("at most 500 ids")
+		return nil, invalid("At most 500 ids.")
 	}
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -164,7 +164,7 @@ func (x *Index) FoldersKnown(paths []string) (map[string]bool, error) {
 		return out, nil
 	}
 	if len(args) > 500 {
-		return nil, invalid("at most 500 paths")
+		return nil, invalid("At most 500 paths.")
 	}
 	err := x.one(func(db querier) error {
 		rows, err := db.Query(`SELECT path FROM folders WHERE path IN (`+marks(len(args))+`)`, args...)

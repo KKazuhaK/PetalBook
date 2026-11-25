@@ -83,11 +83,11 @@ func (s *server) putViews(c *call) {
 		return
 	}
 	if req.BaseRev == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a change needs baseRev, the rev of the views it started from")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A change needs baseRev, the rev of the views it started from.")
 		return
 	}
 	if req.Views == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a change needs views, the whole list the folder or tag is to have")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A change needs views, the whole list the folder or tag is to have.")
 		return
 	}
 	l, err := c.sp.Space.PutViews(s.author(c), space.ViewScope{Folder: req.Folder, Tag: req.Tag}, req.BaseRev, []space.View(*req.Views))
@@ -103,12 +103,12 @@ func (s *server) getGroups(c *call) {
 	v := c.r.URL.Query()
 	tags, ok := queryTags(v)
 	if !ok {
-		writeError(c.w, http.StatusBadRequest, "invalid", fmt.Sprintf("at most %d different tags", maxQueryTags))
+		writeError(c.w, http.StatusBadRequest, "invalid", fmt.Sprintf("At most %d different tags.", maxQueryTags))
 		return
 	}
 	q := index.GroupQuery{Tags: tags, Key: v.Get("key")}
 	if q.Key == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "key is the property to count by")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Key is the property to count by.")
 		return
 	}
 	if v.Has("folder") {
@@ -124,11 +124,11 @@ func (s *server) getGroups(c *call) {
 	case "true":
 		q.Recursive = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "recursive must be true or false")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Recursive must be true or false.")
 		return
 	}
 	if q.Folder == nil && len(q.Tags) == 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give a folder or a tag to count the pages of")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give a folder or a tag to count the pages of.")
 		return
 	}
 	if raw := v.Get("filter"); raw != "" {
@@ -149,5 +149,5 @@ func (s *server) getGroups(c *call) {
 
 // viewsConflict is the body of the 409 of PUT views.
 func viewsConflict(e *space.ViewsConflictError) errorBody {
-	return errorBody{Error: "conflict", Message: "the views changed since you opened them; here is how they are now", Current: toViews(e.Current)}
+	return errorBody{Error: "conflict", Message: "The views changed since you opened them; here is how they are now.", Current: toViews(e.Current)}
 }

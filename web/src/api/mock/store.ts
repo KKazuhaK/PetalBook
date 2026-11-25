@@ -16,6 +16,7 @@ import type {
 } from '../types.ts'
 import { BUILTIN_KEYS, RESERVED_KEYS, partialPropsOf, propsOfMeta } from '../../lib/pageTypes.ts'
 import { matches, parseFilter, sortValue, valuesOf } from './propQuery.ts'
+import { createStyleBook, isIcon, isIconColor } from './styleBook.ts'
 import { createTypeBook } from './typeBook.ts'
 import { createHomeBook } from './homeBook.ts'
 import { createViewBook } from './viewBook.ts'
@@ -140,8 +141,18 @@ const stringField = (meta: PageMeta, key: string): string | undefined => {
   const v = meta[key]
   return typeof v === 'string' && v !== '' ? v : undefined
 }
-const tagsOf = (meta: PageMeta): string[] =>
-  Array.isArray(meta.tags) ? meta.tags.filter((t: unknown): t is string => typeof t === 'string') : []
+const listOf = (v: unknown): string[] => {
+  const out: string[] = []
+  const add = (s: string) => {
+    if (s.trim() !== '' && !out.includes(s.trim())) out.push(s.trim())
+  }
+  if (typeof v === 'string') add(v)
+  else if (Array.isArray(v)) for (const e of v) if (typeof e === 'string') add(e)
+  return out
+}
+const tagsOf = (meta: PageMeta): string[] => listOf(meta.tags)
+// Where the text comes from: a list like the tags; one text written by hand is one source.
+export const sourcesOf = (meta: PageMeta): string[] => listOf(meta.source)
 
 export const rfc3339 = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
 
@@ -191,6 +202,7 @@ export function createSpaceStore({
     folders.has(path) ? path : ([...folders].find((f) => f.toLowerCase() === path.toLowerCase()) ?? null)
   const book = createTypeBook(spelledFolder)
   const viewBook = createViewBook({ random, spelledFolder, validFolder })
+  const styleBook = createStyleBook(spelledFolder)
   const templateBook = createTemplateBook({ now, spelledFolder, validFolder })
   const home = createHomeBook({
     now,
@@ -306,7 +318,7 @@ export function createSpaceStore({
   const toSummary = (p: Stored, withProps = false): PageSummary => {
     const title = stringField(p.meta, 'title')
     const subtitle = stringField(p.meta, 'subtitle')
-    const source = stringField(p.meta, 'source')
+    const source = sourcesOf(p.meta)
     const tags = tagsOf(p.meta)
     return {
       id: p.id,
@@ -314,7 +326,10 @@ export function createSpaceStore({
       folder: p.folder,
       ...(title ? { title } : {}),
       ...(subtitle ? { subtitle } : {}),
-      ...(source ? { source } : {}),
+      source,
+      // What a file written by hand has that is no icon or colour is read as none.
+      ...(typeof p.meta.icon === 'string' && isIcon(p.meta.icon.trim()) ? { icon: p.meta.icon.trim() } : {}),
+      ...(typeof p.meta.color === 'string' && isIconColor(p.meta.color.trim()) ? { color: p.meta.color.trim() } : {}),
       // "" for an untitled page with nothing in it.
       label: title ?? Array.from(firstLine(p.body)).slice(0, 30).join(''),
       untitled: !title,
@@ -567,7 +582,7 @@ export function createSpaceStore({
       items = items.filter((p) => {
         const title = (stringField(p.meta, 'title') ?? '').toLowerCase()
         const sub = (stringField(p.meta, 'subtitle') ?? '').toLowerCase()
-        const src = (stringField(p.meta, 'source') ?? '').toLowerCase()
+        const src = sourcesOf(p.meta).join(' ').toLowerCase()
         const body = p.body.toLowerCase()
         if (titleOnly) {
           if (!words.every((w) => title.includes(w))) return false
@@ -661,11 +676,28 @@ export function createSpaceStore({
     return raw
   }
 
+  // An icon or a colour in a header must be one, unless the file has it already (written by hand: read as none).
+  const checkStyle = (old: PageMeta, given: PageMeta) => {
+    for (const k of ['icon', 'color'] as const) {
+      const v = given[k]
+      if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) continue
+      if (JSON.stringify(old[k]) === JSON.stringify(v)) continue
+      const ok = typeof v === 'string' && (k === 'icon' ? isIcon(v.trim()) : isIconColor(v.trim()))
+      if (!ok)
+        throw new HttpError(
+          400,
+          'invalid',
+          k === 'icon' ? '图标是一个 Lucide 图标的名字或一个表情，不超过 64 字节' : '颜色要是八种之一',
+        )
+    }
+  }
+
   const create = (body: Record<string, unknown>): Page => {
     guard()
     const folder = typeof body.folder === 'string' ? body.folder : ''
     if (!validFolder(folder)) throw new HttpError(400, 'invalid', '文件夹路径不合法')
     let given = parseMeta(body.meta)
+    checkStyle({}, given)
     if (body.body !== undefined && typeof body.body !== 'string')
       throw new HttpError(400, 'invalid', 'body 必须是字符串')
     // A page made in the inbox is a quick note.
@@ -740,6 +772,7 @@ export function createSpaceStore({
     const cur = lookup(id)
     guard()
     const { baseRev, meta, body } = checkInput(id, input)
+    checkStyle(cur.meta, meta)
     const s = writeFile(cur, baseRev, meta, body)
     // A save never takes a draft away (its text may exist nowhere else), except
     // one that says exactly what was just saved.
@@ -1089,6 +1122,7 @@ export function createSpaceStore({
     for (const f of inside) folders.delete(f)
     for (const f of inside) addFolder(rename(f))
     book.folderMoved(from, to)
+    styleBook.folderMoved(from, to)
     viewBook.folderMoved(from, to)
     templateBook.folderMoved(from, to)
     home.folderMoved(from, to)
@@ -1111,6 +1145,7 @@ export function createSpaceStore({
     for (const p of doomed) remove(p.id)
     for (const f of [...folders]) if (isUnder(f, path)) folders.delete(f)
     book.folderRemoved(path)
+    styleBook.folderRemoved(path)
     viewBook.folderRemoved(path)
     templateBook.folderRemoved(path)
   }
@@ -1350,6 +1385,55 @@ export function createSpaceStore({
     bindFolder: (folder: string, type: string) => {
       guard()
       return { folder: book.bind(folder, type), type }
+    },
+    appearance: () => styleBook.appearance(),
+    setFolderStyle: (folder: string, icon: string, color: string) => {
+      guard()
+      return styleBook.setStyle(folder, icon, color)
+    },
+    setSourcePresets: (presets: unknown) => {
+      guard()
+      return { presets: styleBook.setPresets(presets) }
+    },
+    // The sources the pages use, most used first.
+    usedSources: () => {
+      const n = new Map<string, number>()
+      for (const p of pages.values()) for (const s of sourcesOf(p.meta)) n.set(s, (n.get(s) ?? 0) + 1)
+      return {
+        sources: [...n]
+          .map(([source, count]) => ({ source, pages: count }))
+          .sort((a, b) => b.pages - a.pages || (a.source < b.source ? -1 : 1)),
+      }
+    },
+    // Gives a field of a type another key, in the type and in every page of it that has a value there.
+    renameTypeField: (name: string, input: Record<string, unknown>) => {
+      guard()
+      const { baseRev, from, to } = input
+      if (typeof baseRev !== 'string' || typeof from !== 'string' || typeof to !== 'string')
+        throw new HttpError(400, 'invalid', '缺少 baseRev、from 或 to')
+      const type = book.renameField(name, baseRev, from, to)
+      let n = 0
+      const skipped: { id: string; path: string; reason: string }[] = []
+      for (const p of [...pages.values()].sort((a, b) => compareCodePoints(pathOf(a), pathOf(b)))) {
+        const v = p.meta[from]
+        const none =
+          v === null ||
+          v === undefined ||
+          (typeof v === 'string' && v.trim() === '') ||
+          (Array.isArray(v) && v.length === 0)
+        if (none || effectiveOf(p) !== name) continue
+        if (to in p.meta) {
+          skipped.push({ id: p.id, path: pathOf(p), reason: 'has_key' })
+          continue
+        }
+        const next: PageMeta = {}
+        for (const [k, val] of Object.entries(p.meta)) next[k === from ? to : k] = val
+        const s = store({ id: p.id, folder: p.folder, fileName: p.fileName, meta: next, body: p.body, updated: now() })
+        record(s, 'edit')
+        n++
+      }
+      viewBook.fieldRenamed((folder) => book.effective(folder) === name, from, to)
+      return { type, pages: n, skipped }
     },
     damageType: book.damage,
     forceKind: book.forceKind,

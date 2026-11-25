@@ -45,7 +45,7 @@ func wantInvalid(t *testing.T, what string, err error, contains string) {
 		t.Errorf("%s: want a refusal, got %v", what, err)
 		return
 	}
-	if contains != "" && !strings.Contains(inv.Msg, contains) {
+	if contains != "" && !strings.Contains(strings.ToLower(inv.Msg), strings.ToLower(contains)) {
 		t.Errorf("%s: the message %q does not say %q", what, inv.Msg, contains)
 	}
 }

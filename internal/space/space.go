@@ -22,6 +22,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 )
 
 // Defaults for the committer: a commit after a few quiet seconds, or ten
@@ -154,7 +155,9 @@ type InvalidError struct {
 
 func (e *InvalidError) Error() string { return e.Msg }
 
-func invalidf(format string, a ...any) error { return &InvalidError{Msg: fmt.Sprintf(format, a...)} }
+func invalidf(format string, a ...any) error {
+	return &InvalidError{Msg: sentence.End(fmt.Sprintf(format, a...))}
+}
 
 // CodeBadLanguage is the error code of a language tag that is not one.
 const CodeBadLanguage = "bad_language"
@@ -162,7 +165,7 @@ const CodeBadLanguage = "bad_language"
 // BadLanguage is the refusal of a language tag that is not well formed or
 // whose language is not in the IANA registry.
 func BadLanguage(tag string) error {
-	return &InvalidError{Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR", tag), Code: CodeBadLanguage}
+	return &InvalidError{Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR.", tag), Code: CodeBadLanguage}
 }
 
 // ConflictError means the page changed since the client read it.
@@ -338,7 +341,7 @@ func Open(opt Options) (*Space, error) {
 	}
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
-	jrn, recs, err := openJournal(filepath.Join(stateDir, "pending.journal"))
+	jrn, recs, err := openJournal(filepath.Join(stateDir, "pending.journal"), log)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +361,7 @@ func Open(opt Options) (*Space, error) {
 	// finished once the index is ready, and the journal keeps them till then.
 	linkRecs := pendingLinkRecs(recs)
 	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" {
+		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
 			// What the records asked for is done now; they must not be made
 			// again by a later crash, after the bindings may have changed.
 			if err := jrn.rewrite(recovered, linkRecs); err != nil {
@@ -672,26 +675,26 @@ func checkRel(rel string) error {
 		return nil
 	}
 	if !utf8.ValidString(rel) || len(rel) > 1024 {
-		return invalidf("invalid path")
+		return invalidf("Invalid path.")
 	}
 	if strings.HasPrefix(rel, "/") || strings.HasSuffix(rel, "/") {
-		return invalidf("path %q must not start or end with a slash", rel)
+		return invalidf("Path %q must not start or end with a slash.", rel)
 	}
 	for i, seg := range strings.Split(rel, "/") {
 		switch {
 		case seg == "" || seg == "." || seg == "..":
-			return invalidf("path %q has an empty, . or .. segment", rel)
+			return invalidf("Path %q has an empty, . or .. segment.", rel)
 		case strings.HasPrefix(seg, "."):
-			return invalidf("path %q: names starting with a dot are reserved", rel)
+			return invalidf("Path %q: names starting with a dot are reserved.", rel)
 		case len(seg) > 255:
-			return invalidf("path %q: a name is too long", rel)
+			return invalidf("Path %q: a name is too long.", rel)
 		case strings.TrimRight(seg, ". ") != seg:
-			return invalidf("path %q: a name ends with a dot or space", rel)
+			return invalidf("Path %q: a name ends with a dot or space.", rel)
 		case strings.IndexFunc(seg, func(r rune) bool { return r < 0x20 || r == 0x7f || strings.ContainsRune(`<>:"\|?*`, r) }) >= 0:
-			return invalidf("path %q: a name has a character that file systems do not allow", rel)
+			return invalidf("Path %q: a name has a character that file systems do not allow.", rel)
 		case i == 0 && strings.EqualFold(seg, "assets"):
 			// In any spelling: on a file system that ignores case, Assets is assets.
-			return invalidf("the folder name %q is reserved for attachments", seg)
+			return invalidf("The folder name %q is reserved for attachments.", seg)
 		}
 	}
 	return nil
@@ -721,7 +724,7 @@ func (s *Space) abs(rel string) (string, error) {
 			return "", err
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return "", invalidf("path %q goes through a symbolic link", rel)
+			return "", invalidf("Path %q goes through a symbolic link.", rel)
 		}
 	}
 	return p, nil

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { groupFieldsOf, MAX_CARD_FIELDS, type ViewState } from '@/lib/savedViews'
+import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
 
 // What a view can be adjusted by, above the listing: its filters, and a menu of the settings of its layout (the field a
@@ -27,7 +28,7 @@ interface Props {
 
 export default function ViewTools({ isTag, type, state, group, onChange, disabled }: Props) {
   const fields = type?.fields ?? []
-  const groupFields = groupFieldsOf(type)
+  const groupFields = groupFieldsOf(type, t.ftable.columns.source)
   const wantsGroup = state.layout === 'board' || isTag
   const wantsColumns = state.layout === 'table' && fields.length > 0
   const wantsCard = state.layout === 'board' && fields.length > 0

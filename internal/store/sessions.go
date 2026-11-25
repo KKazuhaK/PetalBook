@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,10 +16,57 @@ type Session struct {
 	LastUsed time.Time
 	// Held: the session may only register a passkey and sign out.
 	Held bool
+	// UserAgent and Method are what the administrator's list of a person's
+	// sessions shows (see the schema); empty when not known.
+	UserAgent, Method string
 }
 
+// MaxUserAgent is the longest user agent a session keeps (bytes).
+const MaxUserAgent = 200
+
 func InsertSession(ctx context.Context, q Q, s Session) error {
-	_, err := q.Exec(ctx, `INSERT INTO sessions(id, user_id, created, last_used, held) VALUES (?, ?, ?, ?, ?)`, s.ID, s.UserID, ms(s.Created), ms(s.LastUsed), b2i(s.Held))
+	ua := s.UserAgent
+	if len(ua) > MaxUserAgent {
+		ua = strings.ToValidUTF8(ua[:MaxUserAgent], "")
+	}
+	_, err := q.Exec(ctx, `INSERT INTO sessions(id, user_id, created, last_used, held, user_agent, method) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.UserID, ms(s.Created), ms(s.LastUsed), b2i(s.Held), ua, s.Method)
+	return err
+}
+
+// ListUserSessions is a person's sessions, the one used last first. A person has
+// at most a few (TrimSessions), so the list is not paged.
+func ListUserSessions(ctx context.Context, q Q, userID string) ([]Session, error) {
+	rows, err := q.Query(ctx, `SELECT id, user_id, created, last_used, held, user_agent, method FROM sessions WHERE user_id = ? ORDER BY last_used DESC, id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		var s Session
+		var created, used, held int64
+		if err := rows.Scan(&s.ID, &s.UserID, &created, &used, &held, &s.UserAgent, &s.Method); err != nil {
+			return nil, err
+		}
+		s.Created, s.LastUsed, s.Held = fromMS(created), fromMS(used), held != 0
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// EndUserSession ends one session of the user, recording reason; ErrNotFound when
+// the user has no such session.
+func EndUserSession(ctx context.Context, q Q, id, userID, reason string, at time.Time) error {
+	res, err := q.Exec(ctx, `DELETE FROM sessions WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	if err := oneRow(res, nil); err != nil {
+		return err
+	}
+	_, err = q.Exec(ctx, `INSERT INTO session_ends(id, user_id, reason, ended) VALUES (?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, ended = excluded.ended`, id, userID, reason, ms(at))
 	return err
 }
 

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { useActiveSpace, useSession, useUpdateSpace } from '@/api/hooks'
+import { useActiveSpace, useProblemCount, useSession, useUpdateSpace } from '@/api/hooks'
 import { can } from '@/lib/permissions'
 import type { SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
@@ -88,12 +88,22 @@ function NameSection({ space, readOnly, why }: { space: SpaceInfo; readOnly: boo
 
 // The way to the check page of the space, for whoever can read it.
 function CheckSection({ space }: { space: string }) {
+  const count = useProblemCount().data
   return (
     <SettingsSection title={t.general.checkTitle} id="space-check-title" description={t.general.checkHelp}>
-      <div>
-        <Button variant="outline" render={<Link to={spaceUrls(space).check()} />}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="outline"
+          className="max-md:h-10 pointer-coarse:h-10"
+          render={<Link to={spaceUrls(space).check()} />}
+        >
           {t.general.checkLink}
         </Button>
+        {count !== undefined && (
+          <p className="text-sm text-muted-foreground" data-testid="problem-count">
+            {count === 0 ? t.general.checkNone : t.general.checkCount(count)}
+          </p>
+        )}
       </div>
     </SettingsSection>
   )

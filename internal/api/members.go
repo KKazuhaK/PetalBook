@@ -57,6 +57,16 @@ func (s *server) addMember(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// The person is told they were added (an invitation to the space, as far as
+	// there are any: the space is theirs to open from now on). Not when they added
+	// themselves, and a failure is only logged: the member is added.
+	if m.UserID != c.user().ID {
+		err := store.NotifyUser(c.r.Context(), s.opt.Store.Q(), m.UserID, store.NotifyInvite, c.sp.Info.ID,
+			map[string]string{"space": c.sp.Info.Name, "role": m.Role, "by": c.user().Name}, s.now())
+		if err != nil {
+			s.log.Warn("could not write a notification", "error", err)
+		}
+	}
 	writeJSON(c.w, http.StatusCreated, toMember(*m, c.user().ID))
 }
 

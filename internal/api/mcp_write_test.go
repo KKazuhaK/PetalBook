@@ -18,7 +18,7 @@ func TestMCPCreate(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		e := newMCP(t, a)
-		out := e.w.tool("page_create", e.args("folder", "Tang/Late", "title", " 暮雪 ", "subtitle", "s", "source", "李", "tags", []string{"玉兰", " 玉兰 ", "", "雪"},
+		out := e.w.tool("page_create", e.args("folder", "Tang/Late", "title", " 暮雪 ", "subtitle", "s", "source", []string{"李", " 李 ", "书"}, "tags", []string{"玉兰", " 玉兰 ", "", "雪"},
 			"type", "poem", "props", map[string]any{"status": "draft", "n": 12, "ratio": 1.5, "list": []any{"a", 2}}, "body", "黄昏\n")).ok(t)
 		pg := out.page(t)
 		if out.out["replayed"] != false || pg["title"] != "暮雪" || pg["path"] != "Tang/Late/暮雪.md" || pg["folder"] != "Tang/Late" || pg["type"] != "poem" ||
@@ -163,8 +163,8 @@ func TestMCPUpdate(t *testing.T) {
 			t.Fatalf("%v", same)
 		}
 		// Fields: replaced when given, removed with "" and [], other fields set and unset; the rest as it was.
-		r = up(rev, "subtitle", "sub", "source", "src", "type", "poem", "tags", []string{"b", "c"}, "set", map[string]any{"n": 4, "added": []any{1, "x"}, "keep": nil}, "unset", []string{"missing"}).ok(t).page(t)
-		if r["subtitle"] != "sub" || r["source"] != "src" || r["type"] != "poem" || fmt.Sprint(r["tags"]) != "[b c]" || r["props"].(map[string]any)["n"] != float64(4) {
+		r = up(rev, "subtitle", "sub", "source", []string{"src", "b"}, "type", "poem", "tags", []string{"b", "c"}, "set", map[string]any{"n": 4, "added": []any{1, "x"}, "keep": nil}, "unset", []string{"missing"}).ok(t).page(t)
+		if r["subtitle"] != "sub" || fmt.Sprint(r["source"]) != "[src b]" || r["type"] != "poem" || fmt.Sprint(r["tags"]) != "[b c]" || r["props"].(map[string]any)["n"] != float64(4) {
 			t.Fatalf("%v", r)
 		}
 		if _, ok := r["props"].(map[string]any)["keep"]; ok {
@@ -175,7 +175,7 @@ func TestMCPUpdate(t *testing.T) {
 			t.Fatalf("%s", h)
 		}
 		rev = r["rev"]
-		r = up(rev, "subtitle", "", "source", "", "type", "", "tags", []string{}, "unset", []string{"added"}).ok(t).page(t)
+		r = up(rev, "subtitle", "", "source", []string{}, "type", "", "tags", []string{}, "unset", []string{"added"}).ok(t).page(t)
 		h = e.restPage(t, id)["header"].(string)
 		for _, k := range []string{"subtitle", "source", "type", "tags", "added"} {
 			if strings.Contains(h, k+":") {

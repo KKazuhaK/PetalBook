@@ -98,8 +98,16 @@ func TestListQueriesUseIndexes(t *testing.T) {
 		tenants := []string{store.DefaultTenantID, "T000000002", "T000000003"}
 		const n = 8000
 		tenantOf := func(i int) string { return tenants[[]int{0, 0, 0, 0, 1, 1, 2, 0}[i%8]] }
-		bulk(t, st, "users", "id, username, name, role, disabled, created, tenant_id", n, 200, func(i int) []any {
-			return []any{fmt.Sprintf("U%07d", i), fmt.Sprintf("user%d", i), fmt.Sprintf("User %d", i), "member", 0, now.Add(time.Duration(i) * time.Minute).UnixMilli(), tenantOf(i)}
+		bulk(t, st, "users", "id, username, name, name_key, role, disabled, created, tenant_id, last_active", n, 200, func(i int) []any {
+			role := "member"
+			if i%50 == 0 {
+				role = "admin"
+			}
+			var active any
+			if i%3 != 0 {
+				active = now.Add(-time.Duration(i%977) * time.Hour).UnixMilli()
+			}
+			return []any{fmt.Sprintf("U%07d", i), fmt.Sprintf("user%d", i), fmt.Sprintf("User %d", i), fmt.Sprintf("user %d", i), role, 0, now.Add(time.Duration(i) * time.Minute).UnixMilli(), tenantOf(i), active}
 		})
 		bulk(t, st, "usage", "kind, id, tenant_id, spaces, bytes, held_bytes, remote_spaces, dormant, created, last_active, grace_spaces, overdue_spaces", n, 100, func(i int) []any {
 			over := 0
@@ -179,9 +187,9 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			}
 		}
 		cases = append(cases,
-			spaceCase{"cursor", tenantScope, store.SpaceFilter{Sort: "created", After: "created.asc:1700000000000:S0001000", Limit: 50}, true},
-			spaceCase{"cursor, bytes", tenantScope, store.SpaceFilter{Sort: "bytes", After: "bytes.desc:5000:S0001000", Limit: 50}, true},
-			spaceCase{"cursor, never measured", tenantScope, store.SpaceFilter{Sort: "bytes", After: "bytes.desc.none::S0001000", Limit: 50}, true},
+			spaceCase{"cursor", tenantScope, store.SpaceFilter{Sort: "created", After: "spaces.created.asc:1700000000000:S0001000", Limit: 50}, true},
+			spaceCase{"cursor, bytes", tenantScope, store.SpaceFilter{Sort: "bytes", After: "spaces.bytes.desc:5000:S0001000", Limit: 50}, true},
+			spaceCase{"cursor, never measured", tenantScope, store.SpaceFilter{Sort: "bytes", After: "spaces.bytes.desc.none::S0001000", Limit: 50}, true},
 			spaceCase{"cache evicted", tenantScope, store.SpaceFilter{Cache: "evicted", Limit: 50}, true},
 			spaceCase{"cache local", tenantScope, store.SpaceFilter{Cache: "local", Limit: 50}, true},
 			spaceCase{"remote ok", tenantScope, store.SpaceFilter{Remote: "ok", Limit: 50}, true},
@@ -230,7 +238,7 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			peopleCase{"people remote none", tenantScope, store.PeopleFilter{Remote: "none", Limit: 50}, true},
 			peopleCase{"people overdue", tenantScope, store.PeopleFilter{Deadline: "overdue", Limit: 50}, false},
 			peopleCase{"people by id", tenantScope, store.PeopleFilter{ID: "U0000004", Limit: 1}, false},
-			peopleCase{"people cursor", tenantScope, store.PeopleFilter{After: "held.desc:5000:U0001000", Limit: 50}, true},
+			peopleCase{"people cursor", tenantScope, store.PeopleFilter{After: "people.held.desc:5000:U0001000", Limit: 50}, true},
 		)
 		for _, c := range pcases {
 			pq.plans = nil
@@ -239,6 +247,46 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			}
 			for _, p := range pq.plans {
 				if why := planProblem(st.Dialect(), p, c.ordered); why != "" {
+					bad = append(bad, c.name+": "+why+"\n"+p)
+				}
+			}
+			if testing.Verbose() {
+				t.Logf("%s:\n%s", c.name, strings.Join(pq.plans, "\n--\n"))
+			}
+		}
+		type userCase struct {
+			name string
+			sc   store.Scope
+			f    store.UserFilter
+		}
+		var ucases []userCase
+		for _, sortName := range store.UserSorts {
+			for _, order := range []string{"asc", "desc"} {
+				ucases = append(ucases, userCase{"users tenant " + sortName + " " + order, tenantScope, store.UserFilter{Sort: sortName, Order: order, Limit: 50}},
+					userCase{"users site " + sortName + " " + order, site, store.UserFilter{Sort: sortName, Order: order, Limit: 50}},
+					userCase{"users tenant admin " + sortName + " " + order, tenantAdmin, store.UserFilter{Sort: sortName, Order: order, Limit: 50}})
+			}
+		}
+		ucases = append(ucases,
+			userCase{"users cursor", tenantScope, store.UserFilter{After: "users.created.asc:1700000000000:U0001000", Limit: 50}},
+			userCase{"users cursor, name", site, store.UserFilter{Sort: "name", After: "users.name.asc:user 100:U0001000", Limit: 50}},
+			userCase{"users cursor, never active", tenantScope, store.UserFilter{Sort: "lastActive", After: "users.lastActive.desc.none::U0001000", Limit: 50}},
+			userCase{"users enabled", tenantScope, store.UserFilter{State: "enabled", Limit: 50}},
+			userCase{"users admins", site, store.UserFilter{Role: "admin", Sort: "name", Limit: 50}},
+			userCase{"users inactive", tenantScope, store.UserFilter{InactiveBefore: now, Sort: "lastActive", Order: "asc", Limit: 50}},
+			userCase{"users search", tenantScope, store.UserFilter{Query: "user 77", Limit: 50}},
+		)
+		for _, c := range ucases {
+			pq.plans = nil
+			if _, _, err := store.ListUserRows(ctx, pq, c.sc, c.f); err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			for _, p := range pq.plans {
+				// The counts of the page are looked up by the ids of the page: not a part of the order.
+				if strings.Contains(p, "passkeys") || strings.Contains(p, "identities") {
+					continue
+				}
+				if why := planProblem(st.Dialect(), p, c.f.Query == "" && c.f.Role == ""); why != "" {
 					bad = append(bad, c.name+": "+why+"\n"+p)
 				}
 			}

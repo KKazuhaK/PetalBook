@@ -385,7 +385,7 @@ func (s *Service) Providers(ctx context.Context) ([]ProviderView, error) {
 func (s *Service) Provider(ctx context.Context, slug string) (*ProviderView, error) {
 	rt := s.provs.get(slug)
 	if rt == nil {
-		return nil, errf(NotFound, "no such provider")
+		return nil, errf(NotFound, "No such provider.")
 	}
 	people, err := store.ProviderPeople(ctx, s.st.Q())
 	if err != nil {
@@ -441,7 +441,7 @@ func providerInvalid(format string, a ...any) *Error { return coded(400, "invali
 func cleanText(name, v string, max int) (string, error) {
 	v = strings.TrimSpace(v)
 	if n := utf8.RuneCountInString(v); n < 1 || n > max || !utf8.ValidString(v) || strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", providerInvalid("%s is 1 to %d characters", name, max)
+		return "", providerInvalid("%s is 1 to %d characters.", name, max)
 	}
 	return v, nil
 }
@@ -453,13 +453,13 @@ func checkIcon(icon string) error {
 	if name, ok := strings.CutPrefix(icon, "preset:"); ok && slices.Contains(presetIcons, name) {
 		return nil
 	}
-	return providerInvalid("icon is empty or preset:<name> with one of %s", strings.Join(presetIcons, ", "))
+	return providerInvalid("Icon is empty or preset:<name> with one of %s.", strings.Join(presetIcons, ", "))
 }
 
 func httpsOnly(name, raw string, path bool) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || len(raw) > 2048 || (!path && u.Path != "" && u.Path != "/") {
-		return "", providerInvalid("%s must be an https address", name)
+		return "", providerInvalid("%s must be an https address.", name)
 	}
 	u.Scheme, u.Host = "https", strings.ToLower(u.Host)
 	if !path {
@@ -470,13 +470,13 @@ func httpsOnly(name, raw string, path bool) (string, error) {
 
 func cleanList(name string, in []string, max int) ([]string, error) {
 	if len(in) > max {
-		return nil, providerInvalid("%s holds at most %d entries", name, max)
+		return nil, providerInvalid("%s holds at most %d entries.", name, max)
 	}
 	out := []string{}
 	for _, v := range in {
 		v = strings.TrimSpace(v)
 		if v == "" || len(v) > 256 || strings.ContainsFunc(v, func(r rune) bool { return r <= 0x20 || r == 0x7f }) {
-			return nil, providerInvalid("%s has an entry that is empty or has spaces", name)
+			return nil, providerInvalid("%s has an entry that is empty or has spaces.", name)
 		}
 		if !slices.Contains(out, v) {
 			out = append(out, v)
@@ -496,13 +496,13 @@ func samlNameIDFormat(v string) (string, error) {
 	case "unspecified", "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified":
 		return string(crewjamsaml.UnspecifiedNameIDFormat), nil
 	}
-	return "", providerInvalid("nameIdFormat is empty, persistent, emailAddress or unspecified")
+	return "", providerInvalid("nameIdFormat is empty, persistent, emailAddress or unspecified.")
 }
 
 func cleanAttr(name, v string) (string, error) {
 	v = strings.TrimSpace(v)
 	if len(v) > 256 || strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", providerInvalid("%s is at most 256 characters", name)
+		return "", providerInvalid("%s is at most 256 characters.", name)
 	}
 	return v, nil
 }
@@ -530,14 +530,14 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	if creating {
 		b.row = store.ProviderRow{Enabled: true, TenantID: store.DefaultTenantID}
 		if in.Slug == nil || !slugRE.MatchString(*in.Slug) {
-			return nil, providerInvalid("slug is 1 to 32 characters of a-z, 0-9 and -, starting with a letter or digit")
+			return nil, providerInvalid("Slug is 1 to 32 characters of a-z, 0-9 and -, starting with a letter or digit.")
 		}
 		if in.Kind == nil || !slices.Contains([]string{KindOIDC, KindSAML, KindGitHub}, *in.Kind) {
-			return nil, providerInvalid("kind is oidc, saml or github")
+			return nil, providerInvalid("Kind is oidc, saml or github.")
 		}
 		b.row.Slug, b.row.Kind = *in.Slug, *in.Kind
 		if in.Name == nil {
-			return nil, providerInvalid("name is required")
+			return nil, providerInvalid("Name is required.")
 		}
 	} else {
 		b.row, b.cfg, b.curSecret = cur.row, cur.cfg, cur.secret
@@ -549,15 +549,15 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			b.cfg.Groups = &g
 		}
 		if in.Slug != nil && *in.Slug != cur.row.Slug || in.Kind != nil && *in.Kind != cur.row.Kind {
-			return nil, providerInvalid("slug and kind cannot be changed")
+			return nil, providerInvalid("Slug and kind cannot be changed.")
 		}
 	}
 	kind := b.row.Kind
 	if (in.OIDC != nil && kind != KindOIDC) || (in.SAML != nil && kind != KindSAML) || (in.GitHub != nil && kind != KindGitHub) {
-		return nil, providerInvalid("the settings are for another kind of provider")
+		return nil, providerInvalid("The settings are for another kind of provider.")
 	}
 	if s.cfg.PublicURL == "" {
-		return nil, coded(400, "public_url_required", "providers need --public-url: it is part of what the identity provider is told")
+		return nil, coded(400, "public_url_required", "Providers need --public-url: it is part of what the identity provider is told.")
 	}
 	mark := func(f string) { b.changed = append(b.changed, f) }
 	if in.Name != nil {
@@ -587,7 +587,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	}
 	if in.Order != nil {
 		if *in.Order < -100000 || *in.Order > 100000 {
-			return nil, providerInvalid("order is -100000 to 100000")
+			return nil, providerInvalid("Order is -100000 to 100000.")
 		}
 		if *in.Order != b.row.Position {
 			mark("order")
@@ -597,12 +597,12 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	if in.Tenant != nil {
 		t, err := store.GetTenant(ctx, s.st.Q(), *in.Tenant)
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, providerInvalid("tenant is the id of a tenant")
+			return nil, providerInvalid("Tenant is the id of a tenant.")
 		} else if err != nil {
 			return nil, err
 		}
 		if t.Disabled && *in.Tenant != b.row.TenantID {
-			return nil, providerInvalid("that tenant is disabled")
+			return nil, providerInvalid("That tenant is disabled.")
 		}
 		if *in.Tenant != b.row.TenantID {
 			mark("tenant")
@@ -635,7 +635,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			if o.Issuer != nil {
 				iss, err := httpsOnly("oidc.issuer", *o.Issuer, true)
 				if err != nil {
-					return nil, coded(400, "oidc_issuer_invalid", "oidc.issuer must be an https address")
+					return nil, coded(400, "oidc_issuer_invalid", "oidc.issuer must be an https address.")
 				}
 				if iss != b.cfg.Issuer {
 					mark("oidc.issuer")
@@ -672,15 +672,15 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 				b.row.LegacyCallback = *o.LegacyCallback
 			}
 			if o.ClientSecret != nil && len(*o.ClientSecret) > 16*1024 {
-				return nil, providerInvalid("oidc.clientSecret is too long")
+				return nil, providerInvalid("oidc.clientSecret is too long.")
 			}
 			secretSet(o.ClientSecret)
 		}
 		if b.cfg.Issuer == "" {
-			return nil, coded(400, "oidc_issuer_invalid", "oidc.issuer must be an https address")
+			return nil, coded(400, "oidc_issuer_invalid", "oidc.issuer must be an https address.")
 		}
 		if b.cfg.ClientID == "" {
-			return nil, providerInvalid("oidc.clientId is required")
+			return nil, providerInvalid("oidc.clientId is required.")
 		}
 		if len(b.cfg.Scopes) == 0 && creating && (o == nil || o.Scopes == nil) {
 			b.cfg.Scopes = []string{"profile", "email"}
@@ -688,7 +688,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		b.row.Issuer = b.cfg.Issuer
 		// The settings must be ones the library accepts.
 		if _, err := authoidc.New(canceled(), authoidc.Config{IssuerURL: b.cfg.Issuer, ClientID: b.cfg.ClientID, RedirectURL: s.publicBase() + legacyPath, Scopes: b.cfg.Scopes}); errors.Is(err, authoidc.ErrInvalidConfig) {
-			return nil, providerInvalid("the OpenID Connect settings are not valid (issuer, client id or scopes)")
+			return nil, providerInvalid("The OpenID Connect settings are not valid (issuer, client id or scopes).")
 		}
 	case KindGitHub:
 		g := in.GitHub
@@ -724,7 +724,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 				b.cfg.Organizations = orgs
 			}
 			if g.ClientSecret != nil && len(*g.ClientSecret) > 16*1024 {
-				return nil, providerInvalid("github.clientSecret is too long")
+				return nil, providerInvalid("github.clientSecret is too long.")
 			}
 			secretSet(g.ClientSecret)
 		}
@@ -732,18 +732,18 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			b.cfg.BaseURL = "https://github.com"
 		}
 		if b.cfg.ClientID == "" {
-			return nil, providerInvalid("github.clientId is required")
+			return nil, providerInvalid("github.clientId is required.")
 		}
 		if creating && (b.secret == "" || g == nil || g.ClientSecret == nil) {
-			return nil, providerInvalid("github.clientSecret is required")
+			return nil, providerInvalid("github.clientSecret is required.")
 		}
 		b.row.Issuer = b.cfg.BaseURL
 		if b.row.AutoCreate && len(b.cfg.Organizations) == 0 {
-			return nil, coded(400, "auto_create_needs_org", "name at least one organisation: anyone with a GitHub account could otherwise make an account here")
+			return nil, coded(400, "auto_create_needs_org", "Name at least one organisation: anyone with a GitHub account could otherwise make an account here.")
 		}
 	case KindSAML:
 		if !strings.HasPrefix(s.cfg.PublicURL, "https://") {
-			return nil, coded(400, "saml_needs_https", "SAML needs an https --public-url: the cookie that crosses from the identity provider must be Secure")
+			return nil, coded(400, "saml_needs_https", "SAML needs an https --public-url: the cookie that crosses from the identity provider must be Secure.")
 		}
 		m := in.SAML
 		if m != nil {
@@ -763,7 +763,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			}
 			if m.MetadataXML != nil {
 				if len(*m.MetadataXML) > metadataLimit {
-					return nil, providerInvalid("saml.metadataXml is too large")
+					return nil, providerInvalid("saml.metadataXml is too large.")
 				}
 				if *m.MetadataXML != b.cfg.MetadataXML {
 					mark("saml.metadataXml")
@@ -774,7 +774,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			if m.EntityID != nil {
 				e := strings.TrimSpace(*m.EntityID)
 				if len(e) > 512 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r == 0x7f }) {
-					return nil, providerInvalid("saml.entityId is at most 512 characters, without spaces")
+					return nil, providerInvalid("saml.entityId is at most 512 characters, without spaces.")
 				}
 				if e != b.cfg.EntityID {
 					mark("saml.entityId")
@@ -821,7 +821,7 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 			}
 		}
 		if (b.cfg.MetadataURL == "") == (strings.TrimSpace(b.cfg.MetadataXML) == "") {
-			return nil, providerInvalid("give exactly one of saml.metadataUrl and saml.metadataXml")
+			return nil, providerInvalid("Give exactly one of saml.metadataUrl and saml.metadataXml.")
 		}
 		b.row.Issuer = b.cfg.IDPEntityID
 	}
@@ -837,17 +837,17 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	if b.row.Issuer != "" {
 		for _, o := range rows {
 			if o.Slug != b.row.Slug && o.Issuer == b.row.Issuer {
-				return nil, coded(409, "provider_issuer_in_use", "another provider already has this issuer")
+				return nil, coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
 			}
 		}
 	}
 	if b.row.LegacyCallback {
 		if kind != KindOIDC {
-			return nil, providerInvalid("only an OpenID Connect provider has a legacy callback")
+			return nil, providerInvalid("Only an OpenID Connect provider has a legacy callback.")
 		}
 		for _, o := range rows {
 			if o.Slug != b.row.Slug && o.LegacyCallback {
-				return nil, coded(409, "legacy_callback_in_use", "another provider has the legacy callback")
+				return nil, coded(409, "legacy_callback_in_use", "Another provider has the legacy callback.")
 			}
 		}
 	}
@@ -867,11 +867,11 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 		return nil, err
 	}
 	if len(rows) >= maxProviders {
-		return nil, coded(409, "provider_limit", "at most %d providers", maxProviders)
+		return nil, coded(409, "provider_limit", "At most %d providers.", maxProviders)
 	}
 	for _, o := range rows {
 		if in.Slug != nil && o.Slug == *in.Slug {
-			return nil, coded(409, "exists", "that slug is taken")
+			return nil, coded(409, "exists", "That slug is taken.")
 		}
 	}
 	b, err := s.applyInput(ctx, nil, in, rows)
@@ -899,7 +899,7 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	// What the metadata names may be an identity provider that has a provider already.
 	for _, o := range rows {
 		if b.row.Issuer != "" && o.Issuer == b.row.Issuer {
-			return nil, coded(409, "provider_issuer_in_use", "another provider already has this issuer")
+			return nil, coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
 		}
 	}
 	if !rt.statusOK && !enabledAsked {
@@ -918,7 +918,7 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	}
 	if err := store.InsertProvider(ctx, s.st.Q(), b.row); err != nil {
 		if store.IsUnique(err) {
-			return nil, coded(409, "exists", "that slug is taken")
+			return nil, coded(409, "exists", "That slug is taken.")
 		}
 		return nil, err
 	}
@@ -935,7 +935,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	defer providerMu.Unlock()
 	cur := s.provs.get(slug)
 	if cur == nil {
-		return nil, errf(NotFound, "no such provider")
+		return nil, errf(NotFound, "No such provider.")
 	}
 	rows, err := store.ListProviders(ctx, s.st.Q())
 	if err != nil {
@@ -970,7 +970,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 			rows2, _ := store.ListProviders(ctx, s.st.Q())
 			for _, o := range rows2 {
 				if o.Slug != b.row.Slug && o.Issuer == b.row.Issuer {
-					return nil, coded(409, "provider_issuer_in_use", "another provider already has this issuer")
+					return nil, coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
 				}
 			}
 		}
@@ -1061,7 +1061,7 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 	defer providerMu.Unlock()
 	cur := s.provs.get(slug)
 	if cur == nil {
-		return errf(NotFound, "no such provider")
+		return errf(NotFound, "No such provider.")
 	}
 	if !force && cur.row.Issuer != "" {
 		n, err := store.UsersWithOnlyIssuer(ctx, s.st.Q(), cur.row.Issuer)
@@ -1069,7 +1069,7 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 			return err
 		}
 		if n > 0 {
-			e := coded(409, "provider_in_use", "%d account(s) can sign in only through this provider; delete it with force=1 to remove it anyway", n)
+			e := coded(409, "provider_in_use", "%d account(s) can sign in only through this provider; delete it with force=1 to remove it anyway.", n)
 			e.Accounts = &n
 			return e
 		}
@@ -1086,7 +1086,7 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 		return err
 	})
 	if errors.Is(err, store.ErrNotFound) {
-		return errf(NotFound, "no such provider")
+		return errf(NotFound, "No such provider.")
 	}
 	if err != nil {
 		return err
@@ -1105,7 +1105,7 @@ func (s *Service) RefreshProvider(ctx context.Context, slug string) (*ProviderVi
 	defer providerMu.Unlock()
 	cur := s.provs.get(slug)
 	if cur == nil {
-		return nil, errf(NotFound, "no such provider")
+		return nil, errf(NotFound, "No such provider.")
 	}
 	if err := s.refresh(ctx, cur); err != nil && !errors.Is(err, errUnreachable) {
 		return nil, err
@@ -1136,7 +1136,7 @@ func (s *Service) refresh(ctx context.Context, cur *providerRT) error {
 		rows, _ := store.ListProviders(ctx, s.st.Q())
 		for _, o := range rows {
 			if o.Slug != b.row.Slug && o.Issuer == b.row.Issuer {
-				return coded(409, "provider_issuer_in_use", "another provider already has this issuer")
+				return coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
 			}
 		}
 	}
@@ -1193,7 +1193,7 @@ func (s *Service) fetchInto(ctx context.Context, b *built) *providerRT {
 		meta, err := parseIDPMetadata(xmlText)
 		if err != nil {
 			rt.statusMessage = "the metadata is not valid"
-			b.metaErr = coded(400, "saml_metadata_invalid", "the identity provider's metadata cannot be used: %s", err.Error())
+			b.metaErr = coded(400, "saml_metadata_invalid", "The identity provider's metadata cannot be used: %s.", err.Error())
 			b.setStatus(rt)
 			return rt
 		}

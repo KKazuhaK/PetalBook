@@ -231,7 +231,7 @@ func (s *server) createToken(c *call) {
 		days = *req.ExpiresInDays
 	}
 	if days < 0 || days > tokens.MaxDays {
-		writeError(c.w, http.StatusBadRequest, "invalid", "expiresInDays must be from 1 to 365, or 0 for a token that never expires")
+		writeError(c.w, http.StatusBadRequest, "invalid", "expiresInDays must be from 1 to 365, or 0 for a token that never expires.")
 		return
 	}
 	// Every space must be one the caller belongs to now.
@@ -251,16 +251,16 @@ func (s *server) createToken(c *call) {
 		return
 	}
 	if req.Access != "" && req.Access != tokens.Read && req.Access != tokens.Write {
-		writeError(c.w, http.StatusBadRequest, "invalid", "access must be read or write")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Access must be read or write.")
 		return
 	}
 	if len(req.Spaces) < 1 || len(req.Spaces) > tokens.MaxSpaces {
-		writeError(c.w, http.StatusBadRequest, "invalid", "name 1 to "+strconv.Itoa(tokens.MaxSpaces)+" spaces")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Name 1 to "+strconv.Itoa(tokens.MaxSpaces)+" spaces.")
 		return
 	}
 	for _, id := range req.Spaces {
 		if !member[id] {
-			writeError(c.w, http.StatusNotFound, "not_found", "no such space: "+clipID(id))
+			writeError(c.w, http.StatusNotFound, "not_found", "No such space: "+clipID(id)+".")
 			return
 		}
 	}
@@ -303,7 +303,7 @@ func (s *server) failTokenRequest(w http.ResponseWriter, err error) {
 	case errors.As(err, &inv):
 		writeError(w, http.StatusBadRequest, "invalid", inv.Msg)
 	case errors.Is(err, tokens.ErrLimit):
-		writeError(w, http.StatusBadRequest, "token_limit", "you have "+strconv.Itoa(tokens.MaxLive)+" tokens in use; revoke one first")
+		writeError(w, http.StatusBadRequest, "token_limit", "You have "+strconv.Itoa(tokens.MaxLive)+" tokens in use; revoke one first.")
 	default:
 		s.fail(w, err)
 	}
@@ -322,7 +322,7 @@ func (s *server) revokeToken(c *call, owner string) {
 		return
 	}
 	if len(rows) == 0 || (owner != "" && rows[0].UserID != owner) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such token")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such token.")
 		return
 	}
 	if owner == "" && s.refuseSiteAdminOwner(c, rows[0].UserID) {
@@ -356,7 +356,7 @@ func (s *server) refuseSiteAdminOwner(c *call, userID string) bool {
 		return true
 	}
 	if u.SiteAdmin {
-		writeError(c.w, http.StatusForbidden, "forbidden", "only a site administrator may change a site administrator")
+		writeError(c.w, http.StatusForbidden, "forbidden", "Only a site administrator may change a site administrator.")
 		return true
 	}
 	return false
@@ -429,7 +429,7 @@ func (s *server) adminListTokens(c *call) {
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 200 {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit must be from 1 to 200")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit must be from 1 to 200.")
 			return
 		}
 		limit = n
@@ -440,7 +440,7 @@ func (s *server) adminListTokens(c *call) {
 		msStr, id, ok := strings.Cut(string(raw), ":")
 		n, perr := strconv.ParseInt(msStr, 10, 64)
 		if err != nil || !ok || perr != nil || id == "" {
-			writeError(c.w, http.StatusBadRequest, "invalid", "the cursor is not one this server gave")
+			writeError(c.w, http.StatusBadRequest, "invalid", "The cursor is not one this server gave.")
 			return
 		}
 		f.AfterCreated, f.AfterID = time.UnixMilli(n).UTC(), id

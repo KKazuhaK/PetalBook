@@ -173,6 +173,22 @@ describe('the text of the day', () => {
     expect(locationText()).toMatch(/^\/s\/default\/p\//)
   })
 
+  it('"another" keeps its size for a mouse and has a 40 px area to hit on a phone or a touch screen', async () => {
+    m = await mount(routes, {
+      entries: (server) => {
+        seedTexts(sender(server))
+        return ['/s/default']
+      },
+      server: { mode: 'single' },
+    })
+    await ready()
+    await settle(() => another() !== null, 'the button')
+    // h-6 (24 px) with a transparent box of 8 px more on every side where the screen is small or the pointer coarse.
+    expect(another()!.className).toContain('h-6')
+    expect(another()!.className).toContain('max-md:before:-inset-2')
+    expect(another()!.className).toContain('pointer-coarse:before:-inset-2')
+  })
+
   it('"another" asks for the next one with skip, and shows it only when it came', async () => {
     m = await mount(routes, {
       entries: (server) => {

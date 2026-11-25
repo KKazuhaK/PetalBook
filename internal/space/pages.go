@@ -188,11 +188,11 @@ func newMeta(in page.Meta) page.Meta {
 		}
 		switch v := f.Value.(type) {
 		case string:
-			if f.Key == "title" || f.Key == "subtitle" || f.Key == "source" || f.Key == "type" {
+			if f.Key == "title" || f.Key == "subtitle" || f.Key == "source" || f.Key == "type" || f.Key == "icon" || f.Key == "color" {
 				f.Value = strings.TrimSpace(v)
 			}
 		case []any:
-			if f.Key == "tags" {
+			if f.Key == "tags" || f.Key == "source" {
 				seen := map[string]bool{}
 				tags := []any{}
 				for _, e := range v {
@@ -218,7 +218,10 @@ func newMeta(in page.Meta) page.Meta {
 // empty list.
 func cleared(f page.Field) bool {
 	switch f.Key {
-	case "title", "subtitle", "source", "type":
+	case "title", "subtitle", "source", "type", "icon", "color":
+		if l, ok := f.Value.([]any); ok && f.Key == "source" {
+			return len(l) == 0
+		}
 		if f.Value == nil {
 			return true
 		}
@@ -242,7 +245,7 @@ func placeAfterKnown(m page.Meta, f page.Field) page.Meta {
 	at := 0
 	for i, x := range m {
 		switch x.Key {
-		case "id", "title", "subtitle", "source", "tags":
+		case "id", "title", "subtitle", "source", "tags", "icon", "color":
 			at = i + 1
 		}
 	}
@@ -252,9 +255,37 @@ func placeAfterKnown(m page.Meta, f page.Field) page.Meta {
 	return append(out, m[at:]...)
 }
 
+// checkStyle refuses an icon or a colour in a header that is none (see
+// CheckIcon and CheckIconColor). A value the page already has (written by
+// hand, and read as no icon) is left as it is, so that saving such a page is
+// not refused for what the person did not touch.
+func checkStyle(old, in page.Meta) error {
+	for _, f := range in {
+		if f.Key != "icon" && f.Key != "color" || cleared(f) {
+			continue
+		}
+		if ov, ok := old.Get(f.Key); ok && page.ValuesEqual(ov, f.Value) {
+			continue
+		}
+		v, ok := f.Value.(string)
+		if !ok {
+			return invalidf("meta.%s must be text.", f.Key)
+		}
+		v = strings.TrimSpace(v)
+		if f.Key == "icon" {
+			if err := CheckIcon(v); err != nil {
+				return err
+			}
+		} else if err := CheckIconColor(v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func checkBody(body string) error {
 	if !utf8.ValidString(body) {
-		return invalidf("body is not valid UTF-8")
+		return invalidf("Body is not valid UTF-8.")
 	}
 	return nil
 }
@@ -275,6 +306,9 @@ func (s *Space) Create(by Author, in CreateInput) (*Page, error) {
 		}
 	}
 	meta = newMeta(meta)
+	if err := checkStyle(nil, meta); err != nil {
+		return nil, err
+	}
 	return mutate(s, by, func(tx *txn) (*Page, error) { return s.createLocked(tx, in, meta) })
 }
 
@@ -301,7 +335,7 @@ func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, er
 
 	doc := page.Parse(nil)
 	if err := doc.SetMeta(meta); err != nil {
-		return nil, invalidf("%v", err)
+		return nil, invalidf("%v.", err)
 	}
 	doc.SetBody(in.Body)
 	data := doc.Bytes()
@@ -358,10 +392,13 @@ func (s *Space) afterWrite(tx *txn, rel string, data []byte, touched ...string) 
 //   - Values equal to what the file has are kept exactly as written; a known
 //     field the client emptied is dropped rather than written empty.
 func saveMeta(id string, old, req page.Meta) (page.Meta, error) {
+	if err := checkStyle(old, req); err != nil {
+		return nil, err
+	}
 	in := req.Clone()
 	if i := in.Index("id"); i >= 0 {
 		if v := in[i].Value; v != nil && v != id {
-			return nil, invalidf("meta.id does not match the page id")
+			return nil, invalidf("meta.id does not match the page id.")
 		}
 		in[i].Value = id
 	} else {
@@ -486,7 +523,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		return nil, err
 	}
 	if err := doc.SetMeta(newMeta); err != nil {
-		return nil, invalidf("%v", err)
+		return nil, invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	newData := s.withIDs(rel, s.rebaseFile(whole, doc.Bytes()))
@@ -568,7 +605,7 @@ func (s *Space) CheckSaveSize(by Author, id string, meta page.Meta, body string)
 		return err
 	}
 	if err := doc.SetMeta(newMeta); err != nil {
-		return invalidf("%v", err)
+		return invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	return by.checkFileSize(rel, int64(len(doc.Bytes())), int64(len(data)))
@@ -594,7 +631,7 @@ func (s *Space) Equivalent(id, baseRev string, meta page.Meta, body string) (*Pa
 		return nil, false, err
 	}
 	if err := doc.SetMeta(newMeta); err != nil {
-		return nil, false, invalidf("%v", err)
+		return nil, false, invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	same := bytes.Equal(s.withIDs(rel, s.rebaseFile(s.rb.chain(id, baseRev), doc.Bytes())), data) && old.Title() == newMeta.Title()
@@ -800,11 +837,11 @@ const MaxPatchProps = 200
 func checkPropKey(key string) error {
 	switch {
 	case key == "" || len(key) > 256 || !utf8.ValidString(key) || strings.IndexFunc(key, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0:
-		return invalidf("a property key is 1 to 256 bytes of text with no control characters")
+		return invalidf("A property key is 1 to 256 bytes of text with no control characters.")
 	case page.IsBuiltinKey(key):
-		return invalidf("%q is a field of every page; change it by saving the page", key)
+		return invalidf("%q is a field of every page; change it by saving the page.", key)
 	case page.IsReservedKey(key):
-		return invalidf("%q is reserved", key)
+		return invalidf("%q is reserved.", key)
 	}
 	return nil
 }
@@ -826,7 +863,7 @@ func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset [
 // checkProps is the checks of PatchProps on what it is asked to change.
 func checkProps(set page.Meta, unset []string) error {
 	if len(set)+len(unset) > MaxPatchProps {
-		return invalidf("at most %d properties can be changed at once", MaxPatchProps)
+		return invalidf("At most %d properties can be changed at once.", MaxPatchProps)
 	}
 	seen := map[string]bool{}
 	for _, f := range set {
@@ -840,7 +877,7 @@ func checkProps(set page.Meta, unset []string) error {
 			return err
 		}
 		if seen[k] {
-			return invalidf("%q is both set and unset", k)
+			return invalidf("%q is both set and unset.", k)
 		}
 		seen[k] = true
 	}
@@ -901,7 +938,7 @@ func (s *Space) patchProps(by Author, id, baseRev string, set page.Meta, unset [
 		}
 		meta = applyProps(meta, set, unset)
 		if err := doc.SetMeta(meta); err != nil {
-			return nil, invalidf("%v", err)
+			return nil, invalidf("%v.", err)
 		}
 		newData := doc.Bytes()
 		if bytes.Equal(newData, data) {
@@ -933,3 +970,6 @@ func propCleared(v any) bool {
 	}
 	return false
 }
+
+// UsedSources lists the sources the pages have, most used first.
+func (s *Space) UsedSources() ([]index.SourceCount, error) { return s.idx.UsedSources() }

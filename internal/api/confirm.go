@@ -191,18 +191,18 @@ func (s *server) adminConfirm(c *call) {
 	}
 	kind, ok := confirmActions[req.Action]
 	if !ok {
-		writeError(c.w, http.StatusBadRequest, "invalid", "action is one of "+actionNames())
+		writeError(c.w, http.StatusBadRequest, "invalid", "Action is one of "+actionNames()+".")
 		return
 	}
 	ids := req.idList()
 	if len(ids) == 0 || len(ids) > maxConfirmIDs {
-		writeError(c.w, http.StatusBadRequest, "invalid", "name from 1 to "+itoa(maxConfirmIDs)+" "+strings.ReplaceAll(kind, "+", " or ")+" for "+req.Action)
+		writeError(c.w, http.StatusBadRequest, "invalid", "Name from 1 to "+itoa(maxConfirmIDs)+" "+strings.ReplaceAll(kind, "+", " or ")+" for "+req.Action+".")
 		return
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if seen[id] {
-			writeError(c.w, http.StatusBadRequest, "invalid", "an id is named twice")
+			writeError(c.w, http.StatusBadRequest, "invalid", "An id is named twice.")
 			return
 		}
 		seen[id] = true
@@ -240,7 +240,7 @@ func actionNames() string {
 // plan changed. The plan is made again from the records at this moment.
 func (s *server) useConfirm(c *call, tok string, req confirmRequest) bool {
 	if tok == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "this needs a confirmation: ask POST /api/admin/confirm first")
+		writeError(c.w, http.StatusBadRequest, "invalid", "This needs a confirmation: ask POST /api/admin/confirm first.")
 		return false
 	}
 	plan, ok := s.planFor(c, req)
@@ -249,10 +249,10 @@ func (s *server) useConfirm(c *call, tok string, req confirmRequest) bool {
 	}
 	switch s.confirms.take(tok, c.user().ID, req.Action, idsKey(req.idList()), plan.Hash, s.now()) {
 	case confirmUnknown:
-		writeError(c.w, http.StatusNotFound, "not_found", "no such confirmation: it was used, has expired, or is for something else")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such confirmation: it was used, has expired, or is for something else.")
 		return false
 	case confirmStaleNow:
-		writeError(c.w, http.StatusConflict, "confirm_stale", "what the plan was made from has changed: ask again")
+		writeError(c.w, http.StatusConflict, "confirm_stale", "What the plan was made from has changed: ask again.")
 		return false
 	}
 	return true
@@ -280,6 +280,6 @@ func (s *server) planFor(c *call, req confirmRequest) (confirmPlan, bool) {
 		}
 		return confirmPlan{Plan: append(p1.Plan, p2.Plan...), Bytes: p1.Bytes + p2.Bytes, Hash: hashOf(p1.Hash, p2.Hash)}, true
 	}
-	writeError(c.w, http.StatusBadRequest, "invalid", req.Action+" cannot be confirmed here")
+	writeError(c.w, http.StatusBadRequest, "invalid", req.Action+" cannot be confirmed here.")
 	return confirmPlan{}, false
 }

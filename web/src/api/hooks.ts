@@ -13,6 +13,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { openView } from '@/lib/adminView'
+import { browserNotifyOn } from '@/lib/browserNotify'
 import { waitForSaves } from '@/editor/saveController'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
@@ -30,6 +31,7 @@ import type {
   BatchPagesInput,
   ChecksResponse,
   FixCheckInput,
+  NotificationList,
   ConnectRemoteInput,
   DailyPrefs,
   DailySettings,
@@ -53,6 +55,7 @@ import type {
   SpaceInfo,
   SpaceRole,
   SyncState,
+  IconColor,
   TagColor,
   TagsResponse,
   TypeInput,
@@ -116,6 +119,9 @@ export const keys = {
   templates: (space: string) => ['space', space, 'templates'] as const,
   template: (space: string, name: string) => ['space', space, 'templates', name] as const,
   // The check page: one listing for each kind (or all of them), read a cursor page at a time.
+  // The notification centre: the unread count (the bell), and the list for a kind and a filter.
+  unread: ['notifications', 'unread'] as const,
+  notifications: (kind: string, unread: boolean) => ['notifications', 'list', kind, unread] as const,
   checks: (space: string, kind: ProblemKind | '') => ['space', space, 'checks', kind] as const,
   // The table view's listing: kept apart from the list and card listings, which
   // ask for less, and which an edit of a cell does not read again.
@@ -452,7 +458,8 @@ export function useSetTagColor() {
 
 // Listings are fetched one cursor page at a time; nothing renders more rows
 // than the person has asked for with "load more".
-export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enabled = true) {
+// `keep`: a new sort or filter keeps the rows on screen until the new ones arrive (a table that does not blink).
+export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enabled = true, keep = false) {
   const space = useSpaceId()
   return useInfiniteQuery({
     enabled,
@@ -462,6 +469,7 @@ export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enable
       spaceApi(space).listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
+    ...(keep ? { placeholderData: keepPreviousData } : {}),
   })
 }
 
@@ -1095,6 +1103,59 @@ export function useDeleteType() {
     onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined),
   })
 }
+// The icons and colours of the folders and the presets of the sources.
+export function useAppearance() {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: ['space', space, 'appearance'] as const,
+    queryFn: ({ signal }) => spaceApi(space).appearance(signal),
+    staleTime: 30_000,
+    enabled: space !== '' && read,
+  })
+}
+
+export function useSetFolderStyle() {
+  const space = useSpaceId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ folder, icon, color }: { folder: string; icon: string; color: IconColor | '' }) =>
+      spaceApi(space).setFolderStyle(folder, icon, color),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['space', space, 'appearance'] }),
+  })
+}
+
+// The sources the pages already use, most used first.
+export function useUsedSources(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: ['space', space, 'sources'] as const,
+    queryFn: ({ signal }) => spaceApi(space).sources(signal),
+    staleTime: 15_000,
+    enabled: enabled && space !== '' && read,
+  })
+}
+
+export function useSetSourcePresets() {
+  const space = useSpaceId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (presets: string[] | null) => spaceApi(space).setSourcePresets(presets),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['space', space, 'appearance'] }),
+  })
+}
+
+export function useRenameTypeField() {
+  const space = useSpaceId()
+  const changed = useTypesChanged()
+  return useMutation({
+    mutationFn: ({ name, ...input }: { name: string; baseRev: string; from: string; to: string }) =>
+      spaceApi(space).renameTypeField(name, input),
+    onSuccess: changed,
+  })
+}
+
 export function useBindFolder() {
   const space = useSpaceId()
   const changed = useTypesChanged()
@@ -1611,6 +1672,22 @@ export function useChecks(kind: ProblemKind | '') {
   })
 }
 
+// How many problems the space has, for the red dot that says so: the counts the index already keeps, read with the
+// first page of the list (one indexed read on the server). Not for those who may not read the space.
+export function useProblemCount() {
+  const id = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: ['space', id, 'checks', 'count'] as const,
+    queryFn: async ({ signal }) => {
+      const r = await spaceApi(id).checks({}, signal)
+      return Object.values(r.counts).reduce((n, c) => n + (c ?? 0), 0)
+    },
+    staleTime: 60_000,
+    enabled: id !== '' && read,
+  })
+}
+
 // A fix writes a file: the problems, the pages and the tree all change (a file without an id becomes a page). A 409
 // or a 404 says the file is not as it was listed: read the problems again.
 export function useFixCheck() {
@@ -1625,3 +1702,51 @@ export function useFixCheck() {
       e instanceof ApiError && (e.code === 'conflict' || e.code === 'not_found') ? void changed() : undefined,
   })
 }
+
+// --- the notification centre -------------------------------------------------------------
+
+// How often the bell asks while the window is in front: one indexed count on the server (and the problems of the open
+// spaces, which the server keeps for a few seconds), so a minute is cheap for everyone who has the app open.
+export const UNREAD_POLL_MS = 60_000
+
+// The number on the bell (up to 100). Not asked in the background; asked again when the person comes back.
+export function useUnreadCount(enabled = true) {
+  return useQuery({
+    queryKey: keys.unread,
+    queryFn: async ({ signal }) => (await api.unreadNotifications(signal)).count,
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: UNREAD_POLL_MS,
+    // A browser notice is for when nobody is looking, so the person who asked for them is asked about in the background too.
+    refetchIntervalInBackground: browserNotifyOn(),
+    refetchOnWindowFocus: 'always',
+  })
+}
+
+// The list, a cursor page at a time, newest first (the problems of the spaces on the first page). `kind` '' is all.
+export function useNotificationList(kind: string, unread: boolean, limit = 20, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: [...keys.notifications(kind, unread), limit],
+    queryFn: ({ pageParam, signal }): Promise<NotificationList> =>
+      api.notifications({ kind: kind || undefined, unread, cursor: pageParam || undefined, limit }, signal),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 0,
+    enabled,
+  })
+}
+
+// A mark changes what the bell says and every list: the count is set from the answer, the lists are read again.
+function useNotificationMarks<V>(call: (v: V) => Promise<{ unread: number }>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: call,
+    onSuccess: (r) => {
+      qc.setQueryData(keys.unread, r.unread)
+      void qc.invalidateQueries({ queryKey: ['notifications', 'list'] })
+    },
+  })
+}
+export const useMarkNotificationsRead = () => useNotificationMarks((ids: string[]) => api.markNotificationsRead(ids))
+export const useMarkAllNotificationsRead = () =>
+  useNotificationMarks((kind: string | undefined) => api.markAllNotificationsRead(kind))

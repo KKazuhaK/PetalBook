@@ -630,8 +630,8 @@ func TestSpaceListRefusesWhatItDoesNotKnow(t *testing.T) {
 			{Sort: "created", After: next},
 			{Sort: "bytes", Order: "asc", After: next},
 			{Sort: "bytes", After: "garbage"},
-			{Sort: "bytes", After: "bytes.desc:x:L001"},
-			{Sort: "bytes", After: "bytes.desc.none:"},
+			{Sort: "bytes", After: "spaces.bytes.desc:x:L001"},
+			{Sort: "bytes", After: "spaces.bytes.desc.none:"},
 		} {
 			if _, _, err := store.ListAllSpaces(ctx, st.Q(), sc, f); err != store.ErrBadCursor {
 				t.Fatalf("%+v: %v", f, err)

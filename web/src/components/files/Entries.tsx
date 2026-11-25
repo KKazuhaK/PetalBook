@@ -5,6 +5,8 @@
 import { useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { Check, FileText, Folder as FolderIcon } from 'lucide-react'
+import { PageIcon } from '@/components/icons/PageIcon'
+import { useFolderStyle, usePageStyle } from '@/lib/icons/useStyles'
 import { useSpacePermissions } from '@/api/hooks'
 import type { PageSummary } from '@/api/types'
 import { TagChip } from '@/components/TagChip'
@@ -44,7 +46,7 @@ function useEntryClick(state: EntryState) {
   }
 }
 
-function useDragSource(state: EntryState) {
+export function useDragSource(state: EntryState) {
   const [dragging, setDragging] = useState(false)
   const { write } = useSpacePermissions()
   return {
@@ -142,9 +144,21 @@ export function PageRow({
   const onClick = useEntryClick(state)
   const drag = useDragSource(state)
   const name = page.label || t.list.blankPage
+  const style = usePageStyle()(page)
   return (
     <li {...{ [ENTRY_ATTR]: `p:${page.id}` }} className={rowClass(state.selected, false, drag.dragging)}>
-      <Leading icon={<FileText className="size-[18px]" />} state={state} label={name} />
+      <Leading
+        icon={
+          <PageIcon
+            icon={style.icon}
+            color={style.color}
+            fallback={<FileText className="size-[18px]" />}
+            className="size-[18px]"
+          />
+        }
+        state={state}
+        label={name}
+      />
       <Link to={urls.page(page.id)} data-index={index} onClick={onClick} className={linkClass} {...drag.props}>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
@@ -189,13 +203,25 @@ export function FolderRow({ folder, urls, state }: { folder: FolderEntry; urls: 
   const onClick = useEntryClick(state)
   const drag = useDragSource(state)
   const drop = useDropTarget(folder.path, ops?.index, (items, target) => void ops?.moveTo(items, target))
+  const style = useFolderStyle()(folder.path)
   return (
     <li
       {...{ [ENTRY_ATTR]: `f:${folder.path}` }}
       className={rowClass(state.selected, drop.over, drag.dragging)}
       {...drop.props}
     >
-      <Leading icon={<FolderIcon className="size-[18px] fill-current/15" />} state={state} label={folder.name} />
+      <Leading
+        icon={
+          <PageIcon
+            icon={style.icon}
+            color={style.color}
+            fallback={<FolderIcon className="size-[18px] fill-current/15" />}
+            className="size-[18px]"
+          />
+        }
+        state={state}
+        label={folder.name}
+      />
       <Link
         to={urls.folder(folder.path)}
         onClick={onClick}
@@ -290,7 +316,7 @@ export function PageCard({ page, urls, state }: { page: PageSummary; urls: Space
           empty && <div className="text-sm text-muted-foreground">{t.list.untitledHint}</div>
         )}
         <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          {page.source && <span className="break-all">——{page.source}</span>}
+          {page.source.length > 0 && <span className="break-all">——{t.fmt.list(page.source)}</span>}
           {page.tags?.map((tag) => (
             <TagChip key={tag} tag={tag} />
           ))}
@@ -309,6 +335,7 @@ export function FolderCard({ folder, urls, state }: { folder: FolderEntry; urls:
   const onClick = useEntryClick(state)
   const drag = useDragSource(state)
   const drop = useDropTarget(folder.path, ops?.index, (items, target) => void ops?.moveTo(items, target))
+  const style = useFolderStyle()(folder.path)
   return (
     <li
       {...{ [ENTRY_ATTR]: `f:${folder.path}` }}
@@ -322,7 +349,12 @@ export function FolderCard({ folder, urls, state }: { folder: FolderEntry; urls:
         className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 pr-9 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         {...drag.props}
       >
-        <FolderIcon className="size-5 shrink-0 fill-current/15 text-muted-foreground" />
+        <PageIcon
+          icon={style.icon}
+          color={style.color}
+          fallback={<FolderIcon className="size-5 shrink-0 fill-current/15 text-muted-foreground" />}
+          className="size-5"
+        />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[0.95rem] font-medium">{folder.name}</span>
           <span className="block truncate text-xs text-muted-foreground">{t.manage.folderPages(folder.total)}</span>

@@ -21,12 +21,14 @@ type typeResp struct {
 	Name   string          `json:"name"`
 	Title  string          `json:"title"`
 	Fields []typeFieldResp `json:"fields"`
+	Icon   string          `json:"icon,omitempty"`
+	Color  string          `json:"color,omitempty"`
 	Error  string          `json:"error,omitempty"`
 	Rev    string          `json:"rev"`
 }
 
 func toType(t space.TypeInfo) typeResp {
-	out := typeResp{Name: t.Name, Title: t.Title, Fields: make([]typeFieldResp, len(t.Fields)), Error: t.Error, Rev: t.Rev}
+	out := typeResp{Name: t.Name, Title: t.Title, Fields: make([]typeFieldResp, len(t.Fields)), Icon: t.Icon, Color: t.Color, Error: t.Error, Rev: t.Rev}
 	for i, f := range t.Fields {
 		out.Fields[i] = typeFieldResp{Key: f.Key, Title: f.Title, Kind: f.Kind, Options: f.Options, Schema: f.Schema}
 	}
@@ -62,8 +64,10 @@ func (s *server) getTypes(c *call) {
 // putType makes a type or changes one.
 func (s *server) putType(c *call) {
 	var req struct {
-		BaseRev string `json:"baseRev"`
-		Title   string `json:"title"`
+		BaseRev string  `json:"baseRev"`
+		Title   string  `json:"title"`
+		Icon    *string `json:"icon"`
+		Color   *string `json:"color"`
 		Fields  []struct {
 			Key     string   `json:"key"`
 			Title   string   `json:"title"`
@@ -74,7 +78,7 @@ func (s *server) putType(c *call) {
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
 	}
-	in := space.TypeInput{Title: req.Title}
+	in := space.TypeInput{Title: req.Title, Icon: req.Icon, Color: req.Color}
 	for _, f := range req.Fields {
 		in.Fields = append(in.Fields, space.FieldInput{Key: f.Key, Title: f.Title, Kind: f.Kind, Options: f.Options})
 	}
@@ -90,7 +94,7 @@ func (s *server) putType(c *call) {
 func (s *server) deleteType(c *call) {
 	if err := c.sp.Space.DeleteType(s.author(c), c.r.PathValue("name"), c.r.URL.Query().Get("baseRev")); err != nil {
 		if errors.Is(err, space.ErrNotFound) {
-			writeError(c.w, http.StatusNotFound, "not_found", "no such type")
+			writeError(c.w, http.StatusNotFound, "not_found", "No such type.")
 			return
 		}
 		s.fail(c.w, err)

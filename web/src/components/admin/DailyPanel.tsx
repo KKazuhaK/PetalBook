@@ -76,6 +76,15 @@ export function DailyPanel() {
   return (
     <div className="min-w-0 space-y-10" data-slot="admin-daily">
       <p className="text-sm break-words text-muted-foreground">{d.help}</p>
+      {nothingOn(data) && (
+        <p
+          role="note"
+          data-slot="daily-off-hint"
+          className="rounded-lg border bg-muted/40 p-3 text-sm break-words text-muted-foreground"
+        >
+          {d.allOffHint}
+        </p>
+      )}
       <AllowSection data={data} />
       <LanguagesSection data={data} />
       <DefaultSection data={data} />
@@ -85,6 +94,11 @@ export function DailyPanel() {
     </div>
   )
 }
+
+// Nothing the home page could show: every built-in interface is off (the way a fresh server starts, for privacy), no
+// interface of our own is on, and there are no lines.
+const nothingOn = (data: AdminDaily) =>
+  data.providers.every((p) => !p.enabled) && data.apis.every((a) => !a.enabled) && data.lines.total === 0
 
 // Two switches for what spaces may do. They wait for the server to say (`allow`): until it does they show as on and
 // cannot be changed.

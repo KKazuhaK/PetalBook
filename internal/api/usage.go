@@ -194,13 +194,13 @@ func (s *server) adminUsage(c *call) {
 		over = true
 	case "", "0":
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "over is 1 or 0")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Over is 1 or 0.")
 		return
 	}
 	ctx := c.r.Context()
 	rows, next, err := store.ListUserUsage(ctx, s.opt.Store.Q(), sc, store.UsageFilter{OverOnly: over, After: qv.Get("cursor"), Limit: limit})
 	if errors.Is(err, store.ErrBadCursor) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "that cursor is not one this list gave")
+		writeError(c.w, http.StatusBadRequest, "invalid", "That cursor is not one this list gave.")
 		return
 	}
 	if err != nil {
@@ -258,7 +258,7 @@ func rank(v *int64, zeroIsNone bool) int64 {
 func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, cur string) (string, bool) {
 	var in map[string]json.RawMessage
 	if json.Unmarshal(raw, &in) != nil || in == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "quota is an object with spaces, bytes and pages")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Quota is an object with spaces, bytes and pages.")
 		return "", false
 	}
 	own := quota.ParseOwn(cur)
@@ -278,12 +278,12 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 		case "pages":
 			key = settings.QuotaPagesPerPerson
 		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "quota has spaces, bytes and pages")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Quota has spaces, bytes and pages.")
 			return "", false
 		}
 		var n *int64
 		if json.Unmarshal(v, &n) != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+" is a number, or null to follow the tenant")
+			writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+" is a number, or null to follow the tenant.")
 			return "", false
 		}
 		if n == nil {
@@ -292,7 +292,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 		}
 		d, _ := s.settings.Def(key)
 		if _, err := d.Value(*n); err != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+": "+err.Error())
+			writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+": "+err.Error()+".")
 			return "", false
 		}
 		e := eff[key]
@@ -302,10 +302,10 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 		}
 		switch {
 		case below.Mode == settings.Lock:
-			writeError(c.w, http.StatusConflict, settings.CodeLocked, key+" is locked: nobody below it may change it")
+			writeError(c.w, http.StatusConflict, settings.CodeLocked, key+" is locked: nobody below it may change it.")
 			return "", false
 		case !below.Allows(d, *n):
-			writeError(c.w, http.StatusConflict, settings.CodeRestricted, key+": above what the layer above allows")
+			writeError(c.w, http.StatusConflict, settings.CodeRestricted, key+": above what the layer above allows.")
 			return "", false
 		}
 		if !site {
@@ -314,7 +314,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 				cap = &ev
 			}
 			if rank(n, k == "spaces") > rank(cap, k == "spaces") {
-				writeError(c.w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may give a person more than their tenant allows")
+				writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may give a person more than their tenant allows.")
 				return "", false
 			}
 		}
@@ -331,7 +331,7 @@ func (s *server) checkQuotaPatch(c *call, id string, raw json.RawMessage) (apply
 	sc := store.ScopeOf(c.user())
 	target, err := store.GetUser(ctx, s.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such user")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
 		return nil, false
 	}
 	if err != nil {

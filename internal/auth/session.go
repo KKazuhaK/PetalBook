@@ -15,7 +15,7 @@ import (
 // sessions, and disabled users, are all Unauthenticated.
 func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, error) {
 	if token == "" || len(token) > 256 {
-		return nil, errf(Unauthenticated, "sign in to continue")
+		return nil, errf(Unauthenticated, "Sign in to continue.")
 	}
 	id := hashToken(token)
 	now := s.now()
@@ -26,7 +26,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if neg, bad := s.negative[id]; bad {
 		if now.Before(neg.until) {
 			s.cmu.Unlock()
-			return nil, ended(neg.reason, "sign in to continue")
+			return nil, ended(neg.reason, "Sign in to continue.")
 		}
 		delete(s.negative, id)
 	}
@@ -55,7 +55,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 			}
 			s.negative[id] = negative{until: now.Add(negativeTTL), reason: reason}
 			s.cmu.Unlock()
-			return nil, ended(reason, "sign in to continue")
+			return nil, ended(reason, "Sign in to continue.")
 		}
 		if err != nil {
 			return nil, err
@@ -65,13 +65,13 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	sec := s.sec(ctx)
 	if now.Sub(snap.lastUsed) > sec.idle || now.Sub(snap.created) > sec.max {
 		s.endSession(ctx, id, snap.userID, store.EndExpired)
-		return nil, ended(store.EndExpired, "your session has ended; sign in again")
+		return nil, ended(store.EndExpired, "Your session has ended; sign in again.")
 	}
 	u, err := s.cachedUser(ctx, snap.userID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.endSession(ctx, id, "", "")
-			return nil, errf(Unauthenticated, "sign in to continue")
+			return nil, errf(Unauthenticated, "Sign in to continue.")
 		}
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	// only while some tenant is disabled.
 	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		s.endSession(ctx, id, u.ID, store.EndDisabled)
-		return nil, ended(store.EndDisabled, "sign in to continue")
+		return nil, ended(store.EndDisabled, "Sign in to continue.")
 	}
 
 	touch := false
@@ -167,7 +167,7 @@ func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error
 
 // ended is the refusal of a cookie whose session is gone, with why when it is known.
 func ended(reason, msg string) *Error {
-	e := errf(Unauthenticated, "%s", msg)
+	e := errf(Unauthenticated, "%s.", msg)
 	e.Reason = reason
 	return e
 }
@@ -265,12 +265,22 @@ func (s *Service) SignOutEverywhere(ctx context.Context, userID, keep string) er
 	return nil
 }
 
-// issueSession starts a session for a user and returns the cookie value.
-func (s *Service) issueSession(ctx context.Context, userID string, held bool) (string, error) {
+type userAgentKey struct{}
+
+// WithUserAgent says, for the sessions that start under ctx, the browser's name
+// for itself (the administrator's list of a person's sessions shows it).
+func WithUserAgent(ctx context.Context, ua string) context.Context {
+	return context.WithValue(ctx, userAgentKey{}, ua)
+}
+
+// issueSession starts a session for a user and returns the cookie value. method
+// is how they signed in (see the sessions table).
+func (s *Service) issueSession(ctx context.Context, userID string, held bool, method string) (string, error) {
 	token := randomToken()
 	now := s.now().UTC()
+	ua, _ := ctx.Value(userAgentKey{}).(string)
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held}); err != nil {
+		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held, UserAgent: ua, Method: method}); err != nil {
 			return err
 		}
 		return store.TrimSessions(ctx, q, userID, maxSessionsPerUser)

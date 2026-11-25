@@ -46,14 +46,18 @@ const day = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
 function summaryOf(e: CatalogEntry, page?: Page): PageSummary {
   const m = page?.meta
   const subtitle = typeof m?.subtitle === 'string' && m.subtitle !== '' ? m.subtitle : undefined
-  const source = typeof m?.source === 'string' && m.source !== '' ? m.source : undefined
+  const source = Array.isArray(m?.source)
+    ? m.source.filter((s): s is string => typeof s === 'string' && s !== '')
+    : typeof m?.source === 'string' && m.source !== ''
+      ? [m.source]
+      : []
   return {
     id: e.id,
     path: e.path,
     folder: e.folder,
     ...(e.title ? { title: e.title } : {}),
     ...(subtitle ? { subtitle } : {}),
-    ...(source ? { source } : {}),
+    source,
     label: e.label,
     untitled: e.untitled,
     ...(e.tags.length ? { tags: e.tags } : {}),
@@ -99,7 +103,7 @@ async function listPages(store: OfflineStore, q: URLSearchParams): Promise<PageL
         const m = r.page.meta
         kept.set(
           r.id,
-          [m.title, m.subtitle, m.source, r.page.body]
+          [m.title, m.subtitle, ...(Array.isArray(m.source) ? m.source : [m.source]), r.page.body]
             .filter((x) => typeof x === 'string')
             .join('\n')
             .toLowerCase(),

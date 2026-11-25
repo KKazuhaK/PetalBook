@@ -312,7 +312,7 @@ describe('what the server says about the space', () => {
     const real = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       if (/\/changes/.test(String(input)))
-        return new Response(JSON.stringify({ error: 'internal', message: 'boom' }), {
+        return new Response(JSON.stringify({ error: 'a_new_code', message: 'boom' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
         })

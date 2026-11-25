@@ -347,8 +347,11 @@ export async function runSequence(
   }
 
   const bodyOf = (t: string) => t + '\n'
-  const read = (): Draft => ({ title, subtitle: '', source: '', tags: [], body: bodyOf(text) })
-  const readDraft = () => ({ fields: { title, subtitle: '', source: '', tags: [] as string[] }, bodyJson: doc(text) })
+  const read = (): Draft => ({ title, subtitle: '', source: [], tags: [], body: bodyOf(text) })
+  const readDraft = () => ({
+    fields: { title, subtitle: '', source: [] as string[], tags: [] as string[] },
+    bodyJson: doc(text),
+  })
   const textOfBody = (b: string) => b.replace(/\n$/, '')
   const titleOf = (p: { meta: Record<string, unknown> }) => String(p.meta.title ?? '')
 

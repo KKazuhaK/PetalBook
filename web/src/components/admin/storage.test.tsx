@@ -6,6 +6,7 @@ import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { SpaceGate } from '@/components/layout/SpaceGate'
 import { ta } from '@/i18n/admin'
+import { tc } from '@/i18n/console'
 import { ts } from '@/i18n/storage'
 import {
   adminRequests,
@@ -37,7 +38,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="/s/:space" element={<SpaceGate />}>
         <Route index element={<div>the pages of the space</div>} />
       </Route>
@@ -64,7 +65,7 @@ async function openMenu(name: string) {
 
 const storagePage = (setup?: NonNullable<Parameters<typeof mount>[1]>['entries']) =>
   mount(routes, {
-    entries: setup ?? ['/admin/storage'],
+    entries: setup ?? ['/admin/storage/rules'],
     signIn: true,
     server: { mode: 'accounts', github: { configured: true } },
   })
@@ -73,7 +74,7 @@ describe('the storage page', () => {
   it('is a section of the administration, with the defaults of the policy', async () => {
     m = await storagePage()
     await settle(() => text().includes(ts.admin.remotes.title), 'the storage settings')
-    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.storage)
+    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(tc.sections.storage)
     const input = (label: string) => byLabel(label) as HTMLInputElement
     expect(input(ts.admin.remotes.graceDays).value).toBe('30')
     expect(input(ts.admin.cache.evictAfter).value).toBe('14')
@@ -135,7 +136,7 @@ describe('the storage page', () => {
   })
 
   it('shows what the server refuses in its own words', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/storage/rules'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => byLabel(ts.admin.remotes.require) !== null, 'the form')
     // The platforms come from the connections; the mock lists GitHub, not set up.
     await settle(
@@ -169,6 +170,37 @@ describe('the spaces list and the copy of each space', () => {
     expect(r.status).toBe(200)
     return id
   }
+
+  it("says why a space in use is not evicted, in the page's words and then the server's reason, once each", async () => {
+    m = await open()
+    await settle(() => rows().length === 2, 'the spaces')
+    await connect(m.server, '团队空间')
+    await m.qc.invalidateQueries({ queryKey: ['admin', 'spaces'] })
+    await settle(
+      () =>
+        rowOf('团队空间').querySelector('[data-slot="space-cache"]')!.textContent!.includes(ts.spaces.caches.partial),
+      'a partial clone',
+    )
+    const real = globalThis.fetch
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
+      if (/\/evict$/.test(url))
+        return new Response(JSON.stringify({ error: 'busy', message: 'The space is not evicted: it has drafts.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      return real(input, init)
+    }
+    await openMenu('团队空间')
+    await click(menuItem(ts.spaces.evict))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the confirmation')
+    await click(buttonIn(document.querySelector('[role="alertdialog"]'), ts.spaces.evictConfirm))
+    const dialog = () => document.querySelector('[role="alertdialog"]')!.textContent ?? ''
+    await settle(() => dialog().includes('it has drafts'), 'the reason')
+    expect(dialog().split(ts.spaces.errors.busy)).toHaveLength(2)
+    expect(dialog().split('it has drafts')).toHaveLength(2)
+    globalThis.fetch = real
+  })
 
   it('says what each copy is, keeps a local space out of eviction, and evicts one that follows a remote', async () => {
     m = await open()
@@ -241,7 +273,7 @@ describe('the notice of a space that needs a remote', () => {
     expect(note.dataset.overdue).toBe('false')
     expect(note.textContent).toContain(ts.notice.graceTitle)
     expect(note.querySelector('a')!.getAttribute('href')).toBe('/settings/sync')
-    await click(note.querySelector('button'))
+    await click(note.querySelector(`button[aria-label="${ts.notice.dismiss}"]`))
     await settle(() => document.querySelector('[data-slot="storage-notice"]') === null, 'the notice put away')
   })
 
@@ -251,7 +283,8 @@ describe('the notice of a space that needs a remote', () => {
     const note = document.querySelector<HTMLElement>('[data-slot="storage-notice"]')!
     expect(note.dataset.overdue).toBe('true')
     expect(note.textContent).toContain(ts.notice.overdueTitle)
-    expect(note.querySelector('button')).toBeNull()
+    // Nothing puts it away (the step-by-step button is not that).
+    expect(note.querySelector(`button[aria-label="${ts.notice.dismiss}"]`)).toBeNull()
   })
 
   it('shows nothing to someone who is not asked: a space that follows a remote, or one that is exempt', async () => {

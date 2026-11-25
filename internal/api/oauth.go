@@ -102,7 +102,7 @@ func (s *server) oauthThere(c *call) bool {
 	if s.oauth != nil {
 		return true
 	}
-	writeError(c.w, http.StatusNotFound, "not_found", "no such endpoint")
+	writeError(c.w, http.StatusNotFound, "not_found", "No such endpoint.")
 	return false
 }
 
@@ -118,7 +118,7 @@ func (s *server) oauthOn(c *call) bool {
 			return true
 		}
 	}
-	writeError(c.w, http.StatusNotFound, "not_found", "no such endpoint")
+	writeError(c.w, http.StatusNotFound, "not_found", "No such endpoint.")
 	return false
 }
 
@@ -149,7 +149,7 @@ func (s *server) oauthConsentInfo(c *call) {
 	u := c.user()
 	info, err := s.oauth.Consent(u.ID, c.r.URL.Query().Get("req"))
 	if errors.Is(err, oauth.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "this authorization request has expired, was decided already or is not yours; start again from the client")
+		writeError(c.w, http.StatusNotFound, "not_found", "This authorization request has expired, was decided already or is not yours; start again from the client.")
 		return
 	}
 	if err != nil {
@@ -219,7 +219,7 @@ func (s *server) oauthConsentDecide(c *call) {
 				if _, err := s.oauth.Consent(u.ID, req.Req); err != nil {
 					break
 				}
-				writeError(c.w, http.StatusBadRequest, "invalid", "you are not a member of the space "+clipID(id))
+				writeError(c.w, http.StatusBadRequest, "invalid", "You are not a member of the space "+clipID(id)+".")
 				return
 			}
 		}
@@ -228,7 +228,7 @@ func (s *server) oauthConsentDecide(c *call) {
 	var inv *oauth.Invalid
 	switch {
 	case errors.Is(err, oauth.ErrNotFound):
-		writeError(c.w, http.StatusNotFound, "not_found", "this authorization request has expired, was decided already or is not yours; start again from the client")
+		writeError(c.w, http.StatusNotFound, "not_found", "This authorization request has expired, was decided already or is not yours; start again from the client.")
 	case errors.As(err, &inv):
 		writeError(c.w, http.StatusBadRequest, "invalid", inv.Msg)
 	case err != nil:
@@ -319,7 +319,7 @@ func (s *server) revokeGrant(c *call, owner string) {
 		return
 	}
 	if len(rows) == 0 || (owner != "" && rows[0].UserID != owner) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such grant")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such grant.")
 		return
 	}
 	if owner == "" && s.refuseSiteAdminOwner(c, rows[0].UserID) {
@@ -354,7 +354,7 @@ func (s *server) adminListGrants(c *call) {
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 200 {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit must be from 1 to 200")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit must be from 1 to 200.")
 			return
 		}
 		limit = n
@@ -365,7 +365,7 @@ func (s *server) adminListGrants(c *call) {
 		msStr, id, ok := strings.Cut(string(raw), ":")
 		n, perr := strconv.ParseInt(msStr, 10, 64)
 		if err != nil || !ok || perr != nil || id == "" {
-			writeError(c.w, http.StatusBadRequest, "invalid", "the cursor is not one this server gave")
+			writeError(c.w, http.StatusBadRequest, "invalid", "The cursor is not one this server gave.")
 			return
 		}
 		f.AfterCreated, f.AfterID = time.UnixMilli(n).UTC(), id

@@ -97,7 +97,7 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 		return err
 	}
 	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" || r.Op == "l" {
+		if r.Op == "b" || r.Op == "u" || r.Op == "l" || r.Op == "f" {
 			c.open = append(c.open, r)
 		}
 	}
@@ -122,7 +122,7 @@ func (c *committer) Done(rec jrec) {
 	}
 	c.mu.Lock()
 	for i, r := range c.open {
-		if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path {
+		if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path && r.Rev == rec.Rev {
 			c.open = append(c.open[:i:i], c.open[i+1:]...)
 			break
 		}
@@ -130,6 +130,8 @@ func (c *committer) Done(rec jrec) {
 	c.mu.Unlock()
 	done := rec
 	done.Op += "d"
+	// The fields name the record; its pages are not needed to close it.
+	done.Pages, done.N = nil, 0
 	if err := c.j.append(done); err != nil {
 		c.log.Error("could not journal that the bindings were changed", "error", err)
 	}

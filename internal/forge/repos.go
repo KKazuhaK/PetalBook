@@ -137,7 +137,7 @@ func (p *Provider) pageOf(cursor string) (int, error) {
 	}
 	n, err := strconv.Atoi(cursor)
 	if err != nil || n < 1 || n > 100_000 {
-		return 0, p.errf(http.StatusBadRequest, connections.CodeInvalid, "the cursor is not one this server made")
+		return 0, p.errf(http.StatusBadRequest, connections.CodeInvalid, "The cursor is not one this server made.")
 	}
 	return n, nil
 }
@@ -145,7 +145,7 @@ func (p *Provider) pageOf(cursor string) (int, error) {
 // checkQ bounds a search text: it is passed on to the host.
 func (p *Provider) checkQ(q string) error {
 	if len(q) > 100 || strings.ContainsAny(q, "\x00\r\n") {
-		return p.errf(http.StatusBadRequest, connections.CodeInvalid, "q is at most 100 characters on one line")
+		return p.errf(http.StatusBadRequest, connections.CodeInvalid, "Q is at most 100 characters on one line.")
 	}
 	return nil
 }
@@ -203,7 +203,7 @@ func (p *Provider) Repos(ctx context.Context, userID string, q connections.RepoQ
 		return nil, "", err
 	}
 	if q.Installation != 0 {
-		return nil, "", p.errf(http.StatusBadRequest, connections.CodeInvalid, "this provider has no installations")
+		return nil, "", p.errf(http.StatusBadRequest, connections.CodeInvalid, "This provider has no installations.")
 	}
 	page, err := p.pageOf(q.Cursor)
 	if err != nil {
@@ -242,7 +242,7 @@ func (p *Provider) PlanCreate(ctx context.Context, userID, owner string) (*conne
 	}
 	owner = strings.TrimSpace(owner)
 	if !p.d.validOwner(owner) {
-		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "owner is not an account or group name on %s", p.name())
+		return nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "Owner is not an account or group name on %s.", p.name())
 	}
 	if strings.EqualFold(row.Login, owner) {
 		return &connections.Plan{Owner: row.Login, Via: connections.ViaUser, UserID: userID}, nil
@@ -256,7 +256,7 @@ func (p *Provider) PlanCreate(ctx context.Context, userID, owner string) (*conne
 		return nil, p.userFailed(err)
 	}
 	if o == nil {
-		return nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "you cannot create a repository for %s", owner)
+		return nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "You cannot create a repository for %s.", owner)
 	}
 	return &connections.Plan{Owner: o.Login, Org: o.Login, Via: connections.ViaUser, UserID: userID, Ref: o.NamespaceID}, nil
 }
@@ -308,11 +308,11 @@ func (p *Provider) createError(plan *connections.Plan, err error) error {
 	switch se.Status {
 	case http.StatusBadRequest, http.StatusConflict, http.StatusUnprocessableEntity:
 		if l := strings.ToLower(said); strings.Contains(l, "already been taken") || strings.Contains(l, "already exists") {
-			return p.errf(http.StatusConflict, connections.CodeNameTaken, "%s already has a repository with that name", plan.Owner)
+			return p.errf(http.StatusConflict, connections.CodeNameTaken, "%s already has a repository with that name.", plan.Owner)
 		}
-		return p.errf(http.StatusBadRequest, connections.CodeInvalid, "%s refused the repository: %s", name, quote(said))
+		return p.errf(http.StatusBadRequest, connections.CodeInvalid, "%s refused the repository: %s.", name, quote(said))
 	case http.StatusForbidden, http.StatusNotFound:
-		return p.errf(http.StatusForbidden, connections.CodeRefused, "%s refused to create the repository: %s", name, quote(said))
+		return p.errf(http.StatusForbidden, connections.CodeRefused, "%s refused to create the repository: %s.", name, quote(said))
 	case http.StatusUnauthorized:
 		return p.userFailed(err)
 	}
@@ -341,21 +341,21 @@ func (p *Provider) ResolveExistingIn(ctx context.Context, tenantID, userID, owne
 		return nil, nil, err
 	}
 	if r.Owner != store.ConnProviderSite && r.Owner != tenantID {
-		return nil, nil, p.errf(http.StatusNotFound, connections.CodeNotFound, "no such provider")
+		return nil, nil, p.errf(http.StatusNotFound, connections.CodeNotFound, "No such provider.")
 	}
 	switch via {
 	case "", connections.ViaUser:
 	case connections.ViaApp:
-		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "%s has no App: connect through your own account (via user)", p.name())
+		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "%s has no App: connect through your own account (via user).", p.name())
 	default:
-		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "credential.via is user for this provider")
+		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "credential.via is user for this provider.")
 	}
 	_, tok, err := p.ready(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !p.d.validOwner(owner) || !nameRe.MatchString(name) {
-		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "the repository is written owner/name")
+		return nil, nil, p.errf(http.StatusBadRequest, connections.CodeInvalid, "The repository is written owner/name.")
 	}
 	var repo *repoInfo
 	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
@@ -364,12 +364,12 @@ func (p *Provider) ResolveExistingIn(ctx context.Context, tenantID, userID, owne
 	})
 	if err != nil {
 		if isStatus(err, http.StatusNotFound, http.StatusForbidden) && !isLimited(err) {
-			return nil, nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "your connection cannot push to %s/%s", owner, name)
+			return nil, nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "Your connection cannot push to %s/%s.", owner, name)
 		}
 		return nil, nil, p.userFailed(err)
 	}
 	if !repo.CanPush {
-		return nil, nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "your connection cannot push to %s", repo.FullName)
+		return nil, nil, p.errf(http.StatusForbidden, connections.CodeOwnerNotAllowed, "Your connection cannot push to %s.", repo.FullName)
 	}
 	cr := repoOf(repo)
 	p.detectPartial(ctx, cr, tok)

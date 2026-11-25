@@ -9,6 +9,6 @@ export function failureText(e: unknown): string {
   const big = fileTooLargeText(e)
   if (big) return big
   if (isUnavailable(e))
-    return e.message ? t.fmt.note(t.remote.unavailable.write, e.message) : t.remote.unavailable.write
+    return e.serverMessage ? t.fmt.note(t.remote.unavailable.write, e.serverMessage) : t.remote.unavailable.write
   return e instanceof Error ? e.message : ''
 }

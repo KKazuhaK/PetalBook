@@ -5,6 +5,7 @@ import { Route, Routes } from 'react-router'
 import { keys } from '@/api/hooks'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { tsec } from '@/i18n/security'
 import {
@@ -38,7 +39,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
     </Routes>
   </SidebarProvider>
 )
@@ -61,6 +62,11 @@ const company = {
 async function open(server: MockOptions = {}) {
   m = await mount(routes, { entries: ['/admin/security'], signIn: true, server: { mode: 'accounts', ...server } })
   await settle(() => q('[data-slot="security-form"]') !== null, 'the security form')
+}
+// The providers and the audit log are pages of their own.
+async function openAt(path: string, server: MockOptions = {}) {
+  m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', ...server } })
+  await settle(() => q('[data-slot="admin-layout"]') !== null, 'the administration')
 }
 const lastPut = () => JSON.parse(calls('PUT', '/api/admin/security').at(-1)!.body!)
 
@@ -129,8 +135,8 @@ describe('the audit detail as key=value', () => {
 describe('the security page', () => {
   it('is a section of the administration, after the daily text', async () => {
     await open()
-    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(
-      ta.sections.security,
+    expect(document.querySelector('nav[aria-label="' + tc.nav + '"] [aria-current="page"]')?.textContent).toBe(
+      tc.sections.security,
     )
   })
 
@@ -164,8 +170,10 @@ describe('the security page', () => {
     expect(lastPut()).toEqual({ login: { mode: 'sso_redirect' }, limits: { maxFailures: 12 } })
     await settle(() => (buttonWith(tsec.save) as HTMLButtonElement).disabled, 'saved')
     expect(q<HTMLSelectElement>('#security-mode')!.value).toBe('sso_redirect')
-    // The change is in the audit log below.
-    await settle(() => text().includes(tsec.audit.kinds.security_changed), 'the audit row')
+    // The change is in the audit log, a page of its own.
+    expect(adminRequests(m!.server)('GET', '/api/admin/audit?kind=security_changed').body).toMatchObject({
+      items: [{ kind: 'security_changed' }],
+    })
   })
 
   it('shows a notice when no provider is enabled and the page differs from the choice', async () => {
@@ -306,6 +314,10 @@ describe('the security page', () => {
   })
 })
 
+const openProviders = async (server: MockOptions = {}) => {
+  await openAt('/admin/security/providers', server)
+  await settle(() => buttonWith(tsec.providers.add) !== undefined, 'the providers page')
+}
 describe('the sign-in providers', () => {
   const listed = () => [...document.querySelectorAll<HTMLElement>('[data-slot="providers"] > li')]
   const form = () => q('[data-slot="provider-form"]')!
@@ -318,7 +330,7 @@ describe('the sign-in providers', () => {
   const labelOf = (label: string) => [...form().querySelectorAll('label')].find((l) => words(l) === label)!
 
   it('lists the providers with their status and how many people use them', async () => {
-    await open({
+    await openProviders({
       providers: [
         company,
         {
@@ -339,7 +351,7 @@ describe('the sign-in providers', () => {
   })
 
   it('creates an OpenID Connect provider with the fields of its kind, and shows the address to register and "saved · change"', async () => {
-    await open()
+    await openProviders()
     await settle(() => text().includes(tsec.providers.empty), 'no providers yet')
     await click(buttonWith(tsec.providers.add))
     await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
@@ -374,7 +386,7 @@ describe('the sign-in providers', () => {
   })
 
   it('marks the required fields with a star', async () => {
-    await open({ providers: [company] })
+    await openProviders({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
     await click(buttonWith(tsec.providers.add))
     await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
@@ -397,7 +409,7 @@ describe('the sign-in providers', () => {
   })
 
   it('SAML shows what to give the identity provider: entity id, ACS address, metadata path and certificate', async () => {
-    await open({
+    await openProviders({
       providers: [
         { slug: 'campus', kind: 'saml', name: 'Campus login', saml: { metadataUrl: 'https://idp.example/m' } },
       ],
@@ -419,7 +431,7 @@ describe('the sign-in providers', () => {
   })
 
   it('maps the refusals to words: a taken slug, an issuer in use, a GitHub provider that creates accounts without an organisation', async () => {
-    await open({ providers: [company] })
+    await openProviders({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
     const fill = async (slug: string, issuer: string) => {
       await click(buttonWith(tsec.providers.add))
@@ -442,7 +454,7 @@ describe('the sign-in providers', () => {
   })
 
   it('a provider that cannot be reached is stored switched off, and the person is told', async () => {
-    await open()
+    await openProviders()
     await click(buttonWith(tsec.providers.add))
     await settle(() => q('[data-slot="provider-form"]') !== null, 'the form')
     await type(inputIn(tsec.providers.slug), 'dead')
@@ -458,7 +470,7 @@ describe('the sign-in providers', () => {
   })
 
   it('switching one off and fetching again are single calls', async () => {
-    await open({ providers: [company] })
+    await openProviders({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
     await click(listed()[0].querySelector('[role="switch"]'))
     await settle(() => calls('PATCH', '/api/admin/auth/providers/company').length === 1, 'patched')
@@ -468,7 +480,7 @@ describe('the sign-in providers', () => {
   })
 
   it("deleting asks first; a provider that is somebody's only way in asks again, and then force-deletes", async () => {
-    await open({ providers: [company] })
+    await openProviders({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
     // Somebody whose only way in is this provider (single sign-on made the account).
     const b = await signInThroughProvider()
@@ -484,7 +496,8 @@ describe('the sign-in providers', () => {
   })
 
   it('shows the audit log, filters it by kind and loads more', async () => {
-    await open({ providers: [company] })
+    await openAt('/admin/audit', { providers: [company] })
+    await settle(() => q('#audit-kind') !== null, 'the audit log')
     // 60 rows of one kind, so there is a second page.
     const admin = adminRequests(m!.server)
     for (let i = 0; i < 60; i++) admin('PUT', '/api/admin/security', { limits: { perMinute: 10 + (i % 2) + 1 } })
@@ -498,7 +511,7 @@ describe('the sign-in providers', () => {
   })
 
   it('a person who is not an administrator cannot read it', async () => {
-    await open()
+    await openAt('/admin/audit')
     const person = makePerson(m!.server, 'carol')
     expect(() => person.request('GET', '/api/admin/audit')).toThrow(/403/)
     expect(t.appName).toBeTruthy()

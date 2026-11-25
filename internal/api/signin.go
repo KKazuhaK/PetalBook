@@ -147,7 +147,7 @@ func (s *server) ssoStartJSON(c *call, kind, slug string) {
 func (s *server) ssoStartPOST(c *call) {
 	kind := c.r.PathValue("kind")
 	if !validKind(kind) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such endpoint")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such endpoint.")
 		return
 	}
 	s.ssoStartJSON(c, kind, c.r.PathValue("slug"))
@@ -159,7 +159,7 @@ func (s *server) ssoStartGET(c *call) {
 	c.w.Header().Set("Cache-Control", "no-store")
 	kind := c.r.PathValue("kind")
 	if !validKind(kind) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such endpoint")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such endpoint.")
 		return
 	}
 	res, err := s.auth.SSOBegin(c.r.Context(), kind, c.r.PathValue("slug"), auth.BeginParams{Intent: "login", Return: c.r.URL.Query().Get("return"), LoginHint: c.r.URL.Query().Get("login_hint")}, s.auth.ClientAddr(c.r))
@@ -472,7 +472,7 @@ func (s *server) adminDeleteProvider(c *call) {
 			force = true
 		case "0":
 		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "force is 1 or 0")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Force is 1 or 0.")
 			return
 		}
 	}
@@ -498,7 +498,7 @@ func (s *server) adminAudit(c *call) {
 	if q.Has("limit") {
 		n, err := strconv.Atoi(q.Get("limit"))
 		if err != nil || n < 1 || n > maxAdminLimit {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit is a number from 1 to "+strconv.Itoa(maxAdminLimit)+".")
 			return
 		}
 		limit = n

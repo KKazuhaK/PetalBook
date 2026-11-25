@@ -27,7 +27,7 @@ func (*Git) Info(context.Context, string) (*Info, error) {
 }
 
 func (g *Git) notFound() *Error {
-	return Errorf(GitID, http.StatusNotFound, CodeNotFound, "a plain Git address has nothing to connect")
+	return Errorf(GitID, http.StatusNotFound, CodeNotFound, "A plain Git address has nothing to connect.")
 }
 
 func (g *Git) StartConnect(context.Context, string, StartRequest) (*Start, error) {
@@ -70,7 +70,7 @@ func (g *Git) ResolveExistingIn(context.Context, string, string, string, string,
 func (*Git) RecordLeftover(context.Context, string, *Repo, string) error { return nil }
 
 func (*Git) GitToken(context.Context, *store.Remote, bool) (string, error) {
-	return "", &gitstore.CredentialError{Code: CodeNotConfigured, Msg: "a plain Git address has no connection to take a token from"}
+	return "", &gitstore.CredentialError{Code: CodeNotConfigured, Msg: "A plain Git address has no connection to take a token from."}
 }
 
 func (*Git) Check(context.Context) error { return nil }

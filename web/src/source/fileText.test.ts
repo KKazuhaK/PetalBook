@@ -50,7 +50,7 @@ describe('parseHeader', () => {
       fields: {
         title: '暮雪',
         subtitle: '下一个路口',
-        source: '《某本书》',
+        source: ['《某本书》'],
         tags: ['玉兰', '黄昏'],
         others: { created: '2025-12-03', series: '冬季' },
       },

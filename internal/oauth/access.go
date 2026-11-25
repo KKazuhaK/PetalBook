@@ -58,7 +58,7 @@ func LooksLikeAccessToken(raw string) bool {
 // one made by another process within the cache's time to live.
 func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Principal, error) {
 	if blocked, wait := s.failLimit.Blocked(ip); blocked {
-		return nil, &tokens.Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "too many failed tokens from this address; wait before trying again",
+		return nil, &tokens.Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "Too many failed tokens from this address; wait before trying again.",
 			RetryAfter: time.Duration(wait) * time.Second}
 	}
 	on, err := s.On(ctx)
@@ -66,7 +66,7 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 		return nil, err
 	}
 	if !on {
-		return nil, refuse(http.StatusNotFound, "not_found", "no such endpoint")
+		return nil, refuse(http.StatusNotFound, "not_found", "No such endpoint.")
 	}
 	now := s.now()
 	v, bad := s.verify(raw, now)
@@ -80,18 +80,18 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 	}
 	if e == nil {
 		s.failLimit.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_revoked", "this authorization was revoked")
+		return nil, refuse(http.StatusUnauthorized, "token_revoked", "This authorization was revoked.")
 	}
 	u, err := s.cfg.Users.CachedUser(ctx, e.userID)
 	if errors.Is(err, store.ErrNotFound) {
 		s.failLimit.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_invalid", "this is not a token this server issued")
+		return nil, refuse(http.StatusUnauthorized, "token_invalid", "This is not a token this server issued.")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if u.Disabled || s.cfg.Store != nil && s.cfg.Store.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
-		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "the account this authorization belongs to is disabled")
+		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "The account this authorization belongs to is disabled.")
 	}
 	g := e.grant
 	if e.write && !v.write { // a refresh asked for less than the grant
@@ -108,7 +108,7 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 // verify checks an access token in process. Whatever is wrong with it is one of
 // the refusals of an API token.
 func (s *Service) verify(raw string, now time.Time) (verifiedToken, *tokens.Error) {
-	invalid := refuse(http.StatusUnauthorized, "token_invalid", "this is not a token this server issued")
+	invalid := refuse(http.StatusUnauthorized, "token_invalid", "This is not a token this server issued.")
 	if len(raw) > 4096 {
 		return verifiedToken{}, invalid
 	}
@@ -143,7 +143,7 @@ func (s *Service) verify(raw string, now time.Time) (verifiedToken, *tokens.Erro
 	}
 	exp := c.Expiry.Time()
 	if !now.Before(exp) {
-		return verifiedToken{}, refuse(http.StatusUnauthorized, "token_expired", "this access token has expired")
+		return verifiedToken{}, refuse(http.StatusUnauthorized, "token_expired", "This access token has expired.")
 	}
 	if (c.NotBefore != nil && now.Before(c.NotBefore.Time())) || (c.IssuedAt != nil && now.Before(c.IssuedAt.Time())) {
 		return verifiedToken{}, invalid

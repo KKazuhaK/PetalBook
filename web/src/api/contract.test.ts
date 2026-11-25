@@ -792,6 +792,123 @@ function suite(target: Target) {
           }
         })
 
+        it('pages the list by cursor in each sort, filters by role and state, and refuses what it does not have', async () => {
+          const names = [uniq('pgx'), uniq('pgy'), uniq('pgz')]
+          const made: Awaited<ReturnType<typeof newMember>>[] = []
+          for (const n of names) made.push(await newMember(n))
+          await as(admin, () => adminApi.updateUser(made[1].user.id, { disabled: true }))
+          for (const sort of ['created', 'name', 'lastActive'] as const) {
+            for (const order of ['asc', 'desc'] as const) {
+              const whole = (await as(admin, () => adminApi.users({ sort, order, limit: 200 }))).users.map((u) => u.id)
+              const walked: string[] = []
+              let cursor: string | undefined
+              for (let i = 0; i < 400; i++) {
+                const page = await as(admin, () => adminApi.users({ sort, order, limit: 2, cursor }))
+                expect(page.users.length).toBeLessThanOrEqual(2)
+                walked.push(...page.users.map((u) => u.id))
+                if (!page.next) break
+                cursor = page.next
+              }
+              // The page of 200 is the whole list as long as there are fewer than that.
+              if (whole.length < 200) expect(walked, `${sort} ${order}`).toEqual(whole)
+              expect(new Set(walked).size).toBe(walked.length)
+            }
+          }
+          const disabled = (await as(admin, () => adminApi.users({ state: 'disabled', limit: 200 }))).users
+          expect(disabled.map((u) => u.id)).toContain(made[1].user.id)
+          expect(disabled.every((u) => u.disabled)).toBe(true)
+          const enabled = (await as(admin, () => adminApi.users({ state: 'enabled', limit: 200 }))).users
+          expect(enabled.map((u) => u.id)).not.toContain(made[1].user.id)
+          const members = (await as(admin, () => adminApi.users({ role: 'member', limit: 200 }))).users
+          expect(members.every((u) => u.role === 'member')).toBe(true)
+          const admins = (await as(admin, () => adminApi.users({ role: 'admin', limit: 200 }))).users
+          expect(admins.every((u) => u.role === 'admin')).toBe(true)
+          for (const bad of [
+            'sort=age',
+            'order=up',
+            'role=king',
+            'state=gone',
+            'inactiveDays=x',
+            'activeDays=-1',
+            'cursor=junk',
+          ]) {
+            const r = await call(admin, 'GET', `/api/users?${bad}`)
+            expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+          }
+          // A cursor of one sort is not one of another.
+          const first = await as(admin, () => adminApi.users({ limit: 1, sort: 'created' }))
+          if (first.next) {
+            const r = await call(admin, 'GET', `/api/users?sort=name&cursor=${encodeURIComponent(first.next)}`)
+            expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+          }
+        })
+
+        it('has one person with their counts and memberships, and a member may not read either', async () => {
+          const m = await newMember(uniq('on'))
+          const one = await as(admin, () => adminApi.user(m.user.id))
+          expect(one.user).toMatchObject({ id: m.user.id, username: m.user.username, passkeys: 0, sso: 0 })
+          const mem = await as(admin, () => adminApi.userMemberships(m.user.id))
+          expect(mem.spaces.some((x) => x.personal)).toBe(true)
+          expect(Array.isArray(mem.groups)).toBe(true)
+          expect((await call(admin, 'GET', '/api/users/NOSUCHUSER')).json.error).toBe('not_found')
+          for (const path of [`/api/users/${m.user.id}`, `/api/users/${m.user.id}/memberships`]) {
+            const r = await call(m.browser, 'GET', path)
+            expect([r.status, r.json.error], path).toEqual([403, 'forbidden'])
+          }
+        })
+
+        it("lists a person's sessions and connected accounts for a site administrator, and ends them as signed out elsewhere", async () => {
+          const m = await newMember(uniq('se'))
+          const second = browser()
+          expect(
+            (await call(second, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+          ).toBe(200)
+          const { sessions } = await as(admin, () => adminApi.userSessions(m.user.id))
+          expect(sessions.length).toBeGreaterThanOrEqual(2)
+          for (const s of sessions) {
+            expect(s.id).toMatch(/^[0-9a-f]{64}$|.+/)
+            expect(typeof s.method).toBe('string')
+            expect(Date.parse(s.lastUsed)).not.toBeNaN()
+          }
+          expect(sessions.some((s) => s.method === 'password')).toBe(true)
+          // End one: the browser that held it is told it signed out elsewhere; the other still works.
+          const gone = sessions.find((s) => s.method === 'password')!
+          await as(admin, () => adminApi.endUserSession(m.user.id, gone.id))
+          const left = (await as(admin, () => adminApi.userSessions(m.user.id))).sessions
+          expect(left.map((s) => s.id)).not.toContain(gone.id)
+          const missing = await call(admin, 'DELETE', `/api/users/${m.user.id}/sessions/${gone.id}`)
+          expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
+          const answers = await Promise.all([
+            call(m.browser, 'GET', '/api/account'),
+            call(second, 'GET', '/api/account'),
+          ])
+          expect(answers.filter((r) => r.status === 401 && r.json.reason === 'signed_out_elsewhere')).toHaveLength(1)
+          // All of them.
+          const ended = await as(admin, () => adminApi.endUserSessions(m.user.id))
+          expect(ended.ended).toBe(left.length)
+          expect((await as(admin, () => adminApi.userSessions(m.user.id))).sessions).toEqual([])
+          for (const b of [m.browser, second]) {
+            const r = await call(b, 'GET', '/api/account')
+            expect([r.status, r.json.reason]).toEqual([401, 'signed_out_elsewhere'])
+          }
+          // No connected account to list, and no such one to disconnect.
+          expect((await as(admin, () => adminApi.userIdentities(m.user.id))).identities).toEqual([])
+          const none = await call(admin, 'DELETE', `/api/users/${m.user.id}/identities/NOSUCHIDEN`)
+          expect([none.status, none.json.error]).toEqual([404, 'not_found'])
+          // A member of any kind is refused, and a person who does not exist is none.
+          const again = browser()
+          await call(again, 'POST', '/api/login', { username: m.user.username, password: m.password })
+          for (const [method, path] of [
+            ['GET', `/api/users/${m.user.id}/sessions`],
+            ['DELETE', `/api/users/${m.user.id}/sessions`],
+            ['GET', `/api/users/${m.user.id}/identities`],
+          ]) {
+            const r = await call(again, method, path)
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+          }
+          expect((await call(admin, 'GET', '/api/users/NOSUCHUSER/sessions')).json.error).toBe('not_found')
+        })
+
         it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
           const m = await newMember(uniq('us'))
           const { users } = await as(admin, () => adminApi.users())
@@ -1541,7 +1658,9 @@ function suite(target: Target) {
             const cleared = await call(admin, 'PATCH', path, { quota: { spaces: null, bytes: null, pages: null } })
             expect((cleared.json.user as User).quota).toEqual({ spaces: null, bytes: null, pages: null })
           }
-          const listed = ((await call(admin, 'GET', '/api/users')).json.users as User[]).find((x) => x.id === m.user.id)
+          const listed = ((await call(admin, 'GET', `/api/users?q=${m.user.username}`)).json.users as User[]).find(
+            (x) => x.id === m.user.id,
+          )
           expect(listed?.quota).toEqual({ spaces: null, bytes: null, pages: null })
         })
 
@@ -1854,6 +1973,133 @@ function suite(target: Target) {
           ] as [string, string, unknown][]) {
             const r = await call(editor.browser, method, path, body)
             expect([r.status, r.json?.error], `editor ${method} ${path}`).toEqual([403, 'no_permission'])
+          }
+        })
+      })
+
+      describe('notifications (3.10, part 4)', () => {
+        const notes = async (b: Browser, query = '') => (await call(b, 'GET', `/api/notifications${query}`)).json
+        const count = async (b: Browser) => (await call(b, 'GET', '/api/notifications/unread')).json.count as number
+
+        it('adding a member tells them, once, with the facts a sentence is made of; nobody else is told', async () => {
+          const owner = await newMember(uniq('no'))
+          const guest = await newMember(uniq('ng'))
+          const other = await newMember(uniq('nx'))
+          const sp = await ownedSpace(owner, 'Notified')
+          expect(await count(guest.browser)).toBe(0)
+          await addMember(owner, sp.id, guest.user.username, 'editor')
+          expect(await count(guest.browser)).toBe(1)
+          const l = await notes(guest.browser)
+          expect(l.unread).toBe(1)
+          expect(l.next).toBe('')
+          expect(l.items).toHaveLength(1)
+          expect(l.items[0]).toMatchObject({
+            kind: 'invite',
+            ref: sp.id,
+            payload: { space: 'Notified', role: 'editor', by: owner.user.name },
+            read: false,
+          })
+          expect(typeof l.items[0].id).toBe('string')
+          expect(l.items[0].at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/)
+          // Not the person who added them, not someone who is no member.
+          expect(await count(owner.browser)).toBe(0)
+          expect(await count(other.browser)).toBe(0)
+          // A change of role is no invitation.
+          await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, { role: 'viewer' })
+          expect(await count(guest.browser)).toBe(1)
+        })
+
+        it('marks one as read for the person only, all of them, and answers the count that is left', async () => {
+          const owner = await newMember(uniq('mo2'))
+          const guest = await newMember(uniq('mg2'))
+          const a = await ownedSpace(owner, 'First')
+          const b = await ownedSpace(owner, 'Second')
+          await addMember(owner, a.id, guest.user.username, 'viewer')
+          await addMember(owner, b.id, guest.user.username, 'viewer')
+          const l = await notes(guest.browser)
+          expect(l.items.map((i: { ref: string }) => i.ref)).toEqual([b.id, a.id]) // newest first
+          // Another person cannot read it for them, with its id or without.
+          const stolen = await call(owner.browser, 'POST', '/api/notifications/read', { ids: [l.items[0].id] })
+          expect([stolen.status, stolen.json.unread]).toEqual([200, 0])
+          expect(await count(guest.browser)).toBe(2)
+          const one = await call(guest.browser, 'POST', '/api/notifications/read', {
+            ids: [l.items[0].id, 'no-such-id'],
+          })
+          expect([one.status, one.json.unread]).toEqual([200, 1])
+          const after = await notes(guest.browser)
+          expect(after.items.map((i: { read: boolean }) => i.read)).toEqual([true, false])
+          expect((await notes(guest.browser, '?unread=1')).items).toHaveLength(1)
+          const all = await call(guest.browser, 'POST', '/api/notifications/read-all', {})
+          expect([all.status, all.json.unread]).toEqual([200, 0])
+          expect(await count(guest.browser)).toBe(0)
+        })
+
+        it('is paged by a cursor, newest first, and filtered by kind', async () => {
+          const owner = await newMember(uniq('mo3'))
+          const guest = await newMember(uniq('mg3'))
+          const spaces: SpaceInfo[] = []
+          for (let i = 0; i < 3; i++) spaces.push(await ownedSpace(owner, `Paged ${i}`))
+          for (const sp of spaces) await addMember(owner, sp.id, guest.user.username, 'viewer')
+          const first = await notes(guest.browser, '?limit=2')
+          expect(first.items).toHaveLength(2)
+          expect(first.next).not.toBe('')
+          const second = await notes(guest.browser, `?limit=2&cursor=${encodeURIComponent(first.next)}`)
+          expect(second.items).toHaveLength(1)
+          expect(second.next).toBe('')
+          expect([...first.items, ...second.items].map((i: { ref: string }) => i.ref)).toEqual(
+            [...spaces].reverse().map((s) => s.id),
+          )
+          expect((await notes(guest.browser, '?kind=invite')).items).toHaveLength(3)
+          expect((await notes(guest.browser, '?kind=sync')).items).toEqual([])
+          expect((await notes(guest.browser, '?kind=mention')).items).toEqual([])
+        })
+
+        it('refuses what it should, and a stranger has nothing', async () => {
+          const m = await newMember(uniq('nr'))
+          for (const q of ['?kind=bogus', '?limit=0', '?limit=101', '?limit=x']) {
+            const r = await call(m.browser, 'GET', `/api/notifications${q}`)
+            expect([q, r.status, r.json.error]).toEqual([q, 400, 'invalid'])
+          }
+          for (const body of [{}, { ids: [] }]) {
+            const r = await call(m.browser, 'POST', '/api/notifications/read', body)
+            expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+          }
+          expect((await call(m.browser, 'POST', '/api/notifications/read-all', { kind: 'bogus' })).status).toBe(400)
+          for (const [method, path] of [
+            ['GET', '/api/notifications'],
+            ['GET', '/api/notifications/unread'],
+            ['POST', '/api/notifications/read-all'],
+            ['GET', '/api/prefs'],
+          ] as const) {
+            const r = await call(browser(), method, path, method === 'GET' ? undefined : {})
+            expect([path, r.status, r.json.error]).toEqual([path, 401, 'unauthenticated'])
+          }
+        })
+
+        it('keeps each person’s preferences apart', async () => {
+          const a = await newMember(uniq('pfa'))
+          const b = await newMember(uniq('pfb'))
+          await call(a.browser, 'PATCH', '/api/prefs', { set: { 'pb.table.users': { pageSize: 100 }, tour: 'done' } })
+          const mine = (await call(a.browser, 'GET', '/api/prefs')).json
+          expect(mine.personal).toBe(true)
+          expect(mine.prefs).toEqual({ 'pb.table.users': { pageSize: 100 }, tour: 'done' })
+          expect((await call(b.browser, 'GET', '/api/prefs')).json.prefs).toEqual({})
+          // A write that would take the file past 100 keys is refused, and nothing of it is kept.
+          const many = Object.fromEntries(Array.from({ length: 99 }, (_, i) => [`k.${i}`, i]))
+          const full = await call(a.browser, 'PATCH', '/api/prefs', { set: many })
+          expect([full.status, full.json.error]).toEqual([400, 'prefs_full'])
+          expect(Object.keys((await call(a.browser, 'GET', '/api/prefs')).json.prefs)).toHaveLength(2)
+          // A personal space that is switched off holds nothing: the answer says so.
+          const own = (await call(b.browser, 'GET', '/api/spaces')).json.spaces.find(
+            (x: { personal: boolean }) => x.personal,
+          )
+          await as(admin, () => adminApi.adminDisableSpace(own.id))
+          try {
+            const r = await call(b.browser, 'PATCH', '/api/prefs', { set: { k: 1 } })
+            expect([r.status, r.json.personal]).toEqual([200, false])
+            expect((await call(b.browser, 'GET', '/api/prefs')).json).toEqual({ personal: false, prefs: {} })
+          } finally {
+            await as(admin, () => adminApi.adminEnableSpace(own.id))
           }
         })
       })
@@ -2976,7 +3222,7 @@ function suite(target: Target) {
           })
           expect(done.status).toBe(200)
           expect(done.json).toMatchObject({ kind: 'user', user: { id: leaver.user.id } })
-          const users = (await call(admin, 'GET', '/api/users')).json.users as User[]
+          const users = (await call(admin, 'GET', `/api/users?q=${leaver.user.username}`)).json.users as User[]
           expect(users.some((u) => u.id === leaver.user.id)).toBe(false)
           expect((await roleOf(heir.browser, shared.id))?.role).toBe('owner')
           const back = await call(admin, 'POST', `/api/admin/recycle/${done.json.id}/restore`, {})
@@ -2986,7 +3232,9 @@ function suite(target: Target) {
           for (const k of back.json.skipped as { name: string; reason: string }[])
             expect(k).toEqual(expect.objectContaining({ name: expect.any(String), reason: expect.any(String) }))
           expect(
-            ((await call(admin, 'GET', '/api/users')).json.users as User[]).some((u) => u.id === leaver.user.id),
+            ((await call(admin, 'GET', `/api/users?q=${leaver.user.username}`)).json.users as User[]).some(
+              (u) => u.id === leaver.user.id,
+            ),
           ).toBe(true)
         })
 
@@ -3094,6 +3342,42 @@ function suite(target: Target) {
       })
     },
   )
+
+  describe('notifications and preferences (3.10, part 4)', () => {
+    it('the list, the count and the marks answer in both modes, with nothing to say yet', async () => {
+      const l = (await call(admin, 'GET', '/api/notifications')).json
+      expect(Array.isArray(l.items)).toBe(true)
+      expect(typeof l.next).toBe('string')
+      expect(typeof l.unread).toBe('number')
+      const c = (await call(admin, 'GET', '/api/notifications/unread')).json
+      expect(Object.keys(c)).toEqual(['count'])
+      expect(c.count).toBeGreaterThanOrEqual(0)
+      // Marking all as read leaves nothing unread (the problems of the space are read as they are now).
+      const all = await call(admin, 'POST', '/api/notifications/read-all', {})
+      expect([all.status, all.json.unread]).toEqual([200, 0])
+      expect((await call(admin, 'GET', '/api/notifications/unread')).json.count).toBe(0)
+      // An id nobody has changes nothing.
+      const none = await call(admin, 'POST', '/api/notifications/read', { ids: ['0000000ZZZ'] })
+      expect([none.status, none.json.unread]).toEqual([200, 0])
+      expect((await call(admin, 'GET', '/api/notifications?kind=bogus')).status).toBe(400)
+    })
+
+    it('the person’s own preferences: read back at once, a null takes a key away, bad names and sizes are refused', async () => {
+      const get = async () => (await call(admin, 'GET', '/api/prefs')).json
+      const first = await get()
+      expect(typeof first.personal).toBe('boolean')
+      const key = `contract.${run}`
+      const set = await call(admin, 'PATCH', '/api/prefs', { set: { [key]: { widths: { name: 0.3 }, hidden: ['a'] } } })
+      expect([set.status, typeof set.json.personal]).toEqual([200, 'boolean'])
+      if (first.personal) expect((await get()).prefs[key]).toEqual({ widths: { name: 0.3 }, hidden: ['a'] })
+      await call(admin, 'PATCH', '/api/prefs', { set: { [key]: null } })
+      expect((await get()).prefs[key]).toBeUndefined()
+      for (const body of [{}, { set: {} }, { set: 'x' }, { set: { 'has space': 1 } }, { set: { '../x': 1 } }]) {
+        const r = await call(admin, 'PATCH', '/api/prefs', body)
+        expect([JSON.stringify(body), r.status, r.json.error]).toEqual([JSON.stringify(body), 400, 'invalid'])
+      }
+    })
+  })
 
   describe('the daily text and favourites', () => {
     const enc = encodeURIComponent
@@ -4598,6 +4882,134 @@ function suite(target: Target) {
       expect(ids(await walk({ folder: f, createdTo: '2020-03-16' }))).toEqual([older.id])
       expect(ids(await walk({ folder: f, createdFrom: '2020-03-16', updatedFrom: dayOf(saved.updated) }))).toEqual(
         expect.arrayContaining([titled.id]),
+      )
+    })
+  })
+
+  describe('sources, icons and colours (3.10)', () => {
+    const folder = `${root}/style`
+    const titles = (items: PageSummary[]) => items.map((i) => i.title).sort()
+
+    it('the source is a list: filtered, sorted, counted, and the sources are listed by use', async () => {
+      await S.createFolder(folder)
+      await mk(folder, { title: 'sA', source: ['书', '电影'] })
+      await mk(folder, { title: 'sB', source: ['书'] })
+      await mk(folder, { title: 'sC' })
+      const all = await walk({ folder })
+      expect(all.find((i) => i.title === 'sA')?.source).toEqual(['书', '电影'])
+      expect(all.find((i) => i.title === 'sC')?.source).toEqual([])
+      const f = (values: string[]) => walk({ folder, filter: [{ key: 'source', op: 'in', values }] })
+      expect(titles(await f(['电影']))).toEqual(['sA'])
+      expect(titles(await f(['书']))).toEqual(['sA', 'sB'])
+      // Sorted by the first source, the pages with none last.
+      const sorted = await walk({ folder, sort: 'prop:source' })
+      expect(sorted.at(-1)?.title).toBe('sC')
+      const used = (await S.sources()).sources
+      expect(used.find((x) => x.source === '书')?.pages).toBeGreaterThanOrEqual(2)
+      expect(used.find((x) => x.source === '电影')?.pages).toBeGreaterThanOrEqual(1)
+      // The sources are not among the properties of the page.
+      const withProps = await walk({ folder, props: true })
+      expect(withProps.find((i) => i.title === 'sA')?.props ?? {}).not.toHaveProperty('source')
+    })
+
+    it('a folder has an icon and a colour that follow it when it moves; a page has them in its header', async () => {
+      const a = `${folder}/a${run}`
+      await S.createFolder(a)
+      await S.createFolder(`${a}/in`)
+      expect(await S.setFolderStyle(a, 'book-open', 'teal')).toMatchObject({
+        folder: a,
+        icon: 'book-open',
+        color: 'teal',
+      })
+      await S.setFolderStyle(`${a}/in`, '🌸', '')
+      const styles = (await S.appearance()).folders
+      expect(styles).toContainEqual({ folder: a, icon: 'book-open', color: 'teal' })
+      expect(styles).toContainEqual({ folder: `${a}/in`, icon: '🌸' })
+      expect((await failure(S.setFolderStyle(a, 'x', 'mauve' as never))).code).toBe('invalid')
+      // A name the icons do not have (and `constructor`, a key of every object) is refused, so is more than one emoji.
+      for (const icon of ['constructor', '__proto__', 'not-an-icon', '🌸🌸', '<b>'])
+        expect((await failure(S.setFolderStyle(a, icon, ''))).code).toBe('invalid')
+      expect((await failure(mk(folder, { title: 'sX', icon: 'constructor' }))).code).toBe('invalid')
+      expect((await failure(mk(folder, { title: 'sX', color: 'mauve' }))).code).toBe('invalid')
+      expect((await failure(S.setFolderStyle(`${a}/nowhere`, 'x', ''))).code).toBe('not_found')
+      const b = `${folder}/b${run}`
+      await S.moveFolder(a, b)
+      const moved = (await S.appearance()).folders
+      expect(moved).toContainEqual({ folder: b, icon: 'book-open', color: 'teal' })
+      expect(moved).toContainEqual({ folder: `${b}/in`, icon: '🌸' })
+      expect(moved.some((x) => x.folder === a)).toBe(false)
+      await S.setFolderStyle(b, '', '')
+      expect((await S.appearance()).folders.some((x) => x.folder === b)).toBe(false)
+      const p = await mk(folder, { title: 'sI', icon: 'flower', color: 'pink' })
+      expect((await walk({ folder })).find((i) => i.id === p.id)).toMatchObject({ icon: 'flower', color: 'pink' })
+    })
+
+    it("the presets of the sources are the space's, and null goes back to the defaults", async () => {
+      expect((await S.appearance()).sourcePresets).toBeNull()
+      expect(await S.setSourcePresets([' 书 ', '电影', '书', ''])).toEqual({ presets: ['书', '电影'] })
+      expect((await S.appearance()).sourcePresets).toEqual(['书', '电影'])
+      // None is not the defaults: an empty list stays one.
+      expect(await S.setSourcePresets([])).toEqual({ presets: [] })
+      expect((await S.appearance()).sourcePresets).toEqual([])
+      await S.setSourcePresets(null)
+      expect((await S.appearance()).sourcePresets).toBeNull()
+    })
+
+    it('renames the key of a field of a type in the type and in the pages that have it', async () => {
+      const name = `rn${run}`
+      const rf = `${root}/rn-fields`
+      const t = await S.putType(name, {
+        title: 'R',
+        fields: [
+          { key: 'status', kind: 'text' },
+          { key: 'due', kind: 'date' },
+        ],
+      })
+      await S.createFolder(rf)
+      await S.bindFolder(rf, name)
+      const a = await mk(rf, { title: 'rA', status: 'open', due: '2026-12-01' })
+      const both = await mk(rf, { title: 'rB', status: 'open', state: 'kept' })
+      await mk(`${root}/rn-other`, { title: 'rO', status: 'kept' })
+      await S.putViews(
+        { folder: rf },
+        {
+          baseRev: (await S.views({ folder: rf })).rev,
+          views: [
+            {
+              name: 'B',
+              layout: 'board',
+              group: 'status',
+              sort: '-prop:status',
+              filter: [{ key: 'status', op: 'in', values: ['open'] }],
+              hidden: ['status'],
+            },
+          ],
+        },
+      )
+      const r = await S.renameTypeField(name, { baseRev: t.rev, from: 'status', to: 'state' })
+      expect(r.pages).toBe(1)
+      // A page that has the new key already is left as it is, and said so.
+      expect(r.skipped).toEqual([{ id: both.id, path: both.path, reason: 'has_key' }])
+      expect((await S.getPage(both.id)).meta).toMatchObject({ status: 'open', state: 'kept' })
+      // The views of the folder follow the key.
+      expect((await S.views({ folder: rf })).views[0]).toMatchObject({
+        group: 'state',
+        sort: '-prop:state',
+        filter: [{ key: 'state', op: 'in', values: ['open'] }],
+        hidden: ['state'],
+      })
+      expect(r.type.fields.map((f) => f.key)).toEqual(['state', 'due'])
+      expect((await S.getPage(a.id)).meta).toMatchObject({ state: 'open', due: '2026-12-01' })
+      expect('status' in (await S.getPage(a.id)).meta).toBe(false)
+      expect((await failure(S.renameTypeField(name, { baseRev: r.type.rev, from: 'state', to: 'due' }))).code).toBe(
+        'invalid',
+      )
+      expect((await failure(S.renameTypeField(name, { baseRev: r.type.rev, from: 'nothing', to: 'x' }))).code).toBe(
+        'not_found',
+      )
+      expect((await failure(S.renameTypeField(name, { baseRev: t.rev, from: 'state', to: 'y' }))).code).toBe('conflict')
+      expect((await failure(S.renameTypeField(`nope${run}`, { baseRev: '', from: 'a', to: 'b' }))).code).toBe(
+        'not_found',
       )
     })
   })

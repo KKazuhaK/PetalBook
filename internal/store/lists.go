@@ -35,11 +35,13 @@ type sortSpec struct {
 
 // keyOrder is a sort and a direction.
 type keyOrder struct {
+	// list names the list the cursors are for: a cursor of another list is bad.
+	list  string
 	spec  sortSpec
 	order string // "asc" or "desc"
 }
 
-func pickSort(specs []sortSpec, name, order string) (keyOrder, bool) {
+func pickSort(list string, specs []sortSpec, name, order string) (keyOrder, bool) {
 	for _, sp := range specs {
 		if sp.name != name {
 			continue
@@ -53,7 +55,7 @@ func pickSort(specs []sortSpec, name, order string) (keyOrder, bool) {
 		if order != "asc" && order != "desc" {
 			return keyOrder{}, false
 		}
-		return keyOrder{sp, order}, true
+		return keyOrder{list, sp, order}, true
 	}
 	return keyOrder{}, false
 }
@@ -74,7 +76,7 @@ func (k keyOrder) orderBy(idCol string) string {
 	return k.spec.col + " " + dir + ", " + idCol + " " + idDir
 }
 
-func (k keyOrder) tag() string { return k.spec.name + "." + k.order }
+func (k keyOrder) tag() string { return k.list + "." + k.spec.name + "." + k.order }
 
 // cursorOf is the cursor of the page that continues after a row whose sort value
 // is v (a string or an int64) and id, in the range of rows without a value
@@ -290,7 +292,7 @@ func ListAllSpaces(ctx context.Context, q Q, sc Scope, f SpaceFilter) (out []Adm
 	if f.Sort == "" {
 		f.Sort = "created"
 	}
-	k, ok := pickSort(spaceSorts, f.Sort, f.Order)
+	k, ok := pickSort("spaces", spaceSorts, f.Sort, f.Order)
 	if !ok {
 		return nil, "", ErrBadFilter
 	}
@@ -535,7 +537,7 @@ func ListPeople(ctx context.Context, q Q, d Dialect, sc Scope, f PeopleFilter) (
 	if f.Sort == "" {
 		f.Sort = "held"
 	}
-	k, ok := pickSort(personSorts, f.Sort, f.Order)
+	k, ok := pickSort("people", personSorts, f.Sort, f.Order)
 	if !ok {
 		return nil, "", ErrBadFilter
 	}

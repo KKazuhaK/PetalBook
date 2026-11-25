@@ -11,7 +11,7 @@ export function draftToCreateInput(draft: StoredDraft, toMarkdown: (doc: DocJSON
   const meta: PageMeta = {}
   if (f.title) meta.title = f.title
   if (f.subtitle) meta.subtitle = f.subtitle
-  if (f.source) meta.source = f.source
+  if (f.source.length) meta.source = f.source
   if (f.tags.length) meta.tags = f.tags
   // Header keys written in the source view come along; the server gives the
   // new page its own id and creation date.

@@ -4,6 +4,8 @@ import { en } from './en'
 import { zhCN } from './zh-CN'
 import { adminEn } from './admin/en'
 import { adminZhCN } from './admin/zh-CN'
+import { consoleEn } from './console/en'
+import { consoleZhCN } from './console/zh-CN'
 import { propsEn } from './props/en'
 import { propsZhCN } from './props/zh-CN'
 import { boardsEn } from './boards/en'
@@ -137,6 +139,7 @@ describe('dictionaries', () => {
     const problems: string[] = []
     walk(zhCN, en, 't', problems)
     walk(adminZhCN, adminEn, 'admin', problems)
+    walk(consoleZhCN, consoleEn, 'console', problems)
     walk(propsZhCN, propsEn, 'props', problems)
     walk(boardsZhCN, boardsEn, 'boards', problems)
     walk(githubZhCN, githubEn, 'github', problems)
@@ -165,6 +168,7 @@ describe('dictionaries', () => {
     }
     scan(en, 't')
     scan(adminEn, 'admin')
+    scan(consoleEn, 'console')
     scan(propsEn, 'props')
     scan(boardsEn, 'boards')
     scan(githubEn, 'github')

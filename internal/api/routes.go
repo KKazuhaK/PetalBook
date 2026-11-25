@@ -146,7 +146,15 @@ var routeTable = []route{
 	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
 
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
+	{"GET", "/api/users/{id}", admin, true, false, false, (*server).getUser},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
+	{"GET", "/api/users/{id}/memberships", admin, true, false, false, (*server).userMemberships},
+	// The sessions and connected accounts of a person are for administrators of the whole server (a tenant's administrator is answered 404).
+	{"GET", "/api/users/{id}/sessions", admin, true, false, false, (*server).userSessions},
+	{"DELETE", "/api/users/{id}/sessions", admin, true, false, false, (*server).endUserSessions},
+	{"DELETE", "/api/users/{id}/sessions/{session}", admin, true, false, false, (*server).endUserSession},
+	{"GET", "/api/users/{id}/identities", admin, true, false, false, (*server).userIdentities},
+	{"DELETE", "/api/users/{id}/identities/{identity}", admin, true, false, false, (*server).disconnectUserIdentity},
 	{"DELETE", "/api/users/{id}", admin, true, false, false, (*server).adminDeleteUser},
 	{"POST", "/api/invites", admin, true, false, false, (*server).createInvite},
 	{"GET", "/api/invites", admin, true, false, false, (*server).listInvites},
@@ -260,12 +268,24 @@ var routeTable = []route{
 	{"GET", "/api/spaces/{space}/types", inSpace(perm.Read), false, false, false, (*server).getTypes},
 	{"PUT", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).putType},
 	{"DELETE", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteType},
+	{"GET", "/api/spaces/{space}/appearance", inSpace(perm.Read), false, false, false, (*server).getAppearance},
+	{"PUT", "/api/spaces/{space}/folders/style", inSpace(perm.Write), false, false, false, (*server).putFolderStyle},
+	{"GET", "/api/spaces/{space}/sources", inSpace(perm.Read), false, false, false, (*server).getSources},
+	{"PUT", "/api/spaces/{space}/sources/presets", inSpace(perm.Manage), false, false, false, (*server).putSourcePresets},
+	{"POST", "/api/spaces/{space}/types/{name}/rename-field", inSpace(perm.Manage), false, false, false, (*server).renameTypeField},
 	{"PUT", "/api/spaces/{space}/folders/type", inSpace(perm.Manage), false, false, false, (*server).putFolderType},
 	{"GET", "/api/spaces/{space}/templates", inSpace(perm.Read), false, false, false, (*server).getTemplates},
 	{"PUT", "/api/spaces/{space}/templates/defaults", inSpace(perm.Manage), false, false, false, (*server).putTemplateDefaults},
 	{"GET", "/api/spaces/{space}/templates/{name}", inSpace(perm.Read), false, false, false, (*server).getTemplate},
 	{"PUT", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage), false, false, false, (*server).putTemplate},
 	{"DELETE", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteTemplate},
+	{"GET", "/api/notifications", signedIn, false, false, false, (*server).listNotifications},
+	{"GET", "/api/notifications/unread", signedIn, false, false, false, (*server).getUnreadNotifications},
+	{"POST", "/api/notifications/read", signedIn, false, false, false, (*server).markNotificationsRead},
+	{"POST", "/api/notifications/read-all", signedIn, false, false, false, (*server).markAllNotificationsRead},
+	{"GET", "/api/prefs", signedIn, false, false, false, (*server).getPrefs},
+	{"PATCH", "/api/prefs", signedIn, false, false, false, (*server).patchPrefs},
+
 	{"GET", "/api/spaces/{space}/checks", inSpace(perm.Read), false, false, false, (*server).getChecks},
 	{"POST", "/api/spaces/{space}/checks/fix", inSpace(perm.Write), false, false, false, (*server).fixCheck},
 	{"GET", "/api/spaces/{space}/daily", inSpace(perm.Read), false, false, false, (*server).getDaily},
@@ -342,8 +362,12 @@ func (s *server) handle(rt route) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if rt.accountsOnly && s.single {
-			writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+			writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 			return
+		}
+		if rt.access.kind == kindPublic {
+			// A public route is where a session starts: it keeps the browser's name for the administrator's list of sessions.
+			r = r.WithContext(auth.WithUserAgent(r.Context(), r.UserAgent()))
 		}
 		c := &call{w: w, r: r}
 		if secret, ok := bearerToken(r); ok {
@@ -352,11 +376,11 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			viaOAuth := s.oauth != nil && oauth.LooksLikeAccessToken(secret)
 			if viaOAuth {
 				// An access token of the authorization server is for /mcp only.
-				writeError(w, http.StatusForbidden, "token_scope", "an OAuth access token can only be used on /mcp")
+				writeError(w, http.StatusForbidden, "token_scope", "An OAuth access token can only be used on /mcp.")
 				return
 			}
 			if !tokenAllowed(rt) {
-				writeError(w, http.StatusForbidden, "token_scope", "an API token cannot use this endpoint")
+				writeError(w, http.StatusForbidden, "token_scope", "An API token cannot use this endpoint.")
 				return
 			}
 			p, err := s.tokenPrincipal(r, secret)
@@ -365,7 +389,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 			if p.Grant != nil && !p.Grant.Write && tokenChanges(r) {
-				writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+				writeError(w, http.StatusForbidden, "token_scope", "This token is read only.")
 				return
 			}
 			c.p = p
@@ -389,15 +413,15 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			}
 		}
 		if c.p != nil && c.p.Held && !heldAllowed[rt.method+" "+rt.pattern] {
-			writeError(w, http.StatusForbidden, "passkey_required", "register a passkey to continue")
+			writeError(w, http.StatusForbidden, "passkey_required", "Register a passkey to continue.")
 			return
 		}
 		if rt.access.kind == kindAdmin && c.p.User.Role != "admin" {
-			writeError(w, http.StatusForbidden, "forbidden", "only an administrator may do that")
+			writeError(w, http.StatusForbidden, "forbidden", "Only an administrator may do that.")
 			return
 		}
 		if rt.access.kind == kindSiteAdmin && !c.isSiteAdmin() {
-			writeError(w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may do that")
+			writeError(w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may do that.")
 			return
 		}
 		// The switch for offline copies comes before the space is opened: an
@@ -436,6 +460,7 @@ var indexOnlyRoutes = map[string]bool{
 	"GET /api/spaces/{space}/pages/groups":         true,
 	"GET /api/spaces/{space}/tree":                 true,
 	"GET /api/spaces/{space}/tags":                 true,
+	"GET /api/spaces/{space}/sources":              true,
 	"GET /api/spaces/{space}/pages/{id}/backlinks": true,
 	"GET /api/spaces/{space}/pages/{id}/links":     true,
 	"GET /api/spaces/{space}/checks":               true,
@@ -469,11 +494,11 @@ func (s *server) openSpace(c *call, rt route) bool {
 		// owner has there now: the owner's own membership decides, not the
 		// administrator's way into spaces they are not a member of.
 		if !g.Names(spaceID) {
-			writeError(w, http.StatusForbidden, "token_scope", "this token does not name this space")
+			writeError(w, http.StatusForbidden, "token_scope", "This token does not name this space.")
 			return false
 		}
 		if need == perm.Write && !g.Write {
-			writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+			writeError(w, http.StatusForbidden, "token_scope", "This token is read only.")
 			return false
 		}
 		var h *spaces.Handle
@@ -492,7 +517,7 @@ func (s *server) openSpace(c *call, rt route) bool {
 		if !h.Info.Perms.Has(need) {
 			h.Release()
 			c.sp = nil
-			writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+			writeError(w, http.StatusForbidden, "no_permission", "Your role in this space does not allow that; it needs the "+need.String()+" permission.")
 			return false
 		}
 		return true
@@ -525,7 +550,7 @@ func (s *server) openSpace(c *call, rt route) bool {
 	if !h.Info.Perms.Has(need) {
 		h.Release()
 		c.sp = nil
-		writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+		writeError(w, http.StatusForbidden, "no_permission", "Your role in this space does not allow that; it needs the "+need.String()+" permission.")
 		return false
 	}
 	return true
@@ -539,7 +564,7 @@ func (s *server) principal(r *http.Request) (*auth.Principal, error) {
 	}
 	ck, err := r.Cookie(s.auth.SessionCookieName())
 	if err != nil {
-		return nil, &auth.Error{Kind: auth.Unauthenticated, Msg: "sign in to continue"}
+		return nil, &auth.Error{Kind: auth.Unauthenticated, Msg: "Sign in to continue."}
 	}
 	return s.auth.Authenticate(r.Context(), ck.Value)
 }
@@ -549,7 +574,7 @@ func (s *server) principal(r *http.Request) (*auth.Principal, error) {
 func (s *server) pageID(c *call) (string, bool) {
 	id := c.r.PathValue("id")
 	if !page.ValidID(id) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such page")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such page.")
 		return "", false
 	}
 	return id, true

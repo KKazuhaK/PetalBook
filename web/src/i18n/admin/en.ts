@@ -178,6 +178,8 @@ export const adminEn: AdminMessages = {
     apisHelp:
       'Any number. The server fetches and caches; header values are stored encrypted and only shown as "saved". Each interface only contacts the host and port of its own address.',
     noApis: 'No interfaces yet.',
+    allOffHint:
+      'Daily text is off by default. Switch on a built-in interface or add your own lines, and the home page will show it.',
     builtinTitle: 'Built-in interfaces',
     builtinHelp:
       'Services the server already knows how to ask: switch one on, with no address, paths or language codes to fill in. Nothing is asked of a service until you switch it on.',

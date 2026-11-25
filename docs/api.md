@@ -13,6 +13,16 @@ The web app talks to the server only through this API.
 - Times are RFC 3339 strings in UTC (`2026-11-21T08:30:00Z`). `created` in a
   page's header is a date (`2026-11-21`).
 - Errors: a non-2xx status and `{"error": "<code>", "message": "<for people>"}`.
+  `message` is an English sentence (a capital first, a full stop last) for people
+  who use the API and read logs; it is not a contract and may change. A client
+  decides by `error`, and the web app shows its own text in the language of the
+  page by that code, with what the answer says it is about (`limit`, `size`,
+  `name`, `provider`, `permission`, `Retry-After`). The server's sentence is shown
+  in two cases: alone, for a code the web app has no text for; and after the
+  app's own text, as the detail, for the codes whose sentence says what exactly
+  is wrong (`invalid`, `conflict`, `forbidden`, `provider_refused`,
+  `provider_error`, `busy`, `unavailable`, `push_failed`, `quota_exceeded`). The codes the server can send are listed in
+  `web/src/i18n/errorCodes.json`, which a test keeps equal to the source.
   Codes: `not_found` (404), `invalid` (400; also 405, 413 and 415),
   `conflict` (409), `exists` (409), `unauthenticated` (401: not signed in, or
   wrong credentials), `forbidden` (403: cross-site requests, see below, and
@@ -338,13 +348,13 @@ unauthenticated` answer to a request that carries the cookie of such a session
 has one more field, `reason`:
 
 ```json
-{"error": "unauthenticated", "message": "your session has ended; sign in again", "reason": "expired"}
+{"error": "unauthenticated", "message": "Your session has ended; sign in again.", "reason": "expired"}
 ```
 
 | `reason` | The session ended because |
 | --- | --- |
 | `expired` | it was idle for longer than the idle limit, or older than the absolute limit (see 安全 settings, `limits.sessionIdleDays`, `limits.sessionMaxDays`) |
-| `signed_out_elsewhere` | the person signed out of every device, or an administrator revoked their sessions |
+| `signed_out_elsewhere` | the person signed out of every device, or a site administrator ended their session (`DELETE /api/users/{id}/sessions…`) |
 | `password_changed` | the password was changed or reset (the session that made the change stays) |
 | `disabled` | the account, or its tenant, was disabled |
 
@@ -769,6 +779,7 @@ how many. At most 100,000 rows or 90 days are kept.
 | `lockout` | a key was locked | `scope`, `minutes` |
 | `passkey_clone` | a passkey's counter went backwards | `passkey` (id) |
 | `identity_linked`, `identity_unlinked` | an identity was attached or removed | `provider`, `by` (`user`, `email`, `admin`) |
+| `sessions_ended` | a site administrator ended a person's session or all of them | `by` (`admin`), `count` |
 | `passkey_added`, `passkey_removed` | a passkey was registered or deleted | `passkey`, `by` (`user`, `admin`) |
 | `security_changed` | `PUT /api/admin/security` changed something | `from`, `to`: the changed fields only, never a secret (a secret shows as `"changed"`) |
 | `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
@@ -885,18 +896,95 @@ otherwise) except the two invite endpoints marked public.
 
 ### `GET /api/users`
 
-`{"users": [{…}]}`, ordered by `created`. Without parameters, every user.
-`?q={text}` keeps the users whose `username` or `name` contains the text,
-ignoring case (as the name filter of the administration's list of spaces does:
-Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and
-PostgreSQL);
-`?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
-be sent alone; `400 invalid` for a `limit` outside the range. `?enabled=1`
-leaves out the disabled accounts, before the limit counts (`enabled=0`, the
-default, keeps them; `400 invalid` for anything else). A picker that looks for
-one person sends `q` and `limit`, so it never loads every account.
+One keyset page of the people in the administrator's scope (their tenant;
+every tenant for a site administrator, narrowed by `?tenant=`), who are not
+deleted:
 
-Each user here also has `passkeys` (how many) and `sso` (how many identities).
+```json
+{"users": [{…}], "next": "users.created.asc:1764000000000:6FAVM1F0R3"}
+```
+
+`next` is `""` after the last page; send it back as `cursor`. A cursor made for
+another sort, order or list is `400 invalid`: it begins with the name of the list
+(`users.`, `spaces.`, `people.`), so one list never takes the cursor of another.
+
+| Parameter | |
+|---|---|
+| `limit` | 1 to 200, default 50 |
+| `sort`, `order` | `created` (default, oldest first), `name` (by the name, ignoring case, then the id) or `lastActive` (most recent first; people who were never active last, in id order); `order` is `asc` or `desc`, the sort's own when left out |
+| `q` | keeps the users whose `username`, `name` or email address contains the text, ignoring case (Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and PostgreSQL) |
+| `role` | `member`, `admin` (of a tenant or of the server) or `site` (administrators of the whole server) |
+| `state` | `enabled` or `disabled` |
+| `inactiveDays`, `activeDays` | last active before the last `n` days (or never), or within them; 0 to 36500 |
+| `enabled` | `1` is `state=enabled`; the picker's older spelling (`0` keeps all) |
+
+Anything else the list does not have is `400 invalid`. The sorts and the search
+read an index (`users_live*`), and the passkey and linked-account counts are
+looked up for the page's ids alone, so a page costs the same whatever its place
+in the list. A picker that looks for one person sends `q` and `limit`.
+
+Each user here also has `passkeys` (how many), `sso` (how many linked accounts),
+`quota` and, once they have been active, `lastActive` (the time of their last
+activity, written at most every few minutes).
+
+### `GET /api/users/{id}`
+
+`{"user": {…}}` as one row of the list has it. `404 not_found` for a person who
+does not exist, is deleted, or is of another tenant than a tenant administrator's.
+
+### `GET /api/users/{id}/memberships`
+
+`{"spaces": [{"id", "name", "role", "personal"}], "groups": [{"id", "name", "source"}]}`:
+the spaces the person is a member of (their own role there) and their groups,
+at most 200 of each. A tenant administrator's answer leaves the person's personal
+space out.
+
+### The sessions and connected accounts of a person (3.10)
+
+**Site administrators only.** An administrator of a tenant never manages or audits
+another person's sign-ins: they are answered `404 not_found` ("No such user."),
+as for a person who does not exist, so nothing tells them the page is there.
+
+#### `GET /api/users/{id}/sessions`
+
+`{"sessions": [{"id", "userAgent", "method", "created", "lastUsed"}]}`, the one used
+last first (a person keeps at most a few). `userAgent` is the browser's name for
+itself, cut to 200 bytes, `""` when it sent none; `method` is how they signed in:
+`password`, `passkey`, `sso:{provider slug}`, `invite`, `registration` or `setup`
+(`""` for a session made before the server recorded it). `id` is the hash the server
+keeps, never the cookie. A session held until the person registers a passkey has
+`"held": true`. The session of the request itself (the administrator looking at
+their own page) has `"current": true`, so a client can mark it "this device" and
+ask before it is ended. The server does not know where a sign-in came from, so there is no
+place.
+
+#### `DELETE /api/users/{id}/sessions/{session}`
+
+`204`. The browser that held it is answered `401` with `signed_out_elsewhere` the
+next time it comes (see "Why a session ended"), and `sessions_ended` is written to
+the audit log (`by: "admin"`, `count`). `404 not_found` for a session the person
+does not have.
+
+#### `DELETE /api/users/{id}/sessions`
+
+Ends every session of the person: `200` with `{"ended": 2}`; each answers
+`signed_out_elsewhere` afterwards, and one `sessions_ended` row is written. It
+ends browser sessions only: API tokens and OAuth or MCP grants of the person keep
+working until they are revoked on their own page. This includes the caller's own
+sessions when the person is the caller.
+
+#### `GET /api/users/{id}/identities`
+
+`{"identities": [{"id", "provider", "slug", "kind", "label", "created"}]}`: the
+accounts they connected to sign in (the same as `GET /api/account` shows its owner).
+
+#### `DELETE /api/users/{id}/identities/{identity}`
+
+`204`; `identity_unlinked` (`by: "admin"`) is written. `409 conflict` when it is
+the only way they can sign in now: what is left is counted only if it works today,
+that is a password or a passkey while password sign-in is not refused to them, and a
+connected account of a provider that is set up and enabled. `404 not_found` for one
+they do not have.
 
 ### `PATCH /api/users/{id}`
 
@@ -2768,14 +2856,19 @@ uses.
 
 ### Page summary
 
-Used in listings. `title`, `subtitle` and `source` are absent when the page
-has none. `source` says where the text comes from (a person, a book, an
-address); it is free text from the header field of the same name.
+Used in listings. `title` and `subtitle` are absent when the page has none.
+`source` is always there: a list of texts saying where the text comes from (a
+person, a book, a film), `[]` for none, like `tags`. In the file it is a list
+too; a single text written by hand there (`source: 雪国`) is read as one source,
+and the same page is a filter, a sort (`prop:source`, by its first source) and
+the column of a board (`key=source`) like a list property. The sources are not
+among `props`.
 `label` is always present: the title, or for an untitled page the first line
 of the body cut to about 30 characters (`untitled` says which). It is an
 empty string for an untitled page with an empty body. `created` is absent
 when the header has none. `updated` is when the file was last written.
-`excerpt` keeps the line breaks of the text as single `\n`; blank lines
+`icon` and `color` are the page's own, from its header, and are left out when it has none (see
+"Icons, colours and the presets of the sources"). `excerpt` keeps the line breaks of the text as single `\n`; blank lines
 between paragraphs are not kept.
 
 `type` is what the header says (`""` when it says nothing). `effectiveType` is
@@ -2785,7 +2878,7 @@ type; whether a type of that name exists is not looked at.
 `props` and `rev` are there only when the listing was asked for them with
 `props=1` (the table view does): `props` is an object of the header's keys
 that are not built in (everything except `id`, `title`, `subtitle`, `source`,
-`tags`, `created` and `type`), in header order, `{}` when there are none, and
+`tags`, `created`, `type`, `icon` and `color`), in header order, `{}` when there are none, and
 `rev` is the page's rev, which a change of a property needs. Only values a
 table cell can show are in it: text (cut to 300 characters), numbers, true
 and false, and lists of those (the first 100 elements). A nested object, a
@@ -2820,7 +2913,7 @@ lose and is not listed.
   "folder": "Tang",
   "title": "暮雪",
   "subtitle": "…",
-  "source": "…",
+  "source": ["书", "电影"],
   "label": "暮雪",
   "untitled": false,
   "tags": ["玉兰", "黄昏"],
@@ -3720,6 +3813,68 @@ removes the binding when `type` is `""`. `200` with `{"folder": "Work",
 the folder does not exist; `400 invalid` when the type does not exist, or the
 entry of the folder in `space.yml` is not a list of settings. Pages are not changed: their
 `effectiveType` is.
+
+### Icons, colours and the presets of the sources (3.10)
+
+A folder has an icon and a colour, written under its entry in
+`.petalbook/space.yml` next to its type and views, and a page has `icon` and
+`color` in its header (fields of every page, not properties of a type). An icon
+is the name of a Lucide icon the web app ships (`book-open`; the list is
+`internal/icons/lucide.txt`) or one emoji, one grapheme cluster of at most 64
+bytes with no control character, space or markup (`<`, `>`, `&`, quotes); a
+colour is one of eight: `red`, `orange`, `amber`, `green`, `teal`, `blue`,
+`purple`, `pink`. A folder style, a page save or create, and a type's default
+that is none of these is `400 invalid`. An icon or colour that is none, read
+from a `space.yml`, a header or a type file written by hand, is read as no icon
+(no colour), and a save that leaves such a value in a header as it was is not
+refused for it. The
+entry of a folder moves with the folder, in the same commit (see Moving a
+folder), so its icon and colour follow it.
+
+A page type may give the default icon of its pages: `x-icon` and `x-color` at the top of its file,
+answered as `icon` and `color` of the type, and written by `PUT …/types/{name}` with `icon` and `color`
+(left out keeps what the file has; `""` takes it away). A page with no icon of its own is drawn with its type's.
+
+`GET /api/spaces/{space}/appearance` (read) answers
+`{"folders": [{"folder", "icon", "color"}], "sourcePresets": [...] | null,
+"iconColors": [...]}`. `sourcePresets` is the list the space chose under
+`sources:` in `space.yml`; `null` when it chose none, and the client offers its
+own defaults; `[]` when it chose to have none (`sources: []`), and the client
+offers none.
+
+`PUT /api/spaces/{space}/folders/style` (write) takes
+`{"folder", "icon", "color"}`; `""` takes one away. `200` with the same,
+the folder as spelled on disk; `404 not_found` for a folder that is not there;
+`400 invalid` for a colour that is none of the eight or an icon that is none (see above).
+
+`GET /api/spaces/{space}/sources` (read) answers
+`{"sources": [{"source", "pages"}]}`, the sources the pages use, most used first
+(at most 500), for the suggestions of the input.
+
+`PUT /api/spaces/{space}/sources/presets` (manage) takes `{"presets": [...]}`,
+or `null` to go back to the defaults; blank and repeated ones are dropped, at
+most 100 of at most 200 bytes. `200` with `{"presets"}` as stored: `[]` for an
+empty list (none), `null` for the defaults.
+
+`POST /api/spaces/{space}/types/{name}/rename-field` (manage) takes
+`{"baseRev", "from", "to"}` and gives a field of a type another key: in the
+type's file and, in one commit, in the header of every page of that type that
+has a value under the old key (the field keeps its place in the header), and in
+the saved views of the folders of the type (their `sort` `prop:<key>`, `group`,
+the `key` of their filters, `hidden` and the fields of a card). The views of
+tags are left as they are: a tag's pages may be of other types. The change is
+journaled whole before the first write and the type's file is written first,
+so a crash part way leaves either nothing changed or the rest finished at the
+next start.
+`200` with `{"type", "pages", "skipped"}`: `pages` is how many were rewritten,
+`skipped` the pages of the type left as they were, by path, each
+`{"id", "path", "reason"}`: `has_key` for a page that already has a value under
+the new key (both keys stay, for the person to merge), `unreadable` for a file
+of a folder of the type whose header cannot be read (it has no `id`). `404` for
+a type or field that is not there, `409 conflict` for a stale `baseRev`, `400
+invalid` when the type has a field of the new key or the key is one of every
+page, or when the header of a page cannot be written with the new key (the
+message names the page; nothing is changed).
 
 ## Saved views
 
@@ -4828,6 +4983,151 @@ fields (only those, the rest of the header byte-for-byte). Answers the page
 like a save; `409 conflict` on a stale `baseRev`; `400 invalid` with
 `error: "not_fixable"` for other kinds.
 
+## Notifications
+
+The notification centre (3.10): what happened to the signed-in person that
+they have not read. Every route here is the caller's own: rows are read by the
+caller's id and tenant, never by an id from the request, so another person's
+(in any tenant) cannot be listed or marked, and a token (`token_scope`) or an
+administrator's view of a space has no way in. Single-user mode has them too.
+Nothing is written as prose: a row says the kind, what it is about and the
+facts, and the web app writes the sentence in the person's language.
+
+### Notification
+
+```json
+{"id": "019354a1b2c3000007", "kind": "invite", "ref": "6FAVM4ZE32",
+ "payload": {"space": "Team", "role": "editor", "by": "Olive"},
+ "at": "2026-11-24T08:00:00Z", "read": false}
+```
+
+`ref` is the space the notice is about. `at` is null for a derived one. A
+derived one also has `"derived": true` and the id `problems:<space id>`. The
+kinds (a registry in the server's code, `store.NotifyKinds`):
+
+| kind | made by | payload |
+|---|---|---|
+| `problems` | derived: the problems in the index of each space the person can write in; no row | `{"space": name, "total": n, "counts": {"no_id": 1, …}, "sig": "…"}` |
+| `invite` | adding the person to a space (`POST …/members`), unless they added themselves; a change of role is not one | `{"space", "role", "by"}` |
+| `sync` | the remote of a space the person owns needs attention (`error`, `rewritten`), and works again after it did; "offline" comes back by itself and is not told, and a state is compared with the last one that was not "offline" (error, offline, error is told once; error, offline, ok is told "ok") | `{"space", "event": "failed" \| "ok", "state", "kind"}` (`kind` is the error's kind: `auth`, `hostkey`, `clone`, a connection code) |
+| `mention` | reserved: there are no mentions yet | |
+| `todo` | reserved: the sidebar's reminders (5.x) | |
+| `system` | reserved: notices from the administrators | |
+
+A kind this client does not know is shown as a plain notice. Invitations to an
+organisation are not a kind yet: an invite makes an account, so it has no
+recipient who is signed in; the kind is added with the first invitation of an
+existing person.
+
+**The problems are not copied to the members.** They are read when the list or
+the count is asked for: for each space the person can write in (a disabled one,
+and one reached only as an administrator, left out), from the live index when the space is open, else from
+what it said when it was last open or closed (in memory; a restart forgets it
+until the space is opened again; a deleted space is forgotten). Nothing is
+opened for this, and a count of an open space is reused for 20 seconds. At most
+50 spaces with problems are listed; how many more have some is
+`moreProblems` of the list. What the person has read is a cursor per
+person and space (`notification_seen`): the signature of the problems then.
+When the problems change, the notice is unread again; when they are all fixed,
+it is gone.
+
+### `GET /api/notifications?kind={kind}&unread=1&cursor={cursor}&limit={n}`
+
+Signed in. `{"items": [Notification], "next": "…", "unread": n, "moreProblems": n}`
+(`moreProblems` left out when 0, and on pages after the first), newest first
+(the derived `problems` first, on the first page only), `limit` 1 to 100
+(default 20). `next` is the cursor of the following page (`""` after the last),
+one range scan of the index `notifications (user_id, id DESC)`. `unread` is the
+badge count, at most 100. `kind` is one of the registry (`400 invalid`
+otherwise; `kind=problems` lists only the derived ones, which have no history).
+
+### `GET /api/notifications/unread`
+
+`{"count": n}`: the stored unread rows (one count on the partial index
+`notifications (user_id) WHERE read_at IS NULL`, stopping at 100) and the
+derived ones not read as they are now; at most 100 (the badge says "99+"). The
+web app asks once a minute while the window is in front.
+
+### `POST /api/notifications/read`
+
+`{"ids": ["…", "problems:6FAVM4ZE32"]}`, 1 to 100. Marks the caller's own rows
+as read, and records what the caller has read of each derived one, as it is now.
+An id that is not the caller's, or not there, changes nothing. `{"unread": n}`.
+
+### `POST /api/notifications/read-all`
+
+`{"kind": "sync"}` (optional: all kinds without it). Marks every unread row (of
+the kind) and the derived ones as read. `{"unread": n}`.
+
+Rows are kept for six months at most, read ones for 30 days (the daily job
+deletes the older ones in batches), and at most 500 for each person (the
+newest: the oldest past that goes when a row is added). A person's rows go with
+them when they are deleted.
+
+### Browser notices
+
+The opt-in is the person's, one of their preferences (`pb.notify.browser`, see
+"Preferences"), so another person who signs in on the same browser gets none for
+it; the permission is the browser's, and both are needed. It works through the
+Notifications API: an open tab shows a notice when the unread count goes up
+while nobody is looking. By default the notice only says how many came ("You
+have N new notifications"), so no space or person is named on a screen others
+may see; with the preference `pb.notify.details` it says what the newest event
+is (not a problem of a space that was there before). There is
+no push server yet. **Reserved:** Web Push with a VAPID key would reach a
+browser with no tab open: a `GET /api/notifications/push` that gives the public
+key, and `PUT`/`DELETE` of a subscription. Nothing of it is built; email and
+phone push come with the todo reminders.
+
+## Preferences
+
+What a person sets for themselves in the interface (the columns, order and
+widths of their tables, whether folders come first, how far the tour got) is
+kept in a file of **their own personal space**, `.petalbook/prefs.yml`, never in
+the database. The route takes no space and no person: it is always the
+caller's own, so nobody else's can be named; an API token or an
+administrator's view cannot reach it (`token_scope`); the file is no page, no
+attachment and no setting of the space, so no route serves it (a path with a
+dot in it is `404 not_found`), the index and the offline sync's catalogue do not
+see it, and an export an administrator makes of a personal space leaves it out
+(an export with `history` carries the repository's history, which names the
+file in the commits that wrote it: a site administrator's export of a personal
+space is the one existing way to read it, as for everything in one).
+
+### `GET /api/prefs`
+
+Signed in. `{"personal": true, "prefs": {"pb.table.users": {…}, …}}`, read from
+the file (what was written and is not committed yet, on top). `personal: false`
+with `{}` when the person has no personal space to keep them in (or it is
+switched off or evicted): the browser keeps them. The web app asks once a
+session and caches the answer.
+
+### `PATCH /api/prefs`
+
+`{"set": {"pb.table.users": {…}, "pb.files.mixed": true, "pb.table.x": null}}`:
+from 1 to 100 keys, each a name of up to 120 letters, digits and `. _ : / -`
+(no `..`) and a JSON value of at most 32 KiB; `null` removes the key (`400
+invalid` otherwise). `{"personal": bool}`, `false` when there is nowhere to
+keep it or it cannot be written now (no personal space, switched off, evicted,
+or read only past its deadline for a remote): nothing is then kept, and the
+browser keeps it. `400 prefs_full` when the file, with what is pending and this
+write, would have more than 100 keys or be larger than 256 KiB: nothing of the
+write is kept. The write is kept in memory (a read shows it at once) and written in
+**one batch** `3 minutes` after the first of a burst (`DefaultPrefsQuiet`), so a
+person dragging a column makes one small commit in a few minutes: the commit is
+"Update prefs.yml", by the person, and is not in the history of any page; the
+file is written by the space's own committer and, when the space follows a
+remote, pushed with it (the personal space's own repository). What is pending
+is written when the server closes. The file is at most 256 KiB.
+
+There is one write of a person's batch at a time, and a value written while it
+runs stays for the next one (the newer value wins). A batch that can never be
+written (the file would be too large, grown by hand meanwhile; the space is
+read only; the person has no personal space) is dropped and logged; one that
+may work later (the space is evicted for a while) is tried again up to 6 times,
+each after twice the wait before (3, 6, 12 … 192 minutes), then dropped and
+logged. The browser keeps its copy either way.
+
 ## API tokens
 
 Milestone 2.6. A token lets a script or an MCP client act for one person in
@@ -5892,6 +6192,13 @@ reviewed and tested):
 - **Strength**: one process and one database, separated by query conditions.
   Whoever can read the server's disk or database reads every tenant. Nothing
   stronger is promised (no database per tenant, no encryption per tenant).
+
+- 3.10's notifications (`notifications`, with the person's `tenant_id`, and
+  `notification_seen`) and the preferences are the caller's own: every query
+  names the caller's id and tenant from the session, no route takes the id of
+  a person, and a row of another tenant is never listed or marked whatever id
+  is sent (`TestNotificationsAreTheCallersOwnAcrossTenants`). Their routes are
+  in the isolation table with the reason.
 
 How it is tested (SQLite and PostgreSQL both):
 
@@ -9007,6 +9314,7 @@ own organisation**.
 | Endpoints | Tenant administrator | Site administrator |
 |---|---|---|
 | `/api/users…`, `/api/invites…`, `DELETE /api/users/{id}`, `/api/admin/users/{id}/deletion` | their tenant | every tenant |
+| `/api/users/{id}/sessions…`, `/api/users/{id}/identities…` (3.10) | `404 not_found`, as for no one | every tenant |
 | `/api/admin/spaces…` (incl. 3.1's `…/storage` `exempt`, `…/evict`; `pin` within `storage.pinnedBytes`), `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage`, `/api/admin/storage/people…` | their tenant | every tenant |
 | `GET /api/admin/storage` | their tenant's summary, settings read only | all, and `PUT` |
 | `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…` | their tenant | every tenant |
@@ -10298,8 +10606,8 @@ no other credential and works once) for the App's id, slug, client id, client
 secret, private key and webhook secret, then saves them as `PUT
 /api/admin/connections/github` does (checked with GitHub, secrets sealed with the server's
 key; the webhook secret is only kept, sealed, since there is no webhook), and
-sends the browser to `/admin/storage?connection_app=created`. A failure goes to
-`/admin/storage?connection_app_error=<code>`: `expired` (no such attempt, used, older
+sends the browser to `/admin/storage/connections?connection_app=created`. A failure goes to
+`/admin/storage/connections?connection_app_error=<code>`: `expired` (no such attempt, used, older
 than ten minutes, another browser or user), `provider_error` (GitHub did not turn
 the code into an App, or the App could not be saved), `app_in_use`,
 `unavailable` (GitHub made the App but could not be asked to check it, so it is
@@ -10311,7 +10619,7 @@ not saved yet; see the next route). A visit with `installation_id` or `setup_act
 
 When GitHub made the App but the server could not save it (`unavailable`: GitHub
 could not be asked to check it), the redirect is
-`/admin/storage?connection_app_error=unavailable&pending=1&app=<slug>`: the App
+`/admin/storage/connections?connection_app_error=unavailable&pending=1&app=<slug>`: the App
 exists on GitHub and its credentials are kept in the server's memory, sealed,
 for ten minutes, for that administrator only (one pending App per administrator,
 the newest). The retry takes no body, saves them as the callback would, and

@@ -560,7 +560,7 @@ func (m *Manager) runRestore(id string, op *restoreOp) {
 	m.ev.mu.Unlock()
 	op.err = m.restore(ctx, id, op)
 	if op.err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		op.err = &RestoreFailed{Msg: "the remote repository did not answer in time", Err: op.err}
+		op.err = &RestoreFailed{Msg: "The remote repository did not answer in time.", Err: op.err}
 	}
 	cancel()
 	<-m.ev.sem
@@ -581,7 +581,7 @@ func (m *Manager) runRestore(id string, op *restoreOp) {
 		if errors.As(op.err, &rf) {
 			f.err = &RestoreFailed{Msg: rf.Msg, Code: rf.Code, Err: rf.Err}
 		} else {
-			f.err = &RestoreFailed{Msg: "the space could not be restored", Err: op.err}
+			f.err = &RestoreFailed{Msg: "The space could not be restored.", Err: op.err}
 		}
 	}
 	m.ev.mu.Unlock()
@@ -606,7 +606,7 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	}
 	rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id)
 	if err != nil || !rem.Connected() {
-		return &RestoreFailed{Msg: "the space has no remote repository to restore it from", Err: err}
+		return &RestoreFailed{Msg: "The space has no remote repository to restore it from.", Err: err}
 	}
 	root, state := m.paths(id)
 	if err := os.MkdirAll(m.restoringDir(), 0o755); err != nil {
@@ -644,7 +644,7 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	}
 	tip := repo.RemoteTip(ctx, rem.Branch)
 	if tip == "" {
-		return &RestoreFailed{Msg: "the remote has no branch " + rem.Branch}
+		return &RestoreFailed{Msg: "The remote has no branch " + rem.Branch + "."}
 	}
 	if partial {
 		if err := repo.PrefetchMove(ctx, "", tip); err != nil {
@@ -852,12 +852,12 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 		return fmt.Errorf("%w: it is evicted already", ErrNotEvictable)
 	}
 	if rem.State != store.RemoteOK {
-		return busyf("its remote repository is %s, so what the space holds cannot be checked against it", rem.State)
+		return busyf("Its remote repository is %s, so what the space holds cannot be checked against it.", rem.State)
 	}
 	if n, err := store.CountDrafts(ctx, q, id); err != nil {
 		return err
 	} else if n > 0 {
-		return busyf("it has %d draft(s) not yet committed", n)
+		return busyf("It has %d draft(s) not yet committed.", n)
 	}
 	m.ev.roundMu.Lock()
 	defer m.ev.roundMu.Unlock()
@@ -880,10 +880,10 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 		// is a reference); this one is not held by anything. Its pending
 		// changes are committed, then it is closed.
 		if err := sp.Flush(); err != nil {
-			return busyf("its pending changes could not be committed yet")
+			return busyf("Its pending changes could not be committed yet.")
 		}
 		if err := sp.Close(); err != nil {
-			return busyf("it could not be closed cleanly: %v", err)
+			return busyf("It could not be closed cleanly: %v.", err)
 		}
 		// The head it closed at, for the offline heads (as closeIdle keeps it).
 		m.mu.Lock()
@@ -897,7 +897,7 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 		// minIdleHours, once more, now that nobody else can use it.
 		idle := time.Duration(m.Storage().Cache.MinIdleHours) * time.Hour
 		if m.opt.Now().Sub(m.lastUsed(st.LastUsed, id)) < idle {
-			return busyf("it was used within the last %d hours", m.Storage().Cache.MinIdleHours)
+			return busyf("It was used within the last %d hours.", m.Storage().Cache.MinIdleHours)
 		}
 	}
 	root, state := m.paths(id)
@@ -997,11 +997,11 @@ func (m *Manager) holdForEviction(id string) (release func(), sp *space.Space, e
 		case <-e.done:
 		default:
 			m.mu.Unlock()
-			return nil, nil, busyf("it is being opened")
+			return nil, nil, busyf("It is being opened.")
 		}
 		if e.refs > 0 || e.closing != nil {
 			m.mu.Unlock()
-			return nil, nil, busyf("a request or a sync is using it right now")
+			return nil, nil, busyf("A request or a sync is using it right now.")
 		}
 		sp = e.sp
 	} else {
@@ -1028,37 +1028,37 @@ func (m *Manager) holdForEviction(id string) (release func(), sp *space.Space, e
 // remote-tracking refs.
 func (m *Manager) verifyOnRemote(ctx context.Context, id, root, state string, rem *store.Remote) error {
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-		return busyf("its directory is not there")
+		return busyf("Its directory is not there.")
 	}
 	if why := space.StateClean(state); why != "" {
-		return busyf("%s", why)
+		return busyf("%s.", why)
 	}
 	repo := gitstore.New(gitstore.Options{Dir: root, Runner: m.opt.RemoteRunner, Cred: m.credential(id, rem), NetTimeout: m.opt.NetTimeout, AllowUnsafe: m.opt.RemotePolicy.AllowUnsafe})
 	if what, err := repo.Busy(ctx); err != nil {
-		return busyf("the clone could not be looked at: %v", gitstore.Scrub(err.Error()))
+		return busyf("The clone could not be looked at: %v.", gitstore.Scrub(err.Error()))
 	} else if what != "" {
-		return busyf("the clone is in the middle of a %s", what)
+		return busyf("The clone is in the middle of a %s.", what)
 	}
 	if mod, err := repo.ModifiedTracked(ctx); err != nil {
-		return busyf("the clone could not be looked at: %v", gitstore.Scrub(err.Error()))
+		return busyf("The clone could not be looked at: %v.", gitstore.Scrub(err.Error()))
 	} else if len(mod) > 0 {
 		sort.Strings(mod)
-		return busyf("the clone has changes that are not committed (%s)", strings.Join(mod[:min(3, len(mod))], ", "))
+		return busyf("The clone has changes that are not committed (%s).", strings.Join(mod[:min(3, len(mod))], ", "))
 	}
 	if files, err := repo.Untracked(ctx); err != nil {
-		return busyf("the clone could not be looked at: %v", gitstore.Scrub(err.Error()))
+		return busyf("The clone could not be looked at: %v.", gitstore.Scrub(err.Error()))
 	} else if len(files) > 0 {
 		sort.Strings(files)
-		return busyf("the clone has files no commit has (%s)", strings.Join(files[:min(3, len(files))], ", "))
+		return busyf("The clone has files no commit has (%s).", strings.Join(files[:min(3, len(files))], ", "))
 	}
 	if refs, err := repo.UnpushedRefs(ctx); err != nil {
-		return busyf("the clone could not be looked at: %v", gitstore.Scrub(err.Error()))
+		return busyf("The clone could not be looked at: %v.", gitstore.Scrub(err.Error()))
 	} else if len(refs) > 0 {
-		return busyf("it holds commits that were set aside because they never reached the remote (%s)", refs[0])
+		return busyf("It holds commits that were set aside because they never reached the remote (%s).", refs[0])
 	}
 	head := repo.Head(ctx)
 	if head == "" {
-		return busyf("it has no commit")
+		return busyf("It has no commit.")
 	}
 	// Ask the remote now, not the last time someone did.
 	fetchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -1073,24 +1073,24 @@ func (m *Manager) verifyOnRemote(ctx context.Context, id, root, state string, re
 	if _, err := repo.CheckRemote(ctx, rem.Branch, lastGood); err != nil {
 		var hr *gitstore.HistoryRewrittenError
 		if errors.As(err, &hr) {
-			return busyf("the history of the remote was rewritten")
+			return busyf("The history of the remote was rewritten.")
 		}
 		if errors.Is(err, gitstore.ErrNoBranch) {
-			return busyf("the remote has no branch %s any more", rem.Branch)
+			return busyf("The remote has no branch %s any more.", rem.Branch)
 		}
-		return busyf("the remote could not be checked: %v", gitstore.Scrub(err.Error()))
+		return busyf("The remote could not be checked: %v.", gitstore.Scrub(err.Error()))
 	}
 	tip := repo.RemoteTip(ctx, rem.Branch)
 	if tip == "" {
-		return busyf("the remote's branch is not known")
+		return busyf("The remote's branch is not known.")
 	}
 	anc, err := repo.IsAncestor(ctx, head, tip)
 	if err != nil {
-		return busyf("the remote could not be checked: %v", gitstore.Scrub(err.Error()))
+		return busyf("The remote could not be checked: %v.", gitstore.Scrub(err.Error()))
 	}
 	if !anc {
 		n, _ := repo.CountNotIn(ctx, tip)
-		return busyf("%d commit(s) of the space are not on the remote", n)
+		return busyf("%d commit(s) of the space are not on the remote.", n)
 	}
 	return nil
 }
@@ -1103,7 +1103,7 @@ func (m *Manager) evictUnreachable(err error) error {
 	if errors.As(err, &ne) {
 		msg = gitstore.Scrub(ne.Msg)
 	}
-	return &space.UnavailableError{Msg: msg + "; the space is not evicted without checking that the remote has everything", Err: err}
+	return &space.UnavailableError{Msg: msg + "; the space is not evicted without checking that the remote has everything.", Err: err}
 }
 
 // --- the rounds ---------------------------------------------------------------------------

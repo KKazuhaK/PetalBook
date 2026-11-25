@@ -15,6 +15,8 @@ import {
   useSession,
   useSpacePermissions,
   useTags,
+  useUsedSources,
+  useAppearance,
   useTree,
   useUrls,
 } from '@/api/hooks'
@@ -81,10 +83,15 @@ import { findLink, LinkReport, pageLinksOf, type PageLinkTarget } from '@/compon
 import { PageLinkPicker } from '@/components/editor/PageLinkPicker'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
+import { PageHeaderIcon } from '@/components/icons/PageHeaderIcon'
+import { SystemFields } from '@/components/editor/SystemFields'
+import { SourcesEditor } from '@/components/editor/SourceEditor'
+import { DEFAULT_SOURCES } from '@/lib/sources'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
+import { onPageSaved } from '@/lib/pageEvents'
 import { getUploadOriginal } from '@/lib/uploadPrefs'
 import { t } from '@/i18n'
 
@@ -334,9 +341,14 @@ function EditorSession({
   const client: SpaceApi = useMemo(() => spaceApi(space), [space])
   const tree = useTree()
   const tags = useTags()
+  const sourceList = useUsedSources()
+  const appearance = useAppearance()
+  const presets = appearance.data?.sourcePresets ?? DEFAULT_SOURCES
   // Without `write` the page is shown and nothing about it can be changed: no
   // typing, no draft, no move or delete, no going back to a version.
-  const { write } = useSpacePermissions()
+  const { write, manage } = useSpacePermissions()
+  // The source view shows the body only; an administrator of the space can bring the header's YAML into it.
+  const [withHeader, setWithHeader] = useState(false)
   // Offline the page can be read and not changed (4.2 makes offline editing); what was typed stays in the browser's
   // own draft.
   const offline = useOffline()
@@ -640,8 +652,13 @@ function EditorSession({
   const page = controller.page
   useDocumentTitle(`${fields.title.trim() || t.editor.untitled} · ${t.appName}`)
 
-  const setField = (key: 'title' | 'subtitle' | 'source', value: string) => {
+  const setField = (key: 'title' | 'subtitle', value: string) => {
     setFields(live.setField(key, value))
+    controller.markDirty()
+    noteRich.current({ fields: true })
+  }
+  const setSources = (next: string[]) => {
+    setFields(live.setSource(next))
     controller.markDirty()
     noteRich.current({ fields: true })
   }
@@ -661,6 +678,45 @@ function EditorSession({
   }
   const typeName = page.effectiveType ?? ''
   const propValues = fields.others ?? othersOf(page.meta)
+  // A conflict the controller found to be the person's own action (a save of theirs was out when it landed) is settled.
+  const closeConflict = () => {
+    setConflictOpen(false)
+    setConflict(null)
+  }
+  // A key of the type was renamed from the panel: the server rewrote this page's header. The header being edited gets
+  // the same change (the key keeps its place) and the rewritten file becomes the base of the text, so the next save is
+  // not a conflict that "keep mine" would settle by writing the old key back. The body being typed stays.
+  // The icon picker saved this page: the header shows the saved icon at once, the header being edited takes the new
+  // icon and colour, and the saved file becomes the base of the text (as after a rename, below).
+  // Only when the action is all that changed in the file (see rebaseOnto): a change made elsewhere meanwhile is met as
+  // any other is, never written over.
+  useEffect(
+    () =>
+      onPageSaved((where, saved) => {
+        if (where !== space || saved.id !== initial.id) return
+        const others = live.fields.others
+        if (others) {
+          const next: PageMeta = { ...others }
+          for (const k of ['icon', 'color'] as const) {
+            if (saved.meta[k] === undefined) delete next[k]
+            else next[k] = saved.meta[k]
+          }
+          setFields(live.setOthers(next))
+        }
+        void controller.rebaseOnto(saved, { kind: 'style' }).then((settled) => settled && closeConflict())
+      }),
+    [space, initial.id, live, controller],
+  )
+  const fieldRenamed = async (from: string, to: string) => {
+    const others = live.fields.others
+    if (others && from in others && !(to in others))
+      setFields(live.setOthers(Object.fromEntries(Object.entries(others).map(([k, v]) => [k === from ? to : k, v]))))
+    try {
+      if (await controller.rebaseOnto(await client.getPage(page.id), { kind: 'rename', from, to })) closeConflict()
+    } catch {
+      // Not read: the next save meets the newer file and asks, as for any change made elsewhere.
+    }
+  }
 
   // --- the three ways to edit (docs/design.md, 7.0) ---
   const wide = useSyncExternalStore(subscribeWide, isWide)
@@ -684,6 +740,7 @@ function EditorSession({
     richScroller,
     source: sourceRef,
     draftRef: ref,
+    withHeader,
   })
   if (narrowTo !== (sv.broken ? 'source' : 'rich') && (sv.broken || mode !== 'source'))
     setNarrowTo(sv.broken ? 'source' : 'rich')
@@ -726,6 +783,8 @@ function EditorSession({
       return
     }
     sv.resumeStale(raw)
+    // Text left with a header in it comes back with the header.
+    setWithHeader(true)
     saveMode('source')
     setRawLeft((dropOldSource(ref, raw), takeOldSource(ref)))
     setSourceKey((k) => k + 1)
@@ -734,6 +793,21 @@ function EditorSession({
   const dropRaw = () => {
     if (rawLeft[0]) setRawLeft(dropOldSource(ref, rawLeft[0]))
   }
+  // The advanced mode: the header's YAML in the source view. Leaving it is refused while the header does not read.
+  const toggleHeader = () => {
+    if (withHeader && sv.canLeaveSource()) return
+    setWithHeader(!withHeader)
+  }
+  const firstRender = useRef(true)
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    // The text is made again for the new way of showing it (the header is in it, or not).
+    sourceRef.current?.setText(sv.currentText())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withHeader])
   // Source text that does not read as a page is in no draft and on no server:
   // closing the tab asks first (the browser keeps the text for next time).
   useEffect(() => {
@@ -875,11 +949,13 @@ function EditorSession({
     const meta: Record<string, unknown> = {
       ...(buildSave(base, { ...f, body: undefined }, () => base.body)?.meta ?? base.meta),
     }
-    for (const k of ['title', 'subtitle', 'source'] as const) {
+    for (const k of ['title', 'subtitle'] as const) {
       const v = f[k] ?? ''
       if (v === '') delete meta[k]
       else meta[k] = v
     }
+    if (f.source.length) meta.source = f.source
+    else delete meta.source
     if (f.tags.length) meta.tags = f.tags
     else delete meta.tags
     return { meta, body: bodyNow() }
@@ -921,7 +997,7 @@ function EditorSession({
             !editor.isDestroyed &&
             f.title === restored.fields.title &&
             f.subtitle === restored.fields.subtitle &&
-            f.source === restored.fields.source &&
+            sameTags(f.source, restored.fields.source) &&
             sameTags(f.tags, restored.fields.tags) &&
             f.others === restored.fields.others &&
             bodyNow() === restored.markdown
@@ -1100,10 +1176,22 @@ function EditorSession({
           >
             {mode !== 'rich' && (
               <div
-                className="min-h-0 min-w-0"
+                className="flex min-h-0 min-w-0 flex-col"
                 onPointerDownCapture={() => sv.settle('source')}
                 onFocusCapture={() => sv.settle('source')}
               >
+                {manage && !readOnly && (
+                  <label className="flex min-h-10 items-center gap-2 border-b px-3 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      data-slot="source-header-toggle"
+                      checked={withHeader}
+                      onChange={toggleHeader}
+                      className="size-4 accent-[var(--color-primary)]"
+                    />
+                    {t.modes.withHeader}
+                  </label>
+                )}
                 <Suspense fallback={<PageFallback />}>
                   <SourceEditor
                     key={sourceKey}
@@ -1145,7 +1233,15 @@ function EditorSession({
                 </div>
               )}
 
-              <div className="mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
+              <div className="group/title mx-auto w-full max-w-[720px] flex-1 px-5 pt-10 pb-24">
+                <PageHeaderIcon
+                  id={initial.id}
+                  folder={page.folder}
+                  label={fields.title || page.id}
+                  icon={typeof page.meta.icon === 'string' ? page.meta.icon : undefined}
+                  color={typeof page.meta.color === 'string' ? page.meta.color : undefined}
+                  effectiveType={page.effectiveType}
+                />
                 <AutoTextarea
                   value={fields.title}
                   readOnly={readOnly}
@@ -1174,20 +1270,27 @@ function EditorSession({
                     suggestions={tags.data?.tags ?? []}
                     readOnly={readOnly}
                   />
-                  {(!readOnly || fields.source !== '') && (
-                    <AutoTextarea
-                      readOnly={readOnly}
-                      value={fields.source}
-                      onChange={(v) => setField('source', v)}
-                      onEnter={() => editor?.commands.focus('start')}
-                      placeholder={t.editor.sourcePlaceholder}
-                      label={t.editor.sourceLabel}
-                      className="pb-source"
-                    />
-                  )}
+                  <SourcesEditor
+                    sources={fields.source}
+                    onChange={setSources}
+                    used={sourceList.data?.sources ?? []}
+                    presets={presets}
+                    chosen={appearance.data?.sourcePresets != null}
+                    readOnly={readOnly}
+                  />
+                  <SystemFields
+                    id={initial.id}
+                    created={typeof page.meta.created === 'string' ? page.meta.created : undefined}
+                  />
                   {typeName !== '' && (
                     <Suspense fallback={null}>
-                      <PropertyPanel typeName={typeName} values={propValues} onChange={setProps} readOnly={readOnly} />
+                      <PropertyPanel
+                        typeName={typeName}
+                        values={propValues}
+                        onChange={setProps}
+                        readOnly={readOnly}
+                        onFieldRenamed={(from, to) => void fieldRenamed(from, to)}
+                      />
                     </Suspense>
                   )}
                 </div>

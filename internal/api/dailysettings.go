@@ -74,19 +74,19 @@ func (s *server) bindDailySettings() {
 				// A tenant chooses a space of its own or one of the interfaces; the
 				// pasted lines are the site's.
 				if def.Kind != "space" && def.Kind != "api" && def.Kind != "sources" {
-					return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "a tenant's default is a space of the tenant, an interface, or sources of those"}
+					return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "A tenant's default is a space of the tenant, an interface, or sources of those."}
 				}
 				if def.Kind == "sources" {
 					// The pasted lines are the site's; a space has to be one of the tenant's.
 					for _, list := range def.Sources {
 						for _, src := range list {
 							if src.Kind == "list" {
-								return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "the lines are the site's: a tenant's sources are interfaces and spaces of the tenant"}
+								return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "The lines are the site's: a tenant's sources are interfaces and spaces of the tenant."}
 							}
 							if src.Kind == "space" {
 								if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.InTenant(tenant), src.Space); err != nil {
 									if err == store.ErrNotFound {
-										return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "there is no such space in this tenant"}
+										return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "There is no such space in this tenant."}
 									}
 									return nil, err
 								}
@@ -96,11 +96,11 @@ func (s *server) bindDailySettings() {
 				}
 				if def.Kind == "space" {
 					if !page.ValidID(def.Space) {
-						return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "a default that is a space needs the space and a source (folder, tag or type)"}
+						return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "A default that is a space needs the space and a source (folder, tag or type)."}
 					}
 					if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.InTenant(tenant), def.Space); err != nil {
 						if err == store.ErrNotFound {
-							return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "there is no such space in this tenant"}
+							return nil, &settings.Error{Code: settings.CodeInvalid, Msg: "There is no such space in this tenant."}
 						}
 						return nil, err
 					}

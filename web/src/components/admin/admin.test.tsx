@@ -6,6 +6,7 @@ import { api, markSignedIn } from '@/api/client'
 import { applySession } from '@/api/hooks'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { tg } from '@/i18n/manage'
 import {
@@ -37,14 +38,14 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
 )
 const text = () => document.body.textContent ?? ''
 const heading = () => document.querySelector('h1')?.textContent
-const navLinks = () => [...document.querySelectorAll(`nav[aria-label="${ta.nav}"] a`)].map((a) => a.textContent)
+const navLinks = () => [...document.querySelectorAll(`nav[aria-label="${tc.nav}"] a`)].map((a) => a.textContent)
 const rows = () => [...document.querySelectorAll<HTMLElement>('tbody tr[data-space]')]
 const rowOf = (name: string) => rows().find((r) => r.querySelector('th')?.textContent?.includes(name))!
 const menuItem = (label: string) =>
@@ -59,25 +60,22 @@ async function openMenu(name: string) {
 describe('who can reach the administration', () => {
   it('an administrator of an accounts server has it: users and invites first, and /admin goes there', async () => {
     m = await mount(routes, { entries: ['/admin'], signIn: true, server: { mode: 'accounts' } })
-    await settle(() => locationText() === '/admin/users' && text().includes(t.users.createInvite), 'users and invites')
-    expect(heading()).toBe(ta.title)
+    await settle(() => locationText() === '/admin/users' && text().includes(tc.users.invite), 'users and invites')
+    expect(heading()).toBe(tc.title)
     expect(navLinks()).toEqual([
-      ta.sections.users,
-      ta.sections.groups,
-      ta.sections.spaces,
-      ta.sections.manage,
-      ta.sections.recycle,
-      ta.sections.daily,
-      ta.sections.access,
-      ta.sections.storage,
-      ta.sections.security,
-      ta.sections.mail,
-      ta.sections.settings,
-      ta.sections.tenants,
-      ta.sections.usage,
-      ta.sections.status,
+      tc.sections.users,
+      tc.sections.groups,
+      tc.sections.spaces,
+      tc.sections.storage,
+      tc.sections.security,
+      tc.sections.mail,
+      tc.sections.daily,
+      tc.sections.settings,
+      tc.sections.tenants,
+      tc.sections.audit,
+      tc.sections.status,
     ])
-    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.users)
+    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(tc.sections.users)
   })
 
   it('a member gets the page every unknown address gets, and nothing of the administration is asked for', async () => {
@@ -89,7 +87,7 @@ describe('who can reach the administration', () => {
     })
     await settle(() => text().includes(t.notFound), 'not found')
     expect(heading()).toBeUndefined()
-    expect(text()).not.toContain(ta.sections.spaces)
+    expect(text()).not.toContain(tc.sections.spaces)
     expect(adminCalls()).toEqual([])
   })
 
@@ -141,7 +139,8 @@ describe('all spaces', () => {
     expect(rows().filter((r) => r.textContent?.includes(ta.spaces.personal))).toHaveLength(2)
     // The way into a space's content.
     expect(team.querySelector('a')!.getAttribute('href')).toMatch(/^\/s\/[^/]+\/$/)
-    expect(text()).toContain(ta.spaces.allLoaded(3))
+    expect(text()).toContain(tc.table.page(1))
+    expect([...document.querySelectorAll('button')].find((b) => b.textContent === tc.table.next)!.disabled).toBe(true)
   })
 
   it('measures one space on request and shows the size in human units', async () => {
@@ -159,25 +158,31 @@ describe('all spaces', () => {
     expect(rows()[0].textContent).not.toContain(ta.spaces.notMeasured)
   })
 
-  it('shows 50 at a time and loads more on request, until all are there', async () => {
+  it("shows 50 at a time, pages on with next and previous, and the page size is the reader's own", async () => {
     m = await open((server) => {
       const admin = adminRequests(server)
       for (let i = 1; i <= 55; i++) admin('POST', '/api/spaces', { name: `空间 ${String(i).padStart(2, '0')}` })
     })
     await settle(() => rows().length === 50, 'the first page')
-    expect(text()).toContain(ta.spaces.loaded(50))
-    const more = () => [...document.querySelectorAll('button')].find((b) => b.textContent === ta.spaces.loadMore)
-    expect(more()).toBeDefined()
-    await click(more())
-    await settle(() => rows().length === 56, 'the rest')
-    expect(more()).toBeUndefined()
-    expect(text()).toContain(ta.spaces.allLoaded(56))
+    expect(text()).toContain(tc.table.page(1))
+    const button = (label: string) =>
+      [...document.querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement
+    expect(button(tc.table.previous).disabled).toBe(true)
+    await click(button(tc.table.next))
+    await settle(() => rows().length === 6 && text().includes(tc.table.page(2)), 'the rest')
+    expect(button(tc.table.next).disabled).toBe(true)
     const listed = m.requests
       .filter((r) => r.url.startsWith('/api/admin/spaces?'))
       .map((r) => new URL(r.url, 'http://x').searchParams)
     expect(listed[0].get('limit')).toBe('50')
     expect(listed[0].get('cursor')).toBeNull()
-    expect(listed[1].get('cursor')).toBeTruthy()
+    expect(listed.some((q) => q.get('cursor'))).toBe(true)
+    await click(button(tc.table.previous))
+    await settle(() => rows().length === 50, 'back on the first page')
+    // The page size is a preference of this browser: another size asks the server for it, and is kept.
+    await type(document.querySelector<HTMLSelectElement>('[data-slot="table-footer"] select')!, '25')
+    await settle(() => rows().length === 25, 'a page of 25')
+    expect(JSON.parse(localStorage.getItem('pb.table.admin-spaces')!).pageSize).toBe(25)
   })
 
   it('searches by name once typing stops, and says when nothing matches', async () => {
@@ -356,8 +361,13 @@ describe('server status and users', () => {
 
   it('users and invites are here: the list, the roles and the invite form', async () => {
     m = await mount(routes, { entries: ['/admin/users'], signIn: true, server: { mode: 'accounts' } })
-    await settle(() => text().includes(t.users.createInvite), 'users')
+    await settle(() => text().includes(tc.users.invite), 'users')
     expect(text()).toContain('管理员')
-    expect(text()).toContain(t.users.invites)
+    // The invites are a page of the section, with the form.
+    expect(
+      [...document.querySelectorAll('nav[aria-label="' + tc.tabsLabel + '"] a')].map((a) => a.textContent),
+    ).toEqual([tc.tabs.users.all, tc.tabs.users.invites, tc.tabs.users.deleted])
+    await click([...document.querySelectorAll('nav a')].find((a) => a.textContent === tc.tabs.users.invites))
+    await settle(() => text().includes(t.users.createInvite), 'the invite form')
   })
 })

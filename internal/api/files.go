@@ -36,7 +36,7 @@ func (s *server) putAsset(c *call) {
 	}
 	name := c.r.URL.Query().Get("name")
 	if strings.TrimSpace(name) == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give the file's name in the name parameter")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give the file's name in the name parameter.")
 		return
 	}
 	max := s.fileLimit(c)
@@ -58,12 +58,12 @@ func (s *server) putAsset(c *call) {
 		if errors.As(err, &tooBig) {
 			tooLarge(c.w, max, 0, name)
 		} else {
-			writeError(c.w, http.StatusBadRequest, "invalid", "could not read the file")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Could not read the file.")
 		}
 		return
 	}
 	if len(data) == 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "the file is empty")
+		writeError(c.w, http.StatusBadRequest, "invalid", "The file is empty.")
 		return
 	}
 	if err := s.spaces.CheckRoom(c.r.Context(), c.sp, int64(len(data))); err != nil {
@@ -130,7 +130,7 @@ func (s *server) getFile(c *call) {
 	f, st, etag, err := c.sp.Space.OpenFileTag(c.r.Context(), rel)
 	if err != nil {
 		if errors.Is(err, space.ErrNotFound) {
-			writeError(c.w, http.StatusNotFound, "not_found", "no such file")
+			writeError(c.w, http.StatusNotFound, "not_found", "No such file.")
 			return
 		}
 		s.fail(c.w, err)

@@ -196,6 +196,11 @@ func TestRemoteRequiredEverywhereTheContractLists(t *testing.T) {
 				t.Fatalf("%s %s: %s", w.method, w.path, r.raw)
 			}
 		}
+		// A preference cannot be written to a read-only personal space: the
+		// answer says so (the browser keeps it), and nothing is kept to fail later.
+		if r := admin.do("PATCH", "/api/prefs", map[string]any{"set": map[string]any{"k": 1}}).want(t, 200, ""); r.body["personal"] != false {
+			t.Fatalf("a read-only space takes preferences: %s", r.raw)
+		}
 		if s := admin.do("GET", base+"/pages", nil).want(t, 200, ""); len(s.body["items"].([]any)) != 1 {
 			t.Fatal(s.raw)
 		}

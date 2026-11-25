@@ -22,24 +22,28 @@ export function spaceUrls(space: string) {
 }
 export type SpaceUrls = ReturnType<typeof spaceUrls>
 
-// The administration (administrators only, accounts mode): its own pages, kept
-// apart from the personal settings.
+// The administration (administrators only, accounts mode): its own pages, kept apart from the personal settings. The
+// address is `/admin/<section>/<tab>`: a section is an item of the sidebar and a tab one of its pages. A person has a
+// page of their own, `/admin/user/<id>/<tab>`.
 export const ADMIN_SECTIONS = [
   'users',
   'groups',
   'spaces',
-  'manage',
-  'recycle',
-  'daily',
-  'access',
   'storage',
   'security',
   'mail',
+  'daily',
   'settings',
   'tenants',
-  'usage',
+  'audit',
   'status',
 ] as const
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 export const isAdminSection = (v: unknown): v is AdminSection => ADMIN_SECTIONS.some((s) => s === v)
-export const adminPath = (section?: AdminSection) => (section ? `/admin/${section}` : '/admin')
+
+export function adminPath(section?: AdminSection, tab?: string): string {
+  if (!section) return '/admin'
+  return tab ? `/admin/${section}/${tab}` : `/admin/${section}`
+}
+export const adminUserPath = (id: string, tab?: string): string =>
+  `/admin/user/${encodeURIComponent(id)}${tab ? `/${tab}` : ''}`

@@ -4,6 +4,8 @@ import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sideb
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { SearchDialogProvider } from '@/components/search/SearchDialog'
+import { OnboardingHost } from '@/components/onboarding/OnboardingHost'
+import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
 import { AppSidebar } from './AppSidebar'
 import { QuickCaptureProvider } from './QuickCapture'
 import { OfflineBanner, OfflineSync } from './OfflineSync'
@@ -17,6 +19,8 @@ function CloseMobileOnNavigate() {
 }
 
 export function AppShell() {
+  // The administration has a sidebar of its own, in place of the app's.
+  const inAdmin = useLocation().pathname.startsWith('/admin')
   return (
     <SidebarProvider>
       <QuickCaptureProvider>
@@ -24,7 +28,9 @@ export function AppShell() {
           <FileOpsProvider>
             <CloseMobileOnNavigate />
             <OfflineSync />
-            <AppSidebar />
+            <BrowserNotifier />
+            <OnboardingHost />
+            {!inAdmin && <AppSidebar />}
             <SidebarInset className="min-w-0">
               <OfflineBanner />
               <ErrorBoundary>

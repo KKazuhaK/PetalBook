@@ -19,6 +19,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 )
@@ -101,13 +102,13 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 		return
 	}
 	if !on {
-		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+		writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 		return
 	}
 	// Stateless: there is no stream to open and no session to end.
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		writeError(w, http.StatusMethodNotAllowed, "invalid", "method "+r.Method+" is not allowed here; use POST")
+		writeError(w, http.StatusMethodNotAllowed, "invalid", "Method "+r.Method+" is not allowed here; use POST.")
 		return
 	}
 	secret, ok := bearerToken(r)
@@ -117,7 +118,7 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 			challenge = s.oauth.Challenge()
 		}
 		w.Header().Set("WWW-Authenticate", challenge)
-		writeError(w, http.StatusUnauthorized, "unauthenticated", "send a token with Authorization: Bearer; a session cookie is not accepted here")
+		writeError(w, http.StatusUnauthorized, "unauthenticated", "Send a token with Authorization: Bearer; a session cookie is not accepted here.")
 		return
 	}
 	var p *auth.Principal
@@ -134,11 +135,11 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 	// the API's shape and the SDK sees a body it can read.
 	raw, err := io.ReadAll(io.LimitReader(r.Body, mcpMaxRequest+1))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid", "could not read the request body")
+		writeError(w, http.StatusBadRequest, "invalid", "Could not read the request body.")
 		return
 	}
 	if len(raw) > mcpMaxRequest {
-		writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("the request body is larger than %d bytes", mcpMaxRequest))
+		writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("The request body is larger than %d bytes.", mcpMaxRequest))
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
@@ -209,7 +210,7 @@ type mcpError struct {
 
 func (e *mcpError) Error() string { return e.Message }
 
-func mcpErr(code, msg string) *mcpError { return &mcpError{Code: code, Message: msg} }
+func mcpErr(code, msg string) *mcpError { return &mcpError{Code: code, Message: sentence.End(msg)} }
 
 func mcpInvalid(format string, args ...any) *mcpError {
 	return mcpErr("invalid", fmt.Sprintf(format, args...))
@@ -236,7 +237,7 @@ func (s *server) toolError(err error) *mcpError {
 	var ce *space.ConflictError
 	if errors.As(err, &ce) {
 		cur := ce.Current
-		return &mcpError{Code: "conflict", Message: "the page changed since you read it; read it again with page_get and redo the change",
+		return &mcpError{Code: "conflict", Message: "The page changed since you read it; read it again with page_get and redo the change.",
 			Details: map[string]any{"current": map[string]any{"rev": cur.Rev, "path": cur.Path, "meta": cur.Meta}}}
 	}
 	var ftl *space.FileTooLargeError
@@ -251,7 +252,7 @@ func (s *server) toolError(err error) *mcpError {
 	s.fail(w, err)
 	var b errorBody
 	if json.Unmarshal(w.buf.Bytes(), &b) != nil || b.Error == "" {
-		return mcpErr("internal", "something went wrong on the server")
+		return mcpErr("internal", "Something went wrong on the server.")
 	}
 	return mcpErr(b.Error, b.Message)
 }
@@ -358,7 +359,7 @@ func (t *mcpTools) errorResult(e *mcpError) *mcp.CallToolResult {
 func (t *mcpTools) okResult(out any) *mcp.CallToolResult {
 	b, err := mcpEncode(out)
 	if err != nil {
-		return t.errorResult(mcpErr("internal", "could not encode the result"))
+		return t.errorResult(mcpErr("internal", "Could not encode the result."))
 	}
 	if len(b) > mcpMaxResult {
 		details := map[string]any{"limitBytes": mcpMaxResult, "sizeBytes": len(b)}
@@ -370,7 +371,7 @@ func (t *mcpTools) okResult(out any) *mcp.CallToolResult {
 			n := int(float64(len(list.Items)) * float64(mcpMaxResult) / float64(len(b)) * 0.9)
 			details["suggestedLimit"] = max(1, min(n, len(list.Items)-1))
 		}
-		return t.errorResult(&mcpError{Code: "too_large", Message: "the result is larger than the 1 MiB a result may be; repeat the request with a smaller limit", Details: details})
+		return t.errorResult(&mcpError{Code: "too_large", Message: "The result is larger than the 1 MiB a result may be; repeat the request with a smaller limit.", Details: details})
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}, StructuredContent: json.RawMessage(b)}
 }

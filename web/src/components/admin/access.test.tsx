@@ -14,7 +14,7 @@ import {
 } from '@/testing/harness'
 import { MOCK_ADMIN, type MockServer } from '@/api/mock/server'
 import { oa } from '@/i18n/oauth'
-import { ta } from '@/i18n/admin'
+import { tc } from '@/i18n/console'
 import { tk } from '@/i18n/tokens'
 import { AdminGate } from './AdminGate'
 
@@ -32,20 +32,20 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
 )
 const text = () => document.body.textContent ?? ''
 const items = () => [...document.querySelectorAll<HTMLElement>('[data-slot="token-item"]')]
-const open = () => mount(routes, { entries: ['/admin/access'], signIn: true, server: { mode: 'accounts' } })
+const open = () => mount(routes, { entries: ['/admin/security/access'], signIn: true, server: { mode: 'accounts' } })
 
 describe('machine access', () => {
   it('has a page in the administration, with the switch on', async () => {
     m = await open()
     await settle(() => document.querySelector('[role="switch"]') !== null, 'the switch')
-    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.access)
+    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(tc.sections.security)
     expect(document.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
     expect(text()).toContain(tk.admin.empty)
   })
@@ -71,7 +71,7 @@ describe('machine access', () => {
         const mine = adminRequests(server)
         const own = (mine('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
         mine('POST', '/api/account/tokens', { name: 'admin script', spaces: [own], access: 'write' })
-        return ['/admin/access']
+        return ['/admin/security/access']
       },
       signIn: true,
       server: { mode: 'accounts' },
@@ -103,7 +103,7 @@ describe('machine access', () => {
         const person = makePerson(server, 'dave')
         const space = (person.request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
         person.request('POST', '/api/account/tokens', { name: 'dave', spaces: [space] })
-        return ['/admin/access']
+        return ['/admin/security/access']
       },
       signIn: true,
       server: { mode: 'accounts' },
@@ -128,7 +128,11 @@ const approveFor = (server: MockServer, who: string, name: string) => {
 
 describe('MCP and OAuth in the machine access', () => {
   it('has its own switch, and says whether the authorization server is running', async () => {
-    m = await mount(routes, { entries: ['/admin/access'], signIn: true, server: { mode: 'accounts', oauth: true } })
+    m = await mount(routes, {
+      entries: ['/admin/security/access'],
+      signIn: true,
+      server: { mode: 'accounts', oauth: true },
+    })
     await settle(() => document.querySelector(`[aria-label="${oa.admin.mcpLabel}"]`) !== null, 'the switch')
     expect(document.querySelector(`[aria-label="${oa.admin.mcpLabel}"]`)!.getAttribute('aria-checked')).toBe('true')
     expect(document.querySelector('[data-slot="oauth-status"]')!.textContent).toBe(oa.admin.oauthOn)
@@ -142,7 +146,7 @@ describe('MCP and OAuth in the machine access', () => {
   })
 
   it('says it is not running when the server has no public address, and lists no grants', async () => {
-    m = await mount(routes, { entries: ['/admin/access'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/security/access'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => document.querySelector('[data-slot="oauth-status"]') !== null, 'the status')
     expect(document.querySelector('[data-slot="oauth-status"]')!.textContent).toBe(oa.admin.oauthOff)
     await new Promise((r) => setTimeout(r, 50))
@@ -154,7 +158,7 @@ describe('MCP and OAuth in the machine access', () => {
       entries: (server) => {
         approveFor(server, 'carol', 'carol app')
         approveFor(server, 'dave', 'dave app')
-        return ['/admin/access']
+        return ['/admin/security/access']
       },
       signIn: true,
       server: { mode: 'accounts', oauth: true },
@@ -179,7 +183,7 @@ describe('MCP and OAuth in the machine access', () => {
     m = await mount(routes, {
       entries: (server) => {
         approveFor(server, 'erin', 'erin app')
-        return ['/admin/access']
+        return ['/admin/security/access']
       },
       signIn: true,
       server: { mode: 'accounts', oauth: true },

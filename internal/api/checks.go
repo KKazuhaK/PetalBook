@@ -55,11 +55,11 @@ func (s *server) fixCheck(c *call) {
 		return
 	}
 	if req.Kind != index.KindNoID && req.Kind != index.KindNotInType {
-		writeJSON(c.w, http.StatusBadRequest, errorBody{Error: "not_fixable", Message: "only problems of the kinds no_id and not_in_type can be fixed here"})
+		writeJSON(c.w, http.StatusBadRequest, errorBody{Error: "not_fixable", Message: "Only problems of the kinds no_id and not_in_type can be fixed here."})
 		return
 	}
 	if req.Path == "" || req.BaseRev == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a fix needs path and baseRev, the rev of the page's file as it was listed")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A fix needs path and baseRev, the rev of the page's file as it was listed.")
 		return
 	}
 	var p *space.Page

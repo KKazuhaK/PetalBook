@@ -173,7 +173,7 @@ var adminMetaRoutes = map[string]bool{
 func (s *server) adminSpaceFor(c *call, id string) (*store.SpaceInfo, bool) {
 	sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && sp.Personal && !c.isSiteAdmin()) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return nil, false
 	}
 	if err != nil {
@@ -193,7 +193,7 @@ func (s *server) adminOpenView(c *call) {
 	}
 	reason := strings.TrimSpace(req.Reason)
 	if n := len([]rune(reason)); n < 1 || n > 500 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "reason is from 1 to 500 characters: why the space is being read")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is from 1 to 500 characters: why the space is being read.")
 		return
 	}
 	id := c.r.PathValue("space")
@@ -202,11 +202,11 @@ func (s *server) adminOpenView(c *call) {
 		return
 	}
 	if s.spaces.Single() || c.p.SessionID == "" {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return
 	}
 	if s.opt.Store.TenantDisabled(sp.TenantID) {
-		writeError(c.w, http.StatusForbidden, "space_disabled", "the tenant of this space is disabled")
+		writeError(c.w, http.StatusForbidden, "space_disabled", "The tenant of this space is disabled.")
 		return
 	}
 	until := s.views.open(c.p.SessionID, sp.ID, s.now())

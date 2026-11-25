@@ -312,7 +312,7 @@ func (m *Manager) validateStorage(s *StorageSettings) error {
 			return err
 		} else if !in.Configured {
 			d := p.Descriptor()
-			return connections.Errorf(d.ID, http.StatusConflict, connections.CodeNotConfigured, "this server has no %s connection set up; set it up before requiring it", d.Name)
+			return connections.Errorf(d.ID, http.StatusConflict, connections.CodeNotConfigured, "This server has no %s connection set up; set it up before requiring it.", d.Name)
 		}
 	}
 	if m.single == nil && !m.opt.HostsFromFlag {

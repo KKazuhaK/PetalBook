@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/KKazuhaK/PetalBook/internal/icons"
 )
 
 // bomText is the UTF-8 byte order mark some editors put at the start of a file.
@@ -334,7 +336,7 @@ func encodeMapping(root *yaml.Node) (string, error) {
 
 // textKeys are header fields whose scalar value is always read as text, so a
 // title like `1984` or an id of only digits is not turned into a number.
-var textKeys = map[string]bool{"id": true, "title": true, "subtitle": true, "source": true, "type": true, "created": true}
+var textKeys = map[string]bool{"id": true, "title": true, "subtitle": true, "source": true, "type": true, "created": true, "icon": true, "color": true}
 
 func metaFromNode(root *yaml.Node) Meta {
 	m := Meta{}
@@ -496,22 +498,34 @@ func (m Meta) Title() string { return strings.TrimSpace(m.String("title")) }
 // Subtitle returns the subtitle, or "".
 func (m Meta) Subtitle() string { return strings.TrimSpace(m.String("subtitle")) }
 
-// Source returns where the text comes from (a person, a book, an address),
-// or "".
-func (m Meta) Source() string { return strings.TrimSpace(m.String("source")) }
+// Sources returns where the text comes from (a person, a book, an address) in
+// file order, without repeats. Like tags, a single text value counts as one
+// source: people write a header by hand.
+func (m Meta) Sources() []string { return m.listOf("source", true) }
 
 // Type returns the page type, or "".
 func (m Meta) Type() string { return strings.TrimSpace(m.String("type")) }
+
+// Icon returns the icon of the page (a Lucide name or an emoji), or "". What
+// is not one (a header written by hand) is no icon.
+func (m Meta) Icon() string { return icons.Of(strings.TrimSpace(m.String("icon"))) }
+
+// Color returns the colour of the page (one of icons.Colors), or "".
+func (m Meta) Color() string { return icons.ColorOf(strings.TrimSpace(m.String("color"))) }
 
 // Created returns the created date as written (YYYY-MM-DD), or "".
 func (m Meta) Created() string { return strings.TrimSpace(m.String("created")) }
 
 // Tags returns the tags in file order. A single text value counts as one tag.
-func (m Meta) Tags() []string {
-	v, _ := m.Get("tags")
+func (m Meta) Tags() []string { return m.listOf("tags", false) }
+
+func (m Meta) listOf(key string, unique bool) []string {
+	v, _ := m.Get(key)
 	var out []string
+	seen := map[string]bool{}
 	add := func(s string) {
-		if s = strings.TrimSpace(s); s != "" {
+		if s = strings.TrimSpace(s); s != "" && !(unique && seen[s]) {
+			seen[s] = true
 			out = append(out, s)
 		}
 	}

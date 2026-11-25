@@ -136,7 +136,7 @@ func (s *Service) UpdateMail(ctx context.Context, actorID, ip string, p MailPatc
 		}
 		t := strings.TrimSpace(*v)
 		if utf8.RuneCountInString(t) > max || strings.ContainsFunc(t, func(r rune) bool { return r < 0x20 || r == 0x7f }) || !utf8.ValidString(t) {
-			return errf(Invalid, "%s is at most %d characters", name, max)
+			return errf(Invalid, "%s is at most %d characters.", name, max)
 		}
 		*dst = t
 		return nil
@@ -144,19 +144,19 @@ func (s *Service) UpdateMail(ctx context.Context, actorID, ip string, p MailPatc
 	if p.Host != nil {
 		h := strings.TrimSpace(*p.Host)
 		if h != "" && !validHost(h) {
-			return nil, errf(Invalid, "host is a name or address, with no port")
+			return nil, errf(Invalid, "Host is a name or address, with no port.")
 		}
 		next.Host = h
 	}
 	if p.Port != nil {
 		if *p.Port < 1 || *p.Port > 65535 {
-			return nil, errf(Invalid, "port is 1 to 65535")
+			return nil, errf(Invalid, "Port is 1 to 65535.")
 		}
 		next.Port = *p.Port
 	}
 	if p.Security != nil {
 		if *p.Security != mail.StartTLS && *p.Security != mail.TLS && *p.Security != mail.None {
-			return nil, errf(Invalid, "security is starttls, tls or none")
+			return nil, errf(Invalid, "Security is starttls, tls or none.")
 		}
 		next.Security = *p.Security
 	}
@@ -169,37 +169,37 @@ func (s *Service) UpdateMail(ctx context.Context, actorID, ip string, p MailPatc
 	if p.From != nil {
 		f := strings.TrimSpace(*p.From)
 		if f != "" && !plainAddress(f) {
-			return nil, errf(Invalid, "from is an address like notes@example.com")
+			return nil, errf(Invalid, "From is an address like notes@example.com.")
 		}
 		next.From = f
 	}
 	if p.ReplyTo != nil {
 		r := strings.TrimSpace(*p.ReplyTo)
 		if r != "" && !plainAddress(r) {
-			return nil, errf(Invalid, "replyTo is an address like help@example.com")
+			return nil, errf(Invalid, "replyTo is an address like help@example.com.")
 		}
 		next.ReplyTo = r
 	}
 	passwordGiven := p.Password != nil
 	if passwordGiven && len(*p.Password) > 1024 {
-		return nil, errf(Invalid, "password is at most 1024 bytes")
+		return nil, errf(Invalid, "Password is at most 1024 bytes.")
 	}
 	if p.Enabled != nil {
 		next.Enabled = *p.Enabled
 	}
 	// Rules that need more than one field.
 	if next.Security == mail.None && next.Host != "" && !mail.IsLoopback(next.Host) {
-		return nil, coded(400, "mail_insecure", "security none is only allowed when host is a loopback address (a relay on this machine); use starttls or tls")
+		return nil, coded(400, "mail_insecure", "Security none is only allowed when host is a loopback address (a relay on this machine); use starttls or tls.")
 	}
 	if next.Enabled {
 		if next.Host == "" {
-			return nil, errf(Invalid, "host is required to enable mail")
+			return nil, errf(Invalid, "Host is required to enable mail.")
 		}
 		if next.From == "" {
-			return nil, coded(400, "mail_from_required", "give the address mail is sent from")
+			return nil, coded(400, "mail_from_required", "Give the address mail is sent from.")
 		}
 		if s.cfg.PublicURL == "" {
-			return nil, coded(400, "mail_needs_public_url", "the links in the messages point to --public-url; start the server with it")
+			return nil, coded(400, "mail_needs_public_url", "The links in the messages point to --public-url; start the server with it.")
 		}
 	}
 	if passwordGiven {
@@ -254,17 +254,17 @@ type MailTestResult struct {
 func (s *Service) TestMail(ctx context.Context, actorID, ip, to, lang string) (*MailTestResult, error) {
 	to = strings.TrimSpace(to)
 	if !plainAddress(to) {
-		return nil, errf(Invalid, "to is an address like admin@example.com")
+		return nil, errf(Invalid, "To is an address like admin@example.com.")
 	}
 	m, err := s.readMail(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if m.Host == "" {
-		return nil, coded(409, "mail_not_configured", "set up the mail server first")
+		return nil, coded(409, "mail_not_configured", "Set up the mail server first.")
 	}
 	if m.From == "" {
-		return nil, coded(400, "mail_from_required", "give the address mail is sent from")
+		return nil, coded(400, "mail_from_required", "Give the address mail is sent from.")
 	}
 	if wait, ok := s.testCaps.take(s.now(), capKey{"mailtest", 10}); !ok {
 		return nil, retryAfter(wait)
@@ -425,9 +425,9 @@ func (s *Service) sendMail(kind, lang, to string, v mail.Vars) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, mail.ErrQueueFull):
-		return coded(503, "unavailable", "the mail queue is full; try again later")
+		return coded(503, "unavailable", "The mail queue is full; try again later.")
 	case errors.Is(err, mail.ErrNotEnabled):
-		return coded(409, "mail_not_configured", "mail is not enabled")
+		return coded(409, "mail_not_configured", "Mail is not enabled.")
 	default:
 		return err
 	}

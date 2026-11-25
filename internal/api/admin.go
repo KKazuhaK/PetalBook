@@ -89,7 +89,7 @@ func (s *server) adminSpaceItems(c *call, rows []store.AdminSpace) []adminSpaceR
 func (s *server) adminGetSpace(c *call) {
 	row, err := store.GetAdminSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), c.r.PathValue("space"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return
 	}
 	if err != nil {

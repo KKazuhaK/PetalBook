@@ -133,7 +133,7 @@ func (s *Service) CancelClosedRegistrations(ctx context.Context) error {
 // mailGate is what every flow that sends a message asks first.
 func (s *Service) needMail() error {
 	if !s.MailEnabled() {
-		return coded(409, "mail_not_configured", "mail is not enabled")
+		return coded(409, "mail_not_configured", "Mail is not enabled.")
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func (s *Service) gateToken(ctx context.Context, ip string) error {
 	return s.gateIP(s.sec(ctx), ip)
 }
 
-func errBadLink() *Error { return errf(NotFound, "that link is not valid, or has expired") }
+func errBadLink() *Error { return errf(NotFound, "That link is not valid, or has expired.") }
 
 func validToken(t string) bool { return t != "" && len(t) <= 256 }
 
@@ -176,7 +176,7 @@ type RegisterParams struct {
 	IP          string
 }
 
-func closedErr() *Error { return coded(403, "registration_closed", "registration is not open") }
+func closedErr() *Error { return coded(403, "registration_closed", "Registration is not open.") }
 
 // Register takes a registration. It answers nil whether or not a message goes
 // out (see docs/api.md): the caller says 202 either way.
@@ -208,38 +208,38 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		return err
 	}
 	if utf8.RuneCountInString(name) > 80 {
-		return errf(Invalid, "a name is 1 to 80 characters")
+		return errf(Invalid, "A name is 1 to 80 characters.")
 	}
 	email := strings.TrimSpace(p.Email)
 	if _, ascii := store.EmailKey(email); email == "" || !ascii || !plainAddress(email) {
-		return errf(Invalid, "that does not look like an email address")
+		return errf(Invalid, "That does not look like an email address.")
 	}
 	if err := CheckPassword(p.Password); err != nil {
 		return err
 	}
 	// 5. the domain
 	if len(rules.Domains) > 0 && !domainAllowed(email, rules.Domains) {
-		return coded(400, "email_domain_not_allowed", "registration is open to some email domains only")
+		return coded(400, "email_domain_not_allowed", "Registration is open to some email domains only.")
 	}
 	// 6. the terms
 	if (rules.TermsURL != "" || rules.PrivacyURL != "") && !p.AcceptTerms {
-		return coded(400, "terms_required", "accept the terms and the privacy policy to register")
+		return coded(400, "terms_required", "Accept the terms and the privacy policy to register.")
 	}
 	// 7. the username
 	if _, err := store.GetUserByUsername(ctx, s.st.Q(), username); err == nil {
-		return errf(Exists, "that username is taken")
+		return errf(Exists, "That username is taken.")
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 	if barred, err := s.retiredName(ctx, s.st.Q(), username); err != nil {
 		return err
 	} else if barred {
-		return errf(Exists, "that username is taken")
+		return errf(Exists, "That username is taken.")
 	}
 	if held, err := store.PendingUsername(ctx, s.st.Q(), username, s.now()); err != nil {
 		return err
 	} else if held {
-		return errf(Exists, "that username is taken")
+		return errf(Exists, "That username is taken.")
 	}
 	// 8. the tenant's hour and its pending registrations. Every request counts,
 	// whether or not the address already has an account, so the answer is the same.
@@ -285,7 +285,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 		}
 		if on, ok := store.UniqueOn(err); ok {
 			if strings.Contains(on, "username") {
-				return errf(Exists, "that username is taken")
+				return errf(Exists, "That username is taken.")
 			}
 			if attempt < 5 {
 				continue
@@ -410,7 +410,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*store
 	if err != nil {
 		return nil, "", err
 	}
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "registration")
 	if err != nil {
 		return nil, "", err
 	}
@@ -427,13 +427,13 @@ func (s *Service) RequestEmailVerify(ctx context.Context, u store.User, lang, ip
 		return err
 	}
 	if u.Email == "" {
-		return errf(Invalid, "this account has no email address; set one first")
+		return errf(Invalid, "This account has no email address; set one first.")
 	}
 	if _, ascii := store.EmailKey(u.Email); !ascii {
-		return errf(Invalid, "this address has characters other than ASCII; set it again")
+		return errf(Invalid, "This address has characters other than ASCII; set it again.")
 	}
 	if u.EmailVerified {
-		return coded(409, "email_verified", "this address is already verified")
+		return coded(409, "email_verified", "This address is already verified.")
 	}
 	if wait, ok := s.mailSlot(u.Email, ip); !ok {
 		return retryAfter(wait)
@@ -524,7 +524,7 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 		return err
 	}
 	if !s.MailEnabled() {
-		return coded(403, "password_reset_off", "password reset is not available")
+		return coded(403, "password_reset_off", "Password reset is not available.")
 	}
 	st := s.sec(ctx)
 	if err := s.checkCaptcha(ctx, st, CtxForgot, "", p.IP, p.Captcha); err != nil {
@@ -532,7 +532,7 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 	}
 	login := strings.TrimSpace(p.Login)
 	if login == "" || len(login) > 254 {
-		return errf(Invalid, "login is a username or an email address")
+		return errf(Invalid, "Login is a username or an email address.")
 	}
 	var accounts []store.User
 	if strings.Contains(login, "@") {
@@ -754,12 +754,12 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, ip, targetID, lang string) error {
 	u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor), targetID)
 	if errors.Is(err, store.ErrNotFound) {
-		return errf(NotFound, "no such user")
+		return errf(NotFound, "No such user.")
 	} else if err != nil {
 		return err
 	}
 	if u.SiteAdmin && !(actor.SiteAdmin && actor.Role == "admin") {
-		return errf(Forbidden, "only a site administrator may reset a site administrator's password")
+		return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
 	}
 	if err := s.needMail(); err != nil {
 		return err
@@ -767,14 +767,14 @@ func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, ip, 
 	if ok, err := s.resetAddressOK(ctx, *u); err != nil {
 		return err
 	} else if !ok {
-		return coded(409, "email_unverified", "this account has no verified email address")
+		return coded(409, "email_unverified", "This account has no verified email address.")
 	}
 	ok, err := s.canUsePassword(ctx, s.st.Q(), *u)
 	if err != nil {
 		return err
 	}
 	if !ok || u.Disabled {
-		return errf(Conflict, "this account has no password it could sign in with")
+		return errf(Conflict, "This account has no password it could sign in with.")
 	}
 	if wait, ok := s.mailSlot(u.Email, ""); !ok {
 		return retryAfter(wait)

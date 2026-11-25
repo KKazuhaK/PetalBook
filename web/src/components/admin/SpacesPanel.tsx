@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { MoreHorizontal, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import {
-  useAdminSpaces,
+  useAdminSpacesPage,
   useEvictSpace,
   usePutSpaceStorage,
   useResizeSpace,
@@ -15,7 +15,7 @@ import {
 } from '@/api/admin'
 import type { AdminSpace, CacheState, ConfirmAction, SpaceSort, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
-import { ErrorState, PageFallback, Spinner } from '@/components/common'
+import { Spinner } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import {
   AlertDialog,
@@ -43,6 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { DataTable, type Column } from '@/components/ui/data-table'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -56,10 +57,15 @@ import { ExportDialog } from './manage/ExportDialog'
 import { LocationBadge, useIsSite } from './manage/shared'
 import { ViewDialog } from './manage/ViewDialog'
 import { spaceUrls } from '@/lib/urls'
+import { useCursorPages } from '@/lib/useCursorPages'
 import { useDebounced } from '@/lib/useDebounced'
+import { useTablePrefs } from '@/lib/tablePrefs'
+import { tc } from '@/i18n/console'
 import { t } from '@/i18n'
 import { ta } from '@/i18n/admin'
 import { ts } from '@/i18n/storage'
+
+const isSort = (v: string): v is SpaceSort => v === 'created' || v === 'name' || v === 'bytes' || v === 'lastUsed'
 
 type Action = { kind: 'transfer' | 'disable' | 'delete' | 'evict' | 'view' | 'export'; space: AdminSpace }
 
@@ -92,29 +98,34 @@ export function SpacesPanel() {
   // What to show: all spaces, those past their deadline for a remote, or those in one cache state.
   const [filter, setFilter] = useState('')
   const site = useIsSite()
-  const [sort, setSort] = useState<SpaceSort>('created')
-  const [order, setOrder] = useState<'asc' | 'desc'>('asc')
+  const prefs = useTablePrefs('admin-spaces')
+  const [sort, setSort] = useState<{ key: SpaceSort; order: 'asc' | 'desc' }>({ key: 'created', order: 'asc' })
   const [remote, setRemote] = useState('')
   const [idle, setIdle] = useState('')
   const [pinnedOnly, setPinnedOnly] = useState(false)
   const [exemptOnly, setExemptOnly] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [bulk, setBulk] = useState<ConfirmAction | null>(null)
-  const spaces = useAdminSpaces(q, true, {
+  const params = {
+    q: q || undefined,
     cache: filter === 'overdue' ? undefined : (filter as CacheState) || undefined,
-    overdue: filter === 'overdue',
-    sort,
-    order,
+    overdue: filter === 'overdue' || undefined,
+    sort: sort.key,
+    order: sort.order,
     remote: (remote || undefined) as 'none' | 'ok' | 'offline' | 'error' | undefined,
     idleDays: idle ? Number(idle) : undefined,
-    pinned: pinnedOnly,
-    exempt: exemptOnly,
-  })
+    pinned: pinnedOnly || undefined,
+    exempt: exemptOnly || undefined,
+    limit: prefs.prefs.pageSize,
+  }
+  const pages = useCursorPages(JSON.stringify(params))
+  const spaces = useAdminSpacesPage({ ...params, cursor: pages.cursor || undefined })
   const setDisabled = useSetSpaceDisabled()
   const putStorage = usePutSpaceStorage()
   const [action, setAction] = useState<Action | null>(null)
 
-  const items = spaces.data?.pages.flatMap((p) => p.items) ?? []
+  const items = spaces.data?.items ?? []
+  const next = spaces.data?.next ?? ''
   const enable = async (s: AdminSpace) => {
     try {
       await setDisabled.mutateAsync({ id: s.id, disabled: false })
@@ -132,6 +143,110 @@ export function SpacesPanel() {
       toast.error(e instanceof ApiError && e.message ? e.message : ts.spaces.changeFailed)
     }
   }
+
+  const columns = useMemo<Column<AdminSpace>[]>(
+    () => [
+      {
+        id: 'name',
+        header: ta.spaces.name,
+        required: true,
+        min: 180,
+        weight: 3,
+        sortKey: 'name',
+        cell: (s) => (
+          <div className="flex min-w-0 items-center gap-x-2">
+            <span className="truncate font-medium">{s.name}</span>
+            {s.personal && <Badge variant="outline">{ta.spaces.personal}</Badge>}
+          </div>
+        ),
+      },
+      {
+        id: 'owner',
+        header: ta.spaces.owner,
+        min: 140,
+        weight: 2,
+        priority: 2,
+        cell: (s) =>
+          s.owner ? (
+            <>
+              <div className="truncate">{s.owner.name}</div>
+              <div className="truncate text-xs text-muted-foreground">{s.owner.username}</div>
+            </>
+          ) : (
+            <span className="text-muted-foreground">{ta.spaces.noOwner}</span>
+          ),
+      },
+      {
+        id: 'members',
+        header: ta.spaces.members,
+        min: 80,
+        weight: 0.8,
+        priority: 5,
+        align: 'right',
+        cell: (s) => s.members,
+      },
+      {
+        id: 'size',
+        header: ta.spaces.size,
+        min: 100,
+        weight: 1.2,
+        priority: 3,
+        sortKey: 'bytes',
+        cell: (s) => <SizeCell space={s} />,
+      },
+      {
+        id: 'where',
+        header: tg.spaces.where,
+        min: 130,
+        weight: 1.5,
+        priority: 6,
+        cell: (s) => <LocationBadge location={s.location} counted={s.counted} />,
+      },
+      {
+        id: 'sync',
+        header: ta.spaces.sync,
+        min: 100,
+        weight: 1,
+        priority: 7,
+        cell: (s) => ta.spaces.syncStates[s.sync],
+      },
+      {
+        id: 'status',
+        header: ta.spaces.status,
+        min: 90,
+        weight: 1,
+        priority: 2,
+        cell: (s) =>
+          s.disabled ? (
+            <Badge variant="secondary">{ta.spaces.disabled}</Badge>
+          ) : (
+            <span className="text-muted-foreground">{ta.spaces.active}</span>
+          ),
+      },
+      {
+        id: 'cache',
+        header: ts.spaces.cache,
+        min: 170,
+        weight: 2,
+        priority: 4,
+        cell: (s) => (
+          <div data-slot="space-cache">
+            <CacheCell space={s} />
+          </div>
+        ),
+      },
+      {
+        id: 'created',
+        header: tc.users.cols.created,
+        min: 140,
+        weight: 1.5,
+        priority: 8,
+        sortKey: 'created',
+        cell: (s) => <time dateTime={s.created}>{absoluteTime(s.created)}</time>,
+      },
+    ],
+    [],
+  )
 
   return (
     <SettingsSection title={ta.spaces.title} id="admin-spaces-heading" description={ta.spaces.help}>
@@ -155,7 +270,8 @@ export function SpacesPanel() {
           aria-label={ts.spaces.filter}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           <option value="">{ts.spaces.filterAll}</option>
           <option value="overdue">{ts.spaces.filterOverdue}</option>
@@ -166,34 +282,11 @@ export function SpacesPanel() {
           ))}
         </NativeSelect>
         <NativeSelect
-          aria-label={tg.spaces.sort}
-          value={sort}
-          onChange={(e) => {
-            setSort(e.target.value as SpaceSort)
-            setOrder(e.target.value === 'created' || e.target.value === 'name' ? 'asc' : 'desc')
-          }}
-          className="w-auto max-sm:w-full"
-        >
-          {(['created', 'name', 'bytes', 'lastUsed'] as const).map((k) => (
-            <option key={k} value={k}>
-              {tg.spaces.sorts[k]}
-            </option>
-          ))}
-        </NativeSelect>
-        <NativeSelect
-          aria-label={`${tg.spaces.sort} ↕`}
-          value={order}
-          onChange={(e) => setOrder(e.target.value as 'asc' | 'desc')}
-          className="w-auto max-sm:w-full"
-        >
-          <option value="asc">{tg.spaces.order.asc}</option>
-          <option value="desc">{tg.spaces.order.desc}</option>
-        </NativeSelect>
-        <NativeSelect
           aria-label={tg.spaces.remote}
           value={remote}
           onChange={(e) => setRemote(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           {(['', 'none', 'ok', 'offline', 'error'] as const).map((k) => (
             <option key={k} value={k}>
@@ -205,7 +298,8 @@ export function SpacesPanel() {
           aria-label={tg.spaces.idle}
           value={idle}
           onChange={(e) => setIdle(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           {(['', '30', '90', '180'] as const).map((k) => (
             <option key={k} value={k}>
@@ -213,7 +307,7 @@ export function SpacesPanel() {
             </option>
           ))}
         </NativeSelect>
-        <label className="flex items-center gap-1.5 text-xs">
+        <label className="flex min-h-10 items-center gap-1.5 text-xs">
           <input
             type="checkbox"
             className="size-4 accent-[var(--color-primary)]"
@@ -222,7 +316,7 @@ export function SpacesPanel() {
           />
           {tg.spaces.pinned}
         </label>
-        <label className="flex items-center gap-1.5 text-xs">
+        <label className="flex min-h-10 items-center gap-1.5 text-xs">
           <input
             type="checkbox"
             className="size-4 accent-[var(--color-primary)]"
@@ -233,123 +327,57 @@ export function SpacesPanel() {
         </label>
       </div>
       {!site && <p className="text-xs text-muted-foreground">{tg.spaces.personalNote}</p>}
-      <BulkBar
-        count={picked.size}
-        actions={
-          site
-            ? ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export', 'evict', 'pin', 'unpin']
-            : ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export']
+      <DataTable
+        prefs={prefs}
+        columns={columns}
+        rows={items}
+        rowId={(s) => s.id}
+        rowLabel={(s) => s.name}
+        rowAttrs={(s) => ({ 'data-space': s.id })}
+        loading={spaces.isPending}
+        fetching={spaces.isFetching && !spaces.isPending}
+        error={spaces.isError ? t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message) : undefined}
+        onRetry={() => void spaces.refetch()}
+        empty={q ? ta.spaces.noMatch(q) : ta.spaces.empty}
+        paging={{
+          page: pages.page,
+          hasPrev: pages.hasPrev,
+          hasNext: next !== '',
+          onPrev: pages.prev,
+          onNext: () => pages.next(next),
+        }}
+        sort={sort}
+        onSort={(s) => isSort(s.key) && setSort({ key: s.key, order: s.order })}
+        selection={{ selected: picked, onChange: setPicked }}
+        bulk={
+          <BulkBar
+            count={picked.size}
+            actions={
+              site
+                ? ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export', 'evict', 'pin', 'unpin']
+                : ['delete_spaces', 'disable_spaces', 'enable_spaces', 'export']
+            }
+            onAction={setBulk}
+            onClear={() => setPicked(new Set())}
+          />
         }
-        onAction={setBulk}
-        onClear={() => setPicked(new Set())}
+        actions={(s) => (
+          <RowActions
+            space={s}
+            site={site}
+            onAction={(kind) => setAction({ kind, space: s })}
+            onEnable={() => void enable(s)}
+            onPin={() =>
+              void changeStorage(
+                s,
+                { pin: !s.storage.pinned },
+                s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone,
+              )
+            }
+            onExempt={() => void changeStorage(s, { exempt: !s.storage.exempt }, ts.spaces.exemptDone)}
+          />
+        )}
       />
-
-      {spaces.isPending ? (
-        <PageFallback />
-      ) : spaces.isError && !spaces.data ? (
-        <ErrorState
-          message={t.fmt.labelled(ta.spaces.loadFailed, spaces.error.message)}
-          onRetry={() => void spaces.refetch()}
-        />
-      ) : items.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">{q ? ta.spaces.noMatch(q) : ta.spaces.empty}</p>
-      ) : (
-        <>
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[62rem] text-left text-sm">
-              <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
-                <tr>
-                  <th scope="col" className="w-8 px-3 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label={tg.spaces.selectAll}
-                      className="size-4 accent-[var(--color-primary)]"
-                      checked={items.length > 0 && items.every((s) => picked.has(s.id))}
-                      onChange={() =>
-                        setPicked(items.every((s) => picked.has(s.id)) ? new Set() : new Set(items.map((s) => s.id)))
-                      }
-                    />
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {ta.spaces.name}
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {ta.spaces.owner}
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">
-                    {ta.spaces.members}
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {ta.spaces.size}
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {tg.spaces.where}
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {ta.spaces.sync}
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {ta.spaces.status}
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    {ts.spaces.cache}
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">
-                    {ta.spaces.actions}
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {items.map((s) => (
-                  <SpaceRow
-                    key={s.id}
-                    space={s}
-                    picked={picked.has(s.id)}
-                    onPick={() =>
-                      setPicked((prev) => {
-                        const next = new Set(prev)
-                        if (!next.delete(s.id)) next.add(s.id)
-                        return next
-                      })
-                    }
-                    site={site}
-                    onAction={(kind) => setAction({ kind, space: s })}
-                    onEnable={() => void enable(s)}
-                    onPin={() =>
-                      void changeStorage(
-                        s,
-                        { pin: !s.storage.pinned },
-                        s.storage.pinned ? ts.spaces.unpinnedDone : ts.spaces.pinnedDone,
-                      )
-                    }
-                    onExempt={() => void changeStorage(s, { exempt: !s.storage.exempt }, ts.spaces.exemptDone)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            {spaces.hasNextPage && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={spaces.isFetchingNextPage}
-                onClick={() => void spaces.fetchNextPage()}
-              >
-                {spaces.isFetchingNextPage && <Spinner />}
-                {spaces.isFetchingNextPage ? ta.spaces.loadingMore : ta.spaces.loadMore}
-              </Button>
-            )}
-            <span className="text-xs text-muted-foreground">
-              {spaces.hasNextPage ? ta.spaces.loaded(items.length) : ta.spaces.allLoaded(items.length)}
-            </span>
-            {spaces.isFetchNextPageError && (
-              <ErrorState message={spaces.error.message} onRetry={() => void spaces.fetchNextPage()} />
-            )}
-          </div>
-        </>
-      )}
 
       {action?.kind === 'transfer' && <TransferDialog space={action.space} onClose={() => setAction(null)} />}
       {action?.kind === 'disable' && <DisableDialog space={action.space} onClose={() => setAction(null)} />}
@@ -387,10 +415,8 @@ export function SpacesPanel() {
   )
 }
 
-function SpaceRow({
+function RowActions({
   space: s,
-  picked,
-  onPick,
   site,
   onAction,
   onEnable,
@@ -398,8 +424,6 @@ function SpaceRow({
   onExempt,
 }: {
   space: AdminSpace
-  picked: boolean
-  onPick: () => void
   site: boolean
   onAction: (kind: Action['kind']) => void
   onEnable: () => void
@@ -408,100 +432,52 @@ function SpaceRow({
 }) {
   const sp = ta.spaces
   return (
-    <tr data-space={s.id}>
-      <td className="px-3 py-2.5">
-        <input
-          type="checkbox"
-          aria-label={tg.spaces.selectFor(s.name)}
-          className="size-4 accent-[var(--color-primary)]"
-          checked={picked}
-          onChange={onPick}
-        />
-      </td>
-      <th scope="row" className="max-w-56 px-3 py-2.5 font-normal">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="truncate font-medium">{s.name}</span>
-          {s.personal && <Badge variant="outline">{sp.personal}</Badge>}
-        </div>
-      </th>
-      <td className="max-w-40 px-3 py-2.5">
-        {s.owner ? (
-          <>
-            <div className="truncate">{s.owner.name}</div>
-            <div className="truncate text-xs text-muted-foreground">{s.owner.username}</div>
-          </>
-        ) : (
-          <span className="text-muted-foreground">{sp.noOwner}</span>
-        )}
-      </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{s.members}</td>
-      <td className="px-3 py-2.5">
-        <SizeCell space={s} />
-      </td>
-      <td className="px-3 py-2.5">
-        <LocationBadge location={s.location} counted={s.counted} />
-      </td>
-      <td className="px-3 py-2.5 whitespace-nowrap">{sp.syncStates[s.sync]}</td>
-      <td className="px-3 py-2.5">
-        {s.disabled ? (
-          <Badge variant="secondary">{sp.disabled}</Badge>
-        ) : (
-          <span className="text-muted-foreground">{sp.active}</span>
-        )}
-      </td>
-      <td className="px-3 py-2.5" data-slot="space-cache">
-        <CacheCell space={s} />
-      </td>
-      <td className="px-3 py-2.5">
-        <div className="flex items-center justify-end gap-1">
-          <Button
-            variant="outline"
-            size="sm"
-            render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}
-          >
-            {sp.open}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={sp.moreFor(s.name)} />}>
-              <MoreHorizontal />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-48">
-              <DropdownMenuItem disabled={s.personal} onClick={() => onAction('transfer')}>
-                {sp.transfer}
-              </DropdownMenuItem>
-              {s.disabled ? (
-                <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem>
-              ) : (
-                <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>
-              )}
-              <DropdownMenuItem onClick={() => onAction('view')}>{tg.spaces.view}</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAction('export')}>{tg.spaces.export}</DropdownMenuItem>
-              {site && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={onPin}>
-                    {s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={onExempt}>
-                    {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
-                    onClick={() => onAction('evict')}
-                  >
-                    {ts.spaces.evict}
-                  </DropdownMenuItem>
-                </>
-              )}
+    <>
+      <Button
+        variant="ghost"
+        className="h-10 px-3"
+        render={<Link to={spaceUrls(s.id).home()} aria-label={t.fmt.labelled(sp.open, s.name)} />}
+        nativeButton={false}
+      >
+        {sp.open}
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" className="size-10" aria-label={sp.moreFor(s.name)} />}>
+          <MoreHorizontal />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-48">
+          <DropdownMenuItem disabled={s.personal} onClick={() => onAction('transfer')}>
+            {sp.transfer}
+          </DropdownMenuItem>
+          {s.disabled ? (
+            <DropdownMenuItem onClick={onEnable}>{sp.enable}</DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onClick={() => onAction('disable')}>{sp.disable}</DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={() => onAction('view')}>{tg.spaces.view}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onAction('export')}>{tg.spaces.export}</DropdownMenuItem>
+          {site && (
+            <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => onAction('delete')}>
-                {tg.spaces.delete}
+              <DropdownMenuItem onClick={onPin}>{s.storage.pinned ? ts.spaces.unpin : ts.spaces.pin}</DropdownMenuItem>
+              <DropdownMenuItem onClick={onExempt}>
+                {s.storage.exempt ? ts.spaces.exemptOff : ts.spaces.exemptOn}
               </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </td>
-    </tr>
+              <DropdownMenuItem
+                disabled={s.storage.cache === 'local' || s.storage.cache === 'evicted' || s.storage.pinned}
+                onClick={() => onAction('evict')}
+              >
+                {ts.spaces.evict}
+              </DropdownMenuItem>
+            </>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={() => onAction('delete')}>
+            {tg.spaces.delete}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   )
 }
 
@@ -550,7 +526,7 @@ function EvictDialog({ space, onClose }: { space: AdminSpace; onClose: () => voi
     } catch (e) {
       if (!(e instanceof ApiError)) return setError(c.changeFailed)
       // busy says what keeps the space (in the server's words); the others have a sentence of their own.
-      if (e.code === 'busy') setError(`${c.errors.busy} ${e.message}`)
+      if (e.code === 'busy') setError(e.serverMessage ? `${c.errors.busy} ${e.serverMessage}` : c.errors.busy)
       else if (e.code === 'conflict') setError(c.errors.conflict)
       else if (e.code === 'unavailable') setError(c.errors.unavailable)
       else setError(e.message || c.changeFailed)

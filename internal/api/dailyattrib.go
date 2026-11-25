@@ -117,3 +117,13 @@ func sentencey(s string) bool {
 	trimmed := strings.TrimRight(s, ".")
 	return strings.ContainsAny(trimmed, "。！？!?；;：:，、\"“”") || strings.Contains(trimmed, "—") || strings.Contains(trimmed, " -- ")
 }
+
+// joinSources writes the sources of a page as one attribution: joined with the
+// enumeration comma in Chinese, with a comma and a space in the other languages.
+func joinSources(sources []string, lang string) string {
+	sep := ", "
+	if strings.HasPrefix(strings.ToLower(lang), "zh") {
+		sep = "、"
+	}
+	return strings.Join(sources, sep)
+}

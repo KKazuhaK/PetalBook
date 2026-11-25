@@ -82,8 +82,8 @@ export interface PageSummary {
   folder: string
   title?: string
   subtitle?: string
-  // Where the text comes from; free text.
-  source?: string
+  // Where the text comes from: a list like the tags (a person, a book, a film).
+  source: string[]
   label: string
   untitled: boolean
   tags?: string[]
@@ -93,6 +93,9 @@ export interface PageSummary {
   created?: string
   updated: string
   excerpt?: string
+  // The page's own icon (a Lucide name or an emoji) and colour, from its header.
+  icon?: string
+  color?: string
   // Only with `props: true` in the listing (the table view): the header's keys
   // that are not built in, as plain values, and the rev a change of them needs.
   props?: Record<string, unknown>
@@ -260,6 +263,9 @@ export interface PageType {
   // The Git blob id of the type's file: a change or a delete is made from it (`baseRev`).
   rev: string
   fields: TypeField[]
+  // The default icon and colour of the pages of the type (`x-icon`, `x-color` of its file).
+  icon?: string
+  color?: string
   // Set when the file cannot be used; the fields are then empty.
   error?: string
 }
@@ -423,6 +429,34 @@ export interface TreeResponse {
 export type TagColorName = 'gray' | 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' | 'purple' | 'pink' | 'rose'
 // A name, or a custom `#rrggbb` (the server stores it in lower case).
 export type TagColor = TagColorName | `#${string}`
+// The eight colours of an icon (the server keeps only the name).
+export type IconColor = 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' | 'purple' | 'pink'
+// The icon and colour of a folder, kept in space.yml.
+export interface FolderStyle {
+  folder: string
+  icon?: string
+  color?: IconColor
+}
+// What renaming a field of a type did (docs/api.md): the type now, how many pages were rewritten, and the pages of
+// the type left as they were: `has_key` when one already has a value under the new key, `unreadable` when its header
+// cannot be read (such a file has no id).
+export interface FieldRename {
+  type: PageType
+  pages: number
+  skipped: { id?: string; path: string; reason: 'has_key' | 'unreadable' }[]
+}
+
+export interface Appearance {
+  folders: FolderStyle[]
+  // The sources the space offers; null when it chose none (the client's defaults apply).
+  sourcePresets: string[] | null
+  iconColors: IconColor[]
+}
+export interface SourceCount {
+  source: string
+  pages: number
+}
+
 export interface TagsResponse {
   // `color` is absent when the tag has none.
   tags: { tag: string; pages: number; color?: TagColor }[]
@@ -884,6 +918,8 @@ export interface User {
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
   sso?: number
+  // The users list only: when the person was last active (absent: never).
+  lastActive?: string
   // The storage policy does not ask the spaces this user owns for a remote (absent when false).
   remoteExempt?: boolean
 }
@@ -2094,4 +2130,86 @@ export interface ExportRequest {
 export interface SpaceView {
   space: string
   until: string
+}
+
+// --- the users list, paged by the server, and a person's page (3.10) ---
+export type UserSort = 'created' | 'name' | 'lastActive'
+export interface UsersParams {
+  q?: string
+  limit?: number
+  cursor?: string
+  sort?: UserSort
+  order?: 'asc' | 'desc'
+  role?: 'member' | 'admin' | 'site'
+  state?: 'enabled' | 'disabled'
+  inactiveDays?: number
+  activeDays?: number
+  tenant?: string
+}
+export interface UsersPage {
+  users: User[]
+  next: string
+}
+// One sign-in of a person, for a site administrator. `method` is password, passkey, invite, registration, setup or sso:<slug>.
+export interface PersonSession {
+  id: string
+  userAgent: string
+  method: string
+  created: string
+  lastUsed: string
+  held?: boolean
+  // The session of this very request: the signed-in administrator's own.
+  current?: boolean
+}
+export interface PersonIdentity {
+  id: string
+  provider: string
+  slug: string
+  kind: string
+  label: string
+  created: string
+}
+export interface PersonMemberships {
+  spaces: { id: string; name: string; role: string; personal: boolean }[]
+  groups: { id: string; name: string; source: string }[]
+}
+
+// --- the notification centre and the person's preferences (docs/api.md, "Notifications", "Preferences") ---
+
+// The registry of kinds. `problems` is derived (read from the index, not a row); `mention`, `todo` and `system` are
+// reserved: nothing makes them yet.
+export const NOTIFY_KINDS = ['problems', 'invite', 'mention', 'sync', 'todo', 'system'] as const
+export type NotifyKind = (typeof NOTIFY_KINDS)[number]
+
+export interface NotificationItem {
+  // `problems:<space id>` for a derived one.
+  id: string
+  // A kind this client does not know is shown as a plain notice, so the type stays open.
+  kind: string
+  // What it is about: a space id.
+  ref: string
+  payload: Record<string, unknown>
+  // When it happened; null for a derived one, which is a state that holds now.
+  at: string | null
+  read: boolean
+  derived?: boolean
+}
+export interface NotificationList {
+  items: NotificationItem[]
+  next: string
+  // Counted up to 100.
+  unread: number
+  // How many more spaces have problems than the list names (at most 50 are); absent when none.
+  moreProblems?: number
+}
+export interface NotificationsParams {
+  kind?: string
+  unread?: boolean
+  cursor?: string
+  limit?: number
+}
+export interface PrefsAnswer {
+  // false: the person has no personal space to keep them in, so this browser does.
+  personal: boolean
+  prefs: Record<string, unknown>
 }

@@ -43,7 +43,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="/s/:space" element={<SpaceGate />}>
         <Route index element={<div data-testid="space-pages">the pages of the space</div>} />
       </Route>
@@ -70,6 +70,13 @@ const asTenantAdmin = (server: MockServer) => {
   admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
 }
 
+// A page of the bin opens on one kind; `all` shows both.
+async function openAll(path: string, scene?: (server: MockServer) => void) {
+  await open(path, scene)
+  await settle(() => document.querySelector('[data-slot="native-select"]') !== null, 'the filter')
+  await type(document.querySelector<HTMLSelectElement>('[data-slot="native-select"]')!, '')
+}
+
 async function open(path: string, scene?: (server: MockServer) => void) {
   m = await mount(routes, {
     signIn: true,
@@ -85,7 +92,7 @@ const deleteSpace = (server: MockServer, id: string, reason = '') =>
 
 describe('the recycle bin', () => {
   it('lists what was deleted with the days left, who deleted it and why', async () => {
-    await open('/admin/recycle', (server) => {
+    await open('/admin/spaces/deleted', (server) => {
       const tang = makePerson(server, 'tang')
       const id = (tang.request('POST', '/api/spaces', { name: '删掉的' }).body as { id: string }).id
       deleteSpace(server, id, '搬家了')
@@ -100,7 +107,7 @@ describe('the recycle bin', () => {
 
   it('restores a space, and the list is empty again', async () => {
     let space = ''
-    await open('/admin/recycle', (server) => {
+    await open('/admin/spaces/deleted', (server) => {
       const tang = makePerson(server, 'tang')
       space = (tang.request('POST', '/api/spaces', { name: '要回来的' }).body as { id: string }).id
       deleteSpace(server, space)
@@ -115,7 +122,7 @@ describe('the recycle bin', () => {
   })
 
   it('asks for a new owner when every owner is gone, and lists the people who were left out', async () => {
-    await open('/admin/recycle', (server) => {
+    await openAll('/admin/spaces/deleted', (server) => {
       const gone = makePerson(server, 'gone')
       makePerson(server, 'newowner')
       const id = (gone.request('POST', '/api/spaces', { name: '没主人了' }).body as { id: string }).id
@@ -142,7 +149,7 @@ describe('the recycle bin', () => {
   })
 
   it('restores a person and lists the handovers it did not undo', async () => {
-    await open('/admin/recycle', (server) => {
+    await open('/admin/users/deleted', (server) => {
       const leaver = makePerson(server, 'leaver')
       const heir = makePerson(server, 'heir')
       makePerson(server, 'viewer')
@@ -161,7 +168,7 @@ describe('the recycle bin', () => {
   })
 
   it('purges early for a site administrator: a fresh confirmation, the name typed, then progress until it is gone', async () => {
-    await open('/admin/recycle', (server) => {
+    await open('/admin/spaces/deleted', (server) => {
       const tang = makePerson(server, 'tang')
       deleteSpace(server, (tang.request('POST', '/api/spaces', { name: '清掉我' }).body as { id: string }).id)
     })
@@ -184,7 +191,7 @@ describe('the recycle bin', () => {
   })
 
   it('offers a tenant administrator no early purge, and no personal space', async () => {
-    await open('/admin/recycle', (server) => {
+    await openAll('/admin/spaces/deleted', (server) => {
       const tang = makePerson(server, 'tang')
       deleteSpace(server, (tang.request('POST', '/api/spaces', { name: '团队的' }).body as { id: string }).id)
       adminRequests(server)('DELETE', `/api/users/${tang.id}`, {})
@@ -202,7 +209,7 @@ describe('the recycle bin', () => {
   })
 
   it('restores several at once through a confirmation and a job', async () => {
-    await open('/admin/recycle', (server) => {
+    await open('/admin/spaces/deleted', (server) => {
       const tang = makePerson(server, 'tang')
       for (const n of ['一', '二'])
         deleteSpace(server, (tang.request('POST', '/api/spaces', { name: n }).body as { id: string }).id)
@@ -248,7 +255,7 @@ describe('exports', () => {
       history: false,
     })
     await click(dlg().querySelector('a'))
-    await settle(() => locationText() === '/admin/recycle' && exportsList().length === 1, 'the list')
+    await settle(() => locationText() === '/admin/spaces/deleted' && exportsList().length === 1, 'the list')
     await settle(() => exportsList()[0].getAttribute('data-state') === 'ready', 'ready')
     const row = exportsList()[0]
     expect(row.textContent).toContain('要导出')
@@ -265,7 +272,7 @@ describe('exports', () => {
 
   it('says what could not be included, and what failed, and drops an export when it expires', async () => {
     let first = ''
-    await open('/admin/recycle', (server) => {
+    await open('/admin/spaces/deleted', (server) => {
       const tang = makePerson(server, 'tang')
       const id = (tang.request('POST', '/api/spaces', { name: '有缺的' }).body as { id: string }).id
       const made = adminRequests(server)('POST', '/api/admin/exports', { spaces: [id] }).body as { id: string }

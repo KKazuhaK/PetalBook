@@ -31,6 +31,7 @@ var scopeAllowlist = map[string]string{
 	"CountEnabledPasswordAdmins": "the same rule for password sign-in: the server's own",
 	"CountPasskeyRequired":       "a count for the security page, which is the server's own",
 	"DeleteOldInvites":           "background job: expired invites of every tenant",
+	"NotifyUser":                 "a notification for one person by id: the row carries the person's own tenant, read here",
 	"TrimAudit":                  "background job: the audit log of every tenant",
 	"DisabledSpaces":             "the server's set of disabled space ids, which is checked by id",
 	"EndTenantSessions":          "a site administrator disabling a tenant: the tenant is the one named, its people's sessions end",

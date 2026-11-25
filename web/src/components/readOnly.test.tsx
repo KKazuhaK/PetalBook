@@ -101,7 +101,7 @@ describe('the file list and the sidebar', () => {
       expect(hasButtonText(t.nav.quickNote), role).toBe(true)
       expect(byLabel(t.tagColor.more('蓝')), role).not.toBeNull()
       expect(document.querySelector('a[draggable="true"]'), role).not.toBeNull()
-      expect(document.querySelector('[role="checkbox"]'), role).not.toBeNull()
+      expect(document.querySelector('input[type="checkbox"]'), role).not.toBeNull()
       await m!.unmount()
       m = undefined
     }
@@ -117,7 +117,7 @@ describe('the file list and the sidebar', () => {
     expect(byLabel(t.capture.fab)).toBeNull()
     expect(byLabel(t.tagColor.more('蓝'))).toBeNull()
     expect(document.querySelector('[draggable="true"]')).toBeNull()
-    expect(document.querySelector('[role="checkbox"]')).toBeNull()
+    expect(document.querySelector('input[type="checkbox"]')).toBeNull()
     // The tag is shown, and links to its pages.
     expect(document.querySelector('[role="list"] a')?.textContent).toContain('蓝')
     expect(document.querySelector('a[href*="/p/"]')?.textContent).toContain('共享页')
@@ -125,7 +125,7 @@ describe('the file list and the sidebar', () => {
 
   it('a viewer gets no menu on right-click, and no key deletes anything', async () => {
     await openList('viewer')
-    const row = document.querySelector('li[data-file-key]')
+    const row = document.querySelector('[data-file-key]')
     // No context menu is built around the list at all.
     expect(row).not.toBeNull()
     await click(row!.querySelector('a'))
@@ -244,7 +244,7 @@ describe('gaining write while a page is open', () => {
         // What this browser kept from when the person could write.
         saveDraft(draftRef(adminId, space, pageId), {
           baseRev: page.rev,
-          fields: { title: '共享页', subtitle: '', source: '', tags: [] },
+          fields: { title: '共享页', subtitle: '', source: [], tags: [] },
           bodyText: '我的草稿',
           savedAt: Date.now(),
           token: 'tok-1',

@@ -230,11 +230,11 @@ func (s *Service) samlFor(rt *providerRT) (*authsaml.Provider, error) {
 func (s *Service) SAMLMetadata(slug string) ([]byte, error) {
 	rt := s.provs.get(slug)
 	if rt == nil || rt.row.Kind != KindSAML {
-		return nil, errf(NotFound, "no such provider")
+		return nil, errf(NotFound, "No such provider.")
 	}
 	p, err := s.samlFor(rt)
 	if err != nil {
-		return nil, errf(Unavailable, "the provider's metadata is not available")
+		return nil, errf(Unavailable, "The provider's metadata is not available.")
 	}
 	// Only the signing key is offered: encrypted assertions are not supported
 	// (and are refused), and a provider that is shown an encryption key uses it.
@@ -334,7 +334,7 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 		rt = s.provs.get(slug)
 	}
 	if rt == nil || rt.row.Kind != kind || !rt.row.Enabled {
-		return nil, errf(NotFound, "single sign-on is not configured")
+		return nil, errf(NotFound, "Single sign-on is not configured.")
 	}
 	switch p.Intent {
 	case "":
@@ -342,13 +342,13 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 	case "login", "setup", "invite":
 	case "link":
 		if p.User == nil {
-			return nil, errf(Unauthenticated, "sign in to link an identity")
+			return nil, errf(Unauthenticated, "Sign in to link an identity.")
 		}
 	default:
-		return nil, errf(Invalid, "intent is login, setup, invite or link")
+		return nil, errf(Invalid, "Intent is login, setup, invite or link.")
 	}
 	if len(p.Token) > 256 {
-		return nil, errf(Invalid, "the token is too long")
+		return nil, errf(Invalid, "The token is too long.")
 	}
 	if d, ok := s.starts.take(ip); !ok {
 		return nil, retryAfter(d)
@@ -359,7 +359,7 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 	}
 	unavailable := func(err error) error {
 		s.log.Error("sign-in provider unavailable", "provider", rt.row.Slug, "kind", kind, "reason", providerReason(err))
-		return errf(Unavailable, "the single sign-on provider cannot be reached right now")
+		return errf(Unavailable, "The single sign-on provider cannot be reached right now.")
 	}
 	switch kind {
 	case KindOIDC:
@@ -400,7 +400,7 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 		s.pending.putAs(binding, e)
 		return out, nil
 	}
-	return nil, errf(NotFound, "single sign-on is not configured")
+	return nil, errf(NotFound, "Single sign-on is not configured.")
 }
 
 // --- finishing -------------------------------------------------------------------
@@ -785,7 +785,7 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	case "login", "invite":
 		s.syncGroups(ctx, rt, user.ID, user.Username, ip, c.groups)
 	}
-	tok, err := s.issueSession(ctx, user.ID, false)
+	tok, err := s.issueSession(ctx, user.ID, false, "sso:"+slug)
 	if err != nil {
 		s.log.Error("could not start a session", "error", err)
 		return s.ssoFail(kind, slug, e.intent, "internal", ip, clear...)

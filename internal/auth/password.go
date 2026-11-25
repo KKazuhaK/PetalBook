@@ -44,10 +44,10 @@ const (
 // CheckPassword applies the password policy.
 func CheckPassword(pw string) error {
 	if len(pw) > MaxPasswordBytes {
-		return errf(Invalid, "a password is at most %d bytes", MaxPasswordBytes)
+		return errf(Invalid, "A password is at most %d bytes.", MaxPasswordBytes)
 	}
 	if !utf8.ValidString(pw) || utf8.RuneCountInString(pw) < MinPasswordChars {
-		return errf(Invalid, "a password is at least %d characters", MinPasswordChars)
+		return errf(Invalid, "A password is at least %d characters.", MinPasswordChars)
 	}
 	return nil
 }

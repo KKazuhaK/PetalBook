@@ -30,7 +30,7 @@ func (s *server) adminScope(c *call) (store.Scope, bool) {
 		return sc, true
 	}
 	if !sc.All() && id != sc.Tenant() {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such tenant")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such tenant.")
 		return sc, false
 	}
 	if sc.All() && !s.tenantExists(c, id) {
@@ -42,7 +42,7 @@ func (s *server) adminScope(c *call) (store.Scope, bool) {
 func (s *server) tenantExists(c *call, id string) bool {
 	_, err := store.GetTenant(c.r.Context(), s.opt.Store.Q(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such tenant")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such tenant.")
 		return false
 	}
 	if err != nil {

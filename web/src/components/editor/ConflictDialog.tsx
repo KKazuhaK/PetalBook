@@ -14,7 +14,7 @@ import { absoluteTime } from '@/lib/time'
 interface Shown {
   title: string
   subtitle: string
-  source?: string
+  source?: string[]
   tags: string[]
   body: string
 }
@@ -34,7 +34,7 @@ function Version({ heading, shown }: { heading: string; shown: Shown }) {
       <h3 className="text-sm font-medium">{heading}</h3>
       {line(t.conflict.title_, shown.title)}
       {line(t.conflict.subtitle_, shown.subtitle)}
-      {shown.source ? line(t.conflict.source_, shown.source) : null}
+      {shown.source?.length ? line(t.conflict.source_, t.fmt.list(shown.source)) : null}
       {line(t.conflict.tags_, t.fmt.list(shown.tags))}
       <div className="text-sm text-muted-foreground">{t.conflict.body_}</div>
       {/* Plain Markdown text: it is the file's content, shown as written. */}

@@ -153,7 +153,7 @@ func (s *server) acceptRemote(c *call) {
 		return
 	}
 	if req.Commit == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "accepting needs commit, the remote commit shown in rewritten.remote")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Accepting needs commit, the remote commit shown in rewritten.remote.")
 		return
 	}
 	v, err := s.spaces.Accept(c.r.Context(), c.sp, req.Commit)
@@ -187,7 +187,7 @@ func (s *server) getHistory(c *call) {
 	if l := c.r.URL.Query().Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
 		if err != nil || n < 1 || n > 100 {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit must be a number from 1 to 100")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit must be a number from 1 to 100.")
 			return
 		}
 		limit = n

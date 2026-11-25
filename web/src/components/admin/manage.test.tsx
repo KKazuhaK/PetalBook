@@ -6,6 +6,8 @@ import { pollMs } from '@/api/manage'
 import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { ta } from '@/i18n/admin'
+import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/manage'
 import {
   adminRequests,
@@ -41,7 +43,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
@@ -100,7 +102,7 @@ const confirmButton = () => buttonIn(dlg(), tg.bulk.confirm)!
 
 describe('the summary and the list of people', () => {
   it('shows what the server holds at the top, with the free disk for a site administrator', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const tang = makePerson(server, 'tang')
       tang.request('POST', '/api/spaces', { name: '团队' })
     })
@@ -115,25 +117,28 @@ describe('the summary and the list of people', () => {
   })
 
   it('does not tell a tenant administrator the free disk', async () => {
-    await open('manage', asTenantAdmin)
+    await open('storage/manage', asTenantAdmin)
     await settle(() => document.querySelector('[data-slot="storage-summary"]') !== null, 'the summary')
     expect(document.querySelector('[data-card="disk"]')).toBeNull()
     expect(document.querySelector('[data-card="held"]')).not.toBeNull()
   })
 
   it('lists people with what counts and what is held, sorted and filtered by the server', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const tang = makePerson(server, 'tang')
       tang.request('POST', '/api/spaces', { name: '她的空间' })
       makePerson(server, 'wu')
     })
     await settle(() => personRows().length === 3, 'three people')
-    await type(select(tg.people.sort), 'created')
+    // A click on a header sorts by it on the server; a second click turns the order round.
+    const header = () =>
+      document.querySelector<HTMLElement>(`button[aria-label="${tc.table.sortBy(tc.users.cols.created)}"]`)!
+    await click(header())
     await settle(
-      () => queries('/api/admin/storage/people').some((q) => q.get('sort') === 'created'),
+      () => queries('/api/admin/storage/people').some((q) => q.get('sort') === 'created' && q.get('order') === 'asc'),
       'sorted by the server',
     )
-    await type(select(tg.people.sort + ' ↕'), 'desc')
+    await click(header())
     await settle(
       () => queries('/api/admin/storage/people').some((q) => q.get('sort') === 'created' && q.get('order') === 'desc'),
       'the order',
@@ -144,7 +149,7 @@ describe('the summary and the list of people', () => {
 
   it('opens a person to see their spaces, each with where it is stored and whether it counts', async () => {
     let space = ''
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const tang = makePerson(server, 'tang')
       space = (tang.request('POST', '/api/spaces', { name: '在自己远端' }).body as { id: string }).id
       tang.request('POST', '/api/spaces', { name: '只在服务器' })
@@ -153,11 +158,12 @@ describe('the summary and the list of people', () => {
     await settle(() => personRows().length === 2, 'people')
     await click(byLabel(tg.people.openFor('名 tang')))
     await settle(() => document.querySelectorAll('[data-slot="person-spaces"] li').length === 3, 'their spaces')
-    const own = dlg().querySelector(`[data-space="${space}"] [data-slot="space-location"]`)!
+    const page = document.querySelector<HTMLElement>('[data-slot="person-usage"]')!
+    const own = page.querySelector(`[data-space="${space}"] [data-slot="space-location"]`)!
     expect(own.getAttribute('data-counted')).toBe('false')
     expect(own.textContent).toContain(tg.where.names.own)
     expect(own.textContent).toContain(tg.where.notCounted)
-    const here = [...dlg().querySelectorAll('[data-slot="space-location"]')].filter(
+    const here = [...page.querySelectorAll('[data-slot="space-location"]')].filter(
       (l) => l.getAttribute('data-counted') === 'true',
     )
     expect(here).toHaveLength(2)
@@ -165,7 +171,7 @@ describe('the summary and the list of people', () => {
   })
 
   it("shows a tenant administrator no personal space in a person's spaces", async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       makePerson(server, 'tang').request('POST', '/api/spaces', { name: '团队' })
       asTenantAdmin(server)
     })
@@ -175,8 +181,9 @@ describe('the summary and the list of people', () => {
       () => document.querySelectorAll('[data-slot="person-spaces"] li').length === 1,
       'only the shared space',
     )
-    expect(dlg().textContent).toContain('团队')
-    expect(dlg().textContent).toContain(tg.people.tenantNote)
+    const page = document.querySelector<HTMLElement>('[data-slot="person-usage"]')!
+    expect(page.textContent).toContain('团队')
+    expect(page.textContent).toContain(tg.people.tenantNote)
   })
 })
 
@@ -193,7 +200,7 @@ describe('the list of spaces', () => {
     expect(loc('外面的').getAttribute('data-counted')).toBe('false')
     expect(loc('外面的').textContent).toContain(tg.where.notCounted)
     expect(rows().filter((r) => r.querySelector('[data-counted="true"]')).length).toBe(2)
-    await type(select(tg.spaces.sort), 'name')
+    await click(document.querySelector(`button[aria-label="${tc.table.sortBy(ta.spaces.name)}"]`))
     await settle(
       () => queries('/api/admin/spaces').some((q) => q.get('sort') === 'name' && q.get('order') === 'asc'),
       'sorted by name',
@@ -255,14 +262,14 @@ describe('deleting a person', () => {
   }
   const openPerson = async () => {
     await settle(() => personRows().length >= 4, 'people')
-    await click(byLabel(tg.people.openFor('名 leaver')))
-    await settle(() => document.querySelector('[data-slot="person-dialog"]') !== null, 'the person')
-    await click(buttonIn(dlg(), tg.people.deletePerson))
+    await click(byLabel(t.fmt.labelled(tc.table.more, '名 leaver')))
+    await settle(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the actions')
+    await click(menuItem(tg.people.deletePerson))
     await settle(() => document.querySelector('[data-slot="user-plan"]') !== null, 'the plan')
   }
 
   it('asks for an heir when a shared space has nobody to take it, then deletes and puts the person in the bin', async () => {
-    await open('manage', people)
+    await open('storage/manage', people)
     await openPerson()
     const box = () => document.querySelector<HTMLElement>('[data-slot="delete-person"]')!
     expect(box().textContent).toContain(tg.del.user.needsHeir)
@@ -389,7 +396,7 @@ describe('bulk actions', () => {
     expect(dlg().textContent).toContain(tg.bulk.states.failed)
   })
   it('drops the confirmation of an heir that was cleared and asks for the plan again', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const leaver = makePerson(server, 'leaver')
       makePerson(server, 'viewer')
       makePerson(server, 'heir')
@@ -418,7 +425,7 @@ describe('bulk actions', () => {
   })
 
   it('asks again with the chosen heir when the plan for them failed, and confirms only a plan made with them', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const leaver = makePerson(server, 'leaver')
       makePerson(server, 'viewer')
       makePerson(server, 'heir')

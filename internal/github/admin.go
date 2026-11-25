@@ -122,7 +122,7 @@ func appInUse(spaces, auths int) *connections.Error {
 	if auths > 0 {
 		parts = append(parts, strconv.Itoa(auths)+" user(s) are connected")
 	}
-	return errf(http.StatusConflict, CodeInUse, "another GitHub App cannot be set while %s: switch or disconnect those first", strings.Join(parts, " and "))
+	return errf(http.StatusConflict, CodeInUse, "Another GitHub App cannot be set while %s: switch or disconnect those first.", strings.Join(parts, " and "))
 }
 
 // Save checks the App with GitHub and stores it. It saves nothing when a check
@@ -149,15 +149,15 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		secret = secretNew
 	}
 	if old == nil && (appID == "" || keyPEM == "") {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "the first save needs appId and privateKey")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "The first save needs appId and privateKey.")
 	}
 	if appID == "" || strings.ContainsAny(appID, " \t\r\n/") {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "appId is missing or malformed")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "appId is missing or malformed.")
 	}
 	if clientID == "" {
 		secret = ""
 	} else if secret == "" || (old != nil && clientID != old.rec.ClientID && secretNew == "") {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "clientId and clientSecret go together")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "clientId and clientSecret go together.")
 	}
 	var pemBytes []byte
 	if keyPEM != "" {
@@ -169,10 +169,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 	}
 	key, err := githubapp.ParseKey(pemBytes)
 	if err != nil {
-		return nil, errf(http.StatusBadRequest, CodeKeyInvalid, "the private key must be an RSA key in PEM form (PKCS#1 or PKCS#8): %s", err.Error())
+		return nil, errf(http.StatusBadRequest, CodeKeyInvalid, "The private key must be an RSA key in PEM form (PKCS#1 or PKCS#8): %s.", err.Error())
 	}
 	if len(keyPEM) > 16<<10 || len(secret) > 1024 || len(clientID) > 256 {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "a value is too long")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "A value is too long.")
 	}
 	// Another App strands everything made with this one. Another (or no)
 	// client id only strands the users' connections: spaces syncing through an
@@ -193,35 +193,35 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (*AppView, error) {
 		}
 		if spaces > 0 || auths > 0 {
 			if !appChanged {
-				return nil, errf(http.StatusConflict, CodeInUse, "the client id cannot be changed or removed while %d user(s) are connected: they disconnect first", auths)
+				return nil, errf(http.StatusConflict, CodeInUse, "The client id cannot be changed or removed while %d user(s) are connected: they disconnect first.", auths)
 			}
 			return nil, appInUse(spaces, auths)
 		}
 	}
 	app, err := s.c.NewApp(appID, key)
 	if err != nil {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "%s", err.Error())
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "%s.", err.Error())
 	}
 	info, err := app.AppInfo(ctx)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusUnauthorized, http.StatusNotFound, http.StatusForbidden) && !limited(err) {
-			return nil, errf(http.StatusBadRequest, CodeAppRejected, "GitHub does not accept this private key for App %s", appID)
+			return nil, errf(http.StatusBadRequest, CodeAppRejected, "GitHub does not accept this private key for App %s.", appID)
 		}
 		return nil, s.unreachable(err)
 	}
 	if strconv.FormatInt(info.ID, 10) != appID && info.ClientID != appID {
-		return nil, errf(http.StatusBadRequest, CodeAppRejected, "the key belongs to App %d, not %s", info.ID, appID)
+		return nil, errf(http.StatusBadRequest, CodeAppRejected, "The key belongs to App %d, not %s.", info.ID, appID)
 	}
 	if clientID != "" {
 		if info.ClientID != clientID {
-			return nil, errf(http.StatusBadRequest, CodeClientRejected, "%s is not the client id of this App", clientID)
+			return nil, errf(http.StatusBadRequest, CodeClientRejected, "%s is not the client id of this App.", clientID)
 		}
 		ok, err := s.c.CheckClient(ctx, clientID, secret)
 		if err != nil {
 			return nil, s.unreachable(err)
 		}
 		if !ok {
-			return nil, errf(http.StatusBadRequest, CodeClientRejected, "GitHub does not accept this client id and secret")
+			return nil, errf(http.StatusBadRequest, CodeClientRejected, "GitHub does not accept this client id and secret.")
 		}
 	}
 	rec := appRecord{AppID: appID, ClientID: clientID, Fingerprint: githubapp.Fingerprint(key), Slug: info.Slug, Name: info.Name,
@@ -267,7 +267,7 @@ func (s *Service) unreachable(err error) error {
 			return he
 		}
 	}
-	return errf(http.StatusServiceUnavailable, CodeUnavailable, "GitHub could not be asked right now; nothing was saved")
+	return errf(http.StatusServiceUnavailable, CodeUnavailable, "GitHub could not be asked right now; nothing was saved.")
 }
 
 // Delete removes the App's settings, the users' connections (GitHub is asked
@@ -286,7 +286,7 @@ func (s *Service) Delete(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		return errf(http.StatusConflict, CodeInUse, "%d space(s) sync through the App: switch or disconnect those first", n)
+		return errf(http.StatusConflict, CodeInUse, "%d space(s) sync through the App: switch or disconnect those first.", n)
 	}
 	auths, err := store.ListGitHubAuthorizations(ctx, q)
 	if err != nil {
@@ -347,7 +347,7 @@ func decodeCursor(s string) (cursor, error) {
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	var c cursor
 	if err != nil || json.Unmarshal(b, &c) != nil || c.Page < 0 || c.After < 0 || len(c.Seen) > 400 {
-		return cursor{}, errf(http.StatusBadRequest, CodeInvalid, "the cursor is not one this server made")
+		return cursor{}, errf(http.StatusBadRequest, CodeInvalid, "The cursor is not one this server made.")
 	}
 	return c, nil
 }
@@ -364,7 +364,7 @@ func (s *Service) Installations(ctx context.Context, cur string) ([]Installation
 		return nil, "", err
 	}
 	if c.Kind != "" && c.Kind != "p" {
-		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "the cursor is not one this server made")
+		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "The cursor is not one this server made.")
 	}
 	list, next, err := st.app.Installations(ctx, c.Page)
 	if err != nil {
@@ -397,7 +397,7 @@ func (s *Service) Installations(ctx context.Context, cur string) ([]Installation
 
 func (s *Service) listError(err error) error {
 	if githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err) {
-		return errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App")
+		return errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App.")
 	}
 	return s.unreachable(err)
 }
@@ -413,7 +413,7 @@ func (s *Service) SetTenants(ctx context.Context, id int64, tenants []string) (*
 		return nil, err
 	}
 	if len(tenants) > maxShareTenants {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "share with at most %d tenants", maxShareTenants)
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "Share with at most %d tenants.", maxShareTenants)
 	}
 	set := make([]string, 0, len(tenants))
 	seen := map[string]bool{}
@@ -427,18 +427,18 @@ func (s *Service) SetTenants(ctx context.Context, id int64, tenants []string) (*
 	in, err := st.app.Installation(ctx, id)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound) {
-			return nil, errf(http.StatusNotFound, CodeNotFound, "GitHub does not know that installation")
+			return nil, errf(http.StatusNotFound, CodeNotFound, "GitHub does not know that installation.")
 		}
 		return nil, s.listError(err)
 	}
 	if len(set) > 0 && in.Account.Type != "Organization" {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "only the installation of an organisation can be shared")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "Only the installation of an organisation can be shared.")
 	}
 	err = s.opt.Store.Tx(ctx, func(q store.Q) error {
 		for _, t := range set {
 			if _, err := store.GetTenant(ctx, q, t); err != nil {
 				if errors.Is(err, store.ErrNotFound) {
-					return errf(http.StatusBadRequest, CodeInvalid, "no such tenant: %s", t)
+					return errf(http.StatusBadRequest, CodeInvalid, "No such tenant: %s.", t)
 				}
 				return err
 			}

@@ -122,7 +122,7 @@ func (s *Space) pushAssets(ctx context.Context, tx *txn) error {
 	if err := b.Put(ctx, files, author, committer); err != nil {
 		var ue *UnavailableError
 		if !errors.As(err, &ue) && gitstore.KindOf(err) != gitstore.KindOther {
-			err = &UnavailableError{Msg: "the attachment repository: " + gitstore.Scrub(err.Error()), Err: err}
+			err = &UnavailableError{Msg: "The attachment repository: " + gitstore.Scrub(err.Error()) + ".", Err: err}
 		}
 		return err
 	}

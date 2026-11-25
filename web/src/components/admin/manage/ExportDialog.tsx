@@ -78,7 +78,7 @@ export function ExportDialog({
                 className={tapTarget}
                 type="button"
                 variant="outline"
-                render={<Link to={adminPath('recycle')} onClick={onClose} />}
+                render={<Link to={adminPath('spaces', 'deleted')} onClick={onClose} />}
               >
                 {tg.exports.goList}
               </Button>

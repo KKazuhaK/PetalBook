@@ -130,7 +130,7 @@ func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
 		return gitstore.Token{Username: user, URL: r.URL, Get: func() (string, error) {
 			p, ok := m.opt.Connections.Get(prov)
 			if !ok {
-				return "", &gitstore.CredentialError{Code: connections.CodeNotConfigured, Msg: "this server has no connection to " + prov + " any more"}
+				return "", &gitstore.CredentialError{Code: connections.CodeNotConfigured, Msg: "This server has no connection to " + prov + " any more."}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -185,7 +185,22 @@ func (m *Manager) remoteOptions(id string, r *store.Remote) *space.RemoteOptions
 // spaces' sync states in line with a space's remote.
 func (m *Manager) persistStatus(id string) func(space.RemoteStatus) {
 	return func(st space.RemoteStatus) {
+		prev := ""
+		if m.single == nil {
+			m.mu.Lock()
+			known := m.syncs != nil
+			prev = m.syncs[id]
+			m.mu.Unlock()
+			if !known {
+				// The states are read once before the first change is noted, so that
+				// the first change of a run is told from the state it was in.
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				prev = m.syncStates(ctx)[id]
+				cancel()
+			}
+		}
 		m.setSync(id, st.State)
+		defer m.syncNotice(id, prev, st)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RemoteStatus{
@@ -386,7 +401,7 @@ func (m *Manager) sameTenant(ctx context.Context, provider, tenantID, userID str
 	_, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(tenantID), userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return &connections.Error{Provider: provider, Code: connections.CodeForbidden, Status: http.StatusForbidden,
-			Msg: "a connection syncs only spaces of its own tenant: use the App (via app), or let someone of the space's tenant connect it"}
+			Msg: "A connection syncs only spaces of its own tenant: use the App (via app), or let someone of the space's tenant connect it."}
 	}
 	return err
 }
@@ -575,7 +590,7 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	// Attachments in their own repository are read through the space's remote;
 	// without one the space could not serve them.
 	if row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id); err == nil && row.URL != "" {
-		return assetsConflict("the space has an attachment repository; disconnect that first")
+		return assetsConflict("The space has an attachment repository; disconnect that first.")
 	}
 	// A local space is the complete copy: a partial clone is made whole first
 	// (it waits for the fetch like any restore, and fails with the space still

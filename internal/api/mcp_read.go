@@ -25,7 +25,7 @@ type mcpItem struct {
 	Folder        string          `json:"folder"`
 	Title         string          `json:"title,omitempty"`
 	Subtitle      string          `json:"subtitle,omitempty"`
-	Source        string          `json:"source,omitempty"`
+	Source        []string        `json:"source"`
 	Label         string          `json:"label"`
 	Untitled      bool            `json:"untitled"`
 	Tags          []string        `json:"tags"`
@@ -44,7 +44,7 @@ func toMCPItem(spaceID string, s index.Summary, types space.TypeResolver) mcpIte
 	if tags == nil {
 		tags = []string{}
 	}
-	return mcpItem{Space: spaceID, ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source,
+	return mcpItem{Space: spaceID, ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: nonNil(s.Sources),
 		Label: s.Label, Untitled: s.Untitled, Tags: tags, Type: s.Type, EffectiveType: types.For(s.Folder, s.Type), Created: s.Created,
 		Updated: rfc3339(s.Updated), Excerpt: cutRunes(s.Excerpt, page.ExcerptRunes), Props: s.Props, PartialProps: s.PartialProps, Rev: s.Rev}
 }
@@ -113,7 +113,7 @@ func withPiece(out map[string]any, body string, offset int) (map[string]any, err
 		end, size = end+n, size+jsonSize(r, n)
 	}
 	if room < 0 || (end == offset && offset < len(body)) {
-		return nil, &mcpError{Code: "too_large", Message: "the header of this page leaves no room for its body in the 1 MiB a result may be; the page cannot be read through MCP",
+		return nil, &mcpError{Code: "too_large", Message: "The header of this page leaves no room for its body in the 1 MiB a result may be; the page cannot be read through MCP.",
 			Details: map[string]any{"limitBytes": mcpMaxResult, "sizeBytes": len(b)}}
 	}
 	out["body"] = body[offset:end]

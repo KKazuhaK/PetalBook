@@ -172,7 +172,7 @@ func (s *Space) TagColors() map[string]string {
 // checkTagName refuses what cannot be the name of a tag.
 func checkTagName(tag string) error {
 	if strings.TrimSpace(tag) == "" || !utf8.ValidString(tag) || len(tag) > MaxTagBytes || strings.ContainsAny(tag, "\x00\n\r") {
-		return invalidf("that is not a tag")
+		return invalidf("That is not a tag.")
 	}
 	return nil
 }
@@ -305,7 +305,7 @@ func (s *Space) SetTagColor(by Author, tag, color string) error {
 	if color != "" {
 		c, ok := NormalTagColor(color)
 		if !ok {
-			return invalidf("the colour must be one of %s, or a colour written #rrggbb", strings.Join(TagColors, ", "))
+			return invalidf("The colour must be one of %s, or a colour written #rrggbb.", strings.Join(TagColors, ", "))
 		}
 		color = c
 	}

@@ -37,10 +37,10 @@ func (s *Space) MoveFolder(by Author, from, to string) (string, error) {
 		return "", err
 	}
 	if from == "" {
-		return "", invalidf("the root cannot be moved")
+		return "", invalidf("The root cannot be moved.")
 	}
 	if to == "" {
-		return "", invalidf("a folder cannot become the root")
+		return "", invalidf("A folder cannot become the root.")
 	}
 	return mutate(s, by, func(tx *txn) (string, error) { return s.moveFolderLocked(tx, from, to) })
 }
@@ -64,16 +64,16 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	fromKey, toKey := folderKey(canonFrom), folderKey(to)
 	switch {
 	case to == canonFrom:
-		return "", invalidf("the folder is already at %q", to)
+		return "", invalidf("The folder is already at %q.", to)
 	case strings.HasPrefix(toKey, fromKey+"/"):
-		return "", invalidf("a folder cannot be moved into itself")
+		return "", invalidf("A folder cannot be moved into itself.")
 	}
 	// The same question put to the file system, which may take two names for
 	// one where no folding of letters here would: is some folder on the way to
 	// the target the folder being moved?
 	for anc := path.Dir(to); anc != "." && anc != "/" && anc != ""; anc = path.Dir(anc) {
 		if fi, err := s.ops.Lstat(filepath.Join(s.root, filepath.FromSlash(anc))); err == nil && s.ops.SameFile(fromInfo, fi) {
-			return "", invalidf("a folder cannot be moved into itself")
+			return "", invalidf("A folder cannot be moved into itself.")
 		}
 	}
 	parent, base := path.Dir(to), path.Base(to)
@@ -130,13 +130,13 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		rel = filepath.ToSlash(rel)
 		switch {
 		case e.Type()&fs.ModeSymlink != 0:
-			return invalidf("the folder holds a symbolic link (%s); it cannot be moved", path.Join(canonFrom, rel))
+			return invalidf("The folder holds a symbolic link (%s); it cannot be moved.", path.Join(canonFrom, rel))
 		case e.IsDir():
 			subdirs = append(subdirs, rel)
 		case e.Type().IsRegular():
 			files = append(files, rel)
 		default:
-			return invalidf("the folder holds something that is not a file (%s); it cannot be moved", path.Join(canonFrom, rel))
+			return invalidf("The folder holds something that is not a file (%s); it cannot be moved.", path.Join(canonFrom, rel))
 		}
 		return nil
 	})
@@ -219,7 +219,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		return a || b || c, err
 	}
 	notMoved := func(reason string) error {
-		return invalidf("the folder was not moved: its type and views cannot follow it in space.yml, because %s", reason)
+		return invalidf("The folder was not moved: its type and views cannot follow it in space.yml, because %s.", reason)
 	}
 	if reason, fails := s.bindingsWouldFail(moveSettings); fails {
 		if !tx.remote {
@@ -405,7 +405,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		return nil, err
 	}
 	if rel == "" {
-		return nil, invalidf("the root cannot be removed")
+		return nil, invalidf("The root cannot be removed.")
 	}
 	var deleted []string
 	_, err := mutate(s, by, func(tx *txn) (struct{}, error) {
@@ -462,7 +462,7 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			// Refused before anything is deleted: a delete whose settings
 			// cannot be taken out of space.yml.
 			if reason, fails := s.bindingsWouldFail(forget(willGo)); fails {
-				return invalidf("the folder was not deleted: its type and views cannot be taken out of space.yml, because %s", reason)
+				return invalidf("The folder was not deleted: its type and views cannot be taken out of space.yml, because %s.", reason)
 			}
 			u := jrec{Op: "u", Path: canon}
 			if err := tx.record(u); err != nil {
@@ -567,9 +567,9 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			// deleted for good (see the ids returned), the error says what is
 			// left, and the "u" record has the next start try again.
 			if tx.remote {
-				return struct{}{}, invalidf("the folder was not deleted: its type and views cannot be taken out of space.yml, because %s", refused)
+				return struct{}{}, invalidf("The folder was not deleted: its type and views cannot be taken out of space.yml, because %s.", refused)
 			}
-			return struct{}{}, invalidf("the pages of the folder were deleted, but its type and views are still in space.yml, because %s; until its entry is taken out of space.yml, a new folder of that name gets them", refused)
+			return struct{}{}, invalidf("The pages of the folder were deleted, but its type and views are still in space.yml, because %s; until its entry is taken out of space.yml, a new folder of that name gets them.", refused)
 		}
 		tx.settleBindings()
 		if tx.remote {
@@ -589,15 +589,15 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 // checkBatch validates the ids of a batch: 1 to MaxBatch, each a page id, each once.
 func checkBatch(ids []string) error {
 	if len(ids) == 0 || len(ids) > MaxBatch {
-		return invalidf("give 1 to %d page ids", MaxBatch)
+		return invalidf("Give 1 to %d page ids.", MaxBatch)
 	}
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if !page.ValidID(id) {
-			return invalidf("%q is not a page id", id)
+			return invalidf("%q is not a page id.", id)
 		}
 		if seen[id] {
-			return invalidf("page %s is listed twice", id)
+			return invalidf("Page %s is listed twice.", id)
 		}
 		seen[id] = true
 	}
@@ -629,7 +629,7 @@ func (s *Space) BatchMove(by Author, ids []string, folder string) error {
 		// Something that is not a folder where the folder should be: said
 		// before any page has moved.
 		if _, _, err := s.resolveFolder(folder); errors.Is(err, ErrExists) {
-			return struct{}{}, invalidf("%q is not a folder: a file has that name", folder)
+			return struct{}{}, invalidf("%q is not a folder: a file has that name.", folder)
 		} else if err != nil {
 			return struct{}{}, err
 		}

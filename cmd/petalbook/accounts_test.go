@@ -456,7 +456,7 @@ func TestUserCommands(t *testing.T) {
 		{pw1, []string{"user", "add", "--data", data, "--username", "bad name"}, "username"},
 		{pw1, []string{"user", "add", "--data", data}, "username"},
 		{pw1, []string{"user", "add", "--username", "x1"}, "data"},
-		{pw2, []string{"user", "passwd", "--data", data, "--username", "nobody"}, "no user"},
+		{pw2, []string{"user", "passwd", "--data", data, "--username", "nobody"}, "No user"},
 	} {
 		if _, err := runIn(t, c.stdin, c.args...); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%v: %v (want %q)", c.args, err, c.want)

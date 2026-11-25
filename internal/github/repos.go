@@ -238,7 +238,7 @@ func (s *Service) Repos(ctx context.Context, userID string, q connections.RepoQu
 		return nil, "", err
 	}
 	if c.Kind != "" && c.Kind != "p" {
-		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "the cursor is not one this server made")
+		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "The cursor is not one this server made.")
 	}
 	var list []githubapp.Repo
 	var next int
@@ -268,7 +268,7 @@ func (s *Service) Repos(ctx context.Context, userID string, q connections.RepoQu
 			tok, err := st.app.Token(ctx, githubapp.TokenSpec{Installation: installation, Perms: map[string]string{"metadata": "read"}})
 			if err != nil {
 				if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity) && !limited(err) {
-					return nil, "", errf(http.StatusNotFound, CodeNotFound, "the App is no longer installed there")
+					return nil, "", errf(http.StatusNotFound, CodeNotFound, "The App is no longer installed there.")
 				}
 				return nil, "", s.listError(err)
 			}
@@ -283,16 +283,16 @@ func (s *Service) Repos(ctx context.Context, userID string, q connections.RepoQu
 			return nil, "", err
 		}
 		if tok == "" {
-			return nil, "", errf(http.StatusNotFound, CodeNotFound, "no such installation")
+			return nil, "", errf(http.StatusNotFound, CodeNotFound, "No such installation.")
 		}
 		if list, next, err = s.c.UserInstallationRepos(ctx, tok, installation, c.Page); err != nil {
 			if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err) {
-				return nil, "", errf(http.StatusNotFound, CodeNotFound, "no such installation")
+				return nil, "", errf(http.StatusNotFound, CodeNotFound, "No such installation.")
 			}
 			return nil, "", s.userFailed(ctx, userID, err)
 		}
 	default:
-		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "give installation or mine=true")
+		return nil, "", errf(http.StatusBadRequest, CodeInvalid, "Give installation or mine=true.")
 	}
 	out := make([]connections.RepoItem, len(list))
 	for i, r := range list {
@@ -320,7 +320,7 @@ func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*connec
 	}
 	owner = strings.TrimSpace(owner)
 	if !validOwner(owner) {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "owner is not a GitHub account name")
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "Owner is not a GitHub account name.")
 	}
 	row, tok, err := s.connected(ctx, userID)
 	if err != nil {
@@ -357,7 +357,7 @@ func (s *Service) PlanCreate(ctx context.Context, userID, owner string) (*connec
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	return nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "you cannot create a repository for %s", owner)
+	return nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "You cannot create a repository for %s.", owner)
 }
 
 var ownerRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
@@ -392,11 +392,11 @@ func (s *Service) CreateRepo(ctx context.Context, p *connections.Plan, n connect
 		if token, err = st.app.Token(ctx, githubapp.TokenSpec{Installation: p.InstallationID, Perms: map[string]string{"administration": "write"}, Once: true}); err != nil {
 			switch {
 			case githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err):
-				return nil, errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App")
+				return nil, errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App.")
 			case githubapp.IsPermissionRefusal(err):
 				return nil, s.missingPermission(ctx, st, p.InstallationID, administrationWrite)
 			case githubapp.IsStatus(err, http.StatusUnprocessableEntity, http.StatusForbidden, http.StatusNotFound) && !limited(err):
-				return nil, errf(http.StatusForbidden, CodeRefused, "the App is not installed there, or GitHub refused it a token for the installation")
+				return nil, errf(http.StatusForbidden, CodeRefused, "The App is not installed there, or GitHub refused it a token for the installation.")
 			}
 			return nil, s.wrap(err)
 		}
@@ -431,10 +431,10 @@ func (s *Service) createError(ctx context.Context, p *connections.Plan, err erro
 	case http.StatusUnprocessableEntity:
 		for _, e := range append(se.Errors, se.Message) {
 			if strings.Contains(strings.ToLower(e), "already exists") {
-				return errf(http.StatusConflict, CodeNameTaken, "%s already has a repository with that name", p.Owner)
+				return errf(http.StatusConflict, CodeNameTaken, "%s already has a repository with that name.", p.Owner)
 			}
 		}
-		return errf(http.StatusBadRequest, CodeInvalid, "GitHub refused the repository: %s", said)
+		return errf(http.StatusBadRequest, CodeInvalid, "GitHub refused the repository: %s.", said)
 	case http.StatusForbidden, http.StatusNotFound:
 		if githubapp.IsPermissionRefusal(err) {
 			if st, serr := s.need(ctx); serr == nil {
@@ -449,7 +449,7 @@ func (s *Service) createError(ctx context.Context, p *connections.Plan, err erro
 					_, ierr := st.app.OrgInstallation(ctx, p.Org)
 					switch {
 					case githubapp.IsStatus(ierr, http.StatusNotFound):
-						e := errf(http.StatusConflict, CodeAppNotInstalled, "the GitHub App is not installed on %s, and GitHub lets no repository be made there until it is; an owner of %s installs it first", p.Owner, p.Owner)
+						e := errf(http.StatusConflict, CodeAppNotInstalled, "The GitHub App is not installed on %s, and GitHub lets no repository be made there until it is; an owner of %s installs it first.", p.Owner, p.Owner)
 						e.InstallURL = installURL(st.rec.HTMLURL)
 						return e
 					case ierr == nil:
@@ -460,7 +460,7 @@ func (s *Service) createError(ctx context.Context, p *connections.Plan, err erro
 					_, ierr := st.app.UserInstallation(ctx, p.Owner)
 					switch {
 					case githubapp.IsStatus(ierr, http.StatusNotFound):
-						e := errf(http.StatusConflict, CodeAppNotInstalled, "the GitHub App is not installed on your account %s, and GitHub lets no repository be made there until it is; install it there first", p.Owner)
+						e := errf(http.StatusConflict, CodeAppNotInstalled, "The GitHub App is not installed on your account %s, and GitHub lets no repository be made there until it is; install it there first.", p.Owner)
 						e.InstallURL = installURL(st.rec.HTMLURL)
 						return e
 					case ierr == nil:
@@ -469,12 +469,12 @@ func (s *Service) createError(ctx context.Context, p *connections.Plan, err erro
 				}
 			}
 		}
-		return errf(http.StatusForbidden, CodeRefused, "GitHub refused to create the repository: %s", said)
+		return errf(http.StatusForbidden, CodeRefused, "GitHub refused to create the repository: %s.", said)
 	case http.StatusUnauthorized:
 		if p.Via == ViaUser {
 			return s.userFailed(ctx, p.UserID, err)
 		}
-		return errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App")
+		return errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App.")
 	}
 	return s.wrap(err)
 }
@@ -523,7 +523,7 @@ func (s *Service) missingPermission(ctx context.Context, st *appState, installat
 		}
 	}
 	sort.Strings(names)
-	e := errf(http.StatusForbidden, CodeMissingPermission, "the GitHub App or its installation lacks the %s permission; an administrator must add it to the App on GitHub and accept the change in the installation's settings", strings.Join(names, ", "))
+	e := errf(http.StatusForbidden, CodeMissingPermission, "The GitHub App or its installation lacks the %s permission; an administrator must add it to the App on GitHub and accept the change in the installation's settings.", strings.Join(names, ", "))
 	e.Missing = names
 	return e
 }
@@ -541,7 +541,7 @@ func (s *Service) reaches(ctx context.Context, st *appState, installation, repoI
 	case githubapp.IsStatus(err, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusForbidden) && !limited(err):
 		return false, nil
 	case githubapp.IsStatus(err, http.StatusUnauthorized) && !limited(err):
-		return false, errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App")
+		return false, errf(http.StatusConflict, CodeNotConfigured, "GitHub no longer accepts the App's key; an administrator must fix the App.")
 	}
 	return false, s.wrap(err)
 }
@@ -599,7 +599,7 @@ func (s *Service) ChooseCredential(ctx context.Context, p *connections.Plan, rep
 		}
 	}
 	if p.Org != "" {
-		e := errf(http.StatusConflict, CodeRepoNotInInstall, "the App's installation on %s does not reach the new repository %s and it could not be added; add it in the installation's settings on GitHub", p.Owner, repo.FullName)
+		e := errf(http.StatusConflict, CodeRepoNotInInstall, "The App's installation on %s does not reach the new repository %s and it could not be added; add it in the installation's settings on GitHub.", p.Owner, repo.FullName)
 		e.Repo = repo.Ref()
 		return nil, e
 	}
@@ -666,12 +666,12 @@ func (s *Service) existingUser(ctx context.Context, userID, owner, name string) 
 	r, err := s.c.GetRepo(ctx, tok, owner, name)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err) {
-			return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "your GitHub connection cannot push to %s/%s", owner, name)
+			return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "Your GitHub connection cannot push to %s/%s.", owner, name)
 		}
 		return nil, nil, s.userFailed(ctx, userID, err)
 	}
 	if !r.Permissions.Push {
-		return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "your GitHub connection cannot push to %s", r.FullName)
+		return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "Your GitHub connection cannot push to %s.", r.FullName)
 	}
 	return &connections.Cred{Provider: ProviderID, Via: ViaUser, UserID: userID, RepoID: r.ID}, repoOf(r), nil
 }
@@ -680,7 +680,7 @@ func (s *Service) existingApp(ctx context.Context, st *appState, sc store.Scope,
 	inst, err := st.app.RepoInstallation(ctx, owner, name)
 	if err != nil {
 		if githubapp.IsStatus(err, http.StatusNotFound) {
-			return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "the App is not installed on %s/%s, or its installation does not reach that repository", owner, name)
+			return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "The App is not installed on %s/%s, or its installation does not reach that repository.", owner, name)
 		}
 		return nil, nil, s.listError(err)
 	}
@@ -696,7 +696,7 @@ func (s *Service) existingApp(ctx context.Context, st *appState, sc store.Scope,
 		}
 		if repo, err = s.c.GetRepo(ctx, tok, owner, name); err != nil {
 			if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err) {
-				return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "the App's installation does not reach %s/%s", owner, name)
+				return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "The App's installation does not reach %s/%s.", owner, name)
 			}
 			return nil, nil, s.wrap(err)
 		}
@@ -710,12 +710,12 @@ func (s *Service) existingApp(ctx context.Context, st *appState, sc store.Scope,
 		}
 		if repo, err = s.c.GetRepo(ctx, tok, owner, name); err != nil {
 			if githubapp.IsStatus(err, http.StatusNotFound, http.StatusForbidden) && !limited(err) {
-				return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "the installation is not shared and your GitHub connection cannot push to %s/%s", owner, name)
+				return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "The installation is not shared and your GitHub connection cannot push to %s/%s.", owner, name)
 			}
 			return nil, nil, s.userFailed(ctx, userID, err)
 		}
 		if !repo.Permissions.Push {
-			return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "the installation is not shared and your GitHub connection cannot push to %s", repo.FullName)
+			return nil, nil, errf(http.StatusForbidden, CodeOwnerNotAllowed, "The installation is not shared and your GitHub connection cannot push to %s.", repo.FullName)
 		}
 	}
 	ok, err := s.reaches(ctx, st, inst, repo.ID)
@@ -724,7 +724,7 @@ func (s *Service) existingApp(ctx context.Context, st *appState, sc store.Scope,
 	}
 	if !ok {
 		st.app.ForgetLookup("repo", owner+"/"+name) // it may have moved: look again next time
-		return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "the App's installation does not reach %s", repo.FullName)
+		return nil, nil, errf(http.StatusConflict, CodeRepoNotInInstall, "The App's installation does not reach %s.", repo.FullName)
 	}
 	return &connections.Cred{Provider: ProviderID, Via: ViaApp, InstallationID: inst, RepoID: repo.ID}, repoOf(repo), nil
 }

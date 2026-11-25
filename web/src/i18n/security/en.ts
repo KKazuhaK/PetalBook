@@ -302,6 +302,7 @@ export const securityEn: SecurityMessages = {
       passkey_clone: 'Passkey counter went back',
       identity_linked: 'Identity linked',
       identity_unlinked: 'Identity removed',
+      sessions_ended: 'Sessions ended',
       passkey_added: 'Passkey added',
       passkey_removed: 'Passkey removed',
       security_changed: 'Security settings changed',

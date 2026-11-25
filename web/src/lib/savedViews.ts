@@ -153,9 +153,15 @@ export const isHandMark = (id: string): boolean => /^@\d+$/.test(id)
 
 // --- board ------------------------------------------------------------------------------
 
-// The fields a board can be grouped by: single choices.
-export const groupFieldsOf = (type: PageType | undefined): TypeField[] =>
-  (type?.fields ?? []).filter((f) => f.kind === 'select')
+// The sources of a page are a list every page has, so a board can be grouped by them too: a column for each value the
+// pages have (a page with two sources is in two columns). Its title is the word of the interface.
+export const SOURCE_FIELD = (title: string): TypeField => ({ key: 'source', title, kind: 'multiselect', schema: {} })
+
+// The fields a board can be grouped by: single choices, then the sources.
+export const groupFieldsOf = (type: PageType | undefined, sourceTitle = ''): TypeField[] => [
+  ...(type?.fields ?? []).filter((f) => f.kind === 'select'),
+  ...(sourceTitle ? [SOURCE_FIELD(sourceTitle)] : []),
+]
 
 export type ColumnKind = 'option' | 'other' | 'empty'
 export interface BoardColumn {

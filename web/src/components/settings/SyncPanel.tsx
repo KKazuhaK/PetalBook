@@ -541,7 +541,9 @@ function Problem({ error }: { error: unknown }) {
     return (
       <div role="alert" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
         <p className="font-medium">{gh}</p>
-        {e.message && <p className="font-mono text-xs break-words text-muted-foreground">{e.message}</p>}
+        {(e.serverMessage ?? e.message) && (
+          <p className="font-mono text-xs break-words text-muted-foreground">{e.serverMessage ?? e.message}</p>
+        )}
       </div>
     )
   if (e?.status === 409)
@@ -550,14 +552,16 @@ function Problem({ error }: { error: unknown }) {
         <p className="font-medium">{t.remote.conflictTitle}</p>
         <p>{t.remote.conflictBody}</p>
         <p className="text-muted-foreground">{t.remote.conflictAdvice}</p>
-        {e.message && <p className="font-mono text-xs break-words text-muted-foreground">{e.message}</p>}
+        {(e.serverMessage ?? e.message) && (
+          <p className="font-mono text-xs break-words text-muted-foreground">{e.serverMessage ?? e.message}</p>
+        )}
       </div>
     )
   if (e?.code === 'unavailable')
     return (
       <div role="alert" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
         <p className="font-medium">{t.remote.unreachableTitle}</p>
-        <p className="break-words">{e.message}</p>
+        <p className="break-words">{e.serverMessage ?? e.message}</p>
         <p className="text-muted-foreground">{t.remote.unreachableAdvice}</p>
       </div>
     )

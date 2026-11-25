@@ -282,13 +282,16 @@ type Manager struct {
 
 	authors authorCache // names for commits, by user id (see AuthorByID)
 
-	heads    map[string]string // space id -> the change cursor it had when it was last closed (guarded by mu; see heads.go)
-	syncs    map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
-	disabled map[string]bool   // ids of the disabled spaces, and of deleted ones, which stay refused (guarded by mu; nil until first needed)
-	adminMu  sync.Mutex        // one administrator action (disable, transfer, delete) at a time
-	sizeSem  chan struct{}     // one directory walk at a time (see Resize)
-	remoteMu sync.Mutex        // one connect, disconnect or key change at a time
-	pullWake chan struct{}     // a space with a remote was just opened: pull it now
+	heads map[string]string // space id -> the change cursor it had when it was last closed (guarded by mu; see heads.go)
+	syncs map[string]string // space id -> state of its remote, for Info.Sync (guarded by mu; nil until first needed)
+	// settled is the last state of each space's remote that was not "offline",
+	// what a notice is told against (notify.go; guarded by mu).
+	settled  map[string]string
+	disabled map[string]bool // ids of the disabled spaces, and of deleted ones, which stay refused (guarded by mu; nil until first needed)
+	adminMu  sync.Mutex      // one administrator action (disable, transfer, delete) at a time
+	sizeSem  chan struct{}   // one directory walk at a time (see Resize)
+	remoteMu sync.Mutex      // one connect, disconnect or key change at a time
+	pullWake chan struct{}   // a space with a remote was just opened: pull it now
 
 	st        storageState // the storage policy (storage.go) and its caches
 	storageMu sync.Mutex   // one change of the settings at a time
@@ -297,6 +300,7 @@ type Manager struct {
 	as        assetState   // attachment repositories and their cache (assets.go)
 	recycle   recycleState // the recycle bin (recycle.go)
 	exp       exportState  // exports (export.go)
+	problems  problemMemo  // what each space said of its problems last (problems.go)
 
 	trimMu    sync.Mutex      // one trim at a time
 	trimming  bool            // a background trim is queued or running (guarded by mu)
@@ -1371,6 +1375,7 @@ func (m *Manager) closeIdle(id string, e *opening) bool {
 	}
 	e.closing = make(chan struct{})
 	m.mu.Unlock()
+	m.noteProblems(id, e.sp)
 	if err := e.sp.Close(); err != nil {
 		m.log.Warn("closing an idle space", "space", id, "error", err)
 	}

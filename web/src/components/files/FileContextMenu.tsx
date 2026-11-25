@@ -6,6 +6,7 @@ import {
   LayoutTemplate,
   ListChecks,
   MoreHorizontal,
+  Palette,
   PenLine,
   Shapes,
   SquareArrowOutUpRight,
@@ -123,6 +124,12 @@ export function FileContextMenu({
                 <ContextMenuItem onClick={() => ops.rename(one.path)}>
                   <PenLine />
                   {t.manage.rename}
+                </ContextMenuItem>
+              )}
+              {write && one && (
+                <ContextMenuItem onClick={() => ops.setStyle(one)}>
+                  <Palette />
+                  {t.icons.menu}
                 </ContextMenuItem>
               )}
               {one?.kind === 'folder' && manage && (

@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { ta } from '@/i18n/admin'
+import { tc } from '@/i18n/console'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/tenants'
 import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
@@ -24,7 +24,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
@@ -36,7 +36,7 @@ const button = (label: string, root: ParentNode = document) =>
   ) ?? null
 const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')!
 const navLabels = () =>
-  [...document.querySelectorAll(`nav[aria-label="${ta.nav}"] a`)].map((a) => a.textContent?.trim())
+  [...document.querySelectorAll(`nav[aria-label="${tc.nav}"] a`)].map((a) => a.textContent?.trim())
 const rowOf = (key: string) => document.querySelector<HTMLElement>(`[data-slot="setting-row"][data-key="${key}"]`)!
 const switchOf = (label: string) => document.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`)!
 
@@ -45,8 +45,9 @@ async function open(section: string, scene?: (server: MockServer) => unknown) {
     signIn: true,
     server: { mode: 'accounts' },
     entries: (server) => {
-      scene?.(server)
-      return [`/admin/${section}`]
+      const where = scene?.(server)
+      // A scene may send the page to one person's own address.
+      return [typeof where === 'string' ? where : `/admin/${section}`]
     },
   })
 }
@@ -210,14 +211,24 @@ describe('administrators and tenants in the Users page and the navigation', () =
     await open('users', (server) => makePerson(server, 'second', 'admin'))
     await settle(() => document.querySelectorAll('[data-slot="admin-kind"]').length === 2, 'two administrators')
     expect(
-      [...document.querySelectorAll('[data-slot="admin-kind"]')].every((b) => b.textContent === tt.adminKinds.site),
+      [...document.querySelectorAll('[data-slot="admin-kind"]')].every(
+        (b) => b.textContent === tc.users.adminKinds.site,
+      ),
     ).toBe(true)
+    // The switch is on the person's own page.
+    await click([...document.querySelectorAll('tbody a')].find((a) => a.textContent === '名 second'))
+    await settle(
+      () => document.querySelector(`[role="switch"][aria-label="${tt.siteAdminFor('名 second')}"]`) !== null,
+      'the switch',
+    )
     const sw = document.querySelector<HTMLElement>(`[role="switch"][aria-label="${tt.siteAdminFor('名 second')}"]`)!
     expect(sw.getAttribute('aria-checked')).toBe('true')
     await click(sw)
     await settle(
       () =>
-        [...document.querySelectorAll('[data-slot="admin-kind"]')].some((b) => b.textContent === tt.adminKinds.tenant),
+        document
+          .querySelector(`[role="switch"][aria-label="${tt.siteAdminFor('名 second')}"]`)
+          ?.getAttribute('aria-checked') === 'false',
       'a tenant administrator',
     )
     expect(m!.requests.find((r) => r.method === 'PATCH' && r.url.startsWith('/api/users/'))!.body).toBe(
@@ -229,20 +240,17 @@ describe('administrators and tenants in the Users page and the navigation', () =
     await open('users')
     await settle(() => navLabels().length > 0, 'the navigation')
     expect(navLabels()).toEqual([
-      ta.sections.users,
-      ta.sections.groups,
-      ta.sections.spaces,
-      ta.sections.manage,
-      ta.sections.recycle,
-      ta.sections.daily,
-      ta.sections.access,
-      ta.sections.storage,
-      ta.sections.security,
-      ta.sections.mail,
-      ta.sections.settings,
-      ta.sections.tenants,
-      ta.sections.usage,
-      ta.sections.status,
+      tc.sections.users,
+      tc.sections.groups,
+      tc.sections.spaces,
+      tc.sections.storage,
+      tc.sections.security,
+      tc.sections.mail,
+      tc.sections.daily,
+      tc.sections.settings,
+      tc.sections.tenants,
+      tc.sections.audit,
+      tc.sections.status,
     ])
     await m!.unmount()
     // Another site administrator exists; the signed-in one is made a tenant administrator.
@@ -259,31 +267,32 @@ describe('administrators and tenants in the Users page and the navigation', () =
     })
     await settle(() => navLabels().length > 0, 'the navigation')
     expect(navLabels()).toEqual([
-      ta.sections.users,
-      ta.sections.groups,
-      ta.sections.spaces,
-      ta.sections.manage,
-      ta.sections.recycle,
-      ta.sections.settings,
-      ta.sections.usage,
+      tc.sections.users,
+      tc.sections.groups,
+      tc.sections.spaces,
+      tc.sections.storage,
+      tc.sections.settings,
+      tc.sections.audit,
     ])
     expect(t.appName).not.toBe('')
   })
 
   it("the Users page of a tenant administrator never asks for the server's security settings", async () => {
+    let second = ''
     await open('users', (server) => {
       const admin = adminRequests(server)
-      makePerson(server, 'second', 'admin')
+      second = makePerson(server, 'second', 'admin').id
       const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
         (u) => u.username === 'admin',
       )!
       admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
+      return `/admin/user/${second}/security`
     })
-    await settle(() => document.querySelectorAll('[data-slot="admin-kind"]').length === 2, 'the list')
+    await settle(() => document.querySelector('[data-slot="person-security"]') !== null, 'the page')
     expect(m!.requests.filter((r) => r.url.startsWith('/api/admin/security'))).toEqual([])
     await m!.unmount()
     // A site administrator's does: it holds the roles a passkey is required of.
-    await open('users')
+    await open('users', (server) => `/admin/user/${makePerson(server, 'second', 'admin').id}/security`)
     await settle(
       () => m!.requests.some((r) => r.method === 'GET' && r.url.startsWith('/api/admin/security')),
       'the security settings',

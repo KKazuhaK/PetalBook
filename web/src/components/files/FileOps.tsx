@@ -42,12 +42,15 @@ const SetTypeDialog = lazy(() => import('./SetTypeDialog'))
 // So are the choice of a template for a new page and a folder's default template (with the words of templates).
 const NewPageDialog = lazy(() => import('./NewPageDialog'))
 const SetTemplateDialog = lazy(() => import('./SetTemplateDialog'))
+// The icon and colour of a folder or a page; the picker itself is a chunk of its own, loaded when it opens.
+const StyleDialog = lazy(() => import('./StyleDialog'))
 
 type Dialog =
   | { kind: 'newFolder'; parent: string }
   | { kind: 'rename'; path: string }
   | { kind: 'setType'; path: string }
   | { kind: 'setTemplate'; path: string }
+  | { kind: 'style'; item: FileItem }
   | { kind: 'newPage'; folder: string; meta?: PageMeta; templates: PageTemplate[]; initial: string }
   | { kind: 'move'; items: FileItem[]; onDone?: () => void }
   | { kind: 'delete'; items: FileItem[]; onDone?: () => void }
@@ -67,6 +70,8 @@ export interface FileOps {
   setType: (path: string) => void
   // Opens the choice of a folder's default template (needs `manage`).
   setTemplate: (path: string) => void
+  // Opens the icon and colour of a folder or a page (needs `write`).
+  setStyle: (item: FileItem) => void
   // Opens the folder picker.
   chooseMove: (items: FileItem[], onDone?: () => void) => void
   // Asks, then deletes.
@@ -252,6 +257,7 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
     rename: (path) => setDialog({ kind: 'rename', path }),
     setType: (path) => setDialog({ kind: 'setType', path }),
     setTemplate: (path) => setDialog({ kind: 'setTemplate', path }),
+    setStyle: (item) => setDialog({ kind: 'style', item }),
     chooseMove: (items, onDone) => setDialog({ kind: 'move', items, onDone }),
     confirmDelete: (items, onDone) => setDialog({ kind: 'delete', items, onDone }),
     moveTo,
@@ -282,6 +288,11 @@ export function FileOpsProvider({ children }: { children: ReactNode }) {
       {dialog?.kind === 'setTemplate' && (
         <Suspense fallback={null}>
           <SetTemplateDialog path={dialog.path} spaceName={spaceName} onClose={close} />
+        </Suspense>
+      )}
+      {dialog?.kind === 'style' && (
+        <Suspense fallback={null}>
+          <StyleDialog item={dialog.item} onClose={close} />
         </Suspense>
       )}
       {dialog?.kind === 'newPage' && (

@@ -145,7 +145,7 @@ func (x *Index) countGroups(q GroupQuery) (GroupResult, error) {
 // countGroups counts in the snapshot of the read.
 func (x *read) countGroups(q GroupQuery) (GroupResult, error) {
 	if q.Key == "" || len(q.Key) > maxFilterKey || !utf8.ValidString(q.Key) {
-		return GroupResult{}, invalid("groups needs the key of a property")
+		return GroupResult{}, invalid("Groups needs the key of a property.")
 	}
 	if err := checkFilters(q.Filters); err != nil {
 		return GroupResult{}, err

@@ -15,8 +15,8 @@ import (
 // Entry is what the index keeps about one page file.
 type Entry struct {
 	ID, Path, Folder string
-	Title, Subtitle  string // "" when the page has none
-	Source           string // where the text comes from, or ""
+	Title, Subtitle  string   // "" when the page has none
+	Sources          []string // where the text comes from, in file order
 	Label            string
 	Untitled         bool
 	Type             string
@@ -27,6 +27,7 @@ type Entry struct {
 	Size             int64
 	Rev              string
 	Excerpt          string
+	Icon, Color      string // the page's own, from its header, or ""
 	// PropsJSON is the JSON object of the header's properties (see propsOf),
 	// "" for none.
 	PropsJSON string
@@ -62,17 +63,29 @@ func BuildEntry(rel string, data []byte, mtimeNs int64) (*Entry, *page.Problem) 
 	plain := page.PlainText(doc.Body)
 	e := &Entry{
 		ID: m.ID(), Path: rel, Folder: folderOf(rel),
-		Title: title, Subtitle: m.Subtitle(), Source: m.Source(), Label: label, Untitled: untitled,
+		Title: title, Subtitle: m.Subtitle(), Label: label, Untitled: untitled,
 		Type: m.Type(), Tags: m.Tags(), Created: m.Created(),
 		MtimeNs: mtimeNs, Size: int64(len(data)), Rev: page.Rev(data),
-		Excerpt:  page.Excerpt(doc.Body),
-		ftsTitle: Fold(title), ftsSubtitle: Fold(m.Subtitle()), ftsSource: Fold(m.Source()), ftsBody: Fold(plain),
+		Excerpt: page.Excerpt(doc.Body),
+		Icon:    m.Icon(), Color: m.Color(),
+		ftsTitle: Fold(title), ftsSubtitle: Fold(m.Subtitle()), ftsSource: Fold(strings.Join(m.Sources(), " ")), ftsBody: Fold(plain),
 	}
 	if e.Tags == nil {
 		e.Tags = []string{}
 	}
+	e.Sources = m.Sources()
+	if e.Sources == nil {
+		e.Sources = []string{}
+	}
 	var partial []string
 	e.props, e.PropsJSON, partial = propsOf(m, doc.InexactKeys())
+	// The sources are rows of the props table like a list property, so a
+	// filter, a sort and the columns of a board work on them with no code of
+	// their own; they are not in the properties of the page (props column).
+	for i, s := range e.Sources {
+		_, r, _, _ := scalarProp(s)
+		e.props = append(e.props, propRow{key: "source", pos: i, val: r.val, skey: r.skey})
+	}
 	if len(partial) > 0 {
 		b, _ := json.Marshal(partial)
 		e.PartialJSON = string(b)
@@ -112,6 +125,8 @@ func folderOf(rel string) string {
 	}
 	return d
 }
+
+func sourcesJSON(sources []string) string { return tagsJSON(sources) }
 
 func tagsJSON(tags []string) string {
 	b, _ := json.Marshal(tags)

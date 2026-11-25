@@ -130,13 +130,13 @@ func (o *ordering) segments(cur *cursor) ([]segment, error) {
 	first := 0
 	if cur != nil {
 		if cur.N != o.tag() {
-			return nil, invalid("cursor belongs to another sort order")
+			return nil, invalid("Cursor belongs to another sort order.")
 		}
 		if cur.G < 0 || cur.G >= n+2 {
 			if n == 0 {
-				return nil, invalid("bad cursor")
+				return nil, invalid("Bad cursor.")
 			}
-			return nil, invalid("cursor belongs to another sort order")
+			return nil, invalid("Cursor belongs to another sort order.")
 		}
 		first = cur.G
 	}

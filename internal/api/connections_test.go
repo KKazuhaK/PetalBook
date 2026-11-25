@@ -727,14 +727,14 @@ func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
 		back, _ := url.Parse(a.fake.SubmitManifest(postURL, string(manifest)))
 		path := back.Path + "?" + back.RawQuery
 		// Someone else's browser (no cookie, or a member's session) finishes nothing.
-		if cb := member.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/storage?connection_app_error=expired" {
+		if cb := member.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("%d %q", cb.code, cb.resp.Header.Get("Location"))
 		}
 		if admin.do("GET", "/api/admin/connections/github", nil).body["configured"] != false {
 			t.Fatal("a refused return configured the App")
 		}
 		cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site")
-		if cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/storage?connection_app=created" {
+		if cb.code != 303 || cb.resp.Header.Get("Location") != "/admin/storage/connections?connection_app=created" {
 			t.Fatalf("%d %q", cb.code, cb.resp.Header.Get("Location"))
 		}
 		got := admin.do("GET", "/api/admin/connections/github", nil).want(t, 200, "")
@@ -747,7 +747,7 @@ func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
 			}
 		}
 		// The state worked once.
-		if cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.resp.Header.Get("Location") != "/admin/storage?connection_app_error=expired" {
+		if cb := admin.do("GET", path, nil, "Sec-Fetch-Site", "cross-site"); cb.resp.Header.Get("Location") != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("a replay: %q", cb.resp.Header.Get("Location"))
 		}
 	})

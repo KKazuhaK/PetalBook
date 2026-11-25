@@ -54,7 +54,7 @@ func tooLarge(w http.ResponseWriter, limit, size int64, name string) {
 
 func fileTooLargeBody(limit, size int64, name string) errorBody {
 	b := errorBody{Error: "file_too_large", Name: name, Limit: &limit,
-		Message: "the file is larger than " + sizeText(limit) + ", the most a file may be here"}
+		Message: "The file is larger than " + sizeText(limit) + ", the most a file may be here."}
 	if size > 0 {
 		b.Size = &size
 	}

@@ -80,7 +80,7 @@ func quote(s string) string { return `"` + strings.ReplaceAll(s, `"`, `'`) + `"`
 // defaults, so it is not a name.
 func ValidTemplateName(name string) error {
 	if name == "" || name != page.FileStem(name) || name == "defaults" || len(name) > maxTemplateName*4 {
-		return invalidf("a template name is a file name of at most %d characters, without %s, and not \"defaults\"", maxTemplateName, `<>:"/\|?*`)
+		return invalidf("A template name is a file name of at most %d characters, without %s, and not \"defaults\".", maxTemplateName, `<>:"/\|?*`)
 	}
 	return nil
 }
@@ -219,7 +219,7 @@ func (s *Space) PutTemplate(by Author, name, baseRev string, meta page.Meta, bod
 	}
 	doc := page.Parse(nil)
 	if err := doc.SetMeta(meta.Clone()); err != nil {
-		return nil, invalidf("%v", err)
+		return nil, invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	data := doc.Bytes()

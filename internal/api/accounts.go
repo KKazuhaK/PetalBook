@@ -3,11 +3,13 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/connections"
@@ -404,66 +406,109 @@ func (s *server) unlinkIdentity(c *call) {
 
 // --- users and invites (administrators) --------------------------------------
 
+// userEx is a user as the administration's list shows them.
+type userEx struct {
+	userResp
+	Passkeys   int    `json:"passkeys"`
+	SSO        int    `json:"sso"`
+	LastActive string `json:"lastActive,omitempty"`
+}
+
+func (s *server) userEx(e store.UserRow) userEx {
+	out := userEx{userResp: s.toUser(e.User), Passkeys: e.Passkeys, SSO: e.Identities}
+	out.Quota = toOwnQuota(e.Quota)
+	if !e.LastActive.IsZero() {
+		out.LastActive = rfc3339(e.LastActive)
+	}
+	return out
+}
+
+// listUsers is one keyset page of the people in the administrator's scope
+// (docs/api.md, "GET /api/users"): a search, filters and a sort, each over an
+// index, and the counts read for the page's ids alone.
 func (s *server) listUsers(c *call) {
 	sc, ok := s.adminScope(c)
 	if !ok {
 		return
 	}
 	q := c.r.URL.Query()
-	var us []store.User
-	var err error
-	enabledOnly := false
-	if q.Has("enabled") {
-		switch q.Get("enabled") {
-		case "1":
-			enabledOnly = true
-		case "0":
-		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "enabled is 1 or 0")
+	limit, present, ok := intParam(c, "limit", 1, maxAdminLimit)
+	if !ok {
+		return
+	}
+	if !present {
+		if q.Has("limit") {
+			writeError(c.w, http.StatusBadRequest, "invalid", "The limit is a number from 1 to "+strconv.Itoa(maxAdminLimit)+".")
 			return
 		}
+		limit = defaultAdminLimit
 	}
-	if q.Has("q") || q.Has("limit") || enabledOnly {
-		limit := 0
-		if v := q.Get("limit"); q.Has("limit") {
-			n, aerr := strconv.Atoi(v)
-			if aerr != nil || n < 1 || n > maxAdminLimit {
-				writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
-				return
-			}
-			limit = n
-		}
-		us, err = s.auth.FindUsers(c.r.Context(), sc, strings.TrimSpace(q.Get("q")), enabledOnly, limit)
-	} else {
-		us, err = s.auth.Users(c.r.Context(), sc)
+	f := store.UserFilter{Query: strings.TrimSpace(q.Get("q")), After: q.Get("cursor"), Limit: limit, Order: q.Get("order")}
+	if f.Order != "" && f.Order != "asc" && f.Order != "desc" {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Order is asc or desc.")
+		return
+	}
+	if f.Sort, ok = oneOf(c, "sort", store.UserSorts); !ok {
+		return
+	}
+	if f.Role, ok = oneOf(c, "role", store.UserRoles); !ok {
+		return
+	}
+	if f.State, ok = oneOf(c, "state", store.UserStates); !ok {
+		return
+	}
+	// The older picker's way of asking for the accounts that are enabled.
+	switch q.Get("enabled") {
+	case "":
+	case "1":
+		f.State = "enabled"
+	case "0":
+	default:
+		writeError(c.w, http.StatusBadRequest, "invalid", "Enabled is 1 or 0.")
+		return
+	}
+	if days, present, ok := intParam(c, "inactiveDays", 0, 36500); !ok {
+		return
+	} else if present {
+		f.InactiveBefore = s.now().Add(-time.Duration(days) * 24 * time.Hour)
+	}
+	if days, present, ok := intParam(c, "activeDays", 0, 36500); !ok {
+		return
+	} else if present {
+		f.ActiveSince = s.now().Add(-time.Duration(days) * 24 * time.Hour)
+	}
+	rows, next, err := store.ListUserRows(c.r.Context(), s.opt.Store.Q(), sc, f)
+	if s.badList(c, err) {
+		return
 	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	counts, err := s.auth.UserCounts(c.r.Context())
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	type userEx struct {
-		userResp
-		Passkeys int `json:"passkeys"`
-		SSO      int `json:"sso"`
-	}
-	own, err := store.UsersWithQuota(c.r.Context(), s.opt.Store.Q(), sc) // one query, the few who have limits of their own
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	out := make([]userEx, len(us))
-	for i, u := range us {
-		out[i] = userEx{s.toUser(u), counts.Passkeys[u.ID], counts.SSO[u.ID]}
-		out[i].Quota = toOwnQuota(own[u.ID])
+	out := make([]userEx, len(rows))
+	for i, e := range rows {
+		out[i] = s.userEx(e)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Users []userEx `json:"users"`
-	}{out})
+		Next  string   `json:"next"`
+	}{out, next})
+}
+
+// getUser is one person as the list shows them.
+func (s *server) getUser(c *call) {
+	e, err := store.GetUserRow(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), c.r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
+		return
+	}
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		User userEx `json:"user"`
+	}{s.userEx(e)})
 }
 
 func (s *server) patchUser(c *call) {
@@ -616,7 +661,7 @@ func (s *server) createSpace(c *call) {
 	var err error
 	sync := req.Storage != nil && req.Storage.Sync != nil
 	if req.Remote != nil && sync {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give remote or storage.sync, not both")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give remote or storage.sync, not both.")
 		return
 	}
 	if r := req.Remote; r != nil {
@@ -626,9 +671,9 @@ func (s *server) createSpace(c *call) {
 		g := req.Storage.Sync
 		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
 			if !ok {
-				writeError(c.w, http.StatusBadRequest, "invalid", "storage.sync.provider is not a provider of this server")
+				writeError(c.w, http.StatusBadRequest, "invalid", "storage.sync.provider is not a provider of this server.")
 			} else {
-				writeError(c.w, http.StatusBadRequest, "invalid", "a plain Git address is given as remote, or connected after the space is made with PUT /api/spaces/{space}/remote")
+				writeError(c.w, http.StatusBadRequest, "invalid", "A plain Git address is given as remote, or connected after the space is made with PUT /api/spaces/{space}/remote.")
 			}
 			return
 		}
@@ -660,7 +705,7 @@ func (s *server) renameSpace(c *call) {
 		return
 	}
 	if req.Name == nil && req.Inbox == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give a name, an inbox folder, or both")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give a name, an inbox folder, or both.")
 		return
 	}
 	in, err := s.spaces.Update(c.r.Context(), c.user(), c.sp.Info.ID, req.Name, req.Inbox)

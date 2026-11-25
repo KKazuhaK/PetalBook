@@ -26,7 +26,7 @@ type Summary struct {
 	Folder   string    `json:"folder"`
 	Title    string    `json:"title,omitempty"`
 	Subtitle string    `json:"subtitle,omitempty"`
-	Source   string    `json:"source,omitempty"`
+	Sources  []string  `json:"source"`
 	Label    string    `json:"label"`
 	Untitled bool      `json:"untitled"`
 	Tags     []string  `json:"tags"`
@@ -34,6 +34,8 @@ type Summary struct {
 	Created  string    `json:"created,omitempty"`
 	Updated  time.Time `json:"updated"`
 	Excerpt  string    `json:"excerpt"`
+	Icon     string    `json:"icon,omitempty"`
+	Color    string    `json:"color,omitempty"`
 	// Props and Rev are filled only when the query asks for them (Query.Props):
 	// the page's properties as a JSON object, and the rev of its file.
 	Props json.RawMessage `json:"props,omitempty"`
@@ -107,7 +109,7 @@ func decodeCursor(s string) (cursor, error) {
 	var c cursor
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil || json.Unmarshal(b, &c) != nil {
-		return c, invalid("bad cursor")
+		return c, invalid("Bad cursor.")
 	}
 	return c, nil
 }
@@ -132,7 +134,7 @@ func (x *Index) List(q Query) (Result, error) {
 		limit = defaultLimit
 	}
 	if limit < 1 || limit > maxLimit {
-		return Result{}, invalid("limit must be between 1 and %d", maxLimit)
+		return Result{}, invalid("Limit must be between 1 and %d.", maxLimit)
 	}
 	sortName := q.Sort
 	relevance := false
@@ -169,7 +171,7 @@ func (x *Index) List(q Query) (Result, error) {
 			return Result{}, err
 		}
 		if c.Sort != sortName && !(relevance && c.Sort == "relevance") {
-			return Result{}, invalid("cursor belongs to another sort order")
+			return Result{}, invalid("Cursor belongs to another sort order.")
 		}
 		cur = &c
 	}
@@ -338,7 +340,7 @@ func (res *Result) fill(rows *sql.Rows, props bool, limit int, relevance bool, o
 // selectCols are the columns of a summary, in the order scanSummary reads them.
 func selectCols(props bool) string {
 	c := `p.rowid, p.id, p.path, p.folder, p.title, p.subtitle, p.source, p.untitled, p.label, p.type, p.tags, p.created,
-		p.mtime_ns, p.excerpt, p.title_key, p.created_key`
+		p.mtime_ns, p.excerpt, p.title_key, p.created_key, p.icon, p.color`
 	if props {
 		c += `, p.props, p.rev, p.partial`
 	}
@@ -347,9 +349,9 @@ func selectCols(props bool) string {
 
 // scanSummary reads one row of selectCols, then the extra columns, if any.
 func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mtime, ckey int64, untitled int, titleKey string, err error) {
-	var tagsText, propsText, partialText string
-	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &s.Source, &untitled, &s.Label, &s.Type,
-		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey}
+	var tagsText, sourceText, propsText, partialText string
+	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &sourceText, &untitled, &s.Label, &s.Type,
+		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey, &s.Icon, &s.Color}
 	if props {
 		dest = append(dest, &propsText, &s.Rev, &partialText)
 	}
@@ -361,6 +363,9 @@ func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mt
 	s.Updated = time.Unix(0, mtime).UTC()
 	if err := json.Unmarshal([]byte(tagsText), &s.Tags); err != nil || s.Tags == nil {
 		s.Tags = []string{}
+	}
+	if err := json.Unmarshal([]byte(sourceText), &s.Sources); err != nil || s.Sources == nil {
+		s.Sources = []string{}
 	}
 	if props {
 		if propsText == "" {
@@ -396,7 +401,7 @@ func sortKeys(name string) ([]sortKey, error) {
 		// Untitled pages go last in either direction, ordered by created.
 		return []sortKey{{"p.untitled", false}, {"p.title_key", desc}, {"p.created_key", desc}, {"p.rowid", false}}, nil
 	}
-	return nil, invalid("unknown sort %q (use updated, created or title, optionally with a leading -)", name)
+	return nil, invalid("Unknown sort %q (use updated, created or title, optionally with a leading -).", name)
 }
 
 func keysetPredicate(order []sortKey, c *cursor) (string, []any) {
@@ -502,6 +507,41 @@ func (x *Index) Tags() ([]TagCount, error) {
 		for rows.Next() {
 			var t TagCount
 			if err := rows.Scan(&t.Tag, &t.Pages); err != nil {
+				return err
+			}
+			out = append(out, t)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SourceCount is a source with the number of pages that have it.
+type SourceCount struct {
+	Source string `json:"source"`
+	Pages  int    `json:"pages"`
+}
+
+// maxUsedSources is the most sources UsedSources lists.
+const maxUsedSources = 500
+
+// UsedSources returns the sources the pages have, most used first, for the
+// suggestions of an input. The sources are rows of the props table (see
+// BuildEntry), and props_val serves the grouping.
+func (x *Index) UsedSources() ([]SourceCount, error) {
+	out := []SourceCount{}
+	err := x.one(func(db querier) error {
+		rows, err := db.Query(`SELECT val, count(*) AS n FROM props INDEXED BY props_val WHERE key = 'source' GROUP BY val ORDER BY n DESC, val LIMIT ?`, maxUsedSources)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t SourceCount
+			if err := rows.Scan(&t.Source, &t.Pages); err != nil {
 				return err
 			}
 			out = append(out, t)
