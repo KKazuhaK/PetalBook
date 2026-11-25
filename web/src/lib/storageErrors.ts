@@ -14,6 +14,8 @@ export function storageErrorMessage(e: unknown): string | undefined {
     case 'not_cached':
       return body.fetching ? text.fetching : text.notCached
     case 'restoring': {
+      // Waiting for its turn (a restore or a rebuild of the index), or being rebuilt.
+      if (body.phase === 'waiting' || body.phase === 'rebuilding') return text.preparing[body.phase]
       const phases = text.phases as Record<string, string>
       return text.restoring(phases[body.phase ?? ''] ?? body.phase ?? '')
     }

@@ -34,12 +34,28 @@ func NewSyncSlots(n int) *SyncSlots {
 // Waiting is the number of big syncs waiting for a slot.
 func (s *SyncSlots) Waiting() int { return int(s.waiting.Load()) }
 
-func (s *SyncSlots) acquire(ctx context.Context) error {
+// Acquire takes a slot, waiting for one until ctx ends. A big sync takes its
+// own; this is for tests that fill the slots.
+func (s *SyncSlots) Acquire(ctx context.Context) error {
+	if s.tryAcquire() {
+		return nil
+	}
+	return s.acquire(ctx)
+}
+
+// Release gives back a slot taken by Acquire.
+func (s *SyncSlots) Release() { s.release() }
+
+func (s *SyncSlots) tryAcquire() bool {
 	select {
 	case s.ch <- struct{}{}:
-		return nil
+		return true
 	default:
+		return false
 	}
+}
+
+func (s *SyncSlots) acquire(ctx context.Context) error {
 	s.waiting.Add(1)
 	defer s.waiting.Add(-1)
 	select {
@@ -59,6 +75,33 @@ func init() { bigSyncSlots.Store(NewSyncSlots(DefaultBigSyncs)) }
 // SetBigSyncLimit sets how many big syncs run at once across the process, for
 // the indexes opened from then on (the server calls it at start-up).
 func SetBigSyncLimit(n int) { bigSyncSlots.Store(NewSyncSlots(n)) }
+
+// BigSyncs are the slots the indexes opened from now on take.
+func BigSyncs() *SyncSlots { return bigSyncSlots.Load() }
+
+// The phases a big sync reports to SetSyncNotify: it waits for a slot of the
+// server's, then it runs.
+const (
+	PhaseWaiting    = "waiting"
+	PhaseRebuilding = "rebuilding"
+)
+
+// SetSyncNotify sets what a big sync tells of its phase (PhaseWaiting, only
+// when it has to wait, then PhaseRebuilding); nil for nothing. The space sets
+// it for the sync of its open, so that requests can answer while it waits.
+func (x *Index) SetSyncNotify(f func(phase string)) {
+	if f == nil {
+		x.notify.Store(nil)
+		return
+	}
+	x.notify.Store(&f)
+}
+
+func (x *Index) tell(phase string) {
+	if f := x.notify.Load(); f != nil {
+		(*f)(phase)
+	}
+}
 
 // BigSyncsWaiting is the number of big syncs of the process waiting for a slot.
 func BigSyncsWaiting() int { return bigSyncSlots.Load().Waiting() }

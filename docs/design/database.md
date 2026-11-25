@@ -304,16 +304,25 @@ process (`index.SyncSlots`). A big sync waits for a slot without holding its ind
 small syncs of that space go on; once it has the slot it walks the files again. Syncs that read 1000 files or
 fewer (the open of an indexed space, a pull of a few changed files, the sync after an edit) never take a slot.
 One rebuild of 50 000 pages keeps about 2 cores busy; two leave the 4-core target able to answer, and halve the
-time to recover from a schema change compared with one. Requests for a space whose open waits for a slot wait
-with their own context, as they already waited for its open; no API answer changed.
+time to recover from a schema change compared with one.
+
+**Requests while a space waits for its rebuild** (owner decision, 2026-11-24): they answer as for an evicted
+space being restored, through the same code (`RestoringError`, `awaitOpen` in `internal/spaces`). The open of a
+space runs in the background; a request waits for it up to `RestoreWait` (10 s), and when the open is still in a
+big sync it answers `503 restoring` with `Retry-After: 5` and `phase` `waiting` (no slot yet) or `rebuilding`
+(the sync holds a slot). The index tells the phase to the space (`SetSyncNotify`, `space.Options.OnRebuild`),
+which tells the manager. The open is not dropped by the answer: it goes on, and a later request finds the space
+open. An open that needs no rebuild is waited for with the request's own context, as before. The web app shows
+"Waiting to prepare this space…" for `waiting` (also when an evicted space waits for its restore turn) and
+"Preparing this space: its index is being built…" for `rebuilding`.
 
 **Cost at 50 000 pages and many users.** Memory of open spaces is bounded by the budget plus the spaces in use:
 1 GiB, plus at most 2 × 150 MB for rebuilds under way, plus about 75 MB per rebuild of high-water that the
 allocator keeps. Before, 64 such spaces could hold 3.5 GB idle and 6.4–15 GB in use. With many users each having
 a large space, about 80 stay open; the 81st opened closes the least recently used idle one, and reopening an
 indexed 50 000-page space costs 0.3–0.8 s (a walk and stat of its files, and the scan of its pages table) and
-12 MB. After a schema change, N large spaces rebuild 2 at a time: about N × 15 s in all, each request for one
-of them waiting until its own rebuild has run.
+12 MB. After a schema change, N large spaces rebuild 2 at a time: about N × 15 s in all; requests for a space
+whose rebuild has not finished answer `503 restoring` after 10 s, and the client tries again.
 
 **Known issues:**
 
@@ -321,7 +330,6 @@ of them waiting until its own rebuild has run.
   read connections); one search at a time is not slower.
 - About 75 MB stays with the process after a rebuild: SQLite's allocator (modernc's
   libc) keeps what it freed. It is reused, and bounded by the rebuild limit.
-- Requests for a space whose open waits for a rebuild slot wait with their own
-  context. Whether they should answer `503 restoring` (phase `waiting`) instead is
-  pending an owner decision: that answer is defined only for evicted spaces today.
+- A server that is shutting down waits for the opens queued for a rebuild slot to
+  finish (two at a time), as it waited for opens before.
 

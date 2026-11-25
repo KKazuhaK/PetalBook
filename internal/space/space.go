@@ -64,6 +64,10 @@ type Options struct {
 	// it returns refuses the change (the storage policy's deadline, see
 	// internal/spaces). Drafts are not files of the space and never ask it.
 	WriteGate func() error
+	// OnRebuild, when set, is told the phases of a big sync of the index that
+	// Open makes (index.PhaseWaiting while it waits for one of the server's
+	// slots, then index.PhaseRebuilding), while Open runs.
+	OnRebuild func(phase string)
 }
 
 // Space is safe for concurrent use.
@@ -387,7 +391,9 @@ func Open(opt Options) (*Space, error) {
 	// it notes what a crash left of a write there (isTempName) on the way.
 	temps := append(tempsIn(root, ".petalbook"), tempsIn(root, typesDir)...)
 	s.watchChecks()
+	idx.SetSyncNotify(opt.OnRebuild)
 	st, err := idx.Sync(dirSource{root: root, temps: &temps}, false)
+	idx.SetSyncNotify(nil)
 	if err != nil {
 		idx.Close()
 		return nil, err

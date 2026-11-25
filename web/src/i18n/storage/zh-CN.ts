@@ -201,6 +201,7 @@ export const storageZhCN: StorageMessages = {
     fetching: '这个版本正在从远端仓库取回。请稍后再试。',
     restoring: (phase) => `这个空间有一阵子没人用了，正在重新取回（${phase}）。请稍后再试。`,
     phases: { waiting: '排队等待', fetching: '下载中', checkout: '检出文件', indexing: '读取文件' },
+    preparing: { waiting: '正在排队准备这个空间…', rebuilding: '正在准备这个空间：正在建立索引…' },
     spaceFull: '这会让空间超过管理员给没有远端仓库的空间设的大小上限。保存文字不受影响。',
   },
 }

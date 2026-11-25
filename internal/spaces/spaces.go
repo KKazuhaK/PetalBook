@@ -274,6 +274,7 @@ type opening struct {
 	closing  chan struct{} // set while it is being closed; closed when that is done
 	nextPull time.Time     // when the remote is pulled next; zero for a local space
 	cost     int64         // its memory as last estimated (see refreshCosts)
+	phase    string        // while it is opened: the phase of its index rebuild, if one is needed ("" if not)
 }
 
 // Manager is safe for concurrent use.
@@ -700,35 +701,21 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 		e.last = m.opt.Now()
 		m.mu.Unlock()
 		if opener {
-			// Opening can take as long as an index rebuild; it must not be cut
-			// short because the request that happened to start it went away.
-			e.sp, e.err = m.openSpace(context.WithoutCancel(ctx), id)
-			if e.err != nil {
-				m.mu.Lock()
-				delete(m.open, id)
-				m.mu.Unlock()
-			}
-			if e.err == nil {
-				if _, ok := e.sp.Remote(); ok {
-					// Someone is about to look at it: bring it up to date now.
-					m.mu.Lock()
-					e.nextPull = m.opt.Now()
-					m.mu.Unlock()
-					m.wakePull()
-				}
-			}
-			close(e.done)
-			if e.err == nil {
-				m.trimSoon()
+			// Opening can take as long as an index rebuild, and wait for a
+			// rebuild slot of the server's first; it runs in the background, so
+			// that it is not cut short because the request that started it went
+			// away or was answered restoring (see awaitOpen).
+			run := func() { m.finishOpen(context.WithoutCancel(ctx), id, e) }
+			if !m.goBg(run) {
+				run()
 			}
 		}
-		select {
-		case <-e.done:
-		case <-ctx.Done():
+		if err := m.awaitOpen(ctx, e); err != nil {
 			m.unref(e)
-			return nil, nil, ctx.Err()
+			return nil, nil, err
 		}
 		if e.err != nil {
+
 			if errors.Is(e.err, errNoClone) && !noClone {
 				// It follows a remote and its clone is gone without being
 				// recorded as evicted: it is evicted, and restored as such.
@@ -747,6 +734,63 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 	}
 }
 
+// finishOpen opens the space of e and tells those waiting (e.done).
+func (m *Manager) finishOpen(ctx context.Context, id string, e *opening) {
+	e.sp, e.err = m.openSpace(ctx, id, func(phase string) {
+		m.mu.Lock()
+		e.phase = phase
+		m.mu.Unlock()
+	})
+	if e.err != nil {
+		m.mu.Lock()
+		delete(m.open, id)
+		m.mu.Unlock()
+	}
+	if e.err == nil {
+		if _, ok := e.sp.Remote(); ok {
+			// Someone is about to look at it: bring it up to date now.
+			m.mu.Lock()
+			e.nextPull = m.opt.Now()
+			m.mu.Unlock()
+			m.wakePull()
+		}
+	}
+	close(e.done)
+	if e.err == nil {
+		m.trimSoon()
+	}
+}
+
+// awaitOpen waits for the open of e. An open whose index is rebuilt (or waits
+// for one of the server's rebuild slots) answers *RestoringError once the
+// request has waited Options.RestoreWait, as a restore does: the open goes on
+// in the background and a later request finds the space open. Any other open
+// is waited for, for as long as the request's context lasts.
+func (m *Manager) awaitOpen(ctx context.Context, e *opening) error {
+	wait := m.opt.RestoreWait
+	if wait <= 0 {
+		wait = 10 * time.Second
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	for {
+		select {
+		case <-e.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			m.mu.Lock()
+			phase := e.phase
+			m.mu.Unlock()
+			if phase != "" {
+				return &RestoringError{Phase: phase, Rebuild: true}
+			}
+			t.Reset(time.Second) // not a rebuild (yet): looked at again
+		}
+	}
+}
+
 func (m *Manager) unref(e *opening) {
 	m.mu.Lock()
 	e.refs--
@@ -762,7 +806,7 @@ func (m *Manager) paths(id string) (root, state string) {
 // recorded as evicted. acquire restores it.
 var errNoClone = errors.New("the clone of a space that follows a remote is missing")
 
-func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error) {
+func (m *Manager) openSpace(ctx context.Context, id string, onRebuild func(phase string)) (*space.Space, error) {
 	if m.opt.OpenHook != nil {
 		m.opt.OpenHook(id)
 	}
@@ -793,7 +837,7 @@ func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error
 	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
-		WriteGate: func() error { return m.CheckWritable(id) },
+		WriteGate: func() error { return m.CheckWritable(id) }, OnRebuild: onRebuild,
 	})
 	if err == nil && rem != nil {
 		m.markCache(id, sp)

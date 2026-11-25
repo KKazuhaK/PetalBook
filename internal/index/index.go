@@ -202,6 +202,8 @@ type Index struct {
 	// of pages after the last sync: for MemoryCost.
 	wcache atomic.Int64
 	pages  atomic.Int64
+	// notify is what a big sync tells of its phase (SetSyncNotify).
+	notify atomic.Pointer[func(phase string)]
 }
 
 // Open opens or creates the index at dbPath for the space at root. An index

@@ -45,10 +45,17 @@ var (
 	ErrNotEvictable = errors.New("the space cannot be evicted")
 )
 
-// RestoringError: the space is being restored and the request's wait is over.
-type RestoringError struct{ Phase string }
+// RestoringError: the space is being restored, or its index rebuilt (Rebuild),
+// and the request's wait is over.
+type RestoringError struct {
+	Phase   string
+	Rebuild bool
+}
 
 func (e *RestoringError) Error() string {
+	if e.Rebuild {
+		return "the index of this space is being prepared (" + e.Phase + ")"
+	}
 	return "this space was not used for a while and is being restored from its remote repository (" + e.Phase + ")"
 }
 

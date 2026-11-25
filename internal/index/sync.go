@@ -144,10 +144,14 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 		// small syncs of this index go on meanwhile; then the files are looked
 		// at again, since they may have changed while it waited.
 		x.wmu.Unlock()
-		if err := x.slots.acquire(ctx); err != nil {
-			return Stats{}, err
+		if !x.slots.tryAcquire() {
+			x.tell(PhaseWaiting)
+			if err := x.slots.acquire(ctx); err != nil {
+				return Stats{}, err
+			}
 		}
 		defer x.slots.release()
+		x.tell(PhaseRebuilding)
 		big = true
 	}
 	defer x.unlockWrite()
