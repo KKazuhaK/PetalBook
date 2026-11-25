@@ -8,6 +8,8 @@ import { MOCK_ADMIN } from '@/api/mock/server'
 import { to } from '@/i18n/onboard'
 import { adminRequests, click, installDomShims, locationText, mount, settle, type Mounted } from '@/testing/harness'
 import type { MockServer } from '@/api/mock/server'
+import { createSyncedPrefs } from '@/lib/syncedPrefs'
+import { browserPrefs, setPrefsStore } from '@/lib/prefsStore'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
@@ -102,6 +104,29 @@ describe('the tour on a first sign-in', () => {
     await settle(() => document.querySelector('[data-testid="home"]') !== null, 'the page')
     await new Promise((r) => setTimeout(r, 100))
     expect(tour()).toBeNull()
+  })
+
+  it('waits for a slow file rather than start again a tour the person finished', async () => {
+    let answer!: (v: { personal: boolean; prefs: Record<string, unknown> }) => void
+    const synced = createSyncedPrefs({
+      api: { get: () => new Promise((r) => (answer = r)), patch: async () => ({ personal: true }) },
+    })
+    setPrefsStore(synced)
+    try {
+      let uid = ''
+      await openApp((server) => void (uid = server.userId(MOCK_ADMIN.username)!))
+      const hydrating = synced.hydrate(uid)
+      await settle(() => document.querySelector('[data-testid="home"]') !== null, 'the page')
+      // The spaces are known and this browser has nothing: the file is still coming, so nothing starts.
+      await new Promise((r) => setTimeout(r, 200))
+      expect(tour()).toBeNull()
+      answer({ personal: true, prefs: { [onboardingKey(uid)]: { state: 'done', at: '2026-11-01T00:00:00.000Z' } } })
+      await hydrating
+      await new Promise((r) => setTimeout(r, 200))
+      expect(tour()).toBeNull()
+    } finally {
+      setPrefsStore(browserPrefs)
+    }
   })
 
   it('is reopened from the help menu, and closing it again does not overwrite what was remembered', async () => {

@@ -20,6 +20,19 @@ export function readOnboarding(userId: string): Onboarding | null {
     : null
 }
 
+// Whether the person's preferences are known well enough to decide on the tour: the store says when its first read of
+// the person's file has ended (read, or failed and this browser's copy stands); a store that only knows this browser
+// knows at once. Without it a slow file would start the tour again for someone who finished it.
+const noSub = () => () => {}
+export function usePrefsSettled(): boolean {
+  const store = prefsStore() as Partial<{
+    subscribe: (fn: () => void) => () => void
+    status: () => { settled: boolean }
+  }>
+  const subscribe = store.subscribe ?? noSub
+  return useSyncExternalStore(subscribe, () => (store.status ? store.status().settled : true))
+}
+
 export function writeOnboarding(userId: string, state: Onboarding['state'], at = new Date()): void {
   prefsStore().write(onboardingKey(userId), { state, at: at.toISOString() } satisfies Onboarding)
 }
