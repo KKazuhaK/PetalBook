@@ -6044,8 +6044,8 @@ Not enforced by the server, but what it is built for:
 
 **What it costs**, in a space of 50 000 pages (measured with
 `PETALBOOK_TIMING=1 go test -run TestChangeFeedInALargeSpace ./internal/space/`;
-the numbers are in docs/design.md, "4.1 的现状"): a `changes` with nothing new
-under a millisecond; a catalogue batch of 2000 about 15 to 20 ms; 100 bodies
+the numbers are in docs/design/milestones/phase-4.md, "4.1 as built"): a
+`changes` with nothing new under a millisecond; a catalogue batch of 2000 about 15 to 20 ms; 100 bodies
 about 20 ms on an SSD; `heads` for 100 spaces a few microseconds each, and no
 disk (after a restart, about a millisecond once for each closed space, to read
 its head from its index). The index grows by one column and one small table, under 1% of its size.
@@ -6327,7 +6327,7 @@ tenants.
 
 ### Settings by layer
 
-The general rule of design.md ("设置的分层和锁定") as an API. A **setting** has a
+The general rule of docs/design/milestones/phase-2.md ("Layered settings and locking") as an API. A **setting** has a
 key, a kind and the layers it exists in. Each layer either sets a value or
 follows the layer above (`null`), and each layer above the last says what the
 layers below it may do (`lower`):
@@ -7798,7 +7798,7 @@ reason, and shows a banner "管理员查看，只读，已记录" while it lasts
 
 Regional or compliance refinements (telling the owner first, a second
 administrator's approval, a longer retention of these rows) are a later item
-(design.md, 5.14).
+(docs/design/milestones/phase-5.md, 5.14).
 
 ### The size of one file
 
@@ -8191,8 +8191,8 @@ merged). Accounts mode only. It finishes the administrators' permission model:
 - **A site administrator is the highest level**: they see and manage
   everything, in every tenant, and decide for every shared thing whether it is
   forced on all tenants or only a default.
-- design.md lists every administrator-configurable thing and its class
-  ("管理项清单"): **site-only** (a), **layered** (b: the site sets a value and
+- docs/design/milestones/phase-3-tenants.md lists every administrator-configurable
+  thing and its class ("List of admin items"): **site-only** (a), **layered** (b: the site sets a value and
   whether it is forced, a minimum, or a default; tenants configure within it;
   spaces and people below where it makes sense), **tenant-owned** (c: each
   tenant has its own, independent of the others).
@@ -8218,7 +8218,7 @@ boundary").
 decide its value.** A capability gates either a tenant-owned resource (whether
 the tenant may configure it and whether it is used) or the tenant layer of a
 layered key (without it, the tenant follows the site). The inventory in
-design.md names the capability of every (b) and (c) item. Site administrators
+docs/design/milestones/phase-3-tenants.md names the capability of every (b) and (c) item. Site administrators
 are never limited by capabilities.
 
 | Key | Kind | Site default | Gates |
@@ -9566,7 +9566,7 @@ a membership to an existing account; the endpoints keep their shapes.
   as in 3.6, and approving adds the membership.
 - **Through the organisation's SSO** (`autoCreate`, `jit.requireGroups`): a new
   identity makes a personal account with the membership. For an existing
-  account see the owner's question 1 of 3.7 in design.md; until it is decided, an
+  account see the owner's question 1 of 3.7 in docs/design/milestones/phase-3-autonomy-and-providers.md; until it is decided, an
   organisation's provider links an identity to an existing personal account
   only when the account's **verified** address is on a **verified** domain of
   that tenant, never for a site administrator, and the session so made carries

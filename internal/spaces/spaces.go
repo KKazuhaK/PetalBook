@@ -253,7 +253,7 @@ const (
 	// quarter of the 4 GB a small server (4 cores, 6 GB) can give the process
 	// beside the operating system's file cache and Git. An idle 50 000-page
 	// space costs about 12 MB in that sum, a 200-page one about 2 MB (see
-	// docs/design.md, "Memory budget of open spaces").
+	// docs/design/database.md, §5.5).
 	DefaultMemoryBudget = 1 << 30
 	// DefaultMaxOpen bounds the open spaces whatever they cost: each keeps a
 	// few files open.

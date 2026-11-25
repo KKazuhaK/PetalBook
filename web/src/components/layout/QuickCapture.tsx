@@ -136,7 +136,7 @@ function CaptureForm({
     if (body === null || create.isPending) return
     setError('')
     try {
-      // An untitled page: the text is all there is (docs/design.md, 3.2).
+      // An untitled page: the text is all there is (docs/design/data-model.md, 3.2).
       const page = await create.mutateAsync({ folder: inbox, body, tz: tzOffset() })
       saveCapture(key, '')
       onDone()

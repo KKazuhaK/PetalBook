@@ -10,7 +10,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
-// 2.7 under the tenants of 3.3 (docs/design.md, "2.7 的约定"): the App is the
+// 2.7 under the tenants of 3.3 (docs/design/milestones/phase-2-connections.md, "The 2.7 contract"): the App is the
 // server's, a GitHub connection is its user's, and a space made with a
 // repository is its creator's tenant's, under its quotas.
 

@@ -1,7 +1,7 @@
 // Package upgrade is where the code that upgrades a state database from one
 // release of PetalBook to the next will live. It is empty on purpose.
 //
-// The rule (docs/design.md, "数据库基线（2026-11-24）"):
+// The rule (docs/design/database.md, "5.3 Database baseline (2026-11-24)"):
 //
 //   - Until the first release there is no upgrade code at all. The schema is
 //     one baseline, internal/store/schema.sql, edited in place; a database made

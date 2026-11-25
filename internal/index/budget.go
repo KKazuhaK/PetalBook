@@ -64,7 +64,7 @@ func SetBigSyncLimit(n int) { bigSyncSlots.Store(NewSyncSlots(n)) }
 func BigSyncsWaiting() int { return bigSyncSlots.Load().Waiting() }
 
 // What an index holds in memory, for MemoryCost; measured on a 50 000-page
-// space (docs/design.md, "Memory budget of open spaces"). A connection with
+// space (docs/design/database.md, §5.5). A connection with
 // the schema parsed and its statements prepared holds about connBytes beside
 // its page cache. A reader maps the file, so its page cache stays nearly empty
 // (readerBytes is its whole cost, measured); the writer's cache fills up to its

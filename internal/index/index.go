@@ -305,7 +305,7 @@ var walCheckpointAt int64 = 16 << 20
 // (mmap_size; modernc's SQLite supports it, up to 2 GB), so the pages the
 // readers share live once, in the operating system's cache, and cost the
 // process nothing it has to keep. Negative cache sizes are in KiB. See
-// docs/design.md, "Memory budget of open spaces", for what an index costs.
+// docs/design/database.md, §5.5, for what an index costs.
 const (
 	writeCacheKiB    = -8192
 	bigWriteCacheKiB = -65536

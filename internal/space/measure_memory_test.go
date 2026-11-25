@@ -21,7 +21,7 @@ import (
 
 // TestMeasureMemoryOfAnOpenSpace prints what one open space costs in memory,
 // what a search takes, and what a rebuild costs, on a generated space (the
-// numbers in docs/design.md, "Memory budget of open spaces"). It is skipped
+// numbers in docs/design/database.md, §5.5). It is skipped
 // unless PETALBOOK_MEASURE_MEM names a step, and needs Linux
 // (/proc/self/smaps_rollup). Each step is run in a process of its own, since
 // memory SQLite frees is kept by the process:

@@ -17,8 +17,9 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
 )
 
-// The five problems the review of the first 2.7 found (docs/design.md, "2.7b
-// 做出来的样子"), each pinned by a test.
+// The five problems the review of the first 2.7 found
+// (docs/design/milestones/phase-2-connections.md, "2.7b: what was built"), each
+// pinned by a test.
 
 // 1. GitHub made the App but saving it failed because GitHub could not be
 // asked: the administrator is not told "nothing was saved". The credentials
