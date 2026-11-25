@@ -364,11 +364,13 @@ func TestMovingAttachmentsIntoTheAttachmentRepository(t *testing.T) {
 
 func TestACrashAtEveryStepOfMovingAttachmentsLosesNone(t *testing.T) {
 	steps := []string{"copied", "copied-all", "switching", "switch-verified", "switch-committed", "switch-reset", "switch-pushed"}
+	// So that the copy takes several commits. Set once for all the steps, which run in
+	// parallel; the cleanup runs after they have ended.
+	t.Cleanup(assetrepoChunk(1500))
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
+			t.Parallel()
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
-				old := assetrepoChunk(1500) // so that the copy takes several commits
-				defer old()
 				var crash string
 				crashed := make(chan struct{}, 1)
 				a := newAssetFixture(t, st, func(o *Options) {
@@ -466,6 +468,7 @@ func TestACrashAtEveryStepOfAnEvictionWithAnAttachmentRepositoryLosesNone(t *tes
 	t.Parallel()
 	for _, step := range []string{"held", "verified", "marked", "moved", "recorded", "removed"} {
 		t.Run(step, func(t *testing.T) {
+			t.Parallel()
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
 				var crash string
 				a, want := movedFixture(t, st, func(o *Options) {
