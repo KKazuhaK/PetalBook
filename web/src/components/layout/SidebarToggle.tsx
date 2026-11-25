@@ -28,7 +28,7 @@ export function SidebarToggle({ where }: { where: 'sidebar' | 'topbar' }) {
     <SidebarTrigger
       ref={take}
       aria-label={t.nav.toggleSidebar}
-      className={where === 'topbar' ? 'size-10 shrink-0' : 'shrink-0'}
+      className={where === 'topbar' ? 'size-9 shrink-0 pointer-coarse:size-10' : 'shrink-0'}
       onClick={hand}
     />
   )

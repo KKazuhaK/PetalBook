@@ -139,7 +139,7 @@ export function FilterBar({
         <PopoverTrigger
           data-slot="filter-button"
           aria-label={t.ftable.filterLabel}
-          className="inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm pointer-coarse:h-10 outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
         >
           <ListFilter className="size-4" strokeWidth={1.75} aria-hidden />
           {label}
@@ -214,7 +214,7 @@ export function FilterBar({
           aria-label={t.ftable.foldersToggle}
           title={t.ftable.foldersToggle}
           onClick={folders.onToggle}
-          className="ml-auto inline-flex h-10 items-center rounded-lg px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="ml-auto inline-flex h-9 items-center rounded-lg px-3 pointer-coarse:h-10 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           {folders.mixed ? t.ftable.foldersMixed : t.ftable.foldersFirst}
         </button>

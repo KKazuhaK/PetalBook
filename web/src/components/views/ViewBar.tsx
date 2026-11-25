@@ -360,7 +360,7 @@ function IconButton({
     <Button
       variant="ghost"
       size="icon-lg"
-      className="size-10"
+      className="size-9 pointer-coarse:size-10"
       aria-label={label}
       title={label}
       disabled={disabled}
