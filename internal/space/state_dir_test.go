@@ -235,6 +235,7 @@ func swapAfterLook(t *testing.T, root, file string, swap func()) (arm func()) {
 	return func() { armed.Store(true) }
 }
 
+// Not parallel: swapAfterLook sets lookedAt, which is one hook for the whole package.
 func TestWhatIsReadWhileAFolderOfTheSettingsIsSwappedIsNotKept(t *testing.T) {
 	s := settled(t)
 	root := s.Root()
@@ -403,6 +404,7 @@ func salvageTime(t *testing.T, data []byte) time.Duration {
 	return time.Since(start)
 }
 
+// Not parallel: it compares the wall-clock times of two readings, and in the last step bounds one by seconds; tests running alongside would slow one and not the other.
 func TestSalvagingALargeFileWithOneTypoIsLinear(t *testing.T) {
 	s := settled(t)
 	full := maxSalvage(spaceSettings)

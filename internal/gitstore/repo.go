@@ -47,8 +47,11 @@ type Options struct {
 type Repo struct {
 	opt Options
 
-	gdMu sync.Mutex
-	gd   string // the absolute git directory, once known
+	// layout is where Dir stands in its repository. The git directory does not
+	// move while a Repo lives, so once known it is not asked for again (see
+	// Layout); Init, which makes the repository, knows it without asking.
+	gdMu   sync.Mutex
+	layout Layout
 
 	// ensureFn is set for a partial clone (see SetEnsure).
 	ensureFn atomic.Pointer[EnsureFunc]
@@ -73,7 +76,9 @@ func (r *Repo) Dir() string { return r.opt.Dir }
 func (r *Repo) WithCredential(c Credential) *Repo {
 	o := r.opt
 	o.Cred = c
-	return &Repo{opt: o}
+	r.gdMu.Lock()
+	defer r.gdMu.Unlock()
+	return &Repo{opt: o, layout: r.layout}
 }
 
 func (r *Repo) runner() Runner {
@@ -150,14 +155,84 @@ func (r *Repo) Init(ctx context.Context, branch string) error {
 	if err := os.MkdirAll(r.opt.Dir, 0o755); err != nil {
 		return err
 	}
-	_, err := r.git(ctx, "init", "--quiet", "--initial-branch="+branch)
-	return err
+	if _, err := r.git(ctx, "init", "--quiet", "--initial-branch="+branch); err != nil {
+		return err
+	}
+	// Dir now has a .git folder of its own (when it is a folder: a file there
+	// is followed by init to a git directory elsewhere, which is asked for
+	// when it is needed), so where the git directory is is known.
+	if abs, err := filepath.Abs(r.opt.Dir); err == nil {
+		if gd, err := filepath.EvalSymlinks(filepath.Join(abs, ".git")); err == nil {
+			if fi, err := os.Stat(gd); err == nil && fi.IsDir() {
+				r.gdMu.Lock()
+				r.layout = Layout{GitDir: gd}
+				r.gdMu.Unlock()
+			}
+		}
+	}
+	return nil
 }
 
-// IsRepo reports whether Dir is inside a Git work tree.
+// Layout is where Dir stands in its repository.
+type Layout struct {
+	// GitDir is the absolute git directory of the work tree (for a linked
+	// work tree, its own one).
+	GitDir string
+	// Prefix is the path of Dir below the top of its work tree, "" when it is
+	// the top.
+	Prefix string
+}
+
+// layoutArgs asks for the layout and whether Dir is inside a work tree, in one
+// command; the answers come one to a line, in this order.
+var layoutArgs = []string{"rev-parse", "--is-inside-work-tree", "--absolute-git-dir", "--show-prefix"}
+
+func (r *Repo) askLayout(ctx context.Context) (l Layout, inside bool, err error) {
+	out, err := r.run(ctx, Cmd{Args: layoutArgs})
+	if err != nil {
+		return Layout{}, false, err
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 2 {
+		return Layout{}, false, fmt.Errorf("git rev-parse printed %q", out)
+	}
+	l.GitDir = lines[1]
+	if len(lines) > 2 {
+		l.Prefix = lines[2]
+	}
+	return l, lines[0] == "true", nil
+}
+
+// Layout is where Dir stands in its repository. The git directory and the
+// prefix do not change while a Repo is in use, so they are asked for once (or
+// not at all, in a repository this Repo made with Init).
+func (r *Repo) Layout(ctx context.Context) (Layout, error) {
+	r.gdMu.Lock()
+	defer r.gdMu.Unlock()
+	if r.layout.GitDir != "" {
+		return r.layout, nil
+	}
+	l, _, err := r.askLayout(ctx)
+	if err != nil {
+		return Layout{}, err
+	}
+	r.layout = l
+	return l, nil
+}
+
+// IsRepo reports whether Dir is inside a Git work tree. It is asked every
+// time, never answered from what is remembered: a directory can stop being a
+// repository (or become one) while the Repo is held. What it learns of the
+// layout is kept for the readers of it.
 func (r *Repo) IsRepo(ctx context.Context) bool {
-	out, err := r.git(ctx, "rev-parse", "--is-inside-work-tree")
-	return err == nil && out == "true"
+	l, inside, err := r.askLayout(ctx)
+	if err != nil || !inside {
+		return false
+	}
+	r.gdMu.Lock()
+	r.layout = l
+	r.gdMu.Unlock()
+	return true
 }
 
 // CommitOf resolves a ref to a full commit id, or "" when it does not exist.
@@ -220,19 +295,10 @@ func (r *Repo) Busy(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// absGitDir is the repository's git directory. It does not move, so it is asked for once.
+// absGitDir is the repository's git directory (see Layout).
 func (r *Repo) absGitDir(ctx context.Context) (string, error) {
-	r.gdMu.Lock()
-	defer r.gdMu.Unlock()
-	if r.gd != "" {
-		return r.gd, nil
-	}
-	d, err := r.git(ctx, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return "", err
-	}
-	r.gd = d
-	return d, nil
+	l, err := r.Layout(ctx)
+	return l.GitDir, err
 }
 
 // BusyError means the repository is in the middle of an operation of the
@@ -569,13 +635,12 @@ func (r *Repo) commitChanges(ctx context.Context, changes []Change, message stri
 	// index would keep a shared copy of it, the size of the whole index, in
 	// .git for every commit.
 	noSplit := []string{"-c", "core.splitIndex=false"}
-	head := r.Head(ctx)
-	headTree := ""
+	head, headTree, err := r.headAndTree(ctx)
+	if err != nil {
+		return false, err
+	}
 	if head != "" {
 		if _, err := r.gitIn(ctx, ienv, nil, append(noSplit, "read-tree", "HEAD")...); err != nil {
-			return false, err
-		}
-		if headTree, err = r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{tree}"); err != nil {
 			return false, err
 		}
 	}
@@ -638,6 +703,27 @@ func (r *Repo) commitChanges(ctx context.Context, changes []Change, message stri
 		return false, err
 	}
 	return true, nil
+}
+
+// headAndTree is the commit HEAD is at and that commit's tree, from one
+// command. With --revs-only git prints only what it could resolve and exits 0
+// whatever it could not: nothing at all is a branch with no commit yet (""
+// and ""), two lines are the commit and its tree, and anything else (a commit
+// whose tree cannot be read, a failing git) is an error. Without it git fails
+// with the same status for "no commit yet" and for a damaged repository.
+func (r *Repo) headAndTree(ctx context.Context) (head, tree string, err error) {
+	out, err := r.git(ctx, "rev-parse", "--revs-only", "HEAD^{commit}", "HEAD^{tree}")
+	if err != nil {
+		return "", "", err
+	}
+	if out == "" {
+		return "", "", nil
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 2 || lines[0] == "" || lines[1] == "" {
+		return "", "", fmt.Errorf("HEAD does not name a commit and its tree: git printed %q", out)
+	}
+	return lines[0], lines[1], nil
 }
 
 // tempIndexDir makes the directory for a commit's own index, inside the git

@@ -131,6 +131,7 @@ func fullID(s string) bool {
 }
 
 func TestCheckerCatchesDestructiveCommands(t *testing.T) {
+	t.Parallel()
 	bad := [][]string{
 		{"push", "--force", "origin", "HEAD:refs/heads/main"},
 		{"push", "-f", "origin", "HEAD:refs/heads/main"},
@@ -186,6 +187,7 @@ func TestCheckerCatchesDestructiveCommands(t *testing.T) {
 }
 
 func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
+	t.Parallel()
 	sha := strings.Repeat("a", 40)
 	for _, args := range [][]string{
 		{"push", "--force", "origin", "HEAD:refs/heads/main"},
@@ -321,6 +323,7 @@ func TestRuntimeGuardRefusesDestructiveCommands(t *testing.T) {
 }
 
 func TestPushArgsIsTheOnlyPushShape(t *testing.T) {
+	t.Parallel()
 	args, err := pushArgs("main")
 	if err != nil || strings.Join(args, " ") != "push --quiet origin HEAD:refs/heads/main" {
 		t.Fatalf("%v %v", args, err)
@@ -405,6 +408,7 @@ func isSafegit(f string) bool {
 }
 
 func TestStaticNoForcePushAnywhereButSafegit(t *testing.T) {
+	t.Parallel()
 	words := []string{"--force", "force-with-lease", "--mirror", "--delete", "--prune", "update-ref",
 		`"-f"`, `"-d"`, `"-D"`, `"+refs`, `"+HEAD`, `"+"+`, "HEAD:refs/"}
 	for _, f := range nonTestSources(t) {
@@ -423,6 +427,7 @@ func TestStaticNoForcePushAnywhereButSafegit(t *testing.T) {
 }
 
 func TestStaticOnlyOneGitRunnerAndOnePushBuilder(t *testing.T) {
+	t.Parallel()
 	for _, f := range nonTestSources(t) {
 		src, _ := os.ReadFile(f)
 		fset := token.NewFileSet()

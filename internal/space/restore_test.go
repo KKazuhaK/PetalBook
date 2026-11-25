@@ -12,6 +12,7 @@ import (
 
 // --- a legitimate file is never taken for one that cannot be used -----------------
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestAnEntrySharedByTenThousandFoldersCostsWhatIsWritten(t *testing.T) {
 	shared := "shared: &tmpl\n  type: wenan\n  views:\n" +
 		"    - {id: aaa111, name: one, layout: board, filter: [{key: series, op: in, values: [a, b]}]}\n" +
@@ -327,6 +328,7 @@ func TestASpaceWhoseHistoryHasNoUsableSettingsStartsEmpty(t *testing.T) {
 	}
 }
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestEveryKindOfUnusableFileIsRestored(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -424,6 +426,7 @@ func TestATagsFileThatCannotBeUsedIsRestoredToo(t *testing.T) {
 
 // --- recovery after a crash -------------------------------------------------------
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestRecoveryRestoresAFileThatCannotBeUsed(t *testing.T) {
 	s := settled(t)
 	root := s.Root()

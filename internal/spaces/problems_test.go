@@ -12,6 +12,7 @@ import (
 )
 
 func TestProblemsAreReadFromOpenSpacesAndRememberedWhenTheyClose(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m, clk := limitedManager(t, st, func(o *Options) { o.IdleAfter = 10 * time.Minute; o.MaxSpaces = 0 })
 		owner := addUser(t, st, "U1", "owner")
@@ -82,6 +83,7 @@ func TestProblemsAreReadFromOpenSpacesAndRememberedWhenTheyClose(t *testing.T) {
 }
 
 func TestTheSignatureOfProblemsChangesWithThem(t *testing.T) {
+	t.Parallel()
 	a := problemsOf("S", "S", map[string]int{"no_id": 1, "bad_header": 0})
 	b := problemsOf("S", "S", map[string]int{"no_id": 1})
 	c := problemsOf("S", "S", map[string]int{"no_id": 2})
@@ -94,6 +96,7 @@ func TestTheSignatureOfProblemsChangesWithThem(t *testing.T) {
 }
 
 func TestOwnersAreToldWhenARemoteNeedsAttention(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m, clk := limitedManager(t, st, func(o *Options) { o.MaxSpaces = 0 })
 		owner := addUser(t, st, "U1", "owner")

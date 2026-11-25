@@ -21,6 +21,7 @@ func checkKinds(t *testing.T, s *Space) map[string]int {
 }
 
 func TestFixNoIDGivesTheHeaderAnIdAndNothingElseChanges(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := openAt(t, root)
 	files := map[string]string{
@@ -104,6 +105,7 @@ func TestFixNoIDGivesTheHeaderAnIdAndNothingElseChanges(t *testing.T) {
 }
 
 func TestFixNotInTypeRemovesOnlyTheStrayFields(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeType(t, root, "task", `{"title":"Task","properties":{"status":{"type":"string","enum":["todo","done"]}}}`)
 	s := openAt(t, root)
@@ -147,6 +149,7 @@ func TestFixNotInTypeRemovesOnlyTheStrayFields(t *testing.T) {
 // TestTypeProblemsFollowTheTypesAcrossARestart: the types change while the
 // server is not running (a pull, an editor); the next start finds out.
 func TestTypeProblemsFollowTheTypesAcrossARestart(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	writeType(t, root, "task", `{"properties":{"a":{"type":"string"}}}`)
@@ -190,6 +193,7 @@ func TestTypeProblemsFollowTheTypesAcrossARestart(t *testing.T) {
 }
 
 func TestAnUploadedAttachmentClearsItsMissingProblems(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	p := mustCreate(t, s, "", meta("title", "Pic"), "![x](/assets/XXXXXXXXXX/a-1234abcd.png)\n")
 	_ = p

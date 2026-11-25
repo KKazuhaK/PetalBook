@@ -49,6 +49,7 @@ func seedHistory(t testing.TB, remote string) string {
 }
 
 func TestPartialCloneFetchesOnlyWhatIsAskedFor(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := filterRemote(t)
@@ -96,6 +97,7 @@ func TestPartialCloneFetchesOnlyWhatIsAskedFor(t *testing.T) {
 // A clone whose filter was stopped but that still lacks objects is partial:
 // only LeavePartial, run once nothing is missing, makes it a full one.
 func TestAClonePartialUntilItLeavesPartialModeNotUntilTheFilterStops(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := filterRemote(t)
@@ -119,6 +121,7 @@ func TestAClonePartialUntilItLeavesPartialModeNotUntilTheFilterStops(t *testing.
 }
 
 func TestHistoryOfAPartialCloneFetchesVersionsInOneRequest(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := filterRemote(t)
@@ -231,6 +234,7 @@ func followByID(t *testing.T, r *Repo, path string, accept func(string, []byte) 
 }
 
 func TestEnsureBlobsReportsWhatCannotBeFetched(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := filterRemote(t)

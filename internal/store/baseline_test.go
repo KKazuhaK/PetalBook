@@ -21,6 +21,7 @@ func count(t *testing.T, st *store.Store, q string, a ...any) int {
 
 // A fresh database has the default tenant, with its usage row, and works at once.
 func TestFreshDatabaseHasTheDefaultTenant(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if st.TenantCount() != 1 || st.TenantDisabled(store.DefaultTenantID) {
 			t.Fatal("no default tenant in memory")
@@ -47,6 +48,7 @@ func TestFreshDatabaseHasTheDefaultTenant(t *testing.T) {
 // make it again, and so is one made before baselines were recorded (it has the
 // schema_migrations table of the numbered migrations); nothing is converted.
 func TestDatabaseOfAnotherBaselineIsRefused(t *testing.T) {
+	t.Parallel()
 	for name, stmt := range map[string]string{
 		"another baseline":    `UPDATE schema_baseline SET hash = '0123456789abcdef'`,
 		"numbered migrations": `DROP TABLE schema_baseline`,
@@ -77,6 +79,7 @@ func TestDatabaseOfAnotherBaselineIsRefused(t *testing.T) {
 // Every row that belongs to a tenant names one that exists: the database
 // refuses the others.
 func TestTenantForeignKeys(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		if err := store.InsertUser(ctx, st.Q(), store.User{ID: "U1", Username: "u1", Name: "u1", Role: "member", Created: now, TenantID: "nowhere"}); err == nil {
@@ -106,6 +109,7 @@ func TestTenantForeignKeys(t *testing.T) {
 // A tenant is deleted only when nothing that a restore or a person needs is
 // left in it; what only history needs moves to the default tenant.
 func TestDeletingATenantMovesItsLeftovers(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		const tn = "T000000002"
@@ -153,6 +157,7 @@ func TestDeletingATenantMovesItsLeftovers(t *testing.T) {
 // The time the first account was made is a site setting (the baseline has no
 // table of its own for it), and the strict mark is taken once.
 func TestFirstUserMarkIsASiteSetting(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		if err := store.MarkFirstUser(ctx, st.Q(), true, now); err != nil {

@@ -16,6 +16,7 @@ import (
 // keep the repository's own setting, or a rename by case coming from the
 // remote could never be fast-forwarded on a disk that ignores case.
 func TestIgnoreCaseIsOffOnlyWhileACommitIsBuilt(t *testing.T) {
+	t.Parallel()
 	sha := strings.Repeat("a", 40)
 	off := func(args ...string) bool {
 		return slices.Contains(commandLine("d", args), "core.ignorecase=false")
@@ -54,6 +55,7 @@ func TestIgnoreCaseIsOffOnlyWhileACommitIsBuilt(t *testing.T) {
 // this needs the merge to know it does; on any other the test is a plain
 // rename.
 func TestFastForwardOverARemoteRenameByCase(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	remote := bareRemote(t)
@@ -105,6 +107,7 @@ func TestFastForwardOverARemoteRenameByCase(t *testing.T) {
 // the space can be unreadable and look changed, and the commit still goes
 // through and leaves them as they were.
 func TestCommitReadsNoOtherFile(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	if os.Getuid() == 0 {
 		t.Skip("root reads everything")
@@ -201,6 +204,7 @@ func TestCommitOfManyPathsAsksForThemInParts(t *testing.T) {
 // A repository set to sign its commits is still committed to: there is no
 // key here, and a commit that keeps failing would hold up every later one.
 func TestCommitIgnoresTheRepositorysSigningSetting(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	r := newClone(t, bareRemote(t), nil)
 	sh(t, r.Dir(), "config", "commit.gpgsign", "true")
@@ -218,6 +222,7 @@ func TestCommitIgnoresTheRepositorysSigningSetting(t *testing.T) {
 // person commits while the server's commit is being made, the server's fails,
 // theirs stays, and the change goes in on top of it the next time.
 func TestCommitDoesNotOverwriteABranchThatMoved(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -259,6 +264,7 @@ func (h hook) Run(ctx context.Context, c Cmd) (string, string, error) {
 // Nothing to commit when nothing of the change is staged differently from
 // HEAD: no empty commit.
 func TestUnchangedPathMakesNoCommit(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -278,6 +284,7 @@ func TestUnchangedPathMakesNoCommit(t *testing.T) {
 // Rename detection may pair a path of the change with a file a person
 // staged. Only the change's side is committed; the person's stays staged.
 func TestRenameDetectionDoesNotTakeAPersonsStagedFile(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	body := strings.Repeat("the same template, line by line\n", 20)
 	t.Run("their deletion, our new file", func(t *testing.T) {
@@ -316,6 +323,7 @@ func TestRenameDetectionDoesNotTakeAPersonsStagedFile(t *testing.T) {
 // and removed before it was committed) is a deletion, not a failure, even
 // with the other spelling right next to it.
 func TestUnicodeFormsAreDifferentNamesWhereTheDiskSaysSo(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	nfc, nfd := "caf\u00e9.md", "cafe\u0301.md"
 	r := newClone(t, bareRemote(t), nil)
@@ -338,6 +346,7 @@ func TestUnicodeFormsAreDifferentNamesWhereTheDiskSaysSo(t *testing.T) {
 // A crash during a commit leaves its index directory behind in .git; the
 // next commit clears it once it is old.
 func TestLeftoverCommitIndexesAreCleared(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	r := newClone(t, bareRemote(t), nil)
 	gd := filepath.Join(r.Dir(), ".git")

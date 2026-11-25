@@ -28,6 +28,7 @@ func partialOf(t *testing.T, header string) []string {
 // What the index holds of a key that is not the whole of it is said, so that a
 // table does not write the shortened copy back over the file's value.
 func TestPropsThatTheIndexOnlyPartlyHoldAreListed(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("字", MaxPropText+1)
 	exact := strings.Repeat("字", MaxPropText)
 	var many strings.Builder
@@ -67,6 +68,7 @@ func TestPropsThatTheIndexOnlyPartlyHoldAreListed(t *testing.T) {
 }
 
 func TestPropsExtraction(t *testing.T) {
+	t.Parallel()
 	rows, col := rowsOf(t, `title: 题
 status: draft
 points: 3
@@ -107,6 +109,7 @@ mixed: [x, {a: 1}, [1, 2], null, y]
 }
 
 func TestPropsLimits(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("长", MaxPropText+50)
 	rows, col := rowsOf(t, "text: "+long+"\n")
 	if n := len([]rune(rows[0].val)); n != MaxPropText {
@@ -127,6 +130,7 @@ func TestPropsLimits(t *testing.T) {
 }
 
 func TestNumberKeysSortLikeNumbers(t *testing.T) {
+	t.Parallel()
 	nums := []float64{-1e9, -100.5, -2, -0.001, 0, 0.001, 1, 2, 2.5, 10, 100, 1e9}
 	for i := 1; i < len(nums); i++ {
 		if !(numberKey(nums[i-1]) < numberKey(nums[i])) {
@@ -185,6 +189,7 @@ func listIDs(t *testing.T, x *Index, q Query) []string {
 }
 
 func TestSortByPropertyPutsPagesWithoutItLast(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	// rowid order is the order of the puts: A1 A2 A3 A4 A5 A6 A7
 	putProp(t, x, "f", "A1", "status: review\npoints: 10\n")
@@ -220,6 +225,7 @@ func TestSortByPropertyPutsPagesWithoutItLast(t *testing.T) {
 }
 
 func TestCursorOfAPropertySortIsStableWhilePagesChange(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	for i := 1; i <= 6; i++ {
 		putProp(t, x, "", fmt.Sprintf("B%d", i), fmt.Sprintf("n: %d\n", i))
@@ -254,6 +260,7 @@ func TestCursorOfAPropertySortIsStableWhilePagesChange(t *testing.T) {
 }
 
 func TestPropertyFilters(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	putProp(t, x, "f", "C1", "status: draft\npoints: 5\ndue: 2026-03-01\nlabels: [a, b]\nname: Gardenia 栀子\n")
 	putProp(t, x, "f", "C2", "status: done\npoints: 12\ndue: 2026-05-10\nlabels: [b]\nname: rose\n")
@@ -312,6 +319,7 @@ func TestPropertyFilters(t *testing.T) {
 }
 
 func TestBadPropertyFilters(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	f := func(key, op string, v ...any) Filter { return Filter{Key: key, Op: op, Values: v} }
 	for name, fs := range map[string][]Filter{
@@ -342,6 +350,7 @@ func TestBadPropertyFilters(t *testing.T) {
 }
 
 func TestListWithPropsAsksForThemAndTheRev(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	putProp(t, x, "", "D1", "status: draft\nlabels: [a, b]\n")
 	putProp(t, x, "", "D2", "title: bare\n")
@@ -372,6 +381,7 @@ func TestListWithPropsAsksForThemAndTheRev(t *testing.T) {
 }
 
 func TestPropsFollowThePage(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	putProp(t, x, "", "E1", "status: draft\n")
 	putProp(t, x, "", "E1", "points: 4\n") // the same page, rewritten
@@ -402,6 +412,7 @@ func TestPropsFollowThePage(t *testing.T) {
 }
 
 func TestListSaysWhichPropsAreOnlyPartlyThere(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	putProp(t, x, "", "F1", "status: draft\nnote: "+strings.Repeat("a", MaxPropText+5)+"\nmeta: {a: 1}\nl: [x, null]\n")
 	putProp(t, x, "", "F2", "status: done\n")
@@ -441,6 +452,7 @@ func TestListSaysWhichPropsAreOnlyPartlyThere(t *testing.T) {
 }
 
 func TestPartialPropsOfAPageIsWhatTheListingSays(t *testing.T) {
+	t.Parallel()
 	doc := page.Parse([]byte("---\nid: AAAAAAAAAA\nhex: 0x10\nok: 3\nl: [x, !custom y]\n---\nbody\n"))
 	if got := PartialProps(doc); !reflect.DeepEqual(got, []string{"hex", "l"}) {
 		t.Errorf("%v", got)
@@ -452,6 +464,7 @@ func TestPartialPropsOfAPageIsWhatTheListingSays(t *testing.T) {
 // were the planner to pick it for the subquery, every page in scope would scan
 // every row of the range.
 func TestFilterSubqueriesLookUpByPrimaryKey(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	for i := 0; i < 50; i++ {
 		putProp(t, x, "f", fmt.Sprintf("C%d", i), fmt.Sprintf("status: draft\npoints: %d\nlabels: [a, b]\nname: n%d\n", i, i))

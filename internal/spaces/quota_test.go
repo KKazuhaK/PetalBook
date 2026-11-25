@@ -23,6 +23,7 @@ func limitsOf(person, tenant int64) func(ctxT, store.User) (SpaceLimits, error) 
 // The number of spaces is the one quota that is refused: a person's, then a
 // tenant's, with what ran out; a deleted space gives the room back.
 func TestTheNumberOfSpacesIsRefusedAtThePersonsAndTheTenantsLimit(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		m.SetQuota(limitsOf(2, 3), nil)
@@ -70,6 +71,7 @@ func TestTheNumberOfSpacesIsRefusedAtThePersonsAndTheTenantsLimit(t *testing.T) 
 
 // Racing creations cannot pass the limit between them.
 func TestRacingCreationsCannotPassTheLimit(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		m.SetQuota(limitsOf(3, 0), nil)
@@ -125,6 +127,7 @@ func makePages(t *testing.T, m *Manager, owner store.User, id string, n int) {
 // space, or from the index file when the space is closed, and a space whose
 // index is gone keeps the count it had.
 func TestAMeasurementCountsBytesAndPagesAndTellsTheHook(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		var mu sync.Mutex
@@ -206,6 +209,7 @@ func usageHas(t *testing.T, st *store.Store, user string, bytes, pages int64) {
 // hook that everyone's usage was looked at. A re-measure corrects a space's own
 // numbers the same way.
 func TestTheBackgroundRecountCorrectsDriftAndTellsTheHook(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		needGit(t)
 		dir, err := os.MkdirTemp("", "petalbook-spaces-")

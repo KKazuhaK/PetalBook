@@ -13,6 +13,7 @@ import (
 // refuses them, so a person disabled for their deletion cannot be added between
 // the check and the insert.
 func TestAMemberIsNeverADisabledOrDeletedPerson(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		for _, id := range []string{"OWNER", "OFF", "GONE"} {
@@ -41,6 +42,7 @@ func TestAMemberIsNeverADisabledOrDeletedPerson(t *testing.T) {
 // A deleted person is not "another owner": the last live owner cannot leave a
 // space that a deleted person's leftover row would then own alone.
 func TestADeletedPersonIsNotAnotherOwner(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		mkUser(t, st, "LIVE", "live", "member")
@@ -70,6 +72,7 @@ func TestADeletedPersonIsNotAnotherOwner(t *testing.T) {
 // again, and a deletion of a person who is not disabled starts afresh: a later
 // deletion never takes an old attempt's "was disabled".
 func TestAStaleDeletionRecordIsNotReused(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		q := st.Q()
 		mkUser(t, st, "OLIVE", "olive", "member")
@@ -117,6 +120,7 @@ func TestAStaleDeletionRecordIsNotReused(t *testing.T) {
 // The preview of a deletion fails when it cannot read the person's connections,
 // rather than showing a plan that leaves some out.
 func TestTheDeletionPreviewReturnsAConnectionsError(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "U1", "u1", "member")
 		if _, err := store.PlanUserDeletion(ctx, st.Q(), store.AllTenants(), "U1", "", nil); err != nil {

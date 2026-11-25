@@ -305,6 +305,7 @@ func manyFilters(n int) []any {
 }
 
 func TestDailyInAccountsMode(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		tm := newTeam(t, a)
 		base := "/api/spaces/" + tm.sid
@@ -320,6 +321,7 @@ func TestDailyInAccountsMode(t *testing.T) {
 
 // Two spaces with the same pages do not pick the same page every day.
 func TestDailyDiffersBetweenSpaces(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		o := a.addUser("olive", pw, "member")
 		var picks []string
@@ -349,6 +351,7 @@ func TestDailyDiffersBetweenSpaces(t *testing.T) {
 }
 
 func TestDailyInSingleUserMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	c := asFixture(f)
 	dailyScenario(t, base, c, c, c, false, func() string {
@@ -361,6 +364,7 @@ func TestDailyInSingleUserMode(t *testing.T) {
 // server writes it, and a file that cannot be used still gives the last source
 // that could be read.
 func TestDailySettingsFile(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	c := asFixture(f)
 	if code, r := c("POST", base+"/folders", map[string]any{"path": "文案"}); code != 201 {
@@ -445,6 +449,7 @@ func favItems(t *testing.T, r map[string]any) []map[string]any {
 // lost connection, a failure of the state database) is finished the next time
 // the favourites are read; a recorded move that did not happen is forgotten.
 func TestFavoritesFollowAMoveTheRequestDidNotFinish(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		tm := newTeam(t, a)
@@ -709,6 +714,7 @@ func favouriteFolderScenario(t *testing.T, base string, owner, viewer caller) {
 }
 
 func TestFavoritesInAccountsMode(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		boss := a.setup("kazuha", pw) // an administrator, a member of nothing but their own space
 		tm := newTeam(t, a)
@@ -779,6 +785,7 @@ func TestFavoritesInAccountsMode(t *testing.T) {
 }
 
 func TestFavoritesAreKeptPerSpaceAndPerson(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		o := a.addUser("olive", pw, "member")
 		oc := asClient(o)
@@ -808,6 +815,7 @@ func TestFavoritesAreKeptPerSpaceAndPerson(t *testing.T) {
 }
 
 func TestFavoritesInSingleUserMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	c := asFixture(f)
 	favoritesScenario(t, base, c, c, c, false)
@@ -855,6 +863,7 @@ func TestFavoritesInSingleUserMode(t *testing.T) {
 // from keeps none of the old one's favourites. A settlement that fails changes
 // nothing, and is done in full later.
 func TestUnsettledFolderMovesAreFollowedInChains(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
 		tm := newTeam(t, a)

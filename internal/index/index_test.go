@@ -138,6 +138,7 @@ func search(t *testing.T, x *Index, q string) []string {
 }
 
 func TestSearchChineseLatinAndPunctuation(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("a.md", pageFile("AAAAAAAAAA", "暮雪", "", nil, "", "栀子花开了\n"))
 	m.put("b.md", pageFile("BBBBBBBBBB", "", "", nil, "", "栀子，花开了\n"))
@@ -193,6 +194,7 @@ func TestSearchChineseLatinAndPunctuation(t *testing.T) {
 }
 
 func TestFoldAndMatchQuery(t *testing.T) {
+	t.Parallel()
 	if got := strings.Join(strings.Fields(Fold("栀子，花开了")), "|"); got != "栀|子||花|开|了" {
 		t.Fatalf("%q", got)
 	}
@@ -217,6 +219,7 @@ func TestFoldAndMatchQuery(t *testing.T) {
 }
 
 func TestSyncReadsOnlyWhatChanged(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	for i := 0; i < 40; i++ {
 		m.put(fmt.Sprintf("dir%d/p%d.md", i%4, i), pageFile(fmt.Sprintf("%010d", i), fmt.Sprintf("T%d", i), "", nil, "", "body\n"))
@@ -278,6 +281,7 @@ func dump(t *testing.T, x *Index) map[string]any {
 }
 
 func TestRebuildAndIncrementalAgree(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("a/one.md", pageFile("1111111111", "One", "sub", []string{"x", "y"}, "2025-01-05", "栀子花\n"))
 	m.put("a/b/two.md", pageFile("2222222222", "", "", []string{"x"}, "2025-02-01", "无题 栀子\n"))
@@ -365,6 +369,7 @@ func (w *withDirs) Walk(file func(FileInfo) error, dir func(string) error) error
 }
 
 func TestListFiltersSortsAndPagination(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	// 30 pages, deliberately with equal timestamps and titles to test tie-breaks.
 	for i := 0; i < 30; i++ {
@@ -515,6 +520,7 @@ func mustCursor(t *testing.T, x *Index, q Query) string {
 }
 
 func TestTreeAndTags(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("a.md", pageFile("AAAAAAAAAA", "A", "", []string{"x", "y"}, "", ""))
 	m.put("d/b.md", pageFile("BBBBBBBBBB", "B", "", []string{"x"}, "", ""))
@@ -534,6 +540,7 @@ func TestTreeAndTags(t *testing.T) {
 }
 
 func TestSummaryFields(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("Tang/暮雪.md", pageFile("AAAAAAAAAA", "暮雪", "下一个路口", []string{"玉兰"}, "2025-12-03", "# 标题\n\n你听得见 **今天** 屋檐滴水的声音么？\n"))
 	m.put("2026-11-21-b2b2.md", pageFile("BBBBBBBBB2", "", "", nil, "", "只有一句话，没有标题。很长很长很长很长很长很长很长很长很长很长很长很长\n"))
@@ -554,6 +561,7 @@ func TestSummaryFields(t *testing.T) {
 }
 
 func TestOpenDiscardsStaleIndexes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	db := filepath.Join(dir, "index.db")
 	m := newMem()
@@ -624,6 +632,7 @@ func pathOf(t *testing.T, x *Index, id string) string {
 
 // mv Gamma.md t; mv Delta.md Gamma.md; mv t Delta.md
 func TestSwappedFilesAreBothIndexed(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("Gamma.md", pageFile("GAMMA00001", "Gamma", "", nil, "", "g\n"))
 	m.put("Delta.md", pageFile("DXXTA00001", "Delta", "", nil, "", "d\n"))
@@ -659,6 +668,7 @@ func TestSwappedFilesAreBothIndexed(t *testing.T) {
 }
 
 func TestThreeWayRotationOfFiles(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	for _, n := range []string{"a", "b", "c"} {
 		m.put(n+".md", pageFile(strings.ToUpper(n)+"AAAAAAAAA", n, "", nil, "", n+"\n"))
@@ -679,6 +689,7 @@ func TestThreeWayRotationOfFiles(t *testing.T) {
 }
 
 func TestDuplicateBecomesAPageWhenItsTwinGoes(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("a.md", pageFile("TWXNTWXN01", "First", "", nil, "", "one\n"))
 	m.put("b.md", pageFile("TWXNTWXN01", "Second", "", nil, "", "two\n"))
@@ -724,6 +735,7 @@ func TestDuplicateBecomesAPageWhenItsTwinGoes(t *testing.T) {
 
 // A page written between the walk and the apply must not be dropped.
 func TestSyncDoesNotDropPagesWrittenDuringTheWalk(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	m.put("a.md", pageFile("AAAAAAAAAA", "A", "", nil, "", "x"))
 	x := openIndex(t)
@@ -755,6 +767,7 @@ func (h *hookSource) Walk(f func(FileInfo) error, d func(string) error) error {
 // Refresh must end where a full rebuild of the same files would, while
 // reading only the files it is told about.
 func TestRefreshAgreesWithARebuildAndReadsOnlyTheChanged(t *testing.T) {
+	t.Parallel()
 	m := newMem()
 	for i := 0; i < 30; i++ {
 		m.put(fmt.Sprintf("d%d/p%02d.md", i%3, i), pageFile(fmt.Sprintf("P%09d", i), fmt.Sprintf("T%02d", i), "", []string{"x"}, "2026-11-0"+fmt.Sprint(i%9+1), "body "+fmt.Sprint(i)+"\n"))

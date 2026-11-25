@@ -88,6 +88,7 @@ func pageIDs(t *testing.T, sp *space.Space) []string {
 }
 
 func TestConnectingToARemoteWithContentMakesAPartialClone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -143,6 +144,7 @@ func TestConnectingToARemoteWithContentMakesAPartialClone(t *testing.T) {
 }
 
 func TestAnExistingFullCloneStaysFullAndALocalSpaceIsNeverPartial(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		// A space with history of its own that is connected to an empty remote keeps its clone.
@@ -181,6 +183,7 @@ func TestAnExistingFullCloneStaysFullAndALocalSpaceIsNeverPartial(t *testing.T) 
 }
 
 func TestHistoryAnswersNotCachedWhenTheRemoteCannotBeReached(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -247,6 +250,7 @@ func TestAFetchThatTakesLongerAnswersFetchingAndGoesOn(t *testing.T) {
 // --- eviction and restore -----------------------------------------------------------
 
 func TestEvictAndRestoreKeepTheIndexAndTheText(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -354,6 +358,7 @@ func mustBusy(t *testing.T, err error, root, why string) {
 }
 
 func TestNothingIsEvictedThatTheRemoteDoesNotHave(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		prepare func(t *testing.T, st *store.Store, remote string, f *rm, in Info, root string)
@@ -419,6 +424,7 @@ func TestNothingIsEvictedThatTheRemoteDoesNotHave(t *testing.T) {
 }
 
 func TestARemoteThatCannotBeReachedIsNotEvictedAndAHeldSpaceIsBusy(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -470,6 +476,7 @@ func TestARemoteThatCannotBeReachedIsNotEvictedAndAHeldSpaceIsBusy(t *testing.T)
 
 // A crash at each step of an eviction leaves the whole space or an evicted one that restores.
 func TestACrashAtEveryStepOfAnEvictionLeavesAGoodSpace(t *testing.T) {
+	t.Parallel()
 	steps := []string{"held", "verified", "marked", "moved", "recorded", "removed"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
@@ -527,6 +534,7 @@ func TestACrashAtEveryStepOfAnEvictionLeavesAGoodSpace(t *testing.T) {
 }
 
 func TestACrashInTheMiddleOfARestoreLeavesNoHalfClone(t *testing.T) {
+	t.Parallel()
 	for _, step := range []string{"restore:fetched", "restore:stamped"} {
 		t.Run(step, func(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -579,6 +587,7 @@ func TestACrashInTheMiddleOfARestoreLeavesNoHalfClone(t *testing.T) {
 }
 
 func TestARestoreWaitsThenAnswersRestoringAndGoesOn(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -621,6 +630,7 @@ func TestARestoreWaitsThenAnswersRestoringAndGoesOn(t *testing.T) {
 }
 
 func TestARestoreThatCannotReachTheRemoteFailsAtOnceAndLeavesNothing(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -807,6 +817,7 @@ func TestADiskThatIsShortEvictsLeastRecentlyUsedFirstButNeverWhatWasUsedRecently
 }
 
 func TestTheIdleSpacesAreOpenedByIndexAfterARestartToo(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -847,6 +858,7 @@ func setRequire(t *testing.T, m *Manager, require string, scope string, grace in
 }
 
 func TestTheRequirementOfARemoteAndItsGracePeriod(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("Notes")
@@ -908,6 +920,7 @@ func TestTheRequirementOfARemoteAndItsGracePeriod(t *testing.T) {
 }
 
 func TestARequirementOfGitHubRefusesAnyOtherCredentialAndTightening(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		// No GitHub App on this server.
@@ -939,6 +952,7 @@ func TestARequirementOfGitHubRefusesAnyOtherCredentialAndTightening(t *testing.T
 }
 
 func TestNewSpacesNeedWhatTheRequirementAsksAndExemptionsAreLeftOut(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		setRequire(t, f.m, "any", "new", 30)
@@ -984,6 +998,7 @@ func countSpaces(t *testing.T, st *store.Store) int {
 }
 
 func TestASpaceExemptFromTheRequirementIsNeverReadOnly(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("Notes")
@@ -1011,6 +1026,7 @@ func TestASpaceExemptFromTheRequirementIsNeverReadOnly(t *testing.T) {
 }
 
 func TestALimitOnLocalSpacesRefusesUploadsOnlyAndNotRemoteSpaces(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("Notes")
@@ -1043,6 +1059,7 @@ func TestALimitOnLocalSpacesRefusesUploadsOnlyAndNotRemoteSpaces(t *testing.T) {
 }
 
 func TestTheSettingsAreCheckedAndStoredAndTheFlagWinsForHosts(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		bad := []StoragePatch{
@@ -1083,6 +1100,7 @@ func TestTheSettingsAreCheckedAndStoredAndTheFlagWinsForHosts(t *testing.T) {
 }
 
 func TestPartialCloneNeedsGit244(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		no := false
 		f := remoteManager(t, st, func(o *Options) { o.GitSupportsPartial = &no })
@@ -1111,6 +1129,7 @@ func TestPartialCloneNeedsGit244(t *testing.T) {
 }
 
 func TestPinningFetchesEveryVersionAndKeepsTheSpace(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1142,6 +1161,7 @@ var _ = context.Background
 // The record that a clone is partial or full is written after the space opens,
 // in the background; an eviction that marks the space in between wins.
 func TestRecordingTheCloneNeverUndoesAnEviction(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var f *rm
 		var id string
@@ -1175,6 +1195,7 @@ func TestRecordingTheCloneNeverUndoesAnEviction(t *testing.T) {
 // whatever its record says (a record overwritten, a directory removed by
 // hand): it is restored, not refused.
 func TestASpaceWithARemoteAndNoCloneIsRestored(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1205,6 +1226,7 @@ func TestASpaceWithARemoteAndNoCloneIsRestored(t *testing.T) {
 // A space recorded as evicted whose clone is in place (the record of a restore
 // was not written) is recorded as what its clone is: a partial clone is partial.
 func TestARestoredCloneRecordedAsEvictedIsRecordedAsWhatItIs(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1235,6 +1257,7 @@ func TestARestoredCloneRecordedAsEvictedIsRecordedAsWhatItIs(t *testing.T) {
 // The same while the server runs: a space that follows a remote, whose clone
 // is not on disk and is not recorded as evicted, is restored when it is opened.
 func TestOpeningASpaceWithARemoteAndNoCloneRestoresIt(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1259,6 +1282,7 @@ func TestOpeningASpaceWithARemoteAndNoCloneRestoresIt(t *testing.T) {
 // The administration reaches a disabled space without restoring it; whether
 // the space is disabled is read under the lock that guards it (run with -race).
 func TestAnAdministratorOpeningAnEvictedSpaceReadsDisabledUnderTheLock(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1392,6 +1416,7 @@ func TestAFailedRestoreIsRememberedAndAHangingOneEnds(t *testing.T) {
 // A pinned space is made full once, and stays full: the pulls after that bring
 // every version, not only the commits.
 func TestAPinnedSpaceStaysFullAfterLaterPulls(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1443,6 +1468,7 @@ func TestAPinnedSpaceStaysFullAfterLaterPulls(t *testing.T) {
 // again: they are fetched when asked for, and a retried disconnect fetches the
 // rest before the space becomes local.
 func TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1517,6 +1543,7 @@ func TestAnInterruptedMakeFullLeavesAPartialCloneThatIsRepairedLater(t *testing.
 // A partial clone is measured for the list, and its usage keeps the last full
 // measurement, so it never shrinks what its owner uses.
 func TestMeasuringAPartialCloneLeavesItsUsageAlone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)
@@ -1554,6 +1581,7 @@ func TestMeasuringAPartialCloneLeavesItsUsageAlone(t *testing.T) {
 // for it (and stops it), so nothing is written into the data directory once
 // the manager is closed and the directory may be removed.
 func TestNothingWritesIntoTheDataDirAfterClose(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var late atomic.Bool // the late measurement has gone by
 		f := remoteManager(t, st, func(o *Options) {
@@ -1592,6 +1620,7 @@ func TestNothingWritesIntoTheDataDirAfterClose(t *testing.T) {
 }
 
 func TestSyncDirReportsItsFailure(t *testing.T) {
+	t.Parallel()
 	if err := syncDir(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}

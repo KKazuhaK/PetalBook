@@ -251,7 +251,7 @@ func Open(opt Options) (*Space, error) {
 	// .git is a folder, or a file or a link that names one (a checkout made
 	// with `git worktree add`, a submodule, --separate-git-dir): git says
 	// where it is.
-	dirs, err := resolveGitDirs(hookRunner{g}, root)
+	dirs, err := resolveGitDirs(g.r(), root)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 
 // One query answers a cookie hash: the session, or why it ended, or neither.
 func TestLookupSessionAnswersTheSessionOrWhyItEnded(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "u1", "kazuha", "admin")
 		now := time.UnixMilli(time.Now().UnixMilli()).UTC()
@@ -38,6 +39,7 @@ func TestLookupSessionAnswersTheSessionOrWhyItEnded(t *testing.T) {
 
 // The records of a disabled person are theirs: enabling them again forgets those, and only those.
 func TestTheDisabledRecordsOfAPersonAreForgottenOnEnabling(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "u1", "kazuha", "admin")
 		mkUser(t, st, "u2", "tang", "member")

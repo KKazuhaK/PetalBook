@@ -435,19 +435,36 @@ var equivPlans = []struct {
 
 func TestEveryWayOfReadingAListingGivesWhatTheModelGives(t *testing.T) {
 	t.Parallel()
-	r := rand.New(rand.NewSource(20261122))
 	pages, queries := 160, 140
 	if testing.Short() || raceDetector {
 		pages, queries = 110, 20
 	}
-	x := equivIndex(t, r, pages)
-	model := loadModel(t, x)
-	sorts := []string{"", "updated", "-updated", "created", "-created", "title", "-title",
-		"prop:status", "-prop:status", "prop:status", "-prop:status", "prop:points", "-prop:points", "prop:labels", "-prop:due", "prop:nothing"}
-	for i := 0; i < queries; i++ {
+	// The queries are shared out among workers, each with an index of its own
+	// (the same pages) and its own stream of queries, so that they run beside each other.
+	const workers = 5
+	for w := range workers {
+		t.Run(fmt.Sprintf("worker %d", w), func(t *testing.T) {
+			t.Parallel()
+			r := rand.New(rand.NewSource(20261122))
+			x := equivIndex(t, r, pages)
+			model := loadModel(t, x)
+			r = rand.New(rand.NewSource(20261122 + int64(w)))
+			for i := w; i < queries; i += workers {
+				checkEveryWayOfReading(t, r, x, model, i)
+			}
+		})
+	}
+}
+
+var equivSorts = []string{"", "updated", "-updated", "created", "-created", "title", "-title",
+	"prop:status", "-prop:status", "prop:status", "-prop:status", "prop:points", "-prop:points", "prop:labels", "-prop:due", "prop:nothing"}
+
+func checkEveryWayOfReading(t *testing.T, r *rand.Rand, x *Index, model []*modelPage, i int) {
+	t.Helper()
+	{
 		var q Query
 		q.Folder, q.Recursive, q.Tags, q.Filters = randomScope(r)
-		q.Sort = sorts[r.Intn(len(sorts))]
+		q.Sort = equivSorts[r.Intn(len(equivSorts))]
 		if strings.HasSuffix(q.Sort, "prop:status") && r.Intn(3) != 0 {
 			q.PropOptions = equivOptions
 		}

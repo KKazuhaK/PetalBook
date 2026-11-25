@@ -89,6 +89,7 @@ func optionsFixture(t *testing.T) *Index {
 var statusOptions = []string{"todo", "doing", "done"}
 
 func TestSortByOptionsFollowsTheOrderOfTheOptions(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	for _, c := range []struct {
 		sort string
@@ -116,6 +117,7 @@ func TestSortByOptionsFollowsTheOrderOfTheOptions(t *testing.T) {
 }
 
 func TestSortByOptionsOfAListUsesTheFirstValue(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	putProps(t, x, "t", "P", "labels: [b, a]\n")
 	putProps(t, x, "t", "Q", "labels: [a]\n")
@@ -132,6 +134,7 @@ func TestSortByOptionsOfAListUsesTheFirstValue(t *testing.T) {
 }
 
 func TestSortByOptionsWorksWithFiltersAndRecursion(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	putProps(t, x, "t/sub", "S", "status: doing\npoints: 5\n")
 	q := Query{Folder: strp("t"), Recursive: true, Sort: "prop:status", PropOptions: statusOptions,
@@ -151,6 +154,7 @@ func TestSortByOptionsWorksWithFiltersAndRecursion(t *testing.T) {
 }
 
 func TestACursorOfAnOptionOrderIsStableWhilePagesChange(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	q := Query{Folder: strp("t"), Sort: "prop:status", PropOptions: statusOptions, Limit: 2}
 	res, err := x.List(q)
@@ -187,6 +191,7 @@ func TestACursorOfAnOptionOrderIsStableWhilePagesChange(t *testing.T) {
 }
 
 func TestACursorOfAnotherOrderIsRefused(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	opt := Query{Folder: strp("t"), Sort: "prop:status", PropOptions: statusOptions, Limit: 2}
 	plain := Query{Folder: strp("t"), Sort: "prop:status", Limit: 2}
@@ -216,6 +221,7 @@ func TestACursorOfAnotherOrderIsRefused(t *testing.T) {
 }
 
 func TestNotInKeepsPagesWithAValueOutsideTheList(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	putProps(t, x, "t", "P", "labels: [b, a]\n")
 	putProps(t, x, "t", "Q", "labels: [a]\n")
@@ -264,6 +270,7 @@ func TestNotInKeepsPagesWithAValueOutsideTheList(t *testing.T) {
 }
 
 func TestGroupsCountsValuesAndTheEmpty(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	putProps(t, x, "t", "P", "labels: [b, a]\nstatus: todo\n")
 	putProps(t, x, "t", "Q", "labels: [a, a]\nstatus: done\n")
@@ -327,6 +334,7 @@ func TestGroupsAreLimited(t *testing.T) {
 }
 
 func TestValidSortAndCheckFilters(t *testing.T) {
+	t.Parallel()
 	for _, ok := range []string{"", "updated", "-updated", "created", "title", "-title", "prop:status", "-prop:状态"} {
 		if err := ValidSort(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
@@ -347,6 +355,7 @@ func TestValidSortAndCheckFilters(t *testing.T) {
 }
 
 func TestFiltersOfAListingAndOfAViewHaveTheirOwnLimits(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	n := func(k int) []Filter {
 		fs := make([]Filter, k)
@@ -380,6 +389,7 @@ func TestFiltersOfAListingAndOfAViewHaveTheirOwnLimits(t *testing.T) {
 }
 
 func TestGroupsOfATagStartFromTheTagsIndex(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	putProps(t, x, "t", "T1", "status: todo\ntags: [rare]\n")
 	putProps(t, x, "other", "T2", "status: done\ntags: [rare, more]\n")
@@ -425,6 +435,7 @@ func TestGroupsOfATagStartFromTheTagsIndex(t *testing.T) {
 }
 
 func TestOptionOrderOfASmallFolderAsksOnlyForTheGroupsItHas(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	opts := make([]string, 300)
 	for i := range opts {
@@ -546,6 +557,7 @@ func TestASelectiveFilterIsReadOnceNotPerGroup(t *testing.T) {
 // The counts of a board's column heads are made once per change of the index:
 // asked again they come from memory, and after any write they are counted anew.
 func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
+	t.Parallel()
 	x := optionsFixture(t)
 	q := GroupQuery{Folder: strp("t"), Key: "status", Filters: []Filter{{Key: "status", Op: "notEmpty"}}}
 	first, err := x.Groups(q)
@@ -592,6 +604,7 @@ func TestGroupCountsAreRememberedUntilTheIndexChanges(t *testing.T) {
 // and the matches are found from the index ranges of the conditions, not by a
 // read of every group of the options.
 func TestOptionOrderWithAFilterNoIndexServesWalksTheFolderOnce(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	setPlan(t, x, 15, 15, 10)
 	opts := make([]string, 40)

@@ -85,6 +85,7 @@ func bulk(t *testing.T, st *store.Store, table, cols string, n, per int, row fun
 }
 
 func TestListQueriesUseIndexes(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("makes 16,000 rows")
 	}

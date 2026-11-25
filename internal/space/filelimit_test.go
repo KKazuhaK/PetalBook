@@ -14,6 +14,7 @@ import (
 // written. One that is over a lowered limit already may be written again at its
 // size or smaller.
 func TestTemplatesAndTypesAreJudgedByTheFileLimit(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	small := Author{MaxFile: 300}
 	var ftl *FileTooLargeError

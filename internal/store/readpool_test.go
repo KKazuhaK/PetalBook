@@ -12,6 +12,7 @@ import (
 // does not wait for a write transaction that is open, it reads what was
 // committed before it began, and a write followed by a read sees the write.
 func TestReadsOutsideATransactionDoNotWaitForTheWriter(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "alice", "member")
 		held := make(chan struct{})
@@ -65,6 +66,7 @@ func TestReadsOutsideATransactionDoNotWaitForTheWriter(t *testing.T) {
 // The read pool cannot write: a statement that is not a plain SELECT goes to the
 // writer even when it is asked for rows.
 func TestStatementsThatWriteGoToTheWriter(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var id string
 		if err := st.Q().QueryRow(ctx, `INSERT INTO site_settings(key, value, updated) VALUES ('k', 'v', 0) RETURNING key`).Scan(&id); err != nil || id != "k" {
