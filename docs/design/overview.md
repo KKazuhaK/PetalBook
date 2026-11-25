@@ -152,4 +152,4 @@ the engine packages.
   be decided again; the official build goes on the App Store, and the license must be compatible with the store's terms (this is also why a CLA is needed).
 - The text of the CLA, how it is signed (for example a bot on the PR), and whether the two maintainers each sign or the rights are assigned to
   a single entity: undecided (on 2026-11-23 the owner decided 「要 CLA」 [a CLA is required]).
-- Document language: this document is in Chinese; whether the README and design docs of the public repository should be mainly in English.
+- Language (decided 2026-11-24): everything in the repository is in English (code comments, commits, pull requests, docs); only the README and the program's own interface are bilingual.
