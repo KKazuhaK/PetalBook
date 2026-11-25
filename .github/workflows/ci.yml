@@ -1,8 +1,10 @@
 name: ci
 
 # Every check is a make target (see the Makefile); this file only decides
-# where each one runs. A pull request gets lint, go and web, and a push to main
-# gets those and the slow jobs besides. The one check branch protection requires is the "ci" job.
+# where each one runs. A pull request gets lint, go and web, and postgres (the
+# PostgreSQL half of the state-database tests and the contract tests) when it
+# changes Go code, so what main would find is found before the merge. A push to
+# main gets those and the remaining jobs besides. The one check branch protection requires is the "ci" job.
 on:
   pull_request:
   push:
@@ -200,13 +202,12 @@ jobs:
   # of its own in it. make contract runs the same tests on SQLite.
   postgres:
     name: postgres
-    if: github.event_name == 'push'
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # Above scripts/test-postgres.sh's own 30 minutes for go test plus the
+    # Above scripts/test-postgres.sh's own 15 minutes for go test plus the
     # contract runs, so a slow test ends with go test's report, not a cancel.
-    # The timeouts follow the measured times with headroom; tune them after
-    # the first runs on main.
-    timeout-minutes: 50
+    timeout-minutes: 30
     permissions:
       contents: read
     services:

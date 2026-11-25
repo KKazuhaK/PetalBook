@@ -52,14 +52,17 @@ folds() {
   return "$ok"
 }
 
-# The test binaries are linked side by side: linking a race binary is slow. The
-# tests themselves run one package at a time, so that tests that depend on
-# timing do not compete with those of another package.
+# The test binaries are linked side by side. They are built without the race
+# detector: make test runs these packages under it already, and what this run
+# adds is a file system that folds case, which the race detector does not
+# care about (it made the run several times slower). The tests themselves run
+# one package at a time, so that tests that depend on timing do not compete
+# with those of another package.
 build() {
   mkdir "$work/bin"
   local pids=() pid status=0
   for pkg in $pkgs; do
-    go test -c -race -o "$work/bin/$(basename "$pkg").test" "./$pkg" &
+    go test -c -o "$work/bin/$(basename "$pkg").test" "./$pkg" &
     pids+=($!)
   done
   for pid in "${pids[@]}"; do
