@@ -13,6 +13,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { openView } from '@/lib/adminView'
+import { browserNotifyOn } from '@/lib/browserNotify'
 import { waitForSaves } from '@/editor/saveController'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { spaceUrls } from '@/lib/urls'
@@ -30,6 +31,7 @@ import type {
   BatchPagesInput,
   ChecksResponse,
   FixCheckInput,
+  NotificationList,
   ConnectRemoteInput,
   DailyPrefs,
   DailySettings,
@@ -117,6 +119,9 @@ export const keys = {
   templates: (space: string) => ['space', space, 'templates'] as const,
   template: (space: string, name: string) => ['space', space, 'templates', name] as const,
   // The check page: one listing for each kind (or all of them), read a cursor page at a time.
+  // The notification centre: the unread count (the bell), and the list for a kind and a filter.
+  unread: ['notifications', 'unread'] as const,
+  notifications: (kind: string, unread: boolean) => ['notifications', 'list', kind, unread] as const,
   checks: (space: string, kind: ProblemKind | '') => ['space', space, 'checks', kind] as const,
   // The table view's listing: kept apart from the list and card listings, which
   // ask for less, and which an edit of a cell does not read again.
@@ -1697,3 +1702,51 @@ export function useFixCheck() {
       e instanceof ApiError && (e.code === 'conflict' || e.code === 'not_found') ? void changed() : undefined,
   })
 }
+
+// --- the notification centre -------------------------------------------------------------
+
+// How often the bell asks while the window is in front: one indexed count on the server (and the problems of the open
+// spaces, which the server keeps for a few seconds), so a minute is cheap for everyone who has the app open.
+export const UNREAD_POLL_MS = 60_000
+
+// The number on the bell (up to 100). Not asked in the background; asked again when the person comes back.
+export function useUnreadCount(enabled = true) {
+  return useQuery({
+    queryKey: keys.unread,
+    queryFn: async ({ signal }) => (await api.unreadNotifications(signal)).count,
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: UNREAD_POLL_MS,
+    // A browser notice is for when nobody is looking, so the person who asked for them is asked about in the background too.
+    refetchIntervalInBackground: browserNotifyOn(),
+    refetchOnWindowFocus: 'always',
+  })
+}
+
+// The list, a cursor page at a time, newest first (the problems of the spaces on the first page). `kind` '' is all.
+export function useNotificationList(kind: string, unread: boolean, limit = 20, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: [...keys.notifications(kind, unread), limit],
+    queryFn: ({ pageParam, signal }): Promise<NotificationList> =>
+      api.notifications({ kind: kind || undefined, unread, cursor: pageParam || undefined, limit }, signal),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next || undefined,
+    staleTime: 0,
+    enabled,
+  })
+}
+
+// A mark changes what the bell says and every list: the count is set from the answer, the lists are read again.
+function useNotificationMarks<V>(call: (v: V) => Promise<{ unread: number }>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: call,
+    onSuccess: (r) => {
+      qc.setQueryData(keys.unread, r.unread)
+      void qc.invalidateQueries({ queryKey: ['notifications', 'list'] })
+    },
+  })
+}
+export const useMarkNotificationsRead = () => useNotificationMarks((ids: string[]) => api.markNotificationsRead(ids))
+export const useMarkAllNotificationsRead = () =>
+  useNotificationMarks((kind: string | undefined) => api.markAllNotificationsRead(kind))

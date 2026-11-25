@@ -73,6 +73,9 @@ import type {
   ChecksParams,
   ChecksResponse,
   FixCheckInput,
+  NotificationList,
+  NotificationsParams,
+  PrefsAnswer,
   PageTemplate,
   PutTemplateInput,
   TemplateDefaults,
@@ -833,6 +836,26 @@ export const api = {
   createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) =>
     request<CreatedToken>('/account/tokens', { method: 'POST', body: input }),
   revokeToken: (id: string) => request<void>(`/account/tokens/${enc(id)}`, { method: 'DELETE' }),
+
+  // --- the notification centre and the person's own preferences ---
+  notifications: (params: NotificationsParams = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    if (params.kind) q.set('kind', params.kind)
+    if (params.unread) q.set('unread', '1')
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<NotificationList>(`/notifications${qs ? `?${qs}` : ''}`, { signal })
+  },
+  unreadNotifications: (signal?: AbortSignal) => request<{ count: number }>('/notifications/unread', { signal }),
+  markNotificationsRead: (ids: string[]) =>
+    request<{ unread: number }>('/notifications/read', { method: 'POST', body: { ids } }),
+  markAllNotificationsRead: (kind?: string) =>
+    request<{ unread: number }>('/notifications/read-all', { method: 'POST', body: kind ? { kind } : {} }),
+  // The person's own preferences, kept in their personal space (never the database); null values remove a key.
+  prefs: (signal?: AbortSignal) => request<PrefsAnswer>('/prefs', { signal }),
+  patchPrefs: (set: Record<string, unknown>) =>
+    request<{ personal: boolean }>('/prefs', { method: 'PATCH', body: { set } }),
 
   // --- connected apps (OAuth grants) and the consent page ---
   // 404 when the server has no authorization server (no public address, or MCP is off).

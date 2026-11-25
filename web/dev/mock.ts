@@ -73,9 +73,44 @@ function optionsFromEnv(): MockOptions {
   }
 }
 
+// Accounts mode starts with something to read in the notification centre: a person who adds the administrator to a
+// space of theirs, and a file in the administrator's own space that is no page (the problem the check page lists).
+function seedNotifications(server: ReturnType<typeof createMockServer>) {
+  const call = (method: string, path: string, body: unknown, cookie: string | null) => {
+    const r = server.handle(method, path, JSON.stringify(body), 'application/json', cookie)
+    return { body: r.body as Record<string, any>, cookie: r.headers?.['Set-Cookie']?.split(';')[0] ?? null }
+  }
+  const admin = call(
+    'POST',
+    '/api/login',
+    { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password },
+    null,
+  ).cookie
+  const invite = call('POST', '/api/invites', { role: 'member' }, admin).body.token
+  const olive = call(
+    'POST',
+    '/api/invites/accept',
+    { token: invite, username: 'olive', name: '陈默', password: 'a-long-password' },
+    null,
+  )
+  const space = call('POST', '/api/spaces', { name: '团队文档' }, olive.cookie).body.id
+  call('POST', `/api/spaces/${space}/members`, { username: MOCK_ADMIN.username, role: 'editor' }, olive.cookie)
+  const mine = (call('GET', '/api/spaces', undefined, admin).body.spaces as { id: string; personal: boolean }[]).find(
+    (x) => x.personal,
+  )
+  if (mine)
+    server.addOrphan(mine.id, {
+      path: 'stray.md',
+      kind: 'no_id',
+      meta: { title: '没有 id 的文件' },
+      body: '一个不是页面的文件\n',
+    })
+}
+
 export function mockApi(): Plugin {
   const options = optionsFromEnv()
   const server = createMockServer(options)
+  if (options.mode === 'accounts' && options.admin !== false) seedNotifications(server)
   const delay = Number(process.env.MOCK_DELAY_MS ?? 0)
   return {
     name: 'petalbook-mock-api',

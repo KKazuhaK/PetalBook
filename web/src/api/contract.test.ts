@@ -1977,6 +1977,116 @@ function suite(target: Target) {
         })
       })
 
+      describe('notifications (3.10, part 4)', () => {
+        const notes = async (b: Browser, query = '') => (await call(b, 'GET', `/api/notifications${query}`)).json
+        const count = async (b: Browser) => (await call(b, 'GET', '/api/notifications/unread')).json.count as number
+
+        it('adding a member tells them, once, with the facts a sentence is made of; nobody else is told', async () => {
+          const owner = await newMember(uniq('no'))
+          const guest = await newMember(uniq('ng'))
+          const other = await newMember(uniq('nx'))
+          const sp = await ownedSpace(owner, 'Notified')
+          expect(await count(guest.browser)).toBe(0)
+          await addMember(owner, sp.id, guest.user.username, 'editor')
+          expect(await count(guest.browser)).toBe(1)
+          const l = await notes(guest.browser)
+          expect(l.unread).toBe(1)
+          expect(l.next).toBe('')
+          expect(l.items).toHaveLength(1)
+          expect(l.items[0]).toMatchObject({
+            kind: 'invite',
+            ref: sp.id,
+            payload: { space: 'Notified', role: 'editor', by: owner.user.name },
+            read: false,
+          })
+          expect(typeof l.items[0].id).toBe('string')
+          expect(l.items[0].at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/)
+          // Not the person who added them, not someone who is no member.
+          expect(await count(owner.browser)).toBe(0)
+          expect(await count(other.browser)).toBe(0)
+          // A change of role is no invitation.
+          await call(owner.browser, 'PATCH', `/api/spaces/${sp.id}/members/${guest.user.id}`, { role: 'viewer' })
+          expect(await count(guest.browser)).toBe(1)
+        })
+
+        it('marks one as read for the person only, all of them, and answers the count that is left', async () => {
+          const owner = await newMember(uniq('mo2'))
+          const guest = await newMember(uniq('mg2'))
+          const a = await ownedSpace(owner, 'First')
+          const b = await ownedSpace(owner, 'Second')
+          await addMember(owner, a.id, guest.user.username, 'viewer')
+          await addMember(owner, b.id, guest.user.username, 'viewer')
+          const l = await notes(guest.browser)
+          expect(l.items.map((i: { ref: string }) => i.ref)).toEqual([b.id, a.id]) // newest first
+          // Another person cannot read it for them, with its id or without.
+          const stolen = await call(owner.browser, 'POST', '/api/notifications/read', { ids: [l.items[0].id] })
+          expect([stolen.status, stolen.json.unread]).toEqual([200, 0])
+          expect(await count(guest.browser)).toBe(2)
+          const one = await call(guest.browser, 'POST', '/api/notifications/read', {
+            ids: [l.items[0].id, 'no-such-id'],
+          })
+          expect([one.status, one.json.unread]).toEqual([200, 1])
+          const after = await notes(guest.browser)
+          expect(after.items.map((i: { read: boolean }) => i.read)).toEqual([true, false])
+          expect((await notes(guest.browser, '?unread=1')).items).toHaveLength(1)
+          const all = await call(guest.browser, 'POST', '/api/notifications/read-all', {})
+          expect([all.status, all.json.unread]).toEqual([200, 0])
+          expect(await count(guest.browser)).toBe(0)
+        })
+
+        it('is paged by a cursor, newest first, and filtered by kind', async () => {
+          const owner = await newMember(uniq('mo3'))
+          const guest = await newMember(uniq('mg3'))
+          const spaces: SpaceInfo[] = []
+          for (let i = 0; i < 3; i++) spaces.push(await ownedSpace(owner, `Paged ${i}`))
+          for (const sp of spaces) await addMember(owner, sp.id, guest.user.username, 'viewer')
+          const first = await notes(guest.browser, '?limit=2')
+          expect(first.items).toHaveLength(2)
+          expect(first.next).not.toBe('')
+          const second = await notes(guest.browser, `?limit=2&cursor=${encodeURIComponent(first.next)}`)
+          expect(second.items).toHaveLength(1)
+          expect(second.next).toBe('')
+          expect([...first.items, ...second.items].map((i: { ref: string }) => i.ref)).toEqual(
+            [...spaces].reverse().map((s) => s.id),
+          )
+          expect((await notes(guest.browser, '?kind=invite')).items).toHaveLength(3)
+          expect((await notes(guest.browser, '?kind=sync')).items).toEqual([])
+          expect((await notes(guest.browser, '?kind=mention')).items).toEqual([])
+        })
+
+        it('refuses what it should, and a stranger has nothing', async () => {
+          const m = await newMember(uniq('nr'))
+          for (const q of ['?kind=bogus', '?limit=0', '?limit=101', '?limit=x']) {
+            const r = await call(m.browser, 'GET', `/api/notifications${q}`)
+            expect([q, r.status, r.json.error]).toEqual([q, 400, 'invalid'])
+          }
+          for (const body of [{}, { ids: [] }]) {
+            const r = await call(m.browser, 'POST', '/api/notifications/read', body)
+            expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+          }
+          expect((await call(m.browser, 'POST', '/api/notifications/read-all', { kind: 'bogus' })).status).toBe(400)
+          for (const [method, path] of [
+            ['GET', '/api/notifications'],
+            ['GET', '/api/notifications/unread'],
+            ['POST', '/api/notifications/read-all'],
+            ['GET', '/api/prefs'],
+          ] as const) {
+            const r = await call(browser(), method, path, method === 'GET' ? undefined : {})
+            expect([path, r.status, r.json.error]).toEqual([path, 401, 'unauthenticated'])
+          }
+        })
+
+        it('keeps each person’s preferences apart', async () => {
+          const a = await newMember(uniq('pfa'))
+          const b = await newMember(uniq('pfb'))
+          await call(a.browser, 'PATCH', '/api/prefs', { set: { 'pb.table.users': { pageSize: 100 }, tour: 'done' } })
+          const mine = (await call(a.browser, 'GET', '/api/prefs')).json
+          expect(mine.personal).toBe(true)
+          expect(mine.prefs).toEqual({ 'pb.table.users': { pageSize: 100 }, tour: 'done' })
+          expect((await call(b.browser, 'GET', '/api/prefs')).json.prefs).toEqual({})
+        })
+      })
+
       describe('administration', () => {
         const adminPaths: [string, string, unknown?][] = [
           ['GET', '/api/admin/spaces'],
@@ -3215,6 +3325,42 @@ function suite(target: Target) {
       })
     },
   )
+
+  describe('notifications and preferences (3.10, part 4)', () => {
+    it('the list, the count and the marks answer in both modes, with nothing to say yet', async () => {
+      const l = (await call(admin, 'GET', '/api/notifications')).json
+      expect(Array.isArray(l.items)).toBe(true)
+      expect(typeof l.next).toBe('string')
+      expect(typeof l.unread).toBe('number')
+      const c = (await call(admin, 'GET', '/api/notifications/unread')).json
+      expect(Object.keys(c)).toEqual(['count'])
+      expect(c.count).toBeGreaterThanOrEqual(0)
+      // Marking all as read leaves nothing unread (the problems of the space are read as they are now).
+      const all = await call(admin, 'POST', '/api/notifications/read-all', {})
+      expect([all.status, all.json.unread]).toEqual([200, 0])
+      expect((await call(admin, 'GET', '/api/notifications/unread')).json.count).toBe(0)
+      // An id nobody has changes nothing.
+      const none = await call(admin, 'POST', '/api/notifications/read', { ids: ['0000000ZZZ'] })
+      expect([none.status, none.json.unread]).toEqual([200, 0])
+      expect((await call(admin, 'GET', '/api/notifications?kind=bogus')).status).toBe(400)
+    })
+
+    it('the person’s own preferences: read back at once, a null takes a key away, bad names and sizes are refused', async () => {
+      const get = async () => (await call(admin, 'GET', '/api/prefs')).json
+      const first = await get()
+      expect(typeof first.personal).toBe('boolean')
+      const key = `contract.${run}`
+      const set = await call(admin, 'PATCH', '/api/prefs', { set: { [key]: { widths: { name: 0.3 }, hidden: ['a'] } } })
+      expect([set.status, typeof set.json.personal]).toEqual([200, 'boolean'])
+      if (first.personal) expect((await get()).prefs[key]).toEqual({ widths: { name: 0.3 }, hidden: ['a'] })
+      await call(admin, 'PATCH', '/api/prefs', { set: { [key]: null } })
+      expect((await get()).prefs[key]).toBeUndefined()
+      for (const body of [{}, { set: {} }, { set: 'x' }, { set: { 'has space': 1 } }, { set: { '../x': 1 } }]) {
+        const r = await call(admin, 'PATCH', '/api/prefs', body)
+        expect([JSON.stringify(body), r.status, r.json.error]).toEqual([JSON.stringify(body), 400, 'invalid'])
+      }
+    })
+  })
 
   describe('the daily text and favourites', () => {
     const enc = encodeURIComponent

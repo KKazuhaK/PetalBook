@@ -2164,3 +2164,41 @@ export interface PersonMemberships {
   spaces: { id: string; name: string; role: string; personal: boolean }[]
   groups: { id: string; name: string; source: string }[]
 }
+
+// --- the notification centre and the person's preferences (docs/api.md, "Notifications", "Preferences") ---
+
+// The registry of kinds. `problems` is derived (read from the index, not a row); `mention`, `todo` and `system` are
+// reserved: nothing makes them yet.
+export const NOTIFY_KINDS = ['problems', 'invite', 'mention', 'sync', 'todo', 'system'] as const
+export type NotifyKind = (typeof NOTIFY_KINDS)[number]
+
+export interface NotificationItem {
+  // `problems:<space id>` for a derived one.
+  id: string
+  // A kind this client does not know is shown as a plain notice, so the type stays open.
+  kind: string
+  // What it is about: a space id.
+  ref: string
+  payload: Record<string, unknown>
+  // When it happened; null for a derived one, which is a state that holds now.
+  at: string | null
+  read: boolean
+  derived?: boolean
+}
+export interface NotificationList {
+  items: NotificationItem[]
+  next: string
+  // Counted up to 100.
+  unread: number
+}
+export interface NotificationsParams {
+  kind?: string
+  unread?: boolean
+  cursor?: string
+  limit?: number
+}
+export interface PrefsAnswer {
+  // false: the person has no personal space to keep them in, so this browser does.
+  personal: boolean
+  prefs: Record<string, unknown>
+}

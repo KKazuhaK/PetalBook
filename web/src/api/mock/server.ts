@@ -59,6 +59,7 @@ import { sha256Hex } from './sha256.ts'
 import { createQuotaBook } from './quotaBook.ts'
 import { createManageBook } from './manageBook.ts'
 import { createMailBook } from './mailBook.ts'
+import { createNotifyBook, type DerivedProblems } from './notifyBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
 
 const DEFAULT_INBOX = 'Inbox'
@@ -436,6 +437,33 @@ export function createMockServer(options: MockOptions = {}) {
     newId: (taken) => newId(taken),
     book: () => book,
   })
+  const notifyBook = createNotifyBook({ now })
+  // The spaces a person writes in that have problems: what the real server reads from their indexes.
+  const derivedProblems = (u: UserRec): DerivedProblems[] =>
+    callerSpaces(u)
+      .filter(
+        (sp) =>
+          !sp.disabled &&
+          groupBook.reach(sp, u.id).role !== null &&
+          ROLE_PERMISSIONS[groupBook.reach(sp, u.id).role!].includes('write'),
+      )
+      .map((sp) => ({
+        id: sp.id,
+        name: sp.name,
+        counts: sp.store.checks(null, null).counts as unknown as Record<string, number>,
+      }))
+  // The owners of a space are told when its remote needs attention, and when it works again (not for a network that is
+  // only away: that comes back by itself).
+  const syncNotice = (sp: SpaceRec, before: string) => {
+    const r = sp.remote
+    if (!r || r.state === before) return
+    const broken = (st: string) => st === 'error' || st === 'rewritten'
+    const event = broken(r.state) ? 'failed' : r.state === 'ok' && broken(before) ? 'ok' : ''
+    if (!event) return
+    for (const [id, m] of sp.members)
+      if (m.role === 'owner')
+        notifyBook.add(id, 'sync', sp.id, { space: sp.name, event, state: r.state, kind: r.errorCode ?? '' })
+  }
   if (oidc) book.addLegacy(oidc.name, oidc.autoCreate === true, oidc.sub ?? 'mock-sub-1')
 
   const randomString = (n: number) => {
@@ -3035,6 +3063,7 @@ export function createMockServer(options: MockOptions = {}) {
       if (!u || u.disabled) throw new HttpError(404, 'user_not_found', 'there is no such user')
       if (s.members.has(u.id)) throw new HttpError(409, 'exists', 'that user is a member of this space already')
       s.members.set(u.id, { role, joined: ++counter })
+      if (u.id !== me.id) notifyBook.add(u.id, 'invite', s.id, { space: s.name, role, by: me.name })
       return j(memberOf(s, u.id, me.id), 201)
     }
     if (rest === '/members/effective' && method === 'GET')
@@ -3605,6 +3634,7 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (rest === '/remote/sync' && method === 'POST') {
       const r = following()
+      const before = r.state
       if (!space.reachable) {
         if (r.state !== 'rewritten') {
           r.state = 'offline'
@@ -3631,6 +3661,7 @@ export function createMockServer(options: MockOptions = {}) {
           r.errorCode = ''
         }
       }
+      syncNotice(space, before)
       return j(remoteInfo(space))
     }
     if (rest === '/remote/accept' && method === 'POST') {
@@ -4166,9 +4197,11 @@ export function createMockServer(options: MockOptions = {}) {
         for (const sp of spaces.values()) {
           const c = sp.remote?.credential
           if (sp.remote && c?.type === 'github' && c.via === 'user' && c.userId === uid) {
+            const before = sp.remote.state
             sp.remote.state = 'error'
             sp.remote.errorCode = 'connection_expired'
             sp.remote.error = '这个空间用的 GitHub 授权已过期或被撤销，要由连接它的人重新连接'
+            syncNotice(sp, before)
           }
         }
       }
@@ -4372,6 +4405,21 @@ export function createMockServer(options: MockOptions = {}) {
     if (adminReset && method === 'POST') {
       accountsOnly()
       return mailBook.adminReset(requireAdmin(ctx), decodeURIComponent(adminReset[1]))
+    }
+
+    // --- the notification centre and the person's own preferences (every signed-in person, in both modes) ---
+    if (path === '/notifications' || path.startsWith('/notifications/') || path === '/prefs') {
+      const me = requireUser(ctx)
+      if (path === '/notifications' && method === 'GET')
+        return j(notifyBook.list(me.id, derivedProblems(me), url.searchParams))
+      if (path === '/notifications/unread' && method === 'GET') return j(notifyBook.unread(me.id, derivedProblems(me)))
+      if (path === '/notifications/read' && method === 'POST')
+        return j(notifyBook.read(me.id, derivedProblems(me), body.ids))
+      if (path === '/notifications/read-all' && method === 'POST')
+        return j(notifyBook.readAll(me.id, derivedProblems(me), body.kind))
+      if (path === '/prefs' && method === 'GET') return j(notifyBook.getPrefs(me.id))
+      if (path === '/prefs' && method === 'PATCH') return j(notifyBook.patchPrefs(me.id, body))
+      throw new HttpError(404, 'not_found', '没有这个接口')
     }
 
     // --- account ---
