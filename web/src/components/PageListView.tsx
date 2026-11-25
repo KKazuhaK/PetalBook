@@ -48,6 +48,19 @@ import { useFileOps } from '@/components/files/FileOps'
 import { SelectionBar } from '@/components/files/SelectionBar'
 import { childFolders, itemKey, type FileItem } from '@/lib/folders'
 import { loadView, saveView, viewKey, type ListViewMode } from '@/lib/listView'
+import {
+  arrangeRows,
+  filterCount,
+  filterParams,
+  noFilters,
+  rowKey,
+  type TableFilters,
+  type TableRow,
+} from '@/lib/folderTable'
+import { prefsStore } from '@/lib/prefsStore'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { FilterBar } from '@/components/files/FilterBar'
+import { FolderTable, PhoneRows } from '@/components/files/FolderTable'
 import { folderTypeName } from '@/lib/pageTypes'
 import {
   DEFAULT_STATE,
@@ -315,6 +328,19 @@ function Listing({ source }: { source: ListSource }) {
   const [rawSelection, setSelection] = useState<Selection>(emptySelection)
 
   const isSearch = source.kind === 'search'
+  const mobile = useIsMobile()
+  // What the folder's listing is filtered by besides the saved view's filters: chips above the table.
+  const [tableFilters, setTableFilters] = useState<TableFilters>(noFilters)
+  const [mixed, setMixedState] = useState(() => prefsStore().read('pb.files.mixed') === true)
+  const setMixed = (v: boolean) => {
+    prefsStore().write('pb.files.mixed', v)
+    setMixedState(v)
+  }
+  const isFolder = source.kind === 'folder'
+  const filesTable = isFolder && mode === 'list' && !mobile
+  const filesPhone = isFolder && mode === 'list' && mobile
+  const extra = isFolder ? filterParams(tableFilters) : {}
+  const filtered = filterCount(tableFilters) > 0
 
   const query = usePageList(
     {
@@ -324,9 +350,16 @@ function Listing({ source }: { source: ListSource }) {
       ...(source.kind === 'tag' ? { tag: [source.tag] } : {}),
       ...(source.kind === 'search' ? { ...source.filters, q: source.q } : {}),
       ...(sortQ ? { sort: sortQ as ListParams['sort'] } : {}),
-      ...(filters.length ? { filter: filters } : {}),
+      ...(filters.length || extra.filter ? { filter: [...filters, ...(extra.filter ?? [])] } : {}),
+      ...(extra.tag ? { tag: extra.tag } : {}),
+      ...(extra.createdFrom ? { createdFrom: extra.createdFrom } : {}),
+      ...(extra.createdTo ? { createdTo: extra.createdTo } : {}),
+      ...(extra.updatedFrom ? { updatedFrom: extra.updatedFrom } : {}),
+      ...(extra.updatedTo ? { updatedTo: extra.updatedTo } : {}),
+      ...(filesTable && type ? { props: true } : {}),
     },
     listLike && !viewsPending,
+    isFolder,
   )
   // Read before the status checks below narrow `query` (a failed "load more" leaves the list in place).
   const nextError = query.isFetchNextPageError ? query.error : null
@@ -337,17 +370,22 @@ function Listing({ source }: { source: ListSource }) {
   useDocumentTitle(`${title} · ${t.appName}`)
 
   // Subfolders, from the tree: it lists every folder with the pages directly in it.
-  const folders = source.kind === 'folder' && ops ? childFolders(ops.index, source.folder) : []
+  // They are not listed while the pages are filtered: a folder has none of the things a filter asks about.
+  const folders = source.kind === 'folder' && ops && !filtered ? childFolders(ops.index, source.folder) : []
+  const tableRows: TableRow[] =
+    filesTable || filesPhone ? arrangeRows(folders, items, mixed, state.sort || '-updated') : []
 
   // Everything selectable, in the order shown (for shift-click ranges).
   const lookup = new Map<string, FileItem>()
   for (const f of folders) lookup.set(itemKey(folderItem(f)), folderItem(f))
   for (const p of items) lookup.set(itemKey(pageItem(p)), pageItem(p))
-  const order = [...lookup.keys()]
+  // Ranges (shift-click) follow what is on the screen.
+  const order = filesTable || filesPhone ? tableRows.map(rowKey) : [...lookup.keys()]
   const selection = prune(rawSelection, order)
   const selected = [...selection.keys].map((k) => lookup.get(k)).filter((i): i is FileItem => !!i)
   const clear = () => setSelection(emptySelection())
 
+  const stateOfRow = (r: TableRow): EntryState => stateOf(r.kind === 'page' ? pageItem(r.page) : folderItem(r.folder))
   const stateOf = (item: FileItem): EntryState => {
     const key = itemKey(item)
     return {
@@ -426,7 +464,7 @@ function Listing({ source }: { source: ListSource }) {
             <>
               {/* On a phone the sort choice shrinks to an icon (the select is still what opens), leaving the room to the breadcrumbs. */}
               {/* In a table the headers of the columns sort. */}
-              {!isTable && (
+              {!isTable && !filesPhone && (
                 <div className="relative w-28 max-sm:w-8 max-sm:[&>div>svg]:hidden">
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
@@ -532,7 +570,22 @@ function Listing({ source }: { source: ListSource }) {
               />
             </Suspense>
           )}
-          {folders.length > 0 &&
+          {isFolder && (mode === 'list' || mode === 'cards') && !viewsPending && (
+            <FilterBar
+              filters={tableFilters}
+              onChange={setTableFilters}
+              type={type}
+              sort={state.sort}
+              onSort={setSort}
+              sortDisabled={busy}
+              mobile={mobile}
+              headerSort={filesTable}
+              folders={filesTable ? { mixed, onToggle: () => setMixed(!mixed) } : undefined}
+            />
+          )}
+          {!filesTable &&
+            !filesPhone &&
+            folders.length > 0 &&
             (mode === 'cards' ? (
               <ul className="mb-4 grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {folders.map((f) => (
@@ -600,7 +653,14 @@ function Listing({ source }: { source: ListSource }) {
             />
           ) : nothing ? (
             <div className="flex flex-col items-center gap-3 py-20 text-center">
-              <p className="text-sm text-muted-foreground">{isInbox ? t.inbox.empty : empty.main}</p>
+              <p className="text-sm text-muted-foreground">
+                {filtered ? t.ftable.nothingMatches : isInbox ? t.inbox.empty : empty.main}
+              </p>
+              {filtered && (
+                <Button variant="outline" size="sm" onClick={() => setTableFilters(noFilters())}>
+                  {t.ftable.clearFilters}
+                </Button>
+              )}
               {empty.hint && <p className="text-xs text-muted-foreground">{empty.hint}</p>}
               {write && isInbox && (
                 <Button size="sm" onClick={capture.open} disabled={!capture.available}>
@@ -627,6 +687,46 @@ function Listing({ source }: { source: ListSource }) {
                 </Button>
               )}
             </div>
+          ) : (filesTable || filesPhone) && tableRows.length > 0 ? (
+            <>
+              {filesTable ? (
+                <FolderTable
+                  folderPath={source.kind === 'folder' ? source.folder : ''}
+                  rows={tableRows}
+                  type={type}
+                  sort={state.sort}
+                  onSort={setSort}
+                  sortDisabled={busy}
+                  stateOf={stateOfRow}
+                  selected={selection.keys}
+                  onSelect={(next, tick) =>
+                    setSelection(
+                      tick?.shift
+                        ? applyClick(order, selection, tick.id, { shift: true })
+                        : { keys: next, anchor: tick && next.has(tick.id) ? tick.id : null },
+                    )
+                  }
+                  loading={false}
+                  hasNext={!!query.hasNextPage}
+                  loadingMore={query.isFetchingNextPage}
+                  onLoadMore={() => void fetchNext()}
+                  empty={null}
+                  defaultHidden={state.hidden}
+                />
+              ) : (
+                <PhoneRows
+                  rows={tableRows}
+                  stateOf={stateOfRow}
+                  hasNext={!!query.hasNextPage}
+                  loadingMore={query.isFetchingNextPage}
+                  onLoadMore={() => void fetchNext()}
+                />
+              )}
+              {nextError && <ErrorState message={nextError.message} onRetry={() => void fetchNext()} />}
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                {query.hasNextPage ? t.list.loaded(items.length) : t.list.allLoaded(items.length)}
+              </p>
+            </>
           ) : items.length > 0 ? (
             <>
               {mode === 'cards' ? (

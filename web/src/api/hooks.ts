@@ -453,7 +453,8 @@ export function useSetTagColor() {
 
 // Listings are fetched one cursor page at a time; nothing renders more rows
 // than the person has asked for with "load more".
-export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enabled = true) {
+// `keep`: a new sort or filter keeps the rows on screen until the new ones arrive (a table that does not blink).
+export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enabled = true, keep = false) {
   const space = useSpaceId()
   return useInfiniteQuery({
     enabled,
@@ -463,6 +464,7 @@ export function usePageList(params: Omit<ListParams, 'cursor' | 'limit'>, enable
       spaceApi(space).listPages({ ...params, limit: PAGE_SIZE, cursor: pageParam || undefined }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 10_000,
+    ...(keep ? { placeholderData: keepPreviousData } : {}),
   })
 }
 

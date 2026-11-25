@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
+import { prefsStore } from './prefsStore'
 
-// What an administrator sets on a table (which columns, in which order, how wide, how tall the rows, how many to a
-// page) lives in this browser only: nothing of it goes to the server. Every read and write of localStorage can throw
-// (a private window, blocked site data, a full disk), and a table works the same without it.
+// What a person sets on a table (which columns, in which order, how wide, how tall the rows, how many to a page) is
+// kept by the prefs store (see prefsStore.ts): this browser today, never a database. A store that cannot be read or
+// written leaves the table working the same without it.
 
 export type Density = 'compact' | 'comfortable'
 export const PAGE_SIZES = [25, 50, 100, 200] as const
@@ -16,6 +17,8 @@ export interface TablePrefs {
   widths: Record<string, number>
   density: Density
   pageSize: number
+  // The person changed the columns, their order or widths: a default from elsewhere (a saved view) no longer applies.
+  custom: boolean
 }
 
 export const defaultPrefs = (): TablePrefs => ({
@@ -24,6 +27,7 @@ export const defaultPrefs = (): TablePrefs => ({
   widths: {},
   density: 'comfortable',
   pageSize: DEFAULT_PAGE_SIZE,
+  custom: false,
 })
 
 const keyOf = (id: string) => `pb.table.${id}`
@@ -42,6 +46,7 @@ export function sanitize(raw: unknown): TablePrefs {
       if (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 1) out.widths[k] = v
     }
   }
+  if (r.custom === true) out.custom = true
   if (r.density === 'compact' || r.density === 'comfortable') out.density = r.density
   if (typeof r.pageSize === 'number' && (PAGE_SIZES as readonly number[]).includes(r.pageSize))
     out.pageSize = r.pageSize
@@ -49,28 +54,16 @@ export function sanitize(raw: unknown): TablePrefs {
 }
 
 export function readPrefs(id: string): TablePrefs {
-  try {
-    const raw = localStorage.getItem(keyOf(id))
-    return raw ? sanitize(JSON.parse(raw)) : defaultPrefs()
-  } catch {
-    return defaultPrefs()
-  }
+  const raw = prefsStore().read(keyOf(id))
+  return raw ? sanitize(raw) : defaultPrefs()
 }
 
 export function writePrefs(id: string, prefs: TablePrefs): void {
-  try {
-    localStorage.setItem(keyOf(id), JSON.stringify(prefs))
-  } catch {
-    // The choice holds until the page is closed.
-  }
+  prefsStore().write(keyOf(id), prefs)
 }
 
 export function clearPrefs(id: string): void {
-  try {
-    localStorage.removeItem(keyOf(id))
-  } catch {
-    // Nothing to forget.
-  }
+  prefsStore().remove(keyOf(id))
 }
 
 // The preferences of one table, read once and written at each change.
@@ -79,7 +72,8 @@ export function useTablePrefs(id: string) {
   const update = useCallback(
     (patch: Partial<TablePrefs>) =>
       setPrefs((prev) => {
-        const next = { ...prev, ...patch }
+        const touches = 'hidden' in patch || 'order' in patch || 'widths' in patch
+        const next = { ...prev, ...patch, ...(touches ? { custom: true } : {}) }
         writePrefs(id, next)
         return next
       }),

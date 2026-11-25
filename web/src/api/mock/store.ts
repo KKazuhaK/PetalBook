@@ -327,6 +327,8 @@ export function createSpaceStore({
       ...(title ? { title } : {}),
       ...(subtitle ? { subtitle } : {}),
       source,
+      ...(typeof p.meta.icon === 'string' && p.meta.icon ? { icon: p.meta.icon } : {}),
+      ...(typeof p.meta.color === 'string' && p.meta.color ? { color: p.meta.color } : {}),
       // "" for an untitled page with nothing in it.
       label: title ?? Array.from(firstLine(p.body)).slice(0, 30).join(''),
       untitled: !title,

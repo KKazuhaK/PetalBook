@@ -15,6 +15,7 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/providers/theme'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { Breadcrumbs } from './Breadcrumbs'
 import { FileOpsProvider } from './FileOps'
 
@@ -116,7 +117,7 @@ describe('the folder listing', () => {
     const keys = [...document.querySelectorAll('[data-file-key]')].map((e) => e.getAttribute('data-file-key')!)
     expect(keys.findIndex((k) => k.startsWith('p:'))).toBeGreaterThan(keys.lastIndexOf('f:随笔'))
     // 随笔 holds 5 pages, 2026 four more below it.
-    expect(entry('f:随笔')!.textContent).toContain(t.manage.folderPages(9))
+    expect(entry('f:随笔')!.textContent).toContain(t.ftable.pages(9))
     // The inbox is a folder like any other here.
     expect(entry('f:收件箱')).not.toBeNull()
   })
@@ -190,8 +191,8 @@ describe('the folder listing', () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
     expect(document.querySelector('[role="toolbar"]')).toBeNull()
-    await act(async () => byLabel(t.manage.selectItem('随笔'))!.click())
-    await act(async () => byLabel(t.manage.selectItem('归档'))!.click())
+    await act(async () => byLabel(tc.table.selectRow('随笔'))!.click())
+    await act(async () => byLabel(tc.table.selectRow('归档'))!.click())
     const bar = document.querySelector('[role="toolbar"]')!
     expect(bar.textContent).toContain(t.manage.selected(2))
     expect(bar.textContent).toContain(t.manage.move)
@@ -204,8 +205,8 @@ describe('the folder listing', () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
     const keys = [...document.querySelectorAll('[data-file-key]')].map((e) => e.getAttribute('data-file-key')!)
-    await act(async () => byLabel(t.manage.selectItem('读书'))!.click())
-    const last = entry(keys[3])!.querySelector<HTMLElement>('[role="checkbox"]')!
+    await act(async () => byLabel(tc.table.selectRow('读书'))!.click())
+    const last = entry(keys[3])!.querySelector<HTMLElement>('input[type="checkbox"]')!
     await act(async () =>
       last.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true })),
     )
@@ -216,7 +217,7 @@ describe('the folder listing', () => {
   it('Delete asks to delete the selection (with the page count of its folders), Escape lets go', async () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
-    await act(async () => byLabel(t.manage.selectItem('随笔'))!.click())
+    await act(async () => byLabel(tc.table.selectRow('随笔'))!.click())
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
     })
@@ -239,7 +240,7 @@ describe('the folder listing', () => {
   it('Move opens the folder picker, which refuses the folder itself and what is inside it', async () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'folders')
-    await act(async () => byLabel(t.manage.selectItem('随笔'))!.click())
+    await act(async () => byLabel(tc.table.selectRow('随笔'))!.click())
     await act(async () => {
       ;[...document.querySelectorAll<HTMLElement>('[role="toolbar"] button')]
         .find((b) => b.textContent === t.manage.move)!
@@ -355,7 +356,7 @@ describe('dragging in the listing', () => {
     await listing()
     await settle(() => entry('f:随笔') !== null && document.querySelector('[data-file-key^="p:"]') !== null, 'listing')
     const page = document.querySelector<HTMLElement>('[data-file-key^="p:"]')!
-    const target = entry('f:归档')!
+    const target = entry('f:归档')!.querySelector<HTMLElement>('a')!
     await act(async () => void page.querySelector('a')!.dispatchEvent(dragEvent('dragstart')))
     await act(async () => void target.dispatchEvent(dragEvent('dragenter')))
     expect(lit(target)).toBe(true)
@@ -373,14 +374,14 @@ describe('dragging in the listing', () => {
   it('does not light up a folder dragged onto itself', async () => {
     await listing()
     await settle(() => entry('f:随笔') !== null, 'listing')
-    const folder = entry('f:随笔')!
-    await act(async () => void folder.querySelector('a')!.dispatchEvent(dragEvent('dragstart')))
+    const folder = entry('f:随笔')!.querySelector<HTMLElement>('a')!
+    await act(async () => void folder.dispatchEvent(dragEvent('dragstart')))
     await act(async () => void folder.dispatchEvent(dragEvent('dragenter')))
     expect(lit(folder)).toBe(false)
     // Another folder takes it.
-    const other = entry('f:归档')!
+    const other = entry('f:归档')!.querySelector<HTMLElement>('a')!
     await act(async () => void other.dispatchEvent(dragEvent('dragenter')))
     expect(lit(other)).toBe(true)
-    await act(async () => void folder.querySelector('a')!.dispatchEvent(dragEvent('dragend')))
+    await act(async () => void folder.dispatchEvent(dragEvent('dragend')))
   })
 })

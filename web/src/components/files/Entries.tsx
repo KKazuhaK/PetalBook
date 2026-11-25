@@ -46,7 +46,7 @@ function useEntryClick(state: EntryState) {
   }
 }
 
-function useDragSource(state: EntryState) {
+export function useDragSource(state: EntryState) {
   const [dragging, setDragging] = useState(false)
   const { write } = useSpacePermissions()
   return {

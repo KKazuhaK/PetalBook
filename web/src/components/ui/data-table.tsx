@@ -62,8 +62,9 @@ export interface DataTableProps<T> {
   error?: string
   onRetry?: () => void
   empty: ReactNode
-  // The page: its number, whether there is a previous and a next, and how to move.
-  paging: {
+  // The page: its number, whether there is a previous and a next, and how to move. Left out, the table has no pager
+  // and no page size: it shows `footer` (a "load more", say) instead.
+  paging?: {
     page: number
     hasPrev: boolean
     hasNext: boolean
@@ -72,12 +73,21 @@ export interface DataTableProps<T> {
   }
   sort?: DataTableSort
   onSort?: (s: DataTableSort) => void
-  selection?: { selected: ReadonlySet<string>; onChange: (next: Set<string>) => void }
+  // `shift` is set when the tick of one row was clicked with Shift held: a list may then select the run from the last one.
+  selection?: {
+    selected: ReadonlySet<string>
+    onChange: (next: Set<string>, tick?: { id: string; shift: boolean }) => void
+  }
   // Shown above the table while something is ticked.
   bulk?: ReactNode
   // A row's common actions (at most one or two), at its right end.
   actions?: (row: T) => ReactNode
   rowAttrs?: (row: T) => Record<string, string>
+  // More classes for a row (a row is `group/row`, so a cell can show something only while the pointer is on it).
+  rowClass?: (row: T) => string
+  footer?: ReactNode
+  // The columns shown when the person has set none themselves (a saved view's choice, say): ids to hide.
+  defaultHidden?: string[]
 }
 
 const ROW_HEIGHT: Record<Density, string> = { compact: 'h-10', comfortable: 'h-14' }
@@ -101,7 +111,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     sort,
     onSort,
   } = props
-  const { selection, bulk, actions, rowAttrs } = props
+  const { selection, bulk, actions, rowAttrs, rowClass, footer, defaultHidden } = props
   const { prefs, update, reset } = prefsApi
 
   // The box the table scrolls in: its width decides which columns fit.
@@ -126,7 +136,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
       ).map((i) => byId.get(i)!),
     [columns, prefs.order, byId],
   )
-  const chosen = ordered.filter((c) => c.required || !prefs.hidden.includes(c.id))
+  const hiddenIds = prefs.custom || !defaultHidden ? prefs.hidden : defaultHidden
+  const chosen = ordered.filter((c) => c.required || !hiddenIds.includes(c.id))
   const fixed = (selection ? SELECT_W : 0) + (actions ? ACTIONS_W : SETTINGS_W) + (actions ? SETTINGS_W : 0)
   const minOf = (c: Column<T>) => c.min ?? 96
 
@@ -209,11 +220,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   const selected = selection?.selected
   const allOnPage = rows.length > 0 && rows.every((r) => selected?.has(rowId(r)))
+  const shiftHeld = useRef(false)
   const toggleRow = (rid: string) => {
     if (!selection) return
     const next = new Set(selection.selected)
     if (!next.delete(rid)) next.add(rid)
-    selection.onChange(next)
+    selection.onChange(next, { id: rid, shift: shiftHeld.current })
   }
   const toggleAll = () => {
     if (!selection) return
@@ -321,7 +333,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 <span className="sr-only">{tc.table.actions}</span>
                 <TableSettings
                   all={ordered}
-                  hidden={prefs.hidden}
+                  hidden={hiddenIds}
                   order={ordered.map((c) => c.id)}
                   density={prefs.density}
                   pageSize={prefs.pageSize}
@@ -372,7 +384,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     {...rowAttrs?.(row)}
                     data-row={rid}
                     aria-selected={selected?.has(rid) || undefined}
-                    className={`${ROW_HEIGHT[prefs.density]} transition-colors hover:bg-muted/40 ${selected?.has(rid) ? 'bg-primary/5' : ''}`}
+                    className={`group/row ${ROW_HEIGHT[prefs.density]} transition-colors hover:bg-muted/40 ${selected?.has(rid) ? 'bg-primary/5' : ''} ${rowClass?.(row) ?? ''}`}
                   >
                     {selection && (
                       <td className="px-0">
@@ -381,6 +393,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                             type="checkbox"
                             aria-label={tc.table.selectRow(rowLabel(row))}
                             checked={selected?.has(rid) ?? false}
+                            onClick={(e) => (shiftHeld.current = e.shiftKey)}
                             onChange={() => toggleRow(rid)}
                             className="size-4 accent-[var(--color-primary)]"
                           />
@@ -421,37 +434,40 @@ export function DataTable<T>(props: DataTableProps<T>) {
           {tc.table.hiddenNarrow(squeezed)}
         </p>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-3" data-slot="table-footer">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          {tc.table.pageSize}
-          <span className="w-20">
-            <NativeSelect
-              className="h-10"
-              value={String(prefs.pageSize)}
-              onChange={(e) => update({ pageSize: Number(e.target.value) })}
-            >
-              {PAGE_SIZES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </NativeSelect>
-          </span>
-        </label>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground" aria-live="polite">
-            {tc.table.page(paging.page)}
-          </span>
-          <Button type="button" variant="outline" className="h-10" disabled={!paging.hasPrev} onClick={paging.onPrev}>
-            <ChevronLeft className="size-4" aria-hidden="true" />
-            {tc.table.previous}
-          </Button>
-          <Button type="button" variant="outline" className="h-10" disabled={!paging.hasNext} onClick={paging.onNext}>
-            {tc.table.next}
-            <ChevronRight className="size-4" aria-hidden="true" />
-          </Button>
+      {footer}
+      {paging && (
+        <div className="flex flex-wrap items-center justify-between gap-3" data-slot="table-footer">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            {tc.table.pageSize}
+            <span className="w-20">
+              <NativeSelect
+                className="h-10"
+                value={String(prefs.pageSize)}
+                onChange={(e) => update({ pageSize: Number(e.target.value) })}
+              >
+                {PAGE_SIZES.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </NativeSelect>
+            </span>
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground" aria-live="polite">
+              {tc.table.page(paging.page)}
+            </span>
+            <Button type="button" variant="outline" className="h-10" disabled={!paging.hasPrev} onClick={paging.onPrev}>
+              <ChevronLeft className="size-4" aria-hidden="true" />
+              {tc.table.previous}
+            </Button>
+            <Button type="button" variant="outline" className="h-10" disabled={!paging.hasNext} onClick={paging.onNext}>
+              {tc.table.next}
+              <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
