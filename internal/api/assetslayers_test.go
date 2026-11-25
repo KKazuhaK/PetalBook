@@ -7,6 +7,25 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
 
+// A person's client reads what a new space of theirs gets: the default, what the owner may ask for, and whether a lock leaves no choice.
+func TestAPersonIsToldWhereTheirNewSpacesAttachmentsGo(t *testing.T) {
+	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
+		admin, member := ghSetup(t, a)
+		get := func() map[string]any {
+			return settingOf(t, member.do("GET", "/api/settings", nil).want(t, 200, ""), "storage.assets")
+		}
+		s := get()
+		if s["effective"] != "repository" || strings.Join(strs(s["allowed"]), ",") != "space,repository" || s["locked"] != false {
+			t.Fatal(s)
+		}
+		admin.do("PUT", "/api/admin/settings/storage.assets", map[string]any{"value": "space", "lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		s = get()
+		if s["effective"] != "space" || strings.Join(strs(s["allowed"]), ",") != "space" || s["locked"] != true {
+			t.Fatal(s)
+		}
+	})
+}
+
 func TestAttachmentsAreSeparateByDefaultAndTheLayeredRulesDecideOverTheAPI(t *testing.T) {
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)

@@ -218,7 +218,8 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 			return Info{}, err
 		}
 	case a.Default:
-		assetsOptional = true
+		// A lock to the repository is not a default the space can do without.
+		assetsOptional = !pol.Locked
 		if pol.Default != "repository" {
 			assetsName = ""
 		}

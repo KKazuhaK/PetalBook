@@ -519,6 +519,11 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 		if err != nil {
 			return err
 		}
+		// The lock is read again here, not taken from the cached view: a lock written
+		// since then (or a stale cache) must still refuse a tenant administrator.
+		if !ch.Site && row.SiteLocked {
+			return &Error{CodeLocked, key + " is locked for this tenant by the site's administrators"}
+		}
 		if ch.HasValue {
 			row.Value = ""
 			if ch.Value != nil {
@@ -536,7 +541,9 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 				row.Lower = string(raw)
 			}
 		}
-		row.SiteLocked = locking
+		if ch.Site {
+			row.SiteLocked = locking // only a site administrator's change touches the lock
+		}
 		row.Updated = s.now()
 		return store.PutLayered(ctx, q, *row)
 	})

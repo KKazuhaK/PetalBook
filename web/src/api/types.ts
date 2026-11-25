@@ -1919,6 +1919,9 @@ export interface MySetting {
   effective: unknown
   space?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
   person?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+  // storage.assets only: what a person may ask for when they make a space, and whether a lock leaves no choice.
+  allowed?: string[]
+  locked?: boolean
 }
 
 // --- storage management (docs/api.md, "Storage management") --------------------------------

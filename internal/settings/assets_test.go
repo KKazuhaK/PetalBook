@@ -3,6 +3,7 @@ package settings_test
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/store"
@@ -126,6 +127,35 @@ func TestASiteLockForOneTenantNeedsAValueAndTheSitesHand(t *testing.T) {
 		}
 		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasSiteLock: true, SiteLock: true, HasValue: true, Value: "space"}); code(err) != settings.CodeLocked {
 			t.Fatalf("a tenant administrator locked: %v", err)
+		}
+	})
+}
+
+// A tenant administrator's write that was checked against a stale cache (the site's lock was written a moment
+// before, by another request or another server) is refused when the row is read in the transaction, and the
+// lock is never cleared by a tenant-layer write.
+func TestATenantWriteThatRacesASiteLockIsRefusedAndKeepsTheLock(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setup(t, st)
+		if _, err := s.Get(ctx, ten, settings.StorageAssets); err != nil { // the cache is warm and says "not locked"
+			t.Fatal(err)
+		}
+		row := store.LayeredRow{Layer: "tenant", LayerID: ten, Key: settings.StorageAssets, Value: `"repository"`, SiteLocked: true, Updated: time.Now()}
+		if err := store.PutLayered(ctx, st.Q(), row); err != nil { // behind the cache's back
+			t.Fatal(err)
+		}
+		for _, ch := range []settings.Change{
+			{HasValue: true, Value: "space"},
+			{HasValue: true, Value: nil},
+			{HasLower: true, Lower: lower("lock")},
+		} {
+			if err := s.SetTenant(ctx, ten, settings.StorageAssets, ch); code(err) != settings.CodeLocked {
+				t.Fatalf("%+v: %v", ch, err)
+			}
+		}
+		got, err := store.GetLayered(ctx, st.Q(), "tenant", ten, settings.StorageAssets)
+		if err != nil || !got.SiteLocked || got.Value != `"repository"` || got.Lower != "" {
+			t.Fatalf("%+v %v", got, err)
 		}
 	})
 }

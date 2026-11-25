@@ -1005,6 +1005,27 @@ func TestTheDefaultFallsBackToTheSpaceWhereASecondRepositoryIsImpossible(t *test
 	})
 }
 
+// Under a lock to the separate repository there is no falling back: the space is not made without it.
+func TestALockToTheRepositoryIsNotFallenBackFrom(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		e := newGHEnv(t, st)
+		e.m.SetAssetsPolicy(func(context.Context, string) (AssetsPolicy, error) {
+			return AssetsPolicy{Default: "repository", Allowed: []string{"repository"}, Locked: true}, nil
+		})
+		e.f.AddRepo("kazuhahub", "plain", true) // no plain-assets beside it
+		if _, err := e.m.CreateWithSync(ctx, e.user.ID, "Plain", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "plain", Private: true, Create: false, Assets: &SyncAssets{Default: true}}); err == nil {
+			t.Fatal("the lock was passed over")
+		}
+		e.f.AddRepo("kazuhahub", "taken-assets", true)
+		if _, err := e.m.CreateWithSync(ctx, e.user.ID, "Taken", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "taken", Private: true, Create: true, Assets: &SyncAssets{Default: true}}); err == nil {
+			t.Fatal("the lock was passed over")
+		}
+		if l, _ := e.m.List(ctx, e.user.ID); len(l) != 0 {
+			t.Fatalf("a space was left: %+v", l)
+		}
+	})
+}
+
 func TestTheSettingsDecideWhatARequestThatDoesNotSayGets(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)

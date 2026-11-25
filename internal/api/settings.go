@@ -303,9 +303,23 @@ func (s *server) mySettings(c *call) {
 		Effective any        `json:"effective"`
 		Space     *layerView `json:"space,omitempty"`
 		Person    *layerView `json:"person,omitempty"`
+		// Allowed and Locked are for storage.assets: what the person may ask for when they make a space,
+		// and whether a lock leaves them no choice.
+		Allowed []string `json:"allowed,omitempty"`
+		Locked  *bool    `json:"locked,omitempty"`
 	}
 	out := []item{}
 	for _, d := range s.settings.Defs() {
+		if d.Key == settings.StorageAssets {
+			r, err := s.settings.AssetsRule(ctx, c.user().TenantID, settings.AssetsInput{})
+			if err != nil {
+				s.fail(c.w, err)
+				return
+			}
+			locked := r.LockedBy != ""
+			out = append(out, item{Key: d.Key, Effective: r.Default, Allowed: r.Allowed, Locked: &locked})
+			continue
+		}
 		if d.Key == settings.OfflineCopies {
 			// Not the person's to change: the client only reads whether it may keep copies.
 			out = append(out, item{Key: d.Key, Effective: eff[d.Key].Value})

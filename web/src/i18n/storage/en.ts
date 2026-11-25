@@ -196,6 +196,7 @@ export const storageEn = {
     },
     retry: 'Try again',
     newSpace: 'Sync attachments to a place of their own',
+    locked: 'Set by the administrators.',
     newSpaceHelp: 'Makes a second one, <name>-assets, next to it, so the space itself stays small and quick.',
     placeholder: 'This attachment is not on the server and cannot be fetched right now.',
   },

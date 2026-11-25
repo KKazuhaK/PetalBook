@@ -412,20 +412,26 @@ export function createTenantBook(o: TenantBookOptions) {
 
   // The settings of one person's layers (GET /api/settings).
   const mine = (tenant: string) =>
-    DEFS.filter((d) => d.layers.includes('space') || d.key === 'offline.copies').map((d) => {
-      const e = effectiveOf(tenant, d)
-      // Not the person's to change: a client only reads whether it may keep offline copies.
-      if (!d.layers.includes('space')) return { key: d.key, effective: e.effective }
-      const on = e.effective === true
-      const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
-      const source =
-        lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)
-      return {
-        key: d.key,
-        effective: e.effective,
-        space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) },
-      }
-    })
+    DEFS.filter((d) => d.layers.includes('space') || d.key === 'offline.copies' || d.key === 'storage.assets').map(
+      (d) => {
+        const e = effectiveOf(tenant, d)
+        if (d.key === 'storage.assets') {
+          const r = assetsRule()
+          return { key: d.key, effective: r.default, allowed: r.allowed, locked: r.locked }
+        }
+        // Not the person's to change: a client only reads whether it may keep offline copies.
+        if (!d.layers.includes('space')) return { key: d.key, effective: e.effective }
+        const on = e.effective === true
+        const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
+        const source =
+          lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)
+        return {
+          key: d.key,
+          effective: e.effective,
+          space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) },
+        }
+      },
+    )
 
   // What the layer below the tenant may do with a setting: a site administrator answers to the site's rule only, anyone
   // else to the stricter of the site's and the tenant's.

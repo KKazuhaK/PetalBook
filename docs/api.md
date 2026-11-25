@@ -6451,6 +6451,14 @@ it; a client reads it to know whether it may keep offline copies):
 `source` is the layer (`site` or `tenant`) whose lock, or whose value that
 switches it off, keeps the layer from changing it; absent when nothing does.
 
+`storage.assets` is also in the list, as `{"key": "storage.assets", "effective":
+"repository", "allowed": ["space", "repository"], "locked": false}`: the default
+a new space of the caller's tenant gets, what the owner may ask for, and whether
+a lock leaves no choice. The web app's new-space dialog starts its attachments
+box from `effective`, sends `storage.sync.assets` only when the person changes
+it, disables the box when `locked`, and hides it when `allowed` has no
+`repository`.
+
 ### Mail
 
 Site administrators. Outgoing mail is what verification, password reset and
@@ -8654,12 +8662,28 @@ with no error. The layers apply in the owner's order, strongest first:
    remains.
 
 A request that says nothing gets the value in effect; a request that asks for
-what the rules leave out is refused as above. A default of `repository` where
-the second repository cannot be had (the existing repository has no
-`<name>-assets` beside it, the name is taken, the credential cannot reach it)
-does not fail the creation: the space keeps its attachments in itself. Only a
-request that asked for one is an error. A repository the default made but could
-not use is remembered as a leftover, as other repositories left empty are.
+what the rules leave out is refused as above.
+
+Where the second repository cannot be had:
+
+- **A space with no remote** (a `server` space) has no second repository to make
+  and keeps its attachments in the space, with no error, under any layer.
+- **A space on a provider, under a default** that is not locked: the creation
+  does not fail; the attachments stay in the space. This covers an existing
+  repository with no `<name>-assets` beside it, a name that is taken, and a
+  credential that cannot reach it. A repository made but unusable is
+  remembered as a leftover, as other repositories left empty are.
+- **A space on a provider, under a lock to `repository`** (the site's, the
+  site's for the tenant, or the tenant's): no fallback. The creation fails with
+  the provider's own error, and nothing is kept (what was made is named, as for
+  any failed creation). The lock means the space is not made without it.
+- A request that asked for an attachment repository is an error, as before.
+
+An existing `<name>-assets` repository that the person can push to is adopted
+as it is when the space connects to existing repositories (`create: false`);
+nothing in it is changed or checked beyond the first fetch. With `create: true`
+a name that is already taken is not adopted (`409 name_taken`, or the fallback
+above under an unlocked default).
 
 When the tenant's limits table turns `sync.assetsRepository` off, only `space`
 is possible, whatever the layers say.

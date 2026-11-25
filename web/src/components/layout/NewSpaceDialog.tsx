@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { ApiError, api } from '@/api/client'
+import { useQuery } from '@tanstack/react-query'
 import { useConnectionOwners, useConnections, useCreateSpace, useRecheckOwners } from '@/api/hooks'
 import type { ConnectionOwner, NewSync, SpaceInfo } from '@/api/types'
 import { Field } from '@/components/auth/Field'
@@ -85,7 +86,25 @@ function NewSpaceForm({
   const [where, setWhere] = useState('')
   const provider = providers.find((p) => p.id === where) ?? null
   const useRepo = provider !== null
-  const [withAssets, setWithAssets] = useState(false)
+  // What the settings say a new space's attachments do for this person: the default, what they may ask for, and
+  // whether a lock leaves no choice. null until it is read; the box is then hidden.
+  const rule = useQuery({
+    queryKey: ['settings', 'new-space-assets'],
+    staleTime: 30_000,
+    queryFn: async ({ signal }) => {
+      const found = (await api.settings(undefined, signal)).settings.find((x) => x.key === 'storage.assets')
+      return found
+        ? {
+            on: found.effective === 'repository',
+            canRepo: !!found.allowed?.includes('repository'),
+            locked: !!found.locked,
+          }
+        : { on: false, canRepo: true, locked: false }
+    },
+  }).data
+  // The owner's own choice, once they touch the box; until then nothing is sent and the default decides.
+  const [assetsChoice, setAssetsChoice] = useState<boolean | null>(null)
+  const withAssets = assetsChoice ?? rule?.on ?? false
   const [owner, setOwner] = useState('')
   const [repo, setRepo] = useState('')
   const [repoTouched, setRepoTouched] = useState(false)
@@ -131,7 +150,7 @@ function NewSpaceForm({
         private: priv,
         ...(description.trim() ? { description: description.trim() } : {}),
         create: existing === undefined,
-        assets: withAssets,
+        ...(assetsChoice !== null && assetsChoice !== rule?.on ? { assets: assetsChoice } : {}),
       }
     }
     setFieldError(problems)
@@ -276,18 +295,25 @@ function NewSpaceForm({
 
             {useRepo && (
               <div className="grid min-w-0 grid-cols-1 gap-3">
-                <label className="flex cursor-pointer items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="mt-1 accent-[var(--brand)]"
-                    checked={withAssets}
-                    onChange={(e) => setWithAssets(e.target.checked)}
-                  />
-                  <span className="min-w-0">
-                    <span className="block font-medium">{ts.assets.newSpace}</span>
-                    <span className="block text-xs text-muted-foreground">{ts.assets.newSpaceHelp}</span>
-                  </span>
-                </label>
+                {rule?.canRepo && (
+                  <label
+                    className={`flex min-h-10 items-start gap-2 text-sm ${rule.locked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 size-4 accent-[var(--brand)]"
+                      checked={withAssets}
+                      disabled={rule.locked}
+                      onChange={(e) => setAssetsChoice(e.target.checked)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-medium">{ts.assets.newSpace}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {rule.locked ? ts.assets.locked : ts.assets.newSpaceHelp}
+                      </span>
+                    </span>
+                  </label>
+                )}
                 {owners.isPending ? (
                   <p className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Spinner />

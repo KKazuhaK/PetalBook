@@ -177,6 +177,7 @@ export const storageZhCN: StorageMessages = {
     },
     retry: '再试一次',
     newSpace: '附件单独同步到另一个位置',
+    locked: '由管理员定的。',
     newSpaceHelp: '在旁边再建一个，叫 <名字>-assets，空间本身就小而快。',
     placeholder: '这个附件不在服务器上，现在取不到。',
   },
