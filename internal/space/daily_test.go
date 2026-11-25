@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,36 @@ func mustDaily(t *testing.T, s *Space, spaceID, date string, skip int) *DailyPic
 		t.Fatalf("daily %s/%d: %v %v", date, skip, none, err)
 	}
 	return p
+}
+
+// askMany asks for n daily texts, ask(i) giving the day and skip of the i-th, from
+// several goroutines at once; each must be answered.
+func askMany(t *testing.T, s *Space, n int, ask func(i int) (string, int)) {
+	t.Helper()
+	var wg sync.WaitGroup
+	next := make(chan int)
+	errs := make(chan error, n)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				date, skip := ask(i)
+				if p, none, err := s.DailyText("S", date, skip, ""); err != nil || p == nil {
+					errs <- fmt.Errorf("daily %s/%d: %v %v", date, skip, none, err)
+				}
+			}
+		}()
+	}
+	for i := range n {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }
 
 func TestDailyIsTheSameForADayAndMovesWithTheDayAndSkip(t *testing.T) {
@@ -148,12 +179,10 @@ func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
 	s.daily.today = func() time.Time { return today }
 	s.dailyMu.Unlock()
 	was := mustDaily(t, s, "S", "2026-11-23", 0)
-	for skip := 1; skip <= maxDailySkip; skip++ {
-		mustDaily(t, s, "S", "2026-11-23", skip)
-	}
-	for d := 0; d < 3*dailyMemoMax; d++ {
-		mustDaily(t, s, "S", today.AddDate(0, 0, -2-d).Format("2006-01-02"), 0)
-	}
+	// Every ask is made, from several readers at once: the memo drops picks by their
+	// distance from today, not by the order they came in.
+	askMany(t, s, maxDailySkip, func(i int) (string, int) { return "2026-11-23", i + 1 })
+	askMany(t, s, 3*dailyMemoMax, func(i int) (string, int) { return today.AddDate(0, 0, -2-i).Format("2006-01-02"), 0 })
 	s.dailyMu.Lock()
 	kept := false
 	for k, e := range s.daily.shared {
