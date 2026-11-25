@@ -50,7 +50,7 @@ func (e badQuery) Error() string { return string(e) }
 func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 	tags, ok := queryTags(v)
 	if !ok {
-		return q, false, badQuery(fmt.Sprintf("at most %d different tags", maxQueryTags))
+		return q, false, badQuery(fmt.Sprintf("At most %d different tags.", maxQueryTags))
 	}
 	q = index.Query{Tags: tags, Text: v.Get("q"), Sort: v.Get("sort"), Cursor: v.Get("cursor")}
 	if v.Has("folder") {
@@ -65,14 +65,14 @@ func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 	case "true":
 		q.Recursive = true
 	default:
-		return q, false, badQuery("recursive must be true or false")
+		return q, false, badQuery("Recursive must be true or false.")
 	}
 	switch in := v.Get("in"); in {
 	case "":
 	case "title":
 		q.TitleOnly = true
 	default:
-		return q, false, badQuery("in must be title")
+		return q, false, badQuery("In must be title.")
 	}
 	// A day in UTC: "from" is its first moment, "to" its last.
 	day := func(name string) (t time.Time, set bool, err error) {
@@ -85,7 +85,7 @@ func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 		// since 1970, which run out in 2262. A day outside is refused rather
 		// than turned into a bound that means something else.
 		if perr != nil || t.Year() < 1970 || t.Year() > 2261 {
-			return t, false, badQuery(name + " must be a day like 2026-11-01, from 1970 to 2261")
+			return t, false, badQuery(name + " must be a day like 2026-11-01, from 1970 to 2261.")
 		}
 		return t, true, nil
 	}
@@ -114,14 +114,14 @@ func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 	case "1", "true":
 		q.Props = true
 	default:
-		return q, false, badQuery("props must be 1 or 0")
+		return q, false, badQuery("Props must be 1 or 0.")
 	}
 	switch v.Get("body") {
 	case "", "0", "false":
 	case "1", "true":
 		body = true
 	default:
-		return q, false, badQuery("body must be 1 or 0")
+		return q, false, badQuery("Body must be 1 or 0.")
 	}
 	if raw := v.Get("filter"); raw != "" {
 		fs, err := parseFilters(raw)
@@ -133,7 +133,7 @@ func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 	if l := v.Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
 		if err != nil {
-			return q, false, badQuery("limit must be a number from 1 to 200")
+			return q, false, badQuery("Limit must be a number from 1 to 200.")
 		}
 		q.Limit = n
 		if n == 0 { // 0 means "default" inside the index; over HTTP it is out of range
@@ -146,7 +146,7 @@ func parseListQuery(v url.Values) (q index.Query, body bool, err error) {
 			q.Limit = space.MaxBodies
 		}
 		if q.Limit > space.MaxBodies {
-			return q, false, badQuery("with body=1 the limit is at most " + strconv.Itoa(space.MaxBodies))
+			return q, false, badQuery("With body=1 the limit is at most " + strconv.Itoa(space.MaxBodies) + ".")
 		}
 	}
 	return q, body, nil
@@ -282,7 +282,7 @@ func (s *server) createPage(c *call) {
 	tz := 0
 	if req.TZ != nil {
 		if *req.TZ < -840 || *req.TZ > 840 {
-			writeError(c.w, http.StatusBadRequest, "invalid", "tz is minutes east of UTC, from -840 to 840")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Tz is minutes east of UTC, from -840 to 840.")
 			return
 		}
 		tz = *req.TZ
@@ -319,13 +319,13 @@ func (s *server) readSave(c *call) (saveRequest, bool) {
 	// A save replaces the whole page, so a request that leaves out the header
 	// or the body would silently empty it. Refuse instead of guessing.
 	if req.Meta == nil || req.Body == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a save needs both meta and body; send the page's current values for the part that did not change")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A save needs both meta and body; send the page's current values for the part that did not change.")
 		return req, false
 	}
 	// A save without the rev it started from is a malformed request, not a
 	// conflict: there is no other version to show the person.
 	if req.BaseRev == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a save needs baseRev, the rev of the page it started from")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A save needs baseRev, the rev of the page it started from.")
 		return req, false
 	}
 	return req, true
@@ -364,11 +364,11 @@ func (s *server) patchProps(c *call) {
 		return
 	}
 	if req.BaseRev == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a change needs baseRev, the rev of the page it started from")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A change needs baseRev, the rev of the page it started from.")
 		return
 	}
 	if len(req.Set) == 0 && len(req.Unset) == 0 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a change needs set or unset")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A change needs set or unset.")
 		return
 	}
 	p, err := s.drafts.PatchProps(c.r.Context(), c.sp.Space, c.sp.Info.ID, c.user().ID, id, req.BaseRev, req.Set, req.Unset)
@@ -471,7 +471,7 @@ func (s *server) putTag(c *call) {
 	color := ""
 	if raw := strings.TrimSpace(string(req.Color)); raw != "" && raw != "null" {
 		if err := json.Unmarshal(req.Color, &color); err != nil || color == "" {
-			writeError(c.w, http.StatusBadRequest, "invalid", "color must be the name of a colour, a colour written #rrggbb, or null")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Color must be the name of a colour, a colour written #rrggbb, or null.")
 			return
 		}
 		// Answered and stored in one form: lower case.
@@ -504,7 +504,7 @@ func (s *server) batchPages(c *call) {
 	switch req.Op {
 	case "move":
 		if req.Folder == nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "a move needs the folder to move to (\"\" is the top level)")
+			writeError(c.w, http.StatusBadRequest, "invalid", "A move needs the folder to move to (\"\" is the top level).")
 			return
 		}
 		err = c.sp.Space.BatchMove(s.author(c), req.IDs, *req.Folder)
@@ -514,7 +514,7 @@ func (s *server) batchPages(c *call) {
 		// Also when it failed part way: what is deleted is deleted.
 		s.dropDrafts(c, gone)
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "op must be move or delete")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Op must be move or delete.")
 		return
 	}
 	if err != nil {
@@ -594,7 +594,7 @@ func (s *server) deleteFolder(c *call) {
 	case "true":
 		recursive = true
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "recursive must be true or false")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Recursive must be true or false.")
 		return
 	}
 	ids, err := c.sp.Space.DeleteFolder(s.author(c), v.Get("path"), recursive)
@@ -671,7 +671,7 @@ func (s *server) commitDraft(c *call) {
 		return
 	}
 	if req.Version == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a commit needs version, the version of the draft to commit")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A commit needs version, the version of the draft to commit.")
 		return
 	}
 	p, err := s.drafts.Commit(c.r.Context(), c.sp.Space, c.sp.Info.ID, c.user().ID, id, req.Version)

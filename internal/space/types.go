@@ -143,11 +143,11 @@ func typeFileProblem(name string) error {
 func ValidTypeName(name string) error {
 	switch {
 	case name == "" || len(name) > maxTypeName || !utf8.ValidString(name):
-		return invalidf("a type name is 1 to %d bytes of text", maxTypeName)
+		return invalidf("A type name is 1 to %d bytes of text.", maxTypeName)
 	case strings.HasPrefix(name, ".") || strings.TrimSpace(name) != name || strings.TrimRight(name, ". ") != name:
-		return invalidf("a type name must not start with a dot or start or end with a space or dot")
+		return invalidf("A type name must not start with a dot or start or end with a space or dot.")
 	case strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f || strings.ContainsRune(`<>:"/\|?*`, r) }) >= 0:
-		return invalidf("a type name must not have a character that file systems do not allow")
+		return invalidf("A type name must not have a character that file systems do not allow.")
 	}
 	return nil
 }
@@ -157,20 +157,20 @@ func ValidTypeName(name string) error {
 func validFieldKey(key string) error {
 	switch {
 	case key == "" || len(key) > maxFieldKey || !utf8.ValidString(key):
-		return invalidf("a field key is 1 to %d bytes of text", maxFieldKey)
+		return invalidf("A field key is 1 to %d bytes of text.", maxFieldKey)
 	case page.IsBuiltinKey(key):
-		return invalidf("%q is a field of every page and cannot be a field of a type", key)
+		return invalidf("%q is a field of every page and cannot be a field of a type.", key)
 	case page.IsReservedKey(key):
-		return invalidf("%q is reserved and cannot be a field of a type", key)
+		return invalidf("%q is reserved and cannot be a field of a type.", key)
 	case strings.IndexFunc(key, func(r rune) bool { return r < 0x20 || r == 0x7f || r == ':' }) >= 0:
-		return invalidf("a field key must not have a control character or a colon")
+		return invalidf("A field key must not have a control character or a colon.")
 	}
 	return nil
 }
 
 func validLabel(what, s string) error {
 	if len(s) > maxLabelBytes || !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return invalidf("%s must be text of at most %d bytes on one line", what, maxLabelBytes)
+		return invalidf("%s must be text of at most %d bytes on one line.", what, maxLabelBytes)
 	}
 	return nil
 }
@@ -569,18 +569,18 @@ var recognised = []string{"type", "enum", "items", "format", "x-multiline", "uni
 
 func checkOptions(key string, opts []string) error {
 	if len(opts) == 0 || len(opts) > maxOptions {
-		return invalidf("field %q needs 1 to %d options", key, maxOptions)
+		return invalidf("Field %q needs 1 to %d options.", key, maxOptions)
 	}
 	seen := map[string]bool{}
 	for _, o := range opts {
 		if strings.TrimSpace(o) == "" {
-			return invalidf("field %q has an empty option", key)
+			return invalidf("Field %q has an empty option.", key)
 		}
 		if err := validLabel("an option", o); err != nil {
 			return err
 		}
 		if seen[o] {
-			return invalidf("field %q lists the option %q twice", key, o)
+			return invalidf("Field %q lists the option %q twice.", key, o)
 		}
 		seen[o] = true
 	}
@@ -621,25 +621,25 @@ func mergeField(cur []kv, exists bool, in FieldInput) ([]kv, error) {
 	kind := in.Kind
 	if kind == "" {
 		if !exists {
-			return nil, invalidf("field %q needs a kind", in.Key)
+			return nil, invalidf("Field %q needs a kind.", in.Key)
 		}
 		kind = curKind
 	}
 	if !fieldKinds[kind] {
-		return nil, invalidf("field %q: unknown kind %q", in.Key, kind)
+		return nil, invalidf("Field %q: unknown kind %q.", in.Key, kind)
 	}
 	if kind == KindOther && !exists {
-		return nil, invalidf("field %q: a field of a kind the server does not know cannot be made here", in.Key)
+		return nil, invalidf("Field %q: a field of a kind the server does not know cannot be made here.", in.Key)
 	}
 	if kind == KindOther && curKind != KindOther {
-		return nil, invalidf("field %q: a field cannot be changed to kind other", in.Key)
+		return nil, invalidf("Field %q: a field cannot be changed to kind other.", in.Key)
 	}
 	if kind == KindSelect || kind == KindMultiSelect {
 		if err := checkOptions(in.Key, in.Options); err != nil {
 			return nil, err
 		}
 	} else if len(in.Options) > 0 {
-		return nil, invalidf("field %q: only a select or multiselect has options", in.Key)
+		return nil, invalidf("Field %q: only a select or multiselect has options.", in.Key)
 	}
 	var out []kv
 	switch {
@@ -698,15 +698,15 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 		return TypeInfo{}, err
 	}
 	if len(in.Fields) > MaxTypeFields {
-		return TypeInfo{}, invalidf("a type has at most %d fields", MaxTypeFields)
+		return TypeInfo{}, invalidf("A type has at most %d fields.", MaxTypeFields)
 	}
 	seen := map[string]bool{}
 	for _, f := range in.Fields {
 		if f.Key == "" || !utf8.ValidString(f.Key) {
-			return TypeInfo{}, invalidf("a field key is 1 to %d bytes of text", maxFieldKey)
+			return TypeInfo{}, invalidf("A field key is 1 to %d bytes of text.", maxFieldKey)
 		}
 		if seen[f.Key] {
-			return TypeInfo{}, invalidf("the field %q is listed twice", f.Key)
+			return TypeInfo{}, invalidf("The field %q is listed twice.", f.Key)
 		}
 		seen[f.Key] = true
 		if err := validLabel("a field title", f.Title); err != nil {
@@ -729,7 +729,7 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 			}
 		}
 		if !have && len(names) >= MaxTypes {
-			return TypeInfo{}, invalidf("a space has at most %d types", MaxTypes)
+			return TypeInfo{}, invalidf("A space has at most %d types.", MaxTypes)
 		}
 		data, from, err := s.typeNow(name)
 		var replacedFields []string
@@ -800,7 +800,7 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 		}
 		out.WriteByte('\n')
 		if out.Len() > MaxTypeFile {
-			return TypeInfo{}, invalidf("the type would be larger than %d KiB", MaxTypeFile>>10)
+			return TypeInfo{}, invalidf("The type would be larger than %d KiB.", MaxTypeFile>>10)
 		}
 		if bytes.Equal(out.Bytes(), data) && from == nil {
 			t, _, _ := parseType(name, data)
@@ -965,7 +965,7 @@ func (s *Space) BindFolder(by Author, folder, typ string) (string, error) {
 			case err != nil:
 				return "", err
 			case data == nil:
-				return "", invalidf("there is no type named %q", typ)
+				return "", invalidf("There is no type named %q.", typ)
 			}
 		}
 		err = s.editSpaceFile(tx, func(root *yaml.Node) (bool, error) { return setBinding(root, canon, typ) })

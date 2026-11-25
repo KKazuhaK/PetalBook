@@ -360,7 +360,7 @@ func (s *Space) CheckDailySource(d DailySource) (DailySource, error) {
 		n++
 	}
 	if n != 1 {
-		return d, invalidf("give exactly one of folder, tag and type")
+		return d, invalidf("Give exactly one of folder, tag and type.")
 	}
 	switch {
 	case d.Folder != nil:
@@ -381,18 +381,18 @@ func (s *Space) CheckDailySource(d DailySource) (DailySource, error) {
 		}
 	default:
 		if _, ok := s.typeInfoCached(d.Type); !ok {
-			return d, invalidf("there is no type %q", d.Type)
+			return d, invalidf("There is no type %q.", d.Type)
 		}
 	}
 	if len(d.Filter) > index.MaxViewFilters {
-		return d, invalidf("at most %d filters", index.MaxViewFilters)
+		return d, invalidf("At most %d filters.", index.MaxViewFilters)
 	}
 	fs := make([]index.Filter, len(d.Filter))
 	for i, f := range d.Filter {
 		fs[i] = index.Filter{Key: f.Key, Op: f.Op, Values: f.Values}
 	}
 	if err := index.CheckFilters(fs); err != nil {
-		return d, invalidf("%s", strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))
+		return d, invalidf("%s.", strings.TrimSuffix(strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "), "."))
 	}
 	for i := range d.Filter {
 		if d.Filter[i].Values == nil {
@@ -405,7 +405,7 @@ func (s *Space) CheckDailySource(d DailySource) (DailySource, error) {
 func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
 	var out DailyConfig
 	if c.All == nil && len(c.ByLang) == 0 {
-		return c, invalidf("give a source: folder, tag or type, or one for each language")
+		return c, invalidf("Give a source: folder, tag or type, or one for each language.")
 	}
 	if c.All != nil {
 		d, err := s.CheckDailySource(*c.All)
@@ -415,7 +415,7 @@ func (s *Space) checkDaily(c DailyConfig) (DailyConfig, error) {
 		out.All = &d
 	}
 	if len(c.ByLang) > maxDailyLangs {
-		return c, invalidf("at most %d languages", maxDailyLangs)
+		return c, invalidf("At most %d languages.", maxDailyLangs)
 	}
 	for lang, d := range c.ByLang {
 		if !ValidLang(lang) {
@@ -804,10 +804,10 @@ func DailyNumber(spaceID, date string) uint64 {
 // remembered for the (source, date, skip) until the page is gone.
 func (s *Space) DailyText(spaceID, date string, skip int, lang string) (*DailyPick, DailyNone, error) {
 	if !ValidDailyDate(date) {
-		return nil, 0, invalidf("date must be a day like 2026-11-23")
+		return nil, 0, invalidf("Date must be a day like 2026-11-23.")
 	}
 	if !ValidDailySkip(skip) {
-		return nil, 0, invalidf("skip must be a number from 0 to %d", maxDailySkip)
+		return nil, 0, invalidf("Skip must be a number from 0 to %d.", maxDailySkip)
 	}
 	src := s.config().daily.For(lang)
 	if src == nil {
@@ -820,10 +820,10 @@ func (s *Space) DailyText(spaceID, date string, skip int, lang string) (*DailyPi
 // source may name a folder, tag or type of this space.
 func (s *Space) DailyFrom(spaceID, date string, skip int, source DailySource) (*DailyPick, DailyNone, error) {
 	if !ValidDailyDate(date) {
-		return nil, 0, invalidf("date must be a day like 2026-11-23")
+		return nil, 0, invalidf("Date must be a day like 2026-11-23.")
 	}
 	if !ValidDailySkip(skip) {
-		return nil, 0, invalidf("skip must be a number from 0 to %d", maxDailySkip)
+		return nil, 0, invalidf("Skip must be a number from 0 to %d.", maxDailySkip)
 	}
 	src := &source
 	q := index.PickQuery{Folder: src.Folder, Recursive: src.Folder != nil, Type: src.Type}

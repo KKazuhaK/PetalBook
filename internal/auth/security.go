@@ -285,7 +285,7 @@ type SecurityPatch struct {
 
 func inRange(name string, v *int, lo, hi int) error {
 	if v != nil && (*v < lo || *v > hi) {
-		return errf(Invalid, "%s is %d to %d", name, lo, hi)
+		return errf(Invalid, "%s is %d to %d.", name, lo, hi)
 	}
 	return nil
 }
@@ -306,7 +306,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 	if l := p.Login; l != nil {
 		if l.Mode != nil {
 			if !slices.Contains([]string{ModeDual, ModeSSOFirst, ModeSSORedirect, ModeLocalOnly}, *l.Mode) {
-				return nil, errf(Invalid, "login.mode is dual, sso_first, sso_redirect or local_only")
+				return nil, errf(Invalid, "login.mode is dual, sso_first, sso_redirect or local_only.")
 			}
 			next.Login.Mode = *l.Mode
 		}
@@ -322,7 +322,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 			var roles []string
 			for _, r := range *k.RequireRoles {
 				if r != "admin" && r != "member" {
-					return nil, errf(Invalid, "passkeys.requireRoles holds admin and member")
+					return nil, errf(Invalid, "passkeys.requireRoles holds admin and member.")
 				}
 				if !slices.Contains(roles, r) {
 					roles = append(roles, r)
@@ -338,7 +338,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 	if c := p.Captcha; c != nil {
 		if c.Provider != nil {
 			if !slices.Contains([]string{CaptchaImage, CaptchaTurnstile, CaptchaRecaptcha, CaptchaHCaptcha}, *c.Provider) {
-				return nil, errf(Invalid, "captcha.provider is image, turnstile, recaptcha or hcaptcha")
+				return nil, errf(Invalid, "captcha.provider is image, turnstile, recaptcha or hcaptcha.")
 			}
 			if *c.Provider != next.Captcha.Provider {
 				// A secret belongs to the provider it was made for.
@@ -348,20 +348,20 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 		}
 		if c.SiteKey != nil {
 			if len(*c.SiteKey) > 512 || strings.ContainsFunc(*c.SiteKey, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-				return nil, errf(Invalid, "captcha.siteKey is at most 512 characters")
+				return nil, errf(Invalid, "captcha.siteKey is at most 512 characters.")
 			}
 			next.Captcha.SiteKey = strings.TrimSpace(*c.SiteKey)
 		}
 		if c.Secret != nil {
 			if len(*c.Secret) > 2048 {
-				return nil, errf(Invalid, "captcha.secret is at most 2048 bytes")
+				return nil, errf(Invalid, "captcha.secret is at most 2048 bytes.")
 			}
 			secretGiven, newSecret = true, strings.TrimSpace(*c.Secret)
 		}
 		for name, v := range c.Contexts {
 			cur, ok := next.Captcha.Contexts[name]
 			if !ok {
-				return nil, errf(Invalid, "captcha.contexts has login, invite, setup, forgot and register (%q is not one)", name)
+				return nil, errf(Invalid, "captcha.contexts has login, invite, setup, forgot and register (%q is not one).", name)
 			}
 			if v == nil {
 				continue
@@ -371,7 +371,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 			}
 			if v.When != nil {
 				if *v.When != "always" && *v.When != "after_failures" {
-					return nil, errf(Invalid, "captcha.contexts.%s.when is always or after_failures", name)
+					return nil, errf(Invalid, "captcha.contexts.%s.when is always or after_failures.", name)
 				}
 				cur.When = *v.When
 			}
@@ -396,7 +396,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 		}
 		if l.Scope != nil {
 			if !slices.Contains([]string{"ip_account", "ip", "account"}, *l.Scope) {
-				return nil, errf(Invalid, "lockout.scope is ip_account, ip or account")
+				return nil, errf(Invalid, "lockout.scope is ip_account, ip or account.")
 			}
 			next.Lockout.Scope = *l.Scope
 		}
@@ -422,7 +422,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 			}
 		}
 		if next.Limits.SessionMaxDays < next.Limits.SessionIdleDays {
-			return nil, errf(Invalid, "limits.sessionMaxDays is at least sessionIdleDays")
+			return nil, errf(Invalid, "limits.sessionMaxDays is at least sessionIdleDays.")
 		}
 	}
 
@@ -430,7 +430,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 	third := next.Captcha.Provider != CaptchaImage
 	if third {
 		if s.cfg.PublicURL == "" {
-			return nil, coded(400, "captcha_needs_public_url", "a third-party captcha is checked against the host of --public-url; start the server with it")
+			return nil, coded(400, "captcha_needs_public_url", "A third-party captcha is checked against the host of --public-url; start the server with it.")
 		}
 		anyOn := false
 		for _, c := range next.Captcha.Contexts {
@@ -438,14 +438,14 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 		}
 		if anyOn {
 			if next.Captcha.SiteKey == "" {
-				return nil, coded(400, "captcha_site_key_required", "give the site key of the captcha provider")
+				return nil, coded(400, "captcha_site_key_required", "Give the site key of the captcha provider.")
 			}
 			hasSecret := next.Captcha.SecretEnc != "" && !(secretGiven && newSecret == "")
 			if secretGiven && newSecret != "" {
 				hasSecret = true
 			}
 			if !hasSecret {
-				return nil, coded(400, "captcha_secret_required", "give the secret of the captcha provider (a secret saved for another provider is not used)")
+				return nil, coded(400, "captcha_secret_required", "Give the secret of the captcha provider (a secret saved for another provider is not used).")
 			}
 		}
 	}
@@ -454,7 +454,7 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 		if open, err := s.RegistrationOpenAnywhere(ctx); err != nil {
 			return nil, err
 		} else if open {
-			return nil, coded(400, "sso_only_with_registration", "registration is open for a tenant; close it before refusing password sign-in")
+			return nil, coded(400, "sso_only_with_registration", "Registration is open for a tenant; close it before refusing password sign-in.")
 		}
 	}
 	// Turning ssoOnly on, or leaving local_only while it is on, needs a way out.
@@ -469,10 +469,10 @@ func (s *Service) UpdateSecurity(ctx context.Context, actorID, ip string, p Secu
 	}
 	hostOK := s.passkeyHostOK()
 	if len(next.Passkeys.RequireRoles) > 0 && !hostOK || next.Passkeys.Enabled && !cur.Passkeys.Enabled && required > 0 && !hostOK {
-		return nil, coded(400, "passkey_unavailable", "passkeys need a --public-url that is https (or http on a loopback name)")
+		return nil, coded(400, "passkey_unavailable", "Passkeys need a --public-url that is https (or http on a loopback name).")
 	}
 	if !next.Passkeys.Enabled && required > 0 {
-		return nil, coded(400, "passkey_requirement_unsatisfiable", "a passkey is required of someone: lift the requirements before switching passkeys off")
+		return nil, coded(400, "passkey_requirement_unsatisfiable", "A passkey is required of someone: lift the requirements before switching passkeys off.")
 	}
 
 	// Seal the new secret only once everything has passed.
@@ -620,7 +620,7 @@ func (s *Service) needPasswordAdmin(ctx context.Context) error {
 		return err
 	}
 	if n == 0 {
-		return coded(400, "local_admin_required", "no enabled administrator has a password: refusing passwords would lock everyone out if the identity provider fails")
+		return coded(400, "local_admin_required", "No enabled administrator has a password: refusing passwords would lock everyone out if the identity provider fails.")
 	}
 	return nil
 }

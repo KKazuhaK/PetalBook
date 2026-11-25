@@ -349,7 +349,7 @@ func (s *Space) resolveFolder(rel string) (canon string, existed bool, err error
 				for _, e := range entries {
 					if e.Name() == found {
 						if e.Type()&fs.ModeSymlink != 0 {
-							return "", false, invalidf("path %q goes through a symbolic link", rel)
+							return "", false, invalidf("Path %q goes through a symbolic link.", rel)
 						}
 						if !e.IsDir() {
 							return "", false, fmt.Errorf("%w: %q is a file", ErrExists, found)
@@ -410,7 +410,7 @@ func (s *Space) ensureFolder(tx *txn, rel string) (canon, abs string, err error)
 func notPageNames(dirs []string) error {
 	for _, d := range dirs {
 		if strings.EqualFold(path.Ext(d), ".md") {
-			return invalidf("a folder name cannot end in .md (%q)", path.Base(d))
+			return invalidf("A folder name cannot end in .md (%q).", path.Base(d))
 		}
 	}
 	return nil

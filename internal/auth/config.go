@@ -95,19 +95,19 @@ func (s *Service) flagsMatch(rt *providerRT, c *OIDCConfig) bool {
 func (s *Service) notices(ctx context.Context) []Notice {
 	out := []Notice{}
 	if s.flagsIgnored.Load() {
-		out = append(out, Notice{Code: "flags_ignored", Message: "the --oidc-* flags differ from the stored provider; they change nothing"})
+		out = append(out, Notice{Code: "flags_ignored", Message: "The --oidc-* flags differ from the stored provider; they change nothing."})
 	}
 	for _, rt := range s.provs.all() {
 		if rt.secretErr != nil {
-			out = append(out, Notice{Code: "secret_unreadable", Slug: rt.row.Slug, Message: "a stored secret of the provider " + rt.row.Slug + " cannot be opened with this server's key"})
+			out = append(out, Notice{Code: "secret_unreadable", Slug: rt.row.Slug, Message: "A stored secret of the provider " + rt.row.Slug + " cannot be opened with this server's key."})
 		}
 	}
 	if s.capSecretErr.Load() {
-		out = append(out, Notice{Code: "secret_unreadable", Field: "captcha.secret", Message: "the stored captcha secret cannot be opened with this server's key"})
+		out = append(out, Notice{Code: "secret_unreadable", Field: "captcha.secret", Message: "The stored captcha secret cannot be opened with this server's key."})
 	}
 	if s.pk != nil {
 		if n, err := store.PasskeysOfOtherHost(ctx, s.st.Q(), s.pk.rpID); err == nil && n > 0 {
-			out = append(out, Notice{Code: "passkey_host_changed", Message: "some passkeys were made for another host than " + s.pk.rpID + " and cannot be used"})
+			out = append(out, Notice{Code: "passkey_host_changed", Message: "Some passkeys were made for another host than " + s.pk.rpID + " and cannot be used."})
 		}
 	}
 	return out

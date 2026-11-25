@@ -218,7 +218,7 @@ func CheckAPI(a API, allowHTTP bool) (API, error) {
 	if a.Lang != "" {
 		c, ok := langtag.Canonical(a.Lang)
 		if !ok {
-			return a, &CodedError{Code: CodeBadLanguage, Field: "lang", Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR; lang may also be empty for every language", a.Lang)}
+			return a, &CodedError{Code: CodeBadLanguage, Field: "lang", Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR; lang may also be empty for every language.", a.Lang)}
 		}
 		a.Lang = c
 	}
@@ -281,7 +281,7 @@ func CheckAPI(a API, allowHTTP bool) (API, error) {
 			return ""
 		})
 		if refused != "" {
-			return a, &CodedError{Code: CodeLinkUsesHeader, Field: "link", Msg: fmt.Sprintf("the link cannot take {%s}: a link takes values of the answer, {lang} and {date}, never a request header", refused)}
+			return a, &CodedError{Code: CodeLinkUsesHeader, Field: "link", Msg: fmt.Sprintf("The link cannot take {%s}: a link takes values of the answer, {lang} and {date}, never a request header.", refused)}
 		}
 	}
 	switch a.Refresh {
@@ -386,7 +386,7 @@ func checkLangMap(m map[string]string) (map[string]string, error) {
 	for k, v := range m {
 		c, ok := langtag.Canonical(k)
 		if !ok {
-			return nil, &CodedError{Code: CodeBadLanguage, Field: "langMap", Msg: fmt.Sprintf("%q in langMap is not a language tag like zh-Hans, en or pt-BR", k)}
+			return nil, &CodedError{Code: CodeBadLanguage, Field: "langMap", Msg: fmt.Sprintf("%q in langMap is not a language tag like zh-Hans, en or pt-BR.", k)}
 		}
 		if !validCode(v) {
 			return nil, fmt.Errorf("langMap gives %q for %s: a code is 1 to 35 letters, digits, - or _", v, c)

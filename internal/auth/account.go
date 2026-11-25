@@ -115,7 +115,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	}
 	if hasPassword {
 		if current == nil || *current == "" {
-			return errf(Invalid, "current is required: send the password you use now")
+			return errf(Invalid, "Current is required: send the password you use now.")
 		}
 		st := s.sec(ctx)
 		if err := s.gateIP(st, ip); err != nil {
@@ -129,11 +129,11 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 			}
 		}
 		if !ok {
-			return errf(Forbidden, "the current password is wrong")
+			return errf(Forbidden, "The current password is wrong.")
 		}
 		s.refundIP(ip)
 	} else if current != nil && *current != "" {
-		return errf(Invalid, "this account has no password yet; leave current out")
+		return errf(Invalid, "This account has no password yet; leave current out.")
 	}
 	nh, err := s.hasher.hash(ctx, newPassword)
 	if err != nil {
@@ -171,14 +171,14 @@ func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string)
 			found = found || i.ID == identityID
 		}
 		if !found {
-			return errf(NotFound, "no such identity")
+			return errf(NotFound, "No such identity.")
 		}
 		if len(ids) == 1 {
 			if _, err := store.GetPasswordHash(ctx, q, userID); errors.Is(err, store.ErrNotFound) {
 				if n, err := store.CountPasskeys(ctx, q, userID); err != nil {
 					return err
 				} else if n == 0 {
-					return errf(Conflict, "this is the only way you can sign in; set a password or a passkey first")
+					return errf(Conflict, "This is the only way you can sign in; set a password or a passkey first.")
 				}
 			} else if err != nil {
 				return err
@@ -231,7 +231,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	}
 	st := s.sec(ctx)
 	if patch.PasskeyRequired != nil && *patch.PasskeyRequired && !s.passkeysOn(st) {
-		return nil, coded(400, "passkey_unavailable", "passkeys cannot be used here: they need a --public-url that is https, and passkeys switched on")
+		return nil, coded(400, "passkey_unavailable", "Passkeys cannot be used here: they need a --public-url that is https, and passkeys switched on.")
 	}
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
@@ -243,19 +243,19 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		u, err := store.GetUser(ctx, q, store.ScopeOf(actor), targetID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return errf(NotFound, "no such user")
+				return errf(NotFound, "No such user.")
 			}
 			return err
 		}
 		isSite := actor.SiteAdmin && actor.Role == "admin"
 		if u.SiteAdmin && !isSite {
-			return errf(Forbidden, "only a site administrator may change a site administrator")
+			return errf(Forbidden, "Only a site administrator may change a site administrator.")
 		}
 		if patch.SiteAdmin != nil && !isSite {
-			return errf(Forbidden, "only a site administrator may make or end a site administrator")
+			return errf(Forbidden, "Only a site administrator may make or end a site administrator.")
 		}
 		if patch.RemoteExempt != nil && !isSite {
-			return errf(Forbidden, "only a site administrator may exempt a person from the site's requirement of a remote")
+			return errf(Forbidden, "Only a site administrator may exempt a person from the site's requirement of a remote.")
 		}
 		role, disabled := u.Role, u.Disabled
 		if patch.Role != nil {
@@ -265,7 +265,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			disabled = *patch.Disabled
 		}
 		if disabled && !u.Disabled && u.ID == actorID {
-			return errf(Conflict, "you cannot disable your own account")
+			return errf(Conflict, "You cannot disable your own account.")
 		}
 		// Promoting someone in the default tenant gives what administrators of it
 		// always had: the server (a site administrator may say otherwise).
@@ -280,7 +280,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			site = false
 		}
 		if patch.SiteAdmin != nil && *patch.SiteAdmin && role != "admin" {
-			return errf(Invalid, "a site administrator must be an administrator")
+			return errf(Invalid, "A site administrator must be an administrator.")
 		}
 		// One of a disabled tenant cannot sign in, so is not counted: losing
 		// them loses no one.
@@ -289,7 +289,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			if n, err := store.CountEnabledAdmins(ctx, q); err != nil {
 				return err
 			} else if n <= 1 {
-				return errf(Conflict, "there must be at least one enabled administrator")
+				return errf(Conflict, "There must be at least one enabled administrator.")
 			}
 			// Whenever ssoOnly is stored, not only while in effect: a provider
 			// enabled later, or the page leaving local_only, puts it in effect.
@@ -298,7 +298,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 					if n, err := store.CountEnabledPasswordAdmins(ctx, q); err != nil {
 						return err
 					} else if n <= 1 {
-						return errf(Conflict, "password sign-in is refused to everyone but administrators: keep at least one enabled administrator with a password")
+						return errf(Conflict, "Password sign-in is refused to everyone but administrators: keep at least one enabled administrator with a password.")
 					}
 				}
 			}
@@ -476,7 +476,7 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 		days = *daysGiven
 	}
 	if days < 1 || days > 30 {
-		return nil, errf(Invalid, "days is 1 to 30")
+		return nil, errf(Invalid, "Days is 1 to 30.")
 	}
 	now := s.now().UTC()
 	token := randomToken()
@@ -485,19 +485,19 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	}
 	isSite := actor.SiteAdmin && actor.Role == "admin"
 	if !isSite && tenantID != actor.TenantID {
-		return nil, errf(NotFound, "no such tenant")
+		return nil, errf(NotFound, "No such tenant.")
 	}
 	if t, err := store.GetTenant(ctx, s.st.Q(), tenantID); errors.Is(err, store.ErrNotFound) {
-		return nil, errf(NotFound, "no such tenant")
+		return nil, errf(NotFound, "No such tenant.")
 	} else if err != nil {
 		return nil, err
 	} else if t.Disabled {
-		return nil, errf(Conflict, "that tenant is disabled")
+		return nil, errf(Conflict, "That tenant is disabled.")
 	}
 	site := role == "admin" && isSite && tenantID == store.DefaultTenantID
 	if siteAdmin != nil {
 		if *siteAdmin && (!isSite || role != "admin") {
-			return nil, errf(Forbidden, "only a site administrator can invite a site administrator")
+			return nil, errf(Forbidden, "Only a site administrator can invite a site administrator.")
 		}
 		site = *siteAdmin
 	}
@@ -513,7 +513,7 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 			if barred, err := s.retiredName(ctx, s.st.Q(), f.Username); err != nil {
 				return nil, err
 			} else if barred {
-				return nil, errf(Exists, "that username is taken")
+				return nil, errf(Exists, "That username is taken.")
 			}
 		}
 	}
@@ -538,7 +538,7 @@ func (s *Service) OpenInvites(ctx context.Context, sc store.Scope) ([]store.Invi
 // DeleteInvite revokes an invite.
 func (s *Service) DeleteInvite(ctx context.Context, sc store.Scope, id string) error {
 	if err := store.DeleteInvite(ctx, s.st.Q(), sc, id); errors.Is(err, store.ErrNotFound) {
-		return errf(NotFound, "no such invite")
+		return errf(NotFound, "No such invite.")
 	} else {
 		return err
 	}
@@ -658,7 +658,7 @@ func (s *Service) UserCounts(ctx context.Context) (*Counts, error) {
 // UserPasskeys lists a user's passkeys for an administrator of the scope.
 func (s *Service) UserPasskeys(ctx context.Context, sc store.Scope, userID string) ([]PasskeyView, error) {
 	if _, err := store.GetUser(ctx, s.st.Q(), sc, userID); errors.Is(err, store.ErrNotFound) {
-		return nil, errf(NotFound, "no such user")
+		return nil, errf(NotFound, "No such user.")
 	} else if err != nil {
 		return nil, err
 	}

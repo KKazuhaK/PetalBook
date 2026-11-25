@@ -113,7 +113,7 @@ func withPiece(out map[string]any, body string, offset int) (map[string]any, err
 		end, size = end+n, size+jsonSize(r, n)
 	}
 	if room < 0 || (end == offset && offset < len(body)) {
-		return nil, &mcpError{Code: "too_large", Message: "the header of this page leaves no room for its body in the 1 MiB a result may be; the page cannot be read through MCP",
+		return nil, &mcpError{Code: "too_large", Message: "The header of this page leaves no room for its body in the 1 MiB a result may be; the page cannot be read through MCP.",
 			Details: map[string]any{"limitBytes": mcpMaxResult, "sizeBytes": len(b)}}
 	}
 	out["body"] = body[offset:end]

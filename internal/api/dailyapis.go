@@ -599,14 +599,14 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, er
 				}
 			}
 			if enc == "" {
-				return storedAPI{}, a, &codedError{code: codeHeaderNoValue, header: h.Name, msg: "the header " + h.Name + " has no value yet; give one"}
+				return storedAPI{}, a, &codedError{code: codeHeaderNoValue, header: h.Name, msg: "The header " + h.Name + " has no value yet; give one."}
 			}
 			// A kept value goes only to the request it was given for: with any
 			// change to the address (its path and query too) it is given again,
 			// by someone who knows it.
 			if a.URL != old.URL {
 				return storedAPI{}, a, &codedError{code: codeHeaderValueAgain, header: h.Name,
-					msg: "the address is not the one the value of the header " + h.Name + " was given for; give the value again"}
+					msg: "The address is not the one the value of the header " + h.Name + " was given for; give the value again."}
 			}
 			box := s.spaces.Secrets()
 			if box == nil {
@@ -638,7 +638,7 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, er
 		}
 		box := s.spaces.Secrets()
 		if box == nil {
-			return storedAPI{}, a, &space.InvalidError{Msg: "this server has no key for storing secrets, so it cannot keep a header value"}
+			return storedAPI{}, a, &space.InvalidError{Msg: "This server has no key for storing secrets, so it cannot keep a header value."}
 		}
 		enc, err := box.Seal("site", headerPurpose(checked.ID, h.Name, checked.URL), []byte(*h.Value))
 		if err != nil {
@@ -655,13 +655,13 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, er
 func jsonCoded(prefix string, err error) error {
 	var inv *space.InvalidError
 	if errors.As(err, &inv) && inv.Code != "" {
-		return &codedError{code: inv.Code, msg: prefix + inv.Msg}
+		return &codedError{code: inv.Code, msg: prefix + inv.Msg + "."}
 	}
-	return &space.InvalidError{Msg: prefix + err.Error()}
+	return &space.InvalidError{Msg: prefix + err.Error() + "."}
 }
 
 func badLangError(tag string) error {
-	return &codedError{code: space.CodeBadLanguage, msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR", tag)}
+	return &codedError{code: space.CodeBadLanguage, msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR.", tag)}
 }
 
 // adminPutDaily changes the default, the languages and what spaces may do.
@@ -673,7 +673,7 @@ func (s *server) adminPutDaily(c *call) {
 	}
 	for k := range req {
 		if k != "default" && k != "languages" && k != "allow" {
-			bad(c, "unknown key "+k+": the settings are default, languages and allow (interfaces have their own requests)")
+			bad(c, "Unknown key "+k+": the settings are default, languages and allow (interfaces have their own requests).")
 			return
 		}
 	}
@@ -684,11 +684,11 @@ func (s *server) adminPutDaily(c *call) {
 	if raw, ok := req["languages"]; ok {
 		var given []string
 		if err := json.Unmarshal(raw, &given); err != nil || given == nil {
-			bad(c, "languages is a list of language tags like zh-Hans and en")
+			bad(c, "Languages is a list of language tags like zh-Hans and en.")
 			return
 		}
 		if len(given) > 30 {
-			bad(c, "at most 30 languages")
+			bad(c, "At most 30 languages.")
 			return
 		}
 		seen := map[string]bool{}
@@ -711,7 +711,7 @@ func (s *server) adminPutDaily(c *call) {
 	}
 	if raw, ok := req["allow"]; ok {
 		if err := json.Unmarshal(raw, &allow); err != nil || allow.Own == nil && allow.API == nil {
-			bad(c, "allow is {\"own\": true or false, \"api\": true or false}")
+			bad(c, "Allow is {\"own\": true or false, \"api\": true or false}.")
 			return
 		}
 	}
@@ -771,7 +771,7 @@ func (s *server) adminPutDailyAPI(c *call) {
 	}
 	id := c.r.PathValue("id")
 	if b.ID != "" && b.ID != id {
-		bad(c, "the id in the body is not the one in the address")
+		bad(c, "The id in the body is not the one in the address.")
 		return
 	}
 	b.ID = id
@@ -791,7 +791,7 @@ func (s *server) adminPutDailyAPI(c *call) {
 		if at >= 0 {
 			old = &site.APIs[at]
 		} else if len(site.APIs) >= dailyfetch.MaxAPIs {
-			return &space.InvalidError{Msg: "at most 50 interfaces"}
+			return &space.InvalidError{Msg: "At most 50 interfaces."}
 		}
 		made, _, err := s.build(b, old)
 		if err != nil {
@@ -817,7 +817,7 @@ func (s *server) putBuiltinFromAPI(c *call, p dailyfetch.Provider, b apiBody) {
 	def, _ := p.WithOptions(nil)
 	same := func(field, got, want string) error {
 		if got != "" && got != want && !(field == "url" && got == def.URL) {
-			return &codedError{code: codeBuiltin, field: field, msg: "the " + field + " of the built-in interface " + p.ID + " cannot be changed"}
+			return &codedError{code: codeBuiltin, field: field, msg: "The " + field + " of the built-in interface " + p.ID + " cannot be changed."}
 		}
 		return nil
 	}
@@ -833,7 +833,7 @@ func (s *server) putBuiltinFromAPI(c *call, p dailyfetch.Provider, b apiBody) {
 		if len(b.Headers) > 0 {
 			field = "headers"
 		}
-		s.fail(c.w, &codedError{code: codeBuiltin, field: field, msg: "the " + field + " of the built-in interface " + p.ID + " cannot be changed"})
+		s.fail(c.w, &codedError{code: codeBuiltin, field: field, msg: "The " + field + " of the built-in interface " + p.ID + " cannot be changed."})
 		return
 	}
 	in := providerBody{Enabled: b.Enabled, Refresh: b.Refresh, Minutes: b.RefreshMinutes, RPS: b.RPS}
@@ -856,7 +856,7 @@ type providerBody struct {
 func (s *server) adminPutDailyProvider(c *call) {
 	p, ok := dailyfetch.ProviderByID(c.r.PathValue("id"))
 	if !ok {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such built-in interface")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such built-in interface.")
 		return
 	}
 	var in providerBody
@@ -864,7 +864,7 @@ func (s *server) adminPutDailyProvider(c *call) {
 		return
 	}
 	if in.Enabled == nil {
-		bad(c, "give enabled (true or false)")
+		bad(c, "Give enabled (true or false).")
 		return
 	}
 	s.putProvider(c, p, in, false)
@@ -881,7 +881,7 @@ func (s *server) putProvider(c *call, p dailyfetch.Provider, in providerBody, fr
 		if st.Enabled {
 			for _, a := range site.APIs {
 				if a.ID == p.ID {
-					return &space.InvalidError{Msg: "an interface of the same id exists; delete it before switching the built-in one on"}
+					return &space.InvalidError{Msg: "An interface of the same id exists; delete it before switching the built-in one on."}
 				}
 			}
 		}
@@ -891,15 +891,15 @@ func (s *server) putProvider(c *call, p dailyfetch.Provider, in providerBody, fr
 			st.Refresh, st.RefreshMinutes = in.Refresh, 0
 		case dailyfetch.RefreshMinutes:
 			if in.Minutes < 1 || in.Minutes > 1440 {
-				return &space.InvalidError{Msg: "minutes is 1 to 1440"}
+				return &space.InvalidError{Msg: "Minutes is 1 to 1440."}
 			}
 			st.Refresh, st.RefreshMinutes = in.Refresh, in.Minutes
 		default:
-			return &space.InvalidError{Msg: "refresh is daily, hourly or minutes"}
+			return &space.InvalidError{Msg: "Refresh is daily, hourly or minutes."}
 		}
 		if in.RPS != 0 {
 			if in.RPS < 0.01 || in.RPS > p.RPS {
-				return &space.InvalidError{Msg: fmt.Sprintf("rps is 0.01 to %g, the most %s allows", p.RPS, p.Name)}
+				return &space.InvalidError{Msg: fmt.Sprintf("Rps is 0.01 to %g, the most %s allows.", p.RPS, p.Name)}
 			}
 			st.RPS = in.RPS
 			if in.RPS == p.RPS {
@@ -943,7 +943,7 @@ func (s *server) adminDeleteDailyAPI(c *call) {
 		}
 		if !found {
 			if _, ok := dailyfetch.ProviderByID(id); ok {
-				return &codedError{code: codeBuiltin, msg: "a built-in interface cannot be deleted; switch it off"}
+				return &codedError{code: codeBuiltin, msg: "A built-in interface cannot be deleted; switch it off."}
 			}
 			return errNoInterface
 		}
@@ -951,7 +951,7 @@ func (s *server) adminDeleteDailyAPI(c *call) {
 		return nil
 	})
 	if errors.Is(err, errNoInterface) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such interface")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such interface.")
 		return
 	}
 	if err != nil {
@@ -987,7 +987,7 @@ func (s *server) adminTryDailyAPI(c *call) {
 		date = time.Now().UTC().Format("2006-01-02")
 	}
 	if !space.ValidDailyDate(date) {
-		bad(c, "date must be a day like 2026-11-23")
+		bad(c, "Date must be a day like 2026-11-23.")
 		return
 	}
 	ctx := c.r.Context()
@@ -1013,7 +1013,7 @@ func (s *server) adminTryDailyAPI(c *call) {
 	res, err := s.opt.DailyFetch.Probe(ctx, rt, lang, date)
 	if errors.Is(err, dailyfetch.ErrRateLimited) {
 		c.w.Header().Set("Retry-After", "1")
-		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "trying too often; wait a moment")
+		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Trying too often; wait a moment.")
 		return
 	}
 	if err != nil {
@@ -1209,7 +1209,7 @@ func (s *server) putDailyPrefs(c *call) {
 		return
 	}
 	if req.Inherit == nil || req.APIs == nil {
-		bad(c, "give inherit (true or false) and apis (the ids of the interfaces to use)")
+		bad(c, "Give inherit (true or false) and apis (the ids of the interfaces to use).")
 		return
 	}
 	ctx := c.r.Context()
@@ -1236,7 +1236,7 @@ func (s *server) putDailyPrefs(c *call) {
 	ids := []string{}
 	for _, id := range *req.APIs {
 		if !known[id] {
-			bad(c, "there is no interface "+id+"; only those the administrators set up and enabled can be used")
+			bad(c, "There is no interface "+id+"; only those the administrators set up and enabled can be used.")
 			return
 		}
 		if !seen[id] {
@@ -1340,7 +1340,7 @@ func (s *server) spaceSources(choice store.SpaceChoice, all []storedAPI, allow d
 // pages of this space, as a folder, tag or type with filters.
 func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (sourceLists, error) {
 	if len(in) > 31 {
-		return nil, &space.InvalidError{Msg: "at most 30 languages"}
+		return nil, &space.InvalidError{Msg: "At most 30 languages."}
 	}
 	out := make(sourceLists, len(in))
 	for l, list := range in {
@@ -1350,12 +1350,12 @@ func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (so
 				return nil, badLangError(l)
 			}
 			if _, dup := out[cl]; dup {
-				return nil, &space.InvalidError{Msg: fmt.Sprintf("%s is given twice", cl)}
+				return nil, &space.InvalidError{Msg: fmt.Sprintf("%s is given twice.", cl)}
 			}
 			l = cl
 		}
 		if len(list) > maxAPIsPerLanguage {
-			return nil, &space.InvalidError{Msg: fmt.Sprintf("each language has at most %d sources", maxAPIsPerLanguage)}
+			return nil, &space.InvalidError{Msg: fmt.Sprintf("Each language has at most %d sources.", maxAPIsPerLanguage)}
 		}
 		checked := make([]dailySource, 0, len(list))
 		for _, src := range list {
@@ -1363,16 +1363,16 @@ func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (so
 			switch src.Kind {
 			case "api":
 				if src.Space != "" || src.Source != nil {
-					return nil, &space.InvalidError{Msg: "a source that is an interface has an id and options only"}
+					return nil, &space.InvalidError{Msg: "A source that is an interface has an id and options only."}
 				}
 				api := slices.IndexFunc(site.all(), func(a storedAPI) bool { return a.ID == src.ID && a.Enabled })
 				if api < 0 {
-					return nil, &space.InvalidError{Msg: "there is no interface " + src.ID + "; only those the administrators set up and enabled can be used"}
+					return nil, &space.InvalidError{Msg: "There is no interface " + src.ID + "; only those the administrators set up and enabled can be used."}
 				}
 				if len(src.Options) > 0 {
 					p, ok := dailyfetch.ProviderByID(src.ID)
 					if !ok || !site.all()[api].Builtin {
-						return nil, &space.InvalidError{Msg: "options are for built-in interfaces; " + src.ID + " is not one"}
+						return nil, &space.InvalidError{Msg: "Options are for built-in interfaces; " + src.ID + " is not one."}
 					}
 					canon, err := p.CheckOptions(src.Options)
 					if err != nil {
@@ -1382,11 +1382,11 @@ func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (so
 				}
 			case "list":
 				if src.ID != "" || src.Options != nil || src.Space != "" || src.Source != nil {
-					return nil, &space.InvalidError{Msg: "a source that is the lines has nothing else"}
+					return nil, &space.InvalidError{Msg: "A source that is the lines has nothing else."}
 				}
 			case "own":
 				if src.ID != "" || src.Options != nil || src.Space != "" || src.Source == nil {
-					return nil, &space.InvalidError{Msg: "a source that is pages of this space needs a source (folder, tag or type)"}
+					return nil, &space.InvalidError{Msg: "A source that is pages of this space needs a source (folder, tag or type)."}
 				}
 				cfg, err := c.sp.Space.CheckDailyConfig(*src.Source)
 				if err != nil {
@@ -1394,7 +1394,7 @@ func (s *server) checkSpaceSources(c *call, in sourceLists, site *siteDaily) (so
 				}
 				src.Source = &cfg
 			default:
-				return nil, &space.InvalidError{Msg: "kind of a source is api, list or own"}
+				return nil, &space.InvalidError{Msg: "Kind of a source is api, list or own."}
 			}
 			checked = append(checked, src)
 		}

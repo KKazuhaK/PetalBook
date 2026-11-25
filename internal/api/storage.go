@@ -168,7 +168,7 @@ func (s *server) adminPutStorage(c *call) {
 		}
 	}
 	if hosts != nil && s.spaces.HostsFromFlag() {
-		writeError(c.w, http.StatusConflict, "conflict", "the allowed hosts were given with --remote-host, which wins; remove the flag to set them here")
+		writeError(c.w, http.StatusConflict, "conflict", "The allowed hosts were given with --remote-host, which wins; remove the flag to set them here.")
 		return
 	}
 	patch := func(st *spaces.StorageSettings) error {
@@ -318,7 +318,7 @@ func (s *server) adminPutSpaceStorage(c *call) {
 	// The site's storage (site administrators only): a space of any tenant.
 	if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.AllTenants(), id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+			writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 			return
 		}
 		s.fail(c.w, err)

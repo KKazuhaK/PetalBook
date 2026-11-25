@@ -166,7 +166,7 @@ func (s *server) jobTenants(ctx context.Context, req confirmRequest, caller stor
 func (s *server) jobActor(ctx context.Context, id string) (store.User, error) {
 	u, err := store.GetUser(ctx, s.opt.Store.Q(), store.AllTenants(), id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && (u.Role != "admin" || u.Disabled)) {
-		return store.User{}, &auth.Error{Kind: auth.Forbidden, Msg: "the administrator who started the job may not do this any more"}
+		return store.User{}, &auth.Error{Kind: auth.Forbidden, Msg: "The administrator who started the job may not do this any more."}
 	}
 	if err != nil {
 		return store.User{}, err
@@ -211,12 +211,12 @@ func (s *server) adminBulk(c *call) {
 		return
 	}
 	if req.Confirm == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a bulk action needs the token of a confirmation: ask POST /api/admin/confirm first")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A bulk action needs the token of a confirmation: ask POST /api/admin/confirm first.")
 		return
 	}
 	e, ok := s.confirms.takeAny(req.Confirm, c.user().ID, s.now())
 	if !ok {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such confirmation: it was used, has expired, or is not yours")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such confirmation: it was used, has expired, or is not yours.")
 		return
 	}
 	// The plan is made again from the records now; what it was made from must be
@@ -226,7 +226,7 @@ func (s *server) adminBulk(c *call) {
 		return
 	}
 	if plan.Hash != e.hash {
-		writeError(c.w, http.StatusConflict, "confirm_stale", "what the plan was made from has changed: ask again")
+		writeError(c.w, http.StatusConflict, "confirm_stale", "What the plan was made from has changed: ask again.")
 		return
 	}
 	ids := e.req.idList()
@@ -252,7 +252,7 @@ func (s *server) adminBulk(c *call) {
 		// The server is stopping: the job never starts, and reads as a restart
 		// leaves it.
 		s.writeJob(&job, store.JobInterrupted, 0, nil)
-		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "the server is stopping: ask again once it has started")
+		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is stopping: ask again once it has started.")
 		return
 	}
 	s.auditRow(c, "bulk_started", job.TenantID, map[string]any{"job": job.ID, "action": job.Action, "count": job.Total, "failed": 0})
@@ -264,7 +264,7 @@ func (s *server) adminBulk(c *call) {
 func (s *server) adminGetJob(c *call) {
 	j, err := store.GetBulkJob(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such job")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such job.")
 		return
 	}
 	if err != nil {
@@ -412,14 +412,14 @@ func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, ac
 		return s.spaces.SetDisabled(ctx, sc, id, req.Action == "disable_spaces")
 	case "evict":
 		if !(actor.SiteAdmin && actor.Role == "admin") {
-			return &auth.Error{Kind: auth.Forbidden, Msg: "only an administrator of the whole server may do that"}
+			return &auth.Error{Kind: auth.Forbidden, Msg: "Only an administrator of the whole server may do that."}
 		}
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		return s.spaces.Evict(ectx, id, spaces.EvictOptions{AdminRequest: true})
 	case "pin", "unpin":
 		if !(actor.SiteAdmin && actor.Role == "admin") {
-			return &auth.Error{Kind: auth.Forbidden, Msg: "only an administrator of the whole server may do that"}
+			return &auth.Error{Kind: auth.Forbidden, Msg: "Only an administrator of the whole server may do that."}
 		}
 		return s.spaces.SetPinned(ctx, id, req.Action == "pin")
 	case "delete_users":
@@ -431,7 +431,7 @@ func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, ac
 		return err
 	case "purge":
 		if !(actor.SiteAdmin && actor.Role == "admin") {
-			return &auth.Error{Kind: auth.Forbidden, Msg: "only an administrator of the whole server may purge the recycle bin early"}
+			return &auth.Error{Kind: auth.Forbidden, Msg: "Only an administrator of the whole server may purge the recycle bin early."}
 		}
 		it, err := s.spaces.PurgeItem(ctx, sc, id)
 		if err != nil {

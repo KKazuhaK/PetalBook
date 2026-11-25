@@ -190,3 +190,53 @@ func TestErrorCodesListIsCurrent(t *testing.T) {
 		t.Fatalf("web/src/i18n/errorCodes.json is not the list of error codes in the source; run: go test ./internal/api -run TestErrorCodesListIsCurrent -update-codes (%v)", err)
 	}
 }
+
+// TestServerSentencesAreSentences keeps the words the server puts in `message`
+// written as sentences (a capital letter first, a full stop last): the web app
+// shows its own text by code, and these are for the people who use the API and
+// read the logs. It looks at the messages that are one string in the source; a
+// message that starts with a name of the API (limit, oidc.issuer) may start in
+// lower case.
+func TestServerSentencesAreSentences(t *testing.T) {
+	fset := token.NewFileSet()
+	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			id, _ := call.Fun.(*ast.Ident)
+			if id == nil || id.Name != "writeError" || len(call.Args) != 4 {
+				return true
+			}
+			lit, ok := call.Args[3].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			msg, _ := strconv.Unquote(lit.Value)
+			if msg == "" {
+				return true
+			}
+			pos := fset.Position(lit.Pos())
+			if last := msg[len(msg)-1]; last != '.' && last != '?' && last != '!' {
+				t.Errorf("%s: %q does not end with a full stop", pos, msg)
+			}
+			word, _, _ := strings.Cut(msg, " ")
+			if word[0] >= 'a' && word[0] <= 'z' && strings.Trim(word, "abcdefghijklmnopqrstuvwxyz") == "" {
+				t.Errorf("%s: %q does not start with a capital letter", pos, msg)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

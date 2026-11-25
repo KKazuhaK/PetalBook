@@ -91,7 +91,7 @@ func (s *server) toTenantRef(id string) *tenantRefResp {
 	return nil
 }
 
-func tenantNotFound(c *call) { writeError(c.w, http.StatusNotFound, "not_found", "no such tenant") }
+func tenantNotFound(c *call) { writeError(c.w, http.StatusNotFound, "not_found", "No such tenant.") }
 
 // --- the switch ------------------------------------------------------------------------
 
@@ -131,7 +131,7 @@ func (s *server) adminPutTenancy(c *call) {
 		return
 	}
 	if req.Enabled == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give enabled: true or false")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give enabled: true or false.")
 		return
 	}
 	ctx := c.r.Context()
@@ -253,12 +253,12 @@ func (s *server) adminCreateTenant(c *call) {
 		return
 	}
 	if !on {
-		writeError(c.w, http.StatusConflict, "tenants_off", "more than the default tenant is switched off; switch it on at /api/admin/tenancy")
+		writeError(c.w, http.StatusConflict, "tenants_off", "More than the default tenant is switched off; switch it on at /api/admin/tenancy.")
 		return
 	}
 	name, ok := cleanTenantName(req.Name)
 	if !ok || !tenantSlugRE.MatchString(req.Slug) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters.")
 		return
 	}
 	// The first administrator's details are checked as the invite checks them,
@@ -276,15 +276,15 @@ func (s *server) adminCreateTenant(c *call) {
 	err = s.opt.Store.CreateTenant(ctx, t)
 	switch {
 	case errors.Is(err, store.ErrTenantLimit):
-		writeError(c.w, http.StatusConflict, "tenant_limit", "a server has at most "+strconv.Itoa(store.MaxTenants)+" tenants")
+		writeError(c.w, http.StatusConflict, "tenant_limit", "A server has at most "+strconv.Itoa(store.MaxTenants)+" tenants.")
 		return
 	case store.IsUnique(err):
 		if on, _ := store.UniqueOn(err); strings.Contains(on, "slug") {
-			writeError(c.w, http.StatusConflict, "exists", "that slug is taken")
+			writeError(c.w, http.StatusConflict, "exists", "That slug is taken.")
 			return
 		}
 		// A taken id: a new one is made on the next request.
-		writeError(c.w, http.StatusConflict, "conflict", "try again")
+		writeError(c.w, http.StatusConflict, "conflict", "Try again.")
 		return
 	case err != nil:
 		s.fail(c.w, err)
@@ -339,11 +339,11 @@ func (s *server) adminPatchTenant(c *call) {
 		case "name":
 		case "slug", "disabled", "quota":
 			if !c.isSiteAdmin() {
-				writeError(c.w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may change "+k)
+				writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may change "+k+".")
 				return
 			}
 		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "unknown field "+k)
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+".")
 			return
 		}
 	}
@@ -356,7 +356,7 @@ func (s *server) adminPatchTenant(c *call) {
 			n, ok = cleanTenantName(v)
 		}
 		if !ok {
-			writeError(c.w, http.StatusBadRequest, "invalid", "name is 1 to 80 characters")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Name is 1 to 80 characters.")
 			return
 		}
 		if n != t.Name {
@@ -366,11 +366,11 @@ func (s *server) adminPatchTenant(c *call) {
 	if raw, ok := req["slug"]; ok {
 		var v string
 		if json.Unmarshal(raw, &v) != nil || !tenantSlugRE.MatchString(v) {
-			writeError(c.w, http.StatusBadRequest, "invalid", "slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit.")
 			return
 		}
 		if t.IsDefault() && v != store.DefaultTenantSlug {
-			writeError(c.w, http.StatusConflict, "default_tenant", "the default tenant's slug is default")
+			writeError(c.w, http.StatusConflict, "default_tenant", "The default tenant's slug is default.")
 			return
 		}
 		if v != t.Slug {
@@ -380,15 +380,15 @@ func (s *server) adminPatchTenant(c *call) {
 	if raw, ok := req["disabled"]; ok {
 		var v bool
 		if json.Unmarshal(raw, &v) != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "disabled is true or false")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Disabled is true or false.")
 			return
 		}
 		if v && t.IsDefault() {
-			writeError(c.w, http.StatusConflict, "default_tenant", "the default tenant cannot be disabled")
+			writeError(c.w, http.StatusConflict, "default_tenant", "The default tenant cannot be disabled.")
 			return
 		}
 		if v && t.ID == c.user().TenantID {
-			writeError(c.w, http.StatusConflict, "conflict", "you cannot disable your own tenant")
+			writeError(c.w, http.StatusConflict, "conflict", "You cannot disable your own tenant.")
 			return
 		}
 		if v && !t.Disabled {
@@ -397,7 +397,7 @@ func (s *server) adminPatchTenant(c *call) {
 				s.fail(c.w, err)
 				return
 			} else if n < 1 {
-				writeError(c.w, http.StatusConflict, "conflict", "there must be at least one enabled administrator of the server outside this tenant")
+				writeError(c.w, http.StatusConflict, "conflict", "There must be at least one enabled administrator of the server outside this tenant.")
 				return
 			}
 		}
@@ -408,18 +408,18 @@ func (s *server) adminPatchTenant(c *call) {
 	if raw, ok := req["quota"]; ok {
 		var in map[string]json.RawMessage
 		if json.Unmarshal(raw, &in) != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "quota is an object")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Quota is an object.")
 			return
 		}
 		q := parseQuota(t.Quota)
 		for k, v := range in {
 			if k != "people" && k != "spaces" && k != "bytes" && k != "pages" {
-				writeError(c.w, http.StatusBadRequest, "invalid", "quota has people, spaces, bytes and pages")
+				writeError(c.w, http.StatusBadRequest, "invalid", "Quota has people, spaces, bytes and pages.")
 				return
 			}
 			var n *int64
 			if json.Unmarshal(v, &n) != nil || n != nil && (*n < 0 || *n > 1<<50) {
-				writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+" is a number from 0, or null for no limit")
+				writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+" is a number from 0, or null for no limit.")
 				return
 			}
 			q[k] = n
@@ -433,7 +433,7 @@ func (s *server) adminPatchTenant(c *call) {
 		t.Updated = time.Now().UTC()
 		if err := s.opt.Store.UpdateTenant(c.r.Context(), t); err != nil {
 			if on, ok := store.UniqueOn(err); ok && strings.Contains(on, "slug") {
-				writeError(c.w, http.StatusConflict, "exists", "that slug is taken")
+				writeError(c.w, http.StatusConflict, "exists", "That slug is taken.")
 				return
 			}
 			s.fail(c.w, err)
@@ -469,7 +469,7 @@ func (s *server) adminDeleteTenant(c *call) {
 		return
 	}
 	if t.IsDefault() {
-		writeError(c.w, http.StatusConflict, "default_tenant", "the default tenant cannot be deleted")
+		writeError(c.w, http.StatusConflict, "default_tenant", "The default tenant cannot be deleted.")
 		return
 	}
 	err := s.opt.Store.DeleteTenant(c.r.Context(), t.ID)

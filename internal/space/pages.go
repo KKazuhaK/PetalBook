@@ -254,7 +254,7 @@ func placeAfterKnown(m page.Meta, f page.Field) page.Meta {
 
 func checkBody(body string) error {
 	if !utf8.ValidString(body) {
-		return invalidf("body is not valid UTF-8")
+		return invalidf("Body is not valid UTF-8.")
 	}
 	return nil
 }
@@ -301,7 +301,7 @@ func (s *Space) createLocked(tx *txn, in CreateInput, meta page.Meta) (*Page, er
 
 	doc := page.Parse(nil)
 	if err := doc.SetMeta(meta); err != nil {
-		return nil, invalidf("%v", err)
+		return nil, invalidf("%v.", err)
 	}
 	doc.SetBody(in.Body)
 	data := doc.Bytes()
@@ -361,7 +361,7 @@ func saveMeta(id string, old, req page.Meta) (page.Meta, error) {
 	in := req.Clone()
 	if i := in.Index("id"); i >= 0 {
 		if v := in[i].Value; v != nil && v != id {
-			return nil, invalidf("meta.id does not match the page id")
+			return nil, invalidf("meta.id does not match the page id.")
 		}
 		in[i].Value = id
 	} else {
@@ -486,7 +486,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		return nil, err
 	}
 	if err := doc.SetMeta(newMeta); err != nil {
-		return nil, invalidf("%v", err)
+		return nil, invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	newData := s.withIDs(rel, s.rebaseFile(whole, doc.Bytes()))
@@ -568,7 +568,7 @@ func (s *Space) CheckSaveSize(by Author, id string, meta page.Meta, body string)
 		return err
 	}
 	if err := doc.SetMeta(newMeta); err != nil {
-		return invalidf("%v", err)
+		return invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	return by.checkFileSize(rel, int64(len(doc.Bytes())), int64(len(data)))
@@ -594,7 +594,7 @@ func (s *Space) Equivalent(id, baseRev string, meta page.Meta, body string) (*Pa
 		return nil, false, err
 	}
 	if err := doc.SetMeta(newMeta); err != nil {
-		return nil, false, invalidf("%v", err)
+		return nil, false, invalidf("%v.", err)
 	}
 	doc.SetBody(body)
 	same := bytes.Equal(s.withIDs(rel, s.rebaseFile(s.rb.chain(id, baseRev), doc.Bytes())), data) && old.Title() == newMeta.Title()
@@ -800,11 +800,11 @@ const MaxPatchProps = 200
 func checkPropKey(key string) error {
 	switch {
 	case key == "" || len(key) > 256 || !utf8.ValidString(key) || strings.IndexFunc(key, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0:
-		return invalidf("a property key is 1 to 256 bytes of text with no control characters")
+		return invalidf("A property key is 1 to 256 bytes of text with no control characters.")
 	case page.IsBuiltinKey(key):
-		return invalidf("%q is a field of every page; change it by saving the page", key)
+		return invalidf("%q is a field of every page; change it by saving the page.", key)
 	case page.IsReservedKey(key):
-		return invalidf("%q is reserved", key)
+		return invalidf("%q is reserved.", key)
 	}
 	return nil
 }
@@ -826,7 +826,7 @@ func (s *Space) PatchProps(by Author, id, baseRev string, set page.Meta, unset [
 // checkProps is the checks of PatchProps on what it is asked to change.
 func checkProps(set page.Meta, unset []string) error {
 	if len(set)+len(unset) > MaxPatchProps {
-		return invalidf("at most %d properties can be changed at once", MaxPatchProps)
+		return invalidf("At most %d properties can be changed at once.", MaxPatchProps)
 	}
 	seen := map[string]bool{}
 	for _, f := range set {
@@ -840,7 +840,7 @@ func checkProps(set page.Meta, unset []string) error {
 			return err
 		}
 		if seen[k] {
-			return invalidf("%q is both set and unset", k)
+			return invalidf("%q is both set and unset.", k)
 		}
 		seen[k] = true
 	}
@@ -901,7 +901,7 @@ func (s *Space) patchProps(by Author, id, baseRev string, set page.Meta, unset [
 		}
 		meta = applyProps(meta, set, unset)
 		if err := doc.SetMeta(meta); err != nil {
-			return nil, invalidf("%v", err)
+			return nil, invalidf("%v.", err)
 		}
 		newData := doc.Bytes()
 		if bytes.Equal(newData, data) {

@@ -130,7 +130,7 @@ func (m *Manager) credential(id string, r *store.Remote) gitstore.Credential {
 		return gitstore.Token{Username: user, URL: r.URL, Get: func() (string, error) {
 			p, ok := m.opt.Connections.Get(prov)
 			if !ok {
-				return "", &gitstore.CredentialError{Code: connections.CodeNotConfigured, Msg: "this server has no connection to " + prov + " any more"}
+				return "", &gitstore.CredentialError{Code: connections.CodeNotConfigured, Msg: "This server has no connection to " + prov + " any more."}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -386,7 +386,7 @@ func (m *Manager) sameTenant(ctx context.Context, provider, tenantID, userID str
 	_, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(tenantID), userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return &connections.Error{Provider: provider, Code: connections.CodeForbidden, Status: http.StatusForbidden,
-			Msg: "a connection syncs only spaces of its own tenant: use the App (via app), or let someone of the space's tenant connect it"}
+			Msg: "A connection syncs only spaces of its own tenant: use the App (via app), or let someone of the space's tenant connect it."}
 	}
 	return err
 }
@@ -575,7 +575,7 @@ func (m *Manager) Disconnect(ctx context.Context, h *Handle) error {
 	// Attachments in their own repository are read through the space's remote;
 	// without one the space could not serve them.
 	if row, err := store.GetAssetRemote(ctx, m.opt.Store.Q(), id); err == nil && row.URL != "" {
-		return assetsConflict("the space has an attachment repository; disconnect that first")
+		return assetsConflict("The space has an attachment repository; disconnect that first.")
 	}
 	// A local space is the complete copy: a partial clone is made whole first
 	// (it waits for the fetch like any restore, and fails with the space still

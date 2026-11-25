@@ -128,7 +128,7 @@ func (m *Manager) CreateGroup(ctx context.Context, tenantID, name, description, 
 				return err
 			}
 			if n >= MaxGroups {
-				return limitErr("a tenant has at most %d groups; this one has %d", MaxGroups, n)
+				return limitErr("A tenant has at most %d groups; this one has %d.", MaxGroups, n)
 			}
 			return store.InsertGroup(ctx, q, g)
 		})
@@ -335,7 +335,7 @@ func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string,
 		}
 		for _, u := range fresh {
 			if groupsOf[u]+1 > MaxUserGroups {
-				return limitErr("a person is in at most %d groups", MaxUserGroups)
+				return limitErr("A person is in at most %d groups.", MaxUserGroups)
 			}
 		}
 		n, err := store.CountGroupPeople(ctx, q, id)
@@ -343,7 +343,7 @@ func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string,
 			return err
 		}
 		if n+len(fresh) > MaxGroupPeople {
-			return limitErr("a group has at most %d people", MaxGroupPeople)
+			return limitErr("A group has at most %d people.", MaxGroupPeople)
 		}
 		return store.AddLocalMembers(ctx, q, id, fresh, m.opt.Now())
 	})
@@ -487,7 +487,7 @@ func (m *Manager) AddSpaceGroup(ctx context.Context, h *Handle, userID, groupID,
 			return err
 		}
 		if n >= MaxSpaceGroups {
-			return limitErr("a space has at most %d groups", MaxSpaceGroups)
+			return limitErr("A space has at most %d groups.", MaxSpaceGroups)
 		}
 		// The space first, then the group: the order every change here takes.
 		if err := store.LockGroup(ctx, q, groupID); err != nil {

@@ -205,10 +205,10 @@ func (m *Manager) parseHost(raw string) (hostSpec, error) {
 	}
 	raw = strings.TrimSuffix(raw, "/")
 	if scheme != "https" && !(scheme == "http" && m.opt.Unsafe) {
-		return hostSpec{}, invalid(ReasonHost, "the host is given without a scheme (it is always https)")
+		return hostSpec{}, invalid(ReasonHost, "The host is given without a scheme (it is always https).")
 	}
 	if raw == "" || strings.ContainsAny(raw, "/?#@\\ \t\r\n%") {
-		return hostSpec{}, invalid(ReasonHost, "the host is a name or address, with a port if it has one: no path, user or query")
+		return hostSpec{}, invalid(ReasonHost, "The host is a name or address, with a port if it has one: no path, user or query.")
 	}
 	name, port := raw, ""
 	if h, p, err := net.SplitHostPort(raw); err == nil {
@@ -216,30 +216,30 @@ func (m *Manager) parseHost(raw string) (hostSpec, error) {
 	} else if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
 		name = raw[1 : len(raw)-1]
 	} else if strings.HasPrefix(raw, "[") {
-		return hostSpec{}, invalid(ReasonHost, "the host is not valid")
+		return hostSpec{}, invalid(ReasonHost, "The host is not valid.")
 	}
 	name = strings.ToLower(strings.TrimSuffix(name, "."))
 	if port != "" {
 		n := 0
 		for _, r := range port {
 			if r < '0' || r > '9' || n > 65535 {
-				return hostSpec{}, invalid(ReasonHost, "the port is not valid")
+				return hostSpec{}, invalid(ReasonHost, "The port is not valid.")
 			}
 			n = n*10 + int(r-'0')
 		}
 		if n < 1 || n > 65535 {
-			return hostSpec{}, invalid(ReasonHost, "the port is not valid")
+			return hostSpec{}, invalid(ReasonHost, "The port is not valid.")
 		}
 	}
 	if ip := net.ParseIP(name); ip != nil {
 		name = ip.String()
 	} else {
 		if len(name) > 253 || name == "" {
-			return hostSpec{}, invalid(ReasonHost, "the host name is not valid")
+			return hostSpec{}, invalid(ReasonHost, "The host name is not valid.")
 		}
 		for _, l := range strings.Split(name, ".") {
 			if !labelR.MatchString(l) {
-				return hostSpec{}, invalid(ReasonHost, "the host name is not valid")
+				return hostSpec{}, invalid(ReasonHost, "The host name is not valid.")
 			}
 		}
 	}
@@ -254,7 +254,7 @@ func (m *Manager) parseHost(raw string) (hostSpec, error) {
 }
 
 func invalid(reason, msg string) *connections.Error {
-	e := connections.Errorf("", http.StatusBadRequest, connections.CodeInvalid, "%s", msg)
+	e := connections.Errorf("", http.StatusBadRequest, connections.CodeInvalid, "%s.", msg)
 	e.Reason = reason
 	return e
 }
@@ -305,29 +305,29 @@ func validClient(id, sec string) bool {
 func (m *Manager) CreateProvider(ctx context.Context, actorID string, body []byte) (connections.Provider, any, error) {
 	var req createRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, nil, connections.Errorf("", http.StatusBadRequest, connections.CodeInvalid, "the body is not what this takes: %s", err.Error())
+		return nil, nil, connections.Errorf("", http.StatusBadRequest, connections.CodeInvalid, "The body is not what this takes: %s.", err.Error())
 	}
 	if !idRe.MatchString(req.ID) || reservedIDs[req.ID] || strings.HasPrefix(req.ID, "t-") {
 		return nil, nil, connections.Errorf("", http.StatusBadRequest, connections.CodeInvalid,
-			"id is 1 to 40 lowercase letters, digits and '-' (not starting or ending with '-', not git or github, not starting with t-)")
+			"ID is 1 to 40 lowercase letters, digits and '-' (not starting or ending with '-', not git or github, not starting with t-).")
 	}
 	d := m.driverFor(req.Type)
 	if d == nil {
-		return nil, nil, invalid(ReasonType, "type is gitlab or gitea (Forgejo and Codeberg are gitea)")
+		return nil, nil, invalid(ReasonType, "Type is gitlab or gitea (Forgejo and Codeberg are gitea).")
 	}
 	hs, err := m.parseHost(req.Host)
 	if err != nil {
 		return nil, nil, withProvider(err, req.ID)
 	}
 	if !validClient(req.ClientID, req.ClientSecret) {
-		return nil, nil, connections.Errorf(req.ID, http.StatusBadRequest, connections.CodeInvalid, "clientId and clientSecret are required")
+		return nil, nil, connections.Errorf(req.ID, http.StatusBadRequest, connections.CodeInvalid, "clientId and clientSecret are required.")
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = defaultName(req.Type, hs.host)
 	}
 	if !validName(name) {
-		return nil, nil, connections.Errorf(req.ID, http.StatusBadRequest, connections.CodeInvalid, "name is at most 80 characters, without control characters")
+		return nil, nil, connections.Errorf(req.ID, http.StatusBadRequest, connections.CodeInvalid, "Name is at most 80 characters, without control characters.")
 	}
 	m.mu.Lock()
 	allow := m.hostAllowed
@@ -340,7 +340,7 @@ func (m *Manager) CreateProvider(ctx context.Context, actorID string, body []byt
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, taken := m.provs[req.ID]; taken {
-		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "a provider with this id exists already")
+		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "A provider with this id exists already.")
 	}
 	db := m.opt.Store.Q()
 	n, err := store.CountConnProviderRows(ctx, db, store.ConnProviderSite)
@@ -348,11 +348,11 @@ func (m *Manager) CreateProvider(ctx context.Context, actorID string, body []byt
 		return nil, nil, err
 	}
 	if n >= SiteLimit {
-		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "provider_limit", "the server has %d such providers, the most there can be", SiteLimit)
+		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "provider_limit", "The server has %d such providers, the most there can be.", SiteLimit)
 	}
 	for _, p := range m.provs {
 		if r, _ := p.snap(); r.Owner == store.ConnProviderSite && r.Host == hs.host {
-			return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "this host has a provider already (%s): one OAuth application per host", p.id)
+			return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "This host has a provider already (%s): one OAuth application per host.", p.id)
 		}
 	}
 	now := m.opt.Now()
@@ -370,7 +370,7 @@ func (m *Manager) CreateProvider(ctx context.Context, actorID string, body []byt
 		Checked: now, UpdatedBy: actorID, Created: now, Updated: now}
 	switch err := store.InsertConnProviderRow(ctx, db, row); {
 	case errors.Is(err, store.ErrExists):
-		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "a provider with this id or host exists already")
+		return nil, nil, connections.Errorf(req.ID, http.StatusConflict, "exists", "A provider with this id or host exists already.")
 	case err != nil:
 		return nil, nil, err
 	}
@@ -408,12 +408,12 @@ func (m *Manager) checkHost(ctx context.Context, d driver, c *client, clientID, 
 	version, err = d.probe(ctx, c)
 	if err != nil {
 		if errors.Is(err, errNotThisPlatform) || isStatus(err, http.StatusNotFound) || isStatus(err, http.StatusUnauthorized, http.StatusForbidden) {
-			return "", invalid(ReasonNotPlatform, "the host does not answer as a "+d.typ()+" does")
+			return "", invalid(ReasonNotPlatform, "The host does not answer as a "+d.typ()+" does.")
 		}
-		return "", invalid(unreachable(err), "the host could not be asked: "+hostFailure(err))
+		return "", invalid(unreachable(err), "The host could not be asked: "+hostFailure(err)+".")
 	}
 	if !d.minVersion(version) {
-		return "", invalid(ReasonVersion, "this version ("+version+") is too old: it has no authorisation with PKCE")
+		return "", invalid(ReasonVersion, "This version ("+version+") is too old: it has no authorisation with PKCE.")
 	}
 	if redirect == "" {
 		redirect = "https://notes.invalid/api/connections/check/authorization/callback"
@@ -425,15 +425,15 @@ func (m *Manager) checkHost(ctx context.Context, d driver, c *client, clientID, 
 	case err == nil, isBadGrant(err), errors.As(err, &oe) && (oe.Code == "invalid_request" || oe.Code == "unsupported_grant_type"):
 		return version, nil // the host knows the client and refused the (made-up) code
 	case isBadClient(err):
-		return "", invalid(ReasonClient, "the host does not accept this client id and secret")
+		return "", invalid(ReasonClient, "The host does not accept this client id and secret.")
 	}
 	if isStatus(err, http.StatusUnauthorized, http.StatusForbidden) {
-		return "", invalid(ReasonClient, "the host does not accept this client id and secret")
+		return "", invalid(ReasonClient, "The host does not accept this client id and secret.")
 	}
 	if errors.As(err, &oe) {
-		return "", invalid(ReasonClient, "the host refused the client: "+quote(oe.Code))
+		return "", invalid(ReasonClient, "The host refused the client: "+quote(oe.Code)+".")
 	}
-	return "", invalid(unreachable(err), "the host could not be asked: "+hostFailure(err))
+	return "", invalid(unreachable(err), "The host could not be asked: "+hostFailure(err)+".")
 }
 
 // unreachable is the reason for an error of reaching a host: one that is not

@@ -121,7 +121,7 @@ func (s *Space) Groups(q index.GroupQuery) (index.GroupResult, error) { return s
 // index is behind) or cannot be read has an empty body.
 func (s *Space) Bodies(items []index.Summary) ([]string, error) {
 	if len(items) > MaxBodies {
-		return nil, invalidf("the bodies of at most %d pages can be read at once", MaxBodies)
+		return nil, invalidf("The bodies of at most %d pages can be read at once.", MaxBodies)
 	}
 	out := make([]string, len(items))
 	for i, it := range items {

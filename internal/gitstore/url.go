@@ -66,15 +66,15 @@ func ParseURL(raw string, p Policy) (Remote, error) {
 	raw = strings.TrimSpace(raw)
 	switch {
 	case raw == "":
-		return Remote{}, urlErr("the remote address is empty")
+		return Remote{}, urlErr("The remote address is empty.")
 	case strings.HasPrefix(raw, "-"):
-		return Remote{}, urlErr("the remote address must not start with a dash")
+		return Remote{}, urlErr("The remote address must not start with a dash.")
 	case badTextRe.MatchString(raw):
-		return Remote{}, urlErr("the remote address must not contain spaces, backslashes or control characters")
+		return Remote{}, urlErr("The remote address must not contain spaces, backslashes or control characters.")
 	case strings.Contains(raw, "%"):
-		return Remote{}, urlErr("percent-encoding is not accepted in a remote address; write the characters themselves")
+		return Remote{}, urlErr("percent-encoding is not accepted in a remote address; write the characters themselves.")
 	case helperRe.MatchString(raw):
-		return Remote{}, urlErr("transport helpers (ext::, fd:: and the like) are not accepted")
+		return Remote{}, urlErr("Transport helpers (ext::, fd:: and the like) are not accepted.")
 	}
 	if p.AllowUnsafe && filepath.IsAbs(raw) {
 		return Remote{URL: raw, Scheme: "file"}, nil
@@ -86,7 +86,7 @@ func ParseURL(raw string, p Policy) (Remote, error) {
 	} else if m := scpRe.FindStringSubmatch(raw); m != nil {
 		r, err = parseSCP(m)
 	} else {
-		return Remote{}, urlErr("the remote address must look like https://host/path, git@host:path or ssh://git@host/path")
+		return Remote{}, urlErr("The remote address must look like https://host/path, git@host:path or ssh://git@host/path.")
 	}
 	if err != nil {
 		return Remote{}, err
@@ -103,30 +103,30 @@ func ParseURL(raw string, p Policy) (Remote, error) {
 func parseSchemeURL(raw string, p Policy) (Remote, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Remote{}, urlErr("the remote address is not a valid URL")
+		return Remote{}, urlErr("The remote address is not a valid URL.")
 	}
 	scheme := strings.ToLower(u.Scheme)
 	switch {
 	case scheme == "https" || scheme == "ssh":
 	case p.AllowUnsafe && (scheme == "http" || scheme == "file"):
 	default:
-		return Remote{}, urlErr("only https and ssh remote addresses are accepted, not %s", scheme)
+		return Remote{}, urlErr("Only https and ssh remote addresses are accepted, not %s.", scheme)
 	}
 	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(raw, "?#") {
-		return Remote{}, urlErr("the remote address must not have a query or a fragment")
+		return Remote{}, urlErr("The remote address must not have a query or a fragment.")
 	}
 	if scheme == "file" {
 		if u.Host != "" || u.Path == "" {
-			return Remote{}, urlErr("a file:// address needs a path and no host")
+			return Remote{}, urlErr("A file:// address needs a path and no host.")
 		}
 		return Remote{URL: raw, Scheme: "file"}, nil
 	}
 	if u.User != nil {
 		if _, has := u.User.Password(); has || scheme != "ssh" {
-			return Remote{}, urlErr("the remote address must not contain a user name, password or token; give the credential separately")
+			return Remote{}, urlErr("The remote address must not contain a user name, password or token; give the credential separately.")
 		}
 		if !userRe.MatchString(u.User.Username()) {
-			return Remote{}, urlErr("the user name in the remote address is not valid")
+			return Remote{}, urlErr("The user name in the remote address is not valid.")
 		}
 	}
 	host, err := canonHost(u.Hostname())
@@ -137,10 +137,10 @@ func parseSchemeURL(raw string, p Policy) (Remote, error) {
 	if port != "" {
 		n, err := strconv.Atoi(port)
 		if err != nil || n < 1 || n > 65535 {
-			return Remote{}, urlErr("the port in the remote address is not valid")
+			return Remote{}, urlErr("The port in the remote address is not valid.")
 		}
 	} else if strings.HasSuffix(u.Host, ":") {
-		return Remote{}, urlErr("the port in the remote address is empty")
+		return Remote{}, urlErr("The port in the remote address is empty.")
 	}
 	path, err := checkPath(u.Path, true)
 	if err != nil {
@@ -160,14 +160,14 @@ func parseSchemeURL(raw string, p Policy) (Remote, error) {
 func parseSCP(m []string) (Remote, error) {
 	user, hostPart, path := m[1], m[2], m[3]
 	if user != "" && !userRe.MatchString(user) {
-		return Remote{}, urlErr("the user name in the remote address is not valid")
+		return Remote{}, urlErr("The user name in the remote address is not valid.")
 	}
 	host, err := canonHost(strings.Trim(hostPart, "[]"))
 	if err != nil {
 		return Remote{}, err
 	}
 	if path == "" || strings.HasPrefix(path, ":") {
-		return Remote{}, urlErr("the remote address has no repository path")
+		return Remote{}, urlErr("The remote address has no repository path.")
 	}
 	path, err = checkPath(path, false)
 	if err != nil {
@@ -187,22 +187,22 @@ func checkPath(p string, leading bool) (string, error) {
 	body := p
 	if leading {
 		if !strings.HasPrefix(p, "/") {
-			return "", urlErr("the remote address has no repository path")
+			return "", urlErr("The remote address has no repository path.")
 		}
 		body = p[1:]
 	} else {
 		body = strings.TrimPrefix(p, "/")
 	}
 	if body == "" {
-		return "", urlErr("the remote address has no repository path")
+		return "", urlErr("The remote address has no repository path.")
 	}
 	for _, seg := range strings.Split(body, "/") {
 		if seg == "" || seg == "." || seg == ".." || !segmentRe.MatchString(seg) {
-			return "", urlErr("the repository path in the remote address is not valid")
+			return "", urlErr("The repository path in the remote address is not valid.")
 		}
 		for _, r := range seg {
 			if unicode.IsControl(r) {
-				return "", urlErr("the repository path in the remote address is not valid")
+				return "", urlErr("The repository path in the remote address is not valid.")
 			}
 		}
 	}
@@ -215,21 +215,21 @@ func canonHost(h string) (string, error) {
 	h = strings.ToLower(h)
 	h = strings.TrimSuffix(h, ".")
 	if h == "" {
-		return "", urlErr("the remote address has no host")
+		return "", urlErr("The remote address has no host.")
 	}
 	if strings.Contains(h, ":") {
 		ip := net.ParseIP(h)
 		if ip == nil {
-			return "", urlErr("the IPv6 address in the remote address is not valid")
+			return "", urlErr("The IPv6 address in the remote address is not valid.")
 		}
 		return ip.String(), nil
 	}
 	if len(h) > 253 {
-		return "", urlErr("the host name in the remote address is too long")
+		return "", urlErr("The host name in the remote address is too long.")
 	}
 	for _, l := range strings.Split(h, ".") {
 		if !labelRe.MatchString(l) {
-			return "", urlErr("the host name in the remote address is not valid")
+			return "", urlErr("The host name in the remote address is not valid.")
 		}
 	}
 	return h, nil

@@ -86,7 +86,7 @@ func decodeCursor(s string) (histCursor, error) {
 	parts := strings.SplitN(string(raw), "\n", 3)
 	if err != nil || len(parts) != 3 || !commitIDRe.MatchString(parts[0]) || (parts[1] != "after" && parts[1] != "from") ||
 		checkRel(parts[2]) != nil || !strings.HasSuffix(strings.ToLower(parts[2]), ".md") {
-		return histCursor{}, invalidf("invalid cursor")
+		return histCursor{}, invalidf("Invalid cursor.")
 	}
 	return histCursor{Commit: parts[0], Path: parts[2], Fresh: parts[1] == "from"}, nil
 }

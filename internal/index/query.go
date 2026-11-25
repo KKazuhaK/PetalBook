@@ -107,7 +107,7 @@ func decodeCursor(s string) (cursor, error) {
 	var c cursor
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil || json.Unmarshal(b, &c) != nil {
-		return c, invalid("bad cursor")
+		return c, invalid("Bad cursor.")
 	}
 	return c, nil
 }
@@ -132,7 +132,7 @@ func (x *Index) List(q Query) (Result, error) {
 		limit = defaultLimit
 	}
 	if limit < 1 || limit > maxLimit {
-		return Result{}, invalid("limit must be between 1 and %d", maxLimit)
+		return Result{}, invalid("Limit must be between 1 and %d.", maxLimit)
 	}
 	sortName := q.Sort
 	relevance := false
@@ -169,7 +169,7 @@ func (x *Index) List(q Query) (Result, error) {
 			return Result{}, err
 		}
 		if c.Sort != sortName && !(relevance && c.Sort == "relevance") {
-			return Result{}, invalid("cursor belongs to another sort order")
+			return Result{}, invalid("Cursor belongs to another sort order.")
 		}
 		cur = &c
 	}
@@ -396,7 +396,7 @@ func sortKeys(name string) ([]sortKey, error) {
 		// Untitled pages go last in either direction, ordered by created.
 		return []sortKey{{"p.untitled", false}, {"p.title_key", desc}, {"p.created_key", desc}, {"p.rowid", false}}, nil
 	}
-	return nil, invalid("unknown sort %q (use updated, created or title, optionally with a leading -)", name)
+	return nil, invalid("Unknown sort %q (use updated, created or title, optionally with a leading -).", name)
 }
 
 func keysetPredicate(order []sortKey, c *cursor) (string, []any) {

@@ -49,35 +49,35 @@ func checkFilters(fs []Filter) error { return checkFiltersMax(fs, maxFilters) }
 
 func checkFiltersMax(fs []Filter, max int) error {
 	if len(fs) > max {
-		return invalid("at most %d filters", max)
+		return invalid("At most %d filters.", max)
 	}
 	for i := range fs {
 		f := &fs[i]
 		if f.Key == "" || len(f.Key) > maxFilterKey || !utf8.ValidString(f.Key) {
-			return invalid("a filter needs the key of a property")
+			return invalid("A filter needs the key of a property.")
 		}
 		f.vals, f.lo, f.hi = nil, nil, nil
 		switch f.Op {
 		case "in", "notIn":
 			if len(f.Values) == 0 || len(f.Values) > maxFilterValues {
-				return invalid("an %s filter needs 1 to %d values", f.Op, maxFilterValues)
+				return invalid("An %s filter needs 1 to %d values.", f.Op, maxFilterValues)
 			}
 			for _, v := range f.Values {
 				t, ok := valText(v)
 				if !ok {
-					return invalid("the values of an %s filter must be text, numbers or true/false", f.Op)
+					return invalid("The values of an %s filter must be text, numbers or true/false.", f.Op)
 				}
 				f.vals = append(f.vals, t)
 			}
 		case "range":
 			if len(f.Values) != 2 {
-				return invalid("a range filter needs two values, [from, to], either may be null")
+				return invalid("A range filter needs two values, [from, to], either may be null.")
 			}
 			var kinds [2]string
 			for j, v := range f.Values {
 				k, key, open, ok := boundKey(v)
 				if !ok {
-					return invalid("the bounds of a range filter must be numbers, text or null")
+					return invalid("The bounds of a range filter must be numbers, text or null.")
 				}
 				kinds[j] = k
 				if open {
@@ -90,14 +90,14 @@ func checkFiltersMax(fs []Filter, max int) error {
 				}
 			}
 			if f.lo == nil && f.hi == nil {
-				return invalid("a range filter needs at least one bound")
+				return invalid("A range filter needs at least one bound.")
 			}
 			if kinds[0] != "" && kinds[1] != "" && kinds[0] != kinds[1] {
-				return invalid("the bounds of a range filter must both be numbers or both be text")
+				return invalid("The bounds of a range filter must both be numbers or both be text.")
 			}
 		case "empty", "notEmpty":
 			if len(f.Values) != 0 {
-				return invalid("%s takes no values", f.Op)
+				return invalid("%s takes no values.", f.Op)
 			}
 		case "contains":
 			t, ok := "", len(f.Values) == 1
@@ -105,11 +105,11 @@ func checkFiltersMax(fs []Filter, max int) error {
 				t, ok = f.Values[0].(string)
 			}
 			if !ok || t == "" || len(t) > 1000 || !utf8.ValidString(t) {
-				return invalid("a contains filter needs one value, the text to look for")
+				return invalid("A contains filter needs one value, the text to look for.")
 			}
 			f.vals = []string{asciiLower(t)}
 		default:
-			return invalid("unknown filter op %q (use in, notIn, range, empty, notEmpty or contains)", f.Op)
+			return invalid("Unknown filter op %q (use in, notIn, range, empty, notEmpty or contains).", f.Op)
 		}
 	}
 	return nil
@@ -269,7 +269,7 @@ func propSort(name string) (key string, desc, byProp bool, err error) {
 	}
 	key = strings.TrimPrefix(rest, "prop:")
 	if key == "" || len(key) > maxFilterKey || !utf8.ValidString(key) {
-		return "", false, false, invalid("sort=prop: needs the key of a property")
+		return "", false, false, invalid("sort=prop: needs the key of a property.")
 	}
 	return key, rest != name, true, nil
 }

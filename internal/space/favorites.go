@@ -53,7 +53,7 @@ func (s *Space) CheckFavorite(ref FavRef) (FavRef, error) {
 	switch ref.Kind {
 	case "page":
 		if !page.ValidID(ref.Target) {
-			return ref, invalidf("that is not a page id")
+			return ref, invalidf("That is not a page id.")
 		}
 		if _, ok, err := s.idx.Summary(ref.Target); err != nil {
 			return ref, err
@@ -63,7 +63,7 @@ func (s *Space) CheckFavorite(ref FavRef) (FavRef, error) {
 		return ref, nil
 	case "folder":
 		if ref.Target == "" {
-			return ref, invalidf("the root folder cannot be a favourite")
+			return ref, invalidf("The root folder cannot be a favourite.")
 		}
 		canon, ok, err := s.CanonicalFolder(ref.Target)
 		if err != nil {
@@ -76,7 +76,7 @@ func (s *Space) CheckFavorite(ref FavRef) (FavRef, error) {
 	case "view":
 		kind, scope, id, ok := splitViewTarget(ref.Target)
 		if !ok {
-			return ref, invalidf("a view is folder:<path>#<id> or tag:<tag>#<id>")
+			return ref, invalidf("A view is folder:<path>#<id> or tag:<tag>#<id>.")
 		}
 		if kind == "folder" {
 			canon, existed, err := s.CanonicalFolder(scope)
@@ -95,7 +95,7 @@ func (s *Space) CheckFavorite(ref FavRef) (FavRef, error) {
 		}
 		return FavRef{"view", kind + ":" + scope + "#" + id}, nil
 	}
-	return ref, invalidf("kind must be page, folder or view")
+	return ref, invalidf("Kind must be page, folder or view.")
 }
 
 // splitViewTarget cuts `folder:<path>#<id>` or `tag:<tag>#<id>`.

@@ -31,7 +31,7 @@ type tokenChecker struct {
 }
 
 func errCaptcha() *Error {
-	return coded(400, "captcha_failed", "the captcha was missing, wrong or expired; try the new one")
+	return coded(400, "captcha_failed", "The captcha was missing, wrong or expired; try the new one.")
 }
 
 func (s *Service) initCaptcha() {
@@ -111,7 +111,7 @@ func (s *Service) CaptchaFor(ctx context.Context, ctxName, account, ip string) (
 		known = known || c == ctxName
 	}
 	if !known {
-		return nil, errf(Invalid, "ctx is login, invite, setup, forgot or register")
+		return nil, errf(Invalid, "Ctx is login, invite, setup, forgot or register.")
 	}
 	st := s.sec(ctx)
 	if !s.captchaRequired(st, ctxName, ip, account) {

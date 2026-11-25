@@ -23,7 +23,7 @@ func intParam(c *call, name string, min, max int) (n int, present, ok bool) {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < min || n > max {
-		writeError(c.w, http.StatusBadRequest, "invalid", name+" is a number from "+strconv.Itoa(min)+" to "+strconv.Itoa(max))
+		writeError(c.w, http.StatusBadRequest, "invalid", name+" is a number from "+strconv.Itoa(min)+" to "+strconv.Itoa(max)+".")
 		return 0, true, false
 	}
 	return n, true, true
@@ -37,7 +37,7 @@ func flagParam(c *call, name string) (on, ok bool) {
 	case "1":
 		return true, true
 	}
-	writeError(c.w, http.StatusBadRequest, "invalid", name+" is 1 or 0")
+	writeError(c.w, http.StatusBadRequest, "invalid", name+" is 1 or 0.")
 	return false, false
 }
 
@@ -47,7 +47,7 @@ func oneOf(c *call, name string, values []string) (string, bool) {
 	if v == "" || slices.Contains(values, v) {
 		return v, true
 	}
-	writeError(c.w, http.StatusBadRequest, "invalid", name+" is one of "+joinOr(values))
+	writeError(c.w, http.StatusBadRequest, "invalid", name+" is one of "+joinOr(values)+".")
 	return "", false
 }
 
@@ -69,9 +69,9 @@ func joinOr(l []string) string {
 func (s *server) badList(c *call, err error) bool {
 	switch {
 	case errors.Is(err, store.ErrBadCursor):
-		writeError(c.w, http.StatusBadRequest, "invalid", "that cursor is not one this list gave, or it was made for another sort")
+		writeError(c.w, http.StatusBadRequest, "invalid", "That cursor is not one this list gave, or it was made for another sort.")
 	case errors.Is(err, store.ErrBadFilter):
-		writeError(c.w, http.StatusBadRequest, "invalid", "a sort, order or filter value this list does not have")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A sort, order or filter value this list does not have.")
 	default:
 		return false
 	}
@@ -94,7 +94,7 @@ func (s *server) adminListSpaces(c *call) {
 		return
 	}
 	if f.Order != "" && f.Order != "asc" && f.Order != "desc" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "order is asc or desc")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Order is asc or desc.")
 		return
 	}
 	if f.Cache, ok = oneOf(c, "cache", store.SpaceCaches); !ok {
@@ -202,7 +202,7 @@ func (s *server) adminListPeople(c *call) {
 		return
 	}
 	if f.Order != "" && f.Order != "asc" && f.Order != "desc" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "order is asc or desc")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Order is asc or desc.")
 		return
 	}
 	if f.Dormant, ok = flagParam(c, "dormant"); !ok {
@@ -225,7 +225,7 @@ func (s *server) adminListPeople(c *call) {
 		v := q.Get("disabled") == "1"
 		f.Disabled = &v
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", "disabled is 1 or 0")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Disabled is 1 or 0.")
 		return
 	}
 	sc, ok := s.adminScope(c)
@@ -258,7 +258,7 @@ func (s *server) adminGetPerson(c *call) {
 	ctx := c.r.Context()
 	e, err := store.GetPerson(ctx, s.opt.Store.Q(), s.opt.Store.Dialect(), store.AdminScopeOf(c.user()), c.r.PathValue("user"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such user")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
 		return
 	}
 	if err != nil {

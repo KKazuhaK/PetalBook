@@ -86,10 +86,10 @@ func (s *Space) PutAsset(by Author, id, name string, data []byte) (Asset, error)
 		return Asset{}, ErrNotFound
 	}
 	if strings.TrimSpace(name) == "" {
-		return Asset{}, invalidf("the file has no name")
+		return Asset{}, invalidf("The file has no name.")
 	}
 	if len(data) == 0 {
-		return Asset{}, invalidf("the file is empty")
+		return Asset{}, invalidf("The file is empty.")
 	}
 	if err := by.checkFileSize(name, int64(len(data)), 0); err != nil {
 		return Asset{}, err
@@ -104,7 +104,7 @@ func (s *Space) putAssetLocked(tx *txn, id, name string, data []byte) (Asset, er
 		return Asset{}, err
 	}
 	if !s.assetsDirIsOurs() {
-		return Asset{}, invalidf("a folder whose name differs from %q only in case is in the way; attachments cannot be stored", AssetsDir)
+		return Asset{}, invalidf("A folder whose name differs from %q only in case is in the way; attachments cannot be stored.", AssetsDir)
 	}
 	if b := s.Assets(); b != nil && b.Direct() && tx.remote {
 		a, _, err := s.putAssetRepo(tx, b, id, name, data)
@@ -238,7 +238,7 @@ func (s *Space) assetDir(tx *txn, rel string) (string, error) {
 		case err != nil:
 			return "", err
 		case !fi.IsDir(): // Lstat: a link to a directory is not one
-			return "", invalidf("%q is not a directory; attachments cannot be stored", cur)
+			return "", invalidf("%q is not a directory; attachments cannot be stored.", cur)
 		}
 	}
 	return p, nil

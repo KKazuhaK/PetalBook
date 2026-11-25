@@ -30,7 +30,7 @@ func (m *Manager) provider(id string) (connections.Provider, error) {
 	if ok {
 		name = p.Descriptor().Name
 	}
-	return nil, connections.Errorf(id, http.StatusConflict, connections.CodeNotConfigured, "this server has no %s connection set up", name)
+	return nil, connections.Errorf(id, http.StatusConflict, connections.CodeNotConfigured, "This server has no %s connection set up.", name)
 }
 
 // hostAllowed holds a provider's host to the allowed hosts (--remote-host, or

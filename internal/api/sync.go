@@ -40,7 +40,7 @@ func (s *server) offlineOff(c *call) bool {
 	if on, _ := e.Value.(bool); on {
 		return false
 	}
-	writeError(c.w, http.StatusForbidden, "offline_off", "offline copies are turned off for this tenant")
+	writeError(c.w, http.StatusForbidden, "offline_off", "Offline copies are turned off for this tenant.")
 	return true
 }
 
@@ -62,9 +62,9 @@ func syncLimit(r *http.Request, def, max int) (int, string) {
 func (s *server) failFeed(c *call, err error) {
 	switch {
 	case errors.Is(err, index.ErrExpired):
-		writeError(c.w, http.StatusGone, "changes_expired", "the change cursor is too old; read the catalogue again")
+		writeError(c.w, http.StatusGone, "changes_expired", "The change cursor is too old; read the catalogue again.")
 	case errors.Is(err, index.ErrBadFeedCursor), errors.Is(err, index.ErrBadCursor):
-		writeError(c.w, http.StatusBadRequest, "invalid", "not a cursor this server made, or one made for other parameters")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Not a cursor this server made, or one made for other parameters.")
 	default:
 		s.fail(c.w, err)
 	}
@@ -79,7 +79,7 @@ func (s *server) syncCatalog(c *call) {
 	}
 	folders := q["folder"]
 	if len(folders) > index.MaxFolders {
-		writeError(c.w, http.StatusBadRequest, "invalid", "at most "+strconv.Itoa(index.MaxFolders)+" folders")
+		writeError(c.w, http.StatusBadRequest, "invalid", "At most "+strconv.Itoa(index.MaxFolders)+" folders.")
 		return
 	}
 	b, err := c.sp.Space.Catalog(folders, q.Get("cursor"), limit)
@@ -99,7 +99,7 @@ func (s *server) syncCatalog(c *call) {
 func (s *server) syncChanges(c *call) {
 	since := c.r.URL.Query().Get("since")
 	if since == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "since is required: a change cursor")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Since is required: a change cursor.")
 		return
 	}
 	limit, bad := syncLimit(c.r, index.DefaultChanges, index.MaxChanges)
@@ -124,12 +124,12 @@ func (s *server) syncChanges(c *call) {
 func (s *server) syncPages(c *call) {
 	raw := c.r.URL.Query().Get("ids")
 	if raw == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "ids is required: 1 to "+strconv.Itoa(maxSyncPages)+" page ids, separated by commas")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Ids is required: 1 to "+strconv.Itoa(maxSyncPages)+" page ids, separated by commas.")
 		return
 	}
 	ids := strings.Split(raw, ",")
 	if len(ids) > maxSyncPages {
-		writeError(c.w, http.StatusBadRequest, "invalid", "at most "+strconv.Itoa(maxSyncPages)+" pages at a time")
+		writeError(c.w, http.StatusBadRequest, "invalid", "At most "+strconv.Itoa(maxSyncPages)+" pages at a time.")
 		return
 	}
 	for _, id := range ids {
@@ -140,11 +140,11 @@ func (s *server) syncPages(c *call) {
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if !page.ValidID(id) {
-			writeError(c.w, http.StatusBadRequest, "invalid", "not a page id: "+id)
+			writeError(c.w, http.StatusBadRequest, "invalid", "Not a page id: "+id+".")
 			return
 		}
 		if seen[id] {
-			writeError(c.w, http.StatusBadRequest, "invalid", "a page id given twice: "+id)
+			writeError(c.w, http.StatusBadRequest, "invalid", "A page id given twice: "+id+".")
 			return
 		}
 		seen[id] = true
@@ -196,13 +196,13 @@ func (s *server) syncPages(c *call) {
 func (s *server) syncHeads(c *call) {
 	ids := c.r.URL.Query()["space"]
 	if len(ids) == 0 || len(ids) > maxHeadSpaces {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give 1 to "+strconv.Itoa(maxHeadSpaces)+" space parameters")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give 1 to "+strconv.Itoa(maxHeadSpaces)+" space parameters.")
 		return
 	}
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if seen[id] {
-			writeError(c.w, http.StatusBadRequest, "invalid", "a space given twice: "+id)
+			writeError(c.w, http.StatusBadRequest, "invalid", "A space given twice: "+id+".")
 			return
 		}
 		seen[id] = true

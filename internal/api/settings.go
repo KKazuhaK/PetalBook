@@ -79,26 +79,26 @@ func (s *server) readChange(c *call) (settings.Change, bool) {
 	var ch settings.Change
 	for k := range req {
 		if k != "value" && k != "lower" {
-			writeError(c.w, http.StatusBadRequest, "invalid", "unknown field "+k)
+			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+".")
 			return ch, false
 		}
 	}
 	if raw, ok := req["value"]; ok {
 		ch.HasValue = true
 		if err := json.Unmarshal(raw, &ch.Value); err != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "value is not JSON")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Value is not JSON.")
 			return ch, false
 		}
 	}
 	if raw, ok := req["lower"]; ok {
 		ch.HasLower = true
 		if err := json.Unmarshal(raw, &ch.Lower); err != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "lower is {\"mode\": …}")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Lower is {\"mode\": …}.")
 			return ch, false
 		}
 	}
 	if !ch.HasValue && !ch.HasLower {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give value, lower or both")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give value, lower or both.")
 		return ch, false
 	}
 	return ch, true
@@ -124,10 +124,10 @@ func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Chan
 		return nil
 	}
 	if !s.registrationReady() {
-		return &settings.Error{Code: "mail_not_configured", Msg: "registration verifies addresses by mail, and mail is not enabled"}
+		return &settings.Error{Code: "mail_not_configured", Msg: "Registration verifies addresses by mail, and mail is not enabled."}
 	}
 	if s.auth.SSOOnlyStored(ctx) {
-		return &settings.Error{Code: "sso_only_with_registration", Msg: "password sign-in is refused (ssoOnly), so nobody could finish registering; switch ssoOnly off first"}
+		return &settings.Error{Code: "sso_only_with_registration", Msg: "Password sign-in is refused (ssoOnly), so nobody could finish registering; switch ssoOnly off first."}
 	}
 	return nil
 }
@@ -151,7 +151,7 @@ func (s *server) adminPutSetting(c *call) {
 	}
 	ctx := c.r.Context()
 	if _, ok := s.settings.Def(key); !ok {
-		s.failSetting(c, &settings.Error{Code: settings.CodeNotFound, Msg: "no such setting"})
+		s.failSetting(c, &settings.Error{Code: settings.CodeNotFound, Msg: "No such setting."})
 		return
 	}
 	if err := s.beforeOpening(ctx, key, ch, true); err != nil {

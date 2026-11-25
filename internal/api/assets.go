@@ -72,7 +72,7 @@ func (s *server) putAssetsRemote(c *call) {
 	var err error
 	if g := req.Sync; g != nil {
 		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
-			writeError(c.w, http.StatusBadRequest, "invalid", "sync.provider is not a provider of this server that makes repositories")
+			writeError(c.w, http.StatusBadRequest, "invalid", "sync.provider is not a provider of this server that makes repositories.")
 			return
 		}
 		v, err = s.spaces.ConnectAssetsSync(c.r.Context(), c.sp, c.user().ID, g.Via, spaces.SyncCreate{Provider: g.Provider,

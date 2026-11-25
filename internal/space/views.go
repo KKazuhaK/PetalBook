@@ -144,7 +144,7 @@ func (v View) MarshalJSON() ([]byte, error) {
 func (v *View) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
-		return invalidf("a view must be an object")
+		return invalidf("A view must be an object.")
 	}
 	*v = View{}
 	text := func(key string, into *string) error {
@@ -153,7 +153,7 @@ func (v *View) UnmarshalJSON(data []byte) error {
 			return nil
 		}
 		if err := json.Unmarshal(r, into); err != nil {
-			return invalidf("the %s of a view must be text", key)
+			return invalidf("The %s of a view must be text.", key)
 		}
 		return nil
 	}
@@ -170,7 +170,7 @@ func (v *View) UnmarshalJSON(data []byte) error {
 		dec.UseNumber()
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&v.Filter); err != nil {
-			return invalidf("the filter of a view must be a list of {\"key\", \"op\", \"values\"}")
+			return invalidf("The filter of a view must be a list of {\"key\", \"op\", \"values\"}.")
 		}
 		for i := range v.Filter {
 			for j := range v.Filter[i].Values {
@@ -180,7 +180,7 @@ func (v *View) UnmarshalJSON(data []byte) error {
 	}
 	if r, ok := raw["hidden"]; ok && string(r) != "null" {
 		if err := json.Unmarshal(r, &v.Hidden); err != nil {
-			return invalidf("the hidden columns of a view must be a list of keys")
+			return invalidf("The hidden columns of a view must be a list of keys.")
 		}
 	}
 	for k, r := range raw {
@@ -191,7 +191,7 @@ func (v *View) UnmarshalJSON(data []byte) error {
 		dec.UseNumber()
 		var val any
 		if err := dec.Decode(&val); err != nil {
-			return invalidf("the key %q of a view is not valid JSON", k)
+			return invalidf("The key %q of a view is not valid JSON.", k)
 		}
 		if v.Extra == nil {
 			v.Extra = map[string]any{}
@@ -615,20 +615,20 @@ func (s *Space) Views(scope ViewScope) (ViewList, error) {
 func checkScope(scope ViewScope) error {
 	switch {
 	case scope.Folder != nil && scope.Tag != "":
-		return invalidf("give a folder or a tag, not both")
+		return invalidf("Give a folder or a tag, not both.")
 	case scope.Folder != nil:
 		return checkRel(*scope.Folder)
 	case scope.Tag != "":
 		return checkTagName(scope.Tag)
 	}
-	return invalidf("give the folder or the tag the views belong to")
+	return invalidf("Give the folder or the tag the views belong to.")
 }
 
 // --- checking views ----------------------------------------------------------------
 
 func checkViewText(what, s string, max int) error {
 	if !utf8.ValidString(s) || len(s) > max || strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return invalidf("%s is not valid: text of at most %d bytes on one line", what, max)
+		return invalidf("%s is not valid: text of at most %d bytes on one line.", what, max)
 	}
 	return nil
 }
@@ -658,7 +658,7 @@ func sameView(a, b View) bool {
 // and a client that saves another view must not be refused for it).
 func checkViews(vs []View, stored map[string]View) error {
 	if len(vs) > MaxViews {
-		return invalidf("a folder or a tag has at most %d views", MaxViews)
+		return invalidf("A folder or a tag has at most %d views.", MaxViews)
 	}
 	ids := map[string]bool{}
 	total := 0
@@ -667,10 +667,10 @@ func checkViews(vs []View, stored map[string]View) error {
 		old, isStored := stored[v.ID]
 		if v.ID != "" {
 			if !validViewID(v.ID) && !isStored {
-				return invalidf("%s: that is not a view id", at)
+				return invalidf("%s: that is not a view id.", at)
 			}
 			if ids[v.ID] {
-				return invalidf("%s: the id %q is used twice", at, v.ID)
+				return invalidf("%s: the id %q is used twice.", at, v.ID)
 			}
 			ids[v.ID] = true
 		}
@@ -678,19 +678,19 @@ func checkViews(vs []View, stored map[string]View) error {
 			continue
 		}
 		if strings.TrimSpace(v.Name) == "" {
-			return invalidf("%s needs a name", at)
+			return invalidf("%s needs a name.", at)
 		}
 		if err := checkViewText(at+": the name", v.Name, maxViewName); err != nil {
 			return err
 		}
 		if !validLayout(v.Layout) {
-			return invalidf("%s: the layout must be one of %s", at, strings.Join(ViewLayouts, ", "))
+			return invalidf("%s: the layout must be one of %s.", at, strings.Join(ViewLayouts, ", "))
 		}
 		if err := checkViewText(at+": the sort", v.Sort, maxViewKey+8); err != nil {
 			return err
 		}
 		if err := index.ValidSort(v.Sort); err != nil {
-			return invalidf("%s: %s", at, strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))
+			return invalidf("%s: %s.", at, strings.TrimSuffix(strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "), "."))
 		}
 		if err := checkViewText(at+": the group", v.Group, maxViewKey); err != nil {
 			return err
@@ -700,15 +700,15 @@ func checkViews(vs []View, stored map[string]View) error {
 			fs[j] = index.Filter{Key: f.Key, Op: f.Op, Values: f.Values}
 		}
 		if err := index.CheckFilters(fs); err != nil {
-			return invalidf("%s: %s", at, strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "))
+			return invalidf("%s: %s.", at, strings.TrimSuffix(strings.TrimPrefix(err.Error(), index.ErrInvalidQuery.Error()+": "), "."))
 		}
 		if len(v.Hidden) > maxViewHidden {
-			return invalidf("%s: at most %d hidden columns", at, maxViewHidden)
+			return invalidf("%s: at most %d hidden columns.", at, maxViewHidden)
 		}
 		seen := map[string]bool{}
 		for _, h := range v.Hidden {
 			if h == "" || seen[h] {
-				return invalidf("%s: the hidden columns must be keys, each once", at)
+				return invalidf("%s: the hidden columns must be keys, each once.", at)
 			}
 			seen[h] = true
 			if err := checkViewText(at+": a hidden column", h, maxViewKey); err != nil {
@@ -716,22 +716,22 @@ func checkViews(vs []View, stored map[string]View) error {
 			}
 		}
 		if len(v.Extra) > maxViewExtraKeys {
-			return invalidf("%s: at most %d keys the server does not know", at, maxViewExtraKeys)
+			return invalidf("%s: at most %d keys the server does not know.", at, maxViewExtraKeys)
 		}
 		for k, e := range v.Extra {
 			if k == "" || len(k) > maxViewExtra || !utf8.ValidString(k) {
-				return invalidf("%s: a key of a view is 1 to %d bytes", at, maxViewExtra)
+				return invalidf("%s: a key of a view is 1 to %d bytes.", at, maxViewExtra)
 			}
 			if b, err := json.Marshal(e); err != nil || len(b) > maxViewExtraBytes {
-				return invalidf("%s: the value of %q is larger than %d bytes", at, k, maxViewExtraBytes)
+				return invalidf("%s: the value of %q is larger than %d bytes.", at, k, maxViewExtraBytes)
 			}
 		}
 		b, err := json.Marshal(v)
 		if err != nil || len(b) > maxViewBytes {
-			return invalidf("%s is larger than %d bytes", at, maxViewBytes)
+			return invalidf("%s is larger than %d bytes.", at, maxViewBytes)
 		}
 		if total += len(b); total > maxViewsBytes {
-			return invalidf("the views changed are larger than %d bytes together", maxViewsBytes)
+			return invalidf("The views changed are larger than %d bytes together.", maxViewsBytes)
 		}
 	}
 	return nil
@@ -822,7 +822,7 @@ func (s *Space) PutViews(by Author, scope ViewScope, baseRev string, views []Vie
 		return ViewList{}, err
 	}
 	if len(views) > MaxViews {
-		return ViewList{}, invalidf("a folder or a tag has at most %d views", MaxViews)
+		return ViewList{}, invalidf("A folder or a tag has at most %d views.", MaxViews)
 	}
 	views = normalViews(views)
 	return mutate(s, by, func(tx *txn) (ViewList, error) {
@@ -940,7 +940,7 @@ func putViewsInto(top *yaml.Node, section string, section2 func(*yaml.Node, bool
 		} else {
 			j, ok := byID[v.ID]
 			if !ok {
-				return false, ViewList{}, invalidf("view %d: there is no view with the id %q here; leave the id out to make a new view", i+1, v.ID)
+				return false, ViewList{}, invalidf("View %d: there is no view with the id %q here; leave the id out to make a new view.", i+1, v.ID)
 			}
 			matched[i] = j
 			unchanged[i] = !strings.HasPrefix(v.ID, "@") && sameView(stored[v.ID], v)

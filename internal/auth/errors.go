@@ -44,7 +44,7 @@ func errf(k Kind, format string, a ...any) *Error {
 
 // errUnauth is the one answer to every failed sign-in: it must not tell a
 // wrong password from an unknown or disabled user.
-func errUnauth() *Error { return errf(Unauthenticated, "wrong username or password") }
+func errUnauth() *Error { return errf(Unauthenticated, "Wrong username or password.") }
 
 // coded is a refusal with an error code of its own.
 func coded(status int, code, format string, a ...any) *Error {

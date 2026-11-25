@@ -136,7 +136,7 @@ func (s *Service) Now() time.Time { return s.now() }
 // what the owner may do in a space is the caller's to decide from the grant.
 func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Principal, error) {
 	if blocked, wait := s.limiter.Blocked(ip); blocked {
-		return nil, &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "too many failed tokens from this address; wait before trying again",
+		return nil, &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "Too many failed tokens from this address; wait before trying again.",
 			RetryAfter: time.Duration(wait) * time.Second}
 	}
 	acc, err := s.Access(ctx)
@@ -144,11 +144,11 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 		return nil, err
 	}
 	if !acc.Tokens {
-		return nil, refuse(http.StatusForbidden, "tokens_off", "an administrator has switched API tokens off")
+		return nil, refuse(http.StatusForbidden, "tokens_off", "An administrator has switched API tokens off.")
 	}
 	if !WellFormed(secret) {
 		s.limiter.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_invalid", "this is not a token this server issued")
+		return nil, refuse(http.StatusUnauthorized, "token_invalid", "This is not a token this server issued.")
 	}
 	now := s.now()
 	e, err := s.lookup(ctx, sha256.Sum256([]byte(secret)), now)
@@ -158,24 +158,24 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 	switch {
 	case e == nil:
 		s.limiter.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_invalid", "this is not a token this server issued")
+		return nil, refuse(http.StatusUnauthorized, "token_invalid", "This is not a token this server issued.")
 	case e.revoked:
 		s.limiter.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_revoked", "this token was revoked")
+		return nil, refuse(http.StatusUnauthorized, "token_revoked", "This token was revoked.")
 	case !e.expires.IsZero() && !now.Before(e.expires):
 		s.limiter.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_expired", "this token has expired")
+		return nil, refuse(http.StatusUnauthorized, "token_expired", "This token has expired.")
 	}
 	u, err := s.cfg.Users.CachedUser(ctx, e.userID)
 	if errors.Is(err, store.ErrNotFound) {
 		s.limiter.Fail(ip)
-		return nil, refuse(http.StatusUnauthorized, "token_invalid", "this is not a token this server issued")
+		return nil, refuse(http.StatusUnauthorized, "token_invalid", "This is not a token this server issued.")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if u.Disabled || s.st != nil && s.st.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
-		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "the account this token belongs to is disabled")
+		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "The account this token belongs to is disabled.")
 	}
 	s.touch(ctx, e.key, now)
 	if s.st != nil {

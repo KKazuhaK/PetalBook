@@ -465,7 +465,7 @@ func (m *Manager) needSpaceRemote(ctx context.Context, id string) (*store.Remote
 		if r := m.Storage().Remotes.Require; r != nil {
 			require = *r
 		}
-		return nil, &RequiredError{Require: require, Msg: "the space has to follow a remote repository before it can have an attachment repository"}
+		return nil, &RequiredError{Require: require, Msg: "The space has to follow a remote repository before it can have an attachment repository."}
 	}
 	return r, err
 }
@@ -531,16 +531,16 @@ func (m *Manager) connectAssetsWith(ctx context.Context, h *Handle, req ConnectR
 		old = nil
 	}
 	if old != nil && (old.Move.Running() || m.moveRunning(id)) {
-		return nil, assetsConflict("the attachments are being moved")
+		return nil, assetsConflict("The attachments are being moved.")
 	}
 	if old != nil && (old.Used || old.Move.State == store.MoveDone) && old.URL != remote.URL {
-		return nil, assetsConflict("attachments are in the attachment repository already; it cannot be replaced by another one")
+		return nil, assetsConflict("Attachments are in the attachment repository already; it cannot be replaced by another one.")
 	}
 	if old != nil && old.URL != remote.URL {
 		// Files it had when it was connected (or that went to it without being
 		// recorded): the space may refer to them.
 		if r, _, _ := m.assetRepo(ctx, id); r != nil && r.Count() > 0 {
-			return nil, assetsConflict("the attachment repository has files; it cannot be replaced by another one")
+			return nil, assetsConflict("The attachment repository has files; it cannot be replaced by another one.")
 		}
 	}
 	row := store.Remote{SpaceID: id, URL: remote.URL, Branch: branch, State: store.RemoteOK, Updated: m.opt.Now()}
@@ -622,14 +622,14 @@ func (m *Manager) finishConnectAssets(ctx context.Context, h *Handle, old *store
 		// A repository with content is taken only while the space has never used
 		// one and has no attachments of its own: it takes the space's files.
 		if old != nil && (old.Used || old.Move.State == store.MoveDone) {
-			return nil, assetsConflict("the attachment repository has files of its own, and the space has used another one")
+			return nil, assetsConflict("The attachment repository has files of its own, and the space has used another one.")
 		}
 		files, err := h.Space.AssetsAtHead(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if len(files) > 0 {
-			return nil, assetsConflict("that repository has files, and the space has attachments of its own in assets/")
+			return nil, assetsConflict("That repository has files, and the space has attachments of its own in assets/.")
 		}
 	}
 	// Accepted: the trial directory becomes the repository's.
@@ -673,15 +673,15 @@ func (m *Manager) DisconnectAssets(ctx context.Context, h *Handle) error {
 		return err
 	}
 	if row.Move.Running() || m.moveRunning(id) {
-		return assetsConflict("the attachments are being moved")
+		return assetsConflict("The attachments are being moved.")
 	}
 	if row.Used || row.Move.State == store.MoveDone {
-		return assetsConflict("attachments have gone to the attachment repository; moving them back into the space is not possible")
+		return assetsConflict("Attachments have gone to the attachment repository; moving them back into the space is not possible.")
 	}
 	// Nothing has gone to it, but what it holds may be in the table from before
 	// (an empty one cannot be told from a used one by the rows alone).
 	if r, _, _ := m.assetRepo(ctx, id); r != nil && r.Count() > 0 {
-		return assetsConflict("the attachment repository has files; the space may refer to them")
+		return assetsConflict("The attachment repository has files; the space may refer to them.")
 	}
 	h.Space.SetAssets(nil)
 	m.forgetAssetRepo(id)
@@ -757,14 +757,14 @@ func (m *Manager) verifyAssets(ctx context.Context, id, root string) error {
 		return err
 	}
 	if row.Move.Running() || m.moveRunning(id) {
-		return busyf("its attachments are being moved into the attachment repository")
+		return busyf("Its attachments are being moved into the attachment repository.")
 	}
 	if row.State != store.RemoteOK {
-		return busyf("its attachment repository is %s, so what it holds cannot be checked against it", row.State)
+		return busyf("Its attachment repository is %s, so what it holds cannot be checked against it.", row.State)
 	}
 	if row.Move.State == store.MoveDone {
 		if n := localAssetFiles(root, 1); n > 0 {
-			return busyf("assets/ of the clone still has files that are not in the repository's history")
+			return busyf("assets/ of the clone still has files that are not in the repository's history.")
 		}
 	}
 	repo, _, err := m.assetRepo(ctx, id)
@@ -779,7 +779,7 @@ func (m *Manager) verifyAssets(ctx context.Context, id, root string) error {
 		return m.evictUnreachable(err)
 	}
 	if reason != "" {
-		return busyf("%s", reason)
+		return busyf("%s.", reason)
 	}
 	return nil
 }

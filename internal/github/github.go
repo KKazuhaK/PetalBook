@@ -68,11 +68,11 @@ func errf(status int, code, format string, a ...any) *connections.Error {
 }
 
 func notConfigured() *connections.Error {
-	return errf(http.StatusConflict, CodeNotConfigured, "this server has no GitHub App set up (an administrator sets it up in the administration)")
+	return errf(http.StatusConflict, CodeNotConfigured, "This server has no GitHub App set up (an administrator sets it up in the administration).")
 }
 
 func notConnected() *connections.Error {
-	return errf(http.StatusConflict, CodeNotConnected, "connect your GitHub account first")
+	return errf(http.StatusConflict, CodeNotConnected, "Connect your GitHub account first.")
 }
 
 // Options configures a Service.
@@ -324,10 +324,10 @@ func (s *Service) wrap(err error) error {
 	if errors.As(err, &se) {
 		switch {
 		case se.RateLimited:
-			return &connections.Error{Provider: ProviderID, Code: CodeRateLimited, Status: http.StatusTooManyRequests, Msg: "GitHub is limiting this server; try again in a moment",
+			return &connections.Error{Provider: ProviderID, Code: CodeRateLimited, Status: http.StatusTooManyRequests, Msg: "GitHub is limiting this server; try again in a moment.",
 				RetryAfter: se.RetryAfter(s.opt.Now()), Err: err}
 		case se.Status >= 500:
-			return &connections.Error{Provider: ProviderID, Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now", Err: err}
+			return &connections.Error{Provider: ProviderID, Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now.", Err: err}
 		}
 		return err
 	}
@@ -338,7 +338,7 @@ func (s *Service) wrap(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return err
 	}
-	return &connections.Error{Provider: ProviderID, Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now", Err: err}
+	return &connections.Error{Provider: ProviderID, Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Msg: "GitHub cannot be reached right now.", Err: err}
 }
 
 // Offline reports whether err means GitHub could not be reached or is limiting

@@ -60,7 +60,7 @@ func (s *server) getTemplates(c *call) {
 func (s *server) getTemplate(c *call) {
 	t, err := c.sp.Space.Template(c.r.PathValue("name"))
 	if errors.Is(err, space.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such template")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such template.")
 		return
 	}
 	if err != nil {
@@ -98,7 +98,7 @@ func (s *server) putTemplate(c *call) {
 func (s *server) deleteTemplate(c *call) {
 	err := c.sp.Space.DeleteTemplate(s.author(c), c.r.PathValue("name"), c.r.URL.Query().Get("baseRev"))
 	if errors.Is(err, space.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such template")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such template.")
 		return
 	}
 	if err != nil {
@@ -128,7 +128,7 @@ func (s *server) putTemplateDefaults(c *call) {
 	case req.QuickNote != nil && req.Folder == nil && req.Template == nil:
 		d, err = c.sp.Space.SetQuickNoteTemplate(s.author(c), *req.QuickNote)
 	default:
-		writeError(c.w, http.StatusBadRequest, "invalid", `send {"folder": …, "template": …} or {"quickNote": …}`)
+		writeError(c.w, http.StatusBadRequest, "invalid", `Send {"folder": …, "template": …} or {"quickNote": …}.`)
 		return
 	}
 	if err != nil {

@@ -65,7 +65,7 @@ func (m *Manager) StartMove(ctx context.Context, h *Handle) (v *AssetsView, star
 		return nil, false, err
 	}
 	if row.Move.Running() || m.moveRunning(id) {
-		return nil, false, assetsConflict("the attachments are being moved already")
+		return nil, false, assetsConflict("The attachments are being moved already.")
 	}
 	m.settleMove(ctx, h, row)
 	files, err := h.Space.AssetsAtHead(ctx)

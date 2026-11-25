@@ -240,7 +240,7 @@ func (s *Service) Put(ctx context.Context, sp *space.Space, spaceID, userID, pag
 	// PostgreSQL cannot store a NUL in text; refuse it on every database so a
 	// draft behaves the same wherever the server runs.
 	if strings.IndexByte(body, 0) >= 0 {
-		return nil, &space.InvalidError{Msg: "a draft cannot contain a NUL character"}
+		return nil, &space.InvalidError{Msg: "A draft cannot contain a NUL character."}
 	}
 	mj, err := meta.MarshalJSON()
 	if err != nil {

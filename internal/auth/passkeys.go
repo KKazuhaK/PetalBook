@@ -124,7 +124,7 @@ func (s *Service) passkeysOn(st *secState) bool { return st.Passkeys.Enabled && 
 // PasskeysAvailable answers the "passkey" of GET /api/auth/providers.
 func (s *Service) PasskeysAvailable(ctx context.Context) bool { return s.passkeysOn(s.sec(ctx)) }
 
-func errNoPasskeys() *Error { return errf(NotFound, "passkeys are not available here") }
+func errNoPasskeys() *Error { return errf(NotFound, "Passkeys are not available here.") }
 
 // --- the credential store -----------------------------------------------------------
 
@@ -261,7 +261,7 @@ func (c *ceremonyUsers) take(id string) ([]byte, bool) {
 // --- signing in with a passkey ---------------------------------------------------------
 
 func errPasskeyFailed() *Error {
-	return coded(401, "passkey_failed", "the passkey did not check out; try again")
+	return coded(401, "passkey_failed", "The passkey did not check out; try again.")
 }
 
 // PasskeyBegin starts a sign-in. With a username the answer lists that user's
@@ -277,7 +277,7 @@ func (s *Service) PasskeyBegin(ctx context.Context, username, ip string) (string
 		return "", nil, err
 	}
 	if len(username) > 128 {
-		return "", nil, errf(Invalid, "the username is too long")
+		return "", nil, errf(Invalid, "The username is too long.")
 	}
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -431,7 +431,7 @@ func cleanPasskeyName(in string) (string, error) {
 
 func cleanTextErr(v, what string, max int) (string, error) {
 	if c := len([]rune(v)); c < 1 || c > max || strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", errf(Invalid, "%s is 1 to %d characters", what, max)
+		return "", errf(Invalid, "%s is 1 to %d characters.", what, max)
 	}
 	return v, nil
 }
@@ -447,14 +447,14 @@ func (s *Service) PasskeyRegisterBegin(ctx context.Context, p *Principal, name s
 		return "", nil, err
 	}
 	if s.now().Sub(p.SessionCreated) > recentLoginWindow {
-		return "", nil, coded(403, "recent_login_required", "sign in again to add a passkey: it needs a sign-in from the last 10 minutes")
+		return "", nil, coded(403, "recent_login_required", "Sign in again to add a passkey: it needs a sign-in from the last 10 minutes.")
 	}
 	count, err := store.CountPasskeys(ctx, s.st.Q(), p.User.ID)
 	if err != nil {
 		return "", nil, err
 	}
 	if count >= maxPasskeys {
-		return "", nil, coded(409, "too_many_passkeys", "an account has at most %d passkeys", maxPasskeys)
+		return "", nil, coded(409, "too_many_passkeys", "An account has at most %d passkeys.", maxPasskeys)
 	}
 	cc, id, err := s.pk.svc.BeginRegistration(ctx, []byte(p.User.ID), p.User.Username, p.User.Name)
 	if err != nil {
@@ -476,11 +476,11 @@ func (s *Service) PasskeyRegisterFinish(ctx context.Context, p *Principal, cerem
 	switch {
 	case err == nil:
 	case errors.Is(err, errPasskeyLimit):
-		return nil, coded(409, "too_many_passkeys", "an account has at most %d passkeys", maxPasskeys)
+		return nil, coded(409, "too_many_passkeys", "An account has at most %d passkeys.", maxPasskeys)
 	case errors.Is(err, passkey.ErrSessionNotFound) || isWebAuthnError(err):
-		return nil, coded(400, "passkey_failed", "the passkey could not be registered; try again")
+		return nil, coded(400, "passkey_failed", "The passkey could not be registered; try again.")
 	case store.IsUnique(err):
-		return nil, coded(409, "exists", "that passkey is registered already")
+		return nil, coded(409, "exists", "That passkey is registered already.")
 	default:
 		return nil, err
 	}
@@ -512,7 +512,7 @@ func (s *Service) RenamePasskey(ctx context.Context, userID, id, name string) (*
 	}
 	if err := store.RenamePasskey(ctx, s.st.Q(), id, userID, n); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, errf(NotFound, "no such passkey")
+			return nil, errf(NotFound, "No such passkey.")
 		}
 		return nil, err
 	}
@@ -525,7 +525,7 @@ func (s *Service) RenamePasskey(ctx context.Context, userID, id, name string) (*
 			return &v, nil
 		}
 	}
-	return nil, errf(NotFound, "no such passkey")
+	return nil, errf(NotFound, "No such passkey.")
 }
 
 // DeletePasskey removes one of the user's passkeys, unless that would leave no
@@ -538,13 +538,13 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 		// A person of another tenant is no person at all.
 		u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor.User), userID)
 		if errors.Is(err, store.ErrNotFound) {
-			return errf(NotFound, "no such user")
+			return errf(NotFound, "No such user.")
 		} else if err != nil {
 			return err
 		}
 		// The rule of UpdateUser: a site administrator is changed by site administrators only.
 		if u.SiteAdmin && !(actor.User.SiteAdmin && actor.User.Role == "admin") {
-			return errf(Forbidden, "only a site administrator may change a site administrator")
+			return errf(Forbidden, "Only a site administrator may change a site administrator.")
 		}
 	}
 	s.credMu.Lock()
@@ -558,13 +558,13 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 			if ok, err := s.hasOtherWay(ctx, userID); err != nil {
 				return err
 			} else if !ok {
-				return errf(Conflict, "this is the only way you can sign in; set a password first")
+				return errf(Conflict, "This is the only way you can sign in; set a password first.")
 			}
 		}
 	}
 	if err := store.DeletePasskey(ctx, s.st.Q(), id, userID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return errf(NotFound, "no such passkey")
+			return errf(NotFound, "No such passkey.")
 		}
 		return err
 	}

@@ -41,7 +41,7 @@ func (p *Provider) StartConnect(ctx context.Context, userID string, req connecti
 		return nil, err
 	}
 	if p.m.opt.PublicURL == "" {
-		return nil, p.errf(http.StatusConflict, connections.CodePublicURLNeeded, "people cannot connect accounts: the server needs its --public-url")
+		return nil, p.errf(http.StatusConflict, connections.CodePublicURLNeeded, "People cannot connect accounts: the server needs its --public-url.")
 	}
 	state := githubapp.RandomState()
 	verifier, challenge := githubapp.PKCE()
@@ -397,7 +397,7 @@ func (p *Provider) doRenew(ctx context.Context, userID string, force bool) (stri
 		p.cacheToken(userID, gen, tok.Access, tok.AccessExpires, row.Version+1)
 		return tok.Access, nil
 	}
-	return "", p.errf(http.StatusServiceUnavailable, connections.CodeUnavailable, "the authorisation keeps changing; try again")
+	return "", p.errf(http.StatusServiceUnavailable, connections.CodeUnavailable, "The authorisation keeps changing; try again.")
 }
 
 func (p *Provider) expire(ctx context.Context, row *store.ProviderAuthorization) {

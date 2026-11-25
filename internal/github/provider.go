@@ -143,7 +143,7 @@ func (s *Service) AdminSave(ctx context.Context, body []byte) (any, error) {
 		ClientSecret string  `json:"clientSecret"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, errf(http.StatusBadRequest, CodeInvalid, "the body is not what this takes: %s", err.Error())
+		return nil, errf(http.StatusBadRequest, CodeInvalid, "The body is not what this takes: %s.", err.Error())
 	}
 	v, err := s.Save(ctx, SaveRequest{AppID: req.AppID, PrivateKey: req.PrivateKey, ClientID: req.ClientID, ClientSecret: req.ClientSecret})
 	if err != nil {

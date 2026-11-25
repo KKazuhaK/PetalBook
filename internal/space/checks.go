@@ -175,7 +175,7 @@ func (s *Space) FixNoID(by Author, rel, baseRev string) (*Page, error) {
 			}
 		}
 		if err := doc.SetMeta(meta); err != nil {
-			return nil, invalidf("%v", err)
+			return nil, invalidf("%v.", err)
 		}
 		newData := doc.Bytes()
 		if bytes.Equal(newData, data) {

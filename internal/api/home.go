@@ -50,17 +50,17 @@ func (s *server) putDailySettings(c *call) {
 	}
 	raw, ok := req["daily"]
 	if !ok || len(req) != 1 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give daily: the source of the daily text, or null to remove it")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give daily: the source of the daily text, or null to remove it.")
 		return
 	}
 	var cfg *space.DailyConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		var inv *space.InvalidError
 		if errors.As(err, &inv) && inv.Code != "" {
-			writeCoded(c.w, &codedError{code: inv.Code, msg: "daily: " + inv.Msg})
+			writeCoded(c.w, &codedError{code: inv.Code, msg: "Daily: " + inv.Msg + "."})
 			return
 		}
-		writeError(c.w, http.StatusBadRequest, "invalid", "daily: "+err.Error())
+		writeError(c.w, http.StatusBadRequest, "invalid", "Daily: "+err.Error()+".")
 		return
 	}
 	d, err := c.sp.Space.SetDaily(s.author(c), cfg)
@@ -90,7 +90,7 @@ func (s *server) getDaily(c *call) {
 		date = time.Now().UTC().Format("2006-01-02")
 	}
 	if !space.ValidDailyDate(date) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "date must be a day like 2026-11-23")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Date must be a day like 2026-11-23.")
 		return
 	}
 	skip := 0
@@ -98,10 +98,10 @@ func (s *server) getDaily(c *call) {
 		n, err := strconv.Atoi(raw)
 		switch {
 		case err != nil || n < 0:
-			writeError(c.w, http.StatusBadRequest, "invalid", "skip must be a number from 0 up")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Skip must be a number from 0 up.")
 			return
 		case !space.ValidDailySkip(n):
-			writeCoded(c.w, &codedError{code: codeSkipTooLarge, msg: "skip is too large"})
+			writeCoded(c.w, &codedError{code: codeSkipTooLarge, msg: "Skip is too large."})
 			return
 		}
 		skip = n
@@ -110,13 +110,13 @@ func (s *server) getDaily(c *call) {
 	if raw := v.Get("lang"); raw != "" {
 		var ok bool
 		if lang, ok = langtag.Canonical(raw); !ok {
-			writeCoded(c.w, &codedError{code: space.CodeBadLanguage, msg: "lang is a language tag like zh-Hans, en or pt-BR"})
+			writeCoded(c.w, &codedError{code: space.CodeBadLanguage, msg: "Lang is a language tag like zh-Hans, en or pt-BR."})
 			return
 		}
 	}
 	tz, ok := parseTZ(v)
 	if !ok {
-		writeError(c.w, http.StatusBadRequest, "invalid", "tz is minutes east of UTC, from -840 to 840")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Tz is minutes east of UTC, from -840 to 840.")
 		return
 	}
 	type none struct {
@@ -168,7 +168,7 @@ func (s *server) getDaily(c *call) {
 		switch {
 		case errors.Is(err, dailyfetch.ErrRateLimited):
 			c.w.Header().Set("Retry-After", "10")
-			writeError(c.w, http.StatusTooManyRequests, "rate_limited", "another text was asked for too often; try again in a moment")
+			writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Another text was asked for too often; try again in a moment.")
 			return
 		case err != nil:
 			s.fail(c.w, err)
@@ -284,7 +284,7 @@ func (s *server) getFavorites(c *call) {
 // member: they have none.
 func (s *server) membersOnly(c *call) bool {
 	if c.sp.Info.ViaAdmin {
-		writeError(c.w, http.StatusForbidden, "forbidden", "favourites belong to the members of a space; you are not one")
+		writeError(c.w, http.StatusForbidden, "forbidden", "Favourites belong to the members of a space; you are not one.")
 		return false
 	}
 	return true
@@ -313,7 +313,7 @@ func (s *server) addFavorite(c *call) {
 		return err
 	})
 	if errors.Is(err, store.ErrFavoritesFull) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "a space can have at most "+strconv.Itoa(store.MaxFavorites)+" favourites of yours; remove one first")
+		writeError(c.w, http.StatusBadRequest, "invalid", "A space can have at most "+strconv.Itoa(store.MaxFavorites)+" favourites of yours; remove one first.")
 		return
 	}
 	s.answerFavorites(c, err)
@@ -340,7 +340,7 @@ func (s *server) deleteFavorite(c *call) {
 	v := c.r.URL.Query()
 	kind, target := v.Get("kind"), v.Get("target")
 	if (kind != store.FavPage && kind != store.FavFolder && kind != store.FavView) || target == "" {
-		writeError(c.w, http.StatusBadRequest, "invalid", "kind (page, folder or view) and target say which favourite")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Kind (page, folder or view) and target say which favourite.")
 		return
 	}
 	if !s.membersOnly(c) {
@@ -364,11 +364,11 @@ func (s *server) putFavoritesOrder(c *call) {
 		return
 	}
 	if req.Items == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "items is the list of favourites in their new order")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Items is the list of favourites in their new order.")
 		return
 	}
 	if len(req.Items) > store.MaxFavorites {
-		writeError(c.w, http.StatusBadRequest, "invalid", "at most "+strconv.Itoa(store.MaxFavorites)+" favourites")
+		writeError(c.w, http.StatusBadRequest, "invalid", "At most "+strconv.Itoa(store.MaxFavorites)+" favourites.")
 		return
 	}
 	if !s.membersOnly(c) {
@@ -377,7 +377,7 @@ func (s *server) putFavoritesOrder(c *call) {
 	items := make([]store.Favorite, len(req.Items))
 	for i, it := range req.Items {
 		if it.Kind != store.FavPage && it.Kind != store.FavFolder && it.Kind != store.FavView {
-			writeError(c.w, http.StatusBadRequest, "invalid", "kind must be page, folder or view")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Kind must be page, folder or view.")
 			return
 		}
 		items[i] = store.Favorite{Kind: it.Kind, Target: it.Target}

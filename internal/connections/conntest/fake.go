@@ -35,12 +35,12 @@ func NewFake(id string) *Fake {
 }
 
 func (f *Fake) err(status int, code, msg string) *connections.Error {
-	return connections.Errorf(f.ID, status, code, "%s", msg)
+	return connections.Errorf(f.ID, status, code, "%s.", msg)
 }
 
 func (f *Fake) need() error {
 	if !f.Configured {
-		return f.err(http.StatusConflict, connections.CodeNotConfigured, "the fake provider is not set up")
+		return f.err(http.StatusConflict, connections.CodeNotConfigured, "The fake provider is not set up.")
 	}
 	return nil
 }
@@ -170,10 +170,10 @@ func (f *Fake) PlanCreate(_ context.Context, userID, owner string) (*connections
 	defer f.mu.Unlock()
 	c := f.conns[userID]
 	if c == nil {
-		return nil, f.err(http.StatusConflict, connections.CodeNotConnected, "connect your account first")
+		return nil, f.err(http.StatusConflict, connections.CodeNotConnected, "Connect your account first.")
 	}
 	if !strings.EqualFold(c.Login, owner) {
-		return nil, f.err(http.StatusForbidden, connections.CodeOwnerNotAllowed, "you cannot create a repository for "+owner)
+		return nil, f.err(http.StatusForbidden, connections.CodeOwnerNotAllowed, "You cannot create a repository for "+owner+".")
 	}
 	return &connections.Plan{Owner: c.Login, Via: connections.ViaUser, UserID: userID}, nil
 }
@@ -183,7 +183,7 @@ func (f *Fake) CreateRepo(_ context.Context, p *connections.Plan, n connections.
 	_, taken := f.repos[p.Owner+"/"+n.Name]
 	f.mu.Unlock()
 	if taken {
-		return nil, f.err(http.StatusConflict, connections.CodeNameTaken, p.Owner+" already has a repository with that name")
+		return nil, f.err(http.StatusConflict, connections.CodeNameTaken, p.Owner+" already has a repository with that name.")
 	}
 	return f.AddRepo(p.Owner, n.Name), nil
 }
@@ -200,7 +200,7 @@ func (f *Fake) ResolveExistingIn(_ context.Context, _, userID, owner, name, _ st
 	defer f.mu.Unlock()
 	r := f.repos[owner+"/"+name]
 	if r == nil {
-		return nil, nil, f.err(http.StatusForbidden, connections.CodeOwnerNotAllowed, "your connection cannot push to "+owner+"/"+name)
+		return nil, nil, f.err(http.StatusForbidden, connections.CodeOwnerNotAllowed, "Your connection cannot push to "+owner+"/"+name+".")
 	}
 	return &connections.Cred{Provider: f.ID, Via: connections.ViaUser, UserID: userID, RepoID: r.ID}, r, nil
 }
@@ -216,7 +216,7 @@ func (f *Fake) GitToken(_ context.Context, r *store.Remote, _ bool) (string, err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.conns[r.GHUserID] == nil {
-		return "", &gitstore.CredentialError{Code: connections.CodeConnectionMissing, Msg: "the person is not connected"}
+		return "", &gitstore.CredentialError{Code: connections.CodeConnectionMissing, Msg: "The person is not connected."}
 	}
 	return "fake-token", nil
 }

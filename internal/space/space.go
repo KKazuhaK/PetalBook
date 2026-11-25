@@ -162,7 +162,7 @@ const CodeBadLanguage = "bad_language"
 // BadLanguage is the refusal of a language tag that is not well formed or
 // whose language is not in the IANA registry.
 func BadLanguage(tag string) error {
-	return &InvalidError{Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR", tag), Code: CodeBadLanguage}
+	return &InvalidError{Msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR.", tag), Code: CodeBadLanguage}
 }
 
 // ConflictError means the page changed since the client read it.
@@ -672,26 +672,26 @@ func checkRel(rel string) error {
 		return nil
 	}
 	if !utf8.ValidString(rel) || len(rel) > 1024 {
-		return invalidf("invalid path")
+		return invalidf("Invalid path.")
 	}
 	if strings.HasPrefix(rel, "/") || strings.HasSuffix(rel, "/") {
-		return invalidf("path %q must not start or end with a slash", rel)
+		return invalidf("Path %q must not start or end with a slash.", rel)
 	}
 	for i, seg := range strings.Split(rel, "/") {
 		switch {
 		case seg == "" || seg == "." || seg == "..":
-			return invalidf("path %q has an empty, . or .. segment", rel)
+			return invalidf("Path %q has an empty, . or .. segment.", rel)
 		case strings.HasPrefix(seg, "."):
-			return invalidf("path %q: names starting with a dot are reserved", rel)
+			return invalidf("Path %q: names starting with a dot are reserved.", rel)
 		case len(seg) > 255:
-			return invalidf("path %q: a name is too long", rel)
+			return invalidf("Path %q: a name is too long.", rel)
 		case strings.TrimRight(seg, ". ") != seg:
-			return invalidf("path %q: a name ends with a dot or space", rel)
+			return invalidf("Path %q: a name ends with a dot or space.", rel)
 		case strings.IndexFunc(seg, func(r rune) bool { return r < 0x20 || r == 0x7f || strings.ContainsRune(`<>:"\|?*`, r) }) >= 0:
-			return invalidf("path %q: a name has a character that file systems do not allow", rel)
+			return invalidf("Path %q: a name has a character that file systems do not allow.", rel)
 		case i == 0 && strings.EqualFold(seg, "assets"):
 			// In any spelling: on a file system that ignores case, Assets is assets.
-			return invalidf("the folder name %q is reserved for attachments", seg)
+			return invalidf("The folder name %q is reserved for attachments.", seg)
 		}
 	}
 	return nil
@@ -721,7 +721,7 @@ func (s *Space) abs(rel string) (string, error) {
 			return "", err
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return "", invalidf("path %q goes through a symbolic link", rel)
+			return "", invalidf("Path %q goes through a symbolic link.", rel)
 		}
 	}
 	return p, nil

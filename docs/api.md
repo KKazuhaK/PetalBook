@@ -13,6 +13,13 @@ The web app talks to the server only through this API.
 - Times are RFC 3339 strings in UTC (`2026-11-21T08:30:00Z`). `created` in a
   page's header is a date (`2026-11-21`).
 - Errors: a non-2xx status and `{"error": "<code>", "message": "<for people>"}`.
+  `message` is an English sentence (a capital first, a full stop last) for people
+  who use the API and read logs; it is not a contract and may change. A client
+  decides by `error`, and the web app shows its own text in the language of the
+  page by that code, with what the answer says it is about (`limit`, `size`,
+  `name`, `provider`, `permission`, `Retry-After`), and the server's sentence
+  only for a code it does not know. The codes the server can send are listed in
+  `web/src/i18n/errorCodes.json`, which a test keeps equal to the source.
   Codes: `not_found` (404), `invalid` (400; also 405, 413 and 415),
   `conflict` (409), `exists` (409), `unauthenticated` (401: not signed in, or
   wrong credentials), `forbidden` (403: cross-site requests, see below, and
@@ -338,7 +345,7 @@ unauthenticated` answer to a request that carries the cookie of such a session
 has one more field, `reason`:
 
 ```json
-{"error": "unauthenticated", "message": "your session has ended; sign in again", "reason": "expired"}
+{"error": "unauthenticated", "message": "Your session has ended; sign in again.", "reason": "expired"}
 ```
 
 | `reason` | The session ended because |

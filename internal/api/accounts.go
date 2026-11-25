@@ -419,7 +419,7 @@ func (s *server) listUsers(c *call) {
 			enabledOnly = true
 		case "0":
 		default:
-			writeError(c.w, http.StatusBadRequest, "invalid", "enabled is 1 or 0")
+			writeError(c.w, http.StatusBadRequest, "invalid", "Enabled is 1 or 0.")
 			return
 		}
 	}
@@ -428,7 +428,7 @@ func (s *server) listUsers(c *call) {
 		if v := q.Get("limit"); q.Has("limit") {
 			n, aerr := strconv.Atoi(v)
 			if aerr != nil || n < 1 || n > maxAdminLimit {
-				writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
+				writeError(c.w, http.StatusBadRequest, "invalid", "Limit is a number from 1 to "+strconv.Itoa(maxAdminLimit)+".")
 				return
 			}
 			limit = n
@@ -616,7 +616,7 @@ func (s *server) createSpace(c *call) {
 	var err error
 	sync := req.Storage != nil && req.Storage.Sync != nil
 	if req.Remote != nil && sync {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give remote or storage.sync, not both")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give remote or storage.sync, not both.")
 		return
 	}
 	if r := req.Remote; r != nil {
@@ -626,9 +626,9 @@ func (s *server) createSpace(c *call) {
 		g := req.Storage.Sync
 		if p, ok := s.registry().Get(g.Provider); !ok || p.Descriptor().Type == connections.GitID {
 			if !ok {
-				writeError(c.w, http.StatusBadRequest, "invalid", "storage.sync.provider is not a provider of this server")
+				writeError(c.w, http.StatusBadRequest, "invalid", "storage.sync.provider is not a provider of this server.")
 			} else {
-				writeError(c.w, http.StatusBadRequest, "invalid", "a plain Git address is given as remote, or connected after the space is made with PUT /api/spaces/{space}/remote")
+				writeError(c.w, http.StatusBadRequest, "invalid", "A plain Git address is given as remote, or connected after the space is made with PUT /api/spaces/{space}/remote.")
 			}
 			return
 		}
@@ -660,7 +660,7 @@ func (s *server) renameSpace(c *call) {
 		return
 	}
 	if req.Name == nil && req.Inbox == nil {
-		writeError(c.w, http.StatusBadRequest, "invalid", "give a name, an inbox folder, or both")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give a name, an inbox folder, or both.")
 		return
 	}
 	in, err := s.spaces.Update(c.r.Context(), c.user(), c.sp.Info.ID, req.Name, req.Inbox)

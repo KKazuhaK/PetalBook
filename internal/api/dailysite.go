@@ -301,10 +301,10 @@ func (s *server) adminAnswerDaily(c *call) {
 // interfaces that are set up.
 func checkDefaultAPIs(d *siteDefault, site *siteDaily) error {
 	if d.Space != "" || d.Source != nil || len(d.APIs) == 0 {
-		return &space.InvalidError{Msg: "a default that is an interface needs apis, the id of an interface for each language (\"\" for all the others), and no space or source"}
+		return &space.InvalidError{Msg: "A default that is an interface needs apis, the id of an interface for each language (\"\" for all the others), and no space or source."}
 	}
 	if len(d.APIs) > 31 {
-		return &space.InvalidError{Msg: "at most 30 languages"}
+		return &space.InvalidError{Msg: "At most 30 languages."}
 	}
 	known := map[string]bool{}
 	for _, a := range site.all() {
@@ -319,17 +319,17 @@ func checkDefaultAPIs(d *siteDefault, site *siteDaily) error {
 				return badLangError(l)
 			}
 			if _, dup := out[cl]; dup {
-				return &space.InvalidError{Msg: fmt.Sprintf("%s is given twice", cl)}
+				return &space.InvalidError{Msg: fmt.Sprintf("%s is given twice.", cl)}
 			}
 			l = cl
 		}
 		if len(ids) == 0 || len(ids) > maxAPIsPerLanguage {
-			return &space.InvalidError{Msg: fmt.Sprintf("each language has 1 to %d interfaces", maxAPIsPerLanguage)}
+			return &space.InvalidError{Msg: fmt.Sprintf("Each language has 1 to %d interfaces.", maxAPIsPerLanguage)}
 		}
 		list := make([]string, 0, len(ids))
 		for _, id := range ids {
 			if !known[id] {
-				return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", id)}
+				return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("There is no interface %q; choose one of the interfaces that are set up.", id)}
 			}
 			if err := site.checkServes(id, l); err != nil {
 				return err
@@ -366,7 +366,7 @@ func checkOptions(site *siteDaily, ids []string, given map[string]map[string][]s
 		p, ok := dailyfetch.ProviderByID(id)
 		builtin := slices.ContainsFunc(site.all(), func(a storedAPI) bool { return a.ID == id && a.Builtin })
 		if !ok || !builtin || !slices.Contains(ids, id) {
-			return nil, &space.InvalidError{Msg: fmt.Sprintf("options are for the built-in interfaces that are chosen; %q is not one", id)}
+			return nil, &space.InvalidError{Msg: fmt.Sprintf("Options are for the built-in interfaces that are chosen; %q is not one.", id)}
 		}
 		canon, err := p.CheckOptions(chosen)
 		if err != nil {
@@ -387,21 +387,21 @@ func checkOptions(site *siteDaily, ids []string, given map[string]map[string][]s
 // (site) and the spaces there are; apis are written as canonical tags.
 func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault, site *siteDaily) error {
 	if d.Kind != "api" && (d.APIs != nil || (d.Options != nil && d.Kind != "sources")) {
-		return &space.InvalidError{Msg: "only a default that is an interface has apis"}
+		return &space.InvalidError{Msg: "Only a default that is an interface has apis."}
 	}
 	if d.Kind != "sources" && d.Sources != nil {
-		return &space.InvalidError{Msg: "only a default that is sources has sources"}
+		return &space.InvalidError{Msg: "Only a default that is sources has sources."}
 	}
 	switch d.Kind {
 	case "list":
 		if d.Space != "" || d.Source != nil {
-			return &space.InvalidError{Msg: "a default that is a list has no space or source"}
+			return &space.InvalidError{Msg: "A default that is a list has no space or source."}
 		}
 	case "api":
 		return checkDefaultAPIs(d, site)
 	case "space":
 		if !page.ValidID(d.Space) || d.Source == nil {
-			return &space.InvalidError{Msg: "a default that is a space needs the space and a source (folder, tag or type)"}
+			return &space.InvalidError{Msg: "A default that is a space needs the space and a source (folder, tag or type)."}
 		}
 		checked, err := s.checkSpaceSource(ctx, d.Space, *d.Source)
 		if err != nil {
@@ -411,7 +411,7 @@ func (s *server) checkSiteDefault(ctx context.Context, d *siteDefault, site *sit
 	case "sources":
 		return s.checkDefaultSources(ctx, d, site)
 	default:
-		return &space.InvalidError{Msg: "kind is space, list, api or sources"}
+		return &space.InvalidError{Msg: "Kind is space, list, api or sources."}
 	}
 	return nil
 }
@@ -486,7 +486,7 @@ func checkLines(in []lineOut) ([]store.DailyLine, error) {
 			continue
 		}
 		if len(body) > store.MaxDailyLineBytes || utf8.RuneCountInString(source) > 200 || utf8.RuneCountInString(author) > 200 || strings.ContainsRune(body+author+source, 0) {
-			return nil, &space.InvalidError{Msg: "an entry is too long (at most 8000 bytes, its author and source 200 characters each) or has a null character: " + firstWords(body)}
+			return nil, &space.InvalidError{Msg: "An entry is too long (at most 8000 bytes, its author and source 200 characters each) or has a null character: " + firstWords(body) + "."}
 		}
 		lines = append(lines, store.DailyLine{Body: body, Author: author, Source: source})
 	}
@@ -526,7 +526,7 @@ func (s *server) adminPutDailyLines(c *call) {
 		return
 	}
 	if len(lines) == 0 {
-		bad(c, "there is no text in it; to take the lines away, delete them")
+		bad(c, "There is no text in it; to take the lines away, delete them.")
 		return
 	}
 	for i := range lines {
@@ -537,7 +537,7 @@ func (s *server) adminPutDailyLines(c *call) {
 		return err
 	})
 	if errors.Is(err, store.ErrTooManyLines) {
-		bad(c, "the server keeps at most 5000 lines in all")
+		bad(c, "The server keeps at most 5000 lines in all.")
 		return
 	}
 	if err != nil {
@@ -680,13 +680,13 @@ func (s *server) adminDeleteDailyLines(c *call) {
 // administrators named: the space is there and enabled, the source is valid in it.
 func (s *server) checkSpaceSource(ctx context.Context, id string, src space.DailyConfig) (space.DailyConfig, error) {
 	if _, err := store.GetSpace(ctx, s.opt.Store.Q(), store.AllTenants(), id); errors.Is(err, store.ErrNotFound) {
-		return src, &space.InvalidError{Msg: "there is no such space"}
+		return src, &space.InvalidError{Msg: "There is no such space."}
 	} else if err != nil {
 		return src, err
 	}
 	sp, release, err := s.spaces.Acquire(ctx, id)
 	if errors.Is(err, spaces.ErrNotFound) || errors.Is(err, spaces.ErrDisabled) {
-		return src, &space.InvalidError{Msg: "there is no such space, or it is disabled"}
+		return src, &space.InvalidError{Msg: "There is no such space, or it is disabled."}
 	}
 	if err != nil {
 		return src, err
@@ -701,13 +701,13 @@ func (s *server) checkSpaceSource(ctx context.Context, id string, src space.Dail
 // administrators' lines, or a space with a source.
 func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *siteDaily) error {
 	if d.Options != nil {
-		return &space.InvalidError{Msg: "options go with a source of a default that is sources (each source has its own), not with the default"}
+		return &space.InvalidError{Msg: "Options go with a source of a default that is sources (each source has its own), not with the default."}
 	}
 	if d.Space != "" || d.Source != nil || d.APIs != nil || len(d.Sources) == 0 {
-		return &space.InvalidError{Msg: "a default that is sources needs sources, the list for each language (\"\" for all the others), and no space, source or apis"}
+		return &space.InvalidError{Msg: "A default that is sources needs sources, the list for each language (\"\" for all the others), and no space, source or apis."}
 	}
 	if len(d.Sources) > 31 {
-		return &space.InvalidError{Msg: "at most 30 languages"}
+		return &space.InvalidError{Msg: "At most 30 languages."}
 	}
 	known := map[string]bool{}
 	for _, a := range site.all() {
@@ -721,22 +721,22 @@ func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *
 				return badLangError(l)
 			}
 			if _, dup := out[cl]; dup {
-				return &space.InvalidError{Msg: fmt.Sprintf("%s is given twice", cl)}
+				return &space.InvalidError{Msg: fmt.Sprintf("%s is given twice.", cl)}
 			}
 			l = cl
 		}
 		if len(list) == 0 || len(list) > maxAPIsPerLanguage {
-			return &space.InvalidError{Msg: fmt.Sprintf("each language has 1 to %d sources", maxAPIsPerLanguage)}
+			return &space.InvalidError{Msg: fmt.Sprintf("Each language has 1 to %d sources.", maxAPIsPerLanguage)}
 		}
 		checked := make([]dailySource, 0, len(list))
 		for _, src := range list {
 			switch src.Kind {
 			case "api":
 				if src.Space != "" || src.Source != nil {
-					return &space.InvalidError{Msg: "a source that is an interface has an id and options only"}
+					return &space.InvalidError{Msg: "A source that is an interface has an id and options only."}
 				}
 				if !known[src.ID] {
-					return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("there is no interface %q; choose one of the interfaces that are set up", src.ID)}
+					return &codedError{code: codeAPINotFound, msg: fmt.Sprintf("There is no interface %q; choose one of the interfaces that are set up.", src.ID)}
 				}
 				if err := site.checkServes(src.ID, l); err != nil {
 					return err
@@ -744,11 +744,11 @@ func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *
 				// Options are checked below, with the interfaces in use.
 			case "list":
 				if src.ID != "" || src.Options != nil || src.Space != "" || src.Source != nil {
-					return &space.InvalidError{Msg: "a source that is the lines has nothing else"}
+					return &space.InvalidError{Msg: "A source that is the lines has nothing else."}
 				}
 			case "space":
 				if src.ID != "" || src.Options != nil || !page.ValidID(src.Space) || src.Source == nil {
-					return &space.InvalidError{Msg: "a source that is a space needs the space and a source (folder, tag or type)"}
+					return &space.InvalidError{Msg: "A source that is a space needs the space and a source (folder, tag or type)."}
 				}
 				cfg, err := s.checkSpaceSource(ctx, src.Space, *src.Source)
 				if err != nil {
@@ -756,7 +756,7 @@ func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *
 				}
 				src.Source = &cfg
 			default:
-				return &space.InvalidError{Msg: "kind of a source is api, list or space"}
+				return &space.InvalidError{Msg: "Kind of a source is api, list or space."}
 			}
 			checked = append(checked, src)
 		}
@@ -770,7 +770,7 @@ func (s *server) checkDefaultSources(ctx context.Context, d *siteDefault, site *
 			}
 			p, isBuiltin := dailyfetch.ProviderByID(src.ID)
 			if len(src.Options) > 0 && (!isBuiltin || !slices.ContainsFunc(site.all(), func(a storedAPI) bool { return a.ID == src.ID && a.Builtin })) {
-				return &space.InvalidError{Msg: fmt.Sprintf("options are for built-in interfaces; %q is not one", src.ID)}
+				return &space.InvalidError{Msg: fmt.Sprintf("Options are for built-in interfaces; %q is not one.", src.ID)}
 			}
 			if len(src.Options) > 0 {
 				canon, err := p.CheckOptions(src.Options)
@@ -794,7 +794,7 @@ func (d *siteDaily) checkServes(id, lang string) error {
 	}
 	for _, a := range d.all() {
 		if a.ID == id && a.Builtin && !a.Serves(lang) {
-			return &space.InvalidError{Msg: fmt.Sprintf("%s has no text in %s; list it under the languages it has", a.Name, lang)}
+			return &space.InvalidError{Msg: fmt.Sprintf("%s has no text in %s; list it under the languages it has.", a.Name, lang)}
 		}
 	}
 	return nil

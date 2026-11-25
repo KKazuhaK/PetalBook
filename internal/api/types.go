@@ -90,7 +90,7 @@ func (s *server) putType(c *call) {
 func (s *server) deleteType(c *call) {
 	if err := c.sp.Space.DeleteType(s.author(c), c.r.PathValue("name"), c.r.URL.Query().Get("baseRev")); err != nil {
 		if errors.Is(err, space.ErrNotFound) {
-			writeError(c.w, http.StatusNotFound, "not_found", "no such type")
+			writeError(c.w, http.StatusNotFound, "not_found", "No such type.")
 			return
 		}
 		s.fail(c.w, err)

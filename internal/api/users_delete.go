@@ -118,7 +118,7 @@ func (s *server) userDeletionOf(c *call, id, heir string, transfers map[string]s
 	sc := store.ScopeOf(c.user())
 	target, err := store.GetUser(ctx, s.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "user_not_found", "there is no such user")
+		writeError(c.w, http.StatusNotFound, "user_not_found", "There is no such user.")
 		return userDeletionResp{}, false
 	}
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *server) userDeletionOf(c *call, id, heir string, transfers map[string]s
 		return userDeletionResp{}, false
 	}
 	if forbidden {
-		writeError(c.w, http.StatusForbidden, "forbidden", "only a site administrator may delete a site administrator")
+		writeError(c.w, http.StatusForbidden, "forbidden", "Only a site administrator may delete a site administrator.")
 		return userDeletionResp{}, false
 	}
 	plan, err := store.PlanUserDeletion(ctx, s.opt.Store.Q(), sc, id, heir, transfers)
@@ -235,7 +235,7 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 		return nil, err
 	}
 	if forbidden {
-		return nil, &auth.Error{Kind: auth.Forbidden, Msg: "only a site administrator may delete a site administrator"}
+		return nil, &auth.Error{Kind: auth.Forbidden, Msg: "Only a site administrator may delete a site administrator."}
 	}
 	if len(blockers) > 0 {
 		return nil, &auth.Error{Kind: auth.Conflict, Msg: blockers[0]["message"].(string)}
@@ -351,7 +351,7 @@ func transfersDetail(t []store.UserTransfer) []map[string]string {
 
 func leaveError(err error) error {
 	if errors.Is(err, store.ErrLastOwnerOfSpace) {
-		return &auth.Error{Kind: auth.Conflict, Msg: "a space the person owned changed while they were being deleted: try again"}
+		return &auth.Error{Kind: auth.Conflict, Msg: "A space the person owned changed while they were being deleted: try again."}
 	}
 	return err
 }
@@ -407,7 +407,7 @@ func (s *server) adminDeleteUser(c *call) {
 		return
 	}
 	if len(req.Reason) > 500 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "reason is at most 500 characters")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is at most 500 characters.")
 		return
 	}
 	res, err := s.deleteUser(c.r.Context(), deleteUserIn{Actor: c.user(), IP: s.auth.ClientAddr(c.r), Heir: req.Heir, Transfers: req.Transfers, Reason: req.Reason}, c.r.PathValue("id"))
@@ -539,7 +539,7 @@ func (s *server) planUsers(c *call, sc store.Scope, req confirmRequest) (confirm
 		return confirmPlan{}, false
 	}
 	if len(fp) != len(req.Users) {
-		writeError(c.w, http.StatusNotFound, "user_not_found", "there is no such user")
+		writeError(c.w, http.StatusNotFound, "user_not_found", "There is no such user.")
 		return confirmPlan{}, false
 	}
 	ids := append([]string(nil), req.Users...)

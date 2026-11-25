@@ -96,7 +96,7 @@ func (s *server) recycleDays(c *call) int { return s.spaces.RecycleDays(c.r.Cont
 func (s *server) recycleItemFound(c *call, id string) (*store.RecycleItem, bool) {
 	it, err := store.GetRecycleItem(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id, false)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such item in the recycle bin")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such item in the recycle bin.")
 		return nil, false
 	}
 	if err != nil {
@@ -112,14 +112,14 @@ func (s *server) adminListRecycle(c *call) {
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > maxAdminLimit {
-			writeError(c.w, http.StatusBadRequest, "invalid", "limit is a number from 1 to "+strconv.Itoa(maxAdminLimit))
+			writeError(c.w, http.StatusBadRequest, "invalid", "Limit is a number from 1 to "+strconv.Itoa(maxAdminLimit)+".")
 			return
 		}
 		limit = n
 	}
 	kind := q.Get("kind")
 	if kind != "" && kind != store.RecycleSpace && kind != store.RecycleUser {
-		writeError(c.w, http.StatusBadRequest, "invalid", "kind is space or user")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Kind is space or user.")
 		return
 	}
 	sc, ok := s.adminScope(c)
@@ -128,7 +128,7 @@ func (s *server) adminListRecycle(c *call) {
 	}
 	rows, next, err := store.ListRecycle(c.r.Context(), s.opt.Store.Q(), sc, store.RecycleFilter{Kind: kind, Query: q.Get("q"), After: q.Get("cursor"), Limit: limit})
 	if errors.Is(err, store.ErrBadCursor) {
-		writeError(c.w, http.StatusBadRequest, "invalid", "that cursor is not one this list gave")
+		writeError(c.w, http.StatusBadRequest, "invalid", "That cursor is not one this list gave.")
 		return
 	}
 	if err != nil {
@@ -242,7 +242,7 @@ func (s *server) adminDeleteSpace(c *call) {
 		return
 	}
 	if len(req.Reason) > 500 {
-		writeError(c.w, http.StatusBadRequest, "invalid", "reason is at most 500 characters")
+		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is at most 500 characters.")
 		return
 	}
 	it, err := s.spaces.RecycleSpace(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), spaces.RecycleOptions{By: c.user().ID, ByName: c.user().Username, Reason: req.Reason})
@@ -291,7 +291,7 @@ func (s *server) deletionOf(c *call, sc store.Scope, id string) (deletionResp, b
 	ctx := c.r.Context()
 	row, err := store.GetAdminSpace(ctx, s.opt.Store.Q(), sc, id)
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return deletionResp{}, false
 	}
 	if err != nil {
@@ -334,7 +334,7 @@ func (s *server) planSpaces(c *call, sc store.Scope, req confirmRequest) (confir
 		return confirmPlan{}, false
 	}
 	if len(fp) != len(req.Spaces) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such space")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return confirmPlan{}, false
 	}
 	var plan confirmPlan
@@ -373,7 +373,7 @@ func (s *server) planSpaces(c *call, sc store.Scope, req confirmRequest) (confir
 
 func (s *server) planItems(c *call, sc store.Scope, req confirmRequest) (confirmPlan, bool) {
 	if req.Action == "purge" && !c.isSiteAdmin() {
-		writeError(c.w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may purge the recycle bin early")
+		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may purge the recycle bin early.")
 		return confirmPlan{}, false
 	}
 	items, err := store.GetRecycleItems(c.r.Context(), s.opt.Store.Q(), sc, req.Items)
@@ -382,7 +382,7 @@ func (s *server) planItems(c *call, sc store.Scope, req confirmRequest) (confirm
 		return confirmPlan{}, false
 	}
 	if len(items) != len(req.Items) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such item in the recycle bin")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such item in the recycle bin.")
 		return confirmPlan{}, false
 	}
 	ids := append([]string(nil), req.Items...)

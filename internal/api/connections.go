@@ -61,7 +61,7 @@ func (s *server) provider(c *call) (connections.Provider, bool) {
 	// A provider of another tenant is as good as not there.
 	p, ok := s.registry().GetFor(c.r.PathValue("provider"), c.user().TenantID)
 	if !ok {
-		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "no such provider")
+		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "No such provider.")
 		return nil, false
 	}
 	return p, true
@@ -70,7 +70,7 @@ func (s *server) provider(c *call) (connections.Provider, bool) {
 // connError answers an error of a connection route: like every one of them
 // it carries the provider's id.
 func (s *server) connError(c *call, provider string, status int, code, msg string) {
-	s.failConnection(c.w, connections.Errorf(provider, status, code, "%s", msg))
+	s.failConnection(c.w, connections.Errorf(provider, status, code, "%s.", msg))
 }
 
 type capabilitiesResp struct {
@@ -203,7 +203,7 @@ func (s *server) connectCallback(c *call) {
 	}
 	id := p.Descriptor().ID
 	if p.Descriptor().Type == connections.GitID {
-		s.connError(c, id, http.StatusNotFound, connections.CodeNotFound, "a plain Git address has nothing to connect")
+		s.connError(c, id, http.StatusNotFound, connections.CodeNotFound, "A plain Git address has nothing to connect.")
 		return
 	}
 	binding := ""
@@ -258,7 +258,7 @@ func (s *server) connectDismissLeftover(c *call) {
 	}
 	id, err := strconv.ParseInt(c.r.PathValue("repoId"), 10, 64)
 	if err != nil || id <= 0 {
-		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "no such repository")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "No such repository.")
 		return
 	}
 	if err := p.DismissLeftover(c.r.Context(), c.user().ID, id); err != nil {
@@ -319,7 +319,7 @@ func (s *server) connectRepos(c *call) {
 	d := p.Descriptor()
 	if !d.Capabilities.Installations && q.Has("installation") {
 		// Installations are GitHub's: a host has none to name, whatever the value.
-		s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "this provider has no installations")
+		s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "This provider has no installations.")
 		return
 	}
 	if d.Type != connections.GitID && d.Capabilities.Installations {
@@ -327,14 +327,14 @@ func (s *server) connectRepos(c *call) {
 		if v := q.Get("installation"); v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil || n <= 0 {
-				s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "installation is a number")
+				s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "Installation is a number.")
 				return
 			}
 			inst = n
 		}
 		mine := q.Get("mine") == "true"
 		if (inst == 0) == !mine {
-			s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "give installation or mine=true, not both and not neither")
+			s.connError(c, d.ID, http.StatusBadRequest, connections.CodeInvalid, "Give installation or mine=true, not both and not neither.")
 			return
 		}
 	}
@@ -378,7 +378,7 @@ func (s *server) adminProvider(c *call) (connections.Provider, connections.Admin
 	}
 	a, ok := p.(connections.Administered)
 	if !ok {
-		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "this provider has no settings")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "This provider has no settings.")
 		return nil, nil, false
 	}
 	return p, a, true
@@ -445,7 +445,7 @@ func (s *server) adminPutConnection(c *call) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(c.w, c.r.Body, authBodyLimit))
 	if err != nil {
-		s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "the body could not be read")
+		s.connError(c, p.Descriptor().ID, http.StatusBadRequest, connections.CodeInvalid, "The body could not be read.")
 		return
 	}
 	v, err := a.AdminSave(connections.WithActor(c.r.Context(), c.user().ID), body)
@@ -466,12 +466,12 @@ func (s *server) adminPutConnection(c *call) {
 func (s *server) adminCreateConnection(c *call) {
 	cr := s.registry().Creator()
 	if cr == nil {
-		s.connError(c, "", http.StatusNotFound, connections.CodeNotFound, "this server makes no providers")
+		s.connError(c, "", http.StatusNotFound, connections.CodeNotFound, "This server makes no providers.")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(c.w, c.r.Body, authBodyLimit))
 	if err != nil {
-		s.connError(c, "", http.StatusBadRequest, connections.CodeInvalid, "the body could not be read")
+		s.connError(c, "", http.StatusBadRequest, connections.CodeInvalid, "The body could not be read.")
 		return
 	}
 	p, v, err := cr.CreateProvider(c.r.Context(), c.user().ID, body)
@@ -514,7 +514,7 @@ func (s *server) adminDeleteConnection(c *call) {
 	}
 	// A provider the site requires cannot go: nobody could meet the requirement.
 	if r := s.spaces.Storage().Remotes.Require; r != nil && *r == p.Descriptor().ID {
-		s.connError(c, *r, http.StatusConflict, connections.CodeInUse, "the site requires a remote on "+p.Descriptor().Name+": change remotes.require in the storage settings before removing it")
+		s.connError(c, *r, http.StatusConflict, connections.CodeInUse, "The site requires a remote on "+p.Descriptor().Name+": change remotes.require in the storage settings before removing it.")
 		return
 	}
 	if err := a.AdminDelete(c.r.Context()); err != nil {
@@ -532,7 +532,7 @@ func (s *server) manifestMaker(c *call) (connections.Provider, connections.Manif
 	}
 	m, ok := p.(connections.ManifestMaker)
 	if !ok {
-		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "this provider's App cannot be made in one click")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "This provider's App cannot be made in one click.")
 		return nil, nil, false
 	}
 	return p, m, true
@@ -620,7 +620,7 @@ func (s *server) installable(c *call) (connections.Installable, bool) {
 	}
 	in, ok := p.(connections.Installable)
 	if !ok {
-		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "this provider has no installations")
+		s.connError(c, p.Descriptor().ID, http.StatusNotFound, connections.CodeNotFound, "This provider has no installations.")
 		return nil, false
 	}
 	return in, true
@@ -649,7 +649,7 @@ func (s *server) adminPutConnectionInstallation(c *call) {
 	}
 	id, err := strconv.ParseInt(c.r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "no such installation")
+		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "No such installation.")
 		return
 	}
 	var req struct {
@@ -659,7 +659,7 @@ func (s *server) adminPutConnectionInstallation(c *call) {
 		return
 	}
 	if req.Tenants == nil {
-		s.connError(c, c.r.PathValue("provider"), http.StatusBadRequest, connections.CodeInvalid, "give tenants: the ids of the tenants to share with (none: [])")
+		s.connError(c, c.r.PathValue("provider"), http.StatusBadRequest, connections.CodeInvalid, "Give tenants: the ids of the tenants to share with (none: []).")
 		return
 	}
 	it, err := in.SetInstallationTenants(c.r.Context(), id, *req.Tenants)

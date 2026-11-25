@@ -342,7 +342,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if rt.accountsOnly && s.single {
-			writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+			writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 			return
 		}
 		c := &call{w: w, r: r}
@@ -352,11 +352,11 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			viaOAuth := s.oauth != nil && oauth.LooksLikeAccessToken(secret)
 			if viaOAuth {
 				// An access token of the authorization server is for /mcp only.
-				writeError(w, http.StatusForbidden, "token_scope", "an OAuth access token can only be used on /mcp")
+				writeError(w, http.StatusForbidden, "token_scope", "An OAuth access token can only be used on /mcp.")
 				return
 			}
 			if !tokenAllowed(rt) {
-				writeError(w, http.StatusForbidden, "token_scope", "an API token cannot use this endpoint")
+				writeError(w, http.StatusForbidden, "token_scope", "An API token cannot use this endpoint.")
 				return
 			}
 			p, err := s.tokenPrincipal(r, secret)
@@ -365,7 +365,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 			if p.Grant != nil && !p.Grant.Write && tokenChanges(r) {
-				writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+				writeError(w, http.StatusForbidden, "token_scope", "This token is read only.")
 				return
 			}
 			c.p = p
@@ -389,15 +389,15 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			}
 		}
 		if c.p != nil && c.p.Held && !heldAllowed[rt.method+" "+rt.pattern] {
-			writeError(w, http.StatusForbidden, "passkey_required", "register a passkey to continue")
+			writeError(w, http.StatusForbidden, "passkey_required", "Register a passkey to continue.")
 			return
 		}
 		if rt.access.kind == kindAdmin && c.p.User.Role != "admin" {
-			writeError(w, http.StatusForbidden, "forbidden", "only an administrator may do that")
+			writeError(w, http.StatusForbidden, "forbidden", "Only an administrator may do that.")
 			return
 		}
 		if rt.access.kind == kindSiteAdmin && !c.isSiteAdmin() {
-			writeError(w, http.StatusForbidden, "forbidden", "only an administrator of the whole server may do that")
+			writeError(w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may do that.")
 			return
 		}
 		// The switch for offline copies comes before the space is opened: an
@@ -469,11 +469,11 @@ func (s *server) openSpace(c *call, rt route) bool {
 		// owner has there now: the owner's own membership decides, not the
 		// administrator's way into spaces they are not a member of.
 		if !g.Names(spaceID) {
-			writeError(w, http.StatusForbidden, "token_scope", "this token does not name this space")
+			writeError(w, http.StatusForbidden, "token_scope", "This token does not name this space.")
 			return false
 		}
 		if need == perm.Write && !g.Write {
-			writeError(w, http.StatusForbidden, "token_scope", "this token is read only")
+			writeError(w, http.StatusForbidden, "token_scope", "This token is read only.")
 			return false
 		}
 		var h *spaces.Handle
@@ -492,7 +492,7 @@ func (s *server) openSpace(c *call, rt route) bool {
 		if !h.Info.Perms.Has(need) {
 			h.Release()
 			c.sp = nil
-			writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+			writeError(w, http.StatusForbidden, "no_permission", "Your role in this space does not allow that; it needs the "+need.String()+" permission.")
 			return false
 		}
 		return true
@@ -525,7 +525,7 @@ func (s *server) openSpace(c *call, rt route) bool {
 	if !h.Info.Perms.Has(need) {
 		h.Release()
 		c.sp = nil
-		writeError(w, http.StatusForbidden, "no_permission", "your role in this space does not allow that; it needs the "+need.String()+" permission")
+		writeError(w, http.StatusForbidden, "no_permission", "Your role in this space does not allow that; it needs the "+need.String()+" permission.")
 		return false
 	}
 	return true
@@ -539,7 +539,7 @@ func (s *server) principal(r *http.Request) (*auth.Principal, error) {
 	}
 	ck, err := r.Cookie(s.auth.SessionCookieName())
 	if err != nil {
-		return nil, &auth.Error{Kind: auth.Unauthenticated, Msg: "sign in to continue"}
+		return nil, &auth.Error{Kind: auth.Unauthenticated, Msg: "Sign in to continue."}
 	}
 	return s.auth.Authenticate(r.Context(), ck.Value)
 }
@@ -549,7 +549,7 @@ func (s *server) principal(r *http.Request) (*auth.Principal, error) {
 func (s *server) pageID(c *call) (string, bool) {
 	id := c.r.PathValue("id")
 	if !page.ValidID(id) {
-		writeError(c.w, http.StatusNotFound, "not_found", "no such page")
+		writeError(c.w, http.StatusNotFound, "not_found", "No such page.")
 		return "", false
 	}
 	return id, true

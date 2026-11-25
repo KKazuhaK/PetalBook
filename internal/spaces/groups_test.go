@@ -1017,7 +1017,7 @@ SELECT 'g' || i, ?, 'g' || i, 'g' || i, '', 'local', ?, ? FROM n`, MaxGroups, te
 		if !errors.Is(err, ErrGroupLimit) {
 			t.Fatalf("%v", err)
 		}
-		if want := fmt.Sprintf("a tenant has at most %d groups; this one has %d", MaxGroups, MaxGroups); !strings.HasSuffix(err.Error(), want) {
+		if want := fmt.Sprintf("A tenant has at most %d groups; this one has %d.", MaxGroups, MaxGroups); !strings.HasSuffix(err.Error(), want) {
 			t.Fatalf("%q, want %q", err, want)
 		}
 	})

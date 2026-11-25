@@ -422,7 +422,7 @@ func hashToken(t string) string {
 func ctEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 
 func retryAfter(d time.Duration) *Error {
-	return &Error{Kind: RateLimited, Msg: "too many attempts; wait a little and try again", RetryAfter: d}
+	return &Error{Kind: RateLimited, Msg: "Too many attempts; wait a little and try again.", RetryAfter: d}
 }
 
 // newID makes an id for a row; callers retry on a unique violation.
@@ -437,7 +437,7 @@ func (s *Service) newID() string { return page.NewID(s.now()) }
 func NormalizeUsername(in string) (string, error) {
 	b := []byte(strings.TrimSpace(in))
 	if len(b) < 2 || len(b) > 32 {
-		return "", errf(Invalid, "a username is 2 to 32 characters")
+		return "", errf(Invalid, "A username is 2 to 32 characters.")
 	}
 	for i, c := range b {
 		if c >= 'A' && c <= 'Z' {
@@ -446,7 +446,7 @@ func NormalizeUsername(in string) (string, error) {
 		}
 		alnum := c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
 		if !alnum && (i == 0 || (c != '.' && c != '_' && c != '-')) {
-			return "", errf(Invalid, "a username uses a-z, 0-9, '.', '_' and '-', and starts with a letter or digit")
+			return "", errf(Invalid, "A username uses a-z, 0-9, '.', '_' and '-', and starts with a letter or digit.")
 		}
 	}
 	return string(b), nil
@@ -455,10 +455,10 @@ func NormalizeUsername(in string) (string, error) {
 func cleanDisplayName(in string) (string, error) {
 	n := strings.TrimSpace(in)
 	if c := utf8.RuneCountInString(n); c < 1 || c > 100 || !utf8.ValidString(n) {
-		return "", errf(Invalid, "a name is 1 to 100 characters")
+		return "", errf(Invalid, "A name is 1 to 100 characters.")
 	}
 	if strings.IndexFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f || r == 0x85 || r == 0x2028 || r == 0x2029 }) >= 0 {
-		return "", errf(Invalid, "a name cannot contain control characters")
+		return "", errf(Invalid, "A name cannot contain control characters.")
 	}
 	return n, nil
 }
@@ -471,14 +471,14 @@ func cleanEmail(in string) (string, error) {
 	at := strings.Index(e, "@")
 	// ASCII only: Unicode case mapping makes look-alikes equal (see store.EmailKey).
 	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r >= 0x7f || r == '<' || r == '>' }) {
-		return "", errf(Invalid, "that does not look like an email address")
+		return "", errf(Invalid, "That does not look like an email address.")
 	}
 	return e, nil
 }
 
 func checkRole(r string) error {
 	if r != "admin" && r != "member" {
-		return errf(Invalid, "role is admin or member")
+		return errf(Invalid, "Role is admin or member.")
 	}
 	return nil
 }
@@ -523,7 +523,7 @@ type IdentityParams struct {
 }
 
 // errInUse is an identity another account already has.
-var errInUse = errf(Conflict, "that identity belongs to another account")
+var errInUse = errf(Conflict, "That identity belongs to another account.")
 
 // CreateUser makes an account with its personal space. Everything that must
 // stand or fall together (the row, the password, the identity, the invite, the
@@ -563,12 +563,12 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		if open, err := s.SetupOpen(ctx); err != nil {
 			return nil, err
 		} else if !open {
-			return nil, errf(Exists, "an account already exists")
+			return nil, errf(Exists, "An account already exists.")
 		}
 	}
 	if _, err := store.GetUserByUsername(ctx, s.st.Q(), username); err == nil {
 		if !p.RetryUsername {
-			return nil, errf(Exists, "that username is taken")
+			return nil, errf(Exists, "That username is taken.")
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
@@ -576,7 +576,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if barred, err := s.retiredName(ctx, s.st.Q(), username); err != nil {
 		return nil, err
 	} else if barred && !p.RetryUsername {
-		return nil, errf(Exists, "that username is taken")
+		return nil, errf(Exists, "That username is taken.")
 	}
 
 	// An account made without saying where (setup, the command line) is in the
@@ -616,20 +616,20 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 				if ok, err := store.UseInvite(ctx, q, p.InviteID, cand.ID, s.now()); err != nil {
 					return err
 				} else if !ok {
-					return errf(NotFound, "that invite is not valid")
+					return errf(NotFound, "That invite is not valid.")
 				}
 			}
 			if p.RegistrationID != "" {
 				if ok, err := store.DeleteRegistration(ctx, q, p.RegistrationID); err != nil {
 					return err
 				} else if !ok {
-					return errf(NotFound, "that link is not valid, or has expired")
+					return errf(NotFound, "That link is not valid, or has expired.")
 				}
 			}
 			// The tenant must exist, and take new people: an invite of a disabled
 			// tenant is no invite.
 			if t, err := store.GetTenant(ctx, q, cand.TenantID); errors.Is(err, store.ErrNotFound) || err == nil && t.Disabled {
-				return errf(NotFound, "that invite is not valid")
+				return errf(NotFound, "That invite is not valid.")
 			} else if err != nil {
 				return err
 			}
@@ -670,7 +670,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			if p.RetryUsername && attempt < 20 {
 				continue
 			}
-			err = errf(Exists, "that username is taken")
+			err = errf(Exists, "That username is taken.")
 		}
 		if on, ok := store.UniqueOn(err); ok {
 			switch {
@@ -678,7 +678,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 				if p.RetryUsername && attempt < 20 {
 					continue
 				}
-				err = errf(Exists, "that username is taken")
+				err = errf(Exists, "That username is taken.")
 			case strings.Contains(on, "identities") || strings.Contains(on, "subject"):
 				err = errInUse
 			case attempt < 5:
@@ -686,7 +686,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			}
 		}
 		if errors.Is(err, store.ErrExists) {
-			err = errf(Exists, "an account already exists")
+			err = errf(Exists, "An account already exists.")
 		}
 		stg.Abort()
 		return nil, err
@@ -732,7 +732,7 @@ func (s *Service) SetPassword(ctx context.Context, username, password string) er
 	}
 	u, err := store.GetUserByUsername(ctx, s.st.Q(), un)
 	if errors.Is(err, store.ErrNotFound) {
-		return errf(NotFound, "no user %q", un)
+		return errf(NotFound, "No user %q.", un)
 	} else if err != nil {
 		return err
 	}

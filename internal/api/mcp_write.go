@@ -19,7 +19,7 @@ func (t *mcpTools) addWriteTools() {
 
 // tooBig is the refusal of text over the limit of a write.
 func tooBig(what string, size int) *mcpError {
-	return &mcpError{Code: "too_large", Message: what + " is larger than a write may carry",
+	return &mcpError{Code: "too_large", Message: what + " is larger than a write may carry.",
 		Details: map[string]any{"limitBytes": mcpMaxWriteBody, "sizeBytes": size}}
 }
 
@@ -215,12 +215,12 @@ func applyEdits(body string, edits []editIn) (string, error) {
 		old := strings.ReplaceAll(e.Old, "\r\n", "\n")
 		at := strings.Index(body, old)
 		if at < 0 {
-			return "", &mcpError{Code: "edit_no_match", Message: "the text of edit " + itoa(i) + " is not in the page; read it again with page_get", Details: map[string]any{"index": i}}
+			return "", &mcpError{Code: "edit_no_match", Message: "The text of edit " + itoa(i) + " is not in the page; read it again with page_get.", Details: map[string]any{"index": i}}
 		}
 		// A second occurrence may overlap the first.
 		_, size := utf8.DecodeRuneInString(body[at:])
 		if strings.Contains(body[at+size:], old) {
-			return "", &mcpError{Code: "edit_ambiguous", Message: "the text of edit " + itoa(i) + " is in the page more than once; add some of the text around it to say which", Details: map[string]any{"index": i}}
+			return "", &mcpError{Code: "edit_ambiguous", Message: "The text of edit " + itoa(i) + " is in the page more than once; add some of the text around it to say which.", Details: map[string]any{"index": i}}
 		}
 		body = body[:at] + strings.ReplaceAll(e.New, "\r\n", "\n") + body[at+len(old):]
 	}
