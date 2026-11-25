@@ -146,6 +146,10 @@ type remote struct {
 	partial atomic.Bool
 	pstate  partialState
 
+	// sincePack counts the changes pushed since the last packing and packEvery
+	// is how many make the next one (0 means DefaultMaintainEvery); both under s.mu.
+	sincePack, packEvery int
+
 	mu          sync.Mutex
 	st          RemoteStatus
 	persisted   RemoteStatus
@@ -257,6 +261,7 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 		r.repo.WriteLastGood(ctx, r.branch, r.st.LastGood)
 	}
 	s.rem.Store(r)
+	s.cm.pauseMaintenance() // see committer.pauseMaintenance
 	s.enterPartial(ctx, r)
 	// origin must be the address the database has.
 	if cur := r.repo.RemoteURL(ctx); cur != o.URL {
@@ -872,6 +877,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		if perr == nil {
 			tx.finishBindings()
 			s.pushedLocked(ctx, r)
+			s.packLocked(ctx, r)
 			return res, nil
 		}
 		// The answer may have been lost although the push went through.
@@ -879,6 +885,7 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		if lerr == nil && landed {
 			tx.finishBindings()
 			s.pushedLocked(ctx, r)
+			s.packLocked(ctx, r)
 			return res, nil
 		}
 		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
@@ -953,6 +960,32 @@ func (s *Space) pushedLocked(ctx context.Context, r *remote) {
 	r.markOK()
 	if err := s.cm.clearJournal(); err != nil {
 		s.log.Warn("could not clear the commit journal", "error", err)
+	}
+}
+
+// packLocked packs the Git objects after every packEvery-th change that was
+// pushed (50 by default): the committer does not commit for a remote space, so
+// this is where its loose objects are dealt with. It runs under s.mu, as the
+// change did, and under fetchMu, so that it is never alongside a fetch or a
+// push of this clone; the change is already on the remote. A failure is a
+// warning only.
+func (s *Space) packLocked(ctx context.Context, r *remote) {
+	r.sincePack++
+	every := r.packEvery
+	if every <= 0 {
+		every = DefaultMaintainEvery
+	}
+	if r.sincePack < every {
+		return
+	}
+	r.sincePack = 0
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	r.fetchMu.Lock()
+	err := r.repo.Maintain(ctx)
+	r.fetchMu.Unlock()
+	if err != nil {
+		s.log.Warn("could not pack the Git objects; will try again later", "error", err)
 	}
 }
 
@@ -1101,6 +1134,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		if err := s.cm.Flush(); err != nil {
 			return fmt.Errorf("could not commit the space's pending changes before connecting: %w", err)
 		}
+		// No packing while the clone is fetched into and pushed from under
+		// the space lock alone (it waits for one that is running).
+		s.cm.pauseMaintenance()
 	}
 	nr := s.newRemote(&o)
 	repo := nr.repo
@@ -1118,6 +1154,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		// when the request that asked for the connection has gone away.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
+		if prev == nil {
+			s.cm.resumeMaintenance()
+		}
 		if h := repo.Head(ctx); h != oldHead && oldHead != "" {
 			if err := repo.ResetHard(ctx, oldHead); err != nil {
 				s.log.Error("could not put the clone back after a failed connection", "error", err)
@@ -1299,6 +1338,7 @@ func (s *Space) Disconnect() error {
 		return err
 	}
 	s.rem.Store(nil)
+	s.cm.resumeMaintenance()
 	// Nothing of the server's own is in the work tree to put in order: its
 	// state is in the Git directory, in local mode as in this one.
 	return nil

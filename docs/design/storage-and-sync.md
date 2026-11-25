@@ -210,3 +210,52 @@ When signing in is not used and your own repository is connected directly
   official server.
 - The merge code is the same as the server's in 4.2 (in the engine packages, see
   the boundary in [overview.md §10](overview.md#10-reuse)); two copies are not written.
+
+### 4.8 Packing Git objects (2026-11-24)
+
+Commits are built with plumbing (`commitChanges`), which never makes Git pack
+anything, so a clone only ever grew in loose objects: measured at 50k pages, about
+90 KB per commit on average and about 250 KB in a 10,000-file folder. `.git` counts
+toward quotas, so a local-only space grew without limit.
+
+- **What runs.** `Repo.Maintain` runs `repack -d -q --geometric=2`, then
+  `prune-packed -q`, then `commit-graph write --reachable`. The repack packs the loose
+  objects into a new pack and merges small packs so that each is at least twice the
+  size of the next: the pack count stays logarithmic in the history instead of one per
+  run, and every object of a merged pack is kept. There is no `-a`, so nothing
+  unreachable is dropped. `prune-packed` deletes only loose objects a pack already
+  holds; the commit graph is a cache. `safegit.go` allows exactly these three forms:
+  `gc`, `prune` and `repack -a/-A/-k/--cruft` stay refused, because they could remove an
+  object that a commit in flight has written but not yet referenced.
+- **Local spaces.** The committer counts commits it makes. After 50
+  (`DefaultMaintainEvery`) its loop goroutine runs `Maintain`, after the commit is done:
+  a save, `Flush` and `SwitchTo` never wait for it, except that a commit asked for while
+  it runs waits for its end. `Close` runs it only if at least 10 commits were made since
+  the last run, so a space that is evicted and reopened often does not leave a pack each
+  time. A failure is a warning in the log; the commits it follows are fine.
+  Lock: `committer.runMu`, which every committer commit holds, so packing never
+  overlaps one. Other writers (restore, settings moves) do not take it, but cannot be
+  hurt by it: nothing unreachable is ever removed.
+- **Remote spaces.** Their fetch, commit and push run under the space lock (`s.mu`, with
+  `fetchMu` for fetches), not `runMu`, and their commits do not go through the
+  committer. So the committer's packing is switched off while a space follows a remote
+  (`Connect`, `initRemote`; `Disconnect` switches it on). Instead, `mutate` packs after
+  every 50th pushed change, after the push, inside the same space lock and under
+  `fetchMu`, so it is never alongside a fetch or a push of that clone. That change's
+  answer waits for it, which is the price of not needing a second lock. Fetch keeps Git's
+  own `gc --auto`; we do not pass `gc.auto=0`, since it is harmless next to ours and
+  stays the fallback if ours fails.
+- **Cost.** Measured: 100 commits, 10 MB loose, a repack takes 354 ms and adds 1.3 MB
+  packed. At the default threshold that is about 0.2 s of git work per 50 commits and a
+  space ends about 7x smaller. The repack scales with the loose objects since the last
+  run (plus the small packs it merges), not with the space. Known issue: `commit-graph
+  write --reachable` rewrites the whole graph each run, about 1 s at 30k commits, so at
+  that size every 50th change (remote) or every 50th commit (local, in the background)
+  pays it; a split graph would make it incremental if that matters. Many users: spaces
+  pack independently, one git process at a time per space, only after writing.
+- **Known issues (round 1).**
+  - On a remote space the pack runs under the space lock, so a slow first repack (up to
+    the 10-minute timeout) holds back the writes that follow it. Packing after the lock
+    is released would remove this.
+  - No test covers a geometric repack in a partial clone (promisor packs). Git releases
+    before about 2.49 may fail there; that is a logged warning, not data loss.
