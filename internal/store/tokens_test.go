@@ -23,6 +23,7 @@ func mkToken(t *testing.T, st *store.Store, id, user, hash string, created time.
 }
 
 func TestAPITokens(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")

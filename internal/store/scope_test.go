@@ -179,6 +179,7 @@ var scopeAllowlist = map[string]string{
 }
 
 func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	files, err := parser.ParseDir(fset, ".", nil, 0)
 	if err != nil {
@@ -330,6 +331,7 @@ var deletedAllowlist = map[string]string{
 }
 
 func TestEveryReadOfPeopleLeavesOutTheDeleted(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	files, err := parser.ParseDir(fset, ".", nil, 0)
 	if err != nil {
@@ -381,6 +383,7 @@ func TestEveryReadOfPeopleLeavesOutTheDeleted(t *testing.T) {
 // touches must see a table through a query and through lockRow, and must not
 // see one that is not a tenant table: the test above stands on it.
 func TestScopeTestSeesTenantTables(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		src  string
 		want bool

@@ -37,6 +37,7 @@ func twoTenants(t *testing.T, st *store.Store) {
 }
 
 func TestLinksAcrossTenantsAreRefusedByTheStatement(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		now := time.Now()
@@ -98,6 +99,7 @@ func assertNoCrossTenantLinks(t *testing.T, st *store.Store) {
 }
 
 func TestScopeSeesOnlyItsTenant(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -200,6 +202,7 @@ func TestScopeSeesOnlyItsTenant(t *testing.T) {
 }
 
 func TestTenantsTable(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		for i, n := range []string{"Zed", "alpha", "Beta"} {
@@ -264,6 +267,7 @@ func TestTenantsTable(t *testing.T) {
 }
 
 func TestTenantLimit(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		for i := 1; i < store.MaxTenants; i++ {
@@ -279,6 +283,7 @@ func TestTenantLimit(t *testing.T) {
 }
 
 func TestSiteAdminFlagFollowsTheRole(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		store.InsertUser(ctx, st.Q(), store.User{ID: "A", Username: "a", Name: "a", Role: "admin", SiteAdmin: true, Created: now})
@@ -306,6 +311,7 @@ func TestSiteAdminFlagFollowsTheRole(t *testing.T) {
 }
 
 func TestSiteAdministratorsOfADisabledTenantAreNotCounted(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		now := time.Now()

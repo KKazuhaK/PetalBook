@@ -46,6 +46,7 @@ func measure(t *testing.T, st *store.Store, space string, bytes, pages int64) st
 }
 
 func TestUsageFollowsSpacesMembersAndMeasurements(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		now := time.Now()
@@ -135,6 +136,7 @@ func TestUsageFollowsSpacesMembersAndMeasurements(t *testing.T) {
 }
 
 func TestAMeasurementWithoutPagesKeepsThePageCount(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		if err := store.AddMember(ctx, st.Q(), "Sa", "Ua", "owner", time.Now()); err != nil {
@@ -157,6 +159,7 @@ func TestAMeasurementWithoutPagesKeepsThePageCount(t *testing.T) {
 // that differ from what they summarise; the recount puts every kind of
 // difference right, counts what it corrected, and a second one has nothing to do.
 func TestRecountCorrectsDriftOfEveryKind(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		now := time.Now()
@@ -204,6 +207,7 @@ func TestRecountCorrectsDriftOfEveryKind(t *testing.T) {
 // measurement that was lost, or a size that changed while the server was down,
 // never leaves the totals off by more than one pass.
 func TestAMeasurementCorrectsWhatTheRowsHold(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		q := st.Q()
@@ -235,6 +239,7 @@ func TestAMeasurementCorrectsWhatTheRowsHold(t *testing.T) {
 // racing each other leave the rows exactly as a recount from scratch finds them.
 // On PostgreSQL the transactions really run together; on SQLite they take turns.
 func TestConcurrentChangesKeepTheCountersExact(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		q := st.Q()
@@ -326,6 +331,7 @@ func mustUsage(t *testing.T, st *store.Store, kind, id string) store.Usage {
 }
 
 func TestUsageListIsByBytesWithACursorAndAScope(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		twoTenants(t, st)
 		now := time.Now()
@@ -392,6 +398,7 @@ func TestUsageListIsByBytesWithACursorAndAScope(t *testing.T) {
 
 // Deleting an empty tenant takes its usage row with it.
 func TestDeletingATenantDeletesItsUsage(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		if err := st.CreateTenant(ctx, store.Tenant{ID: "T000000009", Slug: "tmp", Name: "Tmp", Created: now, Updated: now}); err != nil {
@@ -424,9 +431,16 @@ func TestDeletingATenantDeletesItsUsage(t *testing.T) {
 // several statements, so without a lock a write committed between them would be
 // counted twice or undone; the test repeats the race to make that likely.
 func TestARecountDuringWritesLeavesTheCountersExact(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
-		for round := 0; round < 8; round++ {
+		// SQLite has one writer at a time, so its recount cannot interleave
+		// with a write: two rounds show it, the repeats are for PostgreSQL.
+		rounds := 8
+		if st.Dialect() != store.Postgres {
+			rounds = 2
+		}
+		for round := 0; round < rounds; round++ {
 			const writers, perWriter = 8, 6
 			var wg sync.WaitGroup
 			errs := make(chan error, 1000)

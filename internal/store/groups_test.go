@@ -18,6 +18,7 @@ func mkGroup(t *testing.T, st *store.Store, id, name, source string) {
 }
 
 func TestGroupListsPageByName(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		d := st.Dialect()
 		for i, n := range []string{"beta", "Alpha", "gamma", "Épsilon", "delta"} {
@@ -70,6 +71,7 @@ func TestGroupListsPageByName(t *testing.T) {
 }
 
 func TestPeopleAndEffectiveListsAreOneQueryPages(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		d := st.Dialect()
 		now := time.Now()
