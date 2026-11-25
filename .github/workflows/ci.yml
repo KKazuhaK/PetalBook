@@ -1,8 +1,10 @@
 name: ci
 
 # Every check is a make target (see the Makefile); this file only decides
-# where each one runs. A pull request gets lint, go and web, and a push to main
-# gets those and the slow jobs besides. The one check branch protection requires is the "ci" job.
+# where each one runs. A pull request gets lint, go and web, and postgres (the
+# PostgreSQL half of the state-database tests and the contract tests) when it
+# changes Go code, so what main would find is found before the merge. A push to
+# main gets those and the remaining jobs besides. The one check branch protection requires is the "ci" job.
 on:
   pull_request:
   push:
@@ -189,8 +191,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make web-test
 
-  # From here on only pushes to main run. A pull request gets the jobs above;
-  # these need services, a second toolchain, or a long build.
+  # From here on the jobs need services, a second toolchain, or a long build.
+  # postgres also runs on a pull request that changes Go; the rest only on
+  # pushes to main.
 
   # On a runner the database is a service container instead of the throwaway
   # cluster scripts/test-postgres.sh makes locally; the script uses the one in
@@ -200,13 +203,12 @@ jobs:
   # of its own in it. make contract runs the same tests on SQLite.
   postgres:
     name: postgres
-    if: github.event_name == 'push'
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # Above scripts/test-postgres.sh's own 30 minutes for go test plus the
+    # Above scripts/test-postgres.sh's own 20 minutes for go test plus the
     # contract runs, so a slow test ends with go test's report, not a cancel.
-    # The timeouts follow the measured times with headroom; tune them after
-    # the first runs on main.
-    timeout-minutes: 50
+    timeout-minutes: 30
     permissions:
       contents: read
     services:
@@ -255,7 +257,7 @@ jobs:
       - run: make contract-postgres
 
   # Where the code meets other platforms: the tests on a case-folding file
-  # system (as macOS and Windows have), and a build for every release target.
+  # system (as macOS and Windows have), and a build for a few release targets (release.yml builds them all).
   compat:
     name: compat
     if: github.event_name == 'push'

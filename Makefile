@@ -93,7 +93,8 @@ contract-postgres: build web/node_modules/.package-lock.json
 # Every check is defined here and nowhere else: CI only calls these targets,
 # so what passes on a laptop is what passes on the runner.
 #
-#   make check        before every push (the pull request jobs: lint, go, web)
+#   make check        before every push (the pull request jobs lint, go, web;
+#                     a change to Go also gets postgres: make test-postgres)
 #   make check-full   before a risky change (what main runs after a merge)
 
 # The web dependencies, installed only when missing so local runs stay fast.
@@ -177,17 +178,22 @@ test-casefold:
 
 # The server builds without cgo for every release platform. The web app is
 # not embedded here: this only proves the Go code compiles for each target.
-# Each platform compiles the whole dependency tree again, so the work is the
-# same for all six and CPU bound; "make cross-compile OSES=darwin" does one OS.
-OSES ?= linux darwin windows
+# Each target compiles the whole dependency tree again; they are built side by
+# side. What differs between targets that matters to Go code is the operating
+# system, so by default one target is built per system other than Linux, where
+# the tests run; the release workflow builds every release target on tag day.
+# Every target: make cross-compile CROSS_TARGETS="linux/amd64 linux/arm64
+# darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
+CROSS_TARGETS ?= darwin/arm64 windows/amd64
 cross-compile:
-	@dir="$$(mktemp -d)"; trap 'rm -rf "$$dir"' EXIT; \
-	for os in $(OSES); do \
-	  for arch in amd64 arm64; do \
-	    echo "== $$os/$$arch"; \
-	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o "$$dir/petalbook" ./cmd/petalbook || exit 1; \
-	  done; \
-	done
+	@dir="$$(mktemp -d)"; trap 'rm -rf "$$dir"' EXIT; status=0; pids=; \
+	for t in $(CROSS_TARGETS); do \
+	  os=$${t%/*}; arch=$${t#*/}; \
+	  ( CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o "$$dir/petalbook-$$os-$$arch" ./cmd/petalbook && echo "== $$t ok" ) & \
+	  pids="$$pids $$!"; \
+	done; \
+	for p in $$pids; do wait $$p || status=1; done; \
+	exit $$status
 
 # The postsubmit: everything main runs after a merge. Needs the PostgreSQL
 # tools (initdb, pg_ctl, psql) and a Linux kernel with tmpfs casefold. Like

@@ -23,10 +23,17 @@ import (
 // EnvPostgres names the variable that switches the PostgreSQL runs on.
 const EnvPostgres = "PETALBOOK_TEST_POSTGRES"
 
+// EnvPostgresOnly, set to 1 together with EnvPostgres, leaves out the SQLite
+// half of Each. scripts/test-postgres.sh sets it: the ordinary test run has
+// done the SQLite half already, under the race detector.
+const EnvPostgresOnly = "PETALBOOK_TEST_POSTGRES_ONLY"
+
 // Each runs fn as a subtest per available database.
 func Each(t *testing.T, fn func(t *testing.T, st *store.Store)) {
 	t.Helper()
-	t.Run("sqlite", func(t *testing.T) { fn(t, Open(t, "sqlite")) })
+	if postgresDSN() == "" || os.Getenv(EnvPostgresOnly) != "1" {
+		t.Run("sqlite", func(t *testing.T) { fn(t, Open(t, "sqlite")) })
+	}
 	if postgresDSN() != "" {
 		t.Run("postgres", func(t *testing.T) { fn(t, Open(t, "postgres")) })
 	}
