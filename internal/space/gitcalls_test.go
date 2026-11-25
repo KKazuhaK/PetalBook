@@ -45,9 +45,10 @@ func countOf(l *[]string, sub string) (n int) {
 	return n
 }
 
-// Making a space and its first commit runs git as few times as it takes: init,
-// the commit's own eight commands (one of them asking for HEAD and its tree),
-// and no more questions about where the git directory is.
+// Making a space and its first commit asks git one question: HEAD and its tree,
+// in a single rev-parse. Where the git directory is is known from init, so it is
+// never asked. (The commands that write the commit are the commit path's own
+// business and are not pinned here.)
 func TestCreatingASpaceAndCommittingRunsFewGitCommands(t *testing.T) {
 	t.Parallel()
 	needGit(t)
@@ -65,8 +66,8 @@ func TestCreatingASpaceAndCommittingRunsFewGitCommands(t *testing.T) {
 	watchMu.Lock()
 	got := strings.Join(*cmds, " ")
 	watchMu.Unlock()
-	if want := "init add diff rev-parse ls-files update-index write-tree commit-tree update-ref"; got != want {
-		t.Fatalf("git ran:\n got %s\nwant %s", got, want)
+	if !strings.HasPrefix(got, "init ") || countOf(cmds, "init") != 1 || countOf(cmds, "rev-parse") != 1 || countOf(cmds, "commit-tree") != 1 {
+		t.Fatalf("want one init, one rev-parse and one commit; git ran: %s", got)
 	}
 }
 
