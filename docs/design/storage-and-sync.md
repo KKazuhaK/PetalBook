@@ -127,8 +127,10 @@ command line, in the remote address, in `.git/config` or in logs.
 
 What takes up space is mainly attachments and Git history, not text: the text of
 50,000 pages and 62.2 million characters is only 192 MB, and the index is
-166 MB. So the text and the index always stay complete locally, and the rest
-can be fetched on demand:
+166 MB to 305 MB (the full-text index is most of it). So the text and the index
+always stay complete locally, and the rest can be fetched on demand. The index
+is large, but what every open reads of it is not: the table a sync scans holds no
+excerpts and has a covering index of its own (see database.md §5.2):
 
 - **Attachments**: when a separate attachment repository or an S3 backend is
   used, only a cache with a size limit is kept locally; recently used ones are
