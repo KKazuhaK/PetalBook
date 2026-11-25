@@ -87,7 +87,7 @@ function NewSpaceForm({
   const provider = providers.find((p) => p.id === where) ?? null
   const useRepo = provider !== null
   // What the settings say a new space's attachments do for this person: the default, what they may ask for, and
-  // whether a lock leaves no choice. null until it is read; the box is then hidden.
+  // whether a lock (or a rule allowing only one answer) leaves no choice. null until it is read; the box is then hidden.
   const rule = useQuery({
     queryKey: ['settings', 'new-space-assets'],
     staleTime: 30_000,
@@ -97,7 +97,8 @@ function NewSpaceForm({
         ? {
             on: found.effective === 'repository',
             canRepo: !!found.allowed?.includes('repository'),
-            locked: !!found.locked,
+            // No choice either when the site allows only a repository of their own without locking it.
+            locked: !!found.locked || !found.allowed?.includes('space'),
           }
         : { on: false, canRepo: true, locked: false }
     },

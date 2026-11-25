@@ -311,7 +311,7 @@ func (s *server) mySettings(c *call) {
 	out := []item{}
 	for _, d := range s.settings.Defs() {
 		if d.Key == settings.StorageAssets {
-			r, err := s.settings.AssetsRule(ctx, c.user().TenantID, settings.AssetsInput{})
+			r, err := s.assetsRule(ctx, c.user().TenantID)
 			if err != nil {
 				s.fail(c.w, err)
 				return

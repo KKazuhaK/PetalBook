@@ -66,6 +66,31 @@ func PutLayered(ctx context.Context, q Q, r LayeredRow) error {
 	return err
 }
 
+// PutLayeredUnlocked writes a tenant administrator's change to a tenant's
+// record: the value when setValue, the rule when setLower, never site_locked.
+// It is one statement, so a site lock committed by another transaction at any
+// moment is seen: an existing record is changed only while it is not locked,
+// and a new one starts unlocked (a site lock on a missing record inserts it too,
+// so the two meet on the conflict). It reports false, writing nothing, when the
+// record is locked.
+func PutLayeredUnlocked(ctx context.Context, q Q, r LayeredRow, setValue, setLower bool) (bool, error) {
+	set := `updated = excluded.updated`
+	if setValue {
+		set += `, value = excluded.value`
+	}
+	if setLower {
+		set += `, lower = excluded.lower`
+	}
+	res, err := q.Exec(ctx, `INSERT INTO layered_settings(layer, layer_id, key, value, lower, site_locked, updated) VALUES (?, ?, ?, ?, ?, 0, ?)
+		ON CONFLICT (layer, layer_id, key) DO UPDATE SET `+set+` WHERE layered_settings.site_locked = 0`,
+		r.Layer, r.LayerID, r.Key, r.Value, r.Lower, ms(r.Updated))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // LayeredOfKey returns the records of a key in every layer id of a layer: the
 // tenants that have a value or a rule for it.
 func LayeredOfKey(ctx context.Context, q Q, layer, key string) ([]LayeredRow, error) {

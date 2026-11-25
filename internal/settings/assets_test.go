@@ -160,6 +160,46 @@ func TestATenantWriteThatRacesASiteLockIsRefusedAndKeepsTheLock(t *testing.T) {
 	})
 }
 
+// A site lock committed while a tenant administrator's write is in its transaction (on PostgreSQL after any
+// read that write could make; on SQLite, with one writer, it waits for the tenant's commit) must survive: the
+// tenant's write lands before the lock or is refused with setting_locked, never after it with the lock undone.
+func TestASiteLockCommittedDuringATenantWriteSurvives(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setup(t, st)
+		if _, err := s.Get(ctx, ten, settings.StorageAssets); err != nil { // the cache says "not locked"
+			t.Fatal(err)
+		}
+		lockErr := make(chan error, 1)
+		s.SetBeforeTenantWrite(func() {
+			s.SetBeforeTenantWrite(nil)
+			go func() {
+				lockErr <- s.SetTenant(ctx, ten, settings.StorageAssets,
+					settings.Change{Site: true, HasSiteLock: true, SiteLock: true, HasValue: true, Value: "repository"})
+			}()
+			// PostgreSQL commits the lock now; SQLite's single writer holds it until the tenant commits.
+			select {
+			case err := <-lockErr:
+				lockErr <- err
+			case <-time.After(300 * time.Millisecond):
+			}
+		})
+		err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"})
+		if c := code(err); c != "" && c != settings.CodeLocked {
+			t.Fatalf("tenant write: %v", err)
+		}
+		if err := <-lockErr; err != nil {
+			t.Fatalf("site lock: %v", err)
+		}
+		got, gerr := store.GetLayered(ctx, st.Q(), "tenant", ten, settings.StorageAssets)
+		if gerr != nil || !got.SiteLocked || got.Value != `"repository"` {
+			t.Fatalf("the lock did not survive (tenant write: %v): %+v %v", err, got, gerr)
+		}
+		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"}); code(err) != settings.CodeLocked {
+			t.Fatalf("after the lock: %v", err)
+		}
+	})
+}
+
 func TestTheSitesRestrictionLeavesTheOwnersWhatItNames(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)

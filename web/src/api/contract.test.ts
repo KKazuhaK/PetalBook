@@ -1567,6 +1567,17 @@ function suite(target: Target) {
             await call(admin, 'PUT', '/api/admin/settings/storage.assets', { lower: { mode: 'lock' } })
             const over = await view()
             expect([over.effective, over.tenant.value, over.tenant.inEffect]).toEqual(['space', 'repository', false])
+            // What a person of the default tenant (the administrator here) sees when they make a space: the
+            // effective default, what they may ask for, and whether a lock leaves no choice.
+            const asked = (
+              (await call(admin, 'GET', '/api/settings')).json.settings as {
+                key: string
+                effective: unknown
+                allowed?: string[]
+                locked?: boolean
+              }[]
+            ).find((x) => x.key === 'storage.assets')!
+            expect([asked.effective, asked.allowed, asked.locked]).toEqual(['space', ['space'], true])
             expect(
               ((await call(admin, 'GET', '/api/admin/settings')).json.settings as Row[]).find(
                 (x) => x.key === 'storage.assets.ownStorageExempt',

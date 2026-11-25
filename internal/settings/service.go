@@ -34,6 +34,10 @@ type Service struct {
 	bind map[string]SiteBinding
 	now  func() time.Time
 
+	// beforeTenantWrite, set by tests only, runs in a tenant administrator's
+	// transaction just before its write.
+	beforeTenantWrite func()
+
 	mu      sync.Mutex
 	ceiling int64 // --max-upload, see SetFileCeiling
 	gen     uint64
@@ -511,6 +515,37 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 		}
 		lower = &l
 	}
+	var rawValue, rawLower string
+	if ch.HasValue && ch.Value != nil {
+		raw, err := json.Marshal(val)
+		if err != nil {
+			return err
+		}
+		rawValue = string(raw)
+	}
+	if ch.HasLower && lower != nil {
+		raw, _ := json.Marshal(lower)
+		rawLower = string(raw)
+	}
+	if !ch.Site {
+		// A tenant administrator's write never reads the lock first: the one
+		// statement writes only while the record is not locked, so a lock written
+		// since the cached view was read, even by a transaction that commits while
+		// this one runs, refuses it and is never cleared by it.
+		err = s.st.Tx(ctx, func(q store.Q) error {
+			if s.beforeTenantWrite != nil {
+				s.beforeTenantWrite()
+			}
+			ok, err := store.PutLayeredUnlocked(ctx, q, store.LayeredRow{Layer: string(Tenant), LayerID: tenant, Key: key,
+				Value: rawValue, Lower: rawLower, Updated: s.now()}, ch.HasValue, ch.HasLower)
+			if err == nil && !ok {
+				err = &Error{CodeLocked, key + " is locked for this tenant by the site's administrators"}
+			}
+			return err
+		})
+		s.Invalidate()
+		return err
+	}
 	err = s.st.Tx(ctx, func(q store.Q) error {
 		row, err := store.GetLayered(ctx, q, string(Tenant), tenant, key)
 		if errors.Is(err, store.ErrNotFound) {
@@ -519,31 +554,13 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 		if err != nil {
 			return err
 		}
-		// The lock is read again here, not taken from the cached view: a lock written
-		// since then (or a stale cache) must still refuse a tenant administrator.
-		if !ch.Site && row.SiteLocked {
-			return &Error{CodeLocked, key + " is locked for this tenant by the site's administrators"}
-		}
 		if ch.HasValue {
-			row.Value = ""
-			if ch.Value != nil {
-				raw, err := json.Marshal(val)
-				if err != nil {
-					return err
-				}
-				row.Value = string(raw)
-			}
+			row.Value = rawValue
 		}
 		if ch.HasLower {
-			row.Lower = ""
-			if lower != nil {
-				raw, _ := json.Marshal(lower)
-				row.Lower = string(raw)
-			}
+			row.Lower = rawLower
 		}
-		if ch.Site {
-			row.SiteLocked = locking // only a site administrator's change touches the lock
-		}
+		row.SiteLocked = locking // only a site administrator's change sets the lock, always explicitly
 		row.Updated = s.now()
 		return store.PutLayered(ctx, q, *row)
 	})
