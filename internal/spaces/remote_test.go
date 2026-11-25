@@ -35,6 +35,12 @@ type runner struct {
 	// loseAnswer, if set, lets the next push through and then answers it as
 	// failed, with the remote down from then on: an answer lost on the way.
 	loseAnswer bool
+	// holdOnce, if set, stops the first network command run in holdDir until
+	// it is closed, whatever its context says, and then answers as a command
+	// whose context ended would; heldIn is closed when that command arrives.
+	holdDir  string
+	holdOnce chan struct{}
+	heldIn   chan struct{}
 }
 
 func (r *runner) Run(c context.Context, cmd gitstore.Cmd) (string, string, error) {
@@ -51,6 +57,21 @@ func (r *runner) Run(c context.Context, cmd gitstore.Cmd) (string, string, error
 		}
 	}
 	if sub == "fetch" || sub == "push" || sub == "ls-remote" {
+		r.mu.Lock()
+		once := r.holdOnce
+		if once != nil && cmd.Dir == r.holdDir {
+			r.holdOnce = nil
+			close(r.heldIn)
+		} else {
+			once = nil
+		}
+		r.mu.Unlock()
+		if once != nil {
+			<-once
+			if c.Err() != nil {
+				return "", "fatal: the command was stopped", c.Err()
+			}
+		}
 		r.mu.Lock()
 		down, hold := r.down, r.hold
 		if sub == "fetch" {
