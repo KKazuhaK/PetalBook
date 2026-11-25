@@ -502,11 +502,13 @@ function Listing({ source }: { source: ListSource }) {
             <>
               {/* On a phone the sort choice shrinks to an icon (the select is still what opens), leaving the room to the breadcrumbs. */}
               {/* In a table the headers of the columns sort. */}
+              {/* As wide as its longest choice (a select sizes itself so when its width is auto), so no choice is cut. */}
               {!isTable && !filesPhone && (
-                <div className="relative w-36 max-sm:w-10 max-sm:[&>div>svg]:hidden">
+                <div className="relative max-sm:w-10 max-sm:[&>div>svg]:hidden">
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
-                    className="h-10 text-[0.8rem] max-sm:opacity-0"
+                    wrapperClassName="w-auto max-sm:w-full"
+                    className="h-10 w-auto text-[0.8rem] max-sm:w-full max-sm:opacity-0"
                     aria-label={t.list.sort}
                     disabled={busy}
                     value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
