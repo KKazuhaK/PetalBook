@@ -591,3 +591,62 @@ together, so it is accepted.
 - `append` always fsyncs. The unsynced `a` record needs a variant that does not.
 - The "change still running" mark of PR 1 becomes "the first transaction not yet
   applied" in PR 3.
+
+### 4.10 Commits built from the changed folders, and group commit (round 3)
+
+**Commits built from the changed folders.** A commit no longer goes through the whole
+index. `gitstore.commitByFolders` takes every path with its blob: the content a
+transaction recorded, or, for a path with none, the file hashed in one `hash-object`.
+It then:
+- reads the trees of HEAD on the way to each changed path (one `cat-file --batch`);
+- changes them in memory;
+- computes the new trees' ids itself (SHA-1, in git's entry order), writes them all with
+  one `mktree -z --missing --batch`, and checks that git made the same ids;
+- commits the new root (`commit-tree`) and moves the branch from where it was (a
+  compare-and-swap).
+
+The real index gets the new entries of these paths only, first, in one `update-index`
+written as a split index (`core.splitIndex=true`), so only a small file changes and the
+shared index is rewritten rarely. Because the index is written first, a commit is not
+made while someone else holds the index.
+
+What stays as it was:
+- **Only our paths:** a person's own staged changes stay staged and uncommitted.
+- **Modes:** an executable page keeps its mode.
+- **Folders:** a folder whose last file goes leaves the tree, and a file where a folder was
+  replaces it.
+- **Commit messages:** a move is found by its content, or as the only page gone and the
+  only page come.
+- **Case:** a change of case is a path gone and a path come, as before.
+- **Old way:** a path that is a link or no regular file, or a repository that is not SHA-1,
+  still goes the index way. Packing is unchanged.
+
+**Group commit (remote spaces).** A change of a space that follows a remote still runs
+under the space lock up to its commit. Then it waits for a push that has its commit. The
+change that finds nobody pushing pushes for all (`pushLocked`). It lets the lock go while
+git pushes, so changes that come meanwhile are made and committed on top, without
+fetching, and go out in the next push.
+- Each change is answered once a push has its commit.
+- The journal is trimmed up to the last change pushed.
+- A refused push takes back every waiting change, last first, from its parent commit, and
+  each is made again on the new tip. A failed push answers each with the failure.
+- A repair of the way to a folder (which pushes on its own) waits until the group is out.
+- The next start takes back an unpushed group to the commit its first change started
+  from (the first `rp` in the journal).
+- `Close` waits for a push under way.
+
+**Cost**, measured on this server (8 cores, shared), on a seeded space of 50,000 pages in
+100 folders, 40 commits of one save each, before and after:
+
+| | Before | After |
+|---|---|---|
+| Local commit, mean (p90) | 114 ms (118 ms) | 20 ms (24 ms) |
+| Git commands per commit | 11 | 7 |
+| Remote space, sequential changes | 6.3/s | 15.1/s |
+| Remote space, 8 writers at once | 6.2/s | 30.8/s |
+
+A commit's cost grows with the folders it changes: the trees on the way to each changed
+path, about 40 bytes an entry. It does not grow with the number of pages. Memory is those
+trees for the duration of one commit. The split index adds one shared index file in
+`.git` the size of the index (4 MB at 50k pages), rewritten when a fifth of it has changed
+(git's default).

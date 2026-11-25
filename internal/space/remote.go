@@ -161,6 +161,25 @@ type remote struct {
 	persisted   RemoteStatus
 	persistedAt time.Time
 	blocked     string // why changes are refused until an administrator looks, "" if none
+
+	// Group commit (under s.mu): changes committed and not pushed yet, in
+	// order, each waiting for a push that has its commit; pushing is set
+	// while one change pushes for them all (pushLocked); idle is signalled
+	// when none is left.
+	pending []*pendingChange
+	pushing bool
+	idle    *sync.Cond
+}
+
+// pendingChange is a change of a space that follows a remote, committed and
+// waiting for its push.
+type pendingChange struct {
+	tx     *txn
+	commit string
+	mark   uint64 // the journal's last frame once it was committed
+	done   bool
+	retry  bool  // taken back because the remote moved on: made again
+	err    error // taken back, and why
 }
 
 func (r *remote) status() RemoteStatus {
@@ -332,9 +351,12 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 	}
 	head := repo.Head(ctx)
 	parent := ""
+	// The first change the journal holds is the earliest not pushed (with
+	// group commit several can be): back to the commit it started from.
 	for _, r := range recs {
 		if r.Op == "rp" {
 			parent = r.Rev
+			break
 		}
 	}
 	if parent == "" {
@@ -528,6 +550,12 @@ func (s *Space) syncTipLocked(ctx context.Context, r *remote) error {
 	if r.blocked != "" {
 		return unavailable(nil, "%s", r.blocked)
 	}
+	if len(r.pending) > 0 {
+		// Changes are waiting for their push: this one goes on top of them,
+		// and out with them. A remote that moved meanwhile refuses that
+		// push, and every change of it is made again on the new tip.
+		return nil
+	}
 	if err := s.fetch(ctx, r, false); err != nil {
 		return s.netFailure(r, err)
 	}
@@ -536,6 +564,9 @@ func (s *Space) syncTipLocked(ctx context.Context, r *remote) error {
 
 // reconcileLocked looks at the fetched remote branch against the clone.
 func (s *Space) reconcileLocked(ctx context.Context, r *remote) error {
+	if len(r.pending) > 0 || r.pushing {
+		return nil // the push under way brings the clone and the remote together
+	}
 	repo := r.repo
 	for pass := 0; pass < 3; pass++ {
 		tip, err := repo.CheckRemote(ctx, r.branch, r.lastGood())
@@ -1125,6 +1156,15 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 		}
 		if err != nil {
 			s.undoLocked(ctx, r, tx, tx.parent)
+			if errors.Is(err, errPushPending) {
+				// A repair that has to be pushed first, with changes of
+				// others waiting for their push: once they are out.
+				for len(r.pending) > 0 {
+					r.idleCond(&s.mu).Wait()
+				}
+				attempt--
+				continue
+			}
 			if errors.Is(err, errRemoteMoved) {
 				// A repair the change needed first could not be pushed: it
 				// was taken back, and the change is made again on the new tip.
@@ -1152,33 +1192,121 @@ func mutate[T any](s *Space, by Author, op func(*txn) (T, error)) (T, error) {
 			s.cm.clearJournal()
 			return res, nil
 		}
-		perr := r.repo.Push(ctx, r.branch)
-		if perr == nil {
-			s.stepped("remote pushed")
-			s.pushedLocked(ctx, r)
-			s.packLocked(ctx, r)
-			return res, nil
+		// Pushed with the changes committed meanwhile (group commit): the
+		// answer waits for a push that has this commit.
+		pc := &pendingChange{tx: tx, commit: r.repo.Head(ctx), mark: s.cm.j.lastSeq()}
+		r.pending = append(r.pending, pc)
+		if !r.pushing {
+			s.pushLocked(ctx, r)
 		}
-		// The answer may have been lost although the push went through.
-		landed, lerr := s.landed(ctx, r)
-		if lerr == nil && landed {
-			s.pushedLocked(ctx, r)
-			s.packLocked(ctx, r)
-			return res, nil
+		for !pc.done {
+			r.idleCond(&s.mu).Wait()
 		}
-		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
-		s.undoLocked(ctx, r, tx, tx.parent)
 		switch {
-		case lerr != nil:
-			return zero, s.netFailure(r, lerr)
-		case !moved:
-			// Nothing moved, so replaying cannot help: the remote refused this change.
-			return zero, unavailable(perr, "%s", gitstore.Scrub(perr.Error()))
+		case pc.err == nil && !pc.retry:
+			return res, nil
+		case pc.retry:
+			s.log.Info("push rejected, making the change again on the new tip", "attempt", attempt)
+			continue
 		}
-		r.noteFetched() // Landed has just looked at the remote
-		s.log.Info("push rejected, making the change again on the new tip", "attempt", attempt)
+		return zero, pc.err
 	}
 	return zero, unavailable(nil, "the remote keeps changing; try again in a moment")
+}
+
+// errPushPending is a change that has to push something of its own first (a
+// repair of the way to a folder) while changes of others wait for theirs.
+var errPushPending = errors.New("changes are waiting for their push")
+
+func (r *remote) idleCond(mu *sync.Mutex) *sync.Cond {
+	if r.idle == nil {
+		r.idle = sync.NewCond(mu)
+	}
+	return r.idle
+}
+
+// pushLocked pushes the changes waiting for their push, called with s.mu
+// held by the change that found nobody pushing. The space lock is let go
+// while git pushes, so that changes coming meanwhile are made and committed
+// on top, and go out together in the next push. A push that the remote
+// refuses, or that fails, takes back every change waiting (last first), and
+// each is made again on the new tip, or answered with the failure.
+func (s *Space) pushLocked(ctx context.Context, r *remote) {
+	r.pushing = true
+	defer func() {
+		r.pushing = false
+		r.idleCond(&s.mu).Broadcast()
+	}()
+	for len(r.pending) > 0 {
+		parent := r.pending[0].tx.parent
+		top := r.pending[len(r.pending)-1].commit
+		s.mu.Unlock()
+		r.fetchMu.Lock()
+		perr := r.repo.Push(ctx, r.branch)
+		r.fetchMu.Unlock()
+		s.mu.Lock()
+		pushed := ""
+		if perr == nil {
+			s.stepped("remote pushed")
+			pushed = r.repo.RemoteTip(ctx, r.branch)
+		} else if landed, lerr := s.landedAt(ctx, r, top); lerr == nil && landed {
+			// The answer was lost, but the push went through.
+			pushed = r.repo.RemoteTip(ctx, r.branch)
+		} else {
+			moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
+			var err error
+			switch {
+			case lerr != nil:
+				err = s.netFailure(r, lerr)
+			case !moved:
+				// Nothing moved, so replaying cannot help: the remote refused this change.
+				err = unavailable(perr, "%s", gitstore.Scrub(perr.Error()))
+			default:
+				r.noteFetched() // landedAt has just looked at the remote
+			}
+			batch := r.pending
+			r.pending = nil
+			for i := len(batch) - 1; i >= 0; i-- {
+				s.undoLocked(ctx, r, batch[i].tx, batch[i].tx.parent)
+			}
+			for _, pc := range batch {
+				pc.done, pc.retry, pc.err = true, err == nil, err
+			}
+			r.idleCond(&s.mu).Broadcast()
+			return
+		}
+		// Every change whose commit the push has is answered.
+		n := 0
+		for n < len(r.pending) {
+			if ok, err := r.repo.IsAncestor(ctx, r.pending[n].commit, pushed); err != nil || !ok {
+				break
+			}
+			n++
+		}
+		if n == 0 {
+			n = len(r.pending) // the push had them all (HEAD went no further)
+		}
+		done := r.pending[:n]
+		r.pending = append([]*pendingChange(nil), r.pending[n:]...)
+		s.pushedUpToLocked(ctx, r, pushed, done[len(done)-1].mark)
+		for _, pc := range done {
+			pc.done = true
+			s.packLocked(ctx, r)
+		}
+		r.idleCond(&s.mu).Broadcast()
+	}
+}
+
+// landedAt is landed for the commit top: whether the remote has it.
+func (s *Space) landedAt(ctx context.Context, r *remote, top string) (bool, error) {
+	if err := s.fetch(ctx, r, true); err != nil {
+		return false, err
+	}
+	tip := r.repo.RemoteTip(ctx, r.branch)
+	if top == "" || tip == "" {
+		return false, nil
+	}
+	return r.repo.IsAncestor(ctx, top, tip)
 }
 
 // visibleDirs keeps the folders the index lists: not hidden ones, not
@@ -1224,6 +1352,26 @@ func (s *Space) landed(ctx context.Context, r *remote) (bool, error) {
 		return false, nil
 	}
 	return r.repo.IsAncestor(ctx, head, tip)
+}
+
+// pushedUpToLocked records that the changes of a group commit up to commit
+// pushed reached the remote, their journal up to mark done with.
+func (s *Space) pushedUpToLocked(ctx context.Context, r *remote, pushed string, mark uint64) {
+	if len(r.pending) == 0 {
+		s.pushedLocked(ctx, r)
+		return
+	}
+	if pushed != "" {
+		if err := r.repo.WriteLastGood(ctx, r.branch, pushed); err != nil {
+			s.log.Warn("could not store the last good commit", "error", err)
+		}
+		r.setLastGood(pushed)
+	}
+	r.noteFetched()
+	r.markOK()
+	if err := s.cm.trimJournal(mark); err != nil {
+		s.log.Warn("could not trim the commit journal", "error", err)
+	}
 }
 
 // pushedLocked records a change that reached the remote.
@@ -1382,6 +1530,11 @@ func (s *Space) undoLocked(ctx context.Context, r *remote, tx *txn, parent strin
 	// The journal names the files of the change. It is forgotten only when they
 	// are back as they were; otherwise the next start still knows about them.
 	if !undone {
+		return
+	}
+	// Changes of others still waiting for their push keep theirs (this
+	// change's transactions are given up above).
+	if len(r.pending) > 0 {
 		return
 	}
 	if err := s.cm.clearJournal(); err != nil {
