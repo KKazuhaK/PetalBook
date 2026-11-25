@@ -368,7 +368,18 @@ func Open(opt Options) (*Space, error) {
 		}
 	}
 	heal.setStateDir(stateDir)
-	recovered, recoveredRevs, giveUp := recoverJournal(heal, root, recs)
+	var recovered map[string]Author
+	var recoveredRevs map[string]gitstore.Blob
+	var giveUp []uint64
+	rolledBack := "" // what stops the clone from being put back, if anything
+	if opt.Remote != nil {
+		// A space that follows a remote answers a change only after its
+		// push: one an earlier run did not get to push is taken back, unless
+		// its commit is on the remote after all (owner decision 2).
+		rolledBack = rollbackRemote(context.Background(), g.r(), opt.Remote.Branch, root, recs, log)
+	} else {
+		recovered, recoveredRevs, giveUp = recoverJournal(heal, root, recs)
+	}
 	if len(giveUp) > 0 {
 		ks := make([]jrec, len(giveUp))
 		for i, tx := range giveUp {
@@ -378,14 +389,11 @@ func Open(opt Options) (*Space, error) {
 			return nil, err
 		}
 	}
-	// Moves whose links were not all made right before the crash: they are
-	// finished once the index is ready, and the journal keeps them till then.
-	linkRecs := pendingLinkRecs(recs)
 	for _, r := range recs {
 		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
 			// What the records asked for is done now; they must not be made
 			// again by a later crash, after the bindings may have changed.
-			if err := jrn.trim(jrn.lastSeq(), linkRecs, recovered); err != nil {
+			if err := jrn.trim(jrn.lastSeq(), nil, recovered); err != nil {
 				return nil, err
 			}
 			break
@@ -468,21 +476,15 @@ func Open(opt Options) (*Space, error) {
 		}
 		s.cm = newCommitter(g, idle, max, log, jrn, nil, nil)
 		s.cm.setOnCommit(heal.committed)
-		s.cm.hold(linkRecs...)
-		if err := s.initRemote(opt.Remote, recovered); err != nil {
+		if err := s.initRemote(opt.Remote, recovered, rolledBack); err != nil {
 			s.cm.Close()
 			idx.Close()
 			return nil, err
 		}
-		// Needs the remote (a change on its latest state): when it cannot be
-		// reached the records stay in the journal for the next start.
-		s.finishLinkRecs(linkRecs)
 		return s, nil
 	}
 	s.cm = newCommitter(g, idle, max, log, jrn, recovered, recoveredRevs)
 	s.cm.setOnCommit(heal.committed)
-	s.cm.hold(linkRecs...)
-	s.finishLinkRecs(linkRecs)
 	// Pages renamed or moved outside PetalBook since it last ran: the links
 	// that carry their ids follow them.
 	if n, err := s.RepairLinks(); err != nil {

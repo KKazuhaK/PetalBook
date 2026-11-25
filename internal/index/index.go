@@ -23,7 +23,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 12
+const schemaVersion = 13
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -45,7 +45,6 @@ CREATE TABLE pages (
 	mtime_ns    INTEGER NOT NULL,
 	size        INTEGER NOT NULL,
 	rev         TEXT NOT NULL,
-	excerpt     TEXT NOT NULL,
 	icon        TEXT NOT NULL DEFAULT '',
 	color       TEXT NOT NULL DEFAULT '',
 	props       TEXT NOT NULL DEFAULT '',
@@ -53,6 +52,14 @@ CREATE TABLE pages (
 	seq         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX pages_seq ON pages(seq);
+-- What a sync reads of every page to know which files changed, as an index of
+-- its own so that the scan does not walk the rows of pages (see loadKnown).
+CREATE INDEX pages_known ON pages(path, size, mtime_ns);
+-- The excerpt of a page (see excerpt.go), by the rowid of the page. It is not a
+-- column of pages: a scan of pages (and a sort that carries its rows) would
+-- read about a kilobyte of text for each page it passes, and the text is read
+-- only for the pages a response shows.
+CREATE TABLE excerpts (rowid INTEGER PRIMARY KEY, text TEXT NOT NULL);
 -- The pages that were removed, for the change feed (see feed.go): the sequence
 -- number the removal got and when it happened (Unix seconds). Bounded by
 -- goneMax records and goneAge.

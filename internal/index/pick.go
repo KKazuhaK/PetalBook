@@ -29,6 +29,15 @@ type PickQuery struct {
 // of the range of each condition at most (see plan.go), then one page is read
 // by its number; no file is read.
 func (x *Index) Pick(q PickQuery, at func(total int) int) (total int, s Summary, err error) {
+	if total, s, err = x.pick(q, at); err != nil {
+		return total, s, err
+	}
+	one := []Summary{s}
+	err = x.fillExcerpts(one)
+	return total, one[0], err
+}
+
+func (x *Index) pick(q PickQuery, at func(total int) int) (total int, s Summary, err error) {
 	if err := checkFilters(q.Filters); err != nil {
 		return 0, s, err
 	}
@@ -85,6 +94,15 @@ func (x *Index) Summary(id string) (s Summary, ok bool, err error) { return x.su
 func (x *Index) SummaryWithProps(id string) (Summary, bool, error) { return x.summaryOf(id, true) }
 
 func (x *Index) summaryOf(id string, props bool) (s Summary, ok bool, err error) {
+	if s, ok, err = x.summaryRow(id, props); err != nil || !ok {
+		return s, ok, err
+	}
+	one := []Summary{s}
+	err = x.fillExcerpts(one)
+	return one[0], true, err
+}
+
+func (x *Index) summaryRow(id string, props bool) (s Summary, ok bool, err error) {
 	err = x.one(func(db querier) error {
 		rows, err := db.Query(`SELECT `+selectCols(props)+` FROM pages p WHERE p.id = ?`, id)
 		if err != nil {
@@ -145,7 +163,20 @@ func (x *Index) Summaries(ids []string) (map[string]Summary, error) {
 		}
 		return rows.Err()
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	list := make([]Summary, 0, len(out))
+	for _, s := range out {
+		list = append(list, s)
+	}
+	if err := x.fillExcerpts(list); err != nil {
+		return nil, err
+	}
+	for _, s := range list {
+		out[s.ID] = s
+	}
+	return out, nil
 }
 
 // FoldersKnown says which of the paths are folders of the space (empty ones

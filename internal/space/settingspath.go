@@ -328,6 +328,11 @@ func (s *Space) clearWayIn(tx *txn, rel, skip string) (string, error) {
 		return "", err
 	}
 	tx.parent = r.repo.Head(ctx)
+	// The repair is pushed: the change now starts from its commit, also for
+	// the next start if a crash cuts the change short.
+	if err := s.cm.Record(tx.by, jrec{Op: "rp", Rev: tx.parent}); err != nil {
+		return "", err
+	}
 	return copy, nil
 }
 

@@ -238,33 +238,25 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// part of the move, so it is journaled with it and a crash between the
 	// rename and the edit of space.yml is finished at recovery (see "b").
 	bind := jrec{Op: "b", From: canonFrom, To: target}
-	// The links of the pages that moved are part of it as well. In a local
-	// space the rename is journaled as a move ("md") and the links are one
-	// transaction with it, made after the rename: a crash before that
-	// transaction has the next start rename the folder back. A space that
-	// follows a remote journals an "l" record, which the next start finishes.
+	// The links of the pages that moved are part of it as well: the rename
+	// is journaled as a move ("md") and the links are one transaction with
+	// it, made after the rename. In a local space a crash before that
+	// transaction has the next start rename the folder back; in one that
+	// follows a remote, the next start takes the whole change back.
 	moveRec := jrec{Op: "md", From: canonFrom, To: target}
-	if tx.remote {
-		moveRec = jrec{Op: "l", From: canonFrom, To: target, Dir: true}
-	}
 	recs = append(recs, bind, moveRec)
 	if err := tx.record(recs...); err != nil {
 		return "", err
 	}
 	tx.bind = append(tx.bind, bind)
-	if tx.remote {
-		tx.links = append(tx.links, moveRec)
-	}
 	inside := make([]string, 0, len(ours))
 	for f := range ours {
 		inside = append(inside, f)
 	}
 	sort.Strings(inside)
 	if err := s.rename(tx.by, absFrom, absTarget, inside); err != nil {
-		if !tx.remote {
-			// Not renamed: the next start must not rename anything back.
-			tx.record(jrec{Op: "mdd", From: canonFrom, To: target})
-		}
+		// Not renamed: the next start must not rename anything back.
+		tx.record(jrec{Op: "mdd", From: canonFrom, To: target})
 		tx.settleBindings() // nothing moved (or the rename is stuck: its own records say so)
 		return "", err
 	}
@@ -305,7 +297,7 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// is journaled the next start finishes the move, bindings and all; before,
 	// it takes the rename back, and the bindings were not touched.
 	var fmove *txMove
-	if !tx.remote {
+	{
 		fmove = &txMove{from: canonFrom, to: target, dir: true}
 		// The folder's identity, so that the next start never takes a
 		// folder made under the old name since for this one.

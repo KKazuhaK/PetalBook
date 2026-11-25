@@ -69,19 +69,25 @@ func TestCrashLeavingAnUnpushedCommitIsFinishedOnTheNextSync(t *testing.T) {
 	consistent(t, f.s)
 }
 
-func TestCrashLeavingAWrittenButUncommittedFileIsCommittedAndPushed(t *testing.T) {
+// A file written and journaled but never pushed (here never committed): the
+// person was never told the change was made, so the next start takes it back
+// (owner decision 2), and nothing of it reaches the remote.
+func TestCrashLeavingAWrittenButUnpushedFileTakesItBack(t *testing.T) {
 	t.Parallel()
 	f := newRemoteSpace(t)
+	tip := f.tip()
 	f.crashedWithUncommittedFile("Written", "WRITE00001")
 	f.reopen()
-	// It is committed on open (no network needed), with the owner as author.
-	if got := git(t, f.root, "log", "-1", "--format=%s|%an|%cn"); got != "Add Written|Ann|Service" {
-		t.Fatalf("%q", got)
+	if exists(f.s, "Written.md") {
+		t.Fatal("the file of a change never pushed is still there")
+	}
+	if head := git(t, f.root, "rev-parse", "HEAD"); head != tip {
+		t.Fatalf("HEAD %s, the remote %s", head, tip)
 	}
 	if err := f.syncNow(); err != nil {
 		t.Fatal(err)
 	}
-	if f.remoteLog()[0] != "Add Written" {
+	if f.tip() != tip {
 		t.Fatalf("%v", f.remoteLog())
 	}
 	if b, _ := os.ReadFile(filepath.Join(f.s.StateDir(), "pending.journal")); len(b) != 0 {
@@ -92,7 +98,9 @@ func TestCrashLeavingAWrittenButUncommittedFileIsCommittedAndPushed(t *testing.T
 
 func TestCrashRecoveryWhenTheRemoteMovedKeepsTheWorkAndFollowsTheRemote(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"unpushed commit", "uncommitted file"} {
+	// A commit made outside the journal (a file written and journaled but
+	// not pushed is taken back at the start: TestCrashLeavingAWrittenButUnpushedFileTakesItBack).
+	for _, kind := range []string{"unpushed commit"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newRemoteSpace(t)
 			mustCreate(t, f.s, "", meta("title", "Before"), "b\n")

@@ -202,62 +202,6 @@ func TestSaveAddsMissingIDs(t *testing.T) {
 	}
 }
 
-// A crash after the file moved and before (all of) the links were rewritten:
-// the next start finishes it.
-func TestCrashBetweenMoveAndRewriteIsFinished(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	for _, folder := range []bool{false, true} {
-		t.Run(fmt.Sprintf("folder=%v", folder), func(t *testing.T) {
-			root := t.TempDir()
-			s := openAt(t, root)
-			tg := mustCreate(t, s, "Old", meta("title", "目标"), "x\n")
-			var refs []*Page
-			for i := range 5 {
-				refs = append(refs, mustCreate(t, s, "R", meta("title", fmt.Sprintf("r%d", i)), "[t](../Old/目标.md) [u](../Old/目标.md#a \""+tg.ID+"\")\n"))
-			}
-			s.Flush()
-			from, to := "Old/目标.md", "New/目标.md"
-			rec := jrec{Op: "l", From: from, To: to}
-			if folder {
-				rec = jrec{Op: "l", From: "Old", To: "New", Dir: true}
-			}
-			if err := s.cm.Record(Author{}, jrec{Op: "t", Path: refs[0].Path}, jrec{Op: "t", Path: from}, jrec{Op: "t", Path: to}, rec); err != nil {
-				t.Fatal(err)
-			}
-			if folder {
-				os.Rename(filepath.Join(root, "Old"), filepath.Join(root, "New"))
-			} else {
-				os.MkdirAll(filepath.Join(root, "New"), 0o755)
-				os.Rename(filepath.Join(root, from), filepath.Join(root, to))
-			}
-			// One referrer was already rewritten (its journal record says so).
-			one := filepath.Join(root, refs[0].Path)
-			b, _ := os.ReadFile(one)
-			os.WriteFile(one, []byte(strings.ReplaceAll(string(b), "../Old/目标.md", "../New/目标.md")), 0o644)
-			crash(s)
-
-			s2 := openAt(t, root)
-			for _, r := range refs {
-				got := readDisk(t, s2, r.Path)
-				if strings.Contains(got, "Old/") || strings.Count(got, "../New/目标.md") != 2 || !strings.Contains(got, "[u](../New/目标.md#a \""+tg.ID+"\")") {
-					t.Fatalf("%s:\n%s", r.Path, got)
-				}
-			}
-			if bl, _, total, _ := s2.Backlinks(tg.ID, ""); total != 5 || len(bl) != 5 {
-				t.Fatalf("total %d", total)
-			}
-			s2.Flush()
-			if st := git(t, root, "status", "--porcelain"); st != "" {
-				t.Fatalf("not committed: %q", st)
-			}
-			if b, _ := os.ReadFile(filepath.Join(s2.StateDir(), "pending.journal")); len(b) != 0 {
-				t.Fatalf("journal: %s", b)
-			}
-		})
-	}
-}
-
 func TestExternalRenameIsRepairedAtStart(t *testing.T) {
 	t.Parallel()
 	needGit(t)
@@ -339,7 +283,6 @@ func TestPullRepairsLinksAfterAnExternalRename(t *testing.T) {
 
 // PETALBOOK_TIMING=1: renaming a page that 1,000 pages link to, in a space of
 // 50,000 pages.
-// Not parallel: it measures timings, which tests running alongside would distort.
 func TestTimingRenameWithManyReferrers(t *testing.T) {
 	if os.Getenv("PETALBOOK_TIMING") == "" {
 		t.Skip("set PETALBOOK_TIMING=1")

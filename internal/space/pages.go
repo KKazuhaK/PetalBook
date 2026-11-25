@@ -553,7 +553,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 	if !bytes.Equal(newData, data) {
 		// Journaled with its content, so a crash before the write is
 		// finished by writing it (if the file is still as it was).
-		id, journaled, err := tx.prepare([]txFile{{path: rel, old: page.Rev(data), rev: page.Rev(newData), data: newData}}, false)
+		id, journaled, err := tx.prepare([]txFile{{path: rel, old: page.Rev(data), rev: page.Rev(newData), data: newData}})
 		if err != nil {
 			return nil, err
 		}
@@ -582,7 +582,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		cur := strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 		if !page.SameStem(cur, stem) {
 			dirAbs := filepath.Dir(abs)
-			name, reserved, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx, rel, folderOf(rel)), !tx.remote)
+			name, reserved, err := s.moveNamed(tx.by, abs, dirAbs, stem, s.moveIntent(tx, rel, folderOf(rel)), true)
 			if err != nil {
 				// The content is saved; only the name is left as it was.
 				s.log.Warn("could not rename page file", "from", rel, "stem", stem, "error", err)
@@ -719,7 +719,7 @@ func (s *Space) moveLocked(tx *txn, id, folder, baseRev string) (*Page, error) {
 	if err != nil {
 		return nil, err
 	}
-	name, reserved, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx, rel, canon), !tx.remote)
+	name, reserved, err := s.moveNamed(tx.by, src, dirAbs, stem, s.moveIntent(tx, rel, canon), true)
 	if err != nil {
 		return nil, err
 	}

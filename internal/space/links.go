@@ -3,7 +3,6 @@ package space
 import (
 	"errors"
 	"io/fs"
-	"path"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -399,10 +398,10 @@ func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEd
 		pe.edits = append(pe.edits, e)
 	}
 	// One transaction with every file's content: a crash part way is
-	// finished by writing what is left of it, never by planning it again
-	// from files that may already be rewritten. In a space that follows a
-	// remote it closes the change's "l" records.
-	id, journaled, err := tx.prepare(files, true)
+	// finished by writing what is left of it (a local space) or taken back
+	// (one that follows a remote), never planned again from files that may
+	// already be rewritten.
+	id, journaled, err := tx.prepare(files)
 	if err != nil {
 		return nil, err
 	}
@@ -415,6 +414,11 @@ func (s *Space) prepareEdits(tx *txn, edits []fileEdit, mv *txMove) (*preparedEd
 		if err := tx.record(recs...); err != nil {
 			return nil, err
 		}
+	}
+	if tx.remote && mv != nil && !mv.dir {
+		// Undoing the change puts both names back as the parent commit has
+		// them, whatever got done of the move.
+		tx.touch(mv.from, mv.to)
 	}
 	if err := s.stepped("edits journaled"); err != nil {
 		pe.stop()
@@ -440,7 +444,7 @@ func (pe *preparedEdits) stop() {
 		return
 	}
 	pe.done = true
-	if pe.journaled {
+	if pe.journaled && !pe.tx.remote {
 		pe.tx.touch(pe.paths...)
 		pe.s.cm.forget(pe.id)
 	}
@@ -457,7 +461,7 @@ func (pe *preparedEdits) apply() ([]string, error) {
 	// from the first replacement: an undo takes them back. In a local one
 	// they are handed to the commit once all are written, with the content
 	// the transaction wrote (Applied), or as they are if the writing stops.
-	if !journaled {
+	if !journaled || tx.remote {
 		tx.touch(paths...)
 	}
 	var steps []rebaseStep
@@ -604,7 +608,6 @@ func (s *Space) relink(tx *txn, mv []movedPage, moves []stepMove, own string, da
 // on.
 func (s *Space) afterRelink(tx *txn, err error) error {
 	if err == nil {
-		tx.settleLinks()
 		return nil
 	}
 	var me *moveError
@@ -725,80 +728,6 @@ func (s *Space) repairStale(tx *txn, ids []string) ([]string, error) {
 		}
 	}
 	return paths, nil
-}
-
-// movedUnder works out which pages a "l" record of the journal moved: the pages
-// now at its target, with the paths they had.
-func (s *Space) movedUnder(r jrec) ([]movedPage, error) {
-	var refs []index.PageRef
-	if r.Dir {
-		var err error
-		if refs, err = s.idx.PagesUnder(r.To); err != nil {
-			return nil, err
-		}
-	} else if id, ok := s.idx.IDAt(r.To); ok {
-		refs = []index.PageRef{{ID: id, Path: r.To}}
-	}
-	out := make([]movedPage, 0, len(refs))
-	for _, p := range refs {
-		from := r.From
-		if r.Dir {
-			from = path.Join(r.From, strings.TrimPrefix(p.Path, r.To+"/"))
-		}
-		out = append(out, movedPage{id: p.ID, from: from, to: p.Path})
-	}
-	return out, nil
-}
-
-// finishLinkRecs completes the link changes of moves that a crash cut short:
-// what the "l" records say moved is looked for where it is now and the links to
-// it made right, as a change by the person who made the move.
-func (s *Space) finishLinkRecs(recs []jrec) {
-	for _, r := range recs {
-		r := r
-		do := func(tx *txn) (struct{}, error) {
-			mv, err := s.movedUnder(r)
-			if err != nil {
-				return struct{}{}, err
-			}
-			var moves []stepMove
-			if r.Dir {
-				moves = []stepMove{{From: r.From, To: r.To, Dir: true}}
-			}
-			// The record is the change's: the transaction of its rewrites
-			// closes it, so that a crash from then on replays them.
-			tx.links = append(tx.links, r)
-			if _, err = s.relink(tx, mv, moves, "", nil, nil); err != nil {
-				return struct{}{}, err
-			}
-			// Nothing to rewrite, or done (a space that follows a remote
-			// closes it once the change is pushed).
-			tx.settleLinks()
-			return struct{}{}, nil
-		}
-		if _, err := mutate(s, r.author(), do); err != nil {
-			s.log.Error("could not finish updating the links of a move an earlier run began", "from", r.From, "to", r.To, "error", err)
-		}
-	}
-}
-
-// pendingLinkRecs are the "l" records of a journal that no "ld" record closes.
-func pendingLinkRecs(recs []jrec) []jrec {
-	var open []jrec
-	for _, r := range recs {
-		switch r.Op {
-		case "l":
-			open = append(open, r)
-		case "ld":
-			for i, o := range open {
-				if o.From == r.From && o.To == r.To && o.Path == r.Path {
-					open = append(open[:i:i], open[i+1:]...)
-					break
-				}
-			}
-		}
-	}
-	return open
 }
 
 // RepairLinks puts right the links that carry the id of a page that was moved

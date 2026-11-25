@@ -178,7 +178,7 @@ func TestJournalWithMissingOrForeignPathsIsTolerated(t *testing.T) {
 		`{"op":"t","p":"vanished.md"}`,
 		`{"op":"d","p":"deleted-long-ago.md"}`,
 		`{"op":"w","p":"taken.md","rev":"1111111111111111111111111111111111111111"}`, // name held by another file
-		`{"op":"m","f":"a.md","to":"b.md"}`,
+		`{"op":"mr","f":"a.md","to":"b.md"}`,
 		`{"op":"t","p":"../escape.md"}`, `{"op":"t","p":"/etc/passwd"}`, `{"op":"t","p":".git/config"}`,
 		`not json at all`, `{"op":""}`, ``,
 	}, "\n")
@@ -386,7 +386,7 @@ func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
 			}
 			crash(s)
 			st := step{"Apple.md", "apple (renaming 1).md", "apple.md"}
-			recs := []string{`{"op":"m","f":"Apple.md","to":"apple.md"}`}
+			recs := []string{`{"op":"mr","f":"Apple.md","to":"apple.md"}`}
 			inside := ""
 			if c.folder != "" {
 				st = step{"notes", "Notes (renaming 1)", "Notes"}
@@ -452,25 +452,25 @@ func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
 	}
 }
 
-// A move by case recorded, done, and then a crash before the commit: on a
-// file system that folds names both names find the one file, and finishing
-// the move must not remove it as "the old name".
-func TestFinishMoveKeepsAFileRenamedByCase(t *testing.T) {
+// A name taken for a move by case, and then a crash: on a file system that
+// folds names both names find the one file, and taking the name back must not
+// remove it.
+func TestTakingBackANameKeepsAFileRenamedByCase(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "apple.md"), []byte("the page\n"), 0o644)
 	if _, err := os.Stat(filepath.Join(root, "Apple.md")); err != nil {
 		t.Skip("this file system tells names apart by case")
 	}
-	recoverPending(root, []jrec{{Op: "m", From: "Apple.md", To: "apple.md"}})
+	recoverPending(root, []jrec{{Op: "mr", From: "Apple.md", To: "apple.md"}})
 	if b, err := os.ReadFile(filepath.Join(root, "apple.md")); err != nil || string(b) != "the page\n" {
 		t.Fatalf("%q %v", b, err)
 	}
 }
 
-// A move to another folder under the same file name, stopped after the link:
-// the old name is removed as before.
-func TestFinishMoveAcrossFoldersRemovesTheOldName(t *testing.T) {
+// A move to another folder under the same file name, stopped after the new
+// name was taken and before its transaction: the new name goes again.
+func TestANameTakenForAMoveWithoutItsTransactionIsTakenBack(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "a"), 0o755)
@@ -479,11 +479,11 @@ func TestFinishMoveAcrossFoldersRemovesTheOldName(t *testing.T) {
 	if err := os.Link(filepath.Join(root, "a", "x.md"), filepath.Join(root, "b", "x.md")); err != nil {
 		t.Skip("no hard links here")
 	}
-	recoverPending(root, []jrec{{Op: "m", From: "a/x.md", To: "b/x.md"}})
-	if _, err := os.Lstat(filepath.Join(root, "a", "x.md")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("the old name is still there: %v", err)
+	recoverPending(root, []jrec{{Op: "mr", From: "a/x.md", To: "b/x.md"}})
+	if _, err := os.Lstat(filepath.Join(root, "b", "x.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the new name is still there: %v", err)
 	}
-	if b, err := os.ReadFile(filepath.Join(root, "b", "x.md")); err != nil || string(b) != "the page\n" {
+	if b, err := os.ReadFile(filepath.Join(root, "a", "x.md")); err != nil || string(b) != "the page\n" {
 		t.Fatalf("%q %v", b, err)
 	}
 }
