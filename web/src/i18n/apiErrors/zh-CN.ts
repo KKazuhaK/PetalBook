@@ -36,6 +36,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   // Spaces, members and groups.
   space_disabled: '这个空间已被管理员停用。',
   no_permission: '你在这个空间里的角色不允许这样做。',
+  prefs_full: '偏好设置已经满了（最多 100 项，共 256 KiB），这一项只保存在这个浏览器里。',
   personal_space: '个人空间只属于一个人，不能共享、转让或删除。',
   last_owner: '空间至少要留一个所有者，请先让别人成为所有者。',
   owner_required: '没有可以恢复的所有者，请指定一位。',

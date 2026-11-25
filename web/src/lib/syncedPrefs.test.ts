@@ -4,6 +4,7 @@ import { createSyncedPrefs, type PrefsApi } from './syncedPrefs'
 import { browserPrefs, prefsStore, setPrefsStore } from './prefsStore'
 import { readPrefs, writePrefs, defaultPrefs } from './tablePrefs'
 import { onboardingKey, readOnboarding, writeOnboarding } from './onboarding'
+import { ApiError } from '@/api/client'
 
 // The person's own preferences in their personal space, with this browser's storage as the fallback and the cache.
 
@@ -60,7 +61,7 @@ describe('reading', () => {
     expect(p.read('missing')).toBeNull()
     for (let i = 0; i < 20; i++) p.read('other')
     expect(api.gets).toBe(1)
-    expect(p.status()).toEqual({ hydrated: true, personal: true, waiting: 0 })
+    expect(p.status()).toEqual({ hydrated: true, settled: true, personal: true, waiting: 0 })
   })
 
   it('the file wins over what this browser had, and what the file lost is gone', async () => {
@@ -186,7 +187,66 @@ describe('writing', () => {
   })
 })
 
+describe('when things go wrong', () => {
+  it('tries loading again after an offline failure, and the file then wins', async () => {
+    const api = fake({ a: 'server' })
+    api.down = true
+    browserPrefs.write('a', 'cached')
+    const p = createSyncedPrefs({ api, retryMs: 1000 })
+    await p.hydrate('U1')
+    expect(p.status()).toMatchObject({ hydrated: false, settled: true })
+    api.down = false
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(api.gets).toBe(2)
+    expect(p.status().hydrated).toBe(true)
+    expect(p.read('a')).toBe('server')
+  })
+
+  it('keeps what was written and not sent when the person signs in again, and sends it: it is newer', async () => {
+    const api = fake({ a: 'old', b: 'file' })
+    const p = createSyncedPrefs({ api, quietMs: 10 })
+    await p.hydrate('U1')
+    api.down = true
+    p.write('a', 'mine')
+    p.remove('b')
+    await vi.advanceTimersByTimeAsync(20)
+    expect(api.patches).toEqual([])
+    // The page is loaded again, and the server can be reached.
+    api.down = false
+    const again = createSyncedPrefs({ api, quietMs: 10 })
+    await again.hydrate('U1')
+    expect(again.read('a')).toBe('mine')
+    expect(again.read('b')).toBeNull()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(api.server).toEqual({ a: 'mine' })
+  })
+
+  it('does not try again a write the server refuses for good; this browser keeps it', async () => {
+    const api = fake()
+    api.patch = async (set) => {
+      api.patches.push(set)
+      throw new ApiError(400, 'prefs_full' as never, 'full')
+    }
+    const p = createSyncedPrefs({ api, quietMs: 10, retryMs: 100 })
+    await p.hydrate('U1')
+    p.write('big', 'x')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.patches).toHaveLength(1)
+    expect(p.read('big')).toBe('x')
+    expect(p.status().waiting).toBe(0)
+  })
+})
+
 describe('whose they are', () => {
+  it('a sign-out takes the person’s copy out of this browser', async () => {
+    const a = fake({ secretA: 'a-only' })
+    const pa = createSyncedPrefs({ api: a })
+    await pa.hydrate('A')
+    expect(browserPrefs.read('secretA')).toBe('a-only')
+    await pa.reset()
+    expect(browserPrefs.read('secretA')).toBeNull()
+  })
+
   it('what this browser copied from one person’s file is gone when another signs in', async () => {
     const a = fake({ secretA: 'a-only', shared: 'a' })
     const pa = createSyncedPrefs({ api: a })

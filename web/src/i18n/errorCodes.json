@@ -68,6 +68,7 @@
   "path_error",
   "path_reveals_secret",
   "personal_space",
+  "prefs_full",
   "provider_error",
   "provider_in_use",
   "provider_issuer_in_use",

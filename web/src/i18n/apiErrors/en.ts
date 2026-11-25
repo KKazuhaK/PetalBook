@@ -38,6 +38,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   // Spaces, members and groups.
   space_disabled: 'This space has been disabled by an administrator.',
   no_permission: 'Your role in this space does not allow that.',
+  prefs_full: 'Your preferences are full (at most 100 of them, 256 KiB in all). This one is kept in this browser only.',
   personal_space: 'A personal space belongs to one person and cannot be shared, transferred or deleted.',
   last_owner: 'A space needs at least one owner. Make someone else an owner first.',
   owner_required: 'There is nobody to put back as owner. Name one.',
