@@ -57,6 +57,8 @@
 }
 
 :root {
+    /* The top bar: 56 px, and under the notch (or the status bar of an installed app) the safe area above it. */
+    --topbar-h: calc(3.5rem + env(safe-area-inset-top, 0px));
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);

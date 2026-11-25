@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, type ReactNode, useRef } from 'react'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { ArrowLeft, X } from 'lucide-react'
@@ -40,6 +41,8 @@ const UsagePanel = lazy(() => import('./UsagePanel'))
 // not drawn (the address says "settings", not "settings over this page"), and
 // closing goes back to where the person came from.
 export default function SettingsRoute() {
+  const fadeRef = useRef<HTMLElement>(null)
+  useScrollFade(fadeRef)
   const { section: requested } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -180,8 +183,9 @@ export default function SettingsRoute() {
               <DialogTitle className="text-base font-semibold">{t.settingsUi.title}</DialogTitle>
             </div>
             <nav
+              ref={fadeRef}
               aria-label={t.settingsUi.nav}
-              className="flex gap-4 overflow-x-auto [scrollbar-width:none] px-3 pb-2 md:flex-1 md:flex-col md:gap-4 md:overflow-x-visible md:overflow-y-auto md:px-3 md:pb-4"
+              className={`${scrollFadeClass} flex gap-4 px-3 pb-2 md:flex-1 md:flex-col md:gap-4 md:overflow-x-visible md:overflow-y-auto md:px-3 md:pb-4`}
             >
               {groupsOf(shown).map(({ group, sections }) => (
                 <div
@@ -216,7 +220,7 @@ export default function SettingsRoute() {
             </nav>
           </aside>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="flex h-12 shrink-0 items-center border-b px-4 md:px-8 md:pr-14">
+            <header className="flex h-14 shrink-0 items-center border-b px-4 md:px-8 md:pr-14">
               <h2 className="truncate text-sm font-semibold">{t.settingsUi.sections[section]}</h2>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
