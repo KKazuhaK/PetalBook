@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// The notification centre (docs/design.md, 3.10). One row is one thing that
+// The notification centre (docs/design/decisions-2026-11-24.md, 3.10). One row is one thing that
 // happened to one person; it says what (Kind), about what (Ref) and the facts
 // (Payload, JSON). The sentence is the web app's, written in the person's
 // language, so no prose is stored.

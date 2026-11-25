@@ -4,7 +4,7 @@
 -- the hash of the baseline it was made from (schema_baseline), and one made from
 -- another is refused at start and must be made again. After the first release,
 -- upgrades are code of their own in internal/store/upgrade, never edits that
--- assume an old database (docs/design.md, "数据库基线（2026-11-24）").
+-- assume an old database (docs/design/database.md, "5.3 Database baseline (2026-11-24)").
 --
 -- One schema for both databases: TEXT and BIGINT columns only, times as Unix
 -- milliseconds, booleans as 0/1. Every TEXT column is COLLATE "C": text

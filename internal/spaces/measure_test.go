@@ -17,7 +17,7 @@ import (
 
 // TestMeasureStorageOnAGeneratedCorpus prints what partial clones, eviction and
 // a restore cost on a generated corpus. It is skipped unless PETALBOOK_MEASURE
-// holds the number of pages (the numbers in docs/design.md, "3.1 的现状"):
+// holds the number of pages (the numbers in docs/design/milestones/phase-3.md, "3.1 as built"):
 //
 //	PETALBOOK_MEASURE=3000 go test ./internal/spaces -run MeasureStorage -v
 func TestMeasureStorageOnAGeneratedCorpus(t *testing.T) {
