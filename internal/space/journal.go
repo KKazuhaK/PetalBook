@@ -331,6 +331,37 @@ func readJournal(data []byte) journalRead {
 		}
 		out.recs = append(out.recs, r)
 	}
+	out.recs = wholeTransactions(out.recs)
+	return out
+}
+
+// wholeTransactions drops the records of a transaction that is not all
+// there: its append was cut short, so none of its files was written yet (they
+// are written once it is durable), and the closing of its "l" records is lost
+// with it, so their links are planned again from untouched files.
+func wholeTransactions(recs []jrec) []jrec {
+	want, got := map[uint64]int{}, map[uint64]int{}
+	for _, r := range recs {
+		switch {
+		case r.Op == "x":
+			want[r.Tx] = r.N
+		case r.Tx != 0 && r.Op != "a" && r.Op != "k":
+			got[r.Tx]++
+		}
+	}
+	whole := true
+	for tx, n := range want {
+		whole = whole && got[tx] == n
+	}
+	if whole {
+		return recs
+	}
+	out := recs[:0:0]
+	for _, r := range recs {
+		if r.Tx == 0 || want[r.Tx] == got[r.Tx] {
+			out = append(out, r)
+		}
+	}
 	return out
 }
 
@@ -425,6 +456,9 @@ func (j *journal) blobPath(tx uint64) string {
 // a file of the transaction's.
 const txInline = 64 << 10
 
+// txInlineTotal bounds the content one transaction carries in the journal.
+const txInlineTotal = 1 << 20
+
 // txFile is a file of a transaction: its path, the blob ids of its content
 // before and after (Old "" for a file that is not there), and the new content.
 type txFile struct {
@@ -442,22 +476,30 @@ func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, err
 	defer j.mu.Unlock()
 	tx := j.seq + 1 // the number of the "x" frame
 	recs := make([]jrec, 0, len(files)+1+len(extra))
-	recs = append(recs, jrec{Op: "x", Tx: tx, AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
+	// N counts the frames of the transaction after its "x": a transaction
+	// that is not all there (an append cut short) is not replayed at all.
+	recs = append(recs, jrec{Op: "x", Tx: tx, N: len(files) + len(extra), AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
 	var staged bytes.Buffer
+	inline := 0
 	for _, f := range files {
 		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev}
 		switch {
-		case len(f.data) > txInline:
+		case len(f.data) > txInline || inline+len(f.data) > txInlineTotal:
 			r.BlobAt, r.BlobLen = int64(staged.Len()), int64(len(f.data))
 			staged.Write(f.data)
 		case utf8.Valid(f.data):
 			r.Text = string(f.data)
+			inline += len(f.data)
 		default:
 			r.Bin = f.data
+			inline += len(f.data)
 		}
 		recs = append(recs, r)
 	}
-	recs = append(recs, extra...)
+	for _, r := range extra {
+		r.Tx = tx
+		recs = append(recs, r)
+	}
 	blob := ""
 	if staged.Len() > 0 {
 		blob = j.blobPath(tx)
@@ -516,7 +558,7 @@ func (r jrec) content() ([]byte, error) {
 	}
 	f, err := os.Open(r.blob)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("the staged content of %s cannot be read: %w", r.Path, err)
 	}
 	defer f.Close()
 	b := make([]byte, r.BlobLen)
@@ -709,21 +751,28 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
 	var bindRecs, fieldRecs []jrec
-	given := map[uint64]bool{} // transactions given up ("k")
+	given := map[uint64]bool{}   // transactions given up ("k")
+	applied := map[uint64]bool{} // and written ("a")
 	authors := map[uint64]Author{}
 	for _, r := range recs {
 		switch r.Op {
 		case "k":
 			given[r.Tx] = true
+		case "a":
+			applied[r.Tx] = true
 		case "x":
 			authors[r.Tx] = r.author()
 		}
+	}
+	var log *slog.Logger
+	if h != nil {
+		log = h.log
 	}
 	for _, r := range recs {
 		by := r.author()
 		switch r.Op {
 		case "p":
-			if ok(r.Path) && !given[r.Tx] && replay(root, r) {
+			if ok(r.Path) && !given[r.Tx] && replay(root, r, !applied[r.Tx], log) {
 				set[r.Path] = authors[r.Tx]
 			}
 		case "t", "d":
@@ -795,10 +844,17 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 }
 
 // replay brings the file of a "p" record to its new content, if it is at the
-// old one, and reports whether the file has the new content now. A file at
-// any other content was changed outside PetalBook: it is left alone. Nothing
-// is planned again, so replaying twice is replaying once.
-func replay(root string, r jrec) bool {
+// old one and write is set, and reports whether the file has the new content
+// now. A file at any other content was changed outside PetalBook: it is left
+// alone. Nothing is planned again, so replaying twice is replaying once.
+//
+// A transaction that was applied ("a") is not written again: its files were
+// written, and whatever they hold now came after it (a later change, or one
+// made outside, maybe back to the old bytes). The "a" goes to the journal
+// unsynced, but the next synced append makes it durable, so only the last
+// transaction before a crash can lack it although it was applied; its files
+// are then at the new content, or untouched, and the replay is right either way.
+func replay(root string, r jrec, write bool, log *slog.Logger) bool {
 	abs := filepath.Join(root, filepath.FromSlash(r.Path))
 	cur := ""
 	switch data, err := os.ReadFile(abs); {
@@ -811,11 +867,24 @@ func replay(root string, r jrec) bool {
 	case r.Rev:
 		return true
 	case r.Old:
-		data, err := r.content()
-		if err != nil || page.Rev(data) != r.Rev {
+		if !write {
 			return false
 		}
-		return writeAtomic(abs, data) == nil
+		data, err := r.content()
+		if err == nil && page.Rev(data) != r.Rev {
+			err = errors.New("the content does not match the record")
+		}
+		if err == nil {
+			err = writeAtomic(abs, data)
+		}
+		if err != nil {
+			if log != nil {
+				log.Error("a change an earlier run journaled cannot be finished; the file stays as it was",
+					"path", r.Path, "transaction", r.Tx, "staged", r.blob, "error", err)
+			}
+			return false
+		}
+		return true
 	}
 	return false
 }

@@ -3,6 +3,7 @@ package space
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -295,7 +296,7 @@ func TestReplayingATransactionTwiceIsReplayingItOnce(t *testing.T) {
 	write("b.md", "b1")      // already written before the crash
 	write("c.md", "outside") // changed outside PetalBook
 	rev := func(s string) string { return page.Rev([]byte(s)) }
-	recs := []jrec{{Op: "x", Tx: 1, AuthorName: "Ann"}}
+	recs := []jrec{{Op: "x", Tx: 1, N: 3, AuthorName: "Ann"}}
 	for _, f := range []struct{ name, old, new string }{{"a.md", "a0", "a1"}, {"b.md", "b0", "b1"}, {"c.md", "c0", "c1"}} {
 		recs = append(recs, jrec{Op: "p", Tx: 1, Path: f.name, Old: rev(f.old), Rev: rev(f.new), Text: f.new})
 	}
@@ -315,5 +316,129 @@ func TestReplayingATransactionTwiceIsReplayingItOnce(t *testing.T) {
 	recoverPending(root, append(recs, jrec{Op: "k", Tx: 1}))
 	if b, _ := os.ReadFile(filepath.Join(root, "a.md")); string(b) != "a0" {
 		t.Errorf("a transaction given up was replayed: %q", b)
+	}
+}
+
+// A save that was written is not made again at the next start: the file
+// changed after it (here outside PetalBook, back to its old bytes) keeps
+// that change.
+func TestAnAppliedSaveIsNotReplayed(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	p := mustCreate(t, s, "", meta("title", "Kept"), "v1\n")
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	old := readDisk(t, s, p.Path)
+	if _, err := s.Save(Author{}, p.ID, p.Rev, meta("title", "Kept"), "v2\n"); err != nil {
+		t.Fatal(err)
+	}
+	crash(s)
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(p.Path)), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2 := openAt(t, root)
+	if got := readDisk(t, s2, p.Path); got != old {
+		t.Errorf("the file changed after the save was written over at the next start:\n%s", got)
+	}
+}
+
+// A rewrite whose append a crash cut short (the last frames, with the
+// closing of its "l" record, never reached the disk): none of it is
+// replayed, and the move's links are planned again from the files, which
+// nothing has touched. Half a replay under a new plan would make the moved
+// page's link relative to its old place twice.
+func TestARewriteWhoseJournalIsCutShortIsNotHalfReplayed(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	os.MkdirAll(filepath.Join(root, "A", "B"), 0o755)
+	os.WriteFile(filepath.Join(root, "A", "B", "p.md"), []byte(pageText("PPPPPPPP01", "p", "see [y](y.md)\n")), 0o644)
+	os.WriteFile(filepath.Join(root, "z.md"), []byte(pageText("ZZZZZZZZ01", "z", "see [p](A/B/p.md \"PPPPPPPP01\")\n")), 0o644)
+	if _, err := s.Reindex(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	stopAt(s, "edits journaled", 1)
+	survive(t, func() { s.Move(Author{}, "PPPPPPPP01", "") })
+	crash(s)
+	data, err := os.ReadFile(journalFile(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalFile(root), data[:len(data)-20], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2 := openAt(t, root)
+	if got := readDisk(t, s2, "p.md"); !strings.Contains(got, "[y](A/B/y.md)\n") {
+		t.Errorf("the moved page's link:\n%s", got)
+	}
+	if got := readDisk(t, s2, "z.md"); !strings.Contains(got, "[p](p.md ") {
+		t.Errorf("the link to the moved page:\n%s", got)
+	}
+}
+
+// Content staged for a save that cannot be read back at the next start is
+// reported, with the file and the transaction, not passed over in silence.
+func TestStagedContentThatIsGoneIsReported(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s := openAt(t, root)
+	p := mustCreate(t, s, "", meta("title", "Kept"), "v1\n")
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	stopAt(s, "save journaled", 1)
+	survive(t, func() {
+		s.Save(Author{}, p.ID, p.Rev, meta("title", "Kept"), strings.Repeat("long text ", 10000))
+	})
+	crash(s)
+	blobs := blobsIn(t, s.StateDir())
+	if len(blobs) != 1 {
+		t.Fatalf("staged files: %v", blobs)
+	}
+	os.Remove(blobs[0])
+	var logs logBuffer
+	openAt(t, root, withLog(&logs))
+	if l := logs.String(); !strings.Contains(l, "level=ERROR") || !strings.Contains(l, filepath.Base(blobs[0])) || !strings.Contains(l, p.Path) {
+		t.Errorf("the lost content is not reported:\n%s", l)
+	}
+}
+
+// A transaction of many files near the inline limit stages what is over a
+// bound for the whole transaction: no append is hundreds of megabytes.
+func TestALargeTransactionStagesWhatIsOverItsBound(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.journal")
+	j, _, err := openJournal(path, slog.New(slog.NewTextHandler(&logBuffer{}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.close()
+	var files []txFile
+	for i := range 40 {
+		files = append(files, txFile{path: fmt.Sprintf("f%d.md", i), old: "o", rev: "n", data: bytes.Repeat([]byte{'a' + byte(i%26)}, txInline-10)})
+	}
+	if _, err := j.appendTx(Author{}, files, nil); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(path); st.Size() > 2*txInlineTotal {
+		t.Errorf("the journal is %d bytes", st.Size())
+	}
+	data, _ := os.ReadFile(path)
+	rd := readJournal(data)
+	for i, f := range files {
+		r := rd.recs[i+1]
+		r.blob = j.blobPath(r.Tx)
+		if got, err := r.content(); err != nil || !bytes.Equal(got, f.data) {
+			t.Errorf("%s: %v", f.path, err)
+		}
 	}
 }

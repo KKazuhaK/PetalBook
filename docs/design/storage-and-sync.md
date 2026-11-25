@@ -369,9 +369,18 @@ round 2 the trim rewrote it from memory; both write it once and fsync.
 **What PR 2 does.** In a local space a save and `writeEdits` (link rewrites, field
 renames) journal one transaction before writing: `x`, then one `p` per file with the
 blob ids before and after and the new content. A save whose write fails writes `k`, so
-it is not replayed; after the writes comes `a`, without an fsync. Recovery replays
-every `p` whose transaction was not given up, by hash, in journal order among the older
-records, so replaying twice is replaying once. The `a` record is not read yet (PR 3).
+it is not replayed; after the writes comes `a`, without an fsync. `x` counts the frames
+of its transaction, and a transaction that is not all there (its append was cut short,
+so none of its files was written) is dropped whole. Recovery replays each `p` of a
+transaction that has neither `k` nor `a`, by hash and in journal order among the older
+records, so replaying twice is replaying once. A transaction with `a` is not written
+again: its files may have changed since, even back to the old bytes. Its paths are only
+committed where the file is still at the new hash. The `a` record is unsynced, but the
+next synced append makes it durable, so only the last transaction before a crash can
+lack it while applied, and its files are then at the new hash or untouched. Content
+that cannot be read back is logged with the path and the transaction. Inline content
+is bounded per file (64 KB) and per transaction (1 MB); the rest is staged, and neither
+startup nor the trim reads staged files.
 `writeEdits` also closes the change's open `l` records in the same append (an `ld` per
 record). Without that, a crash after the rewrite was journaled would leave `l` open, and
 the next start would plan the links again from files that are already rewritten: issue
