@@ -60,13 +60,19 @@ export function Tour({
       <DialogContent
         showCloseButton
         data-slot="tour"
-        className="max-sm:top-0 max-sm:left-0 max-sm:h-svh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none sm:max-w-md"
+        // Scrolls when the screen is shorter than the step (a phone held sideways), and keeps the buttons and the close
+        // clear of the notch and the home bar.
+        className="max-h-[100svh] overflow-y-auto overscroll-contain max-sm:top-0 max-sm:left-0 max-sm:h-svh max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:pt-[max(env(safe-area-inset-top),1rem)] max-sm:pr-[max(env(safe-area-inset-right),1rem)] max-sm:pb-[max(env(safe-area-inset-bottom),1rem)] max-sm:pl-[max(env(safe-area-inset-left),1rem)] sm:max-w-md motion-reduce:data-open:animate-none max-sm:[&>[data-slot=dialog-close]]:top-[max(env(safe-area-inset-top),0.5rem)]"
       >
         <div className="flex h-full flex-col gap-4 max-sm:pt-8">
           <p className="text-xs text-muted-foreground" data-slot="tour-progress">
             {to.tour.step(i + 1, steps.length)}
           </p>
-          <div key={id} className="flex flex-1 flex-col gap-3 animate-in duration-200 fade-in-0 slide-in-from-right-2">
+          <div
+            key={id}
+            data-slot="tour-step"
+            className="flex flex-1 flex-col gap-3 animate-in duration-200 fade-in-0 slide-in-from-right-2 motion-reduce:animate-none"
+          >
             <span aria-hidden className="flex size-10 items-center justify-center rounded-xl bg-brand/10 text-brand">
               <Icon className="size-5" />
             </span>
@@ -91,11 +97,11 @@ export function Tour({
               </div>
             )}
           </div>
-          <div aria-hidden className="flex gap-1.5">
+          <div aria-hidden data-slot="tour-dots" className="flex gap-1.5">
             {steps.map((s, n) => (
               <span
                 key={s}
-                className={`h-1.5 rounded-full transition-all duration-300 ${n === i ? 'w-6 bg-brand' : n < i ? 'w-1.5 bg-brand/50' : 'w-1.5 bg-border'}`}
+                className={`h-1.5 rounded-full transition-all duration-300 motion-reduce:transition-none ${n === i ? 'w-6 bg-brand' : n < i ? 'w-1.5 bg-brand/50' : 'w-1.5 bg-border'}`}
               />
             ))}
           </div>

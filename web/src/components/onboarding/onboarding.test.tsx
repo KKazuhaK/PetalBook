@@ -106,6 +106,22 @@ describe('the tour on a first sign-in', () => {
     expect(tour()).toBeNull()
   })
 
+  it('stays usable on a short or landscape phone screen, and keeps still for those who ask for less motion', async () => {
+    await openApp()
+    await settle(() => tour() !== null, 'the tour')
+    const cls = tour()!.className
+    // It scrolls when the screen is shorter than the step, and keeps clear of the notch and the home bar.
+    expect(cls).toMatch(/\boverflow-y-auto\b/)
+    expect(cls).toMatch(/max-h-\[100svh\]|max-h-svh/)
+    expect(cls).toMatch(/safe-area-inset-top/)
+    expect(cls).toMatch(/safe-area-inset-bottom/)
+    // The step's slide and the progress dots do not move for prefers-reduced-motion.
+    const step = tour()!.querySelector('[data-slot="tour-step"]')!
+    expect(step.className).toMatch(/motion-reduce:animate-none/)
+    const dot = tour()!.querySelector('[data-slot="tour-dots"] span')!
+    expect(dot.className).toMatch(/motion-reduce:transition-none/)
+  })
+
   it('waits for a slow file rather than start again a tour the person finished', async () => {
     let answer!: (v: { personal: boolean; prefs: Record<string, unknown> }) => void
     const synced = createSyncedPrefs({
