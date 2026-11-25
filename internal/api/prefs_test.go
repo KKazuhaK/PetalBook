@@ -263,11 +263,21 @@ func TestPrefsThatCannotBeWrittenAreDroppedNotRetriedForever(t *testing.T) {
 		if err := os.WriteFile(file, []byte(hand), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// Gone once the write was tried, and for good: read a while after.
-		time.Sleep(time.Second)
+		// Gone once the write was tried (however long a busy machine takes to
+		// try it), and for good: read a while after.
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if _, p := getPrefs(t, u); p["x"] == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the batch is still kept in memory")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 		for i := 0; i < 10; i++ {
 			if _, p := getPrefs(t, u); p["x"] != nil {
-				t.Fatal("the batch is still kept in memory")
+				t.Fatal("the dropped batch came back")
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
