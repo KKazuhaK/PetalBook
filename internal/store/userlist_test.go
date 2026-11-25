@@ -156,6 +156,18 @@ func TestUserRowsSortFilterAndPage(t *testing.T) {
 		if _, _, err := store.ListUserRows(ctx, q, inA, store.UserFilter{Sort: "name", After: next}); err != store.ErrBadCursor {
 			t.Fatalf("%v", err)
 		}
+		// A cursor of the spaces list is not one of this list, even where the
+		// sort has the same name and direction.
+		if _, _, err := store.ListUserRows(ctx, q, inA, store.UserFilter{After: "spaces.created.asc:1700000000000:P03"}); err != store.ErrBadCursor {
+			t.Fatalf("%v", err)
+		}
+		// The search finds a person by the address too.
+		if err := store.InsertUser(ctx, q, store.User{ID: "P90", Username: "zed", Name: "Zed", Email: "Zed.Mail@Example.org", Role: "member", Created: base, TenantID: tenA}); err != nil {
+			t.Fatal(err)
+		}
+		if rows := all(inA, store.UserFilter{Query: "zed.mail@exam"}, 100); len(rows) != 1 || rows[0].ID != "P90" {
+			t.Fatalf("%+v", rows)
+		}
 		// One person, in scope or not.
 		if _, err := store.GetUserRow(ctx, q, inA, "Ub"); err != store.ErrNotFound {
 			t.Fatalf("%v", err)

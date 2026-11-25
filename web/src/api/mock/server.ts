@@ -1450,7 +1450,12 @@ export function createMockServer(options: MockOptions = {}) {
     const needle = (q.get('q') ?? '').trim().toLowerCase()
     const day = 86_400_000
     let list = [...users.values()].filter((u) => {
-      if (needle !== '' && !u.username.toLowerCase().includes(needle) && !u.name.toLowerCase().includes(needle))
+      if (
+        needle !== '' &&
+        !u.username.toLowerCase().includes(needle) &&
+        !u.name.toLowerCase().includes(needle) &&
+        !u.email.toLowerCase().includes(needle)
+      )
         return false
       if (role === 'site' ? !isSiteAdmin(u) : role !== '' && u.role !== role) return false
       if (state === 'enabled' ? u.disabled : state === 'disabled' && !u.disabled) return false
@@ -1478,13 +1483,13 @@ export function createMockServer(options: MockOptions = {}) {
     })
     const cursor = q.get('cursor')
     if (cursor) {
-      const tag = `${sort}.${order}:`
+      const tag = `users.${sort}.${order}:`
       const at = cursor.startsWith(tag) ? list.findIndex((u) => u.id === cursor.slice(tag.length)) : -1
       if (at < 0) throw new HttpError(400, 'invalid', 'cursor 不对')
       list = list.slice(at + 1)
     }
     const page = list.slice(0, limit ?? 50)
-    const next = list.length > page.length ? `${sort}.${order}:${page[page.length - 1].id}` : ''
+    const next = list.length > page.length ? `users.${sort}.${order}:${page[page.length - 1].id}` : ''
     return { users: page.map(listedUser), next }
   }
 
@@ -4461,6 +4466,7 @@ export function createMockServer(options: MockOptions = {}) {
                   method: meta?.method ?? '',
                   created: new Date(meta?.created ?? at).toISOString(),
                   lastUsed: new Date(at).toISOString(),
+                  ...(token === ctx.token ? { current: true } : {}),
                 })),
             })
           if (method === 'DELETE' && sub === undefined) {
@@ -4502,7 +4508,17 @@ export function createMockServer(options: MockOptions = {}) {
           if (method === 'DELETE' && sub !== undefined) {
             const at = target.identities.findIndex((i) => i.id === sub)
             if (at < 0) throw new HttpError(404, 'not_found', '没有这个已连接的账号')
-            if (target.identities.length === 1 && target.passwordHash === undefined && target.passkeys.length === 0)
+            // What is left must work now: a password or passkey that sign-in still accepts from them, or a connected
+            // account of a provider that is set up and on.
+            const on = new Set(book.publicProviders().map((p) => p.slug))
+            const left = target.identities.filter(
+              (_, k) => k !== at && on.has(target.identities[k].providerSlug),
+            ).length
+            const local =
+              book.ssoOnlyInEffect() && target.role !== 'admin'
+                ? 0
+                : (target.passwordHash ? 1 : 0) + target.passkeys.length
+            if (left + local === 0)
               throw new HttpError(409, 'conflict', '这是这个人唯一的登录方式，需要先有密码或 passkey')
             book.record('identity_unlinked', {
               actor: me.id,

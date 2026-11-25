@@ -106,6 +106,7 @@ export function PersonSessions({ u }: { u: User }) {
                 <div className="min-w-0 flex-1 basis-56">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm font-medium">{nameOf(s)}</span>
+                    {s.current && <Badge>{tc.person.sessions.thisDevice}</Badge>}
                     {s.held && <Badge variant="outline">{tc.person.sessions.held}</Badge>}
                   </div>
                   <div className="text-xs break-words text-muted-foreground">
@@ -146,9 +147,11 @@ export function PersonSessions({ u }: { u: User }) {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {ending === 'all'
-                ? tc.person.sessions.endAllHelp(sessions.length, u.name)
+                ? sessions.some((s) => s.current)
+                  ? tc.person.sessions.endAllOwnHelp(sessions.length)
+                  : tc.person.sessions.endAllHelp(sessions.length, u.name)
                 : ending
-                  ? tc.person.sessions.endFor(nameOf(ending))
+                  ? `${tc.person.sessions.endFor(nameOf(ending))}${ending.current ? `. ${tc.person.sessions.endThisHelp}` : ''}`
                   : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>

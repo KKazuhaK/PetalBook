@@ -176,6 +176,22 @@ func TestUserSessionsAndIdentitiesAreForSiteAdministrators(t *testing.T) {
 		other := f.root.do("GET", "/api/users/"+f.userB+"/sessions", nil).want(t, 200, "").body["sessions"].([]any)[0].(map[string]any)["id"].(string)
 		f.root.do("DELETE", path+"/sessions/"+other, nil).want(t, 404, "not_found")
 
+		// The administrator's own session is marked, and only that one.
+		own := f.root.do("GET", "/api/users/"+mustUserID(t, a, "root")+"/sessions", nil).want(t, 200, "").body["sessions"].([]any)
+		if len(own) == 0 {
+			t.Fatal("the administrator has a session")
+		}
+		for _, s := range own {
+			if s.(map[string]any)["current"] != true {
+				t.Fatalf("the session of this request is marked: %v", own)
+			}
+		}
+		for _, s := range f.root.do("GET", path+"/sessions", nil).want(t, 200, "").body["sessions"].([]any) {
+			if s.(map[string]any)["current"] != nil {
+				t.Fatalf("another person's sessions are not: %v", s)
+			}
+		}
+
 		// End all of them.
 		r = f.root.do("DELETE", path+"/sessions", nil).want(t, 200, "")
 		if r.body["ended"] != float64(2) {
@@ -205,5 +221,18 @@ func TestUserSessionsAndIdentitiesAreForSiteAdministrators(t *testing.T) {
 		if ids := f.root.do("GET", path+"/identities", nil).want(t, 200, "").body["identities"].([]any); len(ids) != 0 {
 			t.Fatalf("%v", ids)
 		}
+
+		// Only the ways that work now count: a person with no password whose two
+		// connected accounts are of providers that are not set up has no way in
+		// left once one of them goes, so neither can be disconnected.
+		if err := store.InsertUser(t.Context(), a.st.Q(), store.User{ID: "NOPASS0001", Username: "nopass", Name: "No Pass", Role: "member", Created: a.clock.Now(), TenantID: store.DefaultTenantID}); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"IDENT00002", "IDENT00003"} {
+			if err := store.InsertIdentity(t.Context(), a.st.Q(), store.Identity{ID: id, UserID: "NOPASS0001", Issuer: "https://gone.example/" + id, Subject: id, Created: a.clock.Now()}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.root.do("DELETE", "/api/users/NOPASS0001/identities/IDENT00002", nil).want(t, 409, "conflict")
 	})
 }

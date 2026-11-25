@@ -82,12 +82,8 @@ describe('the administration frame', () => {
     expect(tabs()).toEqual([])
   })
 
-  it('takes every page of the old sections to its new place, and an unknown address to the users', async () => {
+  it('takes an unknown address to the users', async () => {
     for (const [from, to] of [
-      ['/admin/manage', '/admin/storage/manage'],
-      ['/admin/recycle', '/admin/spaces/deleted'],
-      ['/admin/access', '/admin/security/access'],
-      ['/admin/usage', '/admin/storage/usage'],
       ['/admin/nothing', '/admin/users'],
       ['/admin/users/nothing', '/admin/users'],
       ['/admin', '/admin/users'],

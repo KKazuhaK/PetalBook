@@ -102,7 +102,7 @@ const confirmButton = () => buttonIn(dlg(), tg.bulk.confirm)!
 
 describe('the summary and the list of people', () => {
   it('shows what the server holds at the top, with the free disk for a site administrator', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const tang = makePerson(server, 'tang')
       tang.request('POST', '/api/spaces', { name: '团队' })
     })
@@ -117,14 +117,14 @@ describe('the summary and the list of people', () => {
   })
 
   it('does not tell a tenant administrator the free disk', async () => {
-    await open('manage', asTenantAdmin)
+    await open('storage/manage', asTenantAdmin)
     await settle(() => document.querySelector('[data-slot="storage-summary"]') !== null, 'the summary')
     expect(document.querySelector('[data-card="disk"]')).toBeNull()
     expect(document.querySelector('[data-card="held"]')).not.toBeNull()
   })
 
   it('lists people with what counts and what is held, sorted and filtered by the server', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const tang = makePerson(server, 'tang')
       tang.request('POST', '/api/spaces', { name: '她的空间' })
       makePerson(server, 'wu')
@@ -149,7 +149,7 @@ describe('the summary and the list of people', () => {
 
   it('opens a person to see their spaces, each with where it is stored and whether it counts', async () => {
     let space = ''
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const tang = makePerson(server, 'tang')
       space = (tang.request('POST', '/api/spaces', { name: '在自己远端' }).body as { id: string }).id
       tang.request('POST', '/api/spaces', { name: '只在服务器' })
@@ -171,7 +171,7 @@ describe('the summary and the list of people', () => {
   })
 
   it("shows a tenant administrator no personal space in a person's spaces", async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       makePerson(server, 'tang').request('POST', '/api/spaces', { name: '团队' })
       asTenantAdmin(server)
     })
@@ -269,7 +269,7 @@ describe('deleting a person', () => {
   }
 
   it('asks for an heir when a shared space has nobody to take it, then deletes and puts the person in the bin', async () => {
-    await open('manage', people)
+    await open('storage/manage', people)
     await openPerson()
     const box = () => document.querySelector<HTMLElement>('[data-slot="delete-person"]')!
     expect(box().textContent).toContain(tg.del.user.needsHeir)
@@ -396,7 +396,7 @@ describe('bulk actions', () => {
     expect(dlg().textContent).toContain(tg.bulk.states.failed)
   })
   it('drops the confirmation of an heir that was cleared and asks for the plan again', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const leaver = makePerson(server, 'leaver')
       makePerson(server, 'viewer')
       makePerson(server, 'heir')
@@ -425,7 +425,7 @@ describe('bulk actions', () => {
   })
 
   it('asks again with the chosen heir when the plan for them failed, and confirms only a plan made with them', async () => {
-    await open('manage', (server) => {
+    await open('storage/manage', (server) => {
       const leaver = makePerson(server, 'leaver')
       makePerson(server, 'viewer')
       makePerson(server, 'heir')

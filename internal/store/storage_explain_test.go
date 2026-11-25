@@ -187,9 +187,9 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			}
 		}
 		cases = append(cases,
-			spaceCase{"cursor", tenantScope, store.SpaceFilter{Sort: "created", After: "created.asc:1700000000000:S0001000", Limit: 50}, true},
-			spaceCase{"cursor, bytes", tenantScope, store.SpaceFilter{Sort: "bytes", After: "bytes.desc:5000:S0001000", Limit: 50}, true},
-			spaceCase{"cursor, never measured", tenantScope, store.SpaceFilter{Sort: "bytes", After: "bytes.desc.none::S0001000", Limit: 50}, true},
+			spaceCase{"cursor", tenantScope, store.SpaceFilter{Sort: "created", After: "spaces.created.asc:1700000000000:S0001000", Limit: 50}, true},
+			spaceCase{"cursor, bytes", tenantScope, store.SpaceFilter{Sort: "bytes", After: "spaces.bytes.desc:5000:S0001000", Limit: 50}, true},
+			spaceCase{"cursor, never measured", tenantScope, store.SpaceFilter{Sort: "bytes", After: "spaces.bytes.desc.none::S0001000", Limit: 50}, true},
 			spaceCase{"cache evicted", tenantScope, store.SpaceFilter{Cache: "evicted", Limit: 50}, true},
 			spaceCase{"cache local", tenantScope, store.SpaceFilter{Cache: "local", Limit: 50}, true},
 			spaceCase{"remote ok", tenantScope, store.SpaceFilter{Remote: "ok", Limit: 50}, true},
@@ -238,7 +238,7 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			peopleCase{"people remote none", tenantScope, store.PeopleFilter{Remote: "none", Limit: 50}, true},
 			peopleCase{"people overdue", tenantScope, store.PeopleFilter{Deadline: "overdue", Limit: 50}, false},
 			peopleCase{"people by id", tenantScope, store.PeopleFilter{ID: "U0000004", Limit: 1}, false},
-			peopleCase{"people cursor", tenantScope, store.PeopleFilter{After: "held.desc:5000:U0001000", Limit: 50}, true},
+			peopleCase{"people cursor", tenantScope, store.PeopleFilter{After: "people.held.desc:5000:U0001000", Limit: 50}, true},
 		)
 		for _, c := range pcases {
 			pq.plans = nil
@@ -268,9 +268,9 @@ func checkPlans(t *testing.T, st *store.Store, q store.Q, now time.Time, tenants
 			}
 		}
 		ucases = append(ucases,
-			userCase{"users cursor", tenantScope, store.UserFilter{After: "created.asc:1700000000000:U0001000", Limit: 50}},
-			userCase{"users cursor, name", site, store.UserFilter{Sort: "name", After: "name.asc:user 100:U0001000", Limit: 50}},
-			userCase{"users cursor, never active", tenantScope, store.UserFilter{Sort: "lastActive", After: "lastActive.desc.none::U0001000", Limit: 50}},
+			userCase{"users cursor", tenantScope, store.UserFilter{After: "users.created.asc:1700000000000:U0001000", Limit: 50}},
+			userCase{"users cursor, name", site, store.UserFilter{Sort: "name", After: "users.name.asc:user 100:U0001000", Limit: 50}},
+			userCase{"users cursor, never active", tenantScope, store.UserFilter{Sort: "lastActive", After: "users.lastActive.desc.none::U0001000", Limit: 50}},
 			userCase{"users enabled", tenantScope, store.UserFilter{State: "enabled", Limit: 50}},
 			userCase{"users admins", site, store.UserFilter{Role: "admin", Sort: "name", Limit: 50}},
 			userCase{"users inactive", tenantScope, store.UserFilter{InactiveBefore: now, Sort: "lastActive", Order: "asc", Limit: 50}},

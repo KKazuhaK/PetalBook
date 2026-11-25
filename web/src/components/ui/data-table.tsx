@@ -158,7 +158,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const tableMin = shown.reduce((n, c) => n + minOf(c), fixed)
   const table = useRef<HTMLTableElement>(null)
 
+  // What ends a drag in progress (it takes the listeners off the window), so a table that goes away mid-drag leaves none.
+  const dragEnd = useRef<(() => void) | null>(null)
+  useEffect(() => () => dragEnd.current?.(), [])
   const startResize = (i: number, clientX: number) => {
+    dragEnd.current?.()
     // A table that was never measured (a test, a hidden tab) has no least share to keep.
     const measured = table.current?.clientWidth || boxW
     const w = measured || 1
@@ -173,10 +177,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
       setDraft({ ...start, [left.id]: start[left.id] + d, [right.id]: start[right.id] - d })
     }
     const onMove = (e: PointerEvent) => move(e.clientX)
-    const done = (e: PointerEvent) => {
+    const stop = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', done)
       window.removeEventListener('pointercancel', done)
+      dragEnd.current = null
+    }
+    const done = (e: PointerEvent) => {
+      stop()
       const delta = (e.clientX - clientX) / w
       const d = Math.max(bound(left) - start[left.id], Math.min(start[right.id] - bound(right), delta))
       update({ widths: { ...start, [left.id]: start[left.id] + d, [right.id]: start[right.id] - d } })
@@ -185,6 +193,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', done)
     window.addEventListener('pointercancel', done)
+    dragEnd.current = stop
   }
   const nudge = (i: number, e: KeyboardEvent) => {
     const step = e.key === 'ArrowLeft' ? -0.01 : e.key === 'ArrowRight' ? 0.01 : 0
@@ -300,7 +309,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         startResize(i, e.clientX)
                       }}
                       onKeyDown={(e) => nudge(i, e)}
-                      className="absolute top-0 -right-2 z-10 flex h-full w-4 cursor-col-resize touch-none justify-center outline-none after:h-full after:w-px after:bg-border after:transition-colors hover:after:bg-primary focus-visible:after:w-0.5 focus-visible:after:bg-primary"
+                      className="absolute top-0 -right-2 z-10 flex h-full w-4 cursor-col-resize pointer-coarse:-right-3 pointer-coarse:w-6 touch-none justify-center outline-none after:h-full after:w-px after:bg-border after:transition-colors hover:after:bg-primary focus-visible:after:w-0.5 focus-visible:after:bg-primary"
                     />
                   )}
                 </th>

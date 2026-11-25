@@ -155,7 +155,12 @@ export const consoleEn: ConsoleMessages = {
       endFor: (device) => `End the session on ${device}`,
       endAll: 'End all sessions',
       endAllTitle: "End all of this person's sessions?",
-      endAllHelp: (n, who) => `All ${n} sessions of ${who} end, and they will have to sign in again.`,
+      endAllHelp: (n, who) =>
+        `All ${n} sessions of ${who} end, and they will have to sign in again. Only browser sessions end: API tokens and connected apps (OAuth, MCP) keep working until they are revoked.`,
+      thisDevice: 'This device',
+      endThisHelp: 'This is the device you are using now. Ending it signs you out here.',
+      endAllOwnHelp: (n) =>
+        `All ${n} of your sessions end, this device too: you will be signed out here and have to sign in again. Only browser sessions end: API tokens and connected apps (OAuth, MCP) keep working until they are revoked.`,
       ended: 'Ended.',
       endedAll: (n) => `Ended ${n} sessions.`,
       failed: 'Could not end the session.',

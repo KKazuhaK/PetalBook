@@ -179,19 +179,18 @@ func (s *Service) unlinkIdentity(ctx context.Context, userID, identityID, actor,
 		if !found {
 			return errf(NotFound, "No such identity.")
 		}
-		if len(ids) == 1 {
-			if _, err := store.GetPasswordHash(ctx, q, userID); errors.Is(err, store.ErrNotFound) {
-				if n, err := store.CountPasskeys(ctx, q, userID); err != nil {
-					return err
-				} else if n == 0 {
-					if by != "user" {
-						return errf(Conflict, "This is the only way this person can sign in; they need a password or a passkey first.")
-					}
-					return errf(Conflict, "This is the only way you can sign in; set a password or a passkey first.")
-				}
-			} else if err != nil {
-				return err
+		// What is left must be a way the person can sign in with now: a
+		// password or a passkey that sign-in still accepts from them, or a
+		// connected account of a provider that is set up and on.
+		ways, err := s.waysToSignIn(ctx, q, userID, identityID, ids)
+		if err != nil {
+			return err
+		}
+		if ways == 0 {
+			if by != "user" {
+				return errf(Conflict, "This is the only way this person can sign in; they need a password or a passkey first.")
 			}
+			return errf(Conflict, "This is the only way you can sign in; set a password or a passkey first.")
 		}
 		for _, i := range ids {
 			if i.ID == identityID {
@@ -690,4 +689,44 @@ func (s *Service) PublicInfo() PublicInfo {
 	info.Local, info.SSO = info.Mode != ModeSSORedirect, info.Mode != ModeLocalOnly
 	info.Passkey = s.passkeysOn(st)
 	return info
+}
+
+// waysToSignIn counts the ways a person could sign in once the identity without
+// is gone, counting only those that work now: a password or a passkey when
+// password sign-in is not refused to them, and an identity of a provider that
+// is configured and enabled.
+func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without string, ids []store.Identity) (int, error) {
+	u, err := store.GetUser(ctx, q, store.AllTenants(), userID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, i := range ids {
+		if i.ID == without {
+			continue
+		}
+		for _, rt := range s.provs.all() {
+			if rt.row.Issuer == i.Issuer && rt.row.Enabled {
+				n++
+				break
+			}
+		}
+	}
+	st := s.sec(ctx)
+	if s.ssoOnlyInEffect(st) && u.Role != "admin" {
+		return n, nil
+	}
+	if _, err := store.GetPasswordHash(ctx, q, userID); err == nil {
+		n++
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
+	if s.passkeysOn(st) {
+		c, err := store.CountPasskeys(ctx, q, userID)
+		if err != nil {
+			return 0, err
+		}
+		n += c
+	}
+	return n, nil
 }

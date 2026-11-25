@@ -19,6 +19,8 @@ type SessionView struct {
 	UserAgent, Method string
 	Created, LastUsed time.Time
 	Held              bool
+	// Current is the session the administrator is using for this request.
+	Current bool
 }
 
 // siteTarget is the person a site administrator looks at, or NotFound for
@@ -45,7 +47,7 @@ func (s *Service) UserSessions(ctx context.Context, actor *Principal, userID str
 	}
 	out := make([]SessionView, len(rows))
 	for i, r := range rows {
-		out[i] = SessionView{r.ID, r.UserAgent, r.Method, r.Created, r.LastUsed, r.Held}
+		out[i] = SessionView{r.ID, r.UserAgent, r.Method, r.Created, r.LastUsed, r.Held, actor.SessionID != "" && r.ID == actor.SessionID}
 	}
 	return out, nil
 }
@@ -57,7 +59,11 @@ func (s *Service) EndUserSession(ctx context.Context, actor *Principal, userID, 
 	if err != nil {
 		return err
 	}
-	if err := store.EndUserSession(ctx, s.st.Q(), id, userID, store.EndElsewhere, s.now()); err != nil {
+	// The delete and the record of why are one change: a session that is gone
+	// with no reason kept would tell its browser nothing.
+	if err := s.st.Tx(ctx, func(q store.Q) error {
+		return store.EndUserSession(ctx, q, id, userID, store.EndElsewhere, s.now())
+	}); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return errf(NotFound, "No such session.")
 		}

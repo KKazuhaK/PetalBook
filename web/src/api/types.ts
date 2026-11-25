@@ -2124,6 +2124,8 @@ export interface PersonSession {
   created: string
   lastUsed: string
   held?: boolean
+  // The session of this very request: the signed-in administrator's own.
+  current?: boolean
 }
 export interface PersonIdentity {
   id: string

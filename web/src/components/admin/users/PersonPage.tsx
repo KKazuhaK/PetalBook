@@ -32,7 +32,8 @@ const isTab = (v: unknown): v is PersonTab => PERSON_TABS.some((x) => x === v)
 // they are signed in, where they belong, what they hold, and what the log says about them. The sessions are for the
 // administrators of the whole server only.
 export function PersonPage({ id, tab }: { id: string; tab?: string }) {
-  const me = useSession().data?.user
+  const session = useSession()
+  const me = session.data?.user
   const site = me?.siteAdmin !== false
   const row = useUserRow(id)
   const { change, busy, error, messageRef } = useUserChange()
@@ -40,6 +41,9 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   const u = row.data?.user
   useDocumentTitle(`${u?.name ?? tc.person.back} · ${tc.title} · ${t.appName}`)
 
+  // Until the signed-in person is known the page waits: nobody is taken for a site administrator (the Sessions tab
+  // would flash), and a link to that tab is not sent away before it is known.
+  if (session.isPending) return <PageFallback />
   const tabs = PERSON_TABS.filter((x) => x !== 'sessions' || site)
   if (tab !== undefined && !isTab(tab)) return <Navigate to={adminUserPath(id)} replace />
   const active: PersonTab = tab && tabs.includes(tab) ? tab : 'profile'

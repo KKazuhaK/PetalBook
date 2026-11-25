@@ -67,7 +67,7 @@ function sized(server: MockServer, username: string, chars: number, role: 'membe
 
 describe('the Usage page', () => {
   it('lists people with the most disk first, their numbers against their limits, and says when nothing was measured; the tenant list is not shown while there is one tenant', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
       sized(server, 'bob', 9000)
       makePerson(server, 'cat')
@@ -89,7 +89,7 @@ describe('the Usage page', () => {
   })
 
   it('narrows to the people over a limit and says so when nobody is', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
       const admin = adminRequests(server)
       admin('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 1 })
@@ -108,7 +108,7 @@ describe('the Usage page', () => {
   })
 
   it("loads more people on request, and edits one person's own limits in a dialog", async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       for (let i = 1; i <= 55; i++) makePerson(server, `p${String(i).padStart(2, '0')}`)
     })
     await settle(() => people().length === 50, 'the first page')
@@ -134,7 +134,7 @@ describe('the Usage page', () => {
   })
 
   it('refuses what is not a number, before asking the server', async () => {
-    await open('usage', (server) => makePerson(server, 'amy'))
+    await open('storage/usage', (server) => makePerson(server, 'amy'))
     await settle(() => people().length === 2, 'two people')
     await click(button(tu.admin.editLimitsFor('名 amy')))
     await settle(() => dlg()?.querySelector('[data-slot="own-limits"]') !== null, 'the form')
@@ -145,7 +145,7 @@ describe('the Usage page', () => {
   })
 
   it("shows a site administrator the tenants with what each uses, and a tenant's people when it is picked", async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       const admin = adminRequests(server)
       admin('PUT', '/api/admin/tenancy', { enabled: true })
       admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
@@ -169,7 +169,7 @@ describe('the Usage page', () => {
   })
 
   it('nothing on it can be wider than a phone: rows wrap and shrink, the numbers stack in one column', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
       adminRequests(server)('PUT', '/api/admin/tenancy', { enabled: true })
       adminRequests(server)('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
@@ -196,7 +196,7 @@ describe('the Usage page', () => {
   })
 
   it('shows a tenant administrator only their people, with no tenant list', async () => {
-    await open('usage', (server) => {
+    await open('storage/usage', (server) => {
       const admin = adminRequests(server)
       sized(server, 'amy', 100)
       makePerson(server, 'second', 'admin') // another site administrator must remain

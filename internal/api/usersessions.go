@@ -29,6 +29,8 @@ type sessionResp struct {
 	Created  string `json:"created"`
 	LastUsed string `json:"lastUsed"`
 	Held     bool   `json:"held,omitempty"`
+	// Current is the session of this request: the administrator's own.
+	Current bool `json:"current,omitempty"`
 }
 
 func (s *server) userSessions(c *call) {
@@ -42,7 +44,7 @@ func (s *server) userSessions(c *call) {
 	}
 	items := make([]sessionResp, len(rows))
 	for i, r := range rows {
-		items[i] = sessionResp{r.ID, r.UserAgent, r.Method, rfc3339(r.Created), rfc3339(r.LastUsed), r.Held}
+		items[i] = sessionResp{r.ID, r.UserAgent, r.Method, rfc3339(r.Created), rfc3339(r.LastUsed), r.Held, r.Current}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Sessions []sessionResp `json:"sessions"`

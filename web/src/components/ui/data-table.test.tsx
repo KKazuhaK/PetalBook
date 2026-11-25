@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
+import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DataTable, type Column, type DataTableSort } from '@/components/ui/data-table'
 import { readPrefs, shares, sanitize, useTablePrefs, orderIds, PAGE_SIZES } from '@/lib/tablePrefs'
@@ -200,6 +201,30 @@ describe('the table', () => {
     expect(localStorage.getItem('pb.table.probe')).not.toMatch(/px/)
     // The columns have their widths as shares of the table's width.
     expect(document.querySelector('col:nth-child(1)')!.getAttribute('style')).toContain('calc(')
+  })
+
+  it('takes its listeners off the window when it goes away in the middle of a drag', async () => {
+    const added: string[] = []
+    const removed: string[] = []
+    const add = window.addEventListener.bind(window)
+    const remove = window.removeEventListener.bind(window)
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+      if (type.startsWith('pointer')) added.push(type)
+      add(type, listener, options)
+    })
+    vi.spyOn(window, 'removeEventListener').mockImplementation((type, listener, options) => {
+      if (type.startsWith('pointer')) removed.push(type)
+      remove(type, listener, options)
+    })
+    m = await mount(<Probe />)
+    const handle = document.querySelector<HTMLElement>('[role="separator"]')!
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 100 }))
+    })
+    expect(added.sort()).toEqual(['pointercancel', 'pointermove', 'pointerup'])
+    await m.unmount()
+    m = undefined
+    expect(removed.sort()).toEqual(['pointercancel', 'pointermove', 'pointerup'])
   })
 
   it('takes the least important columns away first when the box is narrow, and scrolls inside its own box', async () => {

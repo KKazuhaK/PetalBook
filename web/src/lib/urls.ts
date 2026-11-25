@@ -41,19 +41,8 @@ export const ADMIN_SECTIONS = [
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 export const isAdminSection = (v: unknown): v is AdminSection => ADMIN_SECTIONS.some((s) => s === v)
 
-// The addresses of the pages that were sections of their own before the sidebar: they open in their place.
-export const ADMIN_LEGACY = {
-  manage: ['storage', 'manage'],
-  recycle: ['spaces', 'deleted'],
-  access: ['security', 'access'],
-  usage: ['storage', 'usage'],
-} as const satisfies Record<string, readonly [AdminSection, string]>
-export type AdminLegacy = keyof typeof ADMIN_LEGACY
-export const isAdminLegacy = (v: unknown): v is AdminLegacy => typeof v === 'string' && Object.hasOwn(ADMIN_LEGACY, v)
-
-export function adminPath(section?: AdminSection | AdminLegacy, tab?: string): string {
+export function adminPath(section?: AdminSection, tab?: string): string {
   if (!section) return '/admin'
-  if (isAdminLegacy(section)) return `/admin/${ADMIN_LEGACY[section][0]}/${ADMIN_LEGACY[section][1]}`
   return tab ? `/admin/${section}/${tab}` : `/admin/${section}`
 }
 export const adminUserPath = (id: string, tab?: string): string =>

@@ -69,7 +69,7 @@ export function DeleteSpaceDialog({
                 className={tapTarget}
                 type="button"
                 variant="outline"
-                render={<Link to={adminPath('recycle')} onClick={onClose} />}
+                render={<Link to={adminPath('spaces', 'deleted')} onClick={onClose} />}
               >
                 {tg.del.space.goBin}
               </Button>

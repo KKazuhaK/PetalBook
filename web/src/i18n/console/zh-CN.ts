@@ -153,7 +153,12 @@ export const consoleZhCN = {
       endFor: (device: string) => `结束 ${device} 的会话`,
       endAll: '结束全部会话',
       endAllTitle: '结束这个人的全部会话？',
-      endAllHelp: (n: number, who: string) => `${who} 的 ${n} 个会话都会结束，他们需要重新登录。`,
+      endAllHelp: (n: number, who: string) =>
+        `${who} 的 ${n} 个会话都会结束，他们需要重新登录。只结束浏览器会话：API 令牌和已连接的应用（OAuth、MCP）不受影响，要另外撤销。`,
+      thisDevice: '此设备',
+      endThisHelp: '这是你正在用的设备，结束后你会在这里退出登录。',
+      endAllOwnHelp: (n: number) =>
+        `你的 ${n} 个会话都会结束，包括此设备：你会在这里退出登录，需要重新登录。只结束浏览器会话：API 令牌和已连接的应用（OAuth、MCP）不受影响，要另外撤销。`,
       ended: '已结束。',
       endedAll: (n: number) => `已结束 ${n} 个会话。`,
       failed: '没能结束会话。',

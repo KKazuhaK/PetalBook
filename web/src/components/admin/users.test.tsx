@@ -80,7 +80,7 @@ describe('the list of people', () => {
     expect(button(tc.table.previous).disabled).toBe(true)
     await click(button(tc.table.next))
     await settle(() => rows().length === 3 && text().includes(tc.table.page(2)), 'the second page')
-    expect(userCalls().some((q) => q.get('cursor')?.startsWith('created.asc:'))).toBe(true)
+    expect(userCalls().some((q) => q.get('cursor')?.startsWith('users.created.asc:'))).toBe(true)
     expect(button(tc.table.next).disabled).toBe(true)
     await click(button(tc.table.previous))
     await settle(() => rows().length === 25, 'back')
@@ -258,6 +258,19 @@ describe("a person's page", () => {
   })
 })
 
+describe('the search of people', () => {
+  it('finds a person by their email address too, and takes no cursor of another list', async () => {
+    await open('/admin/users', (server) => {
+      const amy = makePerson(server, 'amy')
+      adminRequests(server)('PATCH', `/api/users/${amy.id}`, { email: 'Zed.Mail@Example.org' })
+    })
+    const ask = adminRequests(m!.server)
+    const found = (ask('GET', '/api/users?q=zed.mail@exam').body as { users: { username: string }[] }).users
+    expect(found.map((u) => u.username)).toEqual(['amy'])
+    expect(() => ask('GET', '/api/users?cursor=spaces.created.asc:1')).toThrow(/400/)
+  })
+})
+
 describe("a person's sessions and connected accounts", () => {
   it('lists the devices, with how they signed in; ends one and then all', async () => {
     let id = ''
@@ -306,6 +319,32 @@ describe("a person's sessions and connected accounts", () => {
     )
     await settle(() => text().includes(tc.person.sessions.none), 'all ended')
     expect(m!.requests.filter((r) => r.method === 'DELETE' && /\/sessions$/.test(r.url))).toHaveLength(1)
+  })
+
+  it("marks the administrator's own session, and says so before it is ended", async () => {
+    await open('/admin', (server) => {
+      const me = (adminRequests(server)('GET', '/api/session').body as { user: { id: string } }).user
+      return `/admin/user/${me.id}/sessions`
+    })
+    await settle(() => document.querySelectorAll('[data-slot="sessions"] li').length >= 1, 'the sessions')
+    const mine = [...document.querySelectorAll('[data-slot="sessions"] li')].filter((li) =>
+      li.textContent?.includes(tc.person.sessions.thisDevice),
+    )
+    expect(mine).toHaveLength(1)
+    await click(mine[0].querySelector('button'))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+    expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(tc.person.sessions.endThisHelp)
+    await click(
+      [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === t.settings.cancel),
+    )
+    await settle(() => document.querySelector('[role="alertdialog"]') === null, 'closed')
+    expect(m!.requests.filter((r) => r.method === 'DELETE')).toEqual([])
+    // All of one's own: the question says this device goes too, and what does not end.
+    await click(button(tc.person.sessions.endAll))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+    expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(
+      tc.person.sessions.endAllOwnHelp(document.querySelectorAll('[data-slot="sessions"] li').length),
+    )
   })
 
   it('lists the connected accounts and disconnects one after asking', async () => {

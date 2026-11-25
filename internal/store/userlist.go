@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 )
@@ -63,7 +64,7 @@ func ListUserRows(ctx context.Context, q Q, sc Scope, f UserFilter) (out []UserR
 	if f.Sort == "" {
 		f.Sort = "created"
 	}
-	k, ok := pickSort(userSorts, f.Sort, f.Order)
+	k, ok := pickSort("users", userSorts, f.Sort, f.Order)
 	if !ok {
 		return nil, "", ErrBadFilter
 	}
@@ -72,7 +73,7 @@ func ListUserRows(ctx context.Context, q Q, sc Scope, f UserFilter) (out []UserR
 	args := append([]any(nil), cargs...)
 	add := func(c string, a ...any) { where, args = append(where, c), append(args, a...) }
 	if f.Query != "" {
-		c, a := personMatches("", f.Query)
+		c, a := userMatches(f.Query)
 		add(c, a...)
 	}
 	switch f.Role {
@@ -201,6 +202,9 @@ func GetUserRow(ctx context.Context, q Q, sc Scope, id string) (UserRow, error) 
 	e := UserRow{User: *u}
 	var active sql.NullInt64
 	if err := q.QueryRow(ctx, `SELECT last_active, quota FROM users WHERE id = ? AND deleted_at IS NULL`, id).Scan(&active, &e.Quota); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return UserRow{}, ErrNotFound // deleted between the two reads
+		}
 		return UserRow{}, err
 	}
 	if active.Valid {
@@ -217,4 +221,12 @@ func GetUserRow(ctx context.Context, q Q, sc Scope, id string) (UserRow, error) 
 	}
 	e.Passkeys, e.Identities = pk[id], idn[id]
 	return e, nil
+}
+
+// userMatches is the search of the users list: the username, the name, or the
+// address (by its key, which is lower case).
+func userMatches(query string) (string, []any) {
+	pat := "%" + likeEscape(FoldName(query)) + "%"
+	email := "%" + likeEscape(strings.ToLower(query)) + "%"
+	return `(username LIKE ? ESCAPE '\' OR name_key LIKE ? ESCAPE '\' OR email_key LIKE ? ESCAPE '\')`, []any{pat, pat, email}
 }

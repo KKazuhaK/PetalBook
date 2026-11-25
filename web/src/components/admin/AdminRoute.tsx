@@ -1,7 +1,7 @@
 import { Link, Navigate, useLocation } from 'react-router'
 import { useSession } from '@/api/hooks'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
-import { adminPath, isAdminLegacy } from '@/lib/urls'
+import { adminPath } from '@/lib/urls'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { AdminLayout } from './AdminLayout'
@@ -29,7 +29,6 @@ export default function AdminRoute() {
     `${(person ? section?.label : tab && tabs.length > 1 ? `${tab.label} · ${section?.label}` : section?.label) ?? tc.title} · ${tc.title} · ${t.appName}`,
   )
 
-  if (isAdminLegacy(first)) return <Navigate to={adminPath(first)} replace />
   if (!section) return <Navigate to={adminPath('users')} replace />
   if (!person && second !== undefined && tab?.key !== second) return <Navigate to={adminPath(section.key)} replace />
   if (!person && third !== undefined) return <Navigate to={adminPath(section.key, tab?.key)} replace />

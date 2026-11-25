@@ -901,17 +901,18 @@ every tenant for a site administrator, narrowed by `?tenant=`), who are not
 deleted:
 
 ```json
-{"users": [{…}], "next": "created.asc:1764000000000:6FAVM1F0R3"}
+{"users": [{…}], "next": "users.created.asc:1764000000000:6FAVM1F0R3"}
 ```
 
 `next` is `""` after the last page; send it back as `cursor`. A cursor made for
-another sort, order or list is `400 invalid`.
+another sort, order or list is `400 invalid`: it begins with the name of the list
+(`users.`, `spaces.`, `people.`), so one list never takes the cursor of another.
 
 | Parameter | |
 |---|---|
 | `limit` | 1 to 200, default 50 |
 | `sort`, `order` | `created` (default, oldest first), `name` (by the name, ignoring case, then the id) or `lastActive` (most recent first; people who were never active last, in id order); `order` is `asc` or `desc`, the sort's own when left out |
-| `q` | keeps the users whose `username` or `name` contains the text, ignoring case (Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and PostgreSQL) |
+| `q` | keeps the users whose `username`, `name` or email address contains the text, ignoring case (Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and PostgreSQL) |
 | `role` | `member`, `admin` (of a tenant or of the server) or `site` (administrators of the whole server) |
 | `state` | `enabled` or `disabled` |
 | `inactiveDays`, `activeDays` | last active before the last `n` days (or never), or within them; 0 to 36500 |
@@ -952,7 +953,9 @@ itself, cut to 200 bytes, `""` when it sent none; `method` is how they signed in
 `password`, `passkey`, `sso:{provider slug}`, `invite`, `registration` or `setup`
 (`""` for a session made before the server recorded it). `id` is the hash the server
 keeps, never the cookie. A session held until the person registers a passkey has
-`"held": true`. The server does not know where a sign-in came from, so there is no
+`"held": true`. The session of the request itself (the administrator looking at
+their own page) has `"current": true`, so a client can mark it "this device" and
+ask before it is ended. The server does not know where a sign-in came from, so there is no
 place.
 
 #### `DELETE /api/users/{id}/sessions/{session}`
@@ -965,7 +968,10 @@ does not have.
 #### `DELETE /api/users/{id}/sessions`
 
 Ends every session of the person: `200` with `{"ended": 2}`; each answers
-`signed_out_elsewhere` afterwards, and one `sessions_ended` row is written.
+`signed_out_elsewhere` afterwards, and one `sessions_ended` row is written. It
+ends browser sessions only: API tokens and OAuth or MCP grants of the person keep
+working until they are revoked on their own page. This includes the caller's own
+sessions when the person is the caller.
 
 #### `GET /api/users/{id}/identities`
 
@@ -975,7 +981,9 @@ accounts they connected to sign in (the same as `GET /api/account` shows its own
 #### `DELETE /api/users/{id}/identities/{identity}`
 
 `204`; `identity_unlinked` (`by: "admin"`) is written. `409 conflict` when it is
-the only way they can sign in (no password, no passkey). `404 not_found` for one
+the only way they can sign in now: what is left is counted only if it works today,
+that is a password or a passkey while password sign-in is not refused to them, and a
+connected account of a provider that is set up and enabled. `404 not_found` for one
 they do not have.
 
 ### `PATCH /api/users/{id}`
