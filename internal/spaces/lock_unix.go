@@ -25,3 +25,11 @@ func lockDataDir(path string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+// unlockDataDir releases the lock and closes the file. The lock belongs to the
+// open file description, so closing alone would leave it held while a child
+// process forked meanwhile still has a copy of the descriptor.
+func unlockDataDir(f *os.File) error {
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return f.Close()
+}

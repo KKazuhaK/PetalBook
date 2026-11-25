@@ -889,7 +889,7 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		m2, err := reopenAccounts(opt)
+		m2, err := NewAccounts(opt)
 		if err != nil {
 			t.Fatal(err)
 		}

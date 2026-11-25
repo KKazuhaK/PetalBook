@@ -1340,7 +1340,7 @@ func (m *Manager) Close() error {
 	m.lock = nil
 	m.mu.Unlock()
 	if lock != nil {
-		lock.Close() // releases the lock
+		unlockDataDir(lock) // releases the lock
 	}
 	return errors.Join(errs...)
 }

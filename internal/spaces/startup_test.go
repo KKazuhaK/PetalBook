@@ -1,7 +1,6 @@
 package spaces
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,7 +60,7 @@ func TestOnlyTheServerCleansUpAtStartAndOnlyOneServerRuns(t *testing.T) {
 		}
 		// Once the first has stopped, the next server cleans up.
 		m.Close()
-		m3, err := reopenAccounts(srv)
+		m3, err := NewAccounts(srv)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,21 +69,4 @@ func TestOnlyTheServerCleansUpAtStartAndOnlyOneServerRuns(t *testing.T) {
 			t.Fatal("the server did not remove what a stopped run left")
 		}
 	})
-}
-
-// reopenAccounts opens a manager on a data directory whose previous manager
-// has just been closed. The lock of a data directory is released when the last
-// copy of its file descriptor goes, and a command another test starts at that
-// moment still holds a copy for the instant between fork and exec; so, with
-// tests running side by side, the lock may be seen as held a moment longer.
-// A directory that stays held is still an error.
-func reopenAccounts(opt Options) (*Manager, error) {
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		m, err := NewAccounts(opt)
-		if err == nil || !errors.Is(err, ErrDataDirInUse) || time.Now().After(deadline) {
-			return m, err
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 }

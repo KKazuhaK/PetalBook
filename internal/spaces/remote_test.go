@@ -124,7 +124,7 @@ func (f *rm) open(mod ...func(*Options)) *Manager {
 	for _, m := range mod {
 		m(&opt)
 	}
-	m, err := reopenAccounts(opt)
+	m, err := NewAccounts(opt)
 	if err != nil {
 		f.t.Fatal(err)
 	}
