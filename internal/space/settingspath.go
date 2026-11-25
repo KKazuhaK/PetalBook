@@ -345,7 +345,7 @@ func (s *Space) localWay(tx *txn) wayWriter {
 			tx.touch(rel)
 			return nil
 		},
-		commitNow: func([]string) error { return s.cm.Flush() },
+		commitNow: func([]string) error { return s.cm.FlushChange() },
 	}
 }
 

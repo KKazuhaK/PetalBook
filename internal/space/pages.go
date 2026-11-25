@@ -367,8 +367,20 @@ func (s *Space) afterWrite(tx *txn, rel string, data []byte, touched ...string) 
 		return nil, err
 	}
 	// The file is part of the change from the moment it is written: if the index
-	// refuses it, undoing the change takes the file back too.
-	tx.touch(append(touched, rel)...)
+	// refuses it, undoing the change takes the file back too. A file the
+	// change's transaction wrote with this content is already handed over,
+	// with it.
+	if s.cm.covers(rel, page.Rev(data)) {
+		var others []string
+		for _, p := range touched {
+			if p != rel {
+				others = append(others, p)
+			}
+		}
+		tx.touch(others...)
+	} else {
+		tx.touch(append(touched, rel)...)
+	}
 	if _, err := s.idx.Put(rel, data, st.ModTime().UnixNano()); err != nil {
 		return nil, err
 	}

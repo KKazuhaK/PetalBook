@@ -168,7 +168,7 @@ func TestJournalAfterACommitKeepsTheAuthorsOfWhatIsStillPending(t *testing.T) {
 	var once sync.Once
 	var late *Page
 	s.cm.git.before = func(args []string) {
-		if args[0] == "add" {
+		if args[0] == "add" || args[0] == "hash-object" { // staging the commit
 			once.Do(func() {
 				var err error
 				if late, err = s.Create(bo, CreateInput{Meta: meta("title", "Late"), Body: "l\n"}); err != nil {
@@ -181,8 +181,9 @@ func TestJournalAfterACommitKeepsTheAuthorsOfWhatIsStillPending(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
+	// What is left is the page made while git ran: its transaction, by Bo.
 	recs := journalRecords(t, root)
-	if len(recs) != 1 || recs[0].Path != late.Path || recs[0].author() != bo {
+	if len(recs) != 3 || recs[0].Op != "x" || recs[0].author() != bo || recs[1].Op != "p" || recs[1].Path != late.Path || recs[2].Op != "a" {
 		t.Fatalf("journal: %+v", recs)
 	}
 }

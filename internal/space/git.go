@@ -260,9 +260,9 @@ var parseNameStatus = gitstore.ParseNameStatus
 // and anything the user staged, stay as they are. The commit is authored by
 // author (already resolved, see identities). It reports whether a commit was
 // made.
-func (g *gitRepo) commitPaths(author gitstore.Identity, via string, paths []string) (bool, error) {
+func (g *gitRepo) commitPaths(author gitstore.Identity, via string, paths []string, known map[string]gitstore.Blob) (bool, error) {
 	_, committer := g.identities(Author{})
-	return g.r().CommitPaths(context.Background(), paths, messageVia(via), author, committer)
+	return g.r().CommitPathsAs(context.Background(), paths, known, messageVia(via), author, committer)
 }
 
 // messageVia is commitMessage with the trailer of a change made by means other

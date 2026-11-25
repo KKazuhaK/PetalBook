@@ -301,8 +301,10 @@ func TestReplayingATransactionTwiceIsReplayingItOnce(t *testing.T) {
 		recs = append(recs, jrec{Op: "p", Tx: 1, Path: f.name, Old: rev(f.old), Rev: rev(f.new), Text: f.new})
 	}
 	for range 2 {
+		// c.md is committed as the server wrote it; the outside edit stays
+		// in the work tree.
 		got := recoverPending(root, recs)
-		if len(got) != 2 || got["a.md"].Name != "Ann" || got["b.md"].Name != "Ann" {
+		if len(got) != 3 || got["a.md"].Name != "Ann" || got["b.md"].Name != "Ann" || got["c.md"].Name != "Ann" {
 			t.Errorf("pending: %v", got)
 		}
 		for name, want := range map[string]string{"a.md": "a1", "b.md": "b1", "c.md": "outside"} {

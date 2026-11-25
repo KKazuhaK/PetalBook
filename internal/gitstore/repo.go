@@ -286,6 +286,23 @@ func ParseNameStatus(out []byte) []Change {
 // files, and anything a person staged, stay as they are. message is given the
 // changes that will be in the commit. It reports whether a commit was made.
 func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]Change) string, author, committer Identity) (bool, error) {
+	return r.CommitPathsAs(ctx, paths, nil, message, author, committer)
+}
+
+// Blob is the content a path is committed with, whatever the work tree has
+// there now: ID is its blob id, and Data gives the content, asked for only
+// when the work tree does not have it.
+type Blob struct {
+	ID   string
+	Data func() ([]byte, error)
+}
+
+// CommitPathsAs is CommitPaths, but the paths in known are committed with the
+// content known gives them, not with what the work tree has (which may have
+// been changed by someone else since, or be about to change): the index gets
+// that blob, and a file that differs stays an uncommitted change of the work
+// tree. A path whose content cannot be had is staged from the work tree.
+func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[string]Blob, message func([]Change) string, author, committer Identity) (bool, error) {
 	if what, err := r.Busy(ctx); err != nil {
 		return false, err
 	} else if what != "" {
@@ -293,11 +310,18 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 	}
 	var present, gone, skipped []string
 	skip := map[string]bool{}
+	asKnown, err := r.writeBlobs(ctx, paths, known)
+	if err != nil {
+		return false, err
+	}
 	// Present means present under exactly this name. Asking the file system
 	// is not enough: one that ignores case answers for "Apple.md" when the file
 	// is now "apple.md", and the old name would never be recorded as gone.
 	names := exactNames{root: r.opt.Dir, dirs: map[string]dirNames{}}
 	for _, p := range paths {
+		if _, ok := asKnown[p]; ok {
+			continue
+		}
 		e, err := names.entry(p)
 		if err != nil {
 			// Not knowing is not the same as gone: a directory that cannot be
@@ -359,6 +383,20 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 			}
 		}
 	}
+	if len(asKnown) > 0 {
+		var in bytes.Buffer
+		ps := make([]string, 0, len(asKnown))
+		for p := range asKnown {
+			ps = append(ps, p)
+		}
+		sort.Strings(ps)
+		for _, p := range ps {
+			fmt.Fprintf(&in, "100644 %s 0\t%s\x00", asKnown[p], p)
+		}
+		if _, err := r.gitIn(ctx, nil, in.Bytes(), "update-index", "-z", "--index-info"); err != nil {
+			return false, err
+		}
+	}
 	out, err := r.run(ctx, Cmd{Args: []string{"diff", "--cached", "--name-status", "-z", "-M"}})
 	if err != nil {
 		return false, err
@@ -403,6 +441,64 @@ func (r *Repo) CommitPaths(ctx context.Context, paths []string, message func([]C
 		return false, err
 	}
 	return made, left
+}
+
+// writeBlobs puts the contents known gives the paths into the object store,
+// and returns the blob id of each it could: from the work tree, in one
+// process, where the file there has that content; else from Data, one
+// process each (a file changed outside since the server wrote it).
+func (r *Repo) writeBlobs(ctx context.Context, paths []string, known map[string]Blob) (map[string]string, error) {
+	if len(known) == 0 {
+		return nil, nil
+	}
+	out := map[string]string{}
+	var fromTree, fromTreeAbs []string
+	var rest []string
+	for _, p := range paths {
+		b, ok := known[p]
+		if !ok || b.ID == "" {
+			continue
+		}
+		abs := filepath.Join(r.opt.Dir, filepath.FromSlash(p))
+		if st, err := os.Lstat(abs); err == nil && st.Mode().IsRegular() && !strings.ContainsAny(p, "\n\x00") {
+			fromTree, fromTreeAbs = append(fromTree, p), append(fromTreeAbs, abs)
+		} else {
+			rest = append(rest, p)
+		}
+	}
+	if len(fromTree) > 0 {
+		ids, err := r.HashFiles(ctx, fromTreeAbs)
+		if err != nil {
+			// A file went between the look and the hash: each from Data.
+			rest = append(rest, fromTree...)
+		} else {
+			for i, p := range fromTree {
+				if ids[i] == known[p].ID {
+					out[p] = ids[i]
+				} else {
+					rest = append(rest, p)
+				}
+			}
+		}
+	}
+	for _, p := range rest {
+		b := known[p]
+		if b.Data == nil {
+			continue
+		}
+		data, err := b.Data()
+		if err != nil || blobSum(data) != b.ID {
+			continue // staged from the work tree, as before
+		}
+		id, err := r.run(ctx, Cmd{Args: []string{"hash-object", "-w", "--no-filters", "--stdin"}, Stdin: data})
+		if err != nil {
+			return nil, err
+		}
+		if id = strings.TrimSpace(id); id == b.ID {
+			out[p] = id
+		}
+	}
+	return out, nil
 }
 
 // commitChanges commits these staged changes and nothing else, and reports

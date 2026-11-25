@@ -367,10 +367,20 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 			return nil, err
 		}
 	}
-	// The files are part of the change from the first replacement: an undo
-	// takes them back.
-	tx.touch(paths...)
+	// In a space that follows a remote the files are part of the change
+	// from the first replacement: an undo takes them back. In a local one
+	// they are handed to the commit once all are written, with the content
+	// the transaction wrote (Applied), or as they are if the writing stops.
+	if !journaled {
+		tx.touch(paths...)
+	}
 	var steps []rebaseStep
+	applied := false
+	defer func() {
+		if journaled && !applied {
+			tx.touch(paths...)
+		}
+	}()
 	defer func() { s.rb.add(steps...) }()
 	if err := s.stepped("edits journaled"); err != nil {
 		return paths, err
@@ -391,6 +401,7 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 		}
 	}
 	s.cm.Applied(id)
+	applied = true
 	return paths, nil
 }
 
