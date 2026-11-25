@@ -246,7 +246,7 @@ export default function HistoryMode({
     <div className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1">
         {/* Only this row stays in view: on a phone there is no room for more. */}
-        <div className="sticky top-14 z-20 border-b bg-background/95 backdrop-blur">
+        <div className="sticky top-(--topbar-h) z-20 border-b bg-background/95 backdrop-blur">
           <div className="mx-auto flex max-w-[720px] items-center gap-2 px-4 py-2 md:px-5">
             <Button variant="outline" size="sm" onClick={onClose}>
               <ArrowLeft />
@@ -445,7 +445,7 @@ export default function HistoryMode({
       {!isMobile && (
         <aside
           aria-label={t.history.list}
-          className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-72 shrink-0 self-start overflow-y-auto border-l md:block lg:w-80"
+          className="sticky top-(--topbar-h) hidden h-[calc(100svh-var(--topbar-h))] w-72 shrink-0 self-start overflow-y-auto border-l md:block lg:w-80"
         >
           {status === 'ok' ? (
             versionList(true)

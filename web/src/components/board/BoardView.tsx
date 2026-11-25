@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type RefObject } from 'react'
+import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Link } from 'react-router'
 import { MoveRight } from 'lucide-react'
 import { toast } from 'sonner'
@@ -81,6 +82,7 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
     [options, groups.data],
   )
   const scroller = useRef<HTMLDivElement>(null)
+  useScrollFade(scroller)
   const shown = cardFieldsOf(type, cardFields, group)
 
   const patch = usePatchProps()
@@ -141,7 +143,7 @@ export default function BoardView({ scope, type, group, sort, filters, cardField
       {groups.isError && <p className="text-xs text-destructive">{tb.board.groupsFailed}</p>}
       <div
         ref={scroller}
-        className="flex items-start gap-3 overflow-x-auto pb-3"
+        className={`${scrollFadeTouchClass} flex items-start gap-3 pb-3`}
         role="group"
         aria-label={tb.board.label}
       >

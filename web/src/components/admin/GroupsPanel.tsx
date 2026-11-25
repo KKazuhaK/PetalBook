@@ -1,4 +1,5 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent, useRef } from 'react'
+import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -66,6 +67,8 @@ export function groupError(e: unknown): string {
 // people and the spaces it is in; deleting is asked about, and forced only when
 // the group is still in use.
 export function GroupsPanel() {
+  const fadeRef = useRef<HTMLDivElement>(null)
+  useScrollFade(fadeRef)
   const [text, setText] = useState('')
   const [source, setSource] = useState<GroupSource | ''>('')
   const q = useDebounced(text.trim(), 300)
@@ -121,7 +124,7 @@ export function GroupsPanel() {
         <p className="py-8 text-center text-sm text-muted-foreground">{q ? ta.noMatch(q) : ta.empty}</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border">
+          <div ref={fadeRef} className={`${scrollFadeTouchClass} rounded-lg border`}>
             <table className="w-full min-w-[36rem] text-left text-sm">
               <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <tr>

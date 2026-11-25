@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Link, Navigate } from 'react-router'
 import { ArrowLeft, Ellipsis } from 'lucide-react'
 import { toast } from 'sonner'
@@ -32,6 +33,8 @@ const isTab = (v: unknown): v is PersonTab => PERSON_TABS.some((x) => x === v)
 // they are signed in, where they belong, what they hold, and what the log says about them. The sessions are for the
 // administrators of the whole server only.
 export function PersonPage({ id, tab }: { id: string; tab?: string }) {
+  const fadeRef = useRef<HTMLElement>(null)
+  useScrollFade(fadeRef)
   const session = useSession()
   const me = session.data?.user
   const site = me?.siteAdmin !== false
@@ -146,7 +149,7 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
         </div>
       </header>
       <FormMessage focusRef={messageRef}>{error ? error.message : ''}</FormMessage>
-      <nav aria-label={tc.person.tabsLabel} className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+      <nav ref={fadeRef} aria-label={tc.person.tabsLabel} className={`${scrollFadeClass} -mx-4 px-4 md:mx-0 md:px-0`}>
         <ul className="flex min-w-max gap-1 border-b">
           {tabs.map((x) => (
             <li key={x}>

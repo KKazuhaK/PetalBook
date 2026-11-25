@@ -51,14 +51,14 @@ export default function BacklinksPanel({
           data-testid="backlinks-backdrop"
           aria-hidden="true"
           onClick={onClose}
-          className="fixed inset-0 top-14 z-30 bg-black/30"
+          className="fixed inset-0 top-(--topbar-h) z-30 bg-black/30"
         />
       )}
       <aside
         ref={ref}
         tabIndex={-1}
         aria-label={t.pageLinks.backlinks}
-        className="fixed top-14 right-0 bottom-0 z-30 flex w-80 max-w-[calc(100%-3rem)] flex-col border-l bg-background shadow-lg outline-none lg:shadow-none"
+        className="fixed top-(--topbar-h) right-0 bottom-0 z-30 flex w-80 max-w-[calc(100%-3rem)] flex-col border-l bg-background shadow-lg outline-none lg:shadow-none"
       >
         <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
           <h2 className="flex-1 text-sm font-medium">{t.pageLinks.backlinks}</h2>

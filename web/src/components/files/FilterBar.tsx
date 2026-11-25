@@ -127,7 +127,7 @@ export function FilterBar({
               type="date"
               value={filters[name][side]}
               onChange={(e) => onChange({ ...filters, [name]: { ...filters[name], [side]: e.target.value } })}
-              className="h-9 w-full min-w-0 rounded-md border bg-transparent px-2 text-sm text-foreground"
+              className="h-9 w-full min-w-0 rounded-md border bg-transparent px-2 text-sm text-foreground pointer-coarse:text-base!"
             />
           </label>
         ))}

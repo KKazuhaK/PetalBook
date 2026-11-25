@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import {
   ArrowDown,
   ArrowUp,
@@ -116,6 +117,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   // The box the table scrolls in: its width decides which columns fit.
   const box = useRef<HTMLDivElement>(null)
+  useScrollFade(box)
   const [boxW, setBoxW] = useState(0)
   useLayoutEffect(() => {
     const el = box.current
@@ -251,7 +253,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       {selection && selection.selected.size > 0 && bulk}
       <div
         ref={box}
-        className={`overflow-x-auto rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
+        className={`${scrollFadeTouchClass} rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
         aria-busy={fetching || loading || undefined}
       >
         <table

@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalSt
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Code, Columns2, History, Link2, MoreHorizontal, Save, Trash2, FolderInput, Type } from 'lucide-react'
+import { Code, Columns2, FolderInput, History, Link2, Lock, MoreHorizontal, Save, Trash2, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
 import {
@@ -64,6 +64,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -72,6 +74,13 @@ import { setEditableQuietly } from '@/components/editor/editable'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
 import { StarButton } from '@/components/favorites/StarButton'
 import { TopBar } from '@/components/layout/TopBar'
+import {
+  topBarButton,
+  topBarGroup,
+  topBarGroupItem,
+  topBarStatus,
+  topBarTextButton,
+} from '@/components/layout/topBarStyles'
 import { AutoTextarea } from '@/components/editor/AutoTextarea'
 import { ImagePopover, LinkPopover, SelectionBubble } from '@/components/editor/BubbleToolbar'
 import { ConflictDialog } from '@/components/editor/ConflictDialog'
@@ -145,25 +154,63 @@ const subscribeBeside = (cb: () => void) => {
 const isBeside = () => window.matchMedia(BESIDE).matches
 
 function ModeSwitch({ mode, wide, onChange }: { mode: EditMode; wide: boolean; onChange: (m: EditMode) => void }) {
-  const item = (m: EditMode, label: string, Icon: typeof Type) => (
-    <button
-      type="button"
-      aria-pressed={mode === m}
-      aria-label={label}
-      title={label}
-      onClick={() => onChange(m)}
-      className={`flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-    >
-      <Icon className="size-4" />
-    </button>
-  )
+  const modes = [
+    ['rich', t.modes.rich, Type],
+    ['source', t.modes.source, Code],
+    ...(wide ? [['split', t.modes.split, Columns2] as const] : []),
+  ] as const
+  const Current = modes.find(([m]) => m === mode)?.[2] ?? Type
   return (
-    <div role="group" aria-label={t.modes.label} className="flex items-center rounded-lg border p-0.5">
-      {item('rich', t.modes.rich, Type)}
-      {item('source', t.modes.source, Code)}
-      {wide && item('split', t.modes.split, Columns2)}
-    </div>
+    <>
+      {/* Like the list's view switch: one button per mode where the top bar is wide enough, one button that opens the
+          same choices where it is narrow. */}
+      <div role="group" aria-label={t.modes.label} className={`hidden ${topBarGroup} @[30rem]/topbar:flex`}>
+        {modes.map(([m, label, Icon]) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={mode === m}
+            aria-label={label}
+            title={label}
+            onClick={() => onChange(m)}
+            className={topBarGroupItem(mode === m)}
+          >
+            <Icon className="size-4" />
+          </button>
+        ))}
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={t.modes.label}
+          title={t.modes.label}
+          className={`${topBarButton} @[30rem]/topbar:hidden`}
+        >
+          <Current className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-40">
+          <DropdownMenuRadioGroup value={mode} onValueChange={(v) => onChange(v as EditMode)}>
+            {modes.map(([m, label, Icon]) => (
+              <DropdownMenuRadioItem key={m} value={m}>
+                <Icon />
+                {label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   )
+}
+
+// Whether the top bar is narrow (the same width as the `@[30rem]/topbar` query), read when the More menu opens: the
+// menu is drawn outside the bar, so a container query cannot reach it.
+function barIsNarrow(el: HTMLElement | null) {
+  const bar = el?.closest('header')
+  // A bar that has no width (not laid out) is not a narrow one.
+  if (!bar || bar.clientWidth === 0) return false
+  const cs = getComputedStyle(bar)
+  const inner = bar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+  return inner < 30 * parseFloat(getComputedStyle(document.documentElement).fontSize)
 }
 
 export default function PageEditor() {
@@ -1019,41 +1066,50 @@ function EditorSession({
     snapshot.state === 'dirty' ||
     snapshot.state === 'drafted' ||
     (snapshot.state === 'error' && !isUnauthenticated(snapshot.error))
+  // History and "Save version" fold into the More menu while the top bar is narrow.
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const [narrowBar, setNarrowBar] = useState(false)
 
   return (
     <>
       <TopBar
         actions={
           <>
-            {readOnly ? (
-              <span
-                className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground"
-                title={offline ? t.offline.readOnlyNote : t.permissions.readOnlyNote}
-              >
-                {offline ? t.offline.readOnly : t.permissions.readOnly}
-              </span>
-            ) : (
-              <SaveIndicator
-                snapshot={snapshot}
-                draftSafe={!controller.hasUnsaved()}
-                onRetry={() => void controller.retry()}
-                onOpenConflict={() => setConflictOpen(true)}
-              />
-            )}
+            {/* Status, not buttons: plain text on the same 40 px line, and only the icon where the bar is narrow. */}
+            <div
+              className={`${topBarStatus} min-w-0 @max-[48rem]/topbar:gap-0 @max-[48rem]/topbar:[&>*]:gap-0 @max-[48rem]/topbar:[&>*]:text-[0px] @max-[48rem]/topbar:[&>button]:min-h-10 @max-[48rem]/topbar:[&>button]:min-w-10 @max-[48rem]/topbar:[&>button]:justify-center`}
+            >
+              {readOnly ? (
+                <span
+                  className="inline-flex items-center gap-1 text-xs"
+                  title={offline ? t.offline.readOnlyNote : t.permissions.readOnlyNote}
+                >
+                  <Lock className="size-3.5" />
+                  {offline ? t.offline.readOnly : t.permissions.readOnly}
+                </span>
+              ) : (
+                <SaveIndicator
+                  snapshot={snapshot}
+                  draftSafe={!controller.hasUnsaved()}
+                  onRetry={() => void controller.retry()}
+                  onOpenConflict={() => setConflictOpen(true)}
+                />
+              )}
+            </div>
             <StarButton
               target={{ kind: 'page', target: page.id }}
               labels={{ add: t.fav.addPage, remove: t.fav.removePage }}
+              className={topBarButton}
             />
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
               <Button
                 variant="ghost"
-                size="icon-sm"
                 aria-pressed={backlinksOpen}
                 onClick={toggleBacklinks}
                 title={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
                 aria-label={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
-                className={backlinksOpen ? 'bg-muted' : undefined}
+                className={topBarButton}
               >
                 <Link2 />
               </Button>
@@ -1061,33 +1117,38 @@ function EditorSession({
             {!historyOpen && (
               <Button
                 variant="ghost"
-                size="sm"
                 onClick={() => setHistoryOpen(true)}
                 onPointerEnter={() => void loadHistory()}
                 onFocus={() => void loadHistory()}
                 title={t.history.openHint}
                 aria-label={t.history.open}
+                className={`${topBarTextButton} @max-[30rem]/topbar:hidden`}
               >
                 <History />
-                <span className="hidden sm:inline">{t.history.open}</span>
+                <span className="hidden @[48rem]/topbar:inline">{t.history.open}</span>
               </Button>
             )}
             {!historyOpen && !readOnly && (
               <Button
                 variant="ghost"
-                size="sm"
                 disabled={!canSave}
                 onClick={() => void controller.commit()}
                 title={t.editor.saveVersionHint}
                 aria-label={t.editor.saveVersion}
+                className={`${topBarTextButton} @max-[30rem]/topbar:hidden`}
               >
                 <Save />
-                <span className="hidden sm:inline">{t.editor.saveVersion}</span>
+                <span className="hidden @[48rem]/topbar:inline">{t.editor.saveVersion}</span>
               </Button>
             )}
             {!historyOpen && (
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t.editor.more} />}>
+              <DropdownMenu onOpenChange={(open) => open && setNarrowBar(barIsNarrow(moreRef.current))}>
+                <DropdownMenuTrigger
+                  ref={moreRef}
+                  aria-label={t.editor.more}
+                  title={t.editor.more}
+                  className={topBarButton}
+                >
                   <MoreHorizontal />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-40">
@@ -1095,6 +1156,12 @@ function EditorSession({
                     <History />
                     {t.history.open}
                   </DropdownMenuItem>
+                  {narrowBar && !readOnly && (
+                    <DropdownMenuItem disabled={!canSave} onClick={() => void controller.commit()}>
+                      <Save />
+                      {t.editor.saveVersion}
+                    </DropdownMenuItem>
+                  )}
                   {!readOnly && (
                     <>
                       <DropdownMenuItem onClick={() => setMoveOpen(true)}>
@@ -1138,7 +1205,11 @@ function EditorSession({
           in it), hidden and out of reach of the keyboard. */}
         <div
           className={
-            historyOpen ? 'hidden' : mode === 'rich' ? 'flex flex-1 flex-col' : 'flex h-[calc(100dvh-3.5rem)] flex-col'
+            historyOpen
+              ? 'hidden'
+              : mode === 'rich'
+                ? 'flex flex-1 flex-col'
+                : 'flex h-[calc(100dvh-var(--topbar-h))] flex-col'
           }
           inert={historyOpen}
         >
@@ -1225,7 +1296,7 @@ function EditorSession({
             >
               {editor && !readOnly && (
                 <div
-                  className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-14'}`}
+                  className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-(--topbar-h)'}`}
                 >
                   <div className="mx-auto max-w-[720px] px-3">
                     <EditorToolbar editor={editor} />

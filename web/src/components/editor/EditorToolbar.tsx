@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode, useRef } from 'react'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import type { Editor } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
 import {
@@ -180,6 +181,8 @@ function TableMenu({ editor, inTable, disabled }: { editor: Editor; inTable: boo
 // row that scrolls sideways when the window (or half of it, side by side with
 // the source) is narrower than the buttons.
 export function EditorToolbar({ editor }: { editor: Editor }) {
+  const fadeRef = useRef<HTMLDivElement>(null)
+  useScrollFade(fadeRef)
   const [linkOpen, setLinkOpen] = useState(false)
   const s = useEditorState({
     editor,
@@ -226,9 +229,10 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
 
   return (
     <div
+      ref={fadeRef}
       role="toolbar"
       aria-label={t.toolbar.label}
-      className="flex items-center gap-0.5 overflow-x-auto px-1 py-1 [scrollbar-width:thin]"
+      className={`${scrollFadeClass} flex items-center gap-0.5 px-1 py-1`}
     >
       <Tool label={t.toolbar.undo} shortcut="Mod-z" disabled={!s.canUndo} onClick={() => run().undo().run()}>
         <Undo2 />

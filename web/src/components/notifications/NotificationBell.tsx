@@ -5,13 +5,13 @@ import { useMarkAllNotificationsRead, useNotificationList, useSession, useUnread
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { tn } from '@/i18n/notify'
+import { topBarButton } from '@/components/layout/topBarStyles'
 import { NotificationRow } from './NotificationRow'
 
 // How many of the latest the popover shows; the page has the rest.
 const POPOVER_ITEMS = 5
 
-const triggerCls =
-  'relative inline-flex size-10 shrink-0 items-center justify-center rounded-lg border border-input bg-background text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-accent'
+const triggerCls = topBarButton
 
 function Dot({ count }: { count: number }) {
   return (

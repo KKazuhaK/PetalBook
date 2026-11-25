@@ -6,7 +6,7 @@ import { SidebarToggle } from './SidebarToggle'
 // title and actions beside it, and the bell of the notification centre at the end.
 export function TopBar({ children, actions }: { children?: ReactNode; actions?: ReactNode }) {
   return (
-    <header className="@container/topbar sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur">
+    <header className="@container/topbar sticky top-0 z-30 flex h-(--topbar-h) shrink-0 items-center gap-2 border-b bg-background/85 pt-[env(safe-area-inset-top)] pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] backdrop-blur">
       <SidebarToggle where="topbar" />
       <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
       <div className="flex shrink-0 items-center gap-1.5 @max-[22rem]/topbar:gap-1">

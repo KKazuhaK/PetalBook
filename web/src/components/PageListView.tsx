@@ -37,6 +37,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState, Spinner } from '@/components/common'
 import { QuickCaptureFab, useQuickCapture } from '@/components/layout/QuickCapture'
+import { topBarButton, topBarGroup, topBarGroupItem } from '@/components/layout/topBarStyles'
 import { TopBar } from '@/components/layout/TopBar'
 import { ViewBar } from '@/components/views/ViewBar'
 import { useWorkingCopy } from '@/components/views/useWorkingCopy'
@@ -173,7 +174,7 @@ function ViewSwitch({
       title={label}
       disabled={disabled}
       onClick={() => onChange(m)}
-      className={`flex size-[34px] disabled:opacity-60 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      className={topBarGroupItem(mode === m)}
     >
       <Icon className="size-4" />
     </button>
@@ -196,7 +197,7 @@ function ViewSwitch({
         role="group"
         aria-label={t.view.label}
         aria-busy={disabled || undefined}
-        className="hidden items-center rounded-lg border p-0.5 @[30rem]/topbar:flex"
+        className={`hidden ${topBarGroup} @[30rem]/topbar:flex`}
       >
         {modes.map(([m, label, Icon]) => item(m, label, Icon))}
       </div>
@@ -205,7 +206,7 @@ function ViewSwitch({
           disabled={disabled}
           aria-label={t.view.label}
           title={t.view.label}
-          className="flex size-10 items-center justify-center rounded-lg border outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 data-popup-open:bg-muted @[30rem]/topbar:hidden"
+          className={`${topBarButton} @[30rem]/topbar:hidden`}
         >
           <Current className="size-4" />
         </DropdownMenuTrigger>
@@ -508,7 +509,7 @@ function Listing({ source }: { source: ListSource }) {
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
                     wrapperClassName="w-auto max-sm:size-full"
-                    className="h-10 w-auto text-[0.8rem] max-sm:size-full max-sm:opacity-0"
+                    className="h-10 w-auto text-[0.8rem] pointer-coarse:text-base! max-sm:size-full max-sm:opacity-0"
                     aria-label={t.list.sort}
                     disabled={busy}
                     value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
@@ -538,9 +539,8 @@ function Listing({ source }: { source: ListSource }) {
               />
               {write && source.kind === 'folder' && ops && (
                 <Button
-                  variant="outline"
-                  size="icon-lg"
-                  className="size-10 max-sm:hidden"
+                  variant="ghost"
+                  className={`${topBarButton} max-sm:hidden`}
                   onClick={() => ops.newFolder(source.folder)}
                   title={t.manage.newFolder}
                   aria-label={t.manage.newFolder}
