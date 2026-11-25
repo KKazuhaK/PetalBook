@@ -889,8 +889,10 @@ func (s *Space) DailyFrom(spaceID, date string, skip int, source DailySource) (*
 	// What the page says about who wrote it and where it is from, only if it does.
 	if withProps, ok, err := s.idx.SummaryWithProps(sum.ID); err == nil && ok {
 		pick.Author = propText(withProps.Props, "author", "作者")
-		if pick.Page.Source == "" {
-			pick.Page.Source = propText(withProps.Props, "出处")
+		if len(pick.Page.Sources) == 0 {
+			if t := propText(withProps.Props, "出处"); t != "" {
+				pick.Page.Sources = []string{t}
+			}
 		}
 	}
 	return pick, 0, nil

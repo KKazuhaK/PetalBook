@@ -98,16 +98,19 @@ func (r *reading) typeOf(entry *yaml.Node) string {
 // configCache remembers the bindings for as long as the file looks the same,
 // so a listing does not parse it again for every request.
 type configCache struct {
-	valid     bool
-	mode      fs.FileMode
-	size      int64
-	mtimeNs   int64
-	bindings  []Binding
-	byFolder  map[string]string
-	views     map[string][]View // by folder, only those that have some
-	daily     *DailyConfig      // where the daily text comes from, when the file says
-	templates *TemplateDefaults // the default templates, when the file says
-	blocked   string            // what is in the way of the file, when something is
+	valid      bool
+	mode       fs.FileMode
+	size       int64
+	mtimeNs    int64
+	bindings   []Binding
+	byFolder   map[string]string
+	views      map[string][]View      // by folder, only those that have some
+	daily      *DailyConfig           // where the daily text comes from, when the file says
+	templates  *TemplateDefaults      // the default templates, when the file says
+	styles     map[string]FolderStyle // the icon and colour of folders, by folder
+	presets    []string               // the presets of the sources, when the file says
+	presetsSet bool
+	blocked    string // what is in the way of the file, when something is
 }
 
 // config returns what is known of the settings file, read again when the file
@@ -141,6 +144,8 @@ func (s *Space) config() configCache {
 		c.views = viewsOf(doc, "folders", bindingKey)
 		c.daily = dailyOf(doc)
 		c.templates = templatesOf(doc)
+		c.styles = stylesOf(doc)
+		c.presets, c.presetsSet = sourcesOf(doc)
 		s.heal.setOdd(spaceSettings, oddEntries(doc, spaceSettings))
 	}
 	// Kept only when the read found the file the look did; else the next
@@ -565,7 +570,7 @@ func forgetFolders(root *yaml.Node, gone func(folder string) bool) (bool, error)
 	// One pass, whatever the number of folders that go: what stays is
 	// collected, not what goes cut out one at a time.
 	changed := false
-	st := stripper{file: spaceSettings, top: root, keys: []string{"type", "views"}}
+	st := stripper{file: spaceSettings, top: root, keys: []string{"type", "views", "icon", "color"}}
 	kept := make([]*yaml.Node, 0, len(folders.Content))
 	for i := 0; i+1 < len(folders.Content); i += 2 {
 		key, ok := folderAt(folders, i)

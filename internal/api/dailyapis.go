@@ -443,7 +443,7 @@ func (s *server) fromSource(c *call, ctx context.Context, site siteDaily, src da
 			}
 			return nil, "", nil
 		}
-		source := pick.Page.Source
+		source := joinSources(pick.Page.Sources, lang)
 		if source == "" {
 			source = pick.Page.Title
 		}

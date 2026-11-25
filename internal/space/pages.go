@@ -188,11 +188,11 @@ func newMeta(in page.Meta) page.Meta {
 		}
 		switch v := f.Value.(type) {
 		case string:
-			if f.Key == "title" || f.Key == "subtitle" || f.Key == "source" || f.Key == "type" {
+			if f.Key == "title" || f.Key == "subtitle" || f.Key == "source" || f.Key == "type" || f.Key == "icon" || f.Key == "color" {
 				f.Value = strings.TrimSpace(v)
 			}
 		case []any:
-			if f.Key == "tags" {
+			if f.Key == "tags" || f.Key == "source" {
 				seen := map[string]bool{}
 				tags := []any{}
 				for _, e := range v {
@@ -218,7 +218,10 @@ func newMeta(in page.Meta) page.Meta {
 // empty list.
 func cleared(f page.Field) bool {
 	switch f.Key {
-	case "title", "subtitle", "source", "type":
+	case "title", "subtitle", "source", "type", "icon", "color":
+		if l, ok := f.Value.([]any); ok && f.Key == "source" {
+			return len(l) == 0
+		}
 		if f.Value == nil {
 			return true
 		}
@@ -242,7 +245,7 @@ func placeAfterKnown(m page.Meta, f page.Field) page.Meta {
 	at := 0
 	for i, x := range m {
 		switch x.Key {
-		case "id", "title", "subtitle", "source", "tags":
+		case "id", "title", "subtitle", "source", "tags", "icon", "color":
 			at = i + 1
 		}
 	}
@@ -933,3 +936,6 @@ func propCleared(v any) bool {
 	}
 	return false
 }
+
+// UsedSources lists the sources the pages have, most used first.
+func (s *Space) UsedSources() ([]index.SourceCount, error) { return s.idx.UsedSources() }

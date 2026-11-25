@@ -95,7 +95,7 @@ type createIn struct {
 	Folder    string          `json:"folder,omitempty" jsonschema:"folder to make the page in (made if needed); the top level when left out"`
 	Title     string          `json:"title,omitempty"`
 	Subtitle  string          `json:"subtitle,omitempty"`
-	Source    string          `json:"source,omitempty" jsonschema:"where the text comes from"`
+	Source    []string        `json:"source,omitempty" jsonschema:"where the text comes from: a list, like tags"`
 	Tags      []string        `json:"tags,omitempty"`
 	Type      string          `json:"type,omitempty" jsonschema:"the page type, from types_list"`
 	Props     json.RawMessage `json:"props,omitempty" jsonschema:"an object of other header fields, e.g. the typed fields of the type"`
@@ -124,10 +124,17 @@ func (t *mcpTools) pageCreate(c *mcpCall, in createIn) (any, error) {
 		return nil, mcpInvalid("tz is minutes east of UTC, from -840 to 840")
 	}
 	var meta page.Meta
-	for _, f := range []struct{ k, v string }{{"title", in.Title}, {"subtitle", in.Subtitle}, {"source", in.Source}} {
+	for _, f := range []struct{ k, v string }{{"title", in.Title}, {"subtitle", in.Subtitle}} {
 		if v := strings.TrimSpace(f.v); v != "" {
 			meta = append(meta, page.Field{Key: f.k, Value: v})
 		}
+	}
+	sources, err := cleanTags(in.Source)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) > 0 {
+		meta = append(meta, page.Field{Key: "source", Value: tagValue(sources)})
 	}
 	if len(tags) > 0 {
 		meta = append(meta, page.Field{Key: "tags", Value: tagValue(tags)})
@@ -199,7 +206,7 @@ type updateIn struct {
 	BaseRev  string          `json:"baseRev" jsonschema:"the rev you read the page at (from page_get or a page item)"`
 	Title    *string         `json:"title,omitempty" jsonschema:"\"\" removes it"`
 	Subtitle *string         `json:"subtitle,omitempty" jsonschema:"\"\" removes it"`
-	Source   *string         `json:"source,omitempty" jsonschema:"\"\" removes it"`
+	Source   *[]string       `json:"source,omitempty" jsonschema:"all the sources the page is to have; [] removes them"`
 	Tags     *[]string       `json:"tags,omitempty" jsonschema:"all the tags the page is to have; [] removes them (page_tag adds and removes single tags)"`
 	Type     *string         `json:"type,omitempty" jsonschema:"\"\" removes it"`
 	Set      json.RawMessage `json:"set,omitempty" jsonschema:"an object of other header fields to set; a null or empty value removes the field"`
@@ -259,9 +266,14 @@ func (t *mcpTools) pageUpdate(c *mcpCall, in updateIn) (any, error) {
 	if in.Title == nil && in.Subtitle == nil && in.Source == nil && in.Tags == nil && in.Type == nil && len(set) == 0 && len(in.Unset) == 0 && in.Body == nil && len(in.Edits) == 0 {
 		return nil, mcpInvalid("nothing to change: give title, subtitle, source, tags, type, set, unset, body or edits")
 	}
-	var tags []string
+	var tags, sources []string
 	if in.Tags != nil {
 		if tags, err = cleanTags(*in.Tags); err != nil {
+			return nil, err
+		}
+	}
+	if in.Source != nil {
+		if sources, err = cleanTags(*in.Source); err != nil {
 			return nil, err
 		}
 	}
@@ -272,7 +284,7 @@ func (t *mcpTools) pageUpdate(c *mcpCall, in updateIn) (any, error) {
 		for _, f := range []struct {
 			k string
 			v *string
-		}{{"title", in.Title}, {"subtitle", in.Subtitle}, {"source", in.Source}, {"type", in.Type}} {
+		}{{"title", in.Title}, {"subtitle", in.Subtitle}, {"type", in.Type}} {
 			if f.v == nil {
 				continue
 			}
@@ -280,6 +292,13 @@ func (t *mcpTools) pageUpdate(c *mcpCall, in updateIn) (any, error) {
 				meta = putBuiltin(meta, f.k, v)
 			} else {
 				meta = dropField(meta, f.k)
+			}
+		}
+		if in.Source != nil {
+			if len(sources) > 0 {
+				meta = putBuiltin(meta, "source", tagValue(sources))
+			} else {
+				meta = dropField(meta, "source")
 			}
 		}
 		if in.Tags != nil {

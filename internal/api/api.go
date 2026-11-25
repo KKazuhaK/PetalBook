@@ -959,7 +959,7 @@ type summaryResp struct {
 	Folder   string   `json:"folder"`
 	Title    string   `json:"title,omitempty"`
 	Subtitle string   `json:"subtitle,omitempty"`
-	Source   string   `json:"source,omitempty"`
+	Source   []string `json:"source"`
 	Label    string   `json:"label"`
 	Untitled bool     `json:"untitled"`
 	Tags     []string `json:"tags"`
@@ -981,7 +981,14 @@ type summaryResp struct {
 }
 
 func toSummary(s index.Summary, types space.TypeResolver) summaryResp {
-	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source, Label: s.Label,
+	return summaryResp{ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: nonNil(s.Sources), Label: s.Label,
 		Untitled: s.Untitled, Tags: s.Tags, Type: s.Type, Created: s.Created, Updated: rfc3339(s.Updated), Excerpt: s.Excerpt,
 		EffectiveType: types.For(s.Folder, s.Type), Props: s.Props, Rev: s.Rev, PartialProps: s.PartialProps}
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

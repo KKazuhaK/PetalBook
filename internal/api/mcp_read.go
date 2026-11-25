@@ -25,7 +25,7 @@ type mcpItem struct {
 	Folder        string          `json:"folder"`
 	Title         string          `json:"title,omitempty"`
 	Subtitle      string          `json:"subtitle,omitempty"`
-	Source        string          `json:"source,omitempty"`
+	Source        []string        `json:"source"`
 	Label         string          `json:"label"`
 	Untitled      bool            `json:"untitled"`
 	Tags          []string        `json:"tags"`
@@ -44,7 +44,7 @@ func toMCPItem(spaceID string, s index.Summary, types space.TypeResolver) mcpIte
 	if tags == nil {
 		tags = []string{}
 	}
-	return mcpItem{Space: spaceID, ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: s.Source,
+	return mcpItem{Space: spaceID, ID: s.ID, Path: s.Path, Folder: s.Folder, Title: s.Title, Subtitle: s.Subtitle, Source: nonNil(s.Sources),
 		Label: s.Label, Untitled: s.Untitled, Tags: tags, Type: s.Type, EffectiveType: types.For(s.Folder, s.Type), Created: s.Created,
 		Updated: rfc3339(s.Updated), Excerpt: cutRunes(s.Excerpt, page.ExcerptRunes), Props: s.Props, PartialProps: s.PartialProps, Rev: s.Rev}
 }

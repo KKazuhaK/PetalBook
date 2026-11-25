@@ -676,7 +676,7 @@ func (w *writer) upsert(e *Entry, onDisk func(string) bool) (conflict string, er
 	if err := w.forgetGone(e.ID); err != nil {
 		return "", err
 	}
-	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, e.Source, b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
+	args := []any{e.ID, e.Path, e.Folder, e.Title, e.Subtitle, sourcesJSON(e.Sources), b2i(e.Untitled), strings.ToLower(e.Title), e.Label, e.Type,
 		tagsJSON(e.Tags), e.Created, e.CreatedKey, e.MtimeNs, e.Size, e.Rev, e.Excerpt, e.PropsJSON, e.PartialJSON, seq}
 	titleKey := strings.ToLower(e.Title)
 	if found {

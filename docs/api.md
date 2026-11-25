@@ -2848,9 +2848,13 @@ uses.
 
 ### Page summary
 
-Used in listings. `title`, `subtitle` and `source` are absent when the page
-has none. `source` says where the text comes from (a person, a book, an
-address); it is free text from the header field of the same name.
+Used in listings. `title` and `subtitle` are absent when the page has none.
+`source` is always there: a list of texts saying where the text comes from (a
+person, a book, a film), `[]` for none, like `tags`. In the file it is a list
+too; a single text written by hand there (`source: 雪国`) is read as one source,
+and the same page is a filter, a sort (`prop:source`, by its first source) and
+the column of a board (`key=source`) like a list property. The sources are not
+among `props`.
 `label` is always present: the title, or for an untitled page the first line
 of the body cut to about 30 characters (`untitled` says which). It is an
 empty string for an untitled page with an empty body. `created` is absent
@@ -2865,7 +2869,7 @@ type; whether a type of that name exists is not looked at.
 `props` and `rev` are there only when the listing was asked for them with
 `props=1` (the table view does): `props` is an object of the header's keys
 that are not built in (everything except `id`, `title`, `subtitle`, `source`,
-`tags`, `created` and `type`), in header order, `{}` when there are none, and
+`tags`, `created`, `type`, `icon` and `color`), in header order, `{}` when there are none, and
 `rev` is the page's rev, which a change of a property needs. Only values a
 table cell can show are in it: text (cut to 300 characters), numbers, true
 and false, and lists of those (the first 100 elements). A nested object, a
@@ -2900,7 +2904,7 @@ lose and is not listed.
   "folder": "Tang",
   "title": "暮雪",
   "subtitle": "…",
-  "source": "…",
+  "source": ["书", "电影"],
   "label": "暮雪",
   "untitled": false,
   "tags": ["玉兰", "黄昏"],
@@ -3800,6 +3804,43 @@ removes the binding when `type` is `""`. `200` with `{"folder": "Work",
 the folder does not exist; `400 invalid` when the type does not exist, or the
 entry of the folder in `space.yml` is not a list of settings. Pages are not changed: their
 `effectiveType` is.
+
+### Icons, colours and the presets of the sources (3.10)
+
+A folder has an icon and a colour, written under its entry in
+`.petalbook/space.yml` next to its type and views, and a page has `icon` and
+`color` in its header (fields of every page, not properties of a type). An icon
+is a Lucide name (`book-open`) or an emoji, at most 64 bytes; a colour is one
+of `red`, `orange`, `amber`, `green`, `teal`, `blue`, `purple`, `pink`. The
+entry of a folder moves with the folder, in the same commit (see Moving a
+folder), so its icon and colour follow it.
+
+`GET /api/spaces/{space}/appearance` (read) answers
+`{"folders": [{"folder", "icon", "color"}], "sourcePresets": [...] | null,
+"iconColors": [...]}`. `sourcePresets` is the list the space chose under
+`sources:` in `space.yml`; `null` when it chose none, and the client offers its
+own defaults.
+
+`PUT /api/spaces/{space}/folders/style` (write) takes
+`{"folder", "icon", "color"}`; `""` takes one away. `200` with the same,
+the folder as spelled on disk; `404 not_found` for a folder that is not there;
+`400 invalid` for a colour that is none of the eight or an icon that is too long.
+
+`GET /api/spaces/{space}/sources` (read) answers
+`{"sources": [{"source", "pages"}]}`, the sources the pages use, most used first
+(at most 500), for the suggestions of the input.
+
+`PUT /api/spaces/{space}/sources/presets` (manage) takes `{"presets": [...]}`,
+or `null` to go back to the defaults; blank and repeated ones are dropped, at
+most 100 of at most 200 bytes.
+
+`POST /api/spaces/{space}/types/{name}/rename-field` (manage) takes
+`{"baseRev", "from", "to"}` and gives a field of a type another key: in the
+type's file and, in one commit, in the header of every page of that type that
+has a value under the old key (the field keeps its place in the header).
+`200` with `{"type", "pages"}`, `pages` being how many were rewritten; `404` for
+a type or field that is not there, `409 conflict` for a stale `baseRev`, `400
+invalid` when the type has a field of the new key or the key is one of every page.
 
 ## Saved views
 

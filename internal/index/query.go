@@ -26,7 +26,7 @@ type Summary struct {
 	Folder   string    `json:"folder"`
 	Title    string    `json:"title,omitempty"`
 	Subtitle string    `json:"subtitle,omitempty"`
-	Source   string    `json:"source,omitempty"`
+	Sources  []string  `json:"source"`
 	Label    string    `json:"label"`
 	Untitled bool      `json:"untitled"`
 	Tags     []string  `json:"tags"`
@@ -347,8 +347,8 @@ func selectCols(props bool) string {
 
 // scanSummary reads one row of selectCols, then the extra columns, if any.
 func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mtime, ckey int64, untitled int, titleKey string, err error) {
-	var tagsText, propsText, partialText string
-	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &s.Source, &untitled, &s.Label, &s.Type,
+	var tagsText, sourceText, propsText, partialText string
+	dest := []any{&rowid, &s.ID, &s.Path, &s.Folder, &s.Title, &s.Subtitle, &sourceText, &untitled, &s.Label, &s.Type,
 		&tagsText, &s.Created, &mtime, &s.Excerpt, &titleKey, &ckey}
 	if props {
 		dest = append(dest, &propsText, &s.Rev, &partialText)
@@ -361,6 +361,9 @@ func scanSummary(rows *sql.Rows, props bool, extra ...any) (s Summary, rowid, mt
 	s.Updated = time.Unix(0, mtime).UTC()
 	if err := json.Unmarshal([]byte(tagsText), &s.Tags); err != nil || s.Tags == nil {
 		s.Tags = []string{}
+	}
+	if err := json.Unmarshal([]byte(sourceText), &s.Sources); err != nil || s.Sources == nil {
+		s.Sources = []string{}
 	}
 	if props {
 		if propsText == "" {
@@ -502,6 +505,41 @@ func (x *Index) Tags() ([]TagCount, error) {
 		for rows.Next() {
 			var t TagCount
 			if err := rows.Scan(&t.Tag, &t.Pages); err != nil {
+				return err
+			}
+			out = append(out, t)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SourceCount is a source with the number of pages that have it.
+type SourceCount struct {
+	Source string `json:"source"`
+	Pages  int    `json:"pages"`
+}
+
+// maxUsedSources is the most sources UsedSources lists.
+const maxUsedSources = 500
+
+// UsedSources returns the sources the pages have, most used first, for the
+// suggestions of an input. The sources are rows of the props table (see
+// BuildEntry), and props_val serves the grouping.
+func (x *Index) UsedSources() ([]SourceCount, error) {
+	out := []SourceCount{}
+	err := x.one(func(db querier) error {
+		rows, err := db.Query(`SELECT val, count(*) AS n FROM props INDEXED BY props_val WHERE key = 'source' GROUP BY val ORDER BY n DESC, val LIMIT ?`, maxUsedSources)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t SourceCount
+			if err := rows.Scan(&t.Source, &t.Pages); err != nil {
 				return err
 			}
 			out = append(out, t)

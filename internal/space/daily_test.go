@@ -593,15 +593,15 @@ func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
 	mustCreate(t, s, "中文", meta("title", "t", "作者", "苏轼", "出处", "东坡集"), "x\n")
 	folder := func(name string) DailySource { f := name; return DailySource{Folder: &f} }
 	p, _, err := s.DailyFrom("S", "2026-11-23", 0, folder("有"))
-	if err != nil || p == nil || p.Author != "纳兰性德" || p.Page.Source != "纳兰词" {
+	if err != nil || p == nil || p.Author != "纳兰性德" || strings.Join(p.Page.Sources, ",") != "纳兰词" {
 		t.Fatalf("%+v %v", p, err)
 	}
 	p, _, err = s.DailyFrom("S", "2026-11-23", 0, folder("没有"))
-	if err != nil || p == nil || p.Author != "" || p.Page.Source != "" {
+	if err != nil || p == nil || p.Author != "" || len(p.Page.Sources) != 0 {
 		t.Fatalf("%+v %v", p, err)
 	}
 	p, _, err = s.DailyFrom("S", "2026-11-23", 0, folder("中文"))
-	if err != nil || p == nil || p.Author != "苏轼" || p.Page.Source != "东坡集" {
+	if err != nil || p == nil || p.Author != "苏轼" || strings.Join(p.Page.Sources, ",") != "东坡集" {
 		t.Fatalf("%+v %v", p, err)
 	}
 }

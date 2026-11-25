@@ -207,7 +207,7 @@ func (s *server) dailyFromSpace(ctx context.Context, d siteDefault, date string,
 		return nil, "no_match", nil
 	}
 	// What the page says it is from (its source, its author), else its title.
-	source := pick.Page.Source
+	source := joinSources(pick.Page.Sources, lang)
 	if source == "" {
 		source = pick.Page.Title
 	}
