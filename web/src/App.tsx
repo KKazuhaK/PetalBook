@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@/providers/theme'
@@ -16,6 +16,7 @@ import { FolderList, RecentList, SearchList, TagList } from '@/pages/Lists'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { RememberAccount } from '@/components/auth/RememberAccount'
 import { loginUrl } from '@/lib/auth'
+import { installSyncedPrefs } from '@/lib/syncedPrefs'
 import { t } from '@/i18n'
 
 // The editor drags in Tiptap, ProseMirror and the Markdown pipeline; the list
@@ -42,6 +43,33 @@ const CheckPage = lazy(() => import('@/pages/CheckPage'))
 const NotificationsPage = lazy(() => import('@/components/notifications/NotificationsPage'))
 // The home page of a space: the default landing, in a chunk of its own so the lists do not carry it.
 const HomePage = lazy(() => import('@/components/home/HomePage'))
+
+// The person's own preferences (table columns and widths, the tour) live in their personal space: this is the store the
+// screens read them from, in place of the one that only knows this browser (see lib/syncedPrefs.ts).
+const prefs = installSyncedPrefs()
+
+// The most the first screen waits for the person's file: past it the browser's own copy is used, and the file is
+// merged in when it comes.
+const PREFS_WAIT_MS = 1200
+
+// Reads the person's file once, before the pages that read their preferences are shown.
+function PrefsGate({ userId, children }: { userId: string; children: ReactNode }) {
+  const [ready, setReady] = useState(prefs.status().hydrated)
+  useEffect(() => {
+    let live = true
+    const done = () => live && setReady(true)
+    const wait = setTimeout(done, PREFS_WAIT_MS)
+    void prefs.hydrate(userId).finally(() => {
+      clearTimeout(wait)
+      done()
+    })
+    return () => {
+      live = false
+      clearTimeout(wait)
+    }
+  }, [userId])
+  return ready ? children : <PageFallback />
+}
 
 const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
@@ -83,7 +111,11 @@ function AuthGate() {
     // A person who must have a passkey and has none: nothing but the page to set one up.
     if (s.hold === 'passkey') return later(<HeldPage />)
   }
-  return <Outlet />
+  return (
+    <PrefsGate key={s.user?.id ?? 'local'} userId={s.user?.id ?? 'local'}>
+      <Outlet />
+    </PrefsGate>
+  )
 }
 
 // `/` goes to the space used last, or the first one.
@@ -164,6 +196,7 @@ export default function App() {
   useEffect(
     () =>
       onSignedOut((endedReason) => {
+        void prefs.reset()
         // The sign-in page says why from the session it is given.
         queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, user: null, endedReason })
       }),
