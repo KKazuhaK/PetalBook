@@ -159,13 +159,19 @@ async function treeOf(store: OfflineStore): Promise<TreeResponse> {
   const stored = await store.tree()
   if (stored) return stored
   const counts = new Map<string, number>([['', 0]])
+  const newest = new Map<string, string>()
   for (const e of await store.catalog()) {
     counts.set(e.folder, (counts.get(e.folder) ?? 0) + 1)
-    for (let f = e.folder; f !== ''; f = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '')
+    for (let f = e.folder; ; f = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '') {
       if (!counts.has(f)) counts.set(f, 0)
+      if (e.updated > (newest.get(f) ?? '')) newest.set(f, e.updated)
+      if (f === '') break
+    }
   }
   return {
-    folders: [...counts].sort((a, b) => compareCodePoints(a[0], b[0])).map(([path, pages]) => ({ path, pages })),
+    folders: [...counts]
+      .sort((a, b) => compareCodePoints(a[0], b[0]))
+      .map(([path, pages]) => ({ path, pages, ...(newest.has(path) ? { updated: newest.get(path) } : {}) })),
   }
 }
 

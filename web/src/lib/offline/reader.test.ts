@@ -124,11 +124,13 @@ describe('reading without the server', () => {
       await make('Tang', 'b', 'x', { tags: ['甲'] })
       await S().createFolder('Empty')
     })
+    const when = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/)
+    // Each folder's updated is the newest page in it or below it; the empty folder has none.
     expect((await S().tree()).folders).toEqual([
-      { path: '', pages: 0 },
+      { path: '', pages: 0, updated: when },
       { path: 'Empty', pages: 0 },
-      { path: 'Tang', pages: 1 },
-      { path: 'Tang/Li', pages: 1 },
+      { path: 'Tang', pages: 1, updated: when },
+      { path: 'Tang/Li', pages: 1, updated: when },
     ])
     expect((await S().tags()).tags).toEqual([
       { tag: '甲', pages: 2 },

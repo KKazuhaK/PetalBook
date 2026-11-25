@@ -465,33 +465,66 @@ func keysetPredicate(order []sortKey, c *cursor) (string, []any) {
 	return build(0)
 }
 
-// FolderCount is a folder with the number of pages directly inside it.
+// FolderCount is a folder with the number of pages directly inside it and the
+// time of the newest page in it or anywhere below it (nil when there is none).
 type FolderCount struct {
-	Path  string `json:"path"`
-	Pages int    `json:"pages"`
+	Path    string     `json:"path"`
+	Pages   int        `json:"pages"`
+	Updated *time.Time `json:"updated,omitempty"` // same format as a page's updated
 }
 
-// Tree returns every known folder, empty ones included. Cost: O(folders), each
-// count served by the (folder, mtime) index.
+// Tree returns every known folder, empty ones included. Cost: O(folders) with
+// one query: each count and each newest mtime is one probe of the
+// (folder, mtime) index, then every folder's value is handed to its parent in
+// one pass, so no page is scanned and nothing is recomputed per ancestor.
 func (x *Index) Tree() ([]FolderCount, error) {
 	out := []FolderCount{}
+	var newest []int64                    // newest mtime_ns per folder, 0 = none
 	err := x.one(func(db querier) error { // one query, read like the others (read.go)
-		rows, err := db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
+		rows, err := db.Query(`SELECT f.path, (SELECT count(*) FROM pages p WHERE p.folder = f.path),
+			(SELECT max(p.mtime_ns) FROM pages p WHERE p.folder = f.path) FROM folders f ORDER BY f.path`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var f FolderCount
-			if err := rows.Scan(&f.Path, &f.Pages); err != nil {
+			var m sql.NullInt64
+			if err := rows.Scan(&f.Path, &f.Pages, &m); err != nil {
 				return err
 			}
 			out = append(out, f)
+			newest = append(newest, m.Int64)
 		}
 		return rows.Err()
 	})
 	if err != nil {
 		return nil, err
+	}
+	at := make(map[string]int, len(out))
+	for i, f := range out {
+		at[f.Path] = i
+	}
+	// A parent sorts before its children, so walking backwards hands every
+	// folder's subtree maximum up before its parent is read.
+	for i := len(out) - 1; i >= 0; i-- {
+		p := out[i].Path
+		if p == "" {
+			continue
+		}
+		parent := ""
+		if k := strings.LastIndexByte(p, '/'); k >= 0 {
+			parent = p[:k]
+		}
+		if j, ok := at[parent]; ok && newest[i] > newest[j] {
+			newest[j] = newest[i]
+		}
+	}
+	for i := range out {
+		if newest[i] != 0 {
+			t := time.Unix(0, newest[i]).UTC()
+			out[i].Updated = &t
+		}
 	}
 	return out, nil
 }

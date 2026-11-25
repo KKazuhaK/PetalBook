@@ -163,7 +163,7 @@ func TestCreateAndGet(t *testing.T) {
 		t.Fatalf("unknown id: %v", err)
 	}
 	tree, _ := s.Tree()
-	if len(tree) != 2 || tree[0] != (index.FolderCount{Path: "", Pages: 0}) || tree[1] != (index.FolderCount{Path: "Tang", Pages: 1}) {
+	if len(tree) != 2 || tree[0].Path != "" || tree[0].Pages != 0 || tree[1].Path != "Tang" || tree[1].Pages != 1 || tree[1].Updated == nil {
 		t.Fatalf("tree %+v", tree)
 	}
 	// Listing finds it and reports the summary fields.

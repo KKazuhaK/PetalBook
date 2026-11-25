@@ -4871,10 +4871,14 @@ remote, referred to by nothing.
 ### `GET /api/spaces/{space}/tree`
 
 Every folder that exists, including empty ones, with the number of pages
-directly inside it.
+directly inside it and `updated`: the `updated` of the newest page in the
+folder or in any folder below it, at any depth, in the format a page has. A
+folder with no page in it or below it has no `updated` key. The server works
+it out in one query and one pass over the folders, so the cost grows with the
+number of folders, not pages.
 
 ```json
-{"folders": [{"path": "", "pages": 3}, {"path": "Tang", "pages": 95}, {"path": "随笔/2026", "pages": 4}]}
+{"folders": [{"path": "", "pages": 3, "updated": "2026-11-21T08:30:00Z"}, {"path": "Tang", "pages": 95, "updated": "2026-11-20T10:02:11Z"}, {"path": "随笔", "pages": 0}]}
 ```
 
 ### `POST /api/spaces/{space}/folders`
