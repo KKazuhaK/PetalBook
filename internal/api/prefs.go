@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 )
 
@@ -35,50 +37,135 @@ const (
 
 var prefKey = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,120}$`)
 
+// maxPrefsRetries is how many times a flush that failed for a reason that may
+// pass (the space is away, the disk was full) is tried again, each time after
+// twice the wait before, before what it held is given up.
+const maxPrefsRetries = 6
+
 type prefsHub struct {
 	mu      sync.Mutex
 	pending map[string]*pendingPrefs
 	closed  bool
 }
 
-type pendingPrefs struct {
-	// set holds the values to write; a nil value is a key to remove.
-	set   map[string]any
-	timer *time.Timer
+// prefVal is a value written and not committed yet; nil is a key to remove.
+// seq says which write it is, so a flush takes away only what it wrote.
+type prefVal struct {
+	v   any
+	seq uint64
 }
 
-func (h *prefsHub) add(user string, set map[string]any, quiet time.Duration, fire func()) bool {
+type pendingPrefs struct {
+	set   map[string]prefVal
+	seq   uint64
+	timer *time.Timer
+	// flushing: a flush of this person is running. There is never more than
+	// one, so two cannot land out of order.
+	flushing bool
+	// retries counts the flushes in a row that failed and may be tried again.
+	retries int
+}
+
+// add keeps the values of a write, after check has accepted them as they would
+// be with what is pending (check gets the pending values, nil for a removal).
+func (h *prefsHub) add(user string, set map[string]any, quiet time.Duration, fire func(), check func(pending map[string]any) error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
-		return false
+		return errPrefsClosed
 	}
 	if h.pending == nil {
 		h.pending = map[string]*pendingPrefs{}
 	}
 	p := h.pending[user]
+	if check != nil {
+		cur := map[string]any{}
+		if p != nil {
+			for k, pv := range p.set {
+				cur[k] = pv.v
+			}
+		}
+		if err := check(cur); err != nil {
+			return err
+		}
+	}
 	if p == nil {
-		p = &pendingPrefs{set: map[string]any{}}
+		p = &pendingPrefs{set: map[string]prefVal{}}
 		h.pending[user] = p
-		p.timer = time.AfterFunc(quiet, fire)
 	}
 	for k, v := range set {
-		p.set[k] = v
+		p.seq++
+		p.set[k] = prefVal{v, p.seq}
 	}
-	return true
+	if p.timer == nil && !p.flushing {
+		p.timer = time.AfterFunc(quiet, fire)
+	}
+	return nil
 }
 
-// take removes and returns what is pending for the person.
-func (h *prefsHub) take(user string) map[string]any {
+var errPrefsClosed = errors.New("the server is shutting down")
+
+// begin starts the one flush of the person: what is pending now. ok is false
+// when there is nothing, or a flush is running already (it schedules the next
+// one when it ends).
+func (h *prefsHub) begin(user string) (snap map[string]prefVal, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	p := h.pending[user]
+	if p == nil || p.flushing || len(p.set) == 0 {
+		return nil, false
+	}
+	p.flushing = true
+	if p.timer != nil {
+		p.timer.Stop()
+		p.timer = nil
+	}
+	snap = make(map[string]prefVal, len(p.set))
+	for k, pv := range p.set {
+		snap[k] = pv
+	}
+	return snap, true
+}
+
+// finish ends the flush that began with snap. When it is done with (written,
+// or given up), the values it held go, unless they were written again since:
+// those are newer and stay. When it is to be tried again, everything stays
+// and the next try waits twice as long as the one before; after
+// maxPrefsRetries tries it is given up (gaveUp). Whatever is left is flushed
+// after a wait.
+func (h *prefsHub) finish(user string, snap map[string]prefVal, retry bool, quiet time.Duration, fire func()) (gaveUp bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	p := h.pending[user]
 	if p == nil {
-		return nil
+		return false
 	}
-	p.timer.Stop()
-	delete(h.pending, user)
-	return p.set
+	p.flushing = false
+	wait := quiet
+	if retry {
+		p.retries++
+		if p.retries > maxPrefsRetries {
+			retry, gaveUp = false, true
+		} else {
+			wait = quiet << p.retries
+		}
+	}
+	if !retry {
+		p.retries = 0
+		for k, pv := range snap {
+			if cur, ok := p.set[k]; ok && cur.seq == pv.seq {
+				delete(p.set, k)
+			}
+		}
+	}
+	if len(p.set) == 0 {
+		delete(h.pending, user)
+		return gaveUp
+	}
+	if !h.closed && p.timer == nil {
+		p.timer = time.AfterFunc(wait, fire)
+	}
+	return gaveUp
 }
 
 // peek is a copy of what is pending for the person.
@@ -90,8 +177,8 @@ func (h *prefsHub) peek(user string) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(p.set))
-	for k, v := range p.set {
-		out[k] = v
+	for k, pv := range p.set {
+		out[k] = pv.v
 	}
 	return out
 }
@@ -102,7 +189,10 @@ func (h *prefsHub) stop() []string {
 	h.closed = true
 	users := make([]string, 0, len(h.pending))
 	for u, p := range h.pending {
-		p.timer.Stop()
+		if p.timer != nil {
+			p.timer.Stop()
+			p.timer = nil
+		}
 		users = append(users, u)
 	}
 	return users
@@ -115,11 +205,25 @@ func (s *server) prefsQuiet() time.Duration {
 	return DefaultPrefsQuiet
 }
 
-// flushPrefs commits what is pending for the person. A failure puts it back
-// (older than anything written since) and tries again after the quiet period.
+func (s *server) prefsFire(userID string) func() {
+	return func() { s.goBg(func(ctx context.Context) { s.flushPrefs(ctx, userID) }) }
+}
+
+// permanentPrefsError says whether a write of the preferences can never work
+// as it is: the file would be too large or is refused, the person has no
+// personal space, or the space is read only (past its deadline for a remote).
+func permanentPrefsError(err error) bool {
+	var inv *space.InvalidError
+	var req *spaces.RequiredError
+	return errors.As(err, &inv) || errors.As(err, &req) || errors.Is(err, spaces.ErrNoPersonalSpace)
+}
+
+// flushPrefs commits what is pending for the person, one flush at a time. A
+// write that can never work is dropped (the browser keeps its copy); one that
+// may work later is tried again, a few times, each after a longer wait.
 func (s *server) flushPrefs(ctx context.Context, userID string) {
-	set := s.prefs.take(userID)
-	if len(set) == 0 {
+	snap, ok := s.prefs.begin(userID)
+	if !ok {
 		return
 	}
 	err := func() error {
@@ -134,38 +238,34 @@ func (s *server) flushPrefs(ctx context.Context, userID string) {
 		}
 		return sp.WritePrefs(by, func(cur map[string]any) bool {
 			changed := false
-			for k, v := range set {
+			for k, pv := range snap {
 				old, had := cur[k]
-				if v == nil {
+				if pv.v == nil {
 					if had {
 						delete(cur, k)
 						changed = true
 					}
 					continue
 				}
-				if !had || !jsonEqual(old, v) {
-					cur[k] = v
+				if !had || !jsonEqual(old, pv.v) {
+					cur[k] = pv.v
 					changed = true
 				}
 			}
 			return changed
 		})
 	}()
-	if err == nil {
-		return
+	retry := err != nil && !permanentPrefsError(err) && ctx.Err() == nil
+	switch {
+	case err == nil, errors.Is(err, spaces.ErrNoPersonalSpace):
+	case retry:
+		s.log.Warn("could not write the preferences of a person; trying again later", "error", err)
+	default:
+		s.log.Warn("the preferences of a person cannot be written and are dropped; the browser keeps them", "keys", len(snap), "error", err)
 	}
-	if errors.Is(err, spaces.ErrNoPersonalSpace) {
-		return // the person has no place for it; the browser keeps it
+	if s.prefs.finish(userID, snap, retry, s.prefsQuiet(), s.prefsFire(userID)) {
+		s.log.Warn("gave up writing the preferences of a person; the browser keeps them", "keys", len(snap), "tries", maxPrefsRetries+1, "error", err)
 	}
-	s.log.Warn("could not write the preferences of a person", "error", err)
-	if ctx.Err() != nil {
-		return
-	}
-	// Back in, below what came in since.
-	for k, v := range s.prefs.peek(userID) {
-		set[k] = v
-	}
-	s.prefs.add(userID, set, s.prefsQuiet(), func() { s.goBg(func(ctx context.Context) { s.flushPrefs(ctx, userID) }) })
 }
 
 func jsonEqual(a, b any) bool {
@@ -243,8 +343,10 @@ func (s *server) patchPrefs(c *call) {
 		}
 		set[k] = v // null removes
 	}
-	// A person with nowhere to keep them is told, and the browser keeps them.
-	_, release, err := s.spaces.OpenPersonal(c.r.Context(), c.user().ID)
+	// A person with nowhere to keep them, or whose space cannot be written now
+	// (switched off, away, read only), is told, and the browser keeps them.
+	uid := c.user().ID
+	sp, release, err := s.spaces.OpenPersonal(c.r.Context(), uid)
 	if errors.Is(err, spaces.ErrNoPersonalSpace) || errors.Is(err, spaces.ErrPersonalAway) {
 		writeJSON(c.w, http.StatusOK, struct {
 			Personal bool `json:"personal"`
@@ -255,9 +357,42 @@ func (s *server) patchPrefs(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	cur, rerr := sp.ReadPrefs()
+	werr := sp.Writable()
 	release()
-	uid := c.user().ID
-	if !s.prefs.add(uid, set, s.prefsQuiet(), func() { s.goBg(func(ctx context.Context) { s.flushPrefs(ctx, uid) }) }) {
+	if werr != nil || rerr != nil {
+		writeJSON(c.w, http.StatusOK, struct {
+			Personal bool `json:"personal"`
+		}{false})
+		return
+	}
+	// The file, with what is pending and this write, must fit: a write that
+	// cannot be committed is refused now, not kept in memory.
+	fits := func(pending map[string]any) error {
+		all := make(map[string]any, len(cur)+len(pending)+len(set))
+		for _, m := range []map[string]any{cur, pending, set} {
+			for k, v := range m {
+				if v == nil {
+					delete(all, k)
+				} else {
+					all[k] = v
+				}
+			}
+		}
+		if len(all) > maxPrefKeys {
+			return &codedError{code: "prefs_full", msg: fmt.Sprintf("A person keeps at most %d preferences.", maxPrefKeys)}
+		}
+		if n, err := space.PrefsSize(all); err != nil || n > space.MaxPrefsBytes {
+			return &codedError{code: "prefs_full", msg: fmt.Sprintf("The preferences would be larger than %d bytes.", space.MaxPrefsBytes)}
+		}
+		return nil
+	}
+	if err := s.prefs.add(uid, set, s.prefsQuiet(), s.prefsFire(uid), fits); err != nil {
+		var ce *codedError
+		if errors.As(err, &ce) {
+			writeCoded(c.w, ce)
+			return
+		}
 		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is shutting down.")
 		return
 	}

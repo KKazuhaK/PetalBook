@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/KKazuhaK/PetalBook/internal/api"
+	"github.com/KKazuhaK/PetalBook/internal/space"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -204,4 +205,74 @@ func TestSingleUserPrefsLiveInTheOneSpace(t *testing.T) {
 	if !strings.Contains(string(b), "pb.table.x") {
 		t.Fatalf("%s", b)
 	}
+}
+
+// Writes that could never be committed are refused when they are made, never
+// kept in memory: a small key and ten of 30 KiB do not all fit in the file.
+func TestPrefsThatWouldNotFitInTheFileAreRefused(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{prefsQuiet: 200 * time.Millisecond}, func(t *testing.T, a *acc) {
+		u := a.setup("kazuha", pw)
+		pid := u.personalSpace()
+		file := filepath.Join(a.dir, "spaces", pid, ".petalbook", "prefs.yml")
+		setPrefsAPI(t, u, map[string]any{"small": 1}).want(t, 200, "")
+		big := strings.Repeat("v", 30<<10)
+		took, refused := 0, 0
+		for i := 0; i < 10; i++ {
+			r := setPrefsAPI(t, u, map[string]any{"big" + string(rune('a'+i)): big})
+			switch {
+			case r.code == 200:
+				took++
+			case r.code == 400 && r.body["error"] == "prefs_full":
+				refused++
+			default:
+				t.Fatalf("%d %s", r.code, r.raw)
+			}
+		}
+		if took == 0 || refused == 0 || took*30<<10 > 256<<10 {
+			t.Fatalf("took %d, refused %d", took, refused)
+		}
+		_, p := getPrefs(t, u)
+		if len(p) != took+1 {
+			t.Fatalf("%d keys read", len(p))
+		}
+		// What was taken is written.
+		body := waitFile(t, file)
+		if !bytes.Contains(body, []byte("small: 1")) {
+			t.Fatalf("%.200s", body)
+		}
+		// And no more than 100 keys, counting the file and what is pending.
+		setPrefsAPI(t, u, manyKeys(95)).want(t, 400, "prefs_full")
+	})
+}
+
+// A batch that the file cannot take (it grew by hand meanwhile) is dropped,
+// not put back and tried every few minutes for ever.
+func TestPrefsThatCannotBeWrittenAreDroppedNotRetriedForever(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{prefsQuiet: 300 * time.Millisecond}, func(t *testing.T, a *acc) {
+		u := a.setup("kazuha", pw)
+		pid := u.personalSpace()
+		file := filepath.Join(a.dir, "spaces", pid, ".petalbook", "prefs.yml")
+		setPrefsAPI(t, u, map[string]any{"x": strings.Repeat("y", 1024)}).want(t, 200, "")
+		// The file is filled to the brim by hand before the batch is written.
+		hand := "hand: " + strings.Repeat("z", space.MaxPrefsBytes-600) + "\n"
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(hand), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Gone once the write was tried, and for good: read a while after.
+		time.Sleep(time.Second)
+		for i := 0; i < 10; i++ {
+			if _, p := getPrefs(t, u); p["x"] != nil {
+				t.Fatal("the batch is still kept in memory")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if b, _ := os.ReadFile(file); string(b) != hand {
+			t.Fatal("the file was changed")
+		}
+	})
 }

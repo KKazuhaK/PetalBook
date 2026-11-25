@@ -82,6 +82,37 @@ func jsonable(v any) any {
 	return v
 }
 
+// encodePrefs is the file for prefs: nothing when there are none.
+func encodePrefs(prefs map[string]any) ([]byte, error) {
+	if len(prefs) == 0 {
+		return nil, nil
+	}
+	doc := &yaml.Node{}
+	if err := doc.Encode(prefs); err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(&yaml.Node{Kind: yaml.DocumentNode, HeadComment: prefsHead, Content: []*yaml.Node{doc}})
+}
+
+// PrefsSize is how large the file would be with these preferences (to be
+// held to MaxPrefsBytes before a write is taken).
+func PrefsSize(prefs map[string]any) (int, error) {
+	data, err := encodePrefs(prefs)
+	return len(data), err
+}
+
+// Writable says whether a change of the space could be made now: not while it
+// has no files here, nor while the server's storage policy holds it read only.
+func (s *Space) Writable() error {
+	if s.evicted {
+		return unavailable(nil, "the space has no files here right now")
+	}
+	if s.gate != nil {
+		return s.gate()
+	}
+	return nil
+}
+
 // WritePrefs lets edit change what the file says and writes it back if edit
 // says it changed (a change of the space like any other: journaled, committed
 // by the committer's quiet period, pushed when the space follows a remote). It
@@ -99,19 +130,12 @@ func (s *Space) WritePrefs(by Author, edit func(prefs map[string]any) (changed b
 		if !edit(cur) {
 			return struct{}{}, nil
 		}
-		var data []byte
-		if len(cur) > 0 {
-			doc := &yaml.Node{}
-			if err := doc.Encode(cur); err != nil {
-				return struct{}{}, err
-			}
-			wrapped := &yaml.Node{Kind: yaml.DocumentNode, HeadComment: prefsHead, Content: []*yaml.Node{doc}}
-			if data, err = yaml.Marshal(wrapped); err != nil {
-				return struct{}{}, err
-			}
-			if len(data) > MaxPrefsBytes {
-				return struct{}{}, invalidf("The preferences are larger than %d bytes", MaxPrefsBytes)
-			}
+		data, err := encodePrefs(cur)
+		if err != nil {
+			return struct{}{}, err
+		}
+		if len(data) > MaxPrefsBytes {
+			return struct{}{}, invalidf("The preferences are larger than %d bytes", MaxPrefsBytes)
 		}
 		if _, err := s.clearWayIn(tx, PrefsFile, PrefsFile); err != nil {
 			return struct{}{}, err

@@ -5099,13 +5099,25 @@ session and caches the answer.
 from 1 to 100 keys, each a name of up to 120 letters, digits and `. _ : / -`
 (no `..`) and a JSON value of at most 32 KiB; `null` removes the key (`400
 invalid` otherwise). `{"personal": bool}`, `false` when there is nowhere to
-keep it. The write is kept in memory (a read shows it at once) and written in
+keep it or it cannot be written now (no personal space, switched off, evicted,
+or read only past its deadline for a remote): nothing is then kept, and the
+browser keeps it. `400 prefs_full` when the file, with what is pending and this
+write, would have more than 100 keys or be larger than 256 KiB: nothing of the
+write is kept. The write is kept in memory (a read shows it at once) and written in
 **one batch** `3 minutes` after the first of a burst (`DefaultPrefsQuiet`), so a
 person dragging a column makes one small commit in a few minutes: the commit is
 "Update prefs.yml", by the person, and is not in the history of any page; the
 file is written by the space's own committer and, when the space follows a
 remote, pushed with it (the personal space's own repository). What is pending
 is written when the server closes. The file is at most 256 KiB.
+
+There is one write of a person's batch at a time, and a value written while it
+runs stays for the next one (the newer value wins). A batch that can never be
+written (the file would be too large, grown by hand meanwhile; the space is
+read only; the person has no personal space) is dropped and logged; one that
+may work later (the space is evicted for a while) is tried again up to 6 times,
+each after twice the wait before (3, 6, 12 … 192 minutes), then dropped and
+logged. The browser keeps its copy either way.
 
 ## API tokens
 
