@@ -427,7 +427,8 @@ export interface GroupsParams {
 }
 
 export interface TreeResponse {
-  folders: { path: string; pages: number }[]
+  // `updated`: the newest page in the folder or below it; absent when there is none.
+  folders: { path: string; pages: number; updated?: string }[]
 }
 // The ten names the server accepts for a tag's colour; how each looks is the
 // client's business (src/lib/tagColors.ts).

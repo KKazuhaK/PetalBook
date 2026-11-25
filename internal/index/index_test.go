@@ -529,7 +529,10 @@ func TestTreeAndTags(t *testing.T) {
 	src := &withDirs{m, []string{"empty", "d/sub/deep"}}
 	syncAll(t, x, src, false)
 	tree, _ := x.Tree()
-	want := []FolderCount{{"", 1}, {"d", 2}, {"d/sub", 0}, {"d/sub/deep", 0}, {"empty", 0}}
+	want := []FolderCount{{Path: "", Pages: 1}, {Path: "d", Pages: 2}, {Path: "d/sub"}, {Path: "d/sub/deep"}, {Path: "empty"}}
+	for i := range tree {
+		tree[i].Updated = nil // the times are checked in TestTreeUpdated
+	}
 	if !reflect.DeepEqual(tree, want) {
 		t.Fatalf("%+v", tree)
 	}

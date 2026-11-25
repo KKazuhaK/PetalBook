@@ -10,22 +10,35 @@ export const rowKey = (r: TableRow): string => (r.kind === 'folder' ? `f:${r.fol
 
 const compare = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
 
-// The rows to show. By default the subfolders come first, then the pages in the order the server gave. With `mixed` the
-// folders go in among the pages when the order is by title (by name); folders have no date, so under any other order
-// they follow the pages.
+// The rows to show. By default the subfolders come first, then the pages in the order the server gave. The folders are
+// ordered by the sort where it means something for a folder: by name under a title sort, by their updated (the newest
+// page in them) under an updated sort, empty ones last; by name under any other. With `mixed` the folders go in among
+// the pages under a title or updated sort, by the same value; under any other order they follow the pages.
 export function arrangeRows(folders: FolderEntry[], pages: PageSummary[], mixed: boolean, sort: string): TableRow[] {
-  const f: TableRow[] = [...folders]
-    .sort((a, b) => compare(a.name, b.name) * (sort === '-title' ? -1 : 1))
-    .map((folder) => ({ kind: 'folder', folder }))
+  const byDate = sort === '' || sort === 'updated' || sort === '-updated'
+  const dir = sort === '-title' || sort === '' || sort === '-updated' ? -1 : 1
+  const ms = (iso?: string) => (iso ? Date.parse(iso) : NaN)
+  const dated = (f: FolderEntry) => !Number.isNaN(ms(f.updated))
+  const sorted = [...folders].sort((a, b) => {
+    if (byDate && (dated(a) || dated(b))) {
+      if (dated(a) !== dated(b)) return dated(a) ? -1 : 1 // empty ones last, either way round
+      return (ms(a.updated) - ms(b.updated)) * dir || compare(a.name, b.name)
+    }
+    return compare(a.name, b.name) * (sort === '-title' ? -1 : 1)
+  })
+  const f: TableRow[] = sorted.map((folder) => ({ kind: 'folder', folder }))
   const p: TableRow[] = pages.map((page) => ({ kind: 'page', page }))
   if (!mixed) return [...f, ...p]
-  if (sort !== 'title' && sort !== '-title') return [...p, ...f]
-  const dir = sort === '-title' ? -1 : 1
-  const name = (r: TableRow) => (r.kind === 'folder' ? r.folder.name : r.page.label)
+  if (sort !== 'title' && sort !== '-title' && !byDate) return [...p, ...f]
+  // The folders, already in order, step in front of the first page they come before.
+  const before = (folder: FolderEntry, row: Extract<TableRow, { kind: 'page' }>) =>
+    byDate
+      ? dated(folder) && (ms(folder.updated) - (Date.parse(row.page.updated) || 0)) * dir < 0
+      : compare(folder.name, row.page.label) * dir <= 0
   const out: TableRow[] = []
   let i = 0
   for (const row of p) {
-    while (i < f.length && compare(name(f[i]), name(row)) * dir <= 0) out.push(f[i++])
+    while (i < sorted.length && before(sorted[i], row as Extract<TableRow, { kind: 'page' }>)) out.push(f[i++])
     out.push(row)
   }
   return [...out, ...f.slice(i)]

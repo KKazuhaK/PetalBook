@@ -1057,11 +1057,23 @@ export function createSpaceStore({
 
   const tree = () => {
     const counts = new Map<string, number>()
-    for (const p of pages.values()) counts.set(p.folder, (counts.get(p.folder) ?? 0) + 1)
+    // The newest page of each folder, handed up to every folder above it (as the server does).
+    const newest = new Map<string, number>()
+    for (const p of pages.values()) {
+      counts.set(p.folder, (counts.get(p.folder) ?? 0) + 1)
+      for (let f = p.folder; ; f = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '') {
+        if (p.updated > (newest.get(f) ?? 0)) newest.set(f, p.updated)
+        if (f === '') break
+      }
+    }
     return {
       folders: [...folders]
         .sort((a, b) => a.localeCompare(b, 'zh'))
-        .map((path) => ({ path, pages: counts.get(path) ?? 0 })),
+        .map((path) => ({
+          path,
+          pages: counts.get(path) ?? 0,
+          ...(newest.has(path) ? { updated: rfc3339(newest.get(path)!) } : {}),
+        })),
     }
   }
 

@@ -87,6 +87,25 @@ describe('the folder as a table', () => {
     expect(document.querySelector('svg[data-icon="flower"]')).not.toBeNull()
   })
 
+  it("shows a folder's Updated, the newest page below it, and nothing for an empty folder", async () => {
+    m = await mount(shell, {
+      entries: (server) => {
+        send(server, 'POST', '/folders', { path: 'Notes/Empty' })
+        send(server, 'POST', '/pages', { folder: 'Notes/Deep/Er', meta: { title: 'Down' }, body: 'x\n' })
+        return ['/s/default/f/Notes']
+      },
+    })
+    await settle(() => document.querySelectorAll('tr[data-row]').length === 2, 'the rows')
+    const cell = (key: string) =>
+      document.querySelector(`tr[data-row="${key}"] td[data-column="updated"]`) ??
+      document.querySelectorAll(`tr[data-row="${key}"] td`)[1]
+    const deep = document.querySelector('tr[data-row="f:Notes/Deep"] time')
+    expect(deep).not.toBeNull()
+    expect(deep!.textContent).toBe(t.time.justNow)
+    expect(document.querySelector('tr[data-row="f:Notes/Empty"] time')).toBeNull()
+    expect(cell('f:Notes/Empty')).not.toBeNull()
+  })
+
   it('sorts by a header, and by the source, and says so in the address of the listing', async () => {
     await open()
     const header = (name: string) =>

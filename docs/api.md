@@ -4871,10 +4871,14 @@ remote, referred to by nothing.
 ### `GET /api/spaces/{space}/tree`
 
 Every folder that exists, including empty ones, with the number of pages
-directly inside it.
+directly inside it and `updated`: the `updated` of the newest page in the
+folder or in any folder below it, at any depth, in the format a page has. A
+folder with no page in it or below it has no `updated` key. The server works
+it out in one query and one pass over the folders, so the cost grows with the
+number of folders, not pages.
 
 ```json
-{"folders": [{"path": "", "pages": 3}, {"path": "Tang", "pages": 95}, {"path": "随笔/2026", "pages": 4}]}
+{"folders": [{"path": "", "pages": 3, "updated": "2026-11-21T08:30:00Z"}, {"path": "Tang", "pages": 95, "updated": "2026-11-20T10:02:11Z"}, {"path": "随笔", "pages": 0}]}
 ```
 
 ### `POST /api/spaces/{space}/folders`
@@ -5976,7 +5980,10 @@ and the pages removed, in the order they last changed.
   then made again with the same id (moved out of the space and back, outside
   the server) is a catalogue entry, not a removal.
 - `tree` changes whenever a folder is made, moved or removed, or the number of
-  pages in a folder changes; the client then reads `GET …/tree` (and
+  pages in a folder changes. A folder's `updated` in that answer can change
+  without `tree` changing (a page was edited), so a client working offline
+  derives each folder's `updated` from the catalogue entries' `updated`
+  instead of from the tree it saved. The client then reads `GET …/tree` (and
   `GET …/tags` if it shows tags). `settings` changes whenever a file the server
   reads as settings changes (`.petalbook/space.yml`, `tags.yml`, the types and
   the templates); the client then reads again what it uses of them (`…/types`,

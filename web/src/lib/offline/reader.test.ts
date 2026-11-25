@@ -124,11 +124,13 @@ describe('reading without the server', () => {
       await make('Tang', 'b', 'x', { tags: ['甲'] })
       await S().createFolder('Empty')
     })
+    const when = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/)
+    // Each folder's updated is the newest page in it or below it; the empty folder has none.
     expect((await S().tree()).folders).toEqual([
-      { path: '', pages: 0 },
+      { path: '', pages: 0, updated: when },
       { path: 'Empty', pages: 0 },
-      { path: 'Tang', pages: 1 },
-      { path: 'Tang/Li', pages: 1 },
+      { path: 'Tang', pages: 1, updated: when },
+      { path: 'Tang/Li', pages: 1, updated: when },
     ])
     expect((await S().tags()).tags).toEqual([
       { tag: '甲', pages: 2 },
@@ -137,6 +139,26 @@ describe('reading without the server', () => {
     // Without what the server gave (an older copy), the catalogue is counted.
     await s.setTree(undefined as never)
     expect((await S().tree()).folders.map((f) => f.path)).toEqual(['', 'Tang', 'Tang/Li'])
+  })
+
+  it("moves a folder's updated offline when a page is edited, although the saved tree is not read again", async () => {
+    net.restore()
+    let clock = Date.UTC(2026, 10, 1, 8)
+    net = network({ now: () => clock })
+    const page = await make('Tang/Li/Deep', 'a', 'x\n')
+    await make('Other', 'b', 'x\n')
+    const s = await offlineWith('catalog', async () => {})
+    const at = async () => Object.fromEntries((await S().tree()).folders.map((f) => [f.path, f.updated ?? '']))
+    const before = await at()
+    expect(before['Tang']).toBe('2026-11-01T08:00:00Z')
+    net.up()
+    clock += 3_600_000
+    await S().savePage(page.id, { baseRev: page.rev, meta: page.meta, body: 'y\n' })
+    await syncSpace(s) // the page changed; the tree's stamp did not
+    net.down()
+    const after = await at()
+    for (const f of ['', 'Tang', 'Tang/Li', 'Tang/Li/Deep']) expect(after[f]).toBe('2026-11-01T09:00:00Z')
+    expect(after['Other']).toBe('2026-11-01T08:00:00Z')
   })
 
   it('does not answer what needs more than the catalogue and the text: properties, bodies, boards, history', async () => {
