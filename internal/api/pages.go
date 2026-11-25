@@ -346,7 +346,7 @@ func (s *server) savePage(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, toPage(p))
+	writeJSON(c.w, http.StatusOK, toSaved(p))
 }
 
 // patchProps changes properties of a page's header and nothing else.
@@ -679,5 +679,5 @@ func (s *server) commitDraft(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	writeJSON(c.w, http.StatusOK, toPage(p))
+	writeJSON(c.w, http.StatusOK, toSaved(p))
 }

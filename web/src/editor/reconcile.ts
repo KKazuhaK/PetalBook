@@ -57,6 +57,10 @@ export interface Body {
 export interface Ours {
   baseRev: string
   digest: string
+  // Set on the file a commit of ours wrote with link rewrites: `digest` is that
+  // file, at rev `onto`, and `baseRev` is the commit's `textRev`, the rev the text
+  // typed during the commit is on (see SaveController.committed).
+  onto?: string
 }
 export interface ServerDraftView extends Body {
   version: string

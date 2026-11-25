@@ -3169,13 +3169,63 @@ save the draft is usually stale, and the app shows both versions when the page
 is opened. A save that would write the bytes the file already has changes
 nothing and returns the same `rev`.
 
-- `200` with the page (new `rev`, possibly new `path`).
+- `200` with the page (new `rev`, possibly new `path`) and `textRev` (see
+  below).
 - `409 conflict` when `baseRev` is not the file's current rev, unless only the
   server's link rewrites changed the file since (see "Links between pages").
   The response is `{"error": "conflict", "message": "…", "current": {/* page */}}`
   so the client can show both versions.
 - `400 invalid` for a body that is not valid UTF-8, an `id` mismatch, or a
   request without `baseRev`, `meta` or `body`.
+
+#### Typing during a save
+
+A save can write other text than it was sent. A save whose `baseRev` is behind
+the file only by the server's link rewrites (a page it links to was renamed or
+moved meanwhile, see "Links between pages") gets the same rewrites made to its
+text; and when the save moves the file, the links in it that the move changes
+are rewritten too. The answer to a save
+(`PUT …/pages/{id}`) and to a commit (`POST …/pages/{id}/commit`) therefore
+carries `textRev` next to `rev`:
+
+```json
+{"id": "01JD3K8Q7Z", "path": "Tang/新名.md", "rev": "9c41…", "textRev": "57ad…", "body": "…", "…": "…"}
+```
+
+`textRev` is the rev of the page file as the client's text makes it (its
+`meta` and `body` as sent), before this save's link rewrites; `rev` is the file
+after them. When nothing was rewritten the two are equal. (Ids the server adds
+to links on save do not count: they are added again on the next save.) Only these two answers carry it: `GET`, `PATCH
+…/props` (which never rewrites links) and the other answers that return a page
+leave it out, and a client reads a missing `textRev` as `rev`.
+
+The rule for a client that keeps editing while the save is out:
+
+- nothing was typed since the save was sent: take the answer's `body`,
+  `meta` and `rev`, as for any save, and show them (the rewritten links
+  included);
+- something was typed: the text in hand is the sent text plus the typing, so
+  it is based on `textRev`, not on `rev`. The next save (or draft) sends
+  `baseRev = textRev`. The server has logged the rewrites as steps from
+  `textRev` to `rev`, makes them again to that text, and keeps the typing (the
+  same rebase as "Links between pages" describes). If the file changed in any other way since, the answer is the usual
+  `409 conflict` (or a stale draft), with nothing new to handle.
+
+Sending `baseRev = rev` with the old text would write the old link back: a
+link that carries an `id` is put right again on save, but one without (written
+outside PetalBook, or with a title of its own) would point at the old name.
+
+The cost is one field in two answers. A save that rewrote nothing does no
+more work than before. One that was rebased logs one rebase step more per
+rewrite it made (the rewrites themselves are made once, as before), so that
+`textRev` leads to `rev`.
+
+Other writers send their own base. The MCP `page_update` tool takes the `rev`
+the agent read; its `edits` are applied to the file as it is, and a whole
+`body` is rebased over the server's rewrites since that `rev`. An agent that
+changes the title and then sends a whole body reads the page again first (its
+answer carries the new `rev` only). The offline copy (`/sync/…`) only reads:
+writing offline is not supported, so it saves nothing.
 
 ### `PATCH /api/spaces/{space}/pages/{id}/props`
 
@@ -3273,7 +3323,8 @@ Writes the caller's draft to the file, exactly as `PUT …/pages/{id}` with the
 draft's `baseRev`, `meta` and `body` would, and removes the draft. `version`
 is required: the draft is committed only if it is that one.
 
-- `200` with the page.
+- `200` with the page and `textRev`, as `PUT …/pages/{id}` answers (see
+  "Typing during a save").
 - `409 conflict` with `current` (the page) and `draft` (the caller's draft on
   the server, or `null`), when the draft is not version `version` — including
   when there is none because the server committed it already — or when it is

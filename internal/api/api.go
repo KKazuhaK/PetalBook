@@ -965,6 +965,21 @@ type pageResp struct {
 	// PartialProps are the keys of meta that a listing holds only in part
 	// (the same list as the summary's); left out when there are none.
 	PartialProps []string `json:"partialProps,omitempty"`
+	// TextRev is in the answer to a save and a commit only: the rev the text
+	// that was sent stands for, before the link rewrites the save made
+	// (docs/api.md, "Typing during a save"). Equal to Rev when there were none.
+	TextRev string `json:"textRev,omitempty"`
+}
+
+// toSaved is toPage for the answer to a save or a commit, with textRev. A save
+// that wrote nothing (the draft was the file already) rewrote nothing either.
+func toSaved(p *space.Page) pageResp {
+	r := toPage(p)
+	r.TextRev = p.TextRev
+	if r.TextRev == "" {
+		r.TextRev = p.Rev
+	}
+	return r
 }
 
 func toPage(p *space.Page) pageResp {

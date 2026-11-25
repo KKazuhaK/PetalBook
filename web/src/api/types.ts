@@ -130,6 +130,11 @@ export interface Page {
   path: string
   folder: string
   rev: string
+  // Only the answer to a save or a commit carries it: the rev the text that was sent stands for, before the
+  // server rewrote links in it (the save was based on a rev before a page it links to moved). Equal to `rev`
+  // when nothing was rewritten. Text typed while the save was out is based on it, not on `rev` (docs/api.md,
+  // "Typing during a save").
+  textRev?: string
   updated: string
   meta: PageMeta
   // The header exactly as the file has it (the text between the `---` lines),

@@ -118,7 +118,16 @@ func (l *rebaseLog) compact() {
 
 // add remembers steps. Losing them (a full disk) only means a draft can show
 // as stale: it is logged by nobody and costs nobody their text.
-func (l *rebaseLog) add(steps ...rebaseStep) {
+func (l *rebaseLog) add(steps ...rebaseStep) { l.addSteps(false, steps) }
+
+// addNew is add for steps of a text that was sent, not of the file (see
+// rebaseSent): a rev that already has a step keeps it. The text can be an
+// older version of the file, and a draft based on that version follows the
+// step the file took from it; a save on the text's rev then meets a conflict
+// instead, as it would without these steps.
+func (l *rebaseLog) addNew(steps ...rebaseStep) { l.addSteps(true, steps) }
+
+func (l *rebaseLog) addSteps(keep bool, steps []rebaseStep) {
 	if l == nil || len(steps) == 0 {
 		return
 	}
@@ -127,6 +136,9 @@ func (l *rebaseLog) add(steps ...rebaseStep) {
 	var buf bytes.Buffer
 	for _, st := range steps {
 		if st.Old == st.New {
+			continue
+		}
+		if had, ok := l.steps[rebaseKey(st.ID, st.Old)]; keep && ok && had.New != st.New {
 			continue
 		}
 		l.put(st)

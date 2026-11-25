@@ -341,6 +341,56 @@ describe('commit ("save version")', () => {
     expect(t.api.commit).toHaveBeenCalledTimes(1)
   })
 
+  // The commit renamed the page and the server rewrote a link in its own text
+  // (`textRev` is the rev the sent text stands for, `rev` the file after the
+  // rewrite). The editor still holds the old link: its next store is based on
+  // `textRev`, so the server makes the rewrite again on top of the typing.
+  it('typing during a commit that rewrote links stores on textRev, not on the rewritten rev', async () => {
+    const t = setup()
+    t.edit({ title: '新', body: '[上](原标题.md "回到上面")\n', bodyTyped: true })
+    void t.c.commit()
+    await t.settle()
+    await t.answerPut()
+    t.edit({ body: '[上](原标题.md "回到上面")\n又写了一句\n' }) // while the commit is out
+    await t.answerCommit({ rev: 'revW', textRev: 'revT', path: '新.md', body: '[上](新.md "回到上面")\n' })
+    await vi.advanceTimersByTimeAsync(1500)
+    const next = t.puts()[1].input
+    expect(next.baseRev).toBe('revT')
+    expect(next.body).toBe('[上](原标题.md "回到上面")\n又写了一句\n')
+    // The editor is not replaced: the typing is the person's.
+    expect(t.onExternalChange).not.toHaveBeenCalled()
+    await t.answerPut()
+    expect(t.c.state).toBe('drafted')
+    // Committed on textRev, the file holds both: the server rebased it.
+    void t.c.commit()
+    await t.settle()
+    expect(t.api.commit).toHaveBeenCalledTimes(2)
+    await t.answerCommit({ rev: 'revX', textRev: 'revX', body: '[上](新.md "回到上面")\n又写了一句\n' })
+    expect(t.c.page.body).toBe('[上](新.md "回到上面")\n又写了一句\n')
+    // Then the editor's text and the file are the server's, and the next store is on rev again.
+    t.edit({ body: '[上](新.md "回到上面")\n又写了一句\n三\n' })
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(t.puts()[2].input.baseRev).toBe('revX')
+  })
+
+  it('without typing, a commit that rewrote links shows the server text and saves on its rev', async () => {
+    const t = setup()
+    t.edit({ title: '新', body: '[上](原标题.md "回到上面")\n', bodyTyped: true })
+    void t.c.commit()
+    await t.settle()
+    await t.answerPut()
+    const rewritten = { rev: 'revW', textRev: 'revT', path: '新.md', body: '[上](新.md "回到上面")\n' }
+    await t.answerCommit(rewritten)
+    expect(t.c.state).toBe('saved')
+    expect(t.onExternalChange).toHaveBeenCalledTimes(1)
+    expect(t.onExternalChange.mock.calls[0][0]).toMatchObject({ rev: 'revW', path: '新.md', body: rewritten.body })
+    // The editor now shows the server's text (PageEditor's reload): typing is on revW.
+    t.setContent({ body: undefined, bodyTyped: undefined })
+    t.edit({ title: '新二' })
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(t.puts()[1].input).toMatchObject({ baseRev: 'revW', body: '[上](新.md "回到上面")\n' })
+  })
+
   it('typing during a commit and undoing it again leaves the committed file as it is', async () => {
     const t = setup()
     t.edit({ title: 'A' })

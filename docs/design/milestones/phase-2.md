@@ -937,12 +937,13 @@ by transaction in PR 3; `textRev` in PR 7):
   "rescued commit" and marks the remote as in error, which needs an administrator
   to look. It appears only when both sides push within a few seconds of each
   other.
-- **Still typing during a save**: if the user keeps typing after the save request
-  is sent, and the server made a link rewrite on this save, the editor still keeps
-  its own old text, and the next save writes it back at the new version number,
-  no longer applying the rewrite. Links with an `id` are corrected by `id` on
-  save; links without an `id` (written outside PetalBook, or with a title the user
-  wrote) are written back with the old path and become broken links.
+- **The server's own commit of a draft is not recognised as a rebase**: "still
+  typing during a save" is fixed in round 3 by `textRev` (see
+  [storage-and-sync.md](../storage-and-sync.md), "What PR 7 does"), but only for a
+  commit the editor asked for. When the server commits the draft by itself (the
+  idle commit) and that save rewrote links, nobody gets `textRev`: an editor that
+  kept typing finds a file that is not its own text and shows the conflict dialog.
+  Nothing is lost; the person chooses.
 - **`Equivalent` does not check the end of the rewrite chain**: after a rename
   and a rename back, deciding whether a draft is the same as the file applies a
   few more rewrite steps, with the result that a draft that could have been

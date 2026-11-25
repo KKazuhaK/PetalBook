@@ -144,7 +144,7 @@ export interface SaveControllerOptions {
   // shows its content, so it is what the content is compared with.
   draft?: PageDraft
   // What the controller starts out knowing, from the restore plan (draftRestore.ts).
-  seed?: { lineage: string; ours: Ours[] }
+  seed?: { lineage: string; ours: Ours[]; textBase?: { rev: string; base: string } }
   read: () => Draft
   api: DraftApi
   // Space id, so that a page opened again right after leaving waits for the
@@ -411,6 +411,12 @@ export class SaveController {
   // as its base. Changes only when the text is re-based by a decision or a choice,
   // never because a conflict showed a newer file.
   private lineage: string
+  // Set when a commit came back with links rewritten (`textRev` differs from `rev`)
+  // while the person kept typing: the text is based on `base`, not on the file's
+  // `rev`, and a store on top of that file says so. Only while the file is still at
+  // `rev`, the text is still on `base` (`lineage`: any decision that re-bases the
+  // text moves it) and no draft is stored over it.
+  private textBase: { rev: string; base: string } | undefined
   // A draft was sent and its answer never came: the server may hold it. While this
   // is set nothing else is sent: the next step is to ask the server what it holds
   // (observe), so at most one store is ever outstanding and `ours` does not grow
@@ -457,6 +463,7 @@ export class SaveController {
     this.ours = opts.seed ? [...opts.seed.ours] : opts.draft ? [oursOf(opts.draft.baseRev, opts.draft)] : []
     this.openBody = opts.draft ? opts.draft.body : opts.page.body
     this.draftToken = opts.draftToken
+    this.textBase = opts.seed?.textBase
     this.snapshot = { state: this.serverDraft && !this.stale ? 'drafted' : 'saved' }
   }
 
@@ -1282,6 +1289,11 @@ export class SaveController {
       const shown = this.serverDraft && !this.stale ? draftAsPage(this.file, this.serverDraft) : this.file
       input = buildSave(shown, content, () => this.normalize(shown.body))
       sameAsFile = buildSave(this.file, content, () => this.normalize(this.file.body)) === null
+      // Typed on top of a commit whose links the server rewrote: based on the rev the
+      // sent text stood for, so the server rewrites this text too (docs/api.md).
+      const tb = this.textBase
+      if (input && shown === this.file && tb && tb.rev === this.file.rev && tb.base === this.lineage)
+        input = { ...input, baseRev: tb.base }
     } catch (e) {
       // The editor document had no Markdown form, or the editor is gone.
       this.fail(e)
@@ -1391,23 +1403,43 @@ export class SaveController {
   // version we named.
   private committed(page: Page) {
     // 200 to a commit that named the version: the server checked it was that draft.
-    this.file = page
+    const { textRev: _textRev, ...file } = page
+    void _textRev
+    // The server rewrote links in what we sent (a page they name moved): the file is
+    // not the text in the editor plus nothing.
+    const rewritten = !!page.textRev && page.textRev !== page.rev
+    const typing = this.hasUnsaved()
+    this.file = file
+    this.textBase = undefined
     this.lineage = page.rev
     this.setOurs([])
     this.serverDraft = null
     this.stale = false
-    this.openBody = page.body
     this.wantCommit = false
     this.retryCommit = false
+    if (rewritten && typing) {
+      // The text typed while the commit was out is on top of what was sent, not of
+      // the rewritten file: it is based on `textRev`, and the server makes the rewrite
+      // again when it is stored. The editor still shows the old text, so a body
+      // nobody edited still stands for that (`openBody` stays).
+      this.textBase = { rev: page.rev, base: page.textRev! }
+      this.lineage = page.textRev!
+      // So that the browser's copy, if the tab closes before the next store, is
+      // restored on textRev and not met as a change made elsewhere.
+      this.setOurs([{ ...oursOf(page.textRev!, file), onto: page.rev }])
+    } else this.openBody = page.body
     // Text typed while the commit was out is not in the file. Its local draft
     // is rewritten on top of the new rev, and the loop stores it next.
-    if (this.hasUnsaved()) {
+    if (typing) {
       if (!this.detached) this.persistNow()
-      else if (this.draftToken !== undefined) this.opts.drafts?.rebase(this.draftToken, page.rev, [])
+      else if (this.draftToken !== undefined) this.opts.drafts?.rebase(this.draftToken, this.lineage, this.knownOurs())
     } else this.clearLocal()
-    this.opts.onCommitted?.(page)
+    this.opts.onCommitted?.(file)
     this.announce(page.rev, null)
     this.settle()
+    // Nothing typed: the editor takes the file as the server wrote it, so the old
+    // link is not sent back by the next edit.
+    if (rewritten && !typing && !this.detached) this.opts.onExternalChange?.(file)
   }
 }
 

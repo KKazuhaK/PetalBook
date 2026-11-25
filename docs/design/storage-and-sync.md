@@ -568,6 +568,47 @@ once by the trim after the commit.
   The page contents are no longer held in memory; what remains are the records (path
   and blob ids, about 400 bytes a page) and the index's own work.
 
+**What PR 7 does.**
+- **Where a save rewrites the text it was sent.** A save whose base is behind the file
+  only by the service's link rewrites (a page it links to moved) gets the same rewrites
+  (the rebase steps). A rename's relink also rewrites the page's own file, but only
+  when its relative links change, which a rename in the same folder does not (and
+  links of a page to itself are not indexed, so a rename leaves them to the id repair
+  of the next save). In practice it is the rebased save.
+- **`textRev`.** `Save` returns `Page.TextRev`: the rev of the page file as the caller's
+  header and body make it, before those rewrites. The answers to `PUT …/pages/{id}`
+  and `POST …/commit` carry it (`toSaved`); nothing else does. Equal to `rev` when
+  nothing was rewritten. Ids added to links on save do not count: they come back on
+  the next save.
+- **The step it leads by.** When a save was rebased, the rewrites are made to the
+  sent text one step at a time (`rebaseSent`), and each is logged as a step of that
+  text, from the rev of the sent file onwards, the last ending at the rev written. A
+  rename's relink then logs its own step from there, as before. A save with
+  `baseRev = textRev` finds that chain in the rebase log and is rebased like any
+  other; a file changed otherwise since is the usual conflict.
+- **Web.** When a commit comes back with `textRev ≠ rev` and the person typed while it
+  was out, the save controller keeps the editor's text and bases its next store on
+  `textRev` (and the local draft too). With nothing typed it takes the server's text
+  into the editor, the same way as a change made elsewhere, so the old link is not sent
+  back by the next edit.
+- **Other writers.** MCP `page_update` sends the rev the agent read: `edits` work on
+  the file as it is, and a whole `body` is rebased (`UpdateBody`). The offline copy
+  only reads. Neither needs `textRev`.
+- **Cost.** One field in two answers. A save that rewrote nothing does what it did
+  before. A rebased save hashes the sent text once per step and logs as many steps
+  more in the rebase log (one short line each); the rewrites are made once, as before.
+- **A closed tab.** The local draft written after such a commit is on `textRev`, and
+  its sent list holds the committed file with `onto = rev`. Opened again while the
+  file is still at `rev`, the text is restored on `textRev` without a conflict
+  (`planRestore`, seed `textBase`) and stored on it.
+- **An older version as the sent text.** The steps of the sent text are logged with
+  `addNew`: a rev that already has a step keeps it (the sent text can be an older
+  version of the file, which a draft may still be based on). A save on that
+  `textRev` is then a conflict, as without these steps.
+- **Not covered.** A commit the server makes by itself (the idle draft commit) answers
+  nobody: an editor that kept typing finds a file that is not its own text (it has
+  the rewrites) and shows the conflict dialog. Nothing is lost.
+
 **Known issues (PR 3).**
 - `contentAt` read and scanned the whole journal once per path whose file was changed
   outside PetalBook. Fixed in PR 4: the journal keeps where each frame is, and reads
