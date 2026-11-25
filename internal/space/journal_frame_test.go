@@ -271,3 +271,56 @@ func TestAFailedAppendLeavesTheJournalReadable(t *testing.T) {
 		})
 	}
 }
+
+// A trim that fails leaves the records it was to keep as they were: the
+// numbers it would have given an open record are used again by the next
+// append, and must not make the next trim take that append for the record.
+func TestAFailedTrimDoesNotLoseAnOpenRecord(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "pending.journal")
+	j, _, err := openJournal(path, slog.New(slog.NewTextHandler(&logBuffer{}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.close()
+	if err := j.append([]jrec{{Op: "t", Path: "a.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	// An open record whose frames are not in the journal: the trim journals it again.
+	keep := []jrec{{Op: "b", From: "A", To: "B"}}
+	j.replace = func(string, string) error { return errors.New("no space left on device") }
+	if err := j.trim(j.lastSeq(), keep, nil); err == nil {
+		t.Fatal("the trim should have failed")
+	}
+	j.replace = nil
+	if err := j.append([]jrec{{Op: "t", Path: "x.md"}, {Op: "t", Path: "y.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.trim(j.lastSeq(), keep, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(journalOps(t, path), ", "); got != "4 b A>B" {
+		t.Errorf("after the trims: %s", got)
+	}
+	if _, err := os.Stat(path + ".new"); err == nil {
+		t.Error("the failed trim left its file behind")
+	}
+}
+
+// A frame whose length runs past the end of the journal is an append cut
+// short only if nothing follows it; with whole lines after it, it is damage.
+func TestAFrameCutShortWithLinesAfterItIsDamage(t *testing.T) {
+	t.Parallel()
+	good := framed(`{"op":"t","p":"a.md"}` + "\n")
+	var bad bytes.Buffer
+	putFrame(&bad, 2, []byte(`{"op":"t","p":"b.md"}`))
+	b := bad.Bytes()
+	copy(b, "000fffff") // a length far past the end
+	data := append(append(bytes.Clone(good), b...), framed(`{"op":"t","p":"c.md"}`+"\n")...)
+	if rd := readJournal(data); rd.cut != "corrupt" || len(rd.recs) != 1 {
+		t.Errorf("%s with %d records", rd.cut, len(rd.recs))
+	}
+	if rd := readJournal(append(bytes.Clone(good), b[:20]...)); rd.cut != "torn" {
+		t.Errorf("a short header at the end: %s", rd.cut)
+	}
+}

@@ -157,16 +157,24 @@ func scanFrames(data []byte) (frames []frame, end int, cut string) {
 	var last uint64
 	// A file system may leave the blocks of an append that a stop
 	// interrupted as zeros: that is an append cut short, not damage.
+	// A frame cut short is the last thing in the file: its body has no
+	// line end (JSON has none), so whole lines after the cut are damage.
 	corrupt := func(rest []byte) string {
 		if len(bytes.Trim(rest, "\x00")) == 0 {
 			return "torn"
 		}
 		return "corrupt"
 	}
+	short := func(rest []byte) string {
+		if bytes.IndexByte(rest, '\n') >= 0 {
+			return "corrupt"
+		}
+		return "torn"
+	}
 	for end < len(data) {
 		rest := data[end:]
 		if len(rest) < frameHead {
-			return frames, end, "torn"
+			return frames, end, short(rest)
 		}
 		n, ok1 := parseHex(rest[:8])
 		sum, ok2 := parseHex(rest[9:17])
@@ -175,7 +183,7 @@ func scanFrames(data []byte) (frames []frame, end int, cut string) {
 			return frames, end, corrupt(rest)
 		}
 		if uint64(len(rest)-frameHead) < n+1 {
-			return frames, end, "torn"
+			return frames, end, short(rest)
 		}
 		body := rest[frameHead : frameHead+int(n)]
 		if rest[frameHead+int(n)] != '\n' || uint32(sum) != frameSum(seq, body) || seq <= last {
@@ -317,6 +325,9 @@ type journal struct {
 	// test makes an append fail part way with them.
 	write func(f *os.File, b []byte) (int, error)
 	sync  func(f *os.File) error
+	// replace, when set, stands in for the rename that puts a trimmed
+	// journal in place: a test makes a trim fail with it.
+	replace func(tmp, path string) error
 }
 
 // openJournal reads the records an earlier run left and opens the file for
@@ -439,10 +450,14 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) erro
 			found[f.seq] = true
 		}
 	}
+	// A record journaled again gets its new numbers only once the new
+	// journal is in place: after a failed trim the next append uses them.
 	seq := j.seq
-	for i := range keep {
-		if keep[i].seq == 0 || !found[keep[i].seq] {
-			encodeRec(&buf, &seq, &keep[i])
+	again := map[int]jrec{}
+	for i, r := range keep {
+		if r.seq == 0 || !found[r.seq] {
+			encodeRec(&buf, &seq, &r)
+			again[i] = r
 		}
 	}
 	paths := make([]string, 0, len(pending))
@@ -462,15 +477,25 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) erro
 	}
 	if _, err := f.Write(buf.Bytes()); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return err
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return err
 	}
 	f.Close()
-	if err := os.Rename(tmp, j.path); err != nil {
+	replace := os.Rename
+	if j.replace != nil {
+		replace = j.replace
+	}
+	if err := replace(tmp, j.path); err != nil {
+		os.Remove(tmp)
 		return err
+	}
+	for i, r := range again {
+		keep[i].seq, keep[i].first = r.seq, r.first
 	}
 	j.f.Close()
 	j.size, j.seq, j.broken = int64(buf.Len()), seq, false
