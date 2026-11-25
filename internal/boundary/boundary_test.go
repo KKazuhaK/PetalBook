@@ -11,7 +11,9 @@ import (
 	"testing"
 )
 
-const module = "github.com/KKazuhaK/PetalBook/"
+// module is this module's path plus "/", read from go.mod (never written out
+// here, so moving the repository needs no change).
+var module string
 
 // enginePackages are the packages a single-user offline client embeds: pages,
 // the index, git storage and one space. Keep in step with the design doc.
@@ -41,6 +43,11 @@ type listed struct {
 }
 
 func TestEngineDoesNotImportServer(t *testing.T) {
+	m, err := exec.Command("go", "list", "-m").Output()
+	if err != nil {
+		t.Fatalf("go list -m: %v", err)
+	}
+	module = strings.TrimSpace(string(m)) + "/"
 	args := []string{"list", "-deps", "-json"}
 	for _, p := range enginePackages {
 		args = append(args, module+p)
