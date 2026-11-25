@@ -189,7 +189,9 @@ func subcommand(args []string) (string, []string) {
 //	status       --porcelain, -z, --untracked-files=no: modified tracked files when a space opens.
 //
 //	hash-object  -w --no-filters --stdin-paths: the contents of an attachment, read from
-//	             where it is, become a blob (an attachment repository, below).
+//	             where it is, become a blob (an attachment repository, below). The
+//	             same, and --stdin, for the files of a commit that is cut from the
+//	             contents the server wrote, not the work tree (CommitPathsAs).
 //	mktree       -z --missing: a tree made of entries whose contents this clone does not
 //	             have; with ls-tree (no -r), commit-tree and update-ref HEAD, the commit that
 //	             adds files to an attachment repository, or takes a space's attachments
@@ -229,7 +231,7 @@ var allowedOptions = map[string][]string{
 	"push":         {},
 	"remote":       {},
 	"update-ref":   {},
-	"hash-object":  {"-w", "--no-filters", "--stdin-paths"},
+	"hash-object":  {"-w", "--no-filters", "--stdin-paths", "--stdin"},
 	"mktree":       {"-z", "--missing"},
 	"version":      {},
 	"for-each-ref": {"--format=*"},

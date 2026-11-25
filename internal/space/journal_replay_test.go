@@ -301,6 +301,8 @@ func TestReplayingATransactionTwiceIsReplayingItOnce(t *testing.T) {
 		recs = append(recs, jrec{Op: "p", Tx: 1, Path: f.name, Old: rev(f.old), Rev: rev(f.new), Text: f.new})
 	}
 	for range 2 {
+		// c.md was changed outside before the transaction was applied: it
+		// is left alone and not committed (the transaction is given up).
 		got := recoverPending(root, recs)
 		if len(got) != 2 || got["a.md"].Name != "Ann" || got["b.md"].Name != "Ann" {
 			t.Errorf("pending: %v", got)

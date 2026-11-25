@@ -403,6 +403,52 @@ was measured three times each way. On disk it took 0.94 to 1.13 s before and 1.0
 before and 489 ms after. The journal for that change grows from 116 KB to 1.7 MB, read
 once by the trim after the commit.
 
+**What PR 3 does.**
+- **Holding a change.** What a running change touches or applies is held until the
+  change ends (`committer.begin`), so a commit never takes part of one: a move with all
+  its link rewrites is one commit (issue 2). The one change that needs a commit of its
+  own in the middle, a repair of the way to a folder, uses `FlushChange`.
+- **Touch after apply.** A transaction's files are handed to the commit by `Applied`,
+  after they are written, with the blob id each was written with. `writeEdits` no
+  longer touches before writing. `afterWrite` skips a path the transaction already
+  covers with the same content.
+- **Commits from recorded blobs.** Such paths are committed from the recorded blob, not
+  the work tree (`gitstore.CommitPathsAs`). `hash-object -w --no-filters --stdin-paths`
+  writes the blobs in one process where the file still has that content. Where it does
+  not, the content comes from the journal (`hash-object --stdin`, one process per such
+  file). The index gets it with `update-index --index-info`. An edit made outside
+  PetalBook therefore stays in the work tree as an uncommitted change (owner decision
+  1). Paths of the older record types, and any path a later record of another type
+  names, are staged from the work tree as before.
+- **Recovery.** Recovery does the same: a transaction's file is committed as the server
+  wrote it when the replay leaves it at the new content, or when the transaction was
+  applied. A transaction that never was applied and whose file is at neither content is
+  given up (`k`): what it would have written never was on disk.
+- **Edge cases.** A path a transaction wrote keeps its Git mode (an executable page stays
+  one). When one author's commit fails and another's is made, the trim journals the
+  failed path again as an applied transaction of its own, with its content, so the retry
+  still commits what the server wrote. A path with recorded content is committed without
+  looking at the work tree, so a change that deletes or moves such a file must touch the
+  path (`Touch` says so).
+- **Pages made by the server** (`createNamed`) are now transactions: applied once the
+  name is taken, given up (`k`) when another file holds it. A page made and then
+  changed outside before the next start is committed as the server wrote it (3c), and a
+  name another file held is still never committed.
+- **Cost.** Measured three times each way on disk, a commit of a move rewriting 1,000
+  files of about 1.5 KB took 136 to 232 ms before and 184 to 234 ms after. The extra
+  part is a stat per file and an `update-index` process. A save adds no fsync and no
+  git process.
+- **Remote spaces** are unchanged (PR 5).
+
+**Known issues (PR 3).**
+- `contentAt` reads and scans the whole journal once per path whose file was changed
+  outside PetalBook, under `runMu`: O(paths × journal) when many files of a large pending
+  rewrite are edited outside at once. Fixed in PR 4 or later, by reading the journal once
+  per commit, indexed by frame number.
+- In a repository using SHA-256 object names no recorded blob id (SHA-1, `page.Rev`)
+  matches, so every path falls back to the work tree, and owner decision 1 does not hold
+  there.
+
 **Known issue (PR 2, accepted).** The `a` record is not synced. After a power loss (a
 process crash does not lose it), the last transaction may be replayed although it was
 applied. If an edit made outside PetalBook restored that file's exact old bytes in the

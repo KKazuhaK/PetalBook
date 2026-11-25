@@ -39,8 +39,12 @@ type committer struct {
 
 	mu    sync.Mutex
 	paths map[string]Author // changed since the last commit, and by whom
-	first time.Time         // first uncommitted write
-	last  time.Time         // latest write
+	// revs are the pending paths that a transaction wrote, with the content
+	// it wrote: they are committed with that content, whatever the work tree
+	// has by then. The others are staged from the work tree.
+	revs  map[string]gitstore.Blob
+	first time.Time // first uncommitted write
+	last  time.Time // latest write
 
 	j     *journal   // what is pending, on disk, so a crash does not lose it
 	open  []jrec     // "b" and "u" records whose edit of space.yml is not done yet (under mu)
@@ -52,6 +56,13 @@ type committer struct {
 	// commit must keep in the journal every record from the earliest of them
 	// on: what such a change journaled is not in the commit.
 	active map[uint64]int
+	// depth is how many changes are running (begin). What they touch and
+	// apply is held until the last of them ends, so that no commit takes part
+	// of a change: a move with its rewrites is always one commit.
+	depth     int
+	heldPaths map[string]Author
+	heldRevs  map[string]gitstore.Blob
+	txs       map[uint64]preparedTx // prepared, not applied or given up yet
 
 	// Packing (see maintain). A commit leaves its objects loose; after
 	// maintainEvery commits the loop packs them, under runMu so that it never
@@ -74,16 +85,31 @@ type committer struct {
 	once sync.Once
 }
 
+// preparedTx is a transaction journaled and not yet applied: who makes it and
+// its files, with the blob id each gets (the content is in the journal).
+type preparedTx struct {
+	by    Author
+	paths []string
+	revs  []string
+}
+
 // newCommitter starts the committer. initial are paths recovered from an
-// earlier run's journal.
-func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *journal, initial map[string]Author) *committer {
+// earlier run's journal, and revs the content some of them are to be
+// committed with.
+func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *journal, initial map[string]Author, revs map[string]gitstore.Blob) *committer {
 	c := &committer{git: g, idle: idle, max: max, log: log, j: j, paths: map[string]Author{}, active: map[uint64]int{},
+		revs: map[string]gitstore.Blob{}, heldPaths: map[string]Author{}, heldRevs: map[string]gitstore.Blob{}, txs: map[uint64]preparedTx{},
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	if len(initial) > 0 {
 		now := time.Now()
 		c.first, c.last = now, now
 		for p, by := range initial {
 			c.paths[p] = by
+		}
+		for p, b := range revs {
+			if _, ok := initial[p]; ok {
+				c.revs[p] = b
+			}
 		}
 	}
 	go c.loop()
@@ -210,6 +236,11 @@ func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, 
 	if err != nil {
 		return 0, err
 	}
+	pt := preparedTx{by: by}
+	for _, f := range files {
+		pt.paths, pt.revs = append(pt.paths, f.path), append(pt.revs, f.rev)
+	}
+	c.txs[tx] = pt
 	for _, rec := range closing {
 		for i, r := range c.open {
 			if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path && r.Rev == rec.Rev {
@@ -226,15 +257,42 @@ func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, 
 	return tx, nil
 }
 
-// Applied journals that transaction tx is written, without a sync: the replay
-// does not need it, so losing it costs nothing.
+// Applied journals that transaction tx is written, without a sync (the
+// replay does not need it, so losing it costs nothing), and hands its files
+// to the commit with the content it wrote.
 func (c *committer) Applied(tx uint64) {
 	if c == nil || c.j == nil || tx == 0 {
 		return
 	}
+	c.mu.Lock()
+	pt, ok := c.txs[tx]
+	delete(c.txs, tx)
+	if ok {
+		for i, p := range pt.paths {
+			seq := tx + 1 + uint64(i) // the "p" frames follow the "x"
+			b := gitstore.Blob{ID: pt.revs[i], Data: func() ([]byte, error) { return c.j.contentAt(seq) }}
+			c.touchLocked(pt.by, p, &b)
+		}
+	}
+	c.mu.Unlock()
+	if ok && len(pt.paths) > 0 {
+		c.wakeUp()
+	}
 	if err := c.j.appendNoSync([]jrec{{Op: "a", Tx: tx}}); err != nil {
 		c.log.Warn("could not journal that a change was written", "error", err)
 	}
+}
+
+// forget drops what the committer knows of transaction tx, which was neither
+// applied nor given up: the writing stopped part way, the files written are
+// touched as they are, and the next start replays the rest.
+func (c *committer) forget(tx uint64) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.txs, tx)
+	c.mu.Unlock()
 }
 
 // Abort journals that transaction tx was given up before any of its files
@@ -244,6 +302,9 @@ func (c *committer) Abort(tx uint64) {
 	if c == nil || c.j == nil || tx == 0 {
 		return
 	}
+	c.mu.Lock()
+	delete(c.txs, tx)
+	c.mu.Unlock()
 	if err := c.j.append([]jrec{{Op: "k", Tx: tx}}); err != nil {
 		c.log.Error("could not journal that a change was given up; the next start may make it", "error", err)
 	}
@@ -287,41 +348,125 @@ func (c *committer) Done(rec jrec) {
 // then no commit trims the records the change journals (see active). Call it
 // under the space lock, after SwitchTo.
 func (c *committer) begin() (end func()) {
-	if c == nil || c.j == nil {
+	if c == nil {
 		return func() {}
 	}
 	c.mu.Lock()
-	mark := c.j.lastSeq()
-	c.active[mark]++
+	var mark uint64
+	if c.j != nil {
+		mark = c.j.lastSeq()
+		c.active[mark]++
+	}
+	c.depth++
 	c.mu.Unlock()
 	return func() {
 		c.mu.Lock()
-		if c.active[mark]--; c.active[mark] <= 0 {
-			delete(c.active, mark)
+		if c.j != nil {
+			if c.active[mark]--; c.active[mark] <= 0 {
+				delete(c.active, mark)
+			}
 		}
+		c.depth--
+		released := c.depth == 0 && c.releaseLocked()
 		c.mu.Unlock()
+		if released {
+			c.wakeUp()
+		}
 	}
 }
 
+// releaseLocked hands what the changes held to the commit (under mu), and
+// reports whether there was anything.
+func (c *committer) releaseLocked() bool {
+	if len(c.heldPaths) == 0 {
+		return false
+	}
+	now := time.Now()
+	if len(c.paths) == 0 {
+		c.first = now
+	}
+	for p, by := range c.heldPaths {
+		c.paths[p] = by
+		if b, ok := c.heldRevs[p]; ok {
+			c.revs[p] = b
+		} else {
+			delete(c.revs, p)
+		}
+	}
+	c.last = now
+	c.heldPaths, c.heldRevs = map[string]Author{}, map[string]gitstore.Blob{}
+	return true
+}
+
+// touchLocked notes that by changed p (under mu): with b, to the content b
+// gives; without, to what the work tree will have. While a change runs it is
+// held for the end of the change.
+func (c *committer) touchLocked(by Author, p string, b *gitstore.Blob) {
+	paths, revs := c.paths, c.revs
+	if c.depth > 0 {
+		paths, revs = c.heldPaths, c.heldRevs
+	} else if len(c.paths) == 0 {
+		c.first = time.Now()
+	}
+	paths[p] = by
+	if b != nil {
+		revs[p] = *b
+	} else {
+		delete(revs, p)
+	}
+	if c.depth == 0 {
+		c.last = time.Now()
+	}
+}
+
+func (c *committer) wakeUp() {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// covers reports whether the change running has applied the content whose
+// blob id is rev to p, so that touching p again is not needed (it would only
+// make the commit read the work tree for it).
+func (c *committer) covers(p, rev string) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b, ok := c.heldRevs[p]
+	return ok && c.depth > 0 && b.ID == rev
+}
+
+// FlushChange commits now what is pending, with what the change running has
+// done so far: for a change that needs a commit of its own first (a repair of
+// the way to a folder, settingspath.go).
+func (c *committer) FlushChange() error {
+	c.mu.Lock()
+	c.releaseLocked()
+	c.mu.Unlock()
+	return c.commit()
+}
+
 // Touch records that by changed these files (relative, slash-separated). A
-// moved file is two paths: the old and the new.
+// moved file is two paths: the old and the new. It also drops the content a
+// transaction recorded for them: a path with recorded content is committed
+// with that content, without looking at the work tree, so not even whether it
+// is still there. A change that deletes or moves such a file must touch its
+// path, or the commit puts it back.
 func (c *committer) Touch(by Author, paths ...string) {
 	if len(paths) == 0 {
 		return
 	}
-	now := time.Now()
 	c.mu.Lock()
-	if len(c.paths) == 0 {
-		c.first = now
-	}
 	for _, p := range paths {
-		c.paths[p] = by
+		c.touchLocked(by, p, nil)
 	}
-	c.last = now
+	held := c.depth > 0
 	c.mu.Unlock()
-	select {
-	case c.wake <- struct{}{}:
-	default:
+	if !held {
+		c.wakeUp()
 	}
 }
 
@@ -365,6 +510,11 @@ func (c *committer) pendingUnder(dir string) []string {
 	defer c.mu.Unlock()
 	var out []string
 	for p := range c.paths {
+		if _, held := c.heldPaths[p]; !held && strings.HasPrefix(p, dir+"/") {
+			out = append(out, p)
+		}
+	}
+	for p := range c.heldPaths {
 		if strings.HasPrefix(p, dir+"/") {
 			out = append(out, p)
 		}
@@ -426,8 +576,8 @@ func (c *committer) commit() error {
 		c.mu.Unlock()
 		return nil
 	}
-	taken := c.paths
-	c.paths = map[string]Author{}
+	taken, takenRevs := c.paths, c.revs
+	c.paths, c.revs = map[string]Author{}, map[string]gitstore.Blob{}
 	// The journal's records up to upTo are of the paths taken: what the
 	// changes before this point journaled, and handed over. A change still
 	// running may have journaled records without handing its paths over yet:
@@ -456,7 +606,16 @@ func (c *committer) commit() error {
 			failed = append(failed, grp.paths...)
 			continue
 		}
-		made, err := c.git.commitPaths(grp.id, grp.via, grp.paths)
+		var known map[string]gitstore.Blob
+		for _, p := range grp.paths {
+			if b, ok := takenRevs[p]; ok {
+				if known == nil {
+					known = map[string]gitstore.Blob{}
+				}
+				known[p] = b
+			}
+		}
+		made, err := c.git.commitPaths(grp.id, grp.via, grp.paths, known)
 		if made {
 			c.log.Info("committed changes", "files", len(grp.paths), "author", grp.id.Name)
 		}
@@ -497,6 +656,9 @@ func (c *committer) commit() error {
 			// author; only paths nobody touched since go back as they were.
 			if _, newer := c.paths[p]; !newer {
 				c.paths[p] = taken[p]
+				if b, ok := takenRevs[p]; ok {
+					c.revs[p] = b
+				}
 			}
 		}
 		c.last = now
@@ -518,14 +680,35 @@ func (c *committer) commit() error {
 	// place: they are of changes this commit did not take, whether or not
 	// their paths are pending yet.
 	if c.j != nil {
-		c.mu.Lock()
-		again := make(map[string]Author, len(failed))
+		// A failed path that a transaction wrote keeps the content the
+		// server wrote: read back now, before the trim drops its frame, and
+		// journaled again with it, so the retry (or the next start) commits
+		// that and not what the work tree has by then.
+		keepBlob := map[string][]byte{}
 		for _, p := range failed {
-			if by, ok := c.paths[p]; ok {
-				again[p] = by
+			if b, ok := takenRevs[p]; ok && b.Data != nil {
+				if data, err := b.Data(); err == nil && gitstore.BlobID(data) == b.ID {
+					keepBlob[p] = data
+				}
 			}
 		}
-		err := c.j.trim(upTo, c.open, again)
+		c.mu.Lock()
+		again := make(map[string]Author, len(failed))
+		var retx []retainedTx
+		for _, p := range failed {
+			by, ok := c.paths[p]
+			if !ok {
+				continue
+			}
+			data, kept := keepBlob[p]
+			if cur, ok := c.revs[p]; kept && ok && cur.ID == takenRevs[p].ID {
+				retx = append(retx, retainedTx{by: by, file: txFile{path: p, rev: cur.ID, data: data}})
+				c.revs[p] = gitstore.Blob{ID: cur.ID, Data: func() ([]byte, error) { return data, nil }}
+				continue
+			}
+			again[p] = by
+		}
+		err := c.j.trim(upTo, c.open, again, retx...)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)

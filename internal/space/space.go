@@ -277,7 +277,7 @@ func Open(opt Options) (*Space, error) {
 			},
 			commitNow: func(paths []string) error {
 				id, _ := g.identities(Author{})
-				_, err := g.commitPaths(id, "", paths)
+				_, err := g.commitPaths(id, "", paths, nil)
 				var skipped *gitstore.SkippedError
 				if errors.As(err, &skipped) {
 					err = nil
@@ -368,7 +368,16 @@ func Open(opt Options) (*Space, error) {
 		}
 	}
 	heal.setStateDir(stateDir)
-	recovered := recoverPendingWith(heal, root, recs)
+	recovered, recoveredRevs, giveUp := recoverJournal(heal, root, recs)
+	if len(giveUp) > 0 {
+		ks := make([]jrec, len(giveUp))
+		for i, tx := range giveUp {
+			ks[i] = jrec{Op: "k", Tx: tx}
+		}
+		if err := jrn.append(ks); err != nil {
+			return nil, err
+		}
+	}
 	// Moves whose links were not all made right before the crash: they are
 	// finished once the index is ready, and the journal keeps them till then.
 	linkRecs := pendingLinkRecs(recs)
@@ -457,7 +466,7 @@ func Open(opt Options) (*Space, error) {
 				recovered[p] = Author{}
 			}
 		}
-		s.cm = newCommitter(g, idle, max, log, jrn, nil)
+		s.cm = newCommitter(g, idle, max, log, jrn, nil, nil)
 		s.cm.setOnCommit(heal.committed)
 		s.cm.hold(linkRecs...)
 		if err := s.initRemote(opt.Remote, recovered); err != nil {
@@ -470,7 +479,7 @@ func Open(opt Options) (*Space, error) {
 		s.finishLinkRecs(linkRecs)
 		return s, nil
 	}
-	s.cm = newCommitter(g, idle, max, log, jrn, recovered)
+	s.cm = newCommitter(g, idle, max, log, jrn, recovered, recoveredRevs)
 	s.cm.setOnCommit(heal.committed)
 	s.cm.hold(linkRecs...)
 	s.finishLinkRecs(linkRecs)

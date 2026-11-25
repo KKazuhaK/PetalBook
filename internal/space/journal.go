@@ -16,6 +16,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
@@ -545,6 +546,37 @@ func writeSynced(name string, data []byte) error {
 	return d.Sync()
 }
 
+// contentAt is the new content of the "p" record in the frame numbered seq,
+// read back from the journal: for a commit of a file that was changed
+// outside PetalBook after the server wrote it.
+func (j *journal) contentAt(seq uint64) ([]byte, error) {
+	j.mu.Lock()
+	data, err := os.ReadFile(j.path)
+	size := j.size
+	j.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > size {
+		data = data[:size]
+	}
+	frames, _, _ := scanFrames(data)
+	for _, f := range frames {
+		if f.seq != seq {
+			continue
+		}
+		var r jrec
+		if err := json.Unmarshal(f.body, &r); err != nil || r.Op != "p" {
+			return nil, fmt.Errorf("frame %d of the journal is not a file of a change", seq)
+		}
+		if r.BlobLen > 0 {
+			r.blob = j.blobPath(r.Tx)
+		}
+		return r.content()
+	}
+	return nil, fmt.Errorf("frame %d is not in the journal any more", seq)
+}
+
 // content is the new content of a "p" record.
 func (r jrec) content() ([]byte, error) {
 	if r.BlobLen == 0 {
@@ -634,7 +666,14 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 // place), in their order, followed by a "t" record for each path in pending,
 // with its author. A record of keep whose frames are not in the journal any
 // more is journaled again, at the end.
-func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) error {
+// retainedTx is a file a transaction wrote whose commit failed: a trim
+// journals it again as a transaction of its own, applied, with its content.
+type retainedTx struct {
+	by   Author
+	file txFile
+}
+
+func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx ...retainedTx) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.guard != nil {
@@ -674,6 +713,25 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) erro
 		if r.seq == 0 || !found[r.seq] {
 			encodeRec(&buf, &seq, &r)
 			again[i] = r
+		}
+	}
+	for _, rt := range retx {
+		tx := seq + 1
+		f := rt.file
+		recs := []jrec{
+			{Op: "x", Tx: tx, N: 1, AuthorName: rt.by.Name, AuthorEmail: rt.by.Email, Via: rt.by.Via},
+			{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev},
+			{Op: "a", Tx: tx},
+		}
+		// Inline whatever its size: it is rare, and the staged file of its
+		// first transaction goes with this trim.
+		if utf8.Valid(f.data) {
+			recs[1].Text = string(f.data)
+		} else {
+			recs[1].Bin = f.data
+		}
+		for i := range recs {
+			encodeRec(&buf, &seq, &recs[i])
 		}
 	}
 	paths := make([]string, 0, len(pending))
@@ -746,7 +804,29 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 // recoverPendingWith is recoverPending; h restores a space.yml that cannot be
 // used when the bindings of a folder are to be finished in it.
 func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
-	set := map[string]Author{}
+	set, _, _ := recoverJournal(h, root, recs)
+	return set
+}
+
+// recoverJournal is recoverPendingWith, and also gives the content that the
+// paths a transaction wrote are to be committed with: what the server wrote,
+// even where the file was changed outside PetalBook since (that change stays
+// in the work tree, uncommitted). A later record of the path that is not a
+// transaction's leaves it to the work tree again. giveUp are the transactions
+// that never got to be applied and that the replay could not finish (a file
+// changed outside meanwhile): their content never was on disk, so it is not
+// committed, and the caller journals them as given up ("k").
+func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author, revs map[string]gitstore.Blob, giveUp []uint64) {
+	set = map[string]Author{}
+	revs = map[string]gitstore.Blob{}
+	gaveUp := map[uint64]bool{}
+	defer func() {
+		for p := range revs {
+			if _, ok := set[p]; !ok {
+				delete(revs, p)
+			}
+		}
+	}()
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
@@ -771,10 +851,34 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 	for _, r := range recs {
 		by := r.author()
 		switch r.Op {
+		case "x", "a", "k", "p":
+		default:
+			// Any other record of a path leaves it to the work tree.
+			delete(revs, r.Path)
+			delete(revs, r.From)
+			delete(revs, r.To)
+		}
+		switch r.Op {
 		case "p":
-			if ok(r.Path) && !given[r.Tx] && replay(root, r, !applied[r.Tx], log) {
-				set[r.Path] = authors[r.Tx]
+			if !ok(r.Path) || given[r.Tx] {
+				continue
 			}
+			// The file is the server's if the replay leaves it at the new
+			// content, or, changed outside since, if the transaction was
+			// applied. One that never was applied and whose file is at
+			// neither content is given up: what it would have written never
+			// was on disk (and a new file there may be another's that held
+			// the name).
+			switch {
+			case replay(root, r, !applied[r.Tx], log) || applied[r.Tx]:
+				r := r
+				set[r.Path] = authors[r.Tx]
+				revs[r.Path] = gitstore.Blob{ID: r.Rev, Data: r.content}
+			case !gaveUp[r.Tx]:
+				gaveUp[r.Tx] = true
+				giveUp = append(giveUp, r.Tx)
+			}
+			continue
 		case "t", "d":
 			if ok(r.Path) {
 				set[r.Path] = by
@@ -831,6 +935,7 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 		for _, p := range recoverFieldRename(h, root, r) {
 			if ok(p) {
 				set[p] = r.author()
+				delete(revs, p)
 			}
 		}
 	}
@@ -838,9 +943,10 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 		by := bindRecs[len(bindRecs)-1].author()
 		for _, p := range recoverBindings(h, root, bindRecs) {
 			set[p] = by
+			delete(revs, p)
 		}
 	}
-	return set
+	return set, revs, giveUp
 }
 
 // replay brings the file of a "p" record to its new content, if it is at the

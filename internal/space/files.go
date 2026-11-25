@@ -77,15 +77,28 @@ func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (s
 		if taken[page.NameKey(name)] {
 			continue
 		}
-		// Journal the name before taking it; recovery only believes this
-		// record if the file has our content.
-		if err := s.cm.Record(by, jrec{Op: "w", Path: path.Join(folder, name), Rev: rev}); err != nil {
+		// Journal the name, with the content, before taking it. In a local
+		// space it is a transaction, applied once the name is ours and given
+		// up when another file holds it, so the next start commits our
+		// content there even if the file was changed outside meanwhile, and
+		// never someone else's. A space that follows a remote journals a "w"
+		// record, which recovery only believes if the file has our content.
+		rel := path.Join(folder, name)
+		var tx uint64
+		if s.rem.Load() == nil {
+			var err error
+			if tx, err = s.cm.Prepare(by, []txFile{{path: rel, rev: rev, data: data}}, nil); err != nil {
+				return "", err
+			}
+		} else if err := s.cm.Record(by, jrec{Op: "w", Path: rel, Rev: rev}); err != nil {
 			return "", err
 		}
 		err := s.ops.Link(tmp, filepath.Join(dir, name))
 		if err == nil {
+			s.cm.Applied(tx)
 			return name, nil
 		}
+		s.cm.Abort(tx)
 		if !errors.Is(err, fs.ErrExist) {
 			return "", err
 		}
