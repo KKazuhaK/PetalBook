@@ -61,6 +61,17 @@ func noFreeName(stem string) error {
 // the listing did not show (another name for the same file on a file system
 // that ignores case or Unicode form) is never replaced, and the search ends
 // after maxNameTries.
+//
+// The journal is written a fixed number of times whatever the number of names
+// tried: once before the search, a claim ("c") naming the temporary file the
+// new name is linked from, and once the name is ours, the transaction that
+// writes it. A name refused costs one link and nothing in the journal. A crash
+// between the link and the transaction leaves a name nobody was told of, a
+// second name of the temporary file: the next start takes it back (the
+// claim), as the transaction never was. Once the transaction is durable it
+// is the create: in a local space the next start commits our content there,
+// even if the file was changed outside meanwhile, and never someone else's; a
+// space that follows a remote takes it back.
 func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (string, error) {
 	taken, err := s.takenKeys(dir)
 	if err != nil {
@@ -72,31 +83,42 @@ func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (s
 	}
 	defer os.Remove(tmp)
 	rev := page.Rev(data)
+	if err := s.cm.Record(by, jrec{Op: "c", From: path.Join(folder, filepath.Base(tmp)), Rev: rev}); err != nil {
+		return "", err
+	}
 	for n := 1; n <= maxNameTries; n++ {
 		name := page.NumberedStem(stem, n) + ".md"
 		if taken[page.NameKey(name)] {
 			continue
 		}
-		// Journal the name, with the content, before taking it. In a local
-		// space it is a transaction, applied once the name is ours and given
-		// up when another file holds it, so the next start commits our
-		// content there even if the file was changed outside meanwhile, and
-		// never someone else's. A space that follows a remote journals a "w"
-		// record, which recovery only believes if the file has our content.
-		rel := path.Join(folder, name)
-		tx, err := s.cm.Prepare(by, []txFile{{path: rel, rev: rev, data: data}})
+		abs := filepath.Join(dir, name)
+		err := s.ops.Link(tmp, abs)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
 		if err != nil {
 			return "", err
 		}
-		err = s.ops.Link(tmp, filepath.Join(dir, name))
-		if err == nil {
-			s.cm.Applied(tx)
-			return name, nil
-		}
-		s.cm.Abort(tx)
-		if !errors.Is(err, fs.ErrExist) {
+		// The name is ours. Gives it up again, as the change fails.
+		release := func(err error) (string, error) {
+			if rerr := s.ops.Remove(abs); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+				s.log.Error("a name taken for a page that was not made stays", "path", path.Join(folder, name), "error", rerr)
+			}
 			return "", err
 		}
+		if err := s.stepped("name claimed"); err != nil {
+			return release(err)
+		}
+		tx, err := s.cm.Prepare(by, []txFile{{path: path.Join(folder, name), rev: rev, data: data}})
+		if err != nil {
+			return release(err)
+		}
+		if err := s.stepped("create journaled"); err != nil {
+			s.cm.Abort(tx)
+			return release(err)
+		}
+		s.cm.Applied(tx)
+		return name, nil
 	}
 	return "", noFreeName(stem)
 }
