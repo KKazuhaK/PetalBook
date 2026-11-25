@@ -277,82 +277,6 @@ func journalFile(root string) string {
 	return filepath.Join(DefaultStateDir(root), "pending.journal")
 }
 
-func TestCrashAfterAFolderRenameFinishesTheBindingsAtRecovery(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
-		t.Fatal(err)
-	}
-	mustCreate(t, s, "A/sub", meta("title", "P"), "x\n")
-	for f, typ := range map[string]string{"A": "t", "A/sub": "t"} {
-		if _, err := s.BindFolder(Author{}, f, typ); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s.Flush()
-	crash(s)
-	// The rename was made; the edit of space.yml never was.
-	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B")); err != nil {
-		t.Fatal(err)
-	}
-	rec := framed(`{"op":"b","f":"A","to":"B"}` + "\n")
-	if err := os.WriteFile(journalFile(root), rec, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s2 := openAt(t, root)
-	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t", "B/sub": "t"}) {
-		t.Fatalf("after recovery: %v\n%s", m, spaceYML(root))
-	}
-	if err := s2.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if got := git(t, root, "show", "HEAD:.petalbook/space.yml"); !strings.Contains(got, "B/sub") {
-		t.Errorf("the recovered settings are not committed:\n%s", got)
-	}
-	// Again, as if the crash came once more before the journal was trimmed:
-	// nothing is done twice.
-	crash(s2)
-	before := spaceYML(root)
-	os.WriteFile(journalFile(root), rec, 0o644)
-	s3 := openAt(t, root)
-	if spaceYML(root) != before || !reflect.DeepEqual(bindingMap(s3), map[string]string{"B": "t", "B/sub": "t"}) {
-		t.Errorf("a second recovery changed the file:\n%s", spaceYML(root))
-	}
-	// A move that never happened (the old folder is there) moves no bindings.
-	crash(s3)
-	os.Rename(filepath.Join(root, "B"), filepath.Join(root, "A"))
-	os.WriteFile(journalFile(root), framed(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
-	s4 := openAt(t, root)
-	if m := bindingMap(s4); !reflect.DeepEqual(m, map[string]string{"B": "t", "B/sub": "t"}) {
-		t.Errorf("%v", m)
-	}
-}
-
-func TestCrashAfterAFolderDeleteDropsItsBindingsAtRecovery(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	putCurrent(s, "t", TypeInput{})
-	mustCreate(t, s, "G/deep", meta("title", "P"), "x\n")
-	mustCreate(t, s, "Keep", meta("title", "Q"), "x\n")
-	for _, f := range []string{"G", "G/deep", "Keep"} {
-		if _, err := s.BindFolder(Author{}, f, "t"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s.Flush()
-	crash(s)
-	os.RemoveAll(filepath.Join(root, "G"))
-	os.WriteFile(journalFile(root), framed(`{"op":"u","p":"G"}`+"\n"), 0o644)
-	s2 := openAt(t, root)
-	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"Keep": "t"}) {
-		t.Errorf("%v", m)
-	}
-}
-
 func TestFolderMoveIsTakenBackWhenItsBindingsCannotBeWritten(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
@@ -428,75 +352,7 @@ func TestMovingAFolderDropsEveryStaleBindingAtAndUnderTheTarget(t *testing.T) {
 	}
 }
 
-func TestRecoveryOfAMoveDropsStaleBindingsAtTheTargetToo(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	putCurrent(s, "t", TypeInput{})
-	mustCreate(t, s, "A", meta("title", "P"), "x\n")
-	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
-		t.Fatal(err)
-	}
-	s.Flush()
-	crash(s)
-	setSpaceYML(t, root, spaceYML(root)+"  B:\n    type: stale\n  B/x:\n    type: stale\n")
-	os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B"))
-	os.WriteFile(journalFile(root), framed(`{"op":"b","f":"A","to":"B"}`+"\n"), 0o644)
-	s2 := openAt(t, root)
-	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t"}) {
-		t.Errorf("%v\n%s", m, spaceYML(root))
-	}
-}
-
 // --- the committer and the records of bindings -----------------------------------
-
-func TestACommitBetweenTheRecordAndTheEditOfBindingsKeepsTheRecord(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
-	putCurrent(s, "t", TypeInput{})
-	mustCreate(t, s, "A", meta("title", "P"), "x\n")
-	if _, err := s.BindFolder(Author{}, "A", "t"); err != nil {
-		t.Fatal(err)
-	}
-	s.Flush()
-	// The move has renamed the folder and journaled "b"; the edit of space.yml is not made yet.
-	rec := jrec{Op: "b", From: "A", To: "B"}
-	if err := s.cm.Record(Author{}, rec); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(root, "A"), filepath.Join(root, "B")); err != nil {
-		t.Fatal(err)
-	}
-	// ... and the committer runs now, as it does when the quiet period ends.
-	mustCreate(t, s, "Other", meta("title", "Q"), "x\n")
-	if err := s.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(journalFile(root)); !strings.Contains(string(b), `"op":"b"`) {
-		t.Fatalf("the commit dropped the record: %q", b)
-	}
-	crash(s)
-	s2 := openAt(t, root)
-	if m := bindingMap(s2); !reflect.DeepEqual(m, map[string]string{"B": "t"}) {
-		t.Errorf("after the crash: %v", m)
-	}
-	// Once the edit is done the record is done too: the next commit drops it, and a
-	// crash before that does not make the edit again.
-	s2.cm.Record(Author{}, rec)
-	s2.cm.Done(rec)
-	mustCreate(t, s2, "Other2", meta("title", "R"), "x\n")
-	s2.Flush()
-	if b, _ := os.ReadFile(journalFile(root)); strings.Contains(string(b), `"op":"b"`) {
-		t.Errorf("a done record is kept: %q", b)
-	}
-	recs := []jrec{{Op: "b", From: "A", To: "B"}, {Op: "bd", From: "A", To: "B"}}
-	if got := recoverPending(root, recs); len(got) != 0 {
-		t.Errorf("a done record was made again: %v", got)
-	}
-}
 
 // --- an undone move in a space that follows a remote -----------------------------
 
@@ -604,22 +460,4 @@ func TestFolderMoveTakenBackLeavesNoFoldersItMade(t *testing.T) {
 		}
 	}
 	_ = fmt.Sprint
-}
-
-// A record that could not be journaled is not kept open: the trim would carry it
-// for as long as the process lives.
-func TestARecordThatCouldNotBeJournaledIsNotKeptOpen(t *testing.T) {
-	t.Parallel()
-	needGit(t)
-	s := openAt(t, t.TempDir())
-	s.cm.j.f.Close() // appends fail now
-	if err := s.cm.Record(Author{}, jrec{Op: "b", From: "A", To: "B"}); err == nil {
-		t.Fatal("the append should have failed")
-	}
-	s.cm.mu.Lock()
-	n := len(s.cm.open)
-	s.cm.mu.Unlock()
-	if n != 0 {
-		t.Errorf("%d records kept open", n)
-	}
 }

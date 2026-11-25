@@ -184,12 +184,14 @@ func (s *Space) FixNoID(by Author, rel, baseRev string) (*Page, error) {
 		if bytes.Equal(newData, data) {
 			return s.pageFrom(rel, data, mtime), nil
 		}
-		if err := tx.record(jrec{Op: "w", Path: rel, Rev: page.Rev(newData)}); err != nil {
+		w, err := tx.journalFiles(fileWrite{rel: rel, data: newData})
+		if err != nil {
 			return nil, err
 		}
 		if err := writeAtomic(abs, newData); err != nil {
 			return nil, err
 		}
+		w.applied()
 		return s.afterWrite(tx, rel, newData)
 	})
 }

@@ -4,10 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io/fs"
-	"log/slog"
-	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -117,10 +113,26 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 			return FieldRename{}, err
 		}
 
-		// Everything the change writes is planned before anything is.
+		// Everything the change writes is planned before anything is, as one
+		// transaction put together page by page: what is past the inline
+		// bounds of the journal goes to its staged file as it comes, so the
+		// contents of all the pages are never in memory at once.
+		if s.cm == nil || s.cm.j == nil {
+			return FieldRename{}, errors.New("the space has no journal")
+		}
+		b := s.cm.j.newTx()
+		prepared := false
+		defer func() {
+			if !prepared {
+				b.discard()
+			}
+		}()
+		if err := b.add(txFile{path: rel, old: revOf(filepath.Join(s.root, filepath.FromSlash(rel))), rev: page.Rev(out), data: out}); err != nil {
+			return FieldRename{}, err
+		}
 		resolver := s.TypeResolver()
 		var res FieldRename
-		var edits []fileEdit
+		var pages []string
 		var after string
 		for {
 			r, err := s.idx.List(index.Query{Filters: []index.Filter{{Key: from, Op: "notEmpty"}}, Limit: 200, Cursor: after})
@@ -152,7 +164,10 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 						res.Skipped = append(res.Skipped, SkippedPage{ID: it.ID, Path: it.Path, Reason: "has_key"})
 					}
 				case !bytes.Equal(nd, pdata):
-					edits = append(edits, fileEdit{rel: it.Path, old: page.Rev(pdata), data: nd})
+					if err := b.add(txFile{path: it.Path, old: page.Rev(pdata), rev: page.Rev(nd), data: nd}); err != nil {
+						return FieldRename{}, err
+					}
+					pages = append(pages, it.Path)
 				}
 			}
 			if r.Next == "" {
@@ -171,34 +186,37 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 				res.Skipped = append(res.Skipped, SkippedPage{Path: p.Path, Reason: "unreadable"})
 			}
 		}
-		_, views, err := planSpaceYAML(s.root, s.name, func(root *yaml.Node) (bool, error) {
-			return renameFieldInViews(root, typeName, from, to)
-		})
+		renameViews := func(root *yaml.Node) (bool, error) { return renameFieldInViews(root, typeName, from, to) }
+		yml, inline, ymlWritten, err := s.planSpaceInline(tx, renameViews)
 		if err != nil {
 			return FieldRename{}, err
 		}
-
-		pages := make([]string, len(edits))
-		recs := []jrec{{Op: "t", Path: rel}}
-		for i, e := range edits {
-			pages[i] = e.rel
-			recs = append(recs, jrec{Op: "t", Path: e.rel})
+		if inline {
+			if err := b.add(txFile{path: spaceFile, old: revOf(filepath.Join(s.root, filepath.FromSlash(spaceFile))), rev: page.Rev(yml), data: yml}); err != nil {
+				return FieldRename{}, err
+			}
 		}
-		if views {
-			recs = append(recs, jrec{Op: "t", Path: spaceFile})
-		}
-		f := jrec{Op: "f", Path: rel, From: from, To: to, Rev: page.Rev(out), Pages: pages}
-		if err := tx.record(append(recs, f)...); err != nil {
+		prepared = true
+		id, err := tx.prepareBuild(b)
+		if err != nil {
 			return FieldRename{}, err
 		}
-		tx.bind = append(tx.bind, f)
-		// Until the type's file is written nothing is: a failure there leaves
-		// nothing to finish.
+		if err := s.stepped("edits journaled"); err != nil {
+			s.cm.forget(id)
+			return FieldRename{}, err
+		}
+		files := b.files()
+		if tx.remote {
+			for _, f := range files {
+				tx.touch(f.Path)
+			}
+		}
+		// Until the type's file is written nothing is: a failure there gives
+		// the transaction up.
 		notMade := func(err error) (FieldRename, error) {
-			tx.settleBindings()
+			s.cm.Abort(id)
 			return FieldRename{}, err
 		}
-
 		moved, err := s.makeTypeDir(tx, rel)
 		if err != nil {
 			return notMade(err)
@@ -213,36 +231,59 @@ func (s *Space) RenameTypeField(by Author, typeName, baseRev, from, to string) (
 				return notMade(err)
 			}
 		}
-		tx.touch(rel)
 		s.typesDirty.Store(true)
-		if err := writeIn(s.root, rel, out); err != nil {
-			return notMade(err)
-		}
-		s.heal.wroteGood(typeSettings(typeName), out)
-		done()
-		// From here on the change is made: what is left of it is finished at
-		// the next start should this stop part way (the "f" record stays open).
-		paths, err := s.writeEdits(tx, edits)
-		if err != nil {
-			return FieldRename{}, err
-		}
-		if views {
-			if err := s.editSpaceFile(tx, func(root *yaml.Node) (bool, error) {
-				return renameFieldInViews(root, typeName, from, to)
-			}); err != nil {
+		// From here on the change is made: a stop part way is finished at the
+		// next start, from the journal.
+		read, closeRead := b.reader()
+		defer closeRead()
+		for i, f := range files {
+			data, err := read(f)
+			if err == nil {
+				if f.Path == rel || f.Path == spaceFile {
+					err = writeIn(s.root, f.Path, data)
+				} else {
+					var abs string
+					if abs, err = s.abs(f.Path); err == nil {
+						err = writeAtomic(abs, data)
+					}
+				}
+			}
+			if err != nil {
+				if !tx.remote {
+					for _, w := range files[:i] {
+						tx.touch(w.Path)
+					}
+					s.cm.forget(id)
+				}
+				return FieldRename{}, err
+			}
+			if i == 0 {
+				s.heal.wroteGood(typeSettings(typeName), out)
+				done()
+			}
+			if err := s.stepped("rename written"); err != nil {
+				if !tx.remote {
+					for _, w := range files[:i+1] {
+						tx.touch(w.Path)
+					}
+					s.cm.forget(id)
+				}
 				return FieldRename{}, err
 			}
 		}
-		tx.settleBindings()
-		if len(paths) > 0 {
-			if _, err := s.idx.Refresh(s.src, paths, nil); err != nil {
+		s.cm.Applied(id)
+		if inline {
+			ymlWritten()
+		}
+		if len(pages) > 0 {
+			if _, err := s.idx.Refresh(s.src, pages, nil); err != nil {
 				return FieldRename{}, err
 			}
 		}
 		sort.Slice(res.Skipped, func(i, j int) bool { return res.Skipped[i].Path < res.Skipped[j].Path })
 		t, _, err := parseType(typeName, out)
 		t.Rev = page.Rev(out)
-		res.Type, res.Pages = t, len(edits)
+		res.Type, res.Pages = t, len(pages)
 		return res, err
 	})
 }
@@ -362,51 +403,6 @@ func renamedView(v View, from, to string) (View, bool) {
 		v.Extra = extra
 	}
 	return v, changed
-}
-
-// recoverFieldRename finishes a field rename that a crash stopped part way:
-// when the type's file has the content the rename wrote, the pages it named
-// that still have the old key (and not the new) get the new one, and so do
-// the views of the folders of the type. When it has not, nothing was written
-// (the type's file is written first) and nothing is done. It returns the files
-// it wrote, and the type's file and the pages, for the commit.
-func recoverFieldRename(h *healer, root string, r jrec) []string {
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(r.Path)))
-	if err != nil || page.Rev(data) != r.Rev {
-		return nil
-	}
-	typeName := strings.TrimSuffix(path.Base(r.Path), ".json")
-	out := []string{r.Path}
-	for _, p := range r.Pages {
-		if !fs.ValidPath(p) || strings.HasPrefix(p, ".git/") || strings.HasPrefix(p, ".petalbook/") {
-			continue
-		}
-		abs := filepath.Join(root, filepath.FromSlash(p))
-		pdata, err := os.ReadFile(abs)
-		if err != nil {
-			continue
-		}
-		doc := page.Parse(pdata)
-		if len(doc.Problems()) > 0 {
-			continue
-		}
-		nd, ok, err := renameKey(doc, r.From, r.To)
-		if err != nil || !ok {
-			continue
-		}
-		if err := writeIn(root, p, nd); err != nil {
-			slog.Warn("recovery: a page of a field rename could not be written", "path", p, "error", err)
-			continue
-		}
-		out = append(out, p)
-	}
-	written, err := editSpaceYAML(h, root, "", func(top *yaml.Node) (bool, error) {
-		return renameFieldInViews(top, typeName, r.From, r.To)
-	}, nil, nil)
-	if err != nil {
-		slog.Warn("recovery: the views of a field rename could not be written", "type", typeName, "error", err)
-	}
-	return append(out, written...)
 }
 
 // indentJSON writes a type's top-level object as the files of types are written.

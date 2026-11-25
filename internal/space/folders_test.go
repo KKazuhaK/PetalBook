@@ -211,7 +211,7 @@ func TestMoveFolderIsJournaledBeforeTheRename(t *testing.T) {
 	if _, err := s.MoveFolder(Author{}, "old", "new"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(seen, `"old/Doc.md"`) || !strings.Contains(seen, `"new/Doc.md"`) {
+	if !strings.Contains(seen, `{"op":"md","f":"old","to":"new"}`) {
 		t.Fatalf("the journal at the time of the rename: %q", seen)
 	}
 	crash(s)

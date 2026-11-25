@@ -448,13 +448,7 @@ func (s *Space) asideType(tx *txn, name string, from *restored, entries []string
 		return func() {}, nil
 	}
 	f := typeSettings(name)
-	copy, err := s.heal.keep(f, func(rel string) error {
-		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
-			return err
-		}
-		tx.touch(rel)
-		return nil
-	})
+	copy, err := s.heal.keep(f, s.keepIn(tx))
 	if err != nil {
 		return nil, err
 	}
@@ -861,12 +855,8 @@ func (s *Space) PutType(by Author, name, baseRev string, in TypeInput) (TypeInfo
 				return TypeInfo{}, err
 			}
 		}
-		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
-			return TypeInfo{}, err
-		}
-		tx.touch(rel)
 		s.typesDirty.Store(true)
-		if err := writeIn(s.root, rel, out.Bytes()); err != nil {
+		if err := s.writeFileIn(tx, rel, out.Bytes()); err != nil {
 			return TypeInfo{}, err
 		}
 		s.heal.wroteGood(typeSettings(name), out.Bytes())
@@ -951,12 +941,8 @@ func (s *Space) DeleteType(by Author, name, baseRev string) error {
 			if err != nil {
 				return struct{}{}, err
 			}
-			if err := tx.record(jrec{Op: "d", Path: rel}); err != nil {
-				return struct{}{}, err
-			}
-			tx.touch(rel)
 			s.typesDirty.Store(true)
-			if err := removeIn(s.root, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := s.removeFileIn(tx, rel); err != nil {
 				return struct{}{}, err
 			}
 			done()

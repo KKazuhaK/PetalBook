@@ -228,27 +228,35 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 		return "", notMoved(reason)
 	}
 
-	// Journal first: after a crash these paths are committed as they are then,
-	// moved or not.
-	recs := make([]jrec, 0, len(oldPaths)+len(newPaths))
-	for _, p := range append(append([]string{}, oldPaths...), newPaths...) {
-		recs = append(recs, jrec{Op: "t", Path: p})
-	}
-	// The bindings of the folder (and of the folders in it) follow it: that is
-	// part of the move, so it is journaled with it and a crash between the
-	// rename and the edit of space.yml is finished at recovery (see "b").
-	bind := jrec{Op: "b", From: canonFrom, To: target}
-	// The links of the pages that moved are part of it as well: the rename
-	// is journaled as a move ("md") and the links are one transaction with
-	// it, made after the rename. In a local space a crash before that
-	// transaction has the next start rename the folder back; in one that
-	// follows a remote, the next start takes the whole change back.
-	moveRec := jrec{Op: "md", From: canonFrom, To: target}
-	recs = append(recs, bind, moveRec)
-	if err := tx.record(recs...); err != nil {
+	// What each file of the folder holds, for the commit under its new name:
+	// the content a change recorded for it, else what Git's index has, else
+	// (a file Git does not have yet) the file itself.
+	members, err := s.folderMembers(oldPaths, canonFrom, target)
+	if err != nil {
 		return "", err
 	}
-	tx.bind = append(tx.bind, bind)
+	// space.yml as the move leaves it, planned (and put right first where it
+	// has to be, which commits at once) before anything moves.
+	yml, inline, ymlWritten, err := s.planSpaceInline(tx, moveSettings)
+	if err != nil {
+		if !tx.remote {
+			s.dropCreated(tx)
+		}
+		return "", err
+	}
+	var ymlFile txFile
+	if inline {
+		ymlFile = txFile{path: spaceFile, old: revOf(filepath.Join(s.root, filepath.FromSlash(spaceFile))), rev: page.Rev(yml), data: yml}
+	}
+	// The move is journaled as a move ("md"); the files that go with the
+	// folder, the links that follow it and the bindings in space.yml are one
+	// transaction with it, made after the rename. In a local space a crash
+	// before that transaction has the next start rename the folder back; in
+	// one that follows a remote, the next start takes the whole change back.
+	moveRec := jrec{Op: "md", From: canonFrom, To: target}
+	if err := tx.record(moveRec); err != nil {
+		return "", err
+	}
 	inside := make([]string, 0, len(ours))
 	for f := range ours {
 		inside = append(inside, f)
@@ -257,7 +265,6 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	if err := s.rename(tx.by, absFrom, absTarget, inside); err != nil {
 		// Not renamed: the next start must not rename anything back.
 		tx.record(jrec{Op: "mdd", From: canonFrom, To: target})
-		tx.settleBindings() // nothing moved (or the rename is stuck: its own records say so)
 		return "", err
 	}
 	if err := s.stepped("folder moved"); err != nil {
@@ -309,14 +316,28 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	if perr != nil {
 		edits = nil
 	}
-	pe, err := s.prepareEdits(tx, edits, fmove)
+	// The bindings: space.yml as the move leaves it is part of the
+	// transaction. Only a file that has to be put right first (it cannot be
+	// used, or the way to it is not a folder) is edited on its own after.
+	extra := members
+	if inline {
+		extra = append(extra, ymlFile)
+	}
+	pe, err := s.prepareEdits(tx, edits, fmove, extra)
 	if err != nil {
 		if !tx.remote {
 			tx.runUndo()
 			s.dropCreated(tx)
-			tx.settleBindings()
 		}
 		return "", err
+	}
+	if inline {
+		// Written first: if it cannot be, nothing else is, and the move is
+		// taken back (as below).
+		pe.skip = map[string]bool{spaceFile: true}
+		if err = writeIn(s.root, spaceFile, yml); err != nil {
+			err = notMoved(err.Error())
+		}
 	}
 	// What was bound to the folder, and to the folders in it, follows it.
 	//
@@ -329,10 +350,6 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// it is as it was. (Finishing the edit instead would only repeat what just
 	// failed.) Should the rename not go back either, the "b" record above has
 	// the next start move the bindings to where the folder now is.
-	refused, err := s.editBindings(tx, moveSettings)
-	if err == nil && refused != "" {
-		err = notMoved(refused)
-	}
 	if err != nil {
 		pe.abort()
 		if !tx.remote {
@@ -340,13 +357,10 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 			s.dropCreated(tx)
 			if tx.undoFailed != "" {
 				err = errors.Join(err, errors.New(tx.undoFailed))
-			} else {
-				tx.settleBindings() // the folder is where it was, with its bindings
 			}
 		}
 		return "", err
 	}
-	tx.settleBindings()
 
 	oldDirs, newDirs := []string{canonFrom}, []string{target}
 	for _, d := range subdirs {
@@ -359,6 +373,9 @@ func (s *Space) moveFolderLocked(tx *txn, from, to string) (string, error) {
 	// the pages outside it, in the same change (the index still has the old
 	// state), journaled above with the move.
 	edited, rerr := pe.apply()
+	if inline {
+		ymlWritten()
+	}
 	if rerr == nil {
 		rerr = perr
 	}
@@ -435,6 +452,47 @@ func (s *Space) foldersLeft(canon string, pages map[string]bool) (seen, left map
 // The ids returned are the pages that were deleted and stay deleted: all of
 // them on success; on a failure, the ones a local space had already deleted
 // (it has no undo), and none in a space that follows a remote (it has).
+// folderMembers are the entries of the files at oldPaths, which move with
+// their folder from from to to unchanged (see txFile.ref).
+func (s *Space) folderMembers(oldPaths []string, from, to string) ([]txFile, error) {
+	var need []string
+	ids := map[string]string{}
+	for _, o := range oldPaths {
+		if fi, err := os.Lstat(filepath.Join(s.root, filepath.FromSlash(o))); err != nil || !fi.Mode().IsRegular() || !listedPath(filepath.Join(s.root, filepath.FromSlash(o))) {
+			continue // not there (a change took it away, or someone did): nothing moves
+		}
+		switch id, known := s.cm.pendingRev(o); {
+		case known && id == "":
+		case known:
+			ids[o] = id
+		default:
+			need = append(need, o)
+		}
+	}
+	if len(need) > 0 {
+		inIndex, err := s.cm.git.r().IndexBlobs(s.ctx, need)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range need {
+			if id := inIndex[o]; id != "" {
+				ids[o] = id
+			} else if id := revOf(filepath.Join(s.root, filepath.FromSlash(o))); id != "" {
+				ids[o] = id
+			}
+		}
+	}
+	out := make([]txFile, 0, len(oldPaths))
+	for _, o := range oldPaths {
+		if ids[o] == "" {
+			continue
+		}
+		n := path.Join(to, strings.TrimPrefix(o, from+"/"))
+		out = append(out, txFile{path: n, from: o, old: ids[o], rev: ids[o], ref: true})
+	}
+	return out, nil
+}
+
 func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, error) {
 	if err := checkRel(rel); err != nil {
 		return nil, err
@@ -470,8 +528,12 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 		// nothing about it (a folder that stays keeps its entry, and with it
 		// what the entry's anchors and aliases do to the rest of the file).
 		var willGo func(folder string) bool
+		var first *writeTx
+		inTx := map[string]bool{}
+		var yml []byte
+		ymlWritten := func() {}
 		startU := func(pages []string) error {
-			if len(tx.bind) > 0 {
+			if willGo != nil {
 				return nil
 			}
 			going := make(map[string]bool, len(pages))
@@ -499,11 +561,39 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			if reason, fails := s.bindingsWouldFail(forget(willGo)); fails {
 				return invalidf("The folder was not deleted: its type and views cannot be taken out of space.yml, because %s.", reason)
 			}
-			u := jrec{Op: "u", Path: canon}
-			if err := tx.record(u); err != nil {
+			// One transaction: the pages, the placeholders of the folders,
+			// and space.yml without the bindings of what goes (unless the file
+			// has to be put right first: then it is edited on its own after).
+			var ws []fileWrite
+			for _, p := range pages {
+				ws = append(ws, fileWrite{rel: p, del: true})
+			}
+			filepath.WalkDir(abs, func(p string, e fs.DirEntry, err error) error {
+				if err == nil && !e.IsDir() && e.Name() == ".gitkeep" && e.Type().IsRegular() {
+					r, _ := filepath.Rel(s.root, p)
+					ws = append(ws, fileWrite{rel: filepath.ToSlash(r), del: true})
+				}
+				return nil
+			})
+			data, changed, after, err := s.planSpaceInline(tx, forget(willGo))
+			if err != nil {
 				return err
 			}
-			tx.bind = append(tx.bind, u)
+			if changed {
+				yml, ymlWritten = data, after
+				ws = append(ws, fileWrite{rel: spaceFile, data: data})
+			}
+			if first, err = tx.journalFiles(ws...); err != nil {
+				return err
+			}
+			if err := s.stepped("edits journaled"); err != nil {
+				return err
+			}
+			for _, w := range ws {
+				inTx[w.rel] = true
+				tx.touch(w.rel)
+			}
+			tx.journaled = inTx
 			return nil
 		}
 		// Deleting a page can turn another file with the same id into the
@@ -565,21 +655,34 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			keep := path.Join(d, ".gitkeep")
 			absKeep := filepath.Join(s.root, filepath.FromSlash(keep))
 			if fi, err := os.Lstat(absKeep); err == nil && fi.Mode().IsRegular() {
-				if err := tx.record(jrec{Op: "d", Path: keep}); err != nil {
-					return struct{}{}, err
+				var w *writeTx
+				if !inTx[keep] {
+					if w, err = tx.journalFiles(fileWrite{rel: keep, del: true}); err != nil {
+						return struct{}{}, err
+					}
 				}
 				tx.touch(keep)
 				if err := os.Remove(absKeep); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return struct{}{}, err
 				}
+				w.applied()
 			}
 			// Fails, rightly, for a folder that still holds something.
 			if s.ops.Remove(filepath.Join(s.root, filepath.FromSlash(d))) == nil {
 				removed = append(removed, d)
 			}
 		}
+		if yml != nil {
+			if err := writeIn(s.root, spaceFile, yml); err != nil {
+				return struct{}{}, err
+			}
+			ymlWritten()
+		}
+		first.applied()
+		tx.journaled = nil
 		// A folder that is gone has no type or views to keep. One that stays (it holds
-		// files that are not pages) keeps its binding.
+		// files that are not pages) keeps its binding. As planned above, this
+		// is no edit at all; it is one when the folders came out otherwise.
 		refused, err := s.editBindings(tx, forget(s.fileGone))
 		if err == nil && refused != "" && willGo != nil {
 			// The edit that was tried before the first deletion (startU) could
@@ -600,13 +703,12 @@ func (s *Space) DeleteFolder(by Author, rel string, recursive bool) ([]string, e
 			// the file changed in between. A space that follows a remote takes
 			// the whole change back. A local space has no undo: its pages are
 			// deleted for good (see the ids returned), the error says what is
-			// left, and the "u" record has the next start try again.
+			// left.
 			if tx.remote {
 				return struct{}{}, invalidf("The folder was not deleted: its type and views cannot be taken out of space.yml, because %s.", refused)
 			}
 			return struct{}{}, invalidf("The pages of the folder were deleted, but its type and views are still in space.yml, because %s; until its entry is taken out of space.yml, a new folder of that name gets them.", refused)
 		}
-		tx.settleBindings()
 		if tx.remote {
 			tx.dirs = append(tx.dirs, dirs...)
 		}

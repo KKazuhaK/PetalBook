@@ -17,6 +17,8 @@ import (
 // crash would.
 type crashed struct{}
 
+func (crashed) stopHere() {}
+
 // stopAt makes the change running in s stop at the n-th time (from 1) it
 // reaches the step name, as a crash there would.
 func stopAt(s *Space, name string, n int) {
@@ -273,7 +275,7 @@ func TestATransactionReadsBackWhole(t *testing.T) {
 			t.Errorf("file %s: %+v %v", f.path, r, err)
 		}
 	}
-	if err := j.trim(j.lastSeq(), nil, nil); err != nil {
+	if err := j.trim(j.lastSeq(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if b := blobsIn(t, dir); len(b) != 0 {

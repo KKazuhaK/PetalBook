@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -215,13 +214,7 @@ func (r TypeResolver) For(folder, headerType string) string {
 // that cannot be used is put aside in the same change, and the settings
 // restored for it are written with the edit (see restore.go).
 func (s *Space) editSpaceFile(tx *txn, edit func(root *yaml.Node) (changed bool, err error)) error {
-	_, err := editSpaceYAML(s.heal, s.root, s.name, edit, func(rel string) error {
-		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
-			return err
-		}
-		tx.touch(rel)
-		return nil
-	}, func() (string, error) { return s.clearWayIn(tx, spaceFile, spaceFile) })
+	_, err := editSpaceYAML(s.heal, s.root, s.name, edit, s.keepIn(tx), func() (string, error) { return s.clearWayIn(tx, spaceFile, spaceFile) })
 	s.cfgMu.Lock()
 	s.cfg = configCache{}
 	s.cfgMu.Unlock()
@@ -271,13 +264,13 @@ func planSpaceYAMLWith(h *healer, root, name string, edit func(root *yaml.Node) 
 // space.yml, and the copy of a file that could not be used, put aside first.
 // clear puts right a folder on the way that is not one (clearWay); without
 // it, nothing is written through such a thing.
-func editSpaceYAML(h *healer, root, name string, edit func(root *yaml.Node) (bool, error), before func(rel string) error, clear func() (string, error)) ([]string, error) {
+func editSpaceYAML(h *healer, root, name string, edit func(root *yaml.Node) (bool, error), before func(rel string, data []byte) (func(), error), clear func() (string, error)) ([]string, error) {
 	data, changed, rep, err := planSpaceYAMLWith(h, root, name, edit)
 	if err != nil || !changed {
 		return nil, err
 	}
 	if before == nil {
-		before = func(string) error { return nil }
+		before = func(string, []byte) (func(), error) { return func() {}, nil }
 	}
 	var written []string
 	kept := ""
@@ -298,12 +291,14 @@ func editSpaceYAML(h *healer, root, name string, edit func(root *yaml.Node) (boo
 		}
 		written = append(written, kept)
 	}
-	if err := before(spaceFile); err != nil {
+	after, err := before(spaceFile, data)
+	if err != nil {
 		return written, err
 	}
 	if err := writeIn(root, spaceFile, data); err != nil {
 		return written, err
 	}
+	after()
 	h.wroteGood(spaceSettings, data)
 	if rep != nil && h != nil {
 		h.repaired(spaceSettings, rep, kept)
@@ -623,6 +618,44 @@ func settingsReason(err error) (reason string, ok bool) {
 	return "", false
 }
 
+// planSpaceInline is the content space.yml gets from edit, for a change that
+// writes it in its own transaction (a folder move or delete, a field rename).
+// What has to be put right first is done first, in transactions of its own:
+// what is in the way of the folder (clearWay), and a file that cannot be used
+// (kept aside). So the change's transaction holds the edit, and a crash after
+// it is journaled finishes the edit with the rest. after is called once the
+// file is written.
+func (s *Space) planSpaceInline(tx *txn, edit func(root *yaml.Node) (bool, error)) (data []byte, changed bool, after func(), err error) {
+	if blocked, err := wayBlocked(s.root, spaceFile); err != nil {
+		return nil, false, nil, err
+	} else if blocked != "" {
+		if _, err := s.clearWayIn(tx, spaceFile, spaceFile); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	data, changed, rep, err := planSpaceYAMLWith(s.heal, s.root, s.name, edit)
+	if err != nil || !changed {
+		return nil, false, nil, err
+	}
+	kept := ""
+	if rep != nil && s.heal != nil {
+		if kept, err = s.heal.keep(spaceSettings, s.keepIn(tx)); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	after = func() {
+		s.heal.wroteGood(spaceSettings, data)
+		if rep != nil && s.heal != nil {
+			s.heal.repaired(spaceSettings, rep, kept)
+		}
+		s.cfgMu.Lock()
+		s.cfg = configCache{}
+		s.cfgMu.Unlock()
+		s.typesDirty.Store(true)
+	}
+	return data, true, after, nil
+}
+
 // bindingsWouldFail makes the edit of space.yml that a move or a delete of a
 // folder will need, without writing it, and says why it cannot be made if so:
 // asked before the folder is touched, so that such a change is refused with
@@ -651,80 +684,4 @@ func (s *Space) editBindings(tx *txn, edit func(root *yaml.Node) (bool, error)) 
 		return "", nil
 	}
 	return "", err
-}
-
-// recoverBindings finishes what a crash left of the bindings of a folder that
-// was moved ("b": From to To) or deleted ("u": Path), after the files have
-// been looked at. Both are safe to run again and again: a move's bindings are
-// moved only if the folder is at its new place and no longer at the old one,
-// and a deleted folder's are dropped only if the folder is not there.
-func recoverBindings(h *healer, root string, recs []jrec) (written []string) {
-	gone := func(rel string) bool {
-		_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
-		return errors.Is(err, fs.ErrNotExist)
-	}
-	for _, r := range recs {
-		var edit func(*yaml.Node) (bool, error)
-		switch r.Op {
-		case "b":
-			dir := filepath.Join(root, filepath.FromSlash(r.To))
-			if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
-				continue // the move did not happen, or not yet
-			}
-			if listed(filepath.Dir(filepath.Join(root, filepath.FromSlash(r.From))), filepath.Base(r.From)) {
-				continue // the old folder is there: nothing was moved, or it was moved back
-			}
-			from, to := bindingKey(r.From), bindingKey(r.To)
-			edit = func(top *yaml.Node) (bool, error) {
-				a, err := rebind(top, from, to, true)
-				if err != nil {
-					return false, err
-				}
-				b, err := rebindDaily(top, from, to)
-				if err != nil {
-					return false, err
-				}
-				c, err := rebindTemplates(top, from, to, true)
-				return a || b || c, err
-			}
-		case "u":
-			canon := bindingKey(r.Path)
-			edit = func(top *yaml.Node) (bool, error) {
-				return forgetAll(top, func(folder string) bool {
-					return (folder == canon || strings.HasPrefix(folder, canon+"/")) && gone(folder)
-				})
-			}
-		default:
-			continue
-		}
-		// A file that cannot be used is put aside and the settings restored for
-		// it are written with the edit, as when a change is made (see
-		// restore.go). Each record is looked at once, and the edit costs no more
-		// than the file is large, so a file cannot keep the space from opening.
-		paths, err := editSpaceYAML(h, root, "", edit, nil, nil)
-		written = append(written, paths...)
-		if _, refused := settingsReason(err); !refused {
-			if err != nil {
-				slog.Warn("recovery: space.yml could not be written; the settings of a folder that was moved or deleted may still be under its old name",
-					"folder", r.From+r.Path, "moved_to", r.To, "error", err)
-			}
-			continue
-		}
-		// The online path refuses such a change and moves the folder back; do
-		// the same, or the folder's type and views stay under a key that a new
-		// folder of that name inherits.
-		if r.Op == "b" {
-			from := filepath.Join(root, filepath.FromSlash(r.From))
-			rerr := os.Rename(filepath.Join(root, filepath.FromSlash(r.To)), from)
-			if rerr == nil {
-				slog.Error("recovery: the settings of a moved folder do not fit in space.yml; the folder was moved back",
-					"folder", r.From, "moved_to", r.To, "error", err)
-				continue
-			}
-			err = errors.Join(err, rerr)
-		}
-		slog.Error("recovery: the settings of a folder in space.yml were not moved or removed",
-			"folder", r.From+r.Path, "moved_to", r.To, "error", err)
-	}
-	return written
 }

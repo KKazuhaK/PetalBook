@@ -240,7 +240,7 @@ func TestOldJournalWithoutAuthorsRecoversAsTheDefaultAuthor(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "Old.md"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	line := `{"op":"w","p":"Old.md","rev":"` + page.Rev(data) + `"}` + "\n"
+	line := `{"op":"x","tx":1,"pn":1}` + "\n" + `{"op":"p","tx":1,"p":"Old.md","rev":"` + page.Rev(data) + `"}` + "\n" + `{"op":"a","tx":1}` + "\n"
 	if err := os.WriteFile(filepath.Join(state, "pending.journal"), framed(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -274,10 +274,19 @@ func TestRemoteChangesAreCommittedAsTheirAuthor(t *testing.T) {
 func TestRecoveredAuthorOfAPathIsTheLastRecordOfIt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.md"), []byte("a2"), 0o644)
+	os.WriteFile(filepath.Join(root, "b.md"), []byte("b"), 0o644)
+	rev := func(s string) string { return page.Rev([]byte(s)) }
 	got := recoverPending(root, []jrec{
-		{Op: "t", Path: "a.md", AuthorName: ann.Name, AuthorEmail: ann.Email},
-		{Op: "t", Path: "a.md", AuthorName: bo.Name, AuthorEmail: bo.Email},
-		{Op: "t", Path: "b.md"},
+		{Op: "x", Tx: 1, N: 1, AuthorName: ann.Name, AuthorEmail: ann.Email},
+		{Op: "p", Tx: 1, Path: "a.md", Rev: rev("a1"), Text: "a1"},
+		{Op: "a", Tx: 1},
+		{Op: "x", Tx: 4, N: 1, AuthorName: bo.Name, AuthorEmail: bo.Email},
+		{Op: "p", Tx: 4, Path: "a.md", Old: rev("a1"), Rev: rev("a2"), Text: "a2"},
+		{Op: "a", Tx: 4},
+		{Op: "x", Tx: 7, N: 1},
+		{Op: "p", Tx: 7, Path: "b.md", Rev: rev("b"), Text: "b"},
+		{Op: "a", Tx: 7},
 	})
 	if got["a.md"] != bo || got["b.md"] != (Author{}) || len(got) != 2 {
 		t.Fatalf("%v", got)

@@ -308,14 +308,9 @@ func (s *Space) journalRespell(by Author, from, mid, to string, inside []string)
 			paths, olds = append(paths, path.Join(m, p)), append(olds, path.Join(f, p))
 		}
 	}
-	recs := []jrec{{Op: "r", From: f, To: t, Path: m, Dir: inside != nil}}
-	for _, p := range paths {
-		recs = append(recs, jrec{Op: "t", Path: p})
-	}
-	// Journaled only, not handed to the committer: once the rename is done
-	// the third name is gone, and a space that follows a remote commits its
-	// changes itself (txn), not in the background.
-	return append(paths, olds...), s.cm.Record(by, recs...)
+	// The step only: what moves is committed by the transaction of the move
+	// that follows.
+	return append(paths, olds...), s.cm.Record(by, jrec{Op: "r", From: f, To: t, Path: m, Dir: inside != nil})
 }
 
 // moveIntent returns the journal call for moving the page at rel into folder:

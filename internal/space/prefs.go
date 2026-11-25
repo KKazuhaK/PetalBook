@@ -140,17 +140,10 @@ func (s *Space) WritePrefs(by Author, edit func(prefs map[string]any) (changed b
 		if _, err := s.clearWayIn(tx, PrefsFile, PrefsFile); err != nil {
 			return struct{}{}, err
 		}
-		if err := tx.record(jrec{Op: "t", Path: PrefsFile}); err != nil {
-			return struct{}{}, err
-		}
-		tx.touch(PrefsFile)
 		if len(data) == 0 {
-			if err := removeIn(s.root, PrefsFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return struct{}{}, err
-			}
-			return struct{}{}, nil
+			return struct{}{}, s.removeFileIn(tx, PrefsFile)
 		}
-		return struct{}{}, writeIn(s.root, PrefsFile, data)
+		return struct{}{}, s.writeFileIn(tx, PrefsFile, data)
 	})
 	return err
 }

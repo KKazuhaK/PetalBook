@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"io/fs"
 	"strings"
 	"unicode/utf8"
 
@@ -237,13 +236,6 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	if err != nil || !changed {
 		return err
 	}
-	record := func(rel string) error {
-		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
-			return err
-		}
-		tx.touch(rel)
-		return nil
-	}
 	// The cache is dropped after the write, as with space.yml: a reading in
 	// between would otherwise keep the old content under the size and time of
 	// the new file.
@@ -258,18 +250,15 @@ func (s *Space) editTagsFile(tx *txn, edit func(root *yaml.Node) (changed bool, 
 	if kept, err = s.clearWayIn(tx, tagsFile, tagsFile); err != nil {
 		return err
 	} else if kept == "" && rep != nil && s.heal != nil {
-		if kept, err = s.heal.keep(tagsSettings, record); err != nil {
+		if kept, err = s.heal.keep(tagsSettings, s.keepIn(tx)); err != nil {
 			return err
 		}
-	}
-	if err := record(tagsFile); err != nil {
-		return err
 	}
 	if len(data) == 0 {
-		if err := removeIn(s.root, tagsFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := s.removeFileIn(tx, tagsFile); err != nil {
 			return err
 		}
-	} else if err := writeIn(s.root, tagsFile, data); err != nil {
+	} else if err := s.writeFileIn(tx, tagsFile, data); err != nil {
 		return err
 	}
 	if len(data) > 0 {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 )
 
 // .petalbook holds the settings files and the types, and nothing else: it is
@@ -218,7 +219,10 @@ type namesCache struct {
 // wayWriter is what clearWay needs of a change: to journal and take in paths
 // as part of it, and to commit what it did so far on its own.
 type wayWriter struct {
-	record func(rel string, deleted bool) error
+	// record journals rel before it is written (with data), removed
+	// (deleted), or made otherwise (data nil: a thing moved aside), and
+	// returns what to call once it is done.
+	record func(rel string, deleted bool, data []byte) (func(), error)
 	// commitNow commits these paths (a copy, and the name it was moved from)
 	// before the folder is made anew: Git cannot record in one commit that a
 	// name stopped being a link and became a folder of files.
@@ -241,15 +245,23 @@ func (h *healer) clearWay(rel, skip string, w wayWriter) (copy string, err error
 		return "", err
 	}
 	copy = asideName(h.root, blocked)
-	if err := w.record(copy, false); err != nil {
+	var aside []byte // what was in the way, when it is a file
+	if fi, _, err := lstatIn(h.root, blocked); err == nil && fi.Mode().IsRegular() {
+		aside, _ = os.ReadFile(filepath.Join(h.root, filepath.FromSlash(blocked)))
+	}
+	afterCopy, err := w.record(copy, false, aside)
+	if err != nil {
 		return "", err
 	}
-	if err := w.record(blocked, true); err != nil {
+	afterGone, err := w.record(blocked, true, nil)
+	if err != nil {
 		return "", err
 	}
 	if err := renameIn(h.root, blocked, copy); err != nil {
 		return "", err
 	}
+	afterCopy()
+	afterGone()
 	if err := w.commitNow([]string{copy, blocked}); err != nil {
 		return copy, err
 	}
@@ -279,12 +291,14 @@ func (h *healer) clearWay(rel, skip string, w wayWriter) (copy string, err error
 		if b, err := wayBlocked(h.root, f.rel); err != nil || b != "" {
 			continue // a folder further down that was not one either: left out
 		}
-		if err := w.record(f.rel, false); err != nil {
+		after, err := w.record(f.rel, false, f.data)
+		if err != nil {
 			return copy, err
 		}
 		if err := writeIn(h.root, f.rel, f.data); err != nil {
 			return copy, err
 		}
+		after()
 	}
 	now := time.Now().UTC()
 	h.mu.Lock()
@@ -336,21 +350,31 @@ func (s *Space) clearWayIn(tx *txn, rel, skip string) (string, error) {
 	return copy, nil
 }
 
+// isAside reports whether rel is a name clearWay or keep puts a thing aside
+// under: a new file, never another's.
+func isAside(rel string) bool { return strings.Contains(path.Base(rel), unreadableMark) }
+
 // localWay is how a change of a local space takes in what clearWay does.
 func (s *Space) localWay(tx *txn) wayWriter {
 	return wayWriter{
-		record: func(rel string, deleted bool) error {
-			op := "t"
-			if deleted {
-				op = "d"
+		record: func(rel string, deleted bool, data []byte) (func(), error) {
+			tx.touch(rel)
+			if !deleted && data == nil {
+				// A thing moved aside that is no file: committed as it is.
+				return func() {}, nil
 			}
-			if err := tx.record(jrec{Op: op, Path: rel}); err != nil {
+			w, err := tx.journalFiles(fileWrite{rel: rel, data: data, del: deleted, create: !deleted && data != nil && isAside(rel)})
+			if err != nil {
+				return nil, err
+			}
+			return w.applied, nil
+		},
+		commitNow: func([]string) error {
+			if err := s.stepped("way cleared"); err != nil {
 				return err
 			}
-			tx.touch(rel)
-			return nil
+			return s.cm.FlushChange()
 		},
-		commitNow: func([]string) error { return s.cm.FlushChange() },
 	}
 }
 
@@ -372,14 +396,30 @@ func (s *Space) repairWayLocked(ctx context.Context, r *remote, rel string) (str
 	parent := r.repo.Head(ctx)
 	author, committer := s.cm.git.identities(Author{})
 	var paths, all []string
+	var txs []uint64
+	defer func() {
+		// The repair is committed and pushed, or taken back, here and now:
+		// nothing of it is left for the committer.
+		for _, id := range txs {
+			s.cm.forget(id)
+		}
+	}()
 	w := wayWriter{
-		record: func(p string, _ bool) error {
-			if err := s.cm.Record(Author{}, jrec{Op: "t", Path: p}); err != nil {
-				return err
+		record: func(p string, deleted bool, data []byte) (func(), error) {
+			// Journaled so that a crash before the push has the next start
+			// put the path back (rollbackRemote).
+			f := txFile{path: p, old: revOf(filepath.Join(s.root, filepath.FromSlash(p)))}
+			if !deleted && data != nil {
+				f.rev, f.data = page.Rev(data), data
 			}
+			id, err := s.cm.Prepare(Author{}, []txFile{f})
+			if err != nil {
+				return nil, err
+			}
+			txs = append(txs, id)
 			paths = append(paths, p)
 			all = append(all, p)
-			return nil
+			return func() {}, nil
 		},
 		commitNow: func(aside []string) error {
 			if _, err := r.repo.CommitPaths(ctx, aside, commitMessage, author, committer); err != nil {

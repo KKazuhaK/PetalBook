@@ -29,7 +29,7 @@ func (f *rfx) crashedWithUnpushedCommit(title, id string) {
 func (f *rfx) crashedWithUncommittedFile(title, id string) {
 	f.t.Helper()
 	data := []byte(pageText(id, title, "written\n"))
-	if err := f.s.cm.Record(Author{}, jrec{Op: "w", Path: title + ".md", Rev: page.Rev(data)}); err != nil {
+	if _, err := f.s.cm.Prepare(Author{}, []txFile{{path: title + ".md", rev: page.Rev(data), data: data}}); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.root, title+".md"), data, 0o644); err != nil {

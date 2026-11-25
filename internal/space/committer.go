@@ -1,9 +1,11 @@
 package space
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,7 +49,6 @@ type committer struct {
 	last  time.Time // latest write
 
 	j     *journal   // what is pending, on disk, so a crash does not lose it
-	open  []jrec     // "b" and "u" records whose edit of space.yml is not done yet (under mu)
 	runMu sync.Mutex // one git run at a time
 
 	// active counts the changes running now (begin) by the number of the
@@ -99,6 +100,7 @@ type txFileRef struct {
 	i         int
 	path, rev string
 	from      string
+	ref       bool // content in Git, not in the journal
 }
 
 // newCommitter starts the committer. initial are paths recovered from an
@@ -215,11 +217,6 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 	if err := c.j.append(recs); err != nil {
 		return err
 	}
-	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
-			c.open = append(c.open, r)
-		}
-	}
 	if hook := c.recorded; hook != nil {
 		c.mu.Unlock()
 		hook()
@@ -237,9 +234,26 @@ func (c *committer) Prepare(by Author, files []txFile) (uint64, error) {
 	if c == nil || c.j == nil {
 		return 0, nil
 	}
+	b := c.j.newTx()
+	for _, f := range files {
+		if err := b.add(f); err != nil {
+			b.discard()
+			return 0, err
+		}
+	}
+	return c.PrepareBuild(by, b)
+}
+
+// PrepareBuild is Prepare for a transaction put together file by file
+// (journal.newTx).
+func (c *committer) PrepareBuild(by Author, b *txBuild) (uint64, error) {
+	if c == nil || c.j == nil {
+		b.discard()
+		return 0, nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	tx, err := c.j.appendTx(by, files, nil)
+	tx, err := b.commit(by, nil)
 	if err != nil {
 		var u *uncertainAppend
 		if errors.As(err, &u) && tx != 0 {
@@ -253,9 +267,9 @@ func (c *committer) Prepare(by Author, files []txFile) (uint64, error) {
 		return 0, err
 	}
 	pt := preparedTx{by: by}
-	for i, f := range files {
-		if !f.dir {
-			pt.files = append(pt.files, txFileRef{i: i, path: f.path, rev: f.rev, from: f.from})
+	for i, f := range b.files() {
+		if !f.Dir {
+			pt.files = append(pt.files, txFileRef{i: i, path: f.Path, rev: f.Rev, from: f.From, ref: f.Ref})
 		}
 	}
 	c.txs[tx] = pt
@@ -285,6 +299,14 @@ func (c *committer) Applied(tx uint64) {
 		for _, f := range pt.files {
 			seq := tx + 1 + uint64(f.i) // the "p" frames follow the "x"
 			b := gitstore.Blob{ID: f.rev, Data: func() ([]byte, error) { return c.j.contentAt(seq) }}
+			if f.ref {
+				id := f.rev
+				b.Data = func() ([]byte, error) {
+					var buf bytes.Buffer
+					err := c.git.r().CatBlob(context.Background(), id, &buf)
+					return buf.Bytes(), err
+				}
+			}
 			c.touchLocked(pt.by, f.path, &b)
 			if f.from != "" {
 				c.touchLocked(pt.by, f.from, &gitstore.Blob{}) // gone
@@ -343,31 +365,6 @@ func (c *committer) Abort(tx uint64) {
 	c.mu.Unlock()
 	if err := c.j.append([]jrec{{Op: "k", Tx: tx}}); err != nil {
 		c.log.Error("could not journal that a change was given up; the next start may make it", "error", err)
-	}
-}
-
-// Done says the edit of space.yml that the "b" or "u" record rec announced has
-// been made (or is not going to be: the move was taken back). From then on a
-// crash must not make it again, so a record that says so goes after it, and
-// the trim no longer keeps it.
-func (c *committer) Done(rec jrec) {
-	if c == nil || c.j == nil {
-		return
-	}
-	c.mu.Lock()
-	for i, r := range c.open {
-		if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path && r.Rev == rec.Rev {
-			c.open = append(c.open[:i:i], c.open[i+1:]...)
-			break
-		}
-	}
-	c.mu.Unlock()
-	done := rec
-	done.Op += "d"
-	// The fields name the record; its pages are not needed to close it.
-	done.Pages, done.N = nil, 0
-	if err := c.j.append([]jrec{done}); err != nil {
-		c.log.Error("could not journal that the bindings were changed", "error", err)
 	}
 }
 
@@ -465,6 +462,25 @@ func (c *committer) covers(p, rev string) bool {
 	defer c.mu.Unlock()
 	b, ok := c.heldRevs[p]
 	return ok && c.depth > 0 && b.ID == rev
+}
+
+// pendingRev is the blob id a pending path is to be committed with; known is
+// false when it has none (it is staged from the work tree). A known "" is a
+// path to be committed as gone.
+func (c *committer) pendingRev(p string) (id string, known bool) {
+	if c == nil {
+		return "", false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if b, ok := c.heldRevs[p]; ok {
+		return b.ID, true
+	}
+	if _, held := c.heldPaths[p]; held {
+		return "", false
+	}
+	b, ok := c.revs[p]
+	return b.ID, ok
 }
 
 // gone reports whether the change running has applied the removal of p (the
@@ -725,22 +741,35 @@ func (c *committer) commit() error {
 			}
 		}
 		c.mu.Lock()
-		again := make(map[string]Author, len(failed))
 		var retx []retainedTx
 		for _, p := range failed {
 			by, ok := c.paths[p]
 			if !ok {
 				continue
 			}
-			data, kept := keepBlob[p]
-			if cur, ok := c.revs[p]; kept && ok && cur.ID == takenRevs[p].ID {
-				retx = append(retx, retainedTx{by: by, file: txFile{path: p, rev: cur.ID, data: data}})
-				c.revs[p] = gitstore.Blob{ID: cur.ID, Data: func() ([]byte, error) { return data, nil }}
-				continue
+			cur, recorded := c.revs[p]
+			if recorded && cur.ID != takenRevs[p].ID {
+				continue // a newer change of the path: its records are kept
 			}
-			again[p] = by
+			f := txFile{path: p}
+			switch data, kept := keepBlob[p]; {
+			case recorded && cur.ID == "":
+				// A removal (a deletion, the old name of a move).
+			case recorded && kept:
+				f.rev, f.data = cur.ID, data
+				c.revs[p] = gitstore.Blob{ID: cur.ID, Data: func() ([]byte, error) { return data, nil }}
+			case recorded:
+				f.rev, f.ref = cur.ID, true // its content is in Git, or the file
+			default:
+				// Staged from the work tree: what the file is now, by
+				// reference, or gone.
+				if f.rev = revOf(filepath.Join(c.git.dir, filepath.FromSlash(p))); f.rev != "" {
+					f.ref = true
+				}
+			}
+			retx = append(retx, retainedTx{by: by, file: f})
 		}
-		err := c.j.trim(upTo, c.open, again, retx...)
+		err := c.j.trim(upTo, nil, retx...)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)
@@ -758,7 +787,7 @@ func (c *committer) clearJournal() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.j.trim(c.j.lastSeq(), c.open, nil)
+	return c.j.trim(c.j.lastSeq(), nil)
 }
 
 // Flush commits pending changes immediately.

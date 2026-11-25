@@ -22,6 +22,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/sentence"
 )
 
@@ -269,11 +270,11 @@ func Open(opt Options) (*Space, error) {
 	if opt.Remote == nil && firstBlockedOwn(root) != "" {
 		b := firstBlockedOwn(root)
 		w := wayWriter{
-			record: func(rel string, deleted bool) error {
+			record: func(rel string, deleted bool, _ []byte) (func(), error) {
 				if !deleted {
 					refilled = append(refilled, rel)
 				}
-				return nil
+				return func() {}, nil
 			},
 			commitNow: func(paths []string) error {
 				id, _ := g.identities(Author{})
@@ -389,16 +390,6 @@ func Open(opt Options) (*Space, error) {
 			return nil, err
 		}
 	}
-	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
-			// What the records asked for is done now; they must not be made
-			// again by a later crash, after the bindings may have changed.
-			if err := jrn.trim(jrn.lastSeq(), nil, recovered); err != nil {
-				return nil, err
-			}
-			break
-		}
-	}
 	if len(recovered) > 0 {
 		log.Info("recovered uncommitted changes from the journal", "paths", len(recovered))
 	}
@@ -493,14 +484,20 @@ func Open(opt Options) (*Space, error) {
 		log.Info("repaired the paths of links to pages that were moved outside", "files", n)
 	}
 	if len(ours) > 0 {
-		recs := make([]jrec, len(ours))
-		for i, p := range ours {
-			recs[i] = jrec{Op: "t", Path: p}
+		// The files we just made, and nothing else, are committed: one
+		// transaction with what they hold.
+		files := make([]txFile, 0, len(ours))
+		for _, p := range ours {
+			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+			if err != nil {
+				continue
+			}
+			files = append(files, txFile{path: p, rev: page.Rev(data), data: data})
 		}
 		end := s.cm.begin()
-		err := s.cm.Record(Author{}, recs...)
+		id, err := s.cm.Prepare(Author{}, files)
 		if err == nil {
-			s.cm.Touch(Author{}, ours...) // commit the files we just made, and nothing else
+			s.cm.Applied(id)
 		}
 		end()
 		if err != nil {

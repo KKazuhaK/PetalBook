@@ -1,6 +1,7 @@
 package space
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -25,14 +25,12 @@ import (
 // durably, so a crash between a write and its commit cannot leave the change
 // outside Git for good.
 //
-//	w  Path was (or is being) written with content whose blob id is Rev
 //	c  a new page is about to take a name in the folder of From, a temporary
 //	   file with the page's content (blob id Rev), as a second name of that
 //	   file; the transaction that writes it follows once the name is taken.
 //	   While From is there, a name in its folder that is From's file and that
 //	   no later transaction (not given up) writes is taken back at the next
 //	   start
-//	d  Path is being deleted
 //	mr the name To is taken for a move of the page at From, as a second name
 //	   of its file: the move is the transaction that follows. Without one (not
 //	   given up) that moves From to To, the next start takes the name back
@@ -40,24 +38,9 @@ import (
 //	   rename did not happen
 //	rp the commit Rev a change of a space that follows a remote starts from:
 //	   a change not pushed is taken back to it at the next start
-//	t  Path changed; no further check
-//	r  From is being renamed to To, another spelling of its name, through Path
-//	b  the folder From is being moved to To: the bindings in space.yml of it
-//	   and of the folders in it have to follow (done at recovery if the folder
-//	   is at To, not at From, and the old keys are still there)
-//	u  the folder Path is being deleted: its bindings have to go with it
-//	bd, ud  the bindings of the "b" or "u" record with the same fields have
-//	   been dealt with: that record is not made again
-//	f  the field From of the type whose file is Path is being renamed To: the
-//	   type's file is written first (with the content whose blob id is Rev),
-//	   then the Pages, then the views in space.yml. At recovery, a type file
-//	   with that content has the rest finished; another has nothing done
-//	fd the rename of the "f" record with the same fields is finished
-//	fp some of the pages of the "f" record with the same fields that follows
-//	   it: a rename can rewrite more pages than fit on one line, so its page
-//	   list is written as parts before the record (in the same append, so a
-//	   readable "f" record has every part before it), and the record says how
-//	   many pages there are in all
+//	r  From is being renamed to To, another spelling of its name, through
+//	   Path: the next start finishes the second step (or, for a change of a
+//	   space that follows a remote, takes it back)
 //	x  transaction Tx begins (Tx is the number of this frame): the "p"
 //	   records that follow it in the same append are its files
 //	p  file Path of transaction Tx goes from the content whose blob id is Old
@@ -70,8 +53,8 @@ import (
 //	a  transaction Tx is applied (not synced: the replay does not need it)
 //	k  transaction Tx was given up before it was applied: it is not replayed
 //
-// A "w" record only counts at recovery if the file really has that content,
-// so a name the server tried to take but another file held is never committed.
+// Every write of the space is a transaction; the other records are the steps
+// of a move and of a remote change around one.
 type jrec struct {
 	Op   string `json:"op"`
 	Path string `json:"p,omitempty"`
@@ -88,10 +71,7 @@ type jrec struct {
 	AuthorEmail string `json:"ae,omitempty"`
 	// Via is the means of the change (Author.Via).
 	Via string `json:"av,omitempty"`
-	// Pages are the pages an "f" record rewrites (in memory: on disk they are
-	// in its "fp" parts), or the part of them an "fp" record carries.
-	Pages []string `json:"ps,omitempty"`
-	// N is how many pages an "f" record rewrites, all its parts together.
+	// N is how many frames follow the "x" record of a transaction (its own).
 	N int `json:"pn,omitempty"`
 
 	// Tx, Old and the content are those of the "x", "p", "a" and "k"
@@ -106,6 +86,10 @@ type jrec struct {
 	// record (fileID), 0 when the system does not give one.
 	Dev uint64 `json:"dv,omitempty"`
 	Ino uint64 `json:"in,omitempty"`
+	// Ref marks a "p" record whose content is not in the journal: a file that
+	// moves with its folder unchanged, its content (Rev) a blob Git has or the
+	// file itself has. Nothing is replayed for it.
+	Ref bool `json:"ref,omitempty"`
 	// blob is the file a "p" record's content is staged in (set when the
 	// journal is read), "" for content in the record.
 	blob string
@@ -115,14 +99,6 @@ type jrec struct {
 	// seq). Zero for a record that was never journaled. Not part of the body.
 	seq, first uint64
 }
-
-// journalPart bounds the bytes of the page paths (as JSON) in one "fp" record,
-// so that no frame this server writes is longer than maxJournalLine (a path is
-// at most a few kilobytes). Frames are read whatever their length.
-const (
-	journalPart    = 64 << 10
-	maxJournalLine = journalPart + 64<<10
-)
 
 // The journal is a sequence of frames, one record each, one per line:
 //
@@ -257,26 +233,7 @@ func encodeRec(buf *bytes.Buffer, seq *uint64, r *jrec) {
 		putFrame(buf, *seq, b)
 	}
 	r.first = 0
-	if r.Op != "f" || len(r.Pages) == 0 {
-		put(*r)
-		r.seq = *seq
-		return
-	}
-	part := jrec{Op: "fp", Path: r.Path, From: r.From, To: r.To, Rev: r.Rev}
-	size := 0
-	for _, p := range r.Pages {
-		q, _ := json.Marshal(p)
-		if size > 0 && size+len(q)+1 > journalPart {
-			put(part)
-			part.Pages, size = nil, 0
-		}
-		part.Pages = append(part.Pages, p)
-		size += len(q) + 1
-	}
-	put(part)
-	whole := *r
-	whole.N, whole.Pages = len(r.Pages), nil
-	put(whole)
+	put(*r)
 	r.seq = *seq
 }
 
@@ -305,12 +262,6 @@ type journalRead struct {
 func readJournal(data []byte) journalRead {
 	frames, end, cut := scanFrames(data)
 	out := journalRead{end: end, cut: cut}
-	type key struct{ path, from, to, rev string }
-	type parts struct {
-		first uint64
-		pages []string
-	}
-	pending := map[key]*parts{}
 	for _, f := range frames {
 		out.seq = f.seq
 		var r jrec
@@ -323,28 +274,6 @@ func readJournal(data []byte) journalRead {
 			continue
 		}
 		r.seq, r.first = f.seq, f.seq
-		k := key{r.Path, r.From, r.To, r.Rev}
-		switch r.Op {
-		case "fp":
-			p := pending[k]
-			if p == nil {
-				p = &parts{first: f.seq}
-				pending[k] = p
-			}
-			p.pages = append(p.pages, r.Pages...)
-			continue
-		case "f":
-			if r.N > 0 {
-				if p := pending[k]; p != nil {
-					r.Pages, r.first = append(p.pages, r.Pages...), p.first
-				}
-				if len(r.Pages) != r.N {
-					out.damage = append(out.damage, journalDamage{f.seq, len(f.body), fmt.Sprintf("the rename names %d pages, %d were found", r.N, len(r.Pages))})
-				}
-			}
-			r.N = 0
-			delete(pending, k)
-		}
 		out.recs = append(out.recs, r)
 	}
 	out.recs = wholeTransactions(out.recs)
@@ -453,6 +382,10 @@ func openJournal(path string, log *slog.Logger) (*journal, []jrec, error) {
 	}
 	// Staged content no record names: a crash after a trim, before the file
 	// went, or during the append that was to name it.
+	parts, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "tx-staging-*.part"))
+	for _, p := range parts {
+		os.Remove(p) // a transaction being put together when the server stopped
+	}
 	stale, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "tx-*.blob"))
 	for _, f := range stale {
 		named := false
@@ -492,6 +425,7 @@ type txFile struct {
 	from           string
 	dir            bool
 	dev, ino       uint64 // a folder's identity (fileID), 0 when not known
+	ref            bool   // content not journaled (jrec.Ref)
 }
 
 // appendTx journals a transaction, durably: an "x" record by by, a "p" record
@@ -500,41 +434,124 @@ type txFile struct {
 // transaction's staged file first (synced, with its folder), so an append
 // with such content costs two syncs more.
 func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, error) {
+	b := j.newTx()
+	for _, f := range files {
+		if err := b.add(f); err != nil {
+			b.discard()
+			return 0, err
+		}
+	}
+	return b.commit(by, extra)
+}
+
+// txBuild is a transaction being put together, file by file, for a change
+// too large to hold in memory (a field rename over every page of a type):
+// content past the inline bounds goes to a staged file as it comes, and only
+// the records stay in memory, with no more inline content than txInlineTotal.
+type txBuild struct {
+	j      *journal
+	recs   []jrec
+	inline int
+	blob   *os.File // staged content so far; named for the transaction at commit
+	w      *bufio.Writer
+	at     int64
+	err    error
+}
+
+func (j *journal) newTx() *txBuild { return &txBuild{j: j} }
+
+// add puts a file into the transaction.
+func (b *txBuild) add(f txFile) error {
+	if b.err != nil {
+		return b.err
+	}
+	r := jrec{Op: "p", Path: f.path, Old: f.old, Rev: f.rev, From: f.from, Dir: f.dir, Dev: f.dev, Ino: f.ino, Ref: f.ref}
+	switch {
+	case f.dir || f.ref:
+	case len(f.data) > txInline || b.inline+len(f.data) > txInlineTotal:
+		if b.blob == nil {
+			b.blob, b.err = os.CreateTemp(filepath.Dir(b.j.path), "tx-staging-*.part")
+			if b.err != nil {
+				return b.err
+			}
+			b.w = bufio.NewWriterSize(b.blob, 1<<20)
+		}
+		if _, b.err = b.w.Write(f.data); b.err != nil {
+			return b.err
+		}
+		r.BlobAt, r.BlobLen = b.at, int64(len(f.data))
+		b.at += int64(len(f.data))
+	case utf8.Valid(f.data):
+		r.Text = string(f.data)
+		b.inline += len(f.data)
+	default:
+		r.Bin = f.data
+		b.inline += len(f.data)
+	}
+	b.recs = append(b.recs, r)
+	return nil
+}
+
+// discard drops a transaction that is not to be journaled.
+func (b *txBuild) discard() {
+	if b.blob != nil {
+		b.blob.Close()
+		os.Remove(b.blob.Name())
+		b.blob = nil
+	}
+}
+
+// commit journals the transaction, durably, by by, with the records in extra
+// after its files, and returns its number. The staged content is synced and
+// named for it first (with a sync of its folder), so an append with such
+// content costs two syncs more.
+func (b *txBuild) commit(by Author, extra []jrec) (uint64, error) {
+	if b.err != nil {
+		b.discard()
+		return 0, b.err
+	}
+	j := b.j
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	tx := j.seq + 1 // the number of the "x" frame
-	recs := make([]jrec, 0, len(files)+1+len(extra))
+	recs := make([]jrec, 0, len(b.recs)+1+len(extra))
 	// N counts the frames of the transaction after its "x": a transaction
 	// that is not all there (an append cut short) is not replayed at all.
-	recs = append(recs, jrec{Op: "x", Tx: tx, N: len(files) + len(extra), AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
-	var staged bytes.Buffer
-	inline := 0
-	for _, f := range files {
-		r := jrec{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev, From: f.from, Dir: f.dir, Dev: f.dev, Ino: f.ino}
-		switch {
-		case f.dir:
-		case len(f.data) > txInline || inline+len(f.data) > txInlineTotal:
-			r.BlobAt, r.BlobLen = int64(staged.Len()), int64(len(f.data))
-			staged.Write(f.data)
-		case utf8.Valid(f.data):
-			r.Text = string(f.data)
-			inline += len(f.data)
-		default:
-			r.Bin = f.data
-			inline += len(f.data)
-		}
-		recs = append(recs, r)
+	recs = append(recs, jrec{Op: "x", Tx: tx, N: len(b.recs) + len(extra), AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via})
+	for i := range b.recs {
+		b.recs[i].Tx = tx
 	}
+	recs = append(recs, b.recs...)
 	for _, r := range extra {
 		r.Tx = tx
 		recs = append(recs, r)
 	}
 	blob := ""
-	if staged.Len() > 0 {
+	if b.blob != nil {
 		blob = j.blobPath(tx)
-		if err := writeSynced(blob, staged.Bytes()); err != nil {
+		err := b.w.Flush()
+		if err == nil {
+			err = b.blob.Sync()
+		}
+		if cerr := b.blob.Close(); err == nil {
+			err = cerr
+		}
+		if err == nil {
+			err = os.Rename(b.blob.Name(), blob)
+		}
+		if err == nil {
+			err = syncDir(filepath.Dir(blob))
+		}
+		if err != nil {
+			os.Remove(b.blob.Name())
 			os.Remove(blob)
 			return 0, err
+		}
+		b.blob = nil
+		for i := range b.recs {
+			if b.recs[i].BlobLen > 0 {
+				b.recs[i].blob = blob
+			}
 		}
 	}
 	if err := j.appendLocked(recs, true); err != nil {
@@ -556,6 +573,46 @@ func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, err
 		j.blobs[tx] = blob
 	}
 	return tx, nil
+}
+
+// files are the "p" records of the transaction, for its writing: their
+// content (see reader) comes from the record or the staged file, one at a time.
+func (b *txBuild) files() []jrec { return b.recs }
+
+// reader reads the content of the records of a committed transaction, with
+// one open file for the staged content; close closes it.
+func (b *txBuild) reader() (read func(r jrec) ([]byte, error), close func()) {
+	var f *os.File
+	read = func(r jrec) ([]byte, error) {
+		if r.BlobLen == 0 || r.blob == "" {
+			return r.content()
+		}
+		if f == nil {
+			var err error
+			if f, err = os.Open(r.blob); err != nil {
+				return nil, err
+			}
+		}
+		data := make([]byte, r.BlobLen)
+		if _, err := f.ReadAt(data, r.BlobAt); err != nil {
+			return nil, fmt.Errorf("the staged content of %s cannot be read: %w", r.Path, err)
+		}
+		return data, nil
+	}
+	return read, func() {
+		if f != nil {
+			f.Close()
+		}
+	}
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // writeSynced writes data to the new file name, and syncs it and its folder.
@@ -685,11 +742,6 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 		}
 		j.broken = false
 	}
-	var buf bytes.Buffer
-	seq := j.seq
-	for i := range recs {
-		encodeRec(&buf, &seq, &recs[i])
-	}
 	write, sync := (*os.File).Write, (*os.File).Sync
 	if j.write != nil {
 		write = j.write
@@ -697,13 +749,36 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 	if j.sync != nil {
 		sync = j.sync
 	}
-	_, err := write(j.f, buf.Bytes())
+	// Written a megabyte at a time: an append of a large transaction is not
+	// built whole in memory first.
+	var buf bytes.Buffer
+	seq, off := j.seq, j.size
+	var err error
+	flush := func() {
+		if err == nil && buf.Len() > 0 {
+			if _, err = write(j.f, buf.Bytes()); err == nil {
+				j.index(buf.Bytes(), off)
+				off += int64(buf.Len())
+			}
+		}
+		buf.Reset()
+	}
+	for i := range recs {
+		encodeRec(&buf, &seq, &recs[i])
+		if buf.Len() >= 1<<20 {
+			flush()
+		}
+	}
+	flush()
 	if err == nil && synced {
 		err = sync(j.f)
 	}
 	if err != nil {
 		for i := range recs {
 			recs[i].seq, recs[i].first = 0, 0
+		}
+		for n := j.seq + 1; n <= seq; n++ {
+			delete(j.at, n)
 		}
 		cut := (*os.File).Truncate
 		if j.truncate != nil {
@@ -717,8 +792,7 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 		}
 		return err
 	}
-	j.index(buf.Bytes(), j.size)
-	j.size += int64(buf.Len())
+	j.size = off
 	j.seq = seq
 	return nil
 }
@@ -744,7 +818,7 @@ type retainedTx struct {
 	file txFile
 }
 
-func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx ...retainedTx) error {
+func (j *journal) trim(upTo uint64, keep []jrec, retx ...retainedTx) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.guard != nil {
@@ -791,29 +865,22 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx
 		f := rt.file
 		recs := []jrec{
 			{Op: "x", Tx: tx, N: 1, AuthorName: rt.by.Name, AuthorEmail: rt.by.Email, Via: rt.by.Via},
-			{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev},
+			{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev, Ref: f.ref},
 			{Op: "a", Tx: tx},
 		}
 		// Inline whatever its size: it is rare, and the staged file of its
-		// first transaction goes with this trim.
-		if utf8.Valid(f.data) {
+		// first transaction goes with this trim. A removal, or a file by
+		// reference, has no content here.
+		switch {
+		case f.rev == "" || f.ref:
+		case utf8.Valid(f.data):
 			recs[1].Text = string(f.data)
-		} else {
+		default:
 			recs[1].Bin = f.data
 		}
 		for i := range recs {
 			encodeRec(&buf, &seq, &recs[i])
 		}
-	}
-	paths := make([]string, 0, len(pending))
-	for p := range pending {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		by := pending[p]
-		r := jrec{Op: "t", Path: p, AuthorName: by.Name, AuthorEmail: by.Email, Via: by.Via}
-		encodeRec(&buf, &seq, &r)
 	}
 	tmp := j.path + ".new"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
@@ -903,7 +970,6 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
-	var bindRecs, fieldRecs []jrec
 	given := map[uint64]bool{}   // transactions given up ("k")
 	applied := map[uint64]bool{} // and written ("a")
 	authors := map[uint64]Author{}
@@ -935,8 +1001,12 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 	if h != nil {
 		log = h.log
 	}
+	type later struct {
+		r jrec
+		i int
+	}
+	var takeBack []later
 	for i, r := range recs {
-		by := r.author()
 		switch r.Op {
 		case "x", "a", "k", "p", "mr", "md", "mdd", "c":
 		default:
@@ -946,30 +1016,29 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			delete(revs, r.To)
 		}
 		switch r.Op {
-		case "c":
-			if ok(r.From) {
-				takeBackClaim(root, r.From, r.Rev, func(p string) bool {
-					j, ok := lastWrite[p]
-					return ok && j > i
-				})
-			}
-			continue
-		case "mr":
-			// A name taken for a move as a second name of the page: without
-			// a transaction that makes the move, nobody was told it was
-			// made, and the name goes again.
-			if ok(r.From) && ok(r.To) && !moved[pair{r.From, r.To}] {
-				takeBackName(root, r.From, r.To)
-			}
-			continue
-		case "md":
-			// A folder renamed for a move: the same, the folder goes back.
-			if ok(r.From) && ok(r.To) && !moved[pair{r.From, r.To}] && !closed[pair{r.From, r.To}] {
-				takeBackFolder(root, r.From, r.To)
-			}
+		case "mr", "md", "c":
+			// Taken back after the other records, once a rename through a
+			// third name ("r") is finished: see below.
+			takeBack = append(takeBack, later{r, i})
 			continue
 		case "p":
 			if !ok(r.Path) || given[r.Tx] || (r.From != "" && !ok(r.From)) {
+				continue
+			}
+			if r.Ref {
+				// A file that moved with its folder: gone under the old name
+				// once the folder is at its new place, and committed under
+				// the new one as it was (unless a later entry of the
+				// transaction rewrote it).
+				abs := filepath.Join(root, filepath.FromSlash(r.Path))
+				if _, err := os.Lstat(abs); r.From != "" && (err == nil || applied[r.Tx]) {
+					set[r.From] = authors[r.Tx]
+					revs[r.From] = gitstore.Blob{}
+				}
+				if revOf(abs) == r.Rev || applied[r.Tx] {
+					set[r.Path] = authors[r.Tx]
+					revs[r.Path] = gitstore.Blob{ID: r.Rev}
+				}
 				continue
 			}
 			if r.Dir {
@@ -1002,65 +1071,47 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 				giveUp = append(giveUp, r.Tx)
 			}
 			continue
-		case "t", "d":
-			if ok(r.Path) {
-				set[r.Path] = by
-			}
-		case "w":
-			if !ok(r.Path) {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(r.Path)))
-			if err == nil && page.Rev(data) == r.Rev {
-				set[r.Path] = by
-			}
-		case "bd", "ud":
-			for i, o := range bindRecs {
-				if o.Op+"d" == r.Op && o.From == r.From && o.To == r.To && o.Path == r.Path {
-					bindRecs = append(bindRecs[:i:i], bindRecs[i+1:]...)
-					break
-				}
-			}
-		case "f":
-			if ok(r.Path) {
-				fieldRecs = append(fieldRecs, r)
-			}
-		case "fd":
-			for i, o := range fieldRecs {
-				if o.From == r.From && o.To == r.To && o.Path == r.Path && o.Rev == r.Rev {
-					fieldRecs = append(fieldRecs[:i:i], fieldRecs[i+1:]...)
-					break
-				}
-			}
-		case "b", "u":
-			// Looked at after the files are in their final places.
-			if (r.Op == "b" && (!ok(r.From) || !ok(r.To))) || (r.Op == "u" && !ok(r.Path)) {
-				continue
-			}
-			bindRecs = append(bindRecs, r)
 		case "r":
 			if !ok(r.From) || !ok(r.To) || !ok(r.Path) {
 				continue
 			}
-			finishRespell(root, r.Path, r.To)
-			if !r.Dir {
-				set[r.From], set[r.To], set[r.Path] = by, by, by
+			// A rename through a third name is the first step of a move:
+			// finished when the move's transaction is there (it commits what
+			// moved), else taken back, as the move is.
+			if moved[pair{r.From, r.To}] {
+				finishRespell(root, r.Path, r.To)
+				continue
+			}
+			finishRespell(root, r.Path, r.From)
+			if a, b := filepath.Join(root, filepath.FromSlash(r.From)), filepath.Join(root, filepath.FromSlash(r.To)); !listedPath(a) && listedPath(b) {
+				renameExact(b, a)
 			}
 		}
 	}
-	for _, r := range fieldRecs {
-		for _, p := range recoverFieldRename(h, root, r) {
-			if ok(p) {
-				set[p] = r.author()
-				delete(revs, p)
+	for _, l := range takeBack {
+		r := l.r
+		if r.Op == "c" {
+			// A name a create took and never journaled the writing of.
+			if ok(r.From) {
+				takeBackClaim(root, r.From, r.Rev, func(p string) bool {
+					j, ok := lastWrite[p]
+					return ok && j > l.i
+				})
 			}
+			continue
 		}
-	}
-	if len(bindRecs) > 0 {
-		by := bindRecs[len(bindRecs)-1].author()
-		for _, p := range recoverBindings(h, root, bindRecs) {
-			set[p] = by
-			delete(revs, p)
+		if !ok(r.From) || !ok(r.To) || moved[pair{r.From, r.To}] {
+			continue
+		}
+		switch {
+		case r.Op == "mr":
+			// A name taken for a move as a second name of the page: without
+			// a transaction that makes the move, nobody was told it was
+			// made, and the name goes again.
+			takeBackName(root, r.From, r.To)
+		case !closed[pair{r.From, r.To}]:
+			// A folder renamed for a move: the same, the folder goes back.
+			takeBackFolder(root, r.From, r.To)
 		}
 	}
 	return set, revs, giveUp
@@ -1106,6 +1157,10 @@ func replay(root string, r jrec, write bool, log *slog.Logger) bool {
 	case r.Old:
 		if !write {
 			return false
+		}
+		if r.Rev == "" && r.From == "" {
+			// A removal.
+			return os.Remove(abs) == nil
 		}
 		data, err := r.content()
 		if err == nil && page.Rev(data) != r.Rev {

@@ -282,11 +282,7 @@ func (s *Space) PutTemplate(by Author, name, baseRev string, meta page.Meta, bod
 		} else {
 			d.Close()
 		}
-		if err := tx.record(jrec{Op: "t", Path: rel}); err != nil {
-			return nil, err
-		}
-		tx.touch(rel)
-		if err := writeIn(s.root, rel, data); err != nil {
+		if err := s.writeFileIn(tx, rel, data); err != nil {
 			return nil, err
 		}
 		return templateFrom(name, data), nil
@@ -322,11 +318,7 @@ func (s *Space) DeleteTemplate(by Author, name, baseRev string) error {
 			}
 		}
 		if cur != nil {
-			if err := tx.record(jrec{Op: "d", Path: rel}); err != nil {
-				return struct{}{}, err
-			}
-			tx.touch(rel)
-			if err := removeIn(s.root, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := s.removeFileIn(tx, rel); err != nil {
 				return struct{}{}, err
 			}
 		}

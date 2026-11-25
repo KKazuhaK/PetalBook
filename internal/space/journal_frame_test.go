@@ -116,37 +116,26 @@ func TestTheTrimKeepsWhatCameAfterTheCommitAndWhatIsOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pages []string
-	for i := range 3000 {
-		pages = append(pages, fmt.Sprintf("Work/%s-%04d.md", strings.Repeat("p", 40), i))
-	}
 	recs := []jrec{
 		{Op: "t", Path: "a.md"},
 		{Op: "b", From: "A", To: "B"},
-		{Op: "f", Path: ".petalbook/types/task.json", From: "status", To: "state", Rev: "r", Pages: pages},
+		{Op: "f", Path: ".petalbook/types/task.json", From: "status", To: "state", Rev: "r"},
 		{Op: "t", Path: "c.md"},
 	}
 	if err := j.append(recs); err != nil {
 		t.Fatal(err)
-	}
-	if recs[2].first != 3 || recs[2].seq <= recs[2].first {
-		t.Fatalf("the rename's frames: %d to %d", recs[2].first, recs[2].seq)
 	}
 	upTo := j.lastSeq()
 	if err := j.append([]jrec{{Op: "w", Path: "later.md", Rev: "x"}}); err != nil {
 		t.Fatal(err)
 	}
 	last := j.lastSeq()
-	if err := j.trim(upTo, []jrec{recs[1], recs[2]}, map[string]Author{"failed.md": {Name: "Ann"}}); err != nil {
+	if err := j.trim(upTo, []jrec{recs[1], recs[2]}, retainedTx{by: Author{Name: "Ann"}, file: txFile{path: "failed.md"}}); err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("2 b A>B, %d f status>state, %d w later.md, %d t failed.md", recs[2].seq, last, last+1)
+	want := fmt.Sprintf("2 b A>B, %d f status>state, %d w later.md, %d x , %d p failed.md, %d a ", recs[2].seq, last, last+1, last+2, last+3)
 	if got := strings.Join(journalOps(t, path), ", "); got != want {
 		t.Errorf("after the trim:\n%s\nwant\n%s", got, want)
-	}
-	data, _ := os.ReadFile(path)
-	if rd := readJournal(data); len(rd.recs[1].Pages) != len(pages) {
-		t.Errorf("the open rename kept %d pages of %d", len(rd.recs[1].Pages), len(pages))
 	}
 	// Numbers go on from there, also after the journal is opened again.
 	if err := j.append([]jrec{{Op: "t", Path: "next.md"}}); err != nil {
@@ -157,7 +146,7 @@ func TestTheTrimKeepsWhatCameAfterTheCommitAndWhatIsOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := got[len(got)-1]; n.Path != "next.md" || n.seq != last+2 || j2.lastSeq() != last+2 {
+	if n := got[len(got)-1]; n.Path != "next.md" || n.seq != last+4 || j2.lastSeq() != last+4 {
 		t.Errorf("the next record: %+v, last %d", n, j2.lastSeq())
 	}
 	j2.close()
@@ -289,14 +278,14 @@ func TestAFailedTrimDoesNotLoseAnOpenRecord(t *testing.T) {
 	// An open record whose frames are not in the journal: the trim journals it again.
 	keep := []jrec{{Op: "b", From: "A", To: "B"}}
 	j.replace = func(string, string) error { return errors.New("no space left on device") }
-	if err := j.trim(j.lastSeq(), keep, nil); err == nil {
+	if err := j.trim(j.lastSeq(), keep); err == nil {
 		t.Fatal("the trim should have failed")
 	}
 	j.replace = nil
 	if err := j.append([]jrec{{Op: "t", Path: "x.md"}, {Op: "t", Path: "y.md"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := j.trim(j.lastSeq(), keep, nil); err != nil {
+	if err := j.trim(j.lastSeq(), keep); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(journalOps(t, path), ", "); got != "4 b A>B" {
