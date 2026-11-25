@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/spaces"
 )
 
 // remoteBodyLimit caps the bodies of the remote endpoints: an address and a token.

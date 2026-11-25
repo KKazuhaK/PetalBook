@@ -15,7 +15,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // LeaveSpace removes a person from a space they do not own alone: nothing is

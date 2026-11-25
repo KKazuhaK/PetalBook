@@ -15,17 +15,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/github"
-	"github.com/KKazuhaK/PetalBook/internal/githubapp"
-	"github.com/KKazuhaK/PetalBook/internal/githubapp/githubapptest"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/github"
+	"petalbook.app/server/internal/githubapp"
+	"petalbook.app/server/internal/githubapp/githubapptest"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // argvRunner runs the real git and remembers every command line and the logs.

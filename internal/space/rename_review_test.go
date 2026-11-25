@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // renameScene is a space with a type task (status, due), a folder Work bound

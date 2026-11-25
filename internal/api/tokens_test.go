@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/tokens"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/tokens"
 )
 
 // bearer is a client that has a token and no cookie.

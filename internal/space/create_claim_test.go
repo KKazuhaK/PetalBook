@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/index"
 )
 
 // A create that has to pass over many names the file system holds journals a

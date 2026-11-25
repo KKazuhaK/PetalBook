@@ -3,9 +3,9 @@ package api
 import (
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/mail"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/store"
 )
 
 // Mail, registration, email verification and password reset (milestone 3.3,

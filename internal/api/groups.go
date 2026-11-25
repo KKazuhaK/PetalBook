@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // Groups (milestone 3.2); the contract is "Groups" in docs/api.md.

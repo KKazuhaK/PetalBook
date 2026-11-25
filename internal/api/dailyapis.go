@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
-	"github.com/KKazuhaK/PetalBook/internal/langtag"
-	"github.com/KKazuhaK/PetalBook/internal/sentence"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/dailyfetch"
+	"petalbook.app/server/internal/langtag"
+	"petalbook.app/server/internal/sentence"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // The external interfaces of the daily text, as the administrators keep them

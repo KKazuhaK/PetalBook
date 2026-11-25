@@ -19,10 +19,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/githubapp"
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/githubapp"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/store"
 )
 
 // ProviderID is the id this provider has in the registry and in every path.

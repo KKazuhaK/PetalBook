@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/mail/mailtest"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/mail/mailtest"
+	"petalbook.app/server/internal/store"
 )
 
 // fakeMail is the SMTP server of a test: in this process, on a loopback

@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // maxRegistrations is how many clients may be registered at once (a variable

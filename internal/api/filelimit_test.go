@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // setFileLimit sets the tenant's files.maxBytes as its administrator would.

@@ -14,7 +14,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KKazuhaK/PetalBook/internal/icons"
+	"petalbook.app/server/internal/icons"
 )
 
 // bomText is the UTF-8 byte order mark some editors put at the start of a file.

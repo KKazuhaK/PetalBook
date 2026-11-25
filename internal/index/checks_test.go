@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // poemRules is one type, "poem", bound nowhere: a page has it when its header

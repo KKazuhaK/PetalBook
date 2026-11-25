@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 func (x *extFixture) putLines(lang, text, format string) {

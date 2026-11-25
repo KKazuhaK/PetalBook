@@ -13,8 +13,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/langtag"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/langtag"
 )
 
 // The daily text of a space (milestone 2.3): one page a day, picked from the

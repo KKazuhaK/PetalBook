@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
-	"github.com/KKazuhaK/PetalBook/internal/tokens"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
+	"petalbook.app/server/internal/tokens"
 )
 
 var ctx = context.Background()

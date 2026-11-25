@@ -55,8 +55,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/store"
 )
 
 var (

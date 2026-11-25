@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
+	"petalbook.app/server/internal/connections"
 )
 
 // Harness is what the checks need of a provider under test.

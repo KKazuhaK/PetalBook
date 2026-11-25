@@ -7,7 +7,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KKazuhaK/PetalBook/internal/icons"
+	"petalbook.app/server/internal/icons"
 )
 
 // IconColors are the colours an icon may have: eight, each with a light and a

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/mail"
-	"github.com/KKazuhaK/PetalBook/internal/mail/mailtest"
+	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/mail/mailtest"
 )
 
 type clk struct {

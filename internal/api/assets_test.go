@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // Milestone 3.1 part 2 through the API: the attachment repository, the move,

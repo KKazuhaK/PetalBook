@@ -31,10 +31,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/assetrepo"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/assetrepo"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // moveRetries is how often the switch is tried again when the remote moved

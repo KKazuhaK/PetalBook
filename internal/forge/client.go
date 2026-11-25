@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
+	"petalbook.app/server/internal/dailyfetch"
 )
 
 // client talks to one host's REST API and OAuth endpoints. Every connection it

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/assetcache"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/assetcache"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // PETALBOOK_MEASURE=20000 go test ./internal/assetrepo -run Measure -v

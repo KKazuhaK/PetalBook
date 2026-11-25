@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // A member who was made a viewer keeps the right to throw their own draft away.

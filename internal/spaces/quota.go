@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // DefaultRecountEvery is how often the usage table is recounted.

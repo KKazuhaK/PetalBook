@@ -10,7 +10,7 @@ import (
 
 	crewjamsaml "github.com/crewjam/saml"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 const samlSlug = "campus"

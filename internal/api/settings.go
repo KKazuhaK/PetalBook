@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/store"
 )
 
 // The layered settings of docs/api.md ("Settings by layer").

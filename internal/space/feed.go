@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/index"
 )
 
 // The change feed of the space (milestone 4.1): where it is, what changed

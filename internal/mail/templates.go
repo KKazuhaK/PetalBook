@@ -5,7 +5,7 @@ import (
 	"html"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/langtag"
+	"petalbook.app/server/internal/langtag"
 )
 
 // The kinds of message the server sends.

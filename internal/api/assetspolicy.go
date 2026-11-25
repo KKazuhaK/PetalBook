@@ -3,8 +3,8 @@ package api
 import (
 	"context"
 
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/spaces"
 )
 
 // assetsRule is where the attachments of a tenant's new space go: the layered

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 func userNames(t *testing.T, c *client, path string) (names []string, next string) {

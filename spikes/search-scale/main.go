@@ -31,9 +31,9 @@ var punct = []string{"，", "，", "，", "。", "。", "？", "！", "；", "�
 
 type page struct {
 	id, path, folder, title, subtitle, typ string
-	tags                                 []string
-	created, updated                     int64
-	body                                 string
+	tags                                   []string
+	created, updated                       int64
+	body                                   string
 }
 
 // word picks with a skew so some words are common and some rare, as in real text.

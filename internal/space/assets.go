@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // AssetsDir is the folder at the root of a space that holds the files the

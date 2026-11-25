@@ -44,8 +44,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/langtag"
-	"github.com/KKazuhaK/PetalBook/internal/sentence"
+	"petalbook.app/server/internal/langtag"
+	"petalbook.app/server/internal/sentence"
 )
 
 // Limits.

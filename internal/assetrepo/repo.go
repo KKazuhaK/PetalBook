@@ -29,9 +29,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/assetcache"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/assetcache"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/space"
 )
 
 // MaxCommitBytes is how much one commit may add: GitHub refuses a push over

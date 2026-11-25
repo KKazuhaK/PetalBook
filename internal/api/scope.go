@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // isSiteAdmin: an administrator of the whole server. In single-user mode the

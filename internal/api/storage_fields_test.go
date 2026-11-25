@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // The fields the administration screens need (docs/api.md, "Storage management"):

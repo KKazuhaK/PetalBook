@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // FileInfo describes one page file as the file system reports it.

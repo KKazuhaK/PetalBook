@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 func asMap(v any) map[string]any { m, _ := v.(map[string]any); return m }

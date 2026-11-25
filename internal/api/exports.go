@@ -6,8 +6,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // Exports (docs/api.md, "Exports"): a zip of what some spaces hold, made in the

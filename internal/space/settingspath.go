@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/page"
 )
 
 // .petalbook holds the settings files and the types, and nothing else: it is

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // crashedWithUnpushedCommit leaves the clone as a crash between the commit and

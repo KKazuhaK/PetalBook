@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/testguard"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/testguard"
 )
 
 // Most tests make spaces, and each space an index: they copy a prepared one

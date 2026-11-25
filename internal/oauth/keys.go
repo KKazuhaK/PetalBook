@@ -15,8 +15,8 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/store"
 )
 
 // The signing key is bound to this purpose when sealed, so a sealed value

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/KKazuhaK/PetalBook/internal/links"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/links"
+	"petalbook.app/server/internal/page"
 )
 
 // --- rebasing what people wrote on top of the service's link rewrites ----------

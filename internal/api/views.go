@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/space"
 )
 
 type viewsResp struct {

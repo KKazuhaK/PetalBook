@@ -20,7 +20,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // A settings file (space.yml, tags.yml) that cannot be used (it is not YAML

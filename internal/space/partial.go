@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/index"
 )
 
 // FetchWait is how long a read that needs contents from the remote waits for

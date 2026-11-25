@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 func TestUnavailableDelayGrowsAndIsBounded(t *testing.T) {

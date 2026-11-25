@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/index"
 )
 
 // TestMeasureMemoryOfAnOpenSpace prints what one open space costs in memory,

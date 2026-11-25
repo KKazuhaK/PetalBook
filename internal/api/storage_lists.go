@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // intParam reads a whole number of at least min from the query; "" is missing.

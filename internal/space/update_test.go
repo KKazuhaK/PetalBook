@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // Update works on the file as it is: what edit gets is what is there, and a

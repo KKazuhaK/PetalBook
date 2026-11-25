@@ -3,8 +3,8 @@ package space
 import (
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
 )
 
 // MaxBodies is the most pages a listing may be asked to give the body of: each

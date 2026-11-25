@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/forge"
-	"github.com/KKazuhaK/PetalBook/internal/forge/forgetest"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/forge"
+	"petalbook.app/server/internal/forge/forgetest"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // each runs a test on both platforms and every database.

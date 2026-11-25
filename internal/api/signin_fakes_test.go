@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
 	crewjamsaml "github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
+	"petalbook.app/server/internal/auth/testidp"
 )
 
 // anyTLSClient trusts every test server: the fake providers each have a

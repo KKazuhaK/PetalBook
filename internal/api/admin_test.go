@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
 )
 
 func adminPath(rt api.RouteInfo, sid string) string {
