@@ -8,6 +8,33 @@ import (
 	"time"
 )
 
+// A folder missing from the table between a page's folder and the root does not
+// stop the time: it goes on to the nearest folder that is there.
+func TestTreeUpdatedPastAMissingFolder(t *testing.T) {
+	t.Parallel()
+	x := openIndex(t)
+	m := newMem()
+	m.put("d/sub/deep/c.md", pageFile("CCCCCCCCCC", "C", "", nil, "", ""))
+	syncAll(t, x, m, false)
+	if _, err := x.wdb.Exec(`DELETE FROM folders WHERE path IN ('d/sub', 'd/sub/deep')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.wdb.Exec(`INSERT INTO folders(path) VALUES ('d/sub/deep')`); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := x.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range tree {
+		got[f.Path] = f.Updated != nil
+	}
+	if !reflect.DeepEqual(got, map[string]bool{"": true, "d": true, "d/sub/deep": true}) {
+		t.Fatalf("%v", got)
+	}
+}
+
 // A folder's Updated is the newest mtime of any page in it or below it; an
 // empty subtree has none, and a save deep down moves every folder above it.
 func TestTreeUpdated(t *testing.T) {

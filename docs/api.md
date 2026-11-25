@@ -5980,7 +5980,10 @@ and the pages removed, in the order they last changed.
   then made again with the same id (moved out of the space and back, outside
   the server) is a catalogue entry, not a removal.
 - `tree` changes whenever a folder is made, moved or removed, or the number of
-  pages in a folder changes; the client then reads `GET …/tree` (and
+  pages in a folder changes. A folder's `updated` in that answer can change
+  without `tree` changing (a page was edited), so a client working offline
+  derives each folder's `updated` from the catalogue entries' `updated`
+  instead of from the tree it saved. The client then reads `GET …/tree` (and
   `GET …/tags` if it shows tags). `settings` changes whenever a file the server
   reads as settings changes (`.petalbook/space.yml`, `tags.yml`, the types and
   the templates); the client then reads again what it uses of them (`…/types`,

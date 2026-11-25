@@ -512,12 +512,16 @@ func (x *Index) Tree() ([]FolderCount, error) {
 		if p == "" {
 			continue
 		}
-		parent := ""
-		if k := strings.LastIndexByte(p, '/'); k >= 0 {
-			parent = p[:k]
-		}
-		if j, ok := at[parent]; ok && newest[i] > newest[j] {
-			newest[j] = newest[i]
+		// To the nearest ancestor that is in the table (the next one up, when
+		// nothing is missing).
+		for parent := p; parent != ""; {
+			parent = parent[:max(strings.LastIndexByte(parent, '/'), 0)]
+			if j, ok := at[parent]; ok {
+				if newest[i] > newest[j] {
+					newest[j] = newest[i]
+				}
+				break
+			}
 		}
 	}
 	for i := range out {
