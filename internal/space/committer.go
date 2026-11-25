@@ -70,6 +70,7 @@ type committer struct {
 	maintainEvery atomic.Int64 // commits between two packings; 0 means DefaultMaintainEvery
 	sinceMaintain atomic.Int64 // commits made since the last packing
 	maintainOff   bool         // under runMu: the space follows a remote, whose fetches and pushes are not under runMu
+	remote        atomic.Bool  // the space follows a remote (pauseMaintenance)
 
 	// onCommit is told the paths of each commit made (under mu).
 	onCommit func(paths []string)
@@ -136,16 +137,22 @@ const closeMaintainMin = 10
 // that follows a remote does its fetches, commits and pushes under the space
 // lock, not under runMu, so packing here could overlap a fetch of its own.
 // It waits for a packing that is running.
+//
+// It also marks the space as one that follows a remote: from then on a
+// transaction applied is not handed to the background committer (the change
+// commits and pushes it itself), until resumeMaintenance.
 func (c *committer) pauseMaintenance() {
 	c.runMu.Lock()
 	c.maintainOff = true
 	c.runMu.Unlock()
+	c.remote.Store(true)
 }
 
 func (c *committer) resumeMaintenance() {
 	c.runMu.Lock()
 	c.maintainOff = false
 	c.runMu.Unlock()
+	c.remote.Store(false)
 }
 
 func (c *committer) every() int64 {
@@ -209,7 +216,7 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 		return err
 	}
 	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" || r.Op == "l" || r.Op == "f" {
+		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
 			c.open = append(c.open, r)
 		}
 	}
@@ -222,24 +229,17 @@ func (c *committer) Record(by Author, recs ...jrec) error {
 }
 
 // Prepare journals a transaction by by, durably, before any of its files is
-// written: the files with their content before and after, and the closing of
-// the open records in closing ("l" records whose links the transaction makes
-// right), all in one append with one sync. From then on a crash is finished
-// by replaying the transaction, never by planning its work again. It returns
-// the transaction's number (0 with no journal).
-func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, error) {
+// written: the files with their content before and after, in one append with
+// one sync. From then on a crash is finished by replaying the transaction (a
+// local space) or taken back (one that follows a remote), never by planning
+// its work again. It returns the transaction's number (0 with no journal).
+func (c *committer) Prepare(by Author, files []txFile) (uint64, error) {
 	if c == nil || c.j == nil {
 		return 0, nil
 	}
-	extra := make([]jrec, len(closing))
-	for i, r := range closing {
-		r.Op += "d"
-		r.Pages, r.N = nil, 0
-		extra[i] = r
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	tx, err := c.j.appendTx(by, files, extra)
+	tx, err := c.j.appendTx(by, files, nil)
 	if err != nil {
 		var u *uncertainAppend
 		if errors.As(err, &u) && tx != 0 {
@@ -259,14 +259,6 @@ func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, 
 		}
 	}
 	c.txs[tx] = pt
-	for _, rec := range closing {
-		for i, r := range c.open {
-			if r.Op == rec.Op && r.From == rec.From && r.To == rec.To && r.Path == rec.Path && r.Rev == rec.Rev {
-				c.open = append(c.open[:i:i], c.open[i+1:]...)
-				break
-			}
-		}
-	}
 	if hook := c.recorded; hook != nil {
 		c.mu.Unlock()
 		hook()
@@ -285,6 +277,10 @@ func (c *committer) Applied(tx uint64) {
 	c.mu.Lock()
 	pt, ok := c.txs[tx]
 	delete(c.txs, tx)
+	if c.remote.Load() {
+		// A change of a space that follows a remote commits its files itself.
+		ok = false
+	}
 	if ok {
 		for _, f := range pt.files {
 			seq := tx + 1 + uint64(f.i) // the "p" frames follow the "x"
@@ -316,6 +312,25 @@ func (c *committer) forget(tx uint64) {
 	c.mu.Unlock()
 }
 
+// AbortAll journals that the transactions txs are given up, in one append:
+// for a change of a space that follows a remote, undone before it is put
+// back from its parent commit.
+func (c *committer) AbortAll(txs []uint64) {
+	if c == nil || c.j == nil || len(txs) == 0 {
+		return
+	}
+	recs := make([]jrec, len(txs))
+	c.mu.Lock()
+	for i, tx := range txs {
+		recs[i] = jrec{Op: "k", Tx: tx}
+		delete(c.txs, tx)
+	}
+	c.mu.Unlock()
+	if err := c.j.append(recs); err != nil {
+		c.log.Error("could not journal that a change was given up", "error", err)
+	}
+}
+
 // Abort journals that transaction tx was given up before any of its files
 // was written (its first write failed, and the change was answered with an
 // error), so that the next start does not make it after all.
@@ -329,14 +344,6 @@ func (c *committer) Abort(tx uint64) {
 	if err := c.j.append([]jrec{{Op: "k", Tx: tx}}); err != nil {
 		c.log.Error("could not journal that a change was given up; the next start may make it", "error", err)
 	}
-}
-
-// hold keeps records that an earlier run left open, until Done says they are
-// finished (a commit's trim of the journal keeps them).
-func (c *committer) hold(recs ...jrec) {
-	c.mu.Lock()
-	c.open = append(c.open, recs...)
-	c.mu.Unlock()
 }
 
 // Done says the edit of space.yml that the "b" or "u" record rec announced has

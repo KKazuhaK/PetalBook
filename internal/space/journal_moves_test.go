@@ -228,7 +228,7 @@ func TestAPrepareWhoseAppendMayHaveReachedTheDiskIsGivenUp(t *testing.T) {
 		}
 		return f.Truncate(size)
 	}
-	if _, err := c.Prepare(Author{}, []txFile{{path: "a.md", old: "o", rev: "n", data: []byte("x")}}, nil); err == nil {
+	if _, err := c.Prepare(Author{}, []txFile{{path: "a.md", old: "o", rev: "n", data: []byte("x")}}); err == nil {
 		t.Fatal("the prepare should have failed")
 	}
 	j.write = nil

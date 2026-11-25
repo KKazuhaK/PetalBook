@@ -26,7 +26,13 @@ import (
 //
 //	w  Path was (or is being) written with content whose blob id is Rev
 //	d  Path is being deleted
-//	m  From is being moved to To (hard link, then remove the old name)
+//	mr the name To is taken for a move of the page at From, as a second name
+//	   of its file: the move is the transaction that follows. Without one (not
+//	   given up) that moves From to To, the next start takes the name back
+//	md the folder From is renamed To for a move, the same way; mdd says the
+//	   rename did not happen
+//	rp the commit Rev a change of a space that follows a remote starts from:
+//	   a change not pushed is taken back to it at the next start
 //	t  Path changed; no further check
 //	r  From is being renamed to To, another spelling of its name, through Path
 //	b  the folder From is being moved to To: the bindings in space.yml of it
@@ -56,8 +62,6 @@ import (
 //	   is left alone: nothing is planned again
 //	a  transaction Tx is applied (not synced: the replay does not need it)
 //	k  transaction Tx was given up before it was applied: it is not replayed
-//	ld the links of the "l" record with the same fields are dealt with, or
-//	   will be by the transaction it was journaled with
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -342,8 +346,8 @@ func readJournal(data []byte) journalRead {
 
 // wholeTransactions drops the records of a transaction that is not all
 // there: its append was cut short, so none of its files was written yet (they
-// are written once it is durable), and the closing of its "l" records is lost
-// with it, so their links are planned again from untouched files.
+// are written once it is durable). A move whose transaction is dropped is
+// taken back ("mr", "md").
 func wholeTransactions(recs []jrec) []jrec {
 	want, got := map[uint64]int{}, map[uint64]int{}
 	for _, r := range recs {
@@ -991,12 +995,6 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			if err == nil && page.Rev(data) == r.Rev {
 				set[r.Path] = by
 			}
-		case "m":
-			if !ok(r.From) || !ok(r.To) {
-				continue
-			}
-			finishMove(root, r.From, r.To)
-			set[r.From], set[r.To] = by, by
 		case "bd", "ud":
 			for i, o := range bindRecs {
 				if o.Op+"d" == r.Op && o.From == r.From && o.To == r.To && o.Path == r.Path {
@@ -1225,35 +1223,4 @@ func finishRespell(root, mid, to string) {
 		return
 	}
 	os.Rename(m, t)
-}
-
-// finishMove completes a move that stopped between the link and the removal of
-// the old name: if both names exist and are the same file (or the same page,
-// byte for byte), the old name goes.
-func finishMove(root, from, to string) {
-	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
-	fa, errA := os.Lstat(a)
-	fb, errB := os.Lstat(b)
-	if errA != nil || errB != nil || !fa.Mode().IsRegular() || !fb.Mode().IsRegular() {
-		return
-	}
-	if os.SameFile(fa, fb) {
-		// Two names of one file: the link was made and the old name is still
-		// there. But on a file system that folds names, a rename to another
-		// spelling of the file's own name answers to both names with one
-		// entry, and removing "the old name" would remove the only one. Only
-		// two entries in the listing are two names.
-		if a != b && listed(filepath.Dir(a), filepath.Base(a)) && listed(filepath.Dir(b), filepath.Base(b)) {
-			os.Remove(a)
-		}
-		return
-	}
-	da, errA := os.ReadFile(a)
-	db, errB := os.ReadFile(b)
-	if errA != nil || errB != nil || !bytes.Equal(da, db) {
-		return
-	}
-	if id := page.Parse(da).Meta().ID(); id != "" && id == page.Parse(db).Meta().ID() {
-		os.Remove(a)
-	}
 }

@@ -84,16 +84,11 @@ func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (s
 		// never someone else's. A space that follows a remote journals a "w"
 		// record, which recovery only believes if the file has our content.
 		rel := path.Join(folder, name)
-		var tx uint64
-		if s.rem.Load() == nil {
-			var err error
-			if tx, err = s.cm.Prepare(by, []txFile{{path: rel, rev: rev, data: data}}, nil); err != nil {
-				return "", err
-			}
-		} else if err := s.cm.Record(by, jrec{Op: "w", Path: rel, Rev: rev}); err != nil {
+		tx, err := s.cm.Prepare(by, []txFile{{path: rel, rev: rev, data: data}})
+		if err != nil {
 			return "", err
 		}
-		err := s.ops.Link(tmp, filepath.Join(dir, name))
+		err = s.ops.Link(tmp, filepath.Join(dir, name))
 		if err == nil {
 			s.cm.Applied(tx)
 			return name, nil
@@ -302,28 +297,15 @@ func (s *Space) journalRespell(by Author, from, mid, to string, inside []string)
 }
 
 // moveIntent returns the journal call for moving the page at rel into folder:
-// it records from -> to before the link, so a crash between link and remove
-// can be finished at the next start.
-//
-// The move is journaled together with an "l" record, which says that the links
-// to the page have to follow it: the record stays open until they have (see
-// relink), so a crash between the move and the last file rewritten is finished
-// at the next start.
+// it records the name about to be taken ("mr"), so that a crash before the
+// move's transaction has the next start take it back.
 func (s *Space) moveIntent(tx *txn, rel, folder string) func(name string) error {
 	return func(name string) error {
 		to := path.Join(folder, name)
-		if !tx.remote {
-			// The name is taken as a second name of the page; the move and
-			// its links are one transaction after that. Without it, the next
-			// start takes the name back ("mr").
-			return tx.record(jrec{Op: "mr", From: rel, To: to})
-		}
-		l := jrec{Op: "l", From: rel, To: to}
-		if err := tx.record(jrec{Op: "m", From: rel, To: to}, l); err != nil {
-			return err
-		}
-		tx.links = append(tx.links, l)
-		return nil
+		// The name is taken as a second name of the page; the move and its
+		// links are one transaction after that. Without it, the next start
+		// takes the name back ("mr").
+		return tx.record(jrec{Op: "mr", From: rel, To: to})
 	}
 }
 
