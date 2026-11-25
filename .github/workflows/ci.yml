@@ -205,7 +205,7 @@ jobs:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # Above scripts/test-postgres.sh's own 15 minutes for go test plus the
+    # Above scripts/test-postgres.sh's own 20 minutes for go test plus the
     # contract runs, so a slow test ends with go test's report, not a cancel.
     timeout-minutes: 30
     permissions:
@@ -256,7 +256,7 @@ jobs:
       - run: make contract-postgres
 
   # Where the code meets other platforms: the tests on a case-folding file
-  # system (as macOS and Windows have), and a build for every release target.
+  # system (as macOS and Windows have), and a build for a few release targets (release.yml builds them all).
   compat:
     name: compat
     if: github.event_name == 'push'

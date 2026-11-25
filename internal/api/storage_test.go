@@ -445,7 +445,7 @@ func TestRestoringAnswersWithThePhaseAndRetryAfter(t *testing.T) {
 		a.clock.Advance(48 * time.Hour)
 		admin.do("POST", "/api/admin/spaces/"+sid+"/evict", nil).want(t, 204, "")
 		n.set(true)
-		deadline = time.Now().Add(10 * time.Second)
+		deadline = time.Now().Add(2 * time.Second)
 		for {
 			r := admin.do("GET", base+"/pages/"+pid, nil)
 			if r.code != 503 || r.body["error"] != "restoring" {
@@ -453,7 +453,7 @@ func TestRestoringAnswersWithThePhaseAndRetryAfter(t *testing.T) {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Fatal("the failed restore still says restoring")
+				t.Fatal("an unreachable remote still says restoring after 2s")
 			}
 			time.Sleep(20 * time.Millisecond)
 		}

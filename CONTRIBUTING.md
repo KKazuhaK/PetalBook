@@ -33,11 +33,11 @@ make check-full
 ```
 
 它在 `check` 之外还有 PostgreSQL 测试（只跑用到状态数据库的包；需要 `initdb`、`pg_ctl`、`psql`）、
-大小写折叠的 tmpfs 上的测试（只在 Linux 上，内核 6.13 以上；CI 用 ext4 镜像代替）、六个平台的交叉编译、
+大小写折叠的 tmpfs 上的测试（只在 Linux 上，内核 6.13 以上；CI 用 ext4 镜像代替）、两个平台的交叉编译（发布时才构建全部平台）、
 `make release`，以及契约测试（SQLite 和 PostgreSQL 各跑一遍账号模式，`make contract-postgres`）。
 That adds the PostgreSQL tests (only the packages that use the state database; needs `initdb`, `pg_ctl`
 and `psql`), the tests on a case-folding tmpfs (Linux only, kernel 6.13 or newer; CI uses an ext4 image
-instead), a cross-compile for six platforms, `make release`, and the contract tests (accounts mode runs on
+instead), a cross-compile for two platforms (a release builds them all), `make release`, and the contract tests (accounts mode runs on
 SQLite and on PostgreSQL, `make contract-postgres`).
 
 每一项检查都只定义在 `Makefile` 里，CI 只是调用这些目标，所以本地通过的，CI 上也通过。
@@ -47,15 +47,15 @@ Every check is defined in the `Makefile` only; CI just calls those targets.
 
 - **拉取请求 / Pull request**：三个任务。`lint`（`make lint`：gofmt、`go mod tidy`、`go vet`、网页端类型检查和
   ESLint、actionlint、govulncheck，以及对这个 PR 的提交做 gitleaks 扫描）总是跑；`go`（`make test`，全部 Go
-  测试，带 `-race`）只在改了 Go 相关文件时跑；`web`（`make web-test`）只在改了网页端、`Makefile` 或 `.github/` 时跑。
+  测试，带 `-race`）和 `postgres`（见下）只在改了 Go 相关文件时跑；`web`（`make web-test`）只在改了网页端、`Makefile` 或 `.github/` 时跑。
   Three jobs. `lint` (`make lint`: gofmt, `go mod tidy`, `go vet`, the web typecheck and ESLint, actionlint,
   govulncheck, and a gitleaks scan of the pull request's commits) always runs; `go` (`make test`, all the Go
-  tests with `-race`) only when a change can affect Go; `web` (`make web-test`) only when it changed the web
+  tests with `-race`) and `postgres` (below) only when a change can affect Go; `web` (`make web-test`) only when it changed the web
   app, the `Makefile` or `.github/`.
-- **合并到 main / Push to main**：以上三个，再加三个：`postgres`（`make test-postgres`，只跑用到状态数据库的包，
+- **合并到 main / Push to main**：以上几个，再加 `compat` 和 `release`；`postgres` 总是跑。`postgres`（`make test-postgres`，只跑用到状态数据库的包的 PostgreSQL 那一半，
   再加 `make contract` 和 `make contract-postgres` 两种契约测试）、`compat`（大小写折叠的文件系统上的测试，
   交叉编译，以及不带 `-race` 的 `make test-fullsize`，即全尺寸的压力测试）、`release`（`make release` 单文件构建，加容器镜像构建）。
-  Those three, plus three more: `postgres` (`make test-postgres`, only the packages that use the state database,
+  Those, plus `compat` and `release`; `postgres` always runs. `postgres` (`make test-postgres`, the PostgreSQL half of the packages that use the state database,
   then the contract tests on SQLite and on PostgreSQL), `compat` (the tests on a case-folding file system, the
   cross-compile, and `make test-fullsize`: the full-size stress tests, without `-race`), and `release` (the single-binary build `make release`, and the image build).
 - **发布 / Release**（推送 `v*` 标签）：标签必须在 main 上，且 ci 在该提交上已通过；
