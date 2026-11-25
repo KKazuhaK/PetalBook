@@ -8,6 +8,7 @@ import (
 
 // A tenant runs one bulk job at a time and the server two; the others wait.
 func TestTheJobRunnerAllowsOnePerTenantAndTwoOnTheServer(t *testing.T) {
+	t.Parallel()
 	bg := context.Background()
 	r := newJobRunner()
 	r.acquire(bg, "A")
@@ -46,6 +47,7 @@ func TestTheJobRunnerAllowsOnePerTenantAndTwoOnTheServer(t *testing.T) {
 
 // A job that works on several tenants waits for the turn of each of them.
 func TestAJobOfSeveralTenantsWaitsForEachOfThem(t *testing.T) {
+	t.Parallel()
 	bg := context.Background()
 	r := newJobRunner()
 	r.acquire(bg, "B")
@@ -68,6 +70,7 @@ func TestAJobOfSeveralTenantsWaitsForEachOfThem(t *testing.T) {
 // A job waiting for its turn stops waiting when its context ends (the handler
 // is closed), having taken nothing.
 func TestAWaitingJobStopsWaitingWhenItsContextEnds(t *testing.T) {
+	t.Parallel()
 	r := newJobRunner()
 	r.acquire(context.Background(), "A")
 	ctx, cancel := context.WithCancel(context.Background())

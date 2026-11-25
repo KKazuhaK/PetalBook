@@ -8,6 +8,7 @@ import (
 // One flush at a time per person, and a value written while a flush runs is
 // never lost or overwritten by the older one, whatever the flush's outcome.
 func TestPrefsHubKeepsNewerValuesAndFlushesOneAtATime(t *testing.T) {
+	t.Parallel()
 	var h prefsHub
 	fire := func() {}
 	if err := h.add("u", map[string]any{"a": 1, "b": 1}, time.Hour, fire, 0, nil); err != nil {
@@ -43,6 +44,7 @@ func TestPrefsHubKeepsNewerValuesAndFlushesOneAtATime(t *testing.T) {
 // A flush that keeps failing for a reason that may pass is tried a few times,
 // each after a longer wait, and then given up.
 func TestPrefsHubGivesUpAfterAFewTries(t *testing.T) {
+	t.Parallel()
 	var h prefsHub
 	fire := func() {}
 	h.add("u", map[string]any{"a": 1}, time.Minute, fire, 0, nil)

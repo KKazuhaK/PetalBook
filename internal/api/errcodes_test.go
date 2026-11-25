@@ -173,6 +173,7 @@ func errorCodesInSource(t *testing.T) []string {
 // (go test ./internal/api -run TestErrorCodesListIsCurrent -update-codes), and then
 // the web test fails until the code has a Chinese and an English text.
 func TestErrorCodesListIsCurrent(t *testing.T) {
+	t.Parallel()
 	codes := errorCodesInSource(t)
 	want, err := json.MarshalIndent(codes, "", "  ")
 	if err != nil {
@@ -198,6 +199,7 @@ func TestErrorCodesListIsCurrent(t *testing.T) {
 // message that starts with a name of the API (limit, oidc.issuer) may start in
 // lower case.
 func TestServerSentencesAreSentences(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

@@ -54,6 +54,7 @@ func connectGitHub(t *testing.T, a *acc, c *client, login string) {
 }
 
 func TestGitHubIsNotConfiguredByDefault(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		r := ghProvider(t, admin)
@@ -73,6 +74,7 @@ func TestGitHubIsNotConfiguredByDefault(t *testing.T) {
 }
 
 func TestTheAdministratorsSaveTheApp(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
@@ -122,6 +124,7 @@ func TestTheAdministratorsSaveTheApp(t *testing.T) {
 }
 
 func TestInstallationsAndTheirSharing(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
 		for i := 0; i < 35; i++ {
@@ -179,6 +182,7 @@ func fmtInt(n int64) string { return itoa(n) }
 type ghAccount = githubapptest.Account
 
 func TestConnectingAnAccountThroughTheApi(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
 		g := ghProvider(t, member)
@@ -246,6 +250,7 @@ func TestConnectingAnAccountThroughTheApi(t *testing.T) {
 }
 
 func TestOwnersAndRepositoriesAreListedByPage(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		o := member.do("GET", "/api/connections/github/owners", nil).want(t, 200, "")
@@ -281,6 +286,7 @@ func TestOwnersAndRepositoriesAreListedByPage(t *testing.T) {
 }
 
 func TestCreatingASpaceWithANewRepository(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		r := member.do("POST", "/api/spaces", map[string]any{"name": "Tang", "inbox": "收件箱", "storage": ghSync(map[string]any{
@@ -327,6 +333,7 @@ func TestCreatingASpaceWithANewRepository(t *testing.T) {
 }
 
 func TestCreatingASpaceFailsCleanly(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		body := func(owner, name string, create bool) map[string]any {
@@ -397,6 +404,7 @@ func TestCreatingASpaceFailsCleanly(t *testing.T) {
 }
 
 func TestMaxSpacesAppliesToSpacesWithRepositories(t *testing.T) {
+	t.Parallel()
 	o := ghOpts
 	o.maxSpaces = 1 // the personal space is the one
 	eachAccounts(t, o, func(t *testing.T, a *acc) {
@@ -410,6 +418,7 @@ func TestMaxSpacesAppliesToSpacesWithRepositories(t *testing.T) {
 }
 
 func TestSwitchingASpaceToGitHubThroughTheRemoteEndpoint(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		repo := a.fake.AddRepo("kazuhahub", "wiki", true)
@@ -447,6 +456,7 @@ func TestSwitchingASpaceToGitHubThroughTheRemoteEndpoint(t *testing.T) {
 // they leave the group they can no longer switch it, and their connection
 // stops being used for it.
 func TestManageThroughAGroupCoversGitHub(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, tang := ghSetup(t, a)
 		a.fake.AddRepo("kazuhahub", "team", true)
@@ -482,6 +492,7 @@ func TestManageThroughAGroupCoversGitHub(t *testing.T) {
 }
 
 func TestAnExpiredAuthorizationShowsItsCodeAndRefusesWrites(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		id := member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "storage": ghSync(map[string]any{"owner": "tang-gh", "name": "mine"})}).want(t, 201, "").body["id"].(string)
@@ -522,6 +533,7 @@ func TestAnExpiredAuthorizationShowsItsCodeAndRefusesWrites(t *testing.T) {
 }
 
 func TestRemoteObjectsOfOtherKindsHaveAnErrorCode(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		id := member.do("POST", "/api/spaces", map[string]any{"name": "Tok"}).want(t, 201, "").body["id"].(string)
@@ -539,6 +551,7 @@ func TestRemoteObjectsOfOtherKindsHaveAnErrorCode(t *testing.T) {
 // create a space with a repository. An attempt started before the hold does
 // not finish under it either.
 func TestAHeldSessionCannotUseGitHub(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
 		start := member.do("POST", "/api/connections/github/authorization/start", map[string]any{}).want(t, 200, "")
@@ -574,6 +587,7 @@ func TestAHeldSessionCannotUseGitHub(t *testing.T) {
 }
 
 func TestDismissingALeftoverRepository(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		_, member := ghSetup(t, a)
 		other := a.addUser("other", pw, "member")
@@ -603,6 +617,7 @@ func TestDismissingALeftoverRepository(t *testing.T) {
 }
 
 func TestLeftoversAreThereWithoutAnApp(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		g := ghProvider(t, admin)
@@ -613,6 +628,7 @@ func TestLeftoversAreThereWithoutAnApp(t *testing.T) {
 }
 
 func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
@@ -649,6 +665,7 @@ func TestTheAdministratorsCheckTheAppAgain(t *testing.T) {
 // A person connects by installing the App on their own account in one GitHub
 // flow; without the App there, a repository in their account answers what to do.
 func TestConnectingByInstallingAndThePersonalAccountNeedsTheApp(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
@@ -711,6 +728,7 @@ func TestConnectingByInstallingAndThePersonalAccountNeedsTheApp(t *testing.T) {
 // The administrator makes the App on GitHub in one click: the server hands
 // over the manifest, GitHub sends the browser back, the server saves the App.
 func TestMakingTheAppFromAManifestThroughTheAPI(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
@@ -779,6 +797,7 @@ func ghProvider(t *testing.T, c *client) result {
 }
 
 func TestAnAppThatWaitsToBeSavedIsFinishedByItsAdministrator(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
@@ -793,6 +812,7 @@ func TestAnAppThatWaitsToBeSavedIsFinishedByItsAdministrator(t *testing.T) {
 // codes"), whichever route and whichever provider; and a plain Git address,
 // which has nothing to connect, answers 404 on every route but repos.
 func TestEveryConnectionErrorNamesItsProvider(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin, member := ghSetup(t, a)
 		sp := member.do("POST", "/api/spaces", map[string]any{"name": "Wiki"}).want(t, 201, "").body["id"].(string)

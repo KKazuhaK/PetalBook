@@ -90,6 +90,7 @@ func fgProvider(t *testing.T, c *client, id string) map[string]any {
 }
 
 func TestAnAdministratorSetsAHostUp(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin := a.setup("root", pw)
 		member := a.addUser("tang", pw, "member")
@@ -169,6 +170,7 @@ func TestAnAdministratorSetsAHostUp(t *testing.T) {
 }
 
 func TestTheStorageHostsDecideWhichHostsAProviderMayBeOn(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin := a.setup("root", pw)
 		admin.do("PUT", "/api/admin/storage", map[string]any{"hosts": map[string]any{"allowed": []string{"git.example.test"}}}).want(t, 200, "")
@@ -182,6 +184,7 @@ func TestTheStorageHostsDecideWhichHostsAProviderMayBeOn(t *testing.T) {
 }
 
 func TestProvidersAreListedByCapability(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		_, member := fgSetup(t, a, kind, f)
 		p := fgProvider(t, member, kind)
@@ -216,6 +219,7 @@ func TestProvidersAreListedByCapability(t *testing.T) {
 }
 
 func TestConnectingAnAccountOnAHostThroughTheApi(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin, member := fgSetup(t, a, kind, f)
 		a.auth.FlushAudit(context.Background())
@@ -265,6 +269,7 @@ func TestConnectingAnAccountOnAHostThroughTheApi(t *testing.T) {
 }
 
 func TestAGiteaAdministratorsConnectionSaysItsTokenCarriesAdminRights(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		_, member := fgSetup(t, a, kind, f)
 		if c := fgProvider(t, member, kind)["connection"].(map[string]any); c["admin"] == true {
@@ -282,6 +287,7 @@ func TestAGiteaAdministratorsConnectionSaysItsTokenCarriesAdminRights(t *testing
 }
 
 func TestOwnersAndRepositoriesThroughTheApi(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		_, member := fgSetup(t, a, kind, f)
 		f.AddUser("boss")
@@ -315,6 +321,7 @@ func TestOwnersAndRepositoriesThroughTheApi(t *testing.T) {
 }
 
 func TestCreatingASpaceWithANewRepositoryOnAHost(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin, member := fgSetup(t, a, kind, f)
 		r := member.do("POST", "/api/spaces", map[string]any{"name": "Team", "storage": fgSync(kind, map[string]any{
@@ -384,6 +391,7 @@ func TestCreatingASpaceWithANewRepositoryOnAHost(t *testing.T) {
 }
 
 func TestCreatingASpaceOnAHostFailsCleanly(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		_, member := fgSetup(t, a, kind, f)
 		f.AddUser("boss")
@@ -432,6 +440,7 @@ func TestCreatingASpaceOnAHostFailsCleanly(t *testing.T) {
 }
 
 func TestSwitchingASpaceToAHostThroughTheRemoteEndpoint(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		_, member := fgSetup(t, a, kind, f)
 		f.AddRepo("acme", "wiki", true)
@@ -451,6 +460,7 @@ func TestSwitchingASpaceToAHostThroughTheRemoteEndpoint(t *testing.T) {
 }
 
 func TestAnExpiredConnectionShowsItsCodeAndRefusesWrites(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		_, member := fgSetup(t, a, kind, f)
 		id := member.do("POST", "/api/spaces", map[string]any{"name": "Mine", "storage": fgSync(kind, map[string]any{"owner": "tang-h", "name": "mine"})}).want(t, 201, "").body["id"].(string)
@@ -482,6 +492,7 @@ func TestAnExpiredConnectionShowsItsCodeAndRefusesWrites(t *testing.T) {
 // A space that syncs with someone's connection stops, and loses nothing, when that
 // person can no longer manage it; another person's connection is not borrowed.
 func TestAnotherPersonsConnectionIsNeverBorrowed(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin, member := fgSetup(t, a, kind, f)
 		bob := a.addUser("bob", pw, "member")
@@ -522,6 +533,7 @@ func TestAnotherPersonsConnectionIsNeverBorrowed(t *testing.T) {
 
 // A provider of one tenant is not seen, listed or used by another's people.
 func TestATenantsProviderIsInvisibleToOtherTenants(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		fx := newTenFx(t, a)
 		sealed, err := a.fm.SealForTest("acme-"+kind, fx.tenB, f.ClientSecret)
@@ -579,6 +591,7 @@ func TestATenantsProviderIsInvisibleToOtherTenants(t *testing.T) {
 }
 
 func TestEveryProviderErrorNamesItsProvider(t *testing.T) {
+	t.Parallel()
 	eachForge(t, func(t *testing.T, a *acc, kind string, f *forgetest.Fake) {
 		admin, member := fgSetup(t, a, kind, f)
 		probes := []struct {

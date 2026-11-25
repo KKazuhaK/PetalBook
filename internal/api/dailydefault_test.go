@@ -18,6 +18,7 @@ func asSlice(v any) []any { s, _ := v.([]any); return s }
 
 // The default of the administrators may be an interface for each language.
 func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		other := newQuoteServer(t)
@@ -126,6 +127,7 @@ func TestSiteDefaultIsAnInterfaceForEachLanguage(t *testing.T) {
 
 // Settings that cannot be read are an error, and a save never writes over them.
 func TestDailySettingsThatCannotBeReadAreNotOverwritten(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		ctx := context.Background()
@@ -148,6 +150,7 @@ func TestDailySettingsThatCannotBeReadAreNotOverwritten(t *testing.T) {
 // Languages are canonical BCP 47 tags everywhere: what is given in another
 // spelling is written canonical, and what is no tag is refused.
 func TestDailyLanguagesAreCanonical(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		ctx := context.Background()
@@ -207,6 +210,7 @@ func TestDailyLanguagesAreCanonical(t *testing.T) {
 
 // A language mapping turns the language into the code the service wants.
 func TestInterfaceLanguageMapping(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		b := x.qs.api("mapped", "")
@@ -273,6 +277,7 @@ func (s *stubServices) count() int {
 }
 
 func TestBuiltInInterfaces(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		stub := &stubServices{}
@@ -396,6 +401,7 @@ func TestBuiltInInterfaces(t *testing.T) {
 // There is no list of hosts: one that is sent is refused as an unknown key, and
 // an interface may only contact the host and port of its own address.
 func TestNoListOfHosts(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"hosts": []any{"a.example"}, "languages": []any{"en"}}); code != 400 {
