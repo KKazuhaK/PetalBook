@@ -455,15 +455,21 @@ once by the trim after the commit.
 - **Folder moves.** A folder move journals `md From To`, then renames the folder. It
   plans the links and journals the transaction, with a `p` record of the folder (`Dir`)
   and the rewritten files, before `space.yml` is edited, and writes the files after.
-  Recovery finishes the rename forwards if the transaction is there. Without it, the
-  folder goes back (`mdd` closes an `md` whose rename failed), so the bindings, edited
+  Recovery finishes the rename forwards only for a transaction not journaled applied,
+  and only if the folder is still at its old place and nothing is at the new one;
+  anything else is left alone and logged. An applied move is never made again, so a new
+  folder under the old name, or a folder renamed by hand since, stays where it is.
+  Without a transaction, the folder goes back (`mdd` closes an `md` whose rename failed), so the bindings, edited
   only after the transaction, never point at a folder that went back.
 - **No more `l`/`ld` in local spaces.** Nothing is planned again at recovery.
 - **Commits.** The moved page's new name is committed from its recorded blob, and its
   old name as gone (a known path with no blob id is committed as a deletion, without
   looking at the work tree).
 - **Failures.** A move that fails after its transaction was journaled fails the change,
-  and the next start finishes it. One that fails before has its name taken back.
+  and the next start finishes it. One that fails before has its name taken back. An
+  append that fails and cannot be cut off again may still be on disk: the transaction is
+  given up (`k`) at once, and if even that fails, it is logged as a change that may be
+  made at the next start.
 - **Remote spaces** still journal `m` and `l` and finish them forwards, until PR 5 rolls
   their changes back instead. Until then, `finishLinkRecs` and `pendingLinkRecs` serve
   only them.

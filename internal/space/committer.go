@@ -241,6 +241,15 @@ func (c *committer) Prepare(by Author, files []txFile, closing []jrec) (uint64, 
 	defer c.mu.Unlock()
 	tx, err := c.j.appendTx(by, files, extra)
 	if err != nil {
+		var u *uncertainAppend
+		if errors.As(err, &u) && tx != 0 {
+			// The change fails, but the transaction may be in the journal:
+			// given up now, the next start does not make it.
+			if kerr := c.j.append([]jrec{{Op: "k", Tx: tx}}); kerr != nil {
+				c.log.Error("a change that failed may be in the journal and be made at the next start",
+					"transaction", tx, "error", errors.Join(err, kerr))
+			}
+		}
 		return 0, err
 	}
 	pt := preparedTx{by: by}

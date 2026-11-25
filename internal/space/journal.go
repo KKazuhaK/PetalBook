@@ -394,6 +394,8 @@ type journal struct {
 	// test makes an append fail part way with them.
 	write func(f *os.File, b []byte) (int, error)
 	sync  func(f *os.File) error
+	// truncate, when set, stands in for the file's Truncate.
+	truncate func(f *os.File, size int64) error
 	// replace, when set, stands in for the rename that puts a trimmed
 	// journal in place: a test makes a trim fail with it.
 	replace func(tmp, path string) error
@@ -520,6 +522,15 @@ func (j *journal) appendTx(by Author, files []txFile, extra []jrec) (uint64, err
 		}
 	}
 	if err := j.appendLocked(recs, true); err != nil {
+		var u *uncertainAppend
+		if errors.As(err, &u) {
+			// The transaction may be in the journal: its number is given,
+			// for the caller to give it up, and its staged content stays.
+			if blob != "" {
+				j.blobs[tx] = blob
+			}
+			return tx, err
+		}
 		if blob != "" {
 			os.Remove(blob)
 		}
@@ -678,8 +689,15 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 		for i := range recs {
 			recs[i].seq, recs[i].first = 0, 0
 		}
-		if terr := j.f.Truncate(j.size); terr != nil {
+		cut := (*os.File).Truncate
+		if j.truncate != nil {
+			cut = j.truncate
+		}
+		if terr := cut(j.f, j.size); terr != nil {
 			j.broken = true
+			// What was written may stay on disk, and be read at the next
+			// start, although the append failed.
+			return &uncertainAppend{err}
 		}
 		return err
 	}
@@ -688,6 +706,15 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 	j.seq = seq
 	return nil
 }
+
+// uncertainAppend is an append that failed and could not be cut off again:
+// its records may or may not be in the journal.
+type uncertainAppend struct{ err error }
+
+func (e *uncertainAppend) Error() string {
+	return "the journal append failed, and may be in the journal anyway: " + e.err.Error()
+}
+func (e *uncertainAppend) Unwrap() error { return e.err }
 
 // trim replaces the journal, atomically, by the frames after number upTo and
 // those of the records in keep (records still open: they stay whatever their
@@ -919,7 +946,11 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			}
 			if r.Dir {
 				// The folder of a move: its files are journaled one by one.
-				finishFolderMove(root, r.From, r.Path)
+				// One that was applied is done: whatever is at its two places
+				// now came after it, and is left alone.
+				if !applied[r.Tx] {
+					finishFolderMove(root, r.From, r.Path, log)
+				}
 				continue
 			}
 			// The file is the server's if the replay leaves it at the new
@@ -1127,16 +1158,27 @@ func takeBackFolder(root, from, to string) {
 	}
 }
 
-// finishFolderMove renames the folder from to to, if it is still at from and
-// nothing is at to: the rename the transaction of the move is about.
-func finishFolderMove(root, from, to string) {
+// finishFolderMove renames the folder from to to, for a move whose
+// transaction was journaled and not journaled applied: the rename the
+// transaction is about. The folder is renamed before the transaction is
+// journaled, so it is normally at to already. Only if it is at from and
+// nothing is at to (the rename was lost with a power loss) is it renamed;
+// anything else is left as it is, and logged.
+func finishFolderMove(root, from, to string, log *slog.Logger) {
 	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
-	if _, err := os.Lstat(b); !errors.Is(err, fs.ErrNotExist) {
-		return
-	}
-	if fi, err := os.Lstat(a); err == nil && fi.IsDir() {
+	ai, errA := os.Lstat(a)
+	_, errB := os.Lstat(b)
+	switch {
+	case errA == nil && ai.IsDir() && errors.Is(errB, fs.ErrNotExist):
 		os.MkdirAll(filepath.Dir(b), 0o755)
 		os.Rename(a, b)
+	case errors.Is(errA, fs.ErrNotExist) && errB == nil:
+		// Made.
+	default:
+		if log != nil {
+			log.Warn("a folder move an earlier run journaled finds both its places taken, or neither; it is left as it is",
+				"from", from, "to", to)
+		}
 	}
 }
 

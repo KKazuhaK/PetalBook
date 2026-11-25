@@ -1,7 +1,9 @@
 package space
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -153,5 +155,95 @@ func TestAMoveIsCommittedFromWhatTheServerWrote(t *testing.T) {
 	checkServerCommitted(t, root, "New/目标.md", string(server), outside)
 	if files := git(t, root, "ls-files", "Old"); strings.Contains(files, "目标") {
 		t.Errorf("the old name is still committed: %s", files)
+	}
+}
+
+// A folder move that was made is not made again at the next start, whatever
+// is at its old and new places by then: here a new folder under the old name,
+// and the moved folder moved on.
+func TestAFolderMoveThatWasMadeIsNotMadeAgain(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s, _, _ := moveScene(t, root)
+	if _, err := s.MoveFolder(Author{}, "Old", "New"); err != nil {
+		t.Fatal(err)
+	}
+	fresh := mustCreate(t, s, "Old", meta("title", "fresh"), "x\n")
+	if _, err := s.MoveFolder(Author{}, "New", "Archive"); err != nil {
+		t.Fatal(err)
+	}
+	crash(s)
+	s2 := openAt(t, root)
+	if !exists(s2, fresh.Path) || exists(s2, "New") || !exists(s2, "Archive/目标.md") {
+		t.Fatalf("the folders after the restart: Old/fresh.md %v, New %v, Archive/目标.md %v",
+			exists(s2, fresh.Path), exists(s2, "New"), exists(s2, "Archive/目标.md"))
+	}
+	checkAllCommitted(t, s2, root)
+}
+
+// A folder move that was made, then a folder renamed and a new one made under
+// the old name by hand before the next start: the next start leaves them so.
+func TestAFolderMoveDoesNotTakeAFolderMadeOutsideUnderItsOldName(t *testing.T) {
+	t.Parallel()
+	needGit(t)
+	root := t.TempDir()
+	s, _, _ := moveScene(t, root)
+	if _, err := s.MoveFolder(Author{}, "Old", "New"); err != nil {
+		t.Fatal(err)
+	}
+	crash(s)
+	if err := os.Rename(filepath.Join(root, "New"), filepath.Join(root, "Mine")); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(root, "Old"), 0o755)
+	os.WriteFile(filepath.Join(root, "Old", "hand.md"), []byte(pageText("HANDHAND01", "hand", "x\n")), 0o644)
+	s2 := openAt(t, root)
+	if !exists(s2, "Old/hand.md") || exists(s2, "New") || !exists(s2, "Mine/目标.md") {
+		t.Fatalf("the folders after the restart: Old/hand.md %v, New %v, Mine/目标.md %v",
+			exists(s2, "Old/hand.md"), exists(s2, "New"), exists(s2, "Mine/目标.md"))
+	}
+}
+
+// A journal append whose outcome is not known (it failed, and cutting it off
+// failed too) is given up at once, so the next start does not make a change
+// the person was told failed.
+func TestAPrepareWhoseAppendMayHaveReachedTheDiskIsGivenUp(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "pending.journal")
+	j, _, err := openJournal(path, slog.New(slog.NewTextHandler(&logBuffer{}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &committer{j: j, log: slog.New(slog.NewTextHandler(&logBuffer{}, nil)), txs: map[uint64]preparedTx{}}
+	j.write = func(f *os.File, b []byte) (int, error) {
+		n, _ := f.Write(b)
+		return n, errors.New("I/O error")
+	}
+	failCut := true
+	j.truncate = func(f *os.File, size int64) error {
+		if failCut {
+			failCut = false
+			return errors.New("I/O error")
+		}
+		return f.Truncate(size)
+	}
+	if _, err := c.Prepare(Author{}, []txFile{{path: "a.md", old: "o", rev: "n", data: []byte("x")}}, nil); err == nil {
+		t.Fatal("the prepare should have failed")
+	}
+	j.write = nil
+	j.close()
+	data, _ := os.ReadFile(path)
+	rd := readJournal(data)
+	given := map[uint64]bool{}
+	for _, r := range rd.recs {
+		if r.Op == "k" {
+			given[r.Tx] = true
+		}
+	}
+	for _, r := range rd.recs {
+		if r.Op == "x" && !given[r.Tx] {
+			t.Errorf("the transaction is in the journal and not given up: %+v", rd.recs)
+		}
 	}
 }
