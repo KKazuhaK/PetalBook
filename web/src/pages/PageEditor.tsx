@@ -3,13 +3,26 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalSt
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { Code, Columns2, FolderInput, History, Link2, Lock, MoreHorizontal, Save, Trash2, Type } from 'lucide-react'
+import {
+  Code,
+  Columns2,
+  FolderInput,
+  History,
+  Link2,
+  Lock,
+  MoreHorizontal,
+  Save,
+  Star,
+  Trash2,
+  Type,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, isUnauthenticated, spaceApi, type SpaceApi } from '@/api/client'
 import {
   invalidateListings,
   keys,
   useActiveSpace,
+  useCanFavorite,
   usePage,
   usePageLinks,
   useSession,
@@ -72,12 +85,13 @@ import {
 import { ErrorState, PageFallback } from '@/components/common'
 import { setEditableQuietly } from '@/components/editor/editable'
 import { Breadcrumbs } from '@/components/files/Breadcrumbs'
-import { StarButton } from '@/components/favorites/StarButton'
+import { StarButton, useToggleFavorite } from '@/components/favorites/StarButton'
 import { TopBar } from '@/components/layout/TopBar'
 import {
   topBarButton,
   topBarGroup,
   topBarGroupItem,
+  topBarRoom,
   topBarStatus,
   topBarTextButton,
 } from '@/components/layout/topBarStyles'
@@ -202,15 +216,17 @@ function ModeSwitch({ mode, wide, onChange }: { mode: EditMode; wide: boolean; o
   )
 }
 
-// Whether the top bar is narrow (the same width as the `@[30rem]/topbar` query), read when the More menu opens: the
-// menu is drawn outside the bar, so a container query cannot reach it.
-function barIsNarrow(el: HTMLElement | null) {
-  const bar = el?.closest('header')
-  // A bar that has no width (not laid out) is not a narrow one.
-  if (!bar || bar.clientWidth === 0) return false
-  const cs = getComputedStyle(bar)
-  const inner = bar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
-  return inner < 30 * parseFloat(getComputedStyle(document.documentElement).fontSize)
+// The star as a line of the More menu, for a bar too narrow for the button.
+function FavoriteItem({ page }: { page: string }) {
+  const allowed = useCanFavorite()
+  const { on, toggle, busy } = useToggleFavorite(allowed ? { kind: 'page', target: page } : null)
+  if (!allowed) return null
+  return (
+    <DropdownMenuItem disabled={busy} onClick={toggle}>
+      <Star className={on ? 'fill-amber-400 text-amber-500' : ''} />
+      {on ? t.fav.removePage : t.fav.addPage}
+    </DropdownMenuItem>
+  )
 }
 
 export default function PageEditor() {
@@ -1068,7 +1084,8 @@ function EditorSession({
     (snapshot.state === 'error' && !isUnauthenticated(snapshot.error))
   // History and "Save version" fold into the More menu while the top bar is narrow.
   const moreRef = useRef<HTMLButtonElement>(null)
-  const [narrowBar, setNarrowBar] = useState(false)
+  // How much room the bar has, read when the menu opens (see topBarRoom): what does not fit in the bar is in the menu.
+  const [barRoom, setBarRoom] = useState(Infinity)
 
   return (
     <>
@@ -1077,6 +1094,7 @@ function EditorSession({
           <>
             {/* Status, not buttons: plain text on the same 40 px line, and only the icon where the bar is narrow. */}
             <div
+              onPointerEnter={(e) => (e.currentTarget.title = e.currentTarget.textContent ?? '')}
               className={`${topBarStatus} min-w-0 @max-[48rem]/topbar:gap-0 @max-[48rem]/topbar:[&>*]:gap-0 @max-[48rem]/topbar:[&>*]:text-[0px] @max-[48rem]/topbar:[&>button]:min-h-10 @max-[48rem]/topbar:[&>button]:min-w-10 @max-[48rem]/topbar:[&>button]:justify-center`}
             >
               {readOnly ? (
@@ -1099,7 +1117,7 @@ function EditorSession({
             <StarButton
               target={{ kind: 'page', target: page.id }}
               labels={{ add: t.fav.addPage, remove: t.fav.removePage }}
-              className={topBarButton}
+              className={`${topBarButton} @max-[26rem]/topbar:hidden`}
             />
             {!historyOpen && <ModeSwitch mode={mode} wide={wide} onChange={changeMode} />}
             {!historyOpen && (
@@ -1109,7 +1127,7 @@ function EditorSession({
                 onClick={toggleBacklinks}
                 title={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
                 aria-label={backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
-                className={topBarButton}
+                className={`${topBarButton} @max-[26rem]/topbar:hidden`}
               >
                 <Link2 />
               </Button>
@@ -1122,7 +1140,7 @@ function EditorSession({
                 onFocus={() => void loadHistory()}
                 title={t.history.openHint}
                 aria-label={t.history.open}
-                className={`${topBarTextButton} @max-[30rem]/topbar:hidden`}
+                className={`${topBarTextButton} @max-[40rem]/topbar:hidden`}
               >
                 <History />
                 <span className="hidden @[48rem]/topbar:inline">{t.history.open}</span>
@@ -1135,14 +1153,14 @@ function EditorSession({
                 onClick={() => void controller.commit()}
                 title={t.editor.saveVersionHint}
                 aria-label={t.editor.saveVersion}
-                className={`${topBarTextButton} @max-[30rem]/topbar:hidden`}
+                className={`${topBarTextButton} @max-[40rem]/topbar:hidden`}
               >
                 <Save />
                 <span className="hidden @[48rem]/topbar:inline">{t.editor.saveVersion}</span>
               </Button>
             )}
             {!historyOpen && (
-              <DropdownMenu onOpenChange={(open) => open && setNarrowBar(barIsNarrow(moreRef.current))}>
+              <DropdownMenu onOpenChange={(open) => open && setBarRoom(topBarRoom(moreRef.current))}>
                 <DropdownMenuTrigger
                   ref={moreRef}
                   aria-label={t.editor.more}
@@ -1156,7 +1174,14 @@ function EditorSession({
                     <History />
                     {t.history.open}
                   </DropdownMenuItem>
-                  {narrowBar && !readOnly && (
+                  {barRoom < 26 && <FavoriteItem page={page.id} />}
+                  {barRoom < 26 && (
+                    <DropdownMenuItem onClick={toggleBacklinks}>
+                      <Link2 />
+                      {backlinksOpen ? t.pageLinks.backlinksClose : t.pageLinks.backlinksOpen}
+                    </DropdownMenuItem>
+                  )}
+                  {barRoom < 40 && !readOnly && (
                     <DropdownMenuItem disabled={!canSave} onClick={() => void controller.commit()}>
                       <Save />
                       {t.editor.saveVersion}

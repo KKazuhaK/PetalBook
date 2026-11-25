@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import {
   ArrowUpDown,
@@ -15,6 +15,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -37,7 +40,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState, Spinner } from '@/components/common'
 import { QuickCaptureFab, useQuickCapture } from '@/components/layout/QuickCapture'
-import { topBarButton, topBarGroup, topBarGroupItem } from '@/components/layout/topBarStyles'
+import { topBarButton, topBarGroup, topBarGroupItem, topBarRoom } from '@/components/layout/topBarStyles'
 import { TopBar } from '@/components/layout/TopBar'
 import { ViewBar } from '@/components/views/ViewBar'
 import { useWorkingCopy } from '@/components/views/useWorkingCopy'
@@ -157,6 +160,7 @@ function ViewSwitch({
   board,
   read,
   disabled,
+  sort,
 }: {
   mode: ListViewMode
   onChange: (m: ListViewMode) => void
@@ -164,7 +168,11 @@ function ViewSwitch({
   board: boolean
   read: boolean
   disabled?: boolean
+  // The sort choices, for the menu of a bar too narrow for the sort button (which is then hidden).
+  sort?: { value: string; onChange: (v: string) => void; choices: (readonly [string, string])[] }
 }) {
+  const trigger = useRef<HTMLButtonElement>(null)
+  const [room, setRoom] = useState(Infinity)
   const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
     <button
       key={m}
@@ -201,8 +209,9 @@ function ViewSwitch({
       >
         {modes.map(([m, label, Icon]) => item(m, label, Icon))}
       </div>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => open && setRoom(topBarRoom(trigger.current))}>
         <DropdownMenuTrigger
+          ref={trigger}
           disabled={disabled}
           aria-label={t.view.label}
           title={t.view.label}
@@ -219,6 +228,24 @@ function ViewSwitch({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          {sort && room < 26 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{t.list.sort}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={sort.value || 'default'}
+                  onValueChange={(v) => sort.onChange(v === 'default' ? '' : v)}
+                >
+                  {sort.choices.map(([v, label]) => (
+                    <DropdownMenuRadioItem key={v} value={v || 'default'}>
+                      {label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </>
@@ -378,6 +405,17 @@ function Listing({ source }: { source: ListSource }) {
   const isFolder = source.kind === 'folder'
   const filesTable = isFolder && mode === 'list' && !mobile
   const filesPhone = isFolder && mode === 'list' && mobile
+  // The sort select and, in a narrow bar, the same choices in the view menu. Search defaults to relevance; everything
+  // else to newest first; a view can sort by a property, which the plain choices do not name.
+  const sortValue = isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort
+  const onSort = (v: string) => setSort(isSearch ? v : v || '-updated')
+  const sortChoices: (readonly [string, string])[] = [
+    ['', isSearch ? t.list.sorts.relevance : t.list.sorts['-updated']],
+    ...SORTS.filter((k) => isSearch || k !== '-updated').map((k) => [k, t.list.sorts[k]] as const),
+    ...(state.sort !== '' && !SORTS.includes(state.sort as SortKey)
+      ? [[state.sort, t.views.customSort(state.sort.replace(/^-?(prop:)?/, ''))] as const]
+      : []),
+  ]
   const extra = isFolder ? filterParams(tableFilters) : {}
   const filtered = filterCount(tableFilters) > 0
 
@@ -505,15 +543,15 @@ function Listing({ source }: { source: ListSource }) {
               {/* In a table the headers of the columns sort. */}
               {/* As wide as its longest choice (a select sizes itself so when its width is auto), so no choice is cut. */}
               {!isTable && !filesPhone && (
-                <div className="relative max-sm:size-10 max-sm:shrink-0 max-sm:rounded-lg max-sm:border max-sm:[&>div>svg]:hidden">
+                <div className="relative max-sm:size-10 max-sm:shrink-0 max-sm:rounded-lg max-sm:border max-sm:[&>div>svg]:hidden @max-[26rem]/topbar:hidden">
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
                     wrapperClassName="w-auto max-sm:size-full"
                     className="h-10 w-auto text-[0.8rem] pointer-coarse:text-base! max-sm:size-full max-sm:opacity-0"
                     aria-label={t.list.sort}
                     disabled={busy}
-                    value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
-                    onChange={(e) => setSort(isSearch ? e.target.value : e.target.value || '-updated')}
+                    value={sortValue}
+                    onChange={(e) => onSort(e.target.value)}
                   >
                     {/* Search defaults to relevance; everything else to newest first. */}
                     <option value="">{isSearch ? t.list.sorts.relevance : t.list.sorts['-updated']}</option>
@@ -536,6 +574,9 @@ function Listing({ source }: { source: ListSource }) {
                 board={boardOk || typesPending}
                 read={readOk}
                 disabled={busy}
+                sort={
+                  !isTable && !filesPhone ? { value: sortValue, onChange: onSort, choices: sortChoices } : undefined
+                }
               />
               {write && source.kind === 'folder' && ops && (
                 <Button

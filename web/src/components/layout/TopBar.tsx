@@ -1,14 +1,15 @@
 import type { ReactNode } from 'react'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
+import { topBarFrame } from './topBarStyles'
 import { SidebarToggle } from './SidebarToggle'
 
 // The strip above every page: sidebar toggle on the left (only while the sidebar is hidden), the page's own
 // title and actions beside it, and the bell of the notification centre at the end.
 export function TopBar({ children, actions }: { children?: ReactNode; actions?: ReactNode }) {
   return (
-    <header className="@container/topbar sticky top-0 z-30 flex h-(--topbar-h) shrink-0 items-center gap-2 border-b bg-background/85 pt-[env(safe-area-inset-top)] pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] backdrop-blur">
+    <header className={`@container/topbar ${topBarFrame}`}>
       <SidebarToggle where="topbar" />
-      <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
+      <div className="flex min-w-24 flex-1 items-center gap-2">{children}</div>
       <div className="flex shrink-0 items-center gap-1.5 @max-[22rem]/topbar:gap-1">
         {actions}
         <NotificationBell />

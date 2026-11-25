@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useActiveSpace } from '@/api/hooks'
+import { topBarButton, topBarFrame } from '@/components/layout/topBarStyles'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { spaceUrls, type AdminSection, adminPath } from '@/lib/urls'
 import { tc } from '@/i18n/console'
@@ -83,13 +84,13 @@ export function AdminLayout({
         />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur md:hidden">
+        <header className={`${topBarFrame} md:hidden`}>
           <button
             type="button"
             onClick={() => setOpen(true)}
             aria-label={tc.menu}
             aria-haspopup="dialog"
-            className="inline-flex size-10 items-center justify-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
+            className={topBarButton}
           >
             <Menu className="size-5" aria-hidden="true" />
           </button>
