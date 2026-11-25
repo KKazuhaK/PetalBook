@@ -100,6 +100,8 @@ type accOpts struct {
 	// oauth turns the authorization server on; cimd fetches client metadata documents.
 	oauth bool
 	cimd  *http.Client
+	// prefsQuiet is how long a first preference write waits before its commit.
+	prefsQuiet time.Duration
 }
 
 func needGit(t *testing.T) {
@@ -231,7 +233,7 @@ func newAcc(t *testing.T, st *store.Store, o accOpts) *acc {
 			t.Fatal(err)
 		}
 	}
-	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg, Now: clk.Now}
+	opts := api.Options{Logger: log, Store: st, Spaces: mgr, Drafts: drf, Auth: svc, Tokens: tok, OAuth: oa, PublicURL: o.public, Version: "test-1", DailyFetch: o.dailyFetch, Connections: reg, Now: clk.Now, PrefsQuiet: o.prefsQuiet}
 	if o.maxSpaces > 0 {
 		n := o.maxSpaces // --max-spaces given: the site's quota.spacesPerPerson
 		opts.MaxSpaces = &n

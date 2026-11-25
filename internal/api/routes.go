@@ -283,6 +283,8 @@ var routeTable = []route{
 	{"GET", "/api/notifications/unread", signedIn, false, false, false, (*server).getUnreadNotifications},
 	{"POST", "/api/notifications/read", signedIn, false, false, false, (*server).markNotificationsRead},
 	{"POST", "/api/notifications/read-all", signedIn, false, false, false, (*server).markAllNotificationsRead},
+	{"GET", "/api/prefs", signedIn, false, false, false, (*server).getPrefs},
+	{"PATCH", "/api/prefs", signedIn, false, false, false, (*server).patchPrefs},
 
 	{"GET", "/api/spaces/{space}/checks", inSpace(perm.Read), false, false, false, (*server).getChecks},
 	{"POST", "/api/spaces/{space}/checks/fix", inSpace(perm.Write), false, false, false, (*server).fixCheck},

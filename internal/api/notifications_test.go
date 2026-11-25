@@ -245,6 +245,8 @@ func TestNotificationsAreNotForATokenNorAnAdministratorsView(t *testing.T) {
 		b.do("GET", "/api/notifications", nil).want(t, 403, "token_scope")
 		b.do("GET", "/api/notifications/unread", nil).want(t, 403, "token_scope")
 		b.do("POST", "/api/notifications/read-all", nil).want(t, 403, "token_scope")
+		b.do("GET", "/api/prefs", nil).want(t, 403, "token_scope")
+		b.do("PATCH", "/api/prefs", map[string]any{"set": map[string]any{"a": 1}}).want(t, 403, "token_scope")
 	})
 }
 

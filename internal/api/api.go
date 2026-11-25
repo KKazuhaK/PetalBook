@@ -107,6 +107,9 @@ type Options struct {
 	// NoMCP switches /mcp off in single-user mode (serve --mcp=false). In
 	// accounts mode the administrators' setting decides.
 	NoMCP bool
+	// PrefsQuiet is how long a person's first preference write waits for others
+	// before they are committed together (DefaultPrefsQuiet when 0).
+	PrefsQuiet time.Duration
 }
 
 type server struct {
@@ -133,6 +136,8 @@ type server struct {
 	views    *viewTable
 	// jobs runs the bulk jobs (see bulk.go).
 	jobs *jobRunner
+	// prefs holds the preferences written and not committed yet (see prefs.go).
+	prefs prefsHub
 	// Background work (the bulk jobs) is started with goBg: it runs with bgCtx,
 	// which Close cancels, and Close waits for it on bg.
 	bgCtx    context.Context
@@ -181,6 +186,7 @@ func (s *server) goBg(f func(ctx context.Context)) bool {
 }
 
 func (s *server) close() {
+	s.flushAllPrefs()
 	s.bgMu.Lock()
 	s.bgClosed = true
 	s.bgMu.Unlock()

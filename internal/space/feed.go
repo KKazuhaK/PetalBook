@@ -55,7 +55,9 @@ func (s *Space) SettingsStamp() string {
 		}
 		var l []stamp
 		for _, e := range ents {
-			if e.IsDir() {
+			if e.IsDir() || dir+"/"+e.Name() == PrefsFile {
+				// The person's own preferences are no setting of the space: writing them must not
+				// make every device read the settings again.
 				continue
 			}
 			fi, err := e.Info()

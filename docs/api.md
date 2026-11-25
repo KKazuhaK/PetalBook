@@ -5049,6 +5049,43 @@ browser with no tab open: a `GET /api/notifications/push` that gives the public
 key, and `PUT`/`DELETE` of a subscription. Nothing of it is built; email and
 phone push come with the todo reminders.
 
+## Preferences
+
+What a person sets for themselves in the interface (the columns, order and
+widths of their tables, whether folders come first, how far the tour got) is
+kept in a file of **their own personal space**, `.petalbook/prefs.yml`, never in
+the database. The route takes no space and no person: it is always the
+caller's own, so nobody else's can be named; an API token or an
+administrator's view cannot reach it (`token_scope`); the file is no page, no
+attachment and no setting of the space, so no route serves it (a path with a
+dot in it is `404 not_found`), the index and the offline sync's catalogue do not
+see it, and an export an administrator makes of a personal space leaves it out
+(an export with `history` carries the repository's history, which names the
+file in the commits that wrote it: a site administrator's export of a personal
+space is the one existing way to read it, as for everything in one).
+
+### `GET /api/prefs`
+
+Signed in. `{"personal": true, "prefs": {"pb.table.users": {…}, …}}`, read from
+the file (what was written and is not committed yet, on top). `personal: false`
+with `{}` when the person has no personal space to keep them in (or it is
+switched off or evicted): the browser keeps them. The web app asks once a
+session and caches the answer.
+
+### `PATCH /api/prefs`
+
+`{"set": {"pb.table.users": {…}, "pb.files.mixed": true, "pb.table.x": null}}`:
+from 1 to 100 keys, each a name of up to 120 letters, digits and `. _ : / -`
+(no `..`) and a JSON value of at most 32 KiB; `null` removes the key (`400
+invalid` otherwise). `{"personal": bool}`, `false` when there is nowhere to
+keep it. The write is kept in memory (a read shows it at once) and written in
+**one batch** `3 minutes` after the first of a burst (`DefaultPrefsQuiet`), so a
+person dragging a column makes one small commit in a few minutes: the commit is
+"Update prefs.yml", by the person, and is not in the history of any page; the
+file is written by the space's own committer and, when the space follows a
+remote, pushed with it (the personal space's own repository). What is pending
+is written when the server closes. The file is at most 256 KiB.
+
 ## API tokens
 
 Milestone 2.6. A token lets a script or an MCP client act for one person in
@@ -6113,6 +6150,13 @@ reviewed and tested):
 - **Strength**: one process and one database, separated by query conditions.
   Whoever can read the server's disk or database reads every tenant. Nothing
   stronger is promised (no database per tenant, no encryption per tenant).
+
+- 3.10's notifications (`notifications`, with the person's `tenant_id`, and
+  `notification_seen`) and the preferences are the caller's own: every query
+  names the caller's id and tenant from the session, no route takes the id of
+  a person, and a row of another tenant is never listed or marked whatever id
+  is sent (`TestNotificationsAreTheCallersOwnAcrossTenants`). Their routes are
+  in the isolation table with the reason.
 
 How it is tested (SQLite and PostgreSQL both):
 
