@@ -66,7 +66,7 @@ function BellPanel({ close }: { close: () => void }) {
           type="button"
           disabled={unread === 0 || markAll.isPending}
           onClick={() => markAll.mutate(undefined)}
-          className="h-8 rounded-md px-2 text-[0.8125rem] text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 disabled:text-muted-foreground disabled:no-underline"
+          className="h-8 rounded-md px-2 text-[0.8125rem] text-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 disabled:text-muted-foreground disabled:no-underline pointer-coarse:h-10"
         >
           {tn.markAll}
         </button>
@@ -92,7 +92,11 @@ function BellPanel({ close }: { close: () => void }) {
         ))}
       </div>
       <div className="border-t px-4 py-2 text-[0.8125rem]">
-        <Link to="/notifications" onClick={close} className="inline-flex h-8 items-center text-brand hover:underline">
+        <Link
+          to="/notifications"
+          onClick={close}
+          className="inline-flex h-8 items-center text-brand hover:underline pointer-coarse:h-10"
+        >
           {tn.viewAll}
         </Link>
       </div>

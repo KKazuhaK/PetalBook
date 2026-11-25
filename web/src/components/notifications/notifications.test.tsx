@@ -104,6 +104,13 @@ describe('the bell', () => {
     expect(row.querySelector('[data-slot="notification-dot"]')!.className).toContain('bg-destructive')
     expect(panel()!.textContent).toContain(tn.markAll)
     expect(panel()!.textContent).toContain(tn.viewAll)
+    // Both are at least 40px to touch (a tablet gets the popover too), and keep their size for a mouse.
+    const markAll = [...panel()!.querySelectorAll('button')].find((b) => b.textContent === tn.markAll)!
+    const viewAll = [...panel()!.querySelectorAll('a')].find((a) => a.textContent === tn.viewAll)!
+    for (const el of [markAll, viewAll]) {
+      expect(el.className).toMatch(/pointer-coarse:h-10\b/)
+      expect(el.className).toMatch(/\bh-8\b/)
+    }
   })
 
   it('"mark all as read" clears the dot and the unread marks', async () => {
