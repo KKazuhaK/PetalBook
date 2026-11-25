@@ -70,6 +70,60 @@ func TestExcerptsFollowThePage(t *testing.T) {
 	if count() != 2 {
 		t.Fatalf("after a delete the table holds %d rows", count())
 	}
+
+	consistent := func(when string) {
+		t.Helper()
+		var orphans, missing int
+		if err := x.wdb.QueryRow(`SELECT count(*) FROM excerpts WHERE rowid NOT IN (SELECT rowid FROM pages)`).Scan(&orphans); err != nil {
+			t.Fatal(err)
+		}
+		if err := x.wdb.QueryRow(`SELECT count(*) FROM pages WHERE rowid NOT IN (SELECT rowid FROM excerpts)`).Scan(&missing); err != nil {
+			t.Fatal(err)
+		}
+		if orphans != 0 || missing != 0 {
+			t.Fatalf("%s: %d orphan and %d missing excerpt rows", when, orphans, missing)
+		}
+	}
+	consistent("after a rewrite and a delete")
+
+	// A move keeps the excerpt on the same page.
+	m.files["d/moved.md"] = m.files["d/000.md"]
+	delete(m.files, "d/000.md")
+	syncAll(t, x, m, false)
+	s, ok, err = x.Summary("EXC0000000")
+	if err != nil || !ok || s.Path != "d/moved.md" || s.Excerpt != page.Excerpt(longBody(0)) {
+		t.Fatalf("after a move: path %q excerpt %q ok=%v err=%v", s.Path, s.Excerpt, ok, err)
+	}
+	consistent("after a move")
+
+	// An id edited at the same path: the old page and its excerpt are gone.
+	m.put("d/001.md", pageFile("EXCNEW0001", "T1", "", nil, "", "other text"))
+	syncAll(t, x, m, false)
+	if _, ok, _ := x.Summary("EXC0000001"); ok {
+		t.Fatal("the old id is still indexed")
+	}
+	s, ok, err = x.Summary("EXCNEW0001")
+	if err != nil || !ok || s.Excerpt != "other text" {
+		t.Fatalf("after an id edit: %q ok=%v err=%v", s.Excerpt, ok, err)
+	}
+	consistent("after an id edit")
+
+	// A page with only front matter has an empty excerpt (and a row).
+	m.put("d/bare.md", pageFile("EXCBAR0001", "Bare", "", nil, "", ""))
+	syncAll(t, x, m, false)
+	s, ok, err = x.Summary("EXCBAR0001")
+	if err != nil || !ok || s.Excerpt != "" {
+		t.Fatalf("front matter only: %q ok=%v err=%v", s.Excerpt, ok, err)
+	}
+	consistent("after a page with no body")
+
+	// A full rebuild gives the same.
+	syncAll(t, x, m, true)
+	consistent("after a full rebuild")
+	s, _, _ = x.Summary("EXCNEW0001")
+	if s.Excerpt != "other text" {
+		t.Fatalf("after a full rebuild: %q", s.Excerpt)
+	}
 }
 
 func TestEveryReadOfSummariesCarriesTheExcerpt(t *testing.T) {

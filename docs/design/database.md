@@ -51,6 +51,9 @@ time and rebuilt from the files.
   holds three times as many rows of it; (a) and (c) save 40 MB but shorten what
   the three displays above show. The offline feed sends no excerpt (the client
   makes it from the body), so it is unchanged.
+  Known and accepted: the excerpts of a response are read in a second query
+  after the listing, so a page that changes between the two shows a newer
+  excerpt than its metadata, or an empty one when it was deleted in between.
 - Global search covers all spaces visible to the current user, and the results
   are filtered by space permissions.
 - Lists, the folder tree, tags and search all query the index; they do not walk
