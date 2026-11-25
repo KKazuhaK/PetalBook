@@ -4,6 +4,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sideb
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { SearchDialogProvider } from '@/components/search/SearchDialog'
+import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
 import { AppSidebar } from './AppSidebar'
 import { QuickCaptureProvider } from './QuickCapture'
 import { OfflineBanner, OfflineSync } from './OfflineSync'
@@ -26,6 +27,7 @@ export function AppShell() {
           <FileOpsProvider>
             <CloseMobileOnNavigate />
             <OfflineSync />
+            <BrowserNotifier />
             {!inAdmin && <AppSidebar />}
             <SidebarInset className="min-w-0">
               <OfflineBanner />

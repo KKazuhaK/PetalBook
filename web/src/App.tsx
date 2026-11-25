@@ -39,6 +39,7 @@ const ConsentPage = lazy(() => import('@/pages/auth/ConsentPage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
 const CheckPage = lazy(() => import('@/pages/CheckPage'))
+const NotificationsPage = lazy(() => import('@/components/notifications/NotificationsPage'))
 // The home page of a space: the default landing, in a chunk of its own so the lists do not carry it.
 const HomePage = lazy(() => import('@/components/home/HomePage'))
 
@@ -130,6 +131,8 @@ const router = createBrowserRouter([
           { index: true, element: <ToLastSpace /> },
           // The settings dialog. `/settings` with no section picks the first one.
           { path: 'settings/:section?', element: later(<SettingsRoute />) },
+          // The full page of the notification centre; on a phone it is where the bell goes.
+          { path: 'notifications', element: later(<NotificationsPage />) },
           { path: 'admin/*', element: <AdminGate /> },
           {
             path: 's/:space',

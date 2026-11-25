@@ -8,6 +8,8 @@ import { getVariety, setVariety } from '@/lib/homePrefs'
 import { getUploadOriginal, setUploadOriginal } from '@/lib/uploadPrefs'
 import { useTheme, type Theme } from '@/providers/theme'
 import { isLang, lang, languages, setLanguage, t } from '@/i18n'
+import { BrowserNotifySetting } from '@/components/notifications/BrowserNotifySetting'
+import { tn } from '@/i18n/notify'
 import { SettingsRow, SettingsRows, SettingsSection } from './SettingsParts'
 
 // Per-browser preferences: how the app looks, the language, and two choices
@@ -158,6 +160,12 @@ export function PreferencesPanel() {
               </NativeSelect>
             </div>
           </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsSection title={tn.title}>
+        <SettingsRows>
+          <BrowserNotifySetting />
         </SettingsRows>
       </SettingsSection>
 
