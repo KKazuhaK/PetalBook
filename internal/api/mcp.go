@@ -19,6 +19,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/auth"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/perm"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
 )
@@ -209,7 +210,7 @@ type mcpError struct {
 
 func (e *mcpError) Error() string { return e.Message }
 
-func mcpErr(code, msg string) *mcpError { return &mcpError{Code: code, Message: msg} }
+func mcpErr(code, msg string) *mcpError { return &mcpError{Code: code, Message: sentence.End(msg)} }
 
 func mcpInvalid(format string, args ...any) *mcpError {
 	return mcpErr("invalid", fmt.Sprintf(format, args...))
@@ -251,7 +252,7 @@ func (s *server) toolError(err error) *mcpError {
 	s.fail(w, err)
 	var b errorBody
 	if json.Unmarshal(w.buf.Bytes(), &b) != nil || b.Error == "" {
-		return mcpErr("internal", "something went wrong on the server")
+		return mcpErr("internal", "Something went wrong on the server.")
 	}
 	return mcpErr(b.Error, b.Message)
 }
@@ -358,7 +359,7 @@ func (t *mcpTools) errorResult(e *mcpError) *mcp.CallToolResult {
 func (t *mcpTools) okResult(out any) *mcp.CallToolResult {
 	b, err := mcpEncode(out)
 	if err != nil {
-		return t.errorResult(mcpErr("internal", "could not encode the result"))
+		return t.errorResult(mcpErr("internal", "Could not encode the result."))
 	}
 	if len(b) > mcpMaxResult {
 		details := map[string]any{"limitBytes": mcpMaxResult, "sizeBytes": len(b)}

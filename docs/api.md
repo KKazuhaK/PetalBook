@@ -17,8 +17,11 @@ The web app talks to the server only through this API.
   who use the API and read logs; it is not a contract and may change. A client
   decides by `error`, and the web app shows its own text in the language of the
   page by that code, with what the answer says it is about (`limit`, `size`,
-  `name`, `provider`, `permission`, `Retry-After`), and the server's sentence
-  only for a code it does not know. The codes the server can send are listed in
+  `name`, `provider`, `permission`, `Retry-After`). The server's sentence is shown
+  in two cases: alone, for a code the web app has no text for; and after the
+  app's own text, as the detail, for the codes whose sentence says what exactly
+  is wrong (`invalid`, `conflict`, `forbidden`, `provider_refused`,
+  `provider_error`, `busy`, `unavailable`, `push_failed`, `quota_exceeded`). The codes the server can send are listed in
   `web/src/i18n/errorCodes.json`, which a test keeps equal to the source.
   Codes: `not_found` (404), `invalid` (400; also 405, 413 and 415),
   `conflict` (409), `exists` (409), `unauthenticated` (401: not signed in, or

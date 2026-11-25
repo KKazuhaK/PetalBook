@@ -244,7 +244,7 @@ describe('403 forbidden', () => {
     })
     expect((await api.createPage({}).catch((e) => e)).message).toBe('“a.png”（12 MB）超过了单个文件的上限 10 MB。')
     globalThis.fetch = answer(403, { error: 'quota_exceeded', message: 'x', quota: 'spaces', limit: 3, used: 3 })
-    expect((await api.createPage({}).catch((e) => e)).message).toBe('空间数量已达上限（最多 3 个，已有 3 个）。')
+    expect((await api.createPage({}).catch((e) => e)).message).toBe('空间数量已达上限（最多 3 个，已有 3 个）。（x）')
     globalThis.fetch = answer(503, { error: 'not_cached', message: 'x' }, { 'Retry-After': '5' })
     expect((await api.createPage({}).catch((e) => e)).message).toBe('这个空间的内容还不在服务器上，请 5 秒后再试。')
   })
@@ -494,7 +494,7 @@ describe('a remote that cannot be reached', () => {
     expect(e).toMatchObject({
       status: 503,
       code: 'unavailable',
-      message: '暂时连不上，你的内容没有丢，请稍后再试。',
+      message: '暂时连不上，你的内容没有丢，请稍后再试。（远端仓库现在连不上）',
       serverMessage: '远端仓库现在连不上',
     })
     expect(told).toBe(1)

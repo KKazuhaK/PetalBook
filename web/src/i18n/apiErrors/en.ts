@@ -14,7 +14,7 @@ export const apiErrorsEn: ApiErrorTexts = {
       ? `Cannot be reached right now. Try again in ${p.wait}. Nothing was lost.`
       : 'Cannot be reached right now. Nothing was lost; try again later.',
   rate_limited: (p) => (p.wait ? `Too many attempts. Try again in ${p.wait}.` : 'Too many attempts. Try again later.'),
-  busy: 'This item is being moved, restored or purged right now. Try again in a moment.',
+  busy: 'This is busy right now; try again in a moment.',
   request_failed: 'The request did not succeed.',
   status: 'The other side answered with a status that cannot be used.',
   no_text: 'The answer has no text to show.',

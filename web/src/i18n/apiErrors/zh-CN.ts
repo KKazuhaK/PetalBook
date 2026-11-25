@@ -14,7 +14,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   unavailable: (p) =>
     p.wait ? `暂时连不上，请 ${p.wait}后再试。你的内容没有丢。` : '暂时连不上，你的内容没有丢，请稍后再试。',
   rate_limited: (p) => (p.wait ? `尝试次数太多，请 ${p.wait}后再试。` : '尝试次数太多，请稍后再试。'),
-  busy: '这一项正在被移动、恢复或清除，请稍后再试。',
+  busy: '正在处理中，请稍后再试。',
   request_failed: '请求没有成功。',
   status: '对方返回了不能用的状态。',
   no_text: '对方的回答里没有可显示的文字。',

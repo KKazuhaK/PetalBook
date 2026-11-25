@@ -18,6 +18,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
 	"github.com/KKazuhaK/PetalBook/internal/langtag"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/store"
 )
@@ -655,9 +656,9 @@ func (s *server) build(b apiBody, old *storedAPI) (storedAPI, dailyfetch.API, er
 func jsonCoded(prefix string, err error) error {
 	var inv *space.InvalidError
 	if errors.As(err, &inv) && inv.Code != "" {
-		return &codedError{code: inv.Code, msg: prefix + inv.Msg + "."}
+		return &codedError{code: inv.Code, msg: sentence.End(prefix + inv.Msg)}
 	}
-	return &space.InvalidError{Msg: prefix + err.Error() + "."}
+	return &space.InvalidError{Msg: sentence.End(prefix + err.Error())}
 }
 
 func badLangError(tag string) error {

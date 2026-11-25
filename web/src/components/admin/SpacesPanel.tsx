@@ -550,7 +550,7 @@ function EvictDialog({ space, onClose }: { space: AdminSpace; onClose: () => voi
     } catch (e) {
       if (!(e instanceof ApiError)) return setError(c.changeFailed)
       // busy says what keeps the space (in the server's words); the others have a sentence of their own.
-      if (e.code === 'busy') setError(`${c.errors.busy} ${e.message}`)
+      if (e.code === 'busy') setError(e.serverMessage ? `${c.errors.busy} ${e.serverMessage}` : c.errors.busy)
       else if (e.code === 'conflict') setError(c.errors.conflict)
       else if (e.code === 'unavailable') setError(c.errors.unavailable)
       else setError(e.message || c.changeFailed)

@@ -216,21 +216,22 @@ func TestServerSentencesAreSentences(t *testing.T) {
 			if id == nil || id.Name != "writeError" || len(call.Args) != 4 {
 				return true
 			}
-			lit, ok := call.Args[3].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
+			// A message that is one string; a Sprintf of one format (its tail may be a value); or a
+			// sum of pieces, of which the first and the last that are strings are looked at.
+			first, last := stringEnds(call.Args[3])
+			if first == nil {
 				return true
 			}
-			msg, _ := strconv.Unquote(lit.Value)
-			if msg == "" {
-				return true
+			if msg, _ := strconv.Unquote(first.Value); msg != "" {
+				word, _, _ := strings.Cut(msg, " ")
+				if word[0] >= 'a' && word[0] <= 'z' && strings.Trim(word, "abcdefghijklmnopqrstuvwxyz") == "" {
+					t.Errorf("%s: %q does not start with a capital letter", fset.Position(first.Pos()), msg)
+				}
 			}
-			pos := fset.Position(lit.Pos())
-			if last := msg[len(msg)-1]; last != '.' && last != '?' && last != '!' {
-				t.Errorf("%s: %q does not end with a full stop", pos, msg)
-			}
-			word, _, _ := strings.Cut(msg, " ")
-			if word[0] >= 'a' && word[0] <= 'z' && strings.Trim(word, "abcdefghijklmnopqrstuvwxyz") == "" {
-				t.Errorf("%s: %q does not start with a capital letter", pos, msg)
+			if msg, _ := strconv.Unquote(last.Value); msg != "" && !strings.HasSuffix(msg, "%s") && !strings.HasSuffix(msg, "%v") && !strings.HasSuffix(msg, "%q") {
+				if c := msg[len(msg)-1]; c != '.' && c != '?' && c != '!' && !(last != first && c == ' ') {
+					t.Errorf("%s: %q does not end with a full stop", fset.Position(last.Pos()), msg)
+				}
 			}
 			return true
 		})
@@ -239,4 +240,41 @@ func TestServerSentencesAreSentences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// stringEnds is the first and the last of the string literals a message is made of, in
+// order: the message itself, the format of an fmt.Sprintf, or the pieces of a sum. A piece
+// that is a name or an error is not one, so a message that ends in one is not judged at its end
+// (writeError ends it), and one that starts with one is not judged at its start.
+func stringEnds(e ast.Expr) (first, last *ast.BasicLit) {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		if x.Kind == token.STRING {
+			return x, x
+		}
+	case *ast.CallExpr:
+		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Sprintf" && len(x.Args) > 0 {
+			return stringEnds(x.Args[0])
+		}
+	case *ast.BinaryExpr:
+		var parts []ast.Expr
+		var flat func(ast.Expr)
+		flat = func(e ast.Expr) {
+			if b, ok := e.(*ast.BinaryExpr); ok && b.Op == token.ADD {
+				flat(b.X)
+				flat(b.Y)
+				return
+			}
+			parts = append(parts, e)
+		}
+		flat(x)
+		if f, ok := parts[0].(*ast.BasicLit); ok && f.Kind == token.STRING {
+			first = f
+		}
+		if l, ok := parts[len(parts)-1].(*ast.BasicLit); ok && l.Kind == token.STRING {
+			last = l
+		}
+		return first, last
+	}
+	return nil, nil
 }

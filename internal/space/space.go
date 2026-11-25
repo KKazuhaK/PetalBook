@@ -22,6 +22,7 @@ import (
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 	"github.com/KKazuhaK/PetalBook/internal/index"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 )
 
 // Defaults for the committer: a commit after a few quiet seconds, or ten
@@ -154,7 +155,9 @@ type InvalidError struct {
 
 func (e *InvalidError) Error() string { return e.Msg }
 
-func invalidf(format string, a ...any) error { return &InvalidError{Msg: fmt.Sprintf(format, a...)} }
+func invalidf(format string, a ...any) error {
+	return &InvalidError{Msg: sentence.End(fmt.Sprintf(format, a...))}
+}
 
 // CodeBadLanguage is the error code of a language tag that is not one.
 const CodeBadLanguage = "bad_language"

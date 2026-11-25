@@ -3,6 +3,7 @@ import codes from './errorCodes.json'
 import { apiErrorsEn } from './apiErrors/en'
 import { apiErrorsZhCN } from './apiErrors/zh-CN'
 import type { ErrorParams } from './apiErrorsTypes'
+import { apiErrorText, DETAIL_CODES } from './apiErrors'
 
 // errorCodes.json is written by a Go test (internal/api/errcodes_test.go) from the codes in the server's source, so a
 // code added there fails this test until it has a text in both languages.
@@ -49,5 +50,16 @@ describe('the texts of the server error codes', () => {
     expect(typeof en === 'function' && en(params)).toContain('10 MB')
     const zh = apiErrorsZhCN.file_too_large
     expect(typeof zh === 'function' && zh(params)).toContain('a.png')
+  })
+  it("follows the text of busy, unavailable, push_failed and quota_exceeded with the server's detail", () => {
+    for (const code of ['busy', 'unavailable', 'push_failed', 'quota_exceeded']) {
+      expect(DETAIL_CODES.has(code), code).toBe(true)
+      expect(apiErrorText(code, {}, 'Drafts are waiting to be committed.'), code).toContain('Drafts are waiting')
+    }
+    expect(apiErrorText('not_found', {}, 'No such page.')).not.toContain('No such page')
+  })
+  it('says nothing about moving or purging in the text of busy', () => {
+    expect(apiErrorsEn.busy).not.toMatch(/moved|purged/)
+    expect(apiErrorsZhCN.busy).not.toMatch(/移动|清除/)
   })
 })

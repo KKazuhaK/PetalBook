@@ -72,8 +72,8 @@ export function SaveIndicator({
             type="button"
             onClick={onRetry}
             title={
-              e.message
-                ? t.fmt.note(draftSafe ? u.commitDraftHint : u.commitLocalHint, e.message)
+              e.serverMessage
+                ? t.fmt.note(draftSafe ? u.commitDraftHint : u.commitLocalHint, e.serverMessage)
                 : draftSafe
                   ? u.commitDraftHint
                   : u.commitLocalHint

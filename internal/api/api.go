@@ -30,6 +30,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/page"
 	"github.com/KKazuhaK/PetalBook/internal/quota"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 	"github.com/KKazuhaK/PetalBook/internal/settings"
 	"github.com/KKazuhaK/PetalBook/internal/space"
 	"github.com/KKazuhaK/PetalBook/internal/spaces"
@@ -532,7 +533,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(v); err != nil {
-		http.Error(w, `{"error":"internal","message":"could not encode the response"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"internal","message":"Could not encode the response."}`, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -612,7 +613,8 @@ type draftConflictBody struct {
 }
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, errorBody{Error: code, Message: msg})
+	// Whatever the message was made from, it goes out as a sentence.
+	writeJSON(w, status, errorBody{Error: code, Message: sentence.End(msg)})
 }
 
 // readJSON decodes the request body into v. An empty body is accepted when
@@ -786,7 +788,7 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, spaces.ErrDisabled):
 		writeError(w, http.StatusForbidden, "space_disabled", "This space has been disabled by an administrator.")
 	case errors.Is(err, spaces.ErrBusy):
-		msg := "the space is in use right now; try again in a moment"
+		msg := "The space is in use right now; try again in a moment."
 		if why := spaces.BusyMessage(err); why != "" {
 			msg = "The space is not evicted: " + why + "."
 		}

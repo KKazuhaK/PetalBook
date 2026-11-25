@@ -166,7 +166,7 @@ export default function SettingsRoute() {
         <DialogOverlay />
         <DialogPrimitive.Popup
           data-slot="settings-dialog"
-          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background text-sm text-foreground outline-none duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 md:inset-auto md:top-1/2 md:left-1/2 md:h-[min(46rem,calc(100dvh-4rem))] md:w-[min(64rem,calc(100vw-4rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:flex-row md:rounded-xl md:shadow-2xl md:ring-1 md:ring-foreground/10 md:data-open:zoom-in-95"
+          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] md:p-0 text-sm text-foreground outline-none duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 md:inset-auto md:top-1/2 md:left-1/2 md:h-[min(46rem,calc(100dvh-4rem))] md:w-[min(64rem,calc(100vw-4rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:flex-row md:rounded-xl md:shadow-2xl md:ring-1 md:ring-foreground/10 md:data-open:zoom-in-95"
         >
           <aside className="flex shrink-0 flex-col border-b md:w-60 md:border-r md:border-b-0 md:bg-sidebar md:text-sidebar-foreground">
             <div className="flex items-center gap-1 py-1 pr-14 pl-2 md:px-5 md:pt-5 md:pr-14 md:pb-3">
@@ -230,7 +230,7 @@ export default function SettingsRoute() {
                 variant="ghost"
                 size="icon"
                 data-slot="settings-close"
-                className="absolute top-1 right-2 z-10 size-11 md:top-3 md:right-3 md:size-8"
+                className="absolute top-[calc(0.25rem+env(safe-area-inset-top))] right-[calc(0.5rem+env(safe-area-inset-right))] z-10 size-11 md:top-3 md:right-3 md:size-8"
               />
             }
           >

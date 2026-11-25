@@ -19,6 +19,10 @@ export const DETAIL_CODES: ReadonlySet<string> = new Set([
   'forbidden',
   'provider_refused',
   'provider_error',
+  'busy',
+  'unavailable',
+  'push_failed',
+  'quota_exceeded',
 ])
 
 // What to tell a person about an error of this code, or undefined when the client has no text for it (the caller then

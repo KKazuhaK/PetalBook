@@ -160,7 +160,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		hd.Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNotFound)
 		if r.Method != http.MethodHead {
-			io.WriteString(w, `{"error":"not_found","message":"no such endpoint"}`+"\n")
+			io.WriteString(w, `{"error":"not_found","message":"No such endpoint."}`+"\n")
 		}
 		return
 	}

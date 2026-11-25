@@ -45,6 +45,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/KKazuhaK/PetalBook/internal/langtag"
+	"github.com/KKazuhaK/PetalBook/internal/sentence"
 )
 
 // Limits.
@@ -1079,7 +1080,7 @@ func (e *CodedError) Error() string { return e.Msg }
 
 // MsgRepeatsHeader is the message of a trial whose answer repeats the value
 // of a request header: such an answer is not shown.
-const MsgRepeatsHeader = "the answer repeats the value of a request header, so it is not shown"
+const MsgRepeatsHeader = "The answer repeats the value of a request header, so it is not shown."
 
 // Probe makes one request now, at the same rules as any other (only the host
 // and port of the interface's own address, checked again when the connection is made) and
@@ -1098,19 +1099,19 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 	status, body, isJSON, err := f.do(ctx, a, lang, date)
 	res.Status = status
 	if err != nil {
-		res.Code, res.Message = CodeRequestFailed, strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
+		res.Code, res.Message = CodeRequestFailed, sentence.Of(strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": "))
 		return res, nil
 	}
 	if !isJSON && status != http.StatusOK {
-		res.Code, res.Message = CodeStatus, fmt.Sprintf("status %d", status)
+		res.Code, res.Message = CodeStatus, fmt.Sprintf("The service answered with status %d.", status)
 		return res, nil
 	}
 	if !isJSON {
-		res.Code, res.Message = CodeNotJSON, "the answer is not JSON (its Content-Type does not say so)"
+		res.Code, res.Message = CodeNotJSON, "The answer is not JSON (its Content-Type does not say so)."
 		return res, nil
 	}
 	if len(body) > MaxResponse {
-		res.Code, res.Message = CodeTooLarge, fmt.Sprintf("the answer is larger than %d bytes", MaxResponse)
+		res.Code, res.Message = CodeTooLarge, fmt.Sprintf("The answer is larger than %d bytes.", MaxResponse)
 		return res, nil
 	}
 	sec := secretsOf(a)
@@ -1119,9 +1120,9 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 	// says cannot be checked.
 	switch clean, valid := rawIsClean(body, sec); {
 	case !valid:
-		res.Code, res.Message = CodeNotJSON, "the answer is not valid JSON"
+		res.Code, res.Message = CodeNotJSON, "The answer is not valid JSON."
 		if status != http.StatusOK {
-			res.Message = fmt.Sprintf("status %d; %s", status, res.Message)
+			res.Message = fmt.Sprintf("The service answered with status %d. %s", status, res.Message)
 		}
 		return res, nil
 	case !clean:
@@ -1135,13 +1136,13 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 	}
 	if status != http.StatusOK {
 		if res.Message == "" {
-			res.Code, res.Message = CodeStatus, fmt.Sprintf("status %d", status)
+			res.Code, res.Message = CodeStatus, fmt.Sprintf("The service answered with status %d.", status)
 		}
 		return res, nil
 	}
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
-		res.Code, res.Message = CodeNotJSON, "the answer is not valid JSON"
+		res.Code, res.Message = CodeNotJSON, "The answer is not valid JSON."
 		return res, nil
 	}
 	q, errs, codes, _ := takeOut(a, doc, lang, date, sec)
@@ -1154,7 +1155,7 @@ func (f *Fetcher) Probe(ctx context.Context, a API, lang, date string) (ProbeRes
 		res.Quote = &q
 		res.OK = res.PathErrors == nil && res.Message == ""
 	} else if res.Message == "" {
-		res.Code, res.Message = CodeNoText, "no text could be taken out of the answer"
+		res.Code, res.Message = CodeNoText, "No text could be taken out of the answer."
 	}
 	return res, nil
 }
@@ -1330,10 +1331,10 @@ func takeOut(a API, doc any, lang, date string, sec *secrets) (q Quote, errs, co
 			// Only the text is required; a source or author with no value
 			// (null, missing, empty) is simply left out.
 			if f.need {
-				errs[f.name], codes[f.name] = "no text or number at "+f.path, CodePathError
+				errs[f.name], codes[f.name] = "There is no text or number at "+f.path+".", CodePathError
 			}
 		case sec.in(s):
-			errs[f.name], codes[f.name] = "the value at "+f.path+" repeats a request header's value; it is never shown", CodePathRevealsSecret
+			errs[f.name], codes[f.name] = "The value at "+f.path+" repeats a request header's value, so it is never shown.", CodePathRevealsSecret
 			leaked = true
 		default:
 			f.set(s)
@@ -1422,7 +1423,7 @@ func expandLink(tpl string, doc any, lang, date string, sec *secrets) (link, why
 			}
 			s = strings.TrimSpace(v)
 			if !bad && sec.in(s) {
-				bad, why = true, "the value at "+path+" repeats a request header's value; it is never put in the link"
+				bad, why = true, "The value at "+path+" repeats a request header's value, so it is never put in the link."
 			}
 		}
 		if s == "" {
@@ -1437,7 +1438,7 @@ func expandLink(tpl string, doc any, lang, date string, sec *secrets) (link, why
 		return "", "", false
 	}
 	if sec.in(out) {
-		return "", "the link would repeat a request header's value", true
+		return "", "The link would repeat a request header's value.", true
 	}
 	u, err := url.Parse(out)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
