@@ -391,6 +391,36 @@ CREATE TABLE favorites (
 CREATE INDEX favorites_order ON favorites(user_id, space_id, position);
 CREATE INDEX favorites_space ON favorites(space_id);
 
+-- The notification centre (3.10 part 4). A row is something that happened to one
+-- person: kind says what (see store/notifications.go for the registry), ref the
+-- thing it is about (a space id), payload the facts as JSON (the web app writes
+-- the sentence, in the person's language). id is the time in Unix milliseconds
+-- as 12 hexadecimal digits and a sequence, so ids sort by time. read_at is NULL
+-- while unread. Space-wide events (the problems of a space) are not rows: they
+-- are read from the index when the list is asked for, and notification_seen
+-- keeps, for each of them, what the person last read.
+CREATE TABLE notifications (
+  id        TEXT COLLATE "C" PRIMARY KEY,
+  user_id   TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
+  kind      TEXT COLLATE "C" NOT NULL,
+  ref       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  payload   TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  created   BIGINT NOT NULL,
+  read_at   BIGINT
+);
+CREATE INDEX notifications_user ON notifications(user_id, id DESC);
+CREATE INDEX notifications_unread ON notifications(user_id) WHERE read_at IS NULL;
+CREATE INDEX notifications_tenant ON notifications(tenant_id);
+
+CREATE TABLE notification_seen (
+  user_id TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key     TEXT COLLATE "C" NOT NULL,
+  sig     TEXT COLLATE "C" NOT NULL,
+  seen    BIGINT NOT NULL,
+  PRIMARY KEY (user_id, key)
+);
+
 -- Folder moves whose favourites have not been made to follow yet.
 CREATE TABLE folder_moves (
   space_id  TEXT COLLATE "C" NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,

@@ -4962,6 +4962,93 @@ fields (only those, the rest of the header byte-for-byte). Answers the page
 like a save; `409 conflict` on a stale `baseRev`; `400 invalid` with
 `error: "not_fixable"` for other kinds.
 
+## Notifications
+
+The notification centre (3.10): what happened to the signed-in person that
+they have not read. Every route here is the caller's own: rows are read by the
+caller's id and tenant, never by an id from the request, so another person's
+(in any tenant) cannot be listed or marked, and a token (`token_scope`) or an
+administrator's view of a space has no way in. Single-user mode has them too.
+Nothing is written as prose: a row says the kind, what it is about and the
+facts, and the web app writes the sentence in the person's language.
+
+### Notification
+
+```json
+{"id": "019354a1b2c3000007", "kind": "invite", "ref": "6FAVM4ZE32",
+ "payload": {"space": "Team", "role": "editor", "by": "Olive"},
+ "at": "2026-11-24T08:00:00Z", "read": false}
+```
+
+`ref` is the space the notice is about. `at` is null for a derived one. A
+derived one also has `"derived": true` and the id `problems:<space id>`. The
+kinds (a registry in the server's code, `store.NotifyKinds`):
+
+| kind | made by | payload |
+|---|---|---|
+| `problems` | derived: the problems in the index of each space the person can write in; no row | `{"space": name, "total": n, "counts": {"no_id": 1, …}, "sig": "…"}` |
+| `invite` | adding the person to a space (`POST …/members`), unless they added themselves; a change of role is not one | `{"space", "role", "by"}` |
+| `sync` | the remote of a space the person owns needs attention (`error`, `rewritten`), and works again after it did; "offline" comes back by itself and is not told | `{"space", "event": "failed" \| "ok", "state", "kind"}` (`kind` is the error's kind: `auth`, `hostkey`, `clone`, a connection code) |
+| `mention` | reserved: there are no mentions yet | |
+| `todo` | reserved: the sidebar's reminders (5.x) | |
+| `system` | reserved: notices from the administrators | |
+
+A kind this client does not know is shown as a plain notice. Invitations to an
+organisation are not a kind yet: an invite makes an account, so it has no
+recipient who is signed in; the kind is added with the first invitation of an
+existing person.
+
+**The problems are not copied to the members.** They are read when the list or
+the count is asked for: for each space the person can write in (at most 50, a
+disabled one left out), from the live index when the space is open, else from
+what it said when it was last open or closed (in memory; a restart forgets it
+until the space is opened again). Nothing is opened for this, and a count of an
+open space is reused for 20 seconds. What the person has read is a cursor per
+person and space (`notification_seen`): the signature of the problems then.
+When the problems change, the notice is unread again; when they are all fixed,
+it is gone.
+
+### `GET /api/notifications?kind={kind}&unread=1&cursor={cursor}&limit={n}`
+
+Signed in. `{"items": [Notification], "next": "…", "unread": n}`, newest first
+(the derived `problems` first, on the first page only), `limit` 1 to 100
+(default 20). `next` is the cursor of the following page (`""` after the last),
+one range scan of the index `notifications (user_id, id DESC)`. `unread` is the
+badge count, at most 100. `kind` is one of the registry (`400 invalid`
+otherwise; `kind=problems` lists only the derived ones, which have no history).
+
+### `GET /api/notifications/unread`
+
+`{"count": n}`: the stored unread rows (one count on the partial index
+`notifications (user_id) WHERE read_at IS NULL`, stopping at 100) and the
+derived ones not read as they are now; at most 100 (the badge says "99+"). The
+web app asks once a minute while the window is in front.
+
+### `POST /api/notifications/read`
+
+`{"ids": ["…", "problems:6FAVM4ZE32"]}`, 1 to 100. Marks the caller's own rows
+as read, and records what the caller has read of each derived one, as it is now.
+An id that is not the caller's, or not there, changes nothing. `{"unread": n}`.
+
+### `POST /api/notifications/read-all`
+
+`{"kind": "sync"}` (optional: all kinds without it). Marks every unread row (of
+the kind) and the derived ones as read. `{"unread": n}`.
+
+Rows are kept for six months at most, read ones for 30 days, and at most 500
+for each person (the newest); the daily job trims them. A person's rows go with
+them when they are deleted.
+
+### Browser notices
+
+The opt-in is a setting of the browser (the permission is too), kept in the
+browser's own storage, and works through the Notifications API: an open tab
+shows a notice when the unread count goes up while nobody is looking. There is
+no push server yet. **Reserved:** Web Push with a VAPID key would reach a
+browser with no tab open: a `GET /api/notifications/push` that gives the public
+key, and `PUT`/`DELETE` of a subscription. Nothing of it is built; email and
+phone push come with the todo reminders.
+
 ## API tokens
 
 Milestone 2.6. A token lets a script or an MCP client act for one person in

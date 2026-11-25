@@ -297,6 +297,7 @@ type Manager struct {
 	as        assetState   // attachment repositories and their cache (assets.go)
 	recycle   recycleState // the recycle bin (recycle.go)
 	exp       exportState  // exports (export.go)
+	problems  problemMemo  // what each space said of its problems last (problems.go)
 
 	trimMu    sync.Mutex      // one trim at a time
 	trimming  bool            // a background trim is queued or running (guarded by mu)
@@ -1371,6 +1372,7 @@ func (m *Manager) closeIdle(id string, e *opening) bool {
 	}
 	e.closing = make(chan struct{})
 	m.mu.Unlock()
+	m.noteProblems(id, e.sp)
 	if err := e.sp.Close(); err != nil {
 		m.log.Warn("closing an idle space", "space", id, "error", err)
 	}

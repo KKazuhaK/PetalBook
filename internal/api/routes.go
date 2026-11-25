@@ -279,6 +279,11 @@ var routeTable = []route{
 	{"GET", "/api/spaces/{space}/templates/{name}", inSpace(perm.Read), false, false, false, (*server).getTemplate},
 	{"PUT", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage), false, false, false, (*server).putTemplate},
 	{"DELETE", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteTemplate},
+	{"GET", "/api/notifications", signedIn, false, false, false, (*server).listNotifications},
+	{"GET", "/api/notifications/unread", signedIn, false, false, false, (*server).getUnreadNotifications},
+	{"POST", "/api/notifications/read", signedIn, false, false, false, (*server).markNotificationsRead},
+	{"POST", "/api/notifications/read-all", signedIn, false, false, false, (*server).markAllNotificationsRead},
+
 	{"GET", "/api/spaces/{space}/checks", inSpace(perm.Read), false, false, false, (*server).getChecks},
 	{"POST", "/api/spaces/{space}/checks/fix", inSpace(perm.Write), false, false, false, (*server).fixCheck},
 	{"GET", "/api/spaces/{space}/daily", inSpace(perm.Read), false, false, false, (*server).getDaily},

@@ -643,7 +643,7 @@ func UserSpaceItems(ctx context.Context, q Q, itemID string) ([]RecycleItem, err
 // --- purging ----------------------------------------------------------------------------
 
 // PurgeUserData deletes what a person's data is: their password, passkeys,
-// identities, sessions, tokens and grants, GitHub connection, favourites,
+// identities, sessions, tokens and grants, GitHub connection, favourites, notifications,
 // drafts, links sent to their address, group memberships and usage row, and
 // empties their row to a tombstone: the id, the tenant and the time of deletion
 // stay, the username becomes deleted-<id>, the name and address go. The username
@@ -670,6 +670,8 @@ func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Tim
 		`DELETE FROM sessions WHERE user_id = ?`,
 		`DELETE FROM email_tokens WHERE user_id = ?`,
 		`DELETE FROM favorites WHERE user_id = ?`,
+		`DELETE FROM notifications WHERE user_id = ?`,
+		`DELETE FROM notification_seen WHERE user_id = ?`,
 		`DELETE FROM drafts WHERE user_id = ?`,
 		`DELETE FROM group_members WHERE user_id = ?`,
 		`DELETE FROM space_members WHERE user_id = ?`,

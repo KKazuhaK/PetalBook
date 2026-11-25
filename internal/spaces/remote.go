@@ -185,7 +185,22 @@ func (m *Manager) remoteOptions(id string, r *store.Remote) *space.RemoteOptions
 // spaces' sync states in line with a space's remote.
 func (m *Manager) persistStatus(id string) func(space.RemoteStatus) {
 	return func(st space.RemoteStatus) {
+		prev := ""
+		if m.single == nil {
+			m.mu.Lock()
+			known := m.syncs != nil
+			prev = m.syncs[id]
+			m.mu.Unlock()
+			if !known {
+				// The states are read once before the first change is noted, so that
+				// the first change of a run is told from the state it was in.
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				prev = m.syncStates(ctx)[id]
+				cancel()
+			}
+		}
 		m.setSync(id, st.State)
+		defer m.syncNotice(id, prev, st)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RemoteStatus{

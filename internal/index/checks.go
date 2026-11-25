@@ -802,25 +802,9 @@ func (x *Index) Checks(kind, cursor string) (counts map[string]int, items []Chec
 		return nil, nil, "", err
 	}
 	defer r.end()
-	counts = map[string]int{}
-	for _, k := range CheckKinds {
-		counts[k] = 0
-	}
-	for _, q := range []string{`SELECT kind, count(*) FROM problems WHERE kind <> '' GROUP BY kind`, `SELECT kind, count(*) FROM checks GROUP BY kind`} {
-		rows, err := r.db.Query(q)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		for rows.Next() {
-			var k string
-			var n int
-			if err := rows.Scan(&k, &n); err != nil {
-				rows.Close()
-				return nil, nil, "", err
-			}
-			counts[k] = n
-		}
-		rows.Close()
+	counts, err = r.checkCounts()
+	if err != nil {
+		return nil, nil, "", err
 	}
 	rank := func(k string) int {
 		for i, c := range CheckKinds {
@@ -864,6 +848,42 @@ func (x *Index) Checks(kind, cursor string) (counts map[string]int, items []Chec
 		items = []Check{}
 	}
 	return counts, items, next, nil
+}
+
+// checkCounts is how many problems of each kind there are.
+func (r *read) checkCounts() (map[string]int, error) {
+	counts := map[string]int{}
+	for _, k := range CheckKinds {
+		counts[k] = 0
+	}
+	for _, q := range []string{`SELECT kind, count(*) FROM problems WHERE kind <> '' GROUP BY kind`, `SELECT kind, count(*) FROM checks GROUP BY kind`} {
+		rows, err := r.db.Query(q)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var k string
+			var n int
+			if err := rows.Scan(&k, &n); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			counts[k] = n
+		}
+		rows.Close()
+	}
+	return counts, nil
+}
+
+// CheckCounts is how many problems of each kind the index holds: the counts of
+// Checks without a page of them (the notification centre reads it often).
+func (x *Index) CheckCounts() (map[string]int, error) {
+	r, err := x.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer r.end()
+	return r.checkCounts()
 }
 
 func isCheckKind(k string) bool {

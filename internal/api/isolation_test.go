@@ -233,6 +233,15 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/connections/{provider}/owners":                 {kind: isoList},
 	"GET /api/connections/{provider}/repos":                  {kind: isoExempt, reason: "what the caller's own connection, or an installation shared with the caller's tenant, reaches on GitHub; names no PetalBook id (tested in github_tenants_test.go)"},
 
+	// 3.10 part 4: the notification centre is the caller's own. Rows are read by
+	// the caller's id and tenant, never by an id of the request (TestNotificationsAreTheCallersOwnAcrossTenants).
+	"GET /api/notifications":           {kind: isoList},
+	"GET /api/notifications/unread":    {kind: isoList},
+	"POST /api/notifications/read":     {kind: isoExempt, reason: "marks the caller's own rows: an id of another person's, in any tenant, matches nothing (tested in notifications_test.go)"},
+	"POST /api/notifications/read-all": {kind: isoExempt, reason: "marks the caller's own rows"},
+	"GET /api/prefs":                   {kind: isoExempt, reason: "the caller's own personal space; names no space or person"},
+	"PATCH /api/prefs":                 {kind: isoExempt, reason: "the caller's own personal space; names no space or person"},
+
 	"GET /api/groups":   {kind: isoList},
 	"GET /api/settings": {kind: isoList},
 	"GET /api/spaces":   {kind: isoList},
