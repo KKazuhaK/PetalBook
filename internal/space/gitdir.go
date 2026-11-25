@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,29 +29,35 @@ type gitDirs struct {
 	common string
 }
 
-// resolveGitDirs asks git (through the restricted runner) for the Git
-// directory of the work tree at root. It fails when there is none, or when
-// root is not the top of its work tree (a .git that git does not take for
-// one, and a repository further up is found instead).
-func resolveGitDirs(run gitstore.Runner, root string) (gitDirs, error) {
+// resolveGitDirs asks git (through the restricted runner of repo, which
+// remembers the answer: a repository made by repo is not asked about at all)
+// for the Git directory of the work tree at repo's directory. It fails when
+// there is none, or when that directory is not the top of its work tree (a
+// .git that git does not take for one, and a repository further up is found
+// instead).
+func resolveGitDirs(repo *gitstore.Repo, root string) (gitDirs, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, errOut, err := run.Run(ctx, gitstore.Cmd{Dir: root, Args: []string{"rev-parse", "--absolute-git-dir", "--show-prefix"}})
+	l, err := repo.Layout(ctx)
 	if err != nil {
-		msg := strings.TrimSpace(errOut)
-		if msg == "" {
-			msg = err.Error()
+		msg := err.Error()
+		var ge *gitstore.GitError
+		if errors.As(err, &ge) {
+			if m := strings.TrimSpace(ge.Stderr); m != "" {
+				msg = m
+			} else {
+				msg = ge.Err.Error()
+			}
 		}
 		return gitDirs{}, fmt.Errorf("the space %s has no Git directory that can be used (%s)", root, gitstore.Scrub(msg))
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) == 0 || lines[0] == "" || !filepath.IsAbs(lines[0]) {
-		return gitDirs{}, fmt.Errorf("the space %s has no Git directory that can be used (git said %q)", root, out)
+	if l.GitDir == "" || !filepath.IsAbs(l.GitDir) {
+		return gitDirs{}, fmt.Errorf("the space %s has no Git directory that can be used (git said %q)", root, l.GitDir)
 	}
-	if len(lines) > 1 && strings.TrimSpace(lines[1]) != "" {
+	if strings.TrimSpace(l.Prefix) != "" {
 		return gitDirs{}, fmt.Errorf("the space %s has no Git directory of its own: git found the repository of a folder above it", root)
 	}
-	gd, err := filepath.EvalSymlinks(lines[0])
+	gd, err := filepath.EvalSymlinks(l.GitDir)
 	if err != nil {
 		return gitDirs{}, err
 	}
@@ -82,18 +89,12 @@ func DefaultStateDir(root string) string {
 		if r, err := filepath.EvalSymlinks(abs); err == nil {
 			abs = r
 		}
-		if d, err := resolveGitDirs(realRunner{}, abs); err == nil {
+		if d, err := resolveGitDirs(gitstore.New(gitstore.Options{Dir: abs}), abs); err == nil {
 			return stateDirIn(d.git)
 		}
 		root = abs
 	}
 	return stateDirIn(filepath.Join(root, ".git"))
-}
-
-type realRunner struct{}
-
-func (realRunner) Run(ctx context.Context, c gitstore.Cmd) (string, string, error) {
-	return gitstore.RunReal(ctx, c)
 }
 
 // within reports whether p is dir or inside it (both real paths).
