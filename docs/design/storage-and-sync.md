@@ -246,7 +246,7 @@ toward quotas, so a local-only space grew without limit.
 - **Remote spaces.** Their fetch, commit and push run under the space lock (`s.mu`, with
   `fetchMu` for fetches), not `runMu`, and their commits do not go through the
   committer. So the committer's packing is switched off while a space follows a remote
-  (`Connect`, `initRemote`; `Disconnect` switches it on). Instead, `mutate` packs after
+  (`Connect`, `initRemote`; `Disconnect` switches it on). Instead, the remote's pusher packs after
   every 50th pushed change, after the push, inside the same space lock and under
   `fetchMu`, so it is never alongside a fetch or a push of that clone. That change's
   answer waits for it, which is the price of not needing a second lock. Fetch keeps Git's
@@ -627,24 +627,44 @@ What stays as it was:
   still goes the index way. Packing is unchanged.
 
 **Group commit (remote spaces).** A change of a space that follows a remote still runs
-under the space lock up to its commit. Then it waits for a push that has its commit. The
-change that finds nobody pushing pushes for all (`pushLocked`). It lets the lock go while
-git pushes, so changes that come meanwhile are made and committed on top, without
-fetching, and go out in the next push.
-- The pusher pushes only until its own commit is out. A change still waiting then takes
-  over the pushing, so no request waits on writers that keep coming.
-- Each change is answered once a push has its commit.
-- A push whose outcome cannot be told (what the remote has cannot be read after it) is
-  a failed push: no change of it is answered as done.
-- The journal is trimmed up to the last change pushed.
-- A refused push takes back every waiting change, last first, from its parent commit, and
-  each is made again on the new tip. A failed push answers each with the failure.
-- A repair of the way to a folder (which pushes on its own) drains the group first: no new
-  change joins it while it goes out, so the repair cannot be starved.
-- Accept, Connect and Disconnect wait for a push under way, as `Close` does.
-- The next start takes back an unpushed group to the commit its first change started
+under the space lock up to its commit. Then it joins the queue of changes waiting for
+their push (`r.pending`) and waits for its own answer only.
+
+- **One pusher per remote space** (`runPusher`). It starts when the space opens with a
+  remote (`initRemote`) or connects (`Connect`), and ends on `Disconnect`, on a
+  `Connect` that replaces the remote, and on `Close`, which waits for it.
+- **The loop.** While the queue is not empty, the pusher takes it as one group and pushes
+  it (`pushGroupLocked`). It lets the space lock go while git pushes, so changes that come
+  meanwhile are made and committed on top, without fetching, and go out with the next
+  group. Git commands run under the space's own context (`s.ctx`), never a request's.
+- **Answers.** Each change has its own `done` channel, closed once a push has its commit
+  or the change was taken back. Nothing is handed from one request to another, so a
+  request never pushes for others and never waits for writers that keep coming.
+- **A request that stops waiting** (`mutateIn` with a context that ends) is answered with
+  that context's error. Its change stays queued and is still pushed; only a refused push,
+  which needs the change made again, drops it, because nobody is left to make it again.
+- **Push outcomes**, as before:
+  - a push whose outcome cannot be told (what the remote has cannot be read after it) is a
+    failed push: no change of it is answered as done;
+  - the journal is trimmed up to the last change pushed;
+  - a refused push takes back every waiting change, last first, from its parent commit,
+    and each request makes its change again on the new tip, at most `maxAttempts` times;
+  - a failed push answers each change with the failure.
+- **Repairs.** A repair of the way to a folder (which pushes on its own) drains the queue
+  first: no new change joins it while it goes out (`draining`), so the repair cannot be
+  starved.
+- **Changing the remote.** `Disconnect`, `Connect`, `Accept` and `Close` first drain the
+  remote (`drainLocked`): from then on no change is queued (it is refused as unavailable,
+  or with `ErrClosed` on `Close`), and they act only once the queue is empty and the pusher
+  is idle. A change queued before goes out through the remote it was made for, and its
+  undo can no longer run after the remote was removed, replaced or its history accepted.
+  The earlier design (whoever found nobody pushing pushed) left a moment between two
+  pushes with changes queued and nobody pushing; one of these could take the lock then,
+  and the waiting change pushed through the old remote and undid itself over the result.
+- **Panics.** A panic in the pusher (a bug, or a test's crash) reaches the requests
+  waiting on that group, which raise it again, and the pusher goes on in a new goroutine.
+- **The next start** takes back an unpushed group to the commit its first change started
   from (the first `rp` in the journal).
-- `Close` waits for a push under way.
 
 **Cost**, measured on this server (8 cores, shared), on a seeded space of 50,000 pages in
 100 folders, 40 commits of one save each, before and after:
@@ -656,8 +676,24 @@ fetching, and go out in the next push.
 | Remote space, sequential changes | 6.3/s | 15.1/s |
 | Remote space, 8 writers at once | 6.2/s | 15.5 to 30.8/s |
 
-The 8-writer figure spans runs on a loaded machine (load average up to 13 on 8 cores);
-after the starter is answered at its own push, pushing passes from change to change.
+The 8-writer figure spans runs on a loaded machine (load average up to 13 on 8 cores).
+
+**The background pusher**, measured on an Openlab node (Slurm job, 8 cores, otherwise
+idle), on a seeded space of 50,000 pages in 100 folders and a local bare remote: changes
+per second over 15 s, two rounds each, before (the change that found nobody pushing
+pushed) and after (one pusher per space):
+
+| | Before | After |
+|---|---|---|
+| 1 writer | 10.9, 11.2/s | 11.2, 11.2/s |
+| 8 writers | 17.4, 19.9/s | 17.8, 18.5/s |
+| 1 writer, `GOMAXPROCS=4` | 11.1, 11.1/s | 11.1, 11.0/s |
+| 8 writers, `GOMAXPROCS=4` | 20.5, 20.2/s | 17.9, 20.1/s |
+
+The two are the same within the spread between runs: the redesign is for correctness,
+and costs nothing measurable. A push and its group's answers still take the space lock
+the way they did; the pusher adds one goroutine per remote space, idle on a condition
+variable when nothing waits.
 
 A commit's cost grows with the folders it changes: the trees on the way to each changed
 path, about 40 bytes an entry. It does not grow with the number of pages. Memory is those
