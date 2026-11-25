@@ -270,7 +270,8 @@ export function SpacesPanel() {
           aria-label={ts.spaces.filter}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           <option value="">{ts.spaces.filterAll}</option>
           <option value="overdue">{ts.spaces.filterOverdue}</option>
@@ -284,7 +285,8 @@ export function SpacesPanel() {
           aria-label={tg.spaces.remote}
           value={remote}
           onChange={(e) => setRemote(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           {(['', 'none', 'ok', 'offline', 'error'] as const).map((k) => (
             <option key={k} value={k}>
@@ -296,7 +298,8 @@ export function SpacesPanel() {
           aria-label={tg.spaces.idle}
           value={idle}
           onChange={(e) => setIdle(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           {(['', '30', '90', '180'] as const).map((k) => (
             <option key={k} value={k}>
@@ -304,7 +307,7 @@ export function SpacesPanel() {
             </option>
           ))}
         </NativeSelect>
-        <label className="flex items-center gap-1.5 text-xs">
+        <label className="flex min-h-10 items-center gap-1.5 text-xs">
           <input
             type="checkbox"
             className="size-4 accent-[var(--color-primary)]"
@@ -313,7 +316,7 @@ export function SpacesPanel() {
           />
           {tg.spaces.pinned}
         </label>
-        <label className="flex items-center gap-1.5 text-xs">
+        <label className="flex min-h-10 items-center gap-1.5 text-xs">
           <input
             type="checkbox"
             className="size-4 accent-[var(--color-primary)]"

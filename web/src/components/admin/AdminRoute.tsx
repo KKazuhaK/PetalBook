@@ -30,7 +30,7 @@ export default function AdminRoute() {
   )
 
   if (isAdminLegacy(first)) return <Navigate to={adminPath(first)} replace />
-  if (!section) return <Navigate to={adminPath('users', 'all')} replace />
+  if (!section) return <Navigate to={adminPath('users')} replace />
   if (!person && second !== undefined && tab?.key !== second) return <Navigate to={adminPath(section.key)} replace />
   if (!person && third !== undefined) return <Navigate to={adminPath(section.key, tab?.key)} replace />
 

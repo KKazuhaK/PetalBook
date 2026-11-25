@@ -249,15 +249,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
           <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
             <tr>
               {selection && (
-                <th scope="col" className="px-3 py-2">
-                  <input
-                    type="checkbox"
-                    aria-label={tc.table.selectAll}
-                    checked={allOnPage}
-                    disabled={rows.length === 0}
-                    onChange={toggleAll}
-                    className="size-4 accent-[var(--color-primary)]"
-                  />
+                <th scope="col" className="px-0 py-0">
+                  <label className="flex size-10 cursor-pointer items-center justify-center">
+                    <input
+                      type="checkbox"
+                      aria-label={tc.table.selectAll}
+                      checked={allOnPage}
+                      disabled={rows.length === 0}
+                      onChange={toggleAll}
+                      className="size-4 accent-[var(--color-primary)]"
+                    />
+                  </label>
                 </th>
               )}
               {shown.map((c, i) => (
@@ -303,7 +305,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   )}
                 </th>
               ))}
-              <th scope="col" className="px-1 py-1 text-right">
+              <th
+                scope="col"
+                className="sticky right-0 z-10 bg-background px-1 py-1 text-right shadow-[-1px_0_0_var(--color-border)]"
+              >
                 <span className="sr-only">{tc.table.actions}</span>
                 <TableSettings
                   all={ordered}
@@ -361,14 +366,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     className={`${ROW_HEIGHT[prefs.density]} transition-colors hover:bg-muted/40 ${selected?.has(rid) ? 'bg-primary/5' : ''}`}
                   >
                     {selection && (
-                      <td className="px-3">
-                        <input
-                          type="checkbox"
-                          aria-label={tc.table.selectRow(rowLabel(row))}
-                          checked={selected?.has(rid) ?? false}
-                          onChange={() => toggleRow(rid)}
-                          className="size-4 accent-[var(--color-primary)]"
-                        />
+                      <td className="px-0">
+                        <label className="flex size-10 cursor-pointer items-center justify-center">
+                          <input
+                            type="checkbox"
+                            aria-label={tc.table.selectRow(rowLabel(row))}
+                            checked={selected?.has(rid) ?? false}
+                            onChange={() => toggleRow(rid)}
+                            className="size-4 accent-[var(--color-primary)]"
+                          />
+                        </label>
                       </td>
                     )}
                     {shown.map((c, i) =>
@@ -391,7 +398,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         </td>
                       ),
                     )}
-                    <td className="px-1 text-right">
+                    <td className="sticky right-0 bg-background px-1 text-right shadow-[-1px_0_0_var(--color-border)]">
                       <div className="flex items-center justify-end gap-1">{actions?.(row)}</div>
                     </td>
                   </tr>

@@ -88,7 +88,7 @@ export function UsersList() {
               <div className="flex min-w-0 items-center gap-1.5">
                 <Link
                   to={adminUserPath(u.id)}
-                  className="truncate font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
+                  className="-my-2.5 truncate py-2.5 font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
                 >
                   {u.name}
                 </Link>
@@ -102,7 +102,7 @@ export function UsersList() {
       {
         id: 'role',
         header: tc.users.cols.role,
-        min: 110,
+        min: 100,
         weight: 1.2,
         priority: 2,
         cell: (u) => (
@@ -119,15 +119,15 @@ export function UsersList() {
       {
         id: 'tenant',
         header: tc.users.cols.tenant,
-        min: 110,
+        min: 100,
         weight: 1.2,
-        priority: 4,
+        priority: 6,
         cell: (u) => (u.tenant ? u.tenant.name : ''),
       },
       {
         id: 'state',
         header: tc.users.cols.state,
-        min: 90,
+        min: 80,
         weight: 1,
         priority: 2,
         cell: (u) =>
@@ -140,15 +140,15 @@ export function UsersList() {
       {
         id: 'email',
         header: tc.users.cols.email,
-        min: 160,
+        min: 150,
         weight: 2,
-        priority: 5,
+        priority: 4,
         cell: (u) => u.email,
       },
       {
         id: 'lastActive',
         header: tc.users.cols.lastActive,
-        min: 140,
+        min: 165,
         weight: 1.5,
         priority: 3,
         sortKey: 'lastActive',
@@ -174,7 +174,7 @@ export function UsersList() {
       {
         id: 'created',
         header: tc.users.cols.created,
-        min: 140,
+        min: 165,
         weight: 1.5,
         priority: 7,
         sortKey: 'created',
@@ -197,7 +197,7 @@ export function UsersList() {
   return (
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center gap-2" role="search">
-        <div className="relative w-full max-w-xs min-w-0 max-sm:max-w-none">
+        <div className="relative w-full max-w-[15rem] min-w-0 max-sm:max-w-none">
           <Search
             aria-hidden="true"
             className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
@@ -212,7 +212,7 @@ export function UsersList() {
             autoComplete="off"
           />
         </div>
-        <div className="w-40 max-sm:w-[calc(50%-0.25rem)]">
+        <div className="w-36 max-sm:w-[calc(50%-0.25rem)]">
           <NativeSelect
             className="h-10"
             aria-label={tc.users.role}
@@ -225,7 +225,7 @@ export function UsersList() {
             {siteAdmin && <option value="site">{tc.users.roleSite}</option>}
           </NativeSelect>
         </div>
-        <div className="w-40 max-sm:w-[calc(50%-0.25rem)]">
+        <div className="w-36 max-sm:w-[calc(50%-0.25rem)]">
           <NativeSelect
             className="h-10"
             aria-label={tc.users.state}
@@ -237,7 +237,7 @@ export function UsersList() {
             <option value="disabled">{tc.users.stateDisabled}</option>
           </NativeSelect>
         </div>
-        <div className="w-48 max-sm:w-full">
+        <div className="w-44 max-sm:w-full">
           <NativeSelect
             className="h-10"
             aria-label={tc.users.active}

@@ -88,9 +88,9 @@ describe('the administration frame', () => {
       ['/admin/recycle', '/admin/spaces/deleted'],
       ['/admin/access', '/admin/security/access'],
       ['/admin/usage', '/admin/storage/usage'],
-      ['/admin/nothing', '/admin/users/all'],
+      ['/admin/nothing', '/admin/users'],
       ['/admin/users/nothing', '/admin/users'],
-      ['/admin', '/admin/users/all'],
+      ['/admin', '/admin/users'],
     ] as const) {
       m = await open(from)
       await settle(() => locationText().startsWith(to), `${from} -> ${to}`)

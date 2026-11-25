@@ -110,6 +110,7 @@ export function AdminLayout({
             back={back}
             spaceName={space?.name}
             collapsed={false}
+            Title="p"
             onNavigate={() => setOpen(false)}
           />
         </SheetContent>
@@ -136,7 +137,7 @@ function Nav({
   footer?: ReactNode
   onNavigate?: () => void
   // The heading of the page: the sidebar's own, the drawer's is a copy and is none.
-  Title?: 'h1'
+  Title?: 'h1' | 'p'
 }) {
   const backText = spaceName ? tc.back(spaceName) : tc.backFallback
   return (

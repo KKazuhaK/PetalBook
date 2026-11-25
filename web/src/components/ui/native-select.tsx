@@ -3,9 +3,14 @@ import { ChevronDownIcon } from 'lucide-react'
 import { cn } from 'cn'
 
 /** A native <select> in the style of Input; fast, accessible and fine for short lists. */
-function NativeSelect({ className, children, ...props }: React.ComponentProps<'select'>) {
+function NativeSelect({
+  className,
+  wrapperClassName,
+  children,
+  ...props
+}: React.ComponentProps<'select'> & { wrapperClassName?: string }) {
   return (
-    <div className="relative w-full">
+    <div className={cn('relative w-full', wrapperClassName)}>
       <select
         data-slot="native-select"
         className={cn(

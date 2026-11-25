@@ -106,7 +106,8 @@ function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
           aria-label={tg.people.filter}
           value={kind}
           onChange={(e) => setKind(e.target.value)}
-          className="w-auto max-sm:w-full"
+          wrapperClassName="w-48 max-sm:w-full"
+          className="h-10"
         >
           <option value="">{tg.recycle.kindAll}</option>
           <option value="space">{tg.recycle.kinds.space}</option>

@@ -114,11 +114,7 @@ export function PersonProfile({
           </label>
         )}
       </SettingsSection>
-      {u.quota && (
-        <SettingsSection title={tc.person.profile.limits} id="person-limits">
-          <OwnLimits userId={u.id} own={u.quota} />
-        </SettingsSection>
-      )}
+      {u.quota && <OwnLimits userId={u.id} own={u.quota} />}
     </div>
   )
 }
