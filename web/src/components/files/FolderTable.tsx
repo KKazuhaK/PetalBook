@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { FileText, Folder as FolderIcon, Star } from 'lucide-react'
-import { useCanFavorite, useUrls } from '@/api/hooks'
+import { useCanFavorite, useSpacePermissions, useUrls } from '@/api/hooks'
 import type { PageSummary, PageType } from '@/api/types'
 import { DataTable, type Column } from '@/components/ui/data-table'
 import { PageIcon } from '@/components/icons/PageIcon'
@@ -158,6 +158,7 @@ export interface FolderTableProps {
 // order and how wide is the person's own, kept in this browser (see prefsStore); a click on a header sorts.
 export function FolderTable(props: FolderTableProps) {
   const prefs = useTablePrefs(`files:${props.folderPath}`)
+  const { write } = useSpacePermissions()
   const c = t.ftable.columns
   const fields = (props.type?.fields ?? []).filter((f) => f.kind !== 'other' && f.kind !== 'longtext')
   const columns: Column<TableRow>[] = [
@@ -236,7 +237,8 @@ export function FolderTable(props: FolderTableProps) {
       empty={props.empty}
       sort={toHeaderSort(props.sort)}
       onSort={(s) => !props.sortDisabled && props.onSort(fromHeaderSort(s))}
-      selection={{ selected: props.selected, onChange: props.onSelect }}
+      // Selecting is for moving and deleting: without `write` there is nothing to do with it.
+      selection={write ? { selected: props.selected, onChange: props.onSelect } : undefined}
       rowAttrs={(r) => ({ [ENTRY_ATTR]: rowKey(r) })}
       rowClass={() => 'group/entry'}
       actions={(r) => (

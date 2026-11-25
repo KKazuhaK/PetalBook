@@ -539,7 +539,7 @@ function Listing({ source }: { source: ListSource }) {
         afterAction={clear}
       >
         <div
-          className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable || mode === 'board' ? 'max-w-[96rem]' : 'max-w-3xl'}`}
+          className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable || filesTable || mode === 'board' ? 'max-w-[96rem]' : 'max-w-3xl'}`}
         >
           {scope && !viewsPending && (
             <ViewBar
