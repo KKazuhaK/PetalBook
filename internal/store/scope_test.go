@@ -101,7 +101,7 @@ var scopeAllowlist = map[string]string{
 	// --- the tenants table and the layers of settings are not a tenant's data -----
 	"CountTenantRows": "counts the rows of one tenant to refuse deleting it",
 	// --- 2.7: GitHub. A connection is its user's, a remote its space's; the App and
-	// its installations are the server's own (each is shared with chosen tenants, design.md 2.7) ---
+	// its installations are the server's own (each is shared with chosen tenants, docs/design/milestones/phase-2-connections.md, 2.7) ---
 	"GetGitHubAuthorization":       "one person's connection, by the id of a user already found in scope",
 	"PutGitHubAuthorization":       "the caller's own connection; its GitHub account check is site-wide, as GitHubAccountUser's",
 	"GitHubAccountUser":            "a GitHub account links to one PetalBook user on the whole server (github_id is unique); callers learn only that it is taken (account_in_use), never by whom or in which tenant",
@@ -157,7 +157,7 @@ var scopeAllowlist = map[string]string{
 	"DeleteRemote":                     "the remote of a space already opened by the caller",
 	"RemoteStates":                     "the server's map of sync states, read by space id",
 	// --- 3.1: server storage. The disk, its policy and the cache of clones are the
-	// server's own (site administrators only, design.md 3.3's table); a space's
+	// server's own (site administrators only, docs/design/milestones/phase-3-tenants.md, the 3.3 table); a space's
 	// records are reached by the id of a space already found ---
 	"GetSpaceStorage":          "the storage record of a space already found, by its id",
 	"TouchSpaceUsed":           "records the use of a space already opened, by its id",

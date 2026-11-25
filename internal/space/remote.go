@@ -548,7 +548,7 @@ func (s *Space) applyDelta(ctx context.Context, r *remote, from, to string) (ids
 // repairAfterPull makes the links that carry the id of a page a pull moved
 // name where the page is now, in one commit made by the service, and reports
 // whether it made one. Links to ids that two files claim, or that no page has,
-// are left as they are (the validation page lists them, see design.md). A
+// are left as they are (the validation page lists them, see docs/design/milestones/phase-2.md, 2.5). A
 // failure undoes what was written and is logged: the next pull tries again.
 func (s *Space) repairAfterPull(ctx context.Context, r *remote, ids []string, all bool) bool {
 	if !all && len(ids) == 0 {

@@ -1094,7 +1094,7 @@ export const zhCN = {
       commitLocalHint: '最新的内容还没送到服务器，先保存在这个浏览器里，没有丢。点一下可以再试。',
     },
   },
-  // The three ways to edit a page (docs/design.md, 7.0).
+  // The three ways to edit a page (docs/design/editor-and-frontend.md, 7.0).
   modes: {
     withHeader: '同时用 YAML 编辑页面头部（高级）',
     label: '编辑模式',

@@ -718,7 +718,7 @@ function EditorSession({
     }
   }
 
-  // --- the three ways to edit (docs/design.md, 7.0) ---
+  // --- the three ways to edit (docs/design/editor-and-frontend.md, 7.0) ---
   const wide = useSyncExternalStore(subscribeWide, isWide)
   // Source text left with a broken header last time is shown again where it was typed.
   // If the page has changed since, the person is asked first (see the notice below).

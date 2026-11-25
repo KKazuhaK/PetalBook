@@ -1,4 +1,4 @@
-// How a page names another page in its Markdown (docs/design.md, 2.4): a
+// How a page names another page in its Markdown (docs/design/milestones/phase-2.md, 2.4): a
 // standard relative link whose title is the target's id,
 // `[暮雪](../Tang/暮雪.md "01JD3K8Q7Z")`. The rules here are the server's
 // (internal/links) and are held to the same cases (markdown/links.test.ts).

@@ -14,7 +14,7 @@ import (
 )
 
 // Where a space's bytes live (spaces.location). The quotas count what is stored
-// with us and nothing else (design.md, "3.1 留下的一条要在这里定"):
+// with us and nothing else (docs/design/milestones/phase-3-storage.md, "One item 3.1 left open, to be settled here"):
 //
 //   - LocationServer: only on this server (a space without a remote). Counted
 //     in full.

@@ -58,7 +58,7 @@ function chipsOf(
   return out
 }
 
-// Above a folder's listing: the "筛选" button with the list-filter icon, the filters in force as chips, and (on a
+// Above a folder's listing: the Filter button with the list-filter icon, the filters in force as chips, and (on a
 // phone) one button that holds the sort as well. Where the sort is not on the headers it is a select here.
 export function FilterBar({
   filters,

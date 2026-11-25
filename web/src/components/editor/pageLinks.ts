@@ -1,4 +1,4 @@
-// Links to other pages as the page editor shows them (docs/design.md, 2.4): a link
+// Links to other pages as the page editor shows them (docs/design/milestones/phase-2.md, 2.4): a link
 // whose destination is a page file of the space is drawn as a page link (a click with
 // Ctrl/⌘, or any click where the text cannot be edited, opens it in the app), one
 // whose target is gone is drawn differently, and hovering shows the target's current

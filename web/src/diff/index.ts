@@ -1,6 +1,6 @@
 // Comparing two versions of a page. No React, no network: two versions in
 // (header and Markdown body), a merged document and a list of header changes
-// out. See docs/design.md 8.7 for what it is for.
+// out. See docs/design/editor-and-frontend.md 8.7 for what it is for.
 
 import { markdownToDoc } from '@/markdown'
 import { diffBlocks } from './blocks'

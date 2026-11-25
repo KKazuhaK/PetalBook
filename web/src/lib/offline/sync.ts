@@ -8,7 +8,7 @@ import { wantedText } from './scope'
 import { OfflineStore, pageBytes } from './store'
 import { totalBytes } from './registry'
 
-// What this device keeps of text, over every account (docs/design.md, 4.1).
+// What this device keeps of text, over every account (docs/design/milestones/phase-4.md, 4.1).
 export const DEFAULT_CAP_BYTES = 200 * 1024 * 1024
 const CATALOG_BATCH = 2000
 const CHANGES_BATCH = 1000

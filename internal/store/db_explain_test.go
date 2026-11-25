@@ -11,7 +11,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
 )
 
-// The plans of the database baseline (docs/design.md, "数据库基线（2026-11-24）"):
+// The plans of the database baseline (docs/design/database.md, "5.3 Database baseline (2026-11-24)"):
 // each query below must be served by its index, on SQLite and PostgreSQL. As in
 // TestListQueriesUseIndexes, PostgreSQL is asked with scans and sorts made dear,
 // so a plan that still has one has no index to use instead.

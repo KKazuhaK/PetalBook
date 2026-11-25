@@ -1,6 +1,6 @@
 package gitstore
 
-// The promise (docs/design.md 4.1): PetalBook never force-pushes, deletes or
+// The promise (docs/design/storage-and-sync.md, 4.1): PetalBook never force-pushes, deletes or
 // rewrites anything on the remote. These tests prove it three ways:
 //
 //  1. TestMain routes every git command of this package's whole test suite
