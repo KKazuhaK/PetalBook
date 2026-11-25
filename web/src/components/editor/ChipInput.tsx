@@ -118,7 +118,8 @@ export function ChipInput({
               type="button"
               aria-label={removeLabel(v)}
               onClick={() => onChange(values.filter((x) => x !== v))}
-              className="flex size-4 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+              // Drawn at 16px; on a touch screen a margin of 12px all round makes 40px to hit.
+              className="relative flex size-4 items-center justify-center rounded-full text-muted-foreground after:absolute after:inset-0 hover:bg-foreground/10 hover:text-foreground pointer-coarse:after:-inset-3"
             >
               <X className="size-3" />
             </button>
@@ -129,6 +130,7 @@ export function ChipInput({
           aria-expanded={showList}
           aria-controls={listId}
           aria-autocomplete="list"
+          aria-activedescendant={showList && active >= 0 && matches[active] ? `${listId}-${active}` : undefined}
           value={text}
           onChange={(e) => {
             const v = e.target.value
@@ -164,6 +166,7 @@ export function ChipInput({
           {matches.map((m, i) => (
             <li
               key={m.value}
+              id={`${listId}-${i}`}
               role="option"
               aria-selected={i === active}
               // mousedown, not click: the input must not lose focus first.

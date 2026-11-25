@@ -40,6 +40,34 @@ const focus = async () => {
 }
 
 describe('the chip input', () => {
+  it('names the suggestion the arrows are on to assistive technology', async () => {
+    m = await mount(<Probe />)
+    await focus()
+    expect(input().getAttribute('aria-activedescendant')).toBeNull()
+    await press(input(), 'ArrowDown')
+    await press(input(), 'ArrowDown')
+    const id = input().getAttribute('aria-activedescendant')
+    expect(id).toBeTruthy()
+    const option = document.getElementById(id!)!
+    expect(option.getAttribute('role')).toBe('option')
+    expect(option.getAttribute('aria-selected')).toBe('true')
+    expect(option.textContent).toBe('书评1')
+    // Every option has an id of its own.
+    const ids = [...document.querySelectorAll('[role="option"]')].map((o) => o.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.every(Boolean)).toBe(true)
+  })
+
+  it('has a remove button of the same look whose touch target is at least 40px', async () => {
+    m = await mount(<Probe start={['书']} />)
+    const remove = document.querySelector<HTMLButtonElement>('[role="group"] button')!
+    // 16px drawn; on a touch screen a 12px margin all round makes it 40px to hit.
+    expect(remove.className).toMatch(/\bsize-4\b/)
+    expect(remove.className).toMatch(/\brelative\b/)
+    expect(remove.className).toMatch(/pointer-coarse:after:-inset-3\b/)
+    expect(remove.className).toMatch(/\bafter:absolute\b/)
+  })
+
   it('lists the used values first, then the presets, and filters as it is typed', async () => {
     m = await mount(<Probe />)
     await focus()
