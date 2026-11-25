@@ -9,7 +9,7 @@ import (
 
 // The record types a journal may hold: transactions, and the records of the
 // steps of a move and of a remote change.
-var txOps = map[string]bool{"x": true, "p": true, "a": true, "k": true, "mr": true, "md": true, "mdd": true, "rp": true, "r": true}
+var txOps = map[string]bool{"x": true, "p": true, "a": true, "k": true, "c": true, "mr": true, "md": true, "mdd": true, "rp": true, "r": true}
 
 func checkOnlyTransactions(t *testing.T, root, what string) {
 	t.Helper()

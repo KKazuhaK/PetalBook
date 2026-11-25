@@ -181,8 +181,12 @@ func TestJournalAfterACommitKeepsTheAuthorsOfWhatIsStillPending(t *testing.T) {
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	// What is left is the page made while git ran: its transaction, by Bo.
+	// What is left is the page made while git ran: its claim on a name and
+	// its transaction, by Bo.
 	recs := journalRecords(t, root)
+	if len(recs) > 0 && recs[0].Op == "c" && recs[0].author() == bo {
+		recs = recs[1:]
+	}
 	if len(recs) != 3 || recs[0].Op != "x" || recs[0].author() != bo || recs[1].Op != "p" || recs[1].Path != late.Path || recs[2].Op != "a" {
 		t.Fatalf("journal: %+v", recs)
 	}

@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,6 +26,12 @@ import (
 // durably, so a crash between a write and its commit cannot leave the change
 // outside Git for good.
 //
+//	c  a new page is about to take a name in the folder of From, a temporary
+//	   file with the page's content (blob id Rev), as a second name of that
+//	   file; the transaction that writes it follows once the name is taken.
+//	   While From is there, a name in its folder that is From's file and that
+//	   no later transaction (not given up) writes is taken back at the next
+//	   start
 //	mr the name To is taken for a move of the page at From, as a second name
 //	   of its file: the move is the transaction that follows. Without one (not
 //	   given up) that moves From to To, the next start takes the name back
@@ -989,19 +996,27 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			closed[pair{r.From, r.To}] = true
 		}
 	}
-	for _, r := range recs {
+	lastWrite := map[string]int{} // the last "p" of each path, not given up
+	for i, r := range recs {
 		if r.Op == "p" && r.From != "" && !given[r.Tx] {
 			moved[pair{r.From, r.Path}] = true
+		}
+		if r.Op == "p" && !given[r.Tx] {
+			lastWrite[r.Path] = i
 		}
 	}
 	var log *slog.Logger
 	if h != nil {
 		log = h.log
 	}
-	var takeBack []jrec
-	for _, r := range recs {
+	type later struct {
+		r jrec
+		i int
+	}
+	var takeBack []later
+	for i, r := range recs {
 		switch r.Op {
-		case "x", "a", "k", "p", "mr", "md", "mdd":
+		case "x", "a", "k", "p", "mr", "md", "mdd", "c":
 		default:
 			// Any other record of a path leaves it to the work tree.
 			delete(revs, r.Path)
@@ -1009,10 +1024,10 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			delete(revs, r.To)
 		}
 		switch r.Op {
-		case "mr", "md":
+		case "mr", "md", "c":
 			// Taken back after the other records, once a rename through a
 			// third name ("r") is finished: see below.
-			takeBack = append(takeBack, r)
+			takeBack = append(takeBack, later{r, i})
 			continue
 		case "p":
 			if !ok(r.Path) || given[r.Tx] || (r.From != "" && !ok(r.From)) {
@@ -1081,7 +1096,18 @@ func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author,
 			}
 		}
 	}
-	for _, r := range takeBack {
+	for _, l := range takeBack {
+		r := l.r
+		if r.Op == "c" {
+			// A name a create took and never journaled the writing of.
+			if ok(r.From) {
+				takeBackClaim(root, r.From, r.Rev, func(p string) bool {
+					j, ok := lastWrite[p]
+					return ok && j > l.i
+				})
+			}
+			continue
+		}
 		if !ok(r.From) || !ok(r.To) || moved[pair{r.From, r.To}] {
 			continue
 		}
@@ -1204,6 +1230,40 @@ func takeBackName(root, from, to string) {
 	fb, errB := os.Lstat(b)
 	if errA == nil && errB == nil && fa.Mode().IsRegular() && os.SameFile(fa, fb) && listedPath(a) && listedPath(b) {
 		os.Remove(b)
+	}
+}
+
+// takeBackClaim undoes the names a create took (a "c" record) and never
+// journaled the writing of: while the temporary file tmp is there, a file in
+// its folder that is a second name of it, or a copy with its content (rev) on
+// a file system that cannot link, goes, unless written says a transaction
+// after the claim writes that path. Without tmp the create got past its
+// transaction, and nothing is looked at. Cost: one listing of the folder,
+// only for a create a crash interrupted.
+func takeBackClaim(root, tmp, rev string, written func(rel string) bool) {
+	abs := filepath.Join(root, filepath.FromSlash(tmp))
+	ft, err := os.Lstat(abs)
+	if err != nil || !ft.Mode().IsRegular() {
+		return
+	}
+	dir := filepath.Dir(abs)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if isTempName(e.Name()) || !e.Type().IsRegular() {
+			continue
+		}
+		name := filepath.Join(dir, e.Name())
+		fi, err := os.Lstat(name)
+		if err != nil || !(os.SameFile(ft, fi) || fi.Size() == ft.Size() && revOf(name) == rev) {
+			continue
+		}
+		if written(path.Join(path.Dir(tmp), e.Name())) {
+			continue
+		}
+		os.Remove(name)
 	}
 }
 
