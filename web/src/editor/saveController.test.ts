@@ -1879,3 +1879,116 @@ describe('what counts as ours', () => {
     expect(t.c.state).toBe('conflict')
   })
 })
+
+// The icon picker and a field rename change the file's header on the server; the editor then takes the new file as its
+// base (`rebaseOnto`). Only when that action is all that changed: anything else is someone else's edit, met like any
+// other (a conflict, or the page shown afresh), never written over.
+describe('an action of the person changed the header on the server', () => {
+  const other = '别人写的\n'
+  // The file after another device changed the body (rev2), then this tab's action changed the header (rev3).
+  const withIcon = (over: Partial<Page> = {}) =>
+    page({ rev: 'rev3', meta: { ...page().meta, icon: '🌷', color: 'pink' }, ...over })
+  const renamed = (over: Partial<Page> = {}) =>
+    page({
+      rev: 'rev3',
+      meta: { id: ID, title: '原标题', season: '冬季', created: '2026-01-01', tags: ['甲'] },
+      ...over,
+    })
+
+  for (const [name, saved, change] of [
+    ['the icon picker', withIcon, { kind: 'style' }],
+    ['a field rename', renamed, { kind: 'rename', from: 'series', to: 'season' }],
+  ] as const) {
+    describe(name, () => {
+      it('after a body change elsewhere, with text typed here: a conflict, never an overwrite', async () => {
+        const t = setup()
+        t.edit({ body: '我写的\n' })
+        await t.c.rebaseOnto(saved({ body: other }), change)
+        await vi.advanceTimersByTimeAsync(1500)
+        // Whatever is stored is stored on the file this tab knows, never on the one it has not seen.
+        for (const p of t.puts()) expect(p.input.baseRev).toBe('rev1')
+        if (t.puts().length) await t.answerPut({ stale: true, version: 'verS' })
+        if (t.calls.some((x) => x.kind === 'get')) {
+          t.last('get').resolve(afterStore(t.puts()[0], 'verS', saved({ body: other })))
+          await t.settle()
+        }
+        expect(t.c.state).toBe('conflict')
+        expect(t.onConflict).toHaveBeenCalledTimes(1)
+        expect(t.onConflict.mock.calls[0][0].theirs.body).toBe(other)
+      })
+
+      it('after a body change elsewhere, with nothing typed: the page as the server has it is shown', async () => {
+        const t = setup()
+        await t.c.rebaseOnto(saved({ body: other }), change)
+        await t.settle()
+        expect(t.api.putDraft).not.toHaveBeenCalled()
+        t.last('get').resolve(saved({ body: other }))
+        await t.settle()
+        expect(t.onExternalChange).toHaveBeenCalledTimes(1)
+        expect(t.onExternalChange.mock.calls[0][0].body).toBe(other)
+        // Typing now is typing on the page shown.
+        t.edit({ body: `${other}我又写了\n` })
+        await vi.advanceTimersByTimeAsync(1500)
+        expect(t.puts()[0].input).toMatchObject({ baseRev: 'rev3', body: `${other}我又写了\n` })
+      })
+
+      it('after a header change elsewhere: not taken as the action', async () => {
+        const t = setup()
+        t.edit({ body: '我写的\n' })
+        const theirs = saved()
+        await t.c.rebaseOnto({ ...theirs, meta: { ...theirs.meta, title: '别人的标题' } }, change)
+        await vi.advanceTimersByTimeAsync(1500)
+        for (const p of t.puts()) expect(p.input.baseRev).toBe('rev1')
+      })
+
+      it('with nothing else changed: the new file is the base, and typing stores on it', async () => {
+        const t = setup()
+        t.edit({ body: '我写的\n' })
+        await t.c.rebaseOnto(saved(), change)
+        await vi.advanceTimersByTimeAsync(1500)
+        expect(t.puts()).toHaveLength(1)
+        expect(t.puts()[0].input).toMatchObject({ baseRev: 'rev3', meta: saved().meta, body: '我写的\n' })
+        expect(t.onConflict).not.toHaveBeenCalled()
+      })
+    })
+  }
+
+  // The person's store was on its way when the rename landed: the server kept it as a stale draft, and the controller
+  // met the renamed file as a conflict before the editor heard of the rename. That conflict is the person's own action:
+  // it is settled on the renamed file, and the old key is never written back.
+  it('a store in flight when the rename landed: no conflict is left, and the old key is not written back', async () => {
+    const t = setup({ draftFields: { others: { series: '冬季' } } })
+    t.edit({ body: '我写的\n' })
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(t.puts()[0].input.meta.series).toBe('冬季')
+    await t.answerPut({ stale: true, version: 'verS' })
+    t.last('get').resolve(afterStore(t.puts()[0], 'verS', renamed()))
+    await t.settle()
+    // The editor takes the rename (PageEditor renames the key in the header being edited), then rebases.
+    t.setContent({ others: { season: '冬季' } })
+    await t.c.rebaseOnto(afterStore(t.puts()[0], 'verS', renamed()), { kind: 'rename', from: 'series', to: 'season' })
+    expect(t.c.state).not.toBe('conflict')
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(t.puts()).toHaveLength(2)
+    const sent = t.puts()[1].input
+    expect(sent).toMatchObject({ baseRev: 'rev3', prev: 'verS', body: '我写的\n' })
+    expect(sent.meta.season).toBe('冬季')
+    expect('series' in sent.meta).toBe(false)
+  })
+
+  it('a store in flight while someone else also changed the body: the conflict stays', async () => {
+    const t = setup()
+    t.edit({ body: '我写的\n' })
+    await vi.advanceTimersByTimeAsync(1500)
+    await t.answerPut({ stale: true, version: 'verS' })
+    t.last('get').resolve(afterStore(t.puts()[0], 'verS', renamed({ body: other })))
+    await t.settle()
+    expect(t.c.state).toBe('conflict')
+    await t.c.rebaseOnto(afterStore(t.puts()[0], 'verS', renamed({ body: other })), {
+      kind: 'rename',
+      from: 'series',
+      to: 'season',
+    })
+    expect(t.c.state).toBe('conflict')
+  })
+})

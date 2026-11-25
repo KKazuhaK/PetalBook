@@ -338,6 +338,25 @@ export function buildSave(base: Page, draft: Draft, normalizedBase: () => string
 
 // --- comparing -----------------------------------------------------------------
 
+// What an action of the person's own changed in the header of a file on the server: the icon picker sets `icon` and
+// `color`; a rename of a field of the page's type gives the value under `from` the key `to`.
+export type HeaderChange = { kind: 'style' } | { kind: 'rename'; from: string; to: string }
+
+// Whether `after` is `before` with `change` made and nothing else.
+export function headerChangedBy(before: PageMeta, after: PageMeta, change: HeaderChange): boolean {
+  const rest = (m: PageMeta, drop: string[]) => {
+    const out: PageMeta = { ...m }
+    for (const k of drop) delete out[k]
+    return out
+  }
+  if (change.kind === 'style') return sameData(rest(before, ['icon', 'color']), rest(after, ['icon', 'color']))
+  const { from, to } = change
+  // A page without the key is not rewritten.
+  if (!(from in before)) return sameData(before, after)
+  if (from === to || to in before || from in after || !(to in after)) return false
+  return sameData(before[from], after[to]) && sameData(rest(before, [from]), rest(after, [to]))
+}
+
 export { sameContent }
 const OURS_CAP = 500
 
@@ -413,6 +432,8 @@ export class SaveController {
   private retryCommit = false
   private keepaliveOnce = false
   private conflict: ConflictInfo | null = null
+  // For a conflict with a newer file: the file the person's text was on (see rebaseOnto).
+  private conflictBase: Page | undefined
   private frozen: Draft | undefined
   private closed = false
   private detached = false
@@ -787,8 +808,10 @@ export class SaveController {
   }
 
   // --- conflict resolution ---
-  private raise(info: ConflictInfo) {
+  // `base`: the file the person's text was on, when the conflict is with a newer file.
+  private raise(info: ConflictInfo, base?: Page) {
     this.conflict = info
+    this.conflictBase = base
     this.clearTimer()
     // The person's text is not on the server in a form that survives the choice
     // (the other side may replace or delete the draft that holds it), so while
@@ -921,16 +944,43 @@ export class SaveController {
     this.noticeExternalSave(moved.rev)
   }
 
-  // An action of the person's own changed the header of the file on the server (a field of its type got another key),
-  // and the caller has made the same change to the header being edited: the new file becomes the base of the text, as
-  // if it had been read with it. The body being typed stays (the action changes no body); a draft the server holds is
-  // on the old file now and is replaced by the next store. Without this the next save meets a newer file, and keeping
-  // one's own text there would write the old key back.
-  async rebaseOnto(page: Page) {
+  // An action of the person's own changed the header of the file on the server (the icon picker set the icon, a field
+  // of its type got another key), and the caller has made the same change to the header being edited: the new file
+  // becomes the base of the text, as if it had been read with it. The body being typed stays (the action changes no
+  // body); a draft the server holds is on the old file now and is replaced by the next store. Without this the next
+  // save meets a newer file, and keeping one's own text there would write the old header back.
+  //
+  // Only when that action is all that changed since the file this text is on: the same body, the same draft on the
+  // server, and a header that differs by `change` alone. Anything else is someone else's edit that this tab has not
+  // seen, met like any other change made elsewhere (shown, or a conflict), never adopted here: the new rev with the old
+  // text would write over it.
+  //
+  // A store of the person's that was out when the action landed has met the new file as a conflict already. When that
+  // file differs from the one the text was on by `change` alone, the conflict is the person's own action: it is settled
+  // on the new file and true is returned, for the caller to close the dialog.
+  async rebaseOnto(page: Page, change: HeaderChange): Promise<boolean> {
     if (this.inflight) await this.inflight.catch(() => {})
-    if (this.closed || this.conflict) return
-    this.activity++
+    if (this.closed) return false
     const { draft, ...file } = page
+    const own = (base: Page) => base.body === file.body && headerChangedBy(base.meta, file.meta, change)
+    let settled = false
+    if (this.conflict) {
+      const base = this.conflictBase
+      // A conflict with anything else waits for the person; what it showed is looked at again once it is settled.
+      if (this.conflict.kind !== 'file' || !base || this.conflict.theirs.rev !== file.rev) return false
+      if (!sameServerDraft(draft, this.serverDraft) || !own(base)) return false
+      this.conflict = null
+      this.conflictBase = undefined
+      settled = true
+    } else if (file.rev === this.file.rev) {
+      // The action changed nothing in this file (it did not have the key, or had that icon already).
+      if (!sameServerDraft(draft, this.serverDraft)) this.noticeExternalDraft(draft?.version ?? null)
+      return false
+    } else if (!sameServerDraft(draft, this.serverDraft) || !own(this.file)) {
+      this.noticeExternalSave(file.rev)
+      return false
+    }
+    this.activity++
     this.file = file
     this.lineage = file.rev
     this.serverDraft = draft ? toServerDraft(draft) : null
@@ -943,6 +993,8 @@ export class SaveController {
     else this.settle()
     // The page shown (its header) is the new file's, whatever the state.
     this.notify()
+    if (settled) this.takeQueued()
+    return settled
   }
 
   // Replace everything this controller knows with what the server has (the
@@ -1178,14 +1230,16 @@ export class SaveController {
         this.file = file
         this.raise(draftConflict(file, dv!, mine, d.afterFile))
         return 'stop'
-      case 'conflict-file':
+      case 'conflict-file': {
+        const base = this.file
         this.file = file
         this.setOurs([])
         this.serverDraft = dv ? toServerDraft(dv) : null
         this.stale = !!dv
         this.wantCommit = false
-        this.raise({ kind: 'file', theirs: file, mine })
+        this.raise({ kind: 'file', theirs: file, mine }, base)
         return 'stop'
+      }
       case 'holds':
         if (d.adoptFile) this.adoptFile(file)
         else this.file = file

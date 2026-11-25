@@ -678,11 +678,18 @@ function EditorSession({
   }
   const typeName = page.effectiveType ?? ''
   const propValues = fields.others ?? othersOf(page.meta)
+  // A conflict the controller found to be the person's own action (a save of theirs was out when it landed) is settled.
+  const closeConflict = () => {
+    setConflictOpen(false)
+    setConflict(null)
+  }
   // A key of the type was renamed from the panel: the server rewrote this page's header. The header being edited gets
   // the same change (the key keeps its place) and the rewritten file becomes the base of the text, so the next save is
   // not a conflict that "keep mine" would settle by writing the old key back. The body being typed stays.
   // The icon picker saved this page: the header shows the saved icon at once, the header being edited takes the new
   // icon and colour, and the saved file becomes the base of the text (as after a rename, below).
+  // Only when the action is all that changed in the file (see rebaseOnto): a change made elsewhere meanwhile is met as
+  // any other is, never written over.
   useEffect(
     () =>
       onPageSaved((where, saved) => {
@@ -696,7 +703,7 @@ function EditorSession({
           }
           setFields(live.setOthers(next))
         }
-        void controller.rebaseOnto(saved)
+        void controller.rebaseOnto(saved, { kind: 'style' }).then((settled) => settled && closeConflict())
       }),
     [space, initial.id, live, controller],
   )
@@ -705,7 +712,7 @@ function EditorSession({
     if (others && from in others && !(to in others))
       setFields(live.setOthers(Object.fromEntries(Object.entries(others).map(([k, v]) => [k === from ? to : k, v]))))
     try {
-      await controller.rebaseOnto(await client.getPage(page.id))
+      if (await controller.rebaseOnto(await client.getPage(page.id), { kind: 'rename', from, to })) closeConflict()
     } catch {
       // Not read: the next save meets the newer file and asks, as for any change made elsewhere.
     }

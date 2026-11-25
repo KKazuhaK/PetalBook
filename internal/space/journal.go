@@ -1,11 +1,12 @@
 package space
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,6 +36,11 @@ import (
 //	   then the Pages, then the views in space.yml. At recovery, a type file
 //	   with that content has the rest finished; another has nothing done
 //	fd the rename of the "f" record with the same fields is finished
+//	fp some of the pages of the "f" record with the same fields that follows
+//	   it: a rename can rewrite more pages than fit on one line, so its page
+//	   list is written as parts before the record (in the same append, so a
+//	   readable "f" record has every part before it), and the record says how
+//	   many pages there are in all
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -54,8 +60,102 @@ type jrec struct {
 	AuthorEmail string `json:"ae,omitempty"`
 	// Via is the means of the change (Author.Via).
 	Via string `json:"av,omitempty"`
-	// Pages are the pages an "f" record rewrites.
+	// Pages are the pages an "f" record rewrites (in memory: on disk they are
+	// in its "fp" parts), or the part of them an "fp" record carries.
 	Pages []string `json:"ps,omitempty"`
+	// N is how many pages an "f" record rewrites, all its parts together.
+	N int `json:"pn,omitempty"`
+}
+
+// journalPart bounds the bytes of the page paths (as JSON) in one "fp" record,
+// so that no line this server writes is longer than maxJournalLine (a path is
+// at most a few kilobytes). Lines are read whatever their length.
+const (
+	journalPart    = 64 << 10
+	maxJournalLine = journalPart + 64<<10
+)
+
+// encodeRec writes r as the lines of the journal: one, or for an "f" record
+// with pages, its "fp" parts and then the record.
+func encodeRec(buf *bytes.Buffer, r jrec) {
+	line := func(r jrec) {
+		b, _ := json.Marshal(r)
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if r.Op != "f" || len(r.Pages) == 0 {
+		line(r)
+		return
+	}
+	part := jrec{Op: "fp", Path: r.Path, From: r.From, To: r.To, Rev: r.Rev}
+	size := 0
+	for _, p := range r.Pages {
+		q, _ := json.Marshal(p)
+		if size > 0 && size+len(q)+1 > journalPart {
+			line(part)
+			part.Pages, size = nil, 0
+		}
+		part.Pages = append(part.Pages, p)
+		size += len(q) + 1
+	}
+	line(part)
+	r.N, r.Pages = len(r.Pages), nil
+	line(r)
+}
+
+// journalDamage is a line of the journal that could not be read.
+type journalDamage struct {
+	Line int
+	Len  int
+	Why  string
+}
+
+// readJournal reads the records of a journal. A line that cannot be read is
+// damage, reported and passed over: the records after it still count. A last
+// line with no end is not damage: the append it began never finished, so the
+// write it announced was never made; torn is its offset, or -1.
+func readJournal(data []byte) (recs []jrec, damage []journalDamage, torn int) {
+	torn = -1
+	type key struct{ path, from, to, rev string }
+	parts := map[key][]string{}
+	for n, at := 1, 0; at < len(data); n++ {
+		end := bytes.IndexByte(data[at:], '\n')
+		if end < 0 {
+			torn = at
+			break
+		}
+		line := data[at : at+end]
+		at += end + 1
+		if len(line) == 0 {
+			continue
+		}
+		var r jrec
+		switch err := json.Unmarshal(line, &r); {
+		case err != nil:
+			damage = append(damage, journalDamage{n, len(line), err.Error()})
+			continue
+		case r.Op == "":
+			damage = append(damage, journalDamage{n, len(line), "no op"})
+			continue
+		}
+		k := key{r.Path, r.From, r.To, r.Rev}
+		switch r.Op {
+		case "fp":
+			parts[k] = append(parts[k], r.Pages...)
+			continue
+		case "f":
+			if r.N > 0 {
+				r.Pages = append(parts[k], r.Pages...)
+				if len(r.Pages) != r.N {
+					damage = append(damage, journalDamage{n, len(line), fmt.Sprintf("the rename names %d pages, %d were found", r.N, len(r.Pages))})
+				}
+			}
+			r.N = 0
+			delete(parts, k)
+		}
+		recs = append(recs, r)
+	}
+	return recs, damage, torn
 }
 
 func (r jrec) author() Author { return Author{Name: r.AuthorName, Email: r.AuthorEmail, Via: r.Via} }
@@ -73,19 +173,23 @@ type journal struct {
 }
 
 // openJournal reads the records an earlier run left and opens the file for
-// appending. Damaged lines are skipped.
-func openJournal(path string) (*journal, []jrec, error) {
-	var recs []jrec
+// appending. A damaged line is logged as an error and passed over (see
+// readJournal); a torn last line is cut off, so that the next record appended
+// starts a line of its own.
+func openJournal(path string, log *slog.Logger) (*journal, []jrec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, err
 	}
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(nil, 1<<20)
-	for sc.Scan() {
-		var r jrec
-		if json.Unmarshal(sc.Bytes(), &r) == nil && r.Op != "" {
-			recs = append(recs, r)
+	recs, damage, torn := readJournal(data)
+	for _, d := range damage {
+		log.Error("a line of the journal cannot be read; what it recorded may not be committed or finished",
+			"journal", path, "line", d.Line, "bytes", d.Len, "problem", d.Why)
+	}
+	if torn >= 0 {
+		log.Warn("the journal ends in a record cut short by a stop; it is dropped", "journal", path, "bytes", len(data)-torn)
+		if err := os.Truncate(path, int64(torn)); err != nil {
+			return nil, nil, err
 		}
 	}
 	j := &journal{path: path}
@@ -98,9 +202,7 @@ func openJournal(path string) (*journal, []jrec, error) {
 func (j *journal) append(recs ...jrec) error {
 	var buf bytes.Buffer
 	for _, r := range recs {
-		b, _ := json.Marshal(r)
-		buf.Write(b)
-		buf.WriteByte('\n')
+		encodeRec(&buf, r)
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -127,9 +229,7 @@ func (j *journal) rewrite(pending map[string]Author, keep []jrec) error {
 	}
 	// Records of bindings still to be changed are not "done" by a commit.
 	for _, r := range keep {
-		b, _ := json.Marshal(r)
-		buf.Write(b)
-		buf.WriteByte('\n')
+		encodeRec(&buf, r)
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()

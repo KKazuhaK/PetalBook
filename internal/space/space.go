@@ -341,7 +341,7 @@ func Open(opt Options) (*Space, error) {
 	}
 	// What an earlier run changed but did not get to commit, and any move it
 	// left half done, before the index looks at the files.
-	jrn, recs, err := openJournal(filepath.Join(stateDir, "pending.journal"))
+	jrn, recs, err := openJournal(filepath.Join(stateDir, "pending.journal"), log)
 	if err != nil {
 		return nil, err
 	}

@@ -1,8 +1,7 @@
 package space
 
 import (
-	"bufio"
-	"encoding/json"
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -155,20 +154,15 @@ func TestFieldRenameNamesThePageItCannotWrite(t *testing.T) {
 // journalRecords reads the records of the journal of the space at root.
 func journalRecords(t *testing.T, root string) []jrec {
 	t.Helper()
-	f, err := os.Open(journalFile(root))
+	data, err := os.ReadFile(journalFile(root))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	var out []jrec
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		var r jrec
-		if json.Unmarshal(sc.Bytes(), &r) == nil {
-			out = append(out, r)
-		}
+	recs, damage, torn := readJournal(data)
+	if len(damage) > 0 || torn >= 0 {
+		t.Fatalf("the journal is damaged: %+v (torn at %d)", damage, torn)
 	}
-	return out
+	return recs
 }
 
 func TestFieldRenameIsJournaledWholeBeforeItsFirstWrite(t *testing.T) {
@@ -243,8 +237,9 @@ func TestCrashDuringAFieldRenameIsFinishedOrUndoneAsOne(t *testing.T) {
 			if !typeWritten {
 				writeType(t, root, "task", strings.TrimSuffix(oldType, "\n"))
 			}
-			line, _ := json.Marshal(f)
-			if err := os.WriteFile(journalFile(root), append(line, '\n'), 0o644); err != nil {
+			var line bytes.Buffer
+			encodeRec(&line, f)
+			if err := os.WriteFile(journalFile(root), line.Bytes(), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			s2 := openAt(t, root)

@@ -130,6 +130,8 @@ func (c *committer) Done(rec jrec) {
 	c.mu.Unlock()
 	done := rec
 	done.Op += "d"
+	// The fields name the record; its pages are not needed to close it.
+	done.Pages, done.N = nil, 0
 	if err := c.j.append(done); err != nil {
 		c.log.Error("could not journal that the bindings were changed", "error", err)
 	}
