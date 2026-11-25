@@ -52,16 +52,13 @@ func TestCreatePastManyTakenNamesJournalsAFixedNumberOfRecords(t *testing.T) {
 	}
 }
 
-// crashAtCreateStep runs a create that dies (as kill -9 would) at the named
-// step, after the name was linked, and returns the space's root. The
+// crashAtCreateStep runs a create in s, at root, that dies (as kill -9
+// would) at the named step, after the name was linked. The
 // temporary file of the create is put back as a crash leaves it: the panic
 // that stands for the crash runs the deferred clean-up a dead process never
 // would.
-func crashAtCreateStep(t *testing.T, step string) string {
+func crashAtCreateStep(t *testing.T, s *Space, root, step string) {
 	t.Helper()
-	needGit(t)
-	root := t.TempDir()
-	s := openAt(t, root)
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +103,15 @@ func crashAtCreateStep(t *testing.T, step string) string {
 	if _, err := os.Lstat(filepath.Join(root, "Claimed.md")); err != nil {
 		t.Fatalf("test setup: the name was not taken: %v", err)
 	}
+}
+
+// crashLocalCreateAt is crashAtCreateStep in a new local space; it returns
+// the space's root.
+func crashLocalCreateAt(t *testing.T, step string) string {
+	t.Helper()
+	needGit(t)
+	root := t.TempDir()
+	crashAtCreateStep(t, openAt(t, root), root, step)
 	return root
 }
 
@@ -113,7 +119,7 @@ func crashAtCreateStep(t *testing.T, step string) string {
 // leaves a file nobody was told of, and the next start takes it back.
 func TestCrashAfterACreateTookItsNameTakesTheNameBack(t *testing.T) {
 	t.Parallel()
-	root := crashAtCreateStep(t, "name claimed")
+	root := crashLocalCreateAt(t, "name claimed")
 	s := openAt(t, root)
 	if exists(s, "Claimed.md") {
 		t.Fatal("the name taken before the crash is still there")
@@ -137,7 +143,7 @@ func TestCrashAfterACreateTookItsNameTakesTheNameBack(t *testing.T) {
 // came before it was told it was made.
 func TestCrashAfterACreateWasJournaledKeepsAndCommitsIt(t *testing.T) {
 	t.Parallel()
-	root := crashAtCreateStep(t, "create journaled")
+	root := crashLocalCreateAt(t, "create journaled")
 	s := openAt(t, root)
 	if !exists(s, "Claimed.md") {
 		t.Fatal("the journaled create was taken back")
@@ -151,5 +157,33 @@ func TestCrashAfterACreateWasJournaledKeepsAndCommitsIt(t *testing.T) {
 	}
 	if got, _ := gitTry(root, "ls-files"); !strings.Contains(got, "Claimed.md") {
 		t.Fatalf("the page was not committed:\n%s", got)
+	}
+}
+
+// In a space that follows a remote a change not pushed is taken back at the
+// next start, the name a create took with it, whether or not its transaction
+// was journaled.
+func TestCrashedCreateInARemoteSpaceIsTakenBack(t *testing.T) {
+	t.Parallel()
+	for _, step := range []string{"name claimed", "create journaled"} {
+		t.Run(step, func(t *testing.T) {
+			f := newRemoteSpace(t)
+			tip := f.tip()
+			crashAtCreateStep(t, f.s, f.root, step)
+			f.reopen()
+			if exists(f.s, "Claimed.md") {
+				t.Fatal("the name a create took and never pushed is still there")
+			}
+			if left := tempsIn(f.root, ""); len(left) != 0 {
+				t.Fatalf("temporary files left: %v", left)
+			}
+			if st := git(t, f.root, "status", "--porcelain"); st != "" {
+				t.Fatalf("work tree not clean:\n%s", st)
+			}
+			if f.tip() != tip {
+				t.Fatalf("%v", f.remoteLog())
+			}
+			consistent(t, f.s)
+		})
 	}
 }

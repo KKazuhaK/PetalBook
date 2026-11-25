@@ -70,8 +70,8 @@ func noFreeName(stem string) error {
 // second name of the temporary file: the next start takes it back (the
 // claim), as the transaction never was. Once the transaction is durable it
 // is the create: in a local space the next start commits our content there,
-// even if the file was changed outside meanwhile, and never someone else's; a
-// space that follows a remote takes it back.
+// even if the file was changed outside meanwhile, and never someone else's. A
+// space that follows a remote takes back a create it did not push, either way.
 func (s *Space) createNamed(by Author, folder, dir, stem string, data []byte) (string, error) {
 	taken, err := s.takenKeys(dir)
 	if err != nil {

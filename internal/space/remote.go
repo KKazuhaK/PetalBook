@@ -381,6 +381,13 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 			// files are journaled one by one ("t").
 			folder(r.From, r.To)
 			folder(r.From, r.Path)
+		case r.Op == "c":
+			// A name a create took: its transaction, if journaled, is
+			// put back below with the rest; a name taken before that is
+			// only a second name of the create's temporary file.
+			if !stays && ok(r.From) {
+				takeBackClaim(root, r.From, r.Rev, func(string) bool { return false })
+			}
 		case r.Op == "l" || r.Op == "ld" || r.Op == "m":
 			// Records an earlier build wrote: what they name is not known
 			// to be files, and nothing of them is done.
