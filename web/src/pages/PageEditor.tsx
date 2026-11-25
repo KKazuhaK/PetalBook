@@ -1138,7 +1138,7 @@ function EditorSession({
           in it), hidden and out of reach of the keyboard. */}
         <div
           className={
-            historyOpen ? 'hidden' : mode === 'rich' ? 'flex flex-1 flex-col' : 'flex h-[calc(100dvh-3rem)] flex-col'
+            historyOpen ? 'hidden' : mode === 'rich' ? 'flex flex-1 flex-col' : 'flex h-[calc(100dvh-3.5rem)] flex-col'
           }
           inert={historyOpen}
         >
@@ -1225,7 +1225,7 @@ function EditorSession({
             >
               {editor && !readOnly && (
                 <div
-                  className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-12'}`}
+                  className={`sticky z-20 border-b bg-background/90 backdrop-blur ${mode === 'split' ? 'top-0' : 'top-14'}`}
                 >
                   <div className="mx-auto max-w-[720px] px-3">
                     <EditorToolbar editor={editor} />

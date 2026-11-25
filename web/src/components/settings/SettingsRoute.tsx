@@ -216,7 +216,7 @@ export default function SettingsRoute() {
             </nav>
           </aside>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="flex h-12 shrink-0 items-center border-b px-4 md:px-8 md:pr-14">
+            <header className="flex h-14 shrink-0 items-center border-b px-4 md:px-8 md:pr-14">
               <h2 className="truncate text-sm font-semibold">{t.settingsUi.sections[section]}</h2>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
