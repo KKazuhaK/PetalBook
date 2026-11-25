@@ -25,8 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/page"
 )
 
 // States of a remote (the state field of the API).

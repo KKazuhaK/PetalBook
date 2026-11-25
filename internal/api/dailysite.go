@@ -14,12 +14,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
-	"github.com/KKazuhaK/PetalBook/internal/langtag"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/dailyfetch"
+	"petalbook.app/server/internal/langtag"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // What the administrators of a server give the daily text: a default for the

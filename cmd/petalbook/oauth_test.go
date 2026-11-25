@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
+	"petalbook.app/server/internal/api"
 )
 
 func call(t *testing.T, base, host, method, path, body string) (int, map[string]any) {

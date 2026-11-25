@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/store"
 )
 
 // Groups from sign-in (milestone 3.2): a provider maps the values of a groups

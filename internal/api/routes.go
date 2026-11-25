@@ -4,13 +4,13 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/oauth"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/oauth"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // access is who may call a route. There is no zero value on purpose: a route

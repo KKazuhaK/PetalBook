@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // What a person's favourites need of a space (the favourites themselves are in

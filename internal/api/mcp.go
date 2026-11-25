@@ -16,12 +16,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/oauth"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/sentence"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/oauth"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/sentence"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
 )
 
 // The limits of /mcp (docs/api.md, "MCP").

@@ -20,7 +20,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
+	"petalbook.app/server/internal/dailyfetch"
 )
 
 // Limits of a Client ID Metadata Document fetch.

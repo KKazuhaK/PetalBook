@@ -9,9 +9,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
 )
 
 const spaceDesc = "id of the space, from spaces_list (may be left out in single-user mode, where the only space is default)"

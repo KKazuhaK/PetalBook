@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // TestPerRequestCostOfOneTenant measures what a request costs on a server with

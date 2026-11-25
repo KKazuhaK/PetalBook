@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 func TestAssetIsJournaledBeforeItIsWrittenAndSurvivesACrash(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // Every read and write under .petalbook goes through the functions here. A

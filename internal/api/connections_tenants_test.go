@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // 2.7 under the tenants of 3.3 (docs/design/milestones/phase-2-connections.md, "The 2.7 contract"): the App is the

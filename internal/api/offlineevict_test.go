@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/spaces"
 )
 
 // The switch for offline copies is decided before the space is opened: a

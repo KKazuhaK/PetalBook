@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 var (

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/store"
 )
 
 // Git is the provider "git": a plain Git address with a deploy key or a token.

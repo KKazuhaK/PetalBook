@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/oauth"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/oauth"
+	"petalbook.app/server/internal/store"
 )
 
 // oauthPaths are the paths of the authorization server that are not under /api

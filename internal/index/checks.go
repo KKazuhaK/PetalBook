@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 var bg = context.Background()

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // openIDs lists the spaces that are open, once the trims under way are done.

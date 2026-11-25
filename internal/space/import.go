@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // ImportAsset is a file an imported page refers to. Token stands for its

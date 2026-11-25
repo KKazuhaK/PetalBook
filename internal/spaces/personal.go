@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/space"
 )
 
 // ErrNoPersonalSpace: the person has no personal space of their own to open.

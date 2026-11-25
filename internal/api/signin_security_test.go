@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/auth/testidp"
+	"petalbook.app/server/internal/store"
 )
 
 func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {

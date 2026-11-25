@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/space"
 )
 
 func TestExistingNameErrorsAre409NotFiveHundred(t *testing.T) {

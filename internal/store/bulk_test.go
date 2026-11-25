@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // The daily pass deletes the bulk jobs that ended before the bound, by their

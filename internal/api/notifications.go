@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // The notification centre (docs/api.md, "Notifications"). Everything here is

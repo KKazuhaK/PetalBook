@@ -22,12 +22,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/assetcache"
-	"github.com/KKazuhaK/PetalBook/internal/assetrepo"
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/assetcache"
+	"petalbook.app/server/internal/assetrepo"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // ErrNoAssets: the space has no attachment repository (404).

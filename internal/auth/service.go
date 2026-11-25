@@ -26,13 +26,13 @@ import (
 	"github.com/KazuhaHub/authcore/captcha"
 	authsaml "github.com/KazuhaHub/authcore/saml"
 
-	"github.com/KKazuhaK/PetalBook/internal/mail"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // negative is a cookie that is no session: until when to answer so without

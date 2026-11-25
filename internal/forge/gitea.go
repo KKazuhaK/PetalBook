@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
+	"petalbook.app/server/internal/connections"
 )
 
 // gitea is Gitea and Forgejo, Codeberg included (codeberg.org runs Forgejo):

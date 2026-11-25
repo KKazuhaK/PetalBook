@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/github"
-	"github.com/KKazuhaK/PetalBook/internal/githubapp"
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/github"
+	"petalbook.app/server/internal/githubapp"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // submit plays the administrator's browser on GitHub: the manifest is posted,

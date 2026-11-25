@@ -26,10 +26,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // ErrExportsFull: the exports would be over exports.maxBytes (507).

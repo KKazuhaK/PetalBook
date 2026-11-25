@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // netSwitch is the real git with a switch that makes the network unreachable.

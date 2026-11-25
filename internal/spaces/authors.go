@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 const (

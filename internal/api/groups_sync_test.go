@@ -7,7 +7,7 @@ import (
 
 	crewjamsaml "github.com/crewjam/saml"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
+	"petalbook.app/server/internal/auth/testidp"
 )
 
 func gmap(pairs ...string) []map[string]any {

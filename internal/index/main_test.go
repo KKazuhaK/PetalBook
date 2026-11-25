@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/testguard"
+	"petalbook.app/server/internal/testguard"
 )
 
 // A test that runs away with memory fails here at a fixed size instead of

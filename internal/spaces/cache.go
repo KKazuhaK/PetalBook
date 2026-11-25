@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/store"
 )
 
 // The membership cache (1.7, reshaped for groups in 3.2).

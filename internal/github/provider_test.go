@@ -3,9 +3,9 @@ package github_test
 import (
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections/conntest"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/connections/conntest"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // The GitHub implementation keeps the same contract as every provider.

@@ -20,7 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // MaxEntries is the most entries a zip may have.

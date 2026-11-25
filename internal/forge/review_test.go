@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/forge"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/forge"
+	"petalbook.app/server/internal/store"
 )
 
 // --- a 401 does not end a connection that can be renewed ----------------------------

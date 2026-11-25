@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/space"
 )
 
 // getAppearance answers the icons and colours of the folders and the presets

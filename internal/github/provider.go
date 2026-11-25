@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/store"
 )
 
 var (

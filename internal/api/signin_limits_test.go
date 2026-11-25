@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
+	"petalbook.app/server/internal/auth"
 )
 
 func TestFailureCapByUsernameDoesNotBlockTheRightPassword(t *testing.T) {

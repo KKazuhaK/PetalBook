@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/settings"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/space"
 )
 
 // The offline sync endpoints (milestone 4.1, docs/api.md "Offline sync"). They

@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
 )
 
 // The check page (docs/api.md, "Checks"). What is wrong with a page is

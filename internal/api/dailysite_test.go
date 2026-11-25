@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/dailyfetch"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/dailyfetch"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // A quote service of the test's own: the text says which language and which time it was asked.

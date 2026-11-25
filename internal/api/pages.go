@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/drafts"
-	"github.com/KKazuhaK/PetalBook/internal/index"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/drafts"
+	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/space"
 )
 
 // maxQueryTags is the most different tags a listing or a count may ask for:

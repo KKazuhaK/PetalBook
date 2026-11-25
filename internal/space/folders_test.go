@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/index"
 )
 
 func folderPaths(t *testing.T, s *Space) []string {

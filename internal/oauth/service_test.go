@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/secret"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
-	"github.com/KKazuhaK/PetalBook/internal/tokens"
+	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
+	"petalbook.app/server/internal/tokens"
 )
 
 type noUsers struct{}

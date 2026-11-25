@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/githubapp"
+	"petalbook.app/server/internal/githubapp"
 )
 
 // Bounds of the sign-ins in progress.

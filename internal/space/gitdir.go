@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // The server's own state is kept in the Git directory of the space. That is

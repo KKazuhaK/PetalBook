@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/drafts"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/drafts"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 type fixture struct {

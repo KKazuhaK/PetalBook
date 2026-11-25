@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
+	"petalbook.app/server/internal/connections"
 )
 
 // gitlab is gitlab.com and self-hosted GitLab (REST API v4, OAuth 2 with PKCE).

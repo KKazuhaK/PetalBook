@@ -3,9 +3,9 @@ package spaces
 import (
 	"context"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // Heads for the offline clients (milestone 4.1): the change cursor each space

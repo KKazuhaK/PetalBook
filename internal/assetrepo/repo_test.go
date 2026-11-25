@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/assetcache"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/space"
+	"petalbook.app/server/internal/assetcache"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/space"
 )
 
 // countRunner counts the fetches, how many run at once, and holds them while

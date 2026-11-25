@@ -11,9 +11,9 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/tokens"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/tokens"
 )
 
 // grantEntry is a grant as kept in memory: what a request needs to know of it.

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 const oidcImportedKey = "oidc_imported"

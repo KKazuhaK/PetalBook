@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/store/storetest"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/store/storetest"
 )
 
 // Closing the manager frees the data directory's lock at once, even while

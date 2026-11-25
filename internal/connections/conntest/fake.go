@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/store"
 )
 
 // Fake is a provider that keeps everything in memory, for the contract's own

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/auth/testidp"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/auth/testidp"
+	"petalbook.app/server/internal/store"
 )
 
 // Go's strings.ToLower folds U+0130 (İ) to "i" and U+212A (the Kelvin sign)

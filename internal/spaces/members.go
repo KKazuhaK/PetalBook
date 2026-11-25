@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/perm"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/store"
 )
 
 // Members are who belong to a space and in what role. Every change checks the

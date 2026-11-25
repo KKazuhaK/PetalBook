@@ -9,9 +9,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/store"
-	"github.com/KKazuhaK/PetalBook/internal/tokens"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/store"
+	"petalbook.app/server/internal/tokens"
 )
 
 // A change made through MCP is committed as the owner, says so in the trailer,

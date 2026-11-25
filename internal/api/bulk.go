@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/page"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/page"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // Bulk actions (docs/api.md, "Confirmations and bulk actions"). A job runs the

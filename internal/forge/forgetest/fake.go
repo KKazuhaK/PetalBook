@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"petalbook.app/server/internal/gitstore"
 )
 
 // Clocker is a source of time; tests give the fake the one the service under

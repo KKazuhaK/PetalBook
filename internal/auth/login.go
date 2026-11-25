@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // allow spends one of the address's requests this minute, shared by the

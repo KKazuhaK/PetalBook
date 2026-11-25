@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/gitstore"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/spaces"
 )
 
 func (f *fixture) importFile(query string, data []byte) (int, map[string]any) {

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KKazuhaK/PetalBook/internal/auth"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/store"
 )
 
 const samlACSPattern = "/api/auth/saml/{slug}/acs"

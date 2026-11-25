@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/index"
+	"petalbook.app/server/internal/index"
 )
 
 func TestRemovingAViewThatCarriesAnAnchorKeepsWhatItsAliasesMean(t *testing.T) {

@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/spaces"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/spaces"
 )
 
 // The attachment repository of a space (milestone 3.1, docs/api.md "Attachment

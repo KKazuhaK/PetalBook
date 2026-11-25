@@ -3,8 +3,8 @@ package conntest_test
 import (
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/connections"
-	"github.com/KKazuhaK/PetalBook/internal/connections/conntest"
+	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/connections/conntest"
 )
 
 func TestTheFakeProviderKeepsTheContract(t *testing.T) {

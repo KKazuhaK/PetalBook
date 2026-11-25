@@ -3,11 +3,11 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/KKazuhaK/PetalBook/internal/api"
-	"github.com/KKazuhaK/PetalBook/internal/space"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"petalbook.app/server/internal/api"
+	"petalbook.app/server/internal/space"
 	"strings"
 	"testing"
 	"time"

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KKazuhaK/PetalBook/internal/page"
+	"petalbook.app/server/internal/page"
 )
 
 // logBuffer collects what a space logs, for the tests to read.

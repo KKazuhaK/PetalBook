@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/store"
 )
 
 // The audit log of docs/api.md: rows are queued in memory and written in

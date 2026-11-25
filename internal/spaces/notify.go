@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/KKazuhaK/PetalBook/internal/space"
-	"github.com/KKazuhaK/PetalBook/internal/store"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/store"
 )
 
 // syncNotice tells the owners of a space that its remote stopped working (it
