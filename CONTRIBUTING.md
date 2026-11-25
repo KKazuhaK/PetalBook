@@ -45,10 +45,10 @@ Every check is defined in the `Makefile` only; CI just calls those targets.
 
 ## 什么在哪里跑 / What runs where
 
-- **拉取请求 / Pull request**：三个任务。`lint`（`make lint`：gofmt、`go mod tidy`、`go vet`、网页端类型检查和
+- **拉取请求 / Pull request**：四个任务。`lint`（`make lint`：gofmt、`go mod tidy`、`go vet`、网页端类型检查和
   ESLint、actionlint、govulncheck，以及对这个 PR 的提交做 gitleaks 扫描）总是跑；`go`（`make test`，全部 Go
   测试，带 `-race`）和 `postgres`（见下）只在改了 Go 相关文件时跑；`web`（`make web-test`）只在改了网页端、`Makefile` 或 `.github/` 时跑。
-  Three jobs. `lint` (`make lint`: gofmt, `go mod tidy`, `go vet`, the web typecheck and ESLint, actionlint,
+  Four jobs. `lint` (`make lint`: gofmt, `go mod tidy`, `go vet`, the web typecheck and ESLint, actionlint,
   govulncheck, and a gitleaks scan of the pull request's commits) always runs; `go` (`make test`, all the Go
   tests with `-race`) and `postgres` (below) only when a change can affect Go; `web` (`make web-test`) only when it changed the web
   app, the `Makefile` or `.github/`.

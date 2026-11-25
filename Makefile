@@ -93,7 +93,8 @@ contract-postgres: build web/node_modules/.package-lock.json
 # Every check is defined here and nowhere else: CI only calls these targets,
 # so what passes on a laptop is what passes on the runner.
 #
-#   make check        before every push (the pull request jobs: lint, go, web)
+#   make check        before every push (the pull request jobs lint, go, web;
+#                     a change to Go also gets postgres: make test-postgres)
 #   make check-full   before a risky change (what main runs after a merge)
 
 # The web dependencies, installed only when missing so local runs stay fast.

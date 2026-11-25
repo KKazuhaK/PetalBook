@@ -191,8 +191,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make web-test
 
-  # From here on only pushes to main run. A pull request gets the jobs above;
-  # these need services, a second toolchain, or a long build.
+  # From here on the jobs need services, a second toolchain, or a long build.
+  # postgres also runs on a pull request that changes Go; the rest only on
+  # pushes to main.
 
   # On a runner the database is a service container instead of the throwaway
   # cluster scripts/test-postgres.sh makes locally; the script uses the one in
