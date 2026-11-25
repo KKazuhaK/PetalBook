@@ -28,6 +28,7 @@ func crash(s *Space) {
 }
 
 func TestSwapOfFilesOutsideTheServerRecoversWithoutReindex(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -60,6 +61,7 @@ func TestSwapOfFilesOutsideTheServerRecoversWithoutReindex(t *testing.T) {
 }
 
 func TestDuplicateBecomesAPageWhenTheTwinIsDeleted(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "", meta("title", "First"), "one\n")
 	raw := readDisk(t, s, a.Path)
@@ -82,6 +84,7 @@ func TestDuplicateBecomesAPageWhenTheTwinIsDeleted(t *testing.T) {
 // --- the journal -------------------------------------------------------------
 
 func TestUncommittedWritesSurviveACrash(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -126,6 +129,7 @@ func TestUncommittedWritesSurviveACrash(t *testing.T) {
 }
 
 func TestCrashBetweenLinkAndRemoveLeavesOnePage(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -161,6 +165,7 @@ func TestCrashBetweenLinkAndRemoveLeavesOnePage(t *testing.T) {
 }
 
 func TestJournalWithMissingOrForeignPathsIsTolerated(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	git(t, root, "init", "-q")
@@ -199,6 +204,7 @@ func TestJournalWithMissingOrForeignPathsIsTolerated(t *testing.T) {
 }
 
 func TestStrayFilesStayOutAfterRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -217,6 +223,7 @@ func TestStrayFilesStayOutAfterRecovery(t *testing.T) {
 }
 
 func TestRecoveredChangesWaitWhileARebaseIsRunning(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -325,6 +332,7 @@ func TestSavesProceedWhileAWalkIsRunning(t *testing.T) {
 // A stale row (a file moved outside the server) is repaired at once even when
 // the interval for unknown ids has not passed.
 func TestStaleRowIsRepairedImmediately(t *testing.T) {
+	t.Parallel()
 	s := open(t, func(o *Options) { o.ResyncInterval = time.Hour })
 	g := mustCreate(t, s, "", meta("title", "Gamma"), "gamma\n")
 	d := mustCreate(t, s, "", meta("title", "Delta"), "delta\n")
@@ -353,6 +361,7 @@ func TestStaleRowIsRepairedImmediately(t *testing.T) {
 // committed under its new name, never as deleted. Where the new name has been
 // taken meanwhile, what is under the third name is committed there.
 func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	type step struct{ from, mid, to string }
 	for _, c := range []struct {
@@ -428,6 +437,7 @@ func TestRespellingStoppedByACrashIsFinished(t *testing.T) {
 // one. Committing the folder itself would be a path Git cannot stage, and a
 // space that follows a remote refuses changes after that.
 func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "Notes"), 0o755)
 	got := recoverPending(root, []jrec{
@@ -444,6 +454,7 @@ func TestRecoveryOfAFolderRespellingListsOnlyFiles(t *testing.T) {
 // file system that folds names both names find the one file, and finishing
 // the move must not remove it as "the old name".
 func TestFinishMoveKeepsAFileRenamedByCase(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "apple.md"), []byte("the page\n"), 0o644)
 	if _, err := os.Stat(filepath.Join(root, "Apple.md")); err != nil {
@@ -458,6 +469,7 @@ func TestFinishMoveKeepsAFileRenamedByCase(t *testing.T) {
 // A move to another folder under the same file name, stopped after the link:
 // the old name is removed as before.
 func TestFinishMoveAcrossFoldersRemovesTheOldName(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "a"), 0o755)
 	os.MkdirAll(filepath.Join(root, "b"), 0o755)
@@ -513,6 +525,7 @@ func foldingOps(fail func(n int, from, to string) error) fileOps {
 // case on such a disk, and the process dying between the two steps (the
 // second rename and the way back both fail, then the process is gone).
 func TestRespellingThroughTheSpaceSurvivesACrash(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	stop := func(n int, from, to string) error {
 		if n >= 2 {

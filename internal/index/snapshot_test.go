@@ -246,6 +246,7 @@ func checkGroups(t *testing.T, groups func(GroupQuery) (GroupResult, error), q G
 // TestGenerationMovesAtTheCommit checks that a write leaves gen even and
 // moved, and that a read begun after it knows its generation.
 func TestGenerationMovesAtTheCommit(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	before := x.gen.Load()
 	if _, err := x.Put("a.md", []byte("---\nid: A\n---\nx\n"), clock()); err != nil {

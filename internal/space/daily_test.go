@@ -27,6 +27,7 @@ func mustDaily(t *testing.T, s *Space, spaceID, date string, skip int) *DailyPic
 }
 
 func TestDailyIsTheSameForADayAndMovesWithTheDayAndSkip(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	ids := map[string]bool{}
 	for i := 0; i < 7; i++ {
@@ -82,6 +83,7 @@ func TestDailyIsTheSameForADayAndMovesWithTheDayAndSkip(t *testing.T) {
 }
 
 func TestDailyKeepsTheDaysPickWhilePagesComeAndGo(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for i := 0; i < 5; i++ {
 		mustCreate(t, s, "f", meta("title", fmt.Sprint("p", i)), "x\n")
@@ -133,6 +135,7 @@ func TestDailyKeepsTheDaysPickWhilePagesComeAndGo(t *testing.T) {
 // Readers asking for many other texts, or for many other days, never push
 // today's shared pick out of the memory; skip has a sane bound.
 func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	for i := 0; i < 5; i++ {
 		mustCreate(t, s, "f", meta("title", fmt.Sprint("p", i)), "x\n")
@@ -169,6 +172,7 @@ func TestDailyTodaysPickOutlastsOtherAsks(t *testing.T) {
 }
 
 func TestDailyBodyIsCutAt2000Characters(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "f", meta("title", "long"), strings.Repeat("字", 2001))
 	if _, err := s.SetDaily(Author{}, dailyFolder(s, "f")); err != nil {
@@ -181,6 +185,7 @@ func TestDailyBodyIsCutAt2000Characters(t *testing.T) {
 }
 
 func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -221,6 +226,7 @@ func TestDailyFollowsAFolderMoveAndItsRecovery(t *testing.T) {
 }
 
 func TestDailyTypeCountsTheFoldersBoundToIt(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	if _, err := putCurrent(s, "t", TypeInput{}); err != nil {
 		t.Fatal(err)
@@ -267,6 +273,7 @@ func TestDailyTypeCountsTheFoldersBoundToIt(t *testing.T) {
 }
 
 func TestDailySourceInTheSettingsFile(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -331,6 +338,7 @@ func TestDailySourceInTheSettingsFile(t *testing.T) {
 }
 
 func TestDailyIsRefusedWhenNotMade(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "f", meta("title", "P"), "x\n")
 	tooMany := make([]ViewFilter, index.MaxViewFilters+1)
@@ -361,6 +369,7 @@ func TestDailyIsRefusedWhenNotMade(t *testing.T) {
 }
 
 func TestDailyConfigByLanguage(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -478,6 +487,7 @@ func mustDailyLang(t *testing.T, s *Space, lang string) *DailyPick {
 }
 
 func TestDailyConfigJSON(t *testing.T) {
+	t.Parallel()
 	var c DailyConfig
 	for in, ok := range map[string]bool{
 		`{"folder":"a"}`:                         true,
@@ -500,6 +510,7 @@ func TestDailyConfigJSON(t *testing.T) {
 }
 
 func TestDailyLanguagesAreBCP47Tags(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -557,6 +568,7 @@ func TestDailyLanguagesAreBCP47Tags(t *testing.T) {
 // is written back with one key: the entry under the canonical key stays, the
 // other spelling goes.
 func TestDailyTwoSpellingsOfALanguageAreMergedOnSave(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -587,6 +599,7 @@ func TestDailyTwoSpellingsOfALanguageAreMergedOnSave(t *testing.T) {
 // cannot is dropped and named, and the rest is kept.
 // A pick says who wrote the page and where it is from, only when the page does.
 func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	mustCreate(t, s, "有", meta("title", "山花子", "author", "纳兰性德", "source", "纳兰词"), "人到情多情转薄\n")
 	mustCreate(t, s, "没有", meta("title", "无名"), "只有正文\n")
@@ -609,6 +622,7 @@ func TestDailyPickCarriesTheAuthorAndSourceOfAPage(t *testing.T) {
 // A source by language is for that language (matched the BCP 47 way) or for all the others, and for no other:
 // a reader of a language with none gets nothing, not the first source there is.
 func TestDailyConfigHasNoFallbackToAnotherLanguage(t *testing.T) {
+	t.Parallel()
 	folder := "x"
 	zh := DailySource{Folder: &folder}
 	only := DailyConfig{ByLang: map[string]DailySource{"zh-Hans": zh}}

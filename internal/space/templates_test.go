@@ -52,6 +52,7 @@ func parseForTest(t *testing.T, text string) *yaml.Node {
 }
 
 func TestTemplateDefaultsInSettingsWithAnchors(t *testing.T) {
+	t.Parallel()
 	want := func(got *TemplateDefaults, folders map[string]string, quick string) {
 		t.Helper()
 		if got == nil {
@@ -122,6 +123,7 @@ func TestTemplateDefaultsInSettingsWithAnchors(t *testing.T) {
 }
 
 func TestTemplateVariables(t *testing.T) {
+	t.Parallel()
 	local := time.Date(2026, 11, 23, 9, 5, 0, 0, time.UTC)
 	tpl := Template{
 		Meta: page.Meta{{Key: "title", Value: "{{date}} {{time}}"}, {Key: "type", Value: "diary"},

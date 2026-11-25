@@ -6,6 +6,7 @@ import (
 )
 
 func TestParseURL(t *testing.T) {
+	t.Parallel()
 	p := Policy{Hosts: DefaultHosts}
 	good := map[string]Remote{
 		"https://github.com/kazuha/notes.git":          {"https://github.com/kazuha/notes.git", "https", "github.com"},
@@ -55,6 +56,7 @@ func TestParseURL(t *testing.T) {
 }
 
 func TestParseURLHostPolicy(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		url   string
 		hosts []string
@@ -102,6 +104,7 @@ func TestParseURLHostPolicy(t *testing.T) {
 }
 
 func TestParseURLUnsafeOnlyInTests(t *testing.T) {
+	t.Parallel()
 	for _, in := range []string{"/tmp/repo.git", "file:///tmp/repo.git", "http://127.0.0.1:8080/r.git"} {
 		if _, err := ParseURL(in, Policy{Hosts: []string{"*"}}); err == nil {
 			t.Errorf("%q accepted without the test option", in)
@@ -120,6 +123,7 @@ func TestParseURLUnsafeOnlyInTests(t *testing.T) {
 }
 
 func TestEveryAcceptedAddressIsSafeForTheRunner(t *testing.T) {
+	t.Parallel()
 	for _, in := range []string{"https://github.com/a/b.git", "git@github.com:a/b.git", "ssh://git@github.com:22/a/b"} {
 		r, err := ParseURL(in, Policy{Hosts: DefaultHosts})
 		if err != nil {

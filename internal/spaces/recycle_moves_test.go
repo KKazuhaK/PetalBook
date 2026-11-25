@@ -23,6 +23,7 @@ import (
 // through them; a restore later in its list that finishes while the job is busy
 // with an earlier item is left alone: its directories stay at their live place.
 func TestTheHourlyJobLeavesARestoreThatFinishedMeanwhileAlone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		a := f.fullSpace("olive", "edith", "mia")
@@ -178,6 +179,7 @@ func removeSome(dir string) {
 // or a crash) never leaves the space partial: after the recovery it is whole,
 // restored or back in the bin, and it can be restored whole.
 func TestACopyAcrossFilesystemsWhoseDeleteIsCutShortKeepsTheSpaceWhole(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"error", "crash"} {
 		t.Run(mode, func(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -276,6 +278,7 @@ func TestACopyAcrossFilesystemsWhoseDeleteIsCutShortKeepsTheSpaceWhole(t *testin
 // The same cut short on the way to the bin: the recovery finishes the move and
 // leaves no leftover at the live place.
 func TestACopyToTheBinWhoseDeleteIsCutShortIsFinished(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")

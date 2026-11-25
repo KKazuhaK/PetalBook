@@ -1,6 +1,7 @@
 package spaces
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,7 @@ import (
 // command run against the data directory of a running server must not remove
 // a restore that server has in progress, nor a space it is making.
 func TestOnlyTheServerCleansUpAtStartAndOnlyOneServerRuns(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		needGit(t)
 		dir := filepath.Join(t.TempDir(), "data")
@@ -59,7 +61,7 @@ func TestOnlyTheServerCleansUpAtStartAndOnlyOneServerRuns(t *testing.T) {
 		}
 		// Once the first has stopped, the next server cleans up.
 		m.Close()
-		m3, err := NewAccounts(srv)
+		m3, err := reopenAccounts(srv)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,4 +70,21 @@ func TestOnlyTheServerCleansUpAtStartAndOnlyOneServerRuns(t *testing.T) {
 			t.Fatal("the server did not remove what a stopped run left")
 		}
 	})
+}
+
+// reopenAccounts opens a manager on a data directory whose previous manager
+// has just been closed. The lock of a data directory is released when the last
+// copy of its file descriptor goes, and a command another test starts at that
+// moment still holds a copy for the instant between fork and exec; so, with
+// tests running side by side, the lock may be seen as held a moment longer.
+// A directory that stays held is still an error.
+func reopenAccounts(opt Options) (*Manager, error) {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		m, err := NewAccounts(opt)
+		if err == nil || !errors.Is(err, ErrDataDirInUse) || time.Now().After(deadline) {
+			return m, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

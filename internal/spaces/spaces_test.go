@@ -55,6 +55,7 @@ func addUser(t *testing.T, st *store.Store, id, username string) store.User {
 }
 
 func TestSingleMode(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	st := storetest.Open(t, "sqlite")
 	sp, err := space.Open(space.Options{Root: filepath.Join(t.TempDir(), "s"), Name: "Mine", CommitIdle: time.Hour, CommitMax: time.Hour})
@@ -96,6 +97,7 @@ func TestSingleMode(t *testing.T) {
 }
 
 func TestOpenIsLazyAndOnce(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		u := addUser(t, st, "U1", "kazuha")
@@ -144,6 +146,7 @@ func TestOpenIsLazyAndOnce(t *testing.T) {
 }
 
 func TestMembershipDecidesAccessAndIsCached(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		u1, u2 := addUser(t, st, "U1", "one"), addUser(t, st, "U2", "two")
@@ -189,6 +192,7 @@ func TestMembershipDecidesAccessAndIsCached(t *testing.T) {
 }
 
 func TestRenameIsForOwnersAndInvalidatesEveryMember(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		u1, u2 := addUser(t, st, "U1", "one"), addUser(t, st, "U2", "two")
@@ -218,6 +222,7 @@ func TestRenameIsForOwnersAndInvalidatesEveryMember(t *testing.T) {
 }
 
 func TestStagedSpaceIsInvisibleUntilCommitted(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		u := addUser(t, st, "U1", "one")
@@ -248,6 +253,7 @@ func TestStagedSpaceIsInvisibleUntilCommitted(t *testing.T) {
 }
 
 func TestMissingDirectoryIsAnErrorNotAnEmptyRepository(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		u := addUser(t, st, "U1", "one")
@@ -271,6 +277,7 @@ func TestMissingDirectoryIsAnErrorNotAnEmptyRepository(t *testing.T) {
 }
 
 func TestCloseCommitsAndRefusesFurtherOpens(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	st := storetest.Open(t, "sqlite")
 	m := testManager(t, st)
@@ -299,6 +306,7 @@ func TestCloseCommitsAndRefusesFurtherOpens(t *testing.T) {
 }
 
 func TestDataDirectoryWithUnsupportedCharacters(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	for _, p := range []string{"/tmp/a#b", "/tmp/a?b"} {
 		if _, err := NewAccounts(Options{Store: st, DataDir: p}); err == nil {
@@ -311,6 +319,7 @@ func TestDataDirectoryWithUnsupportedCharacters(t *testing.T) {
 }
 
 func TestValidName(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{"A": "A", "  Tang  ": "Tang", "日本語のノート": "日本語のノート", strings.Repeat("x", 80): strings.Repeat("x", 80)} {
 		if got, err := ValidName(in); err != nil || got != want {
 			t.Errorf("%q: %q %v", in, got, err)
@@ -324,6 +333,7 @@ func TestValidName(t *testing.T) {
 }
 
 func TestIdentityOf(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		u    store.User
 		want string
@@ -379,6 +389,7 @@ func limitedManager(t *testing.T, st *store.Store, mod func(*Options)) (*Manager
 }
 
 func TestAUserCannotOwnMoreSpacesThanTheLimit(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m, _ := limitedManager(t, st, func(o *Options) { o.MaxSpaces = 3 })
 		u := addUser(t, st, "U1", "one")
@@ -496,6 +507,7 @@ func TestOpenSpacesAndFilesStayBounded(t *testing.T) {
 }
 
 func TestIdleSpacesAreClosedFlushedAndReopened(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m, clk := limitedManager(t, st, func(o *Options) { o.IdleAfter = 10 * time.Minute; o.MaxSpaces = 0 })
 		u := addUser(t, st, "U1", "kazuha")
@@ -546,6 +558,7 @@ func TestIdleSpacesAreClosedFlushedAndReopened(t *testing.T) {
 }
 
 func TestASpaceThatCannotFlushStaysOpenWithItsPendingChanges(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	st := storetest.Open(t, "sqlite")
 	m, clk := limitedManager(t, st, func(o *Options) { o.IdleAfter = time.Minute; o.MaxSpaces = 0 })
@@ -580,6 +593,7 @@ func TestASpaceThatCannotFlushStaysOpenWithItsPendingChanges(t *testing.T) {
 }
 
 func TestACloseNeverRunsAlongsideAnOpenOfTheSameSpace(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	st := storetest.Open(t, "sqlite")
 	m, clk := limitedManager(t, st, func(o *Options) { o.IdleAfter = time.Minute; o.MaxSpaces = 0 })
@@ -640,6 +654,7 @@ func (l *logBuf) Write(p []byte) (int, error) { l.mu.Lock(); defer l.mu.Unlock()
 func (l *logBuf) String() string              { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 func TestCloseWaitsForSpacesThatRequestsStillHold(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	st := storetest.Open(t, "sqlite")
 	m, _ := limitedManager(t, st, func(o *Options) { o.CloseWait = 10 * time.Second; o.MaxSpaces = 0 })
@@ -709,6 +724,7 @@ func TestCloseGivesUpOnAStuckRequestAndItsLaterWritesFailCleanly(t *testing.T) {
 }
 
 func TestOpenPermissions(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		owner := addUser(t, st, "U1", "kazuha")
@@ -775,6 +791,7 @@ func TestOpenPermissions(t *testing.T) {
 // A change drops the cache of the people it touches and of no one else, and it
 // moves the generation that keeps a list read before the change out of the cache.
 func TestMembershipChangedDropsOnlyThoseUsers(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	m := testManager(t, st)
 	u1, u2 := addUser(t, st, "U1", "kazuha"), addUser(t, st, "U2", "tang")
@@ -814,6 +831,7 @@ func TestMembershipChangedDropsOnlyThoseUsers(t *testing.T) {
 // that no request can still be making them, and nothing else: not a space
 // that has its row, not one still being made, not a directory it did not stage.
 func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		needGit(t)
 		dir := filepath.Join(t.TempDir(), "data")
@@ -871,7 +889,7 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		m2, err := NewAccounts(opt)
+		m2, err := reopenAccounts(opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -912,6 +930,7 @@ func TestLeftoverStagedSpacesAreRemovedAtStart(t *testing.T) {
 // A tenant's administrator never reaches a person's own space, in any way; a
 // site administrator reaches it as they reach any space (to manage it).
 func TestAPersonalSpaceIsNotOpenedByATenantAdministrator(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		person := addUser(t, st, "P1", "person")

@@ -90,6 +90,7 @@ func readAsset(t *testing.T, sp *space.Space, rel string) (string, string, error
 }
 
 func TestAnAttachmentGoesToTheAttachmentRepositoryAndIsServedFromTheCache(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -138,6 +139,7 @@ func TestAnAttachmentGoesToTheAttachmentRepositoryAndIsServedFromTheCache(t *tes
 }
 
 func TestAttachmentsThatAreNotCachedAreFetchedOrAnswerNotCached(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -260,6 +262,7 @@ func nothingLost(t *testing.T, a *assetFixture, want map[string]string) {
 }
 
 func TestMovingAttachmentsIntoTheAttachmentRepository(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -460,6 +463,7 @@ func movedFixture(t *testing.T, st *store.Store, mod ...func(*Options)) (*assetF
 }
 
 func TestACrashAtEveryStepOfAnEvictionWithAnAttachmentRepositoryLosesNone(t *testing.T) {
+	t.Parallel()
 	for _, step := range []string{"held", "verified", "marked", "moved", "recorded", "removed"} {
 		t.Run(step, func(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -530,6 +534,7 @@ func reopen(t *testing.T, a *assetFixture, mod ...func(*Options)) *assetFixture 
 }
 
 func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// A move that has not ended: the space's assets/ is the only complete copy.
 		hold := make(chan struct{})
@@ -612,6 +617,7 @@ func TestNothingIsEvictedWhileTheAttachmentRepositoryMayHoldTheOnlyCopy(t *testi
 }
 
 func TestAnImportPushesItsAttachmentsBeforeItsPages(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -669,6 +675,7 @@ func TestAnImportPushesItsAttachmentsBeforeItsPages(t *testing.T) {
 // branch deleted, or the repository made again, empty): the switch must not take
 // assets/ out of the space on the strength of the table the server had.
 func TestAMoveWhoseAttachmentRepositoryLostItsBranchLosesNone(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(remote string){
 		"branch deleted": func(remote string) { runGitQuiet(remote, "update-ref", "-d", "refs/heads/main") },
 		"recreated empty": func(remote string) {
@@ -721,6 +728,7 @@ func TestAMoveWhoseAttachmentRepositoryLostItsBranchLosesNone(t *testing.T) {
 // An upload whose attachment repository is gone answers unavailable and says
 // nothing about the space's own remote, which is fine.
 func TestAFailedAttachmentPushLeavesTheSpaceRemoteAlone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -745,6 +753,7 @@ func TestAFailedAttachmentPushLeavesTheSpaceRemoteAlone(t *testing.T) {
 // Whether assets/ at the root is the space's own is looked up once, not on
 // every read: it is looked at again after a change of the space and a pull.
 func TestWhetherAssetsIsOursIsKeptUntilTheSpaceChanges(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -779,6 +788,7 @@ func TestWhetherAssetsIsOursIsKeptUntilTheSpaceChanges(t *testing.T) {
 // A space whose attachment repository has files (taken when it was connected)
 // may refer to them: the repository cannot be swapped for another address.
 func TestAnAttachmentRepositoryWithFilesIsNotSwappedForAnother(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a := newAssetFixture(t, st)
 		defer a.h.Release()
@@ -808,6 +818,7 @@ func TestAnAttachmentRepositoryWithFilesIsNotSwappedForAnother(t *testing.T) {
 // landed could not be made): the move says failed for now, and once the space
 // has the switch at its HEAD the move is done.
 func TestASwitchWhoseAnswerWasLostEndsDone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var r *runner
 		a := newAssetFixture(t, st, func(o *Options) {

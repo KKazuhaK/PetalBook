@@ -126,6 +126,7 @@ func TestTokenFetchAndPushOverHTTP(t *testing.T) {
 }
 
 func TestWrongTokenIsARefusedCredential(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	bare := filepath.Join(root, "notes.git")
@@ -152,6 +153,7 @@ func TestWrongTokenIsARefusedCredential(t *testing.T) {
 }
 
 func TestUnreachableAndHungRemotes(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	// Nothing listens.
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -187,6 +189,7 @@ func TestUnreachableAndHungRemotes(t *testing.T) {
 }
 
 func TestSSHKeyGeneration(t *testing.T) {
+	t.Parallel()
 	k, err := GenerateSSHKey("petalbook-01JD3K8Q7Z")
 	if err != nil {
 		t.Fatal(err)
@@ -218,6 +221,7 @@ func TestSSHKeyGeneration(t *testing.T) {
 }
 
 func TestSSHCommandAndKeyFileLifetime(t *testing.T) {
+	t.Parallel()
 	want := "ssh -i '/tmp/k' -F /dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new " +
 		"-o UserKnownHostsFile='/data/known hosts/it'\\''s' -o GlobalKnownHostsFile=/dev/null -o HashKnownHosts=no " +
 		"-o PreferredAuthentications=publickey -o ClearAllForwardings=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=2"
@@ -276,6 +280,7 @@ func TestSSHCommandAndKeyFileLifetime(t *testing.T) {
 }
 
 func TestHostKeyFingerprint(t *testing.T) {
+	t.Parallel()
 	k, _ := GenerateSSHKey("host")
 	line := "example.com " + strings.SplitN(k.Public, " ", 3)[0] + " " + strings.SplitN(k.Public, " ", 3)[1] + "\n"
 	f := filepath.Join(t.TempDir(), "known")

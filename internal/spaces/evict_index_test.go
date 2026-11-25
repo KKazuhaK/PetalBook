@@ -66,6 +66,7 @@ func indexMeta(t *testing.T, p, key string) string {
 // list would answer empty. The old index is left as it is until the restore
 // has the files.
 func TestAnEvictedSpaceWhoseIndexCannotAnswerIsRestoredNotEmptied(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		spoil func(t *testing.T, p string)
@@ -153,6 +154,7 @@ func TestAnEvictedSpaceWhoseIndexCannotAnswerIsRestoredNotEmptied(t *testing.T) 
 // new one: it would stay in the map after the full space opened the index,
 // report an old head, and mark the index closed cleanly under the full space.
 func TestNoIndexOnlyHandleIsGivenOnceARestoreClosedIt(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var f *rm
 		var once sync.Once

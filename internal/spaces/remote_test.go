@@ -124,7 +124,7 @@ func (f *rm) open(mod ...func(*Options)) *Manager {
 	for _, m := range mod {
 		m(&opt)
 	}
-	m, err := NewAccounts(opt)
+	m, err := reopenAccounts(opt)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -188,6 +188,7 @@ func tokenReq(remote string) ConnectRequest {
 }
 
 func TestConnectStoresTheCredentialEncryptedAndReopensAsARemoteSpace(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("Notes")
@@ -256,6 +257,7 @@ func TestConnectStoresTheCredentialEncryptedAndReopensAsARemoteSpace(t *testing.
 }
 
 func TestSSHKeyBeforeConnectingAndRotation(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("Keys")
@@ -307,6 +309,7 @@ func TestSSHKeyBeforeConnectingAndRotation(t *testing.T) {
 }
 
 func TestConnectValidation(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st, func(o *Options) { o.RemotePolicy = gitstore.Policy{Hosts: gitstore.DefaultHosts} })
 		_, h := f.space("V")
@@ -348,6 +351,7 @@ func TestConnectValidation(t *testing.T) {
 }
 
 func TestReconnectingKeepsTheStoredTokenAndDisconnectDeletesEverything(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("T")
@@ -388,6 +392,7 @@ func TestReconnectingKeepsTheStoredTokenAndDisconnectDeletesEverything(t *testin
 }
 
 func TestSyncStateInTheListFollowsTheRemote(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		in, h := f.space("S")
@@ -428,6 +433,7 @@ func TestSyncStateInTheListFollowsTheRemote(t *testing.T) {
 }
 
 func TestRewrittenHistoryThroughTheManager(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		_, h := f.space("R")
@@ -475,6 +481,7 @@ func TestRewrittenHistoryThroughTheManager(t *testing.T) {
 // ---- the puller ------------------------------------------------------------------------
 
 func TestPullerPullsOpenSpacesOnlyAndNeverCountsAsUse(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st, func(o *Options) { o.IdleAfter = 10 * time.Minute })
 		in, h := f.space("P")
@@ -541,6 +548,7 @@ func TestPullerPullsOpenSpacesOnlyAndNeverCountsAsUse(t *testing.T) {
 }
 
 func TestPullerRunsAFewAtATime(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	f := remoteManager(t, st, func(o *Options) { o.MaxSpaces = 0 })
 	const n = 12
@@ -592,6 +600,7 @@ func TestPullerRunsAFewAtATime(t *testing.T) {
 }
 
 func TestPullUpdatesIndexOfAnOpenSpaceWithoutARequest(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	f := remoteManager(t, st)
 	in, h := f.space("Q")

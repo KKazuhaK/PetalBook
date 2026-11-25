@@ -142,6 +142,7 @@ func TestCommitAfterMaximumAgeEvenWhileWriting(t *testing.T) {
 }
 
 func TestCloseFlushesPendingChanges(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s, err := Open(Options{Root: root, CommitIdle: time.Hour, CommitMax: 2 * time.Hour})
@@ -211,6 +212,7 @@ func TestCloseFlushesPendingChanges(t *testing.T) {
 }
 
 func TestCommitMessages(t *testing.T) {
+	t.Parallel()
 	cs := func(spec ...string) []change {
 		var out []change
 		for _, s := range spec {
@@ -250,6 +252,7 @@ func TestCommitMessages(t *testing.T) {
 }
 
 func TestOpenKeepsStateDirOutOfTheRepository(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	state := filepath.Join(root, "state-here")
