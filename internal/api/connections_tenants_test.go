@@ -29,6 +29,7 @@ func ghTenFx(t *testing.T, a *acc) *tenFx {
 }
 
 func TestATenantAdministratorCannotReachTheApp(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		for _, c := range []*client{f.admA, f.admB} {
@@ -43,6 +44,7 @@ func TestATenantAdministratorCannotReachTheApp(t *testing.T) {
 }
 
 func TestASpaceWithARepositoryIsItsCreatorsTenantsAndCounts(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		ctx := context.Background()
@@ -81,6 +83,7 @@ func spacesUsed(t *testing.T, r result) int64 {
 }
 
 func TestAConnectionSyncsOnlySpacesOfItsOwnTenant(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		// The site administrator (tenant A) may open B's space, but their own
@@ -104,6 +107,7 @@ func TestAConnectionSyncsOnlySpacesOfItsOwnTenant(t *testing.T) {
 }
 
 func TestAGitHubAccountIsLinkedOnceAcrossTenants(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		// A's member tries B's member's GitHub account: taken, and the answer
@@ -128,6 +132,7 @@ func TestAGitHubAccountIsLinkedOnceAcrossTenants(t *testing.T) {
 // An installation is shared with chosen tenants: only their people can use it,
 // and a site administrator is the only one who chooses.
 func TestAnInstallationIsSharedWithChosenTenantsOnly(t *testing.T) {
+	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		f := ghTenFx(t, a)
 		a.fake.AddOrg("petal-team")

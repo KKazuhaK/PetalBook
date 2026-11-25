@@ -268,6 +268,7 @@ func (f *rbFix) noItem(id string) {
 }
 
 func TestRecycleKeepsEverythingAndRestoreGivesItBack(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -400,6 +401,7 @@ func TestRecycleKeepsEverythingAndRestoreGivesItBack(t *testing.T) {
 // said not to need it: a table added later without being added there would lose
 // its rows on a restore.
 func TestEveryTableOfASpaceIsRecycled(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var query string
 		if st.Dialect() == store.Postgres {
@@ -434,6 +436,7 @@ func TestEveryTableOfASpaceIsRecycled(t *testing.T) {
 }
 
 func TestRecycledRestoreLeavesOutPeopleWhoAreGoneAndNeedsAnOwner(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -492,6 +495,7 @@ func TestRecycledRestoreLeavesOutPeopleWhoAreGoneAndNeedsAnOwner(t *testing.T) {
 }
 
 func TestRecycleCrashesAreFinishedAtTheNextStart(t *testing.T) {
+	t.Parallel()
 	for _, step := range []string{"recycle:rows", "recycle:moved-space"} {
 		t.Run(step, func(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -544,6 +548,7 @@ func TestRecycleCrashesAreFinishedAtTheNextStart(t *testing.T) {
 }
 
 func TestRestoreCrashesAreUndoneAtTheNextStart(t *testing.T) {
+	t.Parallel()
 	for _, step := range []string{"restore:marked", "restore:moved-space", "restore:moved-cache"} {
 		t.Run(step, func(t *testing.T) {
 			storetest.Each(t, func(t *testing.T, st *store.Store) {
@@ -594,6 +599,7 @@ func TestRestoreCrashesAreUndoneAtTheNextStart(t *testing.T) {
 }
 
 func TestPurgeDeletesOnlyAfterTheDaysAndFinishesAfterACrash(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		days := 30
@@ -650,6 +656,7 @@ func TestPurgeDeletesOnlyAfterTheDaysAndFinishesAfterACrash(t *testing.T) {
 // When recycle.days cannot be read, the purge round is skipped: an item is
 // never purged on a default that may be shorter than what the site set.
 func TestAPurgeIsSkippedWhenRecycleDaysCannotBeRead(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		var readErr error = errors.New("the settings cannot be read")
@@ -687,6 +694,7 @@ func (f *rbFix) fullSpaceNamed(owner, editor, member, name string) Info {
 }
 
 func TestRecycleOfASpaceInUseChangesNothing(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -716,6 +724,7 @@ func TestRecycleOfASpaceInUseChangesNothing(t *testing.T) {
 }
 
 func TestAPersonalSpaceIsNotRecycledOnItsOwnNorRestoredWithoutItsPerson(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		f.user("olive")
@@ -743,6 +752,7 @@ func TestAPersonalSpaceIsNotRecycledOnItsOwnNorRestoredWithoutItsPerson(t *testi
 }
 
 func TestRemovePacedRemovesTheTree(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, p := range []string{"a/b/c.txt", "a/d.txt", "e.txt"} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, "x", p)), 0o755); err != nil {
@@ -774,6 +784,7 @@ func TestRemovePacedRemovesTheTree(t *testing.T) {
 // than a minute keeps its directories and finishes, and a purge is never run
 // twice at once.
 func TestTheHourlyJobNeverTakesOverAnActionThatIsRunning(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -860,6 +871,7 @@ func TestTheHourlyJobNeverTakesOverAnActionThatIsRunning(t *testing.T) {
 // state restoring) puts nothing back: its rows are rolled back and its
 // directories go back to the bin.
 func TestARestoreWhoseItemWasTakenPutsNothingBack(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -895,6 +907,7 @@ func TestARestoreWhoseItemWasTakenPutsNothingBack(t *testing.T) {
 // A move across filesystems (rename answers EXDEV) is made by a copy and a
 // delete: the item is never stuck in moving, and it comes back the same way.
 func TestRecycleMovesAcrossFilesystems(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -941,6 +954,7 @@ func TestRecycleMovesAcrossFilesystems(t *testing.T) {
 // A copy cut short is started again and finished by the next look; one that
 // was finished but whose source was not deleted yet is finished too.
 func TestACopyAcrossFilesystemsCutShortIsFinished(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := newRbFix(t, st)
 		info := f.fullSpace("olive", "edith", "mia")
@@ -971,6 +985,7 @@ func TestACopyAcrossFilesystemsCutShortIsFinished(t *testing.T) {
 // the index-only handle (4.1): no orphan clone is left in DATA/spaces after the
 // move, and the bin holds what the space had.
 func TestDeletingASpaceThatIsBeingRestoredLeavesNoOrphanClone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		remote := filterBare(t)

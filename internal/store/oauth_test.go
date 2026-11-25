@@ -22,6 +22,7 @@ func mkGrant(t *testing.T, st *store.Store, id, user, hash string, created time.
 }
 
 func TestOAuthSigningKeyIsStoredOnce(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if _, ok, err := store.GetOAuthSigningKey(ctx, st.Q()); err != nil || ok {
 			t.Fatalf("%v %v", ok, err)
@@ -40,6 +41,7 @@ func TestOAuthSigningKeyIsStoredOnce(t *testing.T) {
 }
 
 func TestOAuthGrantsAndRefreshRotation(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -118,6 +120,7 @@ func TestOAuthGrantsAndRefreshRotation(t *testing.T) {
 }
 
 func TestOAuthClients(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.UnixMilli(1_700_000_000_000)
 		mk := func(id, fp string, created time.Time) {
@@ -173,6 +176,7 @@ func TestOAuthClients(t *testing.T) {
 // The update, the insert of the replaced hash and the trim are one transaction:
 // when a later step fails, the live token is still the old one.
 func TestRotateOAuthRefreshIsOneTransaction(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		now := time.UnixMilli(1_700_000_000_000)

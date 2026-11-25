@@ -5,6 +5,7 @@ import "testing"
 // An icon or a colour written by hand that is none is read as none: a client
 // that looks the icon up by name must never be given "constructor".
 func TestAnIconThatIsNoneIsNotIndexed(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ icon, color, wantIcon, wantColor string }{
 		{"constructor", "__proto__", "", ""},
 		{"toString", "mauve", "", ""},

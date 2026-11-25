@@ -29,6 +29,7 @@ func mustSave(t *testing.T, s *Space, p *Page, title, body string) *Page {
 }
 
 func TestRenameRewritesReferrersAndKeepsEverythingElse(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	target := mustCreate(t, s, "Tang", meta("title", "暮雪"), "body\n")
 	body := "前文 **[读  暮雪](../Tang/暮雪.md#小节 \"" + target.ID + "\")**，另见[再看](<../Tang/暮雪.md>)和 `[x](../Tang/暮雪.md)`。\n\n```\n[y](../Tang/暮雪.md)\n```\n"
@@ -67,6 +68,7 @@ func TestRenameRewritesReferrersAndKeepsEverythingElse(t *testing.T) {
 }
 
 func TestMoveRewritesInboundAndOutboundLinks(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "A", meta("title", "甲"), "x\n")
 	b := mustCreate(t, s, "B", meta("title", "乙"), "x\n")
@@ -88,6 +90,7 @@ func TestMoveRewritesInboundAndOutboundLinks(t *testing.T) {
 }
 
 func TestFolderMoveRewritesNestedAndKeepsInternalLinks(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	out := mustCreate(t, s, "Out", meta("title", "外"), "x\n")
 	in1 := mustCreate(t, s, "F/Sub", meta("title", "内一"), "[out](../../Out/外.md) [in2](../内二.md)\n")
@@ -111,6 +114,7 @@ func TestFolderMoveRewritesNestedAndKeepsInternalLinks(t *testing.T) {
 }
 
 func TestBacklinksPagingAndExcerpt(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	target := mustCreate(t, s, "", meta("title", "目标"), "x\n")
 	long := strings.Repeat("很长的前文。", 60) + "这里[目标](../目标.md)在中间" + strings.Repeat("很长的后文。", 60)
@@ -162,6 +166,7 @@ func TestBacklinksPagingAndExcerpt(t *testing.T) {
 }
 
 func TestLinksFlagBrokenAndDeleted(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "", meta("title", "甲"), "x\n")
 	b := mustCreate(t, s, "", meta("title", "乙"), "[a](甲.md) [gone](没有.md) [byid](old/path.md \""+a.ID+"\")\n")
@@ -185,6 +190,7 @@ func TestLinksFlagBrokenAndDeleted(t *testing.T) {
 }
 
 func TestSaveAddsMissingIDs(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "", meta("title", "甲"), "x\n")
 	mustCreate(t, s, "", meta("title", "丙"), "x\n")
@@ -197,6 +203,7 @@ func TestSaveAddsMissingIDs(t *testing.T) {
 }
 
 func TestExternalRenameIsRepairedAtStart(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -347,6 +354,7 @@ func brokenLinks(t *testing.T, s *Space) []string {
 }
 
 func TestBrokenLinksOnTheCheckPage(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	a := mustCreate(t, s, "", meta("title", "甲"), "x\n")
 	b := mustCreate(t, s, "", meta("title", "乙"), "[a](甲.md) [gone](没有.md)\n")

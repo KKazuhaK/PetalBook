@@ -511,7 +511,7 @@ func TestMCPPageGetWithALargeHeader(t *testing.T) {
 	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
 		e := newMCP(t, a)
 		// Quotes, backslashes and line ends take two bytes each in JSON.
-		body := strings.Repeat("\"长\" \\ x\n", 30000) // about 330 KB
+		body := strings.Repeat("\"长\" \\ x\n", 18000) // about 200 KB: with the header taking all but 60 KiB, still several pieces
 		big := strings.Repeat("y", 1<<20-60<<10)
 		id := e.create(t, map[string]any{"title": "Wide", "props": map[string]any{"big": big}, "body": body})["id"].(string)
 		var got strings.Builder

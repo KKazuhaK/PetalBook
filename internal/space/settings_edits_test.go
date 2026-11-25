@@ -62,6 +62,7 @@ func entriesOf(doc *yaml.Node, section string) int {
 // not with the size times the number of entries that go: each of these took
 // from seconds to more than a minute at this size when entries were cut out of
 // the list one at a time.
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestEditsOfManyEntriesTakeOnePassOverTheFile(t *testing.T) {
 	n := manyFolders() // a full space.yml: 1 MiB of `fNNNNN: {type: t}`
 	typed := func(i int) string { return fmt.Sprintf("f%05d: {type: t}", i) }
@@ -184,6 +185,7 @@ func TestEditsOfManyEntriesTakeOnePassOverTheFile(t *testing.T) {
 // Deleting a type that every folder of a full space.yml is bound to: this is
 // made inside the one change a space makes at a time, so while it runs nothing
 // else is written (it ran for 76 seconds).
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestDeletingATypeBoundToManyFoldersDoesNotStallTheSpace(t *testing.T) {
 	s := open(t)
 	if _, err := putCurrent(s, "t", allKinds()); err != nil {

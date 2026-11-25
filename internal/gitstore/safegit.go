@@ -237,7 +237,7 @@ var allowedOptions = map[string][]string{
 	"for-each-ref": {"--format=*"},
 	"reset":        {"--quiet", "--hard"},
 	"rev-list":     {"--count", "--left-right", "--not", "--objects", "--missing=print", "--all"},
-	"rev-parse":    {"--is-inside-work-tree", "--abbrev-ref", "--absolute-git-dir", "--show-prefix", "--verify", "--quiet", "--short"},
+	"rev-parse":    {"--is-inside-work-tree", "--abbrev-ref", "--absolute-git-dir", "--show-prefix", "--revs-only", "--verify", "--quiet", "--short"},
 	"status":       {"--porcelain", "-z", "--untracked-files=no", "--untracked-files=normal"},
 	// An export of a space (3.5): the files of a commit as a tar, and a bundle
 	// of the whole history. Both only read the repository (the bundle writes

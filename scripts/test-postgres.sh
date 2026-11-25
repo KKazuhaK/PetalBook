@@ -7,7 +7,8 @@
 # PETALBOOK_TEST_POSTGRES_ONLY=1 the SQLite half is left out: running it again
 # would only repeat make test. The race detector stays on: some tests run
 # transactions at the same time only on PostgreSQL (SQLite has one writer), so
-# make test never races them. Only the packages whose tests import
+# make test never races them. checkptr is off for modernc.org packages, as in
+# make test (see RACEFLAGS in the Makefile). Only the packages whose tests import
 # internal/store/storetest (the one place that reads the variables) are run:
 # the others never touch the database. When
 # that variable is already set (CI) the database it names is used; otherwise
@@ -44,7 +45,7 @@ if [ -n "${PETALBOOK_TEST_POSTGRES:-}" ]; then
     state_db_args
     export PETALBOOK_TEST_POSTGRES_ONLY=1
     # shellcheck disable=SC2086
-    set -- -race -timeout 20m $pkgs
+    set -- -race -gcflags=modernc.org/...=-d=checkptr=0 -timeout 20m $pkgs
   fi
   exec go test "$@"
 fi
@@ -62,6 +63,6 @@ if [ "$#" -eq 0 ]; then
   state_db_args
   export PETALBOOK_TEST_POSTGRES_ONLY=1
   # shellcheck disable=SC2086
-  set -- -race -timeout 20m $pkgs
+  set -- -race -gcflags=modernc.org/...=-d=checkptr=0 -timeout 20m $pkgs
 fi
 go test "$@"

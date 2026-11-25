@@ -35,6 +35,7 @@ func changesAll(t *testing.T, x *Index, since string, limit int) (items []Catalo
 func pageID(n int) string { return fmt.Sprintf("01JD3K8%03d", n) }
 
 func TestFeedSeqIsIncreasingUnderConcurrentWrites(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	start := x.Head()
 	const writers, each = 8, 25
@@ -90,6 +91,7 @@ func TestFeedSeqIsIncreasingUnderConcurrentWrites(t *testing.T) {
 }
 
 func TestFeedChangesAreOnceAndInOrder(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	putPage(t, x, "a.md", pageID(1), "A")
 	putPage(t, x, "b.md", pageID(2), "B")
@@ -133,6 +135,7 @@ func TestFeedChangesAreOnceAndInOrder(t *testing.T) {
 }
 
 func TestFeedMoreAndNext(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	base := x.Head()
 	for i := 0; i < 5; i++ {
@@ -203,6 +206,7 @@ func TestFeedGoneIsBoundedByCount(t *testing.T) {
 }
 
 func TestFeedGoneIsBoundedByAge(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	x := openIndex(t)
 	x.now = func() time.Time { return now }
@@ -238,6 +242,7 @@ func TestFeedGoneIsBoundedByAge(t *testing.T) {
 }
 
 func TestFeedNewEpochAfterRebuildAndRestart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "state", "index.db")
 	x, err := Open(p, "/space")
@@ -276,6 +281,7 @@ func TestFeedNewEpochAfterRebuildAndRestart(t *testing.T) {
 }
 
 func TestFeedSchemaVersionRebuildsOldIndex(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "state", "index.db")
 	x, err := Open(p, "/space")
 	if err != nil {
@@ -297,6 +303,7 @@ func TestFeedSchemaVersionRebuildsOldIndex(t *testing.T) {
 }
 
 func TestFeedCatalog(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	for i := 0; i < 30; i++ {
 		folder := []string{"", "Tang", "Tang/Li", "Song", "Tangible"}[i%5]
@@ -366,6 +373,7 @@ func TestFeedCatalog(t *testing.T) {
 }
 
 func TestFeedTreeStamp(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	t0 := x.TreeStamp()
 	putPage(t, x, "a.md", pageID(1), "A")
@@ -402,6 +410,7 @@ func TestFeedTreeStamp(t *testing.T) {
 }
 
 func TestFeedAPageThatIsThereIsNeverAlsoARemoval(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	base := x.Head()
 	putPage(t, x, "a.md", pageID(1), "A")
@@ -503,6 +512,7 @@ func copyFiles(t *testing.T, from, to string) {
 // that was handed out before can be handed out again, so no old cursor may be
 // answered.
 func TestFeedNewEpochAfterAnUncleanShutdown(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "a", "index.db")
 	x, err := Open(p, "/space")
@@ -541,6 +551,7 @@ func TestFeedNewEpochAfterAnUncleanShutdown(t *testing.T) {
 // The first sync after an open that finds files that differ from the index
 // starts a new epoch: what the index held may have been rolled back.
 func TestFeedNewEpochWhenTheStartupSyncFindsChanges(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "state", "index.db")
 	x, err := Open(p, "/space")
 	if err != nil {
@@ -574,6 +585,7 @@ func TestFeedNewEpochWhenTheStartupSyncFindsChanges(t *testing.T) {
 // created where there is no index, an index that was not closed cleanly has no
 // head to give, and the read leaves nothing that a later open would trip on.
 func TestStoredHeadOfAClosedIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "none", "index.db")
 	if h, err := StoredHead(missing); err != nil || h != "" {
@@ -625,6 +637,7 @@ func TestStoredHeadOfAClosedIndex(t *testing.T) {
 // epoch, so a cursor from before the eviction stays good. The note is used once
 // and only on an index that was closed cleanly.
 func TestFeedRestoreKeepsTheEpoch(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "state", "index.db")
 	x, err := Open(p, "/space")
 	if err != nil {
@@ -694,6 +707,7 @@ func TestFeedRestoreKeepsTheEpoch(t *testing.T) {
 
 // Notes stored at Close are read by the next open, and Close keeps them.
 func TestCloseWithStoresNotes(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "index.db")
 	x, err := Open(p, "/space")
 	if err != nil {

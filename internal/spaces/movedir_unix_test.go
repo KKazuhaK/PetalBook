@@ -12,6 +12,7 @@ import (
 // A copy across filesystems keeps each file's mode, whatever the umask, and a
 // copy that cannot be renamed into place leaves no .partial behind.
 func TestACopyAcrossFilesystemsKeepsModesAndLeavesNoPartial(t *testing.T) {
+	// Serial: syscall.Umask changes the whole process.
 	exdev := func(oldpath, newpath string) error {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
 	}

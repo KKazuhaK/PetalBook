@@ -21,6 +21,7 @@ import (
 // The two are compared, not held to a fixed number: a commit must not grow
 // with the space, and the old way did.
 func TestCommitTimeInALargeSpace(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("PETALBOOK_TIMING") == "" {
 		t.Skip("set PETALBOOK_TIMING=1 to measure")
 	}

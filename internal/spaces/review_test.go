@@ -19,6 +19,7 @@ import (
 // Another owner editing their profile does not change the author of the
 // space's default commits: that is the first owner.
 func TestOnlyTheFirstOwnersProfileSetsTheDefaultAuthor(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		ann := addUser(t, st, "U1", "ann")
@@ -53,6 +54,7 @@ func TestOnlyTheFirstOwnersProfileSetsTheDefaultAuthor(t *testing.T) {
 // A transfer to someone who is added at the same moment neither fails on the
 // key nor loses the ownership.
 func TestTransferAndAddOfTheSameUserDoNotCollide(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		owner := addUser(t, st, "U1", "owner")
@@ -103,6 +105,7 @@ func TestTransferAndAddOfTheSameUserDoNotCollide(t *testing.T) {
 // A space deleted while it is being measured is skipped without a failure, and
 // one whose first measurement fails is listed as not measured.
 func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		owner := addUser(t, st, "U1", "owner")
@@ -151,6 +154,7 @@ func TestSizerSkipsADeletedSpaceAndReportsAFailedFirstMeasurementAsNone(t *testi
 // The name search ignores case beyond ASCII, the same on both databases: the
 // names are folded by Go (name_key), not by the database's own idea of case.
 func TestSpaceSearchIgnoresCaseBeyondASCII(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		m := testManager(t, st)
 		owner := addUser(t, st, "U1", "owner")

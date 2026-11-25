@@ -30,6 +30,7 @@ func titles(t *testing.T, x *Index, q Query) string {
 }
 
 func TestListFilters(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	day := func(s string) time.Time {
 		d, err := time.Parse("2006-01-02T15:04", s)
@@ -72,6 +73,7 @@ func strp(s string) *string { return &s }
 
 // A filter stays in force across pages of a listing.
 func TestListFiltersWithACursor(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	base := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 9; i++ {

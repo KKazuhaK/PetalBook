@@ -53,6 +53,7 @@ func (x *extFixture) choose2(base string, apis []any, options map[string]any) (i
 }
 
 func TestBuiltInOptionsAreListedAndChecked(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&categoryServices{})
@@ -125,6 +126,7 @@ func TestBuiltInOptionsAreListedAndChecked(t *testing.T) {
 }
 
 func TestBuiltInOptionsMakeTheAddressAndSeparateTheCache(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		stub := &categoryServices{}
@@ -172,6 +174,7 @@ func TestBuiltInOptionsMakeTheAddressAndSeparateTheCache(t *testing.T) {
 
 // One lane for a provider: the rate limit holds across its sets of options.
 func TestBuiltInRateLimitIsSharedAcrossOptionSets(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		stub := &categoryServices{}
@@ -200,6 +203,7 @@ func TestBuiltInRateLimitIsSharedAcrossOptionSets(t *testing.T) {
 
 // The default's options apply to a space that chose nothing; a space's own choice replaces them.
 func TestBuiltInOptionsFollowTheLayers(t *testing.T) {
+	t.Parallel()
 	withExternal(t, func(x *extFixture) {
 		t := x.t
 		x.fetcher.SetTransport(&categoryServices{})

@@ -20,6 +20,8 @@ import (
 // asked for:
 //
 //	PETALBOOK_TIMING=1 go test -run TestChangeFeedInALargeSpace -v ./internal/space/
+//
+// Not parallel: it measures timings, which tests running alongside would distort.
 func TestChangeFeedInALargeSpace(t *testing.T) {
 	if os.Getenv("PETALBOOK_TIMING") == "" {
 		t.Skip("set PETALBOOK_TIMING=1 to measure")

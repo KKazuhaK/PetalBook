@@ -6,6 +6,7 @@ import "testing"
 // read the file through a memory map, so an index's pages are held once by the
 // operating system instead of in each of its connections.
 func TestReadConnectionsHaveASmallCacheAndAMap(t *testing.T) {
+	t.Parallel()
 	x := openIndex(t)
 	var w, r, a, mm int64
 	if err := x.wdb.QueryRow(`PRAGMA cache_size`).Scan(&w); err != nil {

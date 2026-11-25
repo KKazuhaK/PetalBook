@@ -73,6 +73,7 @@ func TestTheDomainAllowListComparesASCIIOnly(t *testing.T) {
 			}
 		}
 		reg(anon, map[string]any{"username": "domok", "email": "x@GitHub.test"}).want(t, 202, "")
+		srv.Wait(1)
 		settle()
 		if n := len(srv.Messages()); n != 1 {
 			t.Fatalf("%d messages", n)

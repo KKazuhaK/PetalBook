@@ -43,6 +43,7 @@ func same(a, b []string) bool {
 }
 
 func TestFavorites(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")
@@ -122,6 +123,7 @@ func TestFavorites(t *testing.T) {
 }
 
 func TestFavoritesLimit(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkSpace(t, st, "S1", "one")
@@ -167,6 +169,7 @@ func TestFavoritesLimit(t *testing.T) {
 }
 
 func TestMoveFolderFavorites(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "member")
 		mkUser(t, st, "B", "b", "member")

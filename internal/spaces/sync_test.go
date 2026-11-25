@@ -243,6 +243,7 @@ func (e *ghEnv) onlySpace() string {
 }
 
 func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		in, err := e.create("Tang", "kazuhahub", "tang-notes", true)
@@ -295,6 +296,7 @@ func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
 }
 
 func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		in, err := e.create("Mine", "tang", "notes", true)
@@ -332,6 +334,7 @@ func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
 }
 
 func TestNothingIsLeftWhenGitHubRefusesTheRepository(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.AddRepo("kazuhahub", "taken", true)
@@ -376,6 +379,7 @@ func TestNothingIsLeftWhenGitHubRefusesTheRepository(t *testing.T) {
 }
 
 func TestARepositoryThatIsNotFoundForAFewSeconds(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.HiddenGit = 2 // the first two tries with credentials find nothing
@@ -397,6 +401,7 @@ func TestARepositoryThatIsNotFoundForAFewSeconds(t *testing.T) {
 }
 
 func TestAnEmptyRepositoryIsLeftAndNamedWhenThePushNeverWorks(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.HiddenGit = 100 // more than the four tries
@@ -438,6 +443,7 @@ func TestAnEmptyRepositoryIsLeftAndNamedWhenThePushNeverWorks(t *testing.T) {
 }
 
 func TestARefusedCredentialIsNotRetried(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.RejectGit = true
@@ -455,6 +461,7 @@ func TestARefusedCredentialIsNotRetried(t *testing.T) {
 }
 
 func TestSelectedRepositoriesInstallation(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.AddOrg("sel", "tang")
@@ -490,6 +497,7 @@ func TestSelectedRepositoriesInstallation(t *testing.T) {
 }
 
 func TestAFailureAfterTheRepositoryLeavesNoSpace(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		// The record of the space cannot be written.
@@ -520,6 +528,7 @@ func TestAFailureAfterTheRepositoryLeavesNoSpace(t *testing.T) {
 }
 
 func TestTheLimitCountsSpacesBeingMade(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st, func(o *Options) { o.MaxSpaces = 1 })
 		var wg sync.WaitGroup
@@ -557,6 +566,7 @@ func TestTheLimitCountsSpacesBeingMade(t *testing.T) {
 // judged by the space's tenant: the share must reach it, whichever tenant the
 // administrator belongs to.
 func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.AddRepo("kazuhahub", "wiki", true)
@@ -601,6 +611,7 @@ func TestConnectingAnotherTenantsSpaceChecksTheSpacesTenant(t *testing.T) {
 }
 
 func TestSwitchingASpaceToTheApp(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		// A space that follows a repository with a token, as before.
@@ -675,6 +686,7 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 }
 
 func TestAnExpiredAuthorizationPutsTheSpaceInErrorAndKeepsEverything(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		in, err := e.create("Mine", "tang", "notes", true)
@@ -740,6 +752,7 @@ func waitFor(t *testing.T, cond func() bool) {
 }
 
 func TestASpaceWhoseCredentialIsMissingIsTriedAgainEveryTenMinutes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st, func(o *Options) { o.ConnectionRetry = 10 * time.Minute })
 		in, err := e.create("Mine", "tang", "notes", true)
@@ -799,6 +812,7 @@ func runGitQuiet(dir string, args ...string) string {
 // GitHub host is not allowed, neither connecting nor creating gets past it, and
 // GitHub is not asked.
 func TestAGitHubCredentialObeysTheRemoteHostPolicy(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st, func(o *Options) { o.RemotePolicy = gitstore.Policy{Hosts: []string{"gitlab.com"}, AllowUnsafe: true} })
 		e.f.AddRepo("kazuhahub", "wiki", true)
@@ -889,6 +903,7 @@ func TestAHangingFirstPushKeepsToItsDeadline(t *testing.T) {
 // own failures and an unreachable GitHub; never another refusal, nor a
 // credential that could not be had (even one whose message says "not found").
 func TestWhatTheFirstPushTriesAgain(t *testing.T) {
+	t.Parallel()
 	git := func(stderr string) error {
 		return &space.UnavailableError{Msg: "x", Err: &gitstore.GitError{Stderr: stderr}}
 	}
@@ -912,6 +927,7 @@ func TestWhatTheFirstPushTriesAgain(t *testing.T) {
 // Milestone 3.1, part 2: a space made on GitHub can get its attachment
 // repository in the same request, by the same path and credential.
 func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		in, err := e.m.CreateWithSync(ctx, e.user.ID, "Tang", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "tang-notes", Private: true, Create: true, Assets: &SyncAssets{}})
@@ -963,6 +979,7 @@ func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
 
 // A request that does not say gets an attachment repository: separate is the default.
 func TestAttachmentsGoToTheirOwnRepositoryByDefault(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		in, err := e.m.CreateWithSync(ctx, e.user.ID, "A", "", SyncCreate{Provider: "github", Owner: "kazuhahub", Name: "a", Private: true, Create: true, Assets: &SyncAssets{Default: true}})
@@ -1071,6 +1088,7 @@ func TestTheSettingsDecideWhatARequestThatDoesNotSayGets(t *testing.T) {
 }
 
 func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.f.AddOrg("sel", "tang")
@@ -1097,6 +1115,7 @@ func TestBothRepositoriesAreNamedWhenTheSelectedInstallationCannotTakeTheSecond(
 // the answer keeps GitHub's own error (and its wait), names the space's
 // repository, and the retry with create false says which repository is missing.
 func TestAFailureToMakeTheAttachmentRepositoryKeepsGitHubsError(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		e.hook = func(step string) {
@@ -1122,6 +1141,7 @@ func TestAFailureToMakeTheAttachmentRepositoryKeepsGitHubsError(t *testing.T) {
 // A repository left empty by a failure after it was made is remembered for the
 // person, until a space connects to it.
 func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		leftovers := func() []store.GitHubLeftover {
@@ -1182,6 +1202,7 @@ func TestAFailureAfterTheRepositoryWasMadeLeavesAReminder(t *testing.T) {
 // 2.7b with 3.1: remotes.require names a provider; only a connection through
 // that provider meets it, and the provider must be set up to be required.
 func TestARequirementOfAProviderTakesOnlyAConnectionThroughIt(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		r := "github"
@@ -1211,6 +1232,7 @@ func TestARequirementOfAProviderTakesOnlyAConnectionThroughIt(t *testing.T) {
 }
 
 func TestAHostsGitUserNameIsKnownBeforeItsProviderIsLoaded(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		now := e.clk.Now()

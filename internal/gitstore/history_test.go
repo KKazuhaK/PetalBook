@@ -20,6 +20,7 @@ func accept(id string) func(string, []byte) bool {
 }
 
 func TestFileHistoryFollowsRenamesAndVerifiesTheID(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -136,6 +137,7 @@ func TestFileHistoryFollowsRenamesAndVerifiesTheID(t *testing.T) {
 }
 
 func TestFileHistoryKeepsLookingWhenVersionsAreRefused(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	ctx := context.Background()
 	r := newClone(t, bareRemote(t), nil)
@@ -158,6 +160,7 @@ func TestFileHistoryKeepsLookingWhenVersionsAreRefused(t *testing.T) {
 }
 
 func TestParseLogSurvivesStrangeNamesAndPaths(t *testing.T) {
+	t.Parallel()
 	h := strings.Repeat("a", 40)
 	h2 := strings.Repeat("b", 40)
 	out := h + "\x00" + "1700000000" + "\x00" + "Mallory\x1e" + h2 + "\x1f x" + "\x00" + "API token\x00" + "\nR090\x00old name.md\x00new\nline.md\x00" +

@@ -15,6 +15,7 @@ import (
 // command run against the data directory of a running server must not remove
 // a restore that server has in progress, nor a space it is making.
 func TestOnlyTheServerCleansUpAtStartAndOnlyOneServerRuns(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		needGit(t)
 		dir := filepath.Join(t.TempDir(), "data")

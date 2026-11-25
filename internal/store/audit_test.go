@@ -18,6 +18,7 @@ func auditID(at time.Time, seq int) string {
 // The trim deletes by id range, in batches: everything older than the bound,
 // then all but the newest rows to keep, and nothing else.
 func TestTrimAuditDeletesARangeInBatches(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		old := 2*store.AuditTrimBatch + 17 // more than two batches
@@ -51,6 +52,7 @@ func TestTrimAuditDeletesARangeInBatches(t *testing.T) {
 // A tenant's log by kind reads audit_log_tenant_kind (it read a tenant's whole
 // log, 414 ms on a million rows); the trim's batches read the primary key.
 func TestAuditQueriesUseTheirIndexes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		var tenants []string

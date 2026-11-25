@@ -41,6 +41,7 @@ func gitTry(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// Not parallel: it needs the 40 ms gaps between saves to stay inside a one-second quiet period, which a busy machine would break.
 func TestCommitAfterQuietPeriod(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
@@ -115,6 +116,7 @@ func TestCommitAfterQuietPeriod(t *testing.T) {
 	}
 }
 
+// Not parallel: it must see a commit within three seconds of continuous writing, a wall-clock limit that tests running alongside would stretch.
 func TestCommitAfterMaximumAgeEvenWhileWriting(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()
@@ -142,6 +144,7 @@ func TestCommitAfterMaximumAgeEvenWhileWriting(t *testing.T) {
 }
 
 func TestCloseFlushesPendingChanges(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s, err := Open(Options{Root: root, CommitIdle: time.Hour, CommitMax: 2 * time.Hour})
@@ -211,6 +214,7 @@ func TestCloseFlushesPendingChanges(t *testing.T) {
 }
 
 func TestCommitMessages(t *testing.T) {
+	t.Parallel()
 	cs := func(spec ...string) []change {
 		var out []change
 		for _, s := range spec {
@@ -250,6 +254,7 @@ func TestCommitMessages(t *testing.T) {
 }
 
 func TestOpenKeepsStateDirOutOfTheRepository(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	state := filepath.Join(root, "state-here")

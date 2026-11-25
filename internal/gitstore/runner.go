@@ -16,7 +16,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,7 +52,49 @@ func RunReal(ctx context.Context, c Cmd) (string, string, error) { return execRu
 // Path is where the git program is, for a caller that has to hand it to
 // something else (a test server that serves repositories with it); the
 // application itself starts git only through a Runner.
-func Path() (string, error) { return exec.LookPath("git") }
+func Path() (string, error) {
+	if _, err := exec.LookPath("git"); err != nil {
+		return "", err
+	}
+	return gitProgram(), nil
+}
+
+var (
+	darwinOnce sync.Once
+	darwinReal string // "" when xcrun did not give a usable path
+)
+
+func xcrunFindGit() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/usr/bin/xcrun", "--find", "git")
+	cmd.Env = xcrunEnv()
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// gitProgram is the git program to start: what PATH finds, replaced on macOS
+// by the real git behind the shim. When git is not found it is "git", so the
+// start fails the way it always did.
+func gitProgram() string {
+	found, err := exec.LookPath("git")
+	if err != nil {
+		return "git"
+	}
+	if runtime.GOOS != "darwin" || found != darwinShim {
+		return found
+	}
+	darwinOnce.Do(func() {
+		if p := resolveDarwinGit("darwin", found, xcrunFindGit, isExecutableFile); p != found {
+			darwinReal = p
+		}
+	})
+	if darwinReal != "" {
+		return darwinReal
+	}
+	return found
+}
 
 // MaxOutput bounds what one git command may print into memory.
 const MaxOutput = 64 << 20
@@ -144,7 +188,7 @@ func (execRunner) Run(ctx context.Context, c Cmd) (string, string, error) {
 	if err := refuseDestructive(c.Args); err != nil {
 		return "", "", err
 	}
-	cmd := exec.CommandContext(ctx, "git", commandLine(c.Dir, c.Args)...)
+	cmd := exec.CommandContext(ctx, gitProgram(), commandLine(c.Dir, c.Args)...)
 	cmd.Env = append(baseEnv(c.AllowUnsafe), c.Env...)
 	if c.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(c.Stdin)

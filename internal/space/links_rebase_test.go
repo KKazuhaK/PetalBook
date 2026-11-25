@@ -12,6 +12,7 @@ import (
 // save, based on the rev before the service rewrote the link, is accepted with
 // the same rewrite made to their text; the old path is not written back.
 func TestSaveBasedBeforeALinkRewriteIsRebased(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
@@ -60,6 +61,7 @@ func TestSaveBasedBeforeALinkRewriteIsRebased(t *testing.T) {
 // A save keeps no stale path for a link whose id is that of a page somewhere
 // else: the path follows the id, nothing else changes.
 func TestSaveFixesThePathOfALinkByItsID(t *testing.T) {
+	t.Parallel()
 	s := open(t)
 	tg := mustCreate(t, s, "N", meta("title", "目标"), "x\n")
 	b := mustCreate(t, s, "", meta("title", "乙"), "x\n")
@@ -72,6 +74,7 @@ func TestSaveFixesThePathOfALinkByItsID(t *testing.T) {
 // A link that carries an id two files claim is not rewritten by a rename, as
 // the repair after an outside rename leaves it.
 func TestRenameLeavesLinksToDuplicatedIDs(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	root := t.TempDir()
 	s := openAt(t, root)
