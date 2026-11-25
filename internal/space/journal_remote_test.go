@@ -139,21 +139,24 @@ func TestAnUndoneRemoteChangeGivesItsTransactionUp(t *testing.T) {
 	}
 }
 
-// A change of a folder name's case, made through a third name on a file
-// system that folds case, cut short after it was committed and before the
-// push: the next start opens, and the folder is back under its old name.
+// A change of a folder name's case (made through a third name on a file
+// system that folds case), cut short after it was committed and before the
+// push: the next start opens, and the folder is back under its old name,
+// spelled as it was. Run on a case-folding file system too (make
+// test-casefold).
 func TestAnUnpushedRemoteFolderRespellingIsTakenBack(t *testing.T) {
 	t.Parallel()
 	f := newRemoteSpace(t)
 	p := mustCreate(t, f.s, "notes", meta("title", "Apple"), "fruit\n")
 	tip := f.tip()
-	f.s.ops = foldingOps(nil)
 	stopAt(f.s, "remote committed", 1)
 	survive(t, func() { f.s.MoveFolder(Author{}, "notes", "Notes") })
 	crash(f.s)
 	f.reopen()
-	if !exists(f.s, "notes/Apple.md") || exists(f.s, "Notes") {
-		t.Fatalf("the folder is not back: notes/Apple.md %v, Notes %v", exists(f.s, "notes/Apple.md"), exists(f.s, "Notes"))
+	// By the exact names in the listing: a file system that folds case
+	// finds "Notes" for "notes".
+	if !listed(f.root, "notes") || listed(f.root, "Notes") || !exists(f.s, "notes/Apple.md") {
+		t.Fatalf("the folder is not back under its old spelling: notes %v, Notes %v", listed(f.root, "notes"), listed(f.root, "Notes"))
 	}
 	if head := git(t, f.root, "rev-parse", "HEAD"); head != tip {
 		t.Errorf("HEAD %s, the remote %s", head, tip)
@@ -223,5 +226,49 @@ func TestAChangeWhoseCommitIsOnTheRemotePutsItsFilesBackToIt(t *testing.T) {
 	}
 	if st := f.last(); st.State == RemoteError {
 		t.Errorf("status %+v", st)
+	}
+}
+
+// A change to take back at the start that cannot be (the clone is locked):
+// the space opens with changes refused, keeps the journal, and takes the
+// change back when the notice is cleared, before it lets changes in again.
+func TestARollbackThatFailsIsKeptAndMadeWhenTheNoticeIsCleared(t *testing.T) {
+	t.Parallel()
+	f := newRemoteSpace(t)
+	p := mustCreate(t, f.s, "", meta("title", "Kept"), "v1\n")
+	tip := f.tip()
+	stopAt(f.s, "remote committed", 1)
+	survive(t, func() { f.s.Save(Author{}, p.ID, p.Rev, meta("title", "Kept"), "v2\n") })
+	crash(f.s)
+	lock := filepath.Join(f.root, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.reopen()
+	if st := f.last(); st.State != RemoteError {
+		t.Fatalf("a rollback that failed did not refuse changes: %+v", st)
+	}
+	if len(journalOpsAt(t, f.s)) == 0 {
+		t.Fatal("the journal of the change was dropped")
+	}
+	os.Remove(lock)
+	f.s.ClearNotice()
+	if st := f.last(); st.State == RemoteError {
+		t.Fatalf("status %+v", st)
+	}
+	if got := readDisk(t, f.s, p.Path); !strings.HasSuffix(got, "---\nv1\n") {
+		t.Errorf("the change was not taken back:\n%s", got)
+	}
+	if head := git(t, f.root, "rev-parse", "HEAD"); head != tip {
+		t.Errorf("HEAD %s, the remote %s", head, tip)
+	}
+	if ops := journalOpsAt(t, f.s); len(ops) != 0 {
+		t.Errorf("journal left: %v", ops)
+	}
+	if err := f.syncNow(); err != nil {
+		t.Fatal(err)
+	}
+	if f.tip() != tip {
+		t.Errorf("the change was pushed: %v", f.remoteLog())
 	}
 }

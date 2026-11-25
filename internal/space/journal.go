@@ -1127,7 +1127,9 @@ func dropOldName(from, to, old string) {
 		return // another spelling of the same name: never two files
 	}
 	fa, errA := os.Lstat(from)
-	if errA != nil || !fa.Mode().IsRegular() {
+	if errA != nil || !fa.Mode().IsRegular() || !listedPath(from) || !listedPath(to) {
+		// Two names are two entries in the listing: on a file system that
+		// folds names one entry answers to both, and is the page.
 		return
 	}
 	if fb, err := os.Lstat(to); err == nil && os.SameFile(fa, fb) || revOf(from) == old {
@@ -1144,20 +1146,22 @@ func takeBackName(root, from, to string) {
 	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
 	fa, errA := os.Lstat(a)
 	fb, errB := os.Lstat(b)
-	if errA == nil && errB == nil && fa.Mode().IsRegular() && os.SameFile(fa, fb) {
+	if errA == nil && errB == nil && fa.Mode().IsRegular() && os.SameFile(fa, fb) && listedPath(a) && listedPath(b) {
 		os.Remove(b)
 	}
 }
 
 // takeBackFolder renames the folder to back to from, if it is at to and
-// nothing is at from.
+// nothing is at from. Both are looked for by their exact names in the
+// listing of their folder: on a file system that folds case, "notes" finds
+// "Notes", and the folder would never go back to its old spelling.
 func takeBackFolder(root, from, to string) {
 	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
-	if _, err := os.Lstat(a); !errors.Is(err, fs.ErrNotExist) {
+	if listedPath(a) || !listedPath(b) {
 		return
 	}
 	if fi, err := os.Lstat(b); err == nil && fi.IsDir() {
-		os.Rename(b, a)
+		renameExact(b, a)
 	}
 }
 
@@ -1166,7 +1170,8 @@ func takeBackFolder(root, from, to string) {
 // transaction is about. The folder is renamed before the transaction is
 // journaled, so it is normally at to already. Only if it is at from and
 // nothing is at to (the rename was lost with a power loss) is it renamed;
-// anything else is left as it is, and logged.
+// anything else is left as it is, and logged. Names are the exact ones of the
+// listing (see takeBackFolder).
 //
 // Where the record has the folder's identity, the folder at from must be that
 // very folder: one made under the old name since (by hand, while the server
@@ -1174,18 +1179,18 @@ func takeBackFolder(root, from, to string) {
 func finishFolderMove(root string, r jrec, log *slog.Logger) {
 	from, to := r.From, r.Path
 	a, b := filepath.Join(root, filepath.FromSlash(from)), filepath.Join(root, filepath.FromSlash(to))
+	atA, atB := listedPath(a), listedPath(b)
 	ai, errA := os.Lstat(a)
-	_, errB := os.Lstat(b)
 	same := true
-	if errA == nil && r.Ino != 0 {
+	if atA && errA == nil && r.Ino != 0 {
 		dev, ino, ok := fileID(ai)
 		same = !ok || (dev == r.Dev && ino == r.Ino)
 	}
 	switch {
-	case errA == nil && ai.IsDir() && errors.Is(errB, fs.ErrNotExist) && same:
+	case atA && !atB && errA == nil && ai.IsDir() && same:
 		os.MkdirAll(filepath.Dir(b), 0o755)
-		os.Rename(a, b)
-	case errors.Is(errA, fs.ErrNotExist) && errB == nil:
+		renameExact(a, b)
+	case !atA && atB:
 		// Made.
 	default:
 		if log != nil {
@@ -1193,6 +1198,47 @@ func finishFolderMove(root string, r jrec, log *slog.Logger) {
 				"from", from, "to", to)
 		}
 	}
+}
+
+// listedPath reports whether the folder of p has an entry named exactly as p.
+func listedPath(p string) bool { return listed(filepath.Dir(p), filepath.Base(p)) }
+
+// renameExact renames from to to. When to is another spelling of from's own
+// name (the two are one entry on a file system that folds case), it goes
+// through a third name: a case-folding Linux file system takes a rename onto
+// the same entry for nothing, and keeps the old spelling.
+func renameExact(from, to string) error {
+	fi, errF := os.Lstat(from)
+	ti, errT := os.Lstat(to)
+	if errF != nil || errT != nil || !os.SameFile(fi, ti) || filepath.Base(from) == filepath.Base(to) {
+		return os.Rename(from, to)
+	}
+	dir, base := filepath.Dir(to), filepath.Base(to)
+	for n := 1; n <= 100; n++ {
+		mid := filepath.Join(dir, fmt.Sprintf("%s (renaming %d)", base, n))
+		if _, err := os.Lstat(mid); !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err := os.Rename(from, mid); err != nil {
+			return err
+		}
+		return os.Rename(mid, to)
+	}
+	return fmt.Errorf("no free name to rename %s through", base)
+}
+
+// records reads back the records of the journal.
+func (j *journal) records() ([]jrec, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	data, err := os.ReadFile(j.path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	if int64(len(data)) > j.size {
+		data = data[:j.size]
+	}
+	return readJournal(data).recs, nil
 }
 
 // listed reports whether dir has an entry named exactly name.

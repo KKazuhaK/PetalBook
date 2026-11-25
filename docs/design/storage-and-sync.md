@@ -499,7 +499,14 @@ once by the trim after the commit.
   `p`, a folder respelling `r`) are renamed back, and never passed to `Discard`, which
   gets only files. `l`, `ld` and `m` left by an earlier build are logged and passed
   over. A rollback that cannot be done never stops the start: the space opens and
-  refuses changes until someone looks.
+  refuses changes, keeps the journal, and takes the change back when the notice is
+  cleared (or at the next start) before it lets changes in again. Folders are looked for
+  by their exact names in the listing of their parent. A rename to another spelling of
+  the same name goes through a third name, because a case-folding Linux file system
+  takes a direct one for nothing.
+- **Known issue (PR 5).** When the change stays (its commit is on the remote), its
+  files are put back to HEAD. An edit made outside PetalBook to one of them while the
+  server was down, between the push and the clearing of the journal, is overwritten.
 - **Answers after the push**, as before.
 - A commit made outside the journal (the clone ahead of the remote) is still pushed by
   the first sync or set aside, as before.

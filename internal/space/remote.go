@@ -132,6 +132,9 @@ const (
 )
 
 type remote struct {
+	// rollbackDue says the change the journal holds still has to be taken
+	// back (the start could not): changes are refused until it is (under s.mu).
+	rollbackDue bool
 	repo        *gitstore.Repo
 	url, branch string
 	freshFor    time.Duration
@@ -254,6 +257,9 @@ func (s *Space) newRemote(o *RemoteOptions) *remote {
 func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author, rollback string) error {
 	r := s.newRemote(o)
 	r.blocked = rollback
+	// The journal of a change that could not be taken back stays: the next
+	// start, or clearing the notice, takes it back before changes are let in.
+	r.rollbackDue = rollback != ""
 	ctx := s.ctx
 	if r.st.LastGood = r.repo.ReadLastGood(ctx, r.branch); r.st.LastGood == "" {
 		if r.st.LastGood = o.Status.LastGood; r.st.LastGood == "" {
@@ -303,6 +309,9 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author, rollba
 	if r.blocked != "" {
 		s.log.Error("changes are refused: the clone is not in the state the server left it in", "reason", r.blocked)
 		r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, r.blocked })
+	}
+	if r.rollbackDue {
+		return nil
 	}
 	return s.cm.clearJournal()
 }
@@ -740,6 +749,9 @@ func (s *Space) ClearNotice() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if r.rollbackDue && !s.retryRollbackLocked(r) {
+		return
+	}
 	if r.blocked != "" {
 		if mod, err := r.repo.ModifiedTracked(s.ctx); err == nil && len(mod) == 0 {
 			if what, err := r.repo.Busy(s.ctx); err == nil && what == "" {
@@ -757,6 +769,33 @@ func (s *Space) ClearNotice() {
 			st.State, st.Kind, st.Error = RemoteOK, "", ""
 		}
 	})
+}
+
+// retryRollbackLocked takes back the change that the start could not take
+// back (rollbackRemote) and reports whether it is done: then the journal is
+// cleared and the files are indexed as they are now.
+func (s *Space) retryRollbackLocked(r *remote) bool {
+	recs, err := s.cm.j.records()
+	problem := ""
+	if err != nil {
+		problem = "could not read the journal: " + err.Error()
+	} else {
+		problem = rollbackRemote(s.ctx, r.repo, r.branch, s.root, recs, s.log)
+	}
+	if problem != "" {
+		r.blocked = problem
+		r.set(func(st *RemoteStatus) { st.State, st.Kind, st.Error = RemoteError, KindClone, problem })
+		return false
+	}
+	r.rollbackDue = false
+	if err := s.cm.clearJournal(); err != nil {
+		s.log.Warn("could not clear the commit journal", "error", err)
+	}
+	if _, err := s.idx.Sync(s.src, false); err != nil {
+		s.log.Error("could not index the files of a change taken back", "error", err)
+	}
+	s.typesDirty.Store(true)
+	return true
 }
 
 // Accept accepts the remote's rewritten history: the space moves to that
