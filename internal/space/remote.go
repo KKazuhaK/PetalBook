@@ -251,8 +251,9 @@ func (s *Space) newRemote(o *RemoteOptions) *remote {
 // network: what a crash left behind is committed here, and what has to be
 // pushed (or, if the remote moved, set aside) is done by the first sync, which
 // every change and every pull starts with.
-func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error {
+func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author, rollback string) error {
 	r := s.newRemote(o)
+	r.blocked = rollback
 	ctx := s.ctx
 	if r.st.LastGood = r.repo.ReadLastGood(ctx, r.branch); r.st.LastGood == "" {
 		if r.st.LastGood = o.Status.LastGood; r.st.LastGood == "" {
@@ -271,7 +272,7 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 			return err
 		}
 	}
-	if what, err := r.repo.Busy(ctx); err == nil && what != "" {
+	if what, err := r.repo.Busy(ctx); err == nil && what != "" && r.blocked == "" {
 		r.blocked = "the clone is in the middle of a " + what
 	}
 	// Files written but never committed: the journal says which. They are
@@ -315,9 +316,9 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 // and the files the change named to what that commit has; a folder it
 // renamed goes back first. Nothing here reaches the network. A later sync
 // brings back a commit whose push did go through unseen.
-func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root string, recs []jrec, log *slog.Logger) error {
+func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root string, recs []jrec, log *slog.Logger) (problem string) {
 	if len(recs) == 0 {
-		return nil
+		return ""
 	}
 	head := repo.Head(ctx)
 	parent := ""
@@ -329,11 +330,15 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 	if parent == "" {
 		parent = head
 	}
+	// The change stays when its commit is on the remote: then its files go
+	// back to that commit (HEAD), so that nothing half written is left of a
+	// step after it (a crash between the push of a repair of the way to a
+	// folder and the record of the commit the change then started from).
+	to, stays := parent, false
 	if head != "" && head != parent {
 		if tip := repo.RemoteTip(ctx, branch); tip != "" {
 			if on, err := repo.IsAncestor(ctx, head, tip); err == nil && on {
-				log.Info("the change an earlier run left in the journal was pushed; it stays", "commit", head)
-				return nil
+				to, stays = head, true
 			}
 		}
 	}
@@ -348,18 +353,29 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 			paths = append(paths, p)
 		}
 	}
+	folder := func(from, to string) {
+		if !stays && ok(from) && ok(to) {
+			takeBackFolder(root, from, to)
+		}
+	}
 	settings := false
+	var old []string
 	for i := len(recs) - 1; i >= 0; i-- {
 		r := recs[i]
 		switch {
-		case r.Op == "md" || (r.Op == "p" && r.Dir):
-			to := r.To
-			if r.Op == "p" {
-				to = r.Path
-			}
-			if ok(r.From) && ok(to) {
-				takeBackFolder(root, r.From, to)
-			}
+		case r.Op == "md":
+			folder(r.From, r.To)
+		case r.Op == "p" && r.Dir:
+			folder(r.From, r.Path)
+		case r.Op == "r" && r.Dir:
+			// A folder renamed through a third name: back from either. Its
+			// files are journaled one by one ("t").
+			folder(r.From, r.To)
+			folder(r.From, r.Path)
+		case r.Op == "l" || r.Op == "ld" || r.Op == "m":
+			// Records an earlier build wrote: what they name is not known
+			// to be files, and nothing of them is done.
+			old = append(old, r.Op)
 		case r.Op == "b" || r.Op == "u" || r.Op == "bd" || r.Op == "ud" || r.Op == "f" || r.Op == "fd":
 			settings = true
 			for _, p := range r.Pages {
@@ -375,17 +391,34 @@ func rollbackRemote(ctx context.Context, repo *gitstore.Repo, branch, root strin
 			add(r.To)
 		}
 	}
+	if len(old) > 0 {
+		log.Warn("the journal has records an earlier build wrote; they are passed over", "records", old)
+	}
 	if settings {
 		add(spaceFile)
 	}
-	if parent == "" || len(paths) == 0 && head == parent {
-		return nil
+	// Only files go to Discard: a name that is a folder on disk (a record
+	// that names one) is not one to put back.
+	files := paths[:0]
+	for _, p := range paths {
+		if fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p))); err == nil && fi.IsDir() {
+			continue
+		}
+		files = append(files, p)
 	}
-	if err := repo.Discard(ctx, parent, paths); err != nil {
-		return fmt.Errorf("could not take back the change an earlier run did not push: %w", err)
+	if to == "" || len(files) == 0 && head == to {
+		return ""
 	}
-	log.Info("took back a change an earlier run did not push", "files", len(paths), "to", parent)
-	return nil
+	if err := repo.Discard(ctx, to, files); err != nil {
+		// The space opens; changes are refused until someone looks.
+		return "could not take back the change an earlier run did not push: " + gitstore.Scrub(err.Error())
+	}
+	if stays {
+		log.Info("the change an earlier run left in the journal was pushed; it stays", "commit", head)
+	} else {
+		log.Info("took back a change an earlier run did not push", "files", len(files), "to", to)
+	}
+	return ""
 }
 
 func firstN(l []string, n int) []string {

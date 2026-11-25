@@ -493,7 +493,13 @@ once by the trim after the commit.
   folders it renamed go back, and `Discard` puts HEAD and every file the records name
   (with `space.yml` when bindings or a field rename were involved) back to the parent
   commit. Nothing reaches the network. A commit whose push went through unseen comes
-  back with the next sync.
+  back with the next sync. When the change stays, its files are still put back to HEAD,
+  so nothing half written remains of a step after the push (a crash between a pushed
+  repair of the way to a folder and its `rp`). Folders a record names (`md`, a folder
+  `p`, a folder respelling `r`) are renamed back, and never passed to `Discard`, which
+  gets only files. `l`, `ld` and `m` left by an earlier build are logged and passed
+  over. A rollback that cannot be done never stops the start: the space opens and
+  refuses changes until someone looks.
 - **Answers after the push**, as before.
 - A commit made outside the journal (the clone ahead of the remote) is still pushed by
   the first sync or set aside, as before.

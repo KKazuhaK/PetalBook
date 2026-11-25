@@ -371,13 +371,12 @@ func Open(opt Options) (*Space, error) {
 	var recovered map[string]Author
 	var recoveredRevs map[string]gitstore.Blob
 	var giveUp []uint64
+	rolledBack := "" // what stops the clone from being put back, if anything
 	if opt.Remote != nil {
 		// A space that follows a remote answers a change only after its
 		// push: one an earlier run did not get to push is taken back, unless
 		// its commit is on the remote after all (owner decision 2).
-		if err := rollbackRemote(context.Background(), g.r(), opt.Remote.Branch, root, recs, log); err != nil {
-			return nil, err
-		}
+		rolledBack = rollbackRemote(context.Background(), g.r(), opt.Remote.Branch, root, recs, log)
 	} else {
 		recovered, recoveredRevs, giveUp = recoverJournal(heal, root, recs)
 	}
@@ -477,7 +476,7 @@ func Open(opt Options) (*Space, error) {
 		}
 		s.cm = newCommitter(g, idle, max, log, jrn, nil, nil)
 		s.cm.setOnCommit(heal.committed)
-		if err := s.initRemote(opt.Remote, recovered); err != nil {
+		if err := s.initRemote(opt.Remote, recovered, rolledBack); err != nil {
 			s.cm.Close()
 			idx.Close()
 			return nil, err

@@ -3,6 +3,7 @@ package space
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,5 +136,92 @@ func TestAnUndoneRemoteChangeGivesItsTransactionUp(t *testing.T) {
 	f.reopen()
 	if got := readDisk(t, f.s, p.Path); !strings.HasSuffix(got, "---\nv1\n") {
 		t.Errorf("the change was not taken back:\n%s", got)
+	}
+}
+
+// A change of a folder name's case, made through a third name on a file
+// system that folds case, cut short after it was committed and before the
+// push: the next start opens, and the folder is back under its old name.
+func TestAnUnpushedRemoteFolderRespellingIsTakenBack(t *testing.T) {
+	t.Parallel()
+	f := newRemoteSpace(t)
+	p := mustCreate(t, f.s, "notes", meta("title", "Apple"), "fruit\n")
+	tip := f.tip()
+	f.s.ops = foldingOps(nil)
+	stopAt(f.s, "remote committed", 1)
+	survive(t, func() { f.s.MoveFolder(Author{}, "notes", "Notes") })
+	crash(f.s)
+	f.reopen()
+	if !exists(f.s, "notes/Apple.md") || exists(f.s, "Notes") {
+		t.Fatalf("the folder is not back: notes/Apple.md %v, Notes %v", exists(f.s, "notes/Apple.md"), exists(f.s, "Notes"))
+	}
+	if head := git(t, f.root, "rev-parse", "HEAD"); head != tip {
+		t.Errorf("HEAD %s, the remote %s", head, tip)
+	}
+	if st := git(t, f.root, "status", "--porcelain"); st != "" {
+		t.Errorf("the clone is not clean: %q", st)
+	}
+	if _, err := f.s.Get(p.ID); err != nil {
+		t.Errorf("the page is lost: %v", err)
+	}
+	if st := f.last(); st.State == RemoteError {
+		t.Errorf("status %+v", st)
+	}
+}
+
+// A journal an earlier build left, with records this one no longer writes
+// ("l", "ld", "m"): the next start opens, logs them, and takes nothing of
+// them for files.
+func TestRecordsAnEarlierBuildWroteDoNotStopTheStart(t *testing.T) {
+	t.Parallel()
+	f := newRemoteSpace(t)
+	mustCreate(t, f.s, "Old", meta("title", "Apple"), "fruit\n")
+	head := git(t, f.root, "rev-parse", "HEAD")
+	f.s.Close()
+	journal := `{"op":"rp","rev":"` + head + `"}` + "\n" +
+		`{"op":"m","f":"Old/Apple.md","to":"New/Apple.md"}` + "\n" +
+		`{"op":"l","f":"Old","to":"New","dir":true}` + "\n" +
+		`{"op":"ld","f":"Old","to":"New","dir":true}` + "\n"
+	if err := os.WriteFile(journalFile(f.root), framed(journal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.reopen()
+	if !exists(f.s, "Old/Apple.md") {
+		t.Error("the page is gone")
+	}
+	if st := git(t, f.root, "status", "--porcelain"); st != "" {
+		t.Errorf("the clone is not clean: %q", st)
+	}
+	if st := f.last(); st.State == RemoteError {
+		t.Errorf("status %+v", st)
+	}
+}
+
+// A repair of the way to a folder pushed, then a crash before the change
+// journaled the new commit it starts from, with a file of the change half
+// written: HEAD is on the remote and stays, and the files of the change are
+// put back as HEAD has them, so the clone is not refused.
+func TestAChangeWhoseCommitIsOnTheRemotePutsItsFilesBackToIt(t *testing.T) {
+	t.Parallel()
+	f := newRemoteSpace(t)
+	p := mustCreate(t, f.s, "", meta("title", "Kept"), "v1\n")
+	before := git(t, f.root, "rev-parse", "HEAD~1")
+	head := git(t, f.root, "rev-parse", "HEAD")
+	kept := readDisk(t, f.s, p.Path)
+	f.s.Close()
+	journal := `{"op":"rp","rev":"` + before + `"}` + "\n" + `{"op":"t","p":"` + p.Path + `"}` + "\n"
+	if err := os.WriteFile(journalFile(f.root), framed(journal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(f.root, p.Path), []byte(kept[:len(kept)/2]), 0o644)
+	f.reopen()
+	if got := readDisk(t, f.s, p.Path); got != kept {
+		t.Errorf("the half-written file:\n%s", got)
+	}
+	if h := git(t, f.root, "rev-parse", "HEAD"); h != head {
+		t.Errorf("HEAD %s, want %s", h, head)
+	}
+	if st := f.last(); st.State == RemoteError {
+		t.Errorf("status %+v", st)
 	}
 }
