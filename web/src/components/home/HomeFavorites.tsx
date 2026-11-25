@@ -19,7 +19,7 @@ export function HomeFavorites() {
   if (list.isPending) return <Skeleton className="h-16 w-full" />
   if (items.length === 0) return <p className="text-sm text-muted-foreground">{th.favorites.empty}</p>
   return (
-    <ul className="grid gap-1 sm:grid-cols-2" aria-label={t.fav.section}>
+    <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2" aria-label={t.fav.section}>
       {items.map((f, i) => (
         <Item
           key={favoriteKey(f)}

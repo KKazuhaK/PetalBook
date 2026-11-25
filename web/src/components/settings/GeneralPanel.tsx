@@ -92,7 +92,11 @@ function CheckSection({ space }: { space: string }) {
   return (
     <SettingsSection title={t.general.checkTitle} id="space-check-title" description={t.general.checkHelp}>
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" render={<Link to={spaceUrls(space).check()} />}>
+        <Button
+          variant="outline"
+          className="max-md:h-10 pointer-coarse:h-10"
+          render={<Link to={spaceUrls(space).check()} />}
+        >
           {t.general.checkLink}
         </Button>
         {count !== undefined && (

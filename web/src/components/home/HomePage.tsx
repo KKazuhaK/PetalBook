@@ -33,7 +33,7 @@ function Block({
   id: string
 }) {
   return (
-    <section aria-labelledby={id} className="grid gap-2">
+    <section aria-labelledby={id} className="grid grid-cols-1 gap-2">
       <div className="flex items-center justify-between gap-2">
         <h2 id={id} className="text-sm font-semibold">
           {title}
@@ -100,7 +100,7 @@ export default function HomePage() {
         <span className="truncate text-sm font-medium">{current.name}</span>
       </TopBar>
       <div
-        className="mx-auto grid w-full max-w-3xl flex-1 content-start gap-8 px-4 py-8 md:px-8 md:py-10"
+        className="mx-auto grid w-full max-w-3xl grid-cols-1 flex-1 content-start gap-8 px-4 py-8 md:px-8 md:py-10"
         data-slot="home"
       >
         <header className="grid gap-4">
