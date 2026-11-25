@@ -94,7 +94,7 @@ interface Typed {
 
 function session(opts: { page?: Page; draft?: PageDraft; storage: FakeStorage; onExternalChange?: (p: Page) => void }) {
   const start = opts.page ?? page()
-  const live = new LiveDraft({ title: String(start.meta.title ?? ''), subtitle: '', source: '', tags: [] }, toMd)
+  const live = new LiveDraft({ title: String(start.meta.title ?? ''), subtitle: '', source: [], tags: [] }, toMd)
   const editor = {
     isDestroyed: false,
     current: doc(''),
@@ -258,7 +258,7 @@ describe('local draft writing', () => {
       {
         kind: 'file',
         theirs: page({ rev: 'revX' }),
-        mine: { title: '改', subtitle: '', source: '', tags: [], body: 'x\n' },
+        mine: { title: '改', subtitle: '', source: [], tags: [], body: 'x\n' },
       },
       true,
     )
@@ -404,7 +404,7 @@ describe('on opening a page: file, server draft and local draft', () => {
     v: 1,
     id: ID,
     baseRev: 'rev1',
-    fields: { title: '原标题', subtitle: '', source: '', tags: [] },
+    fields: { title: '原标题', subtitle: '', source: [], tags: [] },
     savedAt: Date.now(),
     token: 'old',
     ...over,
@@ -425,10 +425,10 @@ describe('on opening a page: file, server draft and local draft', () => {
   })
 
   it('a local fields-only draft on the same file is applied without touching the body', () => {
-    const p = plan(page(), stored({ fields: { title: '新标题', subtitle: '', source: '', tags: [] } }))
+    const p = plan(page(), stored({ fields: { title: '新标题', subtitle: '', source: [], tags: [] } }))
     expect(p).toMatchObject({
       kind: 'local',
-      content: { fields: { title: '新标题', subtitle: '', source: '', tags: [] }, markdown: '原文\n' },
+      content: { fields: { title: '新标题', subtitle: '', source: [], tags: [] }, markdown: '原文\n' },
       token: 'old',
     })
   })
@@ -436,12 +436,12 @@ describe('on opening a page: file, server draft and local draft', () => {
   it('a local draft on an older file is a conflict, with the draft as "mine" and the server body when only fields were edited', () => {
     const p = plan(
       page({ rev: 'rev2', body: '别人改的\n' }),
-      stored({ fields: { title: '我的标题', subtitle: '', source: '', tags: [] } }),
+      stored({ fields: { title: '我的标题', subtitle: '', source: [], tags: [] } }),
     )
     expect(p.kind).toBe('conflict')
     if (p.kind !== 'conflict') return
     expect(p.info.kind).toBe('file')
-    expect(p.info.mine).toEqual({ title: '我的标题', subtitle: '', source: '', tags: [], body: '别人改的\n' })
+    expect(p.info.mine).toEqual({ title: '我的标题', subtitle: '', source: [], tags: [], body: '别人改的\n' })
     expect(p.unsaved).toBe(true)
   })
 
@@ -470,7 +470,7 @@ describe('on opening a page: file, server draft and local draft', () => {
     const p = plan(withDraft(), null)
     expect(p).toMatchObject({
       kind: 'server',
-      content: { fields: { title: '原标题', subtitle: '', source: '', tags: [] }, markdown: '服务器草稿\n' },
+      content: { fields: { title: '原标题', subtitle: '', source: [], tags: [] }, markdown: '服务器草稿\n' },
       dropLocal: false,
     })
   })
@@ -503,7 +503,7 @@ describe('on opening a page: file, server draft and local draft', () => {
   it('a local fields-only draft following the server draft keeps the server draft body', () => {
     const p = plan(
       withDraft({ version: 'v5' }),
-      stored({ fields: { title: '只改标题', subtitle: '', source: '', tags: [] }, sent: sentOf(serverDraft()) }),
+      stored({ fields: { title: '只改标题', subtitle: '', source: [], tags: [] }, sent: sentOf(serverDraft()) }),
     )
     expect(p).toMatchObject({ kind: 'local', content: { fields: { title: '只改标题' }, markdown: '服务器草稿\n' } })
   })
@@ -580,7 +580,7 @@ describe('on opening a page: file, server draft and local draft', () => {
     const storage = new FakeStorage()
     const s = session({ storage })
     const theirs = page({ rev: 'rev2', body: '别人改的\n' })
-    const mine = { title: '原标题', subtitle: '', source: '', tags: [] as string[], body: '我的\n' }
+    const mine = { title: '原标题', subtitle: '', source: [], tags: [] as string[], body: '我的\n' }
     s.live.bodyChanged()
     s.editor.current = doc('我的')
     s.controller.enterConflict({ kind: 'file', theirs, mine }, true)
@@ -597,7 +597,7 @@ describe('a browser copy of text the server had confirmed as its draft decides n
     v: 1,
     id: ID,
     baseRev: 'rev1',
-    fields: { title: '原标题', subtitle: '', source: '', tags: [] },
+    fields: { title: '原标题', subtitle: '', source: [], tags: [] },
     bodyJson: doc('昨天写的'),
     savedAt: 1,
     token: 'tok',
@@ -777,12 +777,12 @@ describe('a refresh replaces the editor text only when nothing is unsaved', () =
 describe('storage that misbehaves', () => {
   const content: DraftContent = {
     baseRev: 'rev1',
-    fields: { title: 't', subtitle: '', source: '', tags: [] },
+    fields: { title: 't', subtitle: '', source: [], tags: [] },
     savedAt: Date.now(),
     token: 'tk',
     bodyJson: doc('x'),
   }
-  const fields: Fields = { title: 't', subtitle: '', source: '', tags: [] }
+  const fields: Fields = { title: 't', subtitle: '', source: [], tags: [] }
 
   it('reading that throws is the same as no draft', () => {
     const storage = new FakeStorage()
@@ -851,7 +851,7 @@ describe('storage that misbehaves', () => {
 describe('LiveDraft.readStorable', () => {
   it('returns the document without converting to Markdown', () => {
     const conv = vi.fn(() => 'md')
-    const d = new LiveDraft({ title: 'a', subtitle: '', source: '', tags: [] }, conv)
+    const d = new LiveDraft({ title: 'a', subtitle: '', source: [], tags: [] }, conv)
     const ed = { isDestroyed: false, getJSON: vi.fn(() => doc('x')) }
     d.attachEditor(ed)
     expect(d.readStorable().bodyJson).toBeUndefined()
@@ -866,7 +866,7 @@ describe('LiveDraft.readStorable', () => {
 describe('old drafts', () => {
   const content = (savedAt: number): DraftContent => ({
     baseRev: 'r',
-    fields: { title: 't', subtitle: '', source: '', tags: [] },
+    fields: { title: 't', subtitle: '', source: [], tags: [] },
     savedAt,
     token: 'tk',
     bodyJson: doc('x'),
@@ -900,7 +900,7 @@ describe('a page that is gone', () => {
     v: 1 as const,
     id: ID,
     baseRev: 'r',
-    fields: { title: '写了一半', subtitle: '副', source: '', tags: ['x'] },
+    fields: { title: '写了一半', subtitle: '副', source: [], tags: ['x'] },
     savedAt: Date.now(),
     token: 'tk',
     bodyJson: doc('没存上的话'),
@@ -914,7 +914,7 @@ describe('a page that is gone', () => {
     })
     expect(
       draftToCreateInput(
-        { ...draft, fields: { title: '', subtitle: '', source: '', tags: [] }, bodyJson: undefined },
+        { ...draft, fields: { title: '', subtitle: '', source: [], tags: [] }, bodyJson: undefined },
         toMd,
       ),
     ).toEqual({ folder: '', meta: {}, body: '' })
@@ -1084,7 +1084,7 @@ describe('a store refused because another device replaced the draft', () => {
 describe('local drafts of a person, a space and a page', () => {
   const draft = (): DraftContent => ({
     baseRev: 'r',
-    fields: { title: 't', subtitle: '', source: '', tags: [] },
+    fields: { title: 't', subtitle: '', source: [], tags: [] },
     savedAt: Date.now(),
     token: 'tk',
     bodyJson: doc('x'),
@@ -1130,7 +1130,7 @@ describe('local drafts of a person, a space and a page', () => {
       v: 1,
       id: ID,
       baseRev: 'rev1',
-      fields: { title: '原标题', subtitle: '', source: '', tags: [] },
+      fields: { title: '原标题', subtitle: '', source: [], tags: [] },
       bodyJson: doc('我的'),
       savedAt: Date.now(),
       token: 'old',
@@ -1146,7 +1146,7 @@ describe('local drafts of a person, a space and a page', () => {
       v: 1,
       id: ID,
       baseRev: 'rev1',
-      fields: { title: '原标题', subtitle: '', source: '', tags: [] },
+      fields: { title: '原标题', subtitle: '', source: [], tags: [] },
       bodyJson: doc('我后来又写的'),
       savedAt: Date.now(),
       token: 'old',
@@ -1162,7 +1162,7 @@ describe('local drafts of a person, a space and a page', () => {
       v: 1,
       id: ID,
       baseRev: 'rev1',
-      fields: { title: '原标题', subtitle: '', source: '', tags: [] },
+      fields: { title: '原标题', subtitle: '', source: [], tags: [] },
       bodyJson: doc('我后来又写的'),
       savedAt: Date.now(),
       token: 'old',

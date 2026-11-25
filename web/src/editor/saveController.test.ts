@@ -41,7 +41,7 @@ export function setup(
   opts: { page?: Page; draft?: PageDraft; draftFields?: Partial<Draft>; normalizeBody?: (s: string) => string } = {},
 ) {
   const start = opts.page ?? page()
-  let current: Draft = { title: '原标题', subtitle: '', source: '', tags: ['甲'], ...opts.draftFields }
+  let current: Draft = { title: '原标题', subtitle: '', source: [], tags: ['甲'], ...opts.draftFields }
   const calls: Call[] = []
   let clock = 0
   const api = {
@@ -1052,7 +1052,7 @@ describe('a versioned delete the server refuses because the draft is gone', () =
       {
         kind: 'file',
         theirs: page({ rev: 'revT' }),
-        mine: { title: '草稿标题', subtitle: '', source: '', tags: [], body: '草稿正文\n' },
+        mine: { title: '草稿标题', subtitle: '', source: [], tags: [], body: '草稿正文\n' },
       },
       false,
     )
@@ -1487,7 +1487,7 @@ describe('opening in a conflict', () => {
 
   it('enterConflict puts the controller in the conflict state and keeping mine stores on the file rev', async () => {
     const t = setup()
-    const mine = { title: '原标题', subtitle: '', source: '', tags: [] as string[], body: '我的\n' }
+    const mine = { title: '原标题', subtitle: '', source: [], tags: [] as string[], body: '我的\n' }
     t.c.enterConflict({ kind: 'file', theirs: theirs(), mine }, true)
     expect(t.c.state).toBe('conflict')
     expect(t.onConflict).toHaveBeenCalledWith({ kind: 'file', theirs: theirs(), mine })
@@ -1503,7 +1503,7 @@ describe('opening in a conflict', () => {
       {
         kind: 'file',
         theirs: theirs(),
-        mine: { title: '草稿标题', subtitle: '', source: '', tags: [], body: '草稿正文\n' },
+        mine: { title: '草稿标题', subtitle: '', source: [], tags: [], body: '草稿正文\n' },
       },
       false,
     )
@@ -1517,7 +1517,7 @@ describe('opening in a conflict', () => {
     const info: ConflictInfo = {
       kind: 'draft',
       theirs: page({ meta: { id: ID, title: '草稿标题' }, body: '草稿正文\n' }),
-      mine: { title: '本地', subtitle: '', source: '', tags: [], body: '本地正文\n' },
+      mine: { title: '本地', subtitle: '', source: [], tags: [], body: '本地正文\n' },
       draft: {
         version: 'ver0',
         baseRev: 'revOld',
@@ -1556,13 +1556,13 @@ describe('tags and scalars as the server serves them', () => {
     expect(fieldsOf({ id: 'X', tags: '栀子', title: 2026, subtitle: true })).toEqual({
       title: '2026',
       subtitle: 'true',
-      source: '',
+      source: [],
       tags: ['栀子'],
     })
     expect(fieldsOf({ id: 'X', tags: ['a', null, 7, 'b'] })).toEqual({
       title: '',
       subtitle: '',
-      source: '',
+      source: [],
       tags: ['a', 'b'],
     })
     expect(fieldsOf({ id: 'X', tags: '' }).tags).toEqual([])
@@ -1589,7 +1589,7 @@ describe('tags and scalars as the server serves them', () => {
     const meta = { id: 'X', tags: ['a', null, 7, 'b'] }
     const out = applyFields(
       meta,
-      { title: '', subtitle: '', source: '', tags: ['b', 'c'] },
+      { title: '', subtitle: '', source: [], tags: ['b', 'c'] },
       { title: false, subtitle: false, source: false, tags: true },
     )
     expect(out.tags).toEqual(['b', 'c', null, 7])
@@ -1597,7 +1597,7 @@ describe('tags and scalars as the server serves them', () => {
     expect(
       applyFields(
         meta,
-        { title: '', subtitle: '', source: '', tags: [] },
+        { title: '', subtitle: '', source: [], tags: [] },
         { title: false, subtitle: false, source: false, tags: true },
       ).tags,
     ).toEqual([null, 7])
@@ -1605,7 +1605,7 @@ describe('tags and scalars as the server serves them', () => {
       'tags' in
         applyFields(
           { id: 'X', tags: ['a'] },
-          { title: '', subtitle: '', source: '', tags: [] },
+          { title: '', subtitle: '', source: [], tags: [] },
           { title: false, subtitle: false, source: false, tags: true },
         ),
     ).toBe(false)
@@ -1655,7 +1655,7 @@ describe('header handling', () => {
   it('clearing a title removes the key', () => {
     const out = applyFields(
       { id: 'X', title: '甲', subtitle: '乙', created: 'c' },
-      { title: '', subtitle: '乙', source: '', tags: [] },
+      { title: '', subtitle: '乙', source: [], tags: [] },
       { title: true, subtitle: false, source: false, tags: false },
     )
     expect(out).toEqual({ id: 'X', subtitle: '乙', created: 'c' })
@@ -1665,7 +1665,7 @@ describe('header handling', () => {
     const base = { id: 'X', created: 'c', series: 's' }
     const a = applyFields(
       base,
-      { title: 'T', subtitle: 'S', source: '', tags: ['t'] },
+      { title: 'T', subtitle: 'S', source: [], tags: ['t'] },
       { title: true, subtitle: true, source: false, tags: true },
     )
     expect(a).toEqual({ id: 'X', created: 'c', series: 's', title: 'T', subtitle: 'S', tags: ['t'] })
@@ -1695,12 +1695,14 @@ describe('header handling', () => {
   })
 
   it('cleanFields trims, flattens newlines and de-duplicates tags', () => {
-    expect(cleanFields({ title: ' 甲\n乙 ', subtitle: '', source: ' 书\n名 ', tags: [' a ', 'a', '', 'b'] })).toEqual({
-      title: '甲 乙',
-      subtitle: '',
-      source: '书 名',
-      tags: ['a', 'b'],
-    })
+    expect(cleanFields({ title: ' 甲\n乙 ', subtitle: '', source: [' 书\n名 '], tags: [' a ', 'a', '', 'b'] })).toEqual(
+      {
+        title: '甲 乙',
+        subtitle: '',
+        source: ['书 名'],
+        tags: ['a', 'b'],
+      },
+    )
   })
 
   it('sameContent ignores key order and an id or created one side leaves out, nothing else', () => {

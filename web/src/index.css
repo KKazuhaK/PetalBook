@@ -1324,3 +1324,26 @@ html[data-palette="rose-pine"].dark {
 .tag-rose {
     --tag-hue: #f43f5e;
 }
+
+/* The eight colours of an icon (a folder's or a page's). Each has a light and a dark shade, tuned so a 20px glyph
+   keeps 3:1 against the page in both; an icon is drawn with currentColor, so it follows these and the theme. */
+:root {
+    --icon-red: #dc2626;
+    --icon-orange: #ea580c;
+    --icon-amber: #b45309;
+    --icon-green: #15803d;
+    --icon-teal: #0f766e;
+    --icon-blue: #2563eb;
+    --icon-purple: #7c3aed;
+    --icon-pink: #db2777;
+}
+.dark {
+    --icon-red: #f87171;
+    --icon-orange: #fb923c;
+    --icon-amber: #fbbf24;
+    --icon-green: #4ade80;
+    --icon-teal: #2dd4bf;
+    --icon-blue: #60a5fa;
+    --icon-purple: #a78bfa;
+    --icon-pink: #f472b6;
+}

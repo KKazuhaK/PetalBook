@@ -198,6 +198,21 @@ export function createTypeBook(folderExists: (path: string) => string | null) {
       return f && (f.kind === 'select' || f.kind === 'multiselect') && f.options?.length ? [...f.options] : null
     },
 
+    // Gives a field another key (docs/api.md, "Icons, colours and the presets of the sources").
+    renameField(name: string, baseRev: string, from: string, to: string): PageType {
+      const t = types.get(name)
+      if (!t) throw new HttpError(404, 'not_found', '没有这个类型')
+      if (t.error) throw invalid('这个类型的文件坏了，要手动修好才能改')
+      if (revOf(t) !== baseRev) throw conflict(t)
+      if (from === to) throw invalid('字段已经是这个键')
+      if (!t.fields.some((f) => f.key === from)) throw new HttpError(404, 'not_found', '类型里没有这个字段')
+      if (to === '' || bytes(to) > 64 || /[\p{Cc}:]/u.test(to) || BUILTIN_KEYS.has(to) || RESERVED_KEYS.has(to))
+        throw invalid(`字段的键 “${to}” 不能用`)
+      if (t.fields.some((f) => f.key === to)) throw invalid(`类型里已经有字段 “${to}”`)
+      t.fields = t.fields.map((f) => (f.key === from ? { ...f, key: to } : f))
+      return view(t)
+    },
+
     // Renaming or moving a folder moves the bindings of it and of the folders in it.
     folderMoved(from: string, to: string) {
       bindings = bindings.map((b) => (isUnder(b.folder, from) ? { ...b, folder: to + b.folder.slice(from.length) } : b))

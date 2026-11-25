@@ -82,8 +82,8 @@ export interface PageSummary {
   folder: string
   title?: string
   subtitle?: string
-  // Where the text comes from; free text.
-  source?: string
+  // Where the text comes from: a list like the tags (a person, a book, a film).
+  source: string[]
   label: string
   untitled: boolean
   tags?: string[]
@@ -423,6 +423,25 @@ export interface TreeResponse {
 export type TagColorName = 'gray' | 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' | 'purple' | 'pink' | 'rose'
 // A name, or a custom `#rrggbb` (the server stores it in lower case).
 export type TagColor = TagColorName | `#${string}`
+// The eight colours of an icon (the server keeps only the name).
+export type IconColor = 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' | 'purple' | 'pink'
+// The icon and colour of a folder, kept in space.yml.
+export interface FolderStyle {
+  folder: string
+  icon?: string
+  color?: IconColor
+}
+export interface Appearance {
+  folders: FolderStyle[]
+  // The sources the space offers; null when it chose none (the client's defaults apply).
+  sourcePresets: string[] | null
+  iconColors: IconColor[]
+}
+export interface SourceCount {
+  source: string
+  pages: number
+}
+
 export interface TagsResponse {
   // `color` is absent when the tag has none.
   tags: { tag: string; pages: number; color?: TagColor }[]

@@ -11,7 +11,7 @@ import { useOpenSettings } from '@/components/settings/useSettings'
 import { Button } from '@/components/ui/button'
 import { touchHit } from '@/lib/touch'
 import { Skeleton } from '@/components/ui/skeleton'
-import { lang as uiLang } from '@/i18n'
+import { lang as uiLang, t } from '@/i18n'
 import { canonicalTag } from '@/lib/langTags'
 import { th } from '@/i18n/home'
 import { shortDate } from '@/lib/time'
@@ -127,7 +127,7 @@ export function DailyBlock({ now }: { now: Date }) {
           source={
             data.page.title
               ? `${data.page.title}${data.page.subtitle ? `｜${data.page.subtitle}` : ''}`
-              : data.page.source
+              : t.fmt.list(data.page.source)
           }
         />
       )}

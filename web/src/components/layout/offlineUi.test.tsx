@@ -193,7 +193,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
         id = page.id
         saveDraft(draftRef('local', 'default', id), {
           baseRev: page.rev,
-          fields: { title: '浏览器草稿', subtitle: '', source: '', tags: [] },
+          fields: { title: '浏览器草稿', subtitle: '', source: [], tags: [] },
           bodyText: '文件正文\n\n浏览器里没存的字\n',
           savedAt: Date.now(),
           token: 'tok-local',

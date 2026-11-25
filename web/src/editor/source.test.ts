@@ -14,14 +14,24 @@ const base: Page = {
 const same = () => base.body
 
 describe('the source field', () => {
-  it('is read from the header and written back only when edited', () => {
-    expect(fieldsOf(base.meta).source).toBe('《雪国》')
+  it('is a list; one text written by hand reads as one source, and is written back only when edited', () => {
+    expect(fieldsOf(base.meta).source).toEqual(['《雪国》'])
     expect(buildSave(base, { ...fieldsOf(base.meta) }, same)).toBeNull()
-    expect(buildSave(base, { ...fieldsOf(base.meta), source: ' 川端康成 ' }, same)?.meta.source).toBe('川端康成')
+    expect(buildSave(base, { ...fieldsOf(base.meta), source: [' 川端康成 ', '书'] }, same)?.meta.source).toEqual([
+      '川端康成',
+      '书',
+    ])
+  })
+
+  it('reads a list, drops blanks and repeats when written, and keeps what is not text', () => {
+    const listed = { ...base, meta: { id: 'P', source: ['书', '电影', null] } }
+    expect(fieldsOf(listed.meta).source).toEqual(['书', '电影'])
+    const out = buildSave(listed, { ...fieldsOf(listed.meta), source: ['书', ' 音乐 ', '音乐', ''] }, same)
+    expect(out?.meta.source).toEqual(['书', '音乐', null])
   })
 
   it('emptied, the key is removed rather than written empty', () => {
-    const out = buildSave(base, { ...fieldsOf(base.meta), source: '' }, same)
+    const out = buildSave(base, { ...fieldsOf(base.meta), source: [] }, same)
     expect(out && 'source' in out.meta).toBe(false)
   })
 })

@@ -14,6 +14,8 @@ export const BUILTIN_KEYS: ReadonlySet<string> = new Set([
   'tags',
   'created',
   'type',
+  'icon',
+  'color',
 ])
 export const RESERVED_KEYS: ReadonlySet<string> = new Set(['publish', 'slug'])
 export const isPropertyKey = (key: string) => !BUILTIN_KEYS.has(key) && !RESERVED_KEYS.has(key)

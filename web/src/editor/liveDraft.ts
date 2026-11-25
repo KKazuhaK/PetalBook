@@ -34,11 +34,14 @@ export class LiveDraft {
     this.editor = editor
   }
 
-  setField(key: 'title' | 'subtitle' | 'source', value: string): Fields {
+  setField(key: 'title' | 'subtitle', value: string): Fields {
     return (this.fields = { ...this.fields, [key]: value })
   }
   setTags(tags: string[]): Fields {
     return (this.fields = { ...this.fields, tags })
+  }
+  setSource(source: string[]): Fields {
+    return (this.fields = { ...this.fields, source })
   }
   // The header keys that are not the named fields (the properties of a type, and
   // whatever else the header holds), as the person has them now.

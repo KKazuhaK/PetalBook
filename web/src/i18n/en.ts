@@ -168,7 +168,8 @@ export const en: Messages = {
   editor: {
     titlePlaceholder: 'Untitled',
     subtitlePlaceholder: 'Subtitle',
-    sourcePlaceholder: 'Source (optional): where it is from, author or URL',
+    sourcePlaceholder: 'Add a source: a book, a film, a person…',
+    removeSource: (source) => `Remove source ${source}`,
     sourceLabel: 'Source',
     bodyPlaceholder: 'Write something here…',
     bodyLabel: 'Body',

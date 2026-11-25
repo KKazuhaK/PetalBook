@@ -53,6 +53,7 @@ import type {
   SpaceInfo,
   SpaceRole,
   SyncState,
+  IconColor,
   TagColor,
   TagsResponse,
   TypeInput,
@@ -1095,6 +1096,59 @@ export function useDeleteType() {
     onError: (e) => (e instanceof ApiError && e.code === 'conflict' ? void changed() : undefined),
   })
 }
+// The icons and colours of the folders and the presets of the sources.
+export function useAppearance() {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: ['space', space, 'appearance'] as const,
+    queryFn: ({ signal }) => spaceApi(space).appearance(signal),
+    staleTime: 30_000,
+    enabled: space !== '' && read,
+  })
+}
+
+export function useSetFolderStyle() {
+  const space = useSpaceId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ folder, icon, color }: { folder: string; icon: string; color: IconColor | '' }) =>
+      spaceApi(space).setFolderStyle(folder, icon, color),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['space', space, 'appearance'] }),
+  })
+}
+
+// The sources the pages already use, most used first.
+export function useUsedSources(enabled = true) {
+  const space = useSpaceId()
+  const { read } = useSpacePermissions()
+  return useQuery({
+    queryKey: ['space', space, 'sources'] as const,
+    queryFn: ({ signal }) => spaceApi(space).sources(signal),
+    staleTime: 15_000,
+    enabled: enabled && space !== '' && read,
+  })
+}
+
+export function useSetSourcePresets() {
+  const space = useSpaceId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (presets: string[] | null) => spaceApi(space).setSourcePresets(presets),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['space', space, 'appearance'] }),
+  })
+}
+
+export function useRenameTypeField() {
+  const space = useSpaceId()
+  const changed = useTypesChanged()
+  return useMutation({
+    mutationFn: ({ name, ...input }: { name: string; baseRev: string; from: string; to: string }) =>
+      spaceApi(space).renameTypeField(name, input),
+    onSuccess: changed,
+  })
+}
+
 export function useBindFolder() {
   const space = useSpaceId()
   const changed = useTypesChanged()

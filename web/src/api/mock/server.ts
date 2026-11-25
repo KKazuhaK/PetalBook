@@ -1835,7 +1835,11 @@ export function createMockServer(options: MockOptions = {}) {
   const needOf = (me: UserRec, method: string, rest: string): Permission => {
     // Types and their bindings are for those who manage the space; reading them is reading.
     if (rest.startsWith('/templates/') && method !== 'GET') return 'manage'
-    if ((rest.startsWith('/types/') && method !== 'GET') || (rest === '/folders/type' && method === 'PUT'))
+    if (
+      (rest.startsWith('/types/') && method !== 'GET') ||
+      (rest === '/folders/type' && method === 'PUT') ||
+      (rest === '/sources/presets' && method === 'PUT')
+    )
       return 'manage'
     if (
       (rest === '/daily/settings' && method === 'PUT') ||
@@ -3765,6 +3769,24 @@ export function createMockServer(options: MockOptions = {}) {
       }
       return { status: 200, body: st.putType(name, body as never) }
     }
+    if (rest === '/appearance' && method === 'GET') return { status: 200, body: st.appearance() }
+    if (rest === '/folders/style' && method === 'PUT') {
+      if (typeof body.folder !== 'string') throw new HttpError(400, 'invalid', '缺少 folder')
+      return {
+        status: 200,
+        body: st.setFolderStyle(
+          body.folder,
+          (body.icon as string | undefined) ?? '',
+          (body.color as string | undefined) ?? '',
+        ),
+      }
+    }
+    if (rest === '/sources' && method === 'GET') return { status: 200, body: st.usedSources() }
+    if (rest === '/sources/presets' && method === 'PUT')
+      return { status: 200, body: st.setSourcePresets(body.presets ?? null) }
+    const renameField = /^\/types\/(.+)\/rename-field$/.exec(rest)
+    if (renameField && method === 'POST')
+      return { status: 200, body: st.renameTypeField(decodeURIComponent(renameField[1]), body) }
     if (rest === '/folders/type' && method === 'PUT') {
       if (typeof body.folder !== 'string' || (body.type !== undefined && typeof body.type !== 'string'))
         throw new HttpError(400, 'invalid', '缺少 folder 或 type')

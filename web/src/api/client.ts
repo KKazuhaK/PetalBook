@@ -85,6 +85,10 @@ import type {
   SessionInfo,
   SpaceInfo,
   SpaceRole,
+  Appearance,
+  FolderStyle,
+  IconColor,
+  SourceCount,
   TagColor,
   TagsResponse,
   TypeInput,
@@ -610,6 +614,21 @@ export function spaceApi(space: string) {
       request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { folder, template } }),
     setQuickNoteTemplate: (quickNote: string) =>
       request<TemplateDefaults>(base('/templates/defaults'), { method: 'PUT', body: { quickNote } }),
+    // The icons and colours of folders, and the presets of the sources (docs/api.md, "Icons, colours...").
+    appearance: (signal?: AbortSignal) => request<Appearance>(base('/appearance'), { signal }),
+    // "" for the icon and the colour takes them away. Needs `write`.
+    setFolderStyle: (folder: string, icon: string, color: IconColor | '') =>
+      request<FolderStyle>(base('/folders/style'), { method: 'PUT', body: { folder, icon, color } }),
+    sources: (signal?: AbortSignal) => request<{ sources: SourceCount[] }>(base('/sources'), { signal }),
+    // null goes back to the defaults. Needs `manage`.
+    setSourcePresets: (presets: string[] | null) =>
+      request<{ presets: string[] | null }>(base('/sources/presets'), { method: 'PUT', body: { presets } }),
+    // Gives a field of a type another key, in the type and in every page of it. Needs `manage`.
+    renameTypeField: (name: string, input: { baseRev: string; from: string; to: string }) =>
+      request<{ type: PageType; pages: number }>(base(`/types/${enc(name)}/rename-field`), {
+        method: 'POST',
+        body: input,
+      }),
     // `type` "" removes the binding.
     bindFolder: (folder: string, type: string) =>
       request<FolderBinding>(base('/folders/type'), { method: 'PUT', body: { folder, type } }),

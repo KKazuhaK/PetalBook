@@ -164,7 +164,8 @@ export const zhCN = {
   editor: {
     titlePlaceholder: '无标题',
     subtitlePlaceholder: '副标题',
-    sourcePlaceholder: '来源（可选）：出处、作者或网址',
+    sourcePlaceholder: '添加来源：书、电影、人……',
+    removeSource: (source: string) => `移除来源 ${source}`,
     sourceLabel: '来源',
     bodyPlaceholder: '在这里写点什么…',
     bodyLabel: '正文',

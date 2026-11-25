@@ -71,8 +71,8 @@ export interface Fields {
   title: string
   subtitle: string
   tags: string[]
-  // Where the text comes from (a person, a book, an address).
-  source: string
+  // Where the text comes from (a person, a book, a film): a list like the tags.
+  source: string[]
   // The rest of the header (every key but `id` and the four above), when it is
   // not the file's: rewritten in the source view, or held by a draft the text
   // was loaded from. Absent means "as the file has them", whatever the file
@@ -194,27 +194,38 @@ type FieldKey = (typeof FIELD_KEYS)[number]
 export function fieldsOf(meta: PageMeta, fileMeta?: PageMeta): Fields {
   const text = (v: unknown) =>
     typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : ''
-  let tags: string[] = []
-  if (typeof meta.tags === 'string') tags = meta.tags === '' ? [] : [meta.tags]
-  else if (Array.isArray(meta.tags)) tags = meta.tags.filter((t): t is string => typeof t === 'string')
+  // A single text, written by hand, is one value.
+  const list = (v: unknown): string[] =>
+    typeof v === 'string'
+      ? v === ''
+        ? []
+        : [v]
+      : Array.isArray(v)
+        ? v.filter((t): t is string => typeof t === 'string')
+        : []
+  const tags = list(meta.tags)
+  const source = list(meta.source)
   const others = fileMeta && !sameData(othersOf(meta), othersOf(fileMeta)) ? { others: othersOf(meta) } : {}
-  return { title: text(meta.title), subtitle: text(meta.subtitle), source: text(meta.source), tags, ...others }
+  return { title: text(meta.title), subtitle: text(meta.subtitle), source, tags, ...others }
 }
 
 // What a field becomes when the person writes it: one line, trimmed, tags
 // de-duplicated. Applied to what they typed, never to what the server served.
 export function cleanFields(f: Fields): Fields {
   const line = (s: string) => s.replace(/[\r\n]+/g, ' ').trim()
-  const tags: string[] = []
-  for (const raw of f.tags) {
-    const t = line(raw)
-    if (t && !tags.includes(t)) tags.push(t)
+  const tidy = (list: string[]) => {
+    const out: string[] = []
+    for (const raw of list) {
+      const t = line(raw)
+      if (t && !out.includes(t)) out.push(t)
+    }
+    return out
   }
   return {
     title: line(f.title),
     subtitle: line(f.subtitle),
-    source: line(f.source),
-    tags,
+    source: tidy(f.source),
+    tags: tidy(f.tags),
     ...(f.others === undefined ? {} : { others: f.others }),
   }
 }
@@ -277,7 +288,7 @@ export function changedFields(served: Fields, typed: Fields): FieldChanges {
   return {
     title: typed.title !== served.title && clean.title !== served.title,
     subtitle: typed.subtitle !== served.subtitle && clean.subtitle !== served.subtitle,
-    source: typed.source !== served.source && clean.source !== served.source,
+    source: !sameTags(typed.source, served.source) && !sameTags(clean.source, served.source),
     tags: !sameTags(typed.tags, served.tags) && !sameTags(clean.tags, served.tags),
   }
 }
@@ -291,13 +302,14 @@ export function applyFields(meta: PageMeta, typed: Fields, changed: FieldChanges
   const clean = cleanFields(typed)
   for (const key of FIELD_KEYS) {
     if (!changed[key]) continue
-    if (key === 'tags') {
+    if (key === 'tags' || key === 'source') {
       // Entries of a list that are not text (a bare `~`, say) are not the
-      // person's tags to drop: they stay, after the edited ones.
-      const kept = Array.isArray(meta.tags) ? meta.tags.filter((t) => typeof t !== 'string') : []
-      const list = [...clean.tags, ...kept]
-      if (list.length) out.tags = list
-      else delete out.tags
+      // person's to drop: they stay, after the edited ones.
+      const cur = meta[key]
+      const kept = Array.isArray(cur) ? cur.filter((t) => typeof t !== 'string') : []
+      const list = [...clean[key], ...kept]
+      if (list.length) out[key] = list
+      else delete out[key]
     } else if (clean[key]) out[key] = clean[key]
     else delete out[key]
   }

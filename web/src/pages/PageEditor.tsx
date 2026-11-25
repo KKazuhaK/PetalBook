@@ -15,6 +15,8 @@ import {
   useSession,
   useSpacePermissions,
   useTags,
+  useUsedSources,
+  useAppearance,
   useTree,
   useUrls,
 } from '@/api/hooks'
@@ -81,6 +83,8 @@ import { findLink, LinkReport, pageLinksOf, type PageLinkTarget } from '@/compon
 import { PageLinkPicker } from '@/components/editor/PageLinkPicker'
 import { SaveIndicator } from '@/components/editor/SaveIndicator'
 import { TagsEditor } from '@/components/editor/TagsEditor'
+import { SourcesEditor } from '@/components/editor/SourceEditor'
+import { DEFAULT_SOURCES } from '@/lib/sources'
 import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
@@ -334,6 +338,9 @@ function EditorSession({
   const client: SpaceApi = useMemo(() => spaceApi(space), [space])
   const tree = useTree()
   const tags = useTags()
+  const sourceList = useUsedSources()
+  const appearance = useAppearance()
+  const presets = appearance.data?.sourcePresets ?? DEFAULT_SOURCES
   // Without `write` the page is shown and nothing about it can be changed: no
   // typing, no draft, no move or delete, no going back to a version.
   const { write } = useSpacePermissions()
@@ -640,8 +647,13 @@ function EditorSession({
   const page = controller.page
   useDocumentTitle(`${fields.title.trim() || t.editor.untitled} · ${t.appName}`)
 
-  const setField = (key: 'title' | 'subtitle' | 'source', value: string) => {
+  const setField = (key: 'title' | 'subtitle', value: string) => {
     setFields(live.setField(key, value))
+    controller.markDirty()
+    noteRich.current({ fields: true })
+  }
+  const setSources = (next: string[]) => {
+    setFields(live.setSource(next))
     controller.markDirty()
     noteRich.current({ fields: true })
   }
@@ -875,11 +887,13 @@ function EditorSession({
     const meta: Record<string, unknown> = {
       ...(buildSave(base, { ...f, body: undefined }, () => base.body)?.meta ?? base.meta),
     }
-    for (const k of ['title', 'subtitle', 'source'] as const) {
+    for (const k of ['title', 'subtitle'] as const) {
       const v = f[k] ?? ''
       if (v === '') delete meta[k]
       else meta[k] = v
     }
+    if (f.source.length) meta.source = f.source
+    else delete meta.source
     if (f.tags.length) meta.tags = f.tags
     else delete meta.tags
     return { meta, body: bodyNow() }
@@ -921,7 +935,7 @@ function EditorSession({
             !editor.isDestroyed &&
             f.title === restored.fields.title &&
             f.subtitle === restored.fields.subtitle &&
-            f.source === restored.fields.source &&
+            sameTags(f.source, restored.fields.source) &&
             sameTags(f.tags, restored.fields.tags) &&
             f.others === restored.fields.others &&
             bodyNow() === restored.markdown
@@ -1174,17 +1188,13 @@ function EditorSession({
                     suggestions={tags.data?.tags ?? []}
                     readOnly={readOnly}
                   />
-                  {(!readOnly || fields.source !== '') && (
-                    <AutoTextarea
-                      readOnly={readOnly}
-                      value={fields.source}
-                      onChange={(v) => setField('source', v)}
-                      onEnter={() => editor?.commands.focus('start')}
-                      placeholder={t.editor.sourcePlaceholder}
-                      label={t.editor.sourceLabel}
-                      className="pb-source"
-                    />
-                  )}
+                  <SourcesEditor
+                    sources={fields.source}
+                    onChange={setSources}
+                    used={sourceList.data?.sources ?? []}
+                    presets={presets}
+                    readOnly={readOnly}
+                  />
                   {typeName !== '' && (
                     <Suspense fallback={null}>
                       <PropertyPanel typeName={typeName} values={propValues} onChange={setProps} readOnly={readOnly} />
