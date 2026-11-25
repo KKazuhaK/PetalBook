@@ -1,10 +1,12 @@
 package space
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
@@ -44,6 +46,13 @@ type committer struct {
 	open  []jrec     // "b" and "u" records whose edit of space.yml is not done yet (under mu)
 	runMu sync.Mutex // one git run at a time
 
+	// Packing (see maintain). A commit leaves its objects loose; after
+	// maintainEvery commits the loop packs them, under runMu so that it never
+	// runs at the same time as a commit.
+	maintainEvery atomic.Int64 // commits between two packings; 0 means DefaultMaintainEvery
+	sinceMaintain atomic.Int64 // commits made since the last packing
+	maintainOff   bool         // under runMu: the space follows a remote, whose fetches and pushes are not under runMu
+
 	// onCommit is told the paths of each commit made (under mu).
 	onCommit func(paths []string)
 
@@ -67,6 +76,59 @@ func newCommitter(g *gitRepo, idle, max time.Duration, log *slog.Logger, j *jour
 	}
 	go c.loop()
 	return c
+}
+
+// DefaultMaintainEvery is how many commits the committer makes between two
+// packings of the Git objects they leave loose.
+const DefaultMaintainEvery = 50
+
+// pauseMaintenance stops packing, for good until resumeMaintenance: a space
+// that follows a remote does its fetches, commits and pushes under the space
+// lock, not under runMu, so packing here could overlap a fetch of its own.
+// It waits for a packing that is running.
+func (c *committer) pauseMaintenance() {
+	c.runMu.Lock()
+	c.maintainOff = true
+	c.runMu.Unlock()
+}
+
+func (c *committer) resumeMaintenance() {
+	c.runMu.Lock()
+	c.maintainOff = false
+	c.runMu.Unlock()
+}
+
+func (c *committer) every() int64 {
+	if n := c.maintainEvery.Load(); n > 0 {
+		return n
+	}
+	return DefaultMaintainEvery
+}
+
+// maintain packs the loose objects now, if enough commits have been made
+// since the last time (or at all, when force is set and any were made). Under
+// runMu, so never alongside a commit. A failure is only a warning: the commits
+// it follows are done.
+func (c *committer) maintain(force bool) {
+	n := c.sinceMaintain.Load()
+	if n == 0 || (!force && n < c.every()) {
+		return
+	}
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	if c.maintainOff || c.sinceMaintain.Load() == 0 {
+		return
+	}
+	// Reset first: a failure is retried after another batch, not on every pass.
+	c.sinceMaintain.Store(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	start := time.Now()
+	if err := c.git.r().Maintain(ctx); err != nil {
+		c.log.Warn("could not pack the Git objects; will try again later", "error", err)
+		return
+	}
+	c.log.Debug("packed the Git objects", "commits", n, "took", time.Since(start))
 }
 
 // setOnCommit sets what is told the paths of each commit made.
@@ -243,6 +305,7 @@ func (c *committer) loop() {
 		if t != nil {
 			t.Stop()
 		}
+		c.maintain(false)
 	}
 }
 
@@ -294,6 +357,9 @@ func (c *committer) commit() error {
 			continue
 		}
 		committed++
+		if made {
+			c.sinceMaintain.Add(1)
+		}
 		c.mu.Lock()
 		tell := c.onCommit
 		c.mu.Unlock()
@@ -318,6 +384,14 @@ func (c *committer) commit() error {
 		c.mu.Unlock()
 		if committed == 0 {
 			return errors.Join(errs...)
+		}
+	}
+	// Packing is not done here: Flush and SwitchTo are waited for by a save.
+	// The loop does it, after waking.
+	if c.sinceMaintain.Load() >= c.every() {
+		select {
+		case c.wake <- struct{}{}:
+		default:
 		}
 	}
 	// Everything journaled so far is in Git now, except what failed and what
@@ -353,6 +427,7 @@ func (c *committer) Close() error {
 	c.once.Do(func() { close(c.stop) })
 	<-c.done
 	err := c.commit()
+	c.maintain(true)
 	if c.j != nil {
 		c.j.close()
 	}

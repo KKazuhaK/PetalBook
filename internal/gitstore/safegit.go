@@ -97,6 +97,16 @@ func commitTreeArgs(tree, parent string) ([]string, error) {
 	return append(args, "-F", "-"), nil
 }
 
+// maintainArgs are the commands of Repo.Maintain, the only builder of them;
+// refuseDestructive accepts exactly these shapes.
+func maintainArgs() [][]string {
+	return [][]string{
+		{"repack", "-d", "-q"},
+		{"prune-packed", "-q"},
+		{"commit-graph", "write", "--reachable"},
+	}
+}
+
 var errDestructive = errors.New("refusing a git command that could rewrite or delete history")
 
 // allowedConfigKeys are the only "-c key=value" settings passed by callers.
@@ -186,6 +196,15 @@ func subcommand(args []string) (string, []string) {
 //	             out of its repository, is built without a work tree or an index.
 //	cat-file blob <id>: the contents of a file fetched by its id, copied to the cache.
 //
+//	repack -d -q, prune-packed -q, commit-graph write --reachable: Repo.Maintain
+//	             packs the loose objects commits leave behind. Exactly these three
+//	             forms (checked in refuseDestructive): repack without -a only packs
+//	             what is loose and reachable and never drops an unreachable object,
+//	             prune-packed only deletes loose objects that a pack holds, and the
+//	             commit graph is a cache. gc, prune and repack -a/-A/-k/--cruft, which
+//	             could remove an object a commit in flight has written but not yet
+//	             referenced, stay refused.
+//
 // Dropped from RackBook's list because nothing here needs them: --grep and
 // --fixed-strings (trailer search), merge-base's use for pull requests.
 var allowedOptions = map[string][]string{
@@ -223,6 +242,10 @@ var allowedOptions = map[string][]string{
 	// one file, named by the caller, outside it).
 	"archive": {},
 	"bundle":  {},
+	// Packing (Repo.Maintain); their arguments are checked exactly below.
+	"repack":       {},
+	"prune-packed": {},
+	"commit-graph": {},
 }
 
 // partialConfigKeys are the keys of a clone's own configuration that make it
@@ -313,6 +336,20 @@ func refuseDestructive(args []string) error {
 		// Exactly: bundle create <file> --all, the file an absolute path.
 		if len(rest) != 3 || rest[0] != "create" || rest[2] != "--all" || !filepath.IsAbs(rest[1]) || strings.HasPrefix(rest[1], "-") {
 			return fmt.Errorf("%w: bundle %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "repack":
+		// Exactly: repack -d -q. No -a/-A (those rewrite every pack and, with
+		// -d, may drop unreachable objects), no -k, no cruft.
+		if len(rest) != 2 || rest[0] != "-d" || rest[1] != "-q" {
+			return fmt.Errorf("%w: repack %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "prune-packed":
+		if len(rest) != 1 || rest[0] != "-q" {
+			return fmt.Errorf("%w: prune-packed %s", errDestructive, strings.Join(rest, " "))
+		}
+	case "commit-graph":
+		if len(rest) != 2 || rest[0] != "write" || rest[1] != "--reachable" {
+			return fmt.Errorf("%w: commit-graph %s", errDestructive, strings.Join(rest, " "))
 		}
 	case "write-tree", "read-tree":
 		// write-tree takes nothing; read-tree only the commit to read.

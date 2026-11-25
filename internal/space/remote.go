@@ -257,6 +257,7 @@ func (s *Space) initRemote(o *RemoteOptions, recovered map[string]Author) error 
 		r.repo.WriteLastGood(ctx, r.branch, r.st.LastGood)
 	}
 	s.rem.Store(r)
+	s.cm.pauseMaintenance() // see committer.pauseMaintenance
 	s.enterPartial(ctx, r)
 	// origin must be the address the database has.
 	if cur := r.repo.RemoteURL(ctx); cur != o.URL {
@@ -1101,6 +1102,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		if err := s.cm.Flush(); err != nil {
 			return fmt.Errorf("could not commit the space's pending changes before connecting: %w", err)
 		}
+		// No packing while the clone is fetched into and pushed from under
+		// the space lock alone (it waits for one that is running).
+		s.cm.pauseMaintenance()
 	}
 	nr := s.newRemote(&o)
 	repo := nr.repo
@@ -1118,6 +1122,9 @@ func (s *Space) Connect(ctx context.Context, o RemoteOptions) error {
 		// when the request that asked for the connection has gone away.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
+		if prev == nil {
+			s.cm.resumeMaintenance()
+		}
 		if h := repo.Head(ctx); h != oldHead && oldHead != "" {
 			if err := repo.ResetHard(ctx, oldHead); err != nil {
 				s.log.Error("could not put the clone back after a failed connection", "error", err)
@@ -1299,6 +1306,7 @@ func (s *Space) Disconnect() error {
 		return err
 	}
 	s.rem.Store(nil)
+	s.cm.resumeMaintenance()
 	// Nothing of the server's own is in the work tree to put in order: its
 	// state is in the Git directory, in local mode as in this one.
 	return nil

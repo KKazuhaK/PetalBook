@@ -210,3 +210,38 @@ When signing in is not used and your own repository is connected directly
   official server.
 - The merge code is the same as the server's in 4.2 (in the engine packages, see
   the boundary in [overview.md §10](overview.md#10-reuse)); two copies are not written.
+
+### 4.8 Packing Git objects (2026-11-24)
+
+Commits are built with plumbing (`commitChanges`), which never makes Git pack
+anything, so a clone only ever grew in loose objects: measured at 50k pages, about
+90 KB per commit on average and about 250 KB in a 10,000-file folder. `.git` counts
+toward quotas, so a local-only space grew without limit.
+
+- **What runs.** `Repo.Maintain` runs `repack -d -q` (incremental: no `-a`, existing
+  packs are not rewritten, unreachable objects are neither packed nor dropped), then
+  `prune-packed -q` (deletes only loose objects a pack already holds), then
+  `commit-graph write --reachable` (a cache). `safegit.go` allows exactly these three
+  forms and nothing else: `gc`, `prune`, `repack -a/-A/-k/--cruft` stay refused, because
+  they could remove an object that a commit in flight has written but not yet referenced.
+- **When.** The committer counts commits it makes. After 50 (`DefaultMaintainEvery`)
+  its loop goroutine runs `Maintain`, after the commit is done: a save, `Flush` and
+  `SwitchTo` never wait for it, except that a commit asked for while it runs waits for
+  its end. `Close` runs it once more if any commits were made since the last run.
+  A failure is a warning in the log; the commits it follows are fine.
+- **Lock.** `committer.runMu`, the lock every committer commit holds, so packing never
+  overlaps one. Other writers (restore, settings moves) do not take it, but cannot be
+  hurt by it: nothing unreachable is ever removed.
+- **Remote spaces.** Their fetch, commit and push run under the space lock, not
+  `runMu`, and their commits do not go through the committer. The committer's packing
+  is therefore switched off for as long as a space follows a remote (`Connect`,
+  `initRemote`; `Disconnect` switches it on). Their fetches keep Git's own
+  `gc --auto`, which is the only thing packing them; we do not pass `gc.auto=0`, as
+  nothing else would pack a remote space.
+- **Cost.** Measured: 100 commits, 10 MB loose, `repack -d` takes 354 ms and adds 1.3 MB
+  packed. At the default threshold that is about 0.2 s of git work per 50 commits and
+  a space ends about 7x smaller. It scales with the loose objects since the last run, not
+  with the space, apart from the commit graph, which is rewritten from the history
+  (milliseconds per thousand commits). Many users: spaces pack independently, one git
+  process at a time per space, only after writing.
+
