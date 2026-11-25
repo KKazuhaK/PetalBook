@@ -368,7 +368,16 @@ func Open(opt Options) (*Space, error) {
 		}
 	}
 	heal.setStateDir(stateDir)
-	recovered, recoveredRevs := recoverJournal(heal, root, recs)
+	recovered, recoveredRevs, giveUp := recoverJournal(heal, root, recs)
+	if len(giveUp) > 0 {
+		ks := make([]jrec, len(giveUp))
+		for i, tx := range giveUp {
+			ks[i] = jrec{Op: "k", Tx: tx}
+		}
+		if err := jrn.append(ks); err != nil {
+			return nil, err
+		}
+	}
 	// Moves whose links were not all made right before the crash: they are
 	// finished once the index is ready, and the journal keeps them till then.
 	linkRecs := pendingLinkRecs(recs)

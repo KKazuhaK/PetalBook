@@ -666,7 +666,14 @@ func (j *journal) appendLocked(recs []jrec, synced bool) error {
 // place), in their order, followed by a "t" record for each path in pending,
 // with its author. A record of keep whose frames are not in the journal any
 // more is journaled again, at the end.
-func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) error {
+// retainedTx is a file a transaction wrote whose commit failed: a trim
+// journals it again as a transaction of its own, applied, with its content.
+type retainedTx struct {
+	by   Author
+	file txFile
+}
+
+func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author, retx ...retainedTx) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.guard != nil {
@@ -706,6 +713,25 @@ func (j *journal) trim(upTo uint64, keep []jrec, pending map[string]Author) erro
 		if r.seq == 0 || !found[r.seq] {
 			encodeRec(&buf, &seq, &r)
 			again[i] = r
+		}
+	}
+	for _, rt := range retx {
+		tx := seq + 1
+		f := rt.file
+		recs := []jrec{
+			{Op: "x", Tx: tx, N: 1, AuthorName: rt.by.Name, AuthorEmail: rt.by.Email, Via: rt.by.Via},
+			{Op: "p", Tx: tx, Path: f.path, Old: f.old, Rev: f.rev},
+			{Op: "a", Tx: tx},
+		}
+		// Inline whatever its size: it is rare, and the staged file of its
+		// first transaction goes with this trim.
+		if utf8.Valid(f.data) {
+			recs[1].Text = string(f.data)
+		} else {
+			recs[1].Bin = f.data
+		}
+		for i := range recs {
+			encodeRec(&buf, &seq, &recs[i])
 		}
 	}
 	paths := make([]string, 0, len(pending))
@@ -778,7 +804,7 @@ func recoverPending(root string, recs []jrec) map[string]Author {
 // recoverPendingWith is recoverPending; h restores a space.yml that cannot be
 // used when the bindings of a folder are to be finished in it.
 func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
-	set, _ := recoverJournal(h, root, recs)
+	set, _, _ := recoverJournal(h, root, recs)
 	return set
 }
 
@@ -786,10 +812,14 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 // paths a transaction wrote are to be committed with: what the server wrote,
 // even where the file was changed outside PetalBook since (that change stays
 // in the work tree, uncommitted). A later record of the path that is not a
-// transaction's leaves it to the work tree again.
-func recoverJournal(h *healer, root string, recs []jrec) (map[string]Author, map[string]gitstore.Blob) {
-	set := map[string]Author{}
-	revs := map[string]gitstore.Blob{}
+// transaction's leaves it to the work tree again. giveUp are the transactions
+// that never got to be applied and that the replay could not finish (a file
+// changed outside meanwhile): their content never was on disk, so it is not
+// committed, and the caller journals them as given up ("k").
+func recoverJournal(h *healer, root string, recs []jrec) (set map[string]Author, revs map[string]gitstore.Blob, giveUp []uint64) {
+	set = map[string]Author{}
+	revs = map[string]gitstore.Blob{}
+	gaveUp := map[uint64]bool{}
 	defer func() {
 		for p := range revs {
 			if _, ok := set[p]; !ok {
@@ -834,14 +864,19 @@ func recoverJournal(h *healer, root string, recs []jrec) (map[string]Author, map
 				continue
 			}
 			// The file is the server's if the replay leaves it at the new
-			// content; or, changed outside since, if the transaction was
-			// applied, or wrote over a file that was there. A new file whose
-			// transaction never got to be applied may be another's that held
-			// the name: that is never committed.
-			if replay(root, r, !applied[r.Tx], log) || applied[r.Tx] || r.Old != "" {
+			// content, or, changed outside since, if the transaction was
+			// applied. One that never was applied and whose file is at
+			// neither content is given up: what it would have written never
+			// was on disk (and a new file there may be another's that held
+			// the name).
+			switch {
+			case replay(root, r, !applied[r.Tx], log) || applied[r.Tx]:
 				r := r
 				set[r.Path] = authors[r.Tx]
 				revs[r.Path] = gitstore.Blob{ID: r.Rev, Data: r.content}
+			case !gaveUp[r.Tx]:
+				gaveUp[r.Tx] = true
+				giveUp = append(giveUp, r.Tx)
 			}
 			continue
 		case "t", "d":
@@ -911,7 +946,7 @@ func recoverJournal(h *healer, root string, recs []jrec) (map[string]Author, map
 			delete(revs, p)
 		}
 	}
-	return set, revs
+	return set, revs, giveUp
 }
 
 // replay brings the file of a "p" record to its new content, if it is at the

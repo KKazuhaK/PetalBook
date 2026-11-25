@@ -379,6 +379,7 @@ func (s *Space) writeEdits(tx *txn, edits []fileEdit) ([]string, error) {
 	defer func() {
 		if journaled && !applied {
 			tx.touch(paths...)
+			s.cm.forget(id)
 		}
 	}()
 	defer func() { s.rb.add(steps...) }()

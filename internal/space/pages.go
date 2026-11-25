@@ -589,6 +589,9 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 				s.log.Warn("could not rename page file", "from", rel, "stem", stem, "error", err)
 			} else {
 				newRel = path.Join(folderOf(rel), name)
+				// The old name is gone: whatever happens next, it is not
+				// committed with the content the save wrote there.
+				tx.touch(rel)
 				// The pages that link to this one name the file: they follow it.
 				var rerr error
 				if newData, rerr = s.relink(tx, []movedPage{{id, rel, newRel}}, nil, newRel, newData); s.afterRelink(tx, rerr) != nil {

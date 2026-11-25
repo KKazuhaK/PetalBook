@@ -283,6 +283,18 @@ func (c *committer) Applied(tx uint64) {
 	}
 }
 
+// forget drops what the committer knows of transaction tx, which was neither
+// applied nor given up: the writing stopped part way, the files written are
+// touched as they are, and the next start replays the rest.
+func (c *committer) forget(tx uint64) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.txs, tx)
+	c.mu.Unlock()
+}
+
 // Abort journals that transaction tx was given up before any of its files
 // was written (its first write failed, and the change was answered with an
 // error), so that the next start does not make it after all.
@@ -438,7 +450,11 @@ func (c *committer) FlushChange() error {
 }
 
 // Touch records that by changed these files (relative, slash-separated). A
-// moved file is two paths: the old and the new.
+// moved file is two paths: the old and the new. It also drops the content a
+// transaction recorded for them: a path with recorded content is committed
+// with that content, without looking at the work tree, so not even whether it
+// is still there. A change that deletes or moves such a file must touch its
+// path, or the commit puts it back.
 func (c *committer) Touch(by Author, paths ...string) {
 	if len(paths) == 0 {
 		return
@@ -664,14 +680,35 @@ func (c *committer) commit() error {
 	// place: they are of changes this commit did not take, whether or not
 	// their paths are pending yet.
 	if c.j != nil {
-		c.mu.Lock()
-		again := make(map[string]Author, len(failed))
+		// A failed path that a transaction wrote keeps the content the
+		// server wrote: read back now, before the trim drops its frame, and
+		// journaled again with it, so the retry (or the next start) commits
+		// that and not what the work tree has by then.
+		keepBlob := map[string][]byte{}
 		for _, p := range failed {
-			if by, ok := c.paths[p]; ok {
-				again[p] = by
+			if b, ok := takenRevs[p]; ok && b.Data != nil {
+				if data, err := b.Data(); err == nil && gitstore.BlobID(data) == b.ID {
+					keepBlob[p] = data
+				}
 			}
 		}
-		err := c.j.trim(upTo, c.open, again)
+		c.mu.Lock()
+		again := make(map[string]Author, len(failed))
+		var retx []retainedTx
+		for _, p := range failed {
+			by, ok := c.paths[p]
+			if !ok {
+				continue
+			}
+			data, kept := keepBlob[p]
+			if cur, ok := c.revs[p]; kept && ok && cur.ID == takenRevs[p].ID {
+				retx = append(retx, retainedTx{by: by, file: txFile{path: p, rev: cur.ID, data: data}})
+				c.revs[p] = gitstore.Blob{ID: cur.ID, Data: func() ([]byte, error) { return data, nil }}
+				continue
+			}
+			again[p] = by
+		}
+		err := c.j.trim(upTo, c.open, again, retx...)
 		c.mu.Unlock()
 		if err != nil {
 			c.log.Error("could not trim the commit journal", "error", err)

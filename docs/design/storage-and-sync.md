@@ -416,8 +416,15 @@ once by the trim after the commit.
   1). Paths of the older record types, and any path a later record of another type
   names, are staged from the work tree as before.
 - **Recovery.** Recovery does the same: a transaction's file is committed as the server
-  wrote it when the replay leaves it at the new content, or the transaction was applied,
-  or it replaced an existing file.
+  wrote it when the replay leaves it at the new content, or when the transaction was
+  applied. A transaction that never was applied and whose file is at neither content is
+  given up (`k`): what it would have written never was on disk.
+- **Edge cases.** A path a transaction wrote keeps its Git mode (an executable page stays
+  one). When one author's commit fails and another's is made, the trim journals the
+  failed path again as an applied transaction of its own, with its content, so the retry
+  still commits what the server wrote. A path with recorded content is committed without
+  looking at the work tree, so a change that deletes or moves such a file must touch the
+  path (`Touch` says so).
 - **Pages made by the server** (`createNamed`) are now transactions: applied once the
   name is taken, given up (`k`) when another file holds it. A page made and then
   changed outside before the next start is committed as the server wrote it (3c), and a
@@ -427,6 +434,15 @@ once by the trim after the commit.
   part is a stat per file and an `update-index` process. A save adds no fsync and no
   git process.
 - **Remote spaces** are unchanged (PR 5).
+
+**Known issues (PR 3).**
+- `contentAt` reads and scans the whole journal once per path whose file was changed
+  outside PetalBook, under `runMu`: O(paths × journal) when many files of a large pending
+  rewrite are edited outside at once. Fixed in PR 4 or later, by reading the journal once
+  per commit, indexed by frame number.
+- In a repository using SHA-256 object names no recorded blob id (SHA-1, `page.Rev`)
+  matches, so every path falls back to the work tree, and owner decision 1 does not hold
+  there.
 
 **Known issue (PR 2, accepted).** The `a` record is not synced. After a power loss (a
 process crash does not lose it), the last transaction may be replayed although it was

@@ -390,8 +390,18 @@ func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[stri
 			ps = append(ps, p)
 		}
 		sort.Strings(ps)
+		modes, err := r.indexModes(ctx, ps)
+		if err != nil {
+			return false, err
+		}
 		for _, p := range ps {
-			fmt.Fprintf(&in, "100644 %s 0\t%s\x00", asKnown[p], p)
+			// The mode the file has in Git stays (an executable page stays
+			// one); a file new to Git is a plain one.
+			mode := modes[p]
+			if mode != "100755" {
+				mode = "100644"
+			}
+			fmt.Fprintf(&in, "%s %s 0\t%s\x00", mode, asKnown[p], p)
 		}
 		if _, err := r.gitIn(ctx, nil, in.Bytes(), "update-index", "-z", "--index-info"); err != nil {
 			return false, err
@@ -441,6 +451,31 @@ func (r *Repo) CommitPathsAs(ctx context.Context, paths []string, known map[stri
 		return false, err
 	}
 	return made, left
+}
+
+// indexModes is the mode each of paths has in the index, by path ("" for a
+// path the index does not have).
+func (r *Repo) indexModes(ctx context.Context, paths []string) (map[string]string, error) {
+	want := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		want[p] = true
+	}
+	modes := map[string]string{}
+	for rest := paths; len(rest) > 0; {
+		n := min(len(rest), maxArgPaths)
+		out, err := r.run(ctx, Cmd{Args: append([]string{"ls-files", "-s", "-z", "--"}, rest[:n]...)})
+		if err != nil {
+			return nil, err
+		}
+		rest = rest[n:]
+		for _, e := range strings.Split(out, "\x00") {
+			head, p, ok := strings.Cut(e, "\t")
+			if mode, _, _ := strings.Cut(head, " "); ok && want[p] {
+				modes[p] = mode
+			}
+		}
+	}
+	return modes, nil
 }
 
 // writeBlobs puts the contents known gives the paths into the object store,
