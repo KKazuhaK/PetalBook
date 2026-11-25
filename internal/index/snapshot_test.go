@@ -125,8 +125,6 @@ func checkFlipListing(t *testing.T, x *Index, q Query, status, prio string, want
 // listing holds exactly the pages that met its conditions at one moment.
 func TestListingsReadOneSnapshot(t *testing.T) {
 	t.Parallel()
-	x := flipSpace(t)
-	x.plan.part = 20 // many pages are looked up in parts, on several connections
 	routes := []struct {
 		name              string
 		lead, set, budget int
@@ -143,35 +141,43 @@ func TestListingsReadOneSnapshot(t *testing.T) {
 	}{{"", nil}, {"title", nil}, {"-updated", nil}, {"prop:prio", []string{"low", "high"}}, {"-prop:status", nil}}
 	f := func(key string, v ...any) Filter { return Filter{Key: key, Op: "in", Values: v} }
 	half := flipping / 2
-	for _, rt := range routes {
-		t.Run(rt.name, func(t *testing.T) {
-			setPlan(t, x, rt.lead, rt.set, rt.budget)
-			var wg sync.WaitGroup
-			for w := range 3 {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for i := range flipRounds() {
-						s := sorts[(i+w)%len(sorts)]
-						a := "a"
-						q := Query{Folder: &a, Recursive: i%2 == 1, Sort: s.sort, PropOptions: s.opts, Limit: 200}
-						q.Filters = []Filter{f("status", "todo"), f("prio", "high")}
-						checkFlipListing(t, x, q, "todo", "high", constant)
-						q.Filters = []Filter{f("prio", "low"), f("status", "todo")}
-						checkFlipListing(t, x, q, "todo", "low", half)
-						q.Filters = []Filter{f("status", "done")}
-						checkFlipListing(t, x, q, "done", "high", half)
-						q.Limit = 40 // across pages: every page is right on its own
-						q.Filters = []Filter{f("status", "todo")}
-						checkFlipListing(t, x, q, "todo", "", -1)
-					}
-				}()
-			}
-			wg.Wait()
-		})
-	}
-	t.Logf("snapshot shared by other connections %d times, read in turn %d times", x.shared.Load(), x.serial.Load())
-	if x.shared.Load() == 0 {
+	// Each route reads its own index, with its own writer, beside the others.
+	var shared, serial atomic.Int64
+	t.Run("routes", func(t *testing.T) {
+		for _, rt := range routes {
+			t.Run(rt.name, func(t *testing.T) {
+				t.Parallel()
+				x := flipSpace(t)
+				x.plan.part = 20 // many pages are looked up in parts, on several connections
+				defer func() { shared.Add(x.shared.Load()); serial.Add(x.serial.Load()) }()
+				setPlan(t, x, rt.lead, rt.set, rt.budget)
+				var wg sync.WaitGroup
+				for w := range 3 {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for i := range flipRounds() {
+							s := sorts[(i+w)%len(sorts)]
+							a := "a"
+							q := Query{Folder: &a, Recursive: i%2 == 1, Sort: s.sort, PropOptions: s.opts, Limit: 200}
+							q.Filters = []Filter{f("status", "todo"), f("prio", "high")}
+							checkFlipListing(t, x, q, "todo", "high", constant)
+							q.Filters = []Filter{f("prio", "low"), f("status", "todo")}
+							checkFlipListing(t, x, q, "todo", "low", half)
+							q.Filters = []Filter{f("status", "done")}
+							checkFlipListing(t, x, q, "done", "high", half)
+							q.Limit = 40 // across pages: every page is right on its own
+							q.Filters = []Filter{f("status", "todo")}
+							checkFlipListing(t, x, q, "todo", "", -1)
+						}
+					}()
+				}
+				wg.Wait()
+			})
+		}
+	})
+	t.Logf("snapshot shared by other connections %d times, read in turn %d times", shared.Load(), serial.Load())
+	if shared.Load() == 0 {
 		t.Error("no read had other connections share its snapshot")
 	}
 }
