@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -734,13 +735,39 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 	}
 }
 
-// finishOpen opens the space of e and tells those waiting (e.done).
+type restoringAnswerKey struct{}
+
+// WithRestoringAnswer marks ctx as that of a request that answers restoring
+// (503) when the space it needs is still having its index rebuilt after
+// Options.RestoreWait (see awaitOpen). The HTTP layer sets it on every request;
+// background work, exports, moves and every other caller wait for the open.
+func WithRestoringAnswer(ctx context.Context) context.Context {
+	return context.WithValue(ctx, restoringAnswerKey{}, true)
+}
+
+func answersRestoring(ctx context.Context) bool {
+	v, _ := ctx.Value(restoringAnswerKey{}).(bool)
+	return v
+}
+
+// finishOpen opens the space of e and tells those waiting (e.done). An open
+// waiting for a rebuild slot ends when the manager is closed. A panic while
+// opening is the open's error: it runs in the background, where a panic
+// would end the process.
 func (m *Manager) finishOpen(ctx context.Context, id string, e *opening) {
-	e.sp, e.err = m.openSpace(ctx, id, func(phase string) {
-		m.mu.Lock()
-		e.phase = phase
-		m.mu.Unlock()
-	})
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				m.log.Error("opening a space panicked", "space", id, "panic", r, "stack", string(debug.Stack()))
+				e.sp, e.err = nil, fmt.Errorf("opening space %s: panic: %v", id, r)
+			}
+		}()
+		e.sp, e.err = m.openSpace(ctx, id, func(phase string) {
+			m.mu.Lock()
+			e.phase = phase
+			m.mu.Unlock()
+		})
+	}()
 	if e.err != nil {
 		m.mu.Lock()
 		delete(m.open, id)
@@ -761,12 +788,21 @@ func (m *Manager) finishOpen(ctx context.Context, id string, e *opening) {
 	}
 }
 
-// awaitOpen waits for the open of e. An open whose index is rebuilt (or waits
-// for one of the server's rebuild slots) answers *RestoringError once the
-// request has waited Options.RestoreWait, as a restore does: the open goes on
-// in the background and a later request finds the space open. Any other open
-// is waited for, for as long as the request's context lasts.
+// awaitOpen waits for the open of e. For a request marked WithRestoringAnswer,
+// an open whose index is rebuilt (or waits for one of the server's rebuild
+// slots) answers *RestoringError once the request has waited
+// Options.RestoreWait, as a restore does: the open goes on in the background
+// and a later request finds the space open. Any other open, and every open for
+// any other caller, is waited for, for as long as the caller's context lasts.
 func (m *Manager) awaitOpen(ctx context.Context, e *opening) error {
+	if !answersRestoring(ctx) {
+		select {
+		case <-e.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	wait := m.opt.RestoreWait
 	if wait <= 0 {
 		wait = 10 * time.Second
@@ -837,7 +873,7 @@ func (m *Manager) openSpace(ctx context.Context, id string, onRebuild func(phase
 	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
-		WriteGate: func() error { return m.CheckWritable(id) }, OnRebuild: onRebuild,
+		WriteGate: func() error { return m.CheckWritable(id) }, OnRebuild: onRebuild, SlotContext: m.closedCtx(),
 	})
 	if err == nil && rem != nil {
 		m.markCache(id, sp)

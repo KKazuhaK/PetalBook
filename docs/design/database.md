@@ -312,7 +312,12 @@ space runs in the background; a request waits for it up to `RestoreWait` (10 s),
 big sync it answers `503 restoring` with `Retry-After: 5` and `phase` `waiting` (no slot yet) or `rebuilding`
 (the sync holds a slot). The index tells the phase to the space (`SetSyncNotify`, `space.Options.OnRebuild`),
 which tells the manager. The open is not dropped by the answer: it goes on, and a later request finds the space
-open. An open that needs no rebuild is waited for with the request's own context, as before. The web app shows
+open. Only HTTP requests answer so: the API marks their context (`spaces.WithRestoringAnswer`); exports,
+attachment moves, the pinned full cache, the daily text, pulls and every other caller wait for the open with
+their own context, however long the rebuild takes. An open that needs no rebuild is waited for with the
+request's own context, as before. An open still waiting for a slot ends when the manager is closed (the wait
+uses the manager's closed context), so shutdown does not wait for queued rebuilds, and still flushes the open
+spaces. A panic while a space is opened in the background is that open's error, logged with its stack. The web app shows
 "Waiting to prepare this space…" for `waiting` (also when an evicted space waits for its restore turn) and
 "Preparing this space: its index is being built…" for `rebuilding`.
 
@@ -330,6 +335,6 @@ whose rebuild has not finished answer `503 restoring` after 10 s, and the client
   read connections); one search at a time is not slower.
 - About 75 MB stays with the process after a rebuild: SQLite's allocator (modernc's
   libc) keeps what it freed. It is reused, and bounded by the rebuild limit.
-- A server that is shutting down waits for the opens queued for a rebuild slot to
-  finish (two at a time), as it waited for opens before.
+- A rebuild that has its slot runs to its end, even when the server is shutting
+  down: shutdown waits for at most the two rebuilds under way.
 

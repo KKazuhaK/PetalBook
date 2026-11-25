@@ -68,6 +68,9 @@ type Options struct {
 	// Open makes (index.PhaseWaiting while it waits for one of the server's
 	// slots, then index.PhaseRebuilding), while Open runs.
 	OnRebuild func(phase string)
+	// SlotContext, when set, ends the wait of Open's index sync for one of the
+	// server's rebuild slots: Open then fails with its error.
+	SlotContext context.Context
 }
 
 // Space is safe for concurrent use.
@@ -392,7 +395,11 @@ func Open(opt Options) (*Space, error) {
 	temps := append(tempsIn(root, ".petalbook"), tempsIn(root, typesDir)...)
 	s.watchChecks()
 	idx.SetSyncNotify(opt.OnRebuild)
-	st, err := idx.Sync(dirSource{root: root, temps: &temps}, false)
+	slotCtx := opt.SlotContext
+	if slotCtx == nil {
+		slotCtx = context.Background()
+	}
+	st, err := idx.SyncContext(slotCtx, dirSource{root: root, temps: &temps}, false)
 	idx.SetSyncNotify(nil)
 	if err != nil {
 		idx.Close()

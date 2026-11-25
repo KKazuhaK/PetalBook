@@ -73,6 +73,13 @@ type known struct{ size, mtimeNs int64 }
 // start-up, on a reindex, and when a lookup misses (throttled), never per
 // request otherwise.
 func (x *Index) Sync(src Source, full bool) (Stats, error) {
+	return x.SyncContext(context.Background(), src, full)
+}
+
+// SyncContext is Sync whose wait for a slot of the server's for big syncs ends
+// with ctx (with ctx's error, and nothing synced). Once it has its slot the
+// sync runs to its end.
+func (x *Index) SyncContext(slotCtx context.Context, src Source, full bool) (Stats, error) {
 	start := time.Now()
 	ctx := context.Background()
 
@@ -146,7 +153,7 @@ func (x *Index) Sync(src Source, full bool) (Stats, error) {
 		x.wmu.Unlock()
 		if !x.slots.tryAcquire() {
 			x.tell(PhaseWaiting)
-			if err := x.slots.acquire(ctx); err != nil {
+			if err := x.slots.acquire(slotCtx); err != nil {
 				return Stats{}, err
 			}
 		}
