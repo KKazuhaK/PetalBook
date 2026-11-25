@@ -232,3 +232,36 @@ func TestAPanicWhileOpeningASpaceIsAnErrorOfThatOpen(t *testing.T) {
 	}
 	h.Release()
 }
+
+// A panic after the space was opened (while its cache state or attachments are
+// set up) closes the copy that was opened, so a later open never runs a second
+// one beside it.
+func TestAPanicAfterTheSpaceWasOpenedClosesIt(t *testing.T) {
+	st := storetest.Open(t, "sqlite")
+	m, clk := limitedManager(t, st, func(o *Options) { o.MaxSpaces = 0 })
+	u := addUser(t, st, "U1", "one")
+	in, err := m.Create(ctx, u.ID, "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.add(time.Hour)
+	m.Trim()
+	var leaked *space.Space
+	m.testOpened = func(sp *space.Space) {
+		if leaked == nil {
+			leaked = sp
+			panic("boom after open")
+		}
+	}
+	if _, err := m.Open(ctx, u, in.ID); err == nil || !strings.Contains(err.Error(), "boom after open") {
+		t.Fatalf("open that panicked: %v", err)
+	}
+	if _, err := leaked.Reindex(); !errors.Is(err, space.ErrClosed) {
+		t.Fatalf("the copy opened before the panic is still open: %v", err)
+	}
+	h, err := m.Open(ctx, u, in.ID)
+	if err != nil {
+		t.Fatalf("the next open: %v", err)
+	}
+	h.Release()
+}

@@ -342,6 +342,8 @@ type Manager struct {
 	testHook func(point string)
 	// testID, set by tests only, picks a new group's id ("" for a random one).
 	testID func() string
+	// testOpened, set by tests only, is called with a space openSpace has just opened.
+	testOpened func(*space.Space)
 }
 
 // at runs the test hook, if any, at a named point.
@@ -741,6 +743,9 @@ type restoringAnswerKey struct{}
 // (503) when the space it needs is still having its index rebuilt after
 // Options.RestoreWait (see awaitOpen). The HTTP layer sets it on every request;
 // background work, exports, moves and every other caller wait for the open.
+// The mark is a value of the context, so it survives context.WithoutCancel:
+// work that outlives the request must not be started from c.r.Context() (the
+// API's background work takes bgCtx), or it would answer restoring too.
 func WithRestoringAnswer(ctx context.Context) context.Context {
 	return context.WithValue(ctx, restoringAnswerKey{}, true)
 }
@@ -875,11 +880,25 @@ func (m *Manager) openSpace(ctx context.Context, id string, onRebuild func(phase
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
 		WriteGate: func() error { return m.CheckWritable(id) }, OnRebuild: onRebuild, SlotContext: m.closedCtx(),
 	})
-	if err == nil && rem != nil {
+	if err != nil {
+		return nil, err
+	}
+	// A panic from here on (finishOpen recovers it) must not leave this copy
+	// open: a later open would run a second one, with a second committer.
+	defer func() {
+		if r := recover(); r != nil {
+			sp.Close()
+			panic(r)
+		}
+	}()
+	if m.testOpened != nil {
+		m.testOpened(sp)
+	}
+	if rem != nil {
 		m.markCache(id, sp)
 		m.attachAssets(ctx, id, sp)
 	}
-	return sp, err
+	return sp, nil
 }
 
 // ValidName checks a space name: 1-80 characters once trimmed, no control characters.

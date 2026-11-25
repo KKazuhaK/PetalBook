@@ -387,6 +387,18 @@ func Open(opt Options) (*Space, error) {
 	}
 	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal, rb: openRebaseLog(rebaseLogPath(stateDir)), gate: opt.WriteGate}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	// A panic from here on leaves nothing open: the caller may recover it and
+	// open the space again, which must not find this index and committer running.
+	defer func() {
+		if r := recover(); r != nil {
+			s.cancel()
+			if s.cm != nil {
+				s.cm.Close()
+			}
+			idx.Close()
+			panic(r)
+		}
+	}()
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
 	}
