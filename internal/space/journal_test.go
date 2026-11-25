@@ -261,6 +261,7 @@ func (b *blockingSource) Walk(f func(index.FileInfo) error, d func(string) error
 }
 
 func TestUnknownIDsCauseOneWalkPerInterval(t *testing.T) {
+	t.Parallel()
 	s := open(t, func(o *Options) { o.ResyncInterval = time.Hour })
 	s.lastSync = time.Time{} // let the first miss through
 	for i := 0; i < 50; i++ {
@@ -288,6 +289,7 @@ func TestUnknownIDsCauseOneWalkPerInterval(t *testing.T) {
 }
 
 func TestSavesProceedWhileAWalkIsRunning(t *testing.T) {
+	t.Parallel()
 	s := open(t, func(o *Options) { o.ResyncInterval = time.Millisecond })
 	p := mustCreate(t, s, "", meta("title", "忙着"), "v1\n")
 	time.Sleep(5 * time.Millisecond)

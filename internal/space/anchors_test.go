@@ -129,6 +129,7 @@ func viewNames(t *testing.T, s *Space, scope ViewScope) string {
 
 // --- the limits of a document ------------------------------------------------
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestOnlyWhatNoFileAPersonKeepsCanReachMakesADocumentUnusable(t *testing.T) {
 	// A mapping of 1000 keys merged into 5000 others: five million keys brought in.
 	var merged strings.Builder
@@ -188,6 +189,7 @@ func TestOnlyWhatNoFileAPersonKeepsCanReachMakesADocumentUnusable(t *testing.T) 
 	})
 }
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestAFileWhoseAliasesStandForMuchIsReadAsItIsWritten(t *testing.T) {
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
@@ -242,6 +244,7 @@ func TestAFileWhoseAliasesStandForMuchIsReadAsItIsWritten(t *testing.T) {
 	}
 }
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestAtMostMaxViewsAreReadOfAnEntry(t *testing.T) {
 	s := open(t)
 	mustCreate(t, s, "F", meta("title", "x"), "x\n")
@@ -713,6 +716,7 @@ func nestedFolders() string {
 `
 }
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 	needGit(t)
 	for _, c := range []struct {
@@ -789,6 +793,7 @@ func TestWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 	}
 }
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestTagWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 	s := open(t)
 	src := aliasBomb("", "defs", 3) + `tags:
@@ -823,6 +828,7 @@ func TestTagWritesToAFileWithNestedAliasesCostNoMoreThanTheFile(t *testing.T) {
 
 // --- recovery ------------------------------------------------------------------
 
+// Not parallel: bounded reads the whole process's allocation and a wall-clock limit, which tests running alongside would distort.
 func TestRecoveryCostsNoMoreThanTheFileIsLarge(t *testing.T) {
 	needGit(t)
 	root := t.TempDir()

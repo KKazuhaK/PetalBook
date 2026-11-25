@@ -339,6 +339,7 @@ func TestPullRepairsLinksAfterAnExternalRename(t *testing.T) {
 
 // PETALBOOK_TIMING=1: renaming a page that 1,000 pages link to, in a space of
 // 50,000 pages.
+// Not parallel: it measures timings, which tests running alongside would distort.
 func TestTimingRenameWithManyReferrers(t *testing.T) {
 	if os.Getenv("PETALBOOK_TIMING") == "" {
 		t.Skip("set PETALBOOK_TIMING=1")
