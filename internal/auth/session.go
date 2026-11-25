@@ -265,12 +265,22 @@ func (s *Service) SignOutEverywhere(ctx context.Context, userID, keep string) er
 	return nil
 }
 
-// issueSession starts a session for a user and returns the cookie value.
-func (s *Service) issueSession(ctx context.Context, userID string, held bool) (string, error) {
+type userAgentKey struct{}
+
+// WithUserAgent says, for the sessions that start under ctx, the browser's name
+// for itself (the administrator's list of a person's sessions shows it).
+func WithUserAgent(ctx context.Context, ua string) context.Context {
+	return context.WithValue(ctx, userAgentKey{}, ua)
+}
+
+// issueSession starts a session for a user and returns the cookie value. method
+// is how they signed in (see the sessions table).
+func (s *Service) issueSession(ctx context.Context, userID string, held bool, method string) (string, error) {
 	token := randomToken()
 	now := s.now().UTC()
+	ua, _ := ctx.Value(userAgentKey{}).(string)
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held}); err != nil {
+		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held, UserAgent: ua, Method: method}); err != nil {
 			return err
 		}
 		return store.TrimSessions(ctx, q, userID, maxSessionsPerUser)

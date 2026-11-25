@@ -170,7 +170,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		}
 		held = true
 	}
-	tok, err := s.issueSession(ctx, u.ID, held)
+	tok, err := s.issueSession(ctx, u.ID, held, "password")
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +268,7 @@ func (s *Service) Setup(ctx context.Context, token, username, name, password, ip
 		return nil, "", err
 	}
 	// A new account has no passkey: held when one is required of it.
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "setup")
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	}
@@ -343,7 +343,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 		return nil, "", err
 	}
 	// A new account has no passkey: held when one is required of it.
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "invite")
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	}

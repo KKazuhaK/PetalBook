@@ -354,7 +354,7 @@ has one more field, `reason`:
 | `reason` | The session ended because |
 | --- | --- |
 | `expired` | it was idle for longer than the idle limit, or older than the absolute limit (see 安全 settings, `limits.sessionIdleDays`, `limits.sessionMaxDays`) |
-| `signed_out_elsewhere` | the person signed out of every device, or an administrator revoked their sessions |
+| `signed_out_elsewhere` | the person signed out of every device, or a site administrator ended their session (`DELETE /api/users/{id}/sessions…`) |
 | `password_changed` | the password was changed or reset (the session that made the change stays) |
 | `disabled` | the account, or its tenant, was disabled |
 
@@ -779,6 +779,7 @@ how many. At most 100,000 rows or 90 days are kept.
 | `lockout` | a key was locked | `scope`, `minutes` |
 | `passkey_clone` | a passkey's counter went backwards | `passkey` (id) |
 | `identity_linked`, `identity_unlinked` | an identity was attached or removed | `provider`, `by` (`user`, `email`, `admin`) |
+| `sessions_ended` | a site administrator ended a person's session or all of them | `by` (`admin`), `count` |
 | `passkey_added`, `passkey_removed` | a passkey was registered or deleted | `passkey`, `by` (`user`, `admin`) |
 | `security_changed` | `PUT /api/admin/security` changed something | `from`, `to`: the changed fields only, never a secret (a secret shows as `"changed"`) |
 | `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
@@ -895,18 +896,87 @@ otherwise) except the two invite endpoints marked public.
 
 ### `GET /api/users`
 
-`{"users": [{…}]}`, ordered by `created`. Without parameters, every user.
-`?q={text}` keeps the users whose `username` or `name` contains the text,
-ignoring case (as the name filter of the administration's list of spaces does:
-Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and
-PostgreSQL);
-`?limit={n}` (1 to 200) returns at most that many, the oldest first. Either may
-be sent alone; `400 invalid` for a `limit` outside the range. `?enabled=1`
-leaves out the disabled accounts, before the limit counts (`enabled=0`, the
-default, keeps them; `400 invalid` for anything else). A picker that looks for
-one person sends `q` and `limit`, so it never loads every account.
+One keyset page of the people in the administrator's scope (their tenant;
+every tenant for a site administrator, narrowed by `?tenant=`), who are not
+deleted:
 
-Each user here also has `passkeys` (how many) and `sso` (how many identities).
+```json
+{"users": [{…}], "next": "created.asc:1764000000000:6FAVM1F0R3"}
+```
+
+`next` is `""` after the last page; send it back as `cursor`. A cursor made for
+another sort, order or list is `400 invalid`.
+
+| Parameter | |
+|---|---|
+| `limit` | 1 to 200, default 50 |
+| `sort`, `order` | `created` (default, oldest first), `name` (by the name, ignoring case, then the id) or `lastActive` (most recent first; people who were never active last, in id order); `order` is `asc` or `desc`, the sort's own when left out |
+| `q` | keeps the users whose `username` or `name` contains the text, ignoring case (Unicode case folding, so `STRASSE` finds `Straße`, the same on SQLite and PostgreSQL) |
+| `role` | `member`, `admin` (of a tenant or of the server) or `site` (administrators of the whole server) |
+| `state` | `enabled` or `disabled` |
+| `inactiveDays`, `activeDays` | last active before the last `n` days (or never), or within them; 0 to 36500 |
+| `enabled` | `1` is `state=enabled`; the picker's older spelling (`0` keeps all) |
+
+Anything else the list does not have is `400 invalid`. The sorts and the search
+read an index (`users_live*`), and the passkey and linked-account counts are
+looked up for the page's ids alone, so a page costs the same whatever its place
+in the list. A picker that looks for one person sends `q` and `limit`.
+
+Each user here also has `passkeys` (how many), `sso` (how many linked accounts),
+`quota` and, once they have been active, `lastActive` (the time of their last
+activity, written at most every few minutes).
+
+### `GET /api/users/{id}`
+
+`{"user": {…}}` as one row of the list has it. `404 not_found` for a person who
+does not exist, is deleted, or is of another tenant than a tenant administrator's.
+
+### `GET /api/users/{id}/memberships`
+
+`{"spaces": [{"id", "name", "role", "personal"}], "groups": [{"id", "name", "source"}]}`:
+the spaces the person is a member of (their own role there) and their groups,
+at most 200 of each. A tenant administrator's answer leaves the person's personal
+space out.
+
+### The sessions and connected accounts of a person (3.10)
+
+**Site administrators only.** An administrator of a tenant never manages or audits
+another person's sign-ins: they are answered `404 not_found` ("No such user."),
+as for a person who does not exist, so nothing tells them the page is there.
+
+#### `GET /api/users/{id}/sessions`
+
+`{"sessions": [{"id", "userAgent", "method", "created", "lastUsed"}]}`, the one used
+last first (a person keeps at most a few). `userAgent` is the browser's name for
+itself, cut to 200 bytes, `""` when it sent none; `method` is how they signed in:
+`password`, `passkey`, `sso:{provider slug}`, `invite`, `registration` or `setup`
+(`""` for a session made before the server recorded it). `id` is the hash the server
+keeps, never the cookie. A session held until the person registers a passkey has
+`"held": true`. The server does not know where a sign-in came from, so there is no
+place.
+
+#### `DELETE /api/users/{id}/sessions/{session}`
+
+`204`. The browser that held it is answered `401` with `signed_out_elsewhere` the
+next time it comes (see "Why a session ended"), and `sessions_ended` is written to
+the audit log (`by: "admin"`, `count`). `404 not_found` for a session the person
+does not have.
+
+#### `DELETE /api/users/{id}/sessions`
+
+Ends every session of the person: `200` with `{"ended": 2}`; each answers
+`signed_out_elsewhere` afterwards, and one `sessions_ended` row is written.
+
+#### `GET /api/users/{id}/identities`
+
+`{"identities": [{"id", "provider", "slug", "kind", "label", "created"}]}`: the
+accounts they connected to sign in (the same as `GET /api/account` shows its owner).
+
+#### `DELETE /api/users/{id}/identities/{identity}`
+
+`204`; `identity_unlinked` (`by: "admin"`) is written. `409 conflict` when it is
+the only way they can sign in (no password, no passkey). `404 not_found` for one
+they do not have.
 
 ### `PATCH /api/users/{id}`
 
@@ -9017,6 +9087,7 @@ own organisation**.
 | Endpoints | Tenant administrator | Site administrator |
 |---|---|---|
 | `/api/users…`, `/api/invites…`, `DELETE /api/users/{id}`, `/api/admin/users/{id}/deletion` | their tenant | every tenant |
+| `/api/users/{id}/sessions…`, `/api/users/{id}/identities…` (3.10) | `404 not_found`, as for no one | every tenant |
 | `/api/admin/spaces…` (incl. 3.1's `…/storage` `exempt`, `…/evict`; `pin` within `storage.pinnedBytes`), `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage`, `/api/admin/storage/people…` | their tenant | every tenant |
 | `GET /api/admin/storage` | their tenant's summary, settings read only | all, and `PUT` |
 | `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…` | their tenant | every tenant |

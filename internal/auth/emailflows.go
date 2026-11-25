@@ -410,7 +410,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*store
 	if err != nil {
 		return nil, "", err
 	}
-	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u))
+	tok, err := s.issueSession(ctx, u.ID, s.passkeyRequiredOf(st, *u), "registration")
 	if err != nil {
 		return nil, "", err
 	}

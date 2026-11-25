@@ -785,7 +785,7 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 	case "login", "invite":
 		s.syncGroups(ctx, rt, user.ID, user.Username, ip, c.groups)
 	}
-	tok, err := s.issueSession(ctx, user.ID, false)
+	tok, err := s.issueSession(ctx, user.ID, false, "sso:"+slug)
 	if err != nil {
 		s.log.Error("could not start a session", "error", err)
 		return s.ssoFail(kind, slug, e.intent, "internal", ip, clear...)

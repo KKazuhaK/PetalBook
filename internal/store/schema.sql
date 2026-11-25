@@ -80,6 +80,13 @@ CREATE INDEX users_email ON users(tenant_id, email_key) WHERE email_key <> '';
 -- The lists of people read this partial index, which holds only those who are
 -- not deleted.
 CREATE INDEX users_live ON users(tenant_id, created, id) WHERE deleted_at IS NULL;
+-- The administration's list of people (3.10) pages by keyset over one of these
+-- for each sort; the *_all ones serve an administrator of the whole server.
+CREATE INDEX users_live_all ON users(created, id) WHERE deleted_at IS NULL;
+CREATE INDEX users_live_name ON users(tenant_id, name_key, id) WHERE deleted_at IS NULL;
+CREATE INDEX users_live_name_all ON users(name_key, id) WHERE deleted_at IS NULL;
+CREATE INDEX users_live_active ON users(tenant_id, last_active DESC, id) WHERE deleted_at IS NULL;
+CREATE INDEX users_live_active_all ON users(last_active DESC, id) WHERE deleted_at IS NULL;
 
 CREATE TABLE passwords (
   user_id TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -104,7 +111,12 @@ CREATE TABLE sessions (
   user_id   TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created   BIGINT NOT NULL,
   last_used BIGINT NOT NULL,
-  held      BIGINT NOT NULL DEFAULT 0
+  held      BIGINT NOT NULL DEFAULT 0,
+  -- What the administrator's list of a person's sessions shows: the browser's
+  -- own name for itself (cut to 200 bytes) and how they signed in ("password",
+  -- "passkey", "sso:<provider slug>", "invite", "registration", "reset").
+  user_agent TEXT COLLATE "C" NOT NULL DEFAULT '',
+  method     TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE INDEX sessions_user ON sessions(user_id, last_used);
 CREATE INDEX sessions_last_used ON sessions(last_used);

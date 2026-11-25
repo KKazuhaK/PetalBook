@@ -146,7 +146,15 @@ var routeTable = []route{
 	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
 
 	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
+	{"GET", "/api/users/{id}", admin, true, false, false, (*server).getUser},
 	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
+	{"GET", "/api/users/{id}/memberships", admin, true, false, false, (*server).userMemberships},
+	// The sessions and connected accounts of a person are for administrators of the whole server (a tenant's administrator is answered 404).
+	{"GET", "/api/users/{id}/sessions", admin, true, false, false, (*server).userSessions},
+	{"DELETE", "/api/users/{id}/sessions", admin, true, false, false, (*server).endUserSessions},
+	{"DELETE", "/api/users/{id}/sessions/{session}", admin, true, false, false, (*server).endUserSession},
+	{"GET", "/api/users/{id}/identities", admin, true, false, false, (*server).userIdentities},
+	{"DELETE", "/api/users/{id}/identities/{identity}", admin, true, false, false, (*server).disconnectUserIdentity},
 	{"DELETE", "/api/users/{id}", admin, true, false, false, (*server).adminDeleteUser},
 	{"POST", "/api/invites", admin, true, false, false, (*server).createInvite},
 	{"GET", "/api/invites", admin, true, false, false, (*server).listInvites},
@@ -344,6 +352,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		if rt.accountsOnly && s.single {
 			writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 			return
+		}
+		if rt.access.kind == kindPublic {
+			// A public route is where a session starts: it keeps the browser's name for the administrator's list of sessions.
+			r = r.WithContext(auth.WithUserAgent(r.Context(), r.UserAgent()))
 		}
 		c := &call{w: w, r: r}
 		if secret, ok := bearerToken(r); ok {

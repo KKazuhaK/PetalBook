@@ -159,6 +159,12 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 // UnlinkIdentity removes one of the user's identities unless that would leave
 // no way to sign in.
 func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string) error {
+	return s.unlinkIdentity(ctx, userID, identityID, userID, "user", "")
+}
+
+// unlinkIdentity is UnlinkIdentity done by actor (the person, or by "admin" a
+// site administrator).
+func (s *Service) unlinkIdentity(ctx context.Context, userID, identityID, actor, by, ip string) error {
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
 	return s.st.Tx(ctx, func(q store.Q) error {
@@ -178,6 +184,9 @@ func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string)
 				if n, err := store.CountPasskeys(ctx, q, userID); err != nil {
 					return err
 				} else if n == 0 {
+					if by != "user" {
+						return errf(Conflict, "This is the only way this person can sign in; they need a password or a passkey first.")
+					}
 					return errf(Conflict, "This is the only way you can sign in; set a password or a passkey first.")
 				}
 			} else if err != nil {
@@ -187,7 +196,7 @@ func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string)
 		for _, i := range ids {
 			if i.ID == identityID {
 				_, slug, _ := s.providerOf(i.Issuer)
-				defer s.Audit(AuditEvent{Kind: "identity_unlinked", Actor: userID, User: userID, Detail: map[string]any{"provider": slug, "by": "user"}})
+				defer s.Audit(AuditEvent{Kind: "identity_unlinked", Actor: actor, User: userID, IP: ip, Detail: map[string]any{"provider": slug, "by": by}})
 			}
 		}
 		return store.DeleteIdentity(ctx, q, identityID, userID)

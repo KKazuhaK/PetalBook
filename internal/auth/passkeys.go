@@ -380,7 +380,7 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey", "reason": "local_login_refused"}})
 		return nil, "", errLocalRefused()
 	}
-	tok, err := s.issueSession(ctx, u.ID, false)
+	tok, err := s.issueSession(ctx, u.ID, false, "passkey")
 	if err != nil {
 		return nil, "", err
 	}
