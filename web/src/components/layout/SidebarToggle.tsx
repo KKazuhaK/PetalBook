@@ -23,5 +23,13 @@ export function SidebarToggle({ where }: { where: 'sidebar' | 'topbar' }) {
     }
   }, [])
   if (!visible) return null
-  return <SidebarTrigger ref={take} aria-label={t.nav.toggleSidebar} className="shrink-0" onClick={hand} />
+  // In the top bar it is as big as the other buttons there (the 40 px tap area); in the sidebar's header it stays small.
+  return (
+    <SidebarTrigger
+      ref={take}
+      aria-label={t.nav.toggleSidebar}
+      className={where === 'topbar' ? 'size-10 shrink-0' : 'shrink-0'}
+      onClick={hand}
+    />
+  )
 }

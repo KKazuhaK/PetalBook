@@ -173,7 +173,7 @@ function ViewSwitch({
       title={label}
       disabled={disabled}
       onClick={() => onChange(m)}
-      className={`flex size-7 disabled:opacity-60 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      className={`flex size-[34px] disabled:opacity-60 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 ${mode === m ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
     >
       <Icon className="size-4" />
     </button>
@@ -205,7 +205,7 @@ function ViewSwitch({
           disabled={disabled}
           aria-label={t.view.label}
           title={t.view.label}
-          className="flex size-8 items-center justify-center rounded-lg border outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 data-popup-open:bg-muted @[30rem]/topbar:hidden"
+          className="flex size-10 items-center justify-center rounded-lg border outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 data-popup-open:bg-muted @[30rem]/topbar:hidden"
         >
           <Current className="size-4" />
         </DropdownMenuTrigger>
@@ -503,10 +503,10 @@ function Listing({ source }: { source: ListSource }) {
               {/* On a phone the sort choice shrinks to an icon (the select is still what opens), leaving the room to the breadcrumbs. */}
               {/* In a table the headers of the columns sort. */}
               {!isTable && !filesPhone && (
-                <div className="relative w-28 max-sm:w-8 max-sm:[&>div>svg]:hidden">
+                <div className="relative w-36 max-sm:w-10 max-sm:[&>div>svg]:hidden">
                   <ArrowUpDown className="pointer-events-none absolute top-1/2 left-1/2 size-4 -translate-x-1/2 -translate-y-1/2 text-muted-foreground sm:hidden" />
                   <NativeSelect
-                    className="h-7 text-[0.8rem] max-sm:h-8 max-sm:opacity-0"
+                    className="h-10 text-[0.8rem] max-sm:opacity-0"
                     aria-label={t.list.sort}
                     disabled={busy}
                     value={isSearch ? state.sort : normSort(state.sort) === '-updated' ? '' : state.sort}
@@ -537,8 +537,8 @@ function Listing({ source }: { source: ListSource }) {
               {write && source.kind === 'folder' && ops && (
                 <Button
                   variant="outline"
-                  size="icon-sm"
-                  className="max-sm:hidden"
+                  size="icon-lg"
+                  className="size-10 max-sm:hidden"
                   onClick={() => ops.newFolder(source.folder)}
                   title={t.manage.newFolder}
                   aria-label={t.manage.newFolder}
@@ -547,7 +547,13 @@ function Listing({ source }: { source: ListSource }) {
                 </Button>
               )}
               {write && (
-                <Button size="sm" onClick={newPage} disabled={creating} aria-label={t.list.newPage}>
+                <Button
+                  size="lg"
+                  onClick={newPage}
+                  disabled={creating}
+                  aria-label={t.list.newPage}
+                  className="h-10 max-sm:w-10 max-sm:px-0"
+                >
                   {creating ? <Spinner /> : <FilePlus2 />}
                   <span className="max-sm:hidden">{creating ? t.list.creating : t.list.newPage}</span>
                 </Button>
@@ -579,22 +585,39 @@ function Listing({ source }: { source: ListSource }) {
         <div
           className={`mx-auto w-full flex-1 px-2 py-4 max-md:pb-20 sm:px-4 ${mode === 'cards' ? 'max-w-7xl' : isTable || filesTable || mode === 'board' ? 'max-w-[96rem]' : 'max-w-3xl'}`}
         >
-          {scope && !viewsPending && (
-            <ViewBar
-              scope={scope}
-              views={saved}
-              rev={working.list?.rev ?? ''}
-              active={active}
-              working={state}
-              modified={modified && mine}
-              write={write && working.list !== null}
-              busy={busy}
-              onPick={working.pick}
-              onBegin={working.begin}
-              onEnd={working.end}
-              onRevert={working.revert}
-            />
-          )}
+          {/* The view tabs (or just the button for a new view) and the Sort and filter button share one row, which
+              wraps when there is no room, so a phone does not spend a row on a lone "+". */}
+          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 empty:hidden [&>[data-slot=filter-bar]]:mb-0 [&>[data-slot=view-bar]]:mb-0">
+            {scope && !viewsPending && (
+              <ViewBar
+                scope={scope}
+                views={saved}
+                rev={working.list?.rev ?? ''}
+                active={active}
+                working={state}
+                modified={modified && mine}
+                write={write && working.list !== null}
+                busy={busy}
+                onPick={working.pick}
+                onBegin={working.begin}
+                onEnd={working.end}
+                onRevert={working.revert}
+              />
+            )}
+            {isFolder && (mode === 'list' || mode === 'cards') && !viewsPending && (
+              <FilterBar
+                filters={tableFilters}
+                onChange={setTableFilters}
+                type={type}
+                sort={state.sort}
+                onSort={setSort}
+                sortDisabled={busy}
+                mobile={mobile}
+                headerSort={filesTable}
+                folders={filesTable ? { mixed, onToggle: () => setMixed(!mixed) } : undefined}
+              />
+            )}
+          </div>
           {views.isError && <p className="mb-2 text-xs text-muted-foreground">{t.views.loadFailed}</p>}
           {scope && !viewsPending && (typeName !== '' || source.kind === 'tag' || filters.length > 0) && (
             <Suspense fallback={null}>
@@ -607,19 +630,6 @@ function Listing({ source }: { source: ListSource }) {
                 disabled={busy}
               />
             </Suspense>
-          )}
-          {isFolder && (mode === 'list' || mode === 'cards') && !viewsPending && (
-            <FilterBar
-              filters={tableFilters}
-              onChange={setTableFilters}
-              type={type}
-              sort={state.sort}
-              onSort={setSort}
-              sortDisabled={busy}
-              mobile={mobile}
-              headerSort={filesTable}
-              folders={filesTable ? { mixed, onToggle: () => setMixed(!mixed) } : undefined}
-            />
           )}
           {!filesTable &&
             !filesPhone &&
