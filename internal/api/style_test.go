@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +59,17 @@ func TestIconsAreCheckedAndEmptyPresetsStayEmpty(t *testing.T) {
 	}
 	if code, r, raw := f.do("PUT", "/api/spaces/default/types/poem", map[string]any{"baseRev": "", "title": "Poem", "icon": "constructor"}); code != 400 || r["error"] != "invalid" {
 		t.Errorf("a type with the icon constructor: %d %s", code, raw)
+	}
+	// An empty list is no presets, not the defaults: [] and not null.
+	code, _, raw := f.do("PUT", "/api/spaces/default/sources/presets", map[string]any{"presets": []string{}})
+	if code != 200 || strings.TrimSpace(raw) != `{"presets":[]}` {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if _, r, raw := f.do("GET", "/api/spaces/default/appearance", nil); r["sourcePresets"] == nil {
+		t.Fatalf("the appearance: %s", raw)
+	}
+	code, _, raw = f.do("PUT", "/api/spaces/default/sources/presets", map[string]any{"presets": nil})
+	if code != 200 || strings.TrimSpace(raw) != `{"presets":null}` {
+		t.Fatalf("%d %s", code, raw)
 	}
 }

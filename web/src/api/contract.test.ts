@@ -4931,6 +4931,9 @@ function suite(target: Target) {
       expect((await S.appearance()).sourcePresets).toBeNull()
       expect(await S.setSourcePresets([' 书 ', '电影', '书', ''])).toEqual({ presets: ['书', '电影'] })
       expect((await S.appearance()).sourcePresets).toEqual(['书', '电影'])
+      // None is not the defaults: an empty list stays one.
+      expect(await S.setSourcePresets([])).toEqual({ presets: [] })
+      expect((await S.appearance()).sourcePresets).toEqual([])
       await S.setSourcePresets(null)
       expect((await S.appearance()).sourcePresets).toBeNull()
     })

@@ -101,3 +101,23 @@ func TestHandWrittenFolderAndTypeIconsThatAreNoneAreIgnored(t *testing.T) {
 		t.Error("a type with the icon constructor")
 	}
 }
+
+// --- an empty list of presets is not "the defaults" -------------------------------
+
+func TestEmptySourcePresetsStayEmpty(t *testing.T) {
+	t.Parallel()
+	s := open(t)
+	if err := s.SetSourcePresets(Author{}, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	got, set := s.SourcePresets()
+	if !set || got == nil || len(got) != 0 {
+		t.Fatalf("%#v %v", got, set)
+	}
+	if err := s.SetSourcePresets(Author{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, set := s.SourcePresets(); set || got != nil {
+		t.Fatalf("unset: %#v %v", got, set)
+	}
+}

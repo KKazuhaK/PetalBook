@@ -3839,7 +3839,8 @@ answered as `icon` and `color` of the type, and written by `PUT …/types/{name}
 `{"folders": [{"folder", "icon", "color"}], "sourcePresets": [...] | null,
 "iconColors": [...]}`. `sourcePresets` is the list the space chose under
 `sources:` in `space.yml`; `null` when it chose none, and the client offers its
-own defaults.
+own defaults; `[]` when it chose to have none (`sources: []`), and the client
+offers none.
 
 `PUT /api/spaces/{space}/folders/style` (write) takes
 `{"folder", "icon", "color"}`; `""` takes one away. `200` with the same,
@@ -3852,7 +3853,8 @@ the folder as spelled on disk; `404 not_found` for a folder that is not there;
 
 `PUT /api/spaces/{space}/sources/presets` (manage) takes `{"presets": [...]}`,
 or `null` to go back to the defaults; blank and repeated ones are dropped, at
-most 100 of at most 200 bytes.
+most 100 of at most 200 bytes. `200` with `{"presets"}` as stored: `[]` for an
+empty list (none), `null` for the defaults.
 
 `POST /api/spaces/{space}/types/{name}/rename-field` (manage) takes
 `{"baseRev", "from", "to"}` and gives a field of a type another key: in the

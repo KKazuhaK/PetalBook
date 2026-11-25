@@ -241,7 +241,11 @@ func sourcesOf(doc *yaml.Node) (presets []string, ok bool) {
 // whether it chose any (a space that did not has the client's defaults).
 func (s *Space) SourcePresets() ([]string, bool) {
 	c := s.config()
-	return append([]string(nil), c.presets...), c.presetsSet
+	if !c.presetsSet {
+		return nil, false
+	}
+	// A space that chose none has an empty list, not nil: nil is "the defaults".
+	return append([]string{}, c.presets...), true
 }
 
 // CleanSourcePresets trims, drops blank ones and repeats, and checks the rest.
