@@ -25,6 +25,7 @@ func mkUser(t *testing.T, st *store.Store, id, username, role string) {
 }
 
 func TestOpeningAgainChangesNothing(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		// The database was made once and opened again (storetest copies a made
 		// file): it records the baseline of this build.
@@ -37,6 +38,7 @@ func TestOpeningAgainChangesNothing(t *testing.T) {
 }
 
 func TestReopenKeepsData(t *testing.T) {
+	t.Parallel()
 	path := t.TempDir() + "/s.db"
 	st, err := store.Open(ctx, path)
 	if err != nil {
@@ -55,6 +57,7 @@ func TestReopenKeepsData(t *testing.T) {
 }
 
 func TestUniqueViolationsAreRecognised(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "alice", "member")
 		err := store.InsertUser(ctx, st.Q(), store.User{ID: "B", Username: "alice", Name: "x", Role: "member", Created: time.Now()})
@@ -76,6 +79,7 @@ func TestUniqueViolationsAreRecognised(t *testing.T) {
 }
 
 func TestTransactionRollsBack(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		err := st.Tx(ctx, func(q store.Q) error {
 			if err := store.InsertUser(ctx, q, store.User{ID: "A", Username: "a", Name: "a", Role: "member", Created: time.Now()}); err != nil {
@@ -93,6 +97,7 @@ func TestTransactionRollsBack(t *testing.T) {
 }
 
 func TestFirstUserMarkerAllowsOneWinner(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var wg sync.WaitGroup
 		results := make([]error, 8)
@@ -131,6 +136,7 @@ func TestFirstUserMarkerAllowsOneWinner(t *testing.T) {
 }
 
 func TestInviteIsUsedOnce(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		now := time.Now()
@@ -176,6 +182,7 @@ func TestInviteIsUsedOnce(t *testing.T) {
 }
 
 func TestSpacesAndMembership(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		mkUser(t, st, "B", "b", "member")
@@ -207,6 +214,7 @@ func TestSpacesAndMembership(t *testing.T) {
 }
 
 func TestDraftsLifecycle(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
@@ -273,6 +281,7 @@ func TestDraftsLifecycle(t *testing.T) {
 }
 
 func TestUserDraftsReadsSeveralPagesInOneQuery(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		mkUser(t, st, "B", "b", "member")
@@ -299,6 +308,7 @@ func TestUserDraftsReadsSeveralPagesInOneQuery(t *testing.T) {
 }
 
 func TestPutDraftChecksThePreviousVersion(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
@@ -353,6 +363,7 @@ func TestPutDraftChecksThePreviousVersion(t *testing.T) {
 }
 
 func TestConcurrentDraftStoresHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
@@ -397,6 +408,7 @@ func TestConcurrentDraftStoresHaveOneWinner(t *testing.T) {
 }
 
 func TestRescheduleAppliesNewTimes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
@@ -413,6 +425,7 @@ func TestRescheduleAppliesNewTimes(t *testing.T) {
 }
 
 func TestStateDatabaseSurvivesAPowerCut(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	var mode int
 	if err := st.Q().QueryRow(ctx, `PRAGMA synchronous`).Scan(&mode); err != nil {
@@ -424,6 +437,7 @@ func TestStateDatabaseSurvivesAPowerCut(t *testing.T) {
 }
 
 func TestDraftDueUsesTheIndex(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	rows, err := st.Q().Query(ctx, `EXPLAIN QUERY PLAN SELECT space_id FROM drafts WHERE held = 0 AND due <= ? ORDER BY due LIMIT 50`, 1)
 	if err != nil {
@@ -443,6 +457,7 @@ func TestDraftDueUsesTheIndex(t *testing.T) {
 }
 
 func TestRedactHidesThePassword(t *testing.T) {
+	t.Parallel()
 	_, err := store.Open(ctx, "postgres://user:s3cretpw@127.0.0.1:1/db?connect_timeout=1")
 	if err == nil {
 		t.Fatal("connected to nothing")
@@ -455,6 +470,7 @@ func TestRedactHidesThePassword(t *testing.T) {
 // The two stores meet between the read of the current draft and the write, so
 // only the SQL itself can tell them apart: with no lock of any kind above it.
 func TestTheDraftWriteIsItselfAGuard(t *testing.T) {
+	// Not parallel: it sets a hook for the whole package.
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, "S", "s", "", "", time.Now())
@@ -499,6 +515,7 @@ func TestTheDraftWriteIsItselfAGuard(t *testing.T) {
 }
 
 func TestHeldDraftsAreListedForRecovery(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "alice", "admin")
 		mkUser(t, st, "B", "bob", "member")
@@ -526,6 +543,7 @@ func TestHeldDraftsAreListedForRecovery(t *testing.T) {
 }
 
 func TestSpaceInbox(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		mkUser(t, st, "A", "a", "admin")
 		now := time.Now()
@@ -572,6 +590,7 @@ func TestSpaceInbox(t *testing.T) {
 // A real first start: Open on a path with no file makes the schema, with
 // no prepared copy involved, and the connection enforces foreign keys.
 func TestOpenFreshMigratesAndEnforcesForeignKeys(t *testing.T) {
+	t.Parallel()
 	path := t.TempDir() + "/fresh.db"
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("path is not fresh: %v", err)
@@ -598,6 +617,7 @@ func TestOpenFreshMigratesAndEnforcesForeignKeys(t *testing.T) {
 // The log of the state database is cut back to a limit whenever it restarts,
 // and Checkpoint (called by the hourly maintenance) lets it restart.
 func TestStateDatabaseLogIsLimited(t *testing.T) {
+	t.Parallel()
 	st := storetest.Open(t, "sqlite")
 	var limit int64
 	if err := st.Q().QueryRow(ctx, `PRAGMA journal_size_limit`).Scan(&limit); err != nil {
@@ -612,6 +632,7 @@ func TestStateDatabaseLogIsLimited(t *testing.T) {
 }
 
 func TestCheckpointDoesNothingOnPostgres(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if err := st.Checkpoint(ctx); err != nil {
 			t.Fatal(err)

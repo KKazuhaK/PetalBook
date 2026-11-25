@@ -97,6 +97,7 @@ func usesIndex(st *store.Store, plan, index string) bool {
 // default) on SQLite, so both sort the same and an index serves every ORDER BY
 // and cursor comparison as it is written.
 func TestEveryTextColumnIsBytewise(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if st.Dialect() == store.SQLite {
 			if n := count(t, st, `SELECT COUNT(*) FROM sqlite_master WHERE sql LIKE '%COLLATE "C"%'`); n != 0 {
@@ -125,6 +126,7 @@ func TestEveryTextColumnIsBytewise(t *testing.T) {
 // pages over its index (on PostgreSQL a COLLATE "C" of the query alone, as
 // before the baseline, could not use the column's index and sorted every group).
 func TestCollatedSortsUseTheirIndexes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		names := []string{"Zed", "alpha", "_under", "Émile", "été", "beta", "Ärger", "zeta"}
@@ -168,6 +170,7 @@ func TestCollatedSortsUseTheirIndexes(t *testing.T) {
 // of a person's deletion read the child indexes; the sweep of old session ends
 // and the attachment moves read theirs.
 func TestLookupsUseTheirIndexes(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now().UnixMilli()
 		const n = 3000
@@ -224,6 +227,7 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 // PostgreSQL leaves room in the pages of the tables that are rewritten often, so
 // that their updates can be HOT.
 func TestOftenUpdatedTablesHaveAFillFactor(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if st.Dialect() != store.Postgres {
 			t.Skip("a PostgreSQL storage parameter")
@@ -238,6 +242,7 @@ func TestOftenUpdatedTablesHaveAFillFactor(t *testing.T) {
 
 // PostgreSQL keeps its connections between bursts: as many idle as open.
 func TestPostgresKeepsItsConnections(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if st.Dialect() != store.Postgres {
 			t.Skip("a PostgreSQL pool")

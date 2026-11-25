@@ -13,6 +13,7 @@ import (
 // PostgreSQL the row keeps its version (the no-op UPDATE they replace made a
 // new one and a dead tuple each time), on SQLite no row changes.
 func TestRowLocksWriteNothing(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Now()
 		mkUser(t, st, "U1", "u1", "member")
@@ -66,6 +67,7 @@ func TestRowLocksWriteNothing(t *testing.T) {
 // On PostgreSQL two transactions that lock one space take turns, and the lock
 // does not hold up a row that refers to the space (its foreign-key check).
 func TestSpaceLockSerialisesWithoutBlockingReferences(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		if st.Dialect() != store.Postgres {
 			t.Skip("SQLite has one writer: its transactions take turns anyway")

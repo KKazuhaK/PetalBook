@@ -6,6 +6,7 @@ import (
 )
 
 func TestSplitStatementsKeepsDialectMarks(t *testing.T) {
+	t.Parallel()
 	src := `-- a comment; with a semicolon
 CREATE TABLE a (id TEXT COLLATE "C" PRIMARY KEY);
 -- dialect: postgres
@@ -49,6 +50,7 @@ CREATE INDEX a_x ON a(id)`
 }
 
 func TestLocaleProblem(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		l    map[string]string
 		warn bool

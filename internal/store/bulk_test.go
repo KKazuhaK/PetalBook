@@ -13,6 +13,7 @@ import (
 // The daily pass deletes the bulk jobs that ended before the bound, by their
 // index, and never one that is queued or running.
 func TestPruneBulkJobs(t *testing.T) {
+	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		now := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
 		old, fresh := now.Add(-40*24*time.Hour), now.Add(-time.Hour)
