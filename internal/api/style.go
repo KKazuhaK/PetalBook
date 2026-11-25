@@ -86,13 +86,18 @@ func (s *server) renameTypeField(c *call) {
 	if !s.readJSON(c.w, c.r, &req, false) {
 		return
 	}
-	t, n, err := c.sp.Space.RenameTypeField(s.author(c), c.r.PathValue("name"), req.BaseRev, req.From, req.To)
+	r, err := c.sp.Space.RenameTypeField(s.author(c), c.r.PathValue("name"), req.BaseRev, req.From, req.To)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
+	skipped := r.Skipped
+	if skipped == nil {
+		skipped = []space.SkippedPage{}
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Type  typeResp `json:"type"`
-		Pages int      `json:"pages"`
-	}{toType(t), n})
+		Type    typeResp            `json:"type"`
+		Pages   int                 `json:"pages"`
+		Skipped []space.SkippedPage `json:"skipped"`
+	}{toType(r.Type), r.Pages, skipped})
 }

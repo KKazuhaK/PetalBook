@@ -437,6 +437,15 @@ export interface FolderStyle {
   icon?: string
   color?: IconColor
 }
+// What renaming a field of a type did (docs/api.md): the type now, how many pages were rewritten, and the pages of
+// the type left as they were: `has_key` when one already has a value under the new key, `unreadable` when its header
+// cannot be read (such a file has no id).
+export interface FieldRename {
+  type: PageType
+  pages: number
+  skipped: { id?: string; path: string; reason: 'has_key' | 'unreadable' }[]
+}
+
 export interface Appearance {
   folders: FolderStyle[]
   // The sources the space offers; null when it chose none (the client's defaults apply).

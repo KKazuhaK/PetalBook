@@ -96,6 +96,7 @@ import type {
   TagsResponse,
   TypeInput,
   PageType,
+  FieldRename,
   TypesResponse,
   FolderBinding,
   GroupsParams,
@@ -628,7 +629,7 @@ export function spaceApi(space: string) {
       request<{ presets: string[] | null }>(base('/sources/presets'), { method: 'PUT', body: { presets } }),
     // Gives a field of a type another key, in the type and in every page of it. Needs `manage`.
     renameTypeField: (name: string, input: { baseRev: string; from: string; to: string }) =>
-      request<{ type: PageType; pages: number }>(base(`/types/${enc(name)}/rename-field`), {
+      request<FieldRename>(base(`/types/${enc(name)}/rename-field`), {
         method: 'POST',
         body: input,
       }),

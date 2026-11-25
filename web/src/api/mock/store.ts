@@ -1413,21 +1413,27 @@ export function createSpaceStore({
         throw new HttpError(400, 'invalid', '缺少 baseRev、from 或 to')
       const type = book.renameField(name, baseRev, from, to)
       let n = 0
-      for (const p of [...pages.values()]) {
+      const skipped: { id: string; path: string; reason: string }[] = []
+      for (const p of [...pages.values()].sort((a, b) => compareCodePoints(pathOf(a), pathOf(b)))) {
         const v = p.meta[from]
         const none =
           v === null ||
           v === undefined ||
           (typeof v === 'string' && v.trim() === '') ||
           (Array.isArray(v) && v.length === 0)
-        if (none || effectiveOf(p) !== name || to in p.meta) continue
+        if (none || effectiveOf(p) !== name) continue
+        if (to in p.meta) {
+          skipped.push({ id: p.id, path: pathOf(p), reason: 'has_key' })
+          continue
+        }
         const next: PageMeta = {}
         for (const [k, val] of Object.entries(p.meta)) next[k === from ? to : k] = val
         const s = store({ id: p.id, folder: p.folder, fileName: p.fileName, meta: next, body: p.body, updated: now() })
         record(s, 'edit')
         n++
       }
-      return { type, pages: n }
+      viewBook.fieldRenamed((folder) => book.effective(folder) === name, from, to)
+      return { type, pages: n, skipped }
     },
     damageType: book.damage,
     forceKind: book.forceKind,

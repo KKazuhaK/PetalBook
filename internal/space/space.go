@@ -361,7 +361,7 @@ func Open(opt Options) (*Space, error) {
 	// finished once the index is ready, and the journal keeps them till then.
 	linkRecs := pendingLinkRecs(recs)
 	for _, r := range recs {
-		if r.Op == "b" || r.Op == "u" {
+		if r.Op == "b" || r.Op == "u" || r.Op == "f" {
 			// What the records asked for is done now; they must not be made
 			// again by a later crash, after the bindings may have changed.
 			if err := jrn.rewrite(recovered, linkRecs); err != nil {

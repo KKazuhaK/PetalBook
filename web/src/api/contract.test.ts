@@ -4951,9 +4951,36 @@ function suite(target: Target) {
       await S.createFolder(rf)
       await S.bindFolder(rf, name)
       const a = await mk(rf, { title: 'rA', status: 'open', due: '2026-12-01' })
+      const both = await mk(rf, { title: 'rB', status: 'open', state: 'kept' })
       await mk(`${root}/rn-other`, { title: 'rO', status: 'kept' })
+      await S.putViews(
+        { folder: rf },
+        {
+          baseRev: (await S.views({ folder: rf })).rev,
+          views: [
+            {
+              name: 'B',
+              layout: 'board',
+              group: 'status',
+              sort: '-prop:status',
+              filter: [{ key: 'status', op: 'in', values: ['open'] }],
+              hidden: ['status'],
+            },
+          ],
+        },
+      )
       const r = await S.renameTypeField(name, { baseRev: t.rev, from: 'status', to: 'state' })
       expect(r.pages).toBe(1)
+      // A page that has the new key already is left as it is, and said so.
+      expect(r.skipped).toEqual([{ id: both.id, path: both.path, reason: 'has_key' }])
+      expect((await S.getPage(both.id)).meta).toMatchObject({ status: 'open', state: 'kept' })
+      // The views of the folder follow the key.
+      expect((await S.views({ folder: rf })).views[0]).toMatchObject({
+        group: 'state',
+        sort: '-prop:state',
+        filter: [{ key: 'state', op: 'in', values: ['open'] }],
+        hidden: ['state'],
+      })
       expect(r.type.fields.map((f) => f.key)).toEqual(['state', 'due'])
       expect((await S.getPage(a.id)).meta).toMatchObject({ state: 'open', due: '2026-12-01' })
       expect('status' in (await S.getPage(a.id)).meta).toBe(false)

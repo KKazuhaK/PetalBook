@@ -161,10 +161,11 @@ func TestRenameTypeFieldRewritesTheTypeAndItsPagesInOneCommit(t *testing.T) {
 			rev = ti.Rev
 		}
 	}
-	ti, n, err := s.RenameTypeField(Author{}, "task", rev, "status", "state")
+	res, err := s.RenameTypeField(Author{}, "task", rev, "status", "state")
 	if err != nil {
 		t.Fatal(err)
 	}
+	ti, n := res.Type, res.Pages
 	if n != 1 {
 		t.Fatalf("pages rewritten = %d", n)
 	}
@@ -181,16 +182,16 @@ func TestRenameTypeFieldRewritesTheTypeAndItsPagesInOneCommit(t *testing.T) {
 		t.Fatalf("a page of another type keeps its key: %+v", r)
 	}
 	// A key that is there already, a key that is not a field, an old rev.
-	if _, _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "state", "due"); err == nil {
+	if _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "state", "due"); err == nil {
 		t.Fatal("a key the type has already")
 	}
-	if _, _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "nothing", "x"); err == nil {
+	if _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "nothing", "x"); err == nil {
 		t.Fatal("not a field")
 	}
-	if _, _, err := s.RenameTypeField(Author{}, "task", rev, "state", "x"); err == nil {
+	if _, err := s.RenameTypeField(Author{}, "task", rev, "state", "x"); err == nil {
 		t.Fatal("a rev that is out of date")
 	}
-	if _, _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "state", "id"); err == nil {
+	if _, err := s.RenameTypeField(Author{}, "task", ti.Rev, "state", "id"); err == nil {
 		t.Fatal("a field of every page")
 	}
 }

@@ -178,6 +178,30 @@ export function createViewBook(opts: {
       )
     },
 
+    // A field of a type got another key: the views of the folders of that type follow it (their sort, group, filters,
+    // hidden columns and the fields of a card), as the server rewrites space.yml.
+    fieldRenamed(inType: (folder: string) => boolean, from: string, to: string) {
+      const swap = (k: unknown) => (k === from ? to : k)
+      for (const [k, vs] of [...books]) {
+        if (!k.startsWith('f:') || !inType(k.slice(2))) continue
+        books.set(
+          k,
+          vs.map((v) => {
+            const sort = /^-?prop:/.test(v.sort ?? '') && v.sort?.replace(/^-?prop:/, '') === from
+            const card = (v as { cardFields?: unknown }).cardFields
+            return {
+              ...v,
+              ...(sort ? { sort: (v.sort!.startsWith('-') ? '-' : '') + 'prop:' + to } : {}),
+              ...(v.group !== undefined ? { group: swap(v.group) as string } : {}),
+              ...(v.filter ? { filter: v.filter.map((f) => ({ ...f, key: swap(f.key) as string })) } : {}),
+              ...(v.hidden ? { hidden: v.hidden.map((h) => swap(h) as string) } : {}),
+              ...(Array.isArray(card) ? { cardFields: card.map(swap) } : {}),
+            }
+          }),
+        )
+      }
+    },
+
     // Views follow their folder, and what was at the place it moves to is stale.
     folderMoved(from: string, to: string) {
       const moving = [...books].filter(([k]) => k.startsWith('f:') && isUnder(k.slice(2), from))

@@ -30,6 +30,11 @@ import (
 //	u  the folder Path is being deleted: its bindings have to go with it
 //	bd, ud  the bindings of the "b" or "u" record with the same fields have
 //	   been dealt with: that record is not made again
+//	f  the field From of the type whose file is Path is being renamed To: the
+//	   type's file is written first (with the content whose blob id is Rev),
+//	   then the Pages, then the views in space.yml. At recovery, a type file
+//	   with that content has the rest finished; another has nothing done
+//	fd the rename of the "f" record with the same fields is finished
 //
 // A "w" record only counts at recovery if the file really has that content,
 // so a name the server tried to take but another file held is never committed.
@@ -49,6 +54,8 @@ type jrec struct {
 	AuthorEmail string `json:"ae,omitempty"`
 	// Via is the means of the change (Author.Via).
 	Via string `json:"av,omitempty"`
+	// Pages are the pages an "f" record rewrites.
+	Pages []string `json:"ps,omitempty"`
 }
 
 func (r jrec) author() Author { return Author{Name: r.AuthorName, Email: r.AuthorEmail, Via: r.Via} }
@@ -176,7 +183,7 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 	ok := func(p string) bool {
 		return p != "" && fs.ValidPath(p) && !strings.HasPrefix(p, ".git/") && p != ".git"
 	}
-	var bindRecs []jrec
+	var bindRecs, fieldRecs []jrec
 	for _, r := range recs {
 		by := r.author()
 		switch r.Op {
@@ -205,6 +212,17 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 					break
 				}
 			}
+		case "f":
+			if ok(r.Path) {
+				fieldRecs = append(fieldRecs, r)
+			}
+		case "fd":
+			for i, o := range fieldRecs {
+				if o.From == r.From && o.To == r.To && o.Path == r.Path && o.Rev == r.Rev {
+					fieldRecs = append(fieldRecs[:i:i], fieldRecs[i+1:]...)
+					break
+				}
+			}
 		case "b", "u":
 			// Looked at after the files are in their final places.
 			if (r.Op == "b" && (!ok(r.From) || !ok(r.To))) || (r.Op == "u" && !ok(r.Path)) {
@@ -218,6 +236,13 @@ func recoverPendingWith(h *healer, root string, recs []jrec) map[string]Author {
 			finishRespell(root, r.Path, r.To)
 			if !r.Dir {
 				set[r.From], set[r.To], set[r.Path] = by, by, by
+			}
+		}
+	}
+	for _, r := range fieldRecs {
+		for _, p := range recoverFieldRename(h, root, r) {
+			if ok(p) {
+				set[p] = r.author()
 			}
 		}
 	}

@@ -3859,10 +3859,22 @@ empty list (none), `null` for the defaults.
 `POST /api/spaces/{space}/types/{name}/rename-field` (manage) takes
 `{"baseRev", "from", "to"}` and gives a field of a type another key: in the
 type's file and, in one commit, in the header of every page of that type that
-has a value under the old key (the field keeps its place in the header).
-`200` with `{"type", "pages"}`, `pages` being how many were rewritten; `404` for
+has a value under the old key (the field keeps its place in the header), and in
+the saved views of the folders of the type (their `sort` `prop:<key>`, `group`,
+the `key` of their filters, `hidden` and the fields of a card). The views of
+tags are left as they are: a tag's pages may be of other types. The change is
+journaled whole before the first write and the type's file is written first,
+so a crash part way leaves either nothing changed or the rest finished at the
+next start.
+`200` with `{"type", "pages", "skipped"}`: `pages` is how many were rewritten,
+`skipped` the pages of the type left as they were, by path, each
+`{"id", "path", "reason"}`: `has_key` for a page that already has a value under
+the new key (both keys stay, for the person to merge), `unreadable` for a file
+of a folder of the type whose header cannot be read (it has no `id`). `404` for
 a type or field that is not there, `409 conflict` for a stale `baseRev`, `400
-invalid` when the type has a field of the new key or the key is one of every page.
+invalid` when the type has a field of the new key or the key is one of every
+page, or when the header of a page cannot be written with the new key (the
+message names the page; nothing is changed).
 
 ## Saved views
 
