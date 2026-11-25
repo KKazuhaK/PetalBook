@@ -64,6 +64,10 @@ import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOpt
 
 const DEFAULT_INBOX = 'Inbox'
 
+// The answer to a save or a commit says which rev the sent text stands for. The mock
+// rewrites no links in a page that is saved, so that is always the new rev.
+const withTextRev = (p: Page): Page => ({ ...p, textRev: p.rev })
+
 export { validFolder } from './store.ts'
 
 export interface MockResponse {
@@ -3830,7 +3834,7 @@ export function createMockServer(options: MockOptions = {}) {
           if (method === 'PUT') {
             const had = st.peek(id)
             checkPageSize(u, body, had ? pageFileSize({ meta: had.meta, body: had.body }) : null)
-            return { status: 200, body: st.save(u.id, id, body) }
+            return { status: 200, body: withTextRev(st.save(u.id, id, body)) }
           }
           if (method === 'DELETE') {
             st.remove(id)
@@ -3852,7 +3856,7 @@ export function createMockServer(options: MockOptions = {}) {
           }
           break
         case 'commit':
-          if (method === 'POST') return { status: 200, body: st.commit(u.id, id, body) }
+          if (method === 'POST') return { status: 200, body: withTextRev(st.commit(u.id, id, body)) }
           break
       }
     }

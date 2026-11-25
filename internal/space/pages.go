@@ -34,6 +34,14 @@ type Page struct {
 	// PartialProps are the keys of the header that a listing holds only in part
 	// (see index.PartialProps); nil when there are none.
 	PartialProps []string
+	// TextRev is set by a save (Save, Update, UpdateBody): the rev of the page
+	// file as the caller's header and body make it, before the service's link
+	// rewrites made in the same save (a base behind the file by such rewrites
+	// gets them, rebase.go). It equals Rev when nothing was rewritten. Text
+	// typed on top of what was saved, while the save was out, is based on
+	// TextRev: the rewrites are logged as steps from it, so a save of that text
+	// gets them again.
+	TextRev string
 }
 
 func (s *Space) pageFrom(rel string, data []byte, mtime time.Time) *Page {
@@ -537,14 +545,25 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		return nil, invalidf("%v.", err)
 	}
 	doc.SetBody(body)
-	newData := s.withIDs(rel, s.rebaseFile(whole, doc.Bytes()))
+	sent := doc.Bytes()
+	newData, textSteps := s.rebaseSent(whole, sent, page.Rev(data))
+	newData = s.withIDs(rel, newData)
 	if err := tx.by.checkFileSize(rel, int64(len(newData)), int64(len(data))); err != nil {
 		return nil, err
+	}
+	// textRev is the rev the caller's text stands for (see Page.TextRev).
+	textRev := page.Rev(newData)
+	if len(textSteps) > 0 {
+		textSteps[len(textSteps)-1].New = textRev
+		textRev = page.Rev(sent)
 	}
 
 	wantRename := old.Title() != newMeta.Title()
 	if bytes.Equal(newData, data) && !wantRename {
-		return s.pageFrom(rel, data, mtime), nil
+		s.rb.add(textSteps...)
+		p := s.pageFrom(rel, data, mtime)
+		p.TextRev = textRev
+		return p, nil
 	}
 	abs, err := s.abs(rel)
 	if err != nil {
@@ -568,6 +587,7 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 		}
 		s.cm.Applied(id)
 	}
+	s.rb.add(textSteps...)
 	newRel := rel
 	if wantRename {
 		stem := page.FileStem(newMeta.Title())
@@ -598,7 +618,38 @@ func (s *Space) saveWith(tx *txn, id, baseRev string, mode rebaseMode, produce f
 			}
 		}
 	}
-	return s.afterWrite(tx, newRel, newData, rel)
+	p, err := s.afterWrite(tx, newRel, newData, rel)
+	if p != nil {
+		p.TextRev = textRev
+	}
+	return p, err
+}
+
+// rebaseSent makes the rewrites of steps (the service's link rewrites since
+// the base of a save) to sent, the page file as the caller's text makes it.
+// It also returns the same rewrites as steps of that text, the first from
+// sent's rev, so that text typed on top of sent while the save was out can
+// be rebased the same way (Page.TextRev); the caller sets the New of the last
+// one to the rev of what it writes, and logs them once the save is made. No
+// steps come back when there was nothing to rewrite, or when sent is the file
+// as it is (cur), whose own steps are the ones that count.
+func (s *Space) rebaseSent(steps []rebaseStep, sent []byte, cur string) ([]byte, []rebaseStep) {
+	if len(steps) == 0 {
+		return sent, nil
+	}
+	data := sent
+	out := make([]rebaseStep, 0, len(steps))
+	for _, st := range steps {
+		next := s.applyStep(st, data)
+		at := st
+		at.Old, at.New = page.Rev(data), page.Rev(next)
+		out = append(out, at)
+		data = next
+	}
+	if out[0].Old == cur {
+		return data, nil
+	}
+	return data, out
 }
 
 // CheckDraft applies the checks of Save to a draft without writing anything,

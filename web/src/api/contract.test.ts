@@ -4261,6 +4261,36 @@ function suite(target: Target) {
       expect((await S.getPage(p.id)).path).toBe(saved.path)
     })
 
+    it('a save and a commit answer textRev, which is rev when no link was rewritten; GET has none', async () => {
+      const p = await mk(`${root}/textrev`, { title: `文本${run}` }, '一\n')
+      expect(p.textRev).toBeUndefined()
+      const saved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '二\n' })
+      expect(saved.textRev).toBe(saved.rev)
+      const d = await S.putDraft(p.id, { prev: '', baseRev: saved.rev, meta: saved.meta, body: '三\n' })
+      const committed = await S.commitPage(p.id, d.version)
+      expect(committed.textRev).toBe(committed.rev)
+      expect((await S.getPage(p.id)).textRev).toBeUndefined()
+    })
+
+    // The mock rewrites no links when a page is renamed.
+    it.skipIf(!REAL)(
+      'server only: a save rebased over a rename answers a textRev of its own; text typed on it keeps the rewrite',
+      async () => {
+        const tg = await mk(`${root}/textrev-b`, { title: `乙${run}` }, 'x\n')
+        const text = `[看](../textrev-b/乙${run}.md "看乙")\n`
+        const a = await mk(`${root}/textrev-a`, { title: `甲${run}` }, text)
+        // The page it links to is renamed while a is open: the server rewrites the link.
+        await S.savePage(tg.id, { baseRev: tg.rev, meta: { ...tg.meta, title: `丙${run}` }, body: tg.body })
+        const saved = await S.savePage(a.id, { baseRev: a.rev, meta: a.meta, body: text + '一\n' })
+        expect(saved.body).toBe(`[看](../textrev-b/丙${run}.md "看乙")\n一\n`)
+        expect(saved.textRev).toBeTruthy()
+        expect(saved.textRev).not.toBe(saved.rev)
+        // Typed while the save was out, on the old text: based on textRev.
+        const next = await S.savePage(a.id, { baseRev: saved.textRev!, meta: saved.meta, body: text + '一\n二\n' })
+        expect(next.body).toBe(`[看](../textrev-b/丙${run}.md "看乙")\n一\n二\n`)
+      },
+    )
+
     it('a stale baseRev is 409 conflict carrying the current page, and nothing is overwritten', async () => {
       const p = await mk(`${root}/conflict`, { title: `冲突${run}` }, '起点\n')
       const first = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '先到\n' })
@@ -6664,7 +6694,8 @@ function suite(target: Target) {
       )
       expect(committed.body).toBe(saved.body)
       const got = await S.getPage(a.id)
-      expect(got).toEqual(committed)
+      // The file, as GET shows it: the answer adds only textRev.
+      expect(got).toEqual({ ...committed, textRev: undefined })
       expect('draft' in got).toBe(false)
       expect((await walk({ folder: `${root}/dr6a` }))[0].title).toBe(`提交后${run}`)
     })
@@ -6693,7 +6724,7 @@ function suite(target: Target) {
       const again = await failure(S.commitPage(p.id, r.version))
       expect([again.status, again.code]).toEqual([409, 'conflict'])
       expect(again.draft).toBeNull()
-      expect(again.current).toEqual(done)
+      expect(again.current).toEqual({ ...done, textRev: undefined })
       // And with no draft ever.
       const q = await mk(`${root}/dr8b`, { title: `从没有${run}` })
       const none = await failure(S.commitPage(q.id, 'whatever'))
@@ -6741,7 +6772,7 @@ function suite(target: Target) {
       const e = await failure(S.deleteDraft(p.id, r.version))
       expect([e.status, e.code]).toEqual([409, 'conflict'])
       expect(e.draft).toBeNull()
-      expect(e.current).toEqual(done)
+      expect(e.current).toEqual({ ...done, textRev: undefined })
       expect((await S.getPage(p.id)).body).toBe('y\n')
       expect(await S.deleteDraft(p.id)).toBeUndefined()
     })

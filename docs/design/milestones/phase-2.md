@@ -937,7 +937,8 @@ by transaction in PR 3; `textRev` in PR 7):
   "rescued commit" and marks the remote as in error, which needs an administrator
   to look. It appears only when both sides push within a few seconds of each
   other.
-- **Still typing during a save**: if the user keeps typing after the save request
+- **Still typing during a save** (fixed in round 3 by `textRev`, see
+  [storage-and-sync.md](../storage-and-sync.md), "What PR 7 does"): if the user keeps typing after the save request
   is sent, and the server made a link rewrite on this save, the editor still keeps
   its own old text, and the next save writes it back at the new version number,
   no longer applying the rewrite. Links with an `id` are corrected by `id` on
