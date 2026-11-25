@@ -1519,6 +1519,82 @@ function suite(target: Target) {
           }
         })
 
+        it('where attachments go: separate by default, a choice, a site lock for one tenant the tenant cannot lift, and the exemption switch', async () => {
+          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+          const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('as'), name: 'Assets' })).json as {
+            id: string
+          }
+          type Row = {
+            key: string
+            choices?: string[]
+            effective: unknown
+            tenant: { value: unknown; inEffect: boolean; siteLocked: boolean }
+            site: { value: unknown; lower: { mode: string } }
+          }
+          const view = async () =>
+            ((await call(admin, 'GET', `/api/admin/tenants/${t.id}/settings`)).json.settings as Row[]).find(
+              (x) => x.key === 'storage.assets',
+            )!
+          const mine = (body: unknown) => call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/storage.assets`, body)
+          try {
+            const first = await view()
+            expect([first.effective, first.choices, first.tenant.siteLocked]).toEqual([
+              'repository',
+              ['space', 'repository'],
+              false,
+            ])
+            expect((await mine({ value: 'nowhere' })).json.error).toBe('invalid')
+            expect((await mine({ value: 'space' })).status).toBe(200)
+            expect((await view()).effective).toBe('space')
+            // A lock needs a value, and the site's own layer has no lock for a tenant.
+            expect((await mine({ value: null, siteLock: true })).json.error).toBe('invalid')
+            expect(
+              (await call(admin, 'PUT', '/api/admin/settings/storage.assets', { siteLock: true })).json.error,
+            ).toBe('invalid')
+            // Locked for this tenant: its value beats the site's default.
+            expect((await mine({ value: 'repository', siteLock: true })).status).toBe(200)
+            expect((await call(admin, 'PUT', '/api/admin/settings/storage.assets', { value: 'space' })).status).toBe(
+              200,
+            )
+            const locked = await view()
+            expect([locked.effective, locked.tenant.siteLocked, locked.tenant.inEffect]).toEqual([
+              'repository',
+              true,
+              true,
+            ])
+            // The site's lock over everyone beats the one for the tenant, which is kept.
+            await call(admin, 'PUT', '/api/admin/settings/storage.assets', { lower: { mode: 'lock' } })
+            const over = await view()
+            expect([over.effective, over.tenant.value, over.tenant.inEffect]).toEqual(['space', 'repository', false])
+            // What a person of the default tenant (the administrator here) sees when they make a space: the
+            // effective default, what they may ask for, and whether a lock leaves no choice.
+            const asked = (
+              (await call(admin, 'GET', '/api/settings')).json.settings as {
+                key: string
+                effective: unknown
+                allowed?: string[]
+                locked?: boolean
+              }[]
+            ).find((x) => x.key === 'storage.assets')!
+            expect([asked.effective, asked.allowed, asked.locked]).toEqual(['space', ['space'], true])
+            expect(
+              ((await call(admin, 'GET', '/api/admin/settings')).json.settings as Row[]).find(
+                (x) => x.key === 'storage.assets.ownStorageExempt',
+              )!.site.value,
+            ).toBe(true)
+            expect(
+              (await call(admin, 'PUT', '/api/admin/settings/storage.assets.ownStorageExempt', { value: false }))
+                .status,
+            ).toBe(200)
+          } finally {
+            await call(admin, 'PUT', '/api/admin/settings/storage.assets.ownStorageExempt', { value: true })
+            await call(admin, 'PUT', '/api/admin/settings/storage.assets', { value: 'repository', lower: null })
+            await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+          }
+        })
+
         it("the daily text's switches are the layered settings daily.own and daily.api; GET /api/settings says who keeps them off", async () => {
           const m = await newMember(uniq('ts'))
           const read = async (key: string) =>
@@ -2945,31 +3021,18 @@ function suite(target: Target) {
           }
         })
 
-        it('has the attachment cache and the default for new spaces among the settings', async () => {
+        it('has the attachment cache among the settings', async () => {
           await reset()
           const g = await settings()
-          expect(g.json).toMatchObject({
-            cache: { assetsBytes: expect.any(Number) },
-            assets: { newSpaces: expect.any(Boolean) },
-          })
-          const put = await call(admin, 'PUT', '/api/admin/storage', {
-            cache: { assetsBytes: 64 * 1024 ** 2 },
-            assets: { newSpaces: true },
-          })
+          expect(g.json).toMatchObject({ cache: { assetsBytes: expect.any(Number) } })
+          const put = await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 64 * 1024 ** 2 } })
           expect(put.status).toBe(200)
-          expect(put.json).toMatchObject({ cache: { assetsBytes: 64 * 1024 ** 2 }, assets: { newSpaces: true } })
-          for (const bad of [
-            { cache: { assetsBytes: 1024 ** 2 } },
-            { assets: { newSpaces: 'yes' } },
-            { assets: { other: true } },
-          ]) {
+          expect(put.json).toMatchObject({ cache: { assetsBytes: 64 * 1024 ** 2 } })
+          for (const bad of [{ cache: { assetsBytes: 1024 ** 2 } }]) {
             const r = await call(admin, 'PUT', '/api/admin/storage', bad)
             expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
           }
-          await call(admin, 'PUT', '/api/admin/storage', {
-            cache: { assetsBytes: 5 * 1024 ** 3 },
-            assets: { newSpaces: false },
-          })
+          await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 5 * 1024 ** 3 } })
         })
 
         it('has an attachment repository only for a space that follows a remote', async () => {

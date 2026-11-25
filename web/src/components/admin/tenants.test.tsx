@@ -204,6 +204,74 @@ describe('the Settings page', () => {
     await click(button(tt.settings.save, open1))
     await settle(() => open1.textContent!.includes(tt.settings.errors.mail_not_configured), 'the refusal')
   })
+
+  it('shows where attachments go (separate by default) and the exemption switch, and writes both at the site', async () => {
+    await open('settings')
+    await settle(() => rowOf('storage.assets') != null, 'the settings')
+    const name = tt.settings.names['storage.assets']
+    const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="storage.assets"]')[0]
+    expect(row.textContent).toContain(tt.settings.helps['storage.assets'])
+    const select = row.querySelector<HTMLSelectElement>(`select[aria-label="${name}"]`)!
+    expect(select.value).toBe('repository')
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      tt.settings.choices['storage.assets'].space,
+      tt.settings.choices['storage.assets'].repository,
+    ])
+    await type(select, 'space')
+    await click(button(tt.settings.save, row))
+    await settle(() => row.textContent!.includes(tt.settings.saved), 'saved')
+    expect(
+      JSON.parse(m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/settings/storage.assets')!.body!),
+    ).toEqual({ value: 'space' })
+    // The switch is the site's alone, on by default.
+    const exempt = tt.settings.names['storage.assets.ownStorageExempt']
+    const rows = document.querySelectorAll('[data-slot="setting-row"][data-key="storage.assets.ownStorageExempt"]')
+    expect(rows).toHaveLength(1)
+    expect(switchOf(exempt).getAttribute('aria-checked')).toBe('true')
+    await click(switchOf(exempt))
+    await click(button(tt.settings.save, rows[0] as HTMLElement))
+    await settle(
+      () => m!.requests.some((r) => r.method === 'PUT' && r.url.endsWith('/storage.assets.ownStorageExempt')),
+      'saved the switch',
+    )
+    expect(JSON.parse(m!.requests.find((r) => r.url.endsWith('/storage.assets.ownStorageExempt'))!.body!)).toEqual({
+      value: false,
+    })
+  })
+
+  it('lets a site administrator force where attachments go for one tenant, and shows that it is forced', async () => {
+    await open('settings')
+    await settle(
+      () => document.querySelectorAll('[data-slot="setting-row"][data-key="storage.assets"]').length === 2,
+      'both layers',
+    )
+    const name = tt.settings.names['storage.assets']
+    const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="storage.assets"]')[1]
+    // Nothing to force while the tenant follows the site.
+    expect(switchOf(`${name}: ${tt.settings.siteLock}`).hasAttribute('data-disabled')).toBe(true)
+    await click(switchOf(`${name}: ${tt.settings.follow}`))
+    await type(row.querySelector<HTMLSelectElement>(`select[aria-label="${name}"]`)!, 'space')
+    await click(switchOf(`${name}: ${tt.settings.siteLock}`))
+    await click(button(tt.settings.save, row))
+    await settle(
+      () => m!.requests.some((r) => r.method === 'PUT' && r.url.endsWith('/settings/storage.assets')),
+      'saved',
+    )
+    expect(
+      JSON.parse(
+        m!.requests.find(
+          (r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/storage.assets',
+        )!.body!,
+      ),
+    ).toEqual({ value: 'space', siteLock: true })
+    await settle(
+      () =>
+        document
+          .querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="storage.assets"]')[1]
+          ?.textContent?.includes(tt.settings.siteLockedByYou) === true,
+      'the badge',
+    )
+  })
 })
 
 describe('administrators and tenants in the Users page and the navigation', () => {

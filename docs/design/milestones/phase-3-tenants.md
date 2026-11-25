@@ -986,7 +986,8 @@ become capabilities (`signin.sso`, `signin.idpAdmins`, `storage.quota`,
 | `storage.remotes.scope`, `.graceDays` | site, tenant | — | 3.1's enforced remote. From 3.6, "whether a remote is needed" is derived from `storage.mode` |
 | `storage.hosts` (`--remote-host`) | site, tenant | — | Which hosts the server connects to. A tenant can only cut down from the site's table |
 | `storage.localSpaces.maxBytes` | site, tenant | — | Local-only spaces take site disk, and the site sets the cap |
-| `storage.assets` (attachments in the space repository or the attachments repository) | site, tenant, space (owner) | `sync.assetsRepository` of the limits table (when off it can only be the space repository) | Three layers decided by the owner: the site can enforce (`lock`), or only give a default (`allow`) |
+| `storage.assets` (attachments in the space repository or the attachments repository) | site, tenant, space (owner) | `sync.assetsRepository` of the limits table (when off it can only be the space repository) | Three layers decided by the owner: the site can enforce (`lock`), or only give a default (`allow`). Separate (`repository`) is the default since round 2; see "Where attachments go" below |
+| `storage.assets.ownStorageExempt` | site | — | Whether a tenant on its own storage target is left out of the site's `storage.assets` value and locks. Default on; reserved until 3.6 makes tenant targets |
 | `storage.partial.unsupported` (remotes that cannot sync partially: allow (full clone) / refuse, 3.6) | site, tenant | — | The single partial-sync policy decided by the owner, default allow |
 | The tenant-adjustable values of storage pressure (in `storage.advanced`, evicting this tenant's spaces, days before archiving, the login prefetch switch and "people active in the last N days", 3.5) | site, tenant | — | A tenant can only adjust within the site's range. Tiers, reserve and budget are site only |
 | Exempting from the remote requirement (3.1's `remoteExempt`, a space's `exempt`) | site, tenant | — | An exemption only removes the requirement added by the layer that grants it |
@@ -996,6 +997,44 @@ become capabilities (`signin.sso`, `signin.idpAdmins`, `storage.quota`,
 | Default settings of tenants created by organization self-service sign-up | site → new tenant | — | A new tenant starts from the site defaults |
 | Reserved: default language, color scheme, greeting styles | site, tenant, person | — | Listed in "Layered settings and locking", keys to be added when it is done |
 | Reserved: whether boards and views can be saved by editor members, and whether a space can open to joining | site, tenant, space | — | Same as above |
+
+#### Where attachments go (round 2)
+
+Decided by the owner on 2026-11-24. Attachments are **separate by default**: the
+default of `storage.assets` is `repository`, so a new space made with a
+repository on a provider also gets `<name>-assets`. A space with no remote keeps
+its attachments in the space; and where a second repository cannot be had
+(an existing repository with no attachments repository beside it, a name that is
+taken, a credential that cannot reach it) the default falls back to `space`
+without failing the creation. Only a request that asked for one is an error.
+
+The order, strongest first: **the site's lock over everyone > the site's lock for
+one tenant > the site's default > the tenant's default > the space's owner**.
+Locks go down from the widest layer; for plain defaults the nearer layer
+overrides the wider one, as every layered setting does. This reuses the layered
+settings (the site's `lower`, the tenant's value and `lower`) and adds one thing
+they lacked, the lock for one tenant: a tenant row a site administrator wrote and
+marked `site_locked`. The tenant's administrators cannot change its value or its
+rule; the site's lock over everyone still beats it (the value is kept, not in
+effect). The space layer is the owner's request at creation, not a stored
+setting.
+
+The tenant's limits table (`sync.assetsRepository`, 3.6) is the last word: when
+it is off only `space` is possible, whatever the layers say.
+
+**Tenants on their own storage** (`storage.assets.ownStorageExempt`, site, default
+on): a tenant whose spaces live on a target of its own (3.6's `storage.modes`
+`tenant`) is not bound by the site's value or lock for `storage.assets`,
+including the lock for that one tenant. It chooses freely inside its own layers.
+Turned off, it is bound like any other tenant. The rule is built and tested
+(`settings.AssetsRule` takes `OwnStorage` and `RepositoryOff`); the callers pass
+`false` for both until 3.6 exists, so the switch is stored, shown and edited
+but exempts nobody yet. 3.6 must pass the two inputs where it creates spaces
+(see the 3.6 notes in phase-3-autonomy-and-providers.md).
+
+Cost: the rule is read from the tenant's cached settings, a map lookup; creating
+a space makes one more repository call when an attachments repository is made;
+listing, sync and reading are unaffected.
 
 (c) Tenant-owned, 16 items:
 

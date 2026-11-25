@@ -35,6 +35,14 @@ const (
 	// usernames are unique on the whole server.
 	UsersReuseUsernames = "users.reuseUsernames"
 
+	// StorageAssets is where the attachments of a new space on a provider go:
+	// "space" (its own repository) or "repository" (<name>-assets). Site and
+	// tenant; the space's owner chooses inside what is left (see AssetsRule).
+	StorageAssets = "storage.assets"
+	// StorageAssetsOwnExempt is whether a tenant that stores on its own target is
+	// left out of the site's StorageAssets default and lock. Site only.
+	StorageAssetsOwnExempt = "storage.assets.ownStorageExempt"
+
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
@@ -75,6 +83,11 @@ func Definitions() []*Def {
 		// site's --max-upload, which the server sets (SetFileCeiling).
 		{Key: FilesMaxBytes, Kind: Limit, Layers: []Layer{Site, Tenant}, Default: int64(10 << 20), Min: 1, Max: 256 << 20,
 			Lower: Lower{Mode: Restrict, Max: i64(10 << 20)}},
+		// Attachments are separate by default. The space layer is the owner's
+		// request when the space is made, read by AssetsRule, not a stored
+		// setting. A site administrator may also lock the value for one tenant.
+		{Key: StorageAssets, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "repository", Choices: []string{"space", "repository"}, Lower: Lower{Mode: Allow}},
+		{Key: StorageAssetsOwnExempt, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow}},
 		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}},

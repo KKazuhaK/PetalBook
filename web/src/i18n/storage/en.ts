@@ -74,10 +74,7 @@ export const storageEn = {
     },
     assets: {
       title: 'Attachment repositories',
-      help: 'A space may keep its attachments in a second repository, so its own stays small.',
-      newSpaces: 'Give new synced spaces an attachment repository',
-      newSpacesHelp:
-        'A space made with a repository on a platform also gets one named <name>-assets, unless the request says no.',
+      help: "Attachments go to a second repository, named <name>-assets, so the space's own stays small. Where they go, as a default or a rule, is set under Settings by layer (storage.assets).",
     },
     errors: {
       failed: 'Could not save the settings.',
@@ -199,6 +196,7 @@ export const storageEn = {
     },
     retry: 'Try again',
     newSpace: 'Sync attachments to a place of their own',
+    locked: 'Set by the administrators.',
     newSpaceHelp: 'Makes a second one, <name>-assets, next to it, so the space itself stays small and quick.',
     placeholder: 'This attachment is not on the server and cannot be fetched right now.',
   },

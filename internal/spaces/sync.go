@@ -147,14 +147,20 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		strings.IndexFunc(g.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.description is at most 350 characters, without control characters")
 	}
+	// The name of the attachment repository, when the request could have one. A
+	// name that cannot be a repository's is an error for a request that gave it
+	// and only a reason to keep the attachments in the space for one that did not.
 	assetsName := ""
-	if a := g.Assets; a != nil && (!a.Default || m.Storage().Assets.NewSpaces) {
+	if a := g.Assets; a != nil {
 		assetsName = a.Name
 		if assetsName == "" {
 			assetsName = g.Name + "-assets"
 		}
 		if !gh.ValidRepoName(assetsName) || strings.EqualFold(assetsName, g.Name) {
-			return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.assets names a repository other than the space's, in the form of storage.sync.name")
+			if !a.Default {
+				return Info{}, invalidAt(gh.Descriptor().ID, "storage.sync.assets names a repository other than the space's, in the form of storage.sync.name")
+			}
+			assetsName = ""
 		}
 	}
 	// The limit counts the spaces being made as well as the ones that exist.
@@ -197,6 +203,31 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	// The work goes on if the client goes away.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 	defer cancel()
+
+	// Whether the space gets an attachment repository: the request if it said,
+	// else the settings' default for the tenant, inside what the settings leave
+	// the owner. One more settings lookup (a map read) per creation.
+	pol, err := m.assetsPolicyOf(ctx, tenantID)
+	if err != nil {
+		return Info{}, err
+	}
+	assetsOptional := false // a repository the request did not ask for: the space does without one that cannot be had
+	switch a := g.Assets; {
+	case a == nil:
+		if err := pol.check("space"); err != nil {
+			return Info{}, err
+		}
+	case a.Default:
+		// A lock to the repository is not a default the space can do without.
+		assetsOptional = !pol.Locked
+		if pol.Default != "repository" {
+			assetsName = ""
+		}
+	default:
+		if err := pol.check("repository"); err != nil {
+			return Info{}, err
+		}
+	}
 
 	var plan *connections.Plan
 	var cred *connections.Cred
@@ -271,9 +302,13 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	// that a failure of the check names both and the retry can use them.
 	if assetsName != "" && g.Create {
 		if arepo, err = gh.CreateRepo(ctx, plan, connections.NewRepoSpec{Name: assetsName, Private: g.Private, Description: "Attachments of " + g.Name}); err != nil {
-			return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+			if !assetsOptional || !withoutSecondRepo(err) {
+				return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+			}
+			arepo, assetsName = nil, "" // the default does not fail a space over its second repository
+		} else {
+			acreated = true
 		}
-		acreated = true
 	}
 	if created {
 		if cred, err = gh.ChooseCredential(ctx, plan, repo); err != nil {
@@ -285,9 +320,18 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 		// installation with selected repositories gets it added).
 		if g.Create {
 			if acred, err = gh.ChooseCredential(ctx, plan, arepo); err != nil {
-				return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+				if !assetsOptional || !withoutSecondRepo(err) {
+					return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
+				}
+				// Made but unusable: remembered for the person, and the space goes on without it.
+				if rerr := gh.RecordLeftover(ctx, userID, arepo, name); rerr != nil {
+					m.log.Warn("could not remember an attachment repository left empty", "repo", arepo.FullName, "error", rerr)
+				}
+				arepo, acred, acreated, assetsName = nil, nil, false, ""
 			}
-		} else if acred, arepo, err = gh.ResolveExistingIn(ctx, tenantID, userID, g.Owner, assetsName, ""); err != nil {
+		} else if acred, arepo, err = gh.ResolveExistingIn(ctx, tenantID, userID, g.Owner, assetsName, ""); err != nil && assetsOptional && withoutSecondRepo(err) {
+			arepo, acred, assetsName = nil, nil, "" // there is none beside the space's repository: the attachments stay in the space
+		} else if err != nil {
 			// The space's repository is there; say which one is not (a retry
 			// after the attachment repository could not be made).
 			var ge *connections.Error

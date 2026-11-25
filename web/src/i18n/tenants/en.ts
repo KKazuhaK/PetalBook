@@ -98,6 +98,13 @@ export const tenantsEn: TenantsMessages = {
     onlyOff: 'The layers below can only turn it off',
     atMost: (n: number) => `At most ${n}`,
     fromFlag: 'Set by a command-line flag; read only here',
+    choices: {
+      'storage.assets': { space: "In the space's own repository", repository: 'In a separate attachments repository' },
+    } as Record<string, Record<string, string>>,
+    siteLock: 'Force for this tenant',
+    siteLockHelp:
+      "Sets this value for the tenant and its administrators cannot change it. It beats the site's default, and the site's lock over every tenant beats it.",
+    siteLockedByYou: 'The site forces this value for this tenant',
     affected: (n: number) =>
       n === 1
         ? "1 tenant's own value is no longer in effect because of this"
@@ -133,6 +140,8 @@ export const tenantsEn: TenantsMessages = {
       'quota.pagesPerPerson': 'Pages one person may have',
       'files.maxBytes': 'Largest size of one file (bytes)',
       'recycle.days': 'Days the recycle bin keeps things',
+      'storage.assets': 'Where attachments go',
+      'storage.assets.ownStorageExempt': 'Organizations on their own storage are not bound by this',
     },
     helps: {
       'registration.open':
@@ -150,6 +159,10 @@ export const tenantsEn: TenantsMessages = {
         "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
       'recycle.days':
         'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
+      'storage.assets':
+        "Whether a new space synced to a platform keeps its attachments in its own repository or in a separate attachments repository (<name>-assets). Separate is the default. Order: the site's lock, the site's lock for one tenant, the site's default, the tenant's default, then the space's owner. A space with no remote keeps attachments in the space. When a tenant's limits table turns the attachments repository off, only the space is possible.",
+      'storage.assets.ownStorageExempt':
+        "On (the default): an organization that stores on a target of its own is not bound by the site's default or lock for where attachments go, and chooses freely inside its own layers. Storage targets of their own arrive with 3.6; until then the switch is only stored.",
     },
   },
 }

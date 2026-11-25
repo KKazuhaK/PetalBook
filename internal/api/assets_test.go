@@ -107,8 +107,8 @@ func TestTheAttachmentRepositoryThroughTheAPI(t *testing.T) {
 		if ss["assetCacheBytes"].(float64) <= 0 || ss["assetsBudget"] != float64(5<<30) {
 			t.Fatal(stat.raw)
 		}
-		cfg := admin.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"assetsBytes": 64 << 20}, "assets": map[string]any{"newSpaces": true}}).want(t, 200, "")
-		if cfg.body["cache"].(map[string]any)["assetsBytes"] != float64(64<<20) || cfg.body["assets"].(map[string]any)["newSpaces"] != true {
+		cfg := admin.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"assetsBytes": 64 << 20}}).want(t, 200, "")
+		if cfg.body["cache"].(map[string]any)["assetsBytes"] != float64(64<<20) || cfg.body["assets"] != nil {
 			t.Fatal(cfg.raw)
 		}
 	})

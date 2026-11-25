@@ -117,7 +117,6 @@ describe('the new-space dialog', () => {
           private: true,
           description: 'Notes on Tang poetry',
           create: true,
-          assets: false,
         },
       },
     })
@@ -125,30 +124,97 @@ describe('the new-space dialog', () => {
     await settle(() => dialog() === null, 'the dialog closing')
   })
 
-  it("can also ask for an attachment repository next to the space's", async () => {
+  it('starts the attachment box from the default (separate), and sends nothing about it while it is left alone', async () => {
     const created = await openNewSpace('connected')
     await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
     await type(nameField(), 'Tang Notes')
     await click(checkbox(tg.newSpace.whereSync('GitHub')))
     await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await settle(() => checkbox(ts.assets.newSpace).checked, 'the default')
+    expect(checkbox(ts.assets.newSpace).disabled).toBe(false)
+    await click(button(t.spaces.create))
+    await settle(() => created.length === 1, 'the space')
+    expect(JSON.parse(posts()[0].body!).storage.sync).not.toHaveProperty('assets')
+  })
+
+  it('sends what the owner chose when they change the box, and only then', async () => {
+    const created = await openNewSpace('connected')
+    await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
+    await type(nameField(), 'Tang Notes')
+    await click(checkbox(tg.newSpace.whereSync('GitHub')))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await settle(() => checkbox(ts.assets.newSpace).checked, 'the default')
+    await click(checkbox(ts.assets.newSpace))
+    await click(checkbox(ts.assets.newSpace))
+    await click(checkbox(ts.assets.newSpace))
+    await click(button(t.spaces.create))
+    await settle(() => created.length === 1, 'the space')
+    expect(JSON.parse(posts()[0].body!).storage.sync).toMatchObject({ provider: 'github', create: true, assets: false })
+  })
+
+  it('follows a default of the same repository, and asks for a separate one only when ticked', async () => {
+    const created = await openNewSpace('connected')
+    adminRequests(m!.server)('PUT', '/api/admin/settings/storage.assets', { value: 'space' })
+    await m!.qc.invalidateQueries()
+    await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
+    await type(nameField(), 'Tang Notes')
+    await click(checkbox(tg.newSpace.whereSync('GitHub')))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await settle(() => checkbox(ts.assets.newSpace) !== undefined, 'the box')
     expect(checkbox(ts.assets.newSpace).checked).toBe(false)
     await click(checkbox(ts.assets.newSpace))
     await click(button(t.spaces.create))
     await settle(() => created.length === 1, 'the space')
-    expect(JSON.parse(posts()[0].body!).storage.sync).toMatchObject({ provider: 'github', create: true, assets: true })
+    expect(JSON.parse(posts()[0].body!).storage.sync).toMatchObject({ assets: true })
   })
 
-  it("says no to an attachment repository when the box is not ticked, so the administrator's default never decides for the person", async () => {
+  it('shows the box ticked and disabled, with the reason, under a lock to the repository', async () => {
     const created = await openNewSpace('connected')
+    adminRequests(m!.server)('PUT', '/api/admin/settings/storage.assets', { lower: { mode: 'lock' } })
+    await m!.qc.invalidateQueries()
     await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
     await type(nameField(), 'Tang Notes')
     await click(checkbox(tg.newSpace.whereSync('GitHub')))
     await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
-    await click(checkbox(ts.assets.newSpace))
-    await click(checkbox(ts.assets.newSpace))
+    await settle(() => text().includes(ts.assets.locked), 'the reason')
+    expect(checkbox(ts.assets.newSpace).checked).toBe(true)
+    expect(checkbox(ts.assets.newSpace).disabled).toBe(true)
     await click(button(t.spaces.create))
     await settle(() => created.length === 1, 'the space')
-    expect(JSON.parse(posts()[0].body!).storage.sync.assets).toBe(false)
+    expect(JSON.parse(posts()[0].body!).storage.sync).not.toHaveProperty('assets')
+  })
+
+  it('shows the box ticked and disabled when the site allows only a repository of their own, without a lock', async () => {
+    const created = await openNewSpace('connected')
+    adminRequests(m!.server)('PUT', '/api/admin/settings/storage.assets', {
+      lower: { mode: 'restrict', options: ['repository'] },
+    })
+    await m!.qc.invalidateQueries()
+    await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
+    await type(nameField(), 'Tang Notes')
+    await click(checkbox(tg.newSpace.whereSync('GitHub')))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await settle(() => text().includes(ts.assets.locked), 'the reason')
+    expect(checkbox(ts.assets.newSpace).checked).toBe(true)
+    expect(checkbox(ts.assets.newSpace).disabled).toBe(true)
+    await click(button(t.spaces.create))
+    await settle(() => created.length === 1, 'the space')
+    expect(JSON.parse(posts()[0].body!).storage.sync).not.toHaveProperty('assets')
+  })
+
+  it('hides the box when no second repository is possible (a lock to the same repository)', async () => {
+    const created = await openNewSpace('connected')
+    adminRequests(m!.server)('PUT', '/api/admin/settings/storage.assets', { value: 'space', lower: { mode: 'lock' } })
+    await m!.qc.invalidateQueries()
+    await settle(() => text().includes(tg.newSpace.whereSync('GitHub')), 'the option')
+    await type(nameField(), 'Tang Notes')
+    await click(checkbox(tg.newSpace.whereSync('GitHub')))
+    await settle(() => dialog()!.querySelector('select') !== null, 'the owners')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(text()).not.toContain(ts.assets.newSpace)
+    await click(button(t.spaces.create))
+    await settle(() => created.length === 1, 'the space')
+    expect(JSON.parse(posts()[0].body!).storage.sync).not.toHaveProperty('assets')
   })
 
   it('checks the repository name before asking', async () => {

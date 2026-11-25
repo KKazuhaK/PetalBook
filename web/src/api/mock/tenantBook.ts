@@ -22,6 +22,7 @@ interface Def {
   lower: SettingLower
   min?: number
   max?: number
+  choices?: string[]
 }
 // The settings of 3.3, as the server has them (3.1's come with 3.1).
 const DEFS: Def[] = [
@@ -82,6 +83,17 @@ const DEFS: Def[] = [
     min: 1,
     max: 256 * 1024 * 1024,
   },
+  // Where the attachments of a new space on a provider go: separate by default. A site administrator may also lock the
+  // value for one tenant (siteLock). The switch is the site's alone: whether a tenant on its own storage is exempt.
+  {
+    key: 'storage.assets',
+    kind: 'choice',
+    layers: ['site', 'tenant'],
+    def: 'repository',
+    lower: { mode: 'allow' },
+    choices: ['space', 'repository'],
+  },
+  { key: 'storage.assets.ownStorageExempt', kind: 'boolean', layers: ['site'], def: true, lower: { mode: 'allow' } },
   // How many days a deleted space or person stays in the recycle bin (3.5); the site's alone.
   { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
 ]
@@ -96,6 +108,8 @@ function checkValue(d: Def, v: unknown): unknown {
       return typeof v === 'number' && Number.isInteger(v) && v >= (d.min ?? 0) && v <= (d.max ?? 1e9)
         ? v
         : bad(`${d.key} is a number from ${d.min} to ${d.max}`)
+    case 'choice':
+      return typeof v === 'string' && d.choices?.includes(v) ? v : bad(`${d.key} is one of ${d.choices?.join(', ')}`)
     case 'list': {
       if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return bad(`${d.key} is a list of text`)
       const out: string[] = []
@@ -125,6 +139,10 @@ function checkLower(d: Def, l: unknown): SettingLower {
     return o.options?.length === 1 && o.options[0] === false
       ? { mode: 'restrict', options: [false] }
       : bad('a boolean setting can only be restricted to [false]')
+  if (d.kind === 'choice') {
+    const opts = (o.options ?? []).filter((x): x is string => typeof x === 'string' && !!d.choices?.includes(x))
+    return opts.length > 0 ? { mode: 'restrict', options: [...new Set(opts)] } : bad('restrict needs options')
+  }
   if (d.kind === 'limit')
     return typeof o.max === 'number' && o.max >= (d.min ?? 0) && o.max <= (d.max ?? 1e9)
       ? { mode: 'restrict', max: o.max }
@@ -138,9 +156,11 @@ const allows = (l: SettingLower, d: Def, v: unknown): boolean =>
       ? true
       : d.kind === 'boolean'
         ? v === false
-        : d.kind === 'limit'
-          ? typeof v === 'number' && l.max !== undefined && v <= l.max
-          : false
+        : d.kind === 'choice'
+          ? (l.options ?? []).includes(v as string)
+          : d.kind === 'limit'
+            ? typeof v === 'number' && l.max !== undefined && v <= l.max
+            : false
 const tightens = (l: SettingLower, d: Def, above: SettingLower): boolean => {
   if (above.mode === 'allow') return true
   if (above.mode === 'lock') return l.mode === 'lock'
@@ -178,6 +198,7 @@ export interface TenantBookOptions {
 interface TenantRow {
   value?: unknown // undefined: follows the site
   lower?: SettingLower
+  siteLocked?: boolean // a site administrator set and locked the value for this tenant
 }
 
 const ZERO: TenantUsage = { people: 0, spaces: 0, bytes: 0, pages: 0, measuredAt: null, over: [] }
@@ -220,6 +241,7 @@ export function createTenantBook(o: TenantBookOptions) {
     key: d.key,
     kind: d.kind,
     layers: d.layers,
+    ...(d.choices ? { choices: d.choices } : {}),
     site: {
       value: siteValue(d),
       lower: siteLower(d),
@@ -232,17 +254,21 @@ export function createTenantBook(o: TenantBookOptions) {
     const row = tenantRows.get(tenant)?.get(d.key)
     const sl = siteLower(d)
     const own = row?.value
-    const inEffect = own === undefined || own === null || allows(sl, d, own)
+    const has = own !== undefined && own !== null
+    // A value the site locked for this tenant is in effect unless the site's lock over everyone beats it.
+    const siteLocked = !!row?.siteLocked && has
+    const inEffect = !has || (siteLocked ? sl.mode !== 'lock' : allows(sl, d, own))
     return {
       key: d.key,
       kind: d.kind,
       layers: d.layers,
+      ...(d.choices ? { choices: d.choices } : {}),
       site: { value: siteValue(d), lower: sl },
-      tenant: { value: own ?? null, lower: row?.lower ?? null, inEffect },
+      tenant: { value: own ?? null, lower: row?.lower ?? null, inEffect, siteLocked },
       effective:
         d.key === FILES_KEY
-          ? Math.min(o.maxUpload, (own !== undefined && own !== null && inEffect ? own : siteValue(d)) as number)
-          : own !== undefined && own !== null && inEffect
+          ? Math.min(o.maxUpload, (has && inEffect ? own : siteValue(d)) as number)
+          : has && inEffect
             ? own
             : siteValue(d),
     }
@@ -325,18 +351,31 @@ export function createTenantBook(o: TenantBookOptions) {
     if (key.startsWith('quota.')) o.onQuotaChanged()
     return { ...siteView(d), ...(affected === undefined ? {} : { affected }) }
   }
-  const putTenant = (tenant: string, key: string, body: Record<string, unknown>): TenantSetting => {
+  const putTenant = (tenant: string, key: string, body: Record<string, unknown>, bySite: boolean): TenantSetting => {
     const d = defOf(key, 'tenant')
-    for (const k of Object.keys(body)) if (k !== 'value' && k !== 'lower') bad(`unknown field ${k}`)
-    if (!('value' in body) && !('lower' in body)) bad('give value, lower or both')
+    for (const k of Object.keys(body)) if (k !== 'value' && k !== 'lower' && k !== 'siteLock') bad(`unknown field ${k}`)
+    if (!('value' in body) && !('lower' in body) && !('siteLock' in body)) bad('give value, lower, siteLock or any')
     const sl = siteLower(d)
     const rows = tenantRows.get(tenant) ?? new Map<string, TenantRow>()
     const row = rows.get(key) ?? {}
+    const locked = `${key} is locked for this tenant by the site's administrators`
+    if (!bySite && 'siteLock' in body)
+      throw new HttpError(409, 'setting_locked', `${key}: only the site's administrators lock a value for a tenant`)
+    if (!bySite && row.siteLocked) throw new HttpError(409, 'setting_locked', locked)
+    let locking = !!row.siteLocked
+    if ('siteLock' in body) locking = body.siteLock === true
+    const final = 'value' in body ? body.value : row.value
+    if (final === undefined || final === null) {
+      if (body.siteLock === true) bad(`${key}: a lock for the tenant needs a value to lock`)
+      locking = false
+    }
+    const forced = bySite && locking
     if ('value' in body && body.value !== null) {
-      if (sl.mode === 'lock')
+      if (sl.mode === 'lock' && !forced)
         throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
       const v = d.kind === 'doc' ? body.value : checkValue(d, body.value)
-      if (!allows(sl, d, v)) throw new HttpError(409, 'setting_restricted', `${key}: outside the site's rule`)
+      if (!forced && !allows(sl, d, v))
+        throw new HttpError(409, 'setting_restricted', `${key}: outside the site's rule`)
       if (key === 'registration.open' && v === true) checkOpening()
       row.value = v
     } else if ('value' in body) row.value = undefined
@@ -344,17 +383,20 @@ export function createTenantBook(o: TenantBookOptions) {
       if (body.lower === null) row.lower = undefined
       else {
         const l = checkLower(d, body.lower)
-        if (sl.mode === 'lock' && l.mode !== 'lock')
-          throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
-        if (!tightens(l, d, sl))
-          throw new HttpError(
-            409,
-            'setting_restricted',
-            `${key}: the tenant's rule must be at least as strict as the site's`,
-          )
+        if (!forced) {
+          if (sl.mode === 'lock' && l.mode !== 'lock')
+            throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
+          if (!tightens(l, d, sl))
+            throw new HttpError(
+              409,
+              'setting_restricted',
+              `${key}: the tenant's rule must be at least as strict as the site's`,
+            )
+        }
         row.lower = l
       }
     }
+    row.siteLocked = locking
     rows.set(key, row)
     tenantRows.set(tenant, rows)
     if (key === 'registration.open') o.onRegistrationChanged()
@@ -370,20 +412,26 @@ export function createTenantBook(o: TenantBookOptions) {
 
   // The settings of one person's layers (GET /api/settings).
   const mine = (tenant: string) =>
-    DEFS.filter((d) => d.layers.includes('space') || d.key === 'offline.copies').map((d) => {
-      const e = effectiveOf(tenant, d)
-      // Not the person's to change: a client only reads whether it may keep offline copies.
-      if (!d.layers.includes('space')) return { key: d.key, effective: e.effective }
-      const on = e.effective === true
-      const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
-      const source =
-        lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)
-      return {
-        key: d.key,
-        effective: e.effective,
-        space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) },
-      }
-    })
+    DEFS.filter((d) => d.layers.includes('space') || d.key === 'offline.copies' || d.key === 'storage.assets').map(
+      (d) => {
+        const e = effectiveOf(tenant, d)
+        if (d.key === 'storage.assets') {
+          const r = assetsRule()
+          return { key: d.key, effective: r.default, allowed: r.allowed, locked: r.locked }
+        }
+        // Not the person's to change: a client only reads whether it may keep offline copies.
+        if (!d.layers.includes('space')) return { key: d.key, effective: e.effective }
+        const on = e.effective === true
+        const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
+        const source =
+          lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)
+        return {
+          key: d.key,
+          effective: e.effective,
+          space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) },
+        }
+      },
+    )
 
   // What the layer below the tenant may do with a setting: a site administrator answers to the site's rule only, anyone
   // else to the stricter of the site's and the tenant's.
@@ -395,8 +443,27 @@ export function createTenantBook(o: TenantBookOptions) {
   }
   // The default tenant's own totals, which PATCH /admin/tenants/{id} sets.
   const quotaOf = (id: string) => tenants.get(id)?.quota ?? { people: null, spaces: null, bytes: null, pages: null }
+  // Where the attachments of a new space of the default tenant go, and what its owner may ask for (the server's
+  // AssetsRule): the site's lock, the site's lock for the tenant, the site's value, the tenant's value, in that order.
+  const assetsRule = () => {
+    const d = DEFS.find((x) => x.key === 'storage.assets')!
+    const e = tenantView(DEFAULT_TENANT, d)
+    const sl = siteLower(d)
+    const below =
+      sl.mode === 'lock' || (e.tenant?.siteLocked && e.tenant.inEffect)
+        ? ({ mode: 'lock' } as SettingLower)
+        : (e.tenant?.lower ?? ({ mode: 'allow' } as SettingLower))
+    const merged = below.mode !== 'lock' && sl.mode === 'restrict' ? sl : below
+    const choices = d.choices ?? []
+    let value = e.effective as string
+    let allowed = choices.filter((c) => merged.mode === 'allow' || (merged.mode === 'restrict' && allows(merged, d, c)))
+    if (merged.mode === 'lock') allowed = [value]
+    else if (!allowed.includes(value)) value = allowed[0]
+    return { default: value, allowed, locked: merged.mode === 'lock' }
+  }
   return {
     mine,
+    assetsRule,
     lowerFor,
     quotaOf,
     registrationStored: anyOpen,
@@ -550,7 +617,7 @@ export function createTenantBook(o: TenantBookOptions) {
       const tk = /^\/admin\/tenants\/([^/]+)\/settings\/([^/]+)$/.exec(path)
       if (tk && method === 'PUT') {
         const t = visible(me, decodeURIComponent(tk[1]))
-        return j(putTenant(t.id, decodeURIComponent(tk[2]), body))
+        return j(putTenant(t.id, decodeURIComponent(tk[2]), body, site))
       }
       return undefined
     },

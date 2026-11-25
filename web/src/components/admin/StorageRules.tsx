@@ -77,7 +77,6 @@ function StorageForm({ data }: { data: AdminStorage }) {
   const [clones, setClones] = useState(text(data.cache.clonesBytes, GIB))
   const [free, setFree] = useState(text(data.cache.minFreeBytes ?? null, GIB))
   const [assetCache, setAssetCache] = useState(text(data.cache.assetsBytes, MIB))
-  const [newAssets, setNewAssets] = useState(data.assets.newSpaces)
   const [error, setError] = useState('')
 
   const submit = async (e: FormEvent) => {
@@ -131,7 +130,6 @@ function StorageForm({ data }: { data: AdminStorage }) {
     if (data.cache.minFreeBytes !== undefined && data.cache.minFreeBytes !== floor) cache.minFreeBytes = floor
     if (data.cache.assetsBytes !== assetsBudget) cache.assetsBytes = assetsBudget
     if (Object.keys(cache).length > 0) body.cache = cache
-    if (data.assets.newSpaces !== newAssets) body.assets = { newSpaces: newAssets }
     if (Object.keys(body).length === 0) return toast(a.unchanged)
     try {
       await save.mutateAsync(body)
@@ -282,9 +280,6 @@ function StorageForm({ data }: { data: AdminStorage }) {
               onChange={(e) => setAssetCache(e.target.value)}
               className="w-28"
             />
-          </SettingsRow>
-          <SettingsRow title={a.assets.newSpaces} help={a.assets.newSpacesHelp}>
-            <Switch aria-label={a.assets.newSpaces} checked={newAssets} onCheckedChange={setNewAssets} />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>

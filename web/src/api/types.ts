@@ -1317,7 +1317,6 @@ export interface AdminStorage {
     minFreeBytes?: number | null
     assetsBytes: number
   }
-  assets: { newSpaces: boolean }
   git: { version?: string; partialClone: boolean }
   // `exempt` is the site's: a tenant administrator is not told it.
   affected: { inGrace: number; overdue: number; exempt?: number }
@@ -1347,7 +1346,6 @@ export interface PutAdminStorage {
   hosts?: { allowed?: string[] }
   localSpaces?: { maxBytes?: number | null }
   cache?: Partial<AdminStorage['cache']>
-  assets?: Partial<AdminStorage['assets']>
 }
 export interface StorageStatus {
   spaces: { local: number; full: number; partial: number; evicted: number; restoring: number }
@@ -1899,6 +1897,8 @@ export interface SiteSetting {
   key: string
   kind: SettingKind
   layers: SettingLayer[]
+  // The values of a choice setting, loosest first.
+  choices?: string[]
   site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
   // Set by PUT when the new rule makes this many tenants' values ineffective.
   affected?: number
@@ -1908,7 +1908,9 @@ export interface TenantSetting {
   kind: SettingKind
   layers: SettingLayer[]
   site: { value: unknown; lower: SettingLower }
-  tenant: { value: unknown; lower: SettingLower | null; inEffect: boolean } | null
+  choices?: string[]
+  // siteLocked: a site administrator set and locked this value for this tenant.
+  tenant: { value: unknown; lower: SettingLower | null; inEffect: boolean; siteLocked?: boolean } | null
   effective: unknown
 }
 // What GET /api/settings says of a setting that a space or a person can change.
@@ -1917,6 +1919,9 @@ export interface MySetting {
   effective: unknown
   space?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
   person?: { canChange: boolean; inEffect: boolean; source?: 'site' | 'tenant' }
+  // storage.assets only: what a person may ask for when they make a space, and whether a lock leaves no choice.
+  allowed?: string[]
+  locked?: boolean
 }
 
 // --- storage management (docs/api.md, "Storage management") --------------------------------

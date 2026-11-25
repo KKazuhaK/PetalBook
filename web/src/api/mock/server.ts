@@ -566,7 +566,6 @@ export function createMockServer(options: MockOptions = {}) {
       minFreeBytes: (10 * GIB) as number | null,
       assetsBytes: 5 * GIB,
     },
-    assets: { newSpaces: false },
   }
   const cacheOf = (s: SpaceRec): CacheState => (!s.remote ? 'local' : s.cache)
   const ownerExempt = (s: SpaceRec) =>
@@ -608,7 +607,6 @@ export function createMockServer(options: MockOptions = {}) {
       hosts: { allowed: storage.hosts.allowed, fromFlag: false },
       localSpaces: storage.localSpaces,
       cache: storage.cache,
-      assets: storage.assets,
       git: { version: '2.53.0', partialClone: true },
       affected: {
         inGrace: notices.filter((n) => !n.overdue).length,
@@ -669,7 +667,6 @@ export function createMockServer(options: MockOptions = {}) {
       ['partial', 'evictAfterDays', 'minIdleHours', 'clonesBytes', 'minFreeBytes', 'assetsBytes'],
       'cache',
     )
-    const assets = section(body.assets, ['newSpaces'], 'assets')
     const next = structuredClone(storage)
     if ('require' in rem) {
       // null, "any", or the id of a provider the server has (the mock has GitHub only).
@@ -709,10 +706,6 @@ export function createMockServer(options: MockOptions = {}) {
     if ('minFreeBytes' in cache) next.cache.minFreeBytes = nullable(cache.minFreeBytes, 0, 'cache.minFreeBytes')
     if ('assetsBytes' in cache)
       next.cache.assetsBytes = int(cache.assetsBytes, 64 * 1024 ** 2, Number.MAX_SAFE_INTEGER, 'cache.assetsBytes')
-    if ('newSpaces' in assets) {
-      if (typeof assets.newSpaces !== 'boolean') throw new HttpError(400, 'invalid', 'assets.newSpaces 要是布尔值')
-      next.assets.newSpaces = assets.newSpaces
-    }
     // The requirement's "since" is when it took its present form.
     if (next.remotes.require === null) next.remotes.since = null
     else if (storage.remotes.require !== next.remotes.require || storage.remotes.scope !== next.remotes.scope)
@@ -4881,6 +4874,12 @@ export function createMockServer(options: MockOptions = {}) {
             throw new HttpError(400, 'invalid', 'storage.sync 要有 provider（github）、owner 和 name')
           if (g.description !== undefined && (typeof g.description !== 'string' || g.description.length > 350))
             throw new HttpError(400, 'invalid', 'description 最多 350 个字符')
+          // What the settings leave the owner to ask for, checked before anything is made (as the server does).
+          const ask = g.assets
+          const rule = tenantBook.assetsRule()
+          const wants = ask === true || (isRecord(ask) && typeof ask.name === 'string')
+          if ((wants && !rule.allowed.includes('repository')) || (ask === false && !rule.allowed.includes('space')))
+            throw new HttpError(409, rule.locked ? 'setting_locked' : 'setting_restricted', '附件放在哪里由管理员定了')
           const found =
             g.create === false
               ? github.existing(me.id, g.owner, g.name, '')
@@ -4906,13 +4905,8 @@ export function createMockServer(options: MockOptions = {}) {
             error: '',
             rewritten: null,
           }
-          // An attachment repository next to it: asked for, or the administrator's default when the request is silent.
-          const ask = g.assets
-          if (
-            ask === true ||
-            (isRecord(ask) && typeof ask.name === 'string') ||
-            (ask === undefined && storage.assets.newSpaces)
-          ) {
+          // An attachment repository next to it: asked for, or the settings' default (decided above).
+          if (wants || (ask === undefined && rule.default === 'repository')) {
             const aname = isRecord(ask) && typeof ask.name === 'string' ? ask.name : `${found.repo.name}-assets`
             space.assets = {
               url: `https://github.com/${found.repo.owner}/${aname}.git`,

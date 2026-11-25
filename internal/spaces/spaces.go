@@ -329,6 +329,9 @@ type Manager struct {
 
 	quota quotaHooks // see SetQuota
 
+	// assetsPolicy decides where attachments go (SetAssetsPolicy); nil: separate.
+	assetsPolicy func(ctx context.Context, tenantID string) (AssetsPolicy, error)
+
 	closeCtx    context.Context // ends when the manager is closed (background work stops with it)
 	closeCancel context.CancelFunc
 

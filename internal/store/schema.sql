@@ -335,14 +335,17 @@ CREATE TABLE site_settings (
 
 -- The settings of the layers site and tenant (see internal/settings). A row is
 -- one layer's value of one key and what that layer lets the layers below do.
--- layer_id is '' for the site and the tenant's id for a tenant.
+-- layer_id is '' for the site and the tenant's id for a tenant. site_locked is 1
+-- on a tenant's row whose value a site administrator set for that tenant and
+-- locked: the tenant's own administrators cannot change the row.
 CREATE TABLE layered_settings (
-  layer    TEXT COLLATE "C" NOT NULL,
-  layer_id TEXT COLLATE "C" NOT NULL,
-  key      TEXT COLLATE "C" NOT NULL,
-  value    TEXT COLLATE "C" NOT NULL DEFAULT '',
-  lower    TEXT COLLATE "C" NOT NULL DEFAULT '',
-  updated  BIGINT NOT NULL,
+  layer       TEXT COLLATE "C" NOT NULL,
+  layer_id    TEXT COLLATE "C" NOT NULL,
+  key         TEXT COLLATE "C" NOT NULL,
+  value       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  lower       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  site_locked BIGINT NOT NULL DEFAULT 0,
+  updated     BIGINT NOT NULL,
   PRIMARY KEY (layer, layer_id, key)
 );
 
