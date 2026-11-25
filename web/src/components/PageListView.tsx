@@ -12,6 +12,13 @@ import {
   Table2,
   Tag as TagIcon,
 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
 import { tzOffset } from '@/lib/templates'
 import {
@@ -159,6 +166,7 @@ function ViewSwitch({
 }) {
   const item = (m: ListViewMode, label: string, Icon: typeof ListIcon) => (
     <button
+      key={m}
       type="button"
       aria-pressed={mode === m}
       aria-label={label}
@@ -170,19 +178,49 @@ function ViewSwitch({
       <Icon className="size-4" />
     </button>
   )
+  const modes = (
+    [
+      ['list', t.view.list, ListIcon, true],
+      ['cards', t.view.cards, LayoutGrid, true],
+      ['table', t.view.table, Table2, table],
+      ['board', t.view.board, Columns3, board],
+      ['read', t.view.read, BookOpen, read],
+    ] as const
+  ).filter(([, , , on]) => on)
+  const Current = modes.find(([m]) => m === mode)?.[2] ?? ListIcon
   return (
-    <div
-      role="group"
-      aria-label={t.view.label}
-      aria-busy={disabled || undefined}
-      className="flex items-center rounded-lg border p-0.5"
-    >
-      {item('list', t.view.list, ListIcon)}
-      {item('cards', t.view.cards, LayoutGrid)}
-      {table && item('table', t.view.table, Table2)}
-      {board && item('board', t.view.board, Columns3)}
-      {read && item('read', t.view.read, BookOpen)}
-    </div>
+    <>
+      {/* Where the top bar is wide enough, one button per view; where it is narrow (a phone, or a narrow window beside
+          the sidebar), one button that opens the same choices, so the actions never run over the title. */}
+      <div
+        role="group"
+        aria-label={t.view.label}
+        aria-busy={disabled || undefined}
+        className="hidden items-center rounded-lg border p-0.5 @[30rem]/topbar:flex"
+      >
+        {modes.map(([m, label, Icon]) => item(m, label, Icon))}
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          disabled={disabled}
+          aria-label={t.view.label}
+          title={t.view.label}
+          className="flex size-8 items-center justify-center rounded-lg border outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60 data-popup-open:bg-muted @[30rem]/topbar:hidden"
+        >
+          <Current className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-40">
+          <DropdownMenuRadioGroup value={mode} onValueChange={(v) => onChange(v as ListViewMode)}>
+            {modes.map(([m, label, Icon]) => (
+              <DropdownMenuRadioItem key={m} value={m}>
+                <Icon />
+                {label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   )
 }
 
