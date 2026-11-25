@@ -188,10 +188,11 @@ export function useSourceView({
   const kept = useRef<string | null>(null)
   // Text left on an older file that the person asked to take up again.
   const takeStale = useRef<RawSource | null>(null)
+  // Set while rendering, not in an effect: the source view (a child) reads its first text in its own effect, which
+  // runs before this component's, so an effect would hand it the old answer for one commit.
   const withHeaderRef = useRef(withHeader)
-  useEffect(() => {
-    withHeaderRef.current = withHeader
-  }, [withHeader])
+  // eslint-disable-next-line react-hooks/refs -- read only from callbacks and children's effects, never during render
+  withHeaderRef.current = withHeader
   const modeRef = useRef(mode)
   useEffect(() => {
     modeRef.current = mode
