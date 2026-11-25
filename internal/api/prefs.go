@@ -45,6 +45,9 @@ const maxPrefsRetries = 6
 type prefsHub struct {
 	mu      sync.Mutex
 	pending map[string]*pendingPrefs
+	// written counts the flushes of each person that ended, so a write can tell
+	// that the file it read is no longer the one beside what is pending.
+	written map[string]uint64
 	closed  bool
 }
 
@@ -66,13 +69,30 @@ type pendingPrefs struct {
 	retries int
 }
 
+// gen is the number of the person's flushes that have ended: read before the
+// file, and handed to add, it says whether the file is still the one beside
+// what is pending.
+func (h *prefsHub) gen(user string) uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.written[user]
+}
+
+// errPrefsStale: a flush ended between the read of the file and add; read it again.
+var errPrefsStale = errors.New("the preferences were written meanwhile")
+
 // add keeps the values of a write, after check has accepted them as they would
 // be with what is pending (check gets the pending values, nil for a removal).
-func (h *prefsHub) add(user string, set map[string]any, quiet time.Duration, fire func(), check func(pending map[string]any) error) error {
+// gen is what h.gen said before the file check uses was read (any value when
+// check is nil): if a flush has ended since, it is errPrefsStale.
+func (h *prefsHub) add(user string, set map[string]any, quiet time.Duration, fire func(), gen uint64, check func(pending map[string]any) error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return errPrefsClosed
+	}
+	if check != nil && h.written[user] != gen {
+		return errPrefsStale
 	}
 	if h.pending == nil {
 		h.pending = map[string]*pendingPrefs{}
@@ -141,6 +161,10 @@ func (h *prefsHub) finish(user string, snap map[string]prefVal, retry bool, quie
 		return false
 	}
 	p.flushing = false
+	if h.written == nil {
+		h.written = map[string]uint64{}
+	}
+	h.written[user]++
 	wait := quiet
 	if retry {
 		p.retries++
@@ -170,17 +194,28 @@ func (h *prefsHub) finish(user string, snap map[string]prefVal, retry bool, quie
 
 // peek is a copy of what is pending for the person.
 func (h *prefsHub) peek(user string) map[string]any {
+	m, _ := h.peekAt(user, 0, false)
+	return m
+}
+
+// peekAt is peek, and whether no flush of the person ended since gen (when
+// check is set): a value is in the file or pending, but between the read of
+// the file and the peek a flush may move it from one to the other.
+func (h *prefsHub) peekAt(user string, gen uint64, check bool) (map[string]any, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if check && h.written[user] != gen {
+		return nil, false
+	}
 	p := h.pending[user]
 	if p == nil {
-		return nil
+		return nil, true
 	}
 	out := make(map[string]any, len(p.set))
 	for k, pv := range p.set {
 		out[k] = pv.v
 	}
-	return out
+	return out, true
 }
 
 func (h *prefsHub) stop() []string {
@@ -285,9 +320,10 @@ func (s *server) flushAllPrefs() {
 
 func (s *server) getPrefs(c *call) {
 	ctx := c.r.Context()
-	prefs := map[string]any{}
+	uid := c.user().ID
+	var prefs map[string]any
 	personal := true
-	sp, release, err := s.spaces.OpenPersonal(ctx, c.user().ID)
+	sp, release, err := s.spaces.OpenPersonal(ctx, uid)
 	switch {
 	case errors.Is(err, spaces.ErrNoPersonalSpace), errors.Is(err, spaces.ErrPersonalAway):
 		personal = false
@@ -296,13 +332,29 @@ func (s *server) getPrefs(c *call) {
 		return
 	default:
 		defer release()
-		if prefs, err = sp.ReadPrefs(); err != nil {
-			s.log.Warn("could not read the preferences of a person", "error", err)
-			prefs, personal = map[string]any{}, false
+	}
+	// What was written and is not committed yet is what the person set last,
+	// on top of the file. A flush that ends between the read of the file and
+	// the look at what is pending has the file read again.
+	var pending map[string]any
+	for try := 0; ; try++ {
+		gen := s.prefs.gen(uid)
+		prefs = map[string]any{}
+		if personal {
+			if prefs, err = sp.ReadPrefs(); err != nil {
+				s.log.Warn("could not read the preferences of a person", "error", err)
+				prefs, personal = map[string]any{}, false
+			}
+		}
+		var ok bool
+		if pending, ok = s.prefs.peekAt(uid, gen, true); ok || try == 4 {
+			if !ok {
+				pending = s.prefs.peek(uid)
+			}
+			break
 		}
 	}
-	// What was written and is not committed yet is what the person set last.
-	for k, v := range s.prefs.peek(c.user().ID) {
+	for k, v := range pending {
 		if v == nil {
 			delete(prefs, k)
 		} else {
@@ -357,43 +409,58 @@ func (s *server) patchPrefs(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	cur, rerr := sp.ReadPrefs()
-	werr := sp.Writable()
-	release()
-	if werr != nil || rerr != nil {
+	if err := sp.Writable(); err != nil {
+		release()
 		writeJSON(c.w, http.StatusOK, struct {
 			Personal bool `json:"personal"`
 		}{false})
 		return
 	}
 	// The file, with what is pending and this write, must fit: a write that
-	// cannot be committed is refused now, not kept in memory.
-	fits := func(pending map[string]any) error {
-		all := make(map[string]any, len(cur)+len(pending)+len(set))
-		for _, m := range []map[string]any{cur, pending, set} {
-			for k, v := range m {
-				if v == nil {
-					delete(all, k)
-				} else {
-					all[k] = v
+	// cannot be committed is refused now, not kept in memory. The file is read
+	// again if a flush ends between its read and the check.
+	var err2 error
+	for try := 0; try < 5; try++ {
+		gen := s.prefs.gen(uid)
+		cur, rerr := sp.ReadPrefs()
+		if rerr != nil {
+			release()
+			writeJSON(c.w, http.StatusOK, struct {
+				Personal bool `json:"personal"`
+			}{false})
+			return
+		}
+		fits := func(pending map[string]any) error {
+			all := make(map[string]any, len(cur)+len(pending)+len(set))
+			for _, m := range []map[string]any{cur, pending, set} {
+				for k, v := range m {
+					if v == nil {
+						delete(all, k)
+					} else {
+						all[k] = v
+					}
 				}
 			}
+			if len(all) > maxPrefKeys {
+				return &codedError{code: "prefs_full", msg: fmt.Sprintf("A person keeps at most %d preferences.", maxPrefKeys)}
+			}
+			if n, err := space.PrefsSize(all); err != nil || n > space.MaxPrefsBytes {
+				return &codedError{code: "prefs_full", msg: fmt.Sprintf("The preferences would be larger than %d bytes.", space.MaxPrefsBytes)}
+			}
+			return nil
 		}
-		if len(all) > maxPrefKeys {
-			return &codedError{code: "prefs_full", msg: fmt.Sprintf("A person keeps at most %d preferences.", maxPrefKeys)}
+		if err2 = s.prefs.add(uid, set, s.prefsQuiet(), s.prefsFire(uid), gen, fits); !errors.Is(err2, errPrefsStale) {
+			break
 		}
-		if n, err := space.PrefsSize(all); err != nil || n > space.MaxPrefsBytes {
-			return &codedError{code: "prefs_full", msg: fmt.Sprintf("The preferences would be larger than %d bytes.", space.MaxPrefsBytes)}
-		}
-		return nil
 	}
-	if err := s.prefs.add(uid, set, s.prefsQuiet(), s.prefsFire(uid), fits); err != nil {
+	release()
+	if err2 != nil {
 		var ce *codedError
-		if errors.As(err, &ce) {
+		if errors.As(err2, &ce) {
 			writeCoded(c.w, ce)
 			return
 		}
-		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is shutting down.")
+		writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The server is shutting down or busy; try again.")
 		return
 	}
 	writeJSON(c.w, http.StatusOK, struct {

@@ -10,7 +10,7 @@ import (
 func TestPrefsHubKeepsNewerValuesAndFlushesOneAtATime(t *testing.T) {
 	var h prefsHub
 	fire := func() {}
-	if err := h.add("u", map[string]any{"a": 1, "b": 1}, time.Hour, fire, nil); err != nil {
+	if err := h.add("u", map[string]any{"a": 1, "b": 1}, time.Hour, fire, 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	snap, ok := h.begin("u")
@@ -20,14 +20,14 @@ func TestPrefsHubKeepsNewerValuesAndFlushesOneAtATime(t *testing.T) {
 	if _, again := h.begin("u"); again {
 		t.Fatal("a second flush began while the first runs")
 	}
-	h.add("u", map[string]any{"a": 2}, time.Hour, fire, nil)
+	h.add("u", map[string]any{"a": 2}, time.Hour, fire, 0, nil)
 	// The flush is to be tried again: the newer a stays, b too.
 	h.finish("u", snap, true, time.Hour, fire)
 	if p := h.peek("u"); p["a"] != 2 || p["b"] != 1 {
 		t.Fatalf("%v", p)
 	}
 	snap, _ = h.begin("u")
-	h.add("u", map[string]any{"a": 3}, time.Hour, fire, nil)
+	h.add("u", map[string]any{"a": 3}, time.Hour, fire, 0, nil)
 	// Written: what it wrote goes, what came in meanwhile stays.
 	h.finish("u", snap, false, time.Hour, fire)
 	if p := h.peek("u"); len(p) != 1 || p["a"] != 3 {
@@ -45,7 +45,7 @@ func TestPrefsHubKeepsNewerValuesAndFlushesOneAtATime(t *testing.T) {
 func TestPrefsHubGivesUpAfterAFewTries(t *testing.T) {
 	var h prefsHub
 	fire := func() {}
-	h.add("u", map[string]any{"a": 1}, time.Minute, fire, nil)
+	h.add("u", map[string]any{"a": 1}, time.Minute, fire, 0, nil)
 	var waits []time.Duration
 	for i := 0; ; i++ {
 		snap, ok := h.begin("u")
