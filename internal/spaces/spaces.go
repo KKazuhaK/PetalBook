@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -151,11 +152,15 @@ type Options struct {
 	// then, and what the tests of this package use.
 	MaxSpaces int
 	// IdleAfter is how long an open space may go unused before it is closed
-	// (default 15 minutes), and MaxOpen how many may be open at once (default
-	// 64); the least recently used go first. Closing flushes the committer;
-	// the next request reopens the space.
-	IdleAfter time.Duration
-	MaxOpen   int
+	// (default 15 minutes). MemoryBudget is the memory the open spaces may
+	// hold together, as space.MemoryCost estimates it (default
+	// DefaultMemoryBudget), and MaxOpen how many may be open at once whatever
+	// they cost (default DefaultMaxOpen); past either, the least recently used
+	// idle ones are closed. A space in use is never closed. Closing flushes the
+	// committer; the next request reopens the space.
+	IdleAfter    time.Duration
+	MemoryBudget int64
+	MaxOpen      int
 	// CloseWait is how long Close waits for spaces that requests still hold
 	// (default 5 seconds) before closing them anyway.
 	CloseWait time.Duration
@@ -245,7 +250,15 @@ type Options struct {
 // Defaults for closing spaces that are not in use.
 const (
 	DefaultIdleAfter = 15 * time.Minute
-	DefaultMaxOpen   = 64
+	// DefaultMemoryBudget is what the open spaces may hold together: a
+	// quarter of the 4 GB a small server (4 cores, 6 GB) can give the process
+	// beside the operating system's file cache and Git. An idle 50 000-page
+	// space costs about 12 MB in that sum, a 200-page one about 2 MB (see
+	// docs/design/database.md, §5.5).
+	DefaultMemoryBudget = 1 << 30
+	// DefaultMaxOpen bounds the open spaces whatever they cost: each keeps a
+	// few files open.
+	DefaultMaxOpen = 256
 	// DefaultMaxSpaces is the flag's default; Options.MaxSpaces 0 is unlimited.
 	DefaultMaxSpaces = 20
 )
@@ -261,6 +274,8 @@ type opening struct {
 	last     time.Time     // when it was last acquired or released
 	closing  chan struct{} // set while it is being closed; closed when that is done
 	nextPull time.Time     // when the remote is pulled next; zero for a local space
+	cost     int64         // its memory as last estimated (see refreshCosts)
+	phase    string        // while it is opened: the phase of its index rebuild, if one is needed ("" if not)
 }
 
 // Manager is safe for concurrent use.
@@ -302,8 +317,11 @@ type Manager struct {
 	exp       exportState  // exports (export.go)
 	problems  problemMemo  // what each space said of its problems last (problems.go)
 
-	trimMu    sync.Mutex      // one trim at a time
-	trimming  bool            // a background trim is queued or running (guarded by mu)
+	trimMu    sync.Mutex // one trim at a time
+	trimming  bool       // a background trim is queued or running (guarded by mu)
+	trimAgain bool       // a space was opened while it ran: it runs once more (guarded by mu)
+	// testCost, set by tests only, replaces space.MemoryCost.
+	testCost  func(id string, sp *space.Space) int64
 	createMu  sync.Mutex      // space creation is one at a time, so the limit cannot be passed by racing
 	staging   map[string]bool // spaces being made with a repository on a provider, whose first push needs no member yet (guarded by mu)
 	reserved  map[string]int  // spaces being made with a repository on a provider, by owner (guarded by createMu)
@@ -324,6 +342,8 @@ type Manager struct {
 	testHook func(point string)
 	// testID, set by tests only, picks a new group's id ("" for a random one).
 	testID func() string
+	// testOpened, set by tests only, is called with a space openSpace has just opened.
+	testOpened func(*space.Space)
 }
 
 // at runs the test hook, if any, at a named point.
@@ -414,6 +434,9 @@ func newManager(opt Options, single *space.Space) *Manager {
 	}
 	if opt.MaxOpen <= 0 {
 		opt.MaxOpen = DefaultMaxOpen
+	}
+	if opt.MemoryBudget <= 0 {
+		opt.MemoryBudget = DefaultMemoryBudget
 	}
 	if opt.CloseWait <= 0 {
 		opt.CloseWait = 5 * time.Second
@@ -681,35 +704,21 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 		e.last = m.opt.Now()
 		m.mu.Unlock()
 		if opener {
-			// Opening can take as long as an index rebuild; it must not be cut
-			// short because the request that happened to start it went away.
-			e.sp, e.err = m.openSpace(context.WithoutCancel(ctx), id)
-			if e.err != nil {
-				m.mu.Lock()
-				delete(m.open, id)
-				m.mu.Unlock()
-			}
-			if e.err == nil {
-				if _, ok := e.sp.Remote(); ok {
-					// Someone is about to look at it: bring it up to date now.
-					m.mu.Lock()
-					e.nextPull = m.opt.Now()
-					m.mu.Unlock()
-					m.wakePull()
-				}
-			}
-			close(e.done)
-			if e.err == nil {
-				m.trimSoon()
+			// Opening can take as long as an index rebuild, and wait for a
+			// rebuild slot of the server's first; it runs in the background, so
+			// that it is not cut short because the request that started it went
+			// away or was answered restoring (see awaitOpen).
+			run := func() { m.finishOpen(context.WithoutCancel(ctx), id, e) }
+			if !m.goBg(run) {
+				run()
 			}
 		}
-		select {
-		case <-e.done:
-		case <-ctx.Done():
+		if err := m.awaitOpen(ctx, e); err != nil {
 			m.unref(e)
-			return nil, nil, ctx.Err()
+			return nil, nil, err
 		}
 		if e.err != nil {
+
 			if errors.Is(e.err, errNoClone) && !noClone {
 				// It follows a remote and its clone is gone without being
 				// recorded as evicted: it is evicted, and restored as such.
@@ -728,6 +737,101 @@ func (m *Manager) acquire(ctx context.Context, id string, admin bool) (*space.Sp
 	}
 }
 
+type restoringAnswerKey struct{}
+
+// WithRestoringAnswer marks ctx as that of a request that answers restoring
+// (503) when the space it needs is still having its index rebuilt after
+// Options.RestoreWait (see awaitOpen). The HTTP layer sets it on every request;
+// background work, exports, moves and every other caller wait for the open.
+// The mark is a value of the context, so it survives context.WithoutCancel:
+// work that outlives the request must not be started from c.r.Context() (the
+// API's background work takes bgCtx), or it would answer restoring too.
+func WithRestoringAnswer(ctx context.Context) context.Context {
+	return context.WithValue(ctx, restoringAnswerKey{}, true)
+}
+
+func answersRestoring(ctx context.Context) bool {
+	v, _ := ctx.Value(restoringAnswerKey{}).(bool)
+	return v
+}
+
+// finishOpen opens the space of e and tells those waiting (e.done). An open
+// waiting for a rebuild slot ends when the manager is closed. A panic while
+// opening is the open's error: it runs in the background, where a panic
+// would end the process.
+func (m *Manager) finishOpen(ctx context.Context, id string, e *opening) {
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				m.log.Error("opening a space panicked", "space", id, "panic", r, "stack", string(debug.Stack()))
+				e.sp, e.err = nil, fmt.Errorf("opening space %s: panic: %v", id, r)
+			}
+		}()
+		e.sp, e.err = m.openSpace(ctx, id, func(phase string) {
+			m.mu.Lock()
+			e.phase = phase
+			m.mu.Unlock()
+		})
+	}()
+	if e.err != nil {
+		m.mu.Lock()
+		delete(m.open, id)
+		m.mu.Unlock()
+	}
+	if e.err == nil {
+		if _, ok := e.sp.Remote(); ok {
+			// Someone is about to look at it: bring it up to date now.
+			m.mu.Lock()
+			e.nextPull = m.opt.Now()
+			m.mu.Unlock()
+			m.wakePull()
+		}
+	}
+	close(e.done)
+	if e.err == nil {
+		m.trimSoon()
+	}
+}
+
+// awaitOpen waits for the open of e. For a request marked WithRestoringAnswer,
+// an open whose index is rebuilt (or waits for one of the server's rebuild
+// slots) answers *RestoringError once the request has waited
+// Options.RestoreWait, as a restore does: the open goes on in the background
+// and a later request finds the space open. Any other open, and every open for
+// any other caller, is waited for, for as long as the caller's context lasts.
+func (m *Manager) awaitOpen(ctx context.Context, e *opening) error {
+	if !answersRestoring(ctx) {
+		select {
+		case <-e.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	wait := m.opt.RestoreWait
+	if wait <= 0 {
+		wait = 10 * time.Second
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	for {
+		select {
+		case <-e.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			m.mu.Lock()
+			phase := e.phase
+			m.mu.Unlock()
+			if phase != "" {
+				return &RestoringError{Phase: phase, Rebuild: true}
+			}
+			t.Reset(time.Second) // not a rebuild (yet): looked at again
+		}
+	}
+}
+
 func (m *Manager) unref(e *opening) {
 	m.mu.Lock()
 	e.refs--
@@ -743,7 +847,7 @@ func (m *Manager) paths(id string) (root, state string) {
 // recorded as evicted. acquire restores it.
 var errNoClone = errors.New("the clone of a space that follows a remote is missing")
 
-func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error) {
+func (m *Manager) openSpace(ctx context.Context, id string, onRebuild func(phase string)) (*space.Space, error) {
 	if m.opt.OpenHook != nil {
 		m.opt.OpenHook(id)
 	}
@@ -774,13 +878,27 @@ func (m *Manager) openSpace(ctx context.Context, id string) (*space.Space, error
 	sp, err := space.Open(space.Options{
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
-		WriteGate: func() error { return m.CheckWritable(id) },
+		WriteGate: func() error { return m.CheckWritable(id) }, OnRebuild: onRebuild, SlotContext: m.closedCtx(),
 	})
-	if err == nil && rem != nil {
+	if err != nil {
+		return nil, err
+	}
+	// A panic from here on (finishOpen recovers it) must not leave this copy
+	// open: a later open would run a second one, with a second committer.
+	defer func() {
+		if r := recover(); r != nil {
+			sp.Close()
+			panic(r)
+		}
+	}()
+	if m.testOpened != nil {
+		m.testOpened(sp)
+	}
+	if rem != nil {
 		m.markCache(id, sp)
 		m.attachAssets(ctx, id, sp)
 	}
-	return sp, err
+	return sp, nil
 }
 
 // ValidName checks a space name: 1-80 characters once trimmed, no control characters.
@@ -1261,21 +1379,38 @@ func (m *Manager) OpenCount() int {
 	return len(m.open)
 }
 
-// trimSoon closes spaces over the cap in the background, so the request that
-// opened one does not wait for another to be flushed.
+// trimSoon, after a space was opened, closes in the background the least
+// recently used idle spaces while the open ones are over the memory budget or
+// the cap, so the request that opened one does not wait for another to be
+// flushed. It closes none for being idle long (Trim does). A space opened
+// while it runs makes it run once more: its cost was not counted yet.
 func (m *Manager) trimSoon() {
 	m.mu.Lock()
-	if m.trimming || len(m.open) <= m.opt.MaxOpen || m.closed {
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	if m.trimming {
+		m.trimAgain = true
 		m.mu.Unlock()
 		return
 	}
 	m.trimming = true
 	m.mu.Unlock()
 	if !m.goBg(func() {
-		m.Trim()
-		m.mu.Lock()
-		m.trimming = false
-		m.mu.Unlock()
+		for {
+			m.trim(false)
+			m.mu.Lock()
+			again := m.trimAgain && !m.closed
+			m.trimAgain = false
+			if !again {
+				m.trimming = false
+			}
+			m.mu.Unlock()
+			if !again {
+				return
+			}
+		}
 	}) {
 		m.mu.Lock()
 		m.trimming = false
@@ -1302,23 +1437,31 @@ func (m *Manager) goBg(f func()) bool {
 	return true
 }
 
-// Trim closes the spaces that have been idle for IdleAfter and, while more
-// than MaxOpen are open, the least recently used ones. A space with a request
-// in flight is never closed. Each is flushed first, and one whose pending
+// Trim closes the spaces that have been idle for IdleAfter and, while the open
+// spaces together cost more than MemoryBudget or more than MaxOpen are open,
+// the least recently used ones. A space with a request in flight is never
+// closed, however much it costs. Each is flushed first, and one whose pending
 // changes cannot be committed (the repository is in the middle of a merge, say)
 // stays open and is tried again at the next trim: nothing is closed with
 // uncommitted writes it could not flush.
-func (m *Manager) Trim() {
+func (m *Manager) Trim() { m.trim(true) }
+
+// trim is Trim; idle false closes spaces only while over the budget or the
+// cap (trimSoon).
+func (m *Manager) trim(idle bool) {
 	if m.single != nil {
 		return
 	}
-	m.trimIndexOnly()
+	if idle {
+		m.trimIndexOnly()
+	}
 	m.trimMu.Lock()
 	defer m.trimMu.Unlock()
+	m.refreshCosts()
 	now := m.opt.Now()
 	skip := map[*opening]bool{} // flush failed: not again in this trim
 	for {
-		id, e := m.pickIdle(now, skip)
+		id, e := m.pickIdle(now, idle, skip)
 		if e == nil {
 			return
 		}
@@ -1328,23 +1471,81 @@ func (m *Manager) Trim() {
 	}
 }
 
+// refreshCosts estimates again what each open space holds. The estimate reads
+// counters and stats a file, for each space; it runs outside mu, which it takes
+// only to list the spaces and to store the results.
+func (m *Manager) refreshCosts() {
+	type item struct {
+		id string
+		e  *opening
+	}
+	m.mu.Lock()
+	items := make([]item, 0, len(m.open))
+	for id, e := range m.open {
+		if e.closing == nil && opened(e) && e.sp != nil {
+			items = append(items, item{id, e})
+		}
+	}
+	m.mu.Unlock()
+	costs := make([]int64, len(items))
+	for i, it := range items {
+		if m.testCost != nil {
+			costs[i] = m.testCost(it.id, it.e.sp)
+		} else {
+			costs[i] = it.e.sp.MemoryCost()
+		}
+	}
+	m.mu.Lock()
+	for i, it := range items {
+		it.e.cost = costs[i]
+	}
+	m.mu.Unlock()
+}
+
+// opened reports whether the open of e has finished (e.sp and e.err are set).
+func opened(e *opening) bool {
+	select {
+	case <-e.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// OpenCost is the memory the open spaces hold together, as last estimated.
+func (m *Manager) OpenCost() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, e := range m.open {
+		n += e.cost
+	}
+	return n
+}
+
 // pickIdle chooses the next space to close and pins it (so nobody starts using
-// it while it is flushed); nil when there is none.
-func (m *Manager) pickIdle(now time.Time, skip map[*opening]bool) (string, *opening) {
+// it while it is flushed); nil when there is none. With idle, a space unused
+// for IdleAfter (or disabled) is closed whatever the budget.
+func (m *Manager) pickIdle(now time.Time, idle bool, skip map[*opening]bool) (string, *opening) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return "", nil
 	}
-	over := len(m.open) - m.opt.MaxOpen
+	over := len(m.open) > m.opt.MaxOpen
+	var total int64
+	for _, e := range m.open {
+		total += e.cost
+	}
+	over = over || total > m.opt.MemoryBudget
 	var bestID string
 	var best *opening
 	for id, e := range m.open {
-		if e.refs > 0 || e.closing != nil || e.sp == nil || skip[e] {
+		if e.refs > 0 || e.closing != nil || skip[e] || !opened(e) || e.sp == nil {
 			continue
 		}
-		idle := now.Sub(e.last) >= m.opt.IdleAfter || m.disabled[id]
-		if !idle && over <= 0 {
+		expired := idle && (now.Sub(e.last) >= m.opt.IdleAfter || m.disabled[id])
+		if !expired && !over {
 			continue
 		}
 		if best == nil || e.last.Before(best.last) {

@@ -2584,6 +2584,15 @@ failure in a row, at most 2 minutes): requests meanwhile answer `503
 unavailable` at once, with `Retry-After` set to the seconds left. A failed restore leaves no half clone: the clone is made
 in a directory of its own and moved into place when it is complete.
 
+The same answer is given for a space whose index has to be rebuilt when it is
+opened (after a schema change of the index, a lost index, or the first open of
+a large space): such rebuilds are limited server-wide (`--max-rebuilds`, 2 by
+default), and a request that is still waiting after 10 seconds answers `503
+restoring` with `Retry-After: 5`, `phase` `waiting` (its turn has not come) or
+`rebuilding` (the index is being built). The rebuild goes on in the background,
+and once it is done the space opens as usual. Opens that rebuild nothing (an
+indexed space, a few changed files) never answer this.
+
 What a crash leaves (an eviction cut short, a restore's directory) is finished
 or removed by the next start of the server, and by nothing else: `petalbook
 user …` run against the data directory of a running server touches none of
@@ -2836,7 +2845,7 @@ case.
 |---|---|---|
 | `remote_required` | 409 | the policy requires a remote this request would not have: a new space without one, removing one, a credential the policy does not accept, a change to an overdue space; an attachment repository for a space without a remote. The body has `require` and, for an existing space, `deadline` |
 | `not_cached` | 503 | an old version or an attachment is not on the server and cannot be fetched now; `fetching` says whether a fetch is still running; `Retry-After` |
-| `restoring` | 503 | an evicted space is still being restored after the request's wait; `phase`; `Retry-After` |
+| `restoring` | 503 | an evicted space is still being restored, or a space's index rebuilt, after the request's wait; `phase` (`waiting`, `fetching`, `checkout`, `indexing`, `rebuilding`); `Retry-After` |
 | `space_full` | 507 | an upload or import would take a local space over `localSpaces.maxBytes` |
 | `unavailable` | 503 | as everywhere: the remote cannot be reached or refuses the credential; for an evicted space, it cannot be restored now (`Retry-After` while a failed restore is not tried again) |
 | `busy` | 409 | an eviction asked for while the space is in use or holds what its remote does not |

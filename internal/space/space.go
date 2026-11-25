@@ -64,6 +64,13 @@ type Options struct {
 	// it returns refuses the change (the storage policy's deadline, see
 	// internal/spaces). Drafts are not files of the space and never ask it.
 	WriteGate func() error
+	// OnRebuild, when set, is told the phases of a big sync of the index that
+	// Open makes (index.PhaseWaiting while it waits for one of the server's
+	// slots, then index.PhaseRebuilding), while Open runs.
+	OnRebuild func(phase string)
+	// SlotContext, when set, ends the wait of Open's index sync for one of the
+	// server's rebuild slots: Open then fails with its error.
+	SlotContext context.Context
 }
 
 // Space is safe for concurrent use.
@@ -380,6 +387,18 @@ func Open(opt Options) (*Space, error) {
 	}
 	s := &Space{root: root, stateDir: stateDir, name: name, idx: idx, log: log, now: time.Now, ops: osOps(), src: dirSource{root: root}, syncEvery: opt.ResyncInterval, heal: heal, rb: openRebaseLog(rebaseLogPath(stateDir)), gate: opt.WriteGate}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	// A panic from here on leaves nothing open: the caller may recover it and
+	// open the space again, which must not find this index and committer running.
+	defer func() {
+		if r := recover(); r != nil {
+			s.cancel()
+			if s.cm != nil {
+				s.cm.Close()
+			}
+			idx.Close()
+			panic(r)
+		}
+	}()
 	if s.syncEvery <= 0 {
 		s.syncEvery = 2 * time.Second
 	}
@@ -387,7 +406,13 @@ func Open(opt Options) (*Space, error) {
 	// it notes what a crash left of a write there (isTempName) on the way.
 	temps := append(tempsIn(root, ".petalbook"), tempsIn(root, typesDir)...)
 	s.watchChecks()
-	st, err := idx.Sync(dirSource{root: root, temps: &temps}, false)
+	idx.SetSyncNotify(opt.OnRebuild)
+	slotCtx := opt.SlotContext
+	if slotCtx == nil {
+		slotCtx = context.Background()
+	}
+	st, err := idx.SyncContext(slotCtx, dirSource{root: root, temps: &temps}, false)
+	idx.SetSyncNotify(nil)
 	if err != nil {
 		idx.Close()
 		return nil, err
@@ -512,6 +537,16 @@ func (s *Space) Flush() error {
 	}
 	return s.cm.Flush()
 }
+
+// spaceBytes is what an open space holds in memory beside its index: the
+// committer, the watchers, the caches of settings and types (measured: a
+// 200-page space costs about 2 MB in all).
+const spaceBytes = 1 << 20
+
+// MemoryCost estimates the memory the open space holds now, in bytes (see
+// index.MemoryCost): cheap, it runs no query. The spaces manager keeps the
+// sum over the open spaces under its budget.
+func (s *Space) MemoryCost() int64 { return spaceBytes + s.idx.MemoryCost() }
 
 // Evicted reports a space opened by OpenIndexOnly.
 func (s *Space) Evicted() bool { return s.evicted }

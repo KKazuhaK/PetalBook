@@ -934,7 +934,7 @@ are (a).
 |---|---|
 | `--listen`, `--public-url`, `--data`, `--database`, `--state-dir` | The address and storage location of the server itself |
 | `--trusted-proxy`, `--allow-origin`, `--insecure-no-auth` | The trust boundary of the whole process toward the outside |
-| `--max-open-spaces`, `--space-idle`, `--pull-interval`, `--remote-timeout`, `--commit-*`, `--draft-*` | The memory, CPU and network rhythm of the process, shared by all tenants |
+| `--max-open-spaces`, `--open-spaces-memory`, `--max-rebuilds`, `--space-idle`, `--pull-interval`, `--remote-timeout`, `--commit-*`, `--draft-*` | The memory, CPU and network rhythm of the process, shared by all tenants |
 | `secret.key` | All sealed secrets depend on it |
 | The tenancy switch `/api/admin/tenancy` | Decides whether this server is multi-tenant |
 | Creating, deleting, disabling tenants, `slug` | It constrains the tenant itself, which cannot decide this for itself |

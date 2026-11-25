@@ -159,7 +159,12 @@ type Handler struct {
 	s *server
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.h.ServeHTTP(w, r) }
+// ServeHTTP serves a request. A request for a space whose index is still being
+// rebuilt answers restoring after a short wait (spaces.WithRestoringAnswer);
+// work started in the background does not carry the mark and waits.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.h.ServeHTTP(w, r.WithContext(spaces.WithRestoringAnswer(r.Context())))
+}
 
 // Close stops the background work the handler started and waits for it to
 // end. Call it after the HTTP server has stopped and before the spaces, the

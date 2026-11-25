@@ -27,6 +27,7 @@ import (
 	"github.com/KKazuhaK/PetalBook/internal/github"
 	"github.com/KKazuhaK/PetalBook/internal/githubapp"
 	"github.com/KKazuhaK/PetalBook/internal/gitstore"
+	"github.com/KKazuhaK/PetalBook/internal/index"
 	"github.com/KKazuhaK/PetalBook/internal/oauth"
 	"github.com/KKazuhaK/PetalBook/internal/secret"
 	"github.com/KKazuhaK/PetalBook/internal/space"
@@ -51,6 +52,9 @@ type serveConfig struct {
 	// maxSpaces is how many spaces one user may own (0: no limit); spaceIdle
 	// and maxOpenSpaces decide when spaces that are not in use are closed.
 	maxSpaces, maxOpenSpaces int
+	// openSpacesMB is the memory budget of the open spaces (MiB), maxRebuilds
+	// how many big index syncs run at once.
+	openSpacesMB, maxRebuilds int
 	// maxSpacesSet is whether --max-spaces was given: then it is the site's
 	// quota.spacesPerPerson, read only.
 	maxSpacesSet bool
@@ -187,7 +191,9 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringVar(&c.inbox, "inbox", store.DefaultInbox, "single-user mode: the folder quick notes go to")
 	f.IntVar(&c.maxSpaces, "max-spaces", spaces.DefaultMaxSpaces, "accounts mode: how many spaces one user may own (0: no limit); when given, it is the site's quota.spacesPerPerson and cannot be changed in the app")
 	f.DurationVar(&c.spaceIdle, "space-idle", spaces.DefaultIdleAfter, "accounts mode: close a space that has not been used for this long (it reopens on the next request)")
-	f.IntVar(&c.maxOpenSpaces, "max-open-spaces", spaces.DefaultMaxOpen, "accounts mode: at most this many spaces open at once; the least recently used are closed first")
+	f.IntVar(&c.maxOpenSpaces, "max-open-spaces", spaces.DefaultMaxOpen, "accounts mode: at most this many spaces open at once, whatever they cost; the least recently used are closed first")
+	f.IntVar(&c.openSpacesMB, "open-spaces-memory", spaces.DefaultMemoryBudget>>20, "accounts mode: the memory (MiB, estimated) the open spaces may hold together; past it the least recently used idle ones are closed")
+	f.IntVar(&c.maxRebuilds, "max-rebuilds", index.DefaultBigSyncs, "at most this many index rebuilds (and syncs that read over 1000 files) run at once; others wait their turn")
 	f.BoolVar(&c.insecure, "insecure-no-auth", false, "single-user mode: allow a non-loopback --listen address (anyone who can reach it can read and edit everything). The checks against requests from other web sites stay on, and without loopback-only mode there is no implicit own origin: a browser needs --allow-origin for the address it uses")
 	f.StringSliceVar(&c.allowOrigins, "allow-origin", nil, "an origin besides the server's own that may call the API, e.g. http://localhost:5173 for a dev server that proxies here (repeatable, or comma-separated)")
 	return cmd
@@ -238,8 +244,8 @@ func (c serveConfig) check() (*checked, error) {
 	if out.origins, err = parseOrigins(c.allowOrigins); err != nil {
 		return nil, err
 	}
-	if c.maxSpaces < 0 || c.maxOpenSpaces < 0 || c.spaceIdle < 0 {
-		return nil, errors.New("--max-spaces, --max-open-spaces and --space-idle must not be negative")
+	if c.maxSpaces < 0 || c.maxOpenSpaces < 0 || c.spaceIdle < 0 || c.openSpacesMB < 0 || c.maxRebuilds < 0 {
+		return nil, errors.New("--max-spaces, --max-open-spaces, --space-idle, --open-spaces-memory and --max-rebuilds must not be negative")
 	}
 	// An upload is held in memory while it is stored, so the limit has a limit.
 	// An import is read into memory too.
@@ -343,6 +349,9 @@ func runServe(ctx context.Context, c serveConfig) error {
 	if err != nil {
 		return err
 	}
+	if c.maxRebuilds > 0 {
+		index.SetBigSyncLimit(c.maxRebuilds)
+	}
 	// Listen first: a bad address or a refused exposure should fail before
 	// the (possibly long) index build.
 	ln, err := net.Listen("tcp", c.listen)
@@ -419,7 +428,7 @@ func runServe(ctx context.Context, c serveConfig) error {
 		}
 		if mgr, err = spaces.NewAccounts(spaces.Options{Store: st, DataDir: c.data, Serve: true, Committer: c.committer,
 			CommitIdle: c.commitIdle, CommitMax: c.commitMax, Logger: log,
-			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces,
+			MaxSpaces: c.maxSpaces, IdleAfter: c.spaceIdle, MaxOpen: c.maxOpenSpaces, MemoryBudget: int64(c.openSpacesMB) << 20,
 			PullInterval: c.pullInterval, NetTimeout: c.remoteTimeout, Secrets: box, Connections: conns,
 			RemotePolicy: gitstore.Policy{Hosts: c.remoteHosts, AllowUnsafe: c.remoteUnsafe}, HostsFromFlag: c.hostsSet}); err != nil {
 			return err
