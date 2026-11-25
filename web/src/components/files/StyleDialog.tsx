@@ -4,6 +4,7 @@ import { useAppearance, useSetFolderStyle, useSpaceApi, useSpaceId, invalidateLi
 import type { IconColor } from '@/api/types'
 import { IconPicker } from '@/components/icons/IconPicker'
 import { baseName, type FileItem } from '@/lib/folders'
+import { announcePageSaved } from '@/lib/pageEvents'
 import { t } from '@/i18n'
 
 // "Icon and colour" of one folder (kept in space.yml) or one page (kept in its header).
@@ -61,7 +62,8 @@ function PageStyle({ id, label, onClose }: { id: string; label: string; onClose:
         else delete next.icon
         if (color) next.color = color
         else delete next.color
-        await api.savePage(id, { baseRev: page.data.rev, meta: next, body: page.data.body })
+        const saved = await api.savePage(id, { baseRev: page.data.rev, meta: next, body: page.data.body })
+        announcePageSaved(space, saved)
         await invalidateListings(qc, space)
         await qc.invalidateQueries({ queryKey: ['space', space, 'page'] })
       }}

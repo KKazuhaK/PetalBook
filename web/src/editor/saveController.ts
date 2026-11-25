@@ -941,6 +941,8 @@ export class SaveController {
     // What is typed, and a draft on the old file, are stored again on the new one.
     if (this.hasUnsaved() || this.serverDraft) this.markDirty()
     else this.settle()
+    // The page shown (its header) is the new file's, whatever the state.
+    this.notify()
   }
 
   // Replace everything this controller knows with what the server has (the

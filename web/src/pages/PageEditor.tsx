@@ -91,6 +91,7 @@ import { useMaxUpload } from '@/components/editor/useMaxUpload'
 import { failureText } from '@/lib/failure'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
+import { onPageSaved } from '@/lib/pageEvents'
 import { getUploadOriginal } from '@/lib/uploadPrefs'
 import { t } from '@/i18n'
 
@@ -680,6 +681,25 @@ function EditorSession({
   // A key of the type was renamed from the panel: the server rewrote this page's header. The header being edited gets
   // the same change (the key keeps its place) and the rewritten file becomes the base of the text, so the next save is
   // not a conflict that "keep mine" would settle by writing the old key back. The body being typed stays.
+  // The icon picker saved this page: the header shows the saved icon at once, the header being edited takes the new
+  // icon and colour, and the saved file becomes the base of the text (as after a rename, below).
+  useEffect(
+    () =>
+      onPageSaved((where, saved) => {
+        if (where !== space || saved.id !== initial.id) return
+        const others = live.fields.others
+        if (others) {
+          const next: PageMeta = { ...others }
+          for (const k of ['icon', 'color'] as const) {
+            if (saved.meta[k] === undefined) delete next[k]
+            else next[k] = saved.meta[k]
+          }
+          setFields(live.setOthers(next))
+        }
+        void controller.rebaseOnto(saved)
+      }),
+    [space, initial.id, live, controller],
+  )
   const fieldRenamed = async (from: string, to: string) => {
     const others = live.fields.others
     if (others && from in others && !(to in others))

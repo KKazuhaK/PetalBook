@@ -152,6 +152,29 @@ describe('the properties of a page', () => {
   })
 })
 
+describe('the icon of the open page', () => {
+  it('shows the icon at once once it is saved, and the next store keeps it with what is typed', async () => {
+    const [a] = await open()
+    await settle(() => document.querySelector('[data-field="points"] input') !== null, 'the panel')
+    await type(document.querySelector<HTMLInputElement>('[data-field="points"] input')!, '3')
+    const button = () => [...document.querySelectorAll('button')].find((b) => b.textContent === t.icons.menu)
+    await settle(() => button() !== undefined, 'the icon button')
+    await click(button())
+    await settle(() => document.querySelector('[data-slot="icon-picker"]') !== null, 'the picker')
+    await type(document.querySelector<HTMLInputElement>('[data-slot="icon-picker"] input[type="search"]')!, '日历')
+    await click(document.querySelector('[data-slot="icon-picker"] [role="option"][title="calendar"]'))
+    await click([...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === t.icons.save))
+    await settle(() => document.querySelector('[role="dialog"]') === null, 'saved')
+    expect(get(a).meta.icon).toBe('calendar')
+    await settle(() => document.querySelector('svg[data-icon="calendar"]') !== null, 'the icon in the header')
+    await settle(() => {
+      const p = get(a)
+      return !!p.draft && !p.draft.stale && p.draft.meta.points === 3
+    }, 'the typed value stored on the new file')
+    expect(get(a).draft.meta.icon).toBe('calendar')
+  })
+})
+
 describe('the presets of the sources', () => {
   it('are edited by an administrator, kept for the space, and suggested after the values pages use', async () => {
     await open()
