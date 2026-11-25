@@ -17,6 +17,8 @@ function CloseMobileOnNavigate() {
 }
 
 export function AppShell() {
+  // The administration has a sidebar of its own, in place of the app's.
+  const inAdmin = useLocation().pathname.startsWith('/admin')
   return (
     <SidebarProvider>
       <QuickCaptureProvider>
@@ -24,7 +26,7 @@ export function AppShell() {
           <FileOpsProvider>
             <CloseMobileOnNavigate />
             <OfflineSync />
-            <AppSidebar />
+            {!inAdmin && <AppSidebar />}
             <SidebarInset className="min-w-0">
               <OfflineBanner />
               <ErrorBoundary>

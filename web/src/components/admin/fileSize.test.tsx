@@ -127,7 +127,7 @@ describe("the mock server refuses over the tenant's limit, and the setting is in
   const routes = (
     <SidebarProvider>
       <Routes>
-        <Route path="/admin/:section?" element={<AdminGate />} />
+        <Route path="/admin/*" element={<AdminGate />} />
       </Routes>
     </SidebarProvider>
   )

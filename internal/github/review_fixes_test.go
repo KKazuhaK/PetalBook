@@ -32,7 +32,7 @@ func TestAnAppMadeOnGitHubThatCouldNotBeSavedCanBeSavedAgain(t *testing.T) {
 		q := submit(t, h, s)
 		h.f.AppDown = true
 		to, clear := h.svc.CompleteManifest(ctx, s.Binding, "A1", q)
-		if !clear || !strings.HasPrefix(to, "/admin/storage?connection_app_error=unavailable") ||
+		if !clear || !strings.HasPrefix(to, "/admin/storage/connections?connection_app_error=unavailable") ||
 			!strings.Contains(to, "&pending=1") || !strings.Contains(to, "&app="+h.f.Slug) {
 			t.Fatalf("%q", to)
 		}

@@ -884,6 +884,8 @@ export interface User {
   // The users list only: how many passkeys and single sign-on identities the person has.
   passkeys?: number
   sso?: number
+  // The users list only: when the person was last active (absent: never).
+  lastActive?: string
   // The storage policy does not ask the spaces this user owns for a remote (absent when false).
   remoteExempt?: boolean
 }
@@ -2094,4 +2096,44 @@ export interface ExportRequest {
 export interface SpaceView {
   space: string
   until: string
+}
+
+// --- the users list, paged by the server, and a person's page (3.10) ---
+export type UserSort = 'created' | 'name' | 'lastActive'
+export interface UsersParams {
+  q?: string
+  limit?: number
+  cursor?: string
+  sort?: UserSort
+  order?: 'asc' | 'desc'
+  role?: 'member' | 'admin' | 'site'
+  state?: 'enabled' | 'disabled'
+  inactiveDays?: number
+  activeDays?: number
+  tenant?: string
+}
+export interface UsersPage {
+  users: User[]
+  next: string
+}
+// One sign-in of a person, for a site administrator. `method` is password, passkey, invite, registration, setup or sso:<slug>.
+export interface PersonSession {
+  id: string
+  userAgent: string
+  method: string
+  created: string
+  lastUsed: string
+  held?: boolean
+}
+export interface PersonIdentity {
+  id: string
+  provider: string
+  slug: string
+  kind: string
+  label: string
+  created: string
+}
+export interface PersonMemberships {
+  spaces: { id: string; name: string; role: string; personal: boolean }[]
+  groups: { id: string; name: string; source: string }[]
 }

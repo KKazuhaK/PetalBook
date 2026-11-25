@@ -574,7 +574,7 @@ func (s *server) connectManifestCallback(c *call) {
 	p, ok := s.registry().Get("github")
 	m, isMaker := p.(connections.ManifestMaker)
 	if !ok || !isMaker {
-		http.Redirect(c.w, c.r, "/admin/storage?connection_app_error=expired", http.StatusSeeOther)
+		http.Redirect(c.w, c.r, "/admin/storage/connections?connection_app_error=expired", http.StatusSeeOther)
 		return
 	}
 	binding := ""

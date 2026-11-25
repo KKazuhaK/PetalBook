@@ -4,6 +4,7 @@ import { act } from 'react'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { adminRequests, click, installDomShims, makePerson, mount, settle, type, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
@@ -21,7 +22,7 @@ const d = ta.daily
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div data-testid="elsewhere" />} />
     </Routes>
   </SidebarProvider>
@@ -67,8 +68,8 @@ const GOOD = {
 describe("the administrators' daily text page", () => {
   it('is a section of the administration with its own address, for administrators only', async () => {
     await open()
-    expect(document.querySelector('nav[aria-label="' + ta.nav + '"] [aria-current="page"]')?.textContent).toBe(
-      ta.sections.daily,
+    expect(document.querySelector('nav[aria-label="' + tc.nav + '"] [aria-current="page"]')?.textContent).toBe(
+      tc.sections.daily,
     )
     await m!.unmount()
     // A member never gets it, nor fetches it.

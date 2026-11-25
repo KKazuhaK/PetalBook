@@ -25,8 +25,8 @@ const (
 	// maxAppName is GitHub's limit for an App's name.
 	maxAppName = 34
 	// Where the browser goes when it is over: the administration's GitHub section.
-	manifestDone = "/admin/storage?connection_app=created"
-	manifestFail = "/admin/storage?connection_app_error="
+	manifestDone = "/admin/storage/connections?connection_app=created"
+	manifestFail = "/admin/storage/connections?connection_app_error="
 )
 
 // manifestReturn is where GitHub sends the browser back to; "" without a public URL.

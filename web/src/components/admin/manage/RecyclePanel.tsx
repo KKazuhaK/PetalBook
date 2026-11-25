@@ -50,11 +50,25 @@ export function RecyclePanel() {
   )
 }
 
-function Bin() {
+// The bin of the Users section, and the one of the Spaces section: the same list, opened on one kind. The exports (of
+// spaces) are with the spaces.
+export function DeletedPeople() {
+  return <Bin initialKind="user" />
+}
+export function DeletedSpaces() {
+  return (
+    <div className="space-y-10">
+      <Bin initialKind="space" />
+      <ExportsSection />
+    </div>
+  )
+}
+
+function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
   const site = useIsSite()
   const [text, setText] = useState('')
   const q = useDebounced(text.trim(), 300)
-  const [kind, setKind] = useState('')
+  const [kind, setKind] = useState<string>(initialKind)
   const list = useRecycle({ q: q || undefined, kind: kind || undefined })
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
   const [restoring, setRestoring] = useState<RecycleItem | null>(null)

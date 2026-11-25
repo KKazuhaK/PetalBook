@@ -1182,6 +1182,7 @@ export function createManageBook<S extends BookSpace, U extends BookUser>(o: Man
     decorate,
     summary,
     touch,
+    lastActiveOf: (userId: string): number | undefined => activity.get(userId)?.lastActive,
     listSpaces,
     // Whether this session may read a space it is not a member of.
     viewing: (token: string | null, space: string) => (views.get(viewKey(token ?? '', space))?.until ?? 0) > o.now(),

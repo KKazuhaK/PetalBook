@@ -35,7 +35,7 @@ const ta = tg.admin
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
@@ -212,7 +212,7 @@ describe('the groups mapping of a sign-in provider', () => {
         const admin = adminRequests(server)
         admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
         admin('POST', '/api/admin/groups', { name: 'Local one', source: 'local' })
-        return ['/admin/security']
+        return ['/admin/security/providers']
       },
     })
     await settle(() => text().includes('Company SSO'), 'the providers')
@@ -276,7 +276,7 @@ describe('the groups mapping of a sign-in provider', () => {
         for (let i = 0; i < 200; i++)
           admin('POST', '/api/admin/groups', { name: `A${String(i).padStart(3, '0')}`, source: 'synced' })
         admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
-        return ['/admin/security']
+        return ['/admin/security/providers']
       },
     })
     await settle(() => text().includes('Company SSO'), 'the providers')

@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { MOCK_ADMIN } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { ta } from '@/i18n/admin'
+import { tc } from '@/i18n/console'
 import { tm } from '@/i18n/mail'
 import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
@@ -23,7 +23,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
@@ -54,7 +54,7 @@ describe('the Mail page', () => {
   it('is in the navigation of a site administrator, off to begin with, and shows nothing sent', async () => {
     await open('mail')
     await settle(() => text().includes(tm.admin.help), 'the page')
-    expect(document.querySelector(`nav[aria-label="${ta.nav}"]`)?.textContent).toContain(ta.sections.mail)
+    expect(document.querySelector(`nav[aria-label="${tc.nav}"]`)?.textContent).toContain(tc.sections.mail)
     expect(text()).toContain(tm.admin.statusNever)
     expect(text()).toContain(tm.admin.queue(0, 0, 0))
     expect(m!.server.mail.outbox).toHaveLength(0)

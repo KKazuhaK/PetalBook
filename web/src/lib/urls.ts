@@ -22,24 +22,39 @@ export function spaceUrls(space: string) {
 }
 export type SpaceUrls = ReturnType<typeof spaceUrls>
 
-// The administration (administrators only, accounts mode): its own pages, kept
-// apart from the personal settings.
+// The administration (administrators only, accounts mode): its own pages, kept apart from the personal settings. The
+// address is `/admin/<section>/<tab>`: a section is an item of the sidebar and a tab one of its pages. A person has a
+// page of their own, `/admin/user/<id>/<tab>`.
 export const ADMIN_SECTIONS = [
   'users',
   'groups',
   'spaces',
-  'manage',
-  'recycle',
-  'daily',
-  'access',
   'storage',
   'security',
   'mail',
+  'daily',
   'settings',
   'tenants',
-  'usage',
+  'audit',
   'status',
 ] as const
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 export const isAdminSection = (v: unknown): v is AdminSection => ADMIN_SECTIONS.some((s) => s === v)
-export const adminPath = (section?: AdminSection) => (section ? `/admin/${section}` : '/admin')
+
+// The addresses of the pages that were sections of their own before the sidebar: they open in their place.
+export const ADMIN_LEGACY = {
+  manage: ['storage', 'manage'],
+  recycle: ['spaces', 'deleted'],
+  access: ['security', 'access'],
+  usage: ['storage', 'usage'],
+} as const satisfies Record<string, readonly [AdminSection, string]>
+export type AdminLegacy = keyof typeof ADMIN_LEGACY
+export const isAdminLegacy = (v: unknown): v is AdminLegacy => typeof v === 'string' && Object.hasOwn(ADMIN_LEGACY, v)
+
+export function adminPath(section?: AdminSection | AdminLegacy, tab?: string): string {
+  if (!section) return '/admin'
+  if (isAdminLegacy(section)) return `/admin/${ADMIN_LEGACY[section][0]}/${ADMIN_LEGACY[section][1]}`
+  return tab ? `/admin/${section}/${tab}` : `/admin/${section}`
+}
+export const adminUserPath = (id: string, tab?: string): string =>
+  `/admin/user/${encodeURIComponent(id)}${tab ? `/${tab}` : ''}`

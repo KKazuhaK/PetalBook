@@ -10379,8 +10379,8 @@ no other credential and works once) for the App's id, slug, client id, client
 secret, private key and webhook secret, then saves them as `PUT
 /api/admin/connections/github` does (checked with GitHub, secrets sealed with the server's
 key; the webhook secret is only kept, sealed, since there is no webhook), and
-sends the browser to `/admin/storage?connection_app=created`. A failure goes to
-`/admin/storage?connection_app_error=<code>`: `expired` (no such attempt, used, older
+sends the browser to `/admin/storage/connections?connection_app=created`. A failure goes to
+`/admin/storage/connections?connection_app_error=<code>`: `expired` (no such attempt, used, older
 than ten minutes, another browser or user), `provider_error` (GitHub did not turn
 the code into an App, or the App could not be saved), `app_in_use`,
 `unavailable` (GitHub made the App but could not be asked to check it, so it is
@@ -10392,7 +10392,7 @@ not saved yet; see the next route). A visit with `installation_id` or `setup_act
 
 When GitHub made the App but the server could not save it (`unavailable`: GitHub
 could not be asked to check it), the redirect is
-`/admin/storage?connection_app_error=unavailable&pending=1&app=<slug>`: the App
+`/admin/storage/connections?connection_app_error=unavailable&pending=1&app=<slug>`: the App
 exists on GitHub and its credentials are kept in the server's memory, sealed,
 for ten minutes, for that administrator only (one pending App per administrator,
 the newest). The retry takes no body, saves them as the callback would, and

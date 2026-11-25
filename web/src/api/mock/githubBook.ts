@@ -514,7 +514,7 @@ export function createGitHubBook(
     cookieState: string | undefined,
     q: URLSearchParams,
   ): { to: string; clear: boolean } => {
-    const expired = { to: '/admin/storage?connection_app_error=expired', clear: false }
+    const expired = { to: '/admin/storage/connections?connection_app_error=expired', clear: false }
     const state = q.get('state') ?? ''
     const at = manifests.get(state)
     if (
@@ -528,9 +528,9 @@ export function createGitHubBook(
       return expired
     manifests.delete(state)
     if (!q.get('code') || q.get('code') === 'bad')
-      return { to: '/admin/storage?connection_app_error=provider_error', clear: true }
+      return { to: '/admin/storage/connections?connection_app_error=provider_error', clear: true }
     if (app && (deps.spacesOnApp() > 0 || auths.size > 0))
-      return { to: '/admin/storage?connection_app_error=app_in_use', clear: true }
+      return { to: '/admin/storage/connections?connection_app_error=app_in_use', clear: true }
     app = {
       appId: '7654321',
       clientId: 'Iv23liMockManifest',
@@ -542,7 +542,7 @@ export function createGitHubBook(
       anyAccount: true,
     }
     side.permissions = { ...app.permissions }
-    return { to: '/admin/storage?connection_app=created', clear: true }
+    return { to: '/admin/storage/connections?connection_app=created', clear: true }
   }
 
   const putAdmin = (input: PutAdminGitHubInput): AdminGitHub => {

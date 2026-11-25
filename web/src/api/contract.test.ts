@@ -792,6 +792,123 @@ function suite(target: Target) {
           }
         })
 
+        it('pages the list by cursor in each sort, filters by role and state, and refuses what it does not have', async () => {
+          const names = [uniq('pgx'), uniq('pgy'), uniq('pgz')]
+          const made: Awaited<ReturnType<typeof newMember>>[] = []
+          for (const n of names) made.push(await newMember(n))
+          await as(admin, () => adminApi.updateUser(made[1].user.id, { disabled: true }))
+          for (const sort of ['created', 'name', 'lastActive'] as const) {
+            for (const order of ['asc', 'desc'] as const) {
+              const whole = (await as(admin, () => adminApi.users({ sort, order, limit: 200 }))).users.map((u) => u.id)
+              const walked: string[] = []
+              let cursor: string | undefined
+              for (let i = 0; i < 400; i++) {
+                const page = await as(admin, () => adminApi.users({ sort, order, limit: 2, cursor }))
+                expect(page.users.length).toBeLessThanOrEqual(2)
+                walked.push(...page.users.map((u) => u.id))
+                if (!page.next) break
+                cursor = page.next
+              }
+              // The page of 200 is the whole list as long as there are fewer than that.
+              if (whole.length < 200) expect(walked, `${sort} ${order}`).toEqual(whole)
+              expect(new Set(walked).size).toBe(walked.length)
+            }
+          }
+          const disabled = (await as(admin, () => adminApi.users({ state: 'disabled', limit: 200 }))).users
+          expect(disabled.map((u) => u.id)).toContain(made[1].user.id)
+          expect(disabled.every((u) => u.disabled)).toBe(true)
+          const enabled = (await as(admin, () => adminApi.users({ state: 'enabled', limit: 200 }))).users
+          expect(enabled.map((u) => u.id)).not.toContain(made[1].user.id)
+          const members = (await as(admin, () => adminApi.users({ role: 'member', limit: 200 }))).users
+          expect(members.every((u) => u.role === 'member')).toBe(true)
+          const admins = (await as(admin, () => adminApi.users({ role: 'admin', limit: 200 }))).users
+          expect(admins.every((u) => u.role === 'admin')).toBe(true)
+          for (const bad of [
+            'sort=age',
+            'order=up',
+            'role=king',
+            'state=gone',
+            'inactiveDays=x',
+            'activeDays=-1',
+            'cursor=junk',
+          ]) {
+            const r = await call(admin, 'GET', `/api/users?${bad}`)
+            expect([r.status, r.json.error], bad).toEqual([400, 'invalid'])
+          }
+          // A cursor of one sort is not one of another.
+          const first = await as(admin, () => adminApi.users({ limit: 1, sort: 'created' }))
+          if (first.next) {
+            const r = await call(admin, 'GET', `/api/users?sort=name&cursor=${encodeURIComponent(first.next)}`)
+            expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+          }
+        })
+
+        it('has one person with their counts and memberships, and a member may not read either', async () => {
+          const m = await newMember(uniq('on'))
+          const one = await as(admin, () => adminApi.user(m.user.id))
+          expect(one.user).toMatchObject({ id: m.user.id, username: m.user.username, passkeys: 0, sso: 0 })
+          const mem = await as(admin, () => adminApi.userMemberships(m.user.id))
+          expect(mem.spaces.some((x) => x.personal)).toBe(true)
+          expect(Array.isArray(mem.groups)).toBe(true)
+          expect((await call(admin, 'GET', '/api/users/NOSUCHUSER')).json.error).toBe('not_found')
+          for (const path of [`/api/users/${m.user.id}`, `/api/users/${m.user.id}/memberships`]) {
+            const r = await call(m.browser, 'GET', path)
+            expect([r.status, r.json.error], path).toEqual([403, 'forbidden'])
+          }
+        })
+
+        it("lists a person's sessions and connected accounts for a site administrator, and ends them as signed out elsewhere", async () => {
+          const m = await newMember(uniq('se'))
+          const second = browser()
+          expect(
+            (await call(second, 'POST', '/api/login', { username: m.user.username, password: m.password })).status,
+          ).toBe(200)
+          const { sessions } = await as(admin, () => adminApi.userSessions(m.user.id))
+          expect(sessions.length).toBeGreaterThanOrEqual(2)
+          for (const s of sessions) {
+            expect(s.id).toMatch(/^[0-9a-f]{64}$|.+/)
+            expect(typeof s.method).toBe('string')
+            expect(Date.parse(s.lastUsed)).not.toBeNaN()
+          }
+          expect(sessions.some((s) => s.method === 'password')).toBe(true)
+          // End one: the browser that held it is told it signed out elsewhere; the other still works.
+          const gone = sessions.find((s) => s.method === 'password')!
+          await as(admin, () => adminApi.endUserSession(m.user.id, gone.id))
+          const left = (await as(admin, () => adminApi.userSessions(m.user.id))).sessions
+          expect(left.map((s) => s.id)).not.toContain(gone.id)
+          const missing = await call(admin, 'DELETE', `/api/users/${m.user.id}/sessions/${gone.id}`)
+          expect([missing.status, missing.json.error]).toEqual([404, 'not_found'])
+          const answers = await Promise.all([
+            call(m.browser, 'GET', '/api/account'),
+            call(second, 'GET', '/api/account'),
+          ])
+          expect(answers.filter((r) => r.status === 401 && r.json.reason === 'signed_out_elsewhere')).toHaveLength(1)
+          // All of them.
+          const ended = await as(admin, () => adminApi.endUserSessions(m.user.id))
+          expect(ended.ended).toBe(left.length)
+          expect((await as(admin, () => adminApi.userSessions(m.user.id))).sessions).toEqual([])
+          for (const b of [m.browser, second]) {
+            const r = await call(b, 'GET', '/api/account')
+            expect([r.status, r.json.reason]).toEqual([401, 'signed_out_elsewhere'])
+          }
+          // No connected account to list, and no such one to disconnect.
+          expect((await as(admin, () => adminApi.userIdentities(m.user.id))).identities).toEqual([])
+          const none = await call(admin, 'DELETE', `/api/users/${m.user.id}/identities/NOSUCHIDEN`)
+          expect([none.status, none.json.error]).toEqual([404, 'not_found'])
+          // A member of any kind is refused, and a person who does not exist is none.
+          const again = browser()
+          await call(again, 'POST', '/api/login', { username: m.user.username, password: m.password })
+          for (const [method, path] of [
+            ['GET', `/api/users/${m.user.id}/sessions`],
+            ['DELETE', `/api/users/${m.user.id}/sessions`],
+            ['GET', `/api/users/${m.user.id}/identities`],
+          ]) {
+            const r = await call(again, method, path)
+            expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
+          }
+          expect((await call(admin, 'GET', '/api/users/NOSUCHUSER/sessions')).json.error).toBe('not_found')
+        })
+
         it('an administrator lists users, ordered by created; a member gets 403 forbidden for users and invites', async () => {
           const m = await newMember(uniq('us'))
           const { users } = await as(admin, () => adminApi.users())
@@ -1541,7 +1658,9 @@ function suite(target: Target) {
             const cleared = await call(admin, 'PATCH', path, { quota: { spaces: null, bytes: null, pages: null } })
             expect((cleared.json.user as User).quota).toEqual({ spaces: null, bytes: null, pages: null })
           }
-          const listed = ((await call(admin, 'GET', '/api/users')).json.users as User[]).find((x) => x.id === m.user.id)
+          const listed = ((await call(admin, 'GET', `/api/users?q=${m.user.username}`)).json.users as User[]).find(
+            (x) => x.id === m.user.id,
+          )
           expect(listed?.quota).toEqual({ spaces: null, bytes: null, pages: null })
         })
 
@@ -2976,7 +3095,7 @@ function suite(target: Target) {
           })
           expect(done.status).toBe(200)
           expect(done.json).toMatchObject({ kind: 'user', user: { id: leaver.user.id } })
-          const users = (await call(admin, 'GET', '/api/users')).json.users as User[]
+          const users = (await call(admin, 'GET', `/api/users?q=${leaver.user.username}`)).json.users as User[]
           expect(users.some((u) => u.id === leaver.user.id)).toBe(false)
           expect((await roleOf(heir.browser, shared.id))?.role).toBe('owner')
           const back = await call(admin, 'POST', `/api/admin/recycle/${done.json.id}/restore`, {})
@@ -2986,7 +3105,9 @@ function suite(target: Target) {
           for (const k of back.json.skipped as { name: string; reason: string }[])
             expect(k).toEqual(expect.objectContaining({ name: expect.any(String), reason: expect.any(String) }))
           expect(
-            ((await call(admin, 'GET', '/api/users')).json.users as User[]).some((u) => u.id === leaver.user.id),
+            ((await call(admin, 'GET', `/api/users?q=${leaver.user.username}`)).json.users as User[]).some(
+              (u) => u.id === leaver.user.id,
+            ),
           ).toBe(true)
         })
 

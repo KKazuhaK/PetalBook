@@ -14,7 +14,7 @@ import {
 } from '@/testing/harness'
 import { MOCK_ADMIN, type MockServer } from '@/api/mock/server'
 import { oa } from '@/i18n/oauth'
-import { ta } from '@/i18n/admin'
+import { tc } from '@/i18n/console'
 import { tk } from '@/i18n/tokens'
 import { AdminGate } from './AdminGate'
 
@@ -32,7 +32,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="*" element={<div>elsewhere</div>} />
     </Routes>
   </SidebarProvider>
@@ -45,7 +45,7 @@ describe('machine access', () => {
   it('has a page in the administration, with the switch on', async () => {
     m = await open()
     await settle(() => document.querySelector('[role="switch"]') !== null, 'the switch')
-    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.access)
+    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(tc.sections.security)
     expect(document.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
     expect(text()).toContain(tk.admin.empty)
   })

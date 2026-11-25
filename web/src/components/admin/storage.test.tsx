@@ -6,6 +6,7 @@ import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { SpaceGate } from '@/components/layout/SpaceGate'
 import { ta } from '@/i18n/admin'
+import { tc } from '@/i18n/console'
 import { ts } from '@/i18n/storage'
 import {
   adminRequests,
@@ -37,7 +38,7 @@ afterEach(async () => {
 const routes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
       <Route path="/s/:space" element={<SpaceGate />}>
         <Route index element={<div>the pages of the space</div>} />
       </Route>
@@ -64,7 +65,7 @@ async function openMenu(name: string) {
 
 const storagePage = (setup?: NonNullable<Parameters<typeof mount>[1]>['entries']) =>
   mount(routes, {
-    entries: setup ?? ['/admin/storage'],
+    entries: setup ?? ['/admin/storage/rules'],
     signIn: true,
     server: { mode: 'accounts', github: { configured: true } },
   })
@@ -73,7 +74,7 @@ describe('the storage page', () => {
   it('is a section of the administration, with the defaults of the policy', async () => {
     m = await storagePage()
     await settle(() => text().includes(ts.admin.remotes.title), 'the storage settings')
-    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(ta.sections.storage)
+    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toBe(tc.sections.storage)
     const input = (label: string) => byLabel(label) as HTMLInputElement
     expect(input(ts.admin.remotes.graceDays).value).toBe('30')
     expect(input(ts.admin.cache.evictAfter).value).toBe('14')
@@ -135,7 +136,7 @@ describe('the storage page', () => {
   })
 
   it('shows what the server refuses in its own words', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/storage/rules'], signIn: true, server: { mode: 'accounts' } })
     await settle(() => byLabel(ts.admin.remotes.require) !== null, 'the form')
     // The platforms come from the connections; the mock lists GitHub, not set up.
     await settle(

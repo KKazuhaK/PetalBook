@@ -1,0 +1,160 @@
+import { lazy, Suspense, type ComponentType, type ReactNode } from 'react'
+import {
+  Activity,
+  Building2,
+  Database,
+  FileText,
+  Layers,
+  LayoutGrid,
+  Mail,
+  Quote,
+  Shield,
+  Users,
+  UsersRound,
+} from 'lucide-react'
+import { PageFallback } from '@/components/common'
+import { tc } from '@/i18n/console'
+import type { AdminSection } from '@/lib/urls'
+import { GroupsPanel } from './GroupsPanel'
+import { SettingsPanel } from './SettingsPanel'
+import { SpacesPanel } from './SpacesPanel'
+import { StatusPanel } from './StatusPanel'
+import { TenantsPanel } from './TenantsPanel'
+import { UsagePanel } from './UsagePanel'
+import { InvitesPanel } from './users/InvitesPanel'
+import { UsersList } from './users/UsersList'
+
+// The administration's chunks: the daily text's page is the biggest and the least visited; the security pages carry
+// the providers and the audit log; the storage ones the rules and the connections.
+const lazyNamed = <K extends string>(load: () => Promise<Record<K, ComponentType>>, name: K) =>
+  lazy(() => load().then((m) => ({ default: m[name] })))
+const DailyPanel = lazyNamed(() => import('./DailyPanel'), 'DailyPanel')
+const ManagePanel = lazyNamed(() => import('./manage/ManagePanel'), 'ManagePanel')
+const DeletedPeople = lazy(() => import('./manage/RecyclePanel').then((m) => ({ default: m.DeletedPeople })))
+const DeletedSpaces = lazy(() => import('./manage/RecyclePanel').then((m) => ({ default: m.DeletedSpaces })))
+const AccessPanel = lazyNamed(() => import('./AccessPanel'), 'AccessPanel')
+const StorageRules = lazyNamed(() => import('./StorageRules'), 'StorageRules')
+const ConnectionsSection = lazyNamed(() => import('./ConnectionsSection'), 'ConnectionsSection')
+const MailPanel = lazyNamed(() => import('./MailPanel'), 'MailPanel')
+const SecurityPanel = lazyNamed(() => import('./AdminSecurityPanel'), 'AdminSecurityPanel')
+const ProvidersSection = lazyNamed(() => import('./ProvidersSection'), 'ProvidersSection')
+const AuditSection = lazyNamed(() => import('./AuditSection'), 'AuditSection')
+
+export interface NavTab {
+  key: string
+  label: string
+  // Only an administrator of the whole server sees it.
+  siteOnly?: boolean
+  render: () => ReactNode
+}
+export interface NavSection {
+  key: AdminSection
+  label: string
+  Icon: typeof Users
+  siteOnly?: boolean
+  tabs: NavTab[]
+}
+
+const later = (node: ReactNode) => <Suspense fallback={<PageFallback />}>{node}</Suspense>
+
+// The sidebar's items, each with the pages along its top. What only the server's own administrators may open is marked
+// (a tenant's administrator gets the rest, for their tenant).
+export const NAV: readonly NavSection[] = [
+  {
+    key: 'users',
+    label: tc.sections.users,
+    Icon: Users,
+    tabs: [
+      { key: 'all', label: tc.tabs.users.all, render: () => <UsersList /> },
+      { key: 'invites', label: tc.tabs.users.invites, render: () => <InvitesPanel /> },
+      { key: 'deleted', label: tc.tabs.users.deleted, render: () => later(<DeletedPeople />) },
+    ],
+  },
+  {
+    key: 'groups',
+    label: tc.sections.groups,
+    Icon: UsersRound,
+    tabs: [{ key: 'groups', label: tc.sections.groups, render: () => <GroupsPanel /> }],
+  },
+  {
+    key: 'spaces',
+    label: tc.sections.spaces,
+    Icon: LayoutGrid,
+    tabs: [
+      { key: 'all', label: tc.tabs.spaces.all, render: () => <SpacesPanel /> },
+      { key: 'deleted', label: tc.tabs.spaces.deleted, render: () => later(<DeletedSpaces />) },
+    ],
+  },
+  {
+    key: 'storage',
+    label: tc.sections.storage,
+    Icon: Database,
+    tabs: [
+      { key: 'manage', label: tc.tabs.storage.manage, render: () => later(<ManagePanel />) },
+      { key: 'usage', label: tc.tabs.storage.usage, render: () => <UsagePanel /> },
+      { key: 'rules', label: tc.tabs.storage.rules, siteOnly: true, render: () => later(<StorageRules />) },
+      {
+        key: 'connections',
+        label: tc.tabs.storage.connections,
+        siteOnly: true,
+        render: () => later(<ConnectionsSection />),
+      },
+    ],
+  },
+  {
+    key: 'security',
+    label: tc.sections.security,
+    Icon: Shield,
+    siteOnly: true,
+    tabs: [
+      { key: 'signin', label: tc.tabs.security.signin, render: () => later(<SecurityPanel />) },
+      { key: 'providers', label: tc.tabs.security.providers, render: () => later(<ProvidersSection />) },
+      { key: 'access', label: tc.tabs.security.access, render: () => later(<AccessPanel />) },
+    ],
+  },
+  {
+    key: 'mail',
+    label: tc.sections.mail,
+    Icon: Mail,
+    siteOnly: true,
+    tabs: [{ key: 'mail', label: tc.sections.mail, render: () => later(<MailPanel />) }],
+  },
+  {
+    key: 'daily',
+    label: tc.sections.daily,
+    Icon: Quote,
+    siteOnly: true,
+    tabs: [{ key: 'daily', label: tc.sections.daily, render: () => later(<DailyPanel />) }],
+  },
+  {
+    key: 'settings',
+    label: tc.sections.settings,
+    Icon: Layers,
+    tabs: [{ key: 'settings', label: tc.sections.settings, render: () => <SettingsPanel /> }],
+  },
+  {
+    key: 'tenants',
+    label: tc.sections.tenants,
+    Icon: Building2,
+    siteOnly: true,
+    tabs: [{ key: 'tenants', label: tc.sections.tenants, render: () => <TenantsPanel /> }],
+  },
+  {
+    key: 'audit',
+    label: tc.sections.audit,
+    Icon: FileText,
+    tabs: [{ key: 'audit', label: tc.sections.audit, render: () => later(<AuditSection />) }],
+  },
+  {
+    key: 'status',
+    label: tc.sections.status,
+    Icon: Activity,
+    siteOnly: true,
+    tabs: [{ key: 'status', label: tc.sections.status, render: () => <StatusPanel /> }],
+  },
+]
+
+// What this administrator may open.
+export function navFor(site: boolean): NavSection[] {
+  return NAV.filter((s) => site || !s.siteOnly).map((s) => ({ ...s, tabs: s.tabs.filter((t) => site || !t.siteOnly) }))
+}

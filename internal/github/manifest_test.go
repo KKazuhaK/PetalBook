@@ -52,21 +52,21 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 		}
 		q := submit(t, h, s)
 		// Another browser, another user, or an attempt gone does not finish it.
-		if to, _ := h.svc.CompleteManifest(ctx, "not-the-binding", "A1", q); to != "/admin/storage?connection_app_error=expired" {
+		if to, _ := h.svc.CompleteManifest(ctx, "not-the-binding", "A1", q); to != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("%q", to)
 		}
 		h.user("A2", "other")
-		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A2", q); to != "/admin/storage?connection_app_error=expired" {
+		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A2", q); to != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("%q", to)
 		}
-		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "", q); to != "/admin/storage?connection_app_error=expired" {
+		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "", q); to != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("%q", to)
 		}
 		if h.svc.Configured(ctx) {
 			t.Fatal("a refused return configured the App")
 		}
 		to, clear := h.svc.CompleteManifest(ctx, s.Binding, "A1", q)
-		if to != "/admin/storage?connection_app=created" || !clear {
+		if to != "/admin/storage/connections?connection_app=created" || !clear {
 			t.Fatalf("%q %v", to, clear)
 		}
 		v, err := h.svc.View(ctx)
@@ -93,7 +93,7 @@ func TestMakingTheAppFromAManifest(t *testing.T) {
 			t.Fatalf("%q %v", b, err)
 		}
 		// The state works once.
-		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage?connection_app_error=expired" {
+		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("a replay: %q", to)
 		}
 		if ms := h.f.Manifests(); len(ms) != 1 {
@@ -110,21 +110,21 @@ func TestTheManifestStateExpiresAndTheCodeIsChecked(t *testing.T) {
 		s, _ := h.svc.StartManifest(ctx, "A1", connections.ManifestRequest{Organization: "", Name: ""})
 		q := submit(t, h, s)
 		h.clk.Advance(11 * time.Minute)
-		if to, clear := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage?connection_app_error=expired" || !clear {
+		if to, clear := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage/connections?connection_app_error=expired" || !clear {
 			t.Fatalf("%q %v", to, clear)
 		}
 		// A code GitHub does not know: the attempt is spent and the App is not changed.
 		s, _ = h.svc.StartManifest(ctx, "A1", connections.ManifestRequest{Organization: "", Name: ""})
 		q = submit(t, h, s)
 		q.Set("code", "not-a-code")
-		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage?connection_app_error=provider_error" {
+		if to, _ := h.svc.CompleteManifest(ctx, s.Binding, "A1", q); to != "/admin/storage/connections?connection_app_error=provider_error" {
 			t.Fatalf("%q", to)
 		}
 		if h.svc.Configured(ctx) {
 			t.Fatal("a refused conversion configured the App")
 		}
 		// Anything missing is an expired attempt; a return from an installation is not an error.
-		if to, _ := h.svc.CompleteManifest(ctx, "", "A1", url.Values{}); to != "/admin/storage?connection_app_error=expired" {
+		if to, _ := h.svc.CompleteManifest(ctx, "", "A1", url.Values{}); to != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("%q", to)
 		}
 		if to, _ := h.svc.CompleteManifest(ctx, "", "", url.Values{"setup_action": {"install"}, "installation_id": {"5"}}); to != "/settings/connections" {
@@ -134,7 +134,7 @@ func TestTheManifestStateExpiresAndTheCodeIsChecked(t *testing.T) {
 		h.configure()
 		h.user("U1", "kazuha")
 		_, binding, _ := h.svc.StartInstall(ctx, "U1", "/")
-		if to, _ := h.svc.CompleteManifest(ctx, binding, "U1", url.Values{"state": {"x"}, "code": {"y"}}); to != "/admin/storage?connection_app_error=expired" {
+		if to, _ := h.svc.CompleteManifest(ctx, binding, "U1", url.Values{"state": {"x"}, "code": {"y"}}); to != "/admin/storage/connections?connection_app_error=expired" {
 			t.Fatalf("%q", to)
 		}
 	})

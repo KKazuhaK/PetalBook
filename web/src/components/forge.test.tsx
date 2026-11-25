@@ -41,7 +41,7 @@ const forge = (body: Record<string, unknown>) => adminRequests(m!.server)('POST'
 const adminRoutes = (
   <SidebarProvider>
     <Routes>
-      <Route path="/admin/:section?" element={<AdminGate />} />
+      <Route path="/admin/*" element={<AdminGate />} />
     </Routes>
   </SidebarProvider>
 )
@@ -66,7 +66,11 @@ async function addHost(over: Partial<Record<'id' | 'host' | 'name' | 'id2' | 'se
 
 describe('the hosts in the administration', () => {
   it('says there is no host until one is added, and adds one without ever showing its secret again', async () => {
-    m = await mount(adminRoutes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
     await settle(() => text().includes(tf.admin.none), 'the empty list')
     await addHost({ name: 'Acme GitLab' })
     await settle(() => text().includes('Acme GitLab') && text().includes(tf.admin.usage(0, 0)), 'the card')
@@ -87,7 +91,11 @@ describe('the hosts in the administration', () => {
   })
 
   it('offers the two kinds of host and sends the one chosen', async () => {
-    m = await mount(adminRoutes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
     await settle(() => button(tf.admin.add) !== undefined, 'the add button')
     await click(button(tf.admin.add))
     await settle(() => document.querySelector('#forge-type') !== null, 'the kind')
@@ -105,7 +113,11 @@ describe('the hosts in the administration', () => {
   })
 
   it('asks for what is missing, and says why the host refused in its own words', async () => {
-    m = await mount(adminRoutes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
     await settle(() => button(tf.admin.add) !== undefined, 'the add button')
     await click(button(tf.admin.add))
     await settle(() => document.querySelector('[data-testid="forge-add-form"]') !== null, 'the form')
@@ -131,7 +143,11 @@ describe('the hosts in the administration', () => {
   })
 
   it('edits a host: the name and a new secret, and a refused secret is not kept', async () => {
-    m = await mount(adminRoutes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
     await settle(() => button(tf.admin.add) !== undefined, 'the add button')
     await addHost({ name: 'Acme GitLab' })
     await settle(() => button(tf.admin.edit) !== undefined, 'the card')
@@ -152,7 +168,11 @@ describe('the hosts in the administration', () => {
   })
 
   it('checks a host again and removes it, but not while people are connected', async () => {
-    m = await mount(adminRoutes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(adminRoutes, {
+      entries: ['/admin/storage/connections'],
+      signIn: true,
+      server: { mode: 'accounts' },
+    })
     await settle(() => button(tf.admin.add) !== undefined, 'the add button')
     await addHost()
     await settle(() => button(tf.admin.check) !== undefined, 'the card')

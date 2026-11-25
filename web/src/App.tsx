@@ -130,7 +130,7 @@ const router = createBrowserRouter([
           { index: true, element: <ToLastSpace /> },
           // The settings dialog. `/settings` with no section picks the first one.
           { path: 'settings/:section?', element: later(<SettingsRoute />) },
-          { path: 'admin/:section?', element: <AdminGate /> },
+          { path: 'admin/*', element: <AdminGate /> },
           {
             path: 's/:space',
             element: <SpaceGate />,

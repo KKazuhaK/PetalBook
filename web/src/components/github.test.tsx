@@ -18,9 +18,9 @@ import {
 import { keys } from '@/api/hooks'
 import { MOCK_ADMIN } from '@/api/mock/server'
 import { t } from '@/i18n'
+import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/github'
 import { ts } from '@/i18n/storage'
-import { ta } from '@/i18n/admin'
 import SettingsRoute from '@/components/settings/SettingsRoute'
 import { AdminGate } from '@/components/admin/AdminGate'
 import { SidebarProvider } from '@/components/ui/sidebar'
@@ -572,7 +572,7 @@ describe('the GitHub section of the administration', () => {
   const routes = (
     <SidebarProvider>
       <Routes>
-        <Route path="/admin/:section?" element={<AdminGate />} />
+        <Route path="/admin/*" element={<AdminGate />} />
       </Routes>
     </SidebarProvider>
   )
@@ -582,7 +582,7 @@ describe('the GitHub section of the administration', () => {
     )!
 
   it('saves the App, shows only what is safe to show, and keeps the key when it is left empty', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: { mode: 'accounts' } })
     await settle(
       () =>
         document.querySelector('#github-private-key') !== null &&
@@ -609,11 +609,11 @@ describe('the GitHub section of the administration', () => {
       m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/connections/github')[1].body!,
     )
     expect(second).toEqual({ appId: '1234567', clientId: 'Iv23liMockClientId' })
-    expect(text()).toContain(ta.sections.storage)
+    expect(text()).toContain(tc.sections.storage)
   })
 
   it('says why GitHub refused the key or the secret', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: { mode: 'accounts' } })
     await settle(
       () =>
         document.querySelector('#github-private-key') !== null &&
@@ -633,7 +633,7 @@ describe('the GitHub section of the administration', () => {
 
   it("lists the installations and shares an organisation's with the tenants picked", async () => {
     m = await mount(routes, {
-      entries: ['/admin/storage'],
+      entries: ['/admin/storage/connections'],
       signIn: true,
       server: { mode: 'accounts', github: { configured: true } },
     })
@@ -692,7 +692,7 @@ describe('the GitHub section of the administration', () => {
 
   it('refuses to remove the App while a space syncs through it', async () => {
     m = await mount(routes, {
-      entries: ['/admin/storage'],
+      entries: ['/admin/storage/connections'],
       signIn: true,
       server: { mode: 'accounts', github: { configured: true } },
     })
@@ -718,14 +718,14 @@ describe('the App in the administration: re-checking, warnings and making it on 
   const routes = (
     <SidebarProvider>
       <Routes>
-        <Route path="/admin/:section?" element={<AdminGate />} />
+        <Route path="/admin/*" element={<AdminGate />} />
       </Routes>
     </SidebarProvider>
   )
   const configured = { mode: 'accounts' as const, github: { configured: true } }
 
   it('shows the permissions of the last check until Re-check reads them from GitHub again', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: configured })
+    m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: configured })
     await settle(() => text().includes(tg.admin.recheck), 'the card')
     expect(text()).not.toContain(tg.admin.missing(['contents']))
     // GitHub's side changed: the card does not know yet.
@@ -747,7 +747,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
   })
 
   it('warns when the App can only be installed on one account, and says when GitHub did not say', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: configured })
+    m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: configured })
     await settle(() => button(tg.admin.recheck) !== undefined, 'the card')
     expect(text()).not.toContain(tg.admin.anyAccountNo)
     hook({ side: { anyAccount: false } })
@@ -765,7 +765,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
   it('makes the App on GitHub: asks the server for the manifest and posts it from the browser', async () => {
     const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
     try {
-      m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+      m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: { mode: 'accounts' } })
       await settle(() => button(tg.admin.createButton) !== undefined, 'the button')
       await type(
         [...document.querySelectorAll<HTMLInputElement>('input')].find(
@@ -797,7 +797,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
   })
 
   it('does not offer to replace an App that is in use', async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: configured })
+    m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: configured })
     await settle(() => text().includes(tg.admin.title), 'the section')
     hook({ connect: 'root-gh' })
     await m.qc.invalidateQueries()
@@ -806,14 +806,18 @@ describe('the App in the administration: re-checking, warnings and making it on 
   })
 
   it('says how the manifest flow ended, once, from the address GitHub sent the browser back to', async () => {
-    m = await mount(routes, { entries: ['/admin/storage?connection_app=created'], signIn: true, server: configured })
+    m = await mount(routes, {
+      entries: ['/admin/storage/connections?connection_app=created'],
+      signIn: true,
+      server: configured,
+    })
     await settle(() => text().includes(tg.admin.created), 'the notice')
     await settle(() => !locationText().includes('github_app'), 'the address cleaned')
-    expect(locationText()).toBe('/admin/storage')
+    expect(locationText()).toBe('/admin/storage/connections')
     await m.unmount()
     m = undefined
     m = await mount(routes, {
-      entries: ['/admin/storage?connection_app_error=app_in_use'],
+      entries: ['/admin/storage/connections?connection_app_error=app_in_use'],
       signIn: true,
       server: configured,
     })
@@ -821,7 +825,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
     await m.unmount()
     m = undefined
     m = await mount(routes, {
-      entries: ['/admin/storage?connection_app_error=constructor'],
+      entries: ['/admin/storage/connections?connection_app_error=constructor'],
       signIn: true,
       server: configured,
     })
@@ -829,7 +833,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
   })
 
   it("plays the manifest flow in the mock: the state is bound to the administrator's browser and works once", async () => {
-    m = await mount(routes, { entries: ['/admin/storage'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/admin/storage/connections'], signIn: true, server: { mode: 'accounts' } })
     const server = m.server
     const json = 'application/json'
     const login = server.handle(
@@ -847,13 +851,13 @@ describe('the App in the administration: re-checking, warnings and making it on 
     const back = `/api/connections/github/manifest/callback?code=a-code&state=${state}`
     // Without the browser's cookie nothing happens; with it the App is saved, once.
     expect(server.handle('GET', back, undefined, null, session).headers?.Location).toBe(
-      '/admin/storage?connection_app_error=expired',
+      '/admin/storage/connections?connection_app_error=expired',
     )
     expect(server.handle('GET', '/api/admin/connections/github', undefined, null, session).body).toMatchObject({
       configured: false,
     })
     expect(server.handle('GET', back, undefined, null, `${session}; ${flow}`).headers?.Location).toBe(
-      '/admin/storage?connection_app=created',
+      '/admin/storage/connections?connection_app=created',
     )
     expect(server.handle('GET', '/api/admin/connections/github', undefined, null, session).body).toMatchObject({
       configured: true,
@@ -861,7 +865,7 @@ describe('the App in the administration: re-checking, warnings and making it on 
       userAuthorization: true,
     })
     expect(server.handle('GET', back, undefined, null, `${session}; ${flow}`).headers?.Location).toBe(
-      '/admin/storage?connection_app_error=expired',
+      '/admin/storage/connections?connection_app_error=expired',
     )
   })
 })
@@ -870,24 +874,23 @@ describe('Storage & sync', () => {
   const routes = (
     <SidebarProvider>
       <Routes>
-        <Route path="/admin/:section?" element={<AdminGate />} />
+        <Route path="/admin/*" element={<AdminGate />} />
       </Routes>
     </SidebarProvider>
   )
   it("shows the connections as cards on the administrators' page, under the name of the page", async () => {
     m = await mount(routes, {
-      entries: ['/admin/storage'],
+      entries: ['/admin/storage/connections'],
       signIn: true,
       server: { mode: 'accounts', github: { configured: true } },
     })
-    await settle(() => document.querySelector('[data-part="connections"]') !== null, 'the connections part')
-    expect(text()).toContain(tg.admin.connectionsTitle)
+    await settle(() => text().includes(tg.admin.connectionsTitle), 'the connections part')
     await settle(() => document.querySelector('[data-brand="github"]') !== null, 'the GitHub card with its mark')
   })
 
   it('does not say nothing was saved when GitHub made the App but it could not be saved: it says the App exists, and offers a retry', async () => {
     m = await mount(routes, {
-      entries: ['/admin/storage?connection_app_error=unavailable&pending=1&app=petalbook-notes'],
+      entries: ['/admin/storage/connections?connection_app_error=unavailable&pending=1&app=petalbook-notes'],
       signIn: true,
       server: { mode: 'accounts', github: { configured: false } },
     })

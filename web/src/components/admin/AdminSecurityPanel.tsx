@@ -31,8 +31,6 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
-import { AuditSection } from './AuditSection'
-import { ProvidersSection } from './ProvidersSection'
 import {
   buildPatch,
   CONTEXTS,
@@ -49,8 +47,8 @@ const MODES: readonly LoginMode[] = ['dual', 'sso_first', 'sso_redirect', 'local
 const CAPTCHAS: readonly CaptchaProvider[] = ['image', 'turnstile', 'recaptcha', 'hcaptcha']
 const SCOPES: readonly LockoutScope[] = ['ip_account', 'ip', 'account']
 
-// The security page of the administration: sign-in, passkeys, captcha, lockout and limits, then the
-// sign-in providers and the audit log. The settings are one form with one Save: only what changed is sent.
+// The sign-in page of the security section: sign-in, passkeys, captcha, lockout and limits. The providers and the audit
+// log are pages of their own. The settings are one form with one Save: only what changed is sent.
 export function AdminSecurityPanel() {
   const settings = useSecuritySettings()
   if (settings.isPending) return <PageFallback />
@@ -64,8 +62,6 @@ export function AdminSecurityPanel() {
   return (
     <div className="min-w-0 space-y-10">
       <SettingsForm key={JSON.stringify(settings.data)} settings={settings.data} />
-      <ProvidersSection />
-      <AuditSection />
     </div>
   )
 }

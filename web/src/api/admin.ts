@@ -55,6 +55,11 @@ import type {
   ServerStatus,
   SpaceSize,
   User,
+  UsersPage,
+  UsersParams,
+  PersonIdentity,
+  PersonMemberships,
+  PersonSession,
   AdminGrantList,
   AdminTokenList,
   MachineAccess,
@@ -69,14 +74,37 @@ export const adminApi = {
   // --- users and invites ---
   // `q` keeps the users whose username or name contains it; `limit` caps the count (1 to 200);
   // `enabled` leaves out the disabled accounts before the limit counts.
-  users: (params: { q?: string; limit?: number; enabled?: boolean } = {}, signal?: AbortSignal) => {
+  users: (params: UsersParams & { enabled?: boolean } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.q) q.set('q', params.q)
     if (params.limit) q.set('limit', String(params.limit))
+    if (params.cursor) q.set('cursor', params.cursor)
+    if (params.sort) q.set('sort', params.sort)
+    if (params.order) q.set('order', params.order)
+    if (params.role) q.set('role', params.role)
+    if (params.state) q.set('state', params.state)
+    if (params.inactiveDays !== undefined) q.set('inactiveDays', String(params.inactiveDays))
+    if (params.activeDays !== undefined) q.set('activeDays', String(params.activeDays))
+    if (params.tenant) q.set('tenant', params.tenant)
     if (params.enabled) q.set('enabled', '1')
     const query = q.toString()
-    return request<{ users: User[] }>(`/users${query ? `?${query}` : ''}`, { signal })
+    return request<UsersPage>(`/users${query ? `?${query}` : ''}`, { signal })
   },
+  // One person, as the list shows them.
+  user: (id: string, signal?: AbortSignal) => request<{ user: User }>(`/users/${enc(id)}`, { signal }),
+  // The spaces they are a member of and their groups.
+  userMemberships: (id: string, signal?: AbortSignal) =>
+    request<PersonMemberships>(`/users/${enc(id)}/memberships`, { signal }),
+  // Site administrators only (a tenant's administrator is answered 404): the sessions and the connected accounts.
+  userSessions: (id: string, signal?: AbortSignal) =>
+    request<{ sessions: PersonSession[] }>(`/users/${enc(id)}/sessions`, { signal }),
+  endUserSession: (id: string, session: string) =>
+    request<void>(`/users/${enc(id)}/sessions/${enc(session)}`, { method: 'DELETE' }),
+  endUserSessions: (id: string) => request<{ ended: number }>(`/users/${enc(id)}/sessions`, { method: 'DELETE' }),
+  userIdentities: (id: string, signal?: AbortSignal) =>
+    request<{ identities: PersonIdentity[] }>(`/users/${enc(id)}/identities`, { signal }),
+  disconnectUserIdentity: (id: string, identity: string) =>
+    request<void>(`/users/${enc(id)}/identities/${enc(identity)}`, { method: 'DELETE' }),
   // `quota` sets the person's own limits: a number each, or null to follow the tenant; the keys left out stay.
   // `remoteExempt` (site administrators) leaves the spaces the person owns out of the requirement of a remote.
   updateUser: (
@@ -347,11 +375,42 @@ export const adminApi = {
 
 // --- users and invites ----------------------------------------------------------
 
+// Every person, read by walking the pages of 200: for the one place that must know them all (the usernames pasted to
+// add to a group). The lists people read are paged by the server (`useUsersPage`).
 export function useUsers(enabled = true) {
   return useQuery({
     queryKey: keys.users,
-    queryFn: ({ signal }) => adminApi.users({}, signal),
+    queryFn: async ({ signal }) => {
+      const users: User[] = []
+      let cursor = ''
+      for (let page = 0; page < 100; page++) {
+        const r = await adminApi.users({ limit: 200, cursor: cursor || undefined }, signal)
+        users.push(...r.users)
+        if (!r.next) break
+        cursor = r.next
+      }
+      return { users }
+    },
     staleTime: 30_000,
+    enabled,
+  })
+}
+
+// One page of the people list, as the server cuts it for this search, filter, sort and page size.
+export function useUsersPage(params: UsersParams) {
+  return useQuery({
+    queryKey: [...keys.users, 'page', JSON.stringify(params)],
+    queryFn: ({ signal }) => adminApi.users(params, signal),
+    staleTime: 10_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useUserRow(id: string, enabled = true) {
+  return useQuery({
+    queryKey: [...keys.users, 'one', id],
+    queryFn: ({ signal }) => adminApi.user(id, signal),
+    staleTime: 10_000,
     enabled,
   })
 }
@@ -396,6 +455,16 @@ export function useAdminSpaces(q: string, enabled = true, filter: AdminSpacesFil
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 15_000,
+  })
+}
+
+// One page of the spaces' list, as the server cuts it for this search, filter, sort and page size.
+export function useAdminSpacesPage(params: AdminSpacesParams) {
+  return useQuery({
+    queryKey: [...keys.adminSpaceList(params.q ?? '', JSON.stringify({ ...params, q: undefined })), 'page'],
+    queryFn: ({ signal }) => adminApi.adminSpaces(params, signal),
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
   })
 }
 
@@ -576,8 +645,14 @@ export function useResizeSpace() {
         ...list,
         items: list.items.map((s) => (s.id === id ? { ...s, ...size } : s)),
       })
-      qc.setQueriesData<{ pages: AdminSpaceList[]; pageParams: unknown[] }>({ queryKey: keys.adminSpaces }, (prev) =>
-        prev && 'pages' in prev ? { ...prev, pages: prev.pages.map(patch) } : prev,
+      // The lists are read as infinite queries (the daily text's picker) or as one page (the table).
+      qc.setQueriesData<{ pages: AdminSpaceList[]; pageParams: unknown[] } | AdminSpaceList>(
+        { queryKey: keys.adminSpaces },
+        (prev) => {
+          if (!prev || typeof prev !== 'object') return prev
+          if ('pages' in prev) return { ...prev, pages: prev.pages.map(patch) }
+          return 'items' in prev && Array.isArray(prev.items) ? patch(prev) : prev
+        },
       )
     },
   })

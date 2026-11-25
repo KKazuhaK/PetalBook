@@ -55,6 +55,7 @@ import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
 import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
+import { sha256Hex } from './sha256.ts'
 import { createQuotaBook } from './quotaBook.ts'
 import { createManageBook } from './manageBook.ts'
 import { createMailBook } from './mailBook.ts'
@@ -404,6 +405,8 @@ export function createMockServer(options: MockOptions = {}) {
   // Sessions held until a passkey is registered, and when each session began (registering needs a recent sign-in).
   const held = new Set<string>()
   const sessionAt = new Map<string, number>()
+  // What the administrators' list of a person's sessions shows.
+  const sessionMeta = new Map<string, { userAgent: string; method: string; created: number }>()
   const ceremonies = new Map<
     string,
     { kind: 'login' | 'register'; username?: string; userId?: string; name?: string; created: number }
@@ -464,12 +467,16 @@ export function createMockServer(options: MockOptions = {}) {
     ...(u.remoteExempt ? { remoteExempt: true } : {}),
   })
   // In the users list a person also has how many passkeys and sign-in identities.
-  const listedUser = (u: UserRec): User => ({
-    ...publicUser(u),
-    passkeys: u.passkeys.length,
-    sso: u.identities.length,
-    quota: quotaBook.ownOf(u.id),
-  })
+  const listedUser = (u: UserRec): User => {
+    const active = manage.lastActiveOf(u.id)
+    return {
+      ...publicUser(u),
+      passkeys: u.passkeys.length,
+      sso: u.identities.length,
+      quota: quotaBook.ownOf(u.id),
+      ...(active ? { lastActive: new Date(active).toISOString() } : {}),
+    }
+  }
   // The first owner: who the space's own commits are credited to.
   const ownerOf = (s: SpaceRec): UserRec | undefined => {
     const owners = [...s.members].filter(([, m]) => m.role === 'owner').sort((a, b) => a[1].joined - b[1].joined)
@@ -843,10 +850,18 @@ export function createMockServer(options: MockOptions = {}) {
       .sort((a, b) => Number(b.personal) - Number(a.personal) || compareCodePoints(a.name, b.name))
   }
 
-  const startSession = (u: UserRec, opts: { held?: boolean } = {}): string => {
+  const startSession = (u: UserRec, opts: { held?: boolean; method?: string } = {}): string => {
     const token = randomString(32)
     sessions.set(token, u.id)
     sessionAt.set(token, now())
+    sessionMeta.set(token, {
+      userAgent:
+        typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string'
+          ? ''
+          : navigator.userAgent.slice(0, 200),
+      method: opts.method ?? '',
+      created: now(),
+    })
     if (opts.held) held.add(token)
     return setCookie(SESSION_COOKIE, token)
   }
@@ -944,7 +959,11 @@ export function createMockServer(options: MockOptions = {}) {
     const name = body.name === undefined || body.name === '' ? username : checkName(body.name)
     const u = addUser({ username, name, role: 'admin', password }, false)
     book.record('login', { user: u.id, username, detail: { method: 'password', created: true } })
-    return { status: 201, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u) } }
+    return {
+      status: 201,
+      body: { user: publicUser(u) },
+      headers: { 'Set-Cookie': startSession(u, { method: 'setup' }) },
+    }
   }
 
   const login = (body: Record<string, unknown>): MockResponse => {
@@ -996,7 +1015,7 @@ export function createMockServer(options: MockOptions = {}) {
     return {
       status: 200,
       body: { user: publicUser(u) },
-      headers: { 'Set-Cookie': startSession(u, { held: required && u.passkeys.length === 0 }) },
+      headers: { 'Set-Cookie': startSession(u, { held: required && u.passkeys.length === 0, method: 'password' }) },
     }
   }
 
@@ -1020,7 +1039,7 @@ export function createMockServer(options: MockOptions = {}) {
       u.email = p.email
       u.emailVerified = true
       book.record('login', { user: u.id, username: u.username, detail: { method: 'password', created: true } })
-      return { user: publicUser(u), cookie: startSession(u) }
+      return { user: publicUser(u), cookie: startSession(u, { method: 'registration' }) }
     },
     setPassword: (id, hash) => {
       const u = users.get(id)
@@ -1067,7 +1086,11 @@ export function createMockServer(options: MockOptions = {}) {
     if (inv.fill?.email) u.email = inv.fill.email
     inv.used = true
     book.record('login', { user: u.id, username, detail: { method: 'password', created: true } })
-    return { status: 201, body: { user: publicUser(u) }, headers: { 'Set-Cookie': startSession(u) } }
+    return {
+      status: 201,
+      body: { user: publicUser(u) },
+      headers: { 'Set-Cookie': startSession(u, { method: 'invite' }) },
+    }
   }
 
   // --- single sign-on (the provider is a fake that signs in one person) ---
@@ -1150,7 +1173,7 @@ export function createMockServer(options: MockOptions = {}) {
         if (holder) {
           if (holder.disabled) return fail('disabled')
           book.record('login', { user: holder.id, username: holder.username, detail: { method, provider: slug } })
-          return redirect(attempt.ret, startSession(holder))
+          return redirect(attempt.ret, startSession(holder, { method: 'sso:' + slug }))
         }
         // The one account with this verified address, when the provider is allowed to merge by it.
         const merge = rec.view.mergeVerifiedEmail
@@ -1165,7 +1188,7 @@ export function createMockServer(options: MockOptions = {}) {
             sub,
           })
           book.record('identity_linked', { user: merge[0].id, detail: { provider: slug, by: 'email' } })
-          return redirect(attempt.ret, startSession(merge[0]))
+          return redirect(attempt.ret, startSession(merge[0], { method: 'sso:' + slug }))
         }
         if (merge.length > 1 || !rec.view.autoCreate) return fail('no_account')
         const u = addUser(
@@ -1173,7 +1196,7 @@ export function createMockServer(options: MockOptions = {}) {
           false,
         )
         book.record('login', { user: u.id, username: u.username, detail: { method, provider: slug, created: true } })
-        return redirect(attempt.ret, startSession(u))
+        return redirect(attempt.ret, startSession(u, { method: 'sso:' + slug }))
       }
       case 'setup': {
         if (users.size > 0 || attempt.token !== setupToken) return fail('setup_invalid')
@@ -1181,7 +1204,7 @@ export function createMockServer(options: MockOptions = {}) {
           { username: uniqueUsername(claims.username), name: claims.name, role: 'admin', identity },
           false,
         )
-        return redirect(attempt.ret, startSession(u))
+        return redirect(attempt.ret, startSession(u, { method: 'sso:' + slug }))
       }
       case 'invite': {
         let inv: InviteRec
@@ -1196,7 +1219,7 @@ export function createMockServer(options: MockOptions = {}) {
           false,
         )
         inv.used = true
-        return redirect(attempt.ret, startSession(u))
+        return redirect(attempt.ret, startSession(u, { method: 'sso:' + slug }))
       }
       default: {
         // link: the session must still be the one that started it.
@@ -1279,7 +1302,7 @@ export function createMockServer(options: MockOptions = {}) {
     return {
       status: 200,
       body: { user: publicUser(owner), return: plainPath(q.get('return')) },
-      headers: { 'Set-Cookie': startSession(owner) },
+      headers: { 'Set-Cookie': startSession(owner, { method: 'passkey' }) },
     }
   }
   const RECENT_MS = 600_000
@@ -1398,6 +1421,73 @@ export function createMockServer(options: MockOptions = {}) {
   }
 
   // --- users and invites ---
+  // One page of the list of people (docs/api.md, "GET /api/users"): the cursor is the sort, the order and the id the page ended with.
+  const USER_SORTS = ['created', 'name', 'lastActive']
+  const listUsers = (url: URL): { users: User[]; next: string } => {
+    const q = url.searchParams
+    const pick = (name: string, values: string[]) => {
+      const v = q.get(name) ?? ''
+      if (v !== '' && !values.includes(v)) throw new HttpError(400, 'invalid', `${name} 不对`)
+      return v
+    }
+    const num = (name: string, min: number, max: number): number | null => {
+      if (!q.has(name)) return null
+      const raw = q.get(name) ?? ''
+      const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+      if (!(n >= min && n <= max)) throw new HttpError(400, 'invalid', `${name} is a number from ${min} to ${max}`)
+      return n
+    }
+    const sort = pick('sort', USER_SORTS) || 'created'
+    const order = pick('order', ['asc', 'desc']) || (sort === 'lastActive' ? 'desc' : 'asc')
+    const role = pick('role', ['member', 'admin', 'site'])
+    let state = pick('state', ['enabled', 'disabled'])
+    const enabled = q.get('enabled')
+    if (enabled !== null && enabled !== '1' && enabled !== '0') throw new HttpError(400, 'invalid', 'enabled is 1 or 0')
+    if (enabled === '1') state = 'enabled'
+    const limit = q.has('limit') ? num('limit', 1, 200) : 50
+    const inactive = num('inactiveDays', 0, 36500)
+    const activeDays = num('activeDays', 0, 36500)
+    const needle = (q.get('q') ?? '').trim().toLowerCase()
+    const day = 86_400_000
+    let list = [...users.values()].filter((u) => {
+      if (needle !== '' && !u.username.toLowerCase().includes(needle) && !u.name.toLowerCase().includes(needle))
+        return false
+      if (role === 'site' ? !isSiteAdmin(u) : role !== '' && u.role !== role) return false
+      if (state === 'enabled' ? u.disabled : state === 'disabled' && !u.disabled) return false
+      const active = manage.lastActiveOf(u.id)
+      if (inactive !== null && active !== undefined && active >= now() - inactive * day) return false
+      if (activeDays !== null && (active === undefined || active < now() - activeDays * day)) return false
+      return true
+    })
+    const key = (u: UserRec): string | number =>
+      sort === 'name' ? u.name.toLowerCase() : sort === 'created' ? u.created : (manage.lastActiveOf(u.id) ?? 0)
+    const dir = order === 'asc' ? 1 : -1
+    const made = new Map([...users.keys()].map((id, i) => [id, i]))
+    list = list.sort((a, b) => {
+      // Never active comes last by lastActive, in either order.
+      if (sort === 'lastActive') {
+        const an = manage.lastActiveOf(a.id) === undefined
+        const bn = manage.lastActiveOf(b.id) === undefined
+        if (an !== bn) return an ? 1 : -1
+      }
+      const ka = key(a)
+      const kb = key(b)
+      const c = typeof ka === 'number' && typeof kb === 'number' ? ka - kb : compareCodePoints(String(ka), String(kb))
+      // Equal values keep the order the people were made in (the server's tie is the id).
+      return c * dir || (made.get(a.id) ?? 0) - (made.get(b.id) ?? 0)
+    })
+    const cursor = q.get('cursor')
+    if (cursor) {
+      const tag = `${sort}.${order}:`
+      const at = cursor.startsWith(tag) ? list.findIndex((u) => u.id === cursor.slice(tag.length)) : -1
+      if (at < 0) throw new HttpError(400, 'invalid', 'cursor 不对')
+      list = list.slice(at + 1)
+    }
+    const page = list.slice(0, limit ?? 50)
+    const next = list.length > page.length ? `${sort}.${order}:${page[page.length - 1].id}` : ''
+    return { users: page.map(listedUser), next }
+  }
+
   const patchUser = (me: UserRec, id: string, body: Record<string, unknown>) => {
     const u = users.get(id)
     if (!u) throw new HttpError(404, 'not_found', '没有这个用户')
@@ -4327,27 +4417,103 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/users' || path.startsWith('/users/') || path === '/invites' || path.startsWith('/invites/')) {
       accountsOnly()
       const me = requireAdmin(ctx)
-      if (path === '/users' && method === 'GET') {
-        let list = [...users.values()].sort((a, b) => a.created.localeCompare(b.created))
-        // Without parameters, everyone; `q` (username or name contains it, ignoring case), `enabled=1` and `limit` narrow it.
-        const q = url.searchParams.get('q')
-        const enabled = url.searchParams.get('enabled')
-        if (enabled !== null && enabled !== '1' && enabled !== '0')
-          throw new HttpError(400, 'invalid', 'enabled is 1 or 0')
-        if (enabled === '1') list = list.filter((u) => !u.disabled)
-        if (q !== null && q.trim() !== '') {
-          const needle = q.trim().toLowerCase()
-          list = list.filter((u) => u.username.toLowerCase().includes(needle) || u.name.toLowerCase().includes(needle))
-        }
-        if (url.searchParams.has('limit')) {
-          const raw = url.searchParams.get('limit') ?? ''
-          const n = /^\d+$/.test(raw) ? Number(raw) : NaN
-          if (!(n >= 1 && n <= 200)) throw new HttpError(400, 'invalid', 'limit is a number from 1 to 200')
-          list = list.slice(0, n)
-        }
-        return j({ users: list.map(listedUser) })
-      }
+      if (path === '/users' && method === 'GET') return j(listUsers(url))
       const user = /^\/users\/([^/]+)$/.exec(path)
+      if (user && method === 'GET') {
+        const u = users.get(decodeURIComponent(user[1]))
+        if (!u) throw new HttpError(404, 'not_found', '没有这个用户')
+        return j({ user: listedUser(u) })
+      }
+      const userMore = /^\/users\/([^/]+)\/(memberships|sessions|identities)(?:\/([^/]+))?$/.exec(path)
+      if (userMore) {
+        const target = users.get(decodeURIComponent(userMore[1]))
+        if (!target) throw new HttpError(404, 'not_found', '没有这个用户')
+        const kind = userMore[2]
+        const sub = userMore[3] === undefined ? undefined : decodeURIComponent(userMore[3])
+        if (kind === 'memberships' && method === 'GET' && sub === undefined) {
+          const mine = [...spaces.values()]
+            .filter((x) => x.members.has(target.id))
+            .filter((x) => isSiteAdmin(me) || !x.personal)
+            .sort((a, b) => compareCodePoints(a.name, b.name))
+          return j({
+            spaces: mine.map((x) => ({
+              id: x.id,
+              name: x.name,
+              role: x.members.get(target.id)?.role ?? 'viewer',
+              personal: x.personal,
+            })),
+            groups: groupBook.inGroups(target.id),
+          })
+        }
+        // The sessions and the connected accounts are for the administrators of the whole server: others are told the person is no one.
+        if (!isSiteAdmin(me)) throw new HttpError(404, 'not_found', '没有这个用户')
+        if (kind === 'sessions') {
+          const mine = [...sessions].filter(([, uid]) => uid === target.id).map(([token]) => token)
+          const hashOf = (token: string) => sha256Hex(new TextEncoder().encode(token))
+          if (method === 'GET' && sub === undefined)
+            return j({
+              sessions: mine
+                .map((token) => ({ token, meta: sessionMeta.get(token), at: sessionAt.get(token) ?? 0 }))
+                .sort((a, b) => b.at - a.at)
+                .map(({ token, meta, at }) => ({
+                  id: hashOf(token),
+                  userAgent: meta?.userAgent ?? '',
+                  method: meta?.method ?? '',
+                  created: new Date(meta?.created ?? at).toISOString(),
+                  lastUsed: new Date(at).toISOString(),
+                })),
+            })
+          if (method === 'DELETE' && sub === undefined) {
+            endSessions(target.id)
+            book.record('sessions_ended', {
+              actor: me.id,
+              user: target.id,
+              username: target.username,
+              detail: { by: 'admin', count: mine.length },
+            })
+            return j({ ended: mine.length })
+          }
+          if (method === 'DELETE' && sub !== undefined) {
+            const token = mine.find((x) => hashOf(x) === sub)
+            if (!token) throw new HttpError(404, 'not_found', '没有这个会话')
+            sessions.delete(token)
+            endedWhy.set(token, 'signed_out_elsewhere')
+            book.record('sessions_ended', {
+              actor: me.id,
+              user: target.id,
+              username: target.username,
+              detail: { by: 'admin', count: 1 },
+            })
+            return { status: 204 }
+          }
+        }
+        if (kind === 'identities') {
+          if (method === 'GET' && sub === undefined)
+            return j({
+              identities: target.identities.map((i) => ({
+                id: i.id,
+                provider: i.providerSlug,
+                slug: i.providerSlug,
+                kind: 'oidc',
+                label: i.label,
+                created: i.created,
+              })),
+            })
+          if (method === 'DELETE' && sub !== undefined) {
+            const at = target.identities.findIndex((i) => i.id === sub)
+            if (at < 0) throw new HttpError(404, 'not_found', '没有这个已连接的账号')
+            if (target.identities.length === 1 && target.passwordHash === undefined && target.passkeys.length === 0)
+              throw new HttpError(409, 'conflict', '这是这个人唯一的登录方式，需要先有密码或 passkey')
+            book.record('identity_unlinked', {
+              actor: me.id,
+              user: target.id,
+              detail: { provider: target.identities[at].providerSlug, by: 'admin' },
+            })
+            target.identities.splice(at, 1)
+            return { status: 204 }
+          }
+        }
+      }
       if (user && method === 'PATCH') return j(patchUser(me, decodeURIComponent(user[1]), body))
       if (user && method === 'DELETE') return j(manage.deleteUser(me, decodeURIComponent(user[1]), body))
       const userKeys = /^\/users\/([^/]+)\/passkeys(?:\/([^/]+))?$/.exec(path)
@@ -4853,6 +5019,10 @@ export function createMockServer(options: MockOptions = {}) {
     spaceIds: () => [...spaces.keys()],
     peekDraft: (userId: string, id: string, space = 'default') => spaces.get(space)?.store.peekDraft(userId, id),
     userId: (username: string) => [...users.values()].find((u) => u.username === username)?.id,
+    // A scene for the tests: an account of an outside provider the person connected.
+    addIdentity: (userId: string, i: { id: string; label: string; providerSlug: string }) => {
+      users.get(userId)?.identities.push({ ...i, created: rfc3339(now()), sub: `sub-${i.id}` })
+    },
     // Views of a folder as written by hand in space.yml: served as "@n" until a write names them.
     // What GET .../types says to managers about settings files that could not be used.
     // Mock only: an MCP client sent this person to the authorization page; the id is what the consent page's address carries.
