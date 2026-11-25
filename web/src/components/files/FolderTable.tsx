@@ -304,7 +304,13 @@ export function PhoneRows({
                   <TagChip key={tag} tag={tag} />
                 ))}
                 {r.page.source.map((s) => (
-                  <span key={s} className="rounded-full border px-2 py-0.5 text-xs">
+                  // Cut, whole on hover: a long address must not widen the row past the screen.
+                  <span
+                    key={s}
+                    data-slot="source-chip"
+                    title={s}
+                    className="inline-block max-w-full min-w-0 truncate rounded-full border px-2 py-0.5 text-xs"
+                  >
                     {s}
                   </span>
                 ))}

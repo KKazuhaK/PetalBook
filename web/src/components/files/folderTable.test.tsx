@@ -202,6 +202,11 @@ describe('on a phone', () => {
       expect(bravo.querySelector('time')).not.toBeNull()
       expect(bravo.textContent).toContain('x')
       expect(bravo.textContent).toContain('电影')
+      // A source chip is cut with an ellipsis rather than widen the row: a long address never scrolls the page sideways.
+      const chip = [...bravo.querySelectorAll('[data-slot="source-chip"]')].find((c) => c.textContent === '电影')!
+      expect(chip.className).toMatch(/\btruncate\b/)
+      expect(chip.className).toMatch(/\bmax-w-full\b/)
+      expect(chip.getAttribute('title')).toBe('电影')
       // The star is there, quiet, and the one button says what it holds.
       expect(bravo.querySelector('[data-slot="row-star"]')!.className).toMatch(/pointer-coarse:opacity-40/)
       const button = document.querySelector('[data-slot="filter-button"]')!
