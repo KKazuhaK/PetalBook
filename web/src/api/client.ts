@@ -1,6 +1,8 @@
 // Typed functions for every endpoint of docs/api.md.
 
 import { t } from '@/i18n'
+import { apiErrorText, type ErrorParams } from '@/i18n/apiErrors'
+import { formatBytes } from '@/lib/bytes'
 import { noteNetworkOk } from '@/lib/offline/status'
 import { forgetLastAccount } from '@/lib/lastAccount'
 
@@ -140,6 +142,9 @@ export class ApiError extends Error {
   readonly reason?: ReasonCode
   // The parsed answer, when it had a body: some refusals carry more than a code (the daily trial's `result`).
   readonly body?: unknown
+  // What the server said, in its own words (English, for API users). `message` is the text for people, in the language
+  // of the page, chosen by `code`; it is this only when the client has no text for the code.
+  readonly serverMessage?: string
   constructor(
     status: number,
     code: ErrorCode,
@@ -149,6 +154,7 @@ export class ApiError extends Error {
     draft?: PageDraft | null,
     reason?: ReasonCode,
     body?: unknown,
+    serverMessage?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -159,6 +165,32 @@ export class ApiError extends Error {
     this.draft = draft
     this.reason = reason
     this.body = body
+    this.serverMessage = serverMessage
+  }
+}
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+const count = (v: unknown): string | undefined => (typeof v === 'number' && Number.isFinite(v) ? String(v) : undefined)
+
+// What an error answer is about, written for people: the fields the server puts next to `error` (docs/api.md), and
+// Retry-After as a wait.
+export function errorParams(code: string, body: unknown, retryAfter: number | undefined): ErrorParams {
+  const b = (body ?? {}) as Record<string, unknown>
+  const bytes = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? formatBytes(v) : undefined)
+  const size = code === 'file_too_large'
+  return {
+    limit: size ? bytes(b.limit) : count(b.limit),
+    used: count(b.used),
+    size: bytes(b.size),
+    name: str(b.name),
+    provider: str(b.provider),
+    permission: str(b.permission),
+    header: str(b.header),
+    field: str(b.field),
+    quota: str(b.quota),
+    spaces: count(b.spaces),
+    accounts: count(b.accounts),
+    wait: retryAfter ? t.auth.wait(retryAfter) : undefined,
   }
 }
 
@@ -413,17 +445,21 @@ export async function request<T>(
         accessListeners.forEach((fn) => fn(space ? decodeURIComponent(space) : null, err.error === 'not_found'))
     }
     const retry = Number(res.headers.get('Retry-After'))
+    const wait = Number.isFinite(retry) && retry > 0 ? retry : undefined
+    // The text for people is by code; only a code the client has no text for shows what the server said.
+    const text = err.error ? apiErrorText(err.error, errorParams(err.error, json, wait), err.message) : undefined
     throw new ApiError(
       res.status,
       (err.error as ErrorCode) || 'unknown',
-      err.message || t.errors.requestFailed(res.status),
+      text || err.message || t.errors.requestFailed(res.status),
       err.current,
-      res.status === 429 && Number.isFinite(retry) && retry > 0 ? retry : undefined,
+      res.status === 429 && wait ? wait : undefined,
       err.draft,
       typeof err.error === 'string' && DAILY_CODES.has(err.error)
         ? reasonOf(err as { error: string; header?: unknown; field?: unknown })
         : undefined,
       json ?? undefined,
+      err.message,
     )
   }
   return json as T

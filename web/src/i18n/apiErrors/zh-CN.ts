@@ -1,0 +1,143 @@
+import type { ApiErrorTexts } from '../apiErrorsTypes.ts'
+
+// One text for each error code the server can send (errorCodes.json is the list). Where the server says what a refusal
+// is about, the text uses it.
+export const apiErrorsZhCN: ApiErrorTexts = {
+  // Any request.
+  invalid: '请求的内容不对，请检查后再试。',
+  not_found: '找不到要的内容，它可能已被删除或移走。',
+  forbidden: '没有权限这样做。',
+  conflict: '内容刚刚被别处改过了，请刷新后再试。',
+  exists: '已经有同名的了，请换一个名字。',
+  internal: '服务器出错了，请稍后再试。',
+  unauthenticated: '用户名或密码不对，或者登录已失效。',
+  unavailable: (p) =>
+    p.wait ? `暂时连不上，请 ${p.wait}后再试。你的内容没有丢。` : '暂时连不上，你的内容没有丢，请稍后再试。',
+  rate_limited: (p) => (p.wait ? `尝试次数太多，请 ${p.wait}后再试。` : '尝试次数太多，请稍后再试。'),
+  busy: '这一项正在被移动、恢复或清除，请稍后再试。',
+  request_failed: '请求没有成功。',
+  status: '对方返回了不能用的状态。',
+  no_text: '对方的回答里没有可显示的文字。',
+  answer_reveals_secret: '对方的回答里带着密钥，已被拒绝。',
+  not_cached: (p) =>
+    p.wait ? `这个空间的内容还不在服务器上，请 ${p.wait}后再试。` : '这个空间的内容还不在服务器上，请稍后再试。',
+  restoring: '这个空间正在恢复，请稍后再试。',
+
+  // Files and sizes.
+  file_too_large: (p) =>
+    p.name && p.size
+      ? `“${p.name}”（${p.size}）超过了单个文件的上限${p.limit ? ` ${p.limit}` : ''}。`
+      : `文件超过了单个文件的上限${p.limit ? ` ${p.limit}` : ''}。`,
+  space_full: '这个空间已满，放不下更多了。',
+  exports_full: '导出文件占满了可用的空间，请先删除一些，或等它们过期。',
+  offline_off: '这个组织没有开放离线副本。',
+  changes_expired: '离线记录的位置太旧了，请重新读取目录。',
+
+  // Spaces, members and groups.
+  space_disabled: '这个空间已被管理员停用。',
+  no_permission: '你在这个空间里的角色不允许这样做。',
+  personal_space: '个人空间只属于一个人，不能共享、转让或删除。',
+  last_owner: '空间至少要留一个所有者，请先让别人成为所有者。',
+  owner_required: '没有可以恢复的所有者，请指定一位。',
+  owner_not_allowed: '不能用这个所有者。',
+  user_not_found: '没有这个用户，或者这个用户已被停用。请检查用户名。',
+  user_disabled: '这个用户已被停用，不能拥有空间。',
+  heir_required: '这个人还拥有空间，请先指定接手的人。',
+  quota_exceeded: (p) =>
+    p.quota === 'spaces' && p.limit
+      ? `空间数量已达上限（最多 ${p.limit} 个${p.used ? `，已有 ${p.used} 个` : ''}）。`
+      : '已达到上限，不能再创建了。',
+  group_not_found: '没有这个组。',
+  group_in_use: (p) => `这个组还在使用${p.spaces ? `（${p.spaces} 个空间）` : ''}，请先移除它的用法。`,
+  group_limit: '组的数量已达上限。',
+  group_synced: '这个组的成员由登录服务同步，不能手动修改。',
+  group_not_synced: '这个组不是由登录服务同步的，不能这样设置。',
+  member_via_group: '这个人是通过组加入的，请在组里移除。',
+  default_tenant: '默认组织不能这样改。',
+  tenant_limit: '组织数量已达上限。',
+  tenant_not_empty: '这个组织里还有用户、空间、组、邀请或回收站里的内容，不能直接移走。',
+  tenants_off: '多组织功能没有打开。',
+  not_fixable: '这种问题不能在这里修复。',
+  remote_required: '这个空间需要先连接远程仓库。',
+  confirm_stale: '确认之后情况有变化，请重新确认。',
+
+  // Settings.
+  setting_locked: '这项设置被上一级锁定，不能修改。',
+  setting_restricted: '这项设置超出了上一级允许的范围。',
+  mail_not_configured: '还没有配置发信，所以不能这样做。',
+  mail_insecure: '发信连接没有加密，请换成加密的连接。',
+  mail_from_required: '请填写发件人地址。',
+  mail_needs_public_url: '邮件里的链接要指向公开地址，请用 --public-url 启动服务器。',
+  public_url_required: '登录服务需要公开地址，请用 --public-url 启动服务器。',
+  public_url_needed: '需要先设置服务器的公开地址（--public-url）。',
+  oidc_issuer_invalid: '登录服务的地址必须是 https。',
+  saml_metadata_invalid: '登录服务的元数据不能用。',
+  saml_needs_https: 'SAML 需要 https 的公开地址。',
+  legacy_callback_in_use: '另一个登录服务正在使用旧的回调地址。',
+  provider_issuer_in_use: '已经有一个登录服务用了这个地址。',
+  auto_create_needs_org: '自动创建账号需要先指定组织。',
+  local_admin_required: '要先有一个能用密码登录的管理员，才能这样设置。',
+  sso_only_with_registration: '关闭密码登录后没人能完成注册，请先关闭开放注册。',
+  captcha_failed: '人机验证没有通过，请再试一次。',
+  captcha_needs_public_url: '第三方验证码按公开地址校验，请用 --public-url 启动服务器。',
+  captcha_secret_required: '请填写验证码服务的密钥。',
+  captcha_site_key_required: '请填写验证码服务的站点密钥。',
+
+  // Signing in and accounts.
+  local_login_refused: '这个账号不能用密码登录，请通过登录服务进入。',
+  registration_closed: '现在不开放注册。',
+  password_reset_off: '没有开放重设密码。',
+  email_domain_not_allowed: '这个邮箱的域名不在允许的范围内。',
+  email_unverified: '这个邮箱还没有验证。',
+  email_verified: '这个邮箱已经验证过了。',
+  terms_required: '请先同意服务条款。',
+  passkey_required: '这个账号必须先用通行密钥登录。',
+  passkey_failed: '通行密钥验证没有通过。',
+  passkey_unavailable: '这个账号没有可用的通行密钥，不能要求它。',
+  passkey_requirement_unsatisfiable: '有人还没有通行密钥，现在不能要求所有人使用。',
+  recent_login_required: '请重新登录后再试：这一步要求最近 10 分钟内登录过。',
+  too_many_passkeys: '通行密钥数量已达上限。',
+  token_limit: '你正在使用的令牌太多了，请先撤销一个。',
+  token_expired: '这个令牌已过期。',
+  token_invalid: '这不是本服务器签发的令牌。',
+  token_revoked: '这个授权已被撤销。',
+  token_owner_disabled: '这个授权所属的账号已被停用。',
+  token_scope: '这个令牌的范围不包括这里。',
+  tokens_off: '管理员已关闭 API 令牌。',
+
+  // Connections and repositories.
+  provider_not_configured: '服务器还没有配置这个平台。',
+  not_connected: '你还没有连接这个平台的账号，请先到设置里连接。',
+  provider_refused: (p) => `${p.provider ?? '这个平台'}拒绝了请求，请检查账号的权限。`,
+  provider_error: (p) => `${p.provider ?? '这个平台'}出错了，请稍后再试。`,
+  provider_in_use: (p) =>
+    `还有账号在通过这个平台登录或连接${p.accounts ? `（${p.accounts} 个账号）` : ''}，请先处理它们。`,
+  provider_limit: '这种平台的数量已达上限。',
+  name_taken: '这个名字已经被占用了，请换一个。',
+  push_failed: '没能把内容推送到仓库，空间没有创建。',
+  repo_not_in_installation: '这个仓库不在已安装的应用范围内，请在平台上把它加进去。',
+  app_not_installed: '这个应用还没有安装到该账号上，请先安装。',
+  app_missing_permission: (p) => `应用缺少权限${p.permission ? `“${p.permission}”` : ''}，请在平台上更新应用的权限。`,
+  app_rejected: '平台不接受这个应用的信息，请检查后再试。',
+  client_rejected: '平台拒绝了这次授权。',
+  key_invalid: '这不是有效的私钥。',
+  connection_expired: '你和这个平台的连接已失效，请重新连接。',
+  connection_missing: '这个连接已经不存在了。',
+  installation_gone: '应用已从该账号上卸载。',
+
+  // The daily text.
+  bad_language: '这不是有效的语言标记。',
+  api_not_found: '没有这个接口。',
+  builtin: '内置接口的这一项是固定的，不能改。',
+  header_reenter: (p) => `请重新填写请求头${p.header ? ` ${p.header}` : ''}的值：地址变了，旧的值不会被带过去。`,
+  header_missing: (p) => `请求头${p.header ? ` ${p.header}` : ''}还没有值。`,
+  not_json: '对方的回答不是 JSON。',
+  too_large: '回答太大了。',
+  path_error: (p) => `${p.field ? `“${p.field}”的` : ''}取值路径不对。`,
+  path_reveals_secret: (p) => `${p.field ? `“${p.field}”的` : ''}取值路径会把密钥显示出来，已被拒绝。`,
+  link_uses_header: '链接不能用带请求头的接口。',
+  skip_too_large: '要跳过的内容太多了。',
+
+  // Not sent by the server today; kept for the pages that name it.
+  capability_off: '这个组织没有开通这项功能。',
+}
