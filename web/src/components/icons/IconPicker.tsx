@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { isIconColor } from '@/lib/icons/colors'
 import { noteRecent } from '@/lib/icons/recent'
+import { firstGrapheme, isIconName } from '@/lib/icons/useIcons'
 import { t } from '@/i18n'
 import { PageIcon } from './PageIcon'
 
@@ -101,8 +102,9 @@ function PickerForm({
       <label className="flex items-center gap-2 text-sm">
         <span className="shrink-0 text-muted-foreground">{t.icons.emoji}</span>
         <input
-          value={/^[a-z][a-z0-9-]*$/.test(draft.icon) ? '' : draft.icon}
-          onChange={(e) => setDraft({ ...draft, icon: e.target.value.trim().slice(0, 16) })}
+          value={isIconName(draft.icon) ? '' : draft.icon}
+          // One emoji, cut where a person sees one character end: an emoji with its skin tone, a flag, a family.
+          onChange={(e) => setDraft({ ...draft, icon: firstGrapheme(e.target.value.trim()) })}
           placeholder={t.icons.emojiPlaceholder}
           aria-label={t.icons.emoji}
           className="h-10 min-w-0 flex-1 rounded-lg border bg-transparent px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"

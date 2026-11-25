@@ -7,6 +7,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
 import { PageIcon } from './PageIcon'
 import IconPickerBody from './IconPickerBody'
+import { IconPicker } from './IconPicker'
 import { ALL_NAMES } from '@/lib/icons/lucideAll'
 import { ICON_COLORS } from '@/lib/icons/colors'
 import { readRecent } from '@/lib/icons/recent'
@@ -92,6 +93,35 @@ describe('a name that is a key of every object', () => {
     const server = readFileSync('../internal/icons/lucide.txt', 'utf8').trim().split('\n')
     expect(server, 'run `node scripts/lucide-names.mjs > ../internal/icons/lucide.txt`').toEqual(ALL_NAMES)
     expect(server).not.toContain('constructor')
+  })
+})
+
+describe('the emoji of the picker', () => {
+  it('keeps one emoji whole, cut by grapheme and not by UTF-16 unit', async () => {
+    const saved: string[] = []
+    m = await mount(
+      <IconPicker
+        open
+        onOpenChange={() => {}}
+        description=""
+        icon=""
+        color=""
+        onSave={async (icon) => void saved.push(icon)}
+      />,
+    )
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.icons.emoji}"]`)!
+    // A family is 11 UTF-16 units; 15 keycaps and a book cut at 16 would end in half a surrogate pair.
+    for (const [typed, want] of [
+      ['\u{1F469}\u{1F3FD}\u200d\u{1F4BB}x', '\u{1F469}\u{1F3FD}\u200d\u{1F4BB}'],
+      ['1\ufe0f\u20e3'.repeat(5) + '\u{1F4DA}', '1\ufe0f\u20e3'],
+      [
+        '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}\u200d\u{1F466}\u{1F4DA}',
+        '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}\u200d\u{1F466}',
+      ],
+    ]) {
+      await type(input, typed)
+      expect(input.value).toBe(want)
+    }
   })
 })
 
