@@ -568,7 +568,8 @@ type CreateParams struct {
 	Role     string // admin or member
 	Password string // "" for an account that signs in through an identity only
 	Identity *IdentityParams
-	InviteID string // the invite this account uses up
+	InviteID string   // the invite this account uses up
+	Groups   []string // local groups of the tenant the account joins, from the invite
 	// Setup makes this the first account: it fails with ErrExists if any
 	// account exists, even when two setups run at once. FirstOK is the
 	// command-line form: it also records that an account exists, but never refuses.
@@ -746,6 +747,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			}
 			if pwHash != "" {
 				if err := store.SetPasswordHash(ctx, q, cand.ID, pwHash, s.now()); err != nil {
+					return err
+				}
+			}
+			if len(p.Groups) > 0 {
+				if err := s.joinInvitedGroups(ctx, q, cand, p.Groups); err != nil {
 					return err
 				}
 			}

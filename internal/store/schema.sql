@@ -202,7 +202,10 @@ CREATE TABLE invites (
   used_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
   username   TEXT COLLATE "C" NOT NULL DEFAULT '',
   name       TEXT COLLATE "C" NOT NULL DEFAULT '',
-  email      TEXT COLLATE "C" NOT NULL DEFAULT ''
+  email      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  -- The ids of the local groups of the tenant the account joins when the invite
+  -- is accepted (a batch of new people by file names them), comma separated.
+  groups     TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE INDEX invites_expires ON invites(expires);
 CREATE INDEX invites_tenant ON invites(tenant_id);

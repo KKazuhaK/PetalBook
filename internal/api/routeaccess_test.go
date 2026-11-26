@@ -63,6 +63,12 @@ var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/permissions":              {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// A batch of people by file, and the picker's search.
+	"GET /api/people":                              {"ok", "ok", "ok", "403 token_scope"},
+	"POST /api/admin/members/batch":                {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/groups/{group}/members/batch": {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/spaces/{space}/members/batch":       {"ok", "ok", "403 no_permission", "403 token_scope"},
+
 	// 3.6 part 4: the limits sheet. Reading is the tenant's administrators' too.
 	"GET /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"PUT /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},

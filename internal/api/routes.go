@@ -162,6 +162,7 @@ var routeTable = []route{
 	{"POST", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentDecide},
 
 	{"GET", "/api/groups", signedIn, true, false, false, (*server).findGroups},
+	{"GET", "/api/people", signedIn, true, false, false, (*server).findPeople},
 	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
 
 	{"GET", "/api/users", needs(authz.TenantUsersRead), true, false, false, (*server).listUsers},
@@ -176,6 +177,7 @@ var routeTable = []route{
 	{"DELETE", "/api/users/{id}/identities/{identity}", needs(authz.TenantUsersManage), true, false, false, (*server).disconnectUserIdentity},
 	{"DELETE", "/api/users/{id}", needs(authz.TenantUsersDelete), true, false, false, (*server).adminDeleteUser},
 	{"POST", "/api/invites", needs(authz.TenantInvitesManage), true, false, false, (*server).createInvite},
+	{"POST", "/api/admin/members/batch", needs(authz.TenantInvitesManage), true, false, false, (*server).adminAddMembersBatch},
 	{"GET", "/api/invites", needs(authz.TenantInvitesManage), true, false, false, (*server).listInvites},
 	{"DELETE", "/api/invites/{id}", needs(authz.TenantInvitesManage), true, false, false, (*server).deleteInvite},
 
@@ -240,6 +242,7 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminDeleteGroup},
 	{"GET", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGroupMembers},
 	{"POST", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsManage), true, false, false, (*server).adminAddGroupMembers},
+	{"POST", "/api/admin/groups/{group}/members/batch", needs(authz.TenantGroupsManage), true, false, false, (*server).adminAddGroupMembersBatch},
 	{"DELETE", "/api/admin/groups/{group}/members/{user}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminRemoveGroupMember},
 	{"GET", "/api/admin/groups/{group}/spaces", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGroupSpaces},
 	{"GET", "/api/admin/tenancy", needs(authz.SiteTenancyManage), true, false, false, (*server).adminGetTenancy},
@@ -348,6 +351,7 @@ var routeTable = []route{
 	{"PATCH", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).patchSpaceGroup},
 	{"DELETE", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).deleteSpaceGroup},
 	{"POST", "/api/spaces/{space}/members", inSpace(perm.Members), true, false, false, (*server).addMember},
+	{"POST", "/api/spaces/{space}/members/batch", inSpace(perm.Members), true, false, false, (*server).addMembersBatch},
 	{"PATCH", "/api/spaces/{space}/members/{user}", inSpace(perm.Members), true, false, false, (*server).patchMember},
 	{"DELETE", "/api/spaces/{space}/members/{user}", inSpaceOrSelf(perm.Members), true, false, false, (*server).removeMember},
 
