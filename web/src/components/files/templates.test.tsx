@@ -131,7 +131,7 @@ describe('a new page', () => {
     expect(posts()[0]).toEqual({ folder: '归档', body: '', tz, template: '会议' })
   })
 
-  it('is a quick note in the inbox: no question, the server uses the quick note default', async () => {
+  it('is a quick note in the inbox: no question, and the request names no template (the server applies the quick note default)', async () => {
     const inbox = 'Inbox'
     await open(inbox, (s) => {
       seed(s)

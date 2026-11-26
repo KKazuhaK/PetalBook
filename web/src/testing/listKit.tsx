@@ -1,4 +1,4 @@
-// Shared pieces for the tests of the listings of a folder or a tag: the routes, a way to talk to the mock server
+// Shared pieces for the tests of the listings of a folder or a tag: the routes, a way to talk to the server
 // behind the app's back, and a typed folder with a few pages.
 
 import { Route, Routes } from 'react-router'
