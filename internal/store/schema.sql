@@ -320,71 +320,49 @@ CREATE INDEX drafts_due ON drafts(held, due);
 -- Deleting a person deletes their drafts (the foreign key's cascade).
 CREATE INDEX drafts_user ON drafts(user_id);
 
--- The remote repository a space follows, and its credential. A row with an
--- empty url is a space that only has an SSH key pair so far. Tokens and private
--- keys are stored encrypted (see the secret package). provider is the provider
--- a remote goes through: 'git' for a plain address with a key or a token,
--- otherwise a connection's provider.
+-- The remote repositories of a space, one row per role, and their credentials.
+-- role 'content' is the repository the space follows (a row with an empty url
+-- is a space that only has an SSH key pair so far); role 'assets' is its
+-- attachment repository (3.1). Tokens and private keys are stored encrypted
+-- (see the secret package). provider is the provider a remote goes through:
+-- 'git' for a plain address with a key or a token, otherwise a connection's
+-- provider; via, installation_id, repo_id and cred_user_id say which of that
+-- provider's credentials syncs it (via 'app': the installation; via 'user':
+-- the person whose link it is). target_id is reserved for the storage target
+-- (3.6) that made the repository. used (role 'assets'): 1 once an attachment
+-- has gone to it, 2 once the space's own attachments were moved into it (its
+-- repository ignores assets/ from then on). job_id (role 'assets'): the last
+-- move of the space's attachments into it, a row of jobs (pruned with it).
 CREATE TABLE remotes (
-  space_id           TEXT COLLATE "C" PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
-  url                TEXT COLLATE "C" NOT NULL DEFAULT '',
-  branch             TEXT COLLATE "C" NOT NULL DEFAULT 'main',
-  cred_type          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  username           TEXT COLLATE "C" NOT NULL DEFAULT '',
-  token_enc          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  privkey_enc        TEXT COLLATE "C" NOT NULL DEFAULT '',
-  pubkey             TEXT COLLATE "C" NOT NULL DEFAULT '',
-  last_good          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  state              TEXT COLLATE "C" NOT NULL DEFAULT 'local',
-  error_kind         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  last_error         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  remote_tip         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  last_sync          BIGINT NOT NULL DEFAULT 0,
-  updated            BIGINT NOT NULL,
-  provider           TEXT COLLATE "C" NOT NULL DEFAULT 'git',
-  gh_via             TEXT COLLATE "C" NOT NULL DEFAULT '',
-  gh_installation_id BIGINT NOT NULL DEFAULT 0,
-  gh_repo_id         BIGINT NOT NULL DEFAULT 0,
-  gh_user_id         TEXT COLLATE "C" NOT NULL DEFAULT ''
+  space_id        TEXT COLLATE "C" NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+  role            TEXT COLLATE "C" NOT NULL CHECK (role IN ('content', 'assets')),
+  url             TEXT COLLATE "C" NOT NULL DEFAULT '',
+  branch          TEXT COLLATE "C" NOT NULL DEFAULT 'main',
+  cred_type       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  username        TEXT COLLATE "C" NOT NULL DEFAULT '',
+  token_enc       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  privkey_enc     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  pubkey          TEXT COLLATE "C" NOT NULL DEFAULT '',
+  last_good       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  state           TEXT COLLATE "C" NOT NULL DEFAULT 'local',
+  error_kind      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  last_error      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  remote_tip      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  last_sync       BIGINT NOT NULL DEFAULT 0,
+  updated         BIGINT NOT NULL,
+  provider        TEXT COLLATE "C" NOT NULL DEFAULT 'git',
+  via             TEXT COLLATE "C" NOT NULL DEFAULT '',
+  installation_id BIGINT NOT NULL DEFAULT 0,
+  repo_id         BIGINT NOT NULL DEFAULT 0,
+  cred_user_id    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  target_id       TEXT COLLATE "C" NOT NULL DEFAULT '',
+  used            BIGINT NOT NULL DEFAULT 0,
+  job_id          TEXT COLLATE "C" NOT NULL DEFAULT '',
+  PRIMARY KEY (space_id, role)
 );
-CREATE INDEX remotes_github_installation ON remotes(gh_installation_id);
-CREATE INDEX remotes_github_user ON remotes(gh_user_id);
-
--- The attachment repository of a space (3.1): a second remote with the same
--- columns as the space's own, a mark for "an attachment has gone to it" and the
--- progress of moving the attachments of the space into it.
-CREATE TABLE asset_remotes (
-  space_id           TEXT COLLATE "C" PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
-  url                TEXT COLLATE "C" NOT NULL DEFAULT '',
-  branch             TEXT COLLATE "C" NOT NULL DEFAULT 'main',
-  cred_type          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  username           TEXT COLLATE "C" NOT NULL DEFAULT '',
-  token_enc          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  privkey_enc        TEXT COLLATE "C" NOT NULL DEFAULT '',
-  pubkey             TEXT COLLATE "C" NOT NULL DEFAULT '',
-  last_good          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  state              TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
-  error_kind         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  last_error         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  remote_tip         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  last_sync          BIGINT NOT NULL DEFAULT 0,
-  updated            BIGINT NOT NULL,
-  provider           TEXT COLLATE "C" NOT NULL DEFAULT 'git',
-  gh_via             TEXT COLLATE "C" NOT NULL DEFAULT '',
-  gh_installation_id BIGINT NOT NULL DEFAULT 0,
-  gh_repo_id         BIGINT NOT NULL DEFAULT 0,
-  gh_user_id         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  used               BIGINT NOT NULL DEFAULT 0,
-  move_state         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  move_files         BIGINT NOT NULL DEFAULT 0,
-  move_files_done    BIGINT NOT NULL DEFAULT 0,
-  move_bytes         BIGINT NOT NULL DEFAULT 0,
-  move_bytes_done    BIGINT NOT NULL DEFAULT 0,
-  move_error         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  move_updated       BIGINT NOT NULL DEFAULT 0
-);
--- The few attachment repositories a move is under way for.
-CREATE INDEX asset_remotes_move ON asset_remotes(move_state) WHERE move_state <> '';
+-- "The spaces using a connection": one index scan for both roles.
+CREATE INDEX remotes_installation ON remotes(installation_id) WHERE installation_id <> 0;
+CREATE INDEX remotes_cred_user ON remotes(cred_user_id) WHERE cred_user_id <> '';
 
 -- Server-wide records as text by key (most are JSON): what is not a setting.
 -- The daily text's interfaces and providers, the captcha's site key, the

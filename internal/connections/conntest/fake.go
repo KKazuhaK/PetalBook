@@ -215,7 +215,7 @@ func (f *Fake) RecordLeftover(_ context.Context, userID string, repo *connection
 func (f *Fake) GitToken(_ context.Context, r *store.Remote, _ bool) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.conns[r.GHUserID] == nil {
+	if f.conns[r.CredUserID] == nil {
 		return "", &gitstore.CredentialError{Code: connections.CodeConnectionMissing, Msg: "The person is not connected."}
 	}
 	return "fake-token", nil

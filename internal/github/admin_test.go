@@ -115,11 +115,11 @@ func TestAnotherAppIsRefusedWhileInUse(t *testing.T) {
 			t.Fatalf("another App id: %v", err)
 		}
 		// Deleting is refused while a space syncs through the App; connections go with it otherwise.
-		h.space("S1", store.Remote{GHVia: "user", GHUserID: "U1", GHRepoID: 5})
+		h.space("S1", store.Remote{Via: "user", CredUserID: "U1", RepoID: 5})
 		if err := h.svc.Delete(ctx); code(err) != "provider_in_use" {
 			t.Fatalf("%v", err)
 		}
-		if err := store.DeleteRemote(ctx, st.Q(), "S1"); err != nil {
+		if err := store.DeleteRemote(ctx, st.Q(), "S1", store.RoleContent); err != nil {
 			t.Fatal(err)
 		}
 		if err := h.svc.Delete(ctx); err != nil {
@@ -208,7 +208,7 @@ func TestInstallationsListAndSharing(t *testing.T) {
 		}
 		// A space counts toward its installation.
 		h.user("U1", "kazuha")
-		h.space("S1", store.Remote{GHVia: "app", GHInstallationID: orgInst, GHRepoID: 1})
+		h.space("S1", store.Remote{Via: "app", InstallationID: orgInst, RepoID: 1})
 		it, err = h.svc.SetTenants(ctx, orgInst, nil)
 		if err != nil || len(it.Tenants) != 0 || it.Spaces != 1 {
 			t.Fatalf("%+v %v", it, err)
@@ -224,7 +224,7 @@ func TestRemovingTheClientIDCountsOnlyConnectedUsers(t *testing.T) {
 		h := newHarness(t, st)
 		h.configure()
 		h.user("U1", "kazuha")
-		h.space("S1", store.Remote{GHVia: "app", GHInstallationID: 7, GHRepoID: 5})
+		h.space("S1", store.Remote{Via: "app", InstallationID: 7, RepoID: 5})
 		empty := ""
 		v, err := h.svc.Save(ctx, github.SaveRequest{ClientID: &empty})
 		if err != nil {
@@ -309,8 +309,8 @@ func TestAPermissionRefusalRechecksTheAppByItself(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		w := newWorld(t, st)
 		repo := w.f.AddRepo("kazuhahub", "wiki", true)
-		w.space("S1", store.Remote{GHVia: "app", GHInstallationID: w.kazuhahub, GHRepoID: repo.ID})
-		rem, _ := store.GetRemote(ctx, st.Q(), "S1")
+		w.space("S1", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
+		rem, _ := store.GetRemote(ctx, st.Q(), "S1", store.RoleContent)
 		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
 		if v, _ := w.svc.View(ctx); len(v.Missing) != 0 {
 			t.Fatalf("%+v", v)

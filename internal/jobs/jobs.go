@@ -17,7 +17,8 @@
 // At Start the runner reads the active jobs once and asks each one's kind what
 // a restart makes of it (Recover): taken up again, or ended interrupted,
 // failed or done. Close stops the running jobs through their contexts and
-// waits for them, within a bound.
+// waits for them, within a bound; a stopped job gets its kind's restart
+// outcome then (one that resumes is queued again, not ended interrupted).
 //
 // runner and lease_until are written for a standby server's leases (phase 5)
 // but not read yet: today a start recovers every active row, as the single
@@ -81,6 +82,8 @@ type Handler interface {
 	// (the server is stopping) or cancelled.
 	Run(ctx context.Context, j *store.Job, p *Progress) error
 	// Recover says what a restart makes of a job that was queued or running.
+	// It is also asked when Close stops a running job: Resume queues it again
+	// for the next start, any other outcome ends it so at once.
 	Recover(ctx context.Context, j *store.Job) Outcome
 }
 
@@ -94,6 +97,27 @@ type Queuer interface {
 // audit row and notice of its end), with the job as it ended.
 type Ender interface {
 	Ended(ctx context.Context, j *store.Job)
+}
+
+// QueueEnder is a Handler told when one of its jobs ended in the queue without
+// running (cancelled there, broken before it could start, or ended there by a
+// restart's outcome), with the job as it ended: what the kind keeps for its
+// queued jobs can go.
+type QueueEnder interface {
+	EndedInQueue(ctx context.Context, j *store.Job)
+}
+
+// endedInQueue tells the job's kind that it ended in the queue.
+func (r *Runner) endedInQueue(j *store.Job, state string) {
+	h, ok := r.handler(j.Kind).(QueueEnder)
+	if !ok {
+		return
+	}
+	end := *j
+	end.State = state
+	ctx, cancel := context.WithTimeout(context.Background(), endedWait)
+	defer cancel()
+	r.guard(&end, "EndedInQueue", func() { h.EndedInQueue(ctx, &end) })
 }
 
 // Options configure a Runner.
@@ -302,6 +326,9 @@ func (r *Runner) settle(j *store.Job, out Outcome) {
 	case out == Resume:
 	default:
 		err = store.SetJobState(context.Background(), q, j.ID, j.State, string(out), now)
+		if err == nil && j.State == store.JobQueued {
+			r.endedInQueue(j, string(out))
+		}
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		r.log.Warn("could not record what a stop left of a job", "job", j.ID, "kind", j.Kind, "outcome", out, "error", err)
@@ -391,8 +418,11 @@ func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
 		// Applied when it starts; and should the claim lose to this, the job
 		// ends cancelled in the queue.
 		c.cancel = true
+		job := c.job
 		r.mu.Unlock()
-		if err := store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now()); err == nil {
+			r.endedInQueue(job, store.JobCancelled) // the claim lost: it never runs
+		} else if !errors.Is(err, store.ErrNotFound) {
 			r.log.Warn("could not cancel a job being claimed", "job", id, "error", err)
 		}
 		return nil
@@ -406,6 +436,9 @@ func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
 		return ErrEnded
 	}
 	err = store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now())
+	if err == nil {
+		r.endedInQueue(j, store.JobCancelled)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		if j, gerr := store.GetJob(ctx, r.opt.Store.Q(), sc, id); gerr == nil && store.JobEnded(j.State) {
 			return ErrEnded
@@ -576,7 +609,10 @@ func (r *Runner) dispatch() error {
 func (r *Runner) failQueued(j *store.Job) {
 	end := *j
 	end.State, end.Error = store.JobFailed, "an internal error stopped the job"
-	if err := store.EndJob(context.Background(), r.opt.Store.Q(), end, store.JobQueued, r.opt.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+	err := store.EndJob(context.Background(), r.opt.Store.Q(), end, store.JobQueued, r.opt.Now())
+	if err == nil {
+		r.endedInQueue(j, store.JobFailed)
+	} else if !errors.Is(err, store.ErrNotFound) {
 		r.log.Warn("could not record that a job broke", "job", j.ID, "error", err)
 	}
 }
@@ -673,8 +709,27 @@ func (r *Runner) run(ctx context.Context, h Handler, j *store.Job, p *Progress) 
 		end.State = store.JobFailed
 	case err != nil && ctx.Err() != nil && p.cancelled:
 		end.State = store.JobCancelled
-	case err != nil && ctx.Err() != nil:
+	case err != nil && ctx.Err() != nil && r.ctx.Err() != nil:
+		// Close stopped it: what a restart makes of it, now (as Close does for
+		// the jobs it had queued). A kind that resumes is queued again and
+		// taken up by the next start; the others end as their kind says.
 		end.State = store.JobInterrupted
+		p.mu.Unlock()
+		out := r.recoverOf(context.WithoutCancel(ctx), h, &end)
+		p.mu.Lock()
+		if out == Resume {
+			p.mu.Unlock()
+			if werr := r.write(&end, store.JobQueued, func() error {
+				return store.RequeueJob(context.Background(), r.opt.Store.Q(), j.ID, r.opt.Now())
+			}); werr != nil {
+				r.log.Error("a job stopped by the close could not be queued again; the next start recovers it", "job", j.ID, "kind", j.Kind, "error", werr)
+			}
+			r.mu.Lock()
+			delete(r.live, j.ID)
+			r.mu.Unlock()
+			return // it has not ended: no Ended
+		}
+		end.State = string(out)
 	case err != nil:
 		end.State, end.Error = store.JobFailed, err.Error()
 	case p.broken:

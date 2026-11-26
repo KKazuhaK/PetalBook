@@ -2955,6 +2955,11 @@ is never rewritten. A failure before the switch changes nothing in the space
 repository stay there, and the next `POST …/move` goes on from them). Only one
 move at a time: `409 conflict` while one runs, and also for `PUT` or `DELETE`
 of the attachment repository. `200` with nothing to do when `assets/` is empty.
+The move is a job of the kind `assets.move` (`GET /api/admin/jobs`): it waits
+for its turn with the tenant's other storage work (one at a time per
+organisation, two on the server; `copying` while it waits), and a stop of the
+server, or a crash, leaves it to go on at the next start. `503 unavailable`
+while the server is stopping: nothing is added.
 
 #### `DELETE /api/spaces/{space}/remote/assets`
 

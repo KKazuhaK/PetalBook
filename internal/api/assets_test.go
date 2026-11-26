@@ -149,3 +149,25 @@ func TestNotCachedAttachmentAnswers503WithRetryAfter(t *testing.T) {
 		}
 	})
 }
+
+// A move asked for while the server stops: 503 unavailable, as for a bulk
+// action, and nothing is recorded.
+func TestAMoveAskedForWhileTheServerStopsAnswersUnavailable(t *testing.T) {
+	t.Parallel()
+	n := &netSwitch{}
+	eachAccounts(t, storageOpts(n, nil), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		remote := filterRemote(t)
+		pushVersions(t, remote, 1)
+		sid := admin.do("POST", "/api/spaces", map[string]any{"name": "Followed", "remote": connectBody("file://" + remote)}).want(t, 201, "").body["id"].(string)
+		base := "/api/spaces/" + sid
+		pid := admin.do("GET", base+"/pages", nil).body["items"].([]any)[0].(map[string]any)["id"].(string)
+		admin.upload(base, pid, "old.txt", []byte("OLD")).want(t, 201, "")
+		admin.do("PUT", base+"/remote/assets", connectBody("file://"+filterRemote(t))).want(t, 200, "")
+		a.h.Close() // the jobs runner stops with it
+		admin.do("POST", base+"/remote/assets/move", nil).want(t, 503, "unavailable")
+		if g := admin.do("GET", base+"/remote/assets", nil).want(t, 200, ""); g.body["move"] != nil {
+			t.Fatal(g.raw)
+		}
+	})
+}

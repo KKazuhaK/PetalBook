@@ -163,8 +163,11 @@ func PlanUserDeletion(ctx context.Context, q Q, sc Scope, userID, heir string, t
 	if err := er.Err(); err != nil {
 		return nil, err
 	}
+	// Either role: a space whose attachment repository syncs through the
+	// person's link stops syncing with them as one whose own repository does
+	// (remotes_cred_user).
 	cred := map[string]bool{}
-	cr, err := q.Query(ctx, `SELECT space_id FROM remotes WHERE cred_type = 'connection' AND gh_via = 'user' AND gh_user_id = ? AND `+inMine, userID, userID)
+	cr, err := q.Query(ctx, `SELECT DISTINCT space_id FROM remotes WHERE cred_user_id = ? AND cred_user_id <> '' AND cred_type = 'connection' AND via = 'user' AND `+inMine, userID, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -480,6 +480,54 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+// A kind that keeps something for its queued jobs is told when one ends in
+// the queue without running: cancelled there, or broken before it could start.
+func TestAJobThatEndsInTheQueueIsToldToItsKind(t *testing.T) {
+	t.Parallel()
+	f := newFix(t, storetest.Open(t, "sqlite"), Bulk, nil)
+	k := &queueEndKind{kind: f.k, got: make(chan *store.Job, 4)}
+	f.r.Register("test", k)
+	f.enqueue("Q", "")
+	if err := f.r.Cancel(context.Background(), store.AllTenants(), "Q"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case j := <-k.got:
+		if j.ID != "Q" || j.State != store.JobCancelled {
+			t.Fatalf("%+v", j)
+		}
+	default:
+		t.Fatal("the kind was not told")
+	}
+	k.broken = true
+	f.enqueue("B", "")
+	f.drain()
+	f.r.dispatch()
+	select {
+	case j := <-k.got:
+		if j.ID != "B" || j.State != store.JobFailed {
+			t.Fatalf("%+v", j)
+		}
+	default:
+		t.Fatal("the kind was not told of a job that broke in the queue")
+	}
+}
+
+type queueEndKind struct {
+	*kind
+	broken bool
+	got    chan *store.Job
+}
+
+func (k *queueEndKind) Class() Class {
+	if k.broken {
+		panic("broken")
+	}
+	return k.kind.Class()
+}
+
+func (k *queueEndKind) EndedInQueue(_ context.Context, j *store.Job) { k.got <- j }
+
 // Close stops the running jobs through their contexts and returns once they
 // have ended (interrupted, with what was done); the jobs it had queued get
 // their kind's outcome, and nothing is enqueued after it.
@@ -519,6 +567,48 @@ func TestCloseStopsTheJobsAndWaitsForThem(t *testing.T) {
 		t.Fatalf("an enqueue after Close: %v", err)
 	}
 	f.r.Close()
+}
+
+// A running job of a kind that resumes is queued again when Close stops it,
+// not ended (no Ended), and the next start runs it.
+func TestCloseQueuesAgainAJobWhoseKindResumes(t *testing.T) {
+	t.Parallel()
+	st := storetest.Open(t, "sqlite")
+	f := newFix(t, st, IO, nil)
+	started := make(chan struct{})
+	f.r.Register("slow", &stepKind{kind: f.k, run: func(ctx context.Context, p *Progress) error {
+		p.Step(1, 0)
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	f.r.Start()
+	if _, err := f.r.Enqueue(context.Background(), store.Job{ID: "M", TenantID: store.DefaultTenantID, Kind: "slow", LockKey: "space:S", Total: 2}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	f.r.Close()
+	if j := f.state("M"); j.State != store.JobQueued || j.Done != 1 {
+		t.Fatalf("%+v", j)
+	}
+	select {
+	case j := <-f.k.ended:
+		t.Fatalf("Ended was called for a job that goes on: %+v", j)
+	default:
+	}
+	// The next start takes it up.
+	g := newFix(t, st, IO, nil)
+	g.r.Register("slow", g.k)
+	g.r.Start()
+	close(g.k.gate("M"))
+	select {
+	case j := <-g.k.ended:
+		if j.ID != "M" || j.State != store.JobDone {
+			t.Fatalf("%+v", j)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the next start did not run it")
+	}
 }
 
 // A job that does not stop when asked holds Close up for StopWait at most.

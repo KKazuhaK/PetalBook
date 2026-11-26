@@ -263,8 +263,8 @@ func TestCreateASpaceWithAnOrganisationsNewRepository(t *testing.T) {
 			t.Fatalf("%s commits on the repository's main", got)
 		}
 		// The space follows it: the organisation's repository syncs with the installation's token.
-		row, err := store.GetRemote(ctx, st.Q(), in.ID)
-		if err != nil || row.CredType != "connection" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != repo.ID ||
+		row, err := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
+		if err != nil || row.CredType != "connection" || row.Via != "app" || row.InstallationID != e.kazuhub || row.RepoID != repo.ID ||
 			row.TokenEnc != "" || row.PrivKeyEnc != "" || row.URL != e.f.URL+"/kazuhahub/tang-notes.git" || row.State != "ok" || row.Branch != "main" {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -303,8 +303,8 @@ func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
-		if row.GHVia != "user" || row.GHUserID != "U1" || row.GHInstallationID != 0 {
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
+		if row.Via != "user" || row.CredUserID != "U1" || row.InstallationID != 0 {
 			t.Fatalf("%+v", row)
 		}
 		h, _ := e.m.Open(ctx, e.user, in.ID)
@@ -326,8 +326,8 @@ func TestCreateASpaceInTheUsersOwnAccount(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		row, _ = store.GetRemote(ctx, st.Q(), in2.ID)
-		if row.GHVia != "app" || row.GHInstallationID != inst {
+		row, _ = store.GetRemote(ctx, st.Q(), in2.ID, store.RoleContent)
+		if row.Via != "app" || row.InstallationID != inst {
 			t.Fatalf("%+v", row)
 		}
 	})
@@ -470,8 +470,8 @@ func TestSelectedRepositoriesInstallation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
-		if row.GHVia != "app" || row.GHInstallationID != sel {
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
+		if row.Via != "app" || row.InstallationID != sel {
 			t.Fatalf("%+v", row)
 		}
 		// Where the repository cannot be added: a 409 that names it, and no space.
@@ -637,7 +637,7 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 			t.Fatalf("%+v", v)
 		}
 		_ = tok
-		before, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		before, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
 		if before.TokenEnc == "" {
 			t.Fatal("no token stored")
 		}
@@ -649,8 +649,8 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 		if v.CredType != CredConnection || v.Connection == nil || v.Connection.Via != "app" || v.URL != e.f.URL+"/kazuhahub/wiki.git" || v.State != "ok" {
 			t.Fatalf("%+v", v)
 		}
-		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
-		if row.TokenEnc != "" || row.Username != "" || row.GHRepoID != repo.ID || row.GHInstallationID != e.kazuhub {
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
+		if row.TokenEnc != "" || row.Username != "" || row.RepoID != repo.ID || row.InstallationID != e.kazuhub {
 			t.Fatalf("the old token was kept: %+v", row)
 		}
 		// It syncs with the installation's token now.
@@ -665,8 +665,8 @@ func TestSwitchingASpaceToTheApp(t *testing.T) {
 		if v, err = e.m.Connect(ctx, h, ConnectRequest{URL: e.f.URL + "/kazuhahub/wiki.git", Branch: "main", CredType: CredToken, Token: userTok}); err != nil || v.CredType != CredToken {
 			t.Fatalf("%+v %v", v, err)
 		}
-		row, _ = store.GetRemote(ctx, st.Q(), in.ID)
-		if row.GHVia != "" || row.GHInstallationID != 0 || row.GHRepoID != 0 {
+		row, _ = store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
+		if row.Via != "" || row.InstallationID != 0 || row.RepoID != 0 {
 			t.Fatalf("%+v", row)
 		}
 		// A repository outside GitHub, or one the App does not reach, is refused.
@@ -944,8 +944,8 @@ func TestCreateASpaceWithAnAttachmentRepositoryOnGitHub(t *testing.T) {
 		abare := e.f.BareDir("kazuhahub/tang-notes-assets")
 		gitCmd(t, abare, "config", "uploadpack.allowFilter", "true")
 		gitCmd(t, abare, "config", "uploadpack.allowAnySHA1InWant", "true")
-		row, err := store.GetAssetRemote(ctx, st.Q(), in.ID)
-		if err != nil || row.CredType != "connection" || row.Provider != "github" || row.GHVia != "app" || row.GHInstallationID != e.kazuhub || row.GHRepoID != ar.ID ||
+		row, err := store.GetRemote(ctx, st.Q(), in.ID, store.RoleAssets)
+		if err != nil || row.CredType != "connection" || row.Provider != "github" || row.Via != "app" || row.InstallationID != e.kazuhub || row.RepoID != ar.ID ||
 			row.TokenEnc != "" || row.URL != e.f.URL+"/kazuhahub/tang-notes-assets.git" {
 			t.Fatalf("%+v %v", row, err)
 		}

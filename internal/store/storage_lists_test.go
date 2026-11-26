@@ -106,7 +106,7 @@ func TestUsageCountsWhereTheStorageLives(t *testing.T) {
 		consistent(t, st)
 
 		// The state of the remote is copied to the space, for the filter.
-		if err := store.UpdateRemoteStatus(ctx, q, "Sa", store.RemoteStatus{State: "offline"}, now); err != nil {
+		if err := store.UpdateRemoteStatus(ctx, q, "Sa", store.RoleContent, store.RemoteStatus{State: "offline"}, now); err != nil {
 			t.Fatal(err)
 		}
 		if r := spaceRow(t, st, "Sa"); r.RemoteState != "offline" {
@@ -149,7 +149,7 @@ func TestUsageCountsWhereTheStorageLives(t *testing.T) {
 		}
 
 		// The remote goes: the space lives on the server again and counts what it was last measured at.
-		if err := store.DeleteRemote(ctx, q, "Sa"); err != nil {
+		if err := store.DeleteRemote(ctx, q, "Sa", store.RoleContent); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ua", counters{spaces: 1, bytes: 1500, held: 1700, dormant: 1})
@@ -271,7 +271,7 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 		wantCounters(t, st, store.UsageUser, "Ub", counters{spaces: 1, remote: 1})
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, remote: 1})
 		consistent(t, st)
-		if err := store.DeleteRemote(ctx, q, "Sb"); err != nil {
+		if err := store.DeleteRemote(ctx, q, "Sb", store.RoleContent); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{spaces: 1, dormant: 1})
@@ -777,10 +777,10 @@ func TestSpaceListFilters(t *testing.T) {
 		check("idle", store.SpaceFilter{IdleBefore: cut}, func(f fixtureSpace) bool { return f.used.Before(cut) }) // never used (zero) is before
 		check("name", store.SpaceFilter{Query: "space 03"}, func(f fixtureSpace) bool { return strings.EqualFold(f.name, "Space 03") })
 		// error and rewritten are both "error".
-		if err := store.UpdateRemoteStatus(ctx, q, "L006", store.RemoteStatus{State: store.RemoteRewritten}, time.Now()); err != nil {
+		if err := store.UpdateRemoteStatus(ctx, q, "L006", store.RoleContent, store.RemoteStatus{State: store.RemoteRewritten}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.UpdateRemoteStatus(ctx, q, "L012", store.RemoteStatus{State: store.RemoteError}, time.Now()); err != nil {
+		if err := store.UpdateRemoteStatus(ctx, q, "L012", store.RoleContent, store.RemoteStatus{State: store.RemoteError}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		rows := pageThrough(t, st, sc, store.SpaceFilter{Remote: "error", Sort: "name"}, 10)
@@ -1055,7 +1055,7 @@ func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
 			case op == 5:
 				putRemote(t, st, pick(spaces), []string{"ok", "offline", "error"}[rng.Intn(3)])
 			case op == 6:
-				if err := store.DeleteRemote(ctx, q, pick(spaces)); err != nil {
+				if err := store.DeleteRemote(ctx, q, pick(spaces), store.RoleContent); err != nil {
 					t.Fatal(err)
 				}
 			case op == 7:
