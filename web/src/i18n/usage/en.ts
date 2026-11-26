@@ -72,18 +72,6 @@ export const usageEn: UsageMessages = {
   tenant: {
     usageTitle: 'Usage',
     usageHelp: 'What everyone in the tenant uses together.',
-    quotaTitle: 'Totals',
-    quotaHelp:
-      'Only an administrator of the whole server can set them. Going over for people, disk or pages only warns; going over for spaces refuses new ones. Empty is no limit.',
-    people: 'People',
-    spaces: 'Spaces',
-    bytes: 'Disk (GB)',
-    pages: 'Pages',
-    save: 'Save totals',
-    saving: 'Saving…',
-    saved: 'Saved',
-    invalid: 'Enter a whole number, or leave it empty',
-    failed: 'Could not save the totals',
     over: (list) => `Over: ${list}`,
   },
   invite: {

@@ -65,6 +65,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   tenant_not_empty:
     'The organisation still has users, spaces, groups, invites or items in the recycle bin, so it cannot be moved as it is.',
   tenants_off: 'Several organisations are not turned on.',
+  plan_in_use: 'Organisations still use this plan. Give them another first.',
+  plan_limit: 'The limit on plans is reached.',
   not_fixable: 'This kind of problem cannot be fixed here.',
   remote_required: 'This space needs a remote repository first.',
   confirm_stale: 'Things changed after the confirmation. Confirm again.',

@@ -4754,7 +4754,13 @@ export function createMockServer(options: MockOptions = {}) {
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
     }
-    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings')) {
+    if (
+      path.startsWith('/admin/tenan') ||
+      path.startsWith('/admin/settings') ||
+      path === '/admin/capabilities' ||
+      path === '/admin/plans' ||
+      path.startsWith('/admin/plans/')
+    ) {
       accountsOnly()
       const me = requireAdmin(ctx)
       const r = tenantBook.route(me.id, method, path, url, body)

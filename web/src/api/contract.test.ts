@@ -1638,6 +1638,161 @@ function suite(target: Target) {
         })
       })
 
+      describe('the limits sheet, its plans and the site defaults (3.6)', () => {
+        type Entry = {
+          key: string
+          kind: string
+          value: unknown
+          source: string
+          from?: string
+          until?: string
+          manual?: { value: unknown }
+        }
+        type Sheet = { plan: unknown; limits: Entry[]; warning?: { code: string; keys: string[] } }
+        const PUT = '/api/admin/tenants/0000000000/limits'
+        const sheetOf = async () => (await call(admin, 'GET', PUT)).json as Sheet
+        const entry = (r: { limits: Entry[] }, key: string) => r.limits.find((e) => e.key === key)!
+        const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z')
+
+        it('GET …/limits lists every key with its kind, value and source; …/capabilities only the capabilities', async () => {
+          const r = await sheetOf()
+          expect(r.plan === null || typeof r.plan === 'object').toBe(true)
+          expect(r.limits.map((e) => e.key)).toEqual(
+            expect.arrayContaining([
+              'signin.sso',
+              'storage.modes',
+              'storage.quota.bytes',
+              'other.people',
+              'sync.assetsRepository',
+            ]),
+          )
+          for (const e of r.limits) expect(['site', 'plan', 'billing', 'manual']).toContain(e.source)
+          expect(entry(r, 'signin.sso').kind).toBe('boolean')
+          expect(entry(r, 'storage.modes').kind).toBe('list')
+          expect(entry(r, 'other.people').kind).toBe('limit')
+          const caps = (await call(admin, 'GET', '/api/admin/tenants/0000000000/capabilities')).json
+            .capabilities as Entry[]
+          expect(caps.map((e) => e.key)).toContain('signin.sso')
+          expect(caps.map((e) => e.key)).not.toContain('other.people')
+          expect((await call(admin, 'GET', '/api/admin/tenants/01ZZZZZZZZ/limits')).json.error).toBe('not_found')
+        })
+
+        it('PUT …/limits writes manual values: bare, as {value, from, until}, {value: null} for no limit, null to remove', async () => {
+          const key = 'usage.mailPerDay'
+          try {
+            let r = (await call(admin, 'PUT', PUT, { values: { [key]: 5 } })).json as Sheet
+            expect(entry(r, key)).toMatchObject({ value: 5, source: 'manual' })
+            r = (await call(admin, 'PUT', PUT, { values: { [key]: { value: null } } })).json
+            expect(entry(r, key)).toMatchObject({ value: null, source: 'manual' })
+            // A dated value replaces the undated manual one, and the answer warns; outside its window the site's value applies.
+            const from = iso(Date.now() + 86_400_000)
+            const until = iso(Date.now() + 2 * 86_400_000)
+            const dated = await call(admin, 'PUT', PUT, { values: { [key]: { value: 9, from, until } } })
+            expect(dated.status).toBe(200)
+            expect(dated.json.warning).toMatchObject({ code: 'undated_value_replaced', keys: [key] })
+            expect(entry(dated.json, key)).toMatchObject({ source: 'site', manual: { value: 9 } })
+            r = (await call(admin, 'PUT', PUT, { values: { [key]: null } })).json
+            expect(entry(r, key).source).toBe('site')
+            expect(r.warning).toBeUndefined()
+          } finally {
+            await call(admin, 'PUT', PUT, { values: { [key]: null } })
+          }
+        })
+
+        it("refuses what is not a value of the key, a key that is not the sheet's, a capability route for a limit, and a window that ends before it begins", async () => {
+          for (const values of [
+            {},
+            { nope: 1 },
+            { 'other.people': -1 },
+            { 'other.people': 'many' },
+            { 'signin.sso': 1 },
+            { 'storage.modes': ['cloud'] },
+            { 'other.people': { value: 1, extra: 1 } },
+            { 'other.people': { value: 1, from: '2031-01-02T00:00:00Z', until: '2031-01-01T00:00:00Z' } },
+          ]) {
+            const r = await call(admin, 'PUT', PUT, { values })
+            expect([r.status, r.json.error], JSON.stringify(values)).toEqual([400, 'invalid'])
+          }
+          const caps = '/api/admin/tenants/0000000000/capabilities'
+          expect((await call(admin, 'PUT', caps, { values: { 'other.people': 3 } })).status).toBe(400)
+        })
+
+        it('plans are made, changed, given to a tenant (which clears its manual values) and deleted; a plan in use stays', async () => {
+          const slug = `pl${run}`
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 24)
+          const plans = '/api/admin/plans'
+          const tenantPlan = '/api/admin/tenants/0000000000/plan'
+          expect((await call(admin, 'POST', plans, { slug: 'Bad Slug', name: 'x' })).json.error).toBe('invalid')
+          const made = await call(admin, 'POST', plans, {
+            slug,
+            name: 'Team',
+            description: 'for tests',
+            values: { 'other.people': 10 },
+          })
+          expect(made.status).toBe(201)
+          expect(made.json).toMatchObject({ slug, name: 'Team', values: { 'other.people': 10 }, tenants: 0 })
+          expect((await call(admin, 'POST', plans, { slug, name: 'Again' })).json.error).toBe('exists')
+          const listed = (await call(admin, 'GET', plans)).json.plans as { slug: string }[]
+          expect(listed.map((p) => p.slug)).toContain(slug)
+          expect((await call(admin, 'GET', `${plans}/${slug}`)).json.slug).toBe(slug)
+          const key = 'usage.apiPerMinute'
+          try {
+            await call(admin, 'PUT', PUT, { values: { [key]: 77 } })
+            expect((await call(admin, 'PUT', tenantPlan, { plan: 'nope' })).json.error).toBe('invalid')
+            const set = await call(admin, 'PUT', tenantPlan, { plan: slug })
+            expect(set.status).toBe(200)
+            expect(set.json.plan).toMatchObject({ slug })
+            expect((set.json.cleared as { key: string }[]).map((c) => c.key)).toContain(key)
+            const r = await sheetOf()
+            expect(entry(r, 'other.people')).toMatchObject({ value: 10, source: 'plan' })
+            expect(entry(r, key).source).toBe('site')
+            const patched = await call(admin, 'PATCH', `${plans}/${slug}`, { values: { 'other.people': 20 } })
+            expect(patched.status).toBe(200)
+            expect(patched.json.affected).toContain('0000000000')
+            expect((await call(admin, 'PATCH', `${plans}/${slug}`, { slug: 'other' })).json.error).toBe('invalid')
+            const inUse = await call(admin, 'DELETE', `${plans}/${slug}`)
+            expect([inUse.status, inUse.json.error, inUse.json.tenants]).toEqual([409, 'plan_in_use', 1])
+          } finally {
+            await call(admin, 'PUT', tenantPlan, { plan: null })
+          }
+          expect((await call(admin, 'DELETE', `${plans}/${slug}`)).status).toBe(204)
+          expect((await call(admin, 'GET', `${plans}/${slug}`)).json.error).toBe('not_found')
+        })
+
+        it('GET /api/admin/capabilities is the registry with the site defaults; PUT changes them for every sheet; members may read and write none of it', async () => {
+          const m = await newMember(uniq('lm'))
+          type Def = { key: string; kind: string; group: string; value: unknown }
+          const read = async () => (await call(admin, 'GET', '/api/admin/capabilities')).json.capabilities as Def[]
+          const idp = (await read()).find((c) => c.key === 'signin.idpAdmins')!
+          expect([idp.kind, idp.group]).toEqual(['boolean', 'signin'])
+          const dated = { value: true, from: '2031-01-01T00:00:00Z' }
+          expect(
+            (await call(admin, 'PUT', '/api/admin/capabilities', { values: { 'signin.idpAdmins': dated } })).status,
+          ).toBe(400)
+          try {
+            const r = await call(admin, 'PUT', '/api/admin/capabilities', {
+              values: { 'signin.idpAdmins': !idp.value },
+            })
+            expect(r.status).toBe(200)
+            expect(Array.isArray(r.json.affected)).toBe(true)
+            expect((await read()).find((c) => c.key === 'signin.idpAdmins')!.value).toBe(!idp.value)
+          } finally {
+            await call(admin, 'PUT', '/api/admin/capabilities', { values: { 'signin.idpAdmins': null } })
+          }
+          const asked: [string, string][] = [
+            ['GET', '/api/admin/capabilities'],
+            ['GET', '/api/admin/plans'],
+            ['PUT', PUT],
+          ]
+          for (const [method, path] of asked) {
+            const body = method === 'PUT' ? { values: { 'other.people': 1 } } : undefined
+            expect((await call(m.browser, method, path, body)).status, `${method} ${path}`).toBe(403)
+          }
+        })
+      })
+
       describe('quotas and usage (3.3)', () => {
         const slugOf = (p: string) =>
           `${p}${run}`

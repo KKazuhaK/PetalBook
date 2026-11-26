@@ -4,6 +4,7 @@
 
 import type { CreatedInvite, SettingLower, SiteSetting, Tenant, TenantSetting, TenantUsage } from '../types.ts'
 import { HttpError } from './store.ts'
+import { createLimitsBook } from './limitsBook.ts'
 import type { MockResponse } from './server.ts'
 
 export const DEFAULT_TENANT = '0000000000'
@@ -300,6 +301,19 @@ export function createTenantBook(o: TenantBookOptions) {
     if (!t || (!o.isSiteAdmin(me) && id !== DEFAULT_TENANT)) throw new HttpError(404, 'not_found', 'no such tenant')
     return t
   }
+  // The limits sheet (3.6): a tenant's totals are its values of other.people and storage.quota.*.
+  const sheets = createLimitsBook({
+    now: o.now,
+    visible,
+    tenantIds: () => [...tenants.keys()],
+    usageOf: (id) => o.usageOf(id),
+    onTotals: (id, totals) => {
+      const t = tenants.get(id)
+      if (!t || same(t.quota, totals)) return
+      t.quota = totals
+      o.onQuotaChanged()
+    },
+  })
   const defOf = (key: string, layer: 'site' | 'tenant'): Def => {
     const d = DEFS.find((x) => x.key === key)
     if (!d || !d.layers.includes(layer)) throw new HttpError(404, 'not_found', 'no such setting')
@@ -457,6 +471,10 @@ export function createTenantBook(o: TenantBookOptions) {
     const choices = d.choices ?? []
     let value = e.effective as string
     let allowed = choices.filter((c) => merged.mode === 'allow' || (merged.mode === 'restrict' && allows(merged, d, c)))
+    // The limits sheet turns the attachment repository off (sync.assetsRepository): only the space is possible.
+    if (sheets.value(DEFAULT_TENANT, 'sync.assetsRepository') === false) {
+      return { default: 'space', allowed: ['space'], locked: merged.mode === 'lock' }
+    }
     if (merged.mode === 'lock') allowed = [value]
     else if (!allowed.includes(value)) value = allowed[0]
     return { default: value, allowed, locked: merged.mode === 'lock' }
@@ -546,6 +564,8 @@ export function createTenantBook(o: TenantBookOptions) {
           return j(out, 201)
         }
       }
+      const sheet = sheets.route(me, site, method, path, body)
+      if (sheet) return sheet
       const one = /^\/admin\/tenants\/([^/]+)$/.exec(path)
       if (one) {
         const id = decodeURIComponent(one[1])
@@ -553,7 +573,8 @@ export function createTenantBook(o: TenantBookOptions) {
         if (method === 'PATCH') {
           const t = visible(me, id)
           for (const k of Object.keys(body)) {
-            if (!['name', 'slug', 'disabled', 'quota'].includes(k)) bad(`unknown field ${k}`)
+            if (k === 'quota') bad('the totals are set through PUT /admin/tenants/{tenant}/limits')
+            if (!['name', 'slug', 'disabled'].includes(k)) bad(`unknown field ${k}`)
             if (k !== 'name' && !site)
               throw new HttpError(403, 'forbidden', `only an administrator of the whole server may change ${k}`)
           }
@@ -577,17 +598,7 @@ export function createTenantBook(o: TenantBookOptions) {
               throw new HttpError(409, 'default_tenant', 'the default tenant cannot be disabled')
             t.disabled = body.disabled as boolean
           }
-          if ('quota' in body) {
-            const q = body.quota as Record<string, unknown>
-            if (!q || typeof q !== 'object') bad('quota is an object')
-            for (const [k, v] of Object.entries(q)) {
-              if (!['people', 'spaces', 'bytes', 'pages'].includes(k)) bad('quota has people, spaces, bytes and pages')
-              if (v !== null && !(typeof v === 'number' && v >= 0)) bad(`quota.${k} is a number from 0, or null`)
-              ;(t.quota as Record<string, number | null>)[k] = v as number | null
-            }
-          }
           t.updated = o.now()
-          if ('quota' in body) o.onQuotaChanged()
           return j(tenantOut(t))
         }
         if (method === 'DELETE') {
@@ -596,6 +607,7 @@ export function createTenantBook(o: TenantBookOptions) {
           if (t.default) throw new HttpError(409, 'default_tenant', 'the default tenant cannot be deleted')
           tenants.delete(id)
           tenantRows.delete(id)
+          sheets.forget(id)
           o.onTenantDeleted?.(id)
           return { status: 204 }
         }
