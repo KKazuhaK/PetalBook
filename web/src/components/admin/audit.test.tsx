@@ -65,6 +65,7 @@ describe('the filters of the audit log page', () => {
     expect(q<HTMLAnchorElement>('[data-slot="audit-download"]')!.getAttribute('href')).toBe(
       '/api/admin/audit/download?category=security%2Cdata&kind=login_failed&from=2026-11-01',
     )
+    expect(q('[data-slot="audit-download-note"]')!.textContent).toMatch(/10 万|100,000/)
   })
 
   it('toggles a category, narrows by kind from the groups of the registry, and clears', async () => {

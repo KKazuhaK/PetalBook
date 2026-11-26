@@ -320,6 +320,7 @@ export const securityEn: SecurityMessages = {
     tenant: 'Organization',
     allTenants: 'All organizations',
     download: 'Download CSV',
+    downloadNote: 'Downloads are capped at 100,000 rows.',
     downloadHelp: 'Downloads what the filters show: at most 100,000 rows, newest first.',
     capacities: { site_admin: 'As site administrator', tenant_admin: 'As organization administrator' } as Record<
       string,

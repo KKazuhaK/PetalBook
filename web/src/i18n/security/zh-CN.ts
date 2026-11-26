@@ -285,6 +285,7 @@ export const securityZhCN = {
     tenant: '组织',
     allTenants: '所有组织',
     download: '下载 CSV',
+    downloadNote: '下载最多 10 万行。',
     downloadHelp: '按当前筛选下载，最多 10 万行，最新的在前。',
     capacities: { site_admin: '以全站管理员身份', tenant_admin: '以组织管理员身份' } as Record<string, string>,
     kinds: {

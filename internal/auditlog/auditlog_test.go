@@ -32,7 +32,7 @@ func TestRegistryIsConsistent(t *testing.T) {
 	if got := auditlog.CategoryOf("nobody-knows"); got != auditlog.Admin {
 		t.Errorf("an unregistered kind is filed under %s", got)
 	}
-	want := []string{"connection_provider_changed", "dropped", "lockout", "mail_changed", "mail_test", "provider_changed", "provider_created", "provider_deleted", "rate_limited"}
+	want := []string{"connection_provider_changed", "dropped", "lockout", "mail_changed", "mail_test", "plan_changed", "plan_created", "plan_deleted", "provider_changed", "provider_created", "provider_deleted", "rate_limited"}
 	if got := auditlog.SiteOnlyKinds(); !slices.Equal(got, want) {
 		t.Errorf("site-only kinds %v, want %v", got, want)
 	}

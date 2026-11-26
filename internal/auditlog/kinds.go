@@ -6,8 +6,8 @@ package auditlog
 //
 // Visibility: a tenant's administrators see the rows about their tenant, a
 // site administrator's changes to it included. Only the server's own doings
-// (its sign-in providers, mail, rate limits, lockouts and dropped rows) are
-// site-only.
+// (its sign-in providers, mail, rate limits, lockouts and dropped rows) and the
+// site's plans (a plan is shared by tenants) are site-only.
 var registered = []Kind{
 	// security: failures, lockouts, passkeys, identities, addresses, passwords,
 	// ended sessions, providers, secrets.
@@ -44,9 +44,9 @@ var registered = []Kind{
 	{Name: "setting_changed", Category: Admin},
 	{Name: "setting_rule_started", Category: Admin},
 	{Name: "setting_rule_ended", Category: Admin},
-	{Name: "plan_created", Category: Admin},
-	{Name: "plan_changed", Category: Admin},
-	{Name: "plan_deleted", Category: Admin},
+	{Name: "plan_created", Category: Admin, Visibility: Site},
+	{Name: "plan_changed", Category: Admin, Visibility: Site},
+	{Name: "plan_deleted", Category: Admin, Visibility: Site},
 	{Name: "tenant_plan_changed", Category: Admin},
 	{Name: "tenant_created", Category: Admin},
 	{Name: "tenant_changed", Category: Admin},

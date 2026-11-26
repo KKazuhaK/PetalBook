@@ -232,6 +232,10 @@ func (s *server) adminAuditDownload(c *call) {
 	}
 	start()
 	if more {
+		// Said in the body too, for a person who opens the file.
+		note := make([]string, 11)
+		note[0] = "Truncated: the first 100000 rows; narrow the filter to see the rest."
+		_ = w.Write(note)
 		// Said after the body, which is when it is known.
 		c.w.Header().Set(http.TrailerPrefix+"X-Audit-Truncated", "true")
 	}
@@ -262,9 +266,17 @@ func timeText(t time.Time) string {
 
 // csvCell makes a cell safe to open in a spreadsheet: one that starts with a
 // character a spreadsheet takes for a formula (= + - @, or a tab or return) gets
-// a quote in front, which the spreadsheet shows as text.
+// a quote in front, which the spreadsheet shows as text. Leading spaces, returns
+// and | are looked past, as a spreadsheet does.
 func csvCell(v string) string {
-	if v != "" && strings.ContainsRune("=+-@\t\r", rune(v[0])) {
+	if v == "" {
+		return v
+	}
+	if v[0] == '\t' || v[0] == '\r' {
+		return "'" + v
+	}
+	// Spreadsheets skip leading blanks and | before they read a formula.
+	if i := strings.IndexFunc(v, func(r rune) bool { return !strings.ContainsRune(" \t\r\n|", r) }); i >= 0 && strings.ContainsRune("=+-@", rune(v[i])) {
 		return "'" + v
 	}
 	return v

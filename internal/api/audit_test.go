@@ -155,6 +155,50 @@ func TestAuditOptionalCategoriesFollowTheirSettings(t *testing.T) {
 	})
 }
 
+// A plan is the site's: its rows say which tenants it touches, so no tenant's
+// administrator sees them, not in the list, the kinds or the download.
+func TestPlanRowsAreTheSites(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "team", "name": "Team"}).want(t, 201, "")
+		f.root.do("PATCH", "/api/admin/plans/team", map[string]any{"name": "Teams"}).want(t, 200, "")
+		f.root.do("DELETE", "/api/admin/plans/team", nil).want(t, 204, "")
+		a.auth.FlushAudit(context.Background())
+		kinds := []string{"plan_created", "plan_changed", "plan_deleted"}
+		for _, k := range kinds {
+			if len(f.root.audit(t, k)) != 1 {
+				t.Fatalf("the site administrator sees no %s row", k)
+			}
+			if got := auditCounts(t, f.admA, "&kind="+k); len(got) != 0 {
+				t.Fatalf("a tenant administrator sees %v", got)
+			}
+		}
+		for _, cat := range f.admA.do("GET", "/api/admin/audit/kinds", nil).want(t, 200, "").body["categories"].([]any) {
+			for _, k := range cat.(map[string]any)["kinds"].([]any) {
+				if n := k.(map[string]any)["name"].(string); strings.HasPrefix(n, "plan_") {
+					t.Fatalf("the tenant's kinds hold %s", n)
+				}
+			}
+		}
+		if raw := f.admA.do("GET", "/api/admin/audit/download?category=admin", nil).want(t, 200, "").raw; strings.Contains(raw, "plan_") {
+			t.Fatal(raw)
+		}
+	})
+}
+
+// A cell is escaped when a spreadsheet would read it as a formula, past leading
+// blanks and |.
+func TestCSVCellEscapes(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{" =1+1": "' =1+1", "|=cmd": "'|=cmd", "\t=1": "'\t=1", "\r\n @x": "'\r\n @x", "=1": "'=1",
+		"": "", "a=1": "a=1", " plain": " plain", "| - |": "'| - |", "-": "'-"} {
+		if got := api.CSVCell(in); got != want {
+			t.Errorf("%q gives %q, want %q", in, got, want)
+		}
+	}
+}
+
 // The download is CSV of the filter, for the caller's tenant only, never with a
 // site kind, safe to open in a spreadsheet, capped, one at a time, and audited.
 func TestAuditDownloadIsCSV(t *testing.T) {
@@ -219,8 +263,8 @@ func TestAuditDownloadIsCSV(t *testing.T) {
 		// Capped: it says so after the body.
 		defer api.SetAuditDownloadMax(api.SetAuditDownloadMax(1))
 		capped := f.admB.do("GET", "/api/admin/audit/download?category=security", nil).want(t, 200, "")
-		if n := strings.Count(capped.raw, "\n"); n != 2 {
-			t.Fatalf("%d lines in a download capped at 1 row:\n%s", n, capped.raw)
+		if n := strings.Count(capped.raw, "\n"); n != 3 || !strings.Contains(capped.raw, "\nTruncated: the first 100000 rows; narrow the filter to see the rest.,") {
+			t.Fatalf("%d lines in a download capped at 1 row, the last one saying so:\n%s", n, capped.raw)
 		}
 		_ = capped.resp.Body.Close()
 		if capped.resp.Trailer.Get("X-Audit-Truncated") != "true" {

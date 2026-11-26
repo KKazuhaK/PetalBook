@@ -10,3 +10,5 @@ func HoldAuditDownload(userID string) func() {
 	auditDownloads.Store(userID, struct{}{})
 	return func() { auditDownloads.Delete(userID) }
 }
+
+func CSVCell(v string) string { return csvCell(v) }

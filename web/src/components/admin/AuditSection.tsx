@@ -142,6 +142,11 @@ export function AuditSection() {
               {ta.download}
             </a>
           )}
+          {downloadOn && (
+            <span className="text-xs text-muted-foreground" data-slot="audit-download-note">
+              {ta.downloadNote}
+            </span>
+          )}
         </div>
       </div>
       {log.isPending ? (
