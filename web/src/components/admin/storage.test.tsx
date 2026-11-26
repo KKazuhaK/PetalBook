@@ -9,6 +9,7 @@ import { SpaceGate } from '@/components/layout/SpaceGate'
 import { ta } from '@/i18n/admin'
 import { tc } from '@/i18n/console'
 import { ts } from '@/i18n/storage'
+import { tt } from '@/i18n/tenants'
 import {
   adminRequests,
   byLabel,
@@ -163,6 +164,20 @@ describe('the storage page', () => {
     await click(buttonIn(document, ts.admin.save))
     await settle(() => text().includes(ts.admin.cache.invalid), 'the message')
     expect(puts()).toHaveLength(1)
+  })
+
+  it('switches the exemption of spaces on their own storage, with its own save', async () => {
+    m = await storagePage()
+    await settle(() => byLabel(ts.admin.assets.ownExemptLabel) !== null, 'the exemption')
+    const sw = byLabel(ts.admin.assets.ownExemptLabel) as HTMLElement
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    expect(text()).toContain(ts.admin.assets.ownExemptHelp)
+    await click(sw)
+    const row = sw.closest('li[data-key]') as HTMLElement
+    expect(row.dataset.key).toBe('storage.assets.ownStorageExempt')
+    await click(buttonIn(row, tt.settings.save))
+    await settle(() => puts().length === 1, 'the save')
+    expect(puts()).toEqual([['storage.assets.ownStorageExempt', false]])
   })
 
   it('refuses numbers outside their ranges before asking the server', async () => {

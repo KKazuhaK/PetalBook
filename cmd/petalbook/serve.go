@@ -30,6 +30,7 @@ import (
 	"petalbook.app/server/internal/index"
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/secret"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -39,9 +40,11 @@ import (
 
 type serveConfig struct {
 	// space selects single-user mode, data accounts mode; exactly one is set.
-	space, data                                string
-	listen, name, stateDir, committer          string
-	database                                   string
+	space, data                       string
+	listen, name, stateDir, committer string
+	database                          string
+	// profile is --profile: the site values to seed when the database is empty.
+	profile                                    string
 	publicURL                                  string
 	trustedProxies                             []string
 	oidcIssuer, oidcClientID, oidcName         string
@@ -163,6 +166,7 @@ password, prefer PETALBOOK_DATABASE and note that the URL is never logged.`,
 	f.StringVar(&c.data, "data", "", "accounts mode: data directory (created if missing)")
 	f.StringVar(&c.listen, "listen", "127.0.0.1:8080", "address to listen on")
 	f.StringVar(&c.database, "database", "", "state database: a SQLite file path or a postgres:// URL (default: DATA/petalbook.db, or state.db in the state directory)")
+	f.StringVar(&c.profile, "profile", "", "accounts mode: site defaults to seed on the first start, when the database is empty ("+strings.Join(settings.ProfileNames(), " or ")+"); later starts ignore the same profile and refuse a different one")
 	f.StringVar(&c.publicURL, "public-url", "", "accounts mode: the address people use, e.g. https://notes.example.com (decides whether cookies are Secure, and is accepted as the server's own origin; required with OIDC)")
 	f.StringSliceVar(&c.trustedProxies, "trusted-proxy", nil, "address or CIDR of a reverse proxy whose X-Forwarded-For is believed when limiting sign-in attempts (repeatable, or comma-separated)")
 	f.StringVar(&c.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL (https); imported once as the provider \"sso\" of the state database, which counts from then on")
@@ -237,6 +241,14 @@ func (c serveConfig) check() (*checked, error) {
 		return nil, errors.New("give exactly one of --space (single-user mode) and --data (accounts mode)")
 	}
 	out.accounts = c.data != ""
+	if c.profile != "" {
+		if !out.accounts {
+			return nil, errors.New("--profile is for accounts mode (--data)")
+		}
+		if _, ok := settings.ProfileValues(c.profile); !ok {
+			return nil, fmt.Errorf("--profile: unknown profile %q (one of %s)", c.profile, strings.Join(settings.ProfileNames(), ", "))
+		}
+	}
 	if strings.ContainsAny(c.data, "?#") {
 		return nil, errors.New("--data: '?' and '#' in the path are not supported")
 	}
@@ -412,6 +424,14 @@ func runServe(ctx context.Context, c serveConfig) error {
 		}
 		if st, err = store.Open(ctx, target); err != nil {
 			return err
+		}
+		// Before anything writes a site value: the database must still be empty.
+		if seeded, err := settings.Of(st).SeedProfile(ctx, c.profile); err != nil {
+			return err
+		} else if seeded && c.profile != "" {
+			log.Info("first start: seeded the site settings of a profile", "profile", c.profile)
+		} else if c.profile != "" {
+			log.Info("the database is already set up: --profile is ignored", "profile", c.profile)
 		}
 		box := secret.NewBox(c.data)
 		ghc, err := githubapp.New(githubapp.Config{API: c.githubAPI, Web: c.githubWeb, HTTP: c.githubHTTP})

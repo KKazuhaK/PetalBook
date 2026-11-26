@@ -7472,6 +7472,19 @@ spaces, notices and the once-per-crossing audit row, and the prefilled invite of
 `POST /api/admin/tenants`. Details the implementation settled, which refine the
 text above:
 
+- `serve --profile NAME` (`default` or `cn`) seeds site values on the first
+  start only. When the state database is empty (no account, no site value,
+  no earlier profile) the profile's values are written as ordinary site rows
+  with `set_by` `profile:NAME` and the name is kept in the site record
+  `profile`; they are defaults, not locks, so an administrator changes them as
+  usual. On any other database the same profile (or none) is ignored with a log
+  line, and a different one stops the start with an error (a database from
+  before profiles counts as `default`). `cn` is stricter where content leaves
+  the organisation: every setting the registry marks outward is off
+  (`features.tokens`, `features.mcp`; later public links, publishing and
+  external sharing join them) and GitHub stays on, as it is reachable from
+  China. The table is `profiles` in `internal/settings/profile.go`, and its test
+  fails when a key it names is renamed or an outward setting is missing from `cn`.
 - `--max-spaces`, when it is given, is the site's value of
   `quota.spacesPerPerson` (`fromFlag: true`, read only: a `PUT` of the value is
   `409 conflict`); without it the stored setting counts, 20 to begin with. The

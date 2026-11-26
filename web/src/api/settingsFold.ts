@@ -20,6 +20,7 @@ import type {
 
 export const K = {
   tokens: 'features.tokens',
+  assetsOwnExempt: 'storage.assets.ownStorageExempt',
   mcp: 'features.mcp',
   tenancy: 'features.tenancy',
   passkeys: 'features.passkeys',

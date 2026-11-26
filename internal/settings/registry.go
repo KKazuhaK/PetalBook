@@ -205,8 +205,8 @@ func Definitions() []*Def {
 		{Key: QuotaPagesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
 
 		// Machine access, and whether tenants exist at all.
-		{Key: FeatureTokens, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
-		{Key: FeatureMCP, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureTokens, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}, Outward: true},
+		{Key: FeatureMCP, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: true, Lower: Lower{Mode: Allow}, Outward: true},
 		{Key: FeatureTenancy, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow},
 			ServerWide: "whether tenants besides the default one exist is the server's"},
 		{Key: FeaturePasskeys, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow},
