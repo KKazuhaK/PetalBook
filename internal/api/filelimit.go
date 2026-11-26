@@ -6,7 +6,6 @@ import (
 
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/space"
-	"petalbook.app/server/internal/store"
 )
 
 // The size of one file (files.maxBytes, docs/api.md "The size of one file").
@@ -31,10 +30,12 @@ func (s *server) bindDraftFileLimit() {
 		return
 	}
 	s.opt.Drafts.SetFileLimit(func(ctx context.Context, userID string) int64 {
+		// The person's tenant comes from the user cache the sessions share: no
+		// query for a draft that is written again and again.
 		tenant := ""
-		if !s.single {
-			if t, err := store.UserTenant(ctx, s.opt.Store.Q(), userID); err == nil {
-				tenant = t
+		if !s.single && s.auth != nil {
+			if u, err := s.auth.CachedUser(ctx, userID); err == nil {
+				tenant = u.TenantID
 			}
 		}
 		return s.fileLimitFor(ctx, tenant)

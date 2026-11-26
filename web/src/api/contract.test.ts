@@ -187,6 +187,47 @@ function suite(target: Target) {
     return { status: res.status, json, headers: res.headers, res }
   }
 
+  // The site's value of a setting (GET /api/admin/settings), and a write of one (PUT /api/admin/settings/{key}): the
+  // policy that once had endpoints of its own (access, tenancy, security, storage, the daily text).
+  const siteValue = async (b: Browser, key: string): Promise<any> =>
+    (await call(b, 'GET', '/api/admin/settings')).json.settings.find((x: { key: string }) => x.key === key)?.site.value
+  const putSite = (b: Browser, key: string, value: unknown) => call(b, 'PUT', `/api/admin/settings/${key}`, { value })
+  const putSites = async (b: Browser, values: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(values)) await putSite(b, key, value)
+  }
+
+  // The daily text's page: GET /api/admin/daily has the interfaces and lines; the default, the languages and what spaces
+  // may do are the settings daily.default, daily.languages, daily.own and daily.api. `dailyAdm` puts them back together
+  // as the page sees them: a PUT with no path is the writes of those keys, a GET the whole.
+  const dailyView = async (b: Browser) => ({
+    ...(await call(b, 'GET', '/api/admin/daily')).json,
+    default: await siteValue(b, 'daily.default'),
+    languages: await siteValue(b, 'daily.languages'),
+    allow: { own: await siteValue(b, 'daily.own'), api: await siteValue(b, 'daily.api') },
+  })
+  const putDaily = async (
+    b: Browser,
+    body: { default?: unknown; languages?: unknown; allow?: Record<string, unknown> },
+  ) => {
+    const steps: [string, unknown][] = []
+    if ('default' in body) steps.push(['daily.default', body.default])
+    if ('languages' in body) steps.push(['daily.languages', body.languages])
+    for (const k of ['own', 'api']) if (body.allow && k in body.allow) steps.push([`daily.${k}`, body.allow[k]])
+    for (const [k, v] of steps) {
+      const r = await putSite(b, k, v)
+      if (r.status >= 400) return r
+    }
+    return { status: 200, json: await dailyView(b), headers: new Headers(), res: new Response() }
+  }
+  const dailyAdm = async (b: Browser, method: string, path: string, body?: unknown) => {
+    if (path !== '') return call(b, method, `/api/admin/daily${path}`, body)
+    if (method === 'GET') {
+      const r = await call(b, 'GET', '/api/admin/daily')
+      return r.status === 200 ? { ...r, json: await dailyView(b) } : r
+    }
+    return putDaily(b, body as Parameters<typeof putDaily>[1])
+  }
+
   beforeAll(async () => {
     if (REAL) base = (input, init) => realFetch(REAL + String(input), init)
     else {
@@ -206,20 +247,23 @@ function suite(target: Target) {
         // its window. Once the cap is reached every public endpoint, invite
         // accept included, answers 429 for the rest of the window, so both
         // limits are raised for the run and put back afterwards.
-        const got = await fetch('/api/admin/security')
-        if (got.status !== 200)
-          throw new Error(`could not read the security settings: ${got.status} ${await got.text()}`)
-        const { perMinute, maxFailures } = (
-          (await got.json()) as { limits: { perMinute: number; maxFailures: number } }
-        ).limits
-        savedLimits = { perMinute, maxFailures }
-        const r = await fetch('/api/admin/security', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ limits: { perMinute: 1000, maxFailures: 1000 } }),
-        })
-        if (r.status !== 200)
-          throw new Error(`could not raise the sign-in limits for the run: ${r.status} ${await r.text()}`)
+        const got = await fetch('/api/admin/settings')
+        if (got.status !== 200) throw new Error(`could not read the settings: ${got.status} ${await got.text()}`)
+        const list = ((await got.json()) as { settings: { key: string; site: { value: number } }[] }).settings
+        const of = (key: string) => list.find((x) => x.key === key)!.site.value
+        savedLimits = { perMinute: of('signin.perMinute'), maxFailures: of('signin.maxFailures') }
+        for (const [key, value] of [
+          ['signin.perMinute', 1000],
+          ['signin.maxFailures', 1000],
+        ] as const) {
+          const r = await fetch(`/api/admin/settings/${key}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value }),
+          })
+          if (r.status !== 200)
+            throw new Error(`could not raise the sign-in limits for the run: ${r.status} ${await r.text()}`)
+        }
       }
       spaceId = (await api.spaces()).spaces[0].id
     }
@@ -230,11 +274,15 @@ function suite(target: Target) {
     globalThis.fetch = admin.fetch
     for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
     if (REAL && accounts && savedLimits) {
-      await fetch('/api/admin/security', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limits: savedLimits }),
-      }).catch(() => undefined)
+      for (const [key, value] of [
+        ['signin.perMinute', savedLimits.perMinute],
+        ['signin.maxFailures', savedLimits.maxFailures],
+      ] as const)
+        await fetch(`/api/admin/settings/${key}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        }).catch(() => undefined)
     }
     globalThis.fetch = realFetch
     markSignedIn()
@@ -665,7 +713,7 @@ function suite(target: Target) {
         )
 
         it.skipIf(!!REAL)(
-          'mock only: with MCP off the consent endpoints are 404, the grants are kept and listed, and oauth reads false',
+          'mock only: with MCP off the consent endpoints are 404, and the grants are kept and listed',
           async () => {
             const m = await newMember(uniq('oa6'))
             const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
@@ -674,18 +722,18 @@ function suite(target: Target) {
               approve: true,
               spaces: [mine],
             })
-            const before = (await call(admin, 'GET', '/api/admin/access')).json
-            expect(before).toMatchObject({ mcp: true, oauth: true })
+            const before = { mcp: await siteValue(admin, 'features.mcp') }
+            expect(before.mcp).toBe(true)
             try {
-              await call(admin, 'PUT', '/api/admin/access', { mcp: false })
-              expect((await call(admin, 'GET', '/api/admin/access')).json).toMatchObject({ mcp: false, oauth: false })
+              await putSite(admin, 'features.mcp', false)
+              expect(await siteValue(admin, 'features.mcp')).toBe(false)
               expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('not_found')
               expect((await call(m.browser, 'POST', '/api/oauth/consent', { req: 'x', approve: false })).status).toBe(
                 404,
               )
               expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(1)
             } finally {
-              await call(admin, 'PUT', '/api/admin/access', { mcp: before.mcp })
+              await putSite(admin, 'features.mcp', before.mcp)
             }
           },
         )
@@ -768,25 +816,31 @@ function suite(target: Target) {
           expect(all.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
           expect(all.json.next).toBe('')
           expect((await call(m.browser, 'GET', '/api/admin/tokens')).json.error).toBe('forbidden')
-          expect((await call(m.browser, 'GET', '/api/admin/access')).json.error).toBe('forbidden')
           expect((await call(admin, 'DELETE', `/api/admin/tokens/${t}`)).status).toBe(204)
           expect((await call(m.browser, 'GET', '/api/account/tokens')).json.tokens[0].state).toBe('revoked')
           expect((await call(admin, 'DELETE', '/api/admin/tokens/NOSUCHTOKN')).status).toBe(404)
           expect((await call(admin, 'GET', '/api/admin/tokens?limit=0')).status).toBe(400)
         })
 
-        it('the machine access switches are on, may be changed, and are put back', async () => {
-          const before = await call(admin, 'GET', '/api/admin/access')
-          expect(before.status).toBe(200)
-          expect(Object.keys(before.json).sort()).toEqual(['mcp', 'oauth', 'tokens'])
-          try {
-            const off = await call(admin, 'PUT', '/api/admin/access', { tokens: false })
-            expect(off.json).toMatchObject({ tokens: false, mcp: before.json.mcp })
-            expect((await call(admin, 'GET', '/api/admin/access')).json.tokens).toBe(false)
-          } finally {
-            await call(admin, 'PUT', '/api/admin/access', { tokens: before.json.tokens, mcp: before.json.mcp })
+        it('the machine access switches are the settings features.tokens and features.mcp: on, changed one at a time, and put back', async () => {
+          const before = {
+            tokens: await siteValue(admin, 'features.tokens'),
+            mcp: await siteValue(admin, 'features.mcp'),
           }
-          expect((await call(admin, 'GET', '/api/admin/access')).json).toEqual(before.json)
+          expect(before).toEqual({ tokens: true, mcp: true })
+          // The endpoints they once had are gone.
+          expect((await call(admin, 'GET', '/api/admin/access')).status).toBe(404)
+          try {
+            const off = await putSite(admin, 'features.tokens', false)
+            expect(off.status).toBe(200)
+            expect(off.json.site.value).toBe(false)
+            expect(await siteValue(admin, 'features.tokens')).toBe(false)
+            expect(await siteValue(admin, 'features.mcp')).toBe(true)
+            expect((await putSite(admin, 'features.tokens', 'no')).json.error).toBe('invalid')
+          } finally {
+            await putSites(admin, { 'features.tokens': before.tokens, 'features.mcp': before.mcp })
+          }
+          expect(await siteValue(admin, 'features.tokens')).toBe(true)
         })
       })
 
@@ -1450,7 +1504,7 @@ function suite(target: Target) {
           expect(m.user.siteAdmin).toBe(false)
           expect(m.user.tenant?.id).toBe('0000000000')
           // Only site administrators reach the server's own settings and the tenants.
-          for (const path of ['/api/admin/tenancy', '/api/admin/tenants', '/api/admin/settings'])
+          for (const path of ['/api/admin/tenants', '/api/admin/secrets', '/api/admin/settings'])
             expect((await call(m.browser, 'GET', path)).status, path).toBe(403)
           expect((await call(m.browser, 'GET', '/api/settings')).status).toBe(200)
         })
@@ -1494,14 +1548,18 @@ function suite(target: Target) {
         })
 
         it('the switch gates making tenants; a tenant is made, listed, renamed, disabled and deleted; the default one is kept', async () => {
-          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
+          const was = await siteValue(admin, 'features.tenancy')
           try {
-            expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: false })).status).toBe(200)
+            expect((await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: false })).status).toBe(
+              200,
+            )
             const slug = slugOf('tn')
             expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })).json.error).toBe(
               'tenants_off',
             )
-            expect((await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })).json.enabled).toBe(true)
+            expect(
+              (await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })).json.site.value,
+            ).toBe(true)
             const bad = await call(admin, 'POST', '/api/admin/tenants', { slug: 'A', name: 'x' })
             expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
             const made = await call(admin, 'POST', '/api/admin/tenants', { slug, name: ' Acme ' })
@@ -1529,13 +1587,85 @@ function suite(target: Target) {
             expect((await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)).status).toBe(204)
             expect((await call(admin, 'GET', `/api/admin/tenants/${t.id}`)).status).toBe(404)
           } finally {
-            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+            await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
+          }
+        })
+
+        it('secrets are write-only: the lists say set or not and when, a replace or a clear answers the list, the GitHub ones are changed elsewhere, a tenant holds only what its features allow', async () => {
+          const names = (r: { json: any }) => r.json.secrets.map((x: { name: string }) => x.name)
+          const list = await call(admin, 'GET', '/api/admin/secrets')
+          expect(list.status).toBe(200)
+          expect(names(list)).toEqual(
+            expect.arrayContaining([
+              'github.appKey',
+              'github.clientSecret',
+              'github.webhookSecret',
+              'mail.password',
+              'captcha.secret',
+            ]),
+          )
+          const mail = () =>
+            call(admin, 'GET', '/api/admin/secrets').then((r) =>
+              r.json.secrets.find((x: any) => x.name === 'mail.password'),
+            )
+          expect((await mail()).set).toBe(false)
+          const secret = `pw-${run}`
+          const put = await call(admin, 'PUT', '/api/admin/secrets/mail.password', { value: secret })
+          expect(put.status).toBe(200)
+          expect(put.json.secrets.find((x: any) => x.name === 'mail.password')).toMatchObject({
+            set: true,
+            updatedAt: expect.any(String),
+          })
+          // Never a value: not in the answer, the list, or the mail settings.
+          expect(JSON.stringify(put.json)).not.toContain(secret)
+          expect(JSON.stringify((await call(admin, 'GET', '/api/admin/secrets')).json)).not.toContain(secret)
+          expect((await call(admin, 'GET', '/api/admin/mail')).json.hasPassword).toBe(true)
+          const cleared = await call(admin, 'DELETE', '/api/admin/secrets/mail.password')
+          expect(cleared.json.secrets.find((x: any) => x.name === 'mail.password').set).toBe(false)
+          expect((await call(admin, 'GET', '/api/admin/mail')).json.hasPassword).toBe(false)
+          // No value, an unknown name, and a secret that is changed through its own connection.
+          expect((await call(admin, 'PUT', '/api/admin/secrets/mail.password', {})).json.error).toBe('invalid')
+          expect((await call(admin, 'PUT', '/api/admin/secrets/nothing', { value: 'x' })).json.error).toBe('not_found')
+          expect((await call(admin, 'PUT', '/api/admin/secrets/github.appKey', { value: 'x' })).json.error).toBe(
+            'conflict',
+          )
+          // A tenant: the mail password only, and only while the site lets it have its own sender.
+          const was = await siteValue(admin, 'features.tenancy')
+          await putSite(admin, 'features.tenancy', true)
+          const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('sc'), name: 'Secrets' })).json as {
+            id: string
+          }
+          try {
+            const own = `/api/admin/tenants/${t.id}/secrets`
+            expect(names(await call(admin, 'GET', own))).toEqual(['mail.password'])
+            const off = await call(admin, 'PUT', `${own}/mail.password`, { value: 'x' })
+            expect([off.status, off.json.error, off.json.feature]).toEqual([403, 'feature_off', 'mail.ownSender'])
+            expect((await call(admin, 'PUT', `${own}/captcha.secret`, { value: 'x' })).json.error).toBe('not_found')
+            expect(
+              (
+                await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/mail.ownSender`, {
+                  siteRule: { value: true },
+                })
+              ).status,
+            ).toBe(200)
+            const on = await call(admin, 'PUT', `${own}/mail.password`, { value: 'tenant-secret' })
+            expect(on.status).toBe(200)
+            expect(on.json.secrets[0]).toMatchObject({ name: 'mail.password', set: true })
+            expect(JSON.stringify(on.json)).not.toContain('tenant-secret')
+            // Clearing is always allowed, and it is the tenant's own: the site's stays as it was.
+            expect((await call(admin, 'DELETE', `${own}/mail.password`)).json.secrets[0].set).toBe(false)
+            expect((await mail()).set).toBe(false)
+            const m = await newMember(uniq('sec'))
+            expect((await call(m.browser, 'GET', '/api/admin/secrets')).status).toBe(403)
+          } finally {
+            await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
+            await putSite(admin, 'features.tenancy', was)
           }
         })
 
         it('settings by layer: values are checked, a lock refuses the tenant, a restriction caps it, and what a lock hides is kept', async () => {
-          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
-          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+          const was = await siteValue(admin, 'features.tenancy')
+          await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })
           const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('ts'), name: 'Settings' }))
             .json as { id: string }
           const site = (key: string, body: unknown) => call(admin, 'PUT', `/api/admin/settings/${key}`, body)
@@ -1577,13 +1707,13 @@ function suite(target: Target) {
           } finally {
             await site('registration.perHour', { lower: null })
             await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
-            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+            await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
           }
         })
 
         it('where attachments go: separate by default, a choice, a site lock for one tenant the tenant cannot lift, and the exemption switch', async () => {
-          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
-          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+          const was = await siteValue(admin, 'features.tenancy')
+          await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })
           const t = (await call(admin, 'POST', '/api/admin/tenants', { slug: slugOf('as'), name: 'Assets' })).json as {
             id: string
           }
@@ -1673,7 +1803,7 @@ function suite(target: Target) {
             await call(admin, 'PUT', '/api/admin/settings/storage.assets.ownStorageExempt', { value: true })
             await call(admin, 'PUT', '/api/admin/settings/storage.assets', { value: 'repository', lower: null })
             await call(admin, 'DELETE', `/api/admin/tenants/${t.id}`)
-            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+            await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
           }
         })
 
@@ -1688,7 +1818,7 @@ function suite(target: Target) {
             ).find((x) => x.key === key)!.site.value
           const was = await read('daily.own')
           try {
-            expect((await call(admin, 'PUT', '/api/admin/daily', { allow: { own: false } })).status).toBe(200)
+            expect((await putSite(admin, 'daily.own', false)).status).toBe(200)
             expect(await read('daily.own')).toBe(false)
             const mineAll = (await call(m.browser, 'GET', '/api/settings')).json.settings as {
               key: string
@@ -1703,8 +1833,14 @@ function suite(target: Target) {
               'site',
             ])
             expect((await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: true })).status).toBe(200)
-            const back = (await call(admin, 'GET', '/api/admin/daily')).json as { allow: { own: boolean } }
-            expect(back.allow.own).toBe(true)
+            expect(await read('daily.own')).toBe(true)
+            // What GET /api/admin/daily answers is the interfaces and lines only.
+            expect(Object.keys((await call(admin, 'GET', '/api/admin/daily')).json).sort()).toEqual([
+              'apis',
+              'knownLanguages',
+              'lines',
+              'providers',
+            ])
           } finally {
             await call(admin, 'PUT', '/api/admin/settings/daily.own', { value: was })
           }
@@ -1946,8 +2082,8 @@ function suite(target: Target) {
         })
 
         it("a new tenant's first administrator's invite fills in the form that accepts it; nothing is mailed", async () => {
-          const was = ((await call(admin, 'GET', '/api/admin/tenancy')).json as { enabled: boolean }).enabled
-          await call(admin, 'PUT', '/api/admin/tenancy', { enabled: true })
+          const was = await siteValue(admin, 'features.tenancy')
+          await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })
           const username = uniq('qa')
           const made = await call(admin, 'POST', '/api/admin/tenants', {
             slug: slugOf('qi'),
@@ -1996,7 +2132,7 @@ function suite(target: Target) {
           } finally {
             await call(admin, 'DELETE', `/api/invites/${inv.id}`)
             await call(admin, 'DELETE', `/api/admin/tenants/${tenantId}`)
-            await call(admin, 'PUT', '/api/admin/tenancy', { enabled: was })
+            await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: was })
           }
         })
       })
@@ -3239,73 +3375,76 @@ function suite(target: Target) {
       })
 
       describe("server storage (the site's policy, the pin and the exemption, the requirement of a remote)", () => {
+        // What GET /api/admin/storage answers: what is measured and derived. The policy is the storage.* and cache.*
+        // settings of the site.
         const settings = () => call(admin, 'GET', '/api/admin/storage')
         // The policy is the site's: whatever a test changes is put back, also on a real server that is used again.
         const reset = () =>
-          call(admin, 'PUT', '/api/admin/storage', {
-            remotes: { require: null, scope: 'new', graceDays: 30 },
-            localSpaces: { maxBytes: null },
-            cache: { evictAfterDays: 14, minIdleHours: 24, clonesBytes: null, minFreeBytes: 10 * 1024 ** 3 },
+          putSites(admin, {
+            'storage.remotes.require': '',
+            'storage.remotes.scope': 'new',
+            'storage.remotes.graceDays': 30,
+            'storage.localSpaces.maxBytes': null,
+            'cache.evictAfterDays': 14,
+            'cache.minIdleHours': 24,
+            'cache.clonesBytes': null,
+            'cache.minFreeBytes': 10 * 1024 ** 3,
           })
         afterAll(async () => {
           await reset()
         })
 
-        it('has the settings an administrator reads and writes, partly, and refuses a value outside its range', async () => {
+        it('has the measured state in GET /api/admin/storage and the policy among the settings, which refuse a value outside their range', async () => {
           await reset()
           const g = await settings()
           expect(g.status).toBe(200)
           expect(g.json).toMatchObject({
-            remotes: { require: null, scope: 'new', graceDays: 30, since: null },
-            hosts: { allowed: expect.any(Array), fromFlag: expect.any(Boolean) },
-            localSpaces: { maxBytes: null },
-            cache: {
-              partial: expect.any(Boolean),
-              evictAfterDays: 14,
-              minIdleHours: 24,
-              clonesBytes: null,
-              minFreeBytes: 10 * 1024 ** 3,
-            },
+            remotes: { since: null },
             git: { version: expect.any(String), partialClone: expect.any(Boolean) },
             affected: { inGrace: expect.any(Number), overdue: expect.any(Number), exempt: expect.any(Number) },
           })
-          const put = await call(admin, 'PUT', '/api/admin/storage', {
-            cache: { minIdleHours: 48 },
-            localSpaces: { maxBytes: 5 * 1024 ** 2 },
-          })
+          // The policy is not in it, and PUT /api/admin/storage is gone.
+          for (const k of ['hosts', 'localSpaces', 'cache']) expect(g.json[k], k).toBeUndefined()
+          expect(g.json.remotes.require).toBeUndefined()
+          expect((await call(admin, 'PUT', '/api/admin/storage', {})).status).toBe(405)
+          expect(await siteValue(admin, 'storage.remotes.require')).toBe('')
+          expect(await siteValue(admin, 'storage.remotes.scope')).toBe('new')
+          expect(await siteValue(admin, 'storage.remotes.graceDays')).toBe(30)
+          expect(await siteValue(admin, 'storage.localSpaces.maxBytes')).toBeNull()
+          expect(await siteValue(admin, 'cache.evictAfterDays')).toBe(14)
+          expect(await siteValue(admin, 'cache.minFreeBytes')).toBe(10 * 1024 ** 3)
+          expect(Array.isArray(await siteValue(admin, 'storage.hosts'))).toBe(true)
+          expect(typeof (await siteValue(admin, 'cache.partial'))).toBe('boolean')
+          const put = await putSite(admin, 'cache.minIdleHours', 48)
           expect(put.status).toBe(200)
-          expect(put.json.cache).toMatchObject({ minIdleHours: 48, evictAfterDays: 14 })
-          expect(put.json.localSpaces.maxBytes).toBe(5 * 1024 ** 2)
-          // The summary is the GET's alone.
-          const { summary: _summary, ...again } = (await settings()).json
-          void _summary
-          expect(again).toEqual(put.json)
-          for (const bad of [
-            { remotes: { graceDays: 400 } },
-            { remotes: { require: 'gitlab' } },
-            { remotes: { scope: 'most' } },
-            { localSpaces: { maxBytes: 1000 } },
-            { cache: { evictAfterDays: 0 } },
-            { cache: { minIdleHours: 0 } },
-            { cache: { clonesBytes: 1024 ** 2 } },
-          ]) {
-            const r = await call(admin, 'PUT', '/api/admin/storage', bad)
-            expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
+          expect(put.json.site.value).toBe(48)
+          expect((await putSite(admin, 'storage.localSpaces.maxBytes', 5 * 1024 ** 2)).json.site.value).toBe(
+            5 * 1024 ** 2,
+          )
+          expect(await siteValue(admin, 'cache.evictAfterDays')).toBe(14)
+          for (const [key, value] of [
+            ['storage.remotes.graceDays', 400],
+            ['storage.remotes.require', 'gitlab'],
+            ['storage.remotes.scope', 'most'],
+            ['storage.localSpaces.maxBytes', 1000],
+            ['cache.evictAfterDays', 0],
+            ['cache.minIdleHours', 0],
+            ['cache.clonesBytes', 1024 ** 2],
+          ] as const) {
+            const r = await putSite(admin, key, value)
+            expect([r.status, r.json.error], key).toEqual([400, 'invalid'])
           }
         })
 
         it('has the attachment cache among the settings', async () => {
           await reset()
-          const g = await settings()
-          expect(g.json).toMatchObject({ cache: { assetsBytes: expect.any(Number) } })
-          const put = await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 64 * 1024 ** 2 } })
+          expect(typeof (await siteValue(admin, 'cache.assetsBytes'))).toBe('number')
+          const put = await putSite(admin, 'cache.assetsBytes', 64 * 1024 ** 2)
           expect(put.status).toBe(200)
-          expect(put.json).toMatchObject({ cache: { assetsBytes: 64 * 1024 ** 2 } })
-          for (const bad of [{ cache: { assetsBytes: 1024 ** 2 } }]) {
-            const r = await call(admin, 'PUT', '/api/admin/storage', bad)
-            expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
-          }
-          await call(admin, 'PUT', '/api/admin/storage', { cache: { assetsBytes: 5 * 1024 ** 3 } })
+          expect(put.json.site.value).toBe(64 * 1024 ** 2)
+          const r = await putSite(admin, 'cache.assetsBytes', 1024 ** 2)
+          expect([r.status, r.json.error]).toEqual([400, 'invalid'])
+          await putSite(admin, 'cache.assetsBytes', 5 * 1024 ** 3)
         })
 
         it('has an attachment repository only for a space that follows a remote', async () => {
@@ -3361,7 +3500,8 @@ function suite(target: Target) {
           const m = await newMember(uniq('stad'))
           for (const [method, path, body] of [
             ['GET', '/api/admin/storage', undefined],
-            ['PUT', '/api/admin/storage', {}],
+            ['PUT', '/api/admin/settings/cache.partial', { value: true }],
+            ['GET', '/api/admin/secrets', undefined],
             ['PUT', '/api/admin/spaces/01ZZZZZZZZ/storage', {}],
             ['POST', '/api/admin/spaces/01ZZZZZZZZ/evict', {}],
           ] as [string, string, unknown][]) {
@@ -3413,11 +3553,21 @@ function suite(target: Target) {
         it('requires a remote of new spaces before anything is made, and relaxing it takes the requirement away', async () => {
           const owner = await newMember(uniq('strq'))
           const before = (await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length
-          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
+          await putSites(admin, {
+            'storage.remotes.require': 'any',
+            'storage.remotes.scope': 'new',
+            'storage.remotes.graceDays': 30,
+          })
           const refused = await call(owner.browser, 'POST', '/api/spaces', { name: `Needs a remote ${run}` })
           expect([refused.status, refused.json.error, refused.json.require]).toEqual([409, 'remote_required', 'any'])
           expect((await call(owner.browser, 'GET', '/api/spaces')).json.spaces.length).toBe(before)
-          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
+          const lifted = await putSite(admin, 'storage.remotes.require', '')
+          // The answer says how many spaces the requirement asks something of.
+          expect(lifted.json.remotes).toEqual({
+            InGrace: expect.any(Number),
+            Overdue: expect.any(Number),
+            Exempt: expect.any(Number),
+          })
           expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Free ${run}` })).status).toBe(201)
         })
 
@@ -3425,9 +3575,13 @@ function suite(target: Target) {
           const owner = await newMember(uniq('stex'))
           const r = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: true })
           expect(r.json.user.remoteExempt).toBe(true)
-          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'new', graceDays: 30 } })
+          await putSites(admin, {
+            'storage.remotes.require': 'any',
+            'storage.remotes.scope': 'new',
+            'storage.remotes.graceDays': 30,
+          })
           expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Exempt ${run}` })).status).toBe(201)
-          await call(admin, 'PUT', '/api/admin/storage', { remotes: { require: null } })
+          await putSite(admin, 'storage.remotes.require', '')
           const back = await call(admin, 'PATCH', `/api/users/${owner.user.id}`, { remoteExempt: false })
           expect(back.json.user.remoteExempt).toBeUndefined()
         })
@@ -4080,8 +4234,7 @@ function suite(target: Target) {
 
     if (accounts) {
       it('lines keep their author and source, split off the text and shown beforehand; sources of several kinds are one default', async () => {
-        const adm = (method: string, path: string, body?: unknown) =>
-          call(admin, method, `/api/admin/daily${path}`, body)
+        const adm = (method: string, path: string, body?: unknown) => dailyAdm(admin, method, path, body)
         try {
           const pre = await adm('POST', '/lines/preview', {
             text: '人到情多情转薄，而今真个不多情。 —— 纳兰性德《山花子》\nThe best way out is always through. — Robert Frost\nI think — therefore I am',
@@ -4144,8 +4297,7 @@ function suite(target: Target) {
       })
 
       it('the administrators give a default for spaces with no source: lines by language, a choice per space, and the settings are theirs alone', async () => {
-        const adm = (method: string, path: string, body?: unknown) =>
-          call(admin, method, `/api/admin/daily${path}`, body)
+        const adm = (method: string, path: string, body?: unknown) => dailyAdm(admin, method, path, body)
         const cleanup = async () => {
           await adm('DELETE', '/lines?lang=zh')
           await adm('DELETE', '/lines?lang=en')
@@ -4165,9 +4317,6 @@ function suite(target: Target) {
           })
           // Bad requests.
           for (const [what, method, path, body] of [
-            ['an unknown key', 'PUT', '', { extra: 1 }],
-            ['hosts, which is no setting', 'PUT', '', { hosts: [] }],
-            ['notices, which are none', 'PUT', '', { notices: [] }],
             ['a default with no kind', 'PUT', '', { default: {} }],
             ['a single id where a list goes', 'PUT', '', { default: { kind: 'sources', sources: { '': 'x' } } }],
             ['a bad language', 'PUT', '/lines', { lang: 'chinese!', text: 'x' }],
@@ -4176,6 +4325,8 @@ function suite(target: Target) {
           ] as const)
             expect([what, (await adm(method, path, body)).status]).toEqual([what, 400])
           expect((await call(admin, 'DELETE', '/api/admin/daily/lines?lang=chinese!')).status).toBe(400)
+          // The policy is no longer written here.
+          expect((await call(admin, 'PUT', '/api/admin/daily', { default: null })).status).toBe(405)
           const set = await adm('PUT', '', { default: { kind: 'list' } })
           expect(set.status).toBe(200)
           expect(set.json.default).toEqual({ kind: 'list' })
@@ -4276,8 +4427,7 @@ function suite(target: Target) {
             api: false,
           })
           expect((await dq('date=2026-11-23&lang=zh')).json.origin).toBe('space')
-          for (const bad of [{}, 'no', { own: 'no' }, null])
-            expect((await adm('PUT', '', { allow: bad })).status).toBe(400)
+          for (const bad of ['no', 1, null]) expect((await adm('PUT', '', { allow: { own: bad } })).status).toBe(400)
           expect(await locks({ api: true })).toEqual({ own: true, api: true })
           // Taking the lines away.
           expect((await adm('DELETE', '/lines?lang=zh')).json.lines.byLang['zh-Hans']).toBeUndefined()
@@ -4289,8 +4439,7 @@ function suite(target: Target) {
         }
       })
       it('the administrators configure external interfaces themselves: any number, headers kept secret, a list of languages, built-in interfaces only offered', async () => {
-        const adm = (method: string, path: string, body?: unknown) =>
-          call(admin, method, `/api/admin/daily${path}`, body)
+        const adm = (method: string, path: string, body?: unknown) => dailyAdm(admin, method, path, body)
         const iface = (over: Record<string, unknown> = {}) => ({
           name: `Quotes ${run}`,
           lang: 'en',
@@ -4428,7 +4577,6 @@ function suite(target: Target) {
       it('has no settings of administrators or choices of spaces in single-user mode', async () => {
         for (const [method, path] of [
           ['GET', '/api/admin/daily'],
-          ['PUT', '/api/admin/daily'],
           ['PUT', '/api/admin/daily/lines'],
           ['GET', `${base()}/daily/prefs`],
           ['PUT', `${base()}/daily/prefs`],
@@ -8165,13 +8313,13 @@ function suite(target: Target) {
           register: false,
           forgot: false,
         })
-        await call(root, 'PUT', '/api/admin/security', { login: { mode: 'sso_redirect' } })
+        await putSite(root, 'signin.mode', 'sso_redirect')
         expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({
           loginMode: 'sso_redirect',
           local: false,
           sso: true,
         })
-        await call(root, 'PUT', '/api/admin/security', { login: { mode: 'dual' } })
+        await putSite(root, 'signin.mode', 'dual')
       })
 
       it("a provider's start: GET is a 303 to the provider, a disabled or unknown one goes to /login?sso_error=provider_unavailable, POST gives {url}", async () => {
@@ -8254,79 +8402,109 @@ function suite(target: Target) {
         expect((await call(b, 'GET', '/api/account')).json.identities[0]).toMatchObject({ providerSlug: '', kind: '' })
       })
 
-      it('security: the defaults, a change that is kept, and each refusal; nothing is half saved', async () => {
+      it('security: the sign-in policy is settings, with the defaults, a change that is kept, and each refusal; GET /api/admin/security has only what is derived', async () => {
         const root = await inAs()
+        const read = (key: string) => siteValue(root, key)
+        expect(
+          await Promise.all(['signin.mode', 'signin.ssoOnly', 'features.passkeys', 'signin.passkeyRoles'].map(read)),
+        ).toEqual(['dual', false, true, []])
+        expect(
+          await Promise.all(['signin.lockout.enabled', 'signin.lockout.minutes', 'signin.lockout.scope'].map(read)),
+        ).toEqual([false, 15, 'ip_account'])
+        expect(
+          await Promise.all(
+            [
+              'signin.perMinute',
+              'signin.maxFailures',
+              'signin.windowMinutes',
+              'sessions.idleDays',
+              'sessions.maxDays',
+            ].map(read),
+          ),
+        ).toEqual([10, 10, 15, 30, 90])
+        expect(await read('captcha.provider')).toBe('image')
+        expect(await read('captcha.contexts')).toMatchObject({
+          login: { on: false, when: 'after_failures', failures: 3 },
+          register: { on: false },
+        })
         const got = (await call(root, 'GET', '/api/admin/security')).json
         expect(got).toMatchObject({
-          login: { mode: 'dual', ssoOnly: false },
-          passkeys: { enabled: true, available: true, requireRoles: [] },
-          captcha: { provider: 'image', hasSecret: false },
-          lockout: { enabled: false, minutes: 15, scope: 'ip_account' },
-          limits: { perMinute: 10, maxFailures: 10, windowMinutes: 15, sessionIdleDays: 30, sessionMaxDays: 90 },
+          login: { effectiveMode: expect.any(String), ssoOnlyInEffect: false, ssoAvailable: expect.any(Boolean) },
+          passkeys: { available: true, required: 0, requiredWithout: 0 },
+          captcha: { siteKey: '', hasSecret: false },
           notices: [],
         })
-        const bad = async (body: unknown) => {
-          const r = await call(root, 'PUT', '/api/admin/security', body)
+        for (const k of ['settings', 'lockout', 'limits']) expect(got[k], k).toBeUndefined()
+        expect(got.login.mode).toBeUndefined()
+        const bad = async (key: string, value: unknown) => {
+          const r = await putSite(root, key, value)
           return [r.status, r.json.error]
         }
-        expect(await bad({ login: { mode: 'nope' } })).toEqual([400, 'invalid'])
-        expect(await bad({ limits: { sessionIdleDays: 400 } })).toEqual([400, 'invalid'])
-        expect(await bad({ limits: { sessionIdleDays: 50, sessionMaxDays: 40 } })).toEqual([400, 'invalid'])
-        expect(await bad({ captcha: { provider: 'turnstile', contexts: { login: { on: true } } } })).toEqual([
-          400,
-          'captcha_site_key_required',
-        ])
-        expect(
-          await bad({ captcha: { provider: 'turnstile', siteKey: 'k', contexts: { login: { on: true } } } }),
-        ).toEqual([400, 'captcha_secret_required'])
-        // Refused as a whole: the valid part of the last one was not stored.
-        expect(await bad({ lockout: { minutes: 20 }, limits: { perMinute: 0 } })).toEqual([400, 'invalid'])
-        expect((await call(root, 'GET', '/api/admin/security')).json.lockout.minutes).toBe(15)
-        const ok = await call(root, 'PUT', '/api/admin/security', {
-          lockout: { enabled: true, minutes: 20, scope: 'ip' },
-          captcha: {
-            provider: 'turnstile',
-            siteKey: 'k',
-            secret: 's',
-            contexts: { login: { on: true, when: 'always' } },
-          },
+        expect(await bad('signin.mode', 'nope')).toEqual([400, 'invalid'])
+        expect(await bad('sessions.idleDays', 400)).toEqual([400, 'invalid'])
+        // The lifetimes are checked against each other.
+        expect(await bad('sessions.idleDays', 100)).toEqual([400, 'invalid'])
+        expect(await bad('signin.perMinute', 0)).toEqual([400, 'invalid'])
+        expect(await bad('signin.passkeyRoles', ['nobody'])).toEqual([400, 'invalid'])
+      })
+
+      it('security: the captcha keys are the one thing PUT /api/admin/security writes; the secret is write-only and belongs to its provider', async () => {
+        const root = await inAs()
+        const keys = (body: unknown) => call(root, 'PUT', '/api/admin/security', body)
+        const refusal = async (key: string, value: unknown) => {
+          const r = await putSite(root, key, value)
+          return [r.status, r.json.error]
+        }
+        // Anything but the captcha's keys is refused here.
+        expect((await keys({ lockout: { minutes: 20 } })).status).toBe(400)
+        expect((await keys({ captcha: { provider: 'turnstile' } })).status).toBe(400)
+        // The built-in image captcha has no keys.
+        expect((await keys({ captcha: { siteKey: 'k' } })).json.error).toBe('invalid')
+        expect(await putSite(root, 'signin.lockout.enabled', true).then((r) => r.status)).toBe(200)
+        expect(await putSite(root, 'signin.lockout.minutes', 20).then((r) => r.status)).toBe(200)
+        expect(await putSite(root, 'signin.lockout.scope', 'ip').then((r) => r.status)).toBe(200)
+        expect(await siteValue(root, 'signin.lockout.minutes')).toBe(20)
+        // A third-party provider: its keys, then the contexts that need them.
+        expect((await putSite(root, 'captcha.provider', 'turnstile')).status).toBe(200)
+        expect(await refusal('captcha.contexts', { login: { on: true } })).toEqual([400, 'captcha_site_key_required'])
+        expect((await keys({ captcha: { siteKey: 'k' } })).json.captcha).toEqual({ siteKey: 'k', hasSecret: false })
+        expect(await refusal('captcha.contexts', { login: { on: true } })).toEqual([400, 'captcha_secret_required'])
+        const withSecret = await keys({ captcha: { secret: 's' } })
+        expect(withSecret.json.captcha).toEqual({ siteKey: 'k', hasSecret: true })
+        expect(JSON.stringify(withSecret.json)).not.toContain('"s"')
+        // A partial document is merged over the current one; the answer is the whole.
+        const on = await putSite(root, 'captcha.contexts', { login: { on: true, when: 'always' } })
+        expect(on.status).toBe(200)
+        expect(on.json.site.value).toMatchObject({
+          login: { on: true, when: 'always', failures: 3 },
+          invite: { on: false },
         })
-        expect(ok.status).toBe(200)
-        expect(ok.json).toMatchObject({
-          lockout: { enabled: true, minutes: 20, scope: 'ip' },
-          captcha: { provider: 'turnstile', siteKey: 'k', hasSecret: true },
+        // Another provider while a context is on is refused; with the contexts off it works, and clears the keys.
+        expect(await refusal('captcha.provider', 'hcaptcha')).toEqual([400, 'captcha_site_key_required'])
+        // Clearing the secret while a context needs it is refused.
+        expect((await keys({ captcha: { secret: '' } })).json.error).toBe('captcha_secret_required')
+        await putSite(root, 'captcha.contexts', { login: { on: false } })
+        expect((await putSite(root, 'captcha.provider', 'hcaptcha')).status).toBe(200)
+        expect((await call(root, 'GET', '/api/admin/security')).json.captcha).toEqual({ siteKey: '', hasSecret: false })
+        // Put back.
+        await putSite(root, 'captcha.provider', 'image')
+        await putSites(root, {
+          'signin.lockout.enabled': false,
+          'signin.lockout.minutes': 15,
+          'signin.lockout.scope': 'ip_account',
         })
-        expect(JSON.stringify(ok.json)).not.toContain('"s"')
-        // A secret stored for another provider does not count.
-        expect(
-          await bad({ captcha: { provider: 'hcaptcha', siteKey: 'k2', contexts: { invite: { on: true } } } }),
-        ).toEqual([400, 'captcha_secret_required'])
-        // Clearing the secret while a context needs it is refused; with the context off it works.
-        expect(await bad({ captcha: { secret: '' } })).toEqual([400, 'captcha_secret_required'])
-        expect(
-          (
-            await call(root, 'PUT', '/api/admin/security', {
-              captcha: { secret: '', contexts: { login: { on: false } } },
-            })
-          ).json.captcha.hasSecret,
-        ).toBe(false)
-        expect(
-          (
-            await call(root, 'PUT', '/api/admin/security', {
-              captcha: { provider: 'image', contexts: { login: { on: false } } },
-              lockout: { enabled: false, minutes: 15, scope: 'ip_account' },
-            })
-          ).status,
-        ).toBe(200)
       })
 
       it("ssoOnly: in effect only while a provider is enabled; then a member's password is refused after it was checked, an administrator's is not", async () => {
         const root = await inAs()
         // With no provider the page offers no button, so refusing passwords would lock the door.
-        expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).json.login).toMatchObject(
-          { ssoOnly: true, ssoOnlyInEffect: false, effectiveMode: 'local_only', ssoAvailable: false },
-        )
-        await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+        expect((await putSite(root, 'signin.ssoOnly', true)).json.site.value).toBe(true)
+        expect((await call(root, 'GET', '/api/admin/security')).json.login).toMatchObject({
+          ssoOnlyInEffect: false,
+          effectiveMode: 'local_only',
+          ssoAvailable: false,
+        })
+        await putSite(root, 'signin.ssoOnly', false)
         expect(
           (
             await call(root, 'POST', '/api/admin/auth/providers', {
@@ -8343,7 +8521,7 @@ function suite(target: Target) {
           password: 'a-long-password',
         })
         expect(joined.status).toBe(201)
-        expect((await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: true } })).status).toBe(200)
+        expect((await putSite(root, 'signin.ssoOnly', true)).status).toBe(200)
         const refused = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
         expect([refused.status, refused.json.error]).toEqual([403, 'local_login_refused'])
         // A wrong password still gets the ordinary answer: the code says nothing to someone who does not know it.
@@ -8365,14 +8543,12 @@ function suite(target: Target) {
             })
           ).json.error,
         ).toBe('local_login_refused')
-        await call(root, 'PUT', '/api/admin/security', { login: { ssoOnly: false } })
+        await putSite(root, 'signin.ssoOnly', false)
       })
 
       it('captcha: asked for by the context, an image is answered once, a wrong or missing answer is 400 captcha_failed; unknown contexts are 400', async () => {
         const root = await inAs()
-        await call(root, 'PUT', '/api/admin/security', {
-          captcha: { contexts: { login: { on: true, when: 'always' } } },
-        })
+        await putSite(root, 'captcha.contexts', { login: { on: true, when: 'always' } })
         expect((await call(b28(), 'GET', '/api/captcha?ctx=invite')).json).toEqual({ required: false })
         expect((await call(b28(), 'GET', '/api/captcha?ctx=forgot')).json).toEqual({ required: false })
         expect((await call(b28(), 'GET', '/api/captcha?ctx=nope')).status).toBe(400)
@@ -8411,20 +8587,18 @@ function suite(target: Target) {
             })
           ).status,
         ).toBe(200)
-        await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+        await putSite(root, 'captcha.contexts', { login: { on: false } })
       })
 
       it('after_failures: a name that failed enough asks for a captcha, others do not', async () => {
         const root = await inAs()
-        await call(root, 'PUT', '/api/admin/security', {
-          captcha: { contexts: { login: { on: true, when: 'after_failures', failures: 2 } } },
-        })
+        await putSite(root, 'captcha.contexts', { login: { on: true, when: 'after_failures', failures: 2 } })
         expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(false)
         for (let i = 0; i < 2; i++)
           await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })
         expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(true)
         expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=someone-else')).json.required).toBe(false)
-        await call(root, 'PUT', '/api/admin/security', { captcha: { contexts: { login: { on: false } } } })
+        await putSite(root, 'captcha.contexts', { login: { on: false } })
       })
 
       it('passkeys: register (named, a credential once), sign in with it, rename, delete; a ceremony is used once; a required person is held until they have one', async () => {
@@ -8511,12 +8685,12 @@ function suite(target: Target) {
         for (let i = 1; i < all.items.length; i++) expect(all.items[i - 1].id > all.items[i].id).toBe(true)
         const more = (await call(root, 'GET', `/api/admin/audit?limit=5&cursor=${all.next}`)).json
         expect(more.items[0].id).toBe(all.next)
-        const kinds = (await call(root, 'GET', '/api/admin/audit?kind=security_changed&limit=200')).json.items
+        const kinds = (await call(root, 'GET', '/api/admin/audit?kind=setting_changed&limit=200')).json.items
         expect(kinds.length).toBeGreaterThan(0)
-        expect(kinds.every((r: { kind: string }) => r.kind === 'security_changed')).toBe(true)
+        expect(kinds.every((r: { kind: string }) => r.kind === 'setting_changed')).toBe(true)
         expect(kinds[0]).toMatchObject({
           actor: expect.any(String),
-          detail: { from: expect.any(Object), to: expect.any(Object) },
+          detail: { key: expect.any(String), layer: 'site' },
         })
         // A secret is never in it.
         expect(JSON.stringify(kinds)).not.toContain('"s"')

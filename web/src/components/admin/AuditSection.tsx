@@ -26,6 +26,8 @@ const KINDS = [
   'passkey_added',
   'passkey_removed',
   'security_changed',
+  'setting_changed',
+  'secret_changed',
   'provider_created',
   'provider_changed',
   'provider_deleted',

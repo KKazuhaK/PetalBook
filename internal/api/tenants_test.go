@@ -394,14 +394,14 @@ func TestTenantAdminsSeeTheirAuditRowsWithoutTheServersOwn(t *testing.T) {
 			return out
 		}
 		b := kinds(f.admB)
-		if b["login"] != 2 || b["security_changed"] != 0 || b["tenant_created"] != 0 || b["setting_changed"] != 0 {
+		if b["login"] != 2 || b["tenant_created"] != 0 || b["setting_changed"] != 0 {
 			t.Fatalf("tenant B's administrator sees %v", b)
 		}
 		all := kinds(f.root)
-		if all["security_changed"] == 0 || all["tenant_created"] != 1 || all["setting_changed"] != 1 || all["login"] < 4 {
+		if all["tenant_created"] != 1 || all["setting_changed"] < 2 || all["login"] < 4 {
 			t.Fatalf("a site administrator sees %v", all)
 		}
-		if k := kinds(f.admA); k["security_changed"] != 0 {
+		if k := kinds(f.admA); k["setting_changed"] != 0 {
 			t.Fatalf("tenant A's administrator sees %v", k)
 		}
 	})

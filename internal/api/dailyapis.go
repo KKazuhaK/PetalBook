@@ -19,6 +19,7 @@ import (
 	"petalbook.app/server/internal/dailyfetch"
 	"petalbook.app/server/internal/langtag"
 	"petalbook.app/server/internal/sentence"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/store"
 )
@@ -39,16 +40,19 @@ type storedAPI struct {
 }
 
 type siteDaily struct {
-	Default *siteDefault `json:"default"`
+	// Default, Languages and Allow are the settings daily.default,
+	// daily.languages, daily.own and daily.api: filled in by loadSiteQ from the
+	// layered settings, never stored in the record.
+	Default *siteDefault `json:"-"`
 	// Languages are the languages the settings pages have a tab for, besides
 	// "all languages"; the administrators' own list, as canonical BCP 47 tags.
-	Languages []string `json:"languages"`
+	Languages []string `json:"-"`
 	// APIs are the interfaces the administrators wrote; Providers what they
 	// chose of the built-in ones (see all).
 	APIs      []storedAPI              `json:"apis"`
 	Providers map[string]providerState `json:"providers,omitempty"`
-	// Allow is what the administrators let the spaces do; absent is all of it.
-	Allow *dailyAllow `json:"allow"`
+	// Allow is what the administrators let the spaces do.
+	Allow *dailyAllow `json:"-"`
 }
 
 // dailyAllow is what the administrators let the spaces do. What a space wrote
@@ -97,7 +101,7 @@ func (s *server) loadSite(ctx context.Context) (siteDaily, error) {
 // error, never taken as not set: a save would then write over them.
 func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 	var d siteDaily
-	raw, ok, err := store.GetSiteSetting(ctx, q, siteDailyKey)
+	raw, ok, err := store.GetSiteRecord(ctx, q, siteDailyKey)
 	if err != nil {
 		return d, err
 	}
@@ -107,7 +111,31 @@ func (s *server) loadSiteQ(ctx context.Context, q store.Q) (siteDaily, error) {
 		}
 	}
 	d.fill()
+	if err := s.dailySettingsInto(ctx, &d); err != nil {
+		return siteDaily{}, err
+	}
 	return d, nil
+}
+
+// dailySettingsInto fills the parts of the daily text's settings that are
+// layered settings: one read of the settings' cache.
+func (s *server) dailySettingsInto(ctx context.Context, d *siteDaily) error {
+	eff, err := s.settings.For(ctx, "")
+	if err != nil {
+		return err
+	}
+	if v := eff[settings.DailyDefault].Value; v != nil {
+		if d.Default, err = fromGeneric(v); err != nil {
+			return err
+		}
+	}
+	if l, ok := eff[settings.DailyLanguages].Value.([]string); ok {
+		d.Languages = append([]string(nil), l...)
+	}
+	own, _ := eff[settings.DailyOwn].Value.(bool)
+	api, _ := eff[settings.DailyAPI].Value.(bool)
+	d.Allow = &dailyAllow{Own: own, API: api}
+	return nil
 }
 
 // builtinAPI is a built-in interface as the administrators set it.
@@ -157,7 +185,7 @@ func (s *server) editSite(ctx context.Context, change func(q store.Q, d *siteDai
 // editSiteQ is editSite inside a transaction of the caller's (the layered
 // settings write the same record).
 func (s *server) editSiteQ(ctx context.Context, q store.Q, change func(q store.Q, d *siteDaily) error) error {
-	if err := store.LockSiteSetting(ctx, q, siteDailyKey, time.Now()); err != nil {
+	if err := store.LockSiteRecord(ctx, q, siteDailyKey, time.Now()); err != nil {
 		return err
 	}
 	d, err := s.loadSiteQ(ctx, q)
@@ -169,7 +197,7 @@ func (s *server) editSiteQ(ctx context.Context, q store.Q, change func(q store.Q
 	}
 	d.fill()
 	b, _ := json.Marshal(d)
-	return store.SetSiteSetting(ctx, q, siteDailyKey, string(b), time.Now())
+	return store.SetSiteRecord(ctx, q, siteDailyKey, string(b), time.Now())
 }
 
 // apiView is an interface as the administrators see it: the headers only by
@@ -663,103 +691,6 @@ func jsonCoded(prefix string, err error) error {
 
 func badLangError(tag string) error {
 	return &codedError{code: space.CodeBadLanguage, msg: fmt.Sprintf("%q is not a language tag like zh-Hans, en or pt-BR.", tag)}
-}
-
-// adminPutDaily changes the default, the languages and what spaces may do.
-// What the request leaves out stays as it is.
-func (s *server) adminPutDaily(c *call) {
-	var req map[string]json.RawMessage
-	if !s.readJSON(c.w, c.r, &req, false) {
-		return
-	}
-	for k := range req {
-		if k != "default" && k != "languages" && k != "allow" {
-			bad(c, "Unknown key "+k+": the settings are default, languages and allow (interfaces have their own requests).")
-			return
-		}
-	}
-	ctx := c.r.Context()
-	// Everything is checked first; the change is then made to the settings as
-	// they are at that moment (see editSite).
-	var langs []string
-	if raw, ok := req["languages"]; ok {
-		var given []string
-		if err := json.Unmarshal(raw, &given); err != nil || given == nil {
-			bad(c, "Languages is a list of language tags like zh-Hans and en.")
-			return
-		}
-		if len(given) > 30 {
-			bad(c, "At most 30 languages.")
-			return
-		}
-		seen := map[string]bool{}
-		langs = []string{}
-		for _, l := range given {
-			cl, ok := langtag.Canonical(l)
-			if !ok {
-				s.fail(c.w, badLangError(l))
-				return
-			}
-			if !seen[cl] {
-				seen[cl] = true
-				langs = append(langs, cl)
-			}
-		}
-	}
-	var allow struct {
-		Own *bool `json:"own"`
-		API *bool `json:"api"`
-	}
-	if raw, ok := req["allow"]; ok {
-		if err := json.Unmarshal(raw, &allow); err != nil || allow.Own == nil && allow.API == nil {
-			bad(c, "Allow is {\"own\": true or false, \"api\": true or false}.")
-			return
-		}
-	}
-	var def *siteDefault
-	if raw, ok := req["default"]; ok {
-		if err := json.Unmarshal(raw, &def); err != nil {
-			s.fail(c.w, jsonCoded("default: ", err))
-			return
-		}
-		if def != nil {
-			site, err := s.loadSite(ctx)
-			if err == nil {
-				err = s.checkSiteDefault(ctx, def, &site)
-			}
-			if err != nil {
-				s.fail(c.w, err)
-				return
-			}
-		}
-	}
-	err := s.editSite(ctx, func(_ store.Q, site *siteDaily) error {
-		if def != nil && def.Kind == "api" {
-			// The interfaces as they are while the settings are held.
-			if err := checkDefaultAPIs(def, site); err != nil {
-				return err
-			}
-		}
-		if langs != nil {
-			site.Languages = langs
-		}
-		// What is left out stays.
-		if allow.Own != nil {
-			site.Allow.Own = *allow.Own
-		}
-		if allow.API != nil {
-			site.Allow.API = *allow.API
-		}
-		if _, ok := req["default"]; ok {
-			site.Default = def
-		}
-		return nil
-	})
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	s.adminAnswerDaily(c)
 }
 
 // adminPutDailyAPI makes or changes an interface. A built-in one is only

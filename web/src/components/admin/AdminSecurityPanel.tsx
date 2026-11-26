@@ -1,10 +1,8 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Eraser, Save } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { adminApi, useSecuritySettings } from '@/api/admin'
+import { failedKey, useSecuritySettings, useWriteSettings } from '@/api/admin'
 import { ApiError } from '@/api/client'
-import { keys } from '@/api/hooks'
 import type {
   CaptchaContext,
   CaptchaProvider,
@@ -33,10 +31,9 @@ import { Switch } from '@/components/ui/switch'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 import {
-  buildPatch,
+  buildSteps,
   CONTEXTS,
   draftOf,
-  isEmptyPatch,
   LIMIT_FIELDS,
   partOf,
   type Draft,
@@ -52,6 +49,9 @@ const SCOPES: readonly LockoutScope[] = ['ip_account', 'ip', 'account']
 // log are pages of their own. The settings are one form with one Save: only what changed is sent.
 export function AdminSecurityPanel() {
   const settings = useSecuritySettings()
+  // A refusal in the middle of several writes leaves the ones before it written: the page reads again, and the form is
+  // made again from what the server has, with what was typed still on it and the refusal beside the part it is about.
+  const [failure, setFailure] = useState<Failure | null>(null)
   if (settings.isPending) return <PageFallback />
   if (settings.isError)
     return (
@@ -62,9 +62,21 @@ export function AdminSecurityPanel() {
     )
   return (
     <div className="min-w-0 space-y-10">
-      <SettingsForm key={JSON.stringify(settings.data)} settings={settings.data} />
+      <SettingsForm
+        key={`${JSON.stringify(settings.data)}${failure?.id ?? ''}`}
+        settings={settings.data}
+        failure={failure}
+        onFailure={setFailure}
+      />
     </div>
   )
+}
+
+interface Failure {
+  id: number
+  part: Part
+  message: string
+  draft: Draft
 }
 
 function Notices({ settings }: { settings: SecuritySettings }) {
@@ -86,14 +98,28 @@ function Notices({ settings }: { settings: SecuritySettings }) {
 // A row's control on a narrow screen fills the row.
 const field = 'w-full min-w-0 sm:w-56'
 
-function SettingsForm({ settings }: { settings: SecuritySettings }) {
-  const qc = useQueryClient()
-  const [draft, setDraft] = useState<Draft>(() => draftOf(settings))
+function SettingsForm({
+  settings,
+  failure,
+  onFailure,
+}: {
+  settings: SecuritySettings
+  failure: Failure | null
+  onFailure: (f: Failure | null) => void
+}) {
+  const write = useWriteSettings()
+  const [draft, setDraft] = useState<Draft>(() => failure?.draft ?? draftOf(settings))
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<{ part: Part; message: string } | null>(null)
+  const [error, setError] = useState<{ part: Part; message: string } | null>(
+    failure ? { part: failure.part, message: failure.message } : null,
+  )
   const [replacing, setReplacing] = useState(false)
   const [confirmScope, setConfirmScope] = useState(false)
   const messageRef = useRef<HTMLParagraphElement>(null)
+  // The refusal is read where it is shown.
+  useEffect(() => {
+    if (failure) messageRef.current?.focus()
+  }, [failure])
   const set = (patch: Partial<Draft>) => {
     setError(null)
     setDraft((d) => ({ ...d, ...patch }))
@@ -101,8 +127,8 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
   const setContext = (c: CaptchaContext, patch: Partial<Draft['contexts'][CaptchaContext]>) =>
     set({ contexts: { ...draft.contexts, [c]: { ...draft.contexts[c], ...patch } } })
 
-  const patch = buildPatch(settings, draft)
-  const dirty = !isEmptyPatch(patch)
+  const steps = buildSteps(settings, draft)
+  const dirty = steps.length > 0
   const third = draft.provider !== 'image'
   // A secret stored for another provider does not count: changing provider needs a new one.
   const secretStored = settings.captcha.hasSecret && draft.provider === settings.captcha.provider
@@ -112,18 +138,18 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
     if (busy || !dirty) return
     setBusy(true)
     setError(null)
+    onFailure(null)
     try {
-      const next = await adminApi.putSecurity(patch)
-      qc.setQueryData(keys.adminSecurity, next)
-      void qc.invalidateQueries({ queryKey: keys.adminAudit('', '') })
+      await write.mutateAsync(steps)
       toast.success(tsec.saved)
       // The form is made again from the answer (see `key`).
     } catch (e) {
       const code = e instanceof ApiError ? e.code : 'unknown'
       const known = Object.hasOwn(tsec.errors, code) ? tsec.errors[code] : undefined
       const message = known && code !== 'invalid' ? known : e instanceof ApiError ? e.message : tsec.errors.unknown
-      setError({ part: partOf(code, e instanceof ApiError ? e.message : ''), message })
-      setTimeout(() => messageRef.current?.focus(), 0)
+      const refusal = { part: partOf(code, failedKey(e)), message }
+      setError(refusal)
+      onFailure({ ...refusal, draft, id: Date.now() })
     }
     setBusy(false)
   }
@@ -480,6 +506,7 @@ function SettingsForm({ settings }: { settings: SecuritySettings }) {
                 setDraft(draftOf(settings))
                 setReplacing(false)
                 setError(null)
+                onFailure(null)
               }}
             >
               {tsec.discard}

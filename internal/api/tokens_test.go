@@ -649,7 +649,8 @@ func TestAccessSwitchesAndTheTokenList(t *testing.T) {
 			t.Fatal(r.raw)
 		}
 		b.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 403, "tokens_off")
-		a.bearer("rubbish", "").do("GET", "/api/spaces", nil).want(t, 403, "tokens_off")
+		// The switch is the tenant's, known once the token's owner is: rubbish is rubbish.
+		a.bearer("rubbish", "").do("GET", "/api/spaces", nil).want(t, 401, "token_invalid")
 		tm.owner.do("GET", spacePath(tm.sid)+"/tree", nil).want(t, 200, "")
 		if got := tm.owner.do("GET", "/api/account/tokens", nil).want(t, 200, "").body["tokens"].([]any); len(got) != 1 {
 			t.Fatal(got)

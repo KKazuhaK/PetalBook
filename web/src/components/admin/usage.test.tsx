@@ -147,7 +147,7 @@ describe('the Usage page', () => {
   it("shows a site administrator the tenants with what each uses, and a tenant's people when it is picked", async () => {
     await open('storage/usage', (server) => {
       const admin = adminRequests(server)
-      admin('PUT', '/api/admin/tenancy', { enabled: true })
+      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
       admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
       sized(server, 'amy', 100)
       admin('PUT', '/api/admin/tenants/0000000000/settings/quota.people', { siteRule: { value: 1 } })
@@ -171,7 +171,7 @@ describe('the Usage page', () => {
   it('nothing on it can be wider than a phone: rows wrap and shrink, the numbers stack in one column', async () => {
     await open('storage/usage', (server) => {
       sized(server, 'amy', 100)
-      adminRequests(server)('PUT', '/api/admin/tenancy', { enabled: true })
+      adminRequests(server)('PUT', '/api/admin/settings/features.tenancy', { value: true })
       adminRequests(server)('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
     })
     await settle(
@@ -271,7 +271,7 @@ describe('limits on a user, and the usage of a tenant', () => {
   it("a tenant's details show what it uses and its totals, which a site administrator sets", async () => {
     await open('tenants', (server) => {
       const admin = adminRequests(server)
-      admin('PUT', '/api/admin/tenancy', { enabled: true })
+      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
       sized(server, 'amy', 100)
     })
     await settle(() => button(`${tt.list.manage}: Default`) !== null, 'the list')

@@ -1,13 +1,17 @@
 package settings
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"petalbook.app/server/internal/store"
 )
@@ -17,15 +21,28 @@ import (
 // "the same record" is what keeps /api/admin/daily and this API one thing. Its
 // Lower still lives here.
 type SiteBinding struct {
-	// Get reads the site value; Set writes it (inside the transaction q).
+	// Get reads the site value; Set writes it (inside the transaction q). Both
+	// nil: the value is stored in layered_settings as usual, and the binding
+	// only checks it (Check) and follows it (After).
 	Get func(ctx context.Context, q store.Q) (any, error)
 	Set func(ctx context.Context, q store.Q, v any) error
+	// After runs inside the transaction of a change of the site's value, once
+	// the value is written: old is the value in effect before, new the one
+	// written (nil for a limit that was set to none). The code that keeps
+	// something in step with a setting (the storage policy's "since", a secret
+	// that belongs to a provider) does it here, in the same transaction.
+	After func(ctx context.Context, q store.Q, old, new any) error
 	// Check validates a value of any layer beyond its shape; it may read the
 	// database. tenant is the layer's tenant ("" for the site).
 	Check func(ctx context.Context, tenant string, v any) (any, error)
 	// ReadOnly, when it returns true, makes the site value one a flag set: it
 	// cannot be written (409 conflict).
 	ReadOnly func() bool
+	// Lock, when set, is held across a site write's Check, the write and the
+	// drop of the cache. Settings whose checks look at each other share one, so
+	// that two writes, each fine alone, cannot both pass checks the other
+	// would fail (the sign-in policy's lockout checks).
+	Lock *sync.Mutex
 }
 
 // Service reads and writes the layered settings.
@@ -33,6 +50,7 @@ type Service struct {
 	st   *store.Store
 	defs []*Def
 	byK  map[string]*Def
+	bmu  sync.RWMutex // the bindings are set while the servers of one store start, and read at any time
 	bind map[string]SiteBinding
 	now  func() time.Time
 
@@ -61,7 +79,8 @@ type Service struct {
 	// window of one of its rules.
 	siteGen atomic.Uint64
 	planGen atomic.Uint64
-	slots   sync.Map // tenant id ("" for the site alone) -> *slot
+	serials atomic.Uint64 // numbers the snapshots (see Site)
+	slots   sync.Map      // tenant id ("" for the site alone) -> *slot
 
 	// plans is every rule of every plan, read again when planGen moves.
 	planMu   sync.Mutex
@@ -103,6 +122,7 @@ type slot struct {
 
 type snapshot struct {
 	site, tenant, plan uint64
+	serial             uint64
 	// next is the earliest start or end of a window of a rule in m after the
 	// snapshot was made, in Unix milliseconds (math.MaxInt64: none): the
 	// snapshot is current only before it.
@@ -114,6 +134,13 @@ type snapshot struct {
 	// plan and no rows of their own, by plan id.
 	follow, all map[string]*Effective
 	plans       sync.Map
+}
+
+// Of returns the settings of a store: one for every package that reads them, so
+// that a change made through any of them drops the one cache. Tests of the
+// package make their own with New.
+func Of(st *store.Store) *Service {
+	return st.Shared("settings", func() any { return New(st) }).(*Service)
 }
 
 // New makes the service over the Definitions.
@@ -166,16 +193,57 @@ func (s *Service) Defs() []*Def { return s.defs }
 // Def returns the definition of a key.
 func (s *Service) Def(key string) (*Def, bool) { d, ok := s.byK[key]; return d, ok }
 
+func (s *Service) binding(key string) (SiteBinding, bool) {
+	s.bmu.RLock()
+	b, ok := s.bind[key]
+	s.bmu.RUnlock()
+	return b, ok
+}
+
 // Bind attaches a site binding to a key.
 func (s *Service) Bind(key string, b SiteBinding) {
 	if _, ok := s.byK[key]; !ok {
 		panic("settings: no setting " + key)
 	}
+	s.bmu.Lock()
 	s.bind[key] = b
+	s.bmu.Unlock()
+}
+
+// SetDefault makes v the value of a setting until a site administrator sets one
+// (a value the server was started with, such as the session lifetimes). v is
+// checked like any value; it panics on a key or value that is not one, since
+// that is a mistake of the program.
+func (s *Service) SetDefault(key string, v any) {
+	d, ok := s.byK[key]
+	if !ok {
+		panic("settings: no setting " + key)
+	}
+	nv, err := d.Value(v)
+	if err != nil {
+		panic("settings: default of " + key + ": " + err.Error())
+	}
+	d.Default = nv
+	s.Invalidate()
+}
+
+// Site is the site's own settings (as For does for "") with a number that is
+// different for every set of values the service has made: the code that works
+// something out from them (the sign-in policy, the storage policy) keeps its
+// result with the number, and works it out again only when the number moves.
+func (s *Service) Site(ctx context.Context) (map[string]*Effective, uint64, error) {
+	p, err := s.snapshotOf(ctx, "")
+	if err != nil {
+		return nil, 0, err
+	}
+	return p.m, p.serial, nil
 }
 
 // SetClock sets the clock (tests).
-func (s *Service) SetClock(now func() time.Time) { s.now = now }
+func (s *Service) SetClock(now func() time.Time) {
+	s.now = now
+	s.lastCheck.Store(0) // the revision is looked at again, by the new clock
+}
 
 // Invalidate drops every cached effective value; the code that changes a bound
 // site value (or anything the settings read) calls it after the change.
@@ -327,6 +395,7 @@ func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, err
 			return nil, err
 		}
 		p.site, p.tenant, p.plan, p.next = site, gen, plan, math.MaxInt64
+		p.serial = s.serials.Add(1)
 		sl.snap.Store(p)
 		return p, nil
 	}
@@ -464,7 +533,8 @@ func rowsByKey(rows []store.LayeredRow) map[string]*store.LayeredRow {
 
 func (s *Service) siteView(ctx context.Context, q store.Q, d *Def, r *store.LayeredRow) (SiteView, error) {
 	v := SiteView{Value: d.Default, Lower: d.Lower}
-	b, bound := s.bind[d.Key]
+	b, bound := s.binding(d.Key)
+	bound = bound && b.Get != nil
 	switch {
 	case bound:
 		val, err := b.Get(ctx, q)
@@ -528,7 +598,7 @@ func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any,
 			return nil, err
 		}
 	}
-	if b, ok := s.bind[d.Key]; ok && b.Check != nil && v != nil {
+	if b, ok := s.binding(d.Key); ok && b.Check != nil && v != nil {
 		return b.Check(ctx, tenant, v)
 	}
 	return v, nil
@@ -541,9 +611,13 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 	if !ok {
 		return 0, &Error{Code: CodeNotFound, Msg: "no such setting"}
 	}
+	if b, _ := s.binding(key); b.Lock != nil {
+		b.Lock.Lock()
+		defer b.Lock.Unlock()
+	}
 	var val any
 	if ch.HasValue {
-		b, bound := s.bind[key]
+		b, bound := s.binding(key)
 		if bound && b.ReadOnly != nil && b.ReadOnly() {
 			return 0, &Error{Code: CodeConflict, Msg: key + " is set by a command-line flag; change the flag"}
 		}
@@ -560,67 +634,178 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		lower = &l
 	}
 	err = s.write(ctx, func(q store.Q) error {
-		row, err := store.GetLayered(ctx, q, string(Site), "", key, store.SourceManual)
-		if errors.Is(err, store.ErrNotFound) {
-			row, err = &store.LayeredRow{Layer: string(Site), Key: key}, nil
-		}
-		if err != nil {
-			return err
-		}
-		// The value is held to the site's own restriction as it will be.
-		if ch.HasValue {
-			l := d.Lower
-			switch {
-			case ch.HasLower && lower != nil:
-				l = *lower
-			case !ch.HasLower && row.Lower != "":
-				// Into a value of its own, as in siteView: d.Lower's Max is shared.
-				var rl Lower
-				if err := json.Unmarshal([]byte(row.Lower), &rl); err != nil {
-					return err
-				}
-				l = rl
-			}
-			// null is no limit where a limit may be none, else the default.
-			cmp := val
-			if cmp == nil && !d.Nullable {
-				cmp = d.Default
-			}
-			if err := aboveMax(d, l, cmp); err != nil {
-				return err
-			}
-		}
-		if ch.HasValue {
-			if b, bound := s.bind[key]; bound {
-				if err := b.Set(ctx, q, val); err != nil {
-					return err
-				}
-			} else {
-				raw, err := json.Marshal(val)
-				if err != nil {
-					return err
-				}
-				row.Value = string(raw)
-			}
-		}
-		if ch.HasLower {
-			row.Lower = ""
-			if lower != nil {
-				raw, _ := json.Marshal(lower)
-				row.Lower = string(raw)
-			}
-		}
-		row.Updated, row.SetBy = s.now(), ch.By
-		if err := store.PutLayered(ctx, q, *row); err != nil {
-			return err
-		}
-		if ch.HasLower {
+		_, err := s.putSite(ctx, q, d, ch, val, lower, false)
+		if err == nil && ch.HasLower {
 			affected, err = s.affected(ctx, q, d, lower)
 		}
 		return err
 	})
 	s.Invalidate()
 	return affected, err
+}
+
+// putSite writes the site's row of a setting in the transaction q: the value
+// (already checked) when ch.HasValue, through the binding's Set and After when
+// it has them, and the rule when ch.HasLower. before is the value in effect
+// before, read when wantBefore or when the binding follows changes (After).
+func (s *Service) putSite(ctx context.Context, q store.Q, d *Def, ch Change, val any, lower *Lower, wantBefore bool) (before any, err error) {
+	key := d.Key
+	row, err := store.GetLayered(ctx, q, string(Site), "", key, store.SourceManual)
+	if errors.Is(err, store.ErrNotFound) {
+		row, err = &store.LayeredRow{Layer: string(Site), Key: key}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b, bound := s.binding(key)
+	// The value is held to the site's own restriction as it will be.
+	if ch.HasValue {
+		l := d.Lower
+		switch {
+		case ch.HasLower && lower != nil:
+			l = *lower
+		case !ch.HasLower && row.Lower != "":
+			// Into a value of its own, as in siteView: d.Lower's Max is shared.
+			var rl Lower
+			if err := json.Unmarshal([]byte(row.Lower), &rl); err != nil {
+				return nil, err
+			}
+			l = rl
+		}
+		// null is no limit where a limit may be none, else the default.
+		cmp := val
+		if cmp == nil && !d.Nullable {
+			cmp = d.Default
+		}
+		if err := aboveMax(d, l, cmp); err != nil {
+			return nil, err
+		}
+		if wantBefore || bound && b.After != nil {
+			v, err := s.siteView(ctx, q, d, row)
+			if err != nil {
+				return nil, err
+			}
+			before = v.Value
+		}
+		if bound && b.Set != nil {
+			if err := b.Set(ctx, q, val); err != nil {
+				return nil, err
+			}
+		} else {
+			raw, err := json.Marshal(val)
+			if err != nil {
+				return nil, err
+			}
+			row.Value = string(raw)
+		}
+	}
+	if ch.HasLower {
+		row.Lower = ""
+		if lower != nil {
+			raw, _ := json.Marshal(lower)
+			row.Lower = string(raw)
+		}
+	}
+	row.Updated, row.SetBy = s.now(), ch.By
+	if err := store.PutLayered(ctx, q, *row); err != nil {
+		return nil, err
+	}
+	if ch.HasValue && bound && b.After != nil {
+		if err := b.After(ctx, q, before, val); err != nil {
+			return nil, err
+		}
+	}
+	return before, nil
+}
+
+// KeyValue is a site value ForceSite writes.
+type KeyValue struct {
+	Key   string
+	Value any
+}
+
+// Changed is a site value ForceSite changed: what it was and what it is.
+type Changed struct {
+	Key      string
+	From, To any
+}
+
+// ForceSite writes site values in one transaction, all or none, counted in
+// settings_rev so that a running server sees them: the rescue of a sign-in
+// policy that keeps everyone out ("petalbook security reset"). The values are
+// held to their shape, but not to the bindings' checks, which look at other
+// values to refuse a change that would lock people out; so it is only for
+// values that let people in. The bindings' Set and After run as in SetSite,
+// and their locks are held. It answers the values that changed.
+func (s *Service) ForceSite(ctx context.Context, by string, vals []KeyValue) ([]Changed, error) {
+	type item struct {
+		d   *Def
+		val any
+	}
+	items := make([]item, 0, len(vals))
+	var locks []*sync.Mutex
+	for _, kv := range vals {
+		d, ok := s.byK[kv.Key]
+		if !ok {
+			return nil, &Error{Code: CodeNotFound, Msg: "no such setting"}
+		}
+		b, bound := s.binding(kv.Key)
+		if bound && b.ReadOnly != nil && b.ReadOnly() {
+			return nil, &Error{Code: CodeConflict, Msg: kv.Key + " is set by a command-line flag; change the flag"}
+		}
+		val := kv.Value
+		if d.Kind != Doc {
+			var err error
+			if val, err = d.Value(val); err != nil {
+				return nil, err
+			}
+		}
+		items = append(items, item{d, val})
+		if b.Lock != nil && !slices.Contains(locks, b.Lock) {
+			locks = append(locks, b.Lock)
+		}
+	}
+	// Always in one order, so that two of these cannot wait on each other.
+	slices.SortFunc(locks, func(a, b *sync.Mutex) int {
+		return cmp.Compare(uintptr(unsafe.Pointer(a)), uintptr(unsafe.Pointer(b)))
+	})
+	for _, l := range locks {
+		l.Lock()
+		defer l.Unlock()
+	}
+	var changed []Changed
+	err := s.write(ctx, func(q store.Q) error {
+		changed = changed[:0]
+		for _, it := range items {
+			before, err := s.putSite(ctx, q, it.d, Change{HasValue: true, Value: it.val, By: by}, it.val, nil, true)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(normal(before), normal(it.val)) {
+				changed = append(changed, Changed{Key: it.d.Key, From: before, To: it.val})
+			}
+		}
+		return nil
+	})
+	s.Invalidate()
+	if err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
+// normal is a value as JSON has it, so that values of one meaning compare equal
+// whatever Go type holds them.
+func normal(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if json.Unmarshal(raw, &out) != nil {
+		return v
+	}
+	return out
 }
 
 // affected counts the tenants whose own value the site's new rule forbids, or

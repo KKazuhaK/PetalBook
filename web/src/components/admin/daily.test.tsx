@@ -38,10 +38,28 @@ const open = async (scene?: (admin: ReturnType<typeof adminRequests>) => void) =
   })
   await settle(() => document.querySelector('[data-slot="admin-daily"]') !== null, 'the page')
 }
+// What the page wrote. The default, the languages and what spaces may do are the settings daily.default, daily.languages,
+// daily.own and daily.api (PUT /api/admin/settings/{key}); each is listed here as one write to /api/admin/daily with the
+// field it is, so the tests say what was written and not how many requests it took.
+const SETTING = '/api/admin/settings/daily.'
+const FIELD: Record<string, (v: unknown) => Record<string, unknown>> = {
+  default: (v) => ({ default: v }),
+  languages: (v) => ({ languages: v }),
+  own: (v) => ({ allow: { own: v } }),
+  api: (v) => ({ allow: { api: v } }),
+}
 const calls = () =>
   m!.requests
-    .filter((r) => r.method !== 'GET' && r.url.startsWith('/api/admin/daily'))
-    .map((r) => ({ method: r.method, url: r.url, body: r.body ? JSON.parse(r.body) : undefined }))
+    .filter((r) => r.method !== 'GET' && (r.url.startsWith('/api/admin/daily') || r.url.startsWith(SETTING)))
+    .map((r) =>
+      r.url.startsWith(SETTING)
+        ? {
+            method: r.method,
+            url: '/api/admin/daily',
+            body: FIELD[r.url.slice(SETTING.length)](JSON.parse(r.body!).value),
+          }
+        : { method: r.method, url: r.url, body: r.body ? JSON.parse(r.body) : undefined },
+    )
 const byText = (selector: string, text: string) =>
   [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
 // The save button of the interface form when one is open (the sections above have their own).
@@ -119,6 +137,7 @@ describe("the administrators' daily text page", () => {
         calls().some((c) => c.method === 'PUT' && c.url === '/api/admin/daily' && c.body.languages?.includes('pt-BR')),
       'saved',
     )
+    expect(m!.requests.some((r) => r.method === 'PUT' && r.url === '/api/admin/settings/daily.languages')).toBe(true)
     await settle(
       () => document.querySelector('button[aria-label="' + d.removeLanguage('pt-BR') + '"]') !== null,
       'the new one',

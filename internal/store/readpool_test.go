@@ -69,7 +69,7 @@ func TestStatementsThatWriteGoToTheWriter(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		var id string
-		if err := st.Q().QueryRow(ctx, `INSERT INTO site_settings(key, value, updated) VALUES ('k', 'v', 0) RETURNING key`).Scan(&id); err != nil || id != "k" {
+		if err := st.Q().QueryRow(ctx, `INSERT INTO site_records(key, value, updated) VALUES ('k', 'v', 0) RETURNING key`).Scan(&id); err != nil || id != "k" {
 			t.Fatalf("%q %v", id, err)
 		}
 		var fk int

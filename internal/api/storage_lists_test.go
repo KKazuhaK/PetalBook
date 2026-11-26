@@ -198,8 +198,8 @@ func TestStorageSummaryIsStoredNumbersPerTenant(t *testing.T) {
 		sumOf := func(c *client, path string) map[string]any {
 			t.Helper()
 			r := c.do("GET", path, nil).want(t, 200, "")
-			if r.body["remotes"] == nil || r.body["cache"] == nil || r.body["git"] == nil {
-				t.Fatalf("the settings are not there: %s", r.raw)
+			if r.body["remotes"] == nil || r.body["git"] == nil || r.body["affected"] == nil {
+				t.Fatalf("what is not a setting is not there: %s", r.raw)
 			}
 			return r.body["summary"].(map[string]any)
 		}
@@ -399,8 +399,10 @@ func TestStorageDetailsOfTheServerAreForSiteAdministrators(t *testing.T) {
 				t.Errorf("a site administrator is not told %s: %s", key, site.raw)
 			}
 		}
-		if tenant.body["cache"] == nil || tenant.body["remotes"] == nil {
-			t.Fatalf("the effective settings are gone: %s", tenant.raw)
+		// The policy is settings now, which a tenant administrator does not read
+		// here: since, what the requirement asks of spaces, and the summary stay.
+		if tenant.body["remotes"] == nil || tenant.body["cache"] != nil {
+			t.Fatalf("a tenant administrator reads more or less than since and the summary: %s", tenant.raw)
 		}
 	})
 }

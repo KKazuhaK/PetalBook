@@ -89,7 +89,7 @@ describe('the Tenants page', () => {
   it('renames, disables and deletes a tenant, and says a slug is taken', async () => {
     await open('tenants', (server) => {
       const admin = adminRequests(server)
-      admin('PUT', '/api/admin/tenancy', { enabled: true })
+      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
       admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
       admin('POST', '/api/admin/tenants', { slug: 'zed', name: 'Zed' })
     })
@@ -116,7 +116,9 @@ describe('the Tenants page', () => {
   })
 
   it('nothing on it can be wider than a phone', async () => {
-    await open('tenants', (server) => adminRequests(server)('PUT', '/api/admin/tenancy', { enabled: true }))
+    await open('tenants', (server) =>
+      adminRequests(server)('PUT', '/api/admin/settings/features.tenancy', { value: true }),
+    )
     await settle(() => button(tt.list.create) !== null, 'the page')
     const has = (el: Element | null, ...c: string[]) => c.every((x) => el?.classList.contains(x))
     // The page column may shrink, rows wrap, and the long help texts break.

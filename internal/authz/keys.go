@@ -15,8 +15,6 @@ var (
 	SiteSecurityManage     = Register("site.security.manage", ScopeSite, "", "Read and change the sign-in security of the site")
 	SiteSigninManage       = Register("site.signin.manage", ScopeSite, "", "Add, change and remove sign-in providers")
 	SiteMailManage         = Register("site.mail.manage", ScopeSite, "", "Read and change the mail settings, and send a test message")
-	SiteAccessManage       = Register("site.access.manage", ScopeSite, "", "Read and change who may register and sign in")
-	SiteTenancyManage      = Register("site.tenancy.manage", ScopeSite, "", "Turn tenants on and off")
 	SiteTenantsManage      = Register("site.tenants.manage", ScopeSite, "", "List, create and delete tenants; change a tenant's slug, state and quota, and give a person more than their tenant allows")
 	SiteConnectionsManage  = Register("site.connections.manage", ScopeSite, "", "Set up the providers people connect to")
 	SiteDailyManage        = Register("site.daily.manage", ScopeSite, "", "Set up the daily text: its interfaces, providers and lines")

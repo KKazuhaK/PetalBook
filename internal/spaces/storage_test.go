@@ -755,7 +755,7 @@ func TestARoundEvictsTheSpacesNotUsedForTheConfiguredTimeOnly(t *testing.T) {
 			}
 		}
 		// Never: the setting turns eviction by age off.
-		if _, _, err := f.m.SetStorage(ctx, func(s *StorageSettings) error { s.Cache.EvictAfterDays = nil; return nil }); err != nil {
+		if _, _, err := setStorage(f.m, ctx, func(s *StorageSettings) error { s.Cache.EvictAfterDays = nil; return nil }); err != nil {
 			t.Fatal(err)
 		}
 		f.idle(400 * 24 * time.Hour)
@@ -843,7 +843,7 @@ func TestTheIdleSpacesAreOpenedByIndexAfterARestartToo(t *testing.T) {
 
 func setRequire(t *testing.T, m *Manager, require string, scope string, grace int) {
 	t.Helper()
-	_, _, err := m.SetStorage(ctx, func(s *StorageSettings) error {
+	_, _, err := setStorage(m, ctx, func(s *StorageSettings) error {
 		if require == "" {
 			s.Remotes.Require = nil
 		} else {
@@ -924,7 +924,7 @@ func TestARequirementOfGitHubRefusesAnyOtherCredentialAndTightening(t *testing.T
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		f := remoteManager(t, st)
 		// No GitHub App on this server.
-		_, _, err := f.m.SetStorage(ctx, func(s *StorageSettings) error { r := "github"; s.Remotes.Require = &r; return nil })
+		_, _, err := setStorage(f.m, ctx, func(s *StorageSettings) error { r := "github"; s.Remotes.Require = &r; return nil })
 		if err == nil {
 			t.Fatal("github can be required without an App")
 		}
@@ -1031,7 +1031,7 @@ func TestALimitOnLocalSpacesRefusesUploadsOnlyAndNotRemoteSpaces(t *testing.T) {
 		f := remoteManager(t, st)
 		in, h := f.space("Notes")
 		defer h.Release()
-		if _, _, err := f.m.SetStorage(ctx, func(s *StorageSettings) error { v := int64(1 << 20); s.LocalSpaces.MaxBytes = &v; return nil }); err != nil {
+		if _, _, err := setStorage(f.m, ctx, func(s *StorageSettings) error { v := int64(1 << 20); s.LocalSpaces.MaxBytes = &v; return nil }); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.m.CheckRoom(ctx, h, 10); err != nil {
@@ -1072,11 +1072,11 @@ func TestTheSettingsAreCheckedAndStoredAndTheFlagWinsForHosts(t *testing.T) {
 			func(s *StorageSettings) error { s.Remotes.Scope = "some"; return nil },
 		}
 		for i, p := range bad {
-			if _, _, err := f.m.SetStorage(ctx, p); !errors.Is(err, ErrInvalid) {
+			if _, _, err := setStorage(f.m, ctx, p); !errors.Is(err, ErrInvalid) {
 				t.Errorf("case %d: %v", i, err)
 			}
 		}
-		set, _, err := f.m.SetStorage(ctx, func(s *StorageSettings) error {
+		set, _, err := setStorage(f.m, ctx, func(s *StorageSettings) error {
 			s.Cache.MinIdleHours = 48
 			s.Hosts.Allowed = []string{"Example.Test"}
 			return nil
@@ -1107,7 +1107,7 @@ func TestPartialCloneNeedsGit244(t *testing.T) {
 		if _, partial := f.m.GitInfo(); partial || f.m.Storage().Cache.Partial {
 			t.Fatal("partial clones are on without Git 2.44")
 		}
-		if _, _, err := f.m.SetStorage(ctx, func(s *StorageSettings) error { s.Cache.Partial = true; return nil }); !errors.Is(err, ErrGitTooOld) {
+		if _, _, err := setStorage(f.m, ctx, func(s *StorageSettings) error { s.Cache.Partial = true; return nil }); !errors.Is(err, ErrGitTooOld) {
 			t.Fatalf("%v", err)
 		}
 		// Eviction still works, and the restore makes a full clone.

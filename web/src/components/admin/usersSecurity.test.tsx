@@ -101,7 +101,7 @@ describe('users and their sign-in', () => {
         const ceremony = (admin('POST', '/api/account/passkeys/begin', { name: 'Laptop' }).body as { ceremony: string })
           .ceremony
         admin('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-admin' })
-        admin('PUT', '/api/admin/security', { passkeys: { requireRoles: ['admin'] } })
+        admin('PUT', '/api/admin/settings/signin.passkeyRoles', { value: ['admin'] })
       },
     )
     await settle(() => sw(MOCK_ADMIN.name)?.getAttribute('aria-disabled') === 'true', 'the switch, held by the role')
@@ -113,7 +113,7 @@ describe('users and their sign-in', () => {
 
   it('a member is not required by the role: their switch works and says nothing of it', async () => {
     await open(person('security'), (admin) =>
-      admin('PUT', '/api/admin/security', { passkeys: { requireRoles: ['admin'] } }),
+      admin('PUT', '/api/admin/settings/signin.passkeyRoles', { value: ['admin'] }),
     )
     await settle(() => byLabel(tsec.users.passkeyRequiredFor('名 carol')) != null, 'the switch')
     const sw = byLabel(tsec.users.passkeyRequiredFor('名 carol'))!

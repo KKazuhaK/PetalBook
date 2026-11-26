@@ -153,6 +153,12 @@ func (s *Service) Begin(r *http.Request, userID string) (string, *Problem) {
 	if !ok {
 		return "", badRequest(http.StatusBadRequest, "invalid_scope", "scope must be one of: "+strings.Join(scopesSupported(), " "))
 	}
+	// The person's own features.mcp (their tenant's), as at /mcp.
+	if on, err := s.onForUser(r.Context(), userID); err != nil {
+		return "", badRequest(http.StatusInternalServerError, "server_error", "could not read the machine access setting")
+	} else if !on {
+		return "", badRequest(http.StatusForbidden, "access_denied", "MCP is switched off for your organization")
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return "", badRequest(http.StatusInternalServerError, "server_error", "could not start the request")

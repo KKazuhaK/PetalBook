@@ -95,7 +95,6 @@ export const adminZhCN = {
     deleteConfirm: '确认删除',
     allLanguages: '所有语言',
     allowTitle: '空间的权限',
-    allowPending: '服务器还没有这两项设置，开关暂时不能改。',
     allowOwn: '空间可以用自己的来源',
     allowOwnHelp: '关掉后，各空间不能自己选文件夹、标签或类型来抽文案。',
     allowApi: '空间可以选用外部接口',

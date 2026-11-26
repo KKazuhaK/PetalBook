@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { Ban } from 'lucide-react'
 import { toast } from 'sonner'
-import { adminApi, useAdminGrants, useAdminTokens, useMachineAccess, useSetMachineAccess } from '@/api/admin'
+import { adminApi, useAdminGrants, useAdminTokens, useMachineAccess, useSiteSettings } from '@/api/admin'
+import { K } from '@/api/settingsFold'
 import { keys } from '@/api/hooks'
 import { useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/api/client'
 import type { AdminGrant, AdminToken } from '@/api/types'
 import { ErrorState, PageFallback, Spinner } from '@/components/common'
-import { SettingsRow, SettingsRows, SettingsSection } from '@/components/settings/SettingsParts'
+import { SettingsSection } from '@/components/settings/SettingsParts'
 import { GrantItem } from '@/components/tokens/GrantItem'
 import { TokenItem } from '@/components/tokens/TokenItem'
 import {
@@ -21,10 +22,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { t } from '@/i18n'
 import { oa } from '@/i18n/oauth'
 import { tk } from '@/i18n/tokens'
+import { SiteRow } from './SettingsPanel'
 
 // What machines may do on this server: whether API tokens are accepted, and
 // everyone's tokens, which an administrator may revoke.
@@ -39,34 +40,45 @@ export function AccessPanel() {
   )
 }
 
+// A feature of machine access is a layered setting like any other: the site's value, and the rule that says whether
+// each organization may change it or has it forced. Switching one off here forces it off for every organization (a
+// lock) unless the administrator picks another rule before saving.
+function FeatureRow({
+  settingKey,
+  title,
+  help,
+  label,
+}: {
+  settingKey: string
+  title: string
+  help: string
+  label: string
+}) {
+  const q = useSiteSettings()
+  const s = q.data?.settings.find((x) => x.key === settingKey)
+  if (!s) return null
+  return (
+    <ul className="divide-y overflow-hidden rounded-lg border">
+      <SiteRow key={JSON.stringify(s.site)} s={s} title={title} help={help} label={label} lockWhenOff />
+    </ul>
+  )
+}
+
 function TokenSwitch() {
-  const access = useMachineAccess()
-  const set = useSetMachineAccess()
-  if (access.isPending) return <PageFallback />
-  if (access.isError)
+  const q = useSiteSettings()
+  if (q.isPending) return <PageFallback />
+  if (q.isError)
     return (
-      <ErrorState
-        message={t.fmt.labelled(tk.admin.loadFailed, access.error.message)}
-        onRetry={() => void access.refetch()}
-      />
+      <ErrorState message={t.fmt.labelled(tk.admin.loadFailed, q.error.message)} onRetry={() => void q.refetch()} />
     )
   return (
     <SettingsSection title={tk.admin.title}>
-      <SettingsRows>
-        <SettingsRow title={tk.admin.switchTitle} help={tk.admin.switchHelp}>
-          <Switch
-            aria-label={tk.admin.switchLabel}
-            checked={access.data.tokens}
-            disabled={set.isPending}
-            onCheckedChange={(on) =>
-              set.mutate(
-                { tokens: on },
-                { onError: (e) => toast.error(e instanceof ApiError ? e.message : tk.admin.switchFailed) },
-              )
-            }
-          />
-        </SettingsRow>
-      </SettingsRows>
+      <FeatureRow
+        settingKey={K.tokens}
+        title={tk.admin.switchTitle}
+        help={tk.admin.switchHelp}
+        label={tk.admin.switchLabel}
+      />
     </SettingsSection>
   )
 }
@@ -169,32 +181,13 @@ function AllTokens() {
   )
 }
 
-// MCP, and with it the authorization server for MCP clients. The server says
-// whether the authorization server is there at all: it needs a public address.
+// MCP, and with it the authorization server for MCP clients (the connected apps below are listed when there is one).
 function McpSwitch() {
-  const access = useMachineAccess()
-  const set = useSetMachineAccess()
-  if (access.isPending || access.isError) return null
+  const q = useSiteSettings()
+  if (q.isPending || q.isError) return null
   return (
     <SettingsSection title={oa.admin.mcpTitle}>
-      <SettingsRows>
-        <SettingsRow title={oa.admin.mcpTitle} help={oa.admin.mcpHelp}>
-          <Switch
-            aria-label={oa.admin.mcpLabel}
-            checked={access.data.mcp}
-            disabled={set.isPending}
-            onCheckedChange={(on) =>
-              set.mutate(
-                { mcp: on },
-                { onError: (e) => toast.error(e instanceof ApiError ? e.message : oa.admin.switchFailed) },
-              )
-            }
-          />
-        </SettingsRow>
-      </SettingsRows>
-      <p className="text-xs text-muted-foreground" data-slot="oauth-status">
-        {access.data.oauth ? oa.admin.oauthOn : oa.admin.oauthOff}
-      </p>
+      <FeatureRow settingKey={K.mcp} title={oa.admin.mcpTitle} help={oa.admin.mcpHelp} label={oa.admin.mcpLabel} />
     </SettingsSection>
   )
 }

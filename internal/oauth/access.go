@@ -61,13 +61,6 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 		return nil, &tokens.Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "Too many failed tokens from this address; wait before trying again.",
 			RetryAfter: time.Duration(wait) * time.Second}
 	}
-	on, err := s.On(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !on {
-		return nil, refuse(http.StatusNotFound, "not_found", "No such endpoint.")
-	}
 	now := s.now()
 	v, bad := s.verify(raw, now)
 	if bad != nil {
@@ -92,6 +85,11 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 	}
 	if u.Disabled || s.cfg.Store != nil && s.cfg.Store.TenantDisabled(u.TenantID) { // a disabled tenant is a disabled account
 		return nil, refuse(http.StatusUnauthorized, "token_owner_disabled", "The account this authorization belongs to is disabled.")
+	}
+	if on, err := s.OnFor(ctx, u.TenantID); err != nil {
+		return nil, err
+	} else if !on {
+		return nil, refuse(http.StatusNotFound, "not_found", "No such endpoint.")
 	}
 	g := e.grant
 	if e.write && !v.write { // a refresh asked for less than the grant

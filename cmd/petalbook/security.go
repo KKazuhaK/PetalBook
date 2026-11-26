@@ -12,7 +12,7 @@ func newSecurity() *cobra.Command {
 		Short: "Rescue the sign-in settings of a data directory",
 		Long: `Commands for when the security settings keep everyone out. They work on the
 data directory's state database directly, while the server runs or not; a
-running server notices the change within a few minutes.`,
+running server notices the change within a minute.`,
 	}
 	cmd.AddCommand(newSecurityReset())
 	return cmd
@@ -26,8 +26,10 @@ func newSecurityReset() *cobra.Command {
 		Long: `Sets the login mode back to dual (password and single sign-on), switches off
 "refuse password sign-in", the lockout and every captcha, and clears the
 passkey requirement of roles. Providers, people and the requirements set for
-single people are left alone ("petalbook user passwd" sets a password). The
-change is recorded in the audit log.`,
+single people are left alone ("petalbook user passwd" sets a password). These
+are the settings signin.mode, signin.ssoOnly, signin.lockout.enabled,
+captcha.contexts and signin.passkeyRoles; the change is recorded in the audit
+log.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := f.open(cmd.Context())

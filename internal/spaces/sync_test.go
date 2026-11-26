@@ -991,7 +991,7 @@ func TestAttachmentsGoToTheirOwnRepositoryByDefault(t *testing.T) {
 		if err != nil || in.Assets == "repository" || e.f.RepoByName("kazuhahub/b-assets") != nil {
 			t.Fatalf("%+v %v", in, err)
 		}
-		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Cache.AssetsBytes = 1 << 20; return nil }); !errors.Is(err, ErrInvalid) {
+		if _, _, err := setStorage(e.m, ctx, func(s *StorageSettings) error { s.Cache.AssetsBytes = 1 << 20; return nil }); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("a cache under 64 MiB: %v", err)
 		}
 	})
@@ -1206,7 +1206,7 @@ func TestARequirementOfAProviderTakesOnlyAConnectionThroughIt(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		e := newGHEnv(t, st)
 		r := "github"
-		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Remotes.Require = &r; return nil }); err != nil {
+		if _, _, err := setStorage(e.m, ctx, func(s *StorageSettings) error { s.Remotes.Require = &r; return nil }); err != nil {
 			t.Fatal(err)
 		}
 		var re *RequiredError
@@ -1225,7 +1225,7 @@ func TestARequirementOfAProviderTakesOnlyAConnectionThroughIt(t *testing.T) {
 		}
 		// A provider the server does not have is not a value of the setting.
 		other := "gitlab"
-		if _, _, err := e.m.SetStorage(ctx, func(s *StorageSettings) error { s.Remotes.Require = &other; return nil }); !errors.Is(err, ErrInvalid) {
+		if _, _, err := setStorage(e.m, ctx, func(s *StorageSettings) error { s.Remotes.Require = &other; return nil }); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%v", err)
 		}
 	})

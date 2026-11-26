@@ -34,8 +34,8 @@ func TestSiteSettingsByLayer(t *testing.T) {
 		if d := settingOf(t, r, "daily.own"); strings.Join(strs(d["layers"]), ",") != "site,tenant,space" || d["site"].(map[string]any)["value"] != true {
 			t.Fatal(d)
 		}
-		// The 3.1 and 2.7 settings are reserved: they do not exist yet.
-		for _, k := range []string{"storage.remotes.require", "github.app.id"} {
+		// The GitHub App's settings are records and secrets, not settings.
+		for _, k := range []string{"github.app.id", "mail.password"} {
 			f.root.do("PUT", "/api/admin/settings/"+k, map[string]any{"value": 1}).want(t, 404, "not_found")
 		}
 		// Values are checked.
@@ -74,7 +74,7 @@ func TestTenantSettingsHonourTheSitesLocksAndRestrictions(t *testing.T) {
 			s["tenant"].(map[string]any)["value"] != nil || s["tenant"].(map[string]any)["inEffect"] != true {
 			t.Fatal(s)
 		}
-		if len(r.body["settings"].([]any)) != 36 {
+		if len(r.body["settings"].([]any)) != 38 {
 			t.Fatalf("every setting that has a tenant layer, and the two the site may force for one tenant: %s", r.raw)
 		}
 		f.admB.do("GET", "/api/admin/tenants/"+store.DefaultTenantID+"/settings", nil).want(t, 404, "not_found")

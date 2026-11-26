@@ -5,11 +5,8 @@ package api
 // storage blocks of the lists. The policy itself lives in internal/spaces.
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -18,28 +15,14 @@ import (
 	"petalbook.app/server/internal/store"
 )
 
+// storageResp is what is not a setting of the server's storage: since when the
+// requirement of a remote has had its present form, how many spaces it asks
+// something of, and the Git the server runs. The policy (storage.*, cache.*) is
+// under /api/admin/settings.
 type storageResp struct {
 	Remotes struct {
-		Require   *string `json:"require"`
-		Scope     string  `json:"scope"`
-		GraceDays int     `json:"graceDays"`
-		Since     *string `json:"since"`
+		Since *string `json:"since"`
 	} `json:"remotes"`
-	Hosts struct {
-		Allowed  []string `json:"allowed"`
-		FromFlag *bool    `json:"fromFlag,omitempty"` // the site's only
-	} `json:"hosts"`
-	LocalSpaces struct {
-		MaxBytes *int64 `json:"maxBytes"`
-	} `json:"localSpaces"`
-	Cache struct {
-		Partial        bool    `json:"partial"`
-		EvictAfterDays *int    `json:"evictAfterDays"`
-		MinIdleHours   int     `json:"minIdleHours"`
-		ClonesBytes    *int64  `json:"clonesBytes"`
-		MinFreeBytes   **int64 `json:"minFreeBytes,omitempty"` // the site's only; null inside is "no floor"
-		AssetsBytes    int64   `json:"assetsBytes"`
-	} `json:"cache"`
 	Git struct {
 		Version      string `json:"version,omitempty"` // the site's only
 		PartialClone bool   `json:"partialClone"`
@@ -51,25 +34,16 @@ type storageResp struct {
 	} `json:"affected"`
 }
 
-// storageBody is the settings. The details of the server itself (the Git it
-// runs, a flag that sets the hosts, the disk floor) are for site only.
 func (s *server) storageBody(set spaces.StorageSettings, aff spaces.Affected, site bool) storageResp {
 	var r storageResp
-	r.Remotes.Require, r.Remotes.Scope, r.Remotes.GraceDays = set.Remotes.Require, set.Remotes.Scope, set.Remotes.GraceDays
 	if !set.Remotes.Since.IsZero() {
 		t := rfc3339(set.Remotes.Since)
 		r.Remotes.Since = &t
 	}
-	r.Hosts.Allowed = set.Hosts.Allowed
-	r.LocalSpaces.MaxBytes = set.LocalSpaces.MaxBytes
-	c := set.Cache
-	r.Cache.Partial, r.Cache.EvictAfterDays, r.Cache.MinIdleHours, r.Cache.ClonesBytes = c.Partial, c.EvictAfterDays, c.MinIdleHours, c.ClonesBytes
-	r.Cache.AssetsBytes = c.AssetsBytes
 	version, partial := s.spaces.GitInfo()
 	r.Git.PartialClone = partial
 	if site {
-		flag := s.spaces.HostsFromFlag()
-		r.Hosts.FromFlag, r.Cache.MinFreeBytes, r.Git.Version = &flag, &c.MinFreeBytes, version
+		r.Git.Version = version
 	}
 	r.Affected.InGrace, r.Affected.Overdue, r.Affected.Exempt = aff.InGrace, aff.Overdue, aff.Exempt
 	return r
@@ -110,151 +84,6 @@ func (s *server) adminGetStorage(c *call) {
 		aff = spaces.Affected{InGrace: int(sum.Remotes.InGrace), Overdue: int(sum.Remotes.Overdue)}
 	}
 	writeJSON(c.w, http.StatusOK, storageGetResp{s.storageBody(s.spaces.Storage(), aff, c.can(authz.SiteStorageManage)), sum})
-}
-
-// section decodes one section of a PUT: an object of known keys.
-func section(raw json.RawMessage, known ...string) (map[string]json.RawMessage, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, nil
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
-		return nil, fmt.Errorf("%w: a section is an object", spaces.ErrInvalid)
-	}
-nextKey:
-	for k := range m {
-		for _, n := range known {
-			if k == n {
-				continue nextKey
-			}
-		}
-		return nil, fmt.Errorf("%w: %q is not a setting here", spaces.ErrInvalid, k)
-	}
-	return m, nil
-}
-
-func isNull(raw json.RawMessage) bool { return string(bytes.TrimSpace(raw)) == "null" }
-
-func decodeAs[T any](raw json.RawMessage, what string) (T, error) {
-	var v T
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return v, fmt.Errorf("%w: %s has the wrong type", spaces.ErrInvalid, what)
-	}
-	return v, nil
-}
-
-func (s *server) adminPutStorage(c *call) {
-	var req struct {
-		Remotes     json.RawMessage `json:"remotes"`
-		Hosts       json.RawMessage `json:"hosts"`
-		LocalSpaces json.RawMessage `json:"localSpaces"`
-		Cache       json.RawMessage `json:"cache"`
-	}
-	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
-		return
-	}
-	remotes, err1 := section(req.Remotes, "require", "scope", "graceDays")
-	hosts, err2 := section(req.Hosts, "allowed")
-	local, err3 := section(req.LocalSpaces, "maxBytes")
-	cache, err4 := section(req.Cache, "partial", "evictAfterDays", "minIdleHours", "clonesBytes", "minFreeBytes", "assetsBytes")
-	for _, err := range []error{err1, err2, err3, err4} {
-		if err != nil {
-			s.fail(c.w, err)
-			return
-		}
-	}
-	if hosts != nil && s.spaces.HostsFromFlag() {
-		writeError(c.w, http.StatusConflict, "conflict", "The allowed hosts were given with --remote-host, which wins; remove the flag to set them here.")
-		return
-	}
-	patch := func(st *spaces.StorageSettings) error {
-		for k, v := range remotes {
-			var err error
-			switch k {
-			case "require":
-				if isNull(v) {
-					st.Remotes.Require = nil
-				} else {
-					var r string
-					if r, err = decodeAs[string](v, "remotes.require"); err == nil {
-						st.Remotes.Require = &r
-					}
-				}
-			case "scope":
-				st.Remotes.Scope, err = decodeAs[string](v, "remotes.scope")
-			case "graceDays":
-				st.Remotes.GraceDays, err = decodeAs[int](v, "remotes.graceDays")
-			}
-			if err != nil {
-				return err
-			}
-		}
-		for k, v := range hosts {
-			if k == "allowed" {
-				l, err := decodeAs[[]string](v, "hosts.allowed")
-				if err != nil {
-					return err
-				}
-				st.Hosts.Allowed = l
-			}
-		}
-		for k, v := range local {
-			if k == "maxBytes" {
-				if isNull(v) {
-					st.LocalSpaces.MaxBytes = nil
-				} else {
-					n, err := decodeAs[int64](v, "localSpaces.maxBytes")
-					if err != nil {
-						return err
-					}
-					st.LocalSpaces.MaxBytes = &n
-				}
-			}
-		}
-		for k, v := range cache {
-			var err error
-			switch k {
-			case "partial":
-				st.Cache.Partial, err = decodeAs[bool](v, "cache.partial")
-			case "evictAfterDays":
-				if isNull(v) {
-					st.Cache.EvictAfterDays = nil
-				} else {
-					var n int
-					if n, err = decodeAs[int](v, "cache.evictAfterDays"); err == nil {
-						st.Cache.EvictAfterDays = &n
-					}
-				}
-			case "minIdleHours":
-				st.Cache.MinIdleHours, err = decodeAs[int](v, "cache.minIdleHours")
-			case "assetsBytes":
-				st.Cache.AssetsBytes, err = decodeAs[int64](v, "cache.assetsBytes")
-			case "clonesBytes", "minFreeBytes":
-				var p *int64
-				if !isNull(v) {
-					var n int64
-					if n, err = decodeAs[int64](v, "cache."+k); err == nil {
-						p = &n
-					}
-				}
-				if k == "clonesBytes" {
-					st.Cache.ClonesBytes = p
-				} else {
-					st.Cache.MinFreeBytes = p
-				}
-			}
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	set, aff, err := s.spaces.SetStorage(c.r.Context(), patch)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, s.storageBody(set, aff, true))
 }
 
 // spaceStorageItem is the storage block of an item of the administration's list.

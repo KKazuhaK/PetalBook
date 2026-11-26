@@ -13,6 +13,7 @@ import (
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/auth/testidp"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -479,10 +480,11 @@ func TestSetupAndInvitesStartAHeldSessionWhenAPasskeyIsRequired(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		// Stored before anyone exists, as a restored database could have it.
-		if _, err := store.PutSetting(context.Background(), a.st.Q(), "security", `{"passkeys":{"enabled":true,"requireRoles":["admin","member"]}}`, time.Now()); err != nil {
+		row := store.LayeredRow{Layer: store.LayeredSite, Key: settings.SigninPasskeyRoles, Source: store.SourceManual, Value: `["admin","member"]`, Updated: time.Now()}
+		if err := store.PutLayered(context.Background(), a.st.Q(), row); err != nil {
 			t.Fatal(err)
 		}
-		a.clock.Advance(6 * time.Minute) // past the settings cache
+		settings.Of(a.st).Invalidate()
 		admin := a.newClient("")
 		admin.do("POST", "/api/setup", map[string]any{"token": a.auth.SetupToken(), "username": "kazuha", "password": pw}).want(t, 201, "")
 		if h := admin.do("GET", "/api/session", nil).body["hold"]; h != "passkey" {

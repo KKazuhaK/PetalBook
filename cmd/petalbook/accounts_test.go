@@ -598,7 +598,7 @@ func TestGitHubFlagsAndTheAppThroughTheServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	raw, ok, err := store.GetSiteSetting(context.Background(), st.Q(), "github_app")
+	raw, ok, err := store.GetSiteRecord(context.Background(), st.Q(), "github_app")
 	if err != nil || !ok || strings.Contains(raw, "PRIVATE KEY") || strings.Contains(raw, "424242\\n") {
 		t.Fatalf("%v %v %s", ok, err, raw)
 	}

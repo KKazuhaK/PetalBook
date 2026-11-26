@@ -17,6 +17,7 @@ import {
   makePerson,
   mount,
   press,
+  putSettings,
   settle,
   type,
   type Mounted,
@@ -54,10 +55,18 @@ const menuItem = (label: string) =>
 const buttonIn = (root: ParentNode | null | undefined, label: string) =>
   [...(root?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label) as
     HTMLButtonElement | undefined
+// The writes of the policy: one setting each, its key and its value.
+const SETTING = '/api/admin/settings/'
 const puts = () =>
   m!.requests
-    .filter((r) => r.method === 'PUT' && r.url === '/api/admin/storage')
-    .map((r) => JSON.parse(r.body!) as Record<string, unknown>)
+    .filter((r) => r.method === 'PUT' && r.url.startsWith(SETTING))
+    .map((r) => [r.url.slice(SETTING.length), JSON.parse(r.body!).value])
+// A remote required of every space, with a grace period.
+const require = (graceDays: number) => ({
+  'storage.remotes.require': 'any',
+  'storage.remotes.scope': 'all',
+  'storage.remotes.graceDays': graceDays,
+})
 
 async function openMenu(name: string) {
   // On a slow runner the menu of the previous action can still be mounted, and
@@ -111,16 +120,35 @@ describe('the storage page', () => {
     await type(byLabel(ts.admin.remotes.graceDays) as HTMLInputElement, '10')
     await type(byLabel(ts.admin.cache.evictAfter) as HTMLInputElement, '')
     await click(buttonIn(document, ts.admin.save))
-    await settle(() => puts().length === 1, 'the save')
-    expect(puts()[0]).toEqual({
-      remotes: { require: 'any', scope: 'all', graceDays: 10 },
-      cache: { evictAfterDays: null },
-    })
+    await settle(() => puts().length === 4, 'the save')
+    expect(puts()).toEqual([
+      ['storage.remotes.require', 'any'],
+      ['storage.remotes.scope', 'all'],
+      ['storage.remotes.graceDays', 10],
+      ['cache.evictAfterDays', null],
+    ])
     await settle(() => text().includes(ts.admin.remotes.affected(1, 0, 0)), 'the count of spaces in their grace period')
     expect((byLabel(ts.admin.cache.evictAfter) as HTMLInputElement).value).toBe('')
     // Saving again with nothing changed sends nothing.
     await click(buttonIn(document, ts.admin.save))
-    expect(puts()).toHaveLength(1)
+    expect(puts()).toHaveLength(4)
+  })
+
+  it('stops at the first refusal, keeps what was typed and shows it above the button', async () => {
+    m = await mount(routes, { entries: ['/admin/storage/rules'], signIn: true, server: { mode: 'accounts' } })
+    await settle(() => byLabel(ts.admin.remotes.require) !== null, 'the form')
+    await settle(
+      () => (byLabel(ts.admin.remotes.require) as HTMLSelectElement).querySelector('option[value="github"]') !== null,
+      'the platform',
+    )
+    await type(byLabel(ts.admin.remotes.require) as HTMLSelectElement, 'github')
+    await type(byLabel(ts.admin.remotes.graceDays) as HTMLInputElement, '10')
+    await click(buttonIn(document, ts.admin.save))
+    await settle(() => text().includes(ts.admin.errors.codes.provider_not_configured), 'the refusal')
+    // The first write was refused, so the second was not made, and the form still has what was typed.
+    expect(puts()).toEqual([['storage.remotes.require', 'github']])
+    expect((byLabel(ts.admin.remotes.graceDays) as HTMLInputElement).value).toBe('10')
+    expect((byLabel(ts.admin.remotes.require) as HTMLSelectElement).value).toBe('github')
   })
 
   it('sets the attachment cache', async () => {
@@ -130,7 +158,7 @@ describe('the storage page', () => {
     await type(byLabel(ts.admin.cache.assetsBytes) as HTMLInputElement, '2048')
     await click(buttonIn(document, ts.admin.save))
     await settle(() => puts().length === 1, 'the save')
-    expect(puts()[0]).toEqual({ cache: { assetsBytes: 2048 * 1024 ** 2 } })
+    expect(puts()).toEqual([['cache.assetsBytes', 2048 * 1024 ** 2]])
     await type(byLabel(ts.admin.cache.assetsBytes) as HTMLInputElement, '10')
     await click(buttonIn(document, ts.admin.save))
     await settle(() => text().includes(ts.admin.cache.invalid), 'the message')
@@ -257,9 +285,7 @@ describe('the spaces list and the copy of each space', () => {
     await settle(() => rowOf('团队空间').textContent!.includes(ts.spaces.exempt), 'the exemption')
     // Require a remote of every space at once: the space that is not exempt is past its deadline.
     const admin = adminRequests(m.server)
-    expect(admin('PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'all', graceDays: 0 } }).status).toBe(
-      200,
-    )
+    putSettings(admin, require(0))
     await m.qc.invalidateQueries({ queryKey: ['admin', 'spaces'] })
     await settle(
       () =>
@@ -278,7 +304,7 @@ describe('the notice of a space that needs a remote', () => {
   const sceneOf = (graceDays: number) => (server: MockServer) => {
     const admin = adminRequests(server)
     const list = admin('GET', '/api/spaces').body as { spaces: { id: string; personal: boolean }[] }
-    admin('PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'all', graceDays } })
+    putSettings(admin, require(graceDays))
     return [`/s/${list.spaces[0].id}`]
   }
 
@@ -312,7 +338,7 @@ describe('the notice of a space that needs a remote', () => {
           url: 'https://github.com/a/b.git',
           credential: { type: 'token', token: 'x' },
         })
-        admin('PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'all', graceDays: 0 } })
+        putSettings(admin, require(0))
         return [`/s/${id}`]
       },
       signIn: true,
@@ -328,7 +354,7 @@ describe('the notice of a space that needs a remote', () => {
         const owner = makePerson(server, 'sharer')
         const id = (owner.request('POST', '/api/spaces', { name: '共享' }).body as { id: string }).id
         owner.request('POST', `/api/spaces/${id}/members`, { username: 'admin', role: 'viewer' })
-        adminRequests(server)('PUT', '/api/admin/storage', { remotes: { require: 'any', scope: 'all', graceDays: 5 } })
+        putSettings(adminRequests(server), require(5))
         return [`/s/${id}`]
       },
       signIn: true,

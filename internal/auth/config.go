@@ -22,7 +22,7 @@ func (s *Service) importFlags(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
-	raw, _, err := store.GetSetting(ctx, s.st.Q(), oidcImportedKey)
+	raw, _, err := store.GetRecord(ctx, s.st.Q(), oidcImportedKey)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
@@ -72,7 +72,7 @@ func (s *Service) importFlags(ctx context.Context) error {
 		s.log.Info("the --oidc-* flags became the sign-in provider \"sso\" of the state database; change it on the 安全 page, and remove the flags", "issuer", c.Issuer)
 	}
 	done, _ := json.Marshal(map[string]string{"slug": "sso"})
-	if _, err := store.PutSetting(ctx, s.st.Q(), oidcImportedKey, string(done), s.now()); err != nil {
+	if _, err := store.PutRecord(ctx, s.st.Q(), oidcImportedKey, string(done), s.now()); err != nil {
 		return err
 	}
 	return s.reloadProviders(ctx)

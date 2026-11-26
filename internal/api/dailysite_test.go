@@ -399,7 +399,7 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 		}
 		// ... and it is not kept in the clear in the database either.
 		var raw string
-		x.a.st.Q().QueryRow(context.Background(), `SELECT value FROM site_settings WHERE key = 'daily'`).Scan(&raw)
+		x.a.st.Q().QueryRow(context.Background(), `SELECT value FROM site_records WHERE key = 'daily'`).Scan(&raw)
 		if strings.Contains(raw, "key-one") || !strings.Contains(raw, "X-Api-Key") {
 			t.Fatalf("%s", raw)
 		}

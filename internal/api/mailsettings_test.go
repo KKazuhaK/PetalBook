@@ -84,11 +84,19 @@ func TestTheMailPasswordIsSealedAndNeverShown(t *testing.T) {
 			t.Fatal("the password is shown")
 		}
 		var stored string
-		if err := a.st.Q().QueryRow(context.Background(), `SELECT value FROM site_settings WHERE key = 'mail'`).Scan(&stored); err != nil {
+		if err := a.st.Q().QueryRow(context.Background(), `SELECT value FROM site_records WHERE key = 'mail'`).Scan(&stored); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(stored, secret) || !strings.Contains(stored, "passwordEnc") {
-			t.Fatalf("the password is stored in the clear: %s", stored)
+		if strings.Contains(stored, secret) || strings.Contains(stored, "assword") {
+			t.Fatalf("the record holds the password: %s", stored)
+		}
+		// It is the secret mail.password, sealed.
+		var sealed string
+		if err := a.st.Q().QueryRow(context.Background(), `SELECT value FROM secrets WHERE scope = 'site' AND tenant_id = '' AND name = 'mail.password'`).Scan(&sealed); err != nil {
+			t.Fatal(err)
+		}
+		if sealed == "" || strings.Contains(sealed, secret) {
+			t.Fatalf("the password is stored in the clear: %s", sealed)
 		}
 		// Absent keeps it, "" clears it.
 		root.do("PUT", "/api/admin/mail", map[string]any{"fromName": "X"}).want(t, 200, "")

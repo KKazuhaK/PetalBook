@@ -17,28 +17,28 @@ const (
 // ErrTooManyLines is the refusal of lines beyond MaxDailyLines.
 var ErrTooManyLines = errors.New("too many lines")
 
-// GetSiteSetting returns a server-wide setting (JSON text); ok is false when
+// GetSiteRecord returns a server-wide setting (JSON text); ok is false when
 // it was never set.
-func GetSiteSetting(ctx context.Context, q Q, key string) (value string, ok bool, err error) {
-	err = q.QueryRow(ctx, `SELECT value FROM site_settings WHERE key = ?`, key).Scan(&value)
+func GetSiteRecord(ctx context.Context, q Q, key string) (value string, ok bool, err error) {
+	err = q.QueryRow(ctx, `SELECT value FROM site_records WHERE key = ?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return value, err == nil, err
 }
 
-// SetSiteSetting stores a server-wide setting.
-func SetSiteSetting(ctx context.Context, q Q, key, value string, now time.Time) error {
-	_, err := q.Exec(ctx, `INSERT INTO site_settings(key, value, updated) VALUES (?, ?, ?)
+// SetSiteRecord stores a server-wide setting.
+func SetSiteRecord(ctx context.Context, q Q, key, value string, now time.Time) error {
+	_, err := q.Exec(ctx, `INSERT INTO site_records(key, value, updated) VALUES (?, ?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated`, key, value, ms(now))
 	return err
 }
 
-// CompareAndSetSiteSetting replaces a server-wide setting only if it still has
+// CompareAndSetSiteRecord replaces a server-wide setting only if it still has
 // the value that was read (old), and says whether it did. A writer that read
 // the setting some time ago uses it so as never to overwrite a newer value.
-func CompareAndSetSiteSetting(ctx context.Context, q Q, key, old, value string, now time.Time) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE site_settings SET value = ?, updated = ? WHERE key = ? AND value = ?`, value, ms(now), key, old)
+func CompareAndSetSiteRecord(ctx context.Context, q Q, key, old, value string, now time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE site_records SET value = ?, updated = ? WHERE key = ? AND value = ?`, value, ms(now), key, old)
 	if err != nil {
 		return false, err
 	}
@@ -253,13 +253,13 @@ func TrimDailyCache(ctx context.Context, q Q, apiKey string, keep int) error {
 	return err
 }
 
-// LockSiteSetting holds a server-wide setting until the end of the
+// LockSiteRecord holds a server-wide setting until the end of the
 // transaction q is in, so that one change at a time reads and writes it; a
 // setting never set is made, with the value "{}".
-func LockSiteSetting(ctx context.Context, q Q, key string, now time.Time) error {
-	if _, err := q.Exec(ctx, `INSERT INTO site_settings(key, value, updated) VALUES (?, '{}', ?) ON CONFLICT (key) DO NOTHING`, key, ms(now)); err != nil {
+func LockSiteRecord(ctx context.Context, q Q, key string, now time.Time) error {
+	if _, err := q.Exec(ctx, `INSERT INTO site_records(key, value, updated) VALUES (?, '{}', ?) ON CONFLICT (key) DO NOTHING`, key, ms(now)); err != nil {
 		return err
 	}
-	res, err := q.Exec(ctx, `UPDATE site_settings SET key = key WHERE key = ?`, key)
+	res, err := q.Exec(ctx, `UPDATE site_records SET key = key WHERE key = ?`, key)
 	return oneRow(res, err)
 }

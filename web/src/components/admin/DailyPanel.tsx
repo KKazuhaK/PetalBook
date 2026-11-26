@@ -100,31 +100,28 @@ export function DailyPanel() {
 const nothingOn = (data: AdminDaily) =>
   data.providers.every((p) => !p.enabled) && data.apis.every((a) => !a.enabled) && data.lines.total === 0
 
-// Two switches for what spaces may do. They wait for the server to say (`allow`): until it does they show as on and
-// cannot be changed.
+// Two switches for what spaces may do (daily.own and daily.api, the site's value: a tenant's own is its own page).
 function AllowSection({ data }: { data: AdminDaily }) {
   const save = useSaveDailySite()
   const allow = data.allow
-  const set = (patch: Partial<{ own: boolean; api: boolean }>) => {
-    if (!allow) return
-    save.mutate({ allow: { ...allow, ...patch } }, { onError: (e) => void toast.error(message(e)) })
-  }
+  const set = (patch: Partial<{ own: boolean; api: boolean }>) =>
+    save.mutate({ allow: patch }, { onError: (e) => void toast.error(message(e)) })
   return (
-    <SettingsSection title={d.allowTitle} description={allow ? undefined : d.allowPending}>
+    <SettingsSection title={d.allowTitle}>
       <SettingsRows>
         <SettingsRow title={d.allowOwn} help={d.allowOwnHelp} controlId="daily-allow-own">
           <Switch
             id="daily-allow-own"
-            checked={allow?.own ?? true}
-            disabled={!allow || save.isPending}
+            checked={allow.own}
+            disabled={save.isPending}
             onCheckedChange={(on) => set({ own: on })}
           />
         </SettingsRow>
         <SettingsRow title={d.allowApi} help={d.allowApiHelp} controlId="daily-allow-api">
           <Switch
             id="daily-allow-api"
-            checked={allow?.api ?? true}
-            disabled={!allow || save.isPending}
+            checked={allow.api}
+            disabled={save.isPending}
             onCheckedChange={(on) => set({ api: on })}
           />
         </SettingsRow>

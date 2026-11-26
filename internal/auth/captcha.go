@@ -43,21 +43,21 @@ func (s *Service) initCaptcha() {
 // settings in force changed.
 func (s *Service) captchaRebuild(nst, old *secState) {
 	c := nst.Captcha
-	if c.Provider == CaptchaImage || c.SecretEnc == "" {
+	if c.Provider == CaptchaImage || !c.HasSecret {
 		s.capTok.Store(nil)
 		s.capSecretErr.Store(false)
 		return
 	}
-	if old != nil && old.Captcha.Provider == c.Provider && old.Captcha.SecretEnc == c.SecretEnc && s.capTok.Load() != nil {
+	if old != nil && old.Captcha.Provider == c.Provider && old.Captcha.secret == c.secret && s.capTok.Load() != nil {
 		return
 	}
-	secret, err := s.open("captcha:"+c.Provider, c.SecretEnc)
-	if err != nil {
+	if c.SecretUnreadable {
 		s.log.Warn("the stored captcha secret cannot be opened with this server's key")
 		s.capTok.Store(nil)
 		s.capSecretErr.Store(true)
 		return
 	}
+	secret := c.secret
 	s.capSecretErr.Store(false)
 	opts := []captcha.TokenOption{captcha.WithAllowedHostnames(captcha.HostOf(s.cfg.PublicURL))}
 	if s.cfg.HTTPClient != nil {

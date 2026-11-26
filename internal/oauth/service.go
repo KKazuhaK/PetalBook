@@ -167,11 +167,29 @@ func (s *Service) Challenge() string {
 	return `Bearer resource_metadata="` + s.issuer + PathResourceMCP + `", scope="read write"`
 }
 
-// On says whether the authorization server answers: an administrator may
-// switch MCP, and with it OAuth, off.
+// On says whether the authorization server answers at all: whether MCP can be
+// on for anybody (tokens.MCPAnywhere). Whom it serves is each person's own
+// features.mcp, their tenant's (see OnFor), at the authorization, the
+// exchange of a code and each refresh, as at /mcp.
 func (s *Service) On(ctx context.Context) (bool, error) {
-	a, err := s.cfg.Machine.Access(ctx)
-	return a.MCP, err
+	return s.cfg.Machine.MCPAnywhere(ctx)
+}
+
+// OnFor says whether MCP is on for a tenant.
+func (s *Service) OnFor(ctx context.Context, tenant string) (bool, error) {
+	return s.cfg.Machine.MCPOn(ctx, tenant)
+}
+
+// onForUser says whether MCP is on for a person (their tenant's, from the cache).
+func (s *Service) onForUser(ctx context.Context, userID string) (bool, error) {
+	u, err := s.cfg.Users.CachedUser(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return true, nil // a person who is gone is refused at the exchange (ownerUsable)
+	}
+	if err != nil {
+		return false, err
+	}
+	return s.OnFor(ctx, u.TenantID)
 }
 
 // Run keeps the tables tidy until ctx ends: grants nobody refreshed for 90 days

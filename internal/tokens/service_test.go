@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
 	"petalbook.app/server/internal/tokens"
@@ -39,6 +40,7 @@ type users struct {
 	mu       sync.Mutex
 	disabled map[string]bool
 	gone     map[string]bool
+	tenant   map[string]string // the tenant of a user; "" is the site's own
 }
 
 func (u *users) CachedUser(_ context.Context, id string) (*store.User, error) {
@@ -47,7 +49,7 @@ func (u *users) CachedUser(_ context.Context, id string) (*store.User, error) {
 	if u.gone[id] {
 		return nil, store.ErrNotFound
 	}
-	return &store.User{ID: id, Username: id, Role: "admin", SiteAdmin: true, Disabled: u.disabled[id]}, nil
+	return &store.User{ID: id, Username: id, Role: "admin", SiteAdmin: true, Disabled: u.disabled[id], TenantID: u.tenant[id]}, nil
 }
 
 type fixture struct {
@@ -61,7 +63,7 @@ type fixture struct {
 func newFixture(t *testing.T, st *store.Store) *fixture {
 	t.Helper()
 	clk := &clock{t: time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)}
-	us := &users{disabled: map[string]bool{}, gone: map[string]bool{}}
+	us := &users{disabled: map[string]bool{}, gone: map[string]bool{}, tenant: map[string]string{}}
 	for _, id := range []string{"A", "B"} {
 		if err := store.InsertUser(ctx, st.Q(), store.User{ID: id, Username: strings.ToLower(id), Name: id, Role: "member", Created: clk.Now()}); err != nil {
 			t.Fatal(err)
@@ -351,40 +353,75 @@ func TestOnlyFailedTokensCount(t *testing.T) {
 	})
 }
 
+// Machine access is two settings, features.tokens and features.mcp: switched off
+// for everyone by the site's, for one tenant by a rule for it, and only that
+// tenant's people are refused.
 func TestSwitchedOff(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		_, secret := f.create("A", "read", 90, "S1")
-		a, err := f.svc.Access(ctx)
-		if err != nil || !a.Tokens || !a.MCP {
-			t.Fatalf("%+v %v", a, err)
+		set := settings.Of(f.st)
+		set.SetClock(f.clk.Now)
+		if on, err := f.svc.TokensOn(ctx, ""); err != nil || !on {
+			t.Fatalf("on by default: %v %v", on, err)
 		}
-		off := false
-		if a, err = f.svc.SetAccess(ctx, &off, nil); err != nil || a.Tokens || !a.MCP {
-			t.Fatalf("%+v %v", a, err)
+		off := settings.Change{HasValue: true, Value: false}
+		if _, err := set.SetSite(ctx, settings.FeatureTokens, off); err != nil {
+			t.Fatal(err)
 		}
 		if got := code(f.auth(secret)); got != "tokens_off" {
 			t.Fatal(got)
 		}
-		// Nothing was deleted; on again, it works. A second process sees the
-		// change within 30 seconds.
-		other := tokens.New(tokens.Config{Store: f.st, Users: f.us, Now: f.clk.Now})
-		if _, err := other.Authenticate(ctx, secret, "ip"); code(err) != "tokens_off" {
-			t.Fatal(err)
-		}
-		on := true
-		if _, err = f.svc.SetAccess(ctx, &on, nil); err != nil {
+		// Nothing was deleted; on again, it works.
+		if _, err := set.SetSite(ctx, settings.FeatureTokens, settings.Change{HasValue: true, Value: true}); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.auth(secret); err != nil {
 			t.Fatal(err)
 		}
-		f.clk.Advance(31 * time.Second)
-		if _, err := other.Authenticate(ctx, secret, "ip"); err != nil {
+		// MCP alone is the other switch.
+		if _, err := set.SetSite(ctx, settings.FeatureMCP, off); err != nil {
 			t.Fatal(err)
 		}
-		// MCP alone is the other switch.
-		if a, err = f.svc.SetAccess(ctx, nil, &off); err != nil || !a.Tokens || a.MCP {
-			t.Fatalf("%+v %v", a, err)
+		if tok, _ := f.svc.TokensOn(ctx, ""); !tok {
+			t.Fatal("tokens went off with MCP")
+		}
+		if mcp, _ := f.svc.MCPOn(ctx, ""); mcp {
+			t.Fatal("MCP is still on")
+		}
+	})
+}
+
+func TestSwitchedOffForOneTenant(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		const other = "T000000009"
+		now := f.clk.Now()
+		if err := f.st.CreateTenant(ctx, store.Tenant{ID: other, Slug: "globex", Name: "Globex", Created: now, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+		f.us.tenant["B"] = other
+		_, a := f.create("A", "read", 90, "S1")
+		_, b := f.create("B", "read", 90, "S1")
+		set := settings.Of(f.st)
+		set.SetClock(f.clk.Now)
+		rule := settings.Change{Site: true, HasSiteRule: true, SiteRule: &settings.Rule{Value: false, Lower: &settings.Lower{Mode: settings.Lock}}}
+		if err := set.SetTenant(ctx, other, settings.FeatureTokens, rule); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.auth(a); err != nil {
+			t.Fatalf("the default tenant's token: %v", err)
+		}
+		if got := code(f.auth(b)); got != "tokens_off" {
+			t.Fatalf("the other tenant's token: %q", got)
+		}
+		// MCP is its own switch: the tenant that lost tokens keeps it.
+		if on, _ := f.svc.MCPOn(ctx, other); !on {
+			t.Fatal("MCP went off with tokens")
+		}
+		if err := set.SetTenant(ctx, other, settings.FeatureTokens, settings.Change{Site: true, HasSiteRule: true}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.auth(b); err != nil {
+			t.Fatalf("after the rule was lifted: %v", err)
 		}
 	})
 }

@@ -96,7 +96,6 @@ export const adminEn: AdminMessages = {
     deleteConfirm: 'Confirm delete',
     allLanguages: 'All languages',
     allowTitle: 'What spaces may do',
-    allowPending: 'The server does not have these two settings yet, so the switches cannot be changed.',
     allowOwn: 'Spaces may use a source of their own',
     allowOwnHelp: 'Off: spaces cannot pick a folder, tag or type to take the text from.',
     allowApi: 'Spaces may choose an external interface',

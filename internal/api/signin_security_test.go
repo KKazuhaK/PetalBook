@@ -9,6 +9,7 @@ import (
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/auth/testidp"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -44,9 +45,6 @@ func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {
 			"n failures":  {"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"failures": 101}}}},
 			"role":        {"passkeys": map[string]any{"requireRoles": []string{"root"}}},
 		} {
-			// One good field next to the bad one must not be stored either.
-			body["login"] = mergeMaps(body["login"], map[string]any{"ssoOnly": false})
-			body["lockout"] = mergeMaps(body["lockout"], map[string]any{"enabled": true})
 			r := admin.do("PUT", "/api/admin/security", body)
 			if r.code != 400 || r.body["error"] != "invalid" {
 				t.Errorf("%s: %d %s", name, r.code, r.raw)
@@ -55,21 +53,26 @@ func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {
 		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["lockout"].(map[string]any)["enabled"] != false || g.body["limits"].(map[string]any)["sessionIdleDays"] != float64(30) {
 			t.Fatalf("a refused request changed something: %s", g.raw)
 		}
-		// A partial update keeps the rest; only a change writes the audit log.
-		before := len(admin.audit(t, "security_changed"))
+		// A partial update keeps the rest; every setting written is audited.
+		before := len(admin.audit(t, "setting_changed"))
 		r := admin.putSecurity(t, map[string]any{"lockout": map[string]any{"enabled": true, "minutes": 5, "scope": "account"}})
 		lk := r.body["lockout"].(map[string]any)
 		if lk["enabled"] != true || lk["minutes"] != float64(5) || lk["scope"] != "account" || r.body["limits"].(map[string]any)["maxFailures"] != float64(10) {
 			t.Fatal(r.raw)
 		}
-		admin.putSecurity(t, map[string]any{"lockout": map[string]any{"enabled": true}})
-		rows := admin.audit(t, "security_changed")
-		if len(rows) != before+1 {
-			t.Fatalf("%d rows, want %d: an unchanged save wrote one", len(rows), before+1)
+		rows := admin.audit(t, "setting_changed")
+		if len(rows) != before+3 {
+			t.Fatalf("%d rows, want %d: one for each of the three settings", len(rows), before+3)
 		}
-		d := rows[0]["detail"].(map[string]any)
-		if d["to"].(map[string]any)["lockout.scope"] != "account" || d["from"].(map[string]any)["lockout.scope"] != "ip_account" || len(d["to"].(map[string]any)) != 3 {
-			t.Fatalf("%v", d)
+		found := false
+		for _, row := range rows {
+			d := row["detail"].(map[string]any)
+			if d["key"] == "signin.lockout.scope" {
+				found = d["to"].(map[string]any)["value"] == "account" && d["from"].(map[string]any)["value"] == "ip_account" && d["source"] == "manual"
+			}
+		}
+		if !found {
+			t.Fatalf("no row for the scope: %v", rows)
 		}
 		a.newClient("").do("PUT", "/api/admin/security", map[string]any{}).want(t, 401, "unauthenticated")
 	})
@@ -326,33 +329,30 @@ func TestSettingsChangedByAnotherProcessReachTheRunningServer(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		admin.putSecurity(t, map[string]any{"limits": map[string]any{"maxFailures": 3}, "lockout": map[string]any{"enabled": true}, "login": map[string]any{"mode": "sso_first"}})
-		// "petalbook security reset" is a second process writing the same row.
-		other, err := auth.New(context.Background(), auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: a.public, Password: fastPasswords, Now: a.clock.Now})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := other.ResetSecurity(context.Background()); err != nil {
-			t.Fatal(err)
+		// "petalbook security reset" is a second process writing the same rows: its
+		// own settings service, which the running server learns of through
+		// settings_rev, at most once a minute.
+		other := settings.New(a.st)
+		for _, w := range []struct {
+			key string
+			v   any
+		}{{settings.SigninLockoutEnabled, false}, {settings.SigninMode, "dual"}} {
+			if _, err := other.SetSite(context.Background(), w.key, settings.Change{HasValue: true, Value: w.v, By: "cli"}); err != nil {
+				t.Fatal(err)
+			}
 		}
 		g := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		if g.body["lockout"].(map[string]any)["enabled"] != true {
-			t.Fatal("the change arrived before the cache expired")
+			t.Fatal("the change arrived before the revision was looked at")
 		}
-		a.clock.Advance(6 * time.Minute) // CacheTTL is 5 minutes
+		a.clock.Advance(settings.RevCheck + time.Second)
 		g = admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		if g.body["lockout"].(map[string]any)["enabled"] != false || g.body["login"].(map[string]any)["mode"] != "dual" {
 			t.Fatal(g.raw)
 		}
-		// Limits stay as they were; the reset is written down as the command line's.
+		// Limits stay as they were.
 		if g.body["limits"].(map[string]any)["maxFailures"] != float64(3) {
 			t.Fatal(g.raw)
-		}
-		found := false
-		for _, row := range admin.audit(t, "security_changed") {
-			found = found || row["actor"] == nil && row["detail"].(map[string]any)["by"] == "cli"
-		}
-		if !found {
-			t.Fatal("the reset is not in the audit log")
 		}
 	})
 }

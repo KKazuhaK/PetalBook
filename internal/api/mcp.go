@@ -60,14 +60,22 @@ func mcpIdentityFrom(ctx context.Context) *auth.Principal {
 	return nil
 }
 
-// mcpOn says whether /mcp is served: a switch of the administrators in
-// accounts mode, of the command line in single-user mode (Options.NoMCP).
+// mcpOn says whether /mcp is served at all: the command line's switch in
+// single-user mode (Options.NoMCP). In accounts mode it is each tenant's
+// features.mcp, asked once the caller is known (mcpOnFor).
 func (s *server) mcpOn(ctx context.Context) (bool, error) {
 	if s.single {
 		return !s.opt.NoMCP, nil
 	}
-	a, err := s.tokens.Access(ctx)
-	return a.MCP, err
+	return true, nil
+}
+
+// mcpOnFor says whether MCP is on for the tenant of a caller.
+func (s *server) mcpOnFor(ctx context.Context, tenant string) (bool, error) {
+	if s.single {
+		return !s.opt.NoMCP, nil
+	}
+	return s.tokens.MCPOn(ctx, tenant)
 }
 
 // mcp is the state of the tools: the SDK's server, with its tools, and what
@@ -129,6 +137,13 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 	}
 	if err != nil {
 		s.fail(w, err)
+		return
+	}
+	if on, err := s.mcpOnFor(r.Context(), p.User.TenantID); err != nil {
+		s.fail(w, err)
+		return
+	} else if !on {
+		writeError(w, http.StatusNotFound, "not_found", "No such endpoint.")
 		return
 	}
 	// The request is read here, so that one that is too large answers 413 in

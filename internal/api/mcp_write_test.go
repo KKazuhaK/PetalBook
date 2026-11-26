@@ -455,12 +455,13 @@ func TestMCPFollowsTheSwitchesAndTheAccount(t *testing.T) {
 		g := a.bearer(grant(t, a, e.tm.owner, "write", e.sid).access, "")
 		e.w.tool("spaces_list", nil).ok(t)
 		g.tool("spaces_list", nil).ok(t)
-		// The switch of MCP: /mcp is not there, for either kind of credential, and not for none.
+		// The switch of MCP (features.mcp): /mcp is not there for either kind of
+		// credential. It is the tenant's, so it is known once the caller is.
 		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": false}).want(t, 200, "")
-		for _, c := range []*client{e.w, g, a.newClient("")} {
+		for _, c := range []*client{e.w, g} {
 			c.tool("spaces_list", nil).http(t, 404, "not_found")
-			c.do("GET", "/mcp", nil).want(t, 404, "not_found")
 		}
+		a.newClient("").tool("spaces_list", nil).http(t, 401, "unauthenticated")
 		e.w.do("GET", spacePath(e.sid)+"/tree", nil).want(t, 200, "") // the API is still there
 		admin.do("PUT", "/api/admin/access", map[string]any{"mcp": true}).want(t, 200, "")
 		e.w.tool("spaces_list", nil).ok(t)

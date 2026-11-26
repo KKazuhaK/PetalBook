@@ -383,8 +383,6 @@ export function createMockServer(options: MockOptions = {}) {
   const endedWhy = new Map<string, string>()
   const invites = new Map<string, InviteRec>()
   const apiTokens = new Map<string, TokenRec>()
-  // What an administrator allows machines (docs/api.md, "Machine access").
-  const machine = { tokens: true, mcp: true }
   const grants = new Map<string, GrantRec>()
   const pending = new Map<string, PendingRec>()
   const spaces = new Map<string, SpaceRec>()
@@ -615,10 +613,7 @@ export function createMockServer(options: MockOptions = {}) {
         ).length
       : 0
     return {
-      remotes: { ...storage.remotes, since: storage.remotes.since === null ? null : rfc3339(storage.remotes.since) },
-      hosts: { allowed: storage.hosts.allowed, fromFlag: false },
-      localSpaces: storage.localSpaces,
-      cache: storage.cache,
+      remotes: { since: storage.remotes.since === null ? null : rfc3339(storage.remotes.since) },
       git: { version: '2.53.0', partialClone: true },
       affected: {
         inGrace: notices.filter((n) => !n.overdue).length,
@@ -1816,7 +1811,8 @@ export function createMockServer(options: MockOptions = {}) {
   const oauthHere = () => accounts && options.oauth === true
   // The consent endpoints are off with MCP; the grants are only there with an authorization server.
   const requireOAuth = () => {
-    if (!oauthHere() || !machine.mcp) throw new HttpError(404, 'not_found', 'no such endpoint')
+    if (!oauthHere() || tenantBook.effective('features.mcp') !== true)
+      throw new HttpError(404, 'not_found', 'no such endpoint')
   }
   const requireGrants = () => {
     if (!oauthHere()) throw new HttpError(404, 'not_found', 'no such endpoint')
@@ -2014,9 +2010,108 @@ export function createMockServer(options: MockOptions = {}) {
     rps?: number
     skipNew?: boolean
   }
+  // The mail password, the captcha's secret and the GitHub App's, as the secrets list tells them (write-only).
+  const secretTimes = new Map<string, string>()
+  const siteSecrets = {
+    list: () => {
+      const g = github.admin()
+      const set: Record<string, boolean> = {
+        'github.appKey': g.configured && g.privateKey.set,
+        'github.clientSecret': g.configured && g.clientSecret.set,
+        'github.webhookSecret': g.configured,
+        'mail.password': mailBook.view().hasPassword,
+        'captcha.secret': book.captchaSecretSet(),
+      }
+      return Object.entries(set).map(([name, on]) => ({
+        name,
+        set: on,
+        ...(on ? { updatedAt: secretTimes.get(name) ?? rfc3339(startedAt) } : {}),
+      }))
+    },
+    change: (name: string, value: string | null) => {
+      if (name.startsWith('github.'))
+        throw new HttpError(409, 'conflict', 'This secret is changed through the GitHub connection, which checks it.')
+      if (name === 'mail.password') mailBook.setPassword(value ?? '')
+      else book.setCaptchaSecret(value === null || value.trim() === '' ? null : value)
+      secretTimes.set(name, rfc3339(now()))
+    },
+  }
+  // The settings the parts of the server keep: the sign-in policy, the storage policy and the daily text.
+  const boundSettings = (): Parameters<typeof createTenantBook>[0]['bound'] => {
+    const out: Parameters<typeof createTenantBook>[0]['bound'] = {}
+    for (const key of book.SETTINGS)
+      out[key] = { get: () => book.settingGet(key), set: (v, actor) => book.settingPut(key, v, actor) }
+    const store = (key: string, get: () => unknown, put: (v: unknown) => void) => {
+      out[key] = { get, set: (v) => put(v) }
+    }
+    store(
+      'storage.remotes.require',
+      () => storage.remotes.require ?? '',
+      (v) => putStorage({ remotes: { require: v === '' ? null : v } }),
+    )
+    store(
+      'storage.remotes.scope',
+      () => storage.remotes.scope,
+      (v) => putStorage({ remotes: { scope: v } }),
+    )
+    store(
+      'storage.remotes.graceDays',
+      () => storage.remotes.graceDays,
+      (v) => putStorage({ remotes: { graceDays: v } }),
+    )
+    store(
+      'storage.localSpaces.maxBytes',
+      () => storage.localSpaces.maxBytes,
+      (v) => putStorage({ localSpaces: { maxBytes: v } }),
+    )
+    store(
+      'storage.hosts',
+      () => [...storage.hosts.allowed],
+      (v) => putStorage({ hosts: { allowed: v } }),
+    )
+    for (const k of [
+      'partial',
+      'evictAfterDays',
+      'minIdleHours',
+      'clonesBytes',
+      'minFreeBytes',
+      'assetsBytes',
+    ] as const)
+      store(
+        `cache.${k}`,
+        () => storage.cache[k],
+        (v) => putStorage({ cache: { [k]: v } }),
+      )
+    store(
+      'daily.own',
+      () => site.allow.own,
+      (v) => void (site.allow.own = v === true),
+    )
+    store(
+      'daily.api',
+      () => site.allow.api,
+      (v) => void (site.allow.api = v === true),
+    )
+    store(
+      'daily.languages',
+      () => [...site.languages],
+      (v) => void (site.languages = checkLanguages(v)),
+    )
+    store(
+      'daily.default',
+      () => (site.default === null ? null : { ...site.default }),
+      (v) => void (site.default = checkSiteDefault(v)),
+    )
+    return out
+  }
   const tenantBook = createTenantBook({
     now: () => rfc3339(now()),
-    daily: { get: () => site.allow, set: (patch) => void Object.assign(site.allow, patch) },
+    bound: boundSettings(),
+    siteSecrets,
+    remotesAffected: () => {
+      const a = storageBody().affected
+      return { InGrace: a.inGrace, Overdue: a.overdue, Exempt: a.exempt }
+    },
     isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
     mailReady: () => mailBook.ready(),
     ssoOnlyStored: () => book.security.login.ssoOnly,
@@ -2372,10 +2467,7 @@ export function createMockServer(options: MockOptions = {}) {
       total += list.length
     }
     return {
-      default: site.default === null ? null : { ...site.default },
-      languages: [...site.languages],
       knownLanguages: KNOWN_LANGUAGES,
-      allow: { ...site.allow },
       apis: allApis().map(({ headers, ...rest }) => ({
         ...rest,
         headers: headers.map((h) => ({ name: h.name, set: true })),
@@ -2724,104 +2816,81 @@ export function createMockServer(options: MockOptions = {}) {
     if (typeof body.skipNew === 'boolean') st.skipNew = body.skipNew
     site.providers[p.id] = st
   }
+  // The checks of daily.default: null, or a list, interfaces or sources; the result is what is stored.
+  const checkSiteDefault = (d: unknown): SiteDefault => {
+    let next: SiteDefault
+    if (d === null) next = null
+    else if (
+      isRecord(d) &&
+      d.kind === 'list' &&
+      d.space === undefined &&
+      d.source === undefined &&
+      d.apis === undefined
+    )
+      next = { kind: 'list' }
+    else if (
+      isRecord(d) &&
+      d.kind === 'api' &&
+      d.space === undefined &&
+      d.source === undefined &&
+      isRecord(d.apis) &&
+      Object.keys(d.apis).length > 0
+    ) {
+      const ids = new Set(allApis().map((a) => a.id))
+      const apis: Record<string, string[]> = {}
+      for (const [k, value] of Object.entries(d.apis)) {
+        const tag = k === '' ? '' : tagOf(k)
+        if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
+        const list = value
+        if (!Array.isArray(list) || list.length < 1 || list.length > 8)
+          throw new HttpError(400, 'invalid', '每种语言 1 到 8 个接口')
+        for (const id of list) {
+          if (typeof id !== 'string' || !ids.has(id))
+            throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
+          if (tag !== '' && !servesLang(id, tag)) throw new HttpError(400, 'invalid', `${id} 没有 ${tag} 的文案`)
+        }
+        apis[tag] = [...new Set(list as string[])]
+      }
+      const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
+      next = { kind: 'api', apis, ...(Object.keys(options).length > 0 ? { options } : {}) }
+    } else if (isRecord(d) && d.kind === 'sources' && isRecord(d.sources) && Object.keys(d.sources).length > 0) {
+      if (d.options !== undefined) throw new HttpError(400, 'invalid', 'options go with a source, not with the default')
+      const ids = new Set(allApis().map((a) => a.id))
+      const sources: Record<string, MockSource[]> = {}
+      for (const [k, value] of Object.entries(d.sources)) {
+        const tag = k === '' ? '' : tagOf(k)
+        if (tag in sources) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
+        if (!Array.isArray(value) || value.length < 1 || value.length > 8)
+          throw new HttpError(400, 'invalid', '每种语言 1 到 8 个来源')
+        sources[tag] = value.map((src): MockSource => {
+          if (!isRecord(src)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
+          if (src.kind === 'list') return { kind: 'list' }
+          if (src.kind === 'space') return { kind: 'space', space: String(src.space), source: src.source }
+          if (src.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 space')
+          if (typeof src.id !== 'string' || !ids.has(src.id))
+            throw new HttpError(400, 'api_not_found', `没有接口 ${String(src.id)}`)
+          if (tag !== '' && !servesLang(src.id, tag))
+            throw new HttpError(400, 'invalid', `${src.id} 没有 ${tag} 的文案`)
+          const options = checkOptions([src.id], src.options === undefined ? undefined : { [src.id]: src.options })[
+            src.id
+          ]
+          return { kind: 'api', id: src.id, ...(options ? { options } : {}) }
+        })
+      }
+      next = { kind: 'sources', sources }
+    } else
+      throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, interfaces or sources, or null')
+    return next
+  }
+  const checkLanguages = (v: unknown): string[] => {
+    if (!Array.isArray(v)) throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
+    if (v.length > 30) throw new HttpError(400, 'invalid', '最多 30 种语言')
+    return [...new Set((v as unknown[]).map(tagOf))]
+  }
   const routeSiteDaily = (method: string, path: string, url: URL, body: Record<string, unknown>): MockResponse => {
     if (path === '/admin/daily' && method === 'GET') return { status: 200, body: siteView() }
-    if (path === '/admin/daily' && method === 'PUT') {
-      for (const k of Object.keys(body))
-        if (!['default', 'languages', 'allow'].includes(k)) throw new HttpError(400, 'invalid', `不认识 ${k}`)
-      let languages = site.languages
-      if ('languages' in body) {
-        if (!Array.isArray(body.languages))
-          throw new HttpError(400, 'invalid', 'languages 是 zh-Hans、en 这样的语言标签的列表')
-        if (body.languages.length > 30) throw new HttpError(400, 'invalid', '最多 30 种语言')
-        languages = [...new Set((body.languages as unknown[]).map(tagOf))]
-      }
-      let allow = site.allow
-      if ('allow' in body) {
-        const a = body.allow
-        if (
-          !isRecord(a) ||
-          (a.own === undefined && a.api === undefined) ||
-          (a.own !== undefined && typeof a.own !== 'boolean') ||
-          (a.api !== undefined && typeof a.api !== 'boolean')
-        )
-          throw new HttpError(400, 'invalid', 'allow 是 {own: true 或 false, api: true 或 false}')
-        allow = {
-          own: typeof a.own === 'boolean' ? a.own : allow.own,
-          api: typeof a.api === 'boolean' ? a.api : allow.api,
-        }
-      }
-      let next = site.default
-      if ('default' in body) {
-        const d = body.default
-        if (d === null) next = null
-        else if (
-          isRecord(d) &&
-          d.kind === 'list' &&
-          d.space === undefined &&
-          d.source === undefined &&
-          d.apis === undefined
-        )
-          next = { kind: 'list' }
-        else if (
-          isRecord(d) &&
-          d.kind === 'api' &&
-          d.space === undefined &&
-          d.source === undefined &&
-          isRecord(d.apis) &&
-          Object.keys(d.apis).length > 0
-        ) {
-          const ids = new Set(allApis().map((a) => a.id))
-          const apis: Record<string, string[]> = {}
-          for (const [k, value] of Object.entries(d.apis)) {
-            const tag = k === '' ? '' : tagOf(k)
-            if (tag in apis) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            const list = value
-            if (!Array.isArray(list) || list.length < 1 || list.length > 8)
-              throw new HttpError(400, 'invalid', '每种语言 1 到 8 个接口')
-            for (const id of list) {
-              if (typeof id !== 'string' || !ids.has(id))
-                throw new HttpError(400, 'api_not_found', `没有接口 ${String(id)}`)
-              if (tag !== '' && !servesLang(id, tag)) throw new HttpError(400, 'invalid', `${id} 没有 ${tag} 的文案`)
-            }
-            apis[tag] = [...new Set(list as string[])]
-          }
-          const options = checkOptions([...new Set(Object.values(apis).flat())], d.options)
-          next = { kind: 'api', apis, ...(Object.keys(options).length > 0 ? { options } : {}) }
-        } else if (isRecord(d) && d.kind === 'sources' && isRecord(d.sources) && Object.keys(d.sources).length > 0) {
-          if (d.options !== undefined)
-            throw new HttpError(400, 'invalid', 'options go with a source, not with the default')
-          const ids = new Set(allApis().map((a) => a.id))
-          const sources: Record<string, MockSource[]> = {}
-          for (const [k, value] of Object.entries(d.sources)) {
-            const tag = k === '' ? '' : tagOf(k)
-            if (tag in sources) throw new HttpError(400, 'invalid', `${tag} 写了两次`)
-            if (!Array.isArray(value) || value.length < 1 || value.length > 8)
-              throw new HttpError(400, 'invalid', '每种语言 1 到 8 个来源')
-            sources[tag] = value.map((src): MockSource => {
-              if (!isRecord(src)) throw new HttpError(400, 'invalid', '来源是 {kind, …}')
-              if (src.kind === 'list') return { kind: 'list' }
-              if (src.kind === 'space') return { kind: 'space', space: String(src.space), source: src.source }
-              if (src.kind !== 'api') throw new HttpError(400, 'invalid', '来源的 kind 是 api、list 或 space')
-              if (typeof src.id !== 'string' || !ids.has(src.id))
-                throw new HttpError(400, 'api_not_found', `没有接口 ${String(src.id)}`)
-              if (tag !== '' && !servesLang(src.id, tag))
-                throw new HttpError(400, 'invalid', `${src.id} 没有 ${tag} 的文案`)
-              const options = checkOptions([src.id], src.options === undefined ? undefined : { [src.id]: src.options })[
-                src.id
-              ]
-              return { kind: 'api', id: src.id, ...(options ? { options } : {}) }
-            })
-          }
-          next = { kind: 'sources', sources }
-        } else
-          throw new HttpError(400, 'invalid', 'the mock takes a default that is a list, interfaces or sources, or null')
-      }
-      site.default = next
-      site.languages = languages
-      site.allow = allow
-      return { status: 200, body: siteView() }
-    }
+    // PUT /admin/daily is gone: the default, the languages and what spaces may do are the daily.* settings.
+    if (path === '/admin/daily' && method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Use GET.')
     const providerOne = /^\/admin\/daily\/providers\/([^/]+)$/.exec(path)
     if (providerOne && method === 'PUT') {
       const p = PROVIDERS.find((x) => x.id === decodeURIComponent(providerOne[1]))
@@ -3303,16 +3372,8 @@ export function createMockServer(options: MockOptions = {}) {
       if (!isSiteAdmin(me)) delete (body.affected as { exempt?: number }).exempt
       return j({ ...body, summary: manage.summary(me) })
     }
-    if (path === '/admin/storage' && method === 'PUT') {
-      if (!isSiteAdmin(me))
-        throw new HttpError(
-          403,
-          'forbidden',
-          'only an administrator of the whole server may change the storage settings',
-        )
-      putStorage(body)
-      return j(storageBody())
-    }
+    // PUT /admin/storage is gone: the policy is the storage.* and cache.* settings.
+    if (path === '/admin/storage' && method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Use GET.')
     const one = /^\/admin\/spaces\/([^/]+)(?:\/(size|transfer|takeover|disable|enable|storage|evict))?$/.exec(path)
     if (one) {
       const id = decodeURIComponent(one[1])
@@ -4899,7 +4960,7 @@ export function createMockServer(options: MockOptions = {}) {
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
     }
-    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings')) {
+    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings') || path.startsWith('/admin/secrets')) {
       accountsOnly()
       const me = requireAdmin(ctx)
       const r = tenantBook.route(me.id, method, path, url, body)
@@ -4987,7 +5048,7 @@ export function createMockServer(options: MockOptions = {}) {
       accountsOnly()
       const me = requireAdmin(ctx)
       if (path === '/admin/security' && method === 'GET') return j(book.view())
-      if (path === '/admin/security' && method === 'PUT') return j(book.putSecurity(body, me.id))
+      if (path === '/admin/security' && method === 'PUT') return j(book.putCredentials(body, me.id))
       if (path === '/admin/audit' && method === 'GET') {
         const raw = url.searchParams.get('limit')
         const limit = raw === null ? 50 : /^\d+$/.test(raw) ? Number(raw) : NaN
@@ -5051,19 +5112,9 @@ export function createMockServer(options: MockOptions = {}) {
         return { status: 204 }
       }
     }
-    if (path === '/admin/access' || path === '/admin/tokens' || path.startsWith('/admin/tokens/')) {
+    if (path === '/admin/tokens' || path.startsWith('/admin/tokens/')) {
       accountsOnly()
       const me = requireAdmin(ctx)
-      if (path === '/admin/access') {
-        if (method === 'PUT') {
-          for (const k of ['tokens', 'mcp'] as const) {
-            const v = body[k]
-            if (v !== undefined && typeof v !== 'boolean') throw new HttpError(400, 'invalid', `${k} 要是布尔值`)
-            if (typeof v === 'boolean') machine[k] = v
-          }
-        }
-        return j({ tokens: machine.tokens, mcp: machine.mcp, oauth: oauthHere() && machine.mcp })
-      }
       if (path === '/admin/tokens' && method === 'GET') return adminTokens(url)
       const one = /^\/admin\/tokens\/([^/]+)$/.exec(path)
       if (one && method === 'DELETE') {

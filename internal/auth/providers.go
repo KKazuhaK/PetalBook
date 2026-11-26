@@ -29,6 +29,7 @@ import (
 	crewjamsaml "github.com/crewjam/saml"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
+	"petalbook.app/server/internal/secret"
 	"petalbook.app/server/internal/store"
 )
 
@@ -188,6 +189,14 @@ func (p *providerSet) set(list []*providerRT) {
 }
 
 // --- sealing -----------------------------------------------------------------
+
+// rawBox is the server's box of sealed secrets.
+func (s *Service) rawBox() *secret.Box {
+	if s.cfg.Secrets != nil {
+		return s.cfg.Secrets
+	}
+	return s.cfg.Spaces.Secrets()
+}
 
 func (s *Service) box() interface {
 	Seal(spaceID, purpose string, plaintext []byte) (string, error)

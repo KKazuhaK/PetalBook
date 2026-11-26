@@ -47,8 +47,8 @@ func TestServeHasTheAuthorizationServerWithAPublicURL(t *testing.T) {
 	if code, m := call(t, srv.base, host, "POST", "/oauth/register", `{"client_name":"x","redirect_uris":["http://localhost:1/cb"]}`); code != 201 || m["client_id"] == nil {
 		t.Fatal(code, m)
 	}
-	// An administrator can read that it is there.
-	if code, m := call(t, srv.base, host, "GET", "/api/admin/access", ""); code != 401 {
+	// An administrator can read that it is there (features.mcp), signed in.
+	if code, m := call(t, srv.base, host, "GET", "/api/admin/settings", ""); code != 401 {
 		t.Fatal(code, m)
 	}
 }

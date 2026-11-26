@@ -3,15 +3,34 @@
 // the main bundle does not. (One space an administrator opens without being a member
 // of it is `api.adminSpace`: the space list needs it.)
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type UseQueryResult,
+} from '@tanstack/react-query'
 import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
+import {
+  dailyOf,
+  dailyWrites,
+  K,
+  machineOf,
+  securityOf,
+  storageOf,
+  storageWrites,
+  type SettingStep,
+} from './settingsFold'
 import type {
   AdminForge,
   AdminProviderRow,
   CreateAdminForgeInput,
   PatchAdminForgeInput,
   AdminStorage,
+  AdminStorageBody,
   AdminSpace,
   PutAdminStorage,
   MailPatch,
@@ -24,6 +43,7 @@ import type {
   RuleWrite,
   SettingLower,
   SiteSetting,
+  SecretMeta,
   Tenancy,
   Tenant,
   TenantList,
@@ -35,12 +55,14 @@ import type {
   GroupSource,
   GroupSpaceList,
   AdminDaily,
+  AdminDailyBody,
   AdminSpaceList,
   AuditList,
   AuthProvider,
   Passkey,
   ProviderInput,
-  SecurityPatch,
+  CaptchaCredentials,
+  SecurityBody,
   SecuritySettings,
   DailyAllow,
   AdminSpacesParams,
@@ -64,7 +86,6 @@ import type {
   PersonSession,
   AdminGrantList,
   AdminTokenList,
-  MachineAccess,
   AdminGitHub,
   CursorPage,
   GitHubInstallation,
@@ -158,8 +179,7 @@ export const adminApi = {
     return request<AdminSpaceList>(`/admin/spaces${qs ? `?${qs}` : ''}`, { signal })
   },
   // The site's storage policy (docs/api.md, "Server storage").
-  adminStorage: (signal?: AbortSignal) => request<AdminStorage>('/admin/storage', { signal }),
-  putAdminStorage: (input: PutAdminStorage) => request<AdminStorage>('/admin/storage', { method: 'PUT', body: input }),
+  adminStorage: (signal?: AbortSignal) => request<AdminStorageBody>('/admin/storage', { signal }),
   // Keeps a space's files on the server (pin), or leaves it out of the requirement of a remote (exempt).
   putSpaceStorage: (id: string, input: { pin?: boolean; exempt?: boolean }) =>
     request<AdminSpace>(`/admin/spaces/${enc(id)}/storage`, { method: 'PUT', body: input }),
@@ -205,8 +225,6 @@ export const adminApi = {
     request<{ sent: boolean }>(`/users/${enc(id)}/password-reset`, { method: 'POST', body: lang ? { lang } : {} }),
 
   // --- tenants (3.3) ---
-  tenancy: (signal?: AbortSignal) => request<Tenancy>('/admin/tenancy', { signal }),
-  setTenancy: (enabled: boolean) => request<Tenancy>('/admin/tenancy', { method: 'PUT', body: { enabled } }),
   tenants: (params: { q?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.q) q.set('q', params.q)
@@ -221,6 +239,18 @@ export const adminApi = {
   updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean }) =>
     request<Tenant>(`/admin/tenants/${enc(id)}`, { method: 'PATCH', body: input }),
   deleteTenant: (id: string) => request<void>(`/admin/tenants/${enc(id)}`, { method: 'DELETE' }),
+  // --- secrets: write-only; a tenant's is under its own path ---
+  secrets: (tenant: string | undefined, signal?: AbortSignal) =>
+    request<{ secrets: SecretMeta[] }>(tenant ? `/admin/tenants/${enc(tenant)}/secrets` : '/admin/secrets', { signal }),
+  putSecret: (tenant: string | undefined, name: string, value: string) =>
+    request<{ secrets: SecretMeta[] }>(`${tenant ? `/admin/tenants/${enc(tenant)}` : '/admin'}/secrets/${enc(name)}`, {
+      method: 'PUT',
+      body: { value },
+    }),
+  deleteSecret: (tenant: string | undefined, name: string) =>
+    request<{ secrets: SecretMeta[] }>(`${tenant ? `/admin/tenants/${enc(tenant)}` : '/admin'}/secrets/${enc(name)}`, {
+      method: 'DELETE',
+    }),
   // --- layered settings (3.3) ---
   siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
   putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
@@ -279,9 +309,10 @@ export const adminApi = {
   },
 
   // --- security: settings, sign-in providers and the audit log ---
-  security: (signal?: AbortSignal) => request<SecuritySettings>('/admin/security', { signal }),
-  // Only the blocks and fields that changed; `captcha.secret` is write-only ("" clears it).
-  putSecurity: (patch: SecurityPatch) => request<SecuritySettings>('/admin/security', { method: 'PUT', body: patch }),
+  security: (signal?: AbortSignal) => request<SecurityBody>('/admin/security', { signal }),
+  // The captcha's credentials, the one thing this endpoint writes; `secret` is write-only ("" clears it).
+  putSecurity: (captcha: CaptchaCredentials) =>
+    request<SecurityBody>('/admin/security', { method: 'PUT', body: { captcha } }),
   authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/auth/providers', { signal }),
   createAuthProvider: (input: ProviderInput) =>
     request<AuthProvider>('/admin/auth/providers', { method: 'POST', body: input }),
@@ -302,9 +333,6 @@ export const adminApi = {
   },
 
   // --- machine access: API tokens ---
-  access: (signal?: AbortSignal) => request<MachineAccess>('/admin/access', { signal }),
-  putAccess: (input: { tokens?: boolean; mcp?: boolean }) =>
-    request<MachineAccess>('/admin/access', { method: 'PUT', body: input }),
   adminTokens: (params: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams()
     if (params.cursor) q.set('cursor', params.cursor)
@@ -323,17 +351,15 @@ export const adminApi = {
   adminRevokeGrant: (id: string) => request<void>(`/admin/grants/${enc(id)}`, { method: 'DELETE' }),
 
   // --- the daily text of the whole server ---
-  daily: (signal?: AbortSignal) => request<AdminDaily>('/admin/daily', { signal }),
-  putDaily: (input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow }) =>
-    request<AdminDaily>('/admin/daily', { method: 'PUT', body: input }),
+  daily: (signal?: AbortSignal) => request<AdminDailyBody>('/admin/daily', { signal }),
   // A header with a `value` sets it; one with only a `name` keeps what is saved; a header left out is removed.
   putDailyApi: (api: Omit<DailyApi, 'note'>) =>
-    request<AdminDaily>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
+    request<AdminDailyBody>(`/admin/daily/apis/${enc(api.id)}`, { method: 'PUT', body: api }),
   putDailyProvider: (
     id: string,
     input: { enabled: boolean; refresh?: DailyProvider['refresh']; minutes?: number; rps?: number; skipNew?: boolean },
-  ) => request<AdminDaily>(`/admin/daily/providers/${enc(id)}`, { method: 'PUT', body: input }),
-  deleteDailyApi: (id: string) => request<AdminDaily>(`/admin/daily/apis/${enc(id)}`, { method: 'DELETE' }),
+  ) => request<AdminDailyBody>(`/admin/daily/providers/${enc(id)}`, { method: 'PUT', body: input }),
+  deleteDailyApi: (id: string) => request<AdminDailyBody>(`/admin/daily/apis/${enc(id)}`, { method: 'DELETE' }),
   // A refused trial is a 400 that carries what the trial showed in `result`; it reads as a trial with errors.
   tryDailyApi: async (api: Omit<DailyApi, 'note'>, lang: string, date: string): Promise<DailyTryResult> => {
     try {
@@ -381,13 +407,14 @@ export const adminApi = {
   putAdminGitHubInstallation: (id: number, tenants: string[]) =>
     request<GitHubInstallation>(`/admin/connections/github/installations/${id}`, { method: 'PUT', body: { tenants } }),
   putDailyLines: (input: { lang: string } & ({ text: string; format: LinesFormat } | { lines: DailyLine[] })) =>
-    request<AdminDaily>('/admin/daily/lines', { method: 'PUT', body: input }),
+    request<AdminDailyBody>('/admin/daily/lines', { method: 'PUT', body: input }),
   // How a text would be split into lines, author and source; nothing is kept.
   previewDailyLines: (input: { text: string; format: LinesFormat }) =>
     request<{ lines: DailyLine[] }>('/admin/daily/lines/preview', { method: 'POST', body: input }),
   // The lines kept for a language.
   dailyLines: (lang: string) => request<{ lines: DailyLine[] }>(`/admin/daily/lines?lang=${enc(lang)}`),
-  deleteDailyLines: (lang: string) => request<AdminDaily>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
+  deleteDailyLines: (lang: string) =>
+    request<AdminDailyBody>(`/admin/daily/lines?lang=${enc(lang)}`, { method: 'DELETE' }),
 }
 
 // --- users and invites ----------------------------------------------------------
@@ -531,20 +558,29 @@ export function usePutMail() {
 
 // --- tenants and layered settings (3.3) ---
 
-export function useTenancy(enabled = true) {
-  return useQuery({
-    queryKey: keys.tenancy,
-    queryFn: ({ signal }) => adminApi.tenancy(signal),
+// Whether tenants besides the default one may exist (features.tenancy), and how many there are (`count` of the list).
+export function useTenancy(enabled = true): UseQueryResult<Tenancy> {
+  const on = useQuery({
+    queryKey: keys.siteSettings,
+    queryFn: ({ signal }) => adminApi.siteSettings(signal),
+    enabled,
+    staleTime: 10_000,
+    select: (d) => d.settings.find((x) => x.key === K.tenancy)?.site.value === true,
+  })
+  const count = useQuery({
+    queryKey: keys.tenantCount,
+    queryFn: ({ signal }) => adminApi.tenants({ limit: 1 }, signal).then((l) => l.count),
     enabled,
     staleTime: 15_000,
   })
+  return useJoined(on, count, (enabledNow, tenants) => ({ enabled: enabledNow, tenants }))
 }
 export function useSetTenancy() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (on: boolean) => adminApi.setTenancy(on),
-    onSuccess: (data) => qc.setQueryData(keys.tenancy, data),
-  })
+  const write = useWriteSettings()
+  return {
+    ...write,
+    mutate: (on: boolean, o?: Parameters<typeof write.mutate>[1]) => write.mutate([{ key: K.tenancy, value: on }], o),
+  }
 }
 // Every tenant, the default one first; there are at most 1,000, so the pages are followed to the end.
 // `fresh` asks again on mounting even when the list is cached: a dialog that offers tenants to pick must not miss a new one.
@@ -571,7 +607,10 @@ export function useCreateTenant() {
   return useMutation({
     mutationFn: (input: Parameters<typeof adminApi.createTenant>[0]) => adminApi.createTenant(input),
     onSuccess: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.tenants }),
+        qc.invalidateQueries({ queryKey: keys.tenantCount }),
+      ]),
   })
 }
 export function useUpdateTenant() {
@@ -587,7 +626,10 @@ export function useDeleteTenant() {
   return useMutation({
     mutationFn: (id: string) => adminApi.deleteTenant(id),
     onSuccess: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: keys.tenants }), qc.invalidateQueries({ queryKey: keys.tenancy })]),
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.tenants }),
+        qc.invalidateQueries({ queryKey: keys.tenantCount }),
+      ]),
   })
 }
 export function useSiteSettings(enabled = true) {
@@ -630,8 +672,103 @@ export function usePutSetting() {
         qc.invalidateQueries({ queryKey: keys.tenants }),
         qc.invalidateQueries({ queryKey: ['settings'] }),
         qc.invalidateQueries({ queryKey: keys.adminDaily }),
+        qc.invalidateQueries({ queryKey: keys.tenantCount }),
+        qc.invalidateQueries({ queryKey: keys.adminSecurity }),
+        qc.invalidateQueries({ queryKey: keys.adminStorage }),
       ]),
   })
+}
+
+// --- secrets ----------------------------------------------------------------------------------
+
+// The secrets the scope may hold, each as set or not and when it changed; never a value. The site's, or one tenant's.
+export function useSecrets(tenant?: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.secrets(tenant ?? ''),
+    queryFn: ({ signal }) => adminApi.secrets(tenant, signal).then((r) => r.secrets),
+    enabled,
+    staleTime: 10_000,
+  })
+}
+// Replaces a secret, or clears it (no value). The answer is the list.
+export function useChangeSecret(tenant?: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, value }: { name: string; value: string | null }) =>
+      value === null ? adminApi.deleteSecret(tenant, name) : adminApi.putSecret(tenant, name, value),
+    onSuccess: (r) => {
+      qc.setQueryData(keys.secrets(tenant ?? ''), r.secrets)
+      // The mail password and the captcha's secret also show on their own pages.
+      void qc.invalidateQueries({ queryKey: keys.adminMail })
+      void qc.invalidateQueries({ queryKey: keys.adminSecurity })
+    },
+  })
+}
+
+// What a change of a setting can change on the pages: the settings themselves, what is derived from them, the tenants'
+// totals, and what the spaces show.
+function settingsChanged(qc: QueryClient) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ['admin', 'settings'] }),
+    qc.invalidateQueries({ queryKey: keys.adminSecurity }),
+    qc.invalidateQueries({ queryKey: keys.adminStorage }),
+    qc.invalidateQueries({ queryKey: keys.adminDaily }),
+    qc.invalidateQueries({ queryKey: keys.tenants }),
+    qc.invalidateQueries({ queryKey: keys.tenantCount }),
+    qc.invalidateQueries({ queryKey: keys.adminSpaces }),
+    qc.invalidateQueries({ queryKey: keys.spaces }),
+    qc.invalidateQueries({ queryKey: keys.adminStatus }),
+    qc.invalidateQueries({ queryKey: ['settings'] }),
+    qc.invalidateQueries({ queryKey: keys.adminAudit('', '') }),
+    qc.invalidateQueries({
+      predicate: (q) => q.queryKey[0] === 'space' && String(q.queryKey[2]).startsWith('daily'),
+    }),
+  ])
+}
+
+// Which key a refusal was about, so a page can show it where the person is looking.
+const failedAt = new WeakMap<object, string>()
+export const CREDENTIALS = 'captcha.credentials'
+export const failedKey = (e: unknown): string | undefined =>
+  typeof e === 'object' && e !== null ? failedAt.get(e) : undefined
+
+// One step of a write: a setting, or (on the security page) the captcha's credentials.
+export type SecurityStep = SettingStep | { credentials: CaptchaCredentials }
+const isCredentials = (s: SecurityStep): s is { credentials: CaptchaCredentials } => 'credentials' in s
+
+// The steps, one after the other: the first one the server refuses stops the rest, and its error is the answer. What
+// was written before it stays written. Whatever happens, the pages read again.
+export function useWriteSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (steps: SecurityStep[]): Promise<void> => {
+      for (const step of steps) {
+        try {
+          if (isCredentials(step)) await adminApi.putSecurity(step.credentials)
+          else await adminApi.putSiteSetting(step.key, { value: step.value })
+        } catch (e) {
+          if (typeof e === 'object' && e !== null) failedAt.set(e, isCredentials(step) ? CREDENTIALS : step.key)
+          throw e
+        }
+      }
+    },
+    onSettled: () => settingsChanged(qc),
+  })
+}
+
+// Two queries as one: ready when both are, failing when either fails.
+function useJoined<A, B, R>(a: UseQueryResult<A>, b: UseQueryResult<B>, make: (a: A, b: B) => R): UseQueryResult<R> {
+  const data = useMemo(
+    () => (a.data !== undefined && b.data !== undefined ? make(a.data, b.data) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `make` is a function of the two answers only
+    [a.data, b.data],
+  )
+  const lead = a.isError ? a : b.isError ? b : a.isPending ? a : b.isPending ? b : a
+  return {
+    ...lead,
+    data,
+    refetch: () => Promise.all([a.refetch(), b.refetch()]).then(() => lead),
+  } as unknown as UseQueryResult<R>
 }
 
 export function useAdminStatus(enabled = true, staleTime = 5_000) {
@@ -816,17 +953,20 @@ export function useRemoveGroupPerson() {
 
 // --- the daily text of the whole server ----------------------------------------------
 
-export function useAdminDaily(enabled = true) {
-  return useQuery({
+// The interfaces, providers and lines with the default, the languages and what spaces may do (daily.*).
+export function useAdminDaily(enabled = true): UseQueryResult<AdminDaily> {
+  const body = useQuery({
     queryKey: keys.adminDaily,
     queryFn: ({ signal }) => adminApi.daily(signal),
     enabled,
     staleTime: 15_000,
   })
+  const settings = useSiteSettings(enabled)
+  return useJoined(body, settings, (b, s) => dailyOf(s.settings, b))
 }
 
 // Every write answers with the settings as they are now, which replace the cached ones.
-function useDailyWrite<V>(write: (v: V) => Promise<AdminDaily>) {
+function useDailyWrite<V>(write: (v: V) => Promise<AdminDailyBody>) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: write,
@@ -839,10 +979,17 @@ function useDailyWrite<V>(write: (v: V) => Promise<AdminDaily>) {
     },
   })
 }
-export const useSaveDailySite = () =>
-  useDailyWrite((input: { default?: DailyDefault; languages?: string[]; allow?: DailyAllow }) =>
-    adminApi.putDaily(input),
-  )
+// The default, the languages and what spaces may do are settings: each is one write.
+export function useSaveDailySite() {
+  const write = useWriteSettings()
+  return {
+    ...write,
+    mutate: (
+      input: { default?: DailyDefault; languages?: string[]; allow?: Partial<DailyAllow> },
+      o?: Parameters<typeof write.mutate>[1],
+    ) => write.mutate(dailyWrites(input), o),
+  }
+}
 export const useSaveDailyApi = () => useDailyWrite((api: Omit<DailyApi, 'note'>) => adminApi.putDailyApi(api))
 export const useSaveDailyProvider = () =>
   useDailyWrite(
@@ -871,13 +1018,16 @@ export function useTryDailyApi() {
 
 // --- security ----------------------------------------------------------------------------
 
-export function useSecuritySettings(enabled = true) {
-  return useQuery({
+// The sign-in policy (its settings) with what the server derives from it.
+export function useSecuritySettings(enabled = true): UseQueryResult<SecuritySettings> {
+  const body = useQuery({
     queryKey: keys.adminSecurity,
     queryFn: ({ signal }) => adminApi.security(signal),
     enabled,
     staleTime: 15_000,
   })
+  const settings = useSiteSettings(enabled)
+  return useJoined(body, settings, (b, s) => securityOf(s.settings, b))
 }
 
 export function useAuthProviders() {
@@ -906,20 +1056,14 @@ export function useAuditLog(kind: string, user: string) {
 
 // --- machine access ------------------------------------------------------------------
 
+// Whether API tokens and MCP are on for the site (features.tokens, features.mcp); a tenant may switch them off for itself.
 export function useMachineAccess(enabled = true) {
   return useQuery({
-    queryKey: keys.adminAccess,
-    queryFn: ({ signal }) => adminApi.access(signal),
+    queryKey: keys.siteSettings,
+    queryFn: ({ signal }) => adminApi.siteSettings(signal),
     enabled,
-    staleTime: 15_000,
-  })
-}
-
-export function useSetMachineAccess() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: { tokens?: boolean; mcp?: boolean }) => adminApi.putAccess(input),
-    onSuccess: (a) => qc.setQueryData(keys.adminAccess, a),
+    staleTime: 10_000,
+    select: (d) => machineOf(d.settings),
   })
 }
 
@@ -1087,6 +1231,7 @@ export function useShareGitHubInstallation() {
 
 // --- server storage (docs/api.md, "Server storage") ---
 
+// What is measured and derived (the summary, what the requirement asks of spaces); a tenant administrator reads it too.
 export function useAdminStorage(enabled = true) {
   return useQuery({
     queryKey: keys.adminStorage,
@@ -1095,20 +1240,20 @@ export function useAdminStorage(enabled = true) {
     staleTime: 10_000,
   })
 }
+// The policy of the site (storage.*, cache.*) with what is derived: site administrators only.
+export function useStoragePolicy(enabled = true): UseQueryResult<AdminStorage> {
+  const body = useAdminStorage(enabled)
+  const settings = useSiteSettings(enabled)
+  return useJoined(body, settings, (b, s) => storageOf(s.settings, b))
+}
 // A change of the policy changes what the spaces show (notices, read only) and the counts of the status.
 export function useSaveAdminStorage() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: PutAdminStorage) => adminApi.putAdminStorage(input),
-    onSuccess: (data) => {
-      qc.setQueryData(keys.adminStorage, data)
-      return Promise.all([
-        qc.invalidateQueries({ queryKey: keys.adminSpaces }),
-        qc.invalidateQueries({ queryKey: keys.spaces }),
-        qc.invalidateQueries({ queryKey: keys.adminStatus }),
-      ])
-    },
-  })
+  const write = useWriteSettings()
+  return {
+    ...write,
+    mutate: (input: PutAdminStorage, o?: Parameters<typeof write.mutate>[1]) => write.mutate(storageWrites(input), o),
+    mutateAsync: (input: PutAdminStorage) => write.mutateAsync(storageWrites(input)),
+  }
 }
 export function usePutSpaceStorage() {
   const changed = useAdminSpaceChanged()

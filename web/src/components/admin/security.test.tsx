@@ -21,7 +21,7 @@ import {
   type Mounted,
 } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
-import { buildPatch, draftOf } from './securityDraft'
+import { buildSteps, draftOf } from './securityDraft'
 import { detailText } from './AuditSection'
 import type { MockOptions } from '@/api/mock/server'
 import type { SecuritySettings } from '@/api/types'
@@ -68,7 +68,15 @@ async function openAt(path: string, server: MockOptions = {}) {
   m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', ...server } })
   await settle(() => q('[data-slot="admin-layout"]') !== null, 'the administration')
 }
-const lastPut = () => JSON.parse(calls('PUT', '/api/admin/security').at(-1)!.body!)
+const SETTING = '/api/admin/settings/'
+// The writes the page made, in order: [key, value] of a setting, or ['credentials', body] of PUT /api/admin/security.
+const writes = () =>
+  m!.requests
+    .filter((r) => r.method === 'PUT' && (r.url.startsWith(SETTING) || r.url === '/api/admin/security'))
+    .map((r) => [
+      r.url.startsWith(SETTING) ? r.url.slice(SETTING.length) : 'credentials',
+      r.url.startsWith(SETTING) ? JSON.parse(r.body!).value : JSON.parse(r.body!).captcha,
+    ])
 
 describe('the draft of the form', () => {
   const server: SecuritySettings = {
@@ -91,34 +99,90 @@ describe('the draft of the form', () => {
     passwordAdmins: 1,
     notices: [],
   }
-  it('makes no patch when nothing changed, and only the changed fields otherwise', () => {
-    expect(buildPatch(server, draftOf(server))).toEqual({})
+  it('makes no writes when nothing changed, and one per setting that changed otherwise', () => {
+    expect(buildSteps(server, draftOf(server))).toEqual([])
     const d = draftOf(server)
     d.mode = 'sso_first'
     d.contexts.login.on = true
     d.lockMinutes = '30'
     d.limits.perMinute = '20'
-    expect(buildPatch(server, d)).toEqual({
-      login: { mode: 'sso_first' },
-      captcha: { contexts: { login: { on: true } } },
-      lockout: { minutes: 30 },
-      limits: { perMinute: 20 },
-    })
+    expect(buildSteps(server, d)).toEqual([
+      { key: 'signin.mode', value: 'sso_first' },
+      { key: 'captcha.contexts', value: { login: { on: true } } },
+      { key: 'signin.lockout.minutes', value: 30 },
+      { key: 'signin.perMinute', value: 20 },
+    ])
   })
-  it('sends the secret only when it was touched: a new one, or "" to clear', () => {
-    const d = draftOf(server)
-    expect(buildPatch(server, d).captcha).toBeUndefined()
+  it('sends the captcha keys only when they were touched: a new secret, or "" to clear', () => {
+    const third: SecuritySettings = { ...server, captcha: { ...server.captcha, provider: 'turnstile', siteKey: 'k' } }
+    const d = draftOf(third)
+    expect(buildSteps(third, d)).toEqual([])
     d.secret = ''
-    expect(buildPatch(server, d)).toEqual({ captcha: { secret: '' } })
+    expect(buildSteps(third, d)).toEqual([{ credentials: { secret: '' } }])
     d.secret = 'new'
-    expect(buildPatch(server, d)).toEqual({ captcha: { secret: 'new' } })
+    d.siteKey = 'k2'
+    expect(buildSteps(third, d)).toEqual([{ credentials: { siteKey: 'k2', secret: 'new' } }])
   })
-  it('turns the roles choice into the lists the server takes', () => {
+  it('turns the roles choice into the lists the server takes, switching passkeys on before requiring and off after lifting', () => {
     const d = draftOf(server)
     d.pkRoles = 'admins'
-    expect(buildPatch(server, d)).toEqual({ passkeys: { requireRoles: ['admin'] } })
+    expect(buildSteps(server, d)).toEqual([{ key: 'signin.passkeyRoles', value: ['admin'] }])
     d.pkRoles = 'everyone'
-    expect(buildPatch(server, d)).toEqual({ passkeys: { requireRoles: ['admin', 'member'] } })
+    expect(buildSteps(server, d)).toEqual([{ key: 'signin.passkeyRoles', value: ['admin', 'member'] }])
+    const off = draftOf(server)
+    off.pkEnabled = false
+    off.pkRoles = 'none'
+    const required: SecuritySettings = { ...server, passkeys: { ...server.passkeys, requireRoles: ['admin'] } }
+    expect(buildSteps(required, off)).toEqual([
+      { key: 'signin.passkeyRoles', value: [] },
+      { key: 'features.passkeys', value: false },
+    ])
+    const on: SecuritySettings = { ...server, passkeys: { ...server.passkeys, enabled: false } }
+    const back = draftOf(on)
+    back.pkEnabled = true
+    back.pkRoles = 'admins'
+    expect(buildSteps(on, back)).toEqual([
+      { key: 'features.passkeys', value: true },
+      { key: 'signin.passkeyRoles', value: ['admin'] },
+    ])
+  })
+  it('turns the contexts off before another provider takes over, then its keys, then the contexts that come on', () => {
+    const on: SecuritySettings = {
+      ...server,
+      captcha: {
+        ...server.captcha,
+        provider: 'turnstile',
+        siteKey: 'k',
+        hasSecret: true,
+        contexts: { ...server.captcha.contexts, login: { on: true, when: 'always', failures: 3 } },
+      },
+    }
+    const d = draftOf(on)
+    d.provider = 'hcaptcha'
+    d.siteKey = 'h'
+    d.secret = 'hs'
+    expect(buildSteps(on, d)).toEqual([
+      { key: 'captcha.contexts', value: { login: { on: false } } },
+      { key: 'captcha.provider', value: 'hcaptcha' },
+      { credentials: { siteKey: 'h', secret: 'hs' } },
+      { key: 'captcha.contexts', value: { login: { on: true } } },
+    ])
+  })
+  it('raises the longer session lifetime first and lowers it last', () => {
+    const d = draftOf(server)
+    d.limits.sessionMaxDays = '120'
+    d.limits.sessionIdleDays = '100'
+    expect(buildSteps(server, d).map((x) => ('key' in x ? x.key : ''))).toEqual([
+      'sessions.maxDays',
+      'sessions.idleDays',
+    ])
+    const e = draftOf(server)
+    e.limits.sessionMaxDays = '40'
+    e.limits.sessionIdleDays = '20'
+    expect(buildSteps(server, e).map((x) => ('key' in x ? x.key : ''))).toEqual([
+      'sessions.idleDays',
+      'sessions.maxDays',
+    ])
   })
 })
 
@@ -166,13 +230,16 @@ describe('the security page', () => {
     await type(q<HTMLInputElement>('#security-limit-maxFailures')!, '12')
     expect(save().disabled).toBe(false)
     await click(save())
-    await settle(() => calls('PUT', '/api/admin/security').length === 1, 'the save')
-    expect(lastPut()).toEqual({ login: { mode: 'sso_redirect' }, limits: { maxFailures: 12 } })
+    await settle(() => writes().length === 2, 'the save')
+    expect(writes()).toEqual([
+      ['signin.mode', 'sso_redirect'],
+      ['signin.maxFailures', 12],
+    ])
     await settle(() => (buttonWith(tsec.save) as HTMLButtonElement).disabled, 'saved')
     expect(q<HTMLSelectElement>('#security-mode')!.value).toBe('sso_redirect')
     // The change is in the audit log, a page of its own.
-    expect(adminRequests(m!.server)('GET', '/api/admin/audit?kind=security_changed').body).toMatchObject({
-      items: [{ kind: 'security_changed' }],
+    expect(adminRequests(m!.server)('GET', '/api/admin/audit?kind=setting_changed').body).toMatchObject({
+      items: [{ kind: 'setting_changed', detail: { key: 'signin.maxFailures' } }, { kind: 'setting_changed' }],
     })
   })
 
@@ -196,7 +263,8 @@ describe('the security page', () => {
     await click(buttonWith(tsec.save))
     await settle(() => text().includes(tsec.errors.local_admin_required), 'the refusal')
     expect(section('security-login').textContent).toContain(tsec.errors.local_admin_required)
-    expect(calls('PUT', '/api/admin/security')).toHaveLength(1)
+    expect(writes()).toEqual([['signin.ssoOnly', true]])
+    expect(m!.requests.filter((r) => r.method === 'GET' && r.url === '/api/admin/settings').length).toBeGreaterThan(0)
   })
 
   it('passkeys cannot be switched off while someone is required to have one', async () => {
@@ -209,27 +277,35 @@ describe('the security page', () => {
     await settle(() => text().includes(tsec.errors.passkey_requirement_unsatisfiable), 'the refusal')
   })
 
-  it('a third-party captcha needs a site key and a secret; the secret is write-only and shows as saved', async () => {
+  it('a third-party captcha needs a site key and a secret; each refusal keeps what was typed, and the secret is write-only', async () => {
     await open()
     await type(q<HTMLSelectElement>('#security-captcha-provider')!, 'turnstile')
     await click(q('[data-context="login"] [role="switch"]'))
     await click(buttonWith(tsec.save))
     await settle(() => text().includes(tsec.errors.captcha_site_key_required), 'site key refusal')
+    // The provider was written before the refusal; the form is made again with what was typed.
+    expect(writes()).toEqual([
+      ['captcha.provider', 'turnstile'],
+      ['captcha.contexts', { login: { on: true } }],
+    ])
+    expect(section('security-captcha').textContent).toContain(tsec.errors.captcha_site_key_required)
+    expect(q<HTMLSelectElement>('#security-captcha-provider')!.value).toBe('turnstile')
+    expect(q('[data-context="login"] [role="switch"]')!.getAttribute('aria-checked')).toBe('true')
     await type(q<HTMLInputElement>('#security-sitekey')!, 'site-1')
     await click(buttonWith(tsec.save))
     await settle(() => text().includes(tsec.errors.captcha_secret_required), 'secret refusal')
     await type(q<HTMLInputElement>('#security-secret')!, 'secret-1')
     await click(buttonWith(tsec.save))
-    await settle(() => calls('PUT', '/api/admin/security').length === 3, 'third save')
     await settle(() => q('[data-slot="secret-saved"]') !== null, 'the secret is saved')
-    expect(lastPut().captcha.secret).toBe('secret-1')
+    expect(writes().at(-2)).toEqual(['credentials', { secret: 'secret-1' }])
     // Never shown again.
     expect(document.body.innerHTML).not.toContain('secret-1')
-    // Clearing it is saved as "".
+    // Clearing it with the contexts on is refused; it is sent as "".
+    const before = writes().length
     await click(buttonWith(tsec.captcha.clear))
     await click(buttonWith(tsec.save))
-    await settle(() => calls('PUT', '/api/admin/security').length === 4, 'fourth save')
-    expect(lastPut().captcha).toEqual({ secret: '' })
+    await settle(() => writes().length === before + 1, 'the clearing')
+    expect(writes().at(-1)).toEqual(['credentials', { secret: '' }])
   })
 
   it('changing the captcha provider away from the stored one clears its site key, and coming back restores it', async () => {
@@ -272,8 +348,8 @@ describe('the security page', () => {
     await settle(() => q('[data-slot="scope-warning"]') !== null, 'the warning')
     expect(q('[data-slot="scope-warning"]')!.textContent).toBe(tsec.lockout.accountWarning)
     await click(buttonWith(tsec.save))
-    await settle(() => calls('PUT', '/api/admin/security').length === 1, 'saved')
-    expect(lastPut()).toEqual({ lockout: { scope: 'account' } })
+    await settle(() => writes().length === 1, 'saved')
+    expect(writes()).toEqual([['signin.lockout.scope', 'account']])
   })
 
   it("a number out of range is refused with the server's message, not clamped", async () => {
@@ -281,7 +357,7 @@ describe('the security page', () => {
     await type(q<HTMLInputElement>('#security-limit-sessionIdleDays')!, '9999')
     await click(buttonWith(tsec.save))
     await settle(() => section('security-limits').querySelector('[role="alert"]') !== null, 'the refusal')
-    expect(section('security-limits').querySelector('[role="alert"]')!.textContent).toContain('limits.sessionIdleDays')
+    expect(section('security-limits').querySelector('[role="alert"]')!.textContent).toContain('sessions.idleDays')
     expect(q<HTMLInputElement>('#security-limit-sessionIdleDays')!.value).toBe('9999')
   })
 
@@ -500,7 +576,7 @@ describe('the sign-in providers', () => {
     await settle(() => q('#audit-kind') !== null, 'the audit log')
     // 60 rows of one kind, so there is a second page.
     const admin = adminRequests(m!.server)
-    for (let i = 0; i < 60; i++) admin('PUT', '/api/admin/security', { limits: { perMinute: 10 + (i % 2) + 1 } })
+    for (let i = 0; i < 60; i++) admin('PUT', '/api/admin/settings/signin.perMinute', { value: 10 + (i % 2) + 1 })
     await click(buttonWith(tsec.audit.refresh))
     await settle(() => document.querySelectorAll('[data-slot="audit-rows"] > li').length === 50, 'the first page')
     await click(buttonWith(tsec.audit.loadMore))
