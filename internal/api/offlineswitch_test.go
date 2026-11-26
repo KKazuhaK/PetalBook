@@ -16,14 +16,14 @@ func syncRoutes(f *tenFx, space string) map[string]string {
 // else: the cursor here is another space's).
 func allowed(t *testing.T, c *client, path string) {
 	t.Helper()
-	if r := c.do("GET", path, nil); r.code == 403 && r.body["error"] == "offline_off" {
+	if r := c.do("GET", path, nil); r.code == 403 && r.body["error"] == "feature_off" {
 		t.Fatalf("%s refused although offline copies are allowed: %s", path, r.raw)
 	}
 }
 
 func refused(t *testing.T, c *client, path string) {
 	t.Helper()
-	c.do("GET", path, nil).want(t, 403, "offline_off")
+	c.do("GET", path, nil).want(t, 403, "feature_off")
 }
 
 func TestOfflineCopiesSwitchRefusesTheSyncEndpoints(t *testing.T) {
@@ -38,8 +38,8 @@ func TestOfflineCopiesSwitchRefusesTheSyncEndpoints(t *testing.T) {
 		f.memB.do("GET", inB["sync/catalog"], nil).want(t, 200, "")
 		f.memB.do("GET", inB["heads"], nil).want(t, 200, "")
 		f.memB.do("GET", "/api/spaces/"+f.spaceB+"/sync/pages?ids=0000000AAA", nil).want(t, 200, "")
-		if s := settingOf(t, f.memB.do("GET", "/api/settings", nil).want(t, 200, ""), key); s["effective"] != true || s["space"] != nil || s["person"] != nil {
-			t.Fatalf("a person only reads it: %v", s)
+		if r := f.memB.do("GET", "/api/settings", nil).want(t, 200, ""); r.body["features"].(map[string]any)[key] != true {
+			t.Fatalf("a person only reads it, in features: %s", r.raw)
 		}
 		sd := settingOf(t, f.root.do("GET", "/api/admin/settings", nil).want(t, 200, ""), key)
 		if sd["kind"] != "boolean" || sd["site"].(map[string]any)["value"] != true || len(sd["layers"].([]any)) != 2 {
@@ -58,10 +58,10 @@ func TestOfflineCopiesSwitchRefusesTheSyncEndpoints(t *testing.T) {
 		f.memA.do("GET", inA["sync/catalog"], nil).want(t, 200, "")
 		// Everything else of B still works, and B's own setting says so.
 		f.memB.do("GET", "/api/spaces/"+f.spaceB+"/pages", nil).want(t, 200, "")
-		if s := settingOf(t, f.memB.do("GET", "/api/settings", nil).want(t, 200, ""), key); s["effective"] != false {
-			t.Fatal(s)
+		if r := f.memB.do("GET", "/api/settings", nil).want(t, 200, ""); r.body["features"].(map[string]any)[key] != false {
+			t.Fatal(r.raw)
 		}
-		if s := settingOf(t, f.memA.do("GET", "/api/settings", nil).want(t, 200, ""), key); s["effective"] != true {
+		if r := f.memA.do("GET", "/api/settings", nil).want(t, 200, ""); r.body["features"].(map[string]any)[key] != true {
 			t.Fatal("a tenant's switch is not its own")
 		}
 		// A token of the tenant is refused too; another tenant's space still does not exist for A.

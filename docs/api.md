@@ -29,8 +29,9 @@ The web app talks to the server only through this API.
   actions the signed-in user may not take that are not a matter of a role in a
   space), `no_permission` (403: a member whose role in the space lacks the
   permission the request needs; the message names it), `space_disabled` (403: an
-  administrator has disabled the space, see "Administration"), `offline_off`
-  (403: offline copies are turned off, see "Offline sync"), `rate_limited` (429, with a
+  administrator has disabled the space, see "Administration"), `feature_off`
+  (403: the caller's tenant does not have a feature the route belongs to, see
+  "Features"), `rate_limited` (429, with a
   `Retry-After` header in seconds), `unavailable` (503: the space follows a
   remote repository that cannot be reached or is paused, see "Remote
   repository"; nothing was changed), `internal` (500). Signing in has codes
@@ -6036,12 +6037,12 @@ site's value is the tenant's, so a locked `false` is off for every tenant) or
 restrict it to off (`lower` `restrict`, `options` `[false]`: a tenant may only
 turn it off). When it is
 off for the caller's tenant, **all four endpoints** (`sync/catalog`, `changes`,
-`sync/pages`, `heads`) answer `403 offline_off`. This is decided after the
-sign-in and the token's own checks but before the space is opened: an evicted
+`sync/pages`, `heads`) answer `403 feature_off` with `feature` `features.offline`. This is decided
+after the sign-in and the token's own checks but before the space is opened: an evicted
 space is never restored for a request that is refused, and the answer is the
 same for every space id (one of another tenant, or one that does not exist,
 answers it too), so it tells nothing about the space. Nothing else changes: the rest of the API works as before. A client
-reads the effective value from `GET /api/settings`; when it is off it stops
+reads the effective value from `features` of `GET /api/settings`; when it is off it stops
 syncing and polling, and deletes the offline copies of the signed-in account
 on the next start or poll. The app does not encrypt the copies; the client
 clears them on sign-out.
@@ -6503,7 +6504,7 @@ than the default one exist is the server's) is written with
 `PUT /api/admin/settings/features.tenancy` (site administrators; see "Settings
 by layer"). It is read from the settings' cache: a request that makes or lists
 tenants costs no query for it. Switching it off does not touch tenants that
-exist: they keep working, and no new one can be made (`409 tenants_off`).
+exist: they keep working, and no new one can be made (`403 feature_off`, `feature` `features.tenancy`).
 `GET /api/admin/tenancy` and `PUT /api/admin/tenancy` are gone (`404`); the
 number of tenants is `count` on the list below.
 
@@ -6525,7 +6526,7 @@ answers `404 not_found`). `{tenant}` is the id.
 
 ### `POST /api/admin/tenants`
 
-Site administrators; `409 tenants_off` while `tenancy.enabled` is `false`.
+Site administrators; `403 feature_off` while `features.tenancy` is `false`.
 
 ```json
 {"slug": "acme", "name": "Acme", "admin": {"username": "wu", "name": "Wu", "email": "wu@acme.example"}}
@@ -6580,6 +6581,43 @@ tenants.
 - A group belongs to a tenant; group names are unique within a tenant (no
   longer on the whole server). `GET /api/groups?q=` finds only the caller's
   tenant's groups.
+
+### Features
+
+A **feature** is a whole thing a tenant may or may not have: a boolean setting
+named `features.*` (and `mail.ownSender`), on unless a rule, a plan or the
+tenant says otherwise (see "Settings by layer"). Every route of the API says in
+the server's route table which feature it belongs to, or that it belongs to
+none, and one check answers for all of them: **while the caller's tenant does
+not have the feature, the route is `403 feature_off` before its handler runs**
+(and before a space is opened, so nothing is restored for a refused request).
+
+```json
+{"error": "feature_off", "message": "The API tokens feature is turned off for this organization.", "feature": "features.tokens"}
+```
+
+- The check is one read of the settings' cache for the caller's tenant (taken
+  from the session or the token): no query. In single-user mode every feature
+  is on.
+- It binds everybody, a site administrator included, who is told about the
+  tenant they are in. The one exception is a route that asks a permission key
+  with a feature of its own (`tenant.data.view`: `features.adminView`): a holder
+  of the key across the site is not bound by it, see "Permission keys".
+- A route a person must still be able to reach while its feature is off does
+  not belong to it: listing and revoking one's tokens and grants, the
+  administration of the settings themselves.
+- Routes that belong to a feature: `POST /api/account/tokens`
+  (`features.tokens`); `GET`/`POST /api/oauth/consent` (`features.mcp`);
+  `GET /api/sync/heads`, `…/sync/catalog`, `…/changes`, `…/sync/pages`
+  (`features.offline`); `POST /api/admin/tenants` (`features.tenancy`);
+  `POST`/`DELETE /api/admin/spaces/{space}/view` (`features.adminView`, through
+  its key). Checks that depend on more than the switch stay where they are: a
+  token or an OAuth access token is refused with `tokens_off` or `404` at `/mcp`
+  when its owner's tenant has the feature off, registration is also held to mail
+  being ready and answers before anybody is known, and a secret of a tenant is
+  refused by the feature of the secret named in the path.
+- `GET /api/settings` says which features the caller's tenant has, with an
+  `ETag` (see below).
 
 ### Settings by layer
 
@@ -6729,15 +6767,29 @@ setting_locked`. A server-wide setting is `404 not_found` here.
 
 #### `GET /api/settings?space={space}`
 
-Any signed-in user; `space` optional (needs `read`). The effective value of
-every setting that has a space or person layer, and whether that layer can
-change it, so a client greys out "set by the administrators". `features.offline`
-is also in the list, with only its `effective` value (a person cannot change
-it; a client reads it to know whether it may keep offline copies):
+Any signed-in user; `space` optional (needs `read`). What the caller may know of
+the settings in their context, made from their tenant's cached settings (no
+query):
+
+- `features`: every feature (`features.*`, `mail.ownSender`, see "Features") as
+  the caller's tenant has it, `true` or `false`. A client shows or hides what
+  needs a feature from it (the web app's `useFeature`). In single-user mode every
+  feature is `true`.
+- `settings`: the effective value of every setting that has a space or person
+  layer, and whether that layer can change it, so a client greys out "set by the
+  administrators".
 
 ```json
-{"settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}
+{"features": {"features.tokens": true, "features.offline": false},
+ "settings": [{"key": "daily.own", "effective": false, "space": {"canChange": false, "inEffect": false, "source": "tenant"}}]}
 ```
+
+The answer carries the version of the tenant's settings as its `ETag`
+(`Cache-Control: private, no-cache`): a request with that `If-None-Match` is
+`304` with no body, and costs one read of the settings' cache. The version
+changes when the tenant's settings are computed again (a write by the tenant or
+the site, a rule's window starting or ending, a change by another process), and
+is never one another tenant or another run of the server answers.
 
 `source` is the layer (`site` or `tenant`) whose lock, or whose value that
 switches it off, keeps the layer from changing it; absent when nothing does.
@@ -7197,7 +7249,6 @@ not fill the log).
 
 | Code | Status | When |
 |---|---|---|
-| `tenants_off` | 409 | making a tenant while `tenancy.enabled` is `false` |
 | `tenant_limit` | 409 | 1,000 tenants |
 | `tenant_not_empty` | 409 | deleting a tenant that has users, spaces, groups or invites (with the counts) |
 | `default_tenant` | 409 | disabling or deleting the default tenant |
@@ -8584,6 +8635,9 @@ the **site layer's rule for that tenant** in the layered settings (owner,
   `features.offline`. A feature is on unless a rule says otherwise. "This
   organisation does not have feature X" is X's value `false`, locked, for that
   tenant.
+- **A route declares its feature** (see "Features"): while the caller's tenant
+  does not have it, the route is `403 feature_off`, naming the feature, before
+  its handler runs.
 - **Quotas and limits** are settings too: `quota.people`, `quota.spaces`,
   `quota.bytes`, `quota.pages` (the tenant's totals; `null` is no limit; no
   tenant layer, so only a rule sets them and a tenant administrator's write is
@@ -9998,7 +10052,7 @@ their tenant's rows, while the tenant has `data.auditDownload`
 | `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `tenant`, `join`, `start` |
 | `email_taken` | 409 | setting an address another account holds, verified or not (also a deleted account until its purge) |
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
-| `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it) |
+| `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it); the message is a capitalised sentence naming it ("The API tokens feature is turned off for this organization.") |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
 | `confirm_required` | 409 | a change of feature or plan that stops something in use, without a confirmation; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |

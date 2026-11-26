@@ -17,7 +17,7 @@ import {
   type OfflineConfig,
   type OfflineMode,
 } from '@/lib/offline'
-import { useOfflineAllowed } from '@/lib/offline/allowed'
+import { useFeature } from '@/lib/features'
 import { useOffline } from '@/lib/offline/status'
 import { useCopy } from '@/lib/offline/useCopy'
 import { SettingsNote, SettingsSection } from './SettingsParts'
@@ -37,7 +37,7 @@ export default function OfflinePanel({ space }: { space: string }) {
   const offline = useOffline()
   const { spaces } = useActiveSpace()
   const [busy, setBusy] = useState(false)
-  const allowed = useOfflineAllowed(user)
+  const allowed = useFeature('features.offline')
   // The administrators turned it off: no controls, only the reason (the app deletes this account's copies).
   if (allowed === false)
     return (

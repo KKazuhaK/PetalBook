@@ -57,3 +57,7 @@ func AccessDecision(h *Handler, method, pattern string, w http.ResponseWriter, r
 // handler's clock, as the settings' timer does when it fires (a test's clock is
 // moved by hand, so the real timer does not).
 func (h *Handler) CheckBoundaries() { h.s.settings.CheckBoundaries(context.Background()) }
+
+// SetFeatureFault makes the gate of a route's feature fail its read with the
+// error f returns for the tenant and feature (nil: it reads).
+func (h *Handler) SetFeatureFault(f func(tenant, feature string) error) { h.s.featureFault = f }

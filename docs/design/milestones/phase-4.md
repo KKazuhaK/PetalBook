@@ -298,7 +298,7 @@ owner questions were handled by the defaults in parentheses. For the endpoints s
   no space or personal layer, default allow). A tenant can turn it off for itself.
   The site value is the default for tenants that have not taken a position, and the
   site can lock it (a locked `false` is off for all tenants) or limit it to
-  turn-off-only. When it is off, the four sync endpoints answer `403 offline_off`
+  turn-off-only. When it is off, the four sync endpoints answer `403 feature_off` (`features.offline`)
   (after the checks of sign-in and the token itself, before the space is opened: a
   refused request does not restore an evicted space; the answer is unrelated to the
   space, and the spaces of other tenants and nonexistent spaces also get it, so

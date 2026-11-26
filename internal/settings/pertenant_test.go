@@ -375,6 +375,47 @@ func TestTheCacheIsPerTenant(t *testing.T) {
 	})
 }
 
+// The version of a tenant's settings (the ETag of GET /api/settings) holds
+// while nothing changed, changes with the tenant's own write and with the site's,
+// and is not another tenant's; a read of a feature (On) and of the version cost
+// no query once warm.
+func TestTheVersionOfATenantsSettingsFollowsItsChanges(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setupTwo(t, st)
+		ver := func(id string) string {
+			t.Helper()
+			v, err := s.Version(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return v
+		}
+		a, b := ver(ten), ver(ten2)
+		if a == b || a != ver(ten) || b != ver(ten2) {
+			t.Fatalf("a tenant's version is its own and stays: %q %q", a, b)
+		}
+		if err := s.SetTenant(ctx, ten, settings.OfflineCopies, settings.Change{HasValue: true, Value: false}); err != nil {
+			t.Fatal(err)
+		}
+		a2 := ver(ten)
+		if a2 == a || ver(ten2) != b {
+			t.Fatalf("a write moves its tenant's version only: %q -> %q, other %q", a, a2, ver(ten2))
+		}
+		if _, err := s.SetSite(ctx, settings.OfflineCopies, settings.Change{HasValue: true, Value: false}); err != nil {
+			t.Fatal(err)
+		}
+		if ver(ten) == a2 || ver(ten2) == b {
+			t.Fatal("a site write moves every tenant's version")
+		}
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if s.On(ctx, ten, settings.OfflineCopies) || ver(ten) == "" { // no query: a closed database would fail it
+			t.Fatal("off for the tenant that said so")
+		}
+	})
+}
+
 // A site value above the maximum it is held to is refused, not capped: the
 // site's value against the site's own restriction, and the value of the site's
 // rule for one tenant against that rule's. Lowering a maximum alone still

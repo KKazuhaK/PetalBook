@@ -93,6 +93,13 @@ type Def struct {
 // Has reports whether the setting exists in layer l.
 func (d *Def) Has(l Layer) bool { return slices.Contains(d.Layers, l) }
 
+// IsFeature reports whether the setting is a feature: a whole thing a tenant may
+// or may not have, a boolean named features.* (and mail.ownSender). A route that
+// belongs to one is refused while it is off (the route table's access.on).
+func (d *Def) IsFeature() bool {
+	return d.Kind == Bool && (strings.HasPrefix(d.Key, "features.") || d.Key == MailOwnSender)
+}
+
 // PerTenant reports whether the setting can differ between tenants: it has a
 // tenant layer, or a site administrator may force it for one tenant.
 func (d *Def) PerTenant() bool { return d.Has(Tenant) || d.ForTenant }

@@ -24,7 +24,7 @@ import { SettingsSection } from './SettingsParts'
 // The apps connected to the account through the approval page, and a way to
 // disconnect one. The server answers 404 when it has no authorization server
 // (no public address, or MCP switched off): then the section is not there.
-export default function GrantsSection() {
+export default function GrantsSection({ off = false }: { off?: boolean }) {
   const qc = useQueryClient()
   const list = useQuery({
     queryKey: keys.grants,
@@ -52,8 +52,10 @@ export default function GrantsSection() {
   if (list.isPending) return <PageFallback />
   // No authorization server here: nothing to show, and nothing to explain.
   if (list.isError && list.error instanceof ApiError && list.error.status === 404) return null
+  // With MCP off nothing new is connected: with none to disconnect either, there is nothing to say.
+  if (off && !list.isError && list.data.grants.length === 0) return null
   return (
-    <SettingsSection title={oa.yours.title} description={oa.yours.help}>
+    <SettingsSection title={oa.yours.title} description={off ? oa.yours.off : oa.yours.help}>
       {list.isError ? (
         <p className="text-sm text-destructive" role="alert">
           {`${oa.yours.loadFailed}: ${list.error.message}`}

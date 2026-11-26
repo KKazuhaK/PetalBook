@@ -39,6 +39,7 @@ export const oauthEn: OAuthMessages = {
   yours: {
     title: 'Connected apps',
     help: 'Apps connected to your account through the approval page (MCP clients, for example). Like API tokens, they never do more than you can.',
+    off: 'Connecting new apps is turned off for your organisation. The ones connected can still be disconnected.',
     loadFailed: 'Could not load the connected apps',
     none: 'No app is connected to your account.',
     createdOn: (when: string) => `Connected ${when}`,

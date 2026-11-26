@@ -40,12 +40,12 @@ func TestTheOfflineSwitchRefusesBeforeAnEvictedSpaceIsRestored(t *testing.T) {
 			return admin.do("GET", "/api/admin/spaces/"+sid, nil).body["storage"].(map[string]any)["cache"]
 		}
 		for _, p := range []string{base + "/sync/pages?ids=SNAP000001", base + "/sync/catalog", base + "/changes?since=" + cursor, "/api/sync/heads?space=" + sid} {
-			admin.do("GET", p, nil).want(t, 403, "offline_off")
+			admin.do("GET", p, nil).want(t, 403, "feature_off")
 			if c := cacheOf(); c != "evicted" {
 				t.Fatalf("%s restored the space although offline copies are off (%v)", p, c)
 			}
 		}
 		// A space that does not exist answers the same: nothing is told about it.
-		admin.do("GET", "/api/spaces/NOSUCHSPACE/sync/pages?ids=SNAP000001", nil).want(t, 403, "offline_off")
+		admin.do("GET", "/api/spaces/NOSUCHSPACE/sync/pages?ids=SNAP000001", nil).want(t, 403, "feature_off")
 	})
 }

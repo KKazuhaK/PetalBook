@@ -2,19 +2,26 @@ import { Link } from 'react-router'
 import { Eye, ShieldAlert } from 'lucide-react'
 import { manageApi } from '@/api/manage'
 import { useQueryClient } from '@tanstack/react-query'
-import { keys } from '@/api/hooks'
+import { keys, useSession } from '@/api/hooks'
 import type { SpaceInfo } from '@/api/types'
 import { tapTarget } from '@/components/admin/manage/shared'
 import { ViewForm } from '@/components/admin/manage/ViewForm'
 import { TopBar } from '@/components/layout/TopBar'
 import { Button } from '@/components/ui/button'
 import { openView } from '@/lib/adminView'
+import { acrossSite } from '@/lib/access'
+import { useFeature } from '@/lib/features'
 import { clockTime } from '@/lib/time'
 import { adminPath } from '@/lib/urls'
 import { tg } from '@/i18n/manage'
 
 // Shown in place of a space an administrator manages without being a member of it: reading takes an audited view.
 export function AdminViewGate({ space }: { space: SpaceInfo }) {
+  // The view is the feature features.adminView (a site administrator is not bound by it): without it there is nothing to
+  // open, and the page says so instead of showing a form the server would refuse.
+  const user = useSession().data?.user
+  const viewing = useFeature('features.adminView')
+  const allowed = viewing !== false || acrossSite(user)
   return (
     <>
       <TopBar>
@@ -24,9 +31,9 @@ export function AdminViewGate({ space }: { space: SpaceInfo }) {
         <div className="flex flex-col items-center gap-2 text-center">
           <ShieldAlert aria-hidden="true" className="size-8 text-muted-foreground" strokeWidth={1.5} />
           <h2 className="text-base font-medium">{tg.view.gateTitle}</h2>
-          <p className="text-sm text-muted-foreground">{tg.view.gateHelp}</p>
+          <p className="text-sm text-muted-foreground">{allowed ? tg.view.gateHelp : tg.view.gateOff}</p>
         </div>
-        <ViewForm space={space.id} name={space.name} onStarted={() => undefined} />
+        {allowed && <ViewForm space={space.id} name={space.name} onStarted={() => undefined} />}
         <Link
           to={adminPath('spaces')}
           className="text-center text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"

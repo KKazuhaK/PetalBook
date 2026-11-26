@@ -818,7 +818,6 @@ export type ErrorCode =
   | 'not_offline'
   | 'token_limit'
   | 'quota_exceeded'
-  | 'tenants_off'
   | 'tenant_limit'
   | 'tenant_not_empty'
   | 'plan_in_use'
@@ -859,7 +858,6 @@ export type ErrorCode =
   | 'forbidden'
   | 'no_permission'
   | 'space_disabled'
-  | 'offline_off'
   | 'user_not_found'
   | 'user_disabled'
   | 'last_owner'
@@ -2080,6 +2078,31 @@ export interface TenantSetting {
 }
 // What PUT answers for a tenant's setting: with a warning when a dated manual rule replaced an undated one.
 export type TenantSettingWritten = TenantSetting & { warning?: { code: string; keys: string[]; message: string } }
+// The features of a tenant (docs/api.md, "Features"): whole things a tenant may or may not have. A route that belongs to
+// one answers 403 feature_off while it is off; the app hides what needs it (useFeature).
+export type FeatureKey =
+  | 'features.tokens'
+  | 'features.mcp'
+  | 'features.offline'
+  | 'features.registration'
+  | 'features.tenancy'
+  | 'features.passkeys'
+  | 'features.adminView'
+  | 'features.auditDownload'
+  | 'features.ownSso'
+  | 'features.domains'
+  | 'features.managedAccounts'
+  | 'features.idpAdmins'
+  | 'features.ownCaptcha'
+  | 'features.ownConnections'
+  | 'features.ownDaily'
+  | 'mail.ownSender'
+// What GET /api/settings answers: the features as the caller's tenant has them, and the settings a space or a person can
+// change.
+export interface MySettings {
+  features: Record<string, boolean>
+  settings: MySetting[]
+}
 // What GET /api/settings says of a setting that a space or a person can change.
 export interface MySetting {
   key: string

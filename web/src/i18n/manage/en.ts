@@ -386,6 +386,7 @@ export const manageEn = {
     starting: 'Starting…',
     gateTitle: 'You are not a member of this space',
     gateHelp: 'Administrators can manage it, but reading what is in it needs a read-only view opened with a reason.',
+    gateOff: 'Viewing the contents of spaces is turned off for this organisation.',
     banner: 'Admin view, read only, recorded',
     until: (when: string) => `ends ${when}`,
     end: 'End the view',

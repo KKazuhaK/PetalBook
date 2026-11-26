@@ -369,6 +369,7 @@ export const manageZhCN: ManageMessages = {
     starting: '正在开始…',
     gateTitle: '你不是这个空间的成员',
     gateHelp: '管理员可以管理它，但要读里面的内容，需要带理由开一次只读的查看。',
+    gateOff: '这个组织没有开通管理员查看空间内容。',
     banner: '管理员查看，只读，已记录',
     until: (when) => `到 ${when} 结束`,
     end: '结束查看',

@@ -714,8 +714,8 @@ func TestMachineAccessSwitchTurnsOAuthOff(t *testing.T) {
 		form(t, a, "grant_type", "refresh_token", "client_id", g.cid, "refresh_token", g.refresh).want(t, 404, "not_found")
 		anon.do("POST", "/oauth/register", map[string]any{"client_name": "x", "redirect_uris": []string{cbURI}}).want(t, 404, "not_found")
 		anon.do("OPTIONS", "/oauth/token", nil).want(t, 404, "not_found")
-		tm.owner.do("GET", "/api/oauth/consent?req=x", nil).want(t, 404, "not_found")
-		tm.owner.do("POST", "/api/oauth/consent", map[string]any{"req": "x"}).want(t, 404, "not_found")
+		tm.owner.do("GET", "/api/oauth/consent?req=x", nil).want(t, 403, "feature_off")
+		tm.owner.do("POST", "/api/oauth/consent", map[string]any{"req": "x"}).want(t, 403, "feature_off")
 		// /mcp is gone for every credential; API tokens on /api are a switch of their own.
 		b.tool("folders_list", map[string]any{"space": tm.sid}).http(t, 404, "not_found")
 		_, secret := mkToken(t, tm.owner, "write", nil, tm.sid)

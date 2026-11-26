@@ -30,7 +30,7 @@ func TestTenancyIsOffUntilASiteAdministratorSwitchesItOn(t *testing.T) {
 		if root.siteValue("features.tenancy") != false || count() != float64(1) {
 			t.Fatal("tenancy is off with one tenant to begin with")
 		}
-		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 409, "tenants_off")
+		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 403, "feature_off")
 		root.do("PUT", "/api/admin/settings/features.tenancy", map[string]any{}).want(t, 400, "invalid")
 		root.putSetting("features.tenancy", true).want(t, 200, "")
 		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 201, "")
@@ -39,7 +39,7 @@ func TestTenancyIsOffUntilASiteAdministratorSwitchesItOn(t *testing.T) {
 		if root.siteValue("features.tenancy") != false || count() != float64(2) {
 			t.Fatal("switching off leaves the two tenants")
 		}
-		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "more", "name": "More"}).want(t, 409, "tenants_off")
+		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "more", "name": "More"}).want(t, 403, "feature_off")
 		// Tenant administrators and members have no say in it.
 		adm := a.newClient("")
 		if _, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: "tadmin", Role: "admin", Password: pw, TenantID: store.DefaultTenantID}); err != nil {

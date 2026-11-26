@@ -130,6 +130,8 @@ type server struct {
 	oauth  *oauth.Service
 	// settings are the layered settings (site, tenant; see internal/settings).
 	settings *settings.Service
+	// featureFault, set by tests only, fails a route gate's read of a feature.
+	featureFault func(tenant, feature string) error
 	// vault is the secrets of the site and of tenants.
 	vault *secrets.Service
 	// quota knows which limits apply and notices crossings (accounts mode).

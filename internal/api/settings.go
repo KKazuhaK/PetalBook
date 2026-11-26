@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -346,10 +347,16 @@ type warningResp struct {
 	Message string   `json:"message"`
 }
 
-// mySettings is GET /api/settings: what each setting that has a space or
-// person layer comes to for the caller (and for a space, when one is given), and
-// whether that layer may change it, so a client greys out "set by the
-// administrators".
+// mySettings is GET /api/settings: what the caller may know of the settings in
+// their context. features is every feature (features.*, mail.ownSender) as it
+// stands for the caller's tenant, true or false: what the web app shows or hides
+// (useFeature). settings is what each setting that has a space or person layer
+// comes to for the caller (and for a space, when one is given), and whether that
+// layer may change it, so a client greys out "set by the administrators".
+//
+// It is made from the tenant's cached settings (no query), and carries their
+// version as its ETag: a client that sends it back is answered 304, without
+// the work of making the answer.
 func (s *server) mySettings(c *call) {
 	ctx := c.r.Context()
 	if sp := c.r.URL.Query().Get("space"); sp != "" {
@@ -360,7 +367,24 @@ func (s *server) mySettings(c *call) {
 		}
 		h.Release()
 	}
-	eff, err := s.settings.For(ctx, c.user().TenantID)
+	tenant := c.user().TenantID
+	ver, err := s.settings.Version(ctx, tenant)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	// Single-user mode has every feature on, and a version of its own.
+	if s.single {
+		ver += "s"
+	}
+	h := c.w.Header()
+	h.Set("ETag", `"`+ver+`"`)
+	h.Set("Cache-Control", "private, no-cache")
+	if noneMatch(c.r.Header.Get("If-None-Match"), ver) {
+		c.w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	eff, err := s.settings.For(ctx, tenant)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -383,7 +407,12 @@ func (s *server) mySettings(c *call) {
 		Locked  *bool    `json:"locked,omitempty"`
 	}
 	out := []item{}
+	features := map[string]bool{}
 	for _, d := range s.settings.Defs() {
+		if d.IsFeature() {
+			on, _ := eff[d.Key].Value.(bool)
+			features[d.Key] = on || s.single
+		}
 		if d.Key == settings.StorageAssets {
 			r, err := s.assetsRule(ctx, c.user().TenantID)
 			if err != nil {
@@ -392,11 +421,6 @@ func (s *server) mySettings(c *call) {
 			}
 			locked := r.LockedBy != ""
 			out = append(out, item{Key: d.Key, Effective: r.Default, Allowed: r.Allowed, Locked: &locked})
-			continue
-		}
-		if d.Key == settings.OfflineCopies {
-			// Not the person's to change: the client only reads whether it may keep copies.
-			out = append(out, item{Key: d.Key, Effective: eff[d.Key].Value})
 			continue
 		}
 		if !d.Has(settings.Space) && !d.Has(settings.Person) || strings.HasPrefix(d.Key, "quota.") {
@@ -422,9 +446,19 @@ func (s *server) mySettings(c *call) {
 		}
 		out = append(out, it)
 	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Settings []item `json:"settings"`
-	}{out})
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(struct {
+		Features map[string]bool `json:"features"`
+		Settings []item          `json:"settings"`
+	}{features, out}); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	c.w.WriteHeader(http.StatusOK)
+	c.w.Write(buf.Bytes())
 }
 
 var _ = store.DefaultTenantID

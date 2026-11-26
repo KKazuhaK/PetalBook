@@ -9,7 +9,6 @@ import (
 	"petalbook.app/server/internal/index"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/perm"
-	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
 )
 
@@ -26,23 +25,6 @@ const (
 // syncPagesBytes is how much of the pages one answer of sync/pages holds
 // (tests make it smaller).
 var syncPagesBytes = 8 << 20
-
-// offlineOff answers 403 offline_off, and reports true, when the caller's
-// tenant does not allow offline copies (the setting features.offline, as set by
-// the site and the tenant). handle asks it for the offlineRoutes, before the
-// space is opened.
-func (s *server) offlineOff(c *call) bool {
-	e, err := s.settings.Get(c.r.Context(), c.user().TenantID, settings.OfflineCopies)
-	if err != nil {
-		s.fail(c.w, err)
-		return true
-	}
-	if on, _ := e.Value.(bool); on {
-		return false
-	}
-	writeError(c.w, http.StatusForbidden, "offline_off", "Offline copies are turned off for this tenant.")
-	return true
-}
 
 // syncLimit reads the limit of a request: def when there is none, else 1 to max.
 func syncLimit(r *http.Request, def, max int) (int, string) {

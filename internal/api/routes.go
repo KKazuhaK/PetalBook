@@ -9,6 +9,7 @@ import (
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -30,6 +31,35 @@ type access struct {
 	memberOnly bool
 	// key is what a route outside spaces asks of the caller (kindKey).
 	key authz.Key
+	// feature is the tenant feature the route belongs to (a boolean setting,
+	// features.*): handle answers 403 feature_off before the handler when the
+	// caller's tenant does not have it. alwaysOn says the route belongs to no
+	// feature; one of the two is stated for every route (see on and always),
+	// so a new route cannot forget to choose.
+	feature  string
+	alwaysOn bool
+}
+
+// on is the access of a route that belongs to a feature: while the caller's
+// tenant does not have it, the route answers 403 feature_off. It is stated
+// once: a route that asks a key whose own feature is checked with the key.
+func (a access) on(feature string) access {
+	if a.feature != "" || a.alwaysOn || a.kind == kindPublic || feature == "" {
+		panic("api: a route belongs to one feature, and a public one to none (" + feature + ")")
+	}
+	a.feature = feature
+	return a
+}
+
+// always is the access of a route that belongs to no feature: switching
+// nothing off closes it (signing in, one's own account, reading what one has,
+// the administration of the settings themselves).
+func (a access) always() access {
+	if a.feature != "" || a.alwaysOn {
+		panic("api: a route belongs to one feature, or to none")
+	}
+	a.alwaysOn = true
+	return a
 }
 
 type kind int
@@ -56,7 +86,7 @@ func needs(k authz.Key) access {
 	if k.Scope() == authz.ScopeSpace {
 		panic("api: a space key is asked by inSpace, not needs")
 	}
-	return access{kind: kindKey, key: k}
+	return access{kind: kindKey, key: k, feature: k.Feature()}
 }
 
 // inSpaceMembers is inSpace for a member of the space only (see memberOnly).
@@ -128,239 +158,239 @@ type route struct {
 // routeTable is every endpoint. The access of each is stated here and enforced
 // in handle, in one place.
 var routeTable = []route{
-	{"GET", "/api/meta", public, false, true, false, (*server).getMeta},
-	{"GET", "/api/session", public, false, true, false, (*server).getSession},
+	{"GET", "/api/meta", public.always(), false, true, false, (*server).getMeta},
+	{"GET", "/api/session", public.always(), false, true, false, (*server).getSession},
 
-	{"POST", "/api/setup", public, true, false, false, (*server).setup},
-	{"POST", "/api/login", public, true, false, false, (*server).login},
-	{"POST", "/api/logout", public, true, false, false, (*server).logout},
-	{"POST", "/api/auth/oidc/start", public, true, true, false, (*server).oidcStart},
-	{"GET", oidcCallbackPath, public, true, false, false, (*server).oidcCallback},
-	{"POST", "/api/invites/check", public, true, false, false, (*server).checkInvite},
-	{"POST", "/api/invites/accept", public, true, false, false, (*server).acceptInvite},
+	{"POST", "/api/setup", public.always(), true, false, false, (*server).setup},
+	{"POST", "/api/login", public.always(), true, false, false, (*server).login},
+	{"POST", "/api/logout", public.always(), true, false, false, (*server).logout},
+	{"POST", "/api/auth/oidc/start", public.always(), true, true, false, (*server).oidcStart},
+	{"GET", oidcCallbackPath, public.always(), true, false, false, (*server).oidcCallback},
+	{"POST", "/api/invites/check", public.always(), true, false, false, (*server).checkInvite},
+	{"POST", "/api/invites/accept", public.always(), true, false, false, (*server).acceptInvite},
 
-	{"GET", "/api/connections", signedIn, true, false, false, (*server).listConnections},
-	{"POST", "/api/connections/{provider}/authorization/start", signedIn, true, false, false, (*server).connectStart},
-	{"GET", connCallbackPrefix + "{provider}" + connCallbackSuffix, public, true, true, false, (*server).connectCallback},
-	{"GET", connManifestPath, public, true, true, false, (*server).connectManifestCallback},
-	{"DELETE", "/api/connections/{provider}/authorization", signedIn, true, false, false, (*server).connectDisconnect},
-	{"DELETE", "/api/connections/{provider}/leftovers/{repoId}", signedIn, true, false, false, (*server).connectDismissLeftover},
-	{"GET", "/api/connections/{provider}/owners", signedIn, true, false, false, (*server).connectOwners},
-	{"GET", "/api/connections/{provider}/repos", signedIn, true, false, false, (*server).connectRepos},
+	{"GET", "/api/connections", signedIn.always(), true, false, false, (*server).listConnections},
+	{"POST", "/api/connections/{provider}/authorization/start", signedIn.always(), true, false, false, (*server).connectStart},
+	{"GET", connCallbackPrefix + "{provider}" + connCallbackSuffix, public.always(), true, true, false, (*server).connectCallback},
+	{"GET", connManifestPath, public.always(), true, true, false, (*server).connectManifestCallback},
+	{"DELETE", "/api/connections/{provider}/authorization", signedIn.always(), true, false, false, (*server).connectDisconnect},
+	{"DELETE", "/api/connections/{provider}/leftovers/{repoId}", signedIn.always(), true, false, false, (*server).connectDismissLeftover},
+	{"GET", "/api/connections/{provider}/owners", signedIn.always(), true, false, false, (*server).connectOwners},
+	{"GET", "/api/connections/{provider}/repos", signedIn.always(), true, false, false, (*server).connectRepos},
 
-	{"GET", "/api/account", signedIn, true, false, false, (*server).getAccount},
-	{"PATCH", "/api/account", signedIn, true, false, false, (*server).patchAccount},
-	{"POST", "/api/account/password", signedIn, true, false, false, (*server).changePassword},
-	{"DELETE", "/api/account/identities/{id}", signedIn, true, false, false, (*server).unlinkIdentity},
-	{"GET", "/api/account/usage", signedIn, true, false, false, (*server).accountUsage},
-	{"GET", "/api/account/tokens", signedIn, true, false, false, (*server).listMyTokens},
-	{"POST", "/api/account/tokens", signedIn, true, false, false, (*server).createToken},
-	{"DELETE", "/api/account/tokens/{id}", signedIn, true, false, false, (*server).revokeMyToken},
-	{"GET", "/api/account/grants", signedIn, true, false, false, (*server).listMyGrants},
-	{"DELETE", "/api/account/grants/{id}", signedIn, true, false, false, (*server).revokeMyGrant},
-	{"GET", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentInfo},
-	{"POST", "/api/oauth/consent", signedIn, true, false, false, (*server).oauthConsentDecide},
+	{"GET", "/api/account", signedIn.always(), true, false, false, (*server).getAccount},
+	{"PATCH", "/api/account", signedIn.always(), true, false, false, (*server).patchAccount},
+	{"POST", "/api/account/password", signedIn.always(), true, false, false, (*server).changePassword},
+	{"DELETE", "/api/account/identities/{id}", signedIn.always(), true, false, false, (*server).unlinkIdentity},
+	{"GET", "/api/account/usage", signedIn.always(), true, false, false, (*server).accountUsage},
+	{"GET", "/api/account/tokens", signedIn.always(), true, false, false, (*server).listMyTokens},
+	{"POST", "/api/account/tokens", signedIn.on(settings.FeatureTokens), true, false, false, (*server).createToken},
+	{"DELETE", "/api/account/tokens/{id}", signedIn.always(), true, false, false, (*server).revokeMyToken},
+	{"GET", "/api/account/grants", signedIn.always(), true, false, false, (*server).listMyGrants},
+	{"DELETE", "/api/account/grants/{id}", signedIn.always(), true, false, false, (*server).revokeMyGrant},
+	{"GET", "/api/oauth/consent", signedIn.on(settings.FeatureMCP), true, false, false, (*server).oauthConsentInfo},
+	{"POST", "/api/oauth/consent", signedIn.on(settings.FeatureMCP), true, false, false, (*server).oauthConsentDecide},
 
-	{"GET", "/api/groups", signedIn, true, false, false, (*server).findGroups},
-	{"GET", "/api/people", signedIn, true, false, false, (*server).findPeople},
-	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
+	{"GET", "/api/groups", signedIn.always(), true, false, false, (*server).findGroups},
+	{"GET", "/api/people", signedIn.always(), true, false, false, (*server).findPeople},
+	{"GET", "/api/settings", signedIn.always(), true, false, false, (*server).mySettings},
 
-	{"GET", "/api/users", needs(authz.TenantUsersRead), true, false, false, (*server).listUsers},
-	{"GET", "/api/users/{id}", needs(authz.TenantUsersRead), true, false, false, (*server).getUser},
-	{"PATCH", "/api/users/{id}", needs(authz.TenantUsersManage), true, false, false, (*server).patchUser},
-	{"POST", "/api/users/{id}/password", needs(authz.TenantUsersManage), true, false, false, (*server).setTemporaryPassword},
-	{"GET", "/api/users/{id}/memberships", needs(authz.TenantUsersRead), true, false, false, (*server).userMemberships},
+	{"GET", "/api/users", needs(authz.TenantUsersRead).always(), true, false, false, (*server).listUsers},
+	{"GET", "/api/users/{id}", needs(authz.TenantUsersRead).always(), true, false, false, (*server).getUser},
+	{"PATCH", "/api/users/{id}", needs(authz.TenantUsersManage).always(), true, false, false, (*server).patchUser},
+	{"POST", "/api/users/{id}/password", needs(authz.TenantUsersManage).always(), true, false, false, (*server).setTemporaryPassword},
+	{"GET", "/api/users/{id}/memberships", needs(authz.TenantUsersRead).always(), true, false, false, (*server).userMemberships},
 	// The sessions and connected accounts of a person are for administrators of the whole server (a tenant's administrator is answered 404).
-	{"GET", "/api/users/{id}/sessions", needs(authz.TenantUsersRead), true, false, false, (*server).userSessions},
-	{"DELETE", "/api/users/{id}/sessions", needs(authz.TenantUsersManage), true, false, false, (*server).endUserSessions},
-	{"DELETE", "/api/users/{id}/sessions/{session}", needs(authz.TenantUsersManage), true, false, false, (*server).endUserSession},
-	{"GET", "/api/users/{id}/identities", needs(authz.TenantUsersRead), true, false, false, (*server).userIdentities},
-	{"DELETE", "/api/users/{id}/identities/{identity}", needs(authz.TenantUsersManage), true, false, false, (*server).disconnectUserIdentity},
-	{"DELETE", "/api/users/{id}", needs(authz.TenantUsersDelete), true, false, false, (*server).adminDeleteUser},
-	{"POST", "/api/invites", needs(authz.TenantInvitesManage), true, false, false, (*server).createInvite},
-	{"POST", "/api/admin/members/batch", needs(authz.TenantInvitesManage), true, false, false, (*server).adminAddMembersBatch},
-	{"GET", "/api/invites", needs(authz.TenantInvitesManage), true, false, false, (*server).listInvites},
-	{"DELETE", "/api/invites/{id}", needs(authz.TenantInvitesManage), true, false, false, (*server).deleteInvite},
+	{"GET", "/api/users/{id}/sessions", needs(authz.TenantUsersRead).always(), true, false, false, (*server).userSessions},
+	{"DELETE", "/api/users/{id}/sessions", needs(authz.TenantUsersManage).always(), true, false, false, (*server).endUserSessions},
+	{"DELETE", "/api/users/{id}/sessions/{session}", needs(authz.TenantUsersManage).always(), true, false, false, (*server).endUserSession},
+	{"GET", "/api/users/{id}/identities", needs(authz.TenantUsersRead).always(), true, false, false, (*server).userIdentities},
+	{"DELETE", "/api/users/{id}/identities/{identity}", needs(authz.TenantUsersManage).always(), true, false, false, (*server).disconnectUserIdentity},
+	{"DELETE", "/api/users/{id}", needs(authz.TenantUsersDelete).always(), true, false, false, (*server).adminDeleteUser},
+	{"POST", "/api/invites", needs(authz.TenantInvitesManage).always(), true, false, false, (*server).createInvite},
+	{"POST", "/api/admin/members/batch", needs(authz.TenantInvitesManage).always(), true, false, false, (*server).adminAddMembersBatch},
+	{"GET", "/api/invites", needs(authz.TenantInvitesManage).always(), true, false, false, (*server).listInvites},
+	{"DELETE", "/api/invites/{id}", needs(authz.TenantInvitesManage).always(), true, false, false, (*server).deleteInvite},
 
-	{"GET", "/api/admin/usage", needs(authz.TenantUsageRead), true, false, false, (*server).adminUsage},
-	{"GET", "/api/admin/spaces", needs(authz.TenantSpacesRead), true, false, false, (*server).adminListSpaces},
-	{"GET", "/api/admin/spaces/{space}", needs(authz.TenantSpacesRead), true, false, false, (*server).adminGetSpace},
-	{"POST", "/api/admin/spaces/{space}/size", needs(authz.TenantSpacesManage), true, false, false, (*server).adminResizeSpace},
-	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.SiteStorageManage), true, false, false, (*server).adminPutSpaceStorage},
-	{"POST", "/api/admin/spaces/{space}/evict", needs(authz.SiteStorageManage), true, false, false, (*server).adminEvictSpace},
-	{"GET", "/api/admin/storage", needs(authz.TenantStorageRead), true, false, false, (*server).adminGetStorage},
-	{"GET", "/api/admin/storage/people", needs(authz.TenantStorageRead), true, false, false, (*server).adminListPeople},
-	{"GET", "/api/admin/storage/people/{user}", needs(authz.TenantStorageRead), true, false, false, (*server).adminGetPerson},
-	{"POST", "/api/admin/spaces/{space}/transfer", needs(authz.TenantSpacesTakeover), true, false, false, (*server).adminTransferSpace},
-	{"POST", "/api/admin/spaces/{space}/takeover", needs(authz.TenantSpacesTakeover), true, false, false, (*server).adminTakeOverSpace},
-	{"POST", "/api/admin/spaces/{space}/disable", needs(authz.TenantSpacesManage), true, false, false, (*server).adminDisableSpace},
-	{"POST", "/api/admin/spaces/{space}/enable", needs(authz.TenantSpacesManage), true, false, false, (*server).adminEnableSpace},
-	{"DELETE", "/api/admin/spaces/{space}", needs(authz.TenantSpacesDelete), true, false, false, (*server).adminDeleteSpace},
-	{"GET", "/api/admin/spaces/{space}/deletion", needs(authz.TenantSpacesDelete), true, false, false, (*server).adminSpaceDeletion},
+	{"GET", "/api/admin/usage", needs(authz.TenantUsageRead).always(), true, false, false, (*server).adminUsage},
+	{"GET", "/api/admin/spaces", needs(authz.TenantSpacesRead).always(), true, false, false, (*server).adminListSpaces},
+	{"GET", "/api/admin/spaces/{space}", needs(authz.TenantSpacesRead).always(), true, false, false, (*server).adminGetSpace},
+	{"POST", "/api/admin/spaces/{space}/size", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminResizeSpace},
+	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.SiteStorageManage).always(), true, false, false, (*server).adminPutSpaceStorage},
+	{"POST", "/api/admin/spaces/{space}/evict", needs(authz.SiteStorageManage).always(), true, false, false, (*server).adminEvictSpace},
+	{"GET", "/api/admin/storage", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminGetStorage},
+	{"GET", "/api/admin/storage/people", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminListPeople},
+	{"GET", "/api/admin/storage/people/{user}", needs(authz.TenantStorageRead).always(), true, false, false, (*server).adminGetPerson},
+	{"POST", "/api/admin/spaces/{space}/transfer", needs(authz.TenantSpacesTakeover).always(), true, false, false, (*server).adminTransferSpace},
+	{"POST", "/api/admin/spaces/{space}/takeover", needs(authz.TenantSpacesTakeover).always(), true, false, false, (*server).adminTakeOverSpace},
+	{"POST", "/api/admin/spaces/{space}/disable", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminDisableSpace},
+	{"POST", "/api/admin/spaces/{space}/enable", needs(authz.TenantSpacesManage).always(), true, false, false, (*server).adminEnableSpace},
+	{"DELETE", "/api/admin/spaces/{space}", needs(authz.TenantSpacesDelete).always(), true, false, false, (*server).adminDeleteSpace},
+	{"GET", "/api/admin/spaces/{space}/deletion", needs(authz.TenantSpacesDelete).always(), true, false, false, (*server).adminSpaceDeletion},
 	{"POST", "/api/admin/spaces/{space}/view", needs(authz.TenantDataView), true, false, false, (*server).adminOpenView},
 	{"DELETE", "/api/admin/spaces/{space}/view", needs(authz.TenantDataView), true, false, false, (*server).adminEndView},
-	{"GET", "/api/admin/recycle", needs(authz.TenantRecycleRead), true, false, false, (*server).adminListRecycle},
-	{"POST", "/api/admin/recycle/{item}/restore", needs(authz.TenantRecycleRestore), true, false, false, (*server).adminRestoreItem},
-	{"DELETE", "/api/admin/recycle/{item}", needs(authz.SiteRecyclePurge), true, false, false, (*server).adminPurgeItem},
-	{"POST", "/api/admin/confirm", needs(authz.TenantBulkRun), true, false, false, (*server).adminConfirm},
-	{"POST", "/api/admin/bulk", needs(authz.TenantBulkRun), true, false, false, (*server).adminBulk},
-	{"GET", "/api/admin/jobs/{id}", needs(authz.TenantBulkRun), true, false, false, (*server).adminGetJob},
-	{"GET", "/api/admin/users/{user}/deletion", needs(authz.TenantUsersDelete), true, false, false, (*server).adminUserDeletion},
-	{"POST", "/api/admin/exports", needs(authz.TenantDataExport), true, false, false, (*server).adminCreateExport},
-	{"GET", "/api/admin/exports", needs(authz.TenantDataExport), true, false, false, (*server).adminListExports},
-	{"GET", "/api/admin/exports/{id}", needs(authz.TenantDataExport), true, false, false, (*server).adminGetExport},
-	{"DELETE", "/api/admin/exports/{id}", needs(authz.TenantDataExport), true, false, false, (*server).adminDeleteExport},
-	{"GET", "/api/admin/exports/{id}/download", needs(authz.TenantDataExport), true, false, false, (*server).adminDownloadExport},
-	{"GET", "/api/admin/daily", needs(authz.SiteDailyManage), true, false, false, (*server).adminGetDaily},
-	{"GET", "/api/admin/daily/lines", needs(authz.SiteDailyManage), true, false, false, (*server).adminGetDailyLines},
-	{"POST", "/api/admin/daily/lines/preview", needs(authz.SiteDailyManage), true, false, false, (*server).adminPreviewDailyLines},
-	{"PUT", "/api/admin/daily/lines", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDailyLines},
-	{"DELETE", "/api/admin/daily/lines", needs(authz.SiteDailyManage), true, false, false, (*server).adminDeleteDailyLines},
-	{"PUT", "/api/admin/daily/apis/{id}", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDailyAPI},
-	{"DELETE", "/api/admin/daily/apis/{id}", needs(authz.SiteDailyManage), true, false, false, (*server).adminDeleteDailyAPI},
-	{"PUT", "/api/admin/daily/providers/{id}", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDailyProvider},
-	{"POST", "/api/admin/daily/try", needs(authz.SiteDailyManage), true, false, false, (*server).adminTryDailyAPI},
-	{"GET", "/api/admin/connections", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminListConnections},
-	{"POST", "/api/admin/connections", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminCreateConnection},
-	{"GET", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminGetConnection},
-	{"PUT", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminPutConnection},
-	{"PATCH", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminPutConnection},
-	{"POST", "/api/admin/connections/{provider}/manifest", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminConnectionManifest},
-	{"POST", "/api/admin/connections/{provider}/manifest/retry", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminConnectionManifestRetry},
-	{"POST", "/api/admin/connections/{provider}/check", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminCheckConnection},
-	{"DELETE", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminDeleteConnection},
-	{"GET", "/api/admin/connections/{provider}/installations", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminConnectionInstallations},
-	{"PUT", "/api/admin/connections/{provider}/installations/{id}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminPutConnectionInstallation},
-	{"GET", "/api/admin/status", needs(authz.SiteStatusRead), true, false, false, (*server).adminStatus},
-	{"GET", "/api/admin/groups", needs(authz.TenantGroupsRead), true, false, false, (*server).adminListGroups},
-	{"POST", "/api/admin/groups", needs(authz.TenantGroupsManage), true, false, false, (*server).adminCreateGroup},
-	{"GET", "/api/admin/groups/{group}", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGetGroup},
-	{"PATCH", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminPatchGroup},
-	{"DELETE", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminDeleteGroup},
-	{"GET", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGroupMembers},
-	{"POST", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsManage), true, false, false, (*server).adminAddGroupMembers},
-	{"POST", "/api/admin/groups/{group}/members/batch", needs(authz.TenantGroupsManage), true, false, false, (*server).adminAddGroupMembersBatch},
-	{"DELETE", "/api/admin/groups/{group}/members/{user}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminRemoveGroupMember},
-	{"GET", "/api/admin/groups/{group}/spaces", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGroupSpaces},
-	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage), true, false, false, (*server).adminListTenants},
-	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage), true, false, false, (*server).adminCreateTenant},
-	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead), true, false, false, (*server).adminGetTenant},
-	{"PATCH", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsWrite), true, false, false, (*server).adminPatchTenant},
-	{"DELETE", "/api/admin/tenants/{tenant}", needs(authz.SiteTenantsManage), true, false, false, (*server).adminDeleteTenant},
-	{"PUT", "/api/admin/tenants/{tenant}/plan", needs(authz.SiteTenantsManage), true, false, false, (*server).adminPutTenantPlan},
-	{"GET", "/api/admin/plans", needs(authz.SiteTenantsManage), true, false, false, (*server).adminListPlans},
-	{"POST", "/api/admin/plans", needs(authz.SiteTenantsManage), true, false, false, (*server).adminCreatePlan},
-	{"GET", "/api/admin/plans/{slug}", needs(authz.SiteTenantsManage), true, false, false, (*server).adminGetPlan},
-	{"PATCH", "/api/admin/plans/{slug}", needs(authz.SiteTenantsManage), true, false, false, (*server).adminPatchPlan},
-	{"DELETE", "/api/admin/plans/{slug}", needs(authz.SiteTenantsManage), true, false, false, (*server).adminDeletePlan},
-	{"GET", "/api/admin/tenants/{tenant}/settings", needs(authz.TenantSettingsRead), true, false, false, (*server).adminGetTenantSettings},
-	{"PUT", "/api/admin/tenants/{tenant}/settings/{key}", needs(authz.TenantSettingsWrite), true, false, false, (*server).adminPutTenantSetting},
-	{"GET", "/api/admin/settings", needs(authz.SiteSettingsManage), true, false, false, (*server).adminGetSettings},
-	{"PUT", "/api/admin/settings/{key}", needs(authz.SiteSettingsManage), true, false, false, (*server).adminPutSetting},
-	{"GET", "/api/admin/secrets", needs(authz.SiteSettingsManage), true, false, false, (*server).adminListSecrets},
-	{"PUT", "/api/admin/secrets/{name}", needs(authz.SiteSettingsManage), true, false, false, (*server).adminPutSecret},
-	{"DELETE", "/api/admin/secrets/{name}", needs(authz.SiteSettingsManage), true, false, false, (*server).adminDeleteSecret},
-	{"GET", "/api/admin/tenants/{tenant}/secrets", needs(authz.TenantSettingsRead), true, false, false, (*server).adminListTenantSecrets},
-	{"PUT", "/api/admin/tenants/{tenant}/secrets/{name}", needs(authz.TenantSettingsWrite), true, false, false, (*server).adminPutTenantSecret},
-	{"DELETE", "/api/admin/tenants/{tenant}/secrets/{name}", needs(authz.TenantSettingsWrite), true, false, false, (*server).adminDeleteTenantSecret},
-	{"GET", "/api/admin/tokens", needs(authz.TenantTokensRead), true, false, false, (*server).adminListTokens},
-	{"DELETE", "/api/admin/tokens/{id}", needs(authz.TenantTokensRevoke), true, false, false, (*server).adminRevokeToken},
-	{"GET", "/api/admin/grants", needs(authz.TenantTokensRead), true, false, false, (*server).adminListGrants},
-	{"GET", "/api/admin/permissions", needs(authz.TenantPermissionsRead), true, false, false, (*server).adminPermissions},
-	{"DELETE", "/api/admin/grants/{id}", needs(authz.TenantTokensRevoke), true, false, false, (*server).adminRevokeGrant},
+	{"GET", "/api/admin/recycle", needs(authz.TenantRecycleRead).always(), true, false, false, (*server).adminListRecycle},
+	{"POST", "/api/admin/recycle/{item}/restore", needs(authz.TenantRecycleRestore).always(), true, false, false, (*server).adminRestoreItem},
+	{"DELETE", "/api/admin/recycle/{item}", needs(authz.SiteRecyclePurge).always(), true, false, false, (*server).adminPurgeItem},
+	{"POST", "/api/admin/confirm", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminConfirm},
+	{"POST", "/api/admin/bulk", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminBulk},
+	{"GET", "/api/admin/jobs/{id}", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminGetJob},
+	{"GET", "/api/admin/users/{user}/deletion", needs(authz.TenantUsersDelete).always(), true, false, false, (*server).adminUserDeletion},
+	{"POST", "/api/admin/exports", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminCreateExport},
+	{"GET", "/api/admin/exports", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminListExports},
+	{"GET", "/api/admin/exports/{id}", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminGetExport},
+	{"DELETE", "/api/admin/exports/{id}", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminDeleteExport},
+	{"GET", "/api/admin/exports/{id}/download", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminDownloadExport},
+	{"GET", "/api/admin/daily", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminGetDaily},
+	{"GET", "/api/admin/daily/lines", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminGetDailyLines},
+	{"POST", "/api/admin/daily/lines/preview", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminPreviewDailyLines},
+	{"PUT", "/api/admin/daily/lines", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminPutDailyLines},
+	{"DELETE", "/api/admin/daily/lines", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminDeleteDailyLines},
+	{"PUT", "/api/admin/daily/apis/{id}", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminPutDailyAPI},
+	{"DELETE", "/api/admin/daily/apis/{id}", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminDeleteDailyAPI},
+	{"PUT", "/api/admin/daily/providers/{id}", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminPutDailyProvider},
+	{"POST", "/api/admin/daily/try", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminTryDailyAPI},
+	{"GET", "/api/admin/connections", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminListConnections},
+	{"POST", "/api/admin/connections", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminCreateConnection},
+	{"GET", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminGetConnection},
+	{"PUT", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminPutConnection},
+	{"PATCH", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminPutConnection},
+	{"POST", "/api/admin/connections/{provider}/manifest", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminConnectionManifest},
+	{"POST", "/api/admin/connections/{provider}/manifest/retry", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminConnectionManifestRetry},
+	{"POST", "/api/admin/connections/{provider}/check", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminCheckConnection},
+	{"DELETE", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminDeleteConnection},
+	{"GET", "/api/admin/connections/{provider}/installations", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminConnectionInstallations},
+	{"PUT", "/api/admin/connections/{provider}/installations/{id}", needs(authz.SiteConnectionsManage).always(), true, false, false, (*server).adminPutConnectionInstallation},
+	{"GET", "/api/admin/status", needs(authz.SiteStatusRead).always(), true, false, false, (*server).adminStatus},
+	{"GET", "/api/admin/groups", needs(authz.TenantGroupsRead).always(), true, false, false, (*server).adminListGroups},
+	{"POST", "/api/admin/groups", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminCreateGroup},
+	{"GET", "/api/admin/groups/{group}", needs(authz.TenantGroupsRead).always(), true, false, false, (*server).adminGetGroup},
+	{"PATCH", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminPatchGroup},
+	{"DELETE", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminDeleteGroup},
+	{"GET", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsRead).always(), true, false, false, (*server).adminGroupMembers},
+	{"POST", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminAddGroupMembers},
+	{"POST", "/api/admin/groups/{group}/members/batch", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminAddGroupMembersBatch},
+	{"DELETE", "/api/admin/groups/{group}/members/{user}", needs(authz.TenantGroupsManage).always(), true, false, false, (*server).adminRemoveGroupMember},
+	{"GET", "/api/admin/groups/{group}/spaces", needs(authz.TenantGroupsRead).always(), true, false, false, (*server).adminGroupSpaces},
+	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListTenants},
+	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage).on(settings.FeatureTenancy), true, false, false, (*server).adminCreateTenant},
+	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminGetTenant},
+	{"PATCH", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminPatchTenant},
+	{"DELETE", "/api/admin/tenants/{tenant}", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminDeleteTenant},
+	{"PUT", "/api/admin/tenants/{tenant}/plan", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminPutTenantPlan},
+	{"GET", "/api/admin/plans", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListPlans},
+	{"POST", "/api/admin/plans", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminCreatePlan},
+	{"GET", "/api/admin/plans/{slug}", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminGetPlan},
+	{"PATCH", "/api/admin/plans/{slug}", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminPatchPlan},
+	{"DELETE", "/api/admin/plans/{slug}", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminDeletePlan},
+	{"GET", "/api/admin/tenants/{tenant}/settings", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminGetTenantSettings},
+	{"PUT", "/api/admin/tenants/{tenant}/settings/{key}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminPutTenantSetting},
+	{"GET", "/api/admin/settings", needs(authz.SiteSettingsManage).always(), true, false, false, (*server).adminGetSettings},
+	{"PUT", "/api/admin/settings/{key}", needs(authz.SiteSettingsManage).always(), true, false, false, (*server).adminPutSetting},
+	{"GET", "/api/admin/secrets", needs(authz.SiteSettingsManage).always(), true, false, false, (*server).adminListSecrets},
+	{"PUT", "/api/admin/secrets/{name}", needs(authz.SiteSettingsManage).always(), true, false, false, (*server).adminPutSecret},
+	{"DELETE", "/api/admin/secrets/{name}", needs(authz.SiteSettingsManage).always(), true, false, false, (*server).adminDeleteSecret},
+	{"GET", "/api/admin/tenants/{tenant}/secrets", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminListTenantSecrets},
+	{"PUT", "/api/admin/tenants/{tenant}/secrets/{name}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminPutTenantSecret},
+	{"DELETE", "/api/admin/tenants/{tenant}/secrets/{name}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminDeleteTenantSecret},
+	{"GET", "/api/admin/tokens", needs(authz.TenantTokensRead).always(), true, false, false, (*server).adminListTokens},
+	{"DELETE", "/api/admin/tokens/{id}", needs(authz.TenantTokensRevoke).always(), true, false, false, (*server).adminRevokeToken},
+	{"GET", "/api/admin/grants", needs(authz.TenantTokensRead).always(), true, false, false, (*server).adminListGrants},
+	{"GET", "/api/admin/permissions", needs(authz.TenantPermissionsRead).always(), true, false, false, (*server).adminPermissions},
+	{"DELETE", "/api/admin/grants/{id}", needs(authz.TenantTokensRevoke).always(), true, false, false, (*server).adminRevokeGrant},
 
-	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},
-	{"GET", "/api/sync/heads", signedIn, false, false, false, (*server).syncHeads},
-	{"POST", "/api/spaces", needs(authz.TenantSpacesCreate), true, false, false, (*server).createSpace},
-	{"PATCH", "/api/spaces/{space}", inSpace(perm.Manage), true, false, false, (*server).renameSpace},
+	{"GET", "/api/spaces", signedIn.always(), false, false, false, (*server).listSpaces},
+	{"GET", "/api/sync/heads", signedIn.on(settings.OfflineCopies), false, false, false, (*server).syncHeads},
+	{"POST", "/api/spaces", needs(authz.TenantSpacesCreate).always(), true, false, false, (*server).createSpace},
+	{"PATCH", "/api/spaces/{space}", inSpace(perm.Manage).always(), true, false, false, (*server).renameSpace},
 
-	{"GET", "/api/spaces/{space}/pages", inSpace(perm.Read), false, false, false, (*server).listPages},
-	{"GET", "/api/spaces/{space}/pages/groups", inSpace(perm.Read), false, false, false, (*server).getGroups},
-	{"GET", "/api/spaces/{space}/views", inSpace(perm.Read), false, false, false, (*server).getViews},
-	{"PUT", "/api/spaces/{space}/views", inSpace(perm.Write), false, false, false, (*server).putViews},
-	{"POST", "/api/spaces/{space}/pages", inSpace(perm.Write), false, false, false, (*server).createPage},
-	{"GET", "/api/spaces/{space}/pages/{id}", inSpace(perm.Read), false, false, false, (*server).getPage},
-	{"PUT", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write), false, false, false, (*server).savePage},
-	{"DELETE", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write), false, false, false, (*server).deletePage},
-	{"PUT", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Write), false, false, false, (*server).putDraft},
-	{"DELETE", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Read), false, false, false, (*server).deleteDraft},
-	{"POST", "/api/spaces/{space}/pages/{id}/commit", inSpace(perm.Write), false, false, false, (*server).commitDraft},
-	{"PATCH", "/api/spaces/{space}/pages/{id}/props", inSpace(perm.Write), false, false, false, (*server).patchProps},
-	{"GET", "/api/spaces/{space}/pages/{id}/backlinks", inSpace(perm.Read), false, false, false, (*server).getBacklinks},
-	{"GET", "/api/spaces/{space}/pages/{id}/links", inSpace(perm.Read), false, false, false, (*server).getLinks},
-	{"POST", "/api/spaces/{space}/pages/{id}/move", inSpace(perm.Write), false, false, false, (*server).movePage},
-	{"GET", "/api/spaces/{space}/tree", inSpace(perm.Read), false, false, false, (*server).getTree},
-	{"POST", "/api/spaces/{space}/folders", inSpace(perm.Write), false, false, false, (*server).createFolder},
-	{"POST", "/api/spaces/{space}/folders/move", inSpace(perm.Write), false, false, false, (*server).moveFolder},
-	{"DELETE", "/api/spaces/{space}/folders", inSpace(perm.Write), false, false, false, (*server).deleteFolder},
-	{"POST", "/api/spaces/{space}/pages/batch", inSpace(perm.Write), false, false, false, (*server).batchPages},
-	{"GET", "/api/spaces/{space}/tags", inSpace(perm.Read), false, false, false, (*server).getTags},
-	{"PUT", "/api/spaces/{space}/tags/{tag}", inSpace(perm.Write), false, false, false, (*server).putTag},
-	{"GET", "/api/spaces/{space}/types", inSpace(perm.Read), false, false, false, (*server).getTypes},
-	{"PUT", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).putType},
-	{"DELETE", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteType},
-	{"GET", "/api/spaces/{space}/appearance", inSpace(perm.Read), false, false, false, (*server).getAppearance},
-	{"PUT", "/api/spaces/{space}/folders/style", inSpace(perm.Write), false, false, false, (*server).putFolderStyle},
-	{"GET", "/api/spaces/{space}/sources", inSpace(perm.Read), false, false, false, (*server).getSources},
-	{"PUT", "/api/spaces/{space}/sources/presets", inSpace(perm.Manage), false, false, false, (*server).putSourcePresets},
-	{"POST", "/api/spaces/{space}/types/{name}/rename-field", inSpace(perm.Manage), false, false, false, (*server).renameTypeField},
-	{"PUT", "/api/spaces/{space}/folders/type", inSpace(perm.Manage), false, false, false, (*server).putFolderType},
-	{"GET", "/api/spaces/{space}/templates", inSpace(perm.Read), false, false, false, (*server).getTemplates},
-	{"PUT", "/api/spaces/{space}/templates/defaults", inSpace(perm.Manage), false, false, false, (*server).putTemplateDefaults},
-	{"GET", "/api/spaces/{space}/templates/{name}", inSpace(perm.Read), false, false, false, (*server).getTemplate},
-	{"PUT", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage), false, false, false, (*server).putTemplate},
-	{"DELETE", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage), false, false, false, (*server).deleteTemplate},
-	{"GET", "/api/notifications", signedIn, false, false, false, (*server).listNotifications},
-	{"GET", "/api/notifications/unread", signedIn, false, false, false, (*server).getUnreadNotifications},
-	{"POST", "/api/notifications/read", signedIn, false, false, false, (*server).markNotificationsRead},
-	{"POST", "/api/notifications/read-all", signedIn, false, false, false, (*server).markAllNotificationsRead},
-	{"GET", "/api/prefs", signedIn, false, false, false, (*server).getPrefs},
-	{"PATCH", "/api/prefs", signedIn, false, false, false, (*server).patchPrefs},
+	{"GET", "/api/spaces/{space}/pages", inSpace(perm.Read).always(), false, false, false, (*server).listPages},
+	{"GET", "/api/spaces/{space}/pages/groups", inSpace(perm.Read).always(), false, false, false, (*server).getGroups},
+	{"GET", "/api/spaces/{space}/views", inSpace(perm.Read).always(), false, false, false, (*server).getViews},
+	{"PUT", "/api/spaces/{space}/views", inSpace(perm.Write).always(), false, false, false, (*server).putViews},
+	{"POST", "/api/spaces/{space}/pages", inSpace(perm.Write).always(), false, false, false, (*server).createPage},
+	{"GET", "/api/spaces/{space}/pages/{id}", inSpace(perm.Read).always(), false, false, false, (*server).getPage},
+	{"PUT", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write).always(), false, false, false, (*server).savePage},
+	{"DELETE", "/api/spaces/{space}/pages/{id}", inSpace(perm.Write).always(), false, false, false, (*server).deletePage},
+	{"PUT", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Write).always(), false, false, false, (*server).putDraft},
+	{"DELETE", "/api/spaces/{space}/pages/{id}/draft", inSpace(perm.Read).always(), false, false, false, (*server).deleteDraft},
+	{"POST", "/api/spaces/{space}/pages/{id}/commit", inSpace(perm.Write).always(), false, false, false, (*server).commitDraft},
+	{"PATCH", "/api/spaces/{space}/pages/{id}/props", inSpace(perm.Write).always(), false, false, false, (*server).patchProps},
+	{"GET", "/api/spaces/{space}/pages/{id}/backlinks", inSpace(perm.Read).always(), false, false, false, (*server).getBacklinks},
+	{"GET", "/api/spaces/{space}/pages/{id}/links", inSpace(perm.Read).always(), false, false, false, (*server).getLinks},
+	{"POST", "/api/spaces/{space}/pages/{id}/move", inSpace(perm.Write).always(), false, false, false, (*server).movePage},
+	{"GET", "/api/spaces/{space}/tree", inSpace(perm.Read).always(), false, false, false, (*server).getTree},
+	{"POST", "/api/spaces/{space}/folders", inSpace(perm.Write).always(), false, false, false, (*server).createFolder},
+	{"POST", "/api/spaces/{space}/folders/move", inSpace(perm.Write).always(), false, false, false, (*server).moveFolder},
+	{"DELETE", "/api/spaces/{space}/folders", inSpace(perm.Write).always(), false, false, false, (*server).deleteFolder},
+	{"POST", "/api/spaces/{space}/pages/batch", inSpace(perm.Write).always(), false, false, false, (*server).batchPages},
+	{"GET", "/api/spaces/{space}/tags", inSpace(perm.Read).always(), false, false, false, (*server).getTags},
+	{"PUT", "/api/spaces/{space}/tags/{tag}", inSpace(perm.Write).always(), false, false, false, (*server).putTag},
+	{"GET", "/api/spaces/{space}/types", inSpace(perm.Read).always(), false, false, false, (*server).getTypes},
+	{"PUT", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage).always(), false, false, false, (*server).putType},
+	{"DELETE", "/api/spaces/{space}/types/{name}", inSpace(perm.Manage).always(), false, false, false, (*server).deleteType},
+	{"GET", "/api/spaces/{space}/appearance", inSpace(perm.Read).always(), false, false, false, (*server).getAppearance},
+	{"PUT", "/api/spaces/{space}/folders/style", inSpace(perm.Write).always(), false, false, false, (*server).putFolderStyle},
+	{"GET", "/api/spaces/{space}/sources", inSpace(perm.Read).always(), false, false, false, (*server).getSources},
+	{"PUT", "/api/spaces/{space}/sources/presets", inSpace(perm.Manage).always(), false, false, false, (*server).putSourcePresets},
+	{"POST", "/api/spaces/{space}/types/{name}/rename-field", inSpace(perm.Manage).always(), false, false, false, (*server).renameTypeField},
+	{"PUT", "/api/spaces/{space}/folders/type", inSpace(perm.Manage).always(), false, false, false, (*server).putFolderType},
+	{"GET", "/api/spaces/{space}/templates", inSpace(perm.Read).always(), false, false, false, (*server).getTemplates},
+	{"PUT", "/api/spaces/{space}/templates/defaults", inSpace(perm.Manage).always(), false, false, false, (*server).putTemplateDefaults},
+	{"GET", "/api/spaces/{space}/templates/{name}", inSpace(perm.Read).always(), false, false, false, (*server).getTemplate},
+	{"PUT", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage).always(), false, false, false, (*server).putTemplate},
+	{"DELETE", "/api/spaces/{space}/templates/{name}", inSpace(perm.Manage).always(), false, false, false, (*server).deleteTemplate},
+	{"GET", "/api/notifications", signedIn.always(), false, false, false, (*server).listNotifications},
+	{"GET", "/api/notifications/unread", signedIn.always(), false, false, false, (*server).getUnreadNotifications},
+	{"POST", "/api/notifications/read", signedIn.always(), false, false, false, (*server).markNotificationsRead},
+	{"POST", "/api/notifications/read-all", signedIn.always(), false, false, false, (*server).markAllNotificationsRead},
+	{"GET", "/api/prefs", signedIn.always(), false, false, false, (*server).getPrefs},
+	{"PATCH", "/api/prefs", signedIn.always(), false, false, false, (*server).patchPrefs},
 
-	{"GET", "/api/spaces/{space}/checks", inSpace(perm.Read), false, false, false, (*server).getChecks},
-	{"POST", "/api/spaces/{space}/checks/fix", inSpace(perm.Write), false, false, false, (*server).fixCheck},
-	{"GET", "/api/spaces/{space}/daily", inSpace(perm.Read), false, false, false, (*server).getDaily},
-	{"GET", "/api/spaces/{space}/daily/settings", inSpace(perm.Read), false, false, false, (*server).getDailySettings},
-	{"PUT", "/api/spaces/{space}/daily/settings", inSpace(perm.Manage), false, false, false, (*server).putDailySettings},
-	{"GET", "/api/spaces/{space}/daily/prefs", inSpace(perm.Read), true, false, false, (*server).getDailyPrefs},
-	{"PUT", "/api/spaces/{space}/daily/prefs", inSpace(perm.Manage), true, false, false, (*server).putDailyPrefs},
-	{"GET", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).getFavorites},
-	{"POST", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).addFavorite},
-	{"DELETE", "/api/spaces/{space}/favorites", inSpace(perm.Read), false, false, false, (*server).deleteFavorite},
-	{"PUT", "/api/spaces/{space}/favorites/order", inSpace(perm.Read), false, false, false, (*server).putFavoritesOrder},
-	{"GET", "/api/spaces/{space}/sync/catalog", inSpace(perm.Read), false, false, false, (*server).syncCatalog},
-	{"GET", "/api/spaces/{space}/changes", inSpace(perm.Read), false, false, false, (*server).syncChanges},
-	{"GET", "/api/spaces/{space}/sync/pages", inSpace(perm.Read), false, false, false, (*server).syncPages},
-	{"POST", "/api/spaces/{space}/reindex", inSpace(perm.Manage), false, false, false, (*server).reindex},
+	{"GET", "/api/spaces/{space}/checks", inSpace(perm.Read).always(), false, false, false, (*server).getChecks},
+	{"POST", "/api/spaces/{space}/checks/fix", inSpace(perm.Write).always(), false, false, false, (*server).fixCheck},
+	{"GET", "/api/spaces/{space}/daily", inSpace(perm.Read).always(), false, false, false, (*server).getDaily},
+	{"GET", "/api/spaces/{space}/daily/settings", inSpace(perm.Read).always(), false, false, false, (*server).getDailySettings},
+	{"PUT", "/api/spaces/{space}/daily/settings", inSpace(perm.Manage).always(), false, false, false, (*server).putDailySettings},
+	{"GET", "/api/spaces/{space}/daily/prefs", inSpace(perm.Read).always(), true, false, false, (*server).getDailyPrefs},
+	{"PUT", "/api/spaces/{space}/daily/prefs", inSpace(perm.Manage).always(), true, false, false, (*server).putDailyPrefs},
+	{"GET", "/api/spaces/{space}/favorites", inSpace(perm.Read).always(), false, false, false, (*server).getFavorites},
+	{"POST", "/api/spaces/{space}/favorites", inSpace(perm.Read).always(), false, false, false, (*server).addFavorite},
+	{"DELETE", "/api/spaces/{space}/favorites", inSpace(perm.Read).always(), false, false, false, (*server).deleteFavorite},
+	{"PUT", "/api/spaces/{space}/favorites/order", inSpace(perm.Read).always(), false, false, false, (*server).putFavoritesOrder},
+	{"GET", "/api/spaces/{space}/sync/catalog", inSpace(perm.Read).on(settings.OfflineCopies), false, false, false, (*server).syncCatalog},
+	{"GET", "/api/spaces/{space}/changes", inSpace(perm.Read).on(settings.OfflineCopies), false, false, false, (*server).syncChanges},
+	{"GET", "/api/spaces/{space}/sync/pages", inSpace(perm.Read).on(settings.OfflineCopies), false, false, false, (*server).syncPages},
+	{"POST", "/api/spaces/{space}/reindex", inSpace(perm.Manage).always(), false, false, false, (*server).reindex},
 
-	{"POST", "/api/spaces/{space}/pages/{id}/assets", inSpace(perm.Write), false, false, true, (*server).putAsset},
-	{"GET", "/api/spaces/{space}/files/{path...}", inSpace(perm.Read), false, false, false, (*server).getFile},
-	{"POST", "/api/spaces/{space}/import", inSpace(perm.Write), false, false, true, (*server).importMarkdown},
+	{"POST", "/api/spaces/{space}/pages/{id}/assets", inSpace(perm.Write).always(), false, false, true, (*server).putAsset},
+	{"GET", "/api/spaces/{space}/files/{path...}", inSpace(perm.Read).always(), false, false, false, (*server).getFile},
+	{"POST", "/api/spaces/{space}/import", inSpace(perm.Write).always(), false, false, true, (*server).importMarkdown},
 
-	{"GET", "/api/spaces/{space}/pages/{id}/history", inSpace(perm.Read), false, false, false, (*server).getHistory},
-	{"GET", "/api/spaces/{space}/pages/{id}/versions/{commit}", inSpace(perm.Read), false, false, false, (*server).getVersion},
+	{"GET", "/api/spaces/{space}/pages/{id}/history", inSpace(perm.Read).always(), false, false, false, (*server).getHistory},
+	{"GET", "/api/spaces/{space}/pages/{id}/versions/{commit}", inSpace(perm.Read).always(), false, false, false, (*server).getVersion},
 
-	{"GET", "/api/spaces/{space}/members", inSpace(perm.Read), true, false, false, (*server).listMembers},
-	{"GET", "/api/spaces/{space}/members/effective", inSpace(perm.Read), true, false, false, (*server).effectiveMembers},
-	{"POST", "/api/spaces/{space}/groups", inSpace(perm.Members), true, false, false, (*server).addSpaceGroup},
-	{"PATCH", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).patchSpaceGroup},
-	{"DELETE", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).deleteSpaceGroup},
-	{"POST", "/api/spaces/{space}/members", inSpace(perm.Members), true, false, false, (*server).addMember},
-	{"POST", "/api/spaces/{space}/members/batch", inSpace(perm.Members), true, false, false, (*server).addMembersBatch},
-	{"GET", "/api/spaces/{space}/people", inSpace(perm.Members), true, false, false, (*server).findSpacePeople},
-	{"PATCH", "/api/spaces/{space}/members/{user}", inSpace(perm.Members), true, false, false, (*server).patchMember},
-	{"DELETE", "/api/spaces/{space}/members/{user}", inSpaceOrSelf(perm.Members), true, false, false, (*server).removeMember},
+	{"GET", "/api/spaces/{space}/members", inSpace(perm.Read).always(), true, false, false, (*server).listMembers},
+	{"GET", "/api/spaces/{space}/members/effective", inSpace(perm.Read).always(), true, false, false, (*server).effectiveMembers},
+	{"POST", "/api/spaces/{space}/groups", inSpace(perm.Members).always(), true, false, false, (*server).addSpaceGroup},
+	{"PATCH", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members).always(), true, false, false, (*server).patchSpaceGroup},
+	{"DELETE", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members).always(), true, false, false, (*server).deleteSpaceGroup},
+	{"POST", "/api/spaces/{space}/members", inSpace(perm.Members).always(), true, false, false, (*server).addMember},
+	{"POST", "/api/spaces/{space}/members/batch", inSpace(perm.Members).always(), true, false, false, (*server).addMembersBatch},
+	{"GET", "/api/spaces/{space}/people", inSpace(perm.Members).always(), true, false, false, (*server).findSpacePeople},
+	{"PATCH", "/api/spaces/{space}/members/{user}", inSpace(perm.Members).always(), true, false, false, (*server).patchMember},
+	{"DELETE", "/api/spaces/{space}/members/{user}", inSpaceOrSelf(perm.Members).always(), true, false, false, (*server).removeMember},
 
-	{"GET", "/api/spaces/{space}/remote", inSpace(perm.Manage), true, false, false, (*server).getRemote},
-	{"POST", "/api/spaces/{space}/remote/key", inSpaceMembers(perm.Manage), true, false, false, (*server).remoteKey},
-	{"PUT", "/api/spaces/{space}/remote", inSpaceMembers(perm.Manage), true, false, false, (*server).putRemote},
-	{"DELETE", "/api/spaces/{space}/remote", inSpaceMembers(perm.Manage), true, false, false, (*server).deleteRemote},
-	{"POST", "/api/spaces/{space}/remote/sync", inSpace(perm.Manage), true, false, false, (*server).syncRemote},
-	{"POST", "/api/spaces/{space}/remote/accept", inSpaceMembers(perm.Manage), true, false, false, (*server).acceptRemote},
-	{"GET", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).getAssetsRemote},
-	{"PUT", "/api/spaces/{space}/remote/assets", inSpaceMembers(perm.Manage), true, false, false, (*server).putAssetsRemote},
-	{"DELETE", "/api/spaces/{space}/remote/assets", inSpaceMembers(perm.Manage), true, false, false, (*server).deleteAssetsRemote},
-	{"POST", "/api/spaces/{space}/remote/assets/move", inSpaceMembers(perm.Manage), true, false, false, (*server).moveAssets},
+	{"GET", "/api/spaces/{space}/remote", inSpace(perm.Manage).always(), true, false, false, (*server).getRemote},
+	{"POST", "/api/spaces/{space}/remote/key", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).remoteKey},
+	{"PUT", "/api/spaces/{space}/remote", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).putRemote},
+	{"DELETE", "/api/spaces/{space}/remote", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).deleteRemote},
+	{"POST", "/api/spaces/{space}/remote/sync", inSpace(perm.Manage).always(), true, false, false, (*server).syncRemote},
+	{"POST", "/api/spaces/{space}/remote/accept", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).acceptRemote},
+	{"GET", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage).always(), true, false, false, (*server).getAssetsRemote},
+	{"PUT", "/api/spaces/{space}/remote/assets", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).putAssetsRemote},
+	{"DELETE", "/api/spaces/{space}/remote/assets", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).deleteAssetsRemote},
+	{"POST", "/api/spaces/{space}/remote/assets/move", inSpaceMembers(perm.Manage).always(), true, false, false, (*server).moveAssets},
 }
 
 // RouteInfo describes a route for tests and tooling.
@@ -368,7 +398,11 @@ type RouteInfo struct {
 	Method, Pattern string
 	Public          bool // no session needed
 	// Key is the permission key a route outside spaces asks for ("" for none).
-	Key       string
+	Key string
+	// Feature is the feature the route belongs to ("" for none); AlwaysOn says
+	// it was stated that it belongs to none.
+	Feature   string
+	AlwaysOn  bool
 	Admin     bool      // it asks for a tenant key that only administrators hold
 	SiteAdmin bool      // it asks for a site key
 	Space     bool      // a route on {space}
@@ -385,7 +419,7 @@ func Routes() []RouteInfo {
 	out := make([]RouteInfo, len(routeTable))
 	for i, r := range routeTable {
 		a := r.access
-		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf,
+		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Feature: a.feature, AlwaysOn: a.alwaysOn, Public: a.kind == kindPublic, Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf,
 			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload}
 		if a.kind == kindKey {
 			out[i].Key = a.key.Name()
@@ -402,6 +436,9 @@ func Routes() []RouteInfo {
 func (s *server) handle(rt route) http.HandlerFunc {
 	if rt.access.kind == 0 {
 		panic("api: route " + rt.method + " " + rt.pattern + " has no access level")
+	}
+	if rt.access.feature == "" && !rt.access.alwaysOn {
+		panic("api: route " + rt.method + " " + rt.pattern + " does not say which feature it belongs to (on) or that it belongs to none (always)")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if rt.accountsOnly && s.single {
@@ -470,10 +507,10 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 		}
-		// The switch for offline copies comes before the space is opened: an
-		// evicted space is not restored for a request that is refused anyway,
-		// and the answer is the same for every space.
-		if offlineRoutes[rt.method+" "+rt.pattern] && s.offlineOff(c) {
+		// The route's feature comes before the space is opened: an evicted
+		// space is not restored for a request that is refused anyway, and the
+		// answer is the same for every space.
+		if !s.featureGate(c, rt) {
 			return
 		}
 		if rt.access.kind == kindSpace {
@@ -485,16 +522,6 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		}
 		rt.h(s, c)
 	}
-}
-
-// offlineRoutes are the routes of the offline sync, refused with 403
-// offline_off when the caller's tenant does not allow offline copies (see
-// offlineOff). handle decides it before anything is opened.
-var offlineRoutes = map[string]bool{
-	"GET /api/sync/heads":                  true,
-	"GET /api/spaces/{space}/sync/catalog": true,
-	"GET /api/spaces/{space}/changes":      true,
-	"GET /api/spaces/{space}/sync/pages":   true,
 }
 
 // indexOnlyRoutes are the routes whose answer comes from the index alone, so

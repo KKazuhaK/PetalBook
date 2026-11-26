@@ -13,21 +13,21 @@ import (
 // docs/api.md "Mail", "Registration", "Email verification", "Password reset").
 
 var mailRoutes = []route{
-	{"GET", "/api/admin/mail", needs(authz.SiteMailManage), true, false, false, (*server).adminGetMail},
-	{"PUT", "/api/admin/mail", needs(authz.SiteMailManage), true, false, false, (*server).adminPutMail},
-	{"POST", "/api/admin/mail/test", needs(authz.SiteMailManage), true, false, false, (*server).adminTestMail},
+	{"GET", "/api/admin/mail", needs(authz.SiteMailManage).always(), true, false, false, (*server).adminGetMail},
+	{"PUT", "/api/admin/mail", needs(authz.SiteMailManage).always(), true, false, false, (*server).adminPutMail},
+	{"POST", "/api/admin/mail/test", needs(authz.SiteMailManage).always(), true, false, false, (*server).adminTestMail},
 
-	{"GET", "/api/register", public, true, false, false, (*server).getRegister},
-	{"POST", "/api/register", public, true, false, false, (*server).postRegister},
-	{"POST", "/api/register/confirm", public, true, false, false, (*server).registerConfirm},
+	{"GET", "/api/register", public.always(), true, false, false, (*server).getRegister},
+	{"POST", "/api/register", public.always(), true, false, false, (*server).postRegister},
+	{"POST", "/api/register/confirm", public.always(), true, false, false, (*server).registerConfirm},
 
-	{"POST", "/api/account/email/verify", signedIn, true, false, false, (*server).accountEmailVerify},
-	{"POST", "/api/email/confirm", public, true, false, false, (*server).emailConfirm},
+	{"POST", "/api/account/email/verify", signedIn.always(), true, false, false, (*server).accountEmailVerify},
+	{"POST", "/api/email/confirm", public.always(), true, false, false, (*server).emailConfirm},
 
-	{"POST", "/api/password/forgot", public, true, false, false, (*server).passwordForgot},
-	{"POST", "/api/password/reset/check", public, true, false, false, (*server).passwordResetCheck},
-	{"POST", "/api/password/reset", public, true, false, false, (*server).passwordReset},
-	{"POST", "/api/users/{id}/password-reset", needs(authz.TenantUsersManage), true, false, false, (*server).userPasswordReset},
+	{"POST", "/api/password/forgot", public.always(), true, false, false, (*server).passwordForgot},
+	{"POST", "/api/password/reset/check", public.always(), true, false, false, (*server).passwordResetCheck},
+	{"POST", "/api/password/reset", public.always(), true, false, false, (*server).passwordReset},
+	{"POST", "/api/users/{id}/password-reset", needs(authz.TenantUsersManage).always(), true, false, false, (*server).userPasswordReset},
 }
 
 func init() { routeTable = append(routeTable, mailRoutes...) }

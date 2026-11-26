@@ -70,9 +70,10 @@ export function visibleSections(v: Visibility): SectionDef[] {
   if (v.mode === undefined) return []
   return SECTIONS.filter((s) => {
     switch (s.id) {
+      // Tokens and connected apps can always be listed and revoked, so 'tokens' stays with the features off.
+      case 'tokens':
       case 'profile':
       case 'security':
-      case 'tokens':
       case 'connections':
       case 'usage':
         return v.mode === 'accounts' && v.signedIn

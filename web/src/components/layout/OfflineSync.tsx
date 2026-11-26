@@ -4,7 +4,7 @@ import { CloudOff } from 'lucide-react'
 import { keys, useSession } from '@/api/hooks'
 import { t } from '@/i18n'
 import { clearAccount, onOfflineOff, onSynced, startPolling } from '@/lib/offline'
-import { offlineAllowedKey, useOfflineSetting } from '@/lib/offline/allowed'
+import { featuresKey, useFeature, useFeatures } from '@/lib/features'
 import { useOffline } from '@/lib/offline/status'
 
 // Keeps the copies of the spaces on this device up to date while the app is open (src/lib/offline/poller.ts): the
@@ -15,11 +15,11 @@ export function OfflineSync() {
   const qc = useQueryClient()
   // When the administrators turn offline copies off for the tenant, nothing is synced or polled and this account's
   // copies are deleted (at the start, or when the setting is read again, or when a sync is refused).
-  const setting = useOfflineSetting(user)
-  const allowed = setting.data
+  const features = useFeatures()
+  const allowed = useFeature('features.offline')
   // Not before the answer is in (a request that is sure to be refused is not sent); when it cannot be had (the
   // server cannot be reached), the polling goes on and a refusal of its own deletes the copies.
-  const asked = !setting.isPending
+  const asked = !features.isPending
   useEffect(() => {
     if (!user || !asked || allowed === false) return
     return startPolling(user)
@@ -27,7 +27,7 @@ export function OfflineSync() {
   useEffect(() => {
     if (user && allowed === false) void clearAccount(user).catch(() => undefined)
   }, [user, allowed])
-  useEffect(() => onOfflineOff(() => void qc.invalidateQueries({ queryKey: offlineAllowedKey })), [qc])
+  useEffect(() => onOfflineOff(() => void qc.invalidateQueries({ queryKey: featuresKey })), [qc])
   useEffect(
     () =>
       onSynced(({ space, result }) => {
