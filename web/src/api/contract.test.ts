@@ -502,6 +502,19 @@ function suite(target: Target) {
           expect((await call(m.browser, 'GET', '/api/account')).json.user.email).toBe('x@example.com')
         })
 
+        it('an address belongs to one account: another spelling of a taken one is 409 email_taken; outside ASCII is 400 email_not_ascii by default', async () => {
+          const a = await newMember(uniq('ua'))
+          const b = await newMember(uniq('ub'))
+          const addr = `${uniq('upn')}@example.com`
+          expect((await call(a.browser, 'PATCH', '/api/account', { email: addr })).status).toBe(200)
+          const taken = await call(b.browser, 'PATCH', '/api/account', { email: addr.toUpperCase() })
+          expect([taken.status, taken.json.error]).toEqual([409, 'email_taken'])
+          const wide = await call(b.browser, 'PATCH', '/api/account', { email: `${uniq('wü')}@example.com` })
+          expect([wide.status, wide.json.error]).toEqual([400, 'email_not_ascii'])
+          // The holder may write its own address in another case.
+          expect((await call(a.browser, 'PATCH', '/api/account', { email: addr.toUpperCase() })).status).toBe(200)
+        })
+
         it('changing the password: wrong current is 403 forbidden, a short new one 400, the right one 204 and ends the other sessions', async () => {
           const m = await newMember(uniq('pw'))
           const other = browser()

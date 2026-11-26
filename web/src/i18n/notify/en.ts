@@ -72,6 +72,10 @@ export const notifyEn: NotifyMessages = {
     mention: { title: 'Someone mentioned you', body: 'Open it to see.' },
     todo: { title: 'A reminder', body: 'Open it to see.' },
     system: { title: 'A notice from the administrators', body: 'Open it to see.' },
+    emailReleased: {
+      title: (email: string) => `Your email address “${email}” moved to another account`,
+      body: 'It was not verified, and someone proved it is theirs. Set an address of your own in your profile.',
+    },
     takeover: {
       takenTitle: (by: string, space: string) => `${by} took over “${space}”`,
       transferredTitle: (by: string, space: string) => `${by} transferred “${space}”`,

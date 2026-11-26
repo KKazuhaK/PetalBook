@@ -40,6 +40,8 @@ export const signinEn: SigninMessages = {
     not_allowed: 'You are not in an organisation this sign-in method requires, so you cannot sign in.',
     disabled: 'This account is disabled.',
     identity_in_use: 'This identity already belongs to another account.',
+    email_in_use:
+      'Another account already has this email address. Sign in to that account, then link this sign-in method from your account settings.',
     invite_invalid: 'The invite is invalid, expired or already used.',
     setup_invalid: 'The setup token is wrong, or there is an administrator already.',
     rate_limited: 'Too many requests. Wait a moment and try again.',

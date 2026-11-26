@@ -34,6 +34,12 @@ const (
 	// "after_purge" (anyone may, once the person is purged) or "never". Site only:
 	// usernames are unique on the whole server.
 	UsersReuseUsernames = "users.reuseUsernames"
+	// UsersEmailNonASCII is whether an address with characters outside ASCII
+	// (an internationalised address: a Unicode local part, an IDN domain) may
+	// be set (3.6). Site only: addresses are unique on the whole server. Off,
+	// such an address is refused (400 email_not_ascii); on, it is compared in
+	// store.EmailKey form. Mail to one needs a relay with SMTPUTF8.
+	UsersEmailNonASCII = "users.emailNonAscii"
 
 	// StorageAssets is where the attachments of a new space on a provider go:
 	// "space" (its own repository) or "repository" (<name>-assets). Site and
@@ -91,6 +97,7 @@ func Definitions() []*Def {
 		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}},
+		{Key: UsersEmailNonASCII, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}},
 		{Key: UsersReuseUsernames, Kind: Choice, Layers: []Layer{Site}, Default: "after_purge", Choices: []string{"after_purge", "never"}, Lower: Lower{Mode: Allow}},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.

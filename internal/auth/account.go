@@ -79,15 +79,17 @@ func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *
 	}
 	verified := u.EmailVerified
 	if email != nil {
-		if e, err = cleanEmail(*email); err != nil {
+		if e, err = s.cleanEmailFor(ctx, *email); err != nil {
 			return nil, err
 		}
-		if !strings.EqualFold(e, u.Email) || e != u.Email {
+		if e != u.Email {
 			verified = false // a person changing their own address clears the mark
 		}
 	}
+	// Another account holding the address, verified or not, is 409
+	// email_taken: an address held unverified moves only to who proves it.
 	if err := store.UpdateProfile(ctx, s.st.Q(), u.ID, n, e, verified); err != nil {
-		return nil, err
+		return nil, emailErr(err)
 	}
 	if e != u.Email {
 		// A link sent to the old address neither confirms the new one nor resets the password.
@@ -243,7 +245,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	}
 	var email string
 	if patch.Email != nil {
-		e, err := cleanEmail(*patch.Email)
+		e, err := s.cleanEmailFor(ctx, *patch.Email)
 		if err != nil {
 			return nil, err
 		}
@@ -389,7 +391,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			}
 			if newEmail != u.Email || verified != u.EmailVerified || clearMark {
 				if err := store.SetEmail(ctx, q, u.ID, newEmail, verified, by); err != nil {
-					return err
+					return emailErr(err)
 				}
 				if newEmail != u.Email {
 					changed["email"] = newEmail
@@ -446,8 +448,26 @@ type InviteFill struct {
 
 // CleanInviteFill checks and trims what an invite fills in, as CreateInvite
 // does; a caller that must refuse bad values before it changes anything (the
-// tenant made with its first administrator) calls it first.
-func CleanInviteFill(f InviteFill) (InviteFill, error) {
+// tenant made with its first administrator) calls it first. The address
+// follows the site's rule on addresses outside ASCII, and one another account
+// holds is 409 email_taken (the invite would make an account it cannot have).
+func (s *Service) CleanInviteFill(ctx context.Context, f InviteFill) (InviteFill, error) {
+	out, err := cleanInviteFill(f)
+	if err != nil || out.Email == "" {
+		return out, err
+	}
+	if _, err := s.cleanEmailFor(ctx, out.Email); err != nil {
+		return out, err
+	}
+	if _, err := store.EmailOwner(ctx, s.st.Q(), out.Email); err == nil {
+		return out, errEmailTaken()
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return out, err
+	}
+	return out, nil
+}
+
+func cleanInviteFill(f InviteFill) (InviteFill, error) {
 	var out InviteFill
 	if strings.TrimSpace(f.Username) != "" {
 		u, err := NormalizeUsername(f.Username)
@@ -529,7 +549,7 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	inv := store.Invite{TokenHash: hashToken(token), Role: role, CreatedBy: actor.ID, Created: now, TenantID: tenantID, SiteAdmin: site,
 		Expires: now.Add(time.Duration(days) * 24 * time.Hour)}
 	if len(fill) > 0 {
-		f, err := CleanInviteFill(fill[0])
+		f, err := s.CleanInviteFill(ctx, fill[0])
 		if err != nil {
 			return nil, err
 		}

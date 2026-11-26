@@ -65,6 +65,10 @@ export const notifyZhCN = {
     mention: { title: '有人提到了你', body: '点开去看。' },
     todo: { title: '待办提醒', body: '点开去看。' },
     system: { title: '来自管理员的通知', body: '点开去看。' },
+    emailReleased: {
+      title: (email: string) => `你的邮箱“${email}”已转给另一个账号`,
+      body: '这个邮箱还没有验证，而另一个人证明了它是自己的。请在个人资料里设置你自己的邮箱。',
+    },
     takeover: {
       takenTitle: (by: string, space: string) => `${by} 接管了「${space}」`,
       transferredTitle: (by: string, space: string) => `${by} 转让了「${space}」`,

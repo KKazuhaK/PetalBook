@@ -399,10 +399,8 @@ func TestTenantAdminsSeeTheirAuditRowsWithoutTheServersOwn(t *testing.T) {
 }
 
 // A tenant administrator can set a person's address and say it is verified;
-// that must never let them catch someone else's first sign-in: not across
-// tenants (a provider merges in its own tenant only), and not in their own
-// tenant (an address only a tenant administrator vouched for is not verified
-// for merging).
+// that must never let them catch someone else's first sign-in, in any tenant:
+// a sign-in is never attached to an account by its address (3.6).
 func TestAPuppetAccountNeverCatchesASignIn(t *testing.T) {
 	t.Parallel()
 	idp := newIDPFor(t, "home")
@@ -438,16 +436,17 @@ func TestAPuppetAccountNeverCatchesASignIn(t *testing.T) {
 		if who := signedInAs(t, c); who == "puppet-1" {
 			t.Fatalf("the sign-in merged into an account whose address only a tenant administrator verified (%s)", loc)
 		}
-		if loc != "/login?sso_error=no_account" {
+		// The address is held verified: the person is sent to link the
+		// provider from the account that has it (3.6), never signed in to it.
+		if loc != "/login?sso_error=email_in_use" {
 			t.Fatal(loc)
 		}
-		// A site administrator vouching for the address makes it count.
-		// Sending true again is enough: it clears the mark without a false first.
+		// Not even once a site administrator vouched for it: a sign-in never
+		// attaches itself to an account by its address.
 		f.root.do("PATCH", "/api/users/"+mustUserID(t, a, "puppet-1"), map[string]any{"emailVerified": true}).want(t, 200, "")
 		c = a.newClient("")
-		idpB.signIn2(t, c, "corp", "victim", map[string]any{})
-		if who := signedInAs(t, c); who != "puppet-1" {
-			t.Fatalf("a site administrator's verification did not count: %q", who)
+		if loc := idpB.signIn2(t, c, "corp", "victim", map[string]any{}); signedInAs(t, c) != "" || loc != "/login?sso_error=email_in_use" {
+			t.Fatalf("%s %q", loc, signedInAs(t, c))
 		}
 	})
 }

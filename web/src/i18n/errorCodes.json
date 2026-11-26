@@ -21,6 +21,8 @@
   "connection_missing",
   "default_tenant",
   "email_domain_not_allowed",
+  "email_not_ascii",
+  "email_taken",
   "email_unverified",
   "email_verified",
   "exists",

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -54,15 +55,13 @@ func TestPeopleAreFoundByTheirKeys(t *testing.T) {
 		}
 		byEmail := func(email string) string {
 			t.Helper()
-			l, err := store.UsersByEmail(ctx, q, st.Dialect(), sc, email, 0)
-			if err != nil {
+			row, err := store.EmailOwner(ctx, q, email)
+			if errors.Is(err, store.ErrNotFound) {
+				return ""
+			} else if err != nil {
 				t.Fatal(err)
 			}
-			var ids []string
-			for _, u := range l {
-				ids = append(ids, u.ID)
-			}
-			return strings.Join(ids, ",")
+			return row.UserID
 		}
 		if got := byEmail("anna@example.com"); got != "A" {
 			t.Errorf("by address: %q", got)
@@ -70,11 +69,8 @@ func TestPeopleAreFoundByTheirKeys(t *testing.T) {
 		if got := byEmail("BOB@EXAMPLE.COM"); got != "B" {
 			t.Errorf("by address in capitals: %q", got)
 		}
-		if got := byEmail("cärl@example.com"); got != "" {
-			t.Errorf("an address that is not ASCII matched %q", got)
-		}
-		if got, _ := store.UsersByEmail(ctx, q, st.Dialect(), store.InTenant("other"), "anna@example.com", 0); len(got) != 0 {
-			t.Errorf("another tenant's person: %v", got)
+		if got := byEmail("CÄRL@example.com"); got != "C" {
+			t.Errorf("an address that is not ASCII, in capitals: %q", got)
 		}
 		// Every write of the name or the address moves the keys.
 		if err := store.UpdateProfile(ctx, q, "A", "Zoë", "zoe@Example.com", false); err != nil {

@@ -267,7 +267,7 @@ func (s *server) adminCreateTenant(c *call) {
 	// person fills it in when they accept (a username they must).
 	var fill auth.InviteFill
 	if req.Admin != nil {
-		if fill, err = auth.CleanInviteFill(auth.InviteFill{Username: req.Admin.Username, Name: req.Admin.Name, Email: req.Admin.Email}); err != nil {
+		if fill, err = s.auth.CleanInviteFill(ctx, auth.InviteFill{Username: req.Admin.Username, Name: req.Admin.Name, Email: req.Admin.Email}); err != nil {
 			s.fail(c.w, err)
 			return
 		}

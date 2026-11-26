@@ -93,6 +93,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   email_domain_not_allowed: '这个邮箱的域名不在允许的范围内。',
   email_unverified: '这个邮箱还没有验证。',
   email_verified: '这个邮箱已经验证过了。',
+  email_taken: '另一个账号已经在用这个邮箱。',
+  email_not_ascii: '这个服务器不接受含非 ASCII 字符的邮箱。',
   terms_required: '请先同意服务条款。',
   passkey_required: '这个账号必须先用通行密钥登录。',
   passkey_failed: '通行密钥验证没有通过。',

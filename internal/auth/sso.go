@@ -658,9 +658,9 @@ func samlClaims(rt *providerRT, a *authsaml.Assertion) (claimed, error) {
 	if c.issuer == "" {
 		c.issuer = rt.cfg.IDPEntityID
 	}
-	// SAML has no verified-address claim: turning the option on is the
-	// administrators vouching for every address the identity provider sends.
-	c.emailVerified = email != "" && rt.row.MergeVerifiedEmail
+	// SAML has no verified-address claim: a SAML provider is an organisation's
+	// SSO, trusted only on the domains it verified (see trustsEmail).
+	c.emailVerified = trustsEmail(emailSource{template: tmplSAML, trustOptIn: rt.row.MergeVerifiedEmail, email: email})
 	c.labelOverride = email
 	if c.labelOverride == "" {
 		c.labelOverride = sub
@@ -679,7 +679,11 @@ type claimed struct {
 	name            string
 	preferred       string
 	email           string
-	emailVerified   bool
+	// emailVerified: the sign-in vouches for the address (trustsEmail).
+	emailVerified bool
+	// provider is the slug of the provider (verified_by of an address it
+	// vouched for).
+	provider string
 	// labelOverride, when set, is the label shown for the identity.
 	labelOverride string
 	// groups is what the sign-in said about the person's groups (3.2).
@@ -725,7 +729,8 @@ func identityFromAssertion(rt *providerRT, a *authoidc.Assertion) (claimed, erro
 	}
 	// The issuer is the verified token's: the library checked it equals the configured one.
 	email := clip(str("email"), 254)
-	c := claimed{issuer: a.Issuer, subject: sub, name: str("name"), preferred: str("preferred_username"), email: email, emailVerified: verified && email != ""}
+	c := claimed{issuer: a.Issuer, subject: sub, name: str("name"), preferred: str("preferred_username"), email: email,
+		emailVerified: trustsEmail(emailSource{template: tmplOIDC, trustOptIn: rt.row.MergeVerifiedEmail, email: email, verified: verified, claims: raw})}
 	if g, on := rt.groupsOn(); on {
 		c.groups = oidcGroupClaim(g, raw)
 	}
@@ -754,6 +759,7 @@ func ssoErr(code string) error { return &ssoError{code} }
 // the attempt with a redirect.
 func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry, c claimed, sessionToken, ip string, clear []*http.Cookie) Outcome {
 	kind, slug := rt.row.Kind, rt.row.Slug
+	c.provider = slug
 	var user *store.User
 	var created bool
 	var err error
@@ -816,18 +822,15 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	case !errors.Is(err, store.ErrNotFound):
 		return nil, false, err
 	}
-	// Nobody has this identity. Matching an account by its address is opt-in
-	// and strict; so is making one, and never the first: that is the
-	// administrator's, made with the setup token.
-	if rt.row.MergeVerifiedEmail && c.emailVerified && c.email != "" {
-		u, err := s.mergeByEmail(ctx, rt, c, ip)
-		if err != nil {
-			return nil, false, err
-		}
-		if u != nil {
-			return u, false, nil
-		}
-		if err := s.ambiguousEmail(ctx, rt.row.TenantID, c.email); err != nil {
+	// Nobody has this identity. It is never attached to an account by its
+	// address: an address the sign-in vouches for that another account holds
+	// verified sends the person to sign in to that account and link the
+	// provider there (email_in_use). Making an account is opt-in, and never
+	// the first: that is the administrator's, made with the setup token.
+	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" && c.emailVerified {
+		if row, err := store.EmailOwner(ctx, s.st.Q(), e); err == nil && row.Verified {
+			return nil, false, ssoErr("email_in_use")
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return nil, false, err
 		}
 	}
@@ -843,57 +846,6 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	}
 	u, err := s.createFromClaims(ctx, c, "member", "", false, rt.row.TenantID, false)
 	return u, true, err
-}
-
-// mergeByEmail attaches the identity to the one account of the provider's
-// tenant whose address it is, when that account's address is verified too,
-// and not by a tenant administrator alone. Never to an administrator, a
-// disabled account, or one that has an identity from this provider already.
-func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, error) {
-	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.InTenant(rt.row.TenantID), c.email, 2)
-	if err != nil {
-		return nil, err
-	}
-	if len(users) != 1 {
-		return nil, nil
-	}
-	u := users[0]
-	if !u.EmailVerified || u.IsAdmin() || u.Disabled {
-		return nil, nil
-	}
-	if by, err := store.EmailVerifiedBy(ctx, s.st.Q(), u.ID); err != nil {
-		return nil, err
-	} else if by == store.VerifiedByTenantAdmin {
-		return nil, nil
-	}
-	if has, err := store.UserHasIdentityOf(ctx, s.st.Q(), u.ID, rt.row.Issuer); err != nil {
-		return nil, err
-	} else if has {
-		return nil, nil
-	}
-	err = store.InsertIdentity(ctx, s.st.Q(), store.Identity{ID: s.newID(), UserID: u.ID, Issuer: c.issuer, Subject: c.subject, Label: c.label(), Created: s.now()})
-	if store.IsUnique(err) {
-		return nil, ssoErr("identity_in_use")
-	}
-	if err != nil {
-		return nil, err
-	}
-	s.Audit(AuditEvent{Kind: "identity_linked", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"provider": rt.row.Slug, "by": "email"}})
-	return &u, nil
-}
-
-// ambiguousEmail is where an address that matched nobody (or somebody the
-// rules above kept out) of the provider's tenant stops: no_account, never a
-// new account. Another tenant's accounts are not looked at.
-func (s *Service) ambiguousEmail(ctx context.Context, tenantID, email string) error {
-	users, err := store.UsersByEmail(ctx, s.st.Q(), s.st.Dialect(), store.InTenant(tenantID), email, 1)
-	if err != nil {
-		return err
-	}
-	if len(users) > 0 {
-		return ssoErr("no_account")
-	}
-	return nil
 }
 
 func (s *Service) ssoSetup(ctx context.Context, c claimed, token string) (*store.User, error) {
@@ -967,18 +919,27 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 // createFromClaims makes an account for an identity: the name from the name
 // claim, the username from preferred_username or the part of the email before
 // the @, made valid and unique. The address is the provider's, and verified
-// only when the provider vouched for it.
+// only when the sign-in vouches for it (trustsEmail), recorded as the
+// provider's. The address follows the rules of every address: one the sign-in
+// vouches for is taken from an account that holds it unverified; any other
+// holder keeps it and the account is made without one (as for an address the
+// site does not accept).
 func (s *Service) createFromClaims(ctx context.Context, c claimed, role, inviteID string, setup bool, tenantID string, siteAdmin bool) (*store.User, error) {
 	base := usernameFrom(c)
 	name := clip(c.name, 100)
 	if strings.TrimSpace(name) == "" {
 		name = base
 	}
-	email, verified := "", false
-	if e, err := cleanEmail(c.email); err == nil && e != "" {
+	email, verified, by := "", false, ""
+	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" {
 		email, verified = e, c.emailVerified
+		if verified {
+			by = store.VerifiedByProvider(c.provider)
+		}
 	}
-	u, err := s.CreateUser(ctx, CreateParams{Username: base, Name: name, Role: role, Email: email, EmailVerified: verified, Identity: c.params(), InviteID: inviteID, Setup: setup, RetryUsername: true, TenantID: tenantID, SiteAdmin: siteAdmin})
+	u, err := s.CreateUser(ctx, CreateParams{Username: base, Name: name, Role: role, Email: email, EmailVerified: verified, VerifiedBy: by,
+		TakeUnverified: verified, DropTakenEmail: true,
+		Identity: c.params(), InviteID: inviteID, Setup: setup, RetryUsername: true, TenantID: tenantID, SiteAdmin: siteAdmin})
 	var ae *Error
 	if errors.As(err, &ae) && ae.Kind == Conflict && ae == errInUse {
 		return nil, ssoErr("identity_in_use")
@@ -1172,5 +1133,5 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 	}
 	login := clip(u.Login, 100)
 	return claimed{issuer: rt.cfg.BaseURL, subject: strconv.FormatInt(u.ID, 10), name: clip(u.Name, 100), preferred: login, email: email,
-		emailVerified: verified && email != "", labelOverride: login, groups: gc}, ""
+		emailVerified: trustsEmail(emailSource{template: tmplGitHub, email: email, verified: verified}), labelOverride: login, groups: gc}, ""
 }

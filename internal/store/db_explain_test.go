@@ -165,7 +165,7 @@ func TestCollatedSortsUseTheirIndexes(t *testing.T) {
 	})
 }
 
-// A lookup by address reads users_email (it scanned every person of the tenant,
+// A lookup by address reads user_emails_key (it scanned every person of the tenant,
 // 88 ms on 30,000 people, when it lower-cased each stored address); the cascades
 // of a person's deletion read the child indexes; the sweep of old session ends
 // and the attachment moves read theirs.
@@ -177,6 +177,9 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 		bulk(t, st, "users", "id, username, name, name_key, email, email_key, role, created", n, 200, func(i int) []any {
 			return []any{fmt.Sprintf("U%05d", i), fmt.Sprintf("user%d", i), fmt.Sprintf("User %d", i), fmt.Sprintf("user %d", i),
 				fmt.Sprintf("User%d@Example.com", i), fmt.Sprintf("user%d@example.com", i), "member", now}
+		})
+		bulk(t, st, "user_emails", "user_id, email, email_key, is_primary, created", n, 200, func(i int) []any {
+			return []any{fmt.Sprintf("U%05d", i), fmt.Sprintf("User%d@Example.com", i), fmt.Sprintf("user%d@example.com", i), 1, now}
 		})
 		bulk(t, st, "session_ends", "id, user_id, reason, ended", n, 200, func(i int) []any {
 			return []any{fmt.Sprintf("E%05d", i), fmt.Sprintf("U%05d", i), "disabled", now - int64(i)*1000}
@@ -193,14 +196,9 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 		})
 		// A lookup sorts its few rows: only scans of whole tables are made dear.
 		withDear(t, st, []string{"enable_seqscan"}, func(q store.Q) {
-			pq := &planQ{Q: q, d: st.Dialect()}
-			if _, err := store.UsersByEmail(ctx, pq, st.Dialect(), store.InTenant(store.DefaultTenantID), "USER42@example.com", 2); err != nil {
-				t.Fatal(err)
-			}
-			if len(pq.plans) != 1 || !strings.Contains(pq.plans[0], "users_email") {
-				t.Errorf("the lookup by address does not read users_email:\n%s", strings.Join(pq.plans, "\n--\n"))
-			}
 			for _, c := range []struct{ sql, index string }{
+				// store.EmailOwner's condition.
+				{`SELECT e.user_id FROM user_emails e JOIN users u ON u.id = e.user_id WHERE e.email_key = ? AND e.email_key <> ''`, "user_emails_key"},
 				{`SELECT 1 FROM drafts WHERE user_id = ?`, "drafts_user"},
 				{`SELECT 1 FROM invites WHERE created_by = ?`, "invites_created_by"},
 				{`SELECT 1 FROM provider_leftovers WHERE user_id = ?`, "provider_leftovers_user"},

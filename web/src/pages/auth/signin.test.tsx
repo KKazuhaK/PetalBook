@@ -194,6 +194,7 @@ describe('a failed single sign-on says why', () => {
         'not_allowed',
         'disabled',
         'identity_in_use',
+        'email_in_use',
         'invite_invalid',
         'setup_invalid',
         'rate_limited',
@@ -209,7 +210,7 @@ describe('a failed single sign-on says why', () => {
         'internal',
       ]),
     )
-    for (const code of ['not_allowed', 'saml_replay', 'internal']) {
+    for (const code of ['not_allowed', 'saml_replay', 'email_in_use', 'internal']) {
       await open(`/login?sso_error=${code}`, { providers: [company] })
       await settle(() => text().includes(ts.ssoErrors[code]), code)
       await m!.unmount()

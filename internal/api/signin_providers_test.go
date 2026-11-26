@@ -347,64 +347,88 @@ func TestFlagsBecomeTheProviderSsoWithoutLockingAnyoneOut(t *testing.T) {
 	})
 }
 
-func TestMergeByVerifiedEmailIsStrict(t *testing.T) {
+// A sign-in never attaches itself to an account by its address (3.6). An
+// address it vouches for (a configured provider: its "trust" switch and the
+// email_verified claim) that another account holds verified sends the person
+// to link the provider from that account (email_in_use); one held unverified
+// moves to the new account. An address it does not vouch for is never taken:
+// the new account is made without it.
+func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 	t.Parallel()
 	f := newIDPFor(t, "m")
 	set := func(key, sub, email string, verified bool) {
 		f.addUser(key, testidp.Claims{"sub": sub, "preferred_username": key, "email": email, "email_verified": verified, "name": key})
 	}
 	set("pat", "s-pat", "pat@example.test", true)
-	set("unverified", "s-un", "un@example.test", true)
-	set("boss", "s-boss", "boss@example.test", true)
-	set("off", "s-off", "off@example.test", true)
+	set("victim", "s-victim", "victim@example.test", true)
 	set("claimfalse", "s-cf", "cf@example.test", false)
-	set("twin", "s-twin", "twin@example.test", true)
-	set("gone", "s-gone", "gone@example.test", true)
+	set("off", "s-off", "off@example.test", true)
+	set("fresh", "s-fresh", "fresh@example.test", true)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/auth/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
 		ctx := context.Background()
-		mk := func(username, email string, verified bool, role string) string {
-			u, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: username, Role: role, Password: pw, Email: email, EmailVerified: verified})
+		mk := func(username, email string, verified bool) string {
+			u, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: username, Role: "member", Password: pw, Email: email, EmailVerified: verified})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return u.ID
 		}
-		mk("pat-local", "Pat@Example.test", true, "member")
-		mk("un-local", "un@example.test", false, "member")
-		adminBoss := mk("boss-local", "boss@example.test", true, "admin")
-		_ = adminBoss
-		mk("off-local", "off@example.test", true, "member")
-		mk("cf-local", "cf@example.test", true, "member")
-		mk("twin-a", "twin@example.test", true, "member")
-		mk("twin-b", "twin@example.test", true, "member")
-		goneID := mk("gone-local", "gone@example.test", true, "member")
-		if _, err := a.auth.UpdateUser(ctx, store.User{Role: "admin", SiteAdmin: true}, "", goneID, auth.UserPatch{Disabled: ptr(true)}); err != nil {
-			t.Fatal(err)
-		}
+		mk("pat-local", "Pat@Example.test", true)
+		puppet := mk("puppet", "victim@example.test", false) // someone set the victim's address, unverified
+		mk("cf-local", "cf@example.test", true)
+		mk("off-local", "off@example.test", true)
 		try := func(key string) (string, *client) {
 			c := a.newClient("")
 			return f.signIn2(t, c, "m", key, map[string]any{}), c
 		}
-		// The one account with that address, verified on both sides: merged.
+		// Held verified: never attached, the person links it from that account.
 		loc, c := try("pat")
-		if loc != "/" || signedInAs(t, c) != "pat-local" {
+		if loc != "/login?sso_error=email_in_use" || signedInAs(t, c) != "" {
 			t.Fatalf("%s %s", loc, signedInAs(t, c))
 		}
-		if rows := admin.audit(t, "identity_linked"); len(rows) != 1 || rows[0]["detail"].(map[string]any)["by"] != "email" || rows[0]["detail"].(map[string]any)["provider"] != "m" {
+		if rows := admin.audit(t, "identity_linked"); len(rows) != 0 {
 			t.Fatalf("%v", rows)
 		}
-		// Every other case is no_account.
-		for _, key := range []string{"unverified", "boss", "claimfalse", "twin", "gone"} {
-			if loc, _ := try(key); loc != "/login?sso_error=no_account" {
-				t.Errorf("%s: %s", key, loc)
-			}
+		// Held unverified: never attached to the holder; the address the
+		// sign-in vouches for moves to the new account, and that is told.
+		loc, c = try("victim")
+		if who := signedInAs(t, c); loc != "/" || who == "puppet" || who == "" {
+			t.Fatalf("%s %q", loc, who)
 		}
-		// The provider's option is off by default: an address alone never merges.
+		if u := c.do("GET", "/api/session", nil).user(); u["email"] != "victim@example.test" || u["emailVerified"] != true {
+			t.Fatal(u)
+		}
+		if by, _ := store.EmailVerifiedBy(ctx, a.st.Q(), mustUserID(t, a, signedInAs(t, c))); by != "provider:m" {
+			t.Fatalf("verified by %q", by)
+		}
+		if p, _ := store.GetUser(ctx, a.st.Q(), store.AllTenants(), puppet); p.Email != "" {
+			t.Fatalf("the puppet kept %q", p.Email)
+		}
+		if rows := admin.audit(t, "email_released"); len(rows) != 1 || rows[0]["detail"].(map[string]any)["email"] != "victim@example.test" {
+			t.Fatalf("%v", rows)
+		}
+		if n := rowCount(t, a, `SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'system' AND payload LIKE '%email_released%'`, puppet); n != 1 {
+			t.Fatalf("%d notices", n)
+		}
+		// Not vouched for (the claim is false): a new account without it.
+		loc, c = try("claimfalse")
+		if who := signedInAs(t, c); loc != "/" || who == "cf-local" {
+			t.Fatalf("%s %q", loc, who)
+		} else if u := c.do("GET", "/api/session", nil).user(); u["email"] != "" {
+			t.Fatal(u)
+		}
+		// The provider's trust is off: the same, whatever the claim says.
 		admin.do("PATCH", "/api/admin/auth/providers/m", map[string]any{"mergeVerifiedEmail": false}).want(t, 200, "")
-		if loc, _ := try("off"); loc != "/login?sso_error=no_account" {
-			t.Fatal(loc)
+		loc, c = try("off")
+		if who := signedInAs(t, c); loc != "/" || who == "off-local" {
+			t.Fatalf("%s %q", loc, who)
+		} else if u := c.do("GET", "/api/session", nil).user(); u["email"] != "" {
+			t.Fatal(u)
+		}
+		if _, c := try("fresh"); c.do("GET", "/api/session", nil).user()["emailVerified"] != false {
+			t.Fatal("an untrusted provider made a verified address")
 		}
 		// A person changing their own address clears the mark; an administrator confirming it sets it.
 		off := a.newClient("")
@@ -421,22 +445,6 @@ func TestMergeByVerifiedEmailIsStrict(t *testing.T) {
 		w = admin.do("PATCH", "/api/users/"+id, map[string]any{"emailVerified": true}).want(t, 200, "").user()
 		if w["emailVerified"] != true || w["email"] != "off3@example.test" {
 			t.Fatal(w)
-		}
-		w = admin.do("PATCH", "/api/users/"+id, map[string]any{"email": "off4@example.test", "emailVerified": true}).want(t, 200, "").user()
-		if w["emailVerified"] != true {
-			t.Fatal(w)
-		}
-		// A new account made by the provider has the provider's address, verified when it vouched for it.
-		admin.do("PATCH", "/api/admin/auth/providers/m", map[string]any{"autoCreate": true}).want(t, 200, "")
-		set("fresh", "s-fresh", "fresh@example.test", true)
-		set("fresh2", "s-fresh2", "fresh2@example.test", false)
-		if loc, c := try("fresh"); loc != "/" {
-			t.Fatal(loc)
-		} else if u := c.do("GET", "/api/session", nil).user(); u["email"] != "fresh@example.test" || u["emailVerified"] != true || u["role"] != "member" {
-			t.Fatal(u)
-		}
-		if _, c := try("fresh2"); c.do("GET", "/api/session", nil).user()["emailVerified"] != false {
-			t.Fatal("a claim that is not verified made a verified account")
 		}
 	})
 }

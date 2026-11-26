@@ -100,6 +100,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   email_domain_not_allowed: 'The domain of this email address is not allowed.',
   email_unverified: 'This email address has not been verified yet.',
   email_verified: 'This email address is already verified.',
+  email_taken: 'Another account already has this email address.',
+  email_not_ascii: 'Email addresses with characters outside ASCII are not accepted on this server.',
   terms_required: 'Accept the terms first.',
   passkey_required: 'This account has to sign in with a passkey first.',
   passkey_failed: 'The passkey check did not pass.',

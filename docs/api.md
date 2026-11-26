@@ -619,7 +619,8 @@ own.
 | `provider_unavailable` | the provider is disabled or unknown, its discovery document or metadata cannot be fetched, or its stored secret cannot be opened with this server's key |
 | `idp_error` | the provider refused, or its answer did not verify (OpenID Connect, GitHub) |
 | `expired` | the attempt is unknown, used, older than 10 minutes, or was started in another browser |
-| `no_account` | nobody has this identity and the provider does not create accounts; also when an address match is ambiguous |
+| `no_account` | nobody has this identity and the provider does not create accounts |
+| `email_in_use` | from 3.6: nobody has this identity, the sign-in vouches for its address, and another account holds that address verified; sign in to that account and link the provider from its settings |
 | `not_allowed` | GitHub: the person is in none of the organisations the provider requires |
 | `disabled` | the account is disabled |
 | `identity_in_use` | `link`: another account has this identity |
@@ -645,33 +646,26 @@ Before 2.8 the parameter was `error=`; the web app shipped with 2.8 reads
 For `intent: login`, in this order:
 
 1. The account that has this identity (by issuer and subject: one query).
-2. With `mergeVerifiedEmail` on for this provider, and only then: the one
-   account of the provider's tenant (from 3.3; another tenant's accounts are
-   not looked at, here or in the `no_account` check below) whose `email`
-   equals the address the provider sent (ignoring case),
-   when the provider said the address is verified (`email_verified: true` in
-   OpenID Connect; a verified primary address on GitHub; for SAML, which has no
-   such claim, turning the option on means the administrators vouch for every
-   address the identity provider sends), and the account's `emailVerified` is
-   `true` because a provider vouched for the address, the person confirmed it,
-   or a site administrator set or confirmed it: an address that only a tenant
-   administrator set or confirmed does not count (they could give a person of
-   their tenant someone else's address). It is never an administrator's account, a disabled one, or one that
-   already has an identity from this provider. The identity is then attached to
-   it, and this is recorded in the audit log. Two accounts with the address:
-   `no_account`.
+2. From 3.6, never an account found by its address. When the sign-in vouches
+   for the address it sent (see "Which sign-ins vouch for an address" in
+   "Signing in by email address") and another account holds that address
+   verified: `email_in_use` (the person signs in to that account and links the
+   provider from their account settings). 2.8's merge by verified address is
+   gone, and with it its audit row (`identity_linked` with `by: "email"`).
 3. With `autoCreate` on for this provider: a new member account, named as
    before 2.8 (the `name` claim; the username from `preferred_username` or the
    part of `email` before `@`, made valid and unique; for SAML, the attributes
-   the provider maps). Its `email` is the provider's address, and
-   `emailVerified` is whether the provider vouched for it. Never the first
-   account: that is made with the setup token. A GitHub provider can only create
-   accounts when it names organisations.
+   the provider maps). Its `email` is the provider's address, verified (by
+   `provider:<slug>`) when the sign-in vouches for it, and then taken from an
+   account that holds it unverified; left out when another account keeps it,
+   or when it is outside ASCII while `users.emailNonAscii` is off. Never the
+   first account: that is made with the setup token. A GitHub provider can
+   only create accounts when it names organisations.
 4. Otherwise `no_account`.
 
-An address alone never merges accounts: the same address signing in from two
+An address alone never joins accounts: the same address signing in from two
 providers makes two identities, and they are on one account only if the person
-linked the second one from their account (or the option above is on).
+linked the second one from their account.
 
 Two providers may not share an issuer (see "Sign-in providers"), so an identity
 belongs to exactly one provider, and deleting a provider and adding it again
@@ -6673,7 +6667,8 @@ password reset and for 2.8's merge by verified address.
 Signed in. `{"lang": "zh-Hans"}`. Sends a link
 `<public url>/verify-email#<token>` (valid 24 hours) to the account's current
 `email`. `202 {"sent": true}`. `409 mail_not_configured`; `400 invalid` when
-the account has no email, or one stored with characters outside ASCII; `409 email_verified` when it is verified already;
+the account has no email; `400 email_not_ascii` (from 3.6) for one stored with characters outside ASCII while
+`users.emailNonAscii` is off; `409 email_verified` when it is verified already;
 `429 rate_limited` after 3 in an hour.
 
 #### `POST /api/email/confirm`
@@ -8902,8 +8897,9 @@ tenant's SSO provider:
 
 - finds accounts only by `(its tenant, issuer, subject)`, and the account must
   be of its tenant (checked again on the row, so a bad row cannot cross);
-- merges by verified address (`mergeVerifiedEmail`) only into its tenant's
-  accounts (3.3 already), never an administrator's;
+- never attaches an identity to an account by its address (3.6, "Signing in
+  by email address"), and vouches for an address only on its tenant's
+  verified domains;
 - **never signs in a site administrator**, even one whose identity is linked:
   a tenant administrator controls that provider and could point it at an
   identity provider of their own (`sso_error=not_allowed`, audited);
@@ -9315,10 +9311,30 @@ From 3.6 the email address is the main way in; the username stays.
   commit authors, links, member lists. Nothing about it changes.
 - **The email address is unique on the server**, among all accounts (enabled,
   disabled, and deleted ones in the recycle bin, until they are purged),
-  compared as 3.3 compares addresses (only `A` to `Z` made lower case; ASCII
-  only). It is held as `users.email_key` with a unique index, so finding an
-  account by address is one index lookup. There are no exceptions: two accounts
-  never share an address.
+  verified or not. Every address of every account is a row of `user_emails`
+  (account, address, key, primary, verified, who vouched, created) with a
+  unique index on the key, so finding an account by address is one index
+  lookup. There are no exceptions: two accounts never share an address. An
+  account has one address today, its primary one (the UPN), copied to
+  `users.email` so that lists and search need no join; the shape allows
+  several, and **signing in or resetting by address reads a verified row of
+  `user_emails`**, never `users.email`.
+- **How addresses are compared** (the key): the domain in its ASCII form
+  (lower case; a domain outside ASCII, or one with an `xn--` label, through
+  IDNA (UTS #46) to punycode, so `例子.公司` and `xn--fsqu00a.xn--55qx5d` are
+  one domain); the local part with `A` to `Z` lower case when it is ASCII,
+  otherwise NFC, case folded (Unicode full folding) and NFC again.
+- **Addresses outside ASCII** (a Unicode local part, an internationalised
+  domain) are refused with `400 email_not_ascii` while the site setting
+  `users.emailNonAscii` is off (the default), wherever an address is set:
+  registration, `PATCH /api/account`, `PATCH /api/users/{id}`, a new tenant's
+  first administrator. Turned on, they are accepted and compared by the key
+  above, so they stay unique; mail to them needs a relay that supports
+  SMTPUTF8 (RFC 6531), and without one their messages fail at the relay.
+  Turning it off again keeps the addresses already stored (and their
+  uniqueness) but sends them no account mail, and a lookup by a typed address
+  outside ASCII finds nobody. An address an identity provider sends outside
+  ASCII while it is off is left out of the new account.
 - **`POST /api/login`** takes `{"identifier": "tang@acme.example", "password": "…"}`;
   `identifier` is an email address (it contains `@`) or a username; it
   replaces 2.8's `username` field. The checks and their
@@ -9326,26 +9342,62 @@ From 3.6 the email address is the main way in; the username stays.
   lockout key on the account when one is found, else on the identifier as
   typed in lower case, so an address and a username of the same account share
   one count. A wrong address answers like a wrong username (a dummy hash, the
-  same `401`).
+  same `401`). An address finds the account that holds it verified.
 - **The sign-in page** asks for "email or username" (email first in the label
   and the placeholder), then `POST /api/auth/discover` decides whether it goes
   to SSO (above), then it asks for the password or offers a passkey.
-- **Setting an address** that another account holds, through
+- **Setting an address** that another account holds, verified or not, through
   `PATCH /api/account`, an administrator's `PATCH /api/users/{id}`, or an
-  invite that would make a new account: `409 email_taken` (signed in or
-  administrator only, so this tells a signed-in person no more than the
-  invite and member pages do). Registration keeps 3.3's rule of answering the
-  same `202` either way; what was "an enabled account of the tenant with this
-  verified address" is now any account on the server with it.
+  invite that would make a new account (a new tenant's first administrator):
+  `409 email_taken` (signed in or administrator only, so this tells a
+  signed-in person no more than the invite and member pages do). Setting one's
+  own address in another case is not a change of holder. Registration keeps
+  3.3's rule of answering the same `202` either way; what was "an enabled
+  account of the tenant with this verified address" is now any account on the
+  server that holds it verified (or is deleted and keeps it): the registration
+  is then a decoy whose link is never sent, and the holder, when it may get
+  account mail, is told at its stored address.
+- **`POST /api/password/forgot`** with an address: the account that holds it
+  verified, on the whole server (as a username already was), when that address
+  may get account mail (verified by the person, a trusted sign-in or a site
+  administrator; not by a tenant administrator alone). The link goes to that
+  address as stored. An address held unverified finds nobody.
 - **An address held only unverified by another account** goes to whoever
-  confirms it: confirming a registration (or `POST /api/email/confirm`) for an
-  address another account holds without `emailVerified` moves the address:
-  the other account's `email` is cleared, it gets a notice in the app, and
-  `email_released` is audited. A verified holder is never displaced.
-- **An identity provider's address** already held by another account follows
-  2.8's merge rules (`mergeVerifiedEmail`, within the provider's owner); when it
-  does not merge, the new account is made without an address (as for an address
-  outside ASCII).
+  proves it: confirming a registration, or a trusted sign-in (below), for an
+  address another live account holds without `emailVerified` moves the
+  address: the other account's address is cleared (and its pending links
+  dropped), it gets a `system` notification
+  `{"event": "email_released", "email": "…"}`, and `email_released` is audited
+  (`email`, `to`). It moves only when the proved address is the same mailbox
+  (equal without the Unicode case folding: NFC, `A` to `Z` lower case); one that
+  is equal only once folded is refused like a verified one. A verified holder,
+  and a deleted account until its purge, are never displaced. Setting an
+  address (`PATCH`) never moves it: who has not proved it gets
+  `409 email_taken`.
+- **A sign-in is never attached to an account by its address.** 2.8's merge by
+  verified address is gone. An identity nobody has, whose address another
+  account holds verified, ends in `sso_error=email_in_use` when the sign-in
+  vouches for the address (the person signs in to that account and links the
+  provider from their account settings); when it does not vouch for it, a new
+  account (`autoCreate`) is made without the address. One held unverified moves
+  to the new account when the sign-in vouches for it (above), and is left out
+  otherwise.
+- **Which sign-ins vouch for an address** (one rule in the server,
+  `trustsEmail`). An address a sign-in vouches for is verified at once, with
+  `verified_by` `provider:<slug>`; any other is unverified.
+  - The built-in social providers (3.6's templates): Google and Apple only when
+    the token says `email_verified: true`; GitHub only an address its API lists
+    as verified (today's `github` kind); Microsoft only when the token proves
+    the address: the `xms_edov` claim, or an address on a domain verified here.
+    Microsoft's plain `email` claim is never trusted (any Entra tenant can put
+    any address in it).
+  - An organisation's SSO (OpenID Connect or SAML): only addresses on that
+    organisation's verified domains. Until domain verification exists it
+    vouches for nothing; a SAML provider, which has no verified-address claim,
+    is treated so.
+  - A provider the administrators configured (OpenID Connect): only with its
+    `mergeVerifiedEmail` switch on (shown as "trust this provider's verified
+    email addresses", off by default) and the `email_verified` claim.
 
 ### Joining an organisation
 
@@ -9683,7 +9735,13 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 - Spaces: `spaces.storage_mode`, `spaces.storage_target`, index
   `(tenant_id, storage_mode, storage_target, id)`; the per-mode counts on the
   tenant's `usage` row.
-- People: `users.email_key` with a unique index; `users.role` accepts `viewer`;
+- People: `user_emails` (`user_id` with cascade, `email`, `email_key`,
+  `is_primary`, `verified`, `verified_by`, `created`; primary key
+  `(user_id, email)`; unique `(email_key) WHERE email_key <> ''` and unique
+  `(user_id) WHERE is_primary = 1`); `users.email*` stay as the copy of the
+  primary row, written with it in one transaction; the index
+  `users_email (tenant_id, email_key)` is dropped; the site setting
+  `users.emailNonAscii` (bool, site only, default `false`); `users.role` accepts `viewer`;
   `users.role_source` (`manual` or `idp`); `tenants.created_by` (self-service).
 - Joining: `tenant_join` (tenant, domain mode, default role); `join_requests`
   (id, tenant, username, name, email, password hash, via, state, created,
@@ -9720,6 +9778,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |
 | `audit_downloaded` | someone downloaded audit rows | `from`, `to`, `kind`, `rows` |
 | `space_taken_over`, `space_transferred` | an administrator took a space over, or transferred it | `space`, `to`, `previous`, `ownerGroups`, `reason` |
+| `email_released` | an account lost an address it held unverified to one that proved it (the row is about the account that lost it; the actor is the one that took it) | `email`, `to` |
 
 Every row about a tenant carries `by.role` (`site` or `tenant`). Tenant
 administrators see their tenant's rows of these kinds, the site
@@ -9743,7 +9802,8 @@ their tenant's rows, while the tenant has `data.auditDownload`
 | `domain_public` | 400 | claiming a public mail domain |
 | `domain_code_expired` | 409 | checking an unverified claim whose code is older than 7 days |
 | `domain_managed` | 409 | creating an organisation with an address of a domain with `restrictOrgs`; with `tenant`, `join`, `start` |
-| `email_taken` | 409 | setting an address another account holds |
+| `email_taken` | 409 | setting an address another account holds, verified or not (also a deleted account until its purge) |
+| `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `capability_off` | 403 | the tenant's capabilities leave out what was asked; with `capability` (and `permission`, the key, when a route's key needs it) |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
 | `confirm_required` | 409 | a capability or plan change that stops something in use, without a confirmation; with `plan` |
@@ -10578,9 +10638,12 @@ never returned: `hasSecret` says whether one is stored.
 - `order` sorts the buttons (then `name`).
 - `autoCreate`: an identity nobody has makes a member account at its first
   sign-in (see "Which account an identity signs in to"). Off by default.
-- `mergeVerifiedEmail`: the verified-address match of the same section. Off by
-  default; the page explains that it lets this provider sign people in to
-  existing accounts.
+- `mergeVerifiedEmail`: from 3.6, "trust this provider's verified email
+  addresses": an OpenID Connect provider's address with `email_verified: true`
+  counts as verified (see "Which sign-ins vouch for an address"). It never
+  signs anyone in to an existing account. It does nothing for SAML (no such
+  claim) or GitHub (trusted by its API). Off by default. The name stays for
+  the contract.
 - `status` is the last discovery or metadata fetch; `people` how many accounts
   have an identity from this provider.
 

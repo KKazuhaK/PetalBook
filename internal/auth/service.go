@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/KazuhaHub/authcore/captcha"
@@ -472,17 +473,80 @@ func cleanDisplayName(in string) (string, error) {
 	return n, nil
 }
 
+// cleanEmail checks the form of an address: an @ that is neither first nor
+// last, at most 254 bytes, no space, control or format character, < or >, and
+// a store.EmailKey. It lets characters outside ASCII through: whether those
+// may be set is the site's (see Service.cleanEmailFor).
 func cleanEmail(in string) (string, error) {
 	e := strings.TrimSpace(in)
 	if e == "" {
 		return "", nil
 	}
-	at := strings.Index(e, "@")
-	// ASCII only: Unicode case mapping makes look-alikes equal (see store.EmailKey).
-	if len(e) > 254 || at < 1 || at == len(e)-1 || strings.ContainsFunc(e, func(r rune) bool { return r <= 0x20 || r >= 0x7f || r == '<' || r == '>' }) {
+	at := strings.LastIndex(e, "@")
+	if len(e) > 254 || at < 1 || at == len(e)-1 || !utf8.ValidString(e) || strings.ContainsFunc(e, func(r rune) bool {
+		return r <= 0x20 || r == 0x7f || r == '<' || r == '>' || unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
+	}) {
+		return "", errf(Invalid, "That does not look like an email address.")
+	}
+	if _, ok := store.EmailKey(e); !ok {
 		return "", errf(Invalid, "That does not look like an email address.")
 	}
 	return e, nil
+}
+
+// errNotASCII refuses an address outside ASCII while users.emailNonAscii is off.
+func errNotASCII() *Error {
+	return coded(400, "email_not_ascii", "Addresses with characters outside ASCII are not accepted on this server.")
+}
+
+// errEmailTaken is an address another account holds.
+func errEmailTaken() *Error {
+	return coded(409, "email_taken", "Another account has that email address.")
+}
+
+// emailErr turns store.ErrEmailTaken into its answer.
+func emailErr(err error) error {
+	if errors.Is(err, store.ErrEmailTaken) {
+		return errEmailTaken()
+	}
+	return err
+}
+
+// nonASCIIEmail says whether addresses outside ASCII may be set (the site's
+// users.emailNonAscii, from the settings cache; off when there is none).
+func (s *Service) nonASCIIEmail(ctx context.Context) bool {
+	st := s.settings.Load()
+	if st == nil {
+		return false
+	}
+	e, err := st.Get(ctx, "", settings.UsersEmailNonASCII)
+	if err != nil {
+		return false
+	}
+	on, _ := e.Value.(bool)
+	return on
+}
+
+// cleanEmailFor is cleanEmail with the site's rule on addresses outside ASCII.
+func (s *Service) cleanEmailFor(ctx context.Context, in string) (string, error) {
+	e, err := cleanEmail(in)
+	if err != nil || e == "" {
+		return e, err
+	}
+	if !store.EmailIsASCII(e) && !s.nonASCIIEmail(ctx) {
+		return "", errNotASCII()
+	}
+	return e, nil
+}
+
+// mailable says whether account mail (a link that signs in, a reset) may go
+// to a stored address: it has a key, and it is ASCII or the site accepts
+// addresses outside ASCII (sending to one needs a relay with SMTPUTF8).
+func (s *Service) mailable(ctx context.Context, email string) bool {
+	if _, ok := store.EmailKey(email); email == "" || !ok {
+		return false
+	}
+	return store.EmailIsASCII(email) || s.nonASCIIEmail(ctx)
 }
 
 func checkRole(r string) error {
@@ -507,8 +571,16 @@ type CreateParams struct {
 	// account exists, even when two setups run at once. FirstOK is the
 	// command-line form: it also records that an account exists, but never refuses.
 	Setup, FirstOK bool
-	// EmailVerified: the address came from a provider that vouched for it.
+	// EmailVerified: the address was proved (a confirmed registration,
+	// VerifiedBy "") or a trusted sign-in vouched for it (VerifiedBy
+	// store.VerifiedByProvider).
 	EmailVerified bool
+	VerifiedBy    string
+	// TakeUnverified takes a verified address from another account that holds
+	// it unverified; that account is told and the move audited. DropTakenEmail
+	// makes the account without an address when another account holds it (a
+	// sign-in); otherwise that is 409 email_taken.
+	TakeUnverified, DropTakenEmail bool
 	// RetryUsername lets the name get a numeric suffix when it is taken (accounts made from an
 	// identity provider's claims).
 	RetryUsername bool
@@ -551,7 +623,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if err != nil {
 		return nil, err
 	}
-	email, err := cleanEmail(p.Email)
+	email, err := s.cleanEmailFor(ctx, p.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -604,9 +676,11 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	if err != nil {
 		return nil, err
 	}
+	var released *store.Released
 	for attempt := 0; ; attempt++ {
 		u.ID = s.newID()
 		cand := u
+		released = nil
 		if attempt > 0 && p.RetryUsername {
 			cand.Username = suffixed(username, attempt)
 		}
@@ -647,8 +721,23 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			} else if barred {
 				return errRetiredName
 			}
-			if err := store.InsertUser(ctx, q, cand); err != nil {
+			// The row without its address, then the address by the rules of
+			// every address (store.SetPrimaryEmail), in the same transaction.
+			row := cand
+			row.Email, row.EmailVerified = "", false
+			if err := store.InsertUser(ctx, q, row); err != nil {
 				return err
+			}
+			if cand.Email != "" {
+				r, err := store.SetPrimaryEmail(ctx, q, cand.ID, cand.Email, cand.EmailVerified, p.VerifiedBy,
+					store.PrimaryOpts{TakeUnverified: p.TakeUnverified && cand.EmailVerified, Now: cand.Created})
+				switch {
+				case errors.Is(err, store.ErrEmailTaken) && p.DropTakenEmail:
+					cand.Email, cand.EmailVerified = "", false
+				case err != nil:
+					return emailErr(err)
+				}
+				released = r
 			}
 			if pwHash != "" {
 				if err := store.SetPasswordHash(ctx, q, cand.ID, pwHash, s.now()); err != nil {
@@ -702,6 +791,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 	}
 	stg.Commit(u.ID)
 	s.markUsersExist()
+	if released != nil {
+		s.emailReleased(ctx, *released, u)
+	}
 	if s.onNewUser != nil {
 		s.onNewUser(context.WithoutCancel(ctx), []store.Touched{{UserID: u.ID, TenantID: u.TenantID}})
 	}
