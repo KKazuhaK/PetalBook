@@ -33,8 +33,22 @@ const (
 	NotifySync = "sync"
 	// NotifyTodo: a reminder of the person's own (milestone 5.x). Reserved.
 	NotifyTodo = "todo"
-	// NotifySystem: a notice from the server's administrators. Reserved.
-	NotifySystem = "system"
+	// NotifySpaceTakenOver: an administrator took over a space the person
+	// owned (payload {"space", "by", "reason"}; ref is the space).
+	NotifySpaceTakenOver = "space_taken_over"
+	// NotifySpaceTransferred: an administrator transferred a space the person
+	// owned to someone else (payload as space_taken_over).
+	NotifySpaceTransferred = "space_transferred"
+	// NotifyAccountChanged: someone else changed how the person is known or
+	// reached (payload {"fields": [name, username, email, emailVerified], "by"},
+	// never the values).
+	NotifyAccountChanged = "account_changed"
+	// NotifyPasswordSet: an administrator gave the person a temporary password
+	// (payload {"by"}).
+	NotifyPasswordSet = "password_set"
+	// NotifyEmailReleased: an address the person held unverified moved to the
+	// account that proved it (payload {"email"}).
+	NotifyEmailReleased = "email_released"
 )
 
 // NotifyKind is one entry of the registry.
@@ -53,7 +67,11 @@ var NotifyKinds = []NotifyKind{
 	{NotifyMention, false, ""},
 	{NotifySync, false, "the state of a space's remote"},
 	{NotifyTodo, false, ""},
-	{NotifySystem, false, ""},
+	{NotifySpaceTakenOver, false, "an administrator taking a space over"},
+	{NotifySpaceTransferred, false, "an administrator transferring a space"},
+	{NotifyAccountChanged, false, "someone else editing the person's account"},
+	{NotifyPasswordSet, false, "an administrator setting a temporary password"},
+	{NotifyEmailReleased, false, "another account proving an address the person held unverified"},
 }
 
 // KnownNotifyKind says whether the registry has the kind.
@@ -83,6 +101,10 @@ type Notification struct {
 }
 
 var notifySeq atomic.Uint64
+
+// Atomically runs fn in one transaction: a new one when q is the database
+// itself, or q when it already is a transaction.
+func Atomically(ctx context.Context, q Q, fn func(Q) error) error { return atomically(ctx, q, fn) }
 
 // NewNotificationID is an id for a row made at t: the time as 12 hexadecimal
 // digits of Unix milliseconds, then a sequence, so that ids sort by time.

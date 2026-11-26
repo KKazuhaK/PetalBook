@@ -65,21 +65,32 @@ export function describeNotification(n: NotificationItem): Described {
         space: n.ref,
       }
     }
-    case 'system':
-      // Someone proved an address the person held unverified (3.6).
-      if (p.event === 'email_released') {
-        return { title: p2.emailReleased.title(str(p.email)), body: p2.emailReleased.body, to: settingsPath('profile') }
+    // Someone proved an address the person held unverified (3.6).
+    case 'email_released':
+      return { title: p2.emailReleased.title(str(p.email)), body: p2.emailReleased.body, to: settingsPath('profile') }
+    // An administrator took over or transferred a space the person owned.
+    case 'space_taken_over':
+    case 'space_transferred': {
+      const title = n.kind === 'space_taken_over' ? p2.takeover.takenTitle : p2.takeover.transferredTitle
+      return {
+        title: title(str(p.by), str(p.space)),
+        body: p2.takeover.body(str(p.reason)),
+        to: spaceUrls(n.ref).home(),
       }
-      // An administrator took over or transferred a space the person owned.
-      if (p.event === 'space_taken_over' || p.event === 'space_transferred') {
-        const title = p.event === 'space_taken_over' ? p2.takeover.takenTitle : p2.takeover.transferredTitle
-        return {
-          title: title(str(p.by), str(p.space)),
-          body: p2.takeover.body(str(p.reason)),
-          to: spaceUrls(n.ref).home(),
-        }
+    }
+    // Someone else changed the person's name, username or address: the fields, never the values.
+    case 'account_changed': {
+      const names = p2.accountChanged.fields as Record<string, string>
+      const fields = (Array.isArray(p.fields) ? p.fields : []).map((f) => names[str(f)] ?? str(f)).filter(Boolean)
+      return {
+        title: p2.accountChanged.title(str(p.by)),
+        body: p2.accountChanged.body(fields.join(p2.accountChanged.join)),
+        to: settingsPath('profile'),
       }
-      return { title: p2.system.title, body: p2.system.body, to: n.ref ? spaceUrls(n.ref).home() : '' }
+    }
+    // An administrator gave the person a temporary password.
+    case 'password_set':
+      return { title: p2.passwordSet.title(str(p.by)), body: p2.passwordSet.body, to: settingsPath('profile') }
     case 'mention':
     case 'todo':
       return { title: p2[n.kind].title, body: p2[n.kind].body, to: n.ref ? spaceUrls(n.ref).home() : '' }

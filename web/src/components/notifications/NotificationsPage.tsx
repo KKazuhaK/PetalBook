@@ -8,12 +8,13 @@ import { ErrorState, PageFallback } from '@/components/common'
 import { TopBar } from '@/components/layout/TopBar'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
+import { NOTIFY_KINDS } from '@/api/types'
 import { tn } from '@/i18n/notify'
 import { NotificationRow } from './NotificationRow'
 
-// The filters: everything, only what is unread, and one kind each. The ones with nothing made yet (mentions) are there
+// The filters: everything, only what is unread, and one per kind of the registry. The ones with nothing made yet (mentions) are there
 // all the same, so the place is known before the first one comes.
-const FILTERS = ['all', 'unread', 'problems', 'invite', 'mention', 'sync'] as const
+const FILTERS = ['all', 'unread', ...NOTIFY_KINDS] as const
 type Filter = (typeof FILTERS)[number]
 
 const isFilter = (v: string | null): v is Filter => FILTERS.includes(v as Filter)

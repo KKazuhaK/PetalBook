@@ -1,0 +1,12 @@
+[
+  "problems",
+  "invite",
+  "mention",
+  "sync",
+  "todo",
+  "space_taken_over",
+  "space_transferred",
+  "account_changed",
+  "password_set",
+  "email_released"
+]

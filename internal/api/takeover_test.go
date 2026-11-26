@@ -93,7 +93,7 @@ func TestATenantAdministratorTakesASpaceOverOnlyExplicitly(t *testing.T) {
 		found := false
 		for _, it := range items {
 			p, _ := it["payload"].(map[string]any)
-			if it["kind"] == "system" && it["ref"] == sp && p["event"] == "space_taken_over" && p["space"] == "Team" && p["by"] == "Ada Admin" {
+			if it["kind"] == "space_taken_over" && it["ref"] == sp && p["space"] == "Team" && p["by"] == "Ada Admin" {
 				found = true
 			}
 		}
@@ -120,7 +120,7 @@ func TestATransferIsAuditedAndTellsTheOwners(t *testing.T) {
 			t.Fatal(rows)
 		}
 		items, _, _ := noteItems(t, own, "")
-		if len(items) == 0 || items[0]["kind"] != "system" || items[0]["payload"].(map[string]any)["event"] != "space_transferred" {
+		if len(items) == 0 || items[0]["kind"] != "space_transferred" {
 			t.Fatal(items)
 		}
 	})

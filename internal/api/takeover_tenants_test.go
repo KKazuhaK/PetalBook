@@ -35,7 +35,7 @@ func TestASiteAdministratorTakesOverASpaceOfAnyTenant(t *testing.T) {
 			t.Fatal(rows)
 		}
 		items, _, _ := noteItems(t, f.admB, "")
-		if len(items) == 0 || items[0]["kind"] != "system" || items[0]["payload"].(map[string]any)["event"] != "space_taken_over" {
+		if len(items) == 0 || items[0]["kind"] != "space_taken_over" {
 			t.Fatal(items)
 		}
 	})
@@ -68,7 +68,7 @@ func TestATakeoverTellsThePeopleOfAnOwnerGroup(t *testing.T) {
 		items, _, _ := noteItems(t, gm, "")
 		found := false
 		for _, it := range items {
-			if it["kind"] == "system" && it["payload"].(map[string]any)["event"] == "space_taken_over" {
+			if it["kind"] == "space_taken_over" {
 				found = true
 			}
 		}
