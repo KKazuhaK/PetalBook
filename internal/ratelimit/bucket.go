@@ -8,9 +8,9 @@ import (
 // Bucket is a token bucket per key: burst tokens, refilled at perMinute a
 // minute. Safe for concurrent use.
 //
-// A full table forgets its least recently used key while that key still has a
-// token (forgetting it gives back at most what it would have refilled to
-// anyway); when that key has none, the newcomer gets the table's Full mode.
+// A full table forgets its least recently used key only once that key has
+// refilled to its burst (forgetting it then gives back nothing: a new bucket
+// starts full too); until then the newcomer gets the table's Full mode.
 type Bucket struct {
 	mu    sync.Mutex
 	m     map[string]*entry
@@ -53,7 +53,7 @@ func (b *Bucket) TakeN(key string, n int) (time.Duration, bool) {
 				break
 			}
 			b.refill(h, now)
-			if h.tokens < 1 {
+			if h.tokens < b.burst {
 				switch {
 				case want > b.burst:
 					return b.wait(want, 0), false
@@ -62,7 +62,7 @@ func (b *Bucket) TakeN(key string, n int) (time.Duration, bool) {
 				case b.full == Overflow:
 					return b.spill.take(want, now)
 				}
-				return b.wait(1, h.tokens), false
+				return b.wait(b.burst, h.tokens), false
 			}
 			b.order.remove(h)
 			delete(b.m, h.key)

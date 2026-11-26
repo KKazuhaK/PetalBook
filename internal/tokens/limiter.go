@@ -13,7 +13,9 @@ import (
 // keys: a full table forgets the clients with the fewest failures first, never
 // a blocked one. A new client that finds no room is let through (a correct
 // token is never refused), unless Overflow is set: then new clients share the
-// table's overflow bucket (OAuth registrations, which make rows).
+// table's overflow bucket (OAuth registrations, which make rows). Either way
+// its failures are counted in the table's overflow sketch, which blocks it at
+// Max like a client with an entry.
 type Limiter struct {
 	Max      int           // failures allowed per Window; default 10
 	Window   time.Duration // default 1 minute

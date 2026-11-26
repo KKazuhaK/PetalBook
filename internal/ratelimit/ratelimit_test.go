@@ -336,7 +336,15 @@ func TestChecksDoNotAllocateForKnownKeys(t *testing.T) {
 	w.Take("k", 1, 1<<30)
 	f.Fail("k", 1<<30, time.Hour, 0)
 	b.Take("k")
+	// A full table counts a new key in its sketch, made by the first one.
+	full := NewLockout(1, c.now).OnFull(Open)
+	full.Fail("locked", 1, time.Hour, time.Hour)
+	full.Fail("new", 1<<30, time.Hour, 0)
 	if n := testing.AllocsPerRun(100, func() {
+		full.Fail("new", 1<<30, time.Hour, 0)
+		full.Reserve("new", 1<<30, time.Hour)
+		full.Refund("new")
+		full.LockedFor("new", time.Hour)
 		w.Take("k", 1, 1<<30)
 		f.Fail("k", 1<<30, time.Hour, 0)
 		f.Refund("k")
@@ -344,5 +352,158 @@ func TestChecksDoNotAllocateForKnownKeys(t *testing.T) {
 		b.Take("k")
 	}); n != 0 {
 		t.Fatalf("%v allocations a check", n)
+	}
+}
+
+// fillWithLocks fills a table of 3 keys with locked entries.
+func fillWithLocks(f *Lockout, window, lock time.Duration) {
+	for i := range 3 {
+		f.Fail("l"+strconv.Itoa(i), 1, window, lock)
+	}
+}
+
+// The bypass: a table full of locks once let a new name be guessed without
+// limit (nothing was counted, so it was never locked). Its failures now go to
+// the overflow sketch: it is locked at its cap, and while locked even a
+// correct attempt is refused. Another new name still signs in.
+func TestAFullTableOfLocksStillLocksANewName(t *testing.T) {
+	for _, mode := range []Full{Overflow, Open} {
+		c := newClock()
+		window, lock := 15*time.Minute, 15*time.Minute
+		const max = 3
+		f := NewLockout(3, c.now).OnFull(mode)
+		fillWithLocks(f, window, lock)
+		var r Result
+		for range max + 1 { // as Login: LockedFor, then the wrong password
+			if _, locked := f.LockedFor("victim", window); locked {
+				break
+			}
+			r = f.Fail("victim", max, window, lock)
+		}
+		if !r.Locked || !r.AtCap || r.Wait != lock {
+			t.Fatalf("mode %d: the new name's failures were not counted: %+v", mode, r)
+		}
+		if wait, locked := f.LockedFor("victim", window); !locked || wait != lock {
+			t.Fatalf("mode %d: the next correct attempt is not refused: %v %v", mode, wait, locked)
+		}
+		if _, blocked := f.Blocked("victim", max, window); !blocked {
+			t.Fatalf("mode %d: Blocked lets the locked name try", mode)
+		}
+		if _, locked := f.LockedFor("someone", window); locked || f.Count("someone", window) != 0 {
+			t.Fatalf("mode %d: another new name is held back", mode)
+		}
+		c.t = c.t.Add(lock)
+		if _, locked := f.LockedFor("victim", window); locked {
+			t.Fatalf("mode %d: the lock did not end", mode)
+		}
+	}
+}
+
+// The address table is gated by Reserve: a new address in a full table is
+// counted in the sketch, refused at its cap and locked by LockIfAtCap; a
+// right attempt gives its place back.
+func TestAFullTableOfLocksStillCountsANewAddress(t *testing.T) {
+	c := newClock()
+	window, lock := 15*time.Minute, 15*time.Minute
+	const max = 3
+	f := NewLockout(3, c.now)
+	fillWithLocks(f, window, lock)
+	for range 2 * max { // right attempts give their place back
+		if _, ok, _ := f.Reserve("ip:new", max, window); !ok {
+			t.Fatal("a right attempt was refused")
+		}
+		f.Refund("ip:new")
+	}
+	for range max {
+		if _, ok, _ := f.Reserve("ip:new", max, window); !ok {
+			t.Fatal("refused within the cap")
+		}
+	}
+	if f.Count("ip:new", window) != max {
+		t.Fatalf("count %d", f.Count("ip:new", window))
+	}
+	if _, ok, _ := f.Reserve("ip:new", max, window); ok {
+		t.Fatal("a new address in a full table tries without limit")
+	}
+	if !f.LockIfAtCap("ip:new", max, window, lock) {
+		t.Fatal("LockIfAtCap did not lock the new address")
+	}
+	if _, locked := f.LockedFor("ip:new", window); !locked {
+		t.Fatal("not locked")
+	}
+	if _, ok, _ := f.Reserve("ip:other", max, window); !ok {
+		t.Fatal("another new address was refused")
+	}
+}
+
+// A per-minute allowance that is Open counts newcomers in the sketch when full.
+func TestAFullOpenWindowStillCountsANewKey(t *testing.T) {
+	c := newClock()
+	w := NewWindow(3, time.Minute, EvictFree, c.now).OnFull(Open)
+	for i := range 3 {
+		w.Take("capped"+strconv.Itoa(i), 1, 1)
+	}
+	for range 3 {
+		if _, ok, _ := w.Take("new", 1, 3); !ok {
+			t.Fatal("refused within the allowance")
+		}
+	}
+	if wait, ok, _ := w.Take("new", 1, 3); ok || wait != time.Minute {
+		t.Fatalf("a new key in a full Open table is never limited: %v %v", wait, ok)
+	}
+	if _, ok, _ := w.Take("other", 1, 3); !ok {
+		t.Fatal("another new key was refused")
+	}
+	c.t = c.t.Add(time.Minute)
+	if _, ok, _ := w.Take("new", 1, 3); !ok {
+		t.Fatal("the window did not end")
+	}
+}
+
+// Eviction must not hand a partly drained bucket a fresh burst: only a bucket
+// that has refilled to its burst is forgotten.
+func TestEvictionKeepsAPartlyDrainedBucket(t *testing.T) {
+	c := newClock()
+	b := NewBucket(1, 60, 3, c.now)
+	b.TakeN("a", 2) // one token left
+	if _, ok := b.Take("b"); !ok {
+		t.Fatal("the newcomer gets the overflow bucket")
+	}
+	if _, ok := b.TakeN("a", 2); ok {
+		t.Fatal("eviction gave the drained bucket a fresh burst")
+	}
+	c.t = c.t.Add(2 * time.Second) // refilled to its burst
+	if _, ok := b.Take("b"); !ok || b.Len() != 1 {
+		t.Fatal("a full bucket does not make room")
+	}
+}
+
+// A few goroutines on small tables, for -race.
+func TestTablesAreSafeForConcurrentUse(t *testing.T) {
+	c := newClock()
+	f := NewLockout(3, c.now)
+	w := NewWindow(3, time.Minute, EvictFree, c.now).OnFull(Open)
+	b := NewBucket(3, 60, 5, c.now)
+	done := make(chan struct{})
+	for g := range 4 {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for i := range 20 {
+				k := strconv.Itoa((g + i) % 6)
+				f.Fail(k, 3, time.Minute, time.Minute)
+				f.Reserve("r"+k, 3, time.Minute)
+				f.Refund("r" + k)
+				f.Blocked(k, 3, time.Minute)
+				f.LockedFor(k, time.Minute)
+				w.Take(k, 1, 3)
+				b.Take(k)
+			}
+		}()
+	}
+	for range 4 {
+		<-done
+	}
+	if f.Len() > 3 || w.Len() > 3 || b.Len() > 3 {
+		t.Fatal("a bound was passed")
 	}
 }

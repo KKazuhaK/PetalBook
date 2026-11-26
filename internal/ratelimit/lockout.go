@@ -24,6 +24,7 @@ type Lockout struct {
 	max   int
 	full  Full
 	spill budget
+	sk    *sketch // failures of keys with no entry; nil until the table is first full
 	now   Clock
 }
 
@@ -52,7 +53,7 @@ type Result struct {
 	AtCap   bool          // the key now has max failures, is locked, or could not be counted
 	First   bool          // the first time in this window it reached the cap
 	Locked  bool          // this failure started a lock
-	Full    bool          // no room for a new key: nothing was counted for it (see OnFull)
+	Full    bool          // the key has no entry: it was counted in the overflow sketch (see OnFull)
 	Wait    time.Duration // until the window ends, or the lock does
 	LockFor time.Duration
 }
@@ -69,13 +70,18 @@ func (t *Lockout) Fail(key string, max int, window, lock time.Duration) Result {
 // blocked: attempts that run together then cannot each be judged against the
 // count from before the burst. first says that this refusal is the first of
 // the window (for an audit log). An attempt that turns out well gives its
-// place back with Refund. A new key that finds no room tries uncounted: a
-// full table never refuses an attempt that may be right.
+// place back with Refund. A new key that finds no room is counted in the
+// overflow sketch and refused only at its own cap there (or under its lock):
+// a full table never refuses an attempt of a key that may be right.
 func (t *Lockout) Reserve(key string, max int, window time.Duration) (wait time.Duration, ok, first bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
-	if e := t.live(key, window, now); e != nil {
+	e := t.live(key, window, now)
+	if e == nil && t.sketched(key, now, window) {
+		return t.reserveSketch(key, max, window, now)
+	}
+	if e != nil {
 		if !e.until.IsZero() {
 			return e.until.Sub(now), false, false
 		}
@@ -86,23 +92,55 @@ func (t *Lockout) Reserve(key string, max int, window time.Duration) (wait time.
 			return e.start.Add(window).Sub(now), false, first
 		}
 	}
-	if _, ok := t.canAdd(now, window); !ok {
-		return 0, true, false
+	if e == nil {
+		if _, ok := t.canAdd(now, window); !ok {
+			return t.reserveSketch(key, max, window, now)
+		}
 	}
 	t.count(key, now, window, 0, 0)
 	return 0, true, false
 }
 
+// reserveSketch is Reserve for a key with no entry. Its refusals are not
+// reported as first (the sketch keeps no per-key flag).
+func (t *Lockout) reserveSketch(key string, max int, window time.Duration, now time.Time) (time.Duration, bool, bool) {
+	if t.sk == nil {
+		t.sk = newSketch(now)
+	}
+	if w, locked := t.sk.lockedFor(key, now); locked {
+		return w, false, false
+	}
+	if t.sk.count(key, now, window) >= max {
+		return window, false, false
+	}
+	t.sk.add(key, now, window, 1)
+	return 0, true, false
+}
+
+// sketched says whether a key with no entry has failures in the sketch: it
+// is then counted there, not given an entry, until they are over.
+func (t *Lockout) sketched(key string, now time.Time, window time.Duration) bool {
+	return !t.sk.quiet(now, window) && t.sk.has(key, now, window)
+}
+
 // Blocked says whether the key may not try now, and for how long: it is under
-// lock or has max failures in the current window. A new key that finds no
-// room is blocked only in Closed mode, or in Overflow mode while the overflow
-// bucket is spent.
+// lock or has max failures in the current window, in its entry or else in
+// the overflow sketch. A new key that finds no room is otherwise blocked only
+// in Closed mode, or in Overflow mode while the overflow bucket is spent.
 func (t *Lockout) Blocked(key string, max int, window time.Duration) (time.Duration, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 	e := t.live(key, window, now)
 	if e == nil {
+		if !t.sk.quiet(now, window) {
+			if w, locked := t.sk.lockedFor(key, now); locked {
+				return w, true
+			}
+			if t.sk.count(key, now, window) >= max {
+				return window, true
+			}
+		}
 		d, ok := t.canAdd(now, window)
 		switch {
 		case ok || t.full == Open:
@@ -130,7 +168,13 @@ func (t *Lockout) LockedFor(key string, window time.Duration) (time.Duration, bo
 	defer t.mu.Unlock()
 	now := t.now()
 	e := t.live(key, window, now)
-	if e == nil || e.until.IsZero() {
+	if e == nil {
+		if t.sk.quiet(now, window) {
+			return 0, false
+		}
+		return t.sk.lockedFor(key, now)
+	}
+	if e.until.IsZero() {
 		return 0, false
 	}
 	return e.until.Sub(now), true
@@ -140,8 +184,15 @@ func (t *Lockout) LockedFor(key string, window time.Duration) (time.Duration, bo
 func (t *Lockout) Count(key string, window time.Duration) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if e := t.live(key, window, t.now()); e != nil && e.until.IsZero() {
+	now := t.now()
+	e := t.live(key, window, now)
+	switch {
+	case e != nil && e.until.IsZero():
 		return e.n
+	case e == nil && !t.sk.quiet(now, window):
+		if _, locked := t.sk.lockedFor(key, now); !locked {
+			return t.sk.count(key, now, window)
+		}
 	}
 	return 0
 }
@@ -153,6 +204,13 @@ func (t *Lockout) LockIfAtCap(key string, max int, window, lock time.Duration) b
 	defer t.mu.Unlock()
 	now := t.now()
 	e := t.live(key, window, now)
+	if e == nil && lock > 0 && !t.sk.quiet(now, window) {
+		if _, locked := t.sk.lockedFor(key, now); locked || t.sk.count(key, now, window) < max {
+			return false
+		}
+		t.sk.lock(key, now.Add(lock))
+		return true
+	}
 	if e == nil || !e.until.IsZero() || e.n < max || lock <= 0 {
 		return false
 	}
@@ -161,12 +219,21 @@ func (t *Lockout) LockIfAtCap(key string, max int, window, lock time.Duration) b
 }
 
 // Refund takes back one failure (an attempt that turned out well). A locked
-// key keeps its lock.
+// key keeps its lock. A key with no entry gives back one count of the
+// sketch (that is where its Reserve counted it).
 func (t *Lockout) Refund(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.m[key]
-	if e == nil || !e.until.IsZero() {
+	if e == nil {
+		if t.sk != nil {
+			if _, locked := t.sk.lockedFor(key, t.now()); !locked {
+				t.sk.sub(key)
+			}
+		}
+		return
+	}
+	if !e.until.IsZero() {
 		return
 	}
 	if e.n <= 1 {
@@ -180,7 +247,8 @@ func (t *Lockout) Refund(key string) {
 	t.regroup(e, e.n-1)
 }
 
-// Reset forgets a key.
+// Reset forgets a key's entry. What the overflow sketch counted for it stays
+// until its cells' windows are over: a sketch cannot take one key out.
 func (t *Lockout) Reset(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -213,17 +281,11 @@ func (t *Lockout) Len() int {
 func (t *Lockout) count(key string, now time.Time, window time.Duration, max int, lock time.Duration) Result {
 	e := t.live(key, window, now)
 	if e == nil {
+		if t.sketched(key, now, window) {
+			return t.countSketch(key, now, window, max, lock, 0)
+		}
 		if d, ok := t.room(now, window); !ok {
-			switch t.full {
-			case Open:
-				return Result{N: 1, Full: true, Wait: window}
-			case Overflow:
-				if w, ok := t.spill.take(1, now); !ok {
-					return Result{N: 1, AtCap: true, Full: true, Wait: w}
-				}
-				return Result{N: 1, Full: true, Wait: window}
-			}
-			return Result{N: 1, AtCap: true, Full: true, Wait: d}
+			return t.countSketch(key, now, window, max, lock, d)
 		}
 		e = &entry{key: key, start: now}
 		t.m[key] = e
@@ -247,6 +309,41 @@ func (t *Lockout) count(key string, now time.Time, window time.Duration, max int
 			res.Locked, res.LockFor, res.Wait = true, lock, lock
 		} else {
 			t.hold(e)
+		}
+	}
+	return res
+}
+
+// countSketch counts a failure of a key with no entry in the overflow
+// sketch, locking it there at its cap. Then the table's Full mode: Overflow
+// spends the shared bucket and answers as at the cap once it is spent; Closed
+// answers as at the cap (d is the wait for room).
+func (t *Lockout) countSketch(key string, now time.Time, window time.Duration, max int, lock, d time.Duration) Result {
+	if t.sk == nil {
+		t.sk = newSketch(now)
+	}
+	if w, locked := t.sk.lockedFor(key, now); locked {
+		return Result{N: max, AtCap: true, Full: true, Wait: w}
+	}
+	res := Result{N: t.sk.add(key, now, window, 1), Full: true, Wait: window}
+	if max > 0 && res.N >= max {
+		res.AtCap = true
+		res.First = res.N == max
+		if lock > 0 {
+			t.sk.lock(key, now.Add(lock))
+			res.Locked, res.LockFor, res.Wait = true, lock, lock
+		}
+		return res
+	}
+	switch t.full {
+	case Overflow:
+		if w, ok := t.spill.take(1, now); !ok {
+			res.AtCap, res.Wait = true, w
+		}
+	case Closed:
+		res.AtCap, res.Wait = true, d
+		if d < time.Second {
+			res.Wait = time.Second
 		}
 	}
 	return res

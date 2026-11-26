@@ -146,6 +146,11 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		pending: map[string]*pendingAuth{}, pendingOf: map[string]int{}, codes: map[string]*authCode{}, used: map[string]usedCode{}, replay: map[string]replayEntry{},
 		grants: map[string]*grantEntry{}, gone: map[string]time.Time{}, verified: map[[32]byte]verifiedToken{}}
 	s.cimd = newCIMDFetcher(cfg.CIMDClient, s.now, s.log)
+	// Registrations make rows, so a full table of addresses (10,000) gives a
+	// new address the shared overflow bucket (about 100 registrations a
+	// minute for all such addresses), and each such address is still held to
+	// its own 30 in 10 minutes by the table's overflow sketch. Token failures
+	// (failLimit) let a new address try and count it in the sketch.
 	s.regLimit = &tokens.Limiter{Max: registerPerWindow, Window: registerWindow, Now: s.now, Overflow: true}
 	s.failLimit = &tokens.Limiter{Now: s.now}
 	return s, nil

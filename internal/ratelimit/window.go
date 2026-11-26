@@ -29,6 +29,7 @@ type Window struct {
 	policy Policy
 	full   Full
 	spill  budget
+	sk     *sketch // what keys with no entry spent (Open, Overflow); nil until first full
 	now    Clock
 }
 
@@ -52,24 +53,28 @@ func (w *Window) OnFull(f Full) *Window {
 // Take spends n of the key's allowance of limit in its window. When that would
 // go over, nothing is spent and wait is how long until the window ends; first
 // reports the first refusal of the window (for an audit log, once per key and
-// window). A new key that finds no room gets the table's Full mode.
+// window). A new key that finds no room gets the table's Full mode; in Open
+// and Overflow mode what it spends is counted in the overflow sketch and held
+// to its limit there.
 func (w *Window) Take(key string, n, limit int) (wait time.Duration, ok, first bool) {
 	now := w.now()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	e := w.live(key, now)
 	if e == nil {
-		if d, room := w.room(1, now, w.policy); !room {
+		sketched := !w.sk.quiet(now, w.window) && w.sk.count(key, now, w.window) > 0
+		d, room := time.Duration(0), true
+		if !sketched {
+			d, room = w.room(1, now, w.policy)
+		}
+		if sketched || !room {
 			switch {
 			case n > limit:
 				return w.window, false, false
-			case w.full == Open:
-				return 0, true, false
-			case w.full == Overflow:
-				d, ok := w.spill.take(float64(n), now)
-				return d, ok, false
+			case w.full == Closed && !sketched:
+				return d, false, false
 			}
-			return d, false, false
+			return w.takeSketch(key, n, limit, now)
 		}
 		e = w.add(key, now)
 	}
@@ -83,6 +88,24 @@ func (w *Window) Take(key string, n, limit int) (wait time.Duration, ok, first b
 	if e.n >= limit {
 		w.hold(e)
 	}
+	return 0, true, false
+}
+
+// takeSketch is Take for a key with no entry: its own count in the sketch
+// first, then (Overflow) the shared bucket.
+func (w *Window) takeSketch(key string, n, limit int, now time.Time) (time.Duration, bool, bool) {
+	if w.sk == nil {
+		w.sk = newSketch(now)
+	}
+	if w.sk.count(key, now, w.window)+n > limit {
+		return w.window, false, false
+	}
+	if w.full == Overflow {
+		if d, ok := w.spill.take(float64(n), now); !ok {
+			return d, false, false
+		}
+	}
+	w.sk.add(key, now, w.window, n)
 	return 0, true, false
 }
 

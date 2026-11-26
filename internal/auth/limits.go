@@ -18,7 +18,10 @@ const maxLimitKeys = 10_000
 // sign-on let a new address through (Open: a first request is never turned
 // away); the failure tables let every attempt try and give new keys'
 // failures the overflow bucket; the throttled audit rows use the overflow
-// bucket; the mail caps fail closed.
+// bucket; the mail caps fail closed (refused until a window ends, as before).
+// The per-minute allowance and the failure tables still hold each new key to
+// its own count and lock in their overflow sketch, so a full table is no way
+// round the cap of one name or address.
 func (s *Service) initLimits(now ratelimit.Clock) {
 	s.perMin = ratelimit.NewWindow(maxLimitKeys, time.Minute, ratelimit.EvictFree, now).OnFull(ratelimit.Open)
 	s.auditIP = ratelimit.NewWindow(maxLimitKeys, time.Minute, ratelimit.EvictFree, now)

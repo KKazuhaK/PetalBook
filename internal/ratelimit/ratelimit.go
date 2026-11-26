@@ -25,9 +25,9 @@
 //  2. the entry of least weight that is not held: in a Window the one whose
 //     window is nearest its end, in a Lockout the one with the fewest failures
 //     (oldest first among equals), in a Bucket the least recently used one
-//     while it still has a token;
+//     once it has refilled to its burst;
 //  3. nothing: when every entry is held — locked, at its cap, or a bucket
-//     with no token — existing state is never dropped to let a newcomer in.
+//     below its burst — existing state is never dropped to let a newcomer in.
 //
 // A held entry is one that refuses its key now. Flooding the table with new
 // keys therefore cannot wipe a victim's lockout or failure count: new keys
@@ -41,18 +41,34 @@
 //
 //   - Overflow (the default): all such keys share one overflow bucket of
 //     max(16, MaxKeys/100) tokens, refilled at that many a minute. While it
-//     has tokens they pass, uncounted per key; when it is spent they wait.
-//   - Open: they pass, uncounted. For limits on a first request that must
-//     never be turned away (the per-minute allowance of the sign-in
-//     endpoints, the starts of single sign-on, bearer-token checks).
+//     has tokens they pass; when it is spent they wait.
+//   - Open: they pass. For limits on a first request that must never be
+//     turned away (the per-minute allowance of the sign-in endpoints, the
+//     starts of single sign-on, bearer-token checks).
 //   - Closed: they are refused until an entry runs out. Only for caps that
 //     must fail closed and guard no sign-in: outgoing mail (a Window made
-//     with KeepLive, which also never forgets a live entry).
+//     with KeepLive, which also never forgets a live entry). Unchanged by the
+//     sketch below.
 //
-// A Lockout never refuses a new key's attempt, whatever its mode: Reserve and
-// Blocked let it try (a correct sign-in always gets through), and only a
-// failure spends the overflow bucket; once it is spent, the failure is
-// answered as at its cap (an immediate short lock, the bucket's wait).
+// # The overflow sketch
+//
+// A key that passes without an entry is still counted against its own limit.
+// A Window (Open, Overflow) and a Lockout count such keys in a fixed-size
+// count-min sketch (sketch.go): 4 rows of 8,192 cells, a keyed hash with a
+// seed of the table's own, windowed like the entries, 384 KiB made the first
+// time the table is full. A Lockout locks such a key there at its cap, and
+// LockedFor, Blocked, Count, Reserve and LockIfAtCap read it for keys with no
+// entry. A collision can only count a key high, so it may be held back early,
+// never late; nobody can aim collisions at a chosen key without the seed.
+// Without this, a table filled with locks let one known name be guessed
+// without limit. A Bucket (Open) has no sketch: it guards no secret (the
+// starts of single sign-on).
+//
+// A Lockout never refuses a new key's attempt below its own count, whatever
+// its mode: Reserve and Blocked let it try (a correct sign-in gets through),
+// and only a failure spends the overflow bucket; once it is spent, the
+// failure is answered as at its cap (an immediate short lock, the bucket's
+// wait).
 package ratelimit
 
 import (
