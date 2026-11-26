@@ -281,6 +281,7 @@ var routeTable = []route{
 	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminListTenants},
 	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage).on(settings.FeatureTenancy), true, false, false, (*server).adminCreateTenant},
 	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminGetTenant},
+	{"GET", "/api/admin/tenants/{tenant}/overview", needs(authz.TenantSettingsRead).always(), true, false, false, (*server).adminTenantOverview},
 	{"PATCH", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsWrite).always(), true, false, false, (*server).adminPatchTenant},
 	{"DELETE", "/api/admin/tenants/{tenant}", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminDeleteTenant},
 	{"PUT", "/api/admin/tenants/{tenant}/plan", needs(authz.SiteTenantsManage).always(), true, false, false, (*server).adminPutTenantPlan},

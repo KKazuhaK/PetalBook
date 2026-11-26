@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"petalbook.app/server/internal/auditlog"
@@ -27,6 +28,10 @@ import (
 
 // ScopeHeader names the tenant an administration request acts in.
 const ScopeHeader = "PetalBook-Scope"
+
+// ScopeParam is the query parameter that stands for ScopeHeader on an
+// administration route's GET.
+const ScopeParam = "scope"
 
 // actingScope is the scope of a request.
 type actingScope struct {
@@ -61,6 +66,17 @@ func (s *server) enterScope(c *call, rt route) bool {
 		c.scope.capacity = capacityFor(c.p.Access, rt.access.key)
 	}
 	vals := c.r.Header.Values(ScopeHeader)
+	// What a browser fetches by its address (the audit's CSV) cannot carry a
+	// header: on an administration route's GET, ?scope= is read as the header
+	// is, with the same checks. A write names its scope with the header only;
+	// both at once is refused. A person's own routes do not read the name.
+	if q, ok := c.r.URL.Query()[ScopeParam]; ok && admin {
+		if c.r.Method != http.MethodGet {
+			writeError(c.w, http.StatusBadRequest, "invalid", "?"+ScopeParam+"= is for reads only; a write sends "+ScopeHeader+".")
+			return false
+		}
+		vals = append(slices.Clone(vals), q...)
+	}
 	if len(vals) > 0 {
 		if !admin {
 			writeError(c.w, http.StatusBadRequest, "invalid", ScopeHeader+" is for administration endpoints only.")
@@ -68,7 +84,7 @@ func (s *server) enterScope(c *call, rt route) bool {
 		}
 		id, ok := strings.CutPrefix(vals[0], "tenant:")
 		if len(vals) > 1 || !ok || id == "" || strings.TrimSpace(id) != id {
-			writeError(c.w, http.StatusBadRequest, "invalid", ScopeHeader+" is tenant:<id>.")
+			writeError(c.w, http.StatusBadRequest, "invalid", ScopeHeader+" (or ?"+ScopeParam+"=) is tenant:<id>, once.")
 			return false
 		}
 		// Who may not read the tenant's settings there is told it does not

@@ -31,6 +31,7 @@ import { mailLang } from '@/pages/auth/MailPages'
 import { TemporaryPasswordDialog } from './PersonEditDialogs'
 import { useRequiredRoles } from './PersonProfile'
 import type { UserPatch } from './useUserChange'
+import { useInScope } from '@/lib/scopedClient'
 
 // How a person signs in and what an administrator can do when they cannot: the passkey requirement, the passkeys of
 // someone who lost a device, a reset mail, and (for the site's administrators) the accounts they connected.
@@ -46,6 +47,7 @@ export function PersonSecurity({
   site: boolean
 }) {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const requireRoles = useRequiredRoles(site)
   const [passkeys, setPasskeys] = useState<Passkey[] | null>(null)
   const [error, setError] = useState('')
@@ -59,7 +61,7 @@ export function PersonSecurity({
     setSending(true)
     setResetMsg('')
     try {
-      await adminApi.sendPasswordReset(u.id, mailLang())
+      await inScope(() => adminApi.sendPasswordReset(u.id, mailLang()))
       setResetMsg(tm.users.sent(u.username))
     } catch (e) {
       setResetMsg(e instanceof ApiError ? (tm.users.errors[e.code] ?? e.message) : t.auth.failed)
@@ -70,7 +72,7 @@ export function PersonSecurity({
   // The person's passkeys are read when the page opens, and not before.
   useEffect(() => {
     const ctl = new AbortController()
-    adminApi.userPasskeys(u.id, ctl.signal).then(
+    inScope(() => adminApi.userPasskeys(u.id, ctl.signal), ctl.signal).then(
       (r) => setPasskeys(r.passkeys),
       (e: unknown) => {
         if (e instanceof DOMException && e.name === 'AbortError') return
@@ -78,13 +80,13 @@ export function PersonSecurity({
       },
     )
     return () => ctl.abort()
-  }, [u.id])
+  }, [u.id, inScope])
 
   const remove = async () => {
     if (!removing) return
     const target = removing
     try {
-      await adminApi.deleteUserPasskey(u.id, target.id)
+      await inScope(() => adminApi.deleteUserPasskey(u.id, target.id))
       setPasskeys((list) => list && list.filter((p) => p.id !== target.id))
       void qc.invalidateQueries({ queryKey: keys.users })
       toast.success(tsec.users.passkeyDeleted)
@@ -200,6 +202,7 @@ export function PersonSecurity({
 
 function ConnectedAccounts({ u }: { u: User }) {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const list = useQuery({
     queryKey: [...keys.users, 'identities', u.id],
     queryFn: ({ signal }) => adminApi.userIdentities(u.id, signal),
@@ -211,7 +214,7 @@ function ConnectedAccounts({ u }: { u: User }) {
     const target = removing
     setError('')
     try {
-      await adminApi.disconnectUserIdentity(u.id, target.id)
+      await inScope(() => adminApi.disconnectUserIdentity(u.id, target.id))
       void qc.invalidateQueries({ queryKey: keys.users })
       toast.success(tc.person.security.disconnected)
     } catch (e) {

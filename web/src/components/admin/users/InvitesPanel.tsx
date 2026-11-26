@@ -20,6 +20,7 @@ import { absoluteTime } from '@/lib/time'
 import { adminPath } from '@/lib/urls'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/people'
+import { useInScope } from '@/lib/scopedClient'
 
 // The name of whoever made an invite: one person by their id (cached), their id until it is read.
 function CreatedBy({ id }: { id: string }) {
@@ -29,12 +30,13 @@ function CreatedBy({ id }: { id: string }) {
 
 export function InvitesPanel() {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const invites = useInvites()
   const [adding, setAdding] = useState(false)
 
   const revoke = async (id: string) => {
     try {
-      await adminApi.revokeInvite(id)
+      await inScope(() => adminApi.revokeInvite(id))
       qc.setQueryData<{ invites: { id: string }[] }>(
         keys.invites,
         (prev) => prev && { invites: prev.invites.filter((i) => i.id !== id) },
@@ -116,6 +118,7 @@ function AddMembersDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 // One invitation link, to hand over yourself.
 function InviteLinkForm() {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const [role, setRole] = useState<Role>('member')
   const [days, setDays] = useState('7')
   const [busy, setBusy] = useState(false)
@@ -131,7 +134,7 @@ function InviteLinkForm() {
     setBusy(true)
     setError('')
     try {
-      const inv = await adminApi.createInvite({ role, days: n })
+      const inv = await inScope(() => adminApi.createInvite({ role, days: n }))
       setFresh(inv)
       void qc.invalidateQueries({ queryKey: keys.invites })
     } catch (err) {

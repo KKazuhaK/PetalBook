@@ -1,8 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ApiError } from '@/api/client'
 import { USER_SEARCH_LIMIT, useUserSearch } from '@/api/admin'
-import { useSession } from '@/api/hooks'
-import { acrossSite } from '@/lib/access'
+import { useAcrossSite } from '../TenantScope'
 import type { SpaceLocation, User } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -13,7 +12,7 @@ import { tg } from '@/i18n/manage'
 import { useDebounced } from '@/lib/useDebounced'
 
 // A site administrator sees every tenant and the server's own state; a tenant administrator the tenant's only.
-export const useIsSite = (): boolean => acrossSite(useSession().data?.user)
+export const useIsSite = (): boolean => useAcrossSite()
 
 // What a refusal of one of the storage management calls says, in plain words (the server's words when it has no
 // sentence here).

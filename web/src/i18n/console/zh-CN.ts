@@ -52,6 +52,13 @@ export const consoleZhCN = {
     'audit/audit': '管理员做过的事，按时间倒序。',
     'status/status': '服务器现在的运行情况。',
   },
+  // 租户管理员看到的说明（以及站点管理员进入某个租户的范围时）：说的是这个组织，不是整台服务器。
+  pageHelpTenant: {
+    'users/all': (name?: string) => `查看、筛选和管理${name ? ` ${name} ` : '本组织'}的所有人。`,
+    'spaces/all': (name?: string) => `${name ? `${name} ` : '本组织'}的所有空间、它们的状态和归属。`,
+    'storage/usage': (name?: string) => `${name ? `${name} ` : '本组织'}里每个人用了多少。`,
+    'settings/settings': () => '每个设置在本组织及其空间中如何生效：放开、限制或锁定。',
+  } as Record<string, (name?: string) => string>,
   tabs: {
     users: { all: '全部用户', invites: '邀请', deleted: '已删除' },
     spaces: { all: '全部空间', deleted: '已删除' },

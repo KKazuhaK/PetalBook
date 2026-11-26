@@ -20,7 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
-import { adminPath } from '@/lib/urls'
+import { useAdminPaths } from '../TenantScope'
 import { tg } from '@/i18n/manage'
 import { ts } from '@/i18n/storage'
 import { ExportDialog } from './ExportDialog'
@@ -41,6 +41,7 @@ export function DeleteSpaceDialog({
   onClose: () => void
 }) {
   const preview = useSpaceDeletion(id)
+  const { path: adminPath } = useAdminPaths()
   const del = useDeleteSpace()
   const [typed, setTyped] = useState('')
   const [reason, setReason] = useState('')

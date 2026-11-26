@@ -6572,6 +6572,19 @@ from the stored measurements.
 A site administrator, or an administrator of that tenant (another tenant's
 answers `404 not_found`). `{tenant}` is the id.
 
+### `GET /api/admin/tenants/{tenant}/overview`
+
+The tenant's page in one call; who may read `GET …/tenants/{tenant}` may read it
+(another tenant's answers `404 not_found`). `{"tenant": Tenant, "createdByName":
+"…", "groups": n, "admins": [{"id", "username", "name", "siteAdmin",
+"disabled"}], "adminCount": n, "featuresOff": ["features.tokens", …],
+"recentAdminActivity": [{"id", "at", "kind", "category", "capacity", "actor",
+"username"}]}`. The counts of people, spaces, pages and bytes are the stored
+`tenant.usage`; `admins` are the oldest 10 (read through `users_admins`),
+`recentAdminActivity` the newest 10 audit rows, which only those who hold
+`tenant.audit.read` get (`[]` for the rest). No scan of the tenant's people,
+spaces or pages.
+
 ### `POST /api/admin/tenants`
 
 Site administrators; `403 feature_off` while `features.tenancy` is `false`.
@@ -10097,6 +10110,14 @@ is not administration (a person's own routes, a space's content), is
 scope is audited as `tenant_console_opened` (`admin`, the tenant's row), at
 most once an hour per session and tenant. The scope is read from the session
 and the header, and the tenant from the cached list of tenants: no query.
+
+**`?scope=tenant:{id}`.** What a browser fetches by its address cannot carry a
+header (the audit's CSV, `GET /api/admin/audit/download`), so on an
+administration route's `GET` the query parameter `scope` is read exactly as the
+header is, with the same checks: it narrows only. Sent with the header, sent
+twice or malformed it is `400 invalid`; on an administration write it is
+`400 invalid` (a write names its scope with the header). A person's own routes
+and a space's content do not read it.
 
 **Capacity.** Every audit row written for an administration request records
 the capacity used: `site_admin` for a holder of the route's key across the

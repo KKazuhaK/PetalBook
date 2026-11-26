@@ -1972,6 +1972,24 @@ export interface Tenant extends TenantRef {
   updated: string
 }
 export type TenantOrigin = 'default' | 'admin' | 'self'
+// GET /api/admin/tenants/{tenant}/overview: a tenant's page in one call.
+export interface TenantOverview {
+  tenant: Tenant
+  createdByName: string
+  groups: number
+  admins: { id: string; username: string; name: string; siteAdmin: boolean; disabled: boolean }[]
+  adminCount: number
+  featuresOff: string[]
+  recentAdminActivity: {
+    id: string
+    at: string
+    kind: string
+    category: string
+    capacity: 'site_admin' | 'tenant_admin' | null
+    actor: string | null
+    username: string
+  }[]
+}
 export interface TenantList {
   items: Tenant[]
   next: string

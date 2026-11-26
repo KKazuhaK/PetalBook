@@ -5,7 +5,16 @@ import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tt } from '@/i18n/tenants'
 import { absoluteTime } from '@/lib/time'
-import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import {
+  adminRequests,
+  click,
+  installDomShims,
+  mount,
+  settle,
+  type,
+  type Mounted,
+  openTenantPage,
+} from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // A tenant's rules: each setting with where its value comes from and its window, the edit dialog, and the warning
@@ -50,8 +59,7 @@ async function openSheet(scene: (server: MockServer) => void) {
       return ['/admin/tenants']
     },
   })
-  await settle(() => button(`${tt.list.manage}: Default`) !== null, 'the list')
-  await click(button(`${tt.list.manage}: Default`))
+  await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
   await settle(
     () => document.querySelector('[data-slot="tenant-rules"] [data-key="quota.people"]') !== null,
     'the rules',

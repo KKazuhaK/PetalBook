@@ -200,6 +200,8 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 				// store.EmailOwner's condition.
 				{`SELECT e.user_id FROM user_emails e JOIN users u ON u.id = e.user_id WHERE e.email_key = ? AND e.email_key <> ''`, "user_emails_key"},
 				{`SELECT 1 FROM drafts WHERE user_id = ?`, "drafts_user"},
+				// store.TenantAdmins.
+				{`SELECT id FROM users WHERE tenant_id = ? AND role = 'admin' AND deleted_at IS NULL ORDER BY created, id LIMIT 10`, "users_admins"},
 				{`SELECT 1 FROM invites WHERE created_by = ?`, "invites_created_by"},
 				{`SELECT 1 FROM provider_leftovers WHERE user_id = ?`, "provider_leftovers_user"},
 				{`SELECT id FROM session_ends WHERE ended < ?`, "session_ends_ended"},

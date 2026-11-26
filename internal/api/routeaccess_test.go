@@ -97,6 +97,9 @@ var routeAccessAdded = map[string][4]string{
 	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"DELETE /api/admin/tenants/{tenant}/secrets/{name}": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// 3.6 step c: the tenant's page, for its administrators and the site's.
+	"GET /api/admin/tenants/{tenant}/overview": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
 	// More than one address per account: accounts.multipleEmails, off by default.
 	"POST /api/account/emails":           {"403 feature_off", "403 feature_off", "403 feature_off", "403 token_scope"},
 	"POST /api/account/emails/verify":    {"403 feature_off", "403 feature_off", "403 feature_off", "403 token_scope"},

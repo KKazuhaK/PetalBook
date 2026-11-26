@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-query'
 import { API_BASE, ApiError, enc, request } from './client'
 import { keys } from './hooks'
+import { SCOPE_PARAM } from '@/lib/adminScope'
 import {
   dailyOf,
   dailyWrites,
@@ -47,6 +48,7 @@ import type {
   Tenancy,
   Tenant,
   TenantList,
+  TenantOverview,
   TenantOrigin,
   TenantSetting,
   TenantSettingWritten,
@@ -245,6 +247,8 @@ export const adminApi = {
     return request<TenantList>(`/admin/tenants${qs ? `?${qs}` : ''}`, { signal })
   },
   tenant: (id: string, signal?: AbortSignal) => request<Tenant>(`/admin/tenants/${enc(id)}`, { signal }),
+  tenantOverview: (id: string, signal?: AbortSignal) =>
+    request<TenantOverview>(`/admin/tenants/${enc(id)}/overview`, { signal }),
   createTenant: (input: { slug: string; name: string; admin?: { username: string; name?: string; email?: string } }) =>
     request<CreatedTenant>('/admin/tenants', { method: 'POST', body: input }),
   updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean }) =>
@@ -354,9 +358,12 @@ export const adminApi = {
   },
   // The registry of kinds with their categories, and which optional categories are on in the caller's scope.
   auditKinds: (signal?: AbortSignal) => request<AuditKinds>('/admin/audit/kinds', { signal }),
-  // The address of the CSV of a filter (the browser downloads it; the server streams it).
-  auditDownloadUrl: (filters: Partial<AuditFilters>) => {
-    const qs = auditQuery(filters).toString()
+  // The address of the CSV of a filter (the browser downloads it; the server streams it). A link cannot carry the scope
+  // header, so in a tenant's scope the address names it (?scope=, which the server reads as the header).
+  auditDownloadUrl: (filters: Partial<AuditFilters>, scope: string | null = null) => {
+    const q = auditQuery(filters)
+    if (scope) q.set(SCOPE_PARAM, `tenant:${scope}`)
+    const qs = q.toString()
     return `${API_BASE}/admin/audit/download${qs ? `?${qs}` : ''}`
   },
 
@@ -629,6 +636,25 @@ export function useTenants(enabled = true, fresh = false, origin?: TenantOrigin)
       } while (cursor)
       return out
     },
+  })
+}
+// One tenant (its name, for a banner or a heading); under keys.tenants, so a rename reads it again.
+export function useTenant(id: string | null) {
+  return useQuery({
+    queryKey: [...keys.tenants, 'one', id],
+    queryFn: ({ signal }) => adminApi.tenant(id!, signal),
+    enabled: id !== null,
+    staleTime: 15_000,
+  })
+}
+
+// A tenant's page: the tenant and its numbers in one call. Anything that changes the tenant reads it again (it sits
+// under keys.tenants).
+export function useTenantOverview(id: string) {
+  return useQuery({
+    queryKey: [...keys.tenants, 'overview', id],
+    queryFn: ({ signal }) => adminApi.tenantOverview(id, signal),
+    staleTime: 10_000,
   })
 }
 export function useCreateTenant() {

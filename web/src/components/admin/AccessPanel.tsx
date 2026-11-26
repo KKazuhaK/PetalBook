@@ -26,6 +26,7 @@ import { t } from '@/i18n'
 import { oa } from '@/i18n/oauth'
 import { tk } from '@/i18n/tokens'
 import { SiteRow } from './SettingsPanel'
+import { useInScope } from '@/lib/scopedClient'
 
 // What machines may do on this server: whether API tokens are accepted, and
 // everyone's tokens, which an administrator may revoke.
@@ -85,6 +86,7 @@ function TokenSwitch() {
 
 function AllTokens() {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const list = useAdminTokens()
   const [revoking, setRevoking] = useState<AdminToken | null>(null)
   const [busy, setBusy] = useState(false)
@@ -93,7 +95,7 @@ function AllTokens() {
     if (!revoking) return
     setBusy(true)
     try {
-      await adminApi.adminRevokeToken(revoking.id)
+      await inScope(() => adminApi.adminRevokeToken(revoking.id))
       toast.success(tk.revoked)
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : tk.revokeFailed)
@@ -196,6 +198,7 @@ function McpSwitch() {
 function AllGrants() {
   const access = useMachineAccess()
   const qc = useQueryClient()
+  const inScope = useInScope()
   const list = useAdminGrants(access.data !== undefined)
   const [revoking, setRevoking] = useState<AdminGrant | null>(null)
   const [busy, setBusy] = useState(false)
@@ -207,7 +210,7 @@ function AllGrants() {
     if (!revoking) return
     setBusy(true)
     try {
-      await adminApi.adminRevokeGrant(revoking.id)
+      await inScope(() => adminApi.adminRevokeGrant(revoking.id))
       toast.success(oa.yours.revoked)
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : oa.yours.revokeFailed)

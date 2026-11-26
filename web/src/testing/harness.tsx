@@ -25,7 +25,7 @@ export interface Mounted {
   root: Root
   server: MockServer
   qc: QueryClient
-  requests: { method: string; url: string; body?: string; signal?: AbortSignal | null }[]
+  requests: { method: string; url: string; body?: string; signal?: AbortSignal | null; scope?: string | null }[]
   unmount: () => Promise<void>
 }
 
@@ -85,7 +85,13 @@ export async function mount(
   globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname + input.search : input.url
     const method = init?.method ?? 'GET'
-    requests.push({ method, url, body: typeof init?.body === 'string' ? init.body : undefined, signal: init?.signal })
+    requests.push({
+      method,
+      url,
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      signal: init?.signal,
+      scope: new Headers(init?.headers).get('petalbook-scope'),
+    })
     const ms = options.delay?.(method, url) ?? 0
     if (ms > 0) await new Promise((r) => setTimeout(r, ms))
     return mocked(input, init)
@@ -271,4 +277,15 @@ export function shareSpace(
   const space = (owner.request('POST', '/api/spaces', { name }).body as { id: string }).id
   owner.request('POST', `/api/spaces/${space}/members`, { username: MOCK_ADMIN.username, role })
   return { space, owner }
+}
+
+// Opens a tenant's own page from the Tenants list (the link named after it), and one of its tabs (by the tab's label).
+export async function openTenantPage(openLabel: string, tabLabel?: string) {
+  await settle(() => byLabel(openLabel) !== null, 'the list')
+  await click(byLabel(openLabel))
+  if (tabLabel === undefined) return
+  const tab = () =>
+    [...document.querySelectorAll<HTMLElement>('nav[aria-label] a')].find((a) => a.textContent?.trim() === tabLabel)
+  await settle(() => tab() !== undefined, `the ${tabLabel} tab`)
+  await click(tab())
 }

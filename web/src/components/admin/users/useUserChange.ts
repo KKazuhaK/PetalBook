@@ -6,6 +6,7 @@ import { keys } from '@/api/hooks'
 import type { OwnQuota, Role, User } from '@/api/types'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
+import { useInScope } from '@/lib/scopedClient'
 
 export interface UserPatch {
   name?: string
@@ -35,6 +36,7 @@ export function conflictMessage(e: unknown, disabling: boolean): string {
 // `error` (and the lists are read again in case what was shown is out of date).
 export function useUserChange() {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ id: string; message: string } | null>(null)
   const messageRef = useRef<HTMLParagraphElement>(null)
@@ -42,7 +44,7 @@ export function useUserChange() {
     setBusy(u.id)
     setError(null)
     try {
-      const { user } = await adminApi.updateUser(u.id, patch)
+      const { user } = await inScope(() => adminApi.updateUser(u.id, patch))
       void qc.invalidateQueries({ queryKey: keys.users })
       setBusy(null)
       return user

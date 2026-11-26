@@ -19,13 +19,14 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { formatBytes } from '@/lib/bytes'
 import { absoluteTime } from '@/lib/time'
-import { adminPath } from '@/lib/urls'
+import { useAdminPaths } from '../TenantScope'
 import { tg } from '@/i18n/manage'
 import { manageError, UserPicker, useIsSite, tapTarget, fitScreen } from './shared'
 
 // Deleting one person: what happens to each of their spaces, who inherits, what stops working; then their username
 // typed, and where they went. The person goes to the recycle bin, never away.
 export function DeletePersonDialog({ id, username, onClose }: { id: string; username: string; onClose: () => void }) {
+  const { path: adminPath } = useAdminPaths()
   const site = useIsSite()
   const [heir, setHeir] = useState<User | null>(null)
   const plan = useUserDeletion(id, heir?.id ?? '')

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { CircleCheck, Copy, Package, Plus, Save, Trash2 } from 'lucide-react'
+import { Link } from 'react-router'
+import { CircleCheck, Copy, Eye, Package, Plus, Save, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import {
   useCreateTenant,
@@ -32,6 +33,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
+import { adminTenantPath } from '@/lib/urls'
+import { ManageAsButton } from './TenantScope'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
 import { formatUsed } from '@/lib/usage'
@@ -102,7 +105,6 @@ export function TenantsPanel() {
 function TenantList({ enabled }: { enabled: boolean }) {
   const list = useTenants()
   const selfList = useTenants(true, false, 'self')
-  const [open, setOpen] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [made, setMade] = useState<CreatedTenant | null>(null)
   const [onlySelf, setOnlySelf] = useState(false)
@@ -153,29 +155,38 @@ function TenantList({ enabled }: { enabled: boolean }) {
       ) : (
         <ul className="divide-y rounded-lg border" data-slot="tenant-list">
           {shown.map((tn) => (
-            <li key={tn.id} className="grid gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
+            <li key={tn.id} className="px-3 py-2.5 transition-colors has-[a[data-row-link]:hover]:bg-muted/40">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="min-w-0 flex-1 basis-48">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-medium">{tn.name}</span>
+                    <Link
+                      data-row-link=""
+                      to={adminTenantPath(tn.id)}
+                      className="truncate rounded-sm text-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+                    >
+                      {tn.name}
+                    </Link>
                     {tn.default && <Badge variant="secondary">{tl.default}</Badge>}
                     {tn.disabled && <Badge variant="secondary">{tl.disabled}</Badge>}
                     {tn.origin === 'self' && <Badge variant="outline">{tl.originSelf}</Badge>}
                   </div>
                   <div className="truncate text-xs text-muted-foreground">{tn.slug}</div>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-expanded={open === tn.id}
-                  aria-label={`${tl.manage}: ${tn.name}`}
-                  onClick={() => setOpen(open === tn.id ? null : tn.id)}
-                >
-                  {open === tn.id ? tl.close : tl.manage}
-                </Button>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Button
+                    render={<Link to={adminTenantPath(tn.id)} />}
+                    nativeButton={false}
+                    variant="outline"
+                    size="sm"
+                    className="h-10 lg:h-8"
+                    aria-label={`${tl.open}: ${tn.name}`}
+                  >
+                    <Eye aria-hidden="true" />
+                    {tl.open}
+                  </Button>
+                  <ManageAsButton tenant={tn.id} size="sm" />
+                </div>
               </div>
-              {open === tn.id && <TenantDetails tenant={tn} onGone={() => setOpen(null)} />}
             </li>
           ))}
         </ul>
@@ -287,7 +298,8 @@ function CreateDialog({ onClose, onMade }: { onClose: () => void; onMade: (t: Cr
   )
 }
 
-function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void }) {
+// Rename, disable and delete a tenant: the danger tab of its page.
+export function TenantEditor({ tenant, onGone }: { tenant: Tenant; onGone: () => void }) {
   const update = useUpdateTenant()
   const del = useDeleteTenant()
   const [name, setName] = useState(tenant.name)
@@ -332,7 +344,7 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
     })
   }
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t pt-3">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
         <Field label={tl.nameLabel} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
@@ -352,8 +364,6 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
           </Button>
         </div>
       </form>
-      <TenantPlanBlock tenant={tenant} />
-      <TenantUsageBlock tenant={tenant} />
       {!tenant.default && (
         <div className="flex flex-wrap items-start gap-3">
           <div className="grid max-w-prose gap-1">
@@ -400,7 +410,7 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
 
 // What the tenant uses (measured), and under it the limits sheet that holds the totals it is held to. Only a site
 // administrator opens this page.
-function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
+export function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
   const u = tenant.usage
   return (
     <>
@@ -428,7 +438,7 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
 
 // The tenant's plan, and the way to change it. A change of plan clears every manual rule of the tenant, so the dialog that
 // confirms it lists them, and what the server cleared is listed after.
-function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
+export function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
   const tp = tt.plans.tenantPlan
   const plans = usePlans()
   const sheet = useTenantSettings(tenant.id)

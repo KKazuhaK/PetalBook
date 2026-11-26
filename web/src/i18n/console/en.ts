@@ -54,6 +54,12 @@ export const consoleEn: ConsoleMessages = {
     'audit/audit': 'What administrators have done, newest first.',
     'status/status': 'How the server is running right now.',
   },
+  pageHelpTenant: {
+    'users/all': (name) => `See, filter and manage everyone in ${name ?? 'this organisation'}.`,
+    'spaces/all': (name) => `Every space in ${name ?? 'this organisation'}, its state and who it belongs to.`,
+    'storage/usage': (name) => `How much each person in ${name ?? 'this organisation'} uses.`,
+    'settings/settings': () => 'How each setting applies in this organisation and its spaces: allow, restrict or lock.',
+  },
   tabs: {
     users: { all: 'All users', invites: 'Invites', deleted: 'Deleted' },
     spaces: { all: 'All spaces', deleted: 'Deleted' },

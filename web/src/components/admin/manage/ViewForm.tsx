@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { tg } from '@/i18n/manage'
 import { manageError, tapTarget } from './shared'
+import { useInScope } from '@/lib/scopedClient'
 
 // The reason for an audited, read-only view of a space an administrator is not a member of. The view is recorded on
 // the server; the server also says whether one is open.
@@ -25,6 +26,7 @@ export function ViewForm({
   onCancel?: () => void
 }) {
   const qc = useQueryClient()
+  const inScope = useInScope()
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -34,7 +36,7 @@ export function ViewForm({
     setBusy(true)
     setError('')
     try {
-      await manageApi.startView(space, reason.trim())
+      await inScope(() => manageApi.startView(space, reason.trim()))
       void qc.invalidateQueries({ queryKey: keys.viewedSpace(space) })
       onStarted()
     } catch (e) {

@@ -6,7 +6,8 @@ import { toast } from 'sonner'
 import { useUserRow } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
-import { acrossSite, isAdminAccount } from '@/lib/access'
+import { isAdminAccount } from '@/lib/access'
+import { useAcrossSite, useAdminPaths } from '../TenantScope'
 import { ErrorState, PageFallback } from '@/components/common'
 import { FormMessage } from '@/components/auth/Field'
 import { Badge } from '@/components/ui/badge'
@@ -14,7 +15,6 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { DeletePersonDialog } from '@/components/admin/manage/DeletePersonDialog'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
-import { adminPath, adminUserPath } from '@/lib/urls'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { AdminPageHeader } from '../AdminPageHeader'
@@ -35,11 +35,12 @@ const isTab = (v: unknown): v is PersonTab => PERSON_TABS.some((x) => x === v)
 // they are signed in, where they belong, what they hold, and what the log says about them. The sessions are for the
 // administrators of the whole server only.
 export function PersonPage({ id, tab }: { id: string; tab?: string }) {
+  const { path: adminPath, userPath: adminUserPath } = useAdminPaths()
   const fadeRef = useRef<HTMLElement>(null)
   useScrollFade(fadeRef)
   const session = useSession()
   const me = session.data?.user
-  const site = acrossSite(me)
+  const site = useAcrossSite()
   const row = useUserRow(id)
   const { change, busy, error, messageRef } = useUserChange()
   const [deleting, setDeleting] = useState(false)

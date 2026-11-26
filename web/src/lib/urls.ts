@@ -41,9 +41,16 @@ export const ADMIN_SECTIONS = [
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]
 export const isAdminSection = (v: unknown): v is AdminSection => ADMIN_SECTIONS.some((s) => s === v)
 
-export function adminPath(section?: AdminSection, tab?: string): string {
-  if (!section) return '/admin'
-  return tab ? `/admin/${section}/${tab}` : `/admin/${section}`
+// With `scope` the address is in the console of that tenant (`/admin/t/<id>/...`, 3.6 step c); without it, the whole
+// site's.
+const adminBase = (scope?: string | null) => (scope ? `/admin/t/${encodeURIComponent(scope)}` : '/admin')
+export function adminPath(section?: AdminSection, tab?: string, scope?: string | null): string {
+  const base = adminBase(scope)
+  if (!section) return base
+  return tab ? `${base}/${section}/${tab}` : `${base}/${section}`
 }
-export const adminUserPath = (id: string, tab?: string): string =>
-  `/admin/user/${encodeURIComponent(id)}${tab ? `/${tab}` : ''}`
+export const adminUserPath = (id: string, tab?: string, scope?: string | null): string =>
+  `${adminBase(scope)}/user/${encodeURIComponent(id)}${tab ? `/${tab}` : ''}`
+// A tenant's own page, in the site's console: `/admin/tenants/<id>/<tab>`.
+export const adminTenantPath = (id: string, tab?: string): string =>
+  `/admin/tenants/${encodeURIComponent(id)}${tab ? `/${tab}` : ''}`

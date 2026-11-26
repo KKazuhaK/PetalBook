@@ -9,6 +9,7 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { Button } from '@/components/ui/button'
 import { bytesToGb, countToText, gbToBytes, parseCount } from '@/lib/usage'
 import { tu } from '@/i18n/usage'
+import { useInScope } from '@/lib/scopedClient'
 
 // What a refusal of a person's limits means, in plain words.
 export function ownLimitsError(e: unknown): string {
@@ -30,6 +31,7 @@ export function ownLimitsError(e: unknown): string {
 // A person's own limits: what overrides the tenant's and the site's for them alone. Empty follows them; for spaces, 0 is no limit.
 export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQuota; onSaved?: (user: User) => void }) {
   const qc = useQueryClient()
+  const inScope = useInScope()
   // What the fields started from (the last saved values): a field left as it was is not sent, so a disk
   // limit that is no whole number of GB keeps its exact bytes, and a limit nobody touched stays as it is.
   const [base, setBase] = useState(own)
@@ -53,7 +55,7 @@ export function OwnLimits({ userId, own, onSaved }: { userId: string; own: OwnQu
     if (pages !== countToText(base.pages)) quota.pages = p
     setBusy(true)
     try {
-      const { user } = await adminApi.updateUser(userId, { quota })
+      const { user } = await inScope(() => adminApi.updateUser(userId, { quota }))
       setBase(user.quota ?? { ...base, ...quota })
       void qc.invalidateQueries({ queryKey: keys.users })
       void qc.invalidateQueries({ queryKey: ['admin', 'usage'] })
