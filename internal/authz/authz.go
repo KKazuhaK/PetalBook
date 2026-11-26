@@ -59,13 +59,19 @@ type Info struct {
 	// holder of the key across the site.
 	Capability  string
 	Description string
+	// BuiltInOnly: no stored role may hold the key; only the built-in roles
+	// do (see BuiltInOnly).
+	BuiltInOnly bool
 }
 
 var (
 	mu       sync.Mutex
 	registry []Info // registry[k-1] is key k
 	byName   = map[string]Key{}
-	frozen   bool
+	// aliases are the former names of renamed keys: a stored role that names
+	// a key by an old name still holds it.
+	aliases = map[string]Key{}
+	frozen  bool
 )
 
 var namePattern = regexp.MustCompile(`^(site|tenant|space)(\.[a-z][a-zA-Z]*)+$`)
@@ -82,6 +88,9 @@ func Register(name string, scope Scope, capability, desc string) Key {
 	if _, dup := byName[name]; dup {
 		panic("authz: duplicate key " + name)
 	}
+	if _, dup := aliases[name]; dup {
+		panic("authz: " + name + " is the former name of another key")
+	}
 	if !namePattern.MatchString(name) || name[:len(scope.String())] != scope.String() {
 		panic(fmt.Sprintf("authz: key %q must begin with its scope %q", name, scope))
 	}
@@ -95,6 +104,34 @@ func Register(name string, scope Scope, capability, desc string) Key {
 	k := Key(len(registry))
 	byName[name] = k
 	return k
+}
+
+// BuiltInOnly marks a key that no custom role may hold, at init: what only the
+// built-in roles hold (the content of people's personal spaces). It returns k.
+func BuiltInOnly(k Key) Key {
+	mu.Lock()
+	defer mu.Unlock()
+	if frozen {
+		panic("authz: " + k.info().Name + " marked after the roles were built")
+	}
+	registry[k-1].BuiltInOnly = true
+	return k
+}
+
+// Grantable reports whether a custom role may hold the key.
+func (k Key) Grantable() bool { return !k.info().BuiltInOnly }
+
+// GrantableKeys is every key a custom role may hold.
+func GrantableKeys() Set {
+	mu.Lock()
+	defer mu.Unlock()
+	var s Set
+	for i, in := range registry {
+		if !in.BuiltInOnly {
+			s = s.With(Key(i + 1))
+		}
+	}
+	return s
 }
 
 func (k Key) info() Info {
@@ -115,12 +152,49 @@ func (k Key) Capability() string { return k.info().Capability }
 
 func (k Key) String() string { return k.Name() }
 
-// Lookup finds a key by its name.
+// Alias keeps a key's former name working: when a key is renamed, its old
+// name is registered here (at init, after the key), so that a stored role that
+// names it still holds the key. What is sent always names the key's current
+// name. It panics on a name that is a key's or already an alias, and on a key
+// that is not registered.
+func Alias(old string, k Key) {
+	mu.Lock()
+	defer mu.Unlock()
+	if k == 0 || int(k) > len(registry) {
+		panic("authz: alias " + old + " of a key that is not registered")
+	}
+	if _, dup := byName[old]; dup {
+		panic("authz: alias " + old + " is the name of a key")
+	}
+	if _, dup := aliases[old]; dup {
+		panic("authz: duplicate alias " + old)
+	}
+	aliases[old] = k
+}
+
+// Lookup finds a key by its name, or by a former name (see Alias).
 func Lookup(name string) (Key, bool) {
 	mu.Lock()
 	defer mu.Unlock()
-	k, ok := byName[name]
+	if k, ok := byName[name]; ok {
+		return k, true
+	}
+	k, ok := aliases[name]
 	return k, ok
+}
+
+// SetOf is the set of the keys named, by their names or former names, as a
+// stored role lists them. unknown is the names that are no key (one removed
+// since): they hold nothing.
+func SetOf(names []string) (s Set, unknown []string) {
+	for _, n := range names {
+		if k, ok := Lookup(n); ok {
+			s = s.With(k)
+		} else {
+			unknown = append(unknown, n)
+		}
+	}
+	return s, unknown
 }
 
 // All lists every key in the order it was registered.
@@ -160,6 +234,9 @@ func (s Set) Has(k Key) bool {
 
 // Union is every key of either set.
 func (s Set) Union(o Set) Set { return Set{s[0] | o[0], s[1] | o[1]} }
+
+// Intersect is every key of both sets.
+func (s Set) Intersect(o Set) Set { return Set{s[0] & o[0], s[1] & o[1]} }
 
 // Empty reports whether the set holds nothing.
 func (s Set) Empty() bool { return s[0]|s[1] == 0 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -88,15 +89,14 @@ type userDeletionResp struct {
 // blockersOf says why the caller may not delete the person (the last enabled site
 // administrator, the caller themself); a site administrator is refused to a
 // tenant administrator outright (forbidden).
-func (s *server) blockersOf(ctx context.Context, actor store.User, target *store.User) (blockers []map[string]any, forbidden bool, err error) {
-	isSite := actor.SiteAdmin && actor.Role == "admin"
-	if target.SiteAdmin && !isSite {
+func (s *server) blockersOf(ctx context.Context, actor store.User, access authz.Subject, target *store.User) (blockers []map[string]any, forbidden bool, err error) {
+	if target.IsSiteAdmin() && !access.Can(authz.SiteAdminsManage, "") {
 		return nil, true, nil
 	}
 	if target.ID == actor.ID {
 		blockers = append(blockers, map[string]any{"reason": "self", "message": "you cannot delete your own account"})
 	}
-	if target.SiteAdmin && !target.Disabled && !s.opt.Store.TenantDisabled(target.TenantID) {
+	if target.IsSiteAdmin() && !target.Disabled && !s.opt.Store.TenantDisabled(target.TenantID) {
 		n, err := store.CountEnabledAdmins(ctx, s.opt.Store.Q())
 		if err != nil {
 			return nil, false, err
@@ -125,7 +125,7 @@ func (s *server) userDeletionOf(c *call, id, heir string, transfers map[string]s
 		s.fail(c.w, err)
 		return userDeletionResp{}, false
 	}
-	blockers, forbidden, err := s.blockersOf(ctx, c.user(), target)
+	blockers, forbidden, err := s.blockersOf(ctx, c.user(), c.p.Access, target)
 	if err != nil {
 		s.fail(c.w, err)
 		return userDeletionResp{}, false
@@ -204,7 +204,9 @@ func (s *server) adminUserDeletion(c *call) {
 
 // deleteUserIn is a request to delete a person.
 type deleteUserIn struct {
-	Actor     store.User
+	Actor store.User
+	// Access is what the actor holds (a request's, or a bulk job's actor's now).
+	Access    authz.Subject
 	IP        string
 	Heir      string
 	Transfers map[string]string
@@ -230,7 +232,7 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 	if err != nil {
 		return nil, err
 	}
-	blockers, forbidden, err := s.blockersOf(ctx, in.Actor, target)
+	blockers, forbidden, err := s.blockersOf(ctx, in.Actor, in.Access, target)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +412,7 @@ func (s *server) adminDeleteUser(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is at most 500 characters.")
 		return
 	}
-	res, err := s.deleteUser(c.r.Context(), deleteUserIn{Actor: c.user(), IP: s.auth.ClientAddr(c.r), Heir: req.Heir, Transfers: req.Transfers, Reason: req.Reason}, c.r.PathValue("id"))
+	res, err := s.deleteUser(c.r.Context(), deleteUserIn{Actor: c.user(), Access: c.p.Access, IP: s.auth.ClientAddr(c.r), Heir: req.Heir, Transfers: req.Transfers, Reason: req.Reason}, c.r.PathValue("id"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -443,21 +445,21 @@ func (s *server) restoreUser(c *call, it *store.RecycleItem) {
 	// a tenant's administrator and counts it.
 	skipped, spaceIDs, personal := []store.RestoreSkipped{}, []string{}, 0
 	for _, sk := range res.Skipped {
-		if sk.Personal && !c.isSiteAdmin() {
+		if sk.Personal && !c.can(authz.SiteSpacesPersonalMeta) {
 			personal++
 			continue
 		}
 		skipped = append(skipped, sk)
 	}
 	for _, id := range res.Spaces {
-		if res.Personal[id] && !c.isSiteAdmin() {
+		if res.Personal[id] && !c.can(authz.SiteSpacesPersonalMeta) {
 			personal++
 			continue
 		}
 		spaceIDs = append(spaceIDs, id)
 	}
 	restored := map[string]any{"item": it.ID, "user": s.toUser(res.User), "spaces": spaceIDs}
-	if !c.isSiteAdmin() {
+	if !c.can(authz.SiteSpacesPersonalMeta) {
 		restored["personal"] = personal
 	}
 	if res.Transfers == nil {

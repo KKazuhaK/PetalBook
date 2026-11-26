@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
+	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -45,6 +47,15 @@ func (s *server) allow(c *call, k authz.Key, tenant string) error {
 		return &accessError{status: http.StatusForbidden, code: "forbidden", key: k.Name(), msg: msg}
 	}
 	return s.verify(c, k, tenant)
+}
+
+// subjectOf is what an account holds when it acts outside a request (a bulk
+// job's actor, as they are now): built-in and custom roles.
+func (s *server) subjectOf(ctx context.Context, u store.User) (authz.Subject, error) {
+	if s.auth == nil {
+		return auth.AccessOf(u), nil
+	}
+	return s.auth.SubjectOf(ctx, u)
 }
 
 // verify is the last step of allow. It allows everything until 3.7, where a
@@ -118,7 +129,7 @@ func (s *server) transferSpace(c *call, userID, reason, kind string) {
 	var err error
 	if userID == "" {
 		userID = c.user().ID
-		t, err = s.spaces.TakeOver(c.r.Context(), store.AdminScopeOf(c.user()), id, c.user())
+		t, err = s.spaces.TakeOver(c.r.Context(), store.AdminScopeOf(c.user()), id, c.user(), c.p.Access)
 	} else {
 		t, err = s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), id, userID)
 	}

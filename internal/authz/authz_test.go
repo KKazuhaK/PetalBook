@@ -123,3 +123,75 @@ func TestRegisteringAfterTheRolesWereBuiltPanics(t *testing.T) {
 	}()
 	authz.Register("site.late", authz.ScopeSite, "", "late")
 }
+
+func TestAFormerNameStillNamesItsKey(t *testing.T) {
+	authz.Alias("tenant.people.read", authz.TenantUsersRead)
+	if k, ok := authz.Lookup("tenant.people.read"); !ok || k != authz.TenantUsersRead || k.Name() != "tenant.users.read" {
+		t.Fatal(k, ok)
+	}
+	s, unknown := authz.SetOf([]string{"tenant.people.read", "tenant.gone", "site.status.read"})
+	if s != authz.Of(authz.TenantUsersRead, authz.SiteStatusRead) || !slices.Equal(unknown, []string{"tenant.gone"}) {
+		t.Fatal(s.Names(), unknown)
+	}
+	for name, f := range map[string]func(){
+		"alias of a key's name": func() { authz.Alias("tenant.users.read", authz.TenantUsersManage) },
+		"duplicate alias":       func() { authz.Alias("tenant.people.read", authz.TenantUsersManage) },
+		"unregistered key":      func() { authz.Alias("tenant.nothing", 0) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: no panic", name)
+				}
+			}()
+			f()
+		}()
+	}
+}
+
+// The content of personal spaces is the built-in site administrator's alone: no
+// stored role can hold it, whatever it lists.
+func TestPersonalContentIsNotGrantable(t *testing.T) {
+	if authz.SiteSpacesPersonalContent.Grantable() || !authz.SiteSpacesPersonalMeta.Grantable() || !authz.TenantUsersRead.Grantable() {
+		t.Fatal("grantable marks")
+	}
+	if !authz.SubjectFor("admin", true, "A").Can(authz.SiteSpacesPersonalContent, "") {
+		t.Fatal("the site administrator holds it")
+	}
+	got := authz.Subject{}.WithGrants([]authz.Grant{{Scope: authz.ScopeSite, Keys: authz.Of(authz.SiteSpacesPersonalContent, authz.SiteSpacesPersonalMeta)}})
+	if got.Can(authz.SiteSpacesPersonalContent, "") || !got.Can(authz.SiteSpacesPersonalMeta, "") {
+		t.Fatal(got)
+	}
+}
+
+func TestCustomGrantsKeepToTheirScope(t *testing.T) {
+	mem := authz.SubjectFor("member", false, "A")
+	got := mem.WithGrants([]authz.Grant{
+		// A tenant role naming a site key and a space key: only its tenant key counts.
+		{Scope: authz.ScopeTenant, Tenant: "A", Keys: authz.Of(authz.TenantAuditRead, authz.SiteSettingsManage, authz.SpaceManage)},
+		// A tenant role held nowhere adds nothing.
+		{Scope: authz.ScopeTenant, Keys: authz.Of(authz.TenantUsersDelete)},
+		// A site role across the site.
+		{Scope: authz.ScopeSite, Keys: authz.Of(authz.SiteStatusRead, authz.TenantUsageRead, authz.SpaceRead)},
+		// A site role held in one tenant: its tenant keys there only.
+		{Scope: authz.ScopeSite, Tenant: "B", Keys: authz.Of(authz.SiteMailManage, authz.TenantTokensRead)},
+		// A space role is the space level's.
+		{Scope: authz.ScopeSpace, Tenant: "A", Keys: authz.Of(authz.TenantGroupsRead)},
+	})
+	if !got.Can(authz.TenantAuditRead, "A") || got.Can(authz.TenantAuditRead, "B") || got.Can(authz.SiteSettingsManage, "") ||
+		got.Can(authz.TenantUsersDelete, "A") || got.Can(authz.TenantGroupsRead, "A") {
+		t.Fatal(got)
+	}
+	if !got.Can(authz.SiteStatusRead, "") || !got.SiteWide(authz.TenantUsageRead) || !got.Can(authz.TenantUsageRead, "C") || got.Site.Has(authz.SpaceRead) {
+		t.Fatal(got)
+	}
+	if !got.Can(authz.TenantTokensRead, "B") || got.Can(authz.TenantTokensRead, "A") || got.Can(authz.SiteMailManage, "") {
+		t.Fatal(got)
+	}
+	if !got.Can(authz.TenantSpacesCreate, "A") {
+		t.Fatal("the built-in role is kept")
+	}
+	if mem.Can(authz.TenantAuditRead, "A") {
+		t.Fatal("the subject granted to was changed")
+	}
+}

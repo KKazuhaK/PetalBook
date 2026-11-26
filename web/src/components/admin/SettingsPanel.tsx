@@ -2,6 +2,7 @@ import { useId, useState, type ReactNode } from 'react'
 import { Save } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
+import { acrossSite } from '@/lib/access'
 import { usePutSetting, useSiteSettings, useTenancy, useTenants, useTenantSettings } from '@/api/admin'
 import type { SettingLower, SiteSetting, TenantSetting } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
@@ -473,7 +474,7 @@ function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; i
 // or restricted marked on each setting.
 export function SettingsPanel() {
   const me = useSession().data?.user
-  const isSite = me?.siteAdmin !== false
+  const isSite = acrossSite(me)
   const tenancy = useTenancy(isSite)
   const tenants = useTenants(isSite && !!tenancy.data && (tenancy.data.enabled || tenancy.data.tenants > 1))
   const [picked, setPicked] = useState('')

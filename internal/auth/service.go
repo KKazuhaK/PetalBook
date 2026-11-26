@@ -315,6 +315,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	} else {
 		s.setupToken = randomToken()
 	}
+	// A custom role held through a group follows the group's people at once.
+	cfg.Spaces.OnMembershipChanged(s.membershipChanged)
 	return s, nil
 }
 
@@ -594,10 +596,10 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		p.TenantID, p.SiteAdmin = store.DefaultTenantID, true
 	}
 	if p.TenantID == "" {
-		p.TenantID, p.SiteAdmin = store.DefaultTenantID, p.Role == "admin"
+		p.TenantID, p.SiteAdmin = store.DefaultTenantID, store.IsAdminRole(p.Role)
 	}
 	u := store.User{Username: username, Name: name, Email: email, EmailVerified: p.EmailVerified && email != "", Role: p.Role, Created: s.now().UTC(),
-		TenantID: p.TenantID, SiteAdmin: p.SiteAdmin && p.Role == "admin"}
+		TenantID: p.TenantID, SiteAdmin: store.IsSiteAdminRole(p.Role, p.SiteAdmin)}
 	stg, err := s.cfg.Spaces.Stage("My notes", spaces.IdentityOf(u))
 	if err != nil {
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -23,10 +24,10 @@ type SessionView struct {
 	Current bool
 }
 
-// siteTarget is the person a site administrator looks at, or NotFound for
-// anyone else asking.
+// siteTarget is the person looked at by who reads people across the site (a
+// site administrator), or NotFound for anyone else asking.
 func (s *Service) siteTarget(ctx context.Context, actor *Principal, userID string) (*store.User, error) {
-	if actor == nil || actor.User.Role != "admin" || !actor.User.SiteAdmin {
+	if actor == nil || !actor.Access.SiteWide(authz.TenantUsersRead) {
 		return nil, errf(NotFound, "No such user.")
 	}
 	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), userID)
@@ -34,6 +35,19 @@ func (s *Service) siteTarget(ctx context.Context, actor *Principal, userID strin
 		return nil, errf(NotFound, "No such user.")
 	}
 	return u, err
+}
+
+// siteTargetToChange is siteTarget for a change: a site administrator's
+// sessions and accounts are changed only by who holds site.admins.manage.
+func (s *Service) siteTargetToChange(ctx context.Context, actor *Principal, userID string) (*store.User, error) {
+	u, err := s.siteTarget(ctx, actor, userID)
+	if err != nil {
+		return nil, err
+	}
+	if u.IsSiteAdmin() && !actor.Access.Can(authz.SiteAdminsManage, "") {
+		return nil, errf(Forbidden, "Only a site administrator may change a site administrator.")
+	}
+	return u, nil
 }
 
 // UserSessions lists a person's sessions, the one used last first.
@@ -55,7 +69,7 @@ func (s *Service) UserSessions(ctx context.Context, actor *Principal, userID str
 // EndUserSession ends one session of a person. The browser that held it is told,
 // the next time it comes, that it was signed out elsewhere.
 func (s *Service) EndUserSession(ctx context.Context, actor *Principal, userID, id, ip string) error {
-	u, err := s.siteTarget(ctx, actor, userID)
+	u, err := s.siteTargetToChange(ctx, actor, userID)
 	if err != nil {
 		return err
 	}
@@ -79,7 +93,7 @@ func (s *Service) EndUserSession(ctx context.Context, actor *Principal, userID, 
 
 // EndUserSessions ends every session of a person and says how many there were.
 func (s *Service) EndUserSessions(ctx context.Context, actor *Principal, userID, ip string) (int, error) {
-	u, err := s.siteTarget(ctx, actor, userID)
+	u, err := s.siteTargetToChange(ctx, actor, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -114,7 +128,7 @@ func (s *Service) UserIdentities(ctx context.Context, actor *Principal, userID s
 // DisconnectIdentity removes one connected account of a person, unless it is the
 // only way they can sign in.
 func (s *Service) DisconnectIdentity(ctx context.Context, actor *Principal, userID, identityID, ip string) error {
-	if _, err := s.siteTarget(ctx, actor, userID); err != nil {
+	if _, err := s.siteTargetToChange(ctx, actor, userID); err != nil {
 		return err
 	}
 	return s.unlinkIdentity(ctx, userID, identityID, actor.User.ID, "admin", ip)

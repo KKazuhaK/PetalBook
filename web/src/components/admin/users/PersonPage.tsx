@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { useUserRow } from '@/api/admin'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
+import { acrossSite, isAdminAccount } from '@/lib/access'
 import { ErrorState, PageFallback } from '@/components/common'
 import { FormMessage } from '@/components/auth/Field'
 import { Badge } from '@/components/ui/badge'
@@ -38,7 +39,7 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
   useScrollFade(fadeRef)
   const session = useSession()
   const me = session.data?.user
-  const site = me?.siteAdmin !== false
+  const site = acrossSite(me)
   const row = useUserRow(id)
   const { change, busy, error, messageRef } = useUserChange()
   const [deleting, setDeleting] = useState(false)
@@ -80,7 +81,7 @@ export function PersonPage({ id, tab }: { id: string; tab?: string }) {
     const done = await change(u, { disabled: !u.disabled })
     if (done) toast.success(done.disabled ? t.users.disable : t.users.enable)
   }
-  const roleText = u.role === 'admin' ? t.roles.admin : t.roles.member
+  const roleText = isAdminAccount(u) ? t.roles.admin : t.roles.member
   const tenant = u.tenant && u.tenant.slug !== 'default' ? u.tenant.name : ''
 
   return (

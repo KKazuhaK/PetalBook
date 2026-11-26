@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -323,7 +324,7 @@ func (s *server) storageSummary(c *call, sc store.Scope) (storageSummaryResp, er
 		r.Tenant = &t
 	}
 	r.Spaces.Local, r.Spaces.Full, r.Spaces.Partial, r.Spaces.Evicted, r.Spaces.Archived = sum.Local, sum.Full, sum.Partial, sum.Evicted, sum.Archived
-	if c.isSiteAdmin() {
+	if c.can(authz.SiteStorageManage) {
 		restoring, _ := s.spaces.RestoreCounts()
 		r.Spaces.Restoring = &restoring
 	}
@@ -339,7 +340,7 @@ func (s *server) storageSummary(c *call, sc store.Scope) (storageSummaryResp, er
 	r.Remotes.InGrace, r.Remotes.Overdue = sum.InGrace, sum.Overdue
 	r.RecycleDays = s.recycleDays(c)
 	r.MeasuredAt = optTime(sum.Measured)
-	if c.isSiteAdmin() {
+	if c.can(authz.SiteStorageManage) {
 		if free, ok := diskFree(s.spaces.DataDir()); ok {
 			r.DiskFreeBytes = &free
 		}

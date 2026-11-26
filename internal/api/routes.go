@@ -561,9 +561,9 @@ func (s *server) openSpace(c *call, rt route) bool {
 	}
 	if !self || errors.Is(err, spaces.ErrNotFound) {
 		if indexOnly(rt, r) {
-			h, err = s.spaces.OpenIndex(r.Context(), c.p.User, spaceID)
+			h, err = s.spaces.OpenIndexAs(r.Context(), c.p.User, c.p.Access, spaceID)
 		} else {
-			h, err = s.spaces.Open(r.Context(), c.p.User, spaceID)
+			h, err = s.spaces.OpenAs(r.Context(), c.p.User, c.p.Access, spaceID)
 		}
 	}
 	if err != nil {

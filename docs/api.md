@@ -1450,6 +1450,7 @@ These rows join those of "Audit log":
 |---|---|---|
 | `group_created`, `group_changed`, `group_deleted` | an administrator made, renamed or deleted a group | `group`, `name`, `source`; for a change the changed fields; for a delete `people` and `spaces` |
 | `group_member_added`, `group_member_removed` | an administrator changed a local group's people (one row per request) | `group`, `users` (ids, at most 500) |
+| `group_self_added` | an administrator added themselves to a group that gave them more in some spaces, or a custom role, with a reason (see "Taking over a space") | `group`, `spaces`, `roles`, `reason` |
 | `groups_synced` | a sign-in changed a person's synced groups | `provider`, `added`, `removed` (group ids) |
 | `groups_claim_missing` | a provider with groups on sent no claim (or an overage) | `provider`, `missing` (`keep` or `clear`), `reason` (`absent`, `overage`) |
 | `groups_claim_truncated` | more values than read, or more groups than a person may be in | `provider`, `limit` (`values`, `group_limit`) |
@@ -9492,7 +9493,8 @@ administrator" any more. A key is a name, a scope (`site`, `tenant` or
 `space`), the tenant capability it needs (if any) and a description. The
 registry is in code (`internal/authz`): a key is registered once, and the
 names below, `GET /api/admin/permissions` and the web app's `PermissionKey`
-are the same list (a test compares them).
+are the same list (a test compares them). `site.spaces.personal.content` is
+held by the built-in site administrator only: no custom role may hold it.
 
 | Key | Scope | Capability | What it allows |
 |---|---|---|---|
@@ -9502,12 +9504,15 @@ are the same list (a test compares them).
 | `site.mail.manage` | site | — | Read and change the mail settings, and send a test message |
 | `site.access.manage` | site | — | Read and change who may register and sign in |
 | `site.tenancy.manage` | site | — | Turn tenants on and off |
-| `site.tenants.manage` | site | — | List, create and delete tenants |
+| `site.tenants.manage` | site | — | List, create and delete tenants; change a tenant's slug, state and quota, and give a person more than their tenant allows |
 | `site.connections.manage` | site | — | Set up the providers people connect to |
 | `site.daily.manage` | site | — | Set up the daily text: its interfaces, providers and lines |
 | `site.status.read` | site | — | Read the server's status |
-| `site.storage.manage` | site | — | Change the server's storage budget and a space's storage, and evict spaces |
+| `site.storage.manage` | site | — | Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote |
 | `site.recycle.purge` | site | — | Purge an item of the recycle bin for good |
+| `site.admins.manage` | site | — | Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one |
+| `site.spaces.personal.meta` | site | — | See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content |
+| `site.spaces.personal.content` | site | — | Open an audited view of a person's personal space and export it; held by the built-in site administrator only |
 | `tenant.settings.read` | tenant | — | Read the tenant and its settings |
 | `tenant.settings.write` | tenant | — | Change the tenant and its settings |
 | `tenant.users.read` | tenant | — | List people and read their accounts, memberships, sessions, identities and passkeys |
@@ -9600,11 +9605,21 @@ saying so. That is closed:
   **tenant administrator** only within their tenant (another tenant's space is
   `404 not_found`). A **personal space is never taken over**, by anyone:
   `409 personal_space`.
-- **Groups that hold the owner role** keep it in this part: a takeover or a
-  transfer changes only the owners who were added directly, and the people of
-  each owner group are told as well (the audit row lists the groups as
-  `ownerGroups`). Part 2 of 3.6 removes or lowers a group's owner role on a
-  takeover.
+- **Groups that hold the owner role become editors** (3.6 part 2): a
+  takeover or a transfer leaves the space one owner, the new one. In the same
+  transaction every owner group is made an editor, its people's lists change at
+  once, and each of them is told as well; the audit row lists those groups as
+  `ownerGroups`.
+- **Joining a group is not a way round** (3.6 part 2). An administrator who
+  adds themselves to a group (`POST /api/admin/groups/{group}/members`) that
+  holds a role in a space where that gives them a permission they do not hold
+  already (as a member, or through another group) is refused
+  `403 takeover_required`, and nothing is added. Sending a `reason` makes it
+  explicit: it needs `tenant.spaces.takeover` in the group's tenant
+  (`403 forbidden` naming it otherwise) and is audited as `group_self_added`
+  with `group`, `spaces` (those it gave them more in), `roles` (the custom
+  roles the group holds outside spaces, which count the same) and `reason`.
+  Adding other people is not asked about.
 - A built-in tenant administrator holds `tenant.spaces.takeover`, but only this
   endpoint (and `…/transfer`) uses it; it never widens what they may do in a
   space implicitly. The same holds for a site administrator.
@@ -10677,10 +10692,14 @@ provider and claim value each membership came from.
 #### `POST /api/admin/groups/{group}/members`
 
 Local groups only (`409 group_synced`). `{"userIds": ["01JD3K8Q7Z", …]}`, 1 to
-500. `200` with `{"added": 3, "already": 1}`. All or nothing: an unknown id is
+500, and an optional `reason` (1 to 500 characters). `200` with
+`{"added": 3, "already": 1}`. All or nothing: an unknown id is
 `404 user_not_found` with `{"missing": […]}`; `409 group_limit` when the group
 or a person would pass their limit. Disabled users may be added (they still
-cannot sign in).
+cannot sign in). Adding **oneself** to a group that would give one more in a
+space than one holds is `403 takeover_required` without a `reason`; with one it
+needs `tenant.spaces.takeover` and is audited as `group_self_added` (see
+"Taking over a space").
 
 #### `DELETE /api/admin/groups/{group}/members/{user}`
 

@@ -153,7 +153,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 			}
 		}
 	}
-	if s.ssoOnlyInEffect(st) && u.Role != "admin" {
+	if s.ssoOnlyInEffect(st) && !u.IsAdmin() {
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "local_login_refused"}})
 		return nil, errLocalRefused()
 	}
@@ -335,7 +335,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, username, name, passw
 	if strings.TrimSpace(name) == "" {
 		name = inv.Name
 	}
-	if s.ssoOnlyInEffect(st) && inv.Role != "admin" {
+	if s.ssoOnlyInEffect(st) && !store.IsAdminRole(inv.Role) {
 		return nil, "", errLocalRefused()
 	}
 	u, err := s.CreateUser(ctx, CreateParams{Username: username, Name: name, Email: inv.Email, Role: inv.Role, Password: password, InviteID: inv.ID, TenantID: inv.TenantID, SiteAdmin: inv.SiteAdmin})

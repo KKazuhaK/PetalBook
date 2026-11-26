@@ -422,7 +422,8 @@ func TestEveryTableOfASpaceIsRecycled(t *testing.T) {
 		// spaces it may reach (a restore brings its reach back by itself), and the
 		// bin's own row.
 		not := map[string]string{"api_token_spaces": "names spaces a token reaches; no foreign key", "oauth_grant_spaces": "the same for a grant", "recycle_items": "the bin's own",
-			"space_measure": "the measurement's queue: a restored space is queued again (RestoreSpaceRows)"}
+			"space_measure": "the measurement's queue: a restored space is queued again (RestoreSpaceRows)",
+			"role_grants":   "a custom role held in a space names it with no foreign key, and is kept while the space is in the bin"}
 		for rows.Next() {
 			var n string
 			if err := rows.Scan(&n); err != nil {

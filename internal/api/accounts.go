@@ -47,7 +47,7 @@ func (s *server) toUser(u store.User) userResp {
 	if s.auth != nil {
 		req = s.auth.PasskeyRequiredOf(u)
 	}
-	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.Role == "admin" && u.SiteAdmin, nil, nil, u.RemoteExempt}
+	r := userResp{u.ID, u.Username, u.Name, u.Email, u.Role, u.Disabled, rfc3339(u.Created), u.EmailVerified, req, u.IsSiteAdmin(), nil, nil, u.RemoteExempt}
 	if !s.single {
 		r.Tenant = s.toTenantRef(u.TenantID)
 	}
@@ -538,7 +538,7 @@ func (s *server) patchUser(c *call) {
 		}
 	}
 	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
-		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, SiteAdmin: req.SiteAdmin, RemoteExempt: req.RemoteExempt})
+		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, MakeSiteAdmin: req.SiteAdmin, RemoteExempt: req.RemoteExempt})
 	if err != nil {
 		s.fail(c.w, err)
 		return

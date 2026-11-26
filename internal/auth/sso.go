@@ -858,7 +858,7 @@ func (s *Service) mergeByEmail(ctx context.Context, rt *providerRT, c claimed, i
 		return nil, nil
 	}
 	u := users[0]
-	if !u.EmailVerified || u.Role == "admin" || u.Disabled {
+	if !u.EmailVerified || u.IsAdmin() || u.Disabled {
 		return nil, nil
 	}
 	if by, err := store.EmailVerifiedBy(ctx, s.st.Q(), u.ID); err != nil {
@@ -938,7 +938,11 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 		if e != nil || u.Disabled {
 			return ssoErr("expired")
 		}
-		p = &Principal{User: *u, Access: AccessOf(*u)}
+		access, e := s.SubjectOf(ctx, *u)
+		if e != nil {
+			return ssoErr("expired")
+		}
+		p = &Principal{User: *u, Access: access}
 	} else if p, err = s.Authenticate(ctx, sessionToken); err != nil || p.User.ID != userID {
 		return ssoErr("expired")
 	}

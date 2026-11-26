@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/store"
 )
@@ -193,7 +194,7 @@ func (s *server) adminListTenants(c *call) {
 // answered as unknown.
 func (s *server) visibleTenant(c *call) (*store.Tenant, bool) {
 	id := c.r.PathValue("tenant")
-	if !c.isSiteAdmin() && id != c.user().TenantID {
+	if !c.p.Access.Can(authz.TenantSettingsRead, id) {
 		tenantNotFound(c)
 		return nil, false
 	}
@@ -338,7 +339,7 @@ func (s *server) adminPatchTenant(c *call) {
 		switch k {
 		case "name":
 		case "slug", "disabled", "quota":
-			if !c.isSiteAdmin() {
+			if !c.can(authz.SiteTenantsManage) {
 				writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may change "+k+".")
 				return
 			}

@@ -29,7 +29,13 @@ export const PERMISSIONS: PermissionInfo[] = [
     description: 'Read and change who may register and sign in',
   },
   { name: 'site.tenancy.manage', scope: 'site', capability: '', description: 'Turn tenants on and off' },
-  { name: 'site.tenants.manage', scope: 'site', capability: '', description: 'List, create and delete tenants' },
+  {
+    name: 'site.tenants.manage',
+    scope: 'site',
+    capability: '',
+    description:
+      "List, create and delete tenants; change a tenant's slug, state and quota, and give a person more than their tenant allows",
+  },
   {
     name: 'site.connections.manage',
     scope: 'site',
@@ -47,13 +53,35 @@ export const PERMISSIONS: PermissionInfo[] = [
     name: 'site.storage.manage',
     scope: 'site',
     capability: '',
-    description: "Change the server's storage budget and a space's storage, and evict spaces",
+    description:
+      "Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote",
   },
   {
     name: 'site.recycle.purge',
     scope: 'site',
     capability: '',
     description: 'Purge an item of the recycle bin for good',
+  },
+  {
+    name: 'site.admins.manage',
+    scope: 'site',
+    capability: '',
+    description:
+      'Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one',
+  },
+  {
+    name: 'site.spaces.personal.meta',
+    scope: 'site',
+    capability: '',
+    description:
+      "See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content",
+  },
+  {
+    name: 'site.spaces.personal.content',
+    scope: 'site',
+    capability: '',
+    description:
+      "Open an audited view of a person's personal space and export it; held by the built-in site administrator only",
   },
   { name: 'tenant.settings.read', scope: 'tenant', capability: '', description: 'Read the tenant and its settings' },
   { name: 'tenant.settings.write', scope: 'tenant', capability: '', description: 'Change the tenant and its settings' },

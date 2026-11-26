@@ -4,14 +4,22 @@ import (
 	"errors"
 	"net/http"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
-// isSiteAdmin: an administrator of the whole server. In single-user mode the
-// one user is one.
-func (c *call) isSiteAdmin() bool {
-	u := c.user()
-	return u.Role == "admin" && u.SiteAdmin
+// can reports whether the caller holds k in their own tenant (a site key:
+// across the site). A handler asks this for what it does beyond the key of
+// its route; in single-user mode the one user holds every key.
+func (c *call) can(k authz.Key) bool {
+	return c.p != nil && c.p.Access.Can(k, c.user().TenantID)
+}
+
+// siteWide reports whether the caller holds k across the site: a tenant key
+// in every tenant, which is what reaches beyond their own (what a site
+// administrator holds).
+func (c *call) siteWide(k authz.Key) bool {
+	return c.p != nil && c.p.Access.SiteWide(k)
 }
 
 // ownScope is the caller's own tenant: what a person sees of anything that is

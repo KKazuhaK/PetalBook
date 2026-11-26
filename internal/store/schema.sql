@@ -652,6 +652,39 @@ CREATE TABLE space_groups (
 );
 CREATE INDEX space_groups_group ON space_groups(group_id);
 
+-- Custom roles (3.6, reserved: nothing makes them yet but the store's own
+-- functions). The built-in roles are code (internal/authz), not rows. scope is
+-- 'site', 'tenant' or 'space'; tenant_id is '' for a role of the site. keys is
+-- a JSON list of key names; a renamed key keeps its old name as an alias, so a
+-- stored list stays good. A tenant's roles go with it (DeleteTenant).
+CREATE TABLE roles (
+  id        TEXT COLLATE "C" PRIMARY KEY,
+  tenant_id TEXT COLLATE "C" NOT NULL DEFAULT '',
+  scope     TEXT COLLATE "C" NOT NULL CHECK (scope IN ('site', 'tenant', 'space')),
+  name      TEXT COLLATE "C" NOT NULL,
+  keys      TEXT COLLATE "C" NOT NULL DEFAULT '[]',
+  created   BIGINT NOT NULL,
+  updated   BIGINT NOT NULL,
+  UNIQUE (tenant_id, name)
+);
+
+-- A role held by a person or a group: across the site (tenant_id ''), in one
+-- tenant, or in one space (space_id; the space level's, reserved). The
+-- subject is not a foreign key (it is either table's): a group's grants go
+-- with the group (DeleteGroup), a person's stay with their tombstone. The
+-- session cache reads a person's grants by the index on the subject, and only
+-- while some role exists (Store.CustomRoles).
+CREATE TABLE role_grants (
+  role_id      TEXT COLLATE "C" NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  subject_kind TEXT COLLATE "C" NOT NULL CHECK (subject_kind IN ('user', 'group')),
+  subject_id   TEXT COLLATE "C" NOT NULL,
+  tenant_id    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  space_id     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created      BIGINT NOT NULL,
+  PRIMARY KEY (role_id, subject_kind, subject_id, tenant_id, space_id)
+);
+CREATE INDEX role_grants_subject ON role_grants(subject_kind, subject_id);
+
 -- A registration waiting for its link to be followed. The password is already
 -- hashed and the username is held (unique) until the row expires or is made
 -- into an account; only the SHA-256 of the token is stored.

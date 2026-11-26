@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
@@ -254,7 +255,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 			return
 		}
 	}
-	ch.Site = c.isSiteAdmin()
+	ch.Site = c.siteWide(authz.TenantSettingsWrite)
 	if err := s.settings.SetTenant(ctx, t.ID, key, ch); err != nil {
 		s.failSetting(c, err)
 		return

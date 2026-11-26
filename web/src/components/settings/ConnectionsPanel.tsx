@@ -29,6 +29,7 @@ import { Badge } from '@/components/ui/badge'
 import { BrandIcon } from '@/components/brand/BrandIcon'
 import { Button } from '@/components/ui/button'
 import { absoluteTime, relativeTime } from '@/lib/time'
+import { administers } from '@/lib/access'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/github'
 import { tf } from '@/i18n/forge'
@@ -123,7 +124,7 @@ export function ConnectionsPanel() {
         onRetry={() => void info.refetch()}
       />
     )
-  const admin = session.data.user?.role === 'admin'
+  const admin = administers(session.data.user)
   // Only the platforms a person can connect an account to, and that the server has set up.
   const rows = info.data.providers.filter((p) => p.capabilities.connectAccount && p.configured)
   return (

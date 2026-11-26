@@ -11,18 +11,23 @@ import "petalbook.app/server/internal/perm"
 // the space (or, for reading, in an administrator's audited view).
 var (
 	// The site's own.
-	SiteSettingsManage    = Register("site.settings.manage", ScopeSite, "", "Read and change the site's settings")
-	SiteSecurityManage    = Register("site.security.manage", ScopeSite, "", "Read and change the sign-in security of the site")
-	SiteSigninManage      = Register("site.signin.manage", ScopeSite, "", "Add, change and remove sign-in providers")
-	SiteMailManage        = Register("site.mail.manage", ScopeSite, "", "Read and change the mail settings, and send a test message")
-	SiteAccessManage      = Register("site.access.manage", ScopeSite, "", "Read and change who may register and sign in")
-	SiteTenancyManage     = Register("site.tenancy.manage", ScopeSite, "", "Turn tenants on and off")
-	SiteTenantsManage     = Register("site.tenants.manage", ScopeSite, "", "List, create and delete tenants")
-	SiteConnectionsManage = Register("site.connections.manage", ScopeSite, "", "Set up the providers people connect to")
-	SiteDailyManage       = Register("site.daily.manage", ScopeSite, "", "Set up the daily text: its interfaces, providers and lines")
-	SiteStatusRead        = Register("site.status.read", ScopeSite, "", "Read the server's status")
-	SiteStorageManage     = Register("site.storage.manage", ScopeSite, "", "Change the server's storage budget and a space's storage, and evict spaces")
-	SiteRecyclePurge      = Register("site.recycle.purge", ScopeSite, "", "Purge an item of the recycle bin for good")
+	SiteSettingsManage     = Register("site.settings.manage", ScopeSite, "", "Read and change the site's settings")
+	SiteSecurityManage     = Register("site.security.manage", ScopeSite, "", "Read and change the sign-in security of the site")
+	SiteSigninManage       = Register("site.signin.manage", ScopeSite, "", "Add, change and remove sign-in providers")
+	SiteMailManage         = Register("site.mail.manage", ScopeSite, "", "Read and change the mail settings, and send a test message")
+	SiteAccessManage       = Register("site.access.manage", ScopeSite, "", "Read and change who may register and sign in")
+	SiteTenancyManage      = Register("site.tenancy.manage", ScopeSite, "", "Turn tenants on and off")
+	SiteTenantsManage      = Register("site.tenants.manage", ScopeSite, "", "List, create and delete tenants; change a tenant's slug, state and quota, and give a person more than their tenant allows")
+	SiteConnectionsManage  = Register("site.connections.manage", ScopeSite, "", "Set up the providers people connect to")
+	SiteDailyManage        = Register("site.daily.manage", ScopeSite, "", "Set up the daily text: its interfaces, providers and lines")
+	SiteStatusRead         = Register("site.status.read", ScopeSite, "", "Read the server's status")
+	SiteStorageManage      = Register("site.storage.manage", ScopeSite, "", "Change the server's storage budget and a space's storage, evict and pin spaces, see the disk, and exempt a person from the site's requirement of a remote")
+	SiteRecyclePurge       = Register("site.recycle.purge", ScopeSite, "", "Purge an item of the recycle bin for good")
+	SiteAdminsManage       = Register("site.admins.manage", ScopeSite, "", "Change administrators of the whole server (their accounts, passwords, passkeys, sessions and tokens), delete them, and make or end one")
+	SiteSpacesPersonalMeta = Register("site.spaces.personal.meta", ScopeSite, "", "See people's personal spaces in the administration (in lists, the recycle bin and a person's page, with their size), restore them with their person, and manage one without being its member; not their content")
+	// The content of people's personal spaces is the built-in site
+	// administrator's alone: no custom role holds it.
+	SiteSpacesPersonalContent = BuiltInOnly(Register("site.spaces.personal.content", ScopeSite, "", "Open an audited view of a person's personal space and export it; held by the built-in site administrator only"))
 
 	// A tenant's.
 	TenantSettingsRead    = Register("tenant.settings.read", ScopeTenant, "", "Read the tenant and its settings")

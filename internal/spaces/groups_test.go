@@ -60,7 +60,7 @@ func (f *gfix) group(name, source string) string {
 
 func (f *gfix) in(group string, users ...string) {
 	f.t.Helper()
-	if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), group, users); err != nil {
+	if _, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), group, users, GroupJoin{}); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -302,25 +302,25 @@ func TestGroupLimits(t *testing.T) {
 		for i := 0; i < MaxAddPeople+1; i++ {
 			ids = append(ids, fmt.Sprintf("u%04d", i))
 		}
-		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, ids); !errors.Is(err, ErrInvalid) {
+		if _, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, ids, GroupJoin{}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("501: %v", err)
 		}
-		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, nil); !errors.Is(err, ErrInvalid) {
+		if _, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, nil, GroupJoin{}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("none: %v", err)
 		}
 		f.user("real")
 		var miss *MissingUsersError
-		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real", "ghost", "ghost2"}); !errors.As(err, &miss) || len(miss.Missing) != 2 {
+		if _, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real", "ghost", "ghost2"}, GroupJoin{}); !errors.As(err, &miss) || len(miss.Missing) != 2 {
 			t.Fatalf("missing: %v", err)
 		}
 		if n, _ := store.CountGroupPeople(ctx, st.Q(), g); n != 0 {
 			t.Fatalf("a refused request added %d people", n)
 		}
-		added, already, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real", "real"})
+		added, already, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real", "real"}, GroupJoin{})
 		if err != nil || added != 1 || already != 0 {
 			t.Fatal(added, already, err)
 		}
-		if added, already, _, err = f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real"}); err != nil || added != 0 || already != 1 {
+		if added, already, _, _, err = f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"real"}, GroupJoin{}); err != nil || added != 0 || already != 1 {
 			t.Fatal(added, already, err)
 		}
 		// A person in 1000 groups cannot join a 1001st; a synced sync is cut there too.
@@ -335,7 +335,7 @@ func TestGroupLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"many"}); !errors.Is(err, ErrGroupLimit) {
+		if _, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"many"}, GroupJoin{}); !errors.Is(err, ErrGroupLimit) {
 			t.Fatalf("1001st: %v", err)
 		}
 		sg := f.group("Synced", "synced")
@@ -354,7 +354,7 @@ func TestEditingGroupsByHandRules(t *testing.T) {
 		f.user("ann")
 		syn := f.group("From IdP", "synced")
 		loc := f.group("By hand", "local")
-		if _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), syn, []string{"ann"}); !errors.Is(err, ErrGroupSynced) {
+		if _, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), syn, []string{"ann"}, GroupJoin{}); !errors.Is(err, ErrGroupSynced) {
 			t.Fatalf("%v", err)
 		}
 		if err := f.m.RemoveGroupPerson(ctx, store.AllTenants(), syn, "ann"); !errors.Is(err, ErrGroupSynced) {
@@ -819,7 +819,7 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 	}
 	grants := []grant{
 		{"local add", store.GroupLocal, func(f *gfix, g string) error {
-			_, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"x"})
+			_, _, _, _, err := f.m.AddGroupPeople(ctx, store.AllTenants(), g, []string{"x"}, GroupJoin{})
 			return err
 		}},
 		{"sync", store.GroupSynced, func(f *gfix, g string) error {

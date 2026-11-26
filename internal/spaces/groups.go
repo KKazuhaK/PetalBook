@@ -276,11 +276,29 @@ func (m *Manager) GroupSpaces(ctx context.Context, sc store.Scope, id, cursor st
 	return store.ListGroupSpaces(ctx, m.opt.Store.Q(), m.opt.Store.Dialect(), id, cursor, limit)
 }
 
+// GroupJoin is who adds people to a group, and how.
+type GroupJoin struct {
+	// By is the person adding ("" for none: a sync, a test).
+	By string
+	// Explicit says By adds themselves on purpose, as an audited takeover of
+	// what the group reaches: the caller has asked for a reason and checked
+	// the takeover key (tenant.spaces.takeover).
+	Explicit bool
+}
+
 // AddGroupPeople adds people to a local group, all or nothing. It returns how
-// many were added, how many were in it already, and the ids of those added.
-func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string, userIDs []string) (added, already int, ids []string, err error) {
+// many were added, how many were in it already, the ids of those added, and
+// what join.By gained by joining (GroupGain).
+//
+// Someone who adds themselves to a group that holds a role in a space would
+// take that role without the space's owners having a say: when that gives
+// them anything they do not hold there already (as a member, or through
+// another group), it is ErrTakeover unless join.Explicit. So is joining a
+// group that holds a custom role outside spaces: its keys would be theirs.
+// Adding other people is not asked about.
+func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string, userIDs []string, join GroupJoin) (added, already int, ids []string, gained GroupGain, err error) {
 	if err := m.needAccounts(); err != nil {
-		return 0, 0, nil, err
+		return 0, 0, nil, GroupGain{}, err
 	}
 	seen := map[string]bool{}
 	var want []string
@@ -291,7 +309,7 @@ func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string,
 		}
 	}
 	if len(want) < 1 || len(userIDs) > MaxAddPeople {
-		return 0, 0, nil, fmt.Errorf("%w: userIds holds 1 to %d ids", ErrInvalid, MaxAddPeople)
+		return 0, 0, nil, GroupGain{}, fmt.Errorf("%w: userIds holds 1 to %d ids", ErrInvalid, MaxAddPeople)
 	}
 	var fresh []string
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
@@ -345,16 +363,68 @@ func (m *Manager) AddGroupPeople(ctx context.Context, sc store.Scope, id string,
 		if n+len(fresh) > MaxGroupPeople {
 			return limitErr("A group has at most %d people.", MaxGroupPeople)
 		}
+		if join.By != "" && slices.Contains(fresh, join.By) {
+			if gained.Spaces, err = gainedByJoining(ctx, q, id, join.By); err != nil {
+				return err
+			}
+			if m.opt.Store.CustomRoles() {
+				if gained.Roles, err = store.GroupRoleIDs(ctx, q, id); err != nil {
+					return err
+				}
+			}
+			if !gained.Empty() && !join.Explicit {
+				return ErrTakeover
+			}
+		}
 		return store.AddLocalMembers(ctx, q, id, fresh, m.opt.Now())
 	})
 	if errors.Is(err, store.ErrNotFound) {
-		return 0, 0, nil, ErrGroupNotFound
+		return 0, 0, nil, GroupGain{}, ErrGroupNotFound
 	}
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, nil, GroupGain{}, err
 	}
 	m.MembershipChanged(fresh...)
-	return len(fresh), already, fresh, nil
+	return len(fresh), already, fresh, gained, nil
+}
+
+// GroupGain is what someone gains by joining a group: the spaces in which it
+// gives them a permission they did not hold, and the custom roles outside
+// spaces it holds.
+type GroupGain struct {
+	Spaces, Roles []string
+}
+
+// Empty reports whether joining gained nothing.
+func (g GroupGain) Empty() bool { return len(g.Spaces) == 0 && len(g.Roles) == 0 }
+
+// gainedByJoining lists the spaces in which joining the group gives the
+// person a permission they do not hold there now, in order.
+func gainedByJoining(ctx context.Context, q store.Q, groupID, userID string) ([]string, error) {
+	roles, err := store.GroupSpaceRoles(ctx, q, groupID)
+	if err != nil || len(roles) == 0 {
+		return nil, err
+	}
+	have, err := store.ListUserAccess(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	held := map[string]perm.Set{}
+	for _, a := range have {
+		for _, r := range []string{a.Role, a.GroupRole} {
+			if s, ok := perm.ForRole(r); ok {
+				held[a.SpaceID] |= s
+			}
+		}
+	}
+	var out []string
+	for sp, r := range roles {
+		if s, _ := perm.ForRole(r); s&^held[sp] != 0 {
+			out = append(out, sp)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // RemoveGroupPerson removes a person from a local group.

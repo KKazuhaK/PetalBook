@@ -508,7 +508,7 @@ func (s *server) adminAudit(c *call) {
 	if !ok {
 		return
 	}
-	rows, next, err := s.auth.ListAudit(c.r.Context(), sc, !c.isSiteAdmin(), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
+	rows, next, err := s.auth.ListAudit(c.r.Context(), sc, !c.siteWide(authz.TenantAuditRead), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
 	if err != nil {
 		s.fail(c.w, err)
 		return

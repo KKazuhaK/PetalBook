@@ -106,7 +106,7 @@ func (sc Scope) spaceCond(tenantCol, notPersonal string) (string, []any) {
 // ScopeOf is the scope an administrator acts in: every tenant for a site
 // administrator, their own tenant for any other user.
 func ScopeOf(u User) Scope {
-	if u.SiteAdmin && u.Role == "admin" {
+	if u.IsSiteAdmin() {
 		return AllTenants()
 	}
 	return InTenant(u.TenantID)
@@ -391,6 +391,13 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		}
 		// Installations shared with it are not any more.
 		if _, err := q.Exec(ctx, `DELETE FROM github_installation_tenants WHERE tenant_id = ?`, id); err != nil {
+			return err
+		}
+		// Its custom roles, and the grants of any role held in it, go with it.
+		if _, err := q.Exec(ctx, `DELETE FROM role_grants WHERE tenant_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM roles WHERE tenant_id = ?`, id); err != nil {
 			return err
 		}
 		// Pending registrations are deleted with it.

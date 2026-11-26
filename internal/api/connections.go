@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/store"
 )
@@ -582,7 +583,7 @@ func (s *server) connectManifestCallback(c *call) {
 		binding = ck.Value
 	}
 	userID := ""
-	if c.p != nil && c.isSiteAdmin() {
+	if c.can(authz.SiteConnectionsManage) {
 		userID = c.user().ID
 	}
 	to, clear := m.CompleteManifest(c.r.Context(), binding, userID, c.r.URL.Query())

@@ -81,7 +81,7 @@ func (m *Manager) userEntry(ctx context.Context, userID string) (cachedAuthor, e
 		return cachedAuthor{}, err
 	}
 	a := m.AuthorOf(*u)
-	c = cachedAuthor{a: a, admin: u.Role == "admin", disabled: u.Disabled, at: now}
+	c = cachedAuthor{a: a, admin: u.IsAdmin(), disabled: u.Disabled, at: now}
 	m.authors.mu.Lock()
 	if m.authors.m == nil || len(m.authors.m) >= maxAuthors {
 		m.authors.m = map[string]cachedAuthor{}
