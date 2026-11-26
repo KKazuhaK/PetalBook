@@ -292,7 +292,7 @@ export const tenantsZhCN = {
       'users.emailNonAscii': '允许含非 ASCII 字符的邮箱',
       'accounts.multipleEmails': '一个账号可以有多个邮箱',
       'storage.assets': '附件放在哪里',
-      'storage.assets.ownStorageExempt': '使用自己存储的组织不受此限制',
+      'storage.assets.ownStorageExempt': '放在自己存储上的空间不受此限制',
       'features.ownSso': '租户自己的单点登录提供方',
       'features.domains': '邮箱域名认领与按域名加入',
       'features.managedAccounts': '受管账号',
@@ -383,7 +383,7 @@ export const tenantsZhCN = {
       'storage.assets':
         '新建并同步到平台的空间，附件是放在空间自己的仓库，还是放在单独的附件仓库（<名字>-assets）。默认是单独的仓库。顺序：全站锁定 > 全站为某个租户强制 > 全站默认 > 租户默认 > 空间所有者；没有远端的空间附件始终在空间里。租户的限额表关掉附件仓库时只能放在空间里。',
       'storage.assets.ownStorageExempt':
-        '开着（默认）：把数据存在自己存储位置上的组织，不受全站对附件位置的默认和锁定约束，自己决定，只受自己这一层的规则管。这个存储位置功能随 3.6 一起到来，在那之前这个开关只是先存着。',
+        '开着（默认）：所有者把空间放在自己存储位置上时，不受全站对附件位置的规则约束，由所有者自己决定。关掉：全站的默认或锁定对这些空间同样有效。这个存储位置功能随 3.6 一起到来，在那之前这个开关只是先存着。',
     } as Record<string, string>,
   },
   secrets: {

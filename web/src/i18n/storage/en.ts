@@ -75,6 +75,10 @@ export const storageEn = {
     assets: {
       title: 'Attachment repositories',
       help: "Attachments go to a second repository, named <name>-assets, so the space's own stays small. Where they go, as a default or a rule, is set under Settings by layer (storage.assets).",
+      ownExemptTitle: 'Spaces on their own storage are exempt',
+      ownExemptHelp:
+        "On (the default): a space whose owner stores it on their own storage is exempt from the site's rule for where attachments go, so its owner decides. Off: the site's default or lock applies to those spaces too. The site may allow, restrict or lock this per organization.",
+      ownExemptLabel: 'Exempt spaces on their own storage from the attachments rule',
     },
     errors: {
       failed: 'Could not save the settings.',

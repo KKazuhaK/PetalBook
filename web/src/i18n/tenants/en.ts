@@ -310,7 +310,7 @@ export const tenantsEn: TenantsMessages = {
       'users.emailNonAscii': 'Allow email addresses with characters outside ASCII',
       'accounts.multipleEmails': 'More than one email address per account',
       'storage.assets': 'Where attachments go',
-      'storage.assets.ownStorageExempt': 'Organizations on their own storage are not bound by this',
+      'storage.assets.ownStorageExempt': 'Spaces on their own storage are exempt',
       'features.ownSso': "The tenant's own single sign-on providers",
       'features.domains': 'Email domain claims and joining by domain',
       'features.managedAccounts': 'Managed accounts',
@@ -410,7 +410,7 @@ export const tenantsEn: TenantsMessages = {
       'storage.assets':
         "Whether a new space synced to a platform keeps its attachments in its own repository or in a separate attachments repository (<name>-assets). Separate is the default. Order: the site's lock, the site's lock for one tenant, the site's default, the tenant's default, then the space's owner. A space with no remote keeps attachments in the space. When a tenant's limits table turns the attachments repository off, only the space is possible.",
       'storage.assets.ownStorageExempt':
-        "On (the default): an organization that stores on a target of its own is not bound by the site's default or lock for where attachments go, and chooses freely inside its own layers. Storage targets of their own arrive with 3.6; until then the switch is only stored.",
+        "On (the default): a space whose owner stores it on their own storage is exempt from the site's rule for where attachments go, so its owner decides. Off: the site's default or lock applies to those spaces too. Storage targets of their own arrive with 3.6; until then the switch is only stored.",
     },
   },
   secrets: {
