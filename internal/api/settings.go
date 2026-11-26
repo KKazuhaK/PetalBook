@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"petalbook.app/server/internal/auth"
@@ -57,9 +58,22 @@ type tenantSettingResp struct {
 	Choices []string `json:"choices,omitempty"`
 }
 
-func tenantSettingOf(e *settings.Effective) tenantSettingResp {
+// tenantSettingOf is a setting as the API shows it for a tenant. Who set a rule
+// (a site administrator's id) is shown to site administrators only: for
+// anyone else the rules are copies without it (the cached view is shared).
+func tenantSettingOf(e *settings.Effective, showSetBy bool) tenantSettingResp {
 	d := e.Def
-	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, e.Tenant, e.Value, d.Choices}
+	tv := e.Tenant
+	if !showSetBy && tv != nil && slices.ContainsFunc(tv.Rules, func(r settings.RuleView) bool { return r.SetBy != "" }) {
+		cp := *tv
+		cp.Rules = slices.Clone(tv.Rules)
+		for i := range cp.Rules {
+			cp.Rules[i].SetBy = ""
+		}
+		cp.SiteRule = nil
+		tv = &cp
+	}
+	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, tv, e.Value, d.Choices}
 }
 
 // tenantSiteView is what a tenant is shown of the site's layer: the value and
@@ -121,10 +135,11 @@ func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
 		}
 	}
 	if raw, ok := req["siteRule"]; ok {
-		// {"value": …, "lower": {…}}, either or both; null removes the rule.
+		// {"value": …, "lower": {…}, "from": …, "until": …}, any of them; null
+		// removes the manual rule. from and until are RFC 3339 times.
 		ch.HasSiteRule = true
 		if err := json.Unmarshal(raw, &ch.SiteRule); err != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "SiteRule is {\"value\": …, \"lower\": {…}} or null.")
+			writeError(c.w, http.StatusBadRequest, "invalid", "SiteRule is {\"value\": …, \"lower\": {…}, \"from\": …, \"until\": …} or null, the times in RFC 3339.")
 			return ch, false
 		}
 	}
@@ -197,6 +212,7 @@ func (s *server) adminPutSetting(c *call) {
 		s.failSetting(c, err)
 		return
 	}
+	ch.By = c.user().ID
 	affected, err := s.settings.SetSite(ctx, key, ch)
 	if err != nil {
 		s.failSetting(c, err)
@@ -210,7 +226,7 @@ func (s *server) adminPutSetting(c *call) {
 		return
 	}
 	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: "-",
-		Detail: map[string]any{"key": key, "layer": "site", "from": before.Site, "to": after.Site}})
+		Detail: map[string]any{"key": key, "layer": "site", "source": "manual", "from": before.Site, "to": after.Site}})
 	d, _ := s.settings.Def(key)
 	out := struct {
 		siteSettingResp
@@ -222,7 +238,7 @@ func (s *server) adminPutSetting(c *call) {
 	writeJSON(c.w, http.StatusOK, out)
 }
 
-func (s *server) tenantSettingsOf(ctx context.Context, tenant string) ([]tenantSettingResp, error) {
+func (s *server) tenantSettingsOf(ctx context.Context, tenant string, showSetBy bool) ([]tenantSettingResp, error) {
 	eff, err := s.settings.For(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -233,7 +249,7 @@ func (s *server) tenantSettingsOf(ctx context.Context, tenant string) ([]tenantS
 			continue
 		}
 		e := eff[d.Key]
-		out = append(out, tenantSettingOf(e))
+		out = append(out, tenantSettingOf(e, showSetBy))
 	}
 	return out, nil
 }
@@ -243,7 +259,7 @@ func (s *server) adminGetTenantSettings(c *call) {
 	if !ok {
 		return
 	}
-	out, err := s.tenantSettingsOf(c.r.Context(), t.ID)
+	out, err := s.tenantSettingsOf(c.r.Context(), t.ID, c.siteWide(authz.TenantSettingsWrite))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -276,8 +292,9 @@ func (s *server) adminPutTenantSetting(c *call) {
 			return
 		}
 	}
-	ch.Site = c.siteWide(authz.TenantSettingsWrite)
-	if err := s.settings.SetTenant(ctx, t.ID, key, ch); err != nil {
+	ch.Site, ch.By = c.siteWide(authz.TenantSettingsWrite), c.user().ID
+	res, err := s.settings.SetTenantResult(ctx, t.ID, key, ch)
+	if err != nil {
 		s.failSetting(c, err)
 		return
 	}
@@ -288,9 +305,31 @@ func (s *server) adminPutTenantSetting(c *call) {
 		s.failSetting(c, err)
 		return
 	}
-	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: t.ID,
-		Detail: map[string]any{"key": key, "layer": "tenant", "from": before.Tenant, "to": after.Tenant}})
-	writeJSON(c.w, http.StatusOK, tenantSettingOf(after))
+	detail := map[string]any{"key": key, "layer": "tenant", "from": before.Tenant, "to": after.Tenant}
+	if ch.HasSiteRule {
+		// A rule for the tenant: its source and window.
+		detail["source"] = "manual"
+		if r := ch.SiteRule; r != nil && (!r.From.IsZero() || !r.Until.IsZero()) {
+			detail["window"] = map[string]any{"from": optTime(r.From), "until": optTime(r.Until)}
+		}
+	}
+	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: t.ID, Detail: detail})
+	out := struct {
+		tenantSettingResp
+		Warning *warningResp `json:"warning,omitempty"`
+	}{tenantSettingResp: tenantSettingOf(after, ch.Site)}
+	if res.UndatedReplaced {
+		out.Warning = &warningResp{"undated_value_replaced", []string{key},
+			"There is one manual rule for each setting. A dated rule replaced the undated one: when its window ends, the value is not the undated one but what is below it (billing, the plan, the site)."}
+	}
+	writeJSON(c.w, http.StatusOK, out)
+}
+
+// warningResp is a warning that comes with a change that went through.
+type warningResp struct {
+	Code    string   `json:"code"`
+	Keys    []string `json:"keys"`
+	Message string   `json:"message"`
 }
 
 // mySettings is GET /api/settings: what each setting that has a space or

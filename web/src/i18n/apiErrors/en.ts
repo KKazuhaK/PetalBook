@@ -60,7 +60,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   member_via_group: 'This person is a member through a group. Remove them from the group.',
   default_tenant: 'The default organisation cannot be changed that way.',
   tenant_limit: 'The limit on organisations is reached.',
-  capability_off: 'Your organisation does not have this feature.',
+  feature_off: 'Your organisation does not have this feature.',
   takeover_required:
     'Only a member of the space can change its owners or its remote. An administrator takes the space over first.',
   tenant_not_empty:
@@ -76,6 +76,8 @@ export const apiErrorsEn: ApiErrorTexts = {
   setting_locked: 'This setting is locked by the level above and cannot be changed.',
   setting_restricted: 'This value is outside what the level above allows.',
   setting_above_max: 'The value is above the maximum; raise the maximum first.',
+  setting_until_past: 'The rule ends at a time that has already passed: give a later end, or none.',
+  setting_rule_needs_max: 'A plan or billing rule for this setting must set a maximum or a lock.',
   mail_not_configured: 'Mail is not set up, so that cannot be done.',
   mail_insecure: 'The mail connection is not encrypted. Use an encrypted one.',
   mail_from_required: 'Give the address mail is sent from.',

@@ -96,12 +96,13 @@ func (s *server) putAssetsRemote(c *call) {
 }
 
 // assetsRepositoryMayStart refuses a new attachment repository for a space of a
-// tenant whose limits sheet has sync.assetsRepository off, with the code the
-// space's creation gives (setting_restricted: the sheet is not a lock of the
-// settings). A space that has one already may reconnect it. It answers false once it has
-// answered.
+// tenant whose storage.assets rule leaves only "space" (a rule for the tenant
+// restricting it to that, which is what the limits sheet's
+// sync.assetsRepository was), with the code the space's creation gives
+// (setting_restricted). A space that has one already may reconnect it. It
+// answers false once it has answered.
 func (s *server) assetsRepositoryMayStart(c *call) bool {
-	if s.limits == nil {
+	if s.single {
 		return true
 	}
 	ctx := c.r.Context()
@@ -110,7 +111,12 @@ func (s *server) assetsRepositoryMayStart(c *call) bool {
 		s.fail(c.w, err)
 		return false
 	}
-	if s.limits.Sheet(sp.TenantID).Bool("sync.assetsRepository") {
+	r, err := s.assetsRule(ctx, sp.TenantID)
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	if r.Allows("repository") {
 		return true
 	}
 	if _, err := s.spaces.AssetsRemote(ctx, c.sp); err == nil {

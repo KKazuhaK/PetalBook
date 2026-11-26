@@ -20,7 +20,7 @@ export const manageZhCN: ManageMessages = {
     exports_full: '导出占的地方已经到了上限，请先删掉不要的导出。',
     forbidden: '这件事只有全站管理员能做。',
     space_disabled: '这个空间已经被停用，不能查看。',
-    capability_off: '这个组织没有开通查看空间内容。',
+    feature_off: '这个组织没有开通查看空间内容。',
     invalid: '填写的内容不对，请检查。',
   },
   picker: {

@@ -28,7 +28,6 @@ import (
 	"petalbook.app/server/internal/drafts"
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
-	sheets "petalbook.app/server/internal/limits"
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/quota"
@@ -131,11 +130,6 @@ type server struct {
 	settings *settings.Service
 	// quota knows which limits apply and notices crossings (accounts mode).
 	quota *quota.Service
-	// limits is each tenant's limits sheet (accounts mode; nil in single-user
-	// mode, which has no tenants to limit) and caps, the same service, says
-	// which capabilities each tenant has; nil: all of them.
-	limits *sheets.Service
-	caps   authz.Capabilities
 	// localAccess is what the built-in user of single-user mode holds.
 	localAccess authz.Subject
 	single      bool
@@ -183,9 +177,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.h.ServeHTTP(w, r.WithContext(spaces.WithRestoringAnswer(r.Context())))
 }
 
-// Limits is the limits sheet of the tenants (nil in single-user mode).
-func (h *Handler) Limits() *sheets.Service { return h.s.limits }
-
 // Close stops the background work the handler started and waits for it to
 // end. Call it after the HTTP server has stopped and before the spaces, the
 // services and the database under it are closed; it may be called again.
@@ -211,9 +202,7 @@ func (s *server) goBg(f func(ctx context.Context)) bool {
 }
 
 func (s *server) close() {
-	if s.limits != nil {
-		s.limits.Close()
-	}
+	s.settings.Close()
 	s.flushAllPrefs()
 	s.bgMu.Lock()
 	s.bgClosed = true
@@ -277,6 +266,7 @@ func New(opt Options) *Handler {
 		}
 		s.localAccess = auth.AccessOf(s.local)
 	}
+	s.settings.SetClock(s.now)
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
 	s.bindDraftFileLimit()
@@ -285,15 +275,9 @@ func New(opt Options) *Handler {
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
 		s.bindQuota()
-		// Each tenant's capabilities and limits, in memory. If the state
-		// database cannot be read every capability stays on, which is what a
-		// server without the sheet does.
-		if ls, err := sheets.New(s.bgCtx, sheets.Config{Store: opt.Store, Clock: sheets.RealClock(s.now), Invalidate: s.settings, OnBoundary: s.auditBoundary, Logger: s.log}); err != nil {
-			s.log.Error("the limits sheet could not be read; every capability is on", "error", err)
-		} else {
-			s.limits, s.caps = ls, ls
-			s.quota.UseSheets(ls)
-		}
+		// The starts and ends of the windows of rules are audited, and the
+		// quotas looked at again, by one timer (reads are right without it).
+		s.settings.Watch(s.bgCtx, s.ruleBoundaries)
 	}
 	if s.spaces != nil && !s.single {
 		s.bindAssetsPolicy()
@@ -605,10 +589,10 @@ type errorBody struct {
 	// InstallURL is where the App is installed (app_not_installed).
 	InstallURL string `json:"installUrl,omitempty"`
 	// Permission is the first permission an App lacks (app_missing_permission),
-	// or the permission key a refused route needs (forbidden, capability_off).
+	// or the permission key a refused route needs (forbidden, feature_off).
 	Permission string `json:"permission,omitempty"`
-	// Capability is the tenant capability that is off (capability_off).
-	Capability string `json:"capability,omitempty"`
+	// Feature is the tenant feature that is off (feature_off).
+	Feature string `json:"feature,omitempty"`
 	// What some refusals are about (docs/api.md, "Daily text refusals"): a
 	// request header, a field of an interface.
 	Header string `json:"header,omitempty"`

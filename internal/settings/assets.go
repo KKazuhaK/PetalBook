@@ -14,10 +14,6 @@ type AssetsInput struct {
 	// StorageAssetsOwnExempt is on. Nothing sets it before the tenant targets of
 	// 3.6 exist; the callers pass false.
 	OwnStorage bool
-	// RepositoryOff is true when the tenant's limits table turns
-	// sync.assetsRepository off: only "space" is possible. The limits table is 3.6's;
-	// the callers pass false until it exists.
-	RepositoryOff bool
 }
 
 // AssetsRule is where the attachments of a new space of a tenant go.
@@ -68,9 +64,6 @@ func (s *Service) AssetsRule(ctx context.Context, tenant string, in AssetsInput)
 	}
 	v, _ := value.(string)
 	var r AssetsRule
-	if in.RepositoryOff {
-		return AssetsRule{Default: "space", Allowed: []string{"space"}}, nil
-	}
 	for _, c := range d.Choices {
 		if below.Mode != Lock && below.Allows(d, c) || below.Mode == Allow {
 			r.Allowed = append(r.Allowed, c)

@@ -7,7 +7,7 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
-import { TenantLimitsBlock } from './TenantLimits'
+import { TenantRulesBlock } from './TenantRules'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -375,7 +375,7 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
           <p className="text-xs text-destructive">{tu.tenant.over(u.over.map((k) => tu.quotas[k]).join('、'))}</p>
         )}
       </div>
-      <TenantLimitsBlock tenant={tenant} />
+      <TenantRulesBlock tenant={tenant} />
     </>
   )
 }

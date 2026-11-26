@@ -52,3 +52,8 @@ func AccessDecision(h *Handler, method, pattern string, w http.ResponseWriter, r
 	}
 	panic("api: no route " + method + " " + pattern)
 }
+
+// CheckBoundaries takes in the starts and ends of rule windows up to the
+// handler's clock, as the settings' timer does when it fires (a test's clock is
+// moved by hand, so the real timer does not).
+func (h *Handler) CheckBoundaries() { h.s.settings.CheckBoundaries(context.Background()) }

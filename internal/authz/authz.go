@@ -3,7 +3,7 @@
 // built-in roles (docs/design/auth-and-permissions.md §16).
 //
 // A key is registered once, at init, with its scope (site, tenant or space),
-// the capability of a tenant it needs (if any) and a description. A key's bit
+// the feature of a tenant it needs (if any) and a description. A key's bit
 // exists only in this process: anything stored or sent names the key. A Set is
 // two words, so asking whether a set holds a key is one AND on memory the
 // session cache already holds; nothing is looked up per request.
@@ -54,10 +54,10 @@ type Key uint8
 type Info struct {
 	Name  string
 	Scope Scope
-	// Capability is the tenant capability the key needs ("" for none): with
+	// Feature is the tenant feature the key needs ("" for none): with
 	// it off, the key is refused in that tenant whoever holds it, except to a
 	// holder of the key across the site.
-	Capability  string
+	Feature     string
 	Description string
 	// BuiltInOnly: no stored role may hold the key; only the built-in roles
 	// do (see BuiltInOnly).
@@ -79,7 +79,7 @@ var namePattern = regexp.MustCompile(`^(site|tenant|space)(\.[a-z][a-zA-Z]*)+$`)
 // Register adds a key. It is called at init and panics on a duplicate name, a
 // name that does not begin with its scope, or once the built-in roles have
 // been computed (a key registered later would be missing from them).
-func Register(name string, scope Scope, capability, desc string) Key {
+func Register(name string, scope Scope, feature, desc string) Key {
 	mu.Lock()
 	defer mu.Unlock()
 	if frozen {
@@ -100,7 +100,7 @@ func Register(name string, scope Scope, capability, desc string) Key {
 	if len(registry) >= maxKeys {
 		panic("authz: too many keys")
 	}
-	registry = append(registry, Info{Name: name, Scope: scope, Capability: capability, Description: desc})
+	registry = append(registry, Info{Name: name, Scope: scope, Feature: feature, Description: desc})
 	k := Key(len(registry))
 	byName[name] = k
 	return k
@@ -147,8 +147,8 @@ func (k Key) Name() string { return k.info().Name }
 // Scope is where the key applies.
 func (k Key) Scope() Scope { return k.info().Scope }
 
-// Capability is the capability the key needs, "" for none.
-func (k Key) Capability() string { return k.info().Capability }
+// Feature is the feature the key needs, "" for none.
+func (k Key) Feature() string { return k.info().Feature }
 
 func (k Key) String() string { return k.Name() }
 

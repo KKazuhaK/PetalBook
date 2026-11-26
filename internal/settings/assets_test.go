@@ -159,7 +159,7 @@ func TestATenantWriteThatRacesASiteLockNeverClearsIt(t *testing.T) {
 		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasLower: true, Lower: lower("allow")}); code(err) != settings.CodeLocked {
 			t.Fatalf("after the stale write: %v", err)
 		}
-		got, err := store.GetLayered(ctx, st.Q(), "site", ten, settings.StorageAssets)
+		got, err := store.GetLayered(ctx, st.Q(), "site", ten, settings.StorageAssets, "manual")
 		if err != nil || got.Value != `"repository"` || got.Lower != `{"mode":"lock"}` {
 			t.Fatalf("%+v %v", got, err)
 		}
@@ -197,7 +197,7 @@ func TestASiteLockCommittedDuringATenantWriteSurvives(t *testing.T) {
 		if err := <-lockErr; err != nil {
 			t.Fatalf("site lock: %v", err)
 		}
-		got, gerr := store.GetLayered(ctx, st.Q(), "site", ten, settings.StorageAssets)
+		got, gerr := store.GetLayered(ctx, st.Q(), "site", ten, settings.StorageAssets, "manual")
 		if gerr != nil || got.Value != `"repository"` || got.Lower != `{"mode":"lock"}` {
 			t.Fatalf("the lock did not survive: %+v %v", got, gerr)
 		}
@@ -220,14 +220,15 @@ func TestTheSitesRestrictionLeavesTheOwnersWhatItNames(t *testing.T) {
 	})
 }
 
-// The tenant's limits table (sync.assetsRepository) is not built yet; its answer is an input.
-func TestWhenTheLimitsTableTurnsTheAttachmentRepositoryOffOnlyTheSpaceIsPossible(t *testing.T) {
+// What the limits sheet's sync.assetsRepository was is now a rule for the tenant: storage.assets restricted to "space".
+func TestARuleRestrictingTheAttachmentsToTheSpaceLeavesOnlyTheSpace(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
-		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "repository", Site: true, HasSiteLock: true, SiteLock: true}); err != nil {
+		only := &settings.Rule{Lower: &settings.Lower{Mode: settings.Restrict, Options: []any{"space"}}}
+		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{Site: true, HasSiteRule: true, SiteRule: only}); err != nil {
 			t.Fatal(err)
 		}
-		r := rule(t, s, settings.AssetsInput{RepositoryOff: true})
+		r := rule(t, s, settings.AssetsInput{})
 		if r.Default != "space" || !slices.Equal(r.Allowed, []string{"space"}) {
 			t.Fatalf("%+v", r)
 		}

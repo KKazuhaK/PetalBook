@@ -28,7 +28,7 @@ const (
 var syncPagesBytes = 8 << 20
 
 // offlineOff answers 403 offline_off, and reports true, when the caller's
-// tenant does not allow offline copies (the setting offline.copies, as set by
+// tenant does not allow offline copies (the setting features.offline, as set by
 // the site and the tenant). handle asks it for the offlineRoutes, before the
 // space is opened.
 func (s *server) offlineOff(c *call) bool {

@@ -90,7 +90,7 @@ func stringList(v any) []string {
 }
 
 // RegistrationOpenAnywhere says whether any tenant's effective
-// registration.open is true (the check of the security settings: ssoOnly and
+// features.registration is true (the check of the security settings: ssoOnly and
 // open registration cannot go together).
 func (s *Service) RegistrationOpenAnywhere(ctx context.Context) (bool, error) {
 	st := s.settings.Load()

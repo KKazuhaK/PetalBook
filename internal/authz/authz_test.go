@@ -1,6 +1,7 @@
 package authz_test
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -77,31 +78,31 @@ func TestBuiltInRoles(t *testing.T) {
 	}
 }
 
-type capsOff map[string]bool
+type featuresOff map[string]bool
 
-func (c capsOff) On(_, capability string) bool { return !c[capability] }
+func (c featuresOff) On(_ context.Context, _, feature string) bool { return !c[feature] }
 
-func TestDecideAsksTheCapabilityFirstAndASiteAdministratorIsNotBound(t *testing.T) {
-	off := capsOff{"data.adminView": true}
+func TestDecideAsksTheFeatureFirstAndASiteAdministratorIsNotBound(t *testing.T) {
+	off := featuresOff{"features.adminView": true}
 	site := authz.SubjectFor("admin", true, "A")
 	ten := authz.SubjectFor("admin", false, "A")
 	mem := authz.SubjectFor("member", false, "A")
-	if d := authz.Decide(ten, authz.TenantDataView, "A", off); d != authz.CapabilityOff {
+	if d := authz.Decide(context.Background(), ten, authz.TenantDataView, "A", off); d != authz.FeatureOff {
 		t.Fatal(d)
 	}
-	if d := authz.Decide(mem, authz.TenantDataView, "A", off); d != authz.CapabilityOff {
+	if d := authz.Decide(context.Background(), mem, authz.TenantDataView, "A", off); d != authz.FeatureOff {
 		t.Fatal(d)
 	}
-	if d := authz.Decide(site, authz.TenantDataView, "A", off); d != authz.Allowed {
+	if d := authz.Decide(context.Background(), site, authz.TenantDataView, "A", off); d != authz.Allowed {
 		t.Fatal(d)
 	}
-	if d := authz.Decide(ten, authz.TenantDataView, "A", nil); d != authz.Allowed {
+	if d := authz.Decide(context.Background(), ten, authz.TenantDataView, "A", nil); d != authz.Allowed {
 		t.Fatal(d)
 	}
-	if d := authz.Decide(mem, authz.TenantUsersRead, "A", nil); d != authz.Denied {
+	if d := authz.Decide(context.Background(), mem, authz.TenantUsersRead, "A", nil); d != authz.Denied {
 		t.Fatal(d)
 	}
-	if d := authz.Decide(ten, authz.SiteSettingsManage, "A", nil); d != authz.Denied {
+	if d := authz.Decide(context.Background(), ten, authz.SiteSettingsManage, "A", nil); d != authz.Denied {
 		t.Fatal(d)
 	}
 }

@@ -386,8 +386,8 @@ func TestTenantUsageAndItsTotals(t *testing.T) {
 		if n := len(f.root.audit(t, "quota_exceeded")); n != len(rows) {
 			t.Fatalf("%d rows, was %d", n, len(rows))
 		}
-		// A tenant administrator's cannot set the totals, and they are checked.
-		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/limits", map[string]any{"values": map[string]any{"other.people": 5}}).want(t, 403, "forbidden")
+		// A tenant administrator cannot set the totals (a rule for the tenant is the site's).
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/quota.people", map[string]any{"siteRule": map[string]any{"value": 5}}).want(t, 409, "setting_locked")
 	})
 }
 

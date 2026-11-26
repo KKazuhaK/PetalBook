@@ -135,7 +135,7 @@ function ValueEditor({
 }
 
 // What a layer lets the layers below it do.
-function RuleEditor({
+export function RuleEditor({
   kind,
   lower,
   disabled,
@@ -315,9 +315,10 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   const put = usePutSetting()
   const mine = s.tenant
   // A value the site locked for this tenant lives in the site's rule for it; the tenant's own is kept beside it.
-  const shown = mine?.siteLocked ? (mine.siteRule?.value ?? null) : (mine?.value ?? null)
+  const rule = mine?.rules?.find((r) => r.inEffect) ?? mine?.rules?.find((r) => r.source === 'manual')
+  const shown = mine?.siteLocked ? (rule?.value ?? null) : (mine?.value ?? null)
   // A stored value a rule above beats is kept, not in effect: the editor starts from what the tenant gets.
-  const inEffect = mine?.siteLocked ? mine.siteRule?.inEffect !== false : mine?.inEffect !== false
+  const inEffect = mine?.siteLocked ? rule?.inEffect !== false : mine?.inEffect !== false
   const start = shown != null && !inEffect ? s.effective : shown
   const [follow, setFollow] = useState(start == null)
   const [value, setValue] = useState<unknown>(start ?? s.site.value)

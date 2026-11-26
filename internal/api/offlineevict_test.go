@@ -34,7 +34,7 @@ func TestTheOfflineSwitchRefusesBeforeAnEvictedSpaceIsRestored(t *testing.T) {
 			t.Fatal(err)
 		}
 		db.Close()
-		admin.do("PUT", "/api/admin/settings/offline.copies", map[string]any{"value": false}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/features.offline", map[string]any{"value": false}).want(t, 200, "")
 
 		cacheOf := func() any {
 			return admin.do("GET", "/api/admin/spaces/"+sid, nil).body["storage"].(map[string]any)["cache"]

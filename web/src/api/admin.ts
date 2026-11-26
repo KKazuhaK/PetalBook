@@ -21,14 +21,14 @@ import type {
   AdminUsageList,
   OwnQuota,
   PermissionInfo,
+  RuleWrite,
   SettingLower,
   SiteSetting,
   Tenancy,
   Tenant,
   TenantList,
-  TenantLimits,
-  LimitWrite,
   TenantSetting,
+  TenantSettingWritten,
   Group,
   GroupList,
   GroupPersonList,
@@ -221,12 +221,6 @@ export const adminApi = {
   updateTenant: (id: string, input: { name?: string; slug?: string; disabled?: boolean }) =>
     request<Tenant>(`/admin/tenants/${enc(id)}`, { method: 'PATCH', body: input }),
   deleteTenant: (id: string) => request<void>(`/admin/tenants/${enc(id)}`, { method: 'DELETE' }),
-  // The tenant's limits sheet (3.6): every key with its source and window; site administrators write it.
-  tenantLimits: (id: string, signal?: AbortSignal) =>
-    request<TenantLimits>(`/admin/tenants/${enc(id)}/limits`, { signal }),
-  putTenantLimits: (id: string, values: Record<string, LimitWrite>) =>
-    request<TenantLimits>(`/admin/tenants/${enc(id)}/limits`, { method: 'PUT', body: { values } }),
-
   // --- layered settings (3.3) ---
   siteSettings: (signal?: AbortSignal) => request<{ settings: SiteSetting[] }>('/admin/settings', { signal }),
   putSiteSetting: (key: string, input: { value?: unknown; lower?: SettingLower | null }) =>
@@ -236,8 +230,9 @@ export const adminApi = {
   putTenantSetting: (
     tenant: string,
     key: string,
-    input: { value?: unknown; lower?: SettingLower | null; siteLock?: boolean },
-  ) => request<TenantSetting>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
+    input: { value?: unknown; lower?: SettingLower | null; siteLock?: boolean; siteRule?: RuleWrite | null },
+  ) =>
+    request<TenantSettingWritten>(`/admin/tenants/${enc(tenant)}/settings/${enc(key)}`, { method: 'PUT', body: input }),
 
   // --- groups ---
   adminGroups: (
@@ -587,26 +582,6 @@ export function useUpdateTenant() {
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.tenants }),
   })
 }
-export function useTenantLimits(id: string, enabled = true) {
-  return useQuery({
-    queryKey: keys.tenantLimits(id),
-    queryFn: ({ signal }) => adminApi.tenantLimits(id, signal),
-    enabled: enabled && id !== '',
-    staleTime: 10_000,
-  })
-}
-// A write answers the sheet as it is now, with a warning when a dated value replaced an undated one. The totals the
-// tenant shows (and what it is over) come from the sheet, so the tenants are read again.
-export function usePutTenantLimits(id: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (values: Record<string, LimitWrite>) => adminApi.putTenantLimits(id, values),
-    onSuccess: (data) => {
-      qc.setQueryData(keys.tenantLimits(id), data)
-      return qc.invalidateQueries({ queryKey: keys.tenants })
-    },
-  })
-}
 export function useDeleteTenant() {
   const qc = useQueryClient()
   return useMutation({
@@ -645,10 +620,14 @@ export function usePutSetting() {
       value?: unknown
       lower?: SettingLower | null
       siteLock?: boolean
-    }) => (tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input)),
+      siteRule?: RuleWrite | null
+    }): Promise<{ affected?: number; warning?: { code: string; keys: string[]; message: string } }> =>
+      tenant ? adminApi.putTenantSetting(tenant, key, input) : adminApi.putSiteSetting(key, input),
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: ['admin', 'settings'] }),
+        // A quota rule moves the totals the tenant shows, and what it is over.
+        qc.invalidateQueries({ queryKey: keys.tenants }),
         qc.invalidateQueries({ queryKey: ['settings'] }),
         qc.invalidateQueries({ queryKey: keys.adminDaily }),
       ]),

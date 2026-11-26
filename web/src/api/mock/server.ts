@@ -1100,7 +1100,7 @@ export function createMockServer(options: MockOptions = {}) {
     ssoOnlyStored: () => book.security.login.ssoOnly,
     providerName: () => 'single sign-on',
     rules: () => ({
-      open: tenantBook.effective('registration.open') === true,
+      open: tenantBook.effective('features.registration') === true,
       domains: tenantBook.effective('registration.domains') as string[],
       termsUrl: tenantBook.effective('legal.termsUrl') as string,
       privacyUrl: tenantBook.effective('legal.privacyUrl') as string,
@@ -2072,9 +2072,9 @@ export function createMockServer(options: MockOptions = {}) {
       throw tooLarge(limit, size, typeof meta?.title === 'string' && meta.title !== '' ? meta.title : 'page')
     }
   }
-  // The four sync endpoints are refused when offline copies are off for the caller's tenant (offline.copies).
+  // The four sync endpoints are refused when offline copies are off for the caller's tenant (features.offline).
   const offlineAllowed = () => {
-    if (tenantBook.effective('offline.copies') === false)
+    if (tenantBook.effective('features.offline') === false)
       throw new HttpError(403, 'offline_off', 'offline copies are turned off for this tenant')
   }
   // Storage management (docs/api.md, "Storage management"): where bytes live, the lists, the recycle bin, the previews,
@@ -4899,13 +4899,7 @@ export function createMockServer(options: MockOptions = {}) {
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
     }
-    if (
-      path.startsWith('/admin/tenan') ||
-      path.startsWith('/admin/settings') ||
-      path === '/admin/capabilities' ||
-      path === '/admin/plans' ||
-      path.startsWith('/admin/plans/')
-    ) {
+    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings')) {
       accountsOnly()
       const me = requireAdmin(ctx)
       const r = tenantBook.route(me.id, method, path, url, body)

@@ -7,7 +7,7 @@ import (
 
 // Keys of the settings of 3.3.
 const (
-	RegistrationOpen    = "registration.open"
+	RegistrationOpen    = "features.registration"
 	RegistrationDomains = "registration.domains"
 	RegistrationPerHour = "registration.perHour"
 	LegalTermsURL       = "legal.termsUrl"
@@ -17,7 +17,7 @@ const (
 	DailyDefault        = "daily.default"
 	// OfflineCopies is whether a person may keep offline copies of spaces on a
 	// device (4.1): the four sync endpoints answer 403 offline_off when it is off.
-	OfflineCopies = "offline.copies"
+	OfflineCopies = "features.offline"
 
 	// FilesMaxBytes is the largest file a write may create or replace (3.5):
 	// site and tenant. The site's value is --max-upload and its lower rule
@@ -51,6 +51,43 @@ const (
 	// left out of the site's StorageAssets default and lock. Site only; a site
 	// administrator may force it for one tenant.
 	StorageAssetsOwnExempt = "storage.assets.ownStorageExempt"
+
+	// The features: whole things a tenant may or may not have. A site
+	// administrator turns one off for one tenant with a rule (value false,
+	// locked), or a plan does; a feature is on unless a rule says otherwise
+	// (MailOwnSender: off unless).
+	FeatureOwnSSO          = "features.ownSso"
+	FeatureDomains         = "features.domains"
+	FeatureManagedAccounts = "features.managedAccounts"
+	FeatureIdPAdmins       = "features.idpAdmins"
+	FeatureAdminView       = "features.adminView"
+	FeatureAuditDownload   = "features.auditDownload"
+	MailOwnSender          = "mail.ownSender"
+	FeatureOwnCaptcha      = "features.ownCaptcha"
+	FeatureOwnConnections  = "features.ownConnections"
+	FeatureOwnDaily        = "features.ownDaily"
+
+	// StorageMode is where a tenant's new spaces may sync: on the server's
+	// storage, on a target of the person's own, or on a target of the tenant's.
+	StorageMode = "storage.mode"
+	// StoragePinnedBytes is what the tenant's administrators may pin.
+	StoragePinnedBytes = "storage.pinnedBytes"
+
+	// What a tenant may use in all: set for a tenant by a site rule or its
+	// plan, never by the tenant (no tenant layer); null is no limit.
+	// QuotaPeople is counted and shown, not refused.
+	QuotaPeople = "quota.people"
+	QuotaSpaces = "quota.spaces"
+	QuotaBytes  = "quota.bytes"
+	QuotaPages  = "quota.pages"
+
+	// What a tenant may ask of the server: requests per minute with a token and
+	// with MCP, mail a day, outgoing calls a minute. null is no limit (for the
+	// outgoing calls, the site's own outbound.tenantPerMinute).
+	RateAPIPerMinute      = "rate.apiPerMinute"
+	RateMCPPerMinute      = "rate.mcpPerMinute"
+	RateMailPerDay        = "rate.mailPerDay"
+	RateOutboundPerMinute = "rate.outboundPerMinute"
 
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
 	QuotaBytesPerPerson  = "quota.bytesPerPerson"
@@ -116,6 +153,36 @@ func Definitions() []*Def {
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},
 		{Key: QuotaBytesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}},
 		{Key: QuotaPagesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: nil, Min: 1, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+
+		// The features of 3.1: site-wide on, off for one tenant by a rule.
+		{Key: FeatureOwnSSO, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureDomains, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureManagedAccounts, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureIdPAdmins, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: false, Lower: Lower{Mode: Allow}},
+		{Key: FeatureAdminView, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureAuditDownload, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: MailOwnSender, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: false, Lower: Lower{Mode: Allow}},
+		{Key: FeatureOwnCaptcha, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureOwnConnections, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		{Key: FeatureOwnDaily, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+
+		// Where new spaces may sync; restrict is the modes allowed.
+		{Key: StorageMode, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "server", Choices: []string{"server", "own", "tenant"}, Lower: Lower{Mode: Allow}},
+		{Key: StoragePinnedBytes, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: int64(0), Min: 0, Max: 1 << 50, Lower: Lower{Mode: Allow}},
+
+		// The tenant's totals: the site's, for each tenant by a rule (manual,
+		// billing or the plan's). No tenant layer: a tenant's own value would rank
+		// above the rule's, and its administrators could raise their own totals.
+		{Key: QuotaPeople, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaSpaces, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaBytes, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 50, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: QuotaPages, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+
+		// What a tenant may ask of the server.
+		{Key: RateAPIPerMinute, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: RateMCPPerMinute, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: RateMailPerDay, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
+		{Key: RateOutboundPerMinute, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: nil, Min: 0, Max: 1 << 40, Nullable: true, Lower: Lower{Mode: Allow}},
 	}
 }
 

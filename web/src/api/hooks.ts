@@ -97,7 +97,6 @@ export const keys = {
   tenancy: ['admin', 'tenancy'] as const,
   adminMail: ['admin', 'mail'] as const,
   tenants: ['admin', 'tenants'] as const,
-  tenantLimits: (id: string) => ['admin', 'limits', id] as const,
   siteSettings: ['admin', 'settings', 'site'] as const,
   tenantSettings: (id: string) => ['admin', 'settings', 'tenant', id] as const,
   mySettings: (space: string) => ['settings', space] as const,

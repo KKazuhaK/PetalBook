@@ -45,19 +45,19 @@ type tenantResp struct {
 	Updated string            `json:"updated"`
 }
 
-// quotaOf is the tenant's totals in force, from its limits sheet: read only
-// here, set through PUT …/limits.
-func (s *server) quotaOf(tenant string) map[string]*int64 {
-	t := s.quota.Totals(tenant)
+// quotaOf is the tenant's totals in force, from its quota.* settings: read only
+// here, set through the tenant's settings.
+func (s *server) quotaOf(ctx context.Context, tenant string) map[string]*int64 {
+	t := s.quota.Totals(ctx, tenant)
 	return map[string]*int64{"people": t.People, "spaces": t.Spaces, "bytes": t.Bytes, "pages": t.Pages}
 }
 
 // toTenant is the tenant as the API shows it, with the usage row u (one
 // lookup of its own, or one query for a page: see usageOf).
 func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage) (tenantResp, error) {
-	r := tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(t.ID),
+	r := tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(ctx, t.ID),
 		Usage: toTenantUsage(u), Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
-	e, err := s.settings.Get(ctx, t.ID, "registration.open")
+	e, err := s.settings.Get(ctx, t.ID, "features.registration")
 	if err != nil {
 		return r, err
 	}
@@ -330,7 +330,7 @@ func (s *server) adminPatchTenant(c *call) {
 		switch k {
 		case "name":
 		case "quota":
-			writeError(c.w, http.StatusBadRequest, "invalid", "The totals are set through PUT /api/admin/tenants/{tenant}/limits (other.people, storage.quota.*).")
+			writeError(c.w, http.StatusBadRequest, "invalid", "The totals are settings: a site administrator sets them with PUT /api/admin/tenants/{tenant}/settings/quota.people (and quota.spaces, quota.bytes, quota.pages).")
 			return
 		case "slug", "disabled":
 			if !c.can(authz.SiteTenantsManage) {
@@ -461,9 +461,6 @@ func (s *server) adminDeleteTenant(c *call) {
 	if err != nil {
 		s.fail(c.w, err)
 		return
-	}
-	if s.limits != nil {
-		s.limits.Forget(t.ID)
 	}
 	s.settings.Forget(t.ID)
 	s.audit(c, auth.AuditEvent{Kind: "tenant_deleted", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug}})

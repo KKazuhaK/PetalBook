@@ -254,7 +254,7 @@ func TestTenantsTable(t *testing.T) {
 		if err := st.DeleteTenant(ctx, "T000000002"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.GetLayered(ctx, st.Q(), "tenant", "T000000002", "k"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.GetLayered(ctx, st.Q(), "tenant", "T000000002", "k", "manual"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal("a deleted tenant's settings stay")
 		}
 		if st.TenantDisabled("T000000002") {

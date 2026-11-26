@@ -212,13 +212,13 @@ func TestClosingRegistrationCancelsThePendingOnes(t *testing.T) {
 		anon := a.newClient("")
 		reg(anon, nil).want(t, 202, "")
 		tok := srv.Wait(1)[0].Token(t)
-		root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": false}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": false}).want(t, 200, "")
 		if rowCount(t, a, `SELECT COUNT(*) FROM registrations`) != 0 {
 			t.Fatal("closing registration left a pending one")
 		}
 		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 404, "not_found")
 		// Reopening does not bring it back.
-		root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": true}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
 		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 404, "not_found")
 		// Switching mail off closes it in effect, and cancels what is pending.
 		reg(anon, map[string]any{"username": "second", "email": "second@example.test"}).want(t, 202, "")
@@ -256,16 +256,16 @@ func TestRegistrationNeedsMailAndSSOOnlyExcludesIt(t *testing.T) {
 		srv := fakeMail(t)
 		root := a.setup("root", pw)
 		// Opening: no mail, no registration. Locked at the site for tenants, by default.
-		root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
+		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
 		enableMail(t, root, srv)
 		// ssoOnly stored on (with a provider so it can be set): opening is refused.
 		a.auth.UpdateSecurity(context.Background(), "", "", mustPatch(t, `{"login":{"ssoOnly":true}}`))
-		root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": true}).want(t, 409, "sso_only_with_registration")
+		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "sso_only_with_registration")
 		a.auth.UpdateSecurity(context.Background(), "", "", mustPatch(t, `{"login":{"ssoOnly":false}}`))
-		root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": true}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
 		// The other direction: with registration open, ssoOnly cannot be switched on.
 		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 400, "sso_only_with_registration")
-		root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": false}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": false}).want(t, 200, "")
 		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 200, "")
 	})
 }
@@ -285,15 +285,15 @@ func TestUnlockingRegistrationWhileATenantHasTrueStoredIsChecked(t *testing.T) {
 		f := newTenFx(t, a)
 		enableMail(t, f.root, srv)
 		// Open for tenant B at the site's pleasure, then lose the mail.
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
-		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.open", map[string]any{"value": true}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
 		a.auth.UpdateSecurity(context.Background(), "", "", mustPatch(t, `{"login":{"ssoOnly":false}}`))
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
 		f.root.do("PUT", "/api/admin/mail", map[string]any{"enabled": false}).want(t, 200, "")
 		// Unlocking now would let the stored true take effect with no mail.
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 409, "mail_not_configured")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 409, "mail_not_configured")
 		enableMail(t, f.root, srv)
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
 		// A tenant registers in its own tenant, named by slug.
 		anon := a.newClient("")
 		reg(anon, map[string]any{"tenant": "acme", "username": "bee", "email": "bee@example.test"}).want(t, 202, "")
