@@ -96,7 +96,7 @@ func (s *server) accountUsage(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	tl := s.quota.Totals(u.TenantID)
+	tl := s.quota.Totals(ctx, u.TenantID)
 	for _, k := range quota.OverTenant(trow, tl) {
 		var l int64
 		switch k {

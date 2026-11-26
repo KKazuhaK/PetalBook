@@ -26,7 +26,7 @@ func TestSiteSettingsByLayer(t *testing.T) {
 		f.admA.do("GET", "/api/admin/settings", nil).want(t, 403, "forbidden")
 		f.admA.do("PUT", "/api/admin/settings/legal.termsUrl", map[string]any{"value": "https://x.example"}).want(t, 403, "forbidden")
 		r := f.root.do("GET", "/api/admin/settings", nil).want(t, 200, "")
-		s := settingOf(t, r, "registration.open")
+		s := settingOf(t, r, "features.registration")
 		site := s["site"].(map[string]any)
 		if s["kind"] != "boolean" || site["value"] != false || site["lower"].(map[string]any)["mode"] != "lock" || strings.Join(strs(s["layers"]), ",") != "site,tenant" {
 			t.Fatal(s)
@@ -44,16 +44,16 @@ func TestSiteSettingsByLayer(t *testing.T) {
 		f.root.do("PUT", "/api/admin/settings/registration.perHour", map[string]any{}).want(t, 400, "invalid")
 		f.root.do("PUT", "/api/admin/settings/registration.perHour", map[string]any{"valu": 5}).want(t, 400, "invalid")
 		f.root.do("PUT", "/api/admin/settings/legal.termsUrl", map[string]any{"value": "http://plain.example"}).want(t, 400, "invalid")
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "sometimes"}}).want(t, 400, "invalid")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "sometimes"}}).want(t, 400, "invalid")
 		r = f.root.do("PUT", "/api/admin/settings/legal.termsUrl", map[string]any{"value": "https://example.com/terms"}).want(t, 200, "")
 		if r.body["site"].(map[string]any)["value"] != "https://example.com/terms" || r.body["affected"] != nil {
 			t.Fatal(r.raw)
 		}
 		// Registration cannot be opened while mail is not enabled, at the site or in a tenant.
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
-		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.open", map[string]any{"value": true}).want(t, 409, "setting_locked")
-		f.root.do("PUT", "/api/admin/settings/registration.open", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
-		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/registration.open", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.registration", map[string]any{"value": true}).want(t, 409, "setting_locked")
+		f.root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"lower": map[string]any{"mode": "allow"}}).want(t, 200, "")
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.registration", map[string]any{"value": true}).want(t, 409, "mail_not_configured")
 		// The change is in the audit log with its layer.
 		a.auth.FlushAudit(ctxBG)
 		if r := f.root.do("GET", "/api/admin/audit?kind=setting_changed", nil).want(t, 200, ""); !strings.Contains(r.raw, `"key":"legal.termsUrl"`) || !strings.Contains(r.raw, `"layer":"site"`) {
@@ -69,18 +69,18 @@ func TestTenantSettingsHonourTheSitesLocksAndRestrictions(t *testing.T) {
 		path := func(key string) string { return "/api/admin/tenants/" + f.tenB + "/settings/" + key }
 		// A tenant administrator reads their tenant's, and no other's.
 		r := f.admB.do("GET", "/api/admin/tenants/"+f.tenB+"/settings", nil).want(t, 200, "")
-		s := settingOf(t, r, "registration.open")
+		s := settingOf(t, r, "features.registration")
 		if s["effective"] != false || s["site"].(map[string]any)["lower"].(map[string]any)["mode"] != "lock" ||
 			s["tenant"].(map[string]any)["value"] != nil || s["tenant"].(map[string]any)["inEffect"] != true {
 			t.Fatal(s)
 		}
-		if len(r.body["settings"].([]any)) != 16 {
+		if len(r.body["settings"].([]any)) != 36 {
 			t.Fatalf("every setting that has a tenant layer, and the two the site may force for one tenant: %s", r.raw)
 		}
 		f.admB.do("GET", "/api/admin/tenants/"+store.DefaultTenantID+"/settings", nil).want(t, 404, "not_found")
 		// Locked: refused for the tenant's administrator and for the site's.
-		f.admB.do("PUT", path("registration.open"), map[string]any{"value": false}).want(t, 409, "setting_locked")
-		f.root.do("PUT", path("registration.open"), map[string]any{"value": false}).want(t, 409, "setting_locked")
+		f.admB.do("PUT", path("features.registration"), map[string]any{"value": false}).want(t, 409, "setting_locked")
+		f.root.do("PUT", path("features.registration"), map[string]any{"value": false}).want(t, 409, "setting_locked")
 		// Restricted: perHour may not go above the site's 50.
 		f.admB.do("PUT", path("registration.perHour"), map[string]any{"value": 80}).want(t, 409, "setting_restricted")
 		r = f.admB.do("PUT", path("registration.perHour"), map[string]any{"value": 30}).want(t, 200, "")

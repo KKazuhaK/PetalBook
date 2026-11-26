@@ -19,27 +19,27 @@ import (
 
 // accessError is a refusal of allow.
 type accessError struct {
-	status     int
-	code, msg  string
-	key        string
-	capability string
+	status    int
+	code, msg string
+	key       string
+	feature   string
 }
 
 func (e *accessError) Error() string { return e.msg }
 
 // allow is the check of a permission key in a tenant, in this order:
-//  1. the tenant's capability the key needs (a holder of the key across the
-//     site, a site administrator, is not bound by it): 403 capability_off;
+//  1. the tenant's feature the key needs (a holder of the key across the
+//     site, a site administrator, is not bound by it): 403 feature_off;
 //  2. the key, among what the caller holds there (one AND on the subject the
 //     session cache built): 403 forbidden;
 //  3. verify, where 3.7 checks the caller's standing in that organization.
 //
 // tenant is always explicit: the caller's own for the route table.
 func (s *server) allow(c *call, k authz.Key, tenant string) error {
-	switch authz.Decide(c.p.Access, k, tenant, s.caps) {
-	case authz.CapabilityOff:
-		return &accessError{status: http.StatusForbidden, code: "capability_off", key: k.Name(), capability: k.Capability(),
-			msg: "This organization does not have the capability " + k.Capability() + "."}
+	switch authz.Decide(c.r.Context(), c.p.Access, k, tenant, s.features()) {
+	case authz.FeatureOff:
+		return &accessError{status: http.StatusForbidden, code: "feature_off", key: k.Name(), feature: k.Feature(),
+			msg: "This organization does not have the feature " + k.Feature() + "."}
 	case authz.Denied:
 		msg := "Only an administrator may do that."
 		if k.Scope() == authz.ScopeSite {
@@ -48,6 +48,15 @@ func (s *server) allow(c *call, k authz.Key, tenant string) error {
 		return &accessError{status: http.StatusForbidden, code: "forbidden", key: k.Name(), msg: msg}
 	}
 	return s.verify(c, k, tenant)
+}
+
+// features is the features of the tenants, which the settings answer; nil in
+// single-user mode, where every feature is on.
+func (s *server) features() authz.Features {
+	if s.single {
+		return nil
+	}
+	return s.settings
 }
 
 // subjectOf is what an account holds when it acts outside a request (a bulk
@@ -70,7 +79,7 @@ func (s *server) refuse(w http.ResponseWriter, err error) {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, ae.status, errorBody{Error: ae.code, Message: ae.msg, Permission: ae.key, Capability: ae.capability})
+	writeJSON(w, ae.status, errorBody{Error: ae.code, Message: ae.msg, Permission: ae.key, Feature: ae.feature})
 }
 
 // permissionsOf is what GET /api/session says the caller holds: the names of
@@ -86,7 +95,7 @@ func permissionsOf(c *call) []string {
 type permissionResp struct {
 	Name        string `json:"name"`
 	Scope       string `json:"scope"`
-	Capability  string `json:"capability"`
+	Feature     string `json:"feature"`
 	Description string `json:"description"`
 }
 
@@ -95,7 +104,7 @@ func (s *server) adminPermissions(c *call) {
 	all := authz.All()
 	out := make([]permissionResp, len(all))
 	for i, in := range all {
-		out[i] = permissionResp{in.Name, in.Scope.String(), in.Capability, in.Description}
+		out[i] = permissionResp{in.Name, in.Scope.String(), in.Feature, in.Description}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Permissions []permissionResp `json:"permissions"`

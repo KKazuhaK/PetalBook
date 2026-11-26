@@ -9,7 +9,7 @@ import { freshDevice } from '@/lib/offline/testkit'
 import { adminRequests, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
 import { OfflineSync } from './OfflineSync'
 
-// The app keeps the copies up to date only while the administrators allow offline copies (offline.copies).
+// The app keeps the copies up to date only while the administrators allow offline copies (features.offline).
 
 beforeAll(installDomShims)
 beforeEach(freshDevice)
@@ -42,7 +42,7 @@ const lateRoutes = (
 )
 const heads = () => m!.requests.filter((r) => r.url.startsWith('/api/sync/heads')).length
 const setting = (value: boolean) =>
-  adminRequests(m!.server)('PUT', '/api/admin/settings/offline.copies', {
+  adminRequests(m!.server)('PUT', '/api/admin/settings/features.offline', {
     value,
     lower: { mode: value ? 'allow' : 'lock' },
   })
@@ -75,7 +75,7 @@ describe('the app when offline copies are allowed or not', () => {
       server: { mode: 'accounts' },
       entries: (server) => {
         const admin = adminRequests(server)
-        admin('PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } })
+        admin('PUT', '/api/admin/settings/features.offline', { value: false, lower: { mode: 'lock' } })
         user = (admin('GET', '/api/session').body as { user: { id: string } }).user.id
         return ['/']
       },

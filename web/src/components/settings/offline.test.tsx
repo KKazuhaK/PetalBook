@@ -203,7 +203,7 @@ describe('the Offline section', () => {
       signIn: true,
       server: { mode: 'accounts' },
       entries: (server) => {
-        adminRequests(server)('PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } })
+        adminRequests(server)('PUT', '/api/admin/settings/features.offline', { value: false, lower: { mode: 'lock' } })
         return ['/settings/offline']
       },
     })

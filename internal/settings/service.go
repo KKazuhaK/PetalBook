@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,10 +47,42 @@ type Service struct {
 	ceiling atomic.Int64 // --max-upload, see SetFileCeiling
 
 	// The cache. A site write bumps siteGen, which every snapshot is checked
-	// against; a tenant write bumps only that tenant's slot. A snapshot is
-	// current while both generations it was computed at are.
+	// against; a tenant write bumps only that tenant's slot; a write of a plan's
+	// rules bumps planGen. A snapshot is current while the generations it was
+	// computed at are, and while now is before its next: the start or end of a
+	// window of one of its rules.
 	siteGen atomic.Uint64
+	planGen atomic.Uint64
 	slots   sync.Map // tenant id ("" for the site alone) -> *slot
+
+	// plans is every rule of every plan, read again when planGen moves.
+	planMu   sync.Mutex
+	planSnap atomic.Pointer[planSnapshot]
+
+	// Changes made by another process (the command line, a standby server) are
+	// seen through settings_rev, read at most once per RevCheck, on a request.
+	revCheck  time.Duration
+	lastCheck atomic.Int64 // Unix ms of the last read
+	seenRev   atomic.Int64
+
+	// The timer of the windows' starts and ends (see Watch).
+	tmu       sync.Mutex
+	watching  bool
+	onBound   func(context.Context, []Boundary)
+	handled   time.Time
+	armed     stopper
+	afterFunc func(d time.Duration, f func()) stopper
+}
+
+type stopper interface{ Stop() bool }
+
+// RevCheck is how often a busy process reads settings_rev.
+const RevCheck = 60 * time.Second
+
+// planSnapshot is the rules of the plans, by plan id and key.
+type planSnapshot struct {
+	gen  uint64
+	rows map[string]map[string]*store.LayeredRow
 }
 
 // slot is one tenant's cache entry. It lives as long as the service (about a
@@ -61,16 +94,24 @@ type slot struct {
 }
 
 type snapshot struct {
-	site, tenant uint64
-	m            map[string]*Effective
-	// follow, in the site's snapshot only, is what a tenant with no row for a
-	// setting sees of it: shared by every such tenant.
-	follow map[string]*Effective
+	site, tenant, plan uint64
+	// next is the earliest start or end of a window of a rule in m after the
+	// snapshot was made, in Unix milliseconds (math.MaxInt64: none): the
+	// snapshot is current only before it.
+	next int64
+	m    map[string]*Effective
+	// In the site's snapshot only: follow is what a tenant with no row for a
+	// setting sees of it, shared by every such tenant; all is the whole map of a
+	// tenant with no rows at all; plans are the maps of the tenants that have a
+	// plan and no rows of their own, by plan id.
+	follow, all map[string]*Effective
+	plans       sync.Map
 }
 
 // New makes the service over the Definitions.
 func New(st *store.Store) *Service {
-	s := &Service{st: st, byK: map[string]*Def{}, bind: map[string]SiteBinding{}, now: time.Now}
+	s := &Service{st: st, byK: map[string]*Def{}, bind: map[string]SiteBinding{}, now: time.Now, revCheck: RevCheck,
+		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }}
 	s.defs = Definitions()
 	for _, d := range s.defs {
 		s.byK[d.Key] = d
@@ -163,10 +204,25 @@ type TenantView struct {
 	// lock: the tenant's administrators cannot change the value or the rule
 	// below it.
 	SiteLocked bool `json:"siteLocked"`
-	// SiteRule is the site's layer for this one tenant; nil when the site has
-	// none for it.
-	SiteRule *RuleView `json:"siteRule,omitempty"`
+	// SiteRule is the rule in effect for this one tenant (the first of Rules
+	// whose window holds now); nil when none is.
+	SiteRule *RuleView `json:"-"`
+	// Rules are the tenant's rules for the setting, in the order manual, billing,
+	// plan: at most three, one per source.
+	Rules []RuleView `json:"rules,omitempty"`
+	// Next is the earliest start or end of a window of one of Rules after now.
+	Next time.Time `json:"next,omitzero"`
 }
+
+// The sources of a rule, strongest first.
+const (
+	FromManual  Source = "manual"
+	FromBilling Source = "billing"
+	FromPlan    Source = "plan"
+)
+
+// Source says where a rule for a tenant comes from.
+type Source string
 
 // Rule is the site's layer for one tenant: a value the site gives this tenant
 // in place of its own (nil: the site's), and the rule the tenant's layer is
@@ -175,16 +231,32 @@ type TenantView struct {
 // Y locked off for it), a restriction how it bounds one ("at most 10 spaces").
 // It is the site's choice for that tenant, so it is not held to the site's
 // lower for tenants; only the site's lock over everyone beats it.
+//
+// A rule may have a window: it counts from From up to, not including, Until
+// (the zero time is none).
 type Rule struct {
-	Value any    `json:"value"`
-	Lower *Lower `json:"lower"`
+	Value any       `json:"value"`
+	Lower *Lower    `json:"lower"`
+	From  time.Time `json:"from,omitzero"`
+	Until time.Time `json:"until,omitzero"`
 }
 
-// RuleView is a Rule as a tenant sees it; InEffect is false while the site's
-// lock over everyone beats it (kept, and back when that lock is lifted).
+// RuleView is a Rule as a tenant sees it, with its source. InEffect is true for
+// the rule applied; it is false for a rule the window of which does not hold
+// now, for one an earlier rule covers, and while the site's lock over everyone
+// beats it (kept, and back when that lock is lifted). Underlying is the rule
+// that applies when the one in effect ends or is removed.
 type RuleView struct {
 	Rule
-	InEffect bool `json:"inEffect"`
+	Source     Source `json:"source"`
+	SetBy      string `json:"setBy,omitempty"`
+	InEffect   bool   `json:"inEffect"`
+	Underlying bool   `json:"underlying,omitempty"`
+}
+
+// active says whether the rule's window holds at now.
+func (r *RuleView) active(now time.Time) bool {
+	return (r.From.IsZero() || !now.Before(r.From)) && (r.Until.IsZero() || now.Before(r.Until))
 }
 
 // Effective is a setting as one tenant sees it.
@@ -223,8 +295,14 @@ func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, err
 		v, _ = s.slots.LoadOrStore(tenant, &slot{})
 	}
 	sl := v.(*slot)
+	now := s.now()
+	s.checkRev(ctx, now)
 	site, gen := s.siteGen.Load(), sl.gen.Load()
-	if p := sl.snap.Load(); p != nil && p.site == site && p.tenant == gen {
+	var plan uint64 // the site's own snapshot does not depend on the plans
+	if tenant != "" {
+		plan = s.planGen.Load()
+	}
+	if p := sl.snap.Load(); p != nil && p.site == site && p.tenant == gen && p.plan == plan && (p.next == math.MaxInt64 || now.UnixMilli() < p.next) {
 		return p, nil
 	}
 	// The generations are read before the database: a write that commits while
@@ -236,20 +314,84 @@ func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, err
 	}
 
 	if tenant == "" {
-		p, err := s.computeSite(ctx)
+		p, err := s.computeSite(ctx, now)
 		if err != nil {
 			return nil, err
 		}
-		p.site, p.tenant = site, gen
+		p.site, p.tenant, p.plan, p.next = site, gen, plan, math.MaxInt64
 		sl.snap.Store(p)
 		return p, nil
 	}
-	m, err := s.computeTenant(ctx, tenant)
+	m, next, err := s.computeTenant(ctx, tenant, now)
 	if err != nil {
 		return nil, err
 	}
-	p := &snapshot{site: site, tenant: gen, m: m}
+	p := &snapshot{site: site, tenant: gen, plan: plan, next: next, m: m}
 	sl.snap.Store(p)
+	return p, nil
+}
+
+// checkRev reads settings_rev when RevCheck has passed since the last time, one
+// request paying for it, and drops every cached value when a write of another
+// process moved it.
+func (s *Service) checkRev(ctx context.Context, now time.Time) {
+	t, last := now.UnixMilli(), s.lastCheck.Load()
+	if t-last < s.revCheck.Milliseconds() || !s.lastCheck.CompareAndSwap(last, t) {
+		return
+	}
+	rev, err := store.SettingsRev(ctx, s.st.Q())
+	if err != nil {
+		return
+	}
+	if old := s.seenRev.Swap(rev); old != rev && last != 0 {
+		s.siteGen.Add(1)
+	}
+}
+
+// write runs a change of layered_settings in a transaction that also counts it
+// in settings_rev, which is how another process sees it.
+func (s *Service) write(ctx context.Context, fn func(q store.Q) error) error {
+	var rev int64
+	err := s.st.Tx(ctx, func(q store.Q) error {
+		if err := fn(q); err != nil {
+			return err
+		}
+		var err error
+		rev, err = store.BumpSettingsRev(ctx, q)
+		return err
+	})
+	if err == nil {
+		// Our own count is not a change by another process (unless one slipped in
+		// between: then the revision is further on and the next check sees it).
+		s.seenRev.CompareAndSwap(rev-1, rev)
+	}
+	return err
+}
+
+// planRows is every plan's rules, read when a plan changed.
+func (s *Service) planRows(ctx context.Context) (*planSnapshot, error) {
+	gen := s.planGen.Load()
+	if p := s.planSnap.Load(); p != nil && p.gen == gen {
+		return p, nil
+	}
+	s.planMu.Lock()
+	defer s.planMu.Unlock()
+	if p := s.planSnap.Load(); p != nil && p.gen == gen {
+		return p, nil
+	}
+	rows, err := store.ListLayeredLayer(ctx, s.st.Q(), store.LayeredPlan)
+	if err != nil {
+		return nil, err
+	}
+	p := &planSnapshot{gen: gen, rows: map[string]map[string]*store.LayeredRow{}}
+	for i := range rows {
+		r := &rows[i]
+		if p.rows[r.LayerID] == nil {
+			p.rows[r.LayerID] = map[string]*store.LayeredRow{}
+		}
+		p.rows[r.LayerID][r.Key] = r
+	}
+	s.planSnap.Store(p)
 	return p, nil
 }
 
@@ -270,14 +412,14 @@ func (s *Service) Get(ctx context.Context, tenant, key string) (*Effective, erro
 // and for each setting a tenant may have, what a tenant that has no row for
 // it sees. Those are shared by every such tenant, so a tenant's map holds
 // entries of its own only for the settings it has rows of.
-func (s *Service) computeSite(ctx context.Context) (*snapshot, error) {
+func (s *Service) computeSite(ctx context.Context, now time.Time) (*snapshot, error) {
 	q := s.st.Q()
 	rows, err := store.ListLayered(ctx, q, string(Site), "")
 	if err != nil {
 		return nil, err
 	}
 	site := rowsByKey(rows)
-	p := &snapshot{m: make(map[string]*Effective, len(s.defs)), follow: map[string]*Effective{}}
+	p := &snapshot{m: make(map[string]*Effective, len(s.defs)), follow: map[string]*Effective{}, all: make(map[string]*Effective, len(s.defs))}
 	for _, d := range s.defs {
 		e := &Effective{Def: d}
 		if e.Site, err = s.siteView(ctx, q, d, site[d.Key]); err != nil {
@@ -289,7 +431,10 @@ func (s *Service) computeSite(ctx context.Context) (*snapshot, error) {
 		}
 		p.m[d.Key] = e
 		if d.PerTenant() {
-			p.follow[d.Key] = tenantEffective(d, e.Site, nil, nil)
+			p.follow[d.Key], _ = tenantEffective(d, e.Site, nil, nil, now)
+			p.all[d.Key] = p.follow[d.Key]
+		} else {
+			p.all[d.Key] = e
 		}
 	}
 	return p, nil
@@ -355,6 +500,8 @@ type Change struct {
 	// tenant. Only a site administrator may.
 	HasSiteRule bool
 	SiteRule    *Rule
+	// By is who makes the change (a user id), kept with the rows it writes.
+	By string
 }
 
 func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any, error) {
@@ -398,8 +545,8 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		}
 		lower = &l
 	}
-	err = s.st.Tx(ctx, func(q store.Q) error {
-		row, err := store.GetLayered(ctx, q, string(Site), "", key)
+	err = s.write(ctx, func(q store.Q) error {
+		row, err := store.GetLayered(ctx, q, string(Site), "", key, store.SourceManual)
 		if errors.Is(err, store.ErrNotFound) {
 			row, err = &store.LayeredRow{Layer: string(Site), Key: key}, nil
 		}
@@ -449,7 +596,7 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 				row.Lower = string(raw)
 			}
 		}
-		row.Updated = s.now()
+		row.Updated, row.SetBy = s.now(), ch.By
 		if err := store.PutLayered(ctx, q, *row); err != nil {
 			return err
 		}

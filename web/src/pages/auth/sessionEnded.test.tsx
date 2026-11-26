@@ -330,7 +330,7 @@ describe('touch targets', () => {
       host: 'smtp.example.test',
       from: 'notes@example.test',
     })
-    adminRequests(m.server)('PUT', '/api/admin/settings/registration.open', { value: true })
+    adminRequests(m.server)('PUT', '/api/admin/settings/features.registration', { value: true })
     await m.qc.invalidateQueries()
     await settle(() => linkWith(ts.login.withProvider('Company SSO')) !== undefined, 'the page')
     await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the passkey button')

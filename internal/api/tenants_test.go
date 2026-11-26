@@ -97,7 +97,7 @@ func TestTenantCrudAndItsErrors(t *testing.T) {
 		if r.body["name"] != "Acme Inc" || r.body["slug"] != "acme-inc" {
 			t.Fatal(r.raw)
 		}
-		// The totals are the limits sheet's: read only here, set through PUT …/limits.
+		// The totals are the quota.* settings': read only here, set through the tenant's settings.
 		setTotals(t, root, id, map[string]any{"people": 5, "bytes": nil})
 		if q := root.do("GET", "/api/admin/tenants/"+id, nil).want(t, 200, "").body["quota"].(map[string]any); q["people"] != float64(5) || q["bytes"] != nil {
 			t.Fatalf("%v", q)
@@ -105,8 +105,8 @@ func TestTenantCrudAndItsErrors(t *testing.T) {
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"slug": "zed"}).want(t, 409, "exists")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"slug": "Bad Slug"}).want(t, 400, "invalid")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"quota": map[string]any{"people": 1}}).want(t, 400, "invalid")
-		root.do("PUT", "/api/admin/tenants/"+id+"/limits", map[string]any{"values": map[string]any{"other.people": -1}}).want(t, 400, "invalid")
-		root.do("PUT", "/api/admin/tenants/"+id+"/limits", map[string]any{"values": map[string]any{"mood": 1}}).want(t, 400, "invalid")
+		root.do("PUT", "/api/admin/tenants/"+id+"/settings/quota.people", map[string]any{"siteRule": map[string]any{"value": -1}}).want(t, 400, "invalid")
+		root.do("PUT", "/api/admin/tenants/"+id+"/settings/mood", map[string]any{"siteRule": map[string]any{"value": 1}}).want(t, 404, "not_found")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"mood": 1}).want(t, 400, "invalid")
 		// The default tenant: neither disabled nor deleted nor renamed by slug.
 		root.do("PATCH", "/api/admin/tenants/"+store.DefaultTenantID, map[string]any{"disabled": true}).want(t, 409, "default_tenant")

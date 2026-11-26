@@ -2,16 +2,18 @@ package api_test
 
 import "testing"
 
-// totalsKeys are the keys of the limits sheet that hold a tenant's totals.
-var totalsKeys = map[string]string{"people": "other.people", "spaces": "storage.quota.spaces", "bytes": "storage.quota.bytes", "pages": "storage.quota.pages"}
+// totalsKeys are the settings that hold a tenant's totals.
+var totalsKeys = map[string]string{"people": "quota.people", "spaces": "quota.spaces", "bytes": "quota.bytes", "pages": "quota.pages"}
 
 // setTotals sets a tenant's totals (people, spaces, bytes, pages; nil is no
-// limit) in its limits sheet, as a site administrator.
+// limit) as a site administrator's rule for the tenant.
 func setTotals(t *testing.T, root *client, tenant string, totals map[string]any) {
 	t.Helper()
-	values := map[string]any{}
 	for k, v := range totals {
-		values[totalsKeys[k]] = map[string]any{"value": v}
+		rule := any(nil)
+		if v != nil {
+			rule = map[string]any{"value": v}
+		}
+		root.do("PUT", "/api/admin/tenants/"+tenant+"/settings/"+totalsKeys[k], map[string]any{"siteRule": rule}).want(t, 200, "")
 	}
-	root.do("PUT", "/api/admin/tenants/"+tenant+"/limits", map[string]any{"values": values}).want(t, 200, "")
 }

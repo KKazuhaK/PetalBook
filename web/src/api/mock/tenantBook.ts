@@ -2,9 +2,16 @@
 // layered settings with their locks. It does not keep people or spaces apart by tenant (the mock has one world);
 // what it keeps true is what the web app reads: the contract of these endpoints.
 
-import type { CreatedInvite, SettingLower, SiteSetting, Tenant, TenantSetting, TenantUsage } from '../types.ts'
+import type {
+  CreatedInvite,
+  SettingLower,
+  SettingRule,
+  SiteSetting,
+  Tenant,
+  TenantSetting,
+  TenantUsage,
+} from '../types.ts'
 import { HttpError } from './store.ts'
-import { createLimitsBook } from './limitsBook.ts'
 import type { MockResponse } from './server.ts'
 
 export const DEFAULT_TENANT = '0000000000'
@@ -29,7 +36,7 @@ interface Def {
 }
 // The settings of 3.3, as the server has them (3.1's come with 3.1).
 const DEFS: Def[] = [
-  { key: 'registration.open', kind: 'boolean', layers: ['site', 'tenant'], def: false, lower: { mode: 'lock' } },
+  { key: 'features.registration', kind: 'boolean', layers: ['site', 'tenant'], def: false, lower: { mode: 'lock' } },
   { key: 'registration.domains', kind: 'list', layers: ['site', 'tenant'], def: [], lower: { mode: 'allow' } },
   {
     key: 'registration.perHour',
@@ -45,7 +52,7 @@ const DEFS: Def[] = [
   { key: 'daily.own', kind: 'boolean', layers: ['site', 'tenant', 'space'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.api', kind: 'boolean', layers: ['site', 'tenant', 'space'], def: true, lower: { mode: 'allow' } },
   // Whether people may keep offline copies on a device (4.1); the sync endpoints answer 403 offline_off when it is off.
-  { key: 'offline.copies', kind: 'boolean', layers: ['site', 'tenant'], def: true, lower: { mode: 'allow' } },
+  { key: 'features.offline', kind: 'boolean', layers: ['site', 'tenant'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.default', kind: 'doc', layers: ['site', 'tenant'], def: null, lower: { mode: 'allow' } },
   // What one person may use: only the number of spaces is refused (0 is none); bytes and pages warn (null is none).
   {
@@ -108,7 +115,80 @@ const DEFS: Def[] = [
   { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
   // Whether addresses outside ASCII may be set (3.6); the site's alone.
   { key: 'users.emailNonAscii', kind: 'boolean', layers: ['site'], def: false, lower: { mode: 'allow' } },
+  // The features (3.1): on unless a rule for one tenant turns them off (mail.ownSender: off unless).
+  ...(
+    [
+      ['features.ownSso', true],
+      ['features.domains', true],
+      ['features.managedAccounts', true],
+      ['features.idpAdmins', false],
+      ['features.adminView', true],
+      ['features.auditDownload', true],
+      ['mail.ownSender', false],
+      ['features.ownCaptcha', true],
+      ['features.ownConnections', true],
+      ['features.ownDaily', true],
+    ] as [string, boolean][]
+  ).map(([key, def]): Def => ({
+    key,
+    kind: 'boolean',
+    layers: ['site'],
+    def,
+    lower: { mode: 'allow' },
+    forTenant: true,
+  })),
+  {
+    key: 'storage.mode',
+    kind: 'choice',
+    layers: ['site', 'tenant'],
+    def: 'server',
+    lower: { mode: 'allow' },
+    choices: ['server', 'own', 'tenant'],
+  },
+  {
+    key: 'storage.pinnedBytes',
+    kind: 'limit',
+    layers: ['site'],
+    def: 0,
+    lower: { mode: 'allow' },
+    min: 0,
+    max: 2 ** 50,
+    forTenant: true,
+  },
+  // What a tenant may use in all (null is no limit), and what it may ask of the server.
+  ...(
+    [
+      ['quota.people', 2 ** 40],
+      ['quota.spaces', 2 ** 40],
+      ['quota.bytes', 2 ** 50],
+      ['quota.pages', 2 ** 40],
+    ] as [string, number][]
+  ).map(([key, max]): Def => ({
+    key,
+    kind: 'limit',
+    layers: ['site', 'tenant'],
+    def: null,
+    lower: { mode: 'allow' },
+    min: 0,
+    max,
+  })),
+  ...['rate.apiPerMinute', 'rate.mcpPerMinute', 'rate.mailPerDay', 'rate.outboundPerMinute'].map((key): Def => ({
+    key,
+    kind: 'limit',
+    layers: ['site'],
+    def: null,
+    lower: { mode: 'allow' },
+    min: 0,
+    max: 2 ** 40,
+    forTenant: true,
+  })),
 ]
+const TOTALS: Record<'people' | 'spaces' | 'bytes' | 'pages', string> = {
+  people: 'quota.people',
+  spaces: 'quota.spaces',
+  bytes: 'quota.bytes',
+  pages: 'quota.pages',
+}
 const FILES_KEY = 'files.maxBytes'
 
 function checkValue(d: Def, v: unknown): unknown {
@@ -209,7 +289,7 @@ export interface TenantBookOptions {
   // The switches the daily text keeps in its own record (the site's value of daily.own and daily.api).
   daily: { get: () => { own: boolean; api: boolean }; set: (patch: { own?: boolean; api?: boolean }) => void }
   isSiteAdmin: (id: string) => boolean
-  // Mail is enabled (registration needs it), ssoOnly is stored on, and a change of registration.open happened.
+  // Mail is enabled (registration needs it), ssoOnly is stored on, and a change of features.registration happened.
   mailReady: () => boolean
   ssoOnlyStored: () => boolean
   onRegistrationChanged: () => void
@@ -235,10 +315,13 @@ interface TenantRow {
   lower?: SettingLower
 }
 
-// The site's rule for one tenant: a value in place of the site's, and the rule the tenant's layer is held to.
+// The site's manual rule for one tenant: a value in place of the site's, the rule the tenant's layer is held to, and
+// the window it counts in (RFC 3339; none is always).
 interface SiteRule {
   value?: unknown
   lower?: SettingLower
+  from?: string
+  until?: string
 }
 
 const ZERO: TenantUsage = { people: 0, spaces: 0, bytes: 0, pages: 0, measuredAt: null, over: [] }
@@ -291,12 +374,17 @@ export function createTenantBook(o: TenantBookOptions) {
         : {}),
     },
   })
+  const windowHolds = (r: SiteRule) => {
+    const now = Date.parse(o.now())
+    return (!r.from || now >= Date.parse(r.from)) && (!r.until || now < Date.parse(r.until))
+  }
   const tenantView = (tenant: string, d: Def): TenantSetting => {
     const row = d.layers.includes('tenant') ? tenantRows.get(tenant)?.get(d.key) : undefined
     const rule = siteRules.get(tenant)?.get(d.key)
     const sl = siteLower(d)
-    // The site's rule for this tenant counts unless the site's lock over everyone beats it.
-    const ruleOn = !!rule && sl.mode !== 'lock'
+    // The rule counts while its window holds, unless the site's lock over everyone beats it.
+    const active = !!rule && windowHolds(rule)
+    const ruleOn = active && sl.mode !== 'lock'
     const base = ruleOn && rule.value !== undefined && rule.value !== null ? rule.value : siteValue(d)
     const above = ruleOn && rule.lower ? rule.lower : sl
     const own = row?.value
@@ -304,6 +392,22 @@ export function createTenantBook(o: TenantBookOptions) {
     const inEffect = !has || allows(above, d, own)
     // A restriction bounds the value in effect too, as on the server.
     const v = nearest(above, d, has && inEffect ? own : base)
+    const rules: SettingRule[] = rule
+      ? [
+          {
+            source: 'manual',
+            value: rule.value ?? null,
+            lower: rule.lower ?? null,
+            ...(rule.from ? { from: rule.from } : {}),
+            ...(rule.until ? { until: rule.until } : {}),
+            inEffect: ruleOn,
+          },
+        ]
+      : []
+    const now = Date.parse(o.now())
+    const next = rule
+      ? [rule.from, rule.until].filter((x): x is string => !!x && Date.parse(x) > now).sort()[0]
+      : undefined
     return {
       key: d.key,
       kind: d.kind,
@@ -314,16 +418,30 @@ export function createTenantBook(o: TenantBookOptions) {
         value: own ?? null,
         lower: row?.lower ?? null,
         inEffect,
-        siteLocked: rule?.lower?.mode === 'lock',
-        ...(rule ? { siteRule: { value: rule.value ?? null, lower: rule.lower ?? null, inEffect: ruleOn } } : {}),
+        siteLocked: active && rule.lower?.mode === 'lock',
+        ...(rules.length ? { rules } : {}),
+        ...(next ? { next } : {}),
       },
       effective: d.key === FILES_KEY ? Math.min(o.maxUpload, v as number) : v,
     }
   }
   const effectiveOf = (tenant: string, d: Def) => tenantView(tenant, d)
 
+  // A tenant's totals are its quota.* settings in effect.
+  const quotaOf = (id: string): Tenant['quota'] => {
+    const out = { people: null, spaces: null, bytes: null, pages: null } as Tenant['quota']
+    for (const [name, key] of Object.entries(TOTALS) as [keyof Tenant['quota'], string][]) {
+      const v = effectiveOf(
+        id,
+        DEFS.find((d) => d.key === key)!,
+      ).effective
+      out[name] = typeof v === 'number' ? v : null
+    }
+    return out
+  }
   const tenantOut = (t: Tenant): Tenant => ({
     ...t,
+    quota: quotaOf(t.id),
     usage: t.id === DEFAULT_TENANT ? o.usageOf(t.id) : ZERO,
     registration: { open: o.mailReady() && effectiveOf(t.id, DEFS[0]).effective === true },
   })
@@ -347,19 +465,6 @@ export function createTenantBook(o: TenantBookOptions) {
     if (!t || (!o.isSiteAdmin(me) && id !== DEFAULT_TENANT)) throw new HttpError(404, 'not_found', 'no such tenant')
     return t
   }
-  // The limits sheet (3.6): a tenant's totals are its values of other.people and storage.quota.*.
-  const sheets = createLimitsBook({
-    now: o.now,
-    visible,
-    tenantIds: () => [...tenants.keys()],
-    usageOf: (id) => o.usageOf(id),
-    onTotals: (id, totals) => {
-      const t = tenants.get(id)
-      if (!t || same(t.quota, totals)) return
-      t.quota = totals
-      o.onQuotaChanged()
-    },
-  })
   const defOf = (key: string, layer: 'site' | 'tenant'): Def => {
     const d = DEFS.find((x) => x.key === key)
     if (!d || !d.layers.includes(layer)) throw new HttpError(404, 'not_found', 'no such setting')
@@ -380,7 +485,7 @@ export function createTenantBook(o: TenantBookOptions) {
           : body.value === null && d.kind === 'limit' && d.def !== null
             ? d.def
             : checkValue(d, body.value)
-      if (key === 'registration.open' && v === true) checkOpening()
+      if (key === 'features.registration' && v === true) checkOpening()
       // The server's aboveMax: a site value over its own maximum is refused, not capped.
       const l = 'lower' in body ? (body.lower === null ? d.lower : checkLower(d, body.lower)) : (row.lower ?? d.lower)
       if (d.kind === 'limit' && l.mode === 'restrict' && !allows(l, d, v)) throw aboveMax()
@@ -393,7 +498,7 @@ export function createTenantBook(o: TenantBookOptions) {
       row.lower = body.lower === null ? undefined : checkLower(d, body.lower)
       const l = row.lower ?? d.lower
       if (
-        key === 'registration.open' &&
+        key === 'features.registration' &&
         l.mode !== 'lock' &&
         [...tenantRows.values()].some((r) => r.get(key)?.value === true)
       )
@@ -410,11 +515,16 @@ export function createTenantBook(o: TenantBookOptions) {
       }
     }
     siteRows.set(key, row)
-    if (key === 'registration.open') o.onRegistrationChanged()
+    if (key === 'features.registration') o.onRegistrationChanged()
     if (key.startsWith('quota.')) o.onQuotaChanged()
     return { ...siteView(d), ...(affected === undefined ? {} : { affected }) }
   }
-  const putTenant = (tenant: string, key: string, body: Record<string, unknown>, bySite: boolean): TenantSetting => {
+  const putTenant = (
+    tenant: string,
+    key: string,
+    body: Record<string, unknown>,
+    bySite: boolean,
+  ): TenantSetting & { warning?: { code: string; keys: string[]; message: string } } => {
     const d = DEFS.find((x) => x.key === key)
     if (!d || !(d.layers.includes('tenant') || d.forTenant)) throw new HttpError(404, 'not_found', 'no such setting')
     const fields = ['value', 'lower', 'siteLock', 'siteRule']
@@ -447,11 +557,24 @@ export function createTenantBook(o: TenantBookOptions) {
     }
     if ('siteRule' in body) {
       hasRule = true
-      const r = body.siteRule as { value?: unknown; lower?: unknown } | null
+      const r = body.siteRule as { value?: unknown; lower?: unknown; from?: unknown; until?: unknown } | null
       rule = r ? { value: r.value, lower: r.lower ? checkLower(d, r.lower) : undefined } : undefined
+      for (const k of ['from', 'until'] as const) {
+        const t = r?.[k]
+        if (t === undefined || t === null) continue
+        if (typeof t !== 'string' || Number.isNaN(Date.parse(t))) bad('from and until are RFC 3339 times')
+        if (rule) rule[k] = new Date(t as string).toISOString().replace('.000Z', 'Z')
+      }
+      if (rule?.from && rule.until && Date.parse(rule.until) <= Date.parse(rule.from))
+        bad(`${key}: until is not after from`)
     }
     if (siteOnly && hasValue) {
-      rule = { value, lower: hasRule ? rule?.lower : cur?.lower }
+      rule = {
+        value,
+        lower: hasRule ? rule?.lower : cur?.lower,
+        from: hasRule ? rule?.from : cur?.from,
+        until: hasRule ? rule?.until : cur?.until,
+      }
       hasRule = true
       hasValue = false
     }
@@ -477,7 +600,7 @@ export function createTenantBook(o: TenantBookOptions) {
       value = d.kind === 'doc' ? value : checkValue(d, value)
       if (!allows(above, d, value)) throw new HttpError(409, 'setting_restricted', `${key}: outside the site's rule`)
     }
-    if (key === 'registration.open' && ((hasValue && value === true) || rule?.value === true)) checkOpening()
+    if (key === 'features.registration' && ((hasValue && value === true) || rule?.value === true)) checkOpening()
     let lower: SettingLower | undefined
     if ('lower' in body && body.lower !== null) {
       lower = checkLower(d, body.lower)
@@ -496,14 +619,27 @@ export function createTenantBook(o: TenantBookOptions) {
       rows.set(key, row)
       tenantRows.set(tenant, rows)
     }
+    let replaced = false
     if (hasRule) {
+      replaced = !!rule && (!!rule.from || !!rule.until) && !!cur && !cur.from && !cur.until
       if (rule && (rule.value != null || rule.lower)) rules.set(key, rule)
       else rules.delete(key)
       siteRules.set(tenant, rules)
     }
-    if (key === 'registration.open') o.onRegistrationChanged()
+    if (key === 'features.registration') o.onRegistrationChanged()
     if (key.startsWith('quota.')) o.onQuotaChanged()
-    return effectiveOf(tenant, d)
+    return {
+      ...effectiveOf(tenant, d),
+      ...(replaced
+        ? {
+            warning: {
+              code: 'undated_value_replaced',
+              keys: [key],
+              message: 'A dated rule replaced the undated one.',
+            },
+          }
+        : {}),
+    }
   }
 
   const page = (all: Tenant[], cursor: string, limit: number) => {
@@ -514,7 +650,7 @@ export function createTenantBook(o: TenantBookOptions) {
 
   // The settings of one person's layers (GET /api/settings).
   const mine = (tenant: string) =>
-    DEFS.filter((d) => d.layers.includes('space') || d.key === 'offline.copies' || d.key === 'storage.assets').map(
+    DEFS.filter((d) => d.layers.includes('space') || d.key === 'features.offline' || d.key === 'storage.assets').map(
       (d) => {
         const e = effectiveOf(tenant, d)
         if (d.key === 'storage.assets') {
@@ -543,8 +679,6 @@ export function createTenantBook(o: TenantBookOptions) {
     const tl = tenantRows.get(DEFAULT_TENANT)?.get(key)?.lower
     return site || !tl || !tightens(tl, d, sl) ? sl : tl
   }
-  // The default tenant's own totals, which PATCH /admin/tenants/{id} sets.
-  const quotaOf = (id: string) => tenants.get(id)?.quota ?? { people: null, spaces: null, bytes: null, pages: null }
   // Where the attachments of a new space of the default tenant go, and what its owner may ask for (the server's
   // AssetsRule): the site's lock, the site's lock for the tenant, the site's value, the tenant's value, in that order.
   const assetsRule = (tenant: string) => {
@@ -559,9 +693,12 @@ export function createTenantBook(o: TenantBookOptions) {
     const choices = d.choices ?? []
     let value = e.effective as string
     let allowed = choices.filter((c) => merged.mode === 'allow' || (merged.mode === 'restrict' && allows(merged, d, c)))
-    // The limits sheet turns the attachment repository off (sync.assetsRepository): only the space is possible.
-    if (sheets.value(tenant, 'sync.assetsRepository') === false) {
-      return { default: 'space', allowed: ['space'], locked: false }
+    // A rule for the tenant that restricts the attachments leaves only what it names.
+    const rl = e.tenant?.rules?.find((r) => r.inEffect)?.lower
+    if (rl?.mode === 'restrict') {
+      allowed = allowed.filter((c) => allows(rl, d, c))
+      if (!allowed.includes(value)) value = allowed[0]
+      return { default: value, allowed, locked: false }
     }
     if (merged.mode === 'lock') allowed = [value]
     else if (!allowed.includes(value)) value = allowed[0]
@@ -652,8 +789,6 @@ export function createTenantBook(o: TenantBookOptions) {
           return j(out, 201)
         }
       }
-      const sheet = sheets.route(me, site, method, path, body)
-      if (sheet) return sheet
       const one = /^\/admin\/tenants\/([^/]+)$/.exec(path)
       if (one) {
         const id = decodeURIComponent(one[1])
@@ -661,7 +796,7 @@ export function createTenantBook(o: TenantBookOptions) {
         if (method === 'PATCH') {
           const t = visible(me, id)
           for (const k of Object.keys(body)) {
-            if (k === 'quota') bad('the totals are set through PUT /admin/tenants/{tenant}/limits')
+            if (k === 'quota') bad('the totals are the quota.* settings of the tenant')
             if (!['name', 'slug', 'disabled'].includes(k)) bad(`unknown field ${k}`)
             if (k !== 'name' && !site)
               throw new HttpError(403, 'forbidden', `only an administrator of the whole server may change ${k}`)
@@ -695,7 +830,7 @@ export function createTenantBook(o: TenantBookOptions) {
           if (t.default) throw new HttpError(409, 'default_tenant', 'the default tenant cannot be deleted')
           tenants.delete(id)
           tenantRows.delete(id)
-          sheets.forget(id)
+          siteRules.delete(id)
           o.onTenantDeleted?.(id)
           return { status: 204 }
         }

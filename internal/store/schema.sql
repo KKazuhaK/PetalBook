@@ -17,15 +17,14 @@
 -- everything else in this file. A comment line "-- dialect: postgres" (or
 -- sqlite) right before a statement runs it on that database only (schema.go).
 
--- Plans (3.6): a named set of values of the limits sheet (docs/api.md, "Plans").
--- settings is JSON (the API's "values"; "values" is reserved in SQLite), only the keys the plan sets. It comes before tenants, which
--- may name one.
+-- Plans (3.6): a named bundle of rules (docs/api.md, "Plans"). The rules are
+-- rows of layered_settings with layer 'plan' and layer_id the plan's id. It
+-- comes before tenants, which may name one.
 CREATE TABLE plans (
   id          TEXT COLLATE "C" PRIMARY KEY,
   slug        TEXT COLLATE "C" NOT NULL UNIQUE,
   name        TEXT COLLATE "C" NOT NULL,
-  description TEXT COLLATE "C" NOT NULL DEFAULT '',
-  settings    TEXT COLLATE "C" NOT NULL DEFAULT '{}'
+  description TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 
 -- Tenants (3.3). Every user, space, group, invite, registration, usage row,
@@ -41,23 +40,6 @@ CREATE TABLE tenants (
   plan_id  TEXT COLLATE "C" REFERENCES plans(id),
   created  BIGINT NOT NULL,
   updated  BIGINT NOT NULL
-);
-
--- The overrides of a tenant's limits sheet (3.6, internal/limits): one value of
--- one key from one source, 'manual' (a site administrator) or 'billing' (the
--- internal billing module). value is JSON ('null' is a value: no limit).
--- starts and ends (milliseconds, NULL for none) are the API's from and until:
--- the value counts from starts up to, not including, ends.
-CREATE TABLE tenant_limits (
-  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  key       TEXT COLLATE "C" NOT NULL,
-  source    TEXT COLLATE "C" NOT NULL CHECK (source IN ('manual', 'billing')),
-  value     TEXT COLLATE "C" NOT NULL,
-  starts    BIGINT,
-  ends      BIGINT,
-  set_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
-  updated   BIGINT NOT NULL,
-  PRIMARY KEY (tenant_id, key, source)
 );
 
 -- People. username is stored in lower case and unique on the whole server.
@@ -403,20 +385,41 @@ CREATE TABLE site_settings (
   updated BIGINT NOT NULL
 );
 
--- The settings of the layers site and tenant (see internal/settings). A row is
--- one layer's value of one key and what that layer lets the layers below do.
--- layer_id is '' for the site and the tenant's id for a tenant. site_locked is 1
--- on a tenant's row whose value a site administrator set for that tenant and
--- locked: the tenant's own administrators cannot change the row.
+-- The layered settings (see internal/settings). A row is one layer's value of
+-- one key and what that layer lets the layers below do.
+--   layer 'site', layer_id '':       the site's own value and lower.
+--   layer 'site', layer_id a tenant: the site's rule for that tenant. It has a
+--                                    source (manual, billing) and may have a
+--                                    window: starts and ends (milliseconds,
+--                                    NULL for none; it counts from starts up to,
+--                                    not including, ends).
+--   layer 'tenant', layer_id a tenant: the tenant's own value and lower.
+--   layer 'plan', layer_id a plan:   a rule of the plan (source 'plan').
+-- One row per (layer, layer_id, key, source). There is no foreign key on the
+-- shared layer_id column: DeleteTenant and DeletePlan delete their rows.
 CREATE TABLE layered_settings (
-  layer       TEXT COLLATE "C" NOT NULL,
-  layer_id    TEXT COLLATE "C" NOT NULL,
-  key         TEXT COLLATE "C" NOT NULL,
-  value       TEXT COLLATE "C" NOT NULL DEFAULT '',
-  lower       TEXT COLLATE "C" NOT NULL DEFAULT '',
-  site_locked BIGINT NOT NULL DEFAULT 0,
-  updated     BIGINT NOT NULL,
-  PRIMARY KEY (layer, layer_id, key)
+  layer    TEXT COLLATE "C" NOT NULL,
+  layer_id TEXT COLLATE "C" NOT NULL,
+  key      TEXT COLLATE "C" NOT NULL,
+  source   TEXT COLLATE "C" NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'billing', 'plan')),
+  value    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  lower    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  starts   BIGINT,
+  ends     BIGINT,
+  set_by   TEXT COLLATE "C" NOT NULL DEFAULT '',
+  updated  BIGINT NOT NULL,
+  PRIMARY KEY (layer, layer_id, key, source),
+  CHECK (ends IS NULL OR starts IS NULL OR ends > starts)
+);
+CREATE INDEX layered_settings_starts ON layered_settings(starts) WHERE starts IS NOT NULL;
+CREATE INDEX layered_settings_ends ON layered_settings(ends) WHERE ends IS NOT NULL;
+
+-- One row: every write of layered_settings adds one to rev in its transaction,
+-- so a process that did not make the write (the CLI, a standby server) is seen
+-- by one point read.
+CREATE TABLE settings_rev (
+  id  BIGINT PRIMARY KEY CHECK (id = 1),
+  rev BIGINT NOT NULL
 );
 
 -- The daily text: the lines an administrator pasted or uploaded, a space's

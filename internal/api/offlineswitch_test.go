@@ -31,7 +31,7 @@ func TestOfflineCopiesSwitchRefusesTheSyncEndpoints(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
 		ten := func(id, key string) string { return "/api/admin/tenants/" + id + "/settings/" + key }
-		const key = "offline.copies"
+		const key = "features.offline"
 		inB, inA := syncRoutes(f, f.spaceB), syncRoutes(f, f.spaceA)
 
 		// On by default: every route answers, and the setting is there to read.

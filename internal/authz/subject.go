@@ -1,6 +1,9 @@
 package authz
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // Subject is what a person holds outside the content of spaces: the keys they
 // hold across the site, and the keys they hold in each tenant. A tenant key in
@@ -28,7 +31,7 @@ func (s Subject) Can(k Key, tenant string) bool {
 }
 
 // SiteWide reports whether the subject holds k across the site, which is not
-// bound by any tenant's capabilities.
+// bound by any tenant's features.
 func (s Subject) SiteWide(k Key) bool { return s.Site.Has(k) }
 
 // In is every key the subject holds that applies in tenant: its site keys,
@@ -150,11 +153,11 @@ func SubjectFor(role string, siteAdmin bool, tenant string) Subject {
 	return Subject{}
 }
 
-// Capabilities says whether a capability is on for a tenant. It is read from
-// memory (one map read); nil means every capability is on, which is what holds
-// until the capabilities of 3.6 exist.
-type Capabilities interface {
-	On(tenant, capability string) bool
+// Features says whether a feature (a boolean setting, features.*) is on for a
+// tenant. It is read from the cached settings (one map read); nil means every
+// feature is on.
+type Features interface {
+	On(ctx context.Context, tenant, feature string) bool
 }
 
 // Decision is the outcome of Decide.
@@ -163,18 +166,18 @@ type Decision uint8
 const (
 	// Allowed: the subject may.
 	Allowed Decision = iota
-	// CapabilityOff: the key needs a capability the tenant does not have.
-	CapabilityOff
+	// FeatureOff: the key needs a feature the tenant does not have.
+	FeatureOff
 	// Denied: the subject does not hold the key there.
 	Denied
 )
 
 // Decide is the check of a key in a tenant, in its order: first the tenant's
-// capability (a holder of the key across the site is not bound by it), then
+// feature (a holder of the key across the site is not bound by it), then
 // the key. The caller adds what comes after (the per-organization check of 3.7).
-func Decide(s Subject, k Key, tenant string, caps Capabilities) Decision {
-	if c := k.Capability(); c != "" && caps != nil && !s.SiteWide(k) && !caps.On(tenant, c) {
-		return CapabilityOff
+func Decide(ctx context.Context, s Subject, k Key, tenant string, feats Features) Decision {
+	if c := k.Feature(); c != "" && feats != nil && !s.SiteWide(k) && !feats.On(ctx, tenant, c) {
+		return FeatureOff
 	}
 	if !s.Can(k, tenant) {
 		return Denied

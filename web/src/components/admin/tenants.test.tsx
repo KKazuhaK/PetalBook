@@ -129,29 +129,29 @@ describe('the Tenants page', () => {
 })
 
 describe('the Settings page', () => {
-  it("has offline.copies on both layers, named and explained, and a tenant's switch writes the tenant layer", async () => {
+  it("has features.offline on both layers, named and explained, and a tenant's switch writes the tenant layer", async () => {
     await open('settings')
     await settle(
-      () => document.querySelectorAll('[data-slot="setting-row"][data-key="offline.copies"]').length === 2,
+      () => document.querySelectorAll('[data-slot="setting-row"][data-key="features.offline"]').length === 2,
       'the rows',
     )
-    const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="offline.copies"]')]
-    expect(rows[0].textContent).toContain(tt.settings.names['offline.copies'])
-    expect(rows[0].textContent).toContain(tt.settings.helps['offline.copies'])
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="features.offline"]')]
+    expect(rows[0].textContent).toContain(tt.settings.names['features.offline'])
+    expect(rows[0].textContent).toContain(tt.settings.helps['features.offline'])
     expect(rows[0].querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
-    expect(tt.settings.helps['offline.copies']).toMatch(/offline_off/)
+    expect(tt.settings.helps['features.offline']).toMatch(/offline_off/)
     await click(rows[1].querySelector('[role="switch"][aria-label$="' + tt.settings.follow + '"]'))
-    await click(rows[1].querySelector(`[role="switch"][aria-label="${tt.settings.names['offline.copies']}"]`))
+    await click(rows[1].querySelector(`[role="switch"][aria-label="${tt.settings.names['features.offline']}"]`))
     await click(button(tt.settings.save, rows[1]))
     await settle(
       () =>
         m!.requests.some(
-          (r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/offline.copies',
+          (r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/features.offline',
         ),
       'saved',
     )
     expect(
-      JSON.parse(m!.requests.find((r) => r.url === '/api/admin/tenants/0000000000/settings/offline.copies')!.body!),
+      JSON.parse(m!.requests.find((r) => r.url === '/api/admin/tenants/0000000000/settings/features.offline')!.body!),
     ).toEqual({ value: false })
   })
 
@@ -164,9 +164,9 @@ describe('the Settings page', () => {
       () => rowOf('registration.perHour') !== undefined && rowOf('registration.perHour') !== null,
       'the settings',
     )
-    // registration.open is locked for tenants by default: the tenant layer says so and cannot change it.
+    // features.registration is locked for tenants by default: the tenant layer says so and cannot change it.
     await settle(() => document.querySelectorAll('[data-slot="setting-row"]').length >= 16, 'both layers')
-    const rows = [...document.querySelectorAll('[data-slot="setting-row"][data-key="registration.open"]')]
+    const rows = [...document.querySelectorAll('[data-slot="setting-row"][data-key="features.registration"]')]
     expect(rows).toHaveLength(2)
     expect(rows[1].textContent).toContain(tt.settings.lockedBy.site)
     expect(
@@ -199,7 +199,9 @@ describe('the Settings page', () => {
       m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/settings/registration.perHour')!.body,
     ).toBe(JSON.stringify({ lower: { mode: 'lock' } }))
     // Opening registration is refused while mail is not enabled.
-    const open1 = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.open"]')[0]
+    const open1 = document.querySelectorAll<HTMLElement>(
+      '[data-slot="setting-row"][data-key="features.registration"]',
+    )[0]
     await click(open1.querySelector('[role="switch"]'))
     await click(button(tt.settings.save, open1))
     await settle(() => open1.textContent!.includes(tt.settings.errors.mail_not_configured), 'the refusal')

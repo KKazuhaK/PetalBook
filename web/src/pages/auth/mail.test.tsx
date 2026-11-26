@@ -49,7 +49,7 @@ async function open(path: string, { mail = false, registration = false, terms = 
   window.location.hash = hash
   m = await mount(routes, { entries: [path], server: { mode: 'accounts' } })
   if (mail) admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
-  if (registration) admin('PUT', '/admin/settings/registration.open', { value: true })
+  if (registration) admin('PUT', '/admin/settings/features.registration', { value: true })
   if (terms) admin('PUT', '/admin/settings/legal.termsUrl', { value: 'https://notes.example.test/terms' })
   await m.qc.invalidateQueries()
   await settle(() => document.querySelector('main') !== null, 'the page')
@@ -88,7 +88,7 @@ describe('registration', () => {
     m = await mount(routes, {
       entries: (server) => {
         admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
-        admin('PUT', '/admin/settings/registration.open', { value: true }, server)
+        admin('PUT', '/admin/settings/features.registration', { value: true }, server)
         const sent = server.handle(
           'POST',
           '/api/register',
@@ -158,7 +158,7 @@ describe('the sign-in page links', () => {
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('a[href="/forgot"]') !== null, 'the forgot link')
     expect(document.querySelector('a[href="/register"]')).toBeNull()
-    admin('PUT', '/admin/settings/registration.open', { value: true })
+    admin('PUT', '/admin/settings/features.registration', { value: true })
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('a[href="/register"]') !== null, 'the register link')
   })

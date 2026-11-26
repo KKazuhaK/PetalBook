@@ -812,7 +812,7 @@ export type ErrorCode =
   | 'owner_required'
   | 'confirm_stale'
   | 'exports_full'
-  | 'capability_off'
+  | 'feature_off'
   | 'changes_expired'
   // The page is in the catalogue on this device but its text was not kept (offline).
   | 'not_offline'
@@ -990,8 +990,8 @@ export type PermissionKey =
 export interface PermissionInfo {
   name: PermissionKey
   scope: 'site' | 'tenant' | 'space'
-  // The tenant capability the key needs ("" for none).
-  capability: string
+  // The tenant feature (a features.* setting) the key needs ("" for none).
+  feature: string
   description: string
 }
 
@@ -1933,40 +1933,6 @@ export interface Tenancy {
 }
 export type CreatedTenant = Tenant & { invite?: CreatedInvite }
 
-// --- the limits sheet (3.6, docs/api.md "The limits sheet") ---
-
-export type LimitKind = 'boolean' | 'limit' | 'list'
-export type LimitSource = 'site' | 'plan' | 'billing' | 'manual'
-// The value of a key: a boolean, a whole number or null (no limit), or a list of storage modes.
-export type LimitValue = boolean | number | null | string[]
-// One key of a tenant's sheet. `from` and `until` are the window of the value in force; `underlying` is what applies
-// outside it (or when the manual value goes); `manual` is the manual value that is not in force (its window has not
-// begun or has ended); `used` is there for the limits that are counted.
-export interface LimitEntry {
-  key: string
-  kind: LimitKind
-  description: string
-  value: LimitValue
-  source: LimitSource
-  from?: string | null
-  until?: string | null
-  underlying?: { value: LimitValue; source: LimitSource }
-  manual?: { value: LimitValue; from: string | null; until: string | null }
-  used?: number
-}
-export interface PlanRef {
-  slug: string
-  name: string
-}
-export interface TenantLimits {
-  plan: PlanRef | null
-  limits: LimitEntry[]
-  warning?: { code: string; keys: string[]; message: string }
-}
-// What one key is written as: the value, with a window if it has one. `null` for the whole entry removes the manual
-// value; { value: null } is "no limit".
-export type LimitWrite = null | { value: LimitValue; from?: string; until?: string }
-
 // --- quotas and usage (3.3) ---
 
 export type PersonQuotaKey = 'spaces' | 'bytes' | 'pages'
@@ -2024,24 +1990,48 @@ export interface SiteSetting {
   // Set by PUT when the new rule makes this many tenants' values ineffective.
   affected?: number
 }
+export type RuleSource = 'manual' | 'billing' | 'plan'
+// One rule for a tenant. inEffect: it is the one applied (its window holds, no stronger source covers it, and the
+// site's lock over everyone does not beat it); underlying: it applies when the one in effect ends or is removed.
+export interface SettingRule {
+  source: RuleSource
+  value: unknown
+  lower: SettingLower | null
+  from?: string
+  until?: string
+  inEffect: boolean
+  underlying?: boolean
+  setBy?: string
+}
+// What a site administrator writes as the manual rule for one tenant: any of the fields; from and until in RFC 3339.
+export interface RuleWrite {
+  value?: unknown
+  lower?: SettingLower | null
+  from?: string
+  until?: string
+}
 export interface TenantSetting {
   key: string
   kind: SettingKind
   layers: SettingLayer[]
   site: { value: unknown; lower: SettingLower }
   choices?: string[]
-  // value and lower are the tenant's own. siteRule is the site's rule for this one tenant: a value in place of the
-  // site's, and the rule the tenant's layer is held to (a lock forces the value, a restriction bounds the tenant's);
-  // siteLocked says that rule is a lock. inEffect of the rule is false while the site's lock over everyone beats it.
+  // value and lower are the tenant's own. rules are the rules for this one tenant, strongest first (at most one per
+  // source): a value in place of the site's, and the rule the tenant's layer is held to (a lock forces the value, a
+  // restriction bounds the tenant's), each with the window it counts in. siteLocked says the rule in effect is a lock.
+  // next is the next time a window starts or ends.
   tenant: {
     value: unknown
     lower: SettingLower | null
     inEffect: boolean
     siteLocked?: boolean
-    siteRule?: { value: unknown; lower: SettingLower | null; inEffect: boolean }
+    rules?: SettingRule[]
+    next?: string
   } | null
   effective: unknown
 }
+// What PUT answers for a tenant's setting: with a warning when a dated manual rule replaced an undated one.
+export type TenantSettingWritten = TenantSetting & { warning?: { code: string; keys: string[]; message: string } }
 // What GET /api/settings says of a setting that a space or a person can change.
 export interface MySetting {
   key: string

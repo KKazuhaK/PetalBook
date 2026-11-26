@@ -223,8 +223,8 @@ describe('the timer', () => {
 })
 
 describe('when the administrators turn offline copies off', () => {
-  const turnOff = () => adminApi.putSiteSetting('offline.copies', { value: false, lower: { mode: 'lock' } })
-  const turnOn = () => adminApi.putSiteSetting('offline.copies', { value: true, lower: { mode: 'allow' } })
+  const turnOff = () => adminApi.putSiteSetting('features.offline', { value: false, lower: { mode: 'lock' } })
+  const turnOn = () => adminApi.putSiteSetting('features.offline', { value: true, lower: { mode: 'allow' } })
 
   it('the heads are refused: the copies of the account are deleted, the other requests stop, and the app is told', async () => {
     const { a, b } = await twoSpaces()

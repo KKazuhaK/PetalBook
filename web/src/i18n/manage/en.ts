@@ -19,7 +19,7 @@ export const manageEn = {
     exports_full: 'The room for exports is full. Delete exports you do not need first.',
     forbidden: 'Only a site administrator can do that.',
     space_disabled: 'This space is disabled and cannot be viewed.',
-    capability_off: 'This organisation does not have viewing space contents turned on.',
+    feature_off: 'This organisation does not have viewing space contents turned on.',
     invalid: 'Something you filled in is not right.',
   },
   picker: {

@@ -237,7 +237,8 @@ func CountTenantRows(ctx context.Context, q Q, id string) (c TenantCounts, err e
 }
 
 // TenantRef is a tenant as another object names it.
-type TenantRef struct{ ID, Slug, Name string }
+// PlanID is the id of the tenant's plan, "" for none.
+type TenantRef struct{ ID, Slug, Name, PlanID string }
 
 // tenantState is what the request path needs of the tenants: which are
 // disabled, and how each is named. It is one small map (at most MaxTenants
@@ -249,7 +250,7 @@ type tenantState struct {
 }
 
 func (s *Store) loadTenantState(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, slug, name, disabled FROM tenants`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, slug, name, disabled, COALESCE(plan_id, '') FROM tenants`)
 	if err != nil {
 		return err
 	}
@@ -258,7 +259,7 @@ func (s *Store) loadTenantState(ctx context.Context) error {
 	for rows.Next() {
 		var r TenantRef
 		var dis int64
-		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &dis); err != nil {
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &dis, &r.PlanID); err != nil {
 			return err
 		}
 		st.refs[r.ID], st.bySlug[r.Slug] = r, r.ID
@@ -382,6 +383,9 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites, c.Recycle}
 		}
 		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer IN ('tenant', 'site') AND layer_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := BumpSettingsRev(ctx, q); err != nil {
 			return err
 		}
 		// Installations shared with it are not any more.

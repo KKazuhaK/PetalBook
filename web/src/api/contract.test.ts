@@ -1478,9 +1478,9 @@ function suite(target: Target) {
             ).json.error,
           ).toBe('registration_closed')
           expect((await call(anon, 'POST', '/api/email/confirm', { token: 'nope' })).json.error).toBe('not_found')
-          expect((await call(admin, 'PUT', '/api/admin/settings/registration.open', { value: true })).json.error).toBe(
-            'mail_not_configured',
-          )
+          expect(
+            (await call(admin, 'PUT', '/api/admin/settings/features.registration', { value: true })).json.error,
+          ).toBe('mail_not_configured')
           expect(
             (await call(admin, 'PUT', '/api/admin/mail', { security: 'none', host: 'mail.example.test' })).json.error,
           ).toBe('mail_insecure')
@@ -1554,8 +1554,8 @@ function suite(target: Target) {
             expect((await site('registration.perHour', { value: 0 })).json.error).toBe('invalid')
             expect((await site('no.such.setting', { value: 1 })).status).toBe(404)
             // Registration cannot be opened while mail is not enabled; a tenant cannot touch what the site locks.
-            expect((await site('registration.open', { value: true })).json.error).toBe('mail_not_configured')
-            expect((await mine('registration.open', { value: true })).json.error).toBe('setting_locked')
+            expect((await site('features.registration', { value: true })).json.error).toBe('mail_not_configured')
+            expect((await mine('features.registration', { value: true })).json.error).toBe('setting_locked')
             // The site's rule for perHour: at most 50. A tenant above it is refused, below it is in effect.
             expect((await site('registration.perHour', { lower: { mode: 'restrict', max: 50 } })).status).toBe(200)
             expect((await mine('registration.perHour', { value: 80 })).json.error).toBe('setting_restricted')
@@ -1595,7 +1595,7 @@ function suite(target: Target) {
               value: unknown
               inEffect: boolean
               siteLocked: boolean
-              siteRule?: { value: unknown; inEffect: boolean }
+              rules?: { source: string; value: unknown; inEffect: boolean }[]
             }
             site: { value: unknown; lower: { mode: string } }
           }
@@ -1621,7 +1621,7 @@ function suite(target: Target) {
             // Forcing with no value forces what the tenant has: nothing it sees changes.
             expect((await mine({ siteLock: true })).status).toBe(200)
             const kept = await view()
-            expect([kept.effective, kept.tenant.siteLocked, kept.tenant.siteRule?.value]).toEqual([
+            expect([kept.effective, kept.tenant.siteLocked, kept.tenant.rules?.[0]?.value]).toEqual([
               'space',
               true,
               'space',
@@ -1636,15 +1636,15 @@ function suite(target: Target) {
             expect([
               locked.effective,
               locked.tenant.siteLocked,
-              locked.tenant.siteRule?.value,
-              locked.tenant.siteRule?.inEffect,
+              locked.tenant.rules?.[0]?.value,
+              locked.tenant.rules?.[0]?.inEffect,
               locked.tenant.value,
               locked.tenant.inEffect,
             ]).toEqual(['repository', true, 'repository', true, 'space', false])
             // The site's lock over everyone beats the one for the tenant, which is kept.
             await call(admin, 'PUT', '/api/admin/settings/storage.assets', { lower: { mode: 'lock' } })
             const over = await view()
-            expect([over.effective, over.tenant.siteRule?.value, over.tenant.siteRule?.inEffect]).toEqual([
+            expect([over.effective, over.tenant.rules?.[0]?.value, over.tenant.rules?.[0]?.inEffect]).toEqual([
               'space',
               'repository',
               false,
@@ -1711,158 +1711,83 @@ function suite(target: Target) {
         })
       })
 
-      describe('the limits sheet, its plans and the site defaults (3.6)', () => {
-        type Entry = {
-          key: string
-          kind: string
-          value: unknown
+      describe('rules for a tenant (3.6)', () => {
+        type Rule = {
           source: string
+          value: unknown
+          lower: { mode: string; max?: number } | null
           from?: string
           until?: string
-          manual?: { value: unknown }
+          inEffect: boolean
+          underlying?: boolean
         }
-        type Sheet = { plan: unknown; limits: Entry[]; warning?: { code: string; keys: string[] } }
-        const PUT = '/api/admin/tenants/0000000000/limits'
-        const sheetOf = async () => (await call(admin, 'GET', PUT)).json as Sheet
-        const entry = (r: { limits: Entry[] }, key: string) => r.limits.find((e) => e.key === key)!
+        type Row = {
+          key: string
+          effective: unknown
+          tenant: { value: unknown; siteLocked: boolean; rules?: Rule[]; next?: string }
+        }
+        const base = '/api/admin/tenants/0000000000'
+        const rowOf = async (key: string) =>
+          ((await call(admin, 'GET', `${base}/settings`)).json.settings as Row[]).find((x) => x.key === key)!
+        const put = (key: string, siteRule: unknown) => call(admin, 'PUT', `${base}/settings/${key}`, { siteRule })
         const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z')
 
-        it('GET …/limits lists every key with its kind, value and source; …/capabilities only the capabilities', async () => {
-          const r = await sheetOf()
-          expect(r.plan === null || typeof r.plan === 'object').toBe(true)
-          expect(r.limits.map((e) => e.key)).toEqual(
-            expect.arrayContaining([
-              'signin.sso',
-              'storage.modes',
-              'storage.quota.bytes',
-              'other.people',
-              'sync.assetsRepository',
-            ]),
-          )
-          for (const e of r.limits) expect(['site', 'plan', 'billing', 'manual']).toContain(e.source)
-          expect(entry(r, 'signin.sso').kind).toBe('boolean')
-          expect(entry(r, 'storage.modes').kind).toBe('list')
-          expect(entry(r, 'other.people').kind).toBe('limit')
-          const caps = (await call(admin, 'GET', '/api/admin/tenants/0000000000/capabilities')).json
-            .capabilities as Entry[]
-          expect(caps.map((e) => e.key)).toContain('signin.sso')
-          expect(caps.map((e) => e.key)).not.toContain('other.people')
-          expect((await call(admin, 'GET', '/api/admin/tenants/01ZZZZZZZZ/limits')).json.error).toBe('not_found')
+        it('lists the settings a rule can be set for, with the features on and mail.ownSender off by default', async () => {
+          const r = await call(admin, 'GET', `${base}/settings`)
+          expect(r.status).toBe(200)
+          const keys = (r.json.settings as Row[]).map((x) => x.key)
+          for (const k of ['features.adminView', 'mail.ownSender', 'quota.people', 'quota.bytes', 'rate.mailPerDay'])
+            expect(keys).toContain(k)
+          expect((await rowOf('features.adminView')).effective).toBe(true)
+          expect((await rowOf('mail.ownSender')).effective).toBe(false)
         })
 
-        it('PUT …/limits writes manual values: bare, as {value, from, until}, {value: null} for no limit, null to remove', async () => {
-          const key = 'usage.mailPerDay'
+        it('PUT …/settings/{key} with a siteRule writes the manual rule: a value, with a window, and null removes it', async () => {
+          const from = iso(Date.now() + 24 * 3600_000)
+          const until = iso(Date.now() + 48 * 3600_000)
           try {
-            let r = (await call(admin, 'PUT', PUT, { values: { [key]: 5 } })).json as Sheet
-            expect(entry(r, key)).toMatchObject({ value: 5, source: 'manual' })
-            r = (await call(admin, 'PUT', PUT, { values: { [key]: { value: null } } })).json
-            expect(entry(r, key)).toMatchObject({ value: null, source: 'manual' })
-            // A dated value replaces the undated manual one, and the answer warns; outside its window the site's value applies.
-            const from = iso(Date.now() + 86_400_000)
-            const until = iso(Date.now() + 2 * 86_400_000)
-            const dated = await call(admin, 'PUT', PUT, { values: { [key]: { value: 9, from, until } } })
-            expect(dated.status).toBe(200)
-            expect(dated.json.warning).toMatchObject({ code: 'undated_value_replaced', keys: [key] })
-            expect(entry(dated.json, key)).toMatchObject({ source: 'site', manual: { value: 9 } })
-            r = (await call(admin, 'PUT', PUT, { values: { [key]: null } })).json
-            expect(entry(r, key).source).toBe('site')
-            expect(r.warning).toBeUndefined()
-          } finally {
-            await call(admin, 'PUT', PUT, { values: { [key]: null } })
-          }
-        })
-
-        it("refuses what is not a value of the key, a key that is not the sheet's, a capability route for a limit, and a window that ends before it begins", async () => {
-          for (const values of [
-            {},
-            { nope: 1 },
-            { 'other.people': -1 },
-            { 'other.people': 'many' },
-            { 'signin.sso': 1 },
-            { 'storage.modes': ['cloud'] },
-            { 'other.people': { value: 1, extra: 1 } },
-            { 'other.people': { value: 1, from: '2031-01-02T00:00:00Z', until: '2031-01-01T00:00:00Z' } },
-          ]) {
-            const r = await call(admin, 'PUT', PUT, { values })
-            expect([r.status, r.json.error], JSON.stringify(values)).toEqual([400, 'invalid'])
-          }
-          const caps = '/api/admin/tenants/0000000000/capabilities'
-          expect((await call(admin, 'PUT', caps, { values: { 'other.people': 3 } })).status).toBe(400)
-        })
-
-        it('plans are made, changed, given to a tenant (which clears its manual values) and deleted; a plan in use stays', async () => {
-          const slug = `pl${run}`
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, '')
-            .slice(0, 24)
-          const plans = '/api/admin/plans'
-          const tenantPlan = '/api/admin/tenants/0000000000/plan'
-          expect((await call(admin, 'POST', plans, { slug: 'Bad Slug', name: 'x' })).json.error).toBe('invalid')
-          const made = await call(admin, 'POST', plans, {
-            slug,
-            name: 'Team',
-            description: 'for tests',
-            values: { 'other.people': 10 },
-          })
-          expect(made.status).toBe(201)
-          expect(made.json).toMatchObject({ slug, name: 'Team', values: { 'other.people': 10 }, tenants: 0 })
-          expect((await call(admin, 'POST', plans, { slug, name: 'Again' })).json.error).toBe('exists')
-          const listed = (await call(admin, 'GET', plans)).json.plans as { slug: string }[]
-          expect(listed.map((p) => p.slug)).toContain(slug)
-          expect((await call(admin, 'GET', `${plans}/${slug}`)).json.slug).toBe(slug)
-          const key = 'usage.apiPerMinute'
-          try {
-            await call(admin, 'PUT', PUT, { values: { [key]: 77 } })
-            expect((await call(admin, 'PUT', tenantPlan, { plan: 'nope' })).json.error).toBe('invalid')
-            const set = await call(admin, 'PUT', tenantPlan, { plan: slug })
-            expect(set.status).toBe(200)
-            expect(set.json.plan).toMatchObject({ slug })
-            expect((set.json.cleared as { key: string }[]).map((c) => c.key)).toContain(key)
-            const r = await sheetOf()
-            expect(entry(r, 'other.people')).toMatchObject({ value: 10, source: 'plan' })
-            expect(entry(r, key).source).toBe('site')
-            const patched = await call(admin, 'PATCH', `${plans}/${slug}`, { values: { 'other.people': 20 } })
-            expect(patched.status).toBe(200)
-            expect(patched.json.affected).toContain('0000000000')
-            expect((await call(admin, 'PATCH', `${plans}/${slug}`, { slug: 'other' })).json.error).toBe('invalid')
-            const inUse = await call(admin, 'DELETE', `${plans}/${slug}`)
-            expect([inUse.status, inUse.json.error, inUse.json.tenants]).toEqual([409, 'plan_in_use', 1])
-          } finally {
-            await call(admin, 'PUT', tenantPlan, { plan: null })
-          }
-          expect((await call(admin, 'DELETE', `${plans}/${slug}`)).status).toBe(204)
-          expect((await call(admin, 'GET', `${plans}/${slug}`)).json.error).toBe('not_found')
-        })
-
-        it('GET /api/admin/capabilities is the registry with the site defaults; PUT changes them for every sheet; members may read and write none of it', async () => {
-          const m = await newMember(uniq('lm'))
-          type Def = { key: string; kind: string; group: string; value: unknown }
-          const read = async () => (await call(admin, 'GET', '/api/admin/capabilities')).json.capabilities as Def[]
-          const idp = (await read()).find((c) => c.key === 'signin.idpAdmins')!
-          expect([idp.kind, idp.group]).toEqual(['boolean', 'signin'])
-          const dated = { value: true, from: '2031-01-01T00:00:00Z' }
-          expect(
-            (await call(admin, 'PUT', '/api/admin/capabilities', { values: { 'signin.idpAdmins': dated } })).status,
-          ).toBe(400)
-          try {
-            const r = await call(admin, 'PUT', '/api/admin/capabilities', {
-              values: { 'signin.idpAdmins': !idp.value },
-            })
+            const r = await put('quota.people', { value: 7 })
             expect(r.status).toBe(200)
-            expect(Array.isArray(r.json.affected)).toBe(true)
-            expect((await read()).find((c) => c.key === 'signin.idpAdmins')!.value).toBe(!idp.value)
+            expect((await rowOf('quota.people')).effective).toBe(7)
+            // A dated rule replaces the undated one, says so, and has not begun: the site's value applies.
+            const dated = await put('quota.people', { value: 9, from, until })
+            expect((dated.json.warning as { code: string }).code).toBe('undated_value_replaced')
+            const row = await rowOf('quota.people')
+            expect(row.effective).toBeNull()
+            expect(row.tenant.rules?.[0]).toMatchObject({ source: 'manual', value: 9, from, until, inEffect: false })
+            expect(row.tenant.next).toBe(from)
+            // Until must be after from.
+            expect((await put('quota.people', { value: 9, from: until, until: from })).json.error).toBe('invalid')
           } finally {
-            await call(admin, 'PUT', '/api/admin/capabilities', { values: { 'signin.idpAdmins': null } })
+            expect((await put('quota.people', null)).status).toBe(200)
           }
-          const asked: [string, string][] = [
-            ['GET', '/api/admin/capabilities'],
-            ['GET', '/api/admin/plans'],
-            ['PUT', PUT],
-          ]
-          for (const [method, path] of asked) {
-            const body = method === 'PUT' ? { values: { 'other.people': 1 } } : undefined
-            expect((await call(m.browser, method, path, body)).status, `${method} ${path}`).toBe(403)
+          expect((await rowOf('quota.people')).tenant.rules).toBeUndefined()
+        })
+
+        it('a lock forces its value; a restriction clamps ("at most 10 means at most 10"); a value above its own max is refused', async () => {
+          try {
+            expect((await put('features.adminView', { value: false, lower: { mode: 'lock' } })).status).toBe(200)
+            const off = await rowOf('features.adminView')
+            expect([off.effective, off.tenant.siteLocked, off.tenant.rules?.[0]?.inEffect]).toEqual([false, true, true])
+            expect((await put('quota.pages', { lower: { mode: 'restrict', max: 10 } })).status).toBe(200)
+            expect((await rowOf('quota.pages')).effective).toBe(10)
+            expect((await put('quota.pages', { value: 30, lower: { mode: 'restrict', max: 20 } })).json.error).toBe(
+              'setting_above_max',
+            )
+          } finally {
+            await put('features.adminView', null)
+            await put('quota.pages', null)
           }
+        })
+
+        it('answers 404 for what the limits sheet answered, and a tenant administrator may read the rules but not write one', async () => {
+          for (const path of [`${base}/limits`, `${base}/capabilities`, '/api/admin/capabilities'])
+            expect((await call(admin, 'GET', path)).status, path).toBe(404)
+          const m = await newMember(uniq('rl'))
+          expect((await call(m.browser, 'GET', `${base}/settings`)).status).toBe(403)
+          expect(
+            (await call(m.browser, 'PUT', `${base}/settings/quota.people`, { siteRule: { value: 1 } })).status,
+          ).toBe(403)
         })
       })
 
@@ -2685,12 +2610,12 @@ function suite(target: Target) {
         it('lists the permission keys of the registry, each with its scope', async () => {
           const r = await call(admin, 'GET', '/api/admin/permissions')
           expect(r.status).toBe(200)
-          const l = r.json.permissions as { name: string; scope: string; capability: string; description: string }[]
+          const l = r.json.permissions as { name: string; scope: string; feature: string; description: string }[]
           expect(l.map((p) => p.name)).toEqual(expect.arrayContaining(['tenant.spaces.takeover', 'space.read']))
           for (const p of l) {
             expect(['site', 'tenant', 'space']).toContain(p.scope)
             expect(p.name.startsWith(`${p.scope}.`)).toBe(true)
-            expect(typeof p.capability).toBe('string')
+            expect(typeof p.feature).toBe('string')
             expect(p.description).not.toBe('')
           }
         })
@@ -6813,7 +6738,7 @@ function suite(target: Target) {
     })
 
     it.skipIf(!accounts)(
-      'offline.copies: when the site locks it off, the four sync endpoints answer 403 offline_off; it is a setting a person only reads',
+      'features.offline: when the site locks it off, the four sync endpoints answer 403 offline_off; it is a setting a person only reads',
       async () => {
         const routes = [
           syncUrl('/sync/catalog'),
@@ -6829,7 +6754,7 @@ function suite(target: Target) {
               space?: unknown
               person?: unknown
             }[]
-          ).find((x) => x.key === 'offline.copies')
+          ).find((x) => x.key === 'features.offline')
         const def = (
           (await call(admin, 'GET', '/api/admin/settings')).json.settings as {
             key: string
@@ -6837,13 +6762,17 @@ function suite(target: Target) {
             layers: string[]
             site: { value: unknown }
           }[]
-        ).find((x) => x.key === 'offline.copies')!
+        ).find((x) => x.key === 'features.offline')!
         expect([def.kind, def.layers, def.site.value]).toEqual(['boolean', ['site', 'tenant'], true])
-        expect(await mineOf(admin)).toEqual({ key: 'offline.copies', effective: true })
+        expect(await mineOf(admin)).toEqual({ key: 'features.offline', effective: true })
         try {
           expect(
-            (await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: false, lower: { mode: 'lock' } }))
-              .status,
+            (
+              await call(admin, 'PUT', '/api/admin/settings/features.offline', {
+                value: false,
+                lower: { mode: 'lock' },
+              })
+            ).status,
           ).toBe(200)
           expect((await mineOf(admin))?.effective).toBe(false)
           for (const path of routes) {
@@ -6853,7 +6782,7 @@ function suite(target: Target) {
           // Nothing else is refused.
           expect((await call(admin, 'GET', `/api/spaces/${spaceId}/pages`)).status).toBe(200)
         } finally {
-          await call(admin, 'PUT', '/api/admin/settings/offline.copies', { value: true, lower: { mode: 'allow' } })
+          await call(admin, 'PUT', '/api/admin/settings/features.offline', { value: true, lower: { mode: 'allow' } })
         }
         expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
         expect((await call(admin, 'GET', syncUrl('/sync/catalog'))).status).toBe(200)
@@ -6863,11 +6792,11 @@ function suite(target: Target) {
         ).find((x) => x.default)!
         try {
           expect(
-            (await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: false })).status,
+            (await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/features.offline`, { value: false })).status,
           ).toBe(200)
           expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).json.error).toBe('offline_off')
         } finally {
-          await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/offline.copies`, { value: true })
+          await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/features.offline`, { value: true })
         }
         expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).status).toBe(200)
       },

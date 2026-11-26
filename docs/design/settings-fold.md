@@ -1,6 +1,9 @@
 # Settings fold: capabilities, limits and stray site settings become layered settings
 
-Status: plan, 2026-11-26, on main f379e41. Nothing here is built yet.
+Status: plan, 2026-11-26, on main f379e41. PR 1 (section 6) is built; PRs 2 and 3 are not.
+Open question 2 is implemented with its recommended default (a change of plan clears
+only the undated manual rules and keeps the dated grants), in one place:
+`store.DeleteUndatedRules`.
 
 Owner decisions this plan implements (2026-11-25/26, approved):
 

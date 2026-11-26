@@ -57,7 +57,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   member_via_group: '这个人是通过组加入的，请在组里移除。',
   default_tenant: '默认组织不能这样改。',
   tenant_limit: '组织数量已达上限。',
-  capability_off: '你的组织没有这项功能。',
+  feature_off: '你的组织没有这项功能。',
   takeover_required: '只有空间的成员才能改它的所有者或远程仓库。管理员需要先接管这个空间。',
   plan_in_use: '还有组织在用这个套餐，先给它们换一个。',
   plan_limit: '套餐数量已经到上限。',

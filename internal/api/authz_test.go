@@ -98,7 +98,7 @@ func TestPermissionKeysMatchTheDocsAndTheWebApp(t *testing.T) {
 	scopes := map[string]string{}
 	for _, in := range authz.All() {
 		want = append(want, in.Name)
-		capName := in.Capability
+		capName := in.Feature
 		if capName == "" {
 			capName = "—"
 		} else {

@@ -72,19 +72,13 @@ var routeAccessAdded = map[string][4]string{
 	"POST /api/spaces/{space}/members/batch":       {"ok", "ok", "403 no_permission", "403 token_scope"},
 	"GET /api/spaces/{space}/people":               {"ok", "ok", "403 no_permission", "403 token_scope"},
 
-	// 3.6 part 4: the limits sheet. Reading is the tenant's administrators' too.
-	"GET /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"PUT /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"GET /api/admin/tenants/{tenant}/capabilities": {"ok", "ok", "403 forbidden", "403 token_scope"},
-	"PUT /api/admin/tenants/{tenant}/capabilities": {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"GET /api/admin/tenants/{tenant}/limits":       {"ok", "ok", "403 forbidden", "403 token_scope"},
-	"PUT /api/admin/tenants/{tenant}/limits":       {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"PUT /api/admin/tenants/{tenant}/plan":         {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"GET /api/admin/plans":                         {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"POST /api/admin/plans":                        {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"GET /api/admin/plans/{slug}":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"PATCH /api/admin/plans/{slug}":                {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
-	"DELETE /api/admin/plans/{slug}":               {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	// 3.6 part 4: the plans. Reading a tenant's rules is the tenant's administrators' too (its settings).
+	"PUT /api/admin/tenants/{tenant}/plan": {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/plans":                 {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/plans":                {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/plans/{slug}":          {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"PATCH /api/admin/plans/{slug}":        {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
+	"DELETE /api/admin/plans/{slug}":       {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 }
 
 type routeAccessFx struct {

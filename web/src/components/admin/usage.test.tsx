@@ -150,7 +150,7 @@ describe('the Usage page', () => {
       admin('PUT', '/api/admin/tenancy', { enabled: true })
       admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
       sized(server, 'amy', 100)
-      admin('PUT', '/api/admin/tenants/0000000000/limits', { values: { 'other.people': { value: 1 } } })
+      admin('PUT', '/api/admin/tenants/0000000000/settings/quota.people', { siteRule: { value: 1 } })
     })
     await settle(() => document.querySelectorAll('[data-slot="tenant-usage"] > li').length === 2, 'two tenants')
     const rows = [...document.querySelectorAll('[data-slot="tenant-usage"] > li')]
@@ -280,32 +280,35 @@ describe('limits on a user, and the usage of a tenant', () => {
     const block = document.querySelector<HTMLElement>('[data-slot="tenant-usage-block"]')!
     expect(block.querySelector('[data-slot="tenant-numbers"] [data-quota="people"]')!.textContent).toContain('2')
     expect(block.querySelector('[data-slot="tenant-numbers"] [data-quota="spaces"]')!.textContent).toContain('2')
-    // The totals are values of the limits sheet, under the usage: each with where it comes from, changed one at a time.
+    // The totals are rules for the tenant (quota.* settings), under the usage: each with where it comes from, changed
+    // one at a time.
     await settle(
-      () => document.querySelector('[data-slot="tenant-limits"] [data-key="other.people"]') !== null,
-      'the sheet',
+      () => document.querySelector('[data-slot="tenant-rules"] [data-key="quota.people"]') !== null,
+      'the rules',
     )
-    const sheet = document.querySelector<HTMLElement>('[data-slot="tenant-limits"]')!
-    expect(sheet.querySelector('[data-key="other.people"]')!.getAttribute('data-source')).toBe('site')
-    await click(button(tt.limits.editFor('other.people'), sheet))
-    await settle(() => dlg()?.querySelector('[data-slot="limit-form"]') !== null, 'the form')
-    await type(dlg().querySelector<HTMLInputElement>('#limit-value')!, '1')
-    await click(button(tt.limits.save, dlg()))
+    const sheet = document.querySelector<HTMLElement>('[data-slot="tenant-rules"]')!
+    expect(sheet.querySelector('[data-key="quota.people"]')!.getAttribute('data-source')).toBe('site')
+    await click(button(tt.rules.editFor('quota.people'), sheet))
+    await settle(() => dlg()?.querySelector('[data-slot="rule-form"]') !== null, 'the form')
+    await type(dlg().querySelector<HTMLInputElement>('#rule-value')!, '1')
+    await click(button(tt.rules.save, dlg()))
     await settle(() => document.querySelector('[role="dialog"]') === null, 'saved')
-    const put = m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/limits')!
-    expect(JSON.parse(put.body!)).toEqual({ values: { 'other.people': { value: 1 } } })
+    const url = '/api/admin/tenants/0000000000/settings/quota.people'
+    const put = m!.requests.find((r) => r.method === 'PUT' && r.url === url)!
+    expect(JSON.parse(put.body!)).toEqual({ siteRule: { value: 1 } })
     await settle(
-      () => document.querySelector('[data-key="other.people"]')?.getAttribute('data-source') === 'manual',
+      () => document.querySelector('[data-key="quota.people"]')?.getAttribute('data-source') === 'manual',
       'the source is manual now',
     )
     // A disk total is typed in GB.
-    await click(button(tt.limits.editFor('storage.quota.bytes'), sheet))
-    await settle(() => dlg()?.querySelector('[data-slot="limit-form"]') !== null, 'the disk form')
-    await type(dlg().querySelector<HTMLInputElement>('#limit-value')!, '2')
-    await click(button(tt.limits.save, dlg()))
+    await click(button(tt.rules.editFor('quota.bytes'), sheet))
+    await settle(() => dlg()?.querySelector('[data-slot="rule-form"]') !== null, 'the disk form')
+    await type(dlg().querySelector<HTMLInputElement>('#rule-value')!, '2')
+    await click(button(tt.rules.save, dlg()))
     await settle(() => document.querySelector('[role="dialog"]') === null, 'saved the disk')
-    const puts = m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/limits')
-    expect(JSON.parse(puts[1].body!)).toEqual({ values: { 'storage.quota.bytes': { value: 2 * 1024 ** 3 } } })
+    const bytesUrl = '/api/admin/tenants/0000000000/settings/quota.bytes'
+    const puts = m!.requests.filter((r) => r.method === 'PUT' && r.url === bytesUrl)
+    expect(JSON.parse(puts[0].body!)).toEqual({ siteRule: { value: 2 * 1024 ** 3 } })
     // Now it is over for people: the block says so.
     await settle(
       () =>

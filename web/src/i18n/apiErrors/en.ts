@@ -60,7 +60,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   member_via_group: 'This person is a member through a group. Remove them from the group.',
   default_tenant: 'The default organisation cannot be changed that way.',
   tenant_limit: 'The limit on organisations is reached.',
-  capability_off: 'Your organisation does not have this feature.',
+  feature_off: 'Your organisation does not have this feature.',
   takeover_required:
     'Only a member of the space can change its owners or its remote. An administrator takes the space over first.',
   tenant_not_empty:

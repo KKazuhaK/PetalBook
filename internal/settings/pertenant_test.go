@@ -129,7 +129,7 @@ func TestPrecedenceOfTheLayers(t *testing.T) {
 }
 
 // What was a capability is the site's rule for one tenant: "Acme has no
-// offline copies" is offline.copies locked off for Acme, "at most 10 spaces a
+// offline copies" is features.offline locked off for Acme, "at most 10 spaces a
 // person in Acme" is quota.spacesPerPerson restricted to 10 for Acme. The
 // tenant's own value is kept, and counts when it fits; another tenant is not
 // touched; the tenant's administrators cannot change the rule.
@@ -289,7 +289,7 @@ func TestRemovingTheSitesRuleDeletesItsRow(t *testing.T) {
 			if err := s.SetTenant(ctx, ten, settings.OfflineCopies, remove); err != nil {
 				t.Fatal(err)
 			}
-			if r, err := store.GetLayered(ctx, st.Q(), string(settings.Site), ten, settings.OfflineCopies); !errors.Is(err, store.ErrNotFound) {
+			if r, err := store.GetLayered(ctx, st.Q(), string(settings.Site), ten, settings.OfflineCopies, "manual"); !errors.Is(err, store.ErrNotFound) {
 				t.Fatalf("%+v: the row is %+v (%v)", remove, r, err)
 			}
 			if e, _ := s.Get(ctx, ten, settings.OfflineCopies); e.Value != true || e.Tenant.SiteRule != nil {

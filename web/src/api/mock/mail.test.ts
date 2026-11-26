@@ -26,7 +26,7 @@ function world() {
     ).toBe(200)
   const open = () => {
     enable()
-    expect(req('PUT', '/admin/settings/registration.open', { value: true }, root).status).toBe(200)
+    expect(req('PUT', '/admin/settings/features.registration', { value: true }, root).status).toBe(200)
   }
   return { server, req, login, root, enable, open, advance: (ms: number) => (clock += ms) }
 }
@@ -44,7 +44,7 @@ describe('the mock mail', () => {
     expect(w.req('GET', '/auth/providers').body).toMatchObject({ register: false, forgot: false })
     expect(w.req('GET', '/register').body).toEqual({ open: false })
     expect(w.req('POST', '/password/forgot', { login: 'admin' }).body.error).toBe('password_reset_off')
-    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).body.error).toBe(
+    expect(w.req('PUT', '/admin/settings/features.registration', { value: true }, w.root).body.error).toBe(
       'mail_not_configured',
     )
     expect(w.server.mail.outbox).toHaveLength(0)
@@ -96,7 +96,7 @@ describe('the mock mail', () => {
     // A second one, then the switch goes off.
     expect(w.req('POST', '/register', { ...body, username: 'second', email: 'second@example.test' }).status).toBe(202)
     const second = w.server.mail.outbox.filter((m) => m.kind === 'register')[1]
-    expect(w.req('PUT', '/admin/settings/registration.open', { value: false }, w.root).status).toBe(200)
+    expect(w.req('PUT', '/admin/settings/features.registration', { value: false }, w.root).status).toBe(200)
     expect(w.req('POST', '/register/confirm', { token: tokenOf(second.link) }).status).toBe(404)
     expect(w.req('POST', '/register', body).body.error).toBe('registration_closed')
   })
@@ -134,11 +134,11 @@ describe('the mock mail', () => {
     const w = world()
     w.enable()
     expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).status).toBe(200)
-    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).body.error).toBe(
+    expect(w.req('PUT', '/admin/settings/features.registration', { value: true }, w.root).body.error).toBe(
       'sso_only_with_registration',
     )
     w.req('PUT', '/admin/security', { login: { ssoOnly: false } }, w.root)
-    expect(w.req('PUT', '/admin/settings/registration.open', { value: true }, w.root).status).toBe(200)
+    expect(w.req('PUT', '/admin/settings/features.registration', { value: true }, w.root).status).toBe(200)
     expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).body.error).toBe(
       'sso_only_with_registration',
     )
