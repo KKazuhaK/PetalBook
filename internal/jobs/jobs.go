@@ -114,6 +114,12 @@ type Options struct {
 	WriteFault func(j *store.Job, state string, try int) error
 	// Sleep waits between the tries of a write (default time.Sleep).
 	Sleep func(time.Duration)
+	// After is the clock of the retries of a scan or claim that failed
+	// (default time.After).
+	After func(time.Duration) <-chan time.Time
+	// Fault, when set, runs before the runner's scan ("scan") and each claim
+	// ("claim") and fails it with the error it returns (tests).
+	Fault func(op string) error
 }
 
 // Errors of the runner.
@@ -129,9 +135,30 @@ const (
 	flushEvery = time.Second
 	flushItems = 100
 	writeTries = 3
+	// A scan or claim that failed is tried again after minBackoff, doubled at
+	// each failure up to maxBackoff, and back to minBackoff after a pass that
+	// worked: nothing else would wake the runner for a job already accepted.
+	minBackoff = time.Second
+	maxBackoff = 30 * time.Second
+	// endedWait bounds an Ender's Ended.
+	endedWait = 10 * time.Second
 )
 
+// backoffAfter is the wait after a failure that came prev after the last one
+// (0: the first).
+func backoffAfter(prev time.Duration) time.Duration {
+	if prev <= 0 {
+		return minBackoff
+	}
+	return min(prev*2, maxBackoff)
+}
+
 // Runner runs the jobs of the kinds registered with it.
+type claim struct {
+	job    *store.Job
+	cancel bool
+}
+
 type Runner struct {
 	opt Options
 	log *slog.Logger
@@ -152,6 +179,14 @@ type Runner struct {
 	// tenant.
 	server map[string]int
 	tenant map[string]map[string]int
+	// claiming are the jobs being claimed and not yet running: a Cancel then is
+	// recorded on them and applied when they start.
+	claiming map[string]*claim
+	// backoff is the last wait before a retry; retrying, that one is pending.
+	backoff  time.Duration
+	retrying bool
+	// afterClaim, when set, runs after a claim that worked (tests).
+	afterClaim func(id string)
 
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -165,6 +200,9 @@ func New(opt Options) *Runner {
 	if opt.Sleep == nil {
 		opt.Sleep = time.Sleep
 	}
+	if opt.After == nil {
+		opt.After = time.After
+	}
 	if opt.StopWait <= 0 {
 		opt.StopWait = time.Minute
 	}
@@ -177,7 +215,7 @@ func New(opt Options) *Runner {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	r := &Runner{opt: opt, log: log, wakeup: make(chan struct{}, 1), handlers: map[string]Handler{}, live: map[string]*Progress{},
-		mine: map[string]bool{}, server: map[string]int{}, tenant: map[string]map[string]int{}}
+		mine: map[string]bool{}, server: map[string]int{}, tenant: map[string]map[string]int{}, claiming: map[string]*claim{}}
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	return r
 }
@@ -225,13 +263,33 @@ func (r *Runner) recover() {
 		if h == nil {
 			continue
 		}
-		out := h.Recover(ctx, j)
+		out := r.recoverOf(ctx, h, j)
 		counts[out]++
 		r.settle(j, out)
 	}
 	if len(counts) > 0 {
 		r.log.Info("jobs a stop left were recovered", "resumed", counts[Resume], "interrupted", counts[Interrupt], "failed", counts[Fail], "done", counts[Done])
 	}
+}
+
+// recoverOf is the kind's Recover; a panic in it is logged and fails the job.
+func (r *Runner) recoverOf(ctx context.Context, h Handler, j *store.Job) Outcome {
+	out := Fail
+	r.guard(j, "Recover", func() { out = h.Recover(ctx, j) })
+	return out
+}
+
+// guard runs f, a call into a kind; a panic is logged and reported as false,
+// and the runner goes on.
+func (r *Runner) guard(j *store.Job, what string, f func()) (ok bool) {
+	defer func() {
+		if v := recover(); v != nil {
+			r.log.Error("a job's kind broke", "job", j.ID, "kind", j.Kind, "in", what, "panic", v, "stack", string(debug.Stack()))
+			ok = false
+		}
+	}()
+	f()
+	return true
 }
 
 // settle applies a restart's outcome to a job in the state it was read in.
@@ -306,26 +364,50 @@ func (r *Runner) Get(ctx context.Context, sc store.Scope, id string) (*store.Job
 	return store.GetJob(ctx, r.opt.Store.Q(), sc, id)
 }
 
-// Cancel stops a job: a queued one ends cancelled at once; one this runner
-// runs has its context ended and ends cancelled once its handler returns.
-// ErrEnded: it had ended; store.ErrNotFound: there is no such job, or another
-// process runs it.
-func (r *Runner) Cancel(ctx context.Context, id string) error {
+// Cancel stops a job in the scope: a queued one ends cancelled at once; one
+// this runner runs (or is starting) has its context ended and ends cancelled
+// once its handler returns. ErrEnded: it had ended; store.ErrNotFound: there
+// is no such job in the scope, or another process runs it.
+func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
 	r.mu.Lock()
-	p := r.live[id]
-	if p != nil {
+	if p := r.live[id]; p != nil {
+		snap := p.snapshot()
+		if !sc.Sees(&snap) {
+			r.mu.Unlock()
+			return store.ErrNotFound
+		}
 		p.mu.Lock()
 		p.cancelled = true
 		p.mu.Unlock()
 		p.stop()
-	}
-	r.mu.Unlock()
-	if p != nil {
+		r.mu.Unlock()
 		return nil
 	}
-	err := store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now())
+	if c := r.claiming[id]; c != nil {
+		if !sc.Sees(c.job) {
+			r.mu.Unlock()
+			return store.ErrNotFound
+		}
+		// Applied when it starts; and should the claim lose to this, the job
+		// ends cancelled in the queue.
+		c.cancel = true
+		r.mu.Unlock()
+		if err := store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			r.log.Warn("could not cancel a job being claimed", "job", id, "error", err)
+		}
+		return nil
+	}
+	r.mu.Unlock()
+	j, err := store.GetJob(ctx, r.opt.Store.Q(), sc, id)
+	if err != nil {
+		return err
+	}
+	if store.JobEnded(j.State) {
+		return ErrEnded
+	}
+	err = store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now())
 	if errors.Is(err, store.ErrNotFound) {
-		if j, gerr := store.GetJob(ctx, r.opt.Store.Q(), store.AllTenants(), id); gerr == nil && store.JobEnded(j.State) {
+		if j, gerr := store.GetJob(ctx, r.opt.Store.Q(), sc, id); gerr == nil && store.JobEnded(j.State) {
 			return ErrEnded
 		}
 	}
@@ -370,7 +452,7 @@ func (r *Runner) Close() {
 				continue
 			}
 			if h := r.handler(j.Kind); h != nil {
-				r.settle(j, h.Recover(context.Background(), j))
+				r.settle(j, r.recoverOf(context.Background(), h, j))
 			}
 		}
 	})
@@ -384,19 +466,67 @@ func (r *Runner) loop() {
 			return
 		case <-r.wakeup:
 		}
-		r.dispatch()
+		err := r.dispatch()
+		switch {
+		case r.ctx.Err() != nil:
+		case err != nil:
+			r.retryLater()
+		default:
+			r.mu.Lock()
+			r.backoff = 0
+			r.mu.Unlock()
+		}
 	}
 }
 
-// dispatch starts the queued jobs that have a free slot, oldest first.
-func (r *Runner) dispatch() {
-	act, err := store.ActiveJobs(r.ctx, r.opt.Store.Q())
-	if err != nil {
-		if r.ctx.Err() == nil {
-			r.log.Warn("could not read the queued jobs", "error", err)
-		}
+// retryLater wakes the runner again after the backoff, unless a retry is
+// pending already.
+func (r *Runner) retryLater() {
+	r.mu.Lock()
+	if r.retrying {
+		r.mu.Unlock()
 		return
 	}
+	r.retrying = true
+	r.backoff = backoffAfter(r.backoff)
+	d := r.backoff
+	r.wg.Add(1) // the loop holds the group: Close cannot be waiting yet
+	r.mu.Unlock()
+	go func() {
+		defer r.wg.Done()
+		select {
+		case <-r.opt.After(d):
+			r.mu.Lock()
+			r.retrying = false
+			r.mu.Unlock()
+			r.Wake()
+		case <-r.ctx.Done():
+		}
+	}()
+}
+
+func (r *Runner) fault(op string) error {
+	if r.opt.Fault != nil {
+		return r.opt.Fault(op)
+	}
+	return nil
+}
+
+// dispatch starts the queued jobs that have a free slot, oldest first. It
+// returns the error of a scan or claim that failed (the loop tries again
+// later).
+func (r *Runner) dispatch() error {
+	act, err := store.ActiveJobs(r.ctx, r.opt.Store.Q())
+	if ferr := r.fault("scan"); ferr != nil {
+		err = ferr
+	}
+	if err != nil {
+		if r.ctx.Err() == nil {
+			r.log.Warn("could not read the queued jobs; trying again later", "error", err)
+		}
+		return err
+	}
+	var failed error
 	for _, j := range act {
 		if j.State != store.JobQueued || r.ctx.Err() != nil {
 			continue
@@ -405,21 +535,49 @@ func (r *Runner) dispatch() {
 		if h == nil {
 			continue
 		}
-		cl, queues := h.Class(), queuesOf(h, j)
+		var cl Class
+		var queues []string
+		if !r.guard(j, "Class", func() { cl, queues = h.Class(), queuesOf(h, j) }) {
+			r.failQueued(j)
+			continue
+		}
 		if !r.take(cl, queues) {
 			continue
 		}
+		r.mu.Lock()
+		r.claiming[j.ID] = &claim{job: j}
+		r.mu.Unlock()
 		now := r.opt.Now()
-		ok, err := store.ClaimJob(r.ctx, r.opt.Store.Q(), j.ID, r.opt.ID, now)
+		ok, err := false, r.fault("claim")
+		if err == nil {
+			ok, err = store.ClaimJob(r.ctx, r.opt.Store.Q(), j.ID, r.opt.ID, now)
+		}
 		if err != nil || !ok {
 			if err != nil && r.ctx.Err() == nil {
-				r.log.Warn("could not claim a job", "job", j.ID, "error", err)
+				r.log.Warn("could not claim a job; trying again later", "job", j.ID, "error", err)
+				failed = err
 			}
+			r.mu.Lock()
+			delete(r.claiming, j.ID)
+			r.mu.Unlock()
 			r.release(cl, queues)
 			continue
 		}
+		if r.afterClaim != nil {
+			r.afterClaim(j.ID)
+		}
 		j.State, j.Runner, j.Attempt, j.Started, j.Updated = store.JobRunning, r.opt.ID, j.Attempt+1, now, now
 		r.start(h, j, cl, queues)
+	}
+	return failed
+}
+
+// failQueued ends a queued job failed: its kind broke before it could start.
+func (r *Runner) failQueued(j *store.Job) {
+	end := *j
+	end.State, end.Error = store.JobFailed, "an internal error stopped the job"
+	if err := store.EndJob(context.Background(), r.opt.Store.Q(), end, store.JobQueued, r.opt.Now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		r.log.Warn("could not record that a job broke", "job", j.ID, "error", err)
 	}
 }
 
@@ -478,6 +636,16 @@ func (r *Runner) start(h Handler, j *store.Job, cl Class, queues []string) {
 	r.mu.Lock()
 	r.live[j.ID] = p
 	delete(r.mine, j.ID)
+	cancelled := false
+	if c := r.claiming[j.ID]; c != nil {
+		cancelled = c.cancel
+		delete(r.claiming, j.ID)
+	}
+	if cancelled {
+		// Cancelled between its claim and now.
+		p.cancelled = true
+		stop()
+	}
 	r.wg.Add(1)
 	r.mu.Unlock()
 	go func() {
@@ -525,7 +693,11 @@ func (r *Runner) run(ctx context.Context, h Handler, j *store.Job, p *Progress) 
 	delete(r.live, j.ID)
 	r.mu.Unlock()
 	if e, ok := h.(Ender); ok {
-		e.Ended(ctx, &end)
+		// A context of its own: the job's may have ended (Close), and what
+		// Ended records (the audit row of the end) must not be lost to it.
+		ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endedWait)
+		r.guard(&end, "Ended", func() { e.Ended(ectx, &end) })
+		cancel()
 	}
 }
 

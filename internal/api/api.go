@@ -760,6 +760,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "owner_required", "Nobody who owned the space can be put back: name an owner.")
 	case errors.Is(err, spaces.ErrBusyItem):
 		writeError(w, http.StatusConflict, "busy", "The item is being moved, restored or purged right now.")
+	case errors.Is(err, store.ErrJobLocked):
+		writeError(w, http.StatusConflict, "busy", "Another job is already working on this: wait for it to end.")
 	case errors.Is(err, spaces.ErrRestoreConflict):
 		writeError(w, http.StatusConflict, "conflict", "A space with that id exists.")
 	case errors.Is(err, spaces.ErrNeedsPerson):

@@ -458,10 +458,10 @@ func TestCancel(t *testing.T) {
 	f.enqueue("Q", "")
 	f.drain()
 	f.r.dispatch()
-	if err := f.r.Cancel(context.Background(), "Q"); err != nil {
+	if err := f.r.Cancel(context.Background(), store.AllTenants(), "Q"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.r.Cancel(context.Background(), "R"); err != nil {
+	if err := f.r.Cancel(context.Background(), store.AllTenants(), "R"); err != nil {
 		t.Fatal(err)
 	}
 	if j := <-f.k.ended; j.ID != "R" || j.State != store.JobCancelled {
@@ -472,10 +472,10 @@ func TestCancel(t *testing.T) {
 	if f.k.runsOf("Q") != 0 || f.state("Q").State != store.JobCancelled || f.state("R").State != store.JobCancelled {
 		t.Fatalf("Q ran %d times; Q %s, R %s", f.k.runsOf("Q"), f.state("Q").State, f.state("R").State)
 	}
-	if err := f.r.Cancel(context.Background(), "R"); !errors.Is(err, ErrEnded) {
+	if err := f.r.Cancel(context.Background(), store.AllTenants(), "R"); !errors.Is(err, ErrEnded) {
 		t.Fatalf("cancelling an ended job: %v", err)
 	}
-	if err := f.r.Cancel(context.Background(), "nope"); !errors.Is(err, store.ErrNotFound) {
+	if err := f.r.Cancel(context.Background(), store.AllTenants(), "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("cancelling no job: %v", err)
 	}
 }
