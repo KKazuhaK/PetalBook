@@ -149,11 +149,23 @@ export function adminProbes(fx: FixtureServer): Call[] {
     expires: at,
   })
   d.admin.jobs.push({ id: 'JBSEED', action: 'disable_spaces', total: 1, done: 1, failed: [], state: 'done' })
+  d.spaces[0].checks.push({
+    kind: 'no_id',
+    path: 'Notes/x.md',
+    id: d.spaces[0].pages[0].id,
+    message: 'no id',
+    rev: 'r1',
+    detail: {},
+    fix: 'add_id',
+  })
   const S = `/api/admin/spaces/${extra}`
   const U = '/api/users/01FXDAVE01'
   const T = '/api/admin/tenants/01TNTWO001'
   const G = '/api/admin/groups/01GPONE001'
   return [
+    // the check page
+    ['GET', '/api/spaces/default/checks'],
+    ['POST', '/api/spaces/default/checks/fix', { kind: 'no_id', path: 'Notes/x.md', baseRev: 'r1' }],
     ['GET', '/api/users'],
     ['GET', U],
     ['PATCH', U, { name: '戴夫' }],

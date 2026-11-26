@@ -1,4 +1,5 @@
-// The API client against the in-memory server, which implements docs/api.md.
+// The API client against the fixture server, which answers as docs/api.md says. What the real server refuses is declared
+// where a test needs it, with `fx.fail`.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -14,23 +15,37 @@ import {
   spaceApi,
 } from './client'
 import { adminApi } from './admin'
-import { mockFetch } from './mock/fetch'
+import { fixtureFetch } from './fixtures/fetch'
+import { MOCK_ADMIN } from './fixtures/data/people'
+import { createFixtureServer, type FixtureServer } from './fixtures/server'
 import { ENDED_REASONS } from './types'
-import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
 
 // Everything of a space, for the default one, next to the endpoints that are not in a space.
 const api = { ...accountApi, ...spaceApi('default') }
-let server: MockServer
+let fx: FixtureServer
 let calls: { method: string; url: string; body?: string; init?: RequestInit }[]
 const realFetch = globalThis.fetch
 const NOW = Date.parse('2026-11-21T08:30:00Z')
 
+// `fetch` over a fixture server that notes every request it is given.
+const noting = (server: FixtureServer): typeof fetch => {
+  const through = fixtureFetch(server)
+  return (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname + input.search : input.url
+    calls.push({
+      method: init?.method ?? 'GET',
+      url,
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      init,
+    })
+    return through(input, init)
+  }
+}
+
 beforeEach(() => {
-  server = createMockServer({ now: () => NOW })
+  fx = createFixtureServer({ now: () => NOW })
   calls = []
-  globalThis.fetch = mockFetch(server, {
-    onRequest: (method, url, body, init) => calls.push({ method, url, body, init }),
-  })
+  globalThis.fetch = noting(fx)
 })
 afterEach(() => {
   globalThis.fetch = realFetch
@@ -317,12 +332,15 @@ describe('spaces in URLs', () => {
 })
 
 describe('being signed out', () => {
-  let accounts: MockServer
+  // Nobody is signed in: what a space or an account answers is a 401 (the server's own, here declared).
+  const unauthenticated = (server: FixtureServer) => {
+    server.fail('GET', '/api/spaces/*', 401, { code: 'unauthenticated' })
+    server.fail('GET', '/api/account', 401, { code: 'unauthenticated' })
+  }
   beforeEach(() => {
-    accounts = createMockServer({ mode: 'accounts', empty: true })
-    globalThis.fetch = mockFetch(accounts, {
-      onRequest: (method, url, body, init) => calls.push({ method, url, body, init }),
-    })
+    fx = createFixtureServer({ mode: 'accounts', empty: true })
+    unauthenticated(fx)
+    globalThis.fetch = noting(fx)
     markSignedIn()
   })
   afterEach(() => markSignedIn())
@@ -346,7 +364,6 @@ describe('being signed out', () => {
   })
 
   it('tells the app why, when the 401 says so; a 401 with no reason, or one it does not know, gives none', async () => {
-    const withAdmin = createMockServer({ mode: 'accounts', empty: true, admin: MOCK_ADMIN })
     for (const reason of [
       'expired',
       'signed_out_elsewhere',
@@ -356,7 +373,7 @@ describe('being signed out', () => {
       undefined,
     ]) {
       markSignedIn()
-      globalThis.fetch = mockFetch(withAdmin)
+      globalThis.fetch = noting(fx)
       await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
       // The server answers the cookie of a session that ended with its reason.
       globalThis.fetch = async () =>
@@ -396,20 +413,22 @@ describe('being signed out', () => {
   })
 
   it('signing in re-opens the door, and a session that shows a user does too', async () => {
-    const withAdmin = createMockServer({ mode: 'accounts', empty: true, admin: MOCK_ADMIN })
-    globalThis.fetch = mockFetch(withAdmin)
     await api.tags().catch(() => undefined)
     expect(isSignedOut()).toBe(true)
+    // Signing in: the server answers a session now.
+    fx.clear()
     await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
     expect(isSignedOut()).toBe(false)
     const spaceId = (await accountApi.spaces()).spaces[0].id
     expect(await spaceApi(spaceId).tags()).toEqual({ tags: [] })
     await accountApi.logout()
+    unauthenticated(fx)
     await spaceApi(spaceId)
       .tags()
       .catch(() => undefined)
     expect(isSignedOut()).toBe(true)
     markSignedIn()
+    fx.clear()
     await accountApi.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
     await spaceApi(spaceId)
       .tags()
@@ -518,6 +537,7 @@ describe('a remote that cannot be reached', () => {
 
   it('history and version paths and the remote endpoints go where the contract says', async () => {
     const [{ id }] = (await api.listPages({ limit: 1 })).items
+    fx.reply('GET', '/api/spaces/default/pages/:id/history', { items: [], next: '' })
     await api.history(id, { limit: 5 })
     await expect(api.version(id, 'abc')).rejects.toMatchObject({ status: 404 })
     await expect(api.getRemote()).rejects.toMatchObject({ status: 404 })

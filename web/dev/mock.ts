@@ -4,6 +4,7 @@
 // `npm run dev` against `serve`. Data lives in memory and is reset on restart. MOCK_DELAY_MS adds latency to every call.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
+import { seedAdminDemo } from '../src/api/fixtures/data/adminDemo.ts'
 import type { FixtureOptions } from '../src/api/fixtures/data/model.ts'
 import { INVITE_TOKEN, MOCK_ADMIN, SETUP_TOKEN } from '../src/api/fixtures/data/people.ts'
 import { createFixtureServer } from '../src/api/fixtures/server.ts'
@@ -35,6 +36,8 @@ function optionsFromEnv(): FixtureOptions {
       { slug: 'campus', kind: 'saml', name: 'Campus login', order: 1 },
     ],
     invite: { token: INVITE_TOKEN, role: 'member' },
+    // The administration console has people, a group, a plan and a space to show.
+    data: mode === 'setup' ? undefined : seedAdminDemo,
   }
 }
 

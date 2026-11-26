@@ -55,7 +55,8 @@ function userOf(c: Ctx, id: string): UserRec {
 // The list has the counts and when the person was last active, one person's page the counts, a change neither.
 function userView(c: Ctx, u: UserRec, shown: 'list' | 'one' | 'change' = 'list'): User {
   const { password: _p, passkeys, permissions: _perm, ...rest } = u
-  ;(void _p, void _perm)
+  void _p
+  void _perm
   const rec = person(c, u.id)
   return {
     ...rest,

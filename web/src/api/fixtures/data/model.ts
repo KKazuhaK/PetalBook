@@ -10,6 +10,7 @@ import type {
   PageMeta,
   PageType,
   PageTemplate,
+  Problem,
   Permission,
   SpaceRole,
   SavedView,
@@ -57,6 +58,8 @@ export interface SpaceData {
   sourcePresets: string[] | null
   // One signed-in person, so one draft per page.
   drafts: Record<string, DraftRec>
+  // What the server found wrong in the space (the check page lists them).
+  checks: Problem[]
   // The change feed: the epoch changes with a reindex; each write numbers the page it touched.
   feed: {
     epoch: string
@@ -182,6 +185,7 @@ export function emptySpace(info: Partial<SpaceInfo> & Pick<SpaceInfo, 'id' | 'na
     folderStyles: {},
     sourcePresets: null,
     drafts: {},
+    checks: [],
     feed: { epoch: '00000000', seq: 0, floor: 0, seen: {}, gone: [] },
   }
 }

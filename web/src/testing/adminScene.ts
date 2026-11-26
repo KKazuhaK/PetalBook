@@ -6,6 +6,7 @@ import { emptySpace, type FixtureData, type SpaceData } from '@/api/fixtures/dat
 import { DEFAULT_TENANT, makeProvider, type GroupRec, type PersonRec } from '@/api/fixtures/data/admin'
 import { DEMO_MEMBER, type UserRec } from '@/api/fixtures/data/people'
 import type {
+  SpaceInfo,
   AdminGrant,
   AdminSpace,
   AdminToken,
@@ -129,12 +130,19 @@ export function addProvider(
 export function addSpace(
   d: FixtureData,
   name: string,
-  opts: { owner?: UserRec; personal?: boolean; outside?: boolean; extra?: Partial<AdminSpace> } = {},
+  opts: {
+    owner?: UserRec
+    personal?: boolean
+    outside?: boolean
+    info?: Partial<SpaceInfo>
+    extra?: Partial<AdminSpace>
+  } = {},
 ): SpaceData {
   const s = emptySpace({
     id: `01SP${(d.spaces.length + d.admin.otherSpaces.length + 1).toString().padStart(6, '0')}`,
     name,
     personal: !!opts.personal,
+    ...opts.info,
   })
   if (opts.outside) d.admin.otherSpaces.push(s)
   else d.spaces.push(s)
@@ -239,4 +247,18 @@ export function addRecycled(
   }
   d.admin.recycle.push(item)
   return item
+}
+
+// A page of a space, as the server would hold it.
+export function addPage(space: SpaceData, title: string, body = 'x\n', meta: Record<string, unknown> = {}) {
+  const id = `01PG${(space.pages.length + 1).toString().padStart(6, '0')}`
+  space.pages.push({
+    id,
+    folder: '',
+    file: `${title}.md`,
+    meta: { id, title, created: '2026-11-20', ...meta },
+    body,
+    updated: Date.now(),
+  })
+  return id
 }
