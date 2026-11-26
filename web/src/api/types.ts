@@ -946,50 +946,10 @@ export interface User {
 export type EndedReason = 'expired' | 'signed_out_elsewhere' | 'password_changed' | 'disabled'
 export const ENDED_REASONS: readonly EndedReason[] = ['expired', 'signed_out_elsewhere', 'password_changed', 'disabled']
 
-// A permission key (docs/api.md, "Permission keys"): what a route outside spaces needs. The list is the server's
-// registry, in its order (a test of the server compares the two).
-export type PermissionKey =
-  | 'site.settings.manage'
-  | 'site.security.manage'
-  | 'site.signin.manage'
-  | 'site.mail.manage'
-  | 'site.tenants.manage'
-  | 'site.connections.manage'
-  | 'site.daily.manage'
-  | 'site.status.read'
-  | 'site.storage.manage'
-  | 'site.recycle.purge'
-  | 'site.admins.manage'
-  | 'site.spaces.personal.meta'
-  | 'site.spaces.personal.content'
-  | 'tenant.settings.read'
-  | 'tenant.settings.write'
-  | 'tenant.users.read'
-  | 'tenant.users.manage'
-  | 'tenant.users.delete'
-  | 'tenant.invites.manage'
-  | 'tenant.groups.read'
-  | 'tenant.groups.manage'
-  | 'tenant.spaces.create'
-  | 'tenant.spaces.read'
-  | 'tenant.spaces.manage'
-  | 'tenant.spaces.takeover'
-  | 'tenant.spaces.delete'
-  | 'tenant.data.view'
-  | 'tenant.data.export'
-  | 'tenant.storage.read'
-  | 'tenant.recycle.read'
-  | 'tenant.recycle.restore'
-  | 'tenant.bulk.run'
-  | 'tenant.usage.read'
-  | 'tenant.audit.read'
-  | 'tenant.tokens.read'
-  | 'tenant.tokens.revoke'
-  | 'tenant.permissions.read'
-  | 'space.read'
-  | 'space.write'
-  | 'space.members.manage'
-  | 'space.manage'
+// A permission key (docs/api.md, "Permission keys"): what a route outside spaces needs. The type is generated from the
+// server's registry, so a renamed or removed key fails the typecheck.
+import type { PermissionKey } from './generated/permissionKeys.ts'
+export type { PermissionKey }
 
 // One key of the registry (GET /api/admin/permissions).
 export interface PermissionInfo {
