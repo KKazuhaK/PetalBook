@@ -8,6 +8,7 @@ import { FileOpsProvider } from '@/components/files/FileOps'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
+import { sharedSpace } from '@/api/fixtures/data/model'
 import { t } from '@/i18n'
 import {
   byLabel,
@@ -17,13 +18,12 @@ import {
   mount,
   press,
   settle,
-  shareSpace,
   type,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 
 // Links between pages in the page editor: the picker after `[[`, what a link looks like and where it leads,
-// the panel of backlinks, and what someone who cannot write has of it. The whole page is mounted over the mock
+// the panel of backlinks, and what someone who cannot write has of it. The whole page is mounted over the fixture
 // server, so the requests, the cache and the editor are the real ones.
 
 beforeAll(() => {
@@ -35,7 +35,7 @@ beforeAll(() => {
 })
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -65,25 +65,23 @@ async function openPage(role: Role, build: (c: Ctx) => string | void, expectText
   let scene!: Scene
   m = await mount(null, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const { space, owner } = shareSpace(server, role)
+    fixtures: { mode: 'accounts' },
+    entries: (fx) => {
+      // A space someone else owns, in which the signed-in person has `role`.
+      const space = sharedSpace(fx.data, role).info.id
+      const owner = fx.on(space)
       const make: Make = (title, folder = '', body = '正文') => {
-        const p = owner.request('POST', `/api/spaces/${space}/pages`, { folder, meta: { title }, body }).body as Made
+        const p = owner('POST', '/pages', { folder, meta: { title }, body }).body as Made
         return { id: p.id, path: p.path }
       }
-      const remove = (id: string) => void owner.request('DELETE', `/api/spaces/${space}/pages/${id}`)
+      const remove = (id: string) => void owner('DELETE', `/pages/${id}`)
       const rename = (id: string, title: string) => {
-        const page = owner.request('GET', `/api/spaces/${space}/pages/${id}`).body as {
+        const page = owner('GET', `/pages/${id}`).body as {
           rev: string
           meta: Record<string, unknown>
           body: string
         }
-        owner.request('PUT', `/api/spaces/${space}/pages/${id}`, {
-          baseRev: page.rev,
-          meta: { ...page.meta, title },
-          body: page.body,
-        })
+        owner('PUT', `/pages/${id}`, { baseRev: page.rev, meta: { ...page.meta, title }, body: page.body })
       }
       const current = make('当前页', 'Notes', '正文')
       const chosen = build({ space, make, remove, rename })

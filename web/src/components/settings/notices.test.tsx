@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
+import { shareSpace } from '@/api/fixtures/data/scenes'
 import type { SettingsNotice } from '@/api/types'
 import { SpaceGate } from '@/components/layout/SpaceGate'
 import { t } from '@/i18n'
@@ -14,8 +15,7 @@ import {
   locationText,
   mount,
   settle,
-  shareSpace,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
@@ -25,7 +25,7 @@ import SettingsRoute from './SettingsRoute'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -62,8 +62,8 @@ const noticeItems = () => [...document.querySelectorAll<HTMLElement>('[data-slot
 
 async function openSingle(path: string, notices: SettingsNotice[]) {
   m = await mount(routes, {
-    server: { mode: 'single' },
-    entries: (server) => (server.seedSettingsNotices(notices), [path]),
+    fixtures: { mode: 'single' },
+    entries: (fx) => ((fx.data.spaces[0].settingsNotices = notices), [path]),
   })
 }
 async function openShared(
@@ -73,10 +73,10 @@ async function openShared(
 ) {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const { space } = shareSpace(server, role)
-      server.seedSettingsNotices(notices, space)
+    fixtures: { mode: 'accounts' },
+    entries: (fx) => {
+      const { space, data } = shareSpace(fx, role)
+      data.settingsNotices = notices
       localStorage.setItem('pb.space', space)
       return [path(space)]
     },

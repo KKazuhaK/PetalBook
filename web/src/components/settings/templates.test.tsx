@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { tt } from '@/i18n/templates'
-import { click, installDomShims, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { shareSpace } from '@/api/fixtures/data/scenes'
 import SettingsRoute from './SettingsRoute'
 
-// The templates section of a space's settings, against the mock server.
+// The templates section of a space's settings, against the fixture server.
 
 // Counts the times the section's code is loaded (the factory runs on the first import).
 const chunk = vi.hoisted(() => ({ loaded: 0 }))
@@ -18,7 +19,7 @@ vi.mock('./TemplatesPanel', async (importOriginal) => {
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -44,11 +45,9 @@ const lastPut = () =>
   JSON.parse(puts().at(-1)!.body!) as { baseRev: string; meta: Record<string, unknown>; body: string }
 const defaultsPuts = () =>
   m!.requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/templates/defaults')).map((r) => JSON.parse(r.body!))
-const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown) =>
-  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
+const send = (server: FixtureServer, method: string, path: string, body: unknown) => server.on()(method, path, body)
 const listed = () =>
-  m!.server.handle('GET', '/api/spaces/default/templates', undefined, null).body as {
+  m!.fx.call('GET', '/api/spaces/default/templates').body as {
     templates: { name: string; rev: string; meta: Record<string, unknown> }[]
     defaults: { folders: Record<string, string>; quickNote: string }
   }
@@ -58,21 +57,24 @@ const DIARY = {
   meta: { title: '{{date}} 日记', tags: ['日记'], status: 'draft' },
   body: '## 今天\n{{time}}\n',
 }
-const seed = (s: MockServer) => {
+const seed = (s: FixtureServer) => {
   send(s, 'PUT', '/templates/日记', DIARY)
   send(s, 'PUT', '/templates/会议', { baseRev: '', meta: { title: '会议' }, body: '议程\n' })
   send(s, 'POST', '/folders', { path: 'Work' })
 }
 
-async function openSingle(scene: (server: MockServer) => void = seed) {
-  m = await mount(routes, { entries: (server) => (scene(server), ['/settings/templates']), server: { mode: 'single' } })
+async function openSingle(scene: (server: FixtureServer) => void = seed) {
+  m = await mount(routes, {
+    entries: (server) => (scene(server), ['/settings/templates']),
+    fixtures: { mode: 'single' },
+  })
   await settle(() => dialog() !== null && panelText().includes(tt.settings.title), 'the section')
 }
 
 async function openAs(role: 'editor' | 'viewer') {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
+    fixtures: { mode: 'accounts' },
     entries: (server) => {
       const { space, owner } = shareSpace(server, role)
       owner.request('PUT', `/api/spaces/${space}/templates/日记`, DIARY)
@@ -89,7 +91,7 @@ const alertDialog = () => document.querySelector('[role="alertdialog"]')
 
 describe('the templates section: someone who manages the space', () => {
   it('is its own chunk: another section does not load it, this one does', async () => {
-    m = await mount(routes, { entries: ['/settings/general'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/settings/general'], fixtures: { mode: 'single' } })
     await settle(() => dialog() !== null && panelText().length > 0, 'the dialog')
     expect(chunk.loaded).toBe(0)
     await m.unmount()
@@ -187,9 +189,16 @@ describe('the templates section: someone who manages the space', () => {
     await type(field('template-body'), '我的正文')
     const rev = listed().templates.find((x) => x.name === '日记')!.rev
     expect(
-      send(m!.server, 'PUT', '/templates/日记', { baseRev: rev, meta: { title: '别人的标题' }, body: '别人的正文' })
-        .status,
+      send(m!.fx, 'PUT', '/templates/日记', { baseRev: rev, meta: { title: '别人的标题' }, body: '别人的正文' }).status,
     ).toBe(200)
+    // The server refuses a save made from the old rev, and sends the template as it is now.
+    m!.fx.fail(
+      'PUT',
+      '/api/spaces/default/templates/:name',
+      409,
+      { code: 'conflict', current: listed().templates.find((x) => x.name === '日记') },
+      { times: 1 },
+    )
     await click(button(tt.settings.save))
     await settle(() => document.body.textContent!.includes(tt.settings.changedMeanwhile), 'the message')
     // The form is made again from the template as it is now, not from what was typed.
@@ -235,7 +244,14 @@ describe('the templates section: someone who manages the space', () => {
     await click(row('会议')!.querySelector('button'))
     await settle(() => button(tt.settings.delete) !== undefined, 'the editor')
     const rev = listed().templates.find((x) => x.name === '会议')!.rev
-    send(m!.server, 'PUT', '/templates/会议', { baseRev: rev, meta: { title: '新会议' }, body: '新' })
+    send(m!.fx, 'PUT', '/templates/会议', { baseRev: rev, meta: { title: '新会议' }, body: '新' })
+    m!.fx.fail(
+      'DELETE',
+      '/api/spaces/default/templates/:name',
+      409,
+      { code: 'conflict', current: listed().templates.find((x) => x.name === '会议') },
+      { times: 1 },
+    )
     await click(button(tt.settings.delete))
     await settle(() => alertDialog() !== null, 'the question')
     await click([...alertDialog()!.querySelectorAll('button')].find((b) => b.textContent === tt.settings.deleteConfirm))
@@ -274,9 +290,8 @@ describe('the templates section: someone who manages the space', () => {
 
 describe('the templates section: what the server refuses', () => {
   it('says that a space has at most 200 templates, in words', async () => {
-    await openSingle((s) => {
-      for (let i = 0; i < 200; i++) send(s, 'PUT', `/templates/t${i}`, { baseRev: '', meta: {}, body: '' })
-    })
+    await openSingle()
+    m!.fx.fail('PUT', '/api/spaces/default/templates/:name', 422, { code: 'template_limit' })
     await click(button(tt.settings.newTemplate))
     await type(field('template-name'), '多一个')
     await click(button(tt.settings.create))
@@ -286,6 +301,7 @@ describe('the templates section: what the server refuses', () => {
 
   it('says that a template is too large, in words', async () => {
     await openSingle()
+    m!.fx.fail('PUT', '/api/spaces/default/templates/:name', 413, { code: 'template_too_large' })
     await click(button(tt.settings.newTemplate))
     await type(field('template-name'), '大')
     await type(field('template-body'), 'x'.repeat(257 * 1024))
@@ -298,9 +314,9 @@ describe('the templates section: what the server refuses', () => {
     await openSingle()
     // Someone deletes it after this page was read.
     const rev = listed().templates.find((x) => x.name === '会议')!.rev
-    expect(
-      m!.server.handle('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`, undefined, json).status,
-    ).toBe(204)
+    expect(m!.fx.call('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`).status).toBe(204)
+    // The server no longer has it, so setting it as the default is refused.
+    m!.fx.fail('PUT', '/api/spaces/default/templates/defaults', 404, { code: 'template_not_found' }, { times: 1 })
     await type(field('template-quick'), '会议')
     await settle(() => document.body.textContent!.includes(tt.errors.template_not_found), 'the message')
     // What the server has is read again: the box is back to what it was.

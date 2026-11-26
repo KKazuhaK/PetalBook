@@ -1,18 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { MOCK_ADMIN } from '@/api/mock/server'
-import { adminRequests, byLabel, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { tk } from '@/i18n/tokens'
 import { t } from '@/i18n'
 import SettingsRoute from './SettingsRoute'
 
-// The "API tokens" section of the account settings, against the mock server.
+// The "API tokens" section of the account settings, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -29,8 +28,11 @@ const text = () => dialog()?.textContent ?? ''
 const items = () => [...document.querySelectorAll<HTMLElement>('[data-slot="token-item"]')]
 const button = (label: string) =>
   [...dialog().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label) ?? null
-const open = async (server: { mode: 'accounts' | 'single' } = { mode: 'accounts' }) => {
-  m = await mount(routes, { entries: ['/settings/tokens'], signIn: server.mode === 'accounts', server })
+// A token the person made earlier, behind the page's back.
+const request = (method: string, path: string, body?: unknown) => m!.fx.call(method, path, body)
+const spaceId = () => m!.fx.data.spaces[0].info.id
+const open = async (fixtures: { mode: 'accounts' | 'single' } = { mode: 'accounts' }) => {
+  m = await mount(routes, { entries: ['/settings/tokens'], signIn: fixtures.mode === 'accounts', fixtures })
   await settle(
     () => dialog() !== null && (text().includes(tk.title) || text().includes(t.settingsUi.sections.preferences)),
     'the dialog',
@@ -91,10 +93,8 @@ describe('API tokens in the settings', () => {
     expect(text()).toContain(tk.nameRequired)
     expect(text()).toContain(tk.spaceRequired)
     expect(apiCalls('POST')).toEqual([])
-    // The fiftieth is the last: the 51st says why not.
-    const request = adminRequests(m!.server)
-    const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-    for (let i = 0; i < 50; i++) request('POST', '/api/account/tokens', { name: `t${i}`, spaces: [space] })
+    // The fiftieth is the last: the server refuses the 51st and the page says why.
+    m!.fx.fail('POST', '/api/account/tokens', 422, { code: 'token_limit' })
     await click(dialog().querySelector('input[type="checkbox"]'))
     await type(name(), 'one too many')
     await click(button(tk.submit))
@@ -103,8 +103,7 @@ describe('API tokens in the settings', () => {
 
   it('a long name, a long prefix and many spaces cannot widen the page', async () => {
     await open()
-    const request = adminRequests(m!.server)
-    const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+    const space = spaceId()
     request('POST', '/api/account/tokens', { name: 'x'.repeat(80), spaces: [space], access: 'write' })
     await m!.qc.invalidateQueries({ queryKey: ['tokens'] })
     await settle(() => items().length === 1, 'the token')
@@ -122,8 +121,7 @@ describe('API tokens in the settings', () => {
 
   it('revokes one after asking, and a revoked one has no button', async () => {
     await open()
-    const request = adminRequests(m!.server)
-    const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+    const space = spaceId()
     request('POST', '/api/account/tokens', { name: 'keep', spaces: [space] })
     const gone = (
       request('POST', '/api/account/tokens', { name: 'drop', spaces: [space] }).body as { token: { id: string } }
@@ -156,32 +154,14 @@ describe('API tokens in the settings', () => {
     m = await mount(routes, {
       entries: ['/settings/tokens'],
       signIn: true,
-      server: { mode: 'accounts', now: () => clock },
+      fixtures: { mode: 'accounts', now: () => clock },
     })
     await settle(() => dialog() !== null && text().includes(tk.none), 'the dialog')
-    const request = adminRequests(m.server)
-    const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+    const space = spaceId()
     request('POST', '/api/account/tokens', { name: 'short', spaces: [space], expiresInDays: 1 })
     clock += 2 * 86_400_000
     await m.qc.invalidateQueries({ queryKey: ['tokens'] })
     await settle(() => items().length === 1 && items()[0].dataset.state === 'expired', 'expired')
     expect(items()[0].querySelector('button')).toBeNull()
-  })
-})
-
-describe('what the mock keeps to the contract', () => {
-  it('names a space only while its owner is a member, and refuses spaces that are not theirs', async () => {
-    await open()
-    const request = adminRequests(m!.server)
-    const spaces = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces
-    const r = request('POST', '/api/account/tokens', { name: 'n', spaces: [spaces[0].id], expiresInDays: 0 })
-    expect(r.status).toBe(201)
-    expect((r.body as { token: { expires: unknown } }).token.expires).toBeNull()
-    expect(() => request('POST', '/api/account/tokens', { name: 'n', spaces: ['nope'] })).toThrow(/404/)
-    expect(() => request('POST', '/api/account/tokens', { name: '', spaces: [spaces[0].id] })).toThrow(/400/)
-    expect(() =>
-      request('POST', '/api/account/tokens', { name: 'n', spaces: [spaces[0].id], expiresInDays: 400 }),
-    ).toThrow(/400/)
-    expect(MOCK_ADMIN.username).toBeTruthy()
   })
 })

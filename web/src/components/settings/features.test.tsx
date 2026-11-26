@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { type MockServer } from '@/api/mock/server'
-import { MOCK_ADMIN } from '@/api/mock/server'
-import { adminRequests, byLabel, click, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import { addToken, approveApp, withAuthorizationServer } from '@/api/fixtures/data/area'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { byLabel, click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { oa } from '@/i18n/oauth'
 import { tk } from '@/i18n/tokens'
 import { t } from '@/i18n'
 import SettingsRoute from './SettingsRoute'
 
-// What needs a feature that an administrator switched off is not shown (no disabled stand-ins), against the mock server.
+// What needs a feature that an administrator switched off is not shown (no disabled stand-ins), against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -30,21 +30,19 @@ const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-d
 const text = () => dialog()?.textContent ?? ''
 const nav = () => document.querySelector<HTMLElement>('nav')?.textContent ?? ''
 
+// What an administrator switched off: the features say so.
 const off =
   (...keys: string[]) =>
-  (server: MockServer) =>
-    keys.forEach((k) =>
-      adminRequests(server)('PUT', `/api/admin/settings/${k}`, { value: false, lower: { mode: 'lock' } }),
-    )
+  (d: FixtureData) =>
+    keys.forEach((k) => (d.features[k] = false))
 
-const open = async (seed: (server: MockServer) => void, wait: string) => {
+// The server has an authorization server, and the scene is made first.
+
+const open = async (seed: (d: FixtureData) => void, wait: string) => {
   m = await mount(routes, {
-    entries: (server) => {
-      seed(server)
-      return ['/settings/tokens']
-    },
+    entries: ['/settings/tokens'],
     signIn: true,
-    server: { mode: 'accounts', oauth: true },
+    fixtures: { mode: 'accounts', data: (d) => (withAuthorizationServer(d), seed(d)) },
   })
   await settle(() => dialog() !== null && text().includes(wait), 'the page')
 }
@@ -56,12 +54,9 @@ describe('a feature that is off is not shown', () => {
   })
 
   // A token and a connected app the person made while the features were on.
-  const seed = (server: MockServer) => {
-    const request = adminRequests(server)
-    const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-    request('POST', '/api/account/tokens', { name: 'mine', spaces: [space] })
-    const req = server.startAuthorization(MOCK_ADMIN.username, { clientName: 'Drop' })
-    request('POST', '/api/oauth/consent', { req, approve: true, spaces: [space], access: 'write' })
+  const seed = (d: FixtureData) => {
+    addToken(d, 'mine')
+    approveApp(d, 'Drop')
   }
   const confirm = () =>
     click(
@@ -71,9 +66,9 @@ describe('a feature that is off is not shown', () => {
     )
 
   it('keeps the tokens and their Revoke while features.tokens is off, with no way to make one', async () => {
-    await open((server) => {
-      seed(server)
-      off('features.tokens')(server)
+    await open((d) => {
+      seed(d)
+      off('features.tokens')(d)
     }, oa.yours.title)
     await settle(() => text().includes('mine'), 'the token')
     expect(text()).not.toContain(tk.create)
@@ -89,9 +84,9 @@ describe('a feature that is off is not shown', () => {
   })
 
   it('keeps the connected apps and their Revoke while features.mcp is off, and the tokens too', async () => {
-    await open((server) => {
-      seed(server)
-      off('features.mcp')(server)
+    await open((d) => {
+      seed(d)
+      off('features.mcp')(d)
     }, tk.create)
     await settle(() => text().includes('Drop'), 'the connected app')
     expect(text()).toContain(oa.yours.off)
@@ -111,13 +106,16 @@ describe('a feature that is off is not shown', () => {
 
   it('keeps the section while both are off: what there is can be revoked', async () => {
     m = await mount(routes, {
-      entries: (server) => {
-        seed(server)
-        off('features.tokens', 'features.mcp')(server)
-        return ['/settings/tokens']
-      },
+      entries: ['/settings/tokens'],
       signIn: true,
-      server: { mode: 'accounts', oauth: true },
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          withAuthorizationServer(d)
+          seed(d)
+          off('features.tokens', 'features.mcp')(d)
+        },
+      },
     })
     await settle(() => dialog() !== null && text().includes('mine'), 'the page')
     expect(nav()).toContain(t.settingsUi.sections.tokens)

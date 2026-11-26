@@ -13,9 +13,11 @@ import type {
   Permission,
   SpaceRole,
   SavedView,
+  SettingsNotice,
   SpaceInfo,
   TemplateDefaults,
 } from '../../types.ts'
+import { createArea, type AreaData } from './area.ts'
 import { DEMO_EMPTY_FOLDERS, DEMO_NAME, DEMO_PAGES, DEMO_TAG_COLORS } from './demo.ts'
 import { DEMO_SINGLE_USER, DEMO_ADMIN, SETUP_TOKEN, type UserRec } from './people.ts'
 
@@ -54,6 +56,8 @@ export interface SpaceData {
   tagColors: Record<string, string>
   folderStyles: Record<string, { icon: string; color: string }>
   sourcePresets: string[] | null
+  // What the server did about a settings file it could not use; only those who manage the space are told.
+  settingsNotices: SettingsNotice[]
   // One signed-in person, so one draft per page.
   drafts: Record<string, DraftRec>
   // The change feed: the epoch changes with a reindex; each write numbers the page it touched.
@@ -127,6 +131,8 @@ export interface FixtureData {
   auth: AuthData
   features: Record<string, boolean>
   spaces: SpaceData[]
+  // The person's account, the people and groups around it, and what the settings pages read.
+  area: AreaData
   // Counters for ids and versions, so a run is repeatable.
   counter: number
   // What a route appended: mail a person would be sent, and the like.
@@ -178,6 +184,7 @@ export function emptySpace(info: Partial<SpaceInfo> & Pick<SpaceInfo, 'id' | 'na
     tagColors: {},
     folderStyles: {},
     sourcePresets: null,
+    settingsNotices: [],
     drafts: {},
     feed: { epoch: '00000000', seq: 0, floor: 0, seen: {}, gone: [] },
   }
@@ -205,7 +212,8 @@ export function sharedSpace(data: FixtureData, role: SpaceRole, name = '团队')
 export function createData(options: FixtureOptions = {}): FixtureData {
   const now = (options.now ?? Date.now)()
   const accounts = options.mode === 'accounts'
-  const user: UserRec = accounts ? DEMO_ADMIN : DEMO_SINGLE_USER
+  // A copy: the person's account is changed by the routes, and the demo people are shared.
+  const user: UserRec = structuredClone(accounts ? DEMO_ADMIN : DEMO_SINGLE_USER)
   const space = emptySpace({
     id: 'default',
     name: DEMO_NAME,
@@ -217,7 +225,10 @@ export function createData(options: FixtureOptions = {}): FixtureData {
     const taken = new Set<string>()
     for (const f of DEMO_EMPTY_FOLDERS) space.folders.push(f)
     DEMO_PAGES.forEach((p, i) => {
-      const id = `01FX${(i + 1).toString(32).toUpperCase().padStart(6, '0')}`.replace(/[ILOU]/g, 'X')
+      const id = `01FX${(i + 1).toString(32).toUpperCase().padStart(6, '0')}`.replace(
+        /[ILOU]/g,
+        (c) => ({ I: 'W', L: 'X', O: 'Y', U: 'Z' })[c]!,
+      )
       const meta: PageMeta = { id }
       if (p.title) meta.title = p.title
       if (p.subtitle) meta.subtitle = p.subtitle
@@ -252,6 +263,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
     },
     features: { ...DEFAULT_FEATURES },
     spaces: [space],
+    area: createArea(),
     counter: 0,
     sent: { mail: [] },
   }

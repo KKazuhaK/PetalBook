@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
-import { click, installDomShims, mount, press, settle, shareSpace, type Mounted } from '@/testing/harness'
-import { listShell, putViews, seedWork, sender, TASK, type Send } from '@/testing/listKit'
+import { click, installDomShims, mount, press, settle, type FxMounted } from '@/testing/harness'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import { listShell, peek, putViews, seedWork, sender, TASK, type Send } from '@/testing/listKit'
 import { tb } from '@/i18n/boards'
 
-// The board of a folder or a tag against the mock server: its columns, their paging, and moving cards.
+// The board of a folder or a tag against the fixture server: its columns, their paging, and moving cards.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -48,11 +49,12 @@ const textButton = (label: string, within: ParentNode = document) =>
 async function openBoard(
   scene?: (send: Send, ids: ReturnType<typeof seedWork>) => void,
   path = '/s/default/f/Work',
-  options: Parameters<typeof mount>[1] = {},
+  options: { delay?: (method: string, url: string) => number } = {},
 ) {
   let made: ReturnType<typeof seedWork> | undefined
   m = await mount(listShell, {
     ...options,
+    fixtures: true,
     entries: (server) => {
       const send = sender(server)
       made = seedWork(server)
@@ -228,7 +230,7 @@ describe('moving a card', () => {
     await settle(() => patches().length === 1, 'the request')
     expect(patches()[0].url).toContain(`/pages/${ids.B.id}/props`)
     expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.B.rev, set: { status: 'doing' } })
-    expect(m!.server.peek(ids.B.id)!.meta.status).toBe('doing')
+    expect(peek(m!.fx, ids.B.id)!.meta.status).toBe('doing')
     await settle(() => cardsIn('o:doing').length === 2, 'the card in its new column')
     expect(cardsIn('o:todo')).toEqual([])
     expect(['o:todo', 'o:doing'].map(count)).toEqual(['0', '2'])
@@ -240,7 +242,7 @@ describe('moving a card', () => {
     await drag(await shown('A'), col('empty'))
     await settle(() => patches().length === 1, 'the request')
     expect(JSON.parse(patches()[0].body!)).toEqual({ baseRev: ids.A.rev, unset: ['status'] })
-    expect(m!.server.peek(ids.A.id)!.meta.status).toBeUndefined()
+    expect(peek(m!.fx, ids.A.id)!.meta.status).toBeUndefined()
     await settle(() => cardsIn('empty').length === 2, 'the card in the empty column')
   })
 
@@ -265,16 +267,16 @@ describe('moving a card', () => {
     const ids = await openBoard()
     await settle(() => cardsIn('o:todo').length === 1, 'cards')
     // Someone else changed B after the board was read.
-    sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
+    sender(m!.fx)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
     await drag(await shown('B'), col('o:done'))
     await settle(() => document.body.textContent!.includes(tb.board.conflict('B')), 'the message')
-    expect(m!.server.peek(ids.B.id)!.meta.status).toBe('todo')
+    expect(peek(m!.fx, ids.B.id)!.meta.status).toBe('todo')
     // The card shows the page as it is now (the new points), in the column it was in.
     await settle(() => card('B').querySelector('[data-field="points"]')?.textContent === '点数99', 'the refreshed card')
     expect(cardsIn('o:todo')).toEqual(['B'])
     // With the new rev the same move goes through.
     await drag(await shown('B'), col('o:done'))
-    await settle(() => m!.server.peek(ids.B.id)!.meta.status === 'done', 'the second try')
+    await settle(() => peek(m!.fx, ids.B.id)!.meta.status === 'done', 'the second try')
     await settle(() => cardsIn('o:done').includes('B'), 'moved')
   })
 
@@ -282,19 +284,19 @@ describe('moving a card', () => {
     const ids = await openBoard(undefined, '/s/default/f/Work', { delay: (method) => (method === 'PATCH' ? 300 : 0) })
     await settle(() => cardsIn('o:todo').length === 1 && cardsIn('o:doing').length === 1, 'cards')
     // B is changed elsewhere, so its move is refused; C is dragged before B has been answered.
-    sender(m!.server)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
+    sender(m!.fx)('PATCH', `/pages/${ids.B.id}/props`, { baseRev: ids.B.rev, set: { points: 99 } })
     await drag(await shown('B'), col('o:done'))
     await drag(await shown('C'), col('o:done'))
     expect((await shown('B')).getAttribute('aria-busy')).toBe('true')
     await settle(() => patches().length === 2, 'both requests')
     await settle(() => document.body.textContent!.includes(tb.board.conflict('B')), 'the message for B')
-    await settle(() => m!.server.peek(ids.C.id)!.meta.status === 'done', 'C moved')
+    await settle(() => peek(m!.fx, ids.C.id)!.meta.status === 'done', 'C moved')
     await settle(
       () => [...document.querySelectorAll('[data-card]')].every((c) => c.getAttribute('aria-busy') !== 'true'),
       'no card left busy',
     )
     expect((await shown('B')).getAttribute('draggable')).toBe('true')
-    expect(m!.server.peek(ids.B.id)!.meta.status).toBe('todo')
+    expect(peek(m!.fx, ids.B.id)!.meta.status).toBe('todo')
   })
 
   it('is not offered for a card whose value the listing holds only in part', async () => {
@@ -322,11 +324,10 @@ describe('moving a card', () => {
   it('cannot be done by someone who may only read: nothing can be dragged and nothing is sent', async () => {
     m = await mount(listShell, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) =>
-          owner.request(method, `/api/spaces/${space}${path}`, body)
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        const space = sharedSpace(fx.data, 'viewer').info.id
+        const send = sender(fx, space)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
@@ -380,7 +381,7 @@ describe('moving a card without a mouse', () => {
     await settle(() => cardsIn('o:todo').includes('W'), 'W moved')
     await openMenu('A')
     await click(menuItems().find((e) => e.textContent === tb.board.empty))
-    await settle(() => m!.server.peek(ids.A.id)!.meta.status === undefined, 'A emptied')
+    await settle(() => peek(m!.fx, ids.A.id)!.meta.status === undefined, 'A emptied')
   })
 
   it('on a board of values (a tag) offers only "empty"', async () => {
@@ -404,11 +405,10 @@ describe('moving a card without a mouse', () => {
     m = undefined
     m = await mount(listShell, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) =>
-          owner.request(method, `/api/spaces/${space}${path}`, body)
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        const space = sharedSpace(fx.data, 'viewer').info.id
+        const send = sender(fx, space)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
@@ -460,7 +460,7 @@ describe('the board of a tag', () => {
     await drag(await shown('E'), col('empty'))
     await settle(() => patches().length === 1, 'the request')
     expect(JSON.parse(patches()[0].body!)).toMatchObject({ unset: ['status'] })
-    expect(m!.server.peek(ids.A.id)).toBeTruthy()
+    expect(peek(m!.fx, ids.A.id)).toBeTruthy()
     await settle(() => cardsIn('empty').length === 2, 'moved')
     const groups = m!.requests.filter((r) => /\/pages\/groups\?/.test(r.url))
     expect(decodeURIComponent(groups[0].url)).toContain('tag=栀子')
@@ -547,6 +547,7 @@ describe('a board with many columns', () => {
 describe('a folder that has no type', () => {
   it('has a board too: grouped by the source, with a column for each value the pages have', async () => {
     m = await mount(listShell, {
+      fixtures: true,
       entries: (server) => {
         const send = sender(server)
         send('POST', '/folders', { path: 'Plain' })

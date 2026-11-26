@@ -6,8 +6,9 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
-import type { MockServer } from '@/api/mock/server'
-import { byLabel, click, installDomShims, mount, settle, shareSpace, type, type Mounted } from '@/testing/harness'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
+import { byLabel, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 
 // How the panel is tied to the page editor: it is its own chunk, asked for only by
 // a page that has a type; what is changed in it goes into the same draft as the
@@ -29,15 +30,16 @@ beforeAll(() => {
 })
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
 })
 
-const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown) =>
-  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), json)
+const send = (fx: FixtureServer, method: string, path: string, body: unknown) => fx.on()(method, path, body)
+// What the space holds now, and the draft of the page.
+const peek = (id: string) => m!.fx.data.spaces[0].pages.find((p) => p.id === id)
+const peekDraft = (id: string) => m!.fx.data.spaces[0].drafts[id]
 
 const routes = (element: React.ReactNode) => [
   {
@@ -57,6 +59,7 @@ async function open(which: 'typed' | 'untyped', meta: Record<string, unknown> = 
   let id = ''
   m = await mount(null, {
     routes: routes(<PageEditor />),
+    fixtures: true,
     entries: (server) => {
       send(server, 'PUT', '/types/task', {
         title: '任务',
@@ -115,8 +118,8 @@ describe('the property panel in the page editor', () => {
     await settle(() => byLabel('状态') !== null, 'the panel')
     await type(byLabel('状态') as HTMLSelectElement, 'doing')
     await click(byLabel(t.editor.saveVersion))
-    await settle(() => (m!.server.peek(id)?.meta.status ?? '') === 'doing', 'the file')
-    const meta = m!.server.peek(id)!.meta
+    await settle(() => (peek(id)?.meta.status ?? '') === 'doing', 'the file')
+    const meta = peek(id)!.meta
     // The value that does not fit the field is kept, as are the key that is not in the type and the title.
     expect(meta).toMatchObject({ title: '一页', status: 'doing', owner: 'Ann', points: 'lots' })
     expect(byLabel('点数')!.getAttribute('aria-invalid')).toBe('true')
@@ -129,17 +132,17 @@ describe('the property panel in the page editor', () => {
     await settle(() => document.querySelector('[data-slot="not-in-type"]') !== null, 'the group')
     await click(byLabel(tp.panel.clearKey('owner')))
     await click(byLabel(t.editor.saveVersion))
-    await settle(() => !('owner' in (m!.server.peek(id)?.meta ?? { owner: 1 })), 'the file')
-    expect(m!.server.peek(id)!.meta.status).toBe('todo')
+    await settle(() => !('owner' in (peek(id)?.meta ?? { owner: 1 })), 'the file')
+    expect(peek(id)!.meta.status).toBe('todo')
   })
 
   it('a change goes to the server as a draft before anything is saved', async () => {
     const id = await open('typed')
     await settle(() => byLabel('点数') !== null, 'the panel')
     await type(byLabel('点数') as HTMLInputElement, '7')
-    await settle(() => m!.server.peekDraft('local', id)?.meta.points === 7, 'the draft', 300)
+    await settle(() => peekDraft(id)?.meta.points === 7, 'the draft', 300)
     // The file is as it was until the draft is committed.
-    expect(m!.server.peek(id)!.meta.points).toBeUndefined()
+    expect(peek(id)!.meta.points).toBeUndefined()
   })
 })
 
@@ -147,17 +150,18 @@ describe('the property panel for someone who may only read', () => {
   it('is shown with its values, read only, and nothing is sent', async () => {
     m = await mount(null, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       routes: routes(<PageEditor />),
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        owner.request('PUT', `/api/spaces/${space}/types/task`, {
+      entries: (fx) => {
+        const space = sharedSpace(fx.data, 'viewer').info.id
+        const owner = fx.on(space)
+        owner('PUT', '/types/task', {
           title: '任务',
           fields: [{ key: 'status', title: '状态', kind: 'select', options: ['todo', 'doing'] }],
         })
-        owner.request('POST', `/api/spaces/${space}/folders`, { path: 'Work' })
-        owner.request('PUT', `/api/spaces/${space}/folders/type`, { folder: 'Work', type: 'task' })
-        const page = owner.request('POST', `/api/spaces/${space}/pages`, {
+        owner('POST', '/folders', { path: 'Work' })
+        owner('PUT', '/folders/type', { folder: 'Work', type: 'task' })
+        const page = owner('POST', '/pages', {
           folder: 'Work',
           meta: { title: '共享页', status: 'doing', owner: 'Ann' },
           body: '正文',

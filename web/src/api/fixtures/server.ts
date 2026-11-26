@@ -22,6 +22,7 @@ import { fileRoutes } from './routes/files.ts'
 import { syncRoutes } from './routes/sync.ts'
 import { quietRoutes } from './routes/quiet.ts'
 import { viewRoutes } from './routes/views.ts'
+import { areaRoutes } from './routes/area.ts'
 
 export interface Sent {
   method: string
@@ -67,6 +68,7 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
   const requests: Sent[] = []
   const overrides: Override[] = []
   const routes: Route[] = [...authRoutes, ...fileRoutes, ...draftRoutes, ...viewRoutes, ...syncRoutes, ...quietRoutes]
+  routes.push(...areaRoutes)
 
   function handle(
     method: string,

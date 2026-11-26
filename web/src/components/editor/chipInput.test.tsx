@@ -3,12 +3,12 @@ import { act, useState } from 'react'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { ChipInput } from './ChipInput'
 import { SourcesEditor } from './SourceEditor'
-import { click, installDomShims, mount, press, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, press, type, type FxMounted } from '@/testing/harness'
 
 // The one input of the tags and the sources: chips, and suggestions under it, the used ones before the presets.
 
 beforeAll(installDomShims)
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -41,7 +41,7 @@ const focus = async () => {
 
 describe('the chip input', () => {
   it('names the suggestion the arrows are on to assistive technology', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await focus()
     expect(input().getAttribute('aria-activedescendant')).toBeNull()
     await press(input(), 'ArrowDown')
@@ -59,7 +59,7 @@ describe('the chip input', () => {
   })
 
   it('has a remove button of the same look whose touch target is at least 40px', async () => {
-    m = await mount(<Probe start={['书']} />)
+    m = await mount(<Probe start={['书']} />, { fixtures: true })
     const remove = document.querySelector<HTMLButtonElement>('[role="group"] button')!
     // 16px drawn; on a touch screen a 12px margin all round makes it 40px to hit.
     expect(remove.className).toMatch(/\bsize-4\b/)
@@ -69,7 +69,7 @@ describe('the chip input', () => {
   })
 
   it('lists the used values first, then the presets, and filters as it is typed', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await focus()
     expect(options()).toEqual(['书5', '书评1', '原创', '电影', '音乐'])
     await type(input(), '书')
@@ -79,7 +79,7 @@ describe('the chip input', () => {
   })
 
   it('Tab completes the first suggestion and Enter adds it as a chip', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await focus()
     await type(input(), '音')
     await press(input(), 'Tab')
@@ -90,7 +90,7 @@ describe('the chip input', () => {
   })
 
   it('the arrow keys pick, Enter adds, and a value that is not suggested can be typed', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await focus()
     await press(input(), 'ArrowDown')
     await press(input(), 'ArrowDown')
@@ -102,7 +102,7 @@ describe('the chip input', () => {
   })
 
   it('the mouse picks too, and a value already there is not offered again', async () => {
-    m = await mount(<Probe start={['书']} />)
+    m = await mount(<Probe start={['书']} />, { fixtures: true })
     await focus()
     expect(options()).not.toContain('书5')
     const pick = [...document.querySelectorAll('[role="option"]')].find((o) => o.textContent === '电影')!
@@ -111,7 +111,7 @@ describe('the chip input', () => {
   })
 
   it('Backspace in the empty box takes off the last chip, and Escape closes the list', async () => {
-    m = await mount(<Probe start={['书', '电影']} />)
+    m = await mount(<Probe start={['书', '电影']} />, { fixtures: true })
     await focus()
     expect(document.querySelector('[role="listbox"]')).not.toBeNull()
     await press(input(), 'Escape')
@@ -124,7 +124,7 @@ describe('the chip input', () => {
   })
 
   it('a comma ends a chip, a chip has a button that removes it, and the list is as wide as the row on a phone', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await focus()
     await type(input(), '对话,')
     expect(values()).toEqual(['对话'])
@@ -147,6 +147,7 @@ describe('the chip input', () => {
         removeLabel={(v) => v}
         readOnly
       />,
+      { fixtures: true },
     )
     expect(document.querySelector('input')).toBeNull()
     expect(document.body.textContent).toContain('书')
