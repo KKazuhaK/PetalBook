@@ -53,6 +53,7 @@ import type {
   Provider,
   Remote,
   SessionInfo,
+  SignInAnswer,
   SpaceInfo,
   SpaceRole,
   SyncState,
@@ -379,15 +380,20 @@ export function applySession(qc: QueryClient, user: User | null) {
   qc.setQueryData<SessionInfo>(keys.session, { ...(prev ?? { mode: 'accounts' as const }), user, setup: false })
 }
 
-// After a sign-in: the cache starts over for the new person, and the session is read again, because
-// whether it is held until a passkey is registered (`hold`) is only in the server's answer. Every sign-in that comes
-// here happened on this page, not on a provider's: a provider's page that was left half way is not how it happened.
-export async function applySignIn(qc: QueryClient, user: User) {
+// After a sign-in: the cache starts over for the new person, and the session is the server's answer to the sign-in
+// (the user with their permissions, and whether it is held until a passkey is registered): no second request. Every
+// sign-in that comes here happened on this page, not on a provider's: a provider's page that was left half way is not
+// how it happened.
+export function applySignIn(qc: QueryClient, answer: SignInAnswer) {
   clearPendingMethod()
-  applySession(qc, user)
-  await qc
-    .fetchQuery({ queryKey: keys.session, queryFn: ({ signal }) => api.session(signal), staleTime: 0 })
-    .catch(() => undefined)
+  const prev = qc.getQueryData<SessionInfo>(keys.session)
+  qc.clear()
+  qc.setQueryData<SessionInfo>(keys.session, {
+    ...(prev ?? { mode: 'accounts' as const }),
+    user: answer.user,
+    hold: answer.hold,
+    setup: false,
+  })
 }
 
 // --- space data ----------------------------------------------------------------

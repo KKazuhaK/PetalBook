@@ -171,6 +171,12 @@ func (s *Service) CachedUser(ctx context.Context, id string) (*store.User, error
 	return s.cachedUser(ctx, id)
 }
 
+// CachedSubject is CachedUser with what the person holds outside spaces: the
+// same entry the person's next request reads.
+func (s *Service) CachedSubject(ctx context.Context, id string) (*store.User, authz.Subject, error) {
+	return s.cachedEntry(ctx, id)
+}
+
 func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error) {
 	u, _, err := s.cachedEntry(ctx, id)
 	return u, err

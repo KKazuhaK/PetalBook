@@ -243,14 +243,18 @@ func (s *server) registerConfirm(c *call) {
 		return
 	}
 	s.startSession(c, res.Token)
+	user, hold, ok := s.signedIn(c, *res.User, res.Held, res.HeldBy)
+	if !ok {
+		return
+	}
 	out := struct {
-		User   userResp `json:"user"`
+		signInAnswer
 		Tenant *struct {
 			Slug    string `json:"slug"`
 			Name    string `json:"name"`
 			Renamed bool   `json:"renamed"`
 		} `json:"tenant,omitempty"`
-	}{User: s.toUser(*res.User)}
+	}{signInAnswer: signInAnswer{user, hold}}
 	if res.Org != nil {
 		out.Tenant = &struct {
 			Slug    string `json:"slug"`

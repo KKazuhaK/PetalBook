@@ -127,6 +127,7 @@ func TestAStoredNonASCIIAddressGetsNoAccountMail(t *testing.T) {
 		if err := store.SetEmail(ctx, a.st.Q(), uid, "old@gİthub.test", true, ""); err != nil {
 			t.Fatal(err)
 		}
+		a.auth.Forget(uid) // the sign-in cached the person before the row was written behind it
 		forgot(a.newClient("203.0.113.1"), "old").want(t, 202, "")
 		f.root.do("POST", "/api/users/"+uid+"/password-reset", map[string]any{}).want(t, 409, "email_unverified")
 		c.do("PATCH", "/api/account", map[string]any{"email": "old@gİthub.test"}).want(t, 400, "email_not_ascii")

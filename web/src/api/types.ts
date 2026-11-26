@@ -1006,6 +1006,12 @@ export interface SessionUser extends User {
   permissions?: PermissionKey[]
 }
 
+// What every JSON sign-in answers: GET /api/session's `user` (with the keys the person holds) and `hold`.
+export interface SignInAnswer {
+  user: SessionUser
+  hold: 'passkey' | 'password' | null
+}
+
 export interface SessionInfo {
   mode: 'single' | 'accounts'
   user: SessionUser | null

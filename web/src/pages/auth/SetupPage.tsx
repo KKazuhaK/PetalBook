@@ -70,14 +70,14 @@ function SetupForm() {
     setBusy(true)
     const sent = captcha.value()
     try {
-      const { user } = await api.setup({
+      const answer = await api.setup({
         token,
         username: username.trim(),
         name: name.trim() || undefined,
         password: pass,
         ...(sent ? { captcha: sent } : {}),
       })
-      await applySignIn(qc, user)
+      applySignIn(qc, answer)
       navigate('/', { replace: true })
     } catch (err) {
       setBusy(false)

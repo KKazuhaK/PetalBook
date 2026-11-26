@@ -268,16 +268,20 @@ func (s *server) passkeyBegin(c *call) {
 
 func (s *server) passkeyFinish(c *call) {
 	c.r.Body = http.MaxBytesReader(c.w, c.r.Body, authBodyLimit)
-	u, tok, err := s.auth.PasskeyFinish(c.r.Context(), c.r.URL.Query().Get("ceremony"), s.auth.ClientAddr(c.r), c.r)
+	res, err := s.auth.PasskeyFinish(c.r.Context(), c.r.URL.Query().Get("ceremony"), s.auth.ClientAddr(c.r), c.r)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.startSession(c, tok)
+	s.startSession(c, res.Token)
+	user, hold, ok := s.signedIn(c, *res.User, res.Held, res.HeldBy)
+	if !ok {
+		return
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		User   userResp `json:"user"`
-		Return string   `json:"return"`
-	}{s.toUser(*u), auth.SafeReturn(c.r.URL.Query().Get("return"))})
+		signInAnswer
+		Return string `json:"return"`
+	}{signInAnswer{user, hold}, auth.SafeReturn(c.r.URL.Query().Get("return"))})
 }
 
 func (s *server) listAccountPasskeys(c *call) {

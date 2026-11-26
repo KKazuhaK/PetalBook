@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { KeyRound } from 'lucide-react'
 import { api, ApiError } from '@/api/client'
-import type { User } from '@/api/types'
+import type { SignInAnswer } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { getCredential, passkeyFailure } from '@/lib/webauthn'
 import { t } from '@/i18n'
@@ -19,7 +19,7 @@ export function PasskeyButton({
 }: {
   username?: string
   ret: string
-  onDone: (r: { user: User; return: string }) => void
+  onDone: (r: SignInAnswer & { return: string }) => void
   onError: (message: string, e?: unknown) => void
   disabled?: boolean
 }) {
