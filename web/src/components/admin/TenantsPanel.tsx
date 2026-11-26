@@ -101,11 +101,17 @@ export function TenantsPanel() {
 
 function TenantList({ enabled }: { enabled: boolean }) {
   const list = useTenants()
+  const selfList = useTenants(true, false, 'self')
   const [open, setOpen] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [made, setMade] = useState<CreatedTenant | null>(null)
+  const [onlySelf, setOnlySelf] = useState(false)
   if (list.isPending) return <PageFallback />
   if (list.isError) return <ErrorState message={tl.loadFailed} onRetry={() => void list.refetch()} />
+  // Organisations people made themselves can be told apart: a filter appears once there is one.
+  // The server filters (?origin=self); a failed or pending filter query shows nothing made rather than a guess.
+  const selfMade = selfList.data?.length ?? 0
+  const shown = onlySelf ? (selfList.data ?? []) : list.data
   return (
     <SettingsSection title={tl.title} id="tenants-heading">
       <div className="flex flex-wrap items-center gap-3">
@@ -120,11 +126,33 @@ function TenantList({ enabled }: { enabled: boolean }) {
         )}
       </div>
       {made?.invite && <InviteNotice tenant={made} onClose={() => setMade(null)} />}
-      {list.data.length === 0 ? (
+      {(selfMade > 0 || onlySelf) && (
+        <div role="group" aria-label={tl.filterLabel} className="flex flex-wrap gap-2" data-slot="tenant-filter">
+          <Button
+            type="button"
+            size="sm"
+            variant={onlySelf ? 'outline' : 'secondary'}
+            aria-pressed={!onlySelf}
+            onClick={() => setOnlySelf(false)}
+          >
+            {tl.filterAll}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={onlySelf ? 'secondary' : 'outline'}
+            aria-pressed={onlySelf}
+            onClick={() => setOnlySelf(true)}
+          >
+            {tl.filterSelf(selfMade)}
+          </Button>
+        </div>
+      )}
+      {shown.length === 0 ? (
         <p className="text-sm text-muted-foreground">{tl.empty}</p>
       ) : (
         <ul className="divide-y rounded-lg border" data-slot="tenant-list">
-          {list.data.map((tn) => (
+          {shown.map((tn) => (
             <li key={tn.id} className="grid gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="min-w-0 flex-1 basis-48">
@@ -132,6 +160,7 @@ function TenantList({ enabled }: { enabled: boolean }) {
                     <span className="truncate text-sm font-medium">{tn.name}</span>
                     {tn.default && <Badge variant="secondary">{tl.default}</Badge>}
                     {tn.disabled && <Badge variant="secondary">{tl.disabled}</Badge>}
+                    {tn.origin === 'self' && <Badge variant="outline">{tl.originSelf}</Badge>}
                   </div>
                   <div className="truncate text-xs text-muted-foreground">{tn.slug}</div>
                 </div>

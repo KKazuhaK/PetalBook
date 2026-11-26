@@ -39,8 +39,15 @@ CREATE TABLE tenants (
   disabled BIGINT NOT NULL DEFAULT 0,
   plan_id  TEXT COLLATE "C" REFERENCES plans(id),
   created  BIGINT NOT NULL,
-  updated  BIGINT NOT NULL
+  updated  BIGINT NOT NULL,
+  -- How it came to be: with the database ('default'), by a site administrator
+  -- ('admin') or by a person who registered it ('self'); created_by is that
+  -- person's id ('' for the others). Not a foreign key: it outlives the person.
+  origin     TEXT COLLATE "C" NOT NULL DEFAULT 'admin' CHECK (origin IN ('default', 'admin', 'self')),
+  created_by TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
+-- What a person has made (orgCreation.perPerson counts it).
+CREATE INDEX tenants_created_by ON tenants(created_by) WHERE created_by <> '';
 
 -- People. username is stored in lower case and unique on the whole server.
 -- name_key is the name folded by Go (FoldName): every write of the name writes
@@ -806,9 +813,15 @@ CREATE TABLE registrations (
   token_hash    TEXT COLLATE "C" NOT NULL UNIQUE,
   terms         TEXT COLLATE "C" NOT NULL DEFAULT '',
   created       BIGINT NOT NULL,
-  expires       BIGINT NOT NULL
+  expires       BIGINT NOT NULL,
+  -- A registration that makes an organisation (docs/design/3-6-c.md, 2) names
+  -- it; org_slug <> '' marks it, and holds the slug (unique) until the row ends.
+  -- Its tenant_id is the default tenant, which keeps the foreign key.
+  org_name      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  org_slug      TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX registrations_username ON registrations(username);
+CREATE UNIQUE INDEX registrations_org_slug ON registrations(org_slug) WHERE org_slug <> '';
 CREATE INDEX registrations_tenant ON registrations(tenant_id, expires);
 
 -- Links that confirm an address ('verify') or reset a password ('reset'): only

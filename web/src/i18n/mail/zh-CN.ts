@@ -2,7 +2,7 @@
 // 管理后台的「发信」页。
 
 export const mailZhCN = {
-  links: { register: '注册新账号', forgot: '忘记密码？', backToLogin: '回到登录' },
+  links: { register: '注册新账号', createOrg: '创建组织', forgot: '忘记密码？', backToLogin: '回到登录' },
   register: {
     title: '注册',
     intro: (tenant: string) => `在「${tenant}」里创建账号。我们会往你的邮箱发一封确认信，点了信里的链接账号才会建好。`,
@@ -33,6 +33,20 @@ export const mailZhCN = {
     sentBody: (email: string) =>
       `如果一切顺利，确认信已经发到 ${email}。点开信里的链接，账号就建好了，链接 24 小时内有效。收不到的话，看看垃圾邮件，或者稍后再试。`,
     sentAgain: '重新填写',
+    choiceLabel: '你想做什么？',
+    join: (tenant: string) => `加入 ${tenant}`,
+    createOrg: '创建我自己的组织',
+    orgIntro: '创建一个你自己的组织，以及管理它的账号。我们会给你的邮箱发一封确认邮件，点开里面的链接后两者一起创建。',
+    orgName: '组织名称',
+    orgSlug: '组织地址',
+    orgSlugHelp: '字母、数字和短横线，2 到 32 个字符。别人用它找到你的登录页。',
+    orgSlugTaken: '这个组织地址已被占用',
+    orgSlugReserved: '这个组织地址是保留的',
+    orgSlugInvalid: '请用 2 到 32 个字母、数字或短横线，以字母或数字开头',
+    orgNameRequired: '请给组织起个名字',
+    orgSubmit: '创建组织',
+    orgDialogTitle: '创建组织',
+    orgNone: '现在不能创建组织。',
   },
   confirm: {
     title: '确认注册',
@@ -44,6 +58,11 @@ export const mailZhCN = {
     noToken: '地址里没有确认用的令牌。请直接打开信里的链接。',
     retry: '再试一次',
     toRegister: '回到注册页',
+    orgReady: (name: string) => `${name} 已创建`,
+    orgBody: (name: string, slug: string) => `你的组织「${name}」和账号都已创建，你是它的管理员。组织地址是 ${slug}。`,
+    orgRenamed: (slug: string) => `你想要的地址刚刚被别人占用了，所以这个组织的地址是 ${slug}。以后可以修改。`,
+    orgContinue: '继续',
+    orgLimit: '不能再创建组织了，所以什么都没有创建。',
   },
   verify: {
     title: '确认邮箱',
