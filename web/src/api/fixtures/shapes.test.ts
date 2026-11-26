@@ -1,7 +1,8 @@
 // The fixtures cannot drift from the server: every answer a fixture route gives is compared with the shape the real
 // server's answers were recorded with (recorded/shapes.json, written by the contract suite). A key the server does
 // not send, a key it sends that the fixture lacks, or another type, fails here. A route with no probe fails too, so
-// a new route cannot skip the check.
+// a new route cannot skip the check. What a test writes by hand with `fx.reply` or `fx.fail` (an exact answer or a
+// refusal) is not compared: it says what that test needs, whatever the server does.
 // @ts-expect-error TS2591: Node's own module; the web app has no Node typings, and the test runs in Node.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -74,6 +75,9 @@ function probes(fx: FixtureServer): Call[] {
     ['GET', '/api/meta'],
     ['GET', '/api/settings'],
     ['GET', '/api/notifications/unread'],
+    ['GET', '/api/prefs'],
+    ['GET', '/api/spaces/default/daily'],
+    ['GET', '/api/spaces/default/checks'],
     ['GET', '/api/auth/providers'],
     ['GET', '/api/captcha'],
     ['GET', '/api/account'],
@@ -194,6 +198,12 @@ const UNRECORDED: Record<string, string> = {
   'POST /api/setup 200': 'needs a server with no account',
 }
 
+// A probe is meant to succeed. One that answers 404 is a route that is missing or a probe that is wrong, unless it
+// is here with the reason the 404 is right.
+const NOT_FOUND: Record<string, string> = {
+  'DELETE /api/spaces/default/pages/NOPE': 'a page that does not exist',
+}
+
 describe('the fixtures against the recorded shapes', () => {
   const fx = createFixtureServer({
     mode: 'accounts',
@@ -218,7 +228,8 @@ describe('the fixtures against the recorded shapes', () => {
     for (const [method, path, body] of calls) {
       const made = typeof body === 'function' ? (body as () => unknown)() : body
       const r = fx.handle(method, path, made === undefined ? undefined : JSON.stringify(made))
-      if (r.status >= 400 && r.status !== 404) {
+      if (r.status === 404 && `${method} ${path}` in NOT_FOUND) continue
+      if (r.status >= 400) {
         problems.push(`${method} ${path}: refused with ${r.status}`)
         continue
       }
@@ -226,7 +237,7 @@ describe('the fixtures against the recorded shapes', () => {
       const key = `${method} ${routeOf(path)} ${r.status}`
       const shape = shapeFor(method, path, r.status)
       if (shape === undefined) {
-        if (!(key in UNRECORDED) && r.status !== 404) problems.push(`${key}: no recorded shape`)
+        if (!(key in UNRECORDED)) problems.push(`${key}: no recorded shape`)
         continue
       }
       if (key in UNRECORDED) problems.push(`${key}: is recorded now; take it off the unrecorded list`)

@@ -142,6 +142,20 @@ lines, down from 16k):
   permission checks, no validation beyond JSON parsing, no quotas, no rate
   limits, no audit, no clocks. The caller is the fixture's user, with the
   permissions the fixture declares.
+  - **The protocol rules the fixtures keep on purpose.** The client's own
+    concurrency and sync logic depends on these answers, so a fixture that
+    left them out would let that logic go untested or break it:
+    - draft versioning and its 409 (`routes/drafts.ts`): the editor's
+      autosave and conflict handling read the version it is told;
+    - a page save or property change with a stale rev answers 409
+      (`routes/files.ts:374`, `:387`): the "changed elsewhere" flow;
+    - a views write with a stale rev answers 409 with the current list
+      (`routes/views.ts:28`): the same merge flow for saved views;
+    - the sync feed: an expired cursor is 410 `changes_expired` and a bad one
+      400 (`routes/sync.ts:54`, `:117`): the offline copy's resync;
+    - an unknown username on sign-in is 401 (`routes/auth.ts:59`): the sign-in
+      form's error state.
+    Everything else the real server refuses stays out.
 - `server.ts`: one `createFixtureServer({ data, user, overrides })`, with:
   - `fx.fail(method, path, status, {code, …})` and `fx.reply(method, path, body)`
     for a test that needs an error or an exact answer;

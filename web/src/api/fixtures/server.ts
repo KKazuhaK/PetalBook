@@ -20,6 +20,7 @@ import { authRoutes } from './routes/auth.ts'
 import { draftRoutes } from './routes/drafts.ts'
 import { fileRoutes } from './routes/files.ts'
 import { syncRoutes } from './routes/sync.ts'
+import { quietRoutes } from './routes/quiet.ts'
 import { viewRoutes } from './routes/views.ts'
 
 export interface Sent {
@@ -65,7 +66,7 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
   const data = createData({ ...options, now })
   const requests: Sent[] = []
   const overrides: Override[] = []
-  const routes: Route[] = [...authRoutes, ...fileRoutes, ...draftRoutes, ...viewRoutes, ...syncRoutes]
+  const routes: Route[] = [...authRoutes, ...fileRoutes, ...draftRoutes, ...viewRoutes, ...syncRoutes, ...quietRoutes]
 
   function handle(
     method: string,
@@ -95,7 +96,9 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
       const params = match(pattern, path)
       if (!params) continue
       let json: unknown = {}
-      if (body) {
+      // Only a JSON request is parsed; an upload's bytes go through as `raw`.
+      const isJson = !headers?.get('content-type') || /json/i.test(headers.get('content-type') ?? '')
+      if (body && isJson) {
         try {
           json = JSON.parse(body)
         } catch {

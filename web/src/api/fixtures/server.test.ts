@@ -60,3 +60,20 @@ describe('the fixture server', () => {
     expect(fx.call('GET', '/api/session').body).toMatchObject({ user: null, endedReason: 'expired' })
   })
 })
+
+describe('the fixture server and binary bodies', () => {
+  it('passes an upload through as bytes, not as JSON', () => {
+    const fx = createFixtureServer()
+    const page = fx.data.spaces[0].pages[0]
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x00, 0x80])
+    const r = fx.handle(
+      'POST',
+      `/api/spaces/default/pages/${page.id}/assets?name=a.png`,
+      new TextDecoder().decode(bytes),
+      new Headers({ 'content-type': 'image/png' }),
+      bytes,
+    )
+    expect(r.status).toBe(201)
+    expect(r.body).toMatchObject({ name: 'a.png', size: bytes.length })
+  })
+})
