@@ -12,6 +12,7 @@ import (
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/notify"
+	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
@@ -248,7 +249,7 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) error {
 	}
 	// 8. the tenant's hour and its pending registrations. Every request counts,
 	// whether or not the address already has an account, so the answer is the same.
-	if wait, ok := s.regCaps.take(s.now(), capKey{"reg:" + p.TenantID, rules.PerHour}); !ok {
+	if wait, ok := s.regCaps.TakeAll(ratelimit.Cost{Key: "reg:" + p.TenantID, Limit: rules.PerHour}); !ok {
 		return retryAfter(wait)
 	}
 	if n, err := store.CountPendingRegistrations(ctx, s.st.Q(), p.TenantID, s.now()); err != nil {
@@ -799,8 +800,8 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 	s.refundIP(ip)
 	s.evictUser(u.ID, "")
 	ukey := userKey(u.Username)
-	s.failUser.reset(ukey)
-	s.failPair.resetWhere(func(k string) bool { return strings.HasSuffix(k, "|"+ukey) })
+	s.failUser.Reset(ukey)
+	s.failPair.ResetWhere(func(k string) bool { return strings.HasSuffix(k, "|"+ukey) })
 	s.Audit(AuditEvent{Kind: "password_reset", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": "user"}})
 	return nil
 }

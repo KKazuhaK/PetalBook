@@ -199,27 +199,6 @@ type fakeClock struct{ t time.Time }
 
 func (c *fakeClock) now() time.Time { return c.t }
 
-func TestBucketLimiter(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	b := newBucketLimiter(100, 60, 3, clk.now) // one a second, burst of 3
-	for range 3 {
-		if _, ok := b.take("a"); !ok {
-			t.Fatal("burst refused")
-		}
-	}
-	d, ok := b.take("a")
-	if ok || d <= 0 || d > time.Second {
-		t.Fatalf("%v %v", d, ok)
-	}
-	if _, ok := b.take("b"); !ok {
-		t.Fatal("another key shares the bucket")
-	}
-	clk.t = clk.t.Add(1100 * time.Millisecond)
-	if _, ok := b.take("a"); !ok {
-		t.Fatal("no token after waiting")
-	}
-}
-
 func TestPendingStoreIsOneTimeBoundAndExpires(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
 	p := newPendingStore(clk.now)

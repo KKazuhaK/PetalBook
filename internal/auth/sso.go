@@ -350,7 +350,7 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 	if len(p.Token) > 256 {
 		return nil, errf(Invalid, "The token is too long.")
 	}
-	if d, ok := s.starts.take(ip); !ok {
+	if d, ok := s.starts.Take(ip); !ok {
 		return nil, retryAfter(d)
 	}
 	e := pendingEntry{kind: kind, slug: rt.row.Slug, intent: p.Intent, token: p.Token, ret: SafeReturn(p.Return)}

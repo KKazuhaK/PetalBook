@@ -8,6 +8,7 @@ import (
 
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/store"
 )
 
@@ -184,7 +185,7 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, tenantID str
 		if !ok {
 			key = invs[i].Email
 		}
-		if _, ok := s.mailCaps.take(s.now(), capKey{"to:" + key, mailCapPerAddress}, capKey{"bulk:" + actor.ID, MailBulkPerHour}); !ok {
+		if _, ok := s.mailCaps.TakeAll(ratelimit.Cost{Key: "to:" + key, Limit: mailCapPerAddress}, ratelimit.Cost{Key: "bulk:" + actor.ID, Limit: MailBulkPerHour}); !ok {
 			out[i].Mail = MailLimited
 			continue
 		}

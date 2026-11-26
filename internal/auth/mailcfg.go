@@ -1,18 +1,17 @@
 package auth
 
 import (
-	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	netmail "net/mail"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
 	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/store"
 )
 
@@ -266,7 +265,7 @@ func (s *Service) TestMail(ctx context.Context, actorID, ip, to, lang string) (*
 	if m.From == "" {
 		return nil, coded(400, "mail_from_required", "Give the address mail is sent from.")
 	}
-	if wait, ok := s.testCaps.take(s.now(), capKey{"mailtest", 10}); !ok {
+	if wait, ok := s.testCaps.TakeAll(ratelimit.Cost{Key: "mailtest", Limit: 10}); !ok {
 		return nil, retryAfter(wait)
 	}
 	cfg := mail.Settings{Enabled: m.Enabled, Host: m.Host, Port: m.Port, Security: m.Security, Username: m.Username, From: m.From, FromName: m.FromName, ReplyTo: m.ReplyTo}
@@ -300,100 +299,12 @@ func (s *Service) RunMail(ctx context.Context) { s.mail.Run(ctx) }
 
 // --- caps --------------------------------------------------------------------
 
-// capKey is one count and its limit for an hour.
-type capKey struct {
-	key   string
-	limit int
-}
-
-// hourCaps counts events per key in a fixed window of an hour that starts at
-// the key's first event. In memory and bounded: when the table is full a new
-// key is refused, never an old one forgotten (that would give a capped key its
-// allowance back); a key not used for an hour is over and makes room.
-type hourCaps struct {
-	mu      sync.Mutex
-	entries map[string]*hourEntry
-	order   *list.List
-	max     int
-}
-
-type hourEntry struct {
-	key   string
-	start time.Time
-	last  time.Time // when it was last asked for: the list is in this order
-	n     int
-	elem  *list.Element
-}
-
-func newHourCaps(max int) *hourCaps {
-	return &hourCaps{entries: map[string]*hourEntry{}, order: list.New(), max: max}
-}
-
-// take spends one of each key's allowance, all or none; when one is spent it
-// returns how long until its hour is over.
-func (h *hourCaps) take(now time.Time, keys ...capKey) (wait time.Duration, ok bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	es := make([]*hourEntry, len(keys))
-	for i, k := range keys {
-		e := h.entries[k.key]
-		if e != nil && now.Sub(e.start) >= time.Hour {
-			h.drop(e)
-			e = nil
-		}
-		if e != nil && e.n >= k.limit {
-			h.touch(e, now)
-			return e.start.Add(time.Hour).Sub(now), false
-		}
-		es[i] = e
-	}
-	need := 0
-	for _, e := range es {
-		if e == nil {
-			need++
-		}
-	}
-	// Room for the new keys: only keys not asked for in an hour go, and those
-	// are over (their window started no later). Else nothing is spent.
-	for need > 0 && len(h.entries)+need > h.max {
-		back := h.order.Back()
-		if back == nil || now.Sub(back.Value.(*hourEntry).last) < time.Hour {
-			wait := time.Minute
-			if back != nil {
-				wait = back.Value.(*hourEntry).last.Add(time.Hour).Sub(now)
-			}
-			return wait, false
-		}
-		h.drop(back.Value.(*hourEntry))
-	}
-	for i, k := range keys {
-		e := es[i]
-		if e == nil {
-			e = &hourEntry{key: k.key, start: now, last: now}
-			e.elem = h.order.PushFront(e)
-			h.entries[k.key] = e
-		} else {
-			h.touch(e, now)
-		}
-		e.n++
-	}
-	return 0, true
-}
-
-func (h *hourCaps) touch(e *hourEntry, now time.Time) {
-	e.last = now
-	h.order.MoveToFront(e.elem)
-}
-
-func (h *hourCaps) drop(e *hourEntry) {
-	h.order.Remove(e.elem)
-	delete(h.entries, e.key)
-}
-
-func (h *hourCaps) size() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.entries)
+// newHourCaps is a table of counts per key in a fixed window of an hour that
+// starts at the key's first event. A full table refuses a new key and never
+// forgets a live one (that would give a capped key its allowance back); a key
+// whose hour is over makes room.
+func newHourCaps(max int, now ratelimit.Clock) *ratelimit.Window {
+	return ratelimit.NewWindow(max, time.Hour, ratelimit.KeepLive, now)
 }
 
 // MailCapPerAddress and MailCapPerCaller are the caps of docs/api.md ("Abuse basics").
@@ -409,11 +320,11 @@ func (s *Service) mailSlot(email, ip string) (time.Duration, bool) {
 	if !ok {
 		key = email
 	}
-	keys := []capKey{{"to:" + key, mailCapPerAddress}}
-	if ip != "" {
-		keys = append(keys, capKey{"by:" + ip, mailCapPerCaller})
+	to := ratelimit.Cost{Key: "to:" + key, Limit: mailCapPerAddress}
+	if ip == "" {
+		return s.mailCaps.TakeAll(to)
 	}
-	return s.mailCaps.take(s.now(), keys...)
+	return s.mailCaps.TakeAll(to, ratelimit.Cost{Key: "by:" + ip, Limit: mailCapPerCaller})
 }
 
 // sendMail renders a message and queues it.

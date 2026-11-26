@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/store"
 )
 
@@ -13,7 +14,7 @@ import (
 // sign-in endpoints (login, setup, invites, captcha, passkeys, the SAML ACS).
 func (s *Service) allow(ctx context.Context, ip string) error {
 	st := s.sec(ctx)
-	wait, ok, first := s.perMin.take("ip:"+ip, st.Limits.PerMinute)
+	wait, ok, first := s.perMin.Take("ip:"+ip, 1, st.Limits.PerMinute)
 	if ok {
 		return nil
 	}
@@ -31,7 +32,7 @@ func (s *Service) AllowPublic(ctx context.Context, ip string) error { return s.a
 // looked at; the caller gives it back with refundIP when the attempt turns out
 // well. The address's failure cap is judged here.
 func (s *Service) gateIP(st *secState, ip string) error {
-	wait, ok, first := s.failIP.reserve("ip:"+ip, st.Limits.MaxFailures, st.window)
+	wait, ok, first := s.failIP.Reserve("ip:"+ip, st.Limits.MaxFailures, st.window)
 	if ok {
 		return nil
 	}
@@ -41,13 +42,13 @@ func (s *Service) gateIP(st *secState, ip string) error {
 	return retryAfter(wait)
 }
 
-func (s *Service) refundIP(ip string) { s.failIP.refund("ip:" + ip) }
+func (s *Service) refundIP(ip string) { s.failIP.Refund("ip:" + ip) }
 
 // auditThrottled writes a refusal that anyone can make up (a wrong captcha, an
 // attempt from a locked address) at most once a minute per address (an IPv6
 // /64, see ClientAddr) and reason, so the log cannot be flooded with them.
 func (s *Service) auditThrottled(ev AuditEvent, reason string) {
-	if _, ok, _ := s.auditIP.take(reason+"|"+ev.IP, 1); ok {
+	if _, ok, _ := s.auditIP.Take(reason+"|"+ev.IP, 1, 1); ok {
 		s.Audit(ev)
 	}
 }
@@ -101,7 +102,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	ukey := userKey(p.Username)
 	pkey := pairKey(ip, ukey)
 	if st.Lockout.Enabled {
-		key, table := "", (*failTable)(nil)
+		key, table := "", (*ratelimit.Lockout)(nil)
 		switch st.Lockout.Scope {
 		case "ip_account":
 			key, table = pkey, s.failPair
@@ -109,7 +110,7 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 			key, table = ukey, s.failUser
 		}
 		if table != nil {
-			if wait, locked := table.lockedFor(key, st.window); locked {
+			if wait, locked := table.LockedFor(key, st.window); locked {
 				s.Audit(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "rate_limited"}})
 				return nil, retryAfter(wait)
 			}
@@ -144,8 +145,8 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		return nil, s.wrongPassword(st, p, ukey, pkey, "disabled", &reserved)
 	}
 	// The password is right: what stands against the name is forgiven.
-	s.failUser.reset(ukey)
-	s.failPair.reset(pkey)
+	s.failUser.Reset(ukey)
+	s.failPair.Reset(pkey)
 	s.refundIP(ip)
 	reserved = false
 	if rehash {
@@ -212,27 +213,27 @@ func (s *Service) wrongPassword(st *secState, p LoginParams, ukey, pkey, reason 
 		case "ip_account":
 			lockPair = st.lock
 		case "ip":
-			if s.failIP.lockIfAtCap("ip:"+ip, st.Limits.MaxFailures, st.window, st.lock) {
+			if s.failIP.LockIfAtCap("ip:"+ip, st.Limits.MaxFailures, st.window, st.lock) {
 				s.auditLock(st, p.Username, ip)
 			}
 		}
 	}
-	resU := s.failUser.fail(ukey, st.Limits.MaxFailures, st.window, lockUser)
-	resP := s.failPair.fail(pkey, st.Limits.MaxFailures, st.window, lockPair)
+	resU := s.failUser.Fail(ukey, st.Limits.MaxFailures, st.window, lockUser)
+	resP := s.failPair.Fail(pkey, st.Limits.MaxFailures, st.window, lockPair)
 	s.Audit(AuditEvent{Kind: "login_failed", Username: p.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": reason}})
 	for _, c := range []struct {
-		res   failResult
+		res   ratelimit.Result
 		limit string
 	}{{resU, "username"}, {resP, "pair"}} {
-		if c.res.first {
+		if c.res.First {
 			s.Audit(AuditEvent{Kind: "rate_limited", Username: p.Username, IP: ip, Detail: map[string]any{"limit": c.limit}})
 		}
-		if c.res.locked {
+		if c.res.Locked {
 			s.auditLock(st, p.Username, ip)
 		}
 	}
-	if resU.atCap || resP.atCap {
-		return retryAfter(max(resU.wait, resP.wait))
+	if resU.AtCap || resP.AtCap {
+		return retryAfter(max(resU.Wait, resP.Wait))
 	}
 	return errUnauth()
 }
