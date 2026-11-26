@@ -394,7 +394,8 @@ func TestTenantAdminsSeeTheirAuditRowsWithoutTheServersOwn(t *testing.T) {
 			return out
 		}
 		b := kinds(f.admB)
-		if b["login"] != 2 || b["tenant_created"] != 0 || b["setting_changed"] != 0 {
+		// The creation of the tenant is a row about it, which its administrators see.
+		if b["login"] != 2 || b["tenant_created"] != 1 || b["setting_changed"] != 0 {
 			t.Fatalf("tenant B's administrator sees %v", b)
 		}
 		all := kinds(f.root)

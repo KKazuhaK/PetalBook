@@ -1839,49 +1839,49 @@ export interface ProviderInput {
   github?: Partial<Pick<GithubSettings, 'baseUrl' | 'clientId' | 'organizations'>> & { clientSecret?: string }
 }
 
-export type AuditKind =
-  | 'login'
-  | 'login_failed'
-  | 'rate_limited'
-  | 'lockout'
-  | 'passkey_clone'
-  | 'identity_linked'
-  | 'identity_unlinked'
-  | 'passkey_added'
-  | 'passkey_removed'
-  | 'security_changed'
-  | 'provider_created'
-  | 'provider_changed'
-  | 'provider_deleted'
-  | 'user_changed'
-  | 'password_set_by_admin'
-  | 'token_created'
-  | 'token_revoked'
-  | 'grant_revoked'
-  | 'group_created'
-  | 'group_changed'
-  | 'group_deleted'
-  | 'group_member_added'
-  | 'group_member_removed'
-  | 'members_batch'
-  | 'group_members_batch'
-  | 'invites_batch'
-  | 'groups_synced'
-  | 'groups_claim_missing'
-  | 'groups_claim_truncated'
-  | 'space_group_added'
-  | 'space_group_changed'
-  | 'space_group_removed'
-  | 'dropped'
+// What a row of the audit log is about (docs/api.md, "Audit log"): the core categories are always written, the optional
+// ones (signins, reads, downloads, api) are switched by the settings audit.*.
+export type AuditCategory = 'security' | 'admin' | 'data' | 'system' | 'signins' | 'reads' | 'downloads' | 'api'
+export type AuditCapacity = 'site_admin' | 'tenant_admin'
+// The registry of kinds is the server's (GET /api/admin/audit/kinds), so a kind is a word here.
+export type AuditKind = string
 export interface AuditItem {
   id: string
   at: string
-  kind: AuditKind | (string & {})
+  kind: AuditKind
+  category: AuditCategory
+  capacity: AuditCapacity | null
   actor: string | null
   user: string | null
   username: string | null
   ip: string
   detail: Record<string, unknown>
+}
+// The filters of GET /api/admin/audit and of its CSV download; the audit page keeps them in its address.
+export interface AuditFilters {
+  category: AuditCategory[]
+  kind: string
+  user: string
+  actor: string
+  capacity: AuditCapacity | ''
+  // A day, YYYY-MM-DD (both ends included).
+  from: string
+  to: string
+  // Site administrators: one tenant's id.
+  tenant: string
+}
+// GET /api/admin/audit/kinds: the registry of kinds, for the filters.
+export interface AuditCategoryInfo {
+  id: AuditCategory
+  core: boolean
+  // The setting that switches an optional category; null for a core one.
+  setting: string | null
+  // Whether an optional category is written in the caller's scope.
+  on: boolean
+  kinds: { name: string; site: boolean }[]
+}
+export interface AuditKinds {
+  categories: AuditCategoryInfo[]
 }
 export interface AuditList {
   items: AuditItem[]

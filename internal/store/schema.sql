@@ -708,15 +708,29 @@ CREATE TABLE audit_log (
   user_id   TEXT COLLATE "C" NOT NULL DEFAULT '',
   username  TEXT COLLATE "C" NOT NULL DEFAULT '',
   ip        TEXT COLLATE "C" NOT NULL DEFAULT '',
-  detail    TEXT COLLATE "C" NOT NULL DEFAULT '{}'
+  detail    TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  -- Written from the registry of kinds (internal/auditlog) when the row is
+  -- inserted, not worked out when it is read: a kind that moves to another
+  -- category keeps its old rows' category, and the filter and the trim use the
+  -- index. capacity is reserved for acting as a tenant's administrator ('',
+  -- site_admin or tenant_admin).
+  category  TEXT COLLATE "C" NOT NULL DEFAULT 'admin',
+  capacity  TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE INDEX audit_log_kind ON audit_log(kind, id);
 CREATE INDEX audit_log_user ON audit_log(user_id, id);
 CREATE INDEX audit_log_tenant ON audit_log(tenant_id, id);
 -- A tenant's log filtered by kind (a tenant administrator's view).
 CREATE INDEX audit_log_tenant_kind ON audit_log(tenant_id, kind, id);
--- The daily sweep of tombstones asks whether the audit log still names a person.
-CREATE INDEX audit_log_actor ON audit_log(actor);
+-- A tenant's log filtered by category, and the site's log or the trim of the
+-- optional categories' rows by category.
+CREATE INDEX audit_log_tenant_cat ON audit_log(tenant_id, category, id);
+CREATE INDEX audit_log_cat ON audit_log(category, id);
+-- Only the rows written in a capacity: the filter by capacity reads them alone.
+CREATE INDEX audit_log_capacity ON audit_log(capacity, id) WHERE capacity <> '';
+-- A filter on the actor pages by id; the daily sweep of tombstones asks whether
+-- the audit log still names a person.
+CREATE INDEX audit_log_actor ON audit_log(actor, id);
 
 -- Groups (3.2): a set of people that can be a member of a shared space with a
 -- role. source is 'local' or 'synced'; name_key is the folded name, unique

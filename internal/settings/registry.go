@@ -158,7 +158,8 @@ const (
 	QuotaPagesPerPerson  = "quota.pagesPerPerson"
 )
 
-// Definitions are the settings that exist, in the order the pages show them.
+// baseDefinitions are most of the settings that exist, in the order the pages
+// show them (Definitions adds the audit log's, see registry_audit.go).
 //
 // The storage policy is server-wide for now: the requirement of a remote is
 // worked out by queries over every space (store.RemotePolicy), so a tenant's
@@ -166,7 +167,7 @@ const (
 // captcha's keys are not settings (records and secrets). The person layer of
 // the quota.* limits is an administrator's override on the user (users.quota),
 // read by internal/quota, not something a person sets for themselves.
-func Definitions() []*Def {
+func baseDefinitions() []*Def {
 	return []*Def{
 		{Key: RegistrationOpen, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Lock}},
 		{Key: RegistrationDomains, Kind: List, Layers: []Layer{Site, Tenant}, Default: []string{}, Lower: Lower{Mode: Allow}, Check: checkDomains},

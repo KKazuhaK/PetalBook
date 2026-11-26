@@ -223,7 +223,7 @@ func (s *server) adminCreatePlan(c *call) {
 		s.failSetting(c, err)
 		return
 	}
-	s.audit(c, auth.AuditEvent{Kind: "plan_created", Actor: c.user().ID, Detail: map[string]any{"plan": p.Slug, "rules": req.Rules, "affected": []string{}}})
+	s.audit(c, auth.AuditEvent{Kind: "plan_created", Actor: c.user().ID, Tenant: "-", Detail: map[string]any{"plan": p.Slug, "rules": req.Rules, "affected": []string{}}})
 	c.w.Header().Set("Location", "/api/admin/plans/"+p.Slug)
 	r, err := s.toPlan(ctx, p)
 	if err != nil {
@@ -282,7 +282,7 @@ func (s *server) adminPatchPlan(c *call) {
 		from[k], to[k] = nilIfMissing(before, k), nilIfMissing(after, k)
 	}
 	affected := s.settings.TenantsOfPlan(p.ID)
-	s.audit(c, auth.AuditEvent{Kind: "plan_changed", Actor: c.user().ID, Detail: map[string]any{"plan": p.Slug, "rules": req.Rules, "from": from, "to": to, "affected": affected}})
+	s.audit(c, auth.AuditEvent{Kind: "plan_changed", Actor: c.user().ID, Tenant: "-", Detail: map[string]any{"plan": p.Slug, "rules": req.Rules, "from": from, "to": to, "affected": affected}})
 	s.evaluateQuotas(ctx, affected)
 	r, err := s.toPlan(ctx, *p)
 	if err != nil {
@@ -322,7 +322,7 @@ func (s *server) adminDeletePlan(c *call) {
 		return
 	}
 	s.settings.ForgetPlan()
-	s.audit(c, auth.AuditEvent{Kind: "plan_deleted", Actor: c.user().ID, Detail: map[string]any{"plan": p.Slug, "rules": rules, "affected": []string{}}})
+	s.audit(c, auth.AuditEvent{Kind: "plan_deleted", Actor: c.user().ID, Tenant: "-", Detail: map[string]any{"plan": p.Slug, "rules": rules, "affected": []string{}}})
 	c.w.WriteHeader(http.StatusNoContent)
 }
 

@@ -63,7 +63,12 @@ func init() {
 // routeAccessAdded are the routes added after the golden file was written,
 // with their decision for each caller.
 var routeAccessAdded = map[string][4]string{
-	"GET /api/admin/permissions":              {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/permissions": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
+	// 3.6 part c1: the registry of audit kinds and the CSV of the log (with features.auditDownload).
+	"GET /api/admin/audit/kinds":    {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"GET /api/admin/audit/download": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
 	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
 	// A temporary password for a person.

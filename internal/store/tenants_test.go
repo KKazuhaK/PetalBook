@@ -169,14 +169,14 @@ func TestScopeSeesOnlyItsTenant(t *testing.T) {
 		if err := store.InsertAudit(ctx, q, []store.AuditRow{
 			{ID: "1", At: now, Kind: "login", UserID: "Ua"},                         // takes the tenant of its user
 			{ID: "2", At: now, Kind: "login", UserID: "Ub"},                         //
-			{ID: "3", At: now, Kind: "security_changed", Actor: "Ua"},               // a site kind, in A
+			{ID: "3", At: now, Kind: "provider_created", Actor: "Ua"},               // a site kind, in A
 			{ID: "4", At: now, Kind: "setting_changed", Actor: "Ua", TenantID: "-"}, // the server's own
 			{ID: "5", At: now, Kind: "dropped"},                                     // no user: the server's own
 		}); err != nil {
 			t.Fatal(err)
 		}
 		ids := func(sc store.Scope, hide bool) string {
-			rows, err := store.ListAudit(ctx, q, sc, hide, "", "", "", 50)
+			rows, err := store.ListAudit(ctx, q, sc, store.AuditFilter{HideSite: hide}, 50)
 			if err != nil {
 				t.Fatal(err)
 			}

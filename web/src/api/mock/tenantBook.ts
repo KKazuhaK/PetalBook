@@ -137,6 +137,43 @@ const DEFS: Def[] = [
   },
   // How many days a deleted space or person stays in the recycle bin (3.5); the site's alone.
   { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
+  // The audit log (3.6 c): the optional categories are switched by the site and by each tenant; the retention is the
+  // site's alone (one table), and a core row is kept at least 90 days.
+  ...(
+    [
+      ['audit.signins', true],
+      ['audit.reads', false],
+      ['audit.downloads', false],
+      ['audit.api', false],
+    ] as [string, boolean][]
+  ).map(([key, def]): Def => ({ key, kind: 'boolean', layers: ['site', 'tenant'], def, lower: { mode: 'allow' } })),
+  { key: 'audit.keepDays', kind: 'limit', layers: ['site'], def: 90, lower: { mode: 'allow' }, min: 90, max: 3650 },
+  {
+    key: 'audit.keepRows',
+    kind: 'limit',
+    layers: ['site'],
+    def: 100000,
+    lower: { mode: 'allow' },
+    min: 1000,
+    max: 1e9,
+  },
+  {
+    key: 'audit.keepMode',
+    kind: 'choice',
+    layers: ['site'],
+    def: 'or',
+    lower: { mode: 'allow' },
+    choices: ['or', 'and'],
+  },
+  {
+    key: 'audit.optionalKeepDays',
+    kind: 'limit',
+    layers: ['site'],
+    def: 30,
+    lower: { mode: 'allow' },
+    min: 1,
+    max: 90,
+  },
   // Whether addresses outside ASCII may be set (3.6); the site's alone.
   { key: 'users.emailNonAscii', kind: 'boolean', layers: ['site'], def: false, lower: { mode: 'allow' } },
   // Whether a person may have more than one address (3.6): off by default; site and tenant. A feature.

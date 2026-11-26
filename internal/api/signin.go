@@ -4,8 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
@@ -78,7 +76,6 @@ var signinRoutes = []route{
 	{"PATCH", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminPatchProvider},
 	{"DELETE", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminDeleteProvider},
 	{"POST", "/api/admin/auth/providers/{slug}/refresh", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminRefreshProvider},
-	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead).always(), true, false, false, (*server).adminAudit},
 }
 
 func init() { routeTable = append(routeTable, signinRoutes...) }
@@ -500,54 +497,4 @@ func (s *server) adminRefreshProvider(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, v)
-}
-
-func (s *server) adminAudit(c *call) {
-	q := c.r.URL.Query()
-	limit := 50
-	if q.Has("limit") {
-		n, err := strconv.Atoi(q.Get("limit"))
-		if err != nil || n < 1 || n > maxAdminLimit {
-			writeError(c.w, http.StatusBadRequest, "invalid", "Limit is a number from 1 to "+strconv.Itoa(maxAdminLimit)+".")
-			return
-		}
-		limit = n
-	}
-	sc, ok := s.adminScope(c)
-	if !ok {
-		return
-	}
-	rows, next, err := s.auth.ListAudit(c.r.Context(), sc, !c.siteWide(authz.TenantAuditRead), strings.TrimSpace(q.Get("kind")), strings.TrimSpace(q.Get("user")), q.Get("cursor"), limit)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	type item struct {
-		ID       string `json:"id"`
-		At       string `json:"at"`
-		Kind     string `json:"kind"`
-		Actor    any    `json:"actor"`
-		User     any    `json:"user"`
-		Username string `json:"username"`
-		IP       string `json:"ip"`
-		Detail   any    `json:"detail"`
-	}
-	nullable := func(v string) any {
-		if v == "" {
-			return nil
-		}
-		return v
-	}
-	items := make([]item, len(rows))
-	for i, r := range rows {
-		items[i] = item{r.ID, rfc3339(r.At), r.Kind, nullable(r.Actor), nullable(r.User), r.Username, r.IP, r.Detail}
-	}
-	var nx any
-	if next != "" {
-		nx = next
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Items []item `json:"items"`
-		Next  any    `json:"next"`
-	}{items, nx})
 }

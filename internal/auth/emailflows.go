@@ -563,7 +563,7 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 		res.Org, res.Renamed = &t, t.Slug != reg.OrgSlug
 		s.Audit(AuditEvent{Kind: "tenant_created", Actor: u.ID, Tenant: t.ID, IP: ip, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug, "origin": store.OriginSelf}})
 	}
-	s.Audit(AuditEvent{Kind: "login", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
+	s.Audit(AuditEvent{Kind: "login", Tenant: u.TenantID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "created": true}})
 	return res, nil
 }
 

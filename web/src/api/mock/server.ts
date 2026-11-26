@@ -440,6 +440,7 @@ export function createMockServer(options: MockOptions = {}) {
     onProviderDeleted: (slug) => groupBook.dropProvider(slug),
     onMappingRemoved: (slug, value, keep) => groupBook.dropMapped(slug, value, keep),
     registrationOpen: () => tenantBook.registrationStored(),
+    categoryOn: (key, def) => (tenantBook.effective(key) as boolean | undefined) ?? def,
   })
   const peopleBook = createPeopleBook({ users: () => users as unknown as Map<string, PeopleUser> })
   const groupBook = createGroupBook({
@@ -5239,6 +5240,8 @@ export function createMockServer(options: MockOptions = {}) {
     if (
       path === '/admin/security' ||
       path === '/admin/audit' ||
+      path === '/admin/audit/kinds' ||
+      path === '/admin/audit/download' ||
       path === '/admin/auth/providers' ||
       path.startsWith('/admin/auth/providers/')
     ) {
@@ -5246,18 +5249,27 @@ export function createMockServer(options: MockOptions = {}) {
       const me = requireAdmin(ctx)
       if (path === '/admin/security' && method === 'GET') return j(book.view())
       if (path === '/admin/security' && method === 'PUT') return j(book.putCredentials(body, me.id))
+      // A tenant's administrator does not see the kinds that are the server's own.
+      const hideSite = !isSiteAdmin(me)
       if (path === '/admin/audit' && method === 'GET') {
         const raw = url.searchParams.get('limit')
         const limit = raw === null ? 50 : /^\d+$/.test(raw) ? Number(raw) : NaN
         if (!(limit >= 1 && limit <= 200)) throw new HttpError(400, 'invalid', 'limit 要是 1 到 200')
-        return j(
-          book.auditList(
-            url.searchParams.get('kind') || null,
-            url.searchParams.get('user') || null,
-            url.searchParams.get('cursor') || null,
-            limit,
-          ),
-        )
+        return j(book.auditList(url.searchParams, hideSite, url.searchParams.get('cursor') || null, limit))
+      }
+      if (path === '/admin/audit/kinds' && method === 'GET') return j(book.auditKinds(hideSite))
+      if (path === '/admin/audit/download' && method === 'GET') {
+        if (hideSite) featureGate('features.auditDownload')
+        const csv = book.auditCsv(url.searchParams, hideSite)
+        book.record('audit_downloaded', { actor: me.id, detail: { rows: csv.split('\n').length - 2 } })
+        return {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="audit.csv"',
+          },
+          bytes: new TextEncoder().encode(csv),
+        }
       }
       if (path === '/admin/auth/providers' && method === 'GET')
         return j({

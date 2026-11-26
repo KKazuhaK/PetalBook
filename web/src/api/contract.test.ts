@@ -39,7 +39,8 @@
 // differ, the mock is wrong.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ApiError, api, fileUrl, markSignedIn, spaceApi, type SpaceApi } from './client'
+import { ApiError, api, fileUrl, markSignedIn, request, spaceApi, type SpaceApi } from './client'
+import { AUDIT_CATEGORIES } from './mock/auditKinds'
 import { adminApi } from './admin'
 import { mockFetch } from './mock/fetch'
 import { sha256Hex } from './mock/sha256'
@@ -7989,6 +7990,50 @@ function suite(target: Target) {
       )
     },
   )
+  describe.skipIf(!accounts)('the audit log: categories, the registry of kinds, filters and the CSV (3.6 c)', () => {
+    it('every row has a category and a capacity, and the categories filter', async () => {
+      const all = await adminApi.audit({ limit: 100 })
+      expect(all.items.length).toBeGreaterThan(0)
+      for (const r of all.items) {
+        expect(r.category).toMatch(/^(security|admin|data|system|signins|reads|downloads|api)$/)
+        expect(r.capacity).toBeNull()
+      }
+      const some = await adminApi.audit({ category: ['security', 'admin'], limit: 200 })
+      expect(some.items.every((r) => r.category === 'security' || r.category === 'admin')).toBe(true)
+      const none = await adminApi.audit({ from: '2999-01-01' })
+      expect(none.items).toEqual([])
+      for (const bad of ['category=nope', 'capacity=root', 'from=yesterday']) {
+        const e = await failure(request(`/admin/audit?${bad}`))
+        expect([e.status, e.code], bad).toEqual([400, 'invalid'])
+      }
+    })
+
+    it('the registry: the same categories and kinds as the mock holds, optional categories with their switches', async () => {
+      const k = await adminApi.auditKinds()
+      expect(k.categories.map((c) => c.id)).toEqual(AUDIT_CATEGORIES.map((c) => c.id))
+      for (const c of k.categories) {
+        const mine = AUDIT_CATEGORIES.find((x) => x.id === c.id)!
+        expect(c.core).toBe(mine.core)
+        expect(c.setting).toBe(mine.setting)
+        expect(c.kinds.map((x) => `${x.name}:${x.site}`).sort(), c.id).toEqual(
+          mine.kinds.map((x) => `${x.name}:${x.site}`).sort(),
+        )
+      }
+    })
+
+    it('the CSV: a header, rows of the filter, text/csv, and the download is itself a row of the log', async () => {
+      const r = await fetch(adminApi.auditDownloadUrl({ category: ['security'] }))
+      expect(r.status).toBe(200)
+      expect(r.headers.get('Content-Type')).toMatch(/^text\/csv/)
+      expect(r.headers.get('Content-Disposition')).toMatch(/^attachment/)
+      const lines = (await r.text()).trimEnd().split('\n')
+      expect(lines[0]).toBe('id,time,category,kind,capacity,tenant,actor,user,username,ip,detail')
+      const rows = await adminApi.audit({ kind: 'audit_downloaded', limit: 5 })
+      expect(rows.items[0]).toMatchObject({ kind: 'audit_downloaded', category: 'data' })
+      const bad = await fetch(adminApi.auditDownloadUrl({ category: ['nope' as never] }))
+      expect(bad.status).toBe(400)
+    })
+  })
 
   describe.skipIf(!accounts || !!REAL)(
     'mock only (a real server has no remote to talk to): connecting, states and unavailable writes',

@@ -27,7 +27,7 @@ func TestEachEventWritesOneAuditRowAndOneNotification(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", ev.Kind, err)
 			}
-			rows, err := store.ListAudit(ctx, st.Q(), store.AllTenants(), false, ev.Audit, "A", "", 10)
+			rows, err := store.ListAudit(ctx, st.Q(), store.AllTenants(), store.AuditFilter{Kind: ev.Audit, User: "A"}, 10)
 			if err != nil || len(rows) != 1 {
 				t.Fatalf("%s: audit rows %d %v", ev.Audit, len(rows), err)
 			}
@@ -43,7 +43,7 @@ func TestEachEventWritesOneAuditRowAndOneNotification(t *testing.T) {
 		if err := notify.WithAudit(ctx, st.Q(), notify.AccountChanged, notify.Entry{Actor: "A", User: "A", Now: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
-		if rows, _ := store.ListAudit(ctx, st.Q(), store.AllTenants(), false, notify.AccountChanged.Audit, "A", "", 10); len(rows) != 2 {
+		if rows, _ := store.ListAudit(ctx, st.Q(), store.AllTenants(), store.AuditFilter{Kind: notify.AccountChanged.Audit, User: "A"}, 10); len(rows) != 2 {
 			t.Errorf("audit rows %d", len(rows))
 		}
 		if list, _ := store.ListNotifications(ctx, st.Q(), "A", store.DefaultTenantID, store.NotifyFilter{Kind: notify.AccountChanged.Kind, Limit: 10}); len(list) != 1 {

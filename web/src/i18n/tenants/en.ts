@@ -268,6 +268,7 @@ export const tenantsEn: TenantsMessages = {
       daily: 'Daily text',
       mail: 'Mail',
       recycle: 'Recycle bin',
+      audit: 'Audit log',
       exports: 'Exports',
       users: 'Users',
       accounts: 'Accounts',
@@ -304,6 +305,14 @@ export const tenantsEn: TenantsMessages = {
       'quota.bytesPerPerson': 'Disk one person may use (bytes)',
       'quota.pagesPerPerson': 'Pages one person may have',
       'files.maxBytes': 'Largest size of one file (bytes)',
+      'audit.signins': 'Record successful sign-ins in the audit log',
+      'audit.reads': 'Record people opening pages and files',
+      'audit.downloads': 'Record attachment and file downloads',
+      'audit.api': 'Record API token and MCP calls',
+      'audit.keepDays': 'Days audit rows are kept (core rows: at least 90)',
+      'audit.keepRows': 'Audit rows kept in all',
+      'audit.keepMode': 'How the days and the row count combine',
+      'audit.optionalKeepDays': 'Days rows of the optional categories are kept',
       'recycle.days': 'Days the recycle bin keeps things',
       'users.emailNonAscii': 'Allow email addresses with characters outside ASCII',
       'accounts.multipleEmails': 'More than one email address per account',
@@ -396,6 +405,21 @@ export const tenantsEn: TenantsMessages = {
       'quota.pagesPerPerson': "How many pages a person's spaces hold in all; empty is no limit. Going over only warns.",
       'files.maxBytes':
         "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
+      'audit.signins':
+        'On by default. Off: signing in writes no row for this organization. The core categories (security, administration, data, system) cannot be switched off.',
+      'audit.reads':
+        'Off by default. On: a member opening a page or a file writes a row, at most once an hour for the same person and page.',
+      'audit.downloads':
+        'Off by default. On: downloading an attachment or a file writes a row. Exports are core and always recorded.',
+      'audit.api': 'Off by default. On: a call made with an API token or through MCP writes a row.',
+      'audit.keepDays':
+        'A row is kept while it is younger than this many days, subject to the mode below. Rows of the core categories are never deleted before 90 days, whatever is set. Site administrators only: the audit log is one table for every organization.',
+      'audit.keepRows':
+        'A row is kept while it is among this many newest rows, subject to the mode below. Site administrators only.',
+      'audit.keepMode':
+        'or: a row goes only when it is both older than the days and outside the newest rows. and: a row goes when it is either. Site administrators only.',
+      'audit.optionalKeepDays':
+        'Rows of the optional categories (sign-ins, reads, downloads, API calls) also go after this many days, at most 90. Site administrators only.',
       'recycle.days':
         'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
       'accounts.multipleEmails':

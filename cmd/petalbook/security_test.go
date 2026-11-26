@@ -147,7 +147,7 @@ func checkReset(t *testing.T, data string) {
 		t.Fatalf("not reset: mode %v ssoOnly %v lockout %v login %v roles %v provider %v", m[settings.SigninMode].Value, m[settings.SigninSSOOnly].Value,
 			m[settings.SigninLockoutEnabled].Value, login, m[settings.SigninPasskeyRoles].Value, m[settings.CaptchaProvider].Value)
 	}
-	rows, err := store.ListAudit(ctx, st.Q(), store.AllTenants(), false, "setting_changed", "", "", 100)
+	rows, err := store.ListAudit(ctx, st.Q(), store.AllTenants(), store.AuditFilter{Kind: "setting_changed"}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
