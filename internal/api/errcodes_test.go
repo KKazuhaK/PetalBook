@@ -26,7 +26,7 @@ var notAPICode = map[string]bool{"mcpError": true, "jsonrpc.Error": true, "Notic
 
 // errorCodesInSource finds every error code in the non-test Go files under
 // internal/: the code argument of writeError and coded, the Error of an errorBody,
-// the code or Code of an error value, and the Code* constants. It reads the source
+// the code or Code of an error value (a TemplateError's first value too), and the Code* constants. It reads the source
 // instead of running the server, so a code is found when it is added, whether or
 // not a test reaches it.
 func errorCodesInSource(t *testing.T) []string {
@@ -115,6 +115,12 @@ func errorCodesInSource(t *testing.T) []string {
 				tn := typeName(x.Type)
 				if notAPICode[tn] {
 					break
+				}
+				// A TemplateError is written with positional values: its code first.
+				if tn == "TemplateError" && len(x.Elts) > 0 {
+					if s, ok := str(x.Elts[0]); ok {
+						found[s] = true
+					}
 				}
 				for _, el := range x.Elts {
 					kv, ok := el.(*ast.KeyValueExpr)
