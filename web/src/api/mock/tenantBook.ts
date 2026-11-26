@@ -456,7 +456,7 @@ export interface TenantBookOptions {
     change: (name: string, value: string | null) => void
   }
   // What the requirement of a remote now asks of spaces (answered with a write of storage.remotes.*).
-  remotesAffected: () => { InGrace: number; Overdue: number; Exempt: number }
+  remotesAffected: () => { inGrace: number; overdue: number; exempt: number }
   isSiteAdmin: (id: string) => boolean
   // Mail is enabled (registration needs it), ssoOnly is stored on, and a change of features.registration happened.
   mailReady: () => boolean
@@ -661,7 +661,7 @@ export function createTenantBook(o: TenantBookOptions) {
     key: string,
     body: Record<string, unknown>,
     actor: string,
-  ): SiteSetting & { affected?: number; remotes?: { InGrace: number; Overdue: number; Exempt: number } } => {
+  ): SiteSetting & { affected?: number; remotes?: { inGrace: number; overdue: number; exempt: number } } => {
     const d = defOf(key, 'site')
     for (const k of Object.keys(body)) if (k !== 'value' && k !== 'lower') bad(`unknown field ${k}`)
     if (!('value' in body) && !('lower' in body)) bad('give value, lower or both')

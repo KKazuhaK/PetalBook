@@ -111,6 +111,11 @@ export const tenantsEn: TenantsMessages = {
     editFor: (key: string) => `Edit rule: ${key}`,
     remove: 'Remove',
     removeFor: (key: string) => `Remove rule: ${key}`,
+    removeTitle: (name: string) => `Remove the rule for "${name}"?`,
+    removeHelp: (n: number) =>
+      n > 0
+        ? `${n} tenant(s) are on this plan and stop getting this rule. Their own rules stay.`
+        : 'Tenants on this plan stop getting this rule. Their own rules stay.',
     ruleSaved: (key: string) => `Saved the rule for ${key}`,
     ruleRemoved: (key: string) => `Removed the rule for ${key}`,
     noValue: 'No value',
@@ -131,6 +136,9 @@ export const tenantsEn: TenantsMessages = {
       changeHelp: "Changing the plan clears every manual rule of this tenant, dated or not. Billing's rules stay.",
       willClear: 'These manual rules will be cleared:',
       nothingToClear: 'This tenant has no manual rules, so nothing will be cleared.',
+      rulesLoading: 'Reading the rules of this tenant…',
+      rulesFailed:
+        'Could not read the rules of this tenant, so what the change clears is not known. Close this and try again.',
       confirm: 'Change plan',
       working: 'Changing…',
       changed: (plan: string) => `Plan changed to "${plan}"`,

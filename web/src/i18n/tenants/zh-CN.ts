@@ -103,6 +103,11 @@ export const tenantsZhCN = {
     editFor: (key: string) => `编辑规则：${key}`,
     remove: '去掉',
     removeFor: (key: string) => `去掉规则：${key}`,
+    removeTitle: (name: string) => `去掉“${name}”的规则？`,
+    removeHelp: (n: number) =>
+      n > 0
+        ? `${n} 个租户在用这个套餐，它们将不再得到这条规则。租户自己的规则不受影响。`
+        : '用这个套餐的租户将不再得到这条规则。租户自己的规则不受影响。',
     ruleSaved: (key: string) => `已保存规则 ${key}`,
     ruleRemoved: (key: string) => `已去掉规则 ${key}`,
     noValue: '不给值',
@@ -122,6 +127,8 @@ export const tenantsZhCN = {
       changeHelp: '换套餐会清掉这个租户全部的手动规则，有日期的和没日期的都一样。计费规则保留。',
       willClear: '会清掉这些手动规则：',
       nothingToClear: '这个租户没有手动规则，没有东西会被清掉。',
+      rulesLoading: '正在读取这个租户的规则……',
+      rulesFailed: '读不到这个租户的规则，不知道换套餐会清掉什么。请关掉重试。',
       confirm: '换套餐',
       working: '更换中…',
       changed: (plan: string) => `已换成「${plan}」`,

@@ -2035,6 +2035,8 @@ export interface SiteSetting {
   serverWide?: string
   // Set by PUT when the new rule makes this many tenants' values ineffective.
   affected?: number
+  // Set by PUT of storage.remotes.*: how many spaces the requirement asks something of.
+  remotes?: { inGrace: number; overdue: number; exempt: number }
 }
 export type RuleSource = 'manual' | 'billing' | 'plan'
 // One rule for a tenant. inEffect: it is the one applied (its window holds, no stronger source covers it, and the

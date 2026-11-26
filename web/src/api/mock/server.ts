@@ -2110,7 +2110,7 @@ export function createMockServer(options: MockOptions = {}) {
     siteSecrets,
     remotesAffected: () => {
       const a = storageBody().affected
-      return { InGrace: a.inGrace, Overdue: a.overdue, Exempt: a.exempt }
+      return { inGrace: a.inGrace, overdue: a.overdue, exempt: a.exempt }
     },
     isSiteAdmin: (id) => isSiteAdmin(users.get(id)),
     mailReady: () => mailBook.ready(),

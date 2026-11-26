@@ -3710,9 +3710,9 @@ function suite(target: Target) {
           const lifted = await putSite(admin, 'storage.remotes.require', '')
           // The answer says how many spaces the requirement asks something of.
           expect(lifted.json.remotes).toEqual({
-            InGrace: expect.any(Number),
-            Overdue: expect.any(Number),
-            Exempt: expect.any(Number),
+            inGrace: expect.any(Number),
+            overdue: expect.any(Number),
+            exempt: expect.any(Number),
           })
           expect((await call(owner.browser, 'POST', '/api/spaces', { name: `Free ${run}` })).status).toBe(201)
         })

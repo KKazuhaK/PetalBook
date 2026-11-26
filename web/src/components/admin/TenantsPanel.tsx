@@ -35,6 +35,7 @@ import { Switch } from '@/components/ui/switch'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
 import { formatUsed } from '@/lib/usage'
+import { joinList } from '@/lib/list'
 
 const tl = tt.list
 
@@ -386,7 +387,7 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
           ))}
         </dl>
         {u.over.length > 0 && (
-          <p className="text-xs text-destructive">{tu.tenant.over(u.over.map((k) => tu.quotas[k]).join('、'))}</p>
+          <p className="text-xs text-destructive">{tu.tenant.over(joinList(u.over.map((k) => tu.quotas[k])))}</p>
         )}
       </div>
       <TenantRulesBlock tenant={tenant} />
@@ -420,7 +421,7 @@ function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
           const head = r.plan ? tp.changed(r.plan.name) : tp.changedNone
           setMessage({
             tone: 'info',
-            text: r.cleared.length ? `${head}. ${tp.cleared(r.cleared.map((c) => nameOf(c.key)).join('、'))}` : head,
+            text: r.cleared.length ? `${head}. ${tp.cleared(joinList(r.cleared.map((c) => nameOf(c.key))))}` : head,
           })
         },
         onError: () => {
@@ -477,7 +478,15 @@ function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
               </DialogDescription>
             </DialogHeader>
             <p className="text-sm">{tp.changeHelp}</p>
-            {manual.length === 0 ? (
+            {sheet.isPending ? (
+              <p className="text-sm text-muted-foreground" role="status" data-slot="rules-loading">
+                {tp.rulesLoading}
+              </p>
+            ) : sheet.isError ? (
+              <p className="text-sm text-destructive" role="alert" data-slot="rules-failed">
+                {tp.rulesFailed}
+              </p>
+            ) : manual.length === 0 ? (
               <p className="text-sm text-muted-foreground" data-slot="nothing-to-clear">
                 {tp.nothingToClear}
               </p>
@@ -506,7 +515,7 @@ function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
               <Button type="button" variant="outline" onClick={() => setAsking(false)}>
                 {tl.cancel}
               </Button>
-              <Button type="button" disabled={put.isPending} onClick={change}>
+              <Button type="button" disabled={put.isPending || !sheet.isSuccess} onClick={change}>
                 {put.isPending ? tp.working : tp.confirm}
               </Button>
             </DialogFooter>

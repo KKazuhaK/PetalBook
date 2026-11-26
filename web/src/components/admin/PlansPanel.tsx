@@ -229,6 +229,8 @@ function PlanDetail({ plan, onBack }: { plan: Plan; onBack: () => void }) {
   // The rule being added (adding: true) or edited.
   const [editing, setEditing] = useState<{ key: string; adding: boolean } | null>(null)
   const [ruleError, setRuleError] = useState('')
+  // The rule asked about removing: it leaves every tenant on the plan, so it is confirmed.
+  const [removing, setRemoving] = useState<string | null>(null)
   const all = settings.data?.settings ?? []
   const byKey = new Map(all.map((s) => [s.key, s]))
   const rows: RuleRow[] = Object.entries(plan.rules)
@@ -369,12 +371,36 @@ function PlanDetail({ plan, onBack }: { plan: Plan; onBack: () => void }) {
                 icon={<Trash2 aria-hidden="true" />}
                 label={tp.remove}
                 ariaLabel={tp.removeFor(r.key)}
-                onClick={() => writeRule(r.key, null, () => undefined)}
+                onClick={() => setRemoving(r.key)}
               />
             </>
           )}
         />
       </SettingsSection>
+      {removing !== null && (
+        <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>
+          <DialogContent sheet data-slot="rule-remove">
+            <DialogHeader>
+              <DialogTitle className="pr-8">{tp.removeTitle(nameOf(removing))}</DialogTitle>
+              <DialogDescription>{tp.removeHelp(plan.tenants)}</DialogDescription>
+            </DialogHeader>
+            <FormMessage>{ruleError}</FormMessage>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRemoving(null)}>
+                {tp.cancel}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={update.isPending}
+                onClick={() => writeRule(removing, null, () => setRemoving(null))}
+              >
+                {tp.remove}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {editing && (
         <PlanRuleDialog
           adding={editing.adding}

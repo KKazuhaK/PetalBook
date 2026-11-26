@@ -149,7 +149,7 @@ func TestRemoteRequiredEverywhereTheContractLists(t *testing.T) {
 		admin.putSetting("storage.remotes.require", "any").want(t, 200, "")
 		admin.putSetting("storage.remotes.scope", "all").want(t, 200, "")
 		p := admin.putSetting("storage.remotes.graceDays", 10).want(t, 200, "")
-		if p.body["remotes"].(map[string]any)["InGrace"] != float64(1) || admin.do("GET", "/api/admin/storage", nil).body["remotes"].(map[string]any)["since"] == nil {
+		if p.body["remotes"].(map[string]any)["inGrace"] != float64(1) || admin.do("GET", "/api/admin/storage", nil).body["remotes"].(map[string]any)["since"] == nil {
 			t.Fatal(p.raw)
 		}
 		// The notice is in the space, for every member.

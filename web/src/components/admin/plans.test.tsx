@@ -38,9 +38,14 @@ const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')!
 const writes = (method: string, url: string) =>
   m!.requests.filter((r) => r.method === method && r.url === url).map((r) => JSON.parse(r.body ?? 'null'))
 
-async function open(path: string, scene: (server: MockServer) => void = () => {}) {
+async function open(
+  path: string,
+  scene: (server: MockServer) => void = () => {},
+  delay?: (method: string, url: string) => number,
+) {
   m = await mount(routes, {
     signIn: true,
+    delay,
     server: { mode: 'accounts', empty: true },
     entries: (server) => {
       const admin = adminRequests(server)
@@ -94,6 +99,18 @@ describe('the plans page', () => {
     await settle(() => document.querySelector('[data-key="registration.perHour"]') !== null, 'the rule in the list')
     // Taking it out sends null for the key.
     await click(button(tp.removeFor('registration.perHour')))
+    // It leaves every tenant on the plan, so it asks first, naming the setting and the tenants.
+    await settle(() => document.querySelector('[data-slot="rule-remove"]') !== null, 'the confirmation')
+    expect(dlg().textContent).toContain(tp.removeTitle(tt.settings.names['registration.perHour']))
+    expect(dlg().textContent).toContain(tp.removeHelp(0))
+    expect(button(tp.remove, dlg())!.querySelector('svg')).toBeNull()
+    expect(writes('PATCH', '/api/admin/plans/team')).toHaveLength(1)
+    await click(button(tp.cancel, dlg()))
+    await settle(() => document.querySelector('[data-slot="rule-remove"]') === null, 'cancelled')
+    expect(writes('PATCH', '/api/admin/plans/team')).toHaveLength(1)
+    await click(button(tp.removeFor('registration.perHour')))
+    await settle(() => document.querySelector('[data-slot="rule-remove"]') !== null, 'asked again')
+    await click(button(tp.remove, dlg()))
     await settle(() => document.querySelector('[data-key="registration.perHour"]') === null, 'removed')
     expect(writes('PATCH', '/api/admin/plans/team')[1]).toEqual({ rules: { 'registration.perHour': null } })
   })
@@ -147,6 +164,31 @@ describe('the plan of a tenant', () => {
         'manual',
       'the rule cleared',
     )
+  })
+})
+
+describe('the plan change confirmation while the rules load', () => {
+  it('cannot be confirmed until the tenant rules are read', async () => {
+    await open(
+      '/admin/tenants',
+      (server) => adminRequests(server)('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} }),
+      (method, url) => (method === 'GET' && url.startsWith('/api/admin/tenants/0000000000/settings') ? 400 : 0),
+    )
+    await settle(() => button(`${tt.list.manage}: Default`) !== null, 'the list')
+    await click(button(`${tt.list.manage}: Default`))
+    await settle(
+      () => document.querySelector('[data-slot="tenant-plan"] option[value="team"]') !== null,
+      'the plan block',
+    )
+    await type(document.querySelector<HTMLSelectElement>('[data-slot="tenant-plan"] select')!, 'team')
+    await click(button(tp.tenantPlan.change))
+    await settle(() => document.querySelector('[data-slot="plan-change"]') !== null, 'the confirmation')
+    expect(dlg().querySelector('[data-slot="rules-loading"]')).not.toBeNull()
+    expect(dlg().querySelector('[data-slot="nothing-to-clear"]')).toBeNull()
+    expect(button(tp.tenantPlan.confirm, dlg())!.hasAttribute('disabled')).toBe(true)
+    await settle(() => dlg().querySelector('[data-slot="rules-loading"]') === null, 'the rules')
+    expect(button(tp.tenantPlan.confirm, dlg())!.hasAttribute('disabled')).toBe(false)
+    expect(writes('PUT', '/api/admin/tenants/0000000000/plan')).toHaveLength(0)
   })
 })
 

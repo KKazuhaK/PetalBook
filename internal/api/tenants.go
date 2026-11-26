@@ -54,11 +54,12 @@ func (s *server) quotaOf(ctx context.Context, tenant string) map[string]*int64 {
 }
 
 // toTenant is the tenant as the API shows it, with the usage row u (one
-// lookup of its own, or one query for a page: see usageOf).
-func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage) (r tenantResp, err error) {
+// lookup of its own, or one query for a page: see usageOf) and plans the
+// request's plan index (nil reads it).
+func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage, plans planIndex) (r tenantResp, err error) {
 	r = tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(ctx, t.ID),
 		Usage: toTenantUsage(u), Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
-	if r.Plan, err = s.planRef(ctx, t.ID); err != nil {
+	if r.Plan, err = s.planRef(ctx, t.ID, plans); err != nil {
 		return r, err
 	}
 	e, err := s.settings.Get(ctx, t.ID, "features.registration")
@@ -124,9 +125,14 @@ func (s *server) adminListTenants(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	plans, err := s.planIndexOf(c.r.Context()) // one query for the page
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	items := make([]tenantResp, len(rows))
 	for i, t := range rows {
-		if items[i], err = s.toTenant(c.r.Context(), t, usage[t.ID]); err != nil {
+		if items[i], err = s.toTenant(c.r.Context(), t, usage[t.ID], plans); err != nil {
 			s.fail(c.w, err)
 			return
 		}
@@ -168,7 +174,7 @@ func (s *server) adminGetTenant(c *call) {
 	u, err := s.usageOf(c.r.Context(), t.ID)
 	if err == nil {
 		var r tenantResp
-		if r, err = s.toTenant(c.r.Context(), *t, u); err == nil {
+		if r, err = s.toTenant(c.r.Context(), *t, u, nil); err == nil {
 			writeJSON(c.w, http.StatusOK, r)
 			return
 		}
@@ -242,7 +248,7 @@ func (s *server) adminCreateTenant(c *call) {
 		return
 	}
 	s.audit(c, auth.AuditEvent{Kind: "tenant_created", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug}})
-	resp, err := s.toTenant(ctx, t, store.Usage{})
+	resp, err := s.toTenant(ctx, t, store.Usage{}, nil)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -382,7 +388,7 @@ func (s *server) adminPatchTenant(c *call) {
 	u, err := s.usageOf(c.r.Context(), t.ID)
 	if err == nil {
 		var r tenantResp
-		if r, err = s.toTenant(c.r.Context(), t, u); err == nil {
+		if r, err = s.toTenant(c.r.Context(), t, u, nil); err == nil {
 			writeJSON(c.w, http.StatusOK, r)
 			return
 		}
