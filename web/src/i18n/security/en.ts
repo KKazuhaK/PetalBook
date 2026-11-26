@@ -306,6 +306,8 @@ export const securityEn: SecurityMessages = {
       passkey_added: 'Passkey added',
       passkey_removed: 'Passkey removed',
       security_changed: 'Security settings changed',
+      setting_changed: 'Setting changed',
+      secret_changed: 'Secret changed',
       provider_created: 'Provider added',
       provider_changed: 'Provider changed',
       provider_deleted: 'Provider deleted',

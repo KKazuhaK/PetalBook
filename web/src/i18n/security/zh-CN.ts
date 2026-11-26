@@ -270,6 +270,8 @@ export const securityZhCN = {
       sessions_ended: '结束会话',
       passkey_added: '添加 passkey',
       passkey_removed: '删除 passkey',
+      setting_changed: '设置已修改',
+      secret_changed: '密钥已修改',
       security_changed: '安全设置修改',
       provider_created: '添加提供方',
       provider_changed: '修改提供方',

@@ -169,8 +169,7 @@ function AllTokens() {
   )
 }
 
-// MCP, and with it the authorization server for MCP clients. The server says
-// whether the authorization server is there at all: it needs a public address.
+// MCP, and with it the authorization server for MCP clients (the connected apps below are listed when there is one).
 function McpSwitch() {
   const access = useMachineAccess()
   const set = useSetMachineAccess()
@@ -192,9 +191,6 @@ function McpSwitch() {
           />
         </SettingsRow>
       </SettingsRows>
-      <p className="text-xs text-muted-foreground" data-slot="oauth-status">
-        {access.data.oauth ? oa.admin.oauthOn : oa.admin.oauthOff}
-      </p>
     </SettingsSection>
   )
 }

@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Save } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAdminStorage, useSaveAdminStorage } from '@/api/admin'
+import { useSaveAdminStorage, useStoragePolicy } from '@/api/admin'
 import { useConnections } from '@/api/hooks'
 import { ApiError } from '@/api/client'
 import type { AdminStorage, PutAdminStorage } from '@/api/types'
@@ -25,7 +25,10 @@ const GIB = 1024 ** 3
 // and when the copy of an idle space is removed from the disk. It is the top part
 // of the page "存储与同步" (StoragePanel), above the connections.
 export function StorageRules() {
-  const storage = useAdminStorage()
+  const storage = useStoragePolicy()
+  // A refusal in the middle of several writes leaves the ones before it written: the page reads again and the form is
+  // made again from what the server has, with what was typed still in it and the refusal above the button.
+  const [failure, setFailure] = useState<Failure | null>(null)
   if (storage.isPending) return <PageFallback />
   if (storage.isError)
     return (
@@ -34,7 +37,34 @@ export function StorageRules() {
         onRetry={() => void storage.refetch()}
       />
     )
-  return <StorageForm key={JSON.stringify(storage.data)} data={storage.data} />
+  return (
+    <StorageForm
+      key={`${JSON.stringify(storage.data)}${failure?.id ?? ''}`}
+      data={storage.data}
+      failure={failure}
+      onFailure={setFailure}
+    />
+  )
+}
+
+// What is typed in the form; numbers stay text, so a field can be half typed.
+interface Values {
+  require: string
+  scope: string
+  grace: string
+  hosts: string
+  maxMiB: string
+  partial: boolean
+  evictDays: string
+  idle: string
+  clones: string
+  free: string
+  assetCache: string
+}
+interface Failure {
+  id: number
+  message: string
+  values: Values
 }
 
 // A number field's text, and back: empty means "none" where a setting may be null.
@@ -53,7 +83,15 @@ function explain(e: unknown): string {
   return Object.hasOwn(known, e.code) ? known[e.code] : e.message || ts.admin.errors.failed
 }
 
-function StorageForm({ data }: { data: AdminStorage }) {
+function StorageForm({
+  data,
+  failure,
+  onFailure,
+}: {
+  data: AdminStorage
+  failure: Failure | null
+  onFailure: (f: Failure | null) => void
+}) {
   const save = useSaveAdminStorage()
   // A remote through one platform can be required: every provider but a plain address (2.7b's connections), and
   // the stored one even when the server no longer lists it.
@@ -67,23 +105,35 @@ function StorageForm({ data }: { data: AdminStorage }) {
       ? [...listed, { id: stored, name: stored }]
       : listed
   const a = ts.admin
-  const [require, setRequire] = useState<string>(data.remotes.require ?? '')
-  const [scope, setScope] = useState<string>(data.remotes.scope)
-  const [grace, setGrace] = useState(String(data.remotes.graceDays))
-  const [hosts, setHosts] = useState(data.hosts.allowed.join('\n'))
-  const [maxMiB, setMaxMiB] = useState(text(data.localSpaces.maxBytes, MIB))
-  const [partial, setPartial] = useState(data.cache.partial)
-  const [evictDays, setEvictDays] = useState(text(data.cache.evictAfterDays, 1))
-  const [idle, setIdle] = useState(String(data.cache.minIdleHours))
-  const [clones, setClones] = useState(text(data.cache.clonesBytes, GIB))
-  const [free, setFree] = useState(text(data.cache.minFreeBytes ?? null, GIB))
-  const [assetCache, setAssetCache] = useState(text(data.cache.assetsBytes, MIB))
-  const [error, setError] = useState('')
+  const [v, setV] = useState<Values>(
+    () =>
+      failure?.values ?? {
+        require: data.remotes.require ?? '',
+        scope: data.remotes.scope,
+        grace: String(data.remotes.graceDays),
+        hosts: data.hosts.allowed.join('\n'),
+        maxMiB: text(data.localSpaces.maxBytes, MIB),
+        partial: data.cache.partial,
+        evictDays: text(data.cache.evictAfterDays, 1),
+        idle: String(data.cache.minIdleHours),
+        clones: text(data.cache.clonesBytes, GIB),
+        free: text(data.cache.minFreeBytes, GIB),
+        assetCache: text(data.cache.assetsBytes, MIB),
+      },
+  )
+  const set = (p: Partial<Values>) => setV((x) => ({ ...x, ...p }))
+  const { require, scope, grace, hosts, maxMiB, partial, evictDays, idle, clones, free, assetCache } = v
+  const [error, setError] = useState(failure?.message ?? '')
+  const messageRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (failure) messageRef.current?.focus()
+  }, [failure])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (save.isPending) return
     setError('')
+    onFailure(null)
     const body: PutAdminStorage = {}
     const g = parse(grace, 1, 0, false)
     const days = parse(evictDays, 1, 1, true)
@@ -128,7 +178,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
     if (data.cache.evictAfterDays !== days) cache.evictAfterDays = days
     if (data.cache.minIdleHours !== idleH) cache.minIdleHours = idleH
     if (data.cache.clonesBytes !== budget) cache.clonesBytes = budget
-    if (data.cache.minFreeBytes !== undefined && data.cache.minFreeBytes !== floor) cache.minFreeBytes = floor
+    if (data.cache.minFreeBytes !== floor) cache.minFreeBytes = floor
     if (data.cache.assetsBytes !== assetsBudget) cache.assetsBytes = assetsBudget
     if (Object.keys(cache).length > 0) body.cache = cache
     if (Object.keys(body).length === 0) return toast(a.unchanged)
@@ -137,6 +187,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
       toast.success(a.saved)
     } catch (err) {
       setError(explain(err))
+      onFailure({ id: Date.now(), message: explain(err), values: v })
     }
   }
 
@@ -149,7 +200,11 @@ function StorageForm({ data }: { data: AdminStorage }) {
       <SettingsSection title={a.remotes.title} description={a.remotes.help}>
         <SettingsRows>
           <SettingsRow title={a.remotes.require} help={a.remotes.requireHelp}>
-            <NativeSelect aria-label={a.remotes.require} value={require} onChange={(e) => setRequire(e.target.value)}>
+            <NativeSelect
+              aria-label={a.remotes.require}
+              value={require}
+              onChange={(e) => set({ require: e.target.value })}
+            >
               <option value="">{a.remotes.requireOptions.none}</option>
               <option value="any">{a.remotes.requireOptions.any}</option>
               {platforms.map((p) => (
@@ -163,7 +218,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
             <NativeSelect
               aria-label={a.remotes.scope}
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
+              onChange={(e) => set({ scope: e.target.value })}
               disabled={require === ''}
             >
               <option value="new">{a.remotes.scopeOptions.new}</option>
@@ -175,7 +230,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.remotes.graceDays}
               inputMode="numeric"
               value={grace}
-              onChange={(e) => setGrace(e.target.value)}
+              onChange={(e) => set({ grace: e.target.value })}
               className="w-28"
               disabled={require === ''}
             />
@@ -195,7 +250,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
           <Textarea
             rows={4}
             value={hosts}
-            onChange={(e) => setHosts(e.target.value)}
+            onChange={(e) => set({ hosts: e.target.value })}
             disabled={data.hosts.fromFlag}
             className="w-full max-w-md font-mono text-xs"
             autoComplete="off"
@@ -212,7 +267,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.local.maxBytes}
               inputMode="numeric"
               value={maxMiB}
-              onChange={(e) => setMaxMiB(e.target.value)}
+              onChange={(e) => set({ maxMiB: e.target.value })}
               className="w-28"
             />
           </SettingsRow>
@@ -229,7 +284,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.cache.partial}
               checked={partial}
               disabled={!data.git.partialClone}
-              onCheckedChange={setPartial}
+              onCheckedChange={(on) => set({ partial: on })}
             />
           </SettingsRow>
           <SettingsRow title={a.cache.evictAfter} help={a.cache.evictAfterHelp}>
@@ -237,7 +292,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.cache.evictAfter}
               inputMode="numeric"
               value={evictDays}
-              onChange={(e) => setEvictDays(e.target.value)}
+              onChange={(e) => set({ evictDays: e.target.value })}
               className="w-28"
             />
           </SettingsRow>
@@ -246,7 +301,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.cache.minIdle}
               inputMode="numeric"
               value={idle}
-              onChange={(e) => setIdle(e.target.value)}
+              onChange={(e) => set({ idle: e.target.value })}
               className="w-28"
             />
           </SettingsRow>
@@ -255,7 +310,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.cache.clones}
               inputMode="numeric"
               value={clones}
-              onChange={(e) => setClones(e.target.value)}
+              onChange={(e) => set({ clones: e.target.value })}
               className="w-28"
             />
           </SettingsRow>
@@ -264,7 +319,7 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.cache.minFree}
               inputMode="numeric"
               value={free}
-              onChange={(e) => setFree(e.target.value)}
+              onChange={(e) => set({ free: e.target.value })}
               className="w-28"
             />
           </SettingsRow>
@@ -278,14 +333,14 @@ function StorageForm({ data }: { data: AdminStorage }) {
               aria-label={a.cache.assetsBytes}
               inputMode="numeric"
               value={assetCache}
-              onChange={(e) => setAssetCache(e.target.value)}
+              onChange={(e) => set({ assetCache: e.target.value })}
               className="w-28"
             />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>
 
-      <FormMessage>{error}</FormMessage>
+      <FormMessage focusRef={messageRef}>{error}</FormMessage>
       <div>
         <Button type="submit" disabled={save.isPending}>
           {save.isPending ? <Spinner /> : <Save aria-hidden="true" />}

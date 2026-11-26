@@ -54,8 +54,6 @@ export const oauthZhCN = {
     mcpHelp:
       '关掉后，/mcp 和整个授权服务（发现文档、授权、令牌、注册）都答 404；授权记录不会删，可以照常列出和断开，再打开就恢复。',
     mcpLabel: '开放 MCP 和 OAuth',
-    oauthOn: '授权服务在运行。',
-    oauthOff: '授权服务没有运行：要用 --public-url 启动，并且打开上面的开关。',
     switchFailed: '没能改这个开关',
     all: '所有人已连接的应用',
     allHelp: '每个授权对应一个人批准的一个应用。断开会立刻生效。',

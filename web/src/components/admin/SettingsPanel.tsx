@@ -16,6 +16,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { tt } from '@/i18n/tenants'
+import { SecretsSection } from './SecretsSection'
 
 const ts = tt.settings
 
@@ -500,6 +501,7 @@ export function SettingsPanel() {
     <div className="grid gap-8">
       <p className="rounded-lg border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">{ts.help}</p>
       {isSite && <SiteLayer />}
+      {isSite && <SecretsSection />}
       {isSite && list.length > 1 && (
         <div className="flex items-center gap-2">
           <Label htmlFor="settings-tenant-pick">{ts.tenantPick}</Label>
@@ -518,6 +520,7 @@ export function SettingsPanel() {
         </div>
       )}
       {tenantId && <TenantLayer tenant={tenantId} name={tenantName ?? ''} isSite={isSite} />}
+      {tenantId && <SecretsSection tenant={tenantId} name={tenantName ?? ''} />}
     </div>
   )
 }

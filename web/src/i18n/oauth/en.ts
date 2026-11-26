@@ -60,9 +60,6 @@ export const oauthEn: OAuthMessages = {
     mcpHelp:
       'Off, /mcp and the whole authorization server (discovery, authorization, tokens, registration) answer 404; grants are kept and can still be listed and disconnected, and come back when it is on.',
     mcpLabel: 'Serve MCP and OAuth',
-    oauthOn: 'The authorization server is running.',
-    oauthOff:
-      'The authorization server is not running: it needs the server started with --public-url, and the switch above on.',
     switchFailed: 'Could not change the switch',
     all: 'Everyone’s connected apps',
     allHelp: 'Each is one app approved by one person. Disconnecting takes effect at once.',
