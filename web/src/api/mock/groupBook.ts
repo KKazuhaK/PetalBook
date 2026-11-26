@@ -12,7 +12,9 @@ import type {
   Member,
   SpaceRole,
 } from '../types.ts'
+import type { BatchAnswer, BatchRowOut, BatchStatus } from '../peopleTypes.ts'
 import { HttpError, compareCodePoints } from './store.ts'
+import { hideOutside } from './peopleBook.ts'
 import type { SignInBook } from './signInBook.ts'
 import type { MockResponse } from './server.ts'
 
@@ -47,6 +49,8 @@ export interface GroupUser {
   disabled: boolean
 }
 export interface GroupBookOptions {
+  // The rows of a batch looked up (peopleBook.resolve) and the answer made of them.
+  resolve?: (keys: string[]) => { status: BatchStatus; hit?: GroupUser }[]
   now: () => string
   users: () => Map<string, GroupUser>
   spaces: () => Map<string, GroupSpace>
@@ -228,6 +232,41 @@ export function createGroupBook(o: GroupBookOptions) {
         })
         return { status: 204 }
       }
+    }
+    const batch = /^\/admin\/groups\/([^/]+)\/members\/batch$/.exec(path)
+    if (batch && method === 'POST') {
+      const g = need(decodeURIComponent(batch[1]))
+      if (g.source !== 'local')
+        throw new HttpError(
+          409,
+          'group_synced',
+          'the people of a synced group come from sign-in and cannot be changed by hand',
+        )
+      const rows = Array.isArray(body.rows) ? (body.rows as { user?: unknown }[]) : []
+      if (rows.length < 1 || rows.length > 1000) bad('Rows holds 1 to 1000 rows.')
+      const dry = body.dryRun === true
+      const keys = rows.map((r) => (typeof r.user === 'string' ? r.user : ''))
+      const res = o.resolve!(keys)
+      const out: BatchRowOut[] = res.map((r, i) => {
+        const row: BatchRowOut = { row: i + 1, user: keys[i].trim(), status: hideOutside(r.status) }
+        if (r.hit) {
+          row.userId = r.hit.id
+          row.username = r.hit.username
+          row.name = r.hit.name
+          if (r.hit.id === me.id) row.status = 'forbidden'
+          else if (g.people.has(r.hit.id)) row.status = 'already_member'
+          else if (!dry) {
+            g.people.set(r.hit.id, [{ provider: '', value: '' }])
+            g.addedAt.set(r.hit.id, o.now())
+          }
+        }
+        return row
+      })
+      if (!dry && out.some((r) => r.status === 'ok'))
+        book.record('group_members_batch', { actor: me.id, detail: { group: g.id, rows: out.length } })
+      const summary: BatchAnswer['summary'] = {}
+      for (const r of out) summary[r.status] = (summary[r.status] ?? 0) + 1
+      return j({ dryRun: dry, results: out, summary })
     }
     const people = /^\/admin\/groups\/([^/]+)\/members$/.exec(path)
     if (people) {

@@ -2014,6 +2014,53 @@ function suite(target: Target) {
       })
 
       describe('members and permissions', () => {
+        it('finds people of the tenant by name for the picker, and adds a batch of rows: checked first (dry run), then applied', async () => {
+          const owner = await newMember(uniq('bo'))
+          const guest = await newMember(uniq('bg'))
+          const sp = await ownedSpace(owner, 'Batch')
+          const found = await call(owner.browser, 'GET', `/api/people?q=${encodeURIComponent(guest.user.username)}`)
+          expect(found.status).toBe(200)
+          const hit = (found.json.people as { id: string; username: string; name: string }[]).find(
+            (p) => p.id === guest.user.id,
+          )
+          expect(hit).toEqual({ id: guest.user.id, username: guest.user.username, name: guest.user.name })
+          expect(Object.keys(hit!).sort()).toEqual(['id', 'name', 'username'])
+          // The space's own search, for who manages its members, finds the people of its tenant.
+          const inSpace = await call(
+            owner.browser,
+            'GET',
+            `/api/spaces/${sp.id}/people?q=${encodeURIComponent(guest.user.username)}`,
+          )
+          expect(inSpace.status).toBe(200)
+          expect((inSpace.json.people as { id: string }[]).map((p) => p.id)).toContain(guest.user.id)
+          const short = await call(owner.browser, 'GET', '/api/people?q=a')
+          expect([short.status, short.json.error]).toEqual([400, 'invalid'])
+          const url = `/api/spaces/${sp.id}/members/batch`
+          const rows = [
+            { user: guest.user.username.toUpperCase(), role: 'viewer' },
+            { user: guest.user.username, role: 'viewer' },
+            { user: uniq('nobody'), role: 'viewer' },
+            { user: owner.user.username, role: 'viewer' },
+            { user: '', role: 'viewer' },
+          ]
+          const status = (j: { results: { status: string }[] }) => j.results.map((r) => r.status)
+          const dry = await call(owner.browser, 'POST', url, { dryRun: true, rows })
+          expect(dry.status).toBe(200)
+          expect(status(dry.json)).toEqual(['ok', 'duplicate', 'not_found', 'already_member', 'invalid'])
+          expect((await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members).toHaveLength(1)
+          const applied = await call(owner.browser, 'POST', url, { rows })
+          expect([applied.json.dryRun, status(applied.json)]).toEqual([
+            false,
+            ['ok', 'duplicate', 'not_found', 'already_member', 'invalid'],
+          ])
+          expect((await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members).toHaveLength(2)
+          const none = await call(owner.browser, 'POST', url, { rows: [] })
+          expect([none.status, none.json.error]).toEqual([400, 'invalid'])
+          // A member who may not manage the space cannot add, nor search as the space.
+          expect((await call(guest.browser, 'POST', url, { rows })).status).toBe(403)
+          expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/people?q=ab`)).status).toBe(403)
+        })
+
         it("adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member's own list", async () => {
           const owner = await newMember(uniq('mo'))
           const guest = await newMember(uniq('mg'))

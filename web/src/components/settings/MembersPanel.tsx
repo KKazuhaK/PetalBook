@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { LogOut, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
@@ -6,15 +6,15 @@ import {
   forgetSpace,
   putMember,
   useActiveSpace,
-  useAddMember,
   useMembers,
   useRemoveMember,
   useSession,
   useSetMemberRole,
 } from '@/api/hooks'
 import type { Member, SpaceInfo, SpaceRole } from '@/api/types'
-import { Field, FormMessage } from '@/components/auth/Field'
-import { ErrorState, PageFallback, Spinner } from '@/components/common'
+import { peopleApi, usePickRunner } from '@/api/people'
+import { FormMessage } from '@/components/auth/Field'
+import { ErrorState, PageFallback } from '@/components/common'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,10 +26,12 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
+import { AddPeopleDialog } from '@/components/people/AddPeopleDialog'
+import { RowMenu } from '@/components/people/RowMenu'
 import { can } from '@/lib/permissions'
 import { t } from '@/i18n'
+import { tp } from '@/i18n/people'
 import { tg } from '@/i18n/groups'
 import { useQueryClient } from '@tanstack/react-query'
 import { EffectiveMembers, GroupMembers } from './MemberGroups'
@@ -85,10 +87,8 @@ export function MembersPanel({ space }: { space: string }) {
       <MemberList space={current} members={members.data.members} manage={manage} />
       {current.personal ? (
         <SettingsNote>{t.members.personalNote}</SettingsNote>
-      ) : manage ? (
-        <AddMember space={space} />
       ) : (
-        <SettingsNote>{t.members.noManage}</SettingsNote>
+        !manage && <SettingsNote>{t.members.noManage}</SettingsNote>
       )}
       {!current.personal && <GroupMembers space={current} groups={members.data.groups} manage={manage} />}
       {!current.personal && <EffectiveMembers space={space} />}
@@ -155,6 +155,7 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
   const [asking, setAsking] = useState<Member | null>(null)
   // An owner giving up their own ownership is asked first: they cannot take it back.
   const [demoting, setDemoting] = useState<{ member: Member; role: SpaceRole } | null>(null)
+  const [adding, setAdding] = useState(false)
 
   const change = async (m: Member, role: SpaceRole, confirmed = false) => {
     if (role === m.role) return
@@ -183,6 +184,14 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
 
   return (
     <SettingsSection title={t.members.title} id="members-heading" description={t.members.intro}>
+      {manage && !space.personal && (
+        <div className="flex justify-end">
+          <Button type="button" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
+            {tp.add}
+          </Button>
+        </div>
+      )}
       <FormMessage>{error}</FormMessage>
       <ul className="divide-y rounded-lg border">
         {members.map((m) => (
@@ -221,23 +230,16 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
                 <span className="text-sm">{t.roles[m.role]}</span>
               )}
             </div>
-            {m.you && !space.personal ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => setAsking(m)}>
-                <LogOut aria-hidden="true" />
-                {t.members.leave}
-              </Button>
-            ) : manage && !m.you ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                aria-label={t.fmt.labelled(t.members.remove, m.name)}
-                onClick={() => setAsking(m)}
-              >
-                <Trash2 aria-hidden="true" />
-                {t.members.remove}
-              </Button>
-            ) : null}
+            <RowMenu
+              label={t.fmt.labelled(tp.list.more, m.name)}
+              actions={
+                m.you && !space.personal
+                  ? [{ label: t.members.leave, icon: <LogOut />, onSelect: () => setAsking(m) }]
+                  : manage && !m.you
+                    ? [{ label: t.members.remove, icon: <Trash2 />, onSelect: () => setAsking(m), destructive: true }]
+                    : []
+              }
+            />
           </li>
         ))}
       </ul>
@@ -280,70 +282,41 @@ function MemberList({ space, members, manage }: { space: SpaceInfo; members: Mem
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {manage && !space.personal && (
+        <AddMemberDialog space={space.id} members={members} open={adding} onOpenChange={setAdding} />
+      )}
     </SettingsSection>
   )
 }
 
-function AddMember({ space }: { space: string }) {
-  const add = useAddMember(space)
-  const [username, setUsername] = useState('')
-  const [role, setRole] = useState<SpaceRole>('editor')
-  const [error, setError] = useState('')
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (add.isPending) return
-    const name = username.trim()
-    if (name === '') return setError(t.members.usernameRequired)
-    setError('')
-    try {
-      const m = await add.mutateAsync({ username: name, role })
-      toast.success(t.members.added(m.name))
-      setUsername('')
-    } catch (err) {
-      setError(memberError(err))
-    }
-  }
-
+function AddMemberDialog({
+  space,
+  members,
+  open,
+  onOpenChange,
+}: {
+  space: string
+  members: Member[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const run = (rows: Parameters<typeof peopleApi.spaceBatch>[1], dryRun: boolean) =>
+    peopleApi.spaceBatch(space, rows, dryRun)
+  const pick = usePickRunner(run)
   return (
-    <SettingsSection title={t.members.addTitle} id="add-member-heading" description={t.members.addHelp}>
-      <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => void submit(e)} noValidate>
-        <div className="min-w-48 flex-1">
-          <Field
-            label={t.members.username}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="add-member-role">{t.members.role}</Label>
-          <div className="w-32">
-            <NativeSelect
-              id="add-member-role"
-              value={role}
-              onChange={(e) => setRole(e.target.value as SpaceRole)}
-              aria-describedby="add-member-role-help"
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {t.roles[r]}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-        </div>
-        <Button type="submit" disabled={add.isPending}>
-          {add.isPending ? <Spinner /> : <Plus aria-hidden="true" />}
-          {add.isPending ? t.members.adding : t.members.add}
-        </Button>
-        <p id="add-member-role-help" className="basis-full text-xs text-muted-foreground">
-          {t.members.roleHelp[role]}
-        </p>
-      </form>
-      <FormMessage>{error}</FormMessage>
-    </SettingsSection>
+    <AddPeopleDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t.members.addTitle}
+      description={tp.addHelp}
+      kind="people"
+      roles={ROLES.map((r) => ({ value: r, label: t.roles[r] }))}
+      defaultRole="editor"
+      excluded={new Set(members.map((m) => m.userId))}
+      scope={{ space }}
+      pick={pick}
+      csvRun={run}
+      csvHelp={tp.csv.help}
+    />
   )
 }

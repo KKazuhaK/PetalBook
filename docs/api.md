@@ -1207,6 +1207,112 @@ other owner who can sign in would be left (a disabled user cannot be the one
 remaining owner; the same goes for `PATCH`): make someone else an owner first.
 The removed member's very next request to the space answers `404 not_found`.
 
+## Adding people in batches
+
+The web app adds people from a dialog: a picker (`GET /api/people`, and
+`GET /api/groups` for groups) or a CSV file checked row by row and then
+applied. The file is read by the browser; the server takes rows.
+
+### `GET /api/people?q={text}&limit={n}`
+
+Any signed-in user (not an API token), accounts mode only (`404` in single-user
+mode). The enabled people of the caller's **own tenant** whose username starts
+with `q` or whose name contains it, ignoring case, by name:
+`{"people": [{"id", "username", "name"}]}`, and nothing else of a person (no
+address, no role, no groups). `q` is 2 to 80 characters (`400 invalid`);
+`limit` 1 to 20 (default 20). A person of another tenant is never listed, by
+any spelling. At most 20 searches in 10 seconds per person: `429 rate_limited`
+with `Retry-After`. The search reads the tenant's name index and stops after
+`limit` rows.
+
+What a regular member sees: every enabled person of their own tenant can be
+found by them this way, administrators included, as the people they could
+share a space with (the same as the members lists of the spaces they are in
+already show). Disabled and deleted people are not listed; nothing but the id,
+username and name is.
+
+`GET /api/people?q=&group={id}` searches the people of that group's tenant,
+for who holds `tenant.groups.manage` there; anyone else (and a group that does
+not exist) is `404 not_found`. `GET /api/spaces/{space}/people?q=` searches
+the people of the space's tenant, for who holds `members` in the space (an
+administrator of the whole server managing another tenant's space finds that
+tenant's people); the same rules and rate otherwise. The dialogs of a group
+and of a space's members use these, so the picker finds the people the batch
+can add.
+
+### Batch requests
+
+Three endpoints take rows and answer for each of them:
+
+| Endpoint | Needs | Rows |
+|---|---|---|
+| `POST /api/spaces/{space}/members/batch` | `members` in the space | `user`, `role` |
+| `POST /api/admin/groups/{group}/members/batch` | `tenant.groups.manage` | `user` |
+| `POST /api/admin/members/batch` | `tenant.invites.manage` in the tenant | `user`, `role`, `name`, `groups` |
+
+The body is `{"dryRun": bool, "rows": [...], "tenant": "..."}` (`tenant` only on
+the last, default the caller's). `rows` holds 1 to 1000 rows (`400 invalid`),
+the body at most 1 MiB. A row's `user` is a username or an email address (any
+address the account holds, compared as addresses are). With `dryRun: true`
+nothing is written and the answer is the one the same request would give.
+The three together take at most 5,000 rows in 10 minutes per person, dry runs
+included: past that, `429 rate_limited` with `Retry-After`.
+
+The answer is `{"dryRun", "results": [...], "summary": {status: count}}`, one
+result per row, in order: `{"row" (from 1), "user" (as sent), "role", "status",
+"userId", "username", "name", "detail"}`. A refused row never stops the others.
+`status`:
+
+| `status` | Meaning |
+|---|---|
+| `ok` | space or group batch: the person is (would be) added |
+| `already_member` | already in the space or group (tenant batch: an account that exists, with no group to add) |
+| `not_found` | nobody has this username or address; in a space or group batch also an account of another tenant or a disabled one (as the single add tells them, so that a batch cannot ask the site which accounts exist) |
+| `other_tenant` | tenant batch: the account is in another tenant; nothing of it is shown |
+| `disabled` | tenant batch: a disabled account of the tenant; it is not invited (it still holds its address) |
+| `email_taken` | tenant batch: another account holds the address (a deleted one not yet purged, too); it is not invited |
+| `already_invited` | tenant batch: the address has an open, unexpired invite of the tenant; no new one is made or mailed |
+| `invalid` | an empty or malformed `user`, an unknown `role`, an unknown group name, a username in a tenant batch for someone with no account |
+| `duplicate` | the same person (or address) as an earlier row |
+| `forbidden` | the caller's own row in a group batch (use the single add, which asks a reason); an owner added by an administrator who is not a member of the space (a takeover); a tenant batch row that names groups, for a caller without `tenant.groups.manage` in the tenant |
+| `added` | tenant batch: an existing person put into the groups of the row |
+| `invited` | tenant batch: a new address; an invite is (would be) made |
+| `failed` | tenant batch: the group could not take the person (`detail` says why) |
+
+Tenant batch rows. `role` is `member` (default) or `admin`; `name` is the name
+the invite starts with; `groups` are names of local groups of the tenant (an
+unknown name is `invalid`). Naming groups needs `tenant.groups.manage` in the
+tenant as well (a row with groups is `forbidden` without it, and no group is
+looked up). An existing person of the tenant is put into the
+groups, as `POST /api/admin/groups/{group}/members` would; their role is not
+changed by `role` (that is managing people, on their page), and a row whose
+`role` differs from theirs says so in `detail`. A new address gets an
+invite (7 days) that names the groups, which the account joins when it is made.
+The invitation goes by mail when mail is configured: `mail` on the result is
+`sent` (queued; the answer carries no token), `none` (no mail is configured
+anywhere: `token` is given, once, for the administrator to hand over as
+`/invite#{token}`), or `limited` (the cap below is spent: `token` is given). The
+answer's `mail` is `{"configured": bool, "sender": "site" | ""}`. The sender is
+the server's mail; a tenant's own sender (capability `integrations.smtp`) takes
+its place when a tenant can configure one. Sending is capped: three messages
+per address per hour (as every account mail) and 300 invitations per
+administrator per hour.
+
+Cost. One lookup per 200 rows for the people by username and one for the people
+by address (unique indexes, no scan), one for who is a member already, one for
+the group names; for a tenant batch's new addresses one lookup by key each for
+an account holding the address (as a single invite does) and one per 200 for
+open invites (the `invites_email` index); the writes are one transaction per 200 rows, under the space
+lock for a space (one insert by key per person) or one insert per invite, and
+two calls of at most 500 for a group. Notifications of a space batch are one
+insert each.
+
+Audit. One row per batch, a dry run too (it looks people up as much as an
+applied one): `members_batch` (`space`, `name`), `group_members_batch`
+(`group`) or `invites_batch` (`tenant`, `sender`), each with `dryRun`, `rows`,
+`counts` (status to number) and `results` (`row`, `user`, `status`, `role`). No
+token is ever written.
+
 ## Groups
 
 Milestone 3.2. Accounts mode; single-user mode has no groups and answers `404`
@@ -1444,6 +1550,7 @@ These rows join those of "Audit log":
 |---|---|---|
 | `group_created`, `group_changed`, `group_deleted` | an administrator made, renamed or deleted a group | `group`, `name`, `source`; for a change the changed fields; for a delete `people` and `spaces` |
 | `group_member_added`, `group_member_removed` | an administrator changed a local group's people (one row per request) | `group`, `users` (ids, at most 500) |
+| `members_batch`, `group_members_batch`, `invites_batch` | a batch of people by file was checked or applied ("Adding people in batches") | `dryRun`, `rows`, `counts`, `results` (one per row) and `space`, `group` or `tenant` |
 | `group_self_added` | an administrator added themselves to a group that gave them more in some spaces, or a custom role, with a reason (see "Taking over a space") | `group`, `spaces`, `roles`, `reason` |
 | `groups_synced` | a sign-in changed a person's synced groups | `provider`, `added`, `removed` (group ids) |
 | `groups_claim_missing` | a provider with groups on sent no claim (or an overage) | `provider`, `missing` (`keep` or `clear`), `reason` (`absent`, `overage`) |

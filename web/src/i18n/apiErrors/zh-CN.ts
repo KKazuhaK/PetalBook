@@ -18,6 +18,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   request_failed: '请求没有成功。',
   status: '对方返回了不能用的状态。',
   no_text: '对方的回答里没有可显示的文字。',
+  already_invited: '这个地址已有一个未过期的邀请。',
   answer_reveals_secret: '对方的回答里带着密钥，已被拒绝。',
   not_cached: (p) =>
     p.wait ? `这个空间的内容还不在服务器上，请 ${p.wait}后再试。` : '这个空间的内容还不在服务器上，请稍后再试。',

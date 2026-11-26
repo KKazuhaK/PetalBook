@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -24,15 +25,42 @@ type Invite struct {
 	// first administrator of a new tenant); an Email also becomes the account's
 	// (not verified). All may be empty.
 	Username, Name, Email string
+	// Groups are the ids of the local groups the account joins when it is made.
+	Groups []string
 }
 
 func InsertInvite(ctx context.Context, q Q, i Invite) error {
 	if i.TenantID == "" {
 		i.TenantID = DefaultTenantID
 	}
-	_, err := q.Exec(ctx, `INSERT INTO invites(id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		i.ID, i.TokenHash, i.Role, i.CreatedBy, ms(i.Created), ms(i.Expires), i.TenantID, b2i(i.SiteAdmin), i.Username, i.Name, i.Email)
+	key, _ := EmailKey(i.Email)
+	_, err := q.Exec(ctx, `INSERT INTO invites(id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email, groups, email_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.ID, i.TokenHash, i.Role, i.CreatedBy, ms(i.Created), ms(i.Expires), i.TenantID, b2i(i.SiteAdmin), i.Username, i.Name, i.Email, strings.Join(i.Groups, ","), key)
 	return err
+}
+
+// OpenInviteEmails says which of the addresses (EmailKey form) have an invite
+// of the scope that is neither used nor expired at now: one statement per 200
+// keys on the invites_email index.
+func OpenInviteEmails(ctx context.Context, q Q, sc Scope, keys []string, now time.Time) (map[string]bool, error) {
+	out := map[string]bool{}
+	for i := 0; i < len(keys); i += 200 {
+		chunk := keys[i:min(i+200, len(keys))]
+		cond, args := sc.cond("tenant_id")
+		args = append(args, ms(now))
+		for _, k := range chunk {
+			args = append(args, k)
+		}
+		got, err := strCol(ctx, q, `SELECT DISTINCT email_key FROM invites WHERE `+cond+` AND used = 0 AND expires > ? AND email_key <> '' AND email_key IN (`+
+			strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range got {
+			out[k] = true
+		}
+	}
+	return out, nil
 }
 
 // FindUsableInvite returns the invite with this token hash if it is neither
@@ -40,11 +68,15 @@ func InsertInvite(ctx context.Context, q Q, i Invite) error {
 func FindUsableInvite(ctx context.Context, q Q, tokenHash string, now time.Time) (*Invite, error) {
 	var i Invite
 	var created, expires, siteAdmin int64
-	err := q.QueryRow(ctx, `SELECT id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email FROM invites
+	var groups string
+	err := q.QueryRow(ctx, `SELECT id, token_hash, role, created_by, created, expires, tenant_id, site_admin, username, name, email, groups FROM invites
 		WHERE token_hash = ? AND used = 0 AND expires > ?`, tokenHash, ms(now)).
-		Scan(&i.ID, &i.TokenHash, &i.Role, &i.CreatedBy, &created, &expires, &i.TenantID, &siteAdmin, &i.Username, &i.Name, &i.Email)
+		Scan(&i.ID, &i.TokenHash, &i.Role, &i.CreatedBy, &created, &expires, &i.TenantID, &siteAdmin, &i.Username, &i.Name, &i.Email, &groups)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
+	}
+	if groups != "" {
+		i.Groups = strings.Split(groups, ",")
 	}
 	i.Created, i.Expires, i.SiteAdmin = fromMS(created), fromMS(expires), siteAdmin != 0
 	return &i, err
