@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"petalbook.app/server/internal/connections"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 // The attachment repository of a space (milestone 3.1, docs/api.md "Attachment
@@ -68,6 +71,9 @@ func (s *server) putAssetsRemote(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, remoteBodyLimit) {
 		return
 	}
+	if !s.assetsRepositoryMayStart(c) {
+		return
+	}
 	var v *spaces.AssetsView
 	var err error
 	if g := req.Sync; g != nil {
@@ -87,6 +93,34 @@ func (s *server) putAssetsRemote(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusOK, toAssetsRemote(v))
+}
+
+// assetsRepositoryMayStart refuses a new attachment repository for a space of a
+// tenant whose limits sheet has sync.assetsRepository off, with the code the
+// space's creation gives (setting_restricted: the sheet is not a lock of the
+// settings). A space that has one already may reconnect it. It answers false once it has
+// answered.
+func (s *server) assetsRepositoryMayStart(c *call) bool {
+	if s.limits == nil {
+		return true
+	}
+	ctx := c.r.Context()
+	sp, err := store.GetSpace(ctx, s.opt.Store.Q(), store.AllTenants(), c.sp.Info.ID)
+	if err != nil {
+		s.fail(c.w, err)
+		return false
+	}
+	if s.limits.Sheet(sp.TenantID).Bool("sync.assetsRepository") {
+		return true
+	}
+	if _, err := s.spaces.AssetsRemote(ctx, c.sp); err == nil {
+		return true
+	} else if !errors.Is(err, spaces.ErrNoAssets) {
+		s.fail(c.w, err)
+		return false
+	}
+	s.fail(c.w, &settings.Error{Code: settings.CodeRestricted, Msg: "The administrators do not allow attachments in a repository of their own."})
+	return false
 }
 
 func (s *server) deleteAssetsRemote(c *call) {

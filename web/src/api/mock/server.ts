@@ -4754,7 +4754,13 @@ export function createMockServer(options: MockOptions = {}) {
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
     }
-    if (path.startsWith('/admin/tenan') || path.startsWith('/admin/settings')) {
+    if (
+      path.startsWith('/admin/tenan') ||
+      path.startsWith('/admin/settings') ||
+      path === '/admin/capabilities' ||
+      path === '/admin/plans' ||
+      path.startsWith('/admin/plans/')
+    ) {
       accountsOnly()
       const me = requireAdmin(ctx)
       const r = tenantBook.route(me.id, method, path, url, body)
@@ -4920,7 +4926,7 @@ export function createMockServer(options: MockOptions = {}) {
             throw new HttpError(400, 'invalid', 'description 最多 350 个字符')
           // What the settings leave the owner to ask for, checked before anything is made (as the server does).
           const ask = g.assets
-          const rule = tenantBook.assetsRule()
+          const rule = tenantBook.assetsRule(DEFAULT_TENANT)
           const wants = ask === true || (isRecord(ask) && typeof ask.name === 'string')
           if ((wants && !rule.allowed.includes('repository')) || (ask === false && !rule.allowed.includes('space')))
             throw new HttpError(409, rule.locked ? 'setting_locked' : 'setting_restricted', '附件放在哪里由管理员定了')

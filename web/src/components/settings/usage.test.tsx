@@ -97,7 +97,7 @@ describe('Usage in the account settings', () => {
         for (const title of ['one', 'two', 'three'])
           admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title }, body: 'text' })
         admin('PUT', '/api/admin/settings/quota.pagesPerPerson', { value: 2 })
-        admin('PATCH', '/api/admin/tenants/0000000000', { quota: { bytes: 1 } })
+        admin('PUT', '/api/admin/tenants/0000000000/limits', { values: { 'storage.quota.bytes': { value: 1 } } })
         admin('POST', `/api/admin/spaces/${space}/size`)
       },
       { mode: 'accounts', empty: true },

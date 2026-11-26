@@ -70,17 +70,6 @@ export const usageZhCN = {
   tenant: {
     usageTitle: '用量',
     usageHelp: '租户里所有人合起来用了多少。',
-    quotaTitle: '总额',
-    quotaHelp: '只有全站管理员能设。人数、磁盘和页数超出时只提醒，空间数超出时不让再建。留空是不限。',
-    people: '人数',
-    spaces: '空间数',
-    bytes: '磁盘（GB）',
-    pages: '页面数',
-    save: '保存总额',
-    saving: '正在保存…',
-    saved: '已保存',
-    invalid: '请填整数，或者留空',
-    failed: '没能保存总额',
     over: (list: string) => `超出：${list}`,
   },
   invite: {

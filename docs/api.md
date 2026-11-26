@@ -6368,10 +6368,12 @@ that is not valid, and no tenant is made. `409 exists` for a slug taken;
 
 ### `PATCH /api/admin/tenants/{tenant}`
 
-`{"name": "…", "slug": "…", "disabled": true, "quota": {…}}`, each optional. A
+`{"name": "…", "slug": "…", "disabled": true}`, each optional. A
 tenant administrator may send `name` only (`403 forbidden` for the rest). From
-3.6 `quota` is set through `PUT …/capabilities` and this endpoint no longer
-takes it.
+3.6 the totals are values of the limits sheet (`other.people`,
+`storage.quota.spaces`, `.bytes`, `.pages`), set through `PUT …/limits`; this
+endpoint no longer takes `quota` (`400 invalid`), and the tenant's `quota` shows
+the values in force, read only.
 `200` with the tenant. `409 default_tenant` for disabling the default tenant;
 `409 exists` for a slug taken; `409 conflict` when disabling the tenant of the
 caller, or when no enabled site administrator would be left outside the tenant.
@@ -8360,11 +8362,16 @@ are never limited by capabilities.
 
 #### `GET /api/admin/capabilities`, `PUT /api/admin/capabilities`
 
-Site administrators. `GET` answers the registry (key, kind, group, what it
-gates) and the site's default values. `PUT` takes `{"values": {"signin.idpAdmins": true}}`
-(only the keys that change) and answers `200` with `affected` (the tenants whose
-effective set changed). The confirmation rule below applies to every tenant the
-change reaches.
+Site administrators (`site.tenants.manage`; so are the plans and every write of
+a tenant's sheet). `GET` answers the registry of the whole sheet, in the order
+of this section, with each key's `key`, `kind` (`boolean`, `limit` or `list`),
+`group` (the part before the first dot), `description`, `capability` (false for
+a limit), the built-in `default` and the site's `value`. `PUT` takes
+`{"values": {"signin.idpAdmins": true}}` (only the keys that change; `null`
+goes back to the built-in default; no dates) and answers `200` with `affected`
+(the tenants whose effective set changed, sorted) and the registry again. It is
+audited (`capabilities_default_changed`, with each key's value before and after). Tenants whose limits moved have their totals looked at again at once, so an over-quota notice does not wait. The confirmation rule below is not
+built yet: see "Confirmation" under "Plans".
 
 #### `GET /api/admin/tenants/{tenant}/capabilities`
 
@@ -8379,7 +8386,8 @@ Site administrators, and the tenant's administrators (read only):
 
 `source` is `site` (the default), `plan`, `billing` or `manual` (an override
 for this tenant by a site administrator); see "The limits sheet", whose
-`GET …/limits` this is part of.
+`GET …/limits` this is part of. Each entry also has `kind`, `description` and
+what "The limits sheet" says of `from`, `until`, `underlying` and `manual`.
 
 #### `PUT /api/admin/tenants/{tenant}/capabilities`
 
@@ -8387,6 +8395,15 @@ Site administrators only (`403 forbidden` otherwise).
 `{"values": {"data.adminView": false, "storage.pinnedBytes": null}, "confirm": "c_…"}`;
 `null` removes the tenant's override.
 
+- **Confirmation: not built in 3.6 part 4 (a known gap).** `confirm` is
+  accepted and not asked for, and `change_capabilities` is not an action of
+  `POST /api/admin/confirm` yet. Two of the guarded cases do exist now, and
+  neither has the preview: turning off `sync.assetsRepository` while spaces of
+  the tenant have an attachment repository (they keep it and keep working; only
+  a new one is refused with `setting_restricted`, as at space creation), and turning off a `storage.modes` entry (no space records its mode
+  yet, so there is nothing to count). The rest (tenant providers, domains,
+  managed accounts, storage targets) do not exist yet. The preview and token come
+  with them.
 - A change that turns off something **in use** (a capability with stored items,
   a storage mode that spaces use, managed accounts that are on) needs a
   confirmation token: `POST /api/admin/confirm` (3.5) with
@@ -8416,8 +8433,14 @@ and the site administrators' editing. No prices, billing, trials or renewals.
   sets), `GET`, `PATCH`, `DELETE /api/admin/plans/{slug}`: site administrators
   only. `PATCH` changes every tenant on the plan at once (`affected` in the
   answer; the confirmation rule applies to each of them). `DELETE` of a plan that
-  tenants use answers `409 plan_in_use` with the count. At most 100 plans; slugs
-  as tenant slugs.
+  tenants use answers `409 plan_in_use` with the count. At most 100 plans
+  (`409 plan_limit`); slugs as tenant slugs. A plan is
+  `{"slug", "name", "description", "values", "tenants"}` (`tenants`: how many use
+  it). `PATCH` takes `name`, `description` and `values` (the keys given are set,
+  a key with `null` leaves the plan; no dates) and answers the plan with
+  `affected`. `PUT …/plan` answers `{"plan": {"slug", "name"} | null, "cleared":
+  [{"key", "value", "from", "until"}]}`: the manual overrides it removed
+  (billing's stay); `400 invalid` for a plan that does not exist.
 - `tenant.selfService.plan` (site only, `null` by default): the plan of the
   tenants made by organisation sign-up; `null` means the site's default.
 
@@ -8434,7 +8457,9 @@ the effective settings that depend on a capability are computed again.
 ### The limits sheet
 
 Owner, 2026-11-23. Every tenant has one **limits sheet**, set by hand by site
-administrators. It holds the capabilities above (same keys) and these limits:
+administrators. It holds the capabilities above (same keys) and these limits.
+If the server could not read the sheet when it started, every capability stays
+on and the endpoints of the sheet and the plans answer `503 unavailable`.
 
 | Key | Kind | Site default | What it limits |
 |---|---|---|---|
@@ -8463,7 +8488,7 @@ it recomputes the tenants that have a boundary behind them and sets itself for
 the next, and a write moves it. With nothing dated there is no timer; nothing
 polls.
 
-**Built in 3.6 part 3** (`internal/limits`, no endpoint yet): the registry of
+**Built in 3.6 part 3** (`internal/limits`): the registry of
 keys with their types, defaults and descriptions (every key of the two tables;
 the quota and per-person totals are one limit each, `storage.quota.spaces`,
 `.bytes`, `.pages` and `storage.perPerson.…`, as this table lists them); the
@@ -8474,6 +8499,18 @@ a key: a key with no capability, or a capability the registry does not know,
 stays on, and a holder of the key across the site is never limited. `null` is a
 value of a limit (no limit), so a manual `{"value": null}` beats a plan's
 number; a bare `null` in a *write* removes the manual value, as above.
+
+**Built in 3.6 part 4:** the endpoints above; the totals of a tenant (`quota`)
+are read from the sheet by the quota service, and the `tenants.quota` column is
+gone; `sync.assetsRepository` off makes `storage.assets` `space` for the
+tenant's new spaces (own storage stays unknown to that rule until the storage
+targets exist); deleting a tenant drops it from the sheet's memory.
+
+**One value per tenant, key and source.** A dated manual write **replaces** the
+undated manual value of the same key (the primary key is tenant, key, source): when
+the window ends the value is not the undated one but what is below it (billing,
+the plan, the site). The answer to such a write has `warning`:
+`{"code": "undated_value_replaced", "keys": [...], "message": "…"}`.
 
 #### `GET /api/admin/tenants/{tenant}/limits`, `PUT …/limits`
 
@@ -8491,15 +8528,27 @@ capability keys only:
 ```
 
 `underlying` is what applies outside the window or when the manual value is
-removed; `used` is there for limits that are counted (from the `usage` row and
-memory).
+removed; `used` is there for limits that are counted (`other.people` and
+`storage.quota.*`, from the `usage` row). An entry whose manual value is not in
+effect (its window has not begun or has ended) shows the value that is, and
+`manual: {"value", "from", "until"}` for the one that is not. Every entry also
+has `kind` and `description`.
 
 `PUT`: site administrators only (`403 forbidden` otherwise); `PUT
 …/capabilities` is the same for capability keys only:
 `{"values": {"storage.quota.bytes": {"value": 214748364800, "from": "…", "until": "…"},
 "usage.mailPerDay": null}, "confirm": "c_…"}`; `null` removes the manual value.
-The confirmation rule of "Capabilities" applies. `400 invalid` for a value
-outside its kind or `until` not after `from`.
+**One encoding on both routes**: a value is written bare (`true`, `500`,
+`["server"]`) or as `{"value": …, "from": …, "until": …}`; the object is the
+only way to write `null` as a value (`{"value": null}`: no limit, which a plan's
+number does not beat), while a bare `null` removes the manual value. The answer
+is the sheet as `GET` shows it, with `warning` as above. The confirmation rule
+of "Capabilities" applies. `400 invalid` for a value outside its kind, a key
+that is not the sheet's (or, on `…/capabilities`, not a capability) or `until`
+not after `from`. Every key written is audited: `capability_changed` for a
+capability, `tenant_limit_changed` for a limit, with the value before and after;
+a dated value starting or ending writes `tenant_limit_changed` with no actor.
+After a limit changes the quotas are looked at again.
 
 #### Events
 
@@ -8769,8 +8818,10 @@ a name that is already taken is not adopted (`409 name_taken`, or the fallback
 above under an unlocked default).
 
 When the tenant's limits table turns `sync.assetsRepository` off, only `space`
-is possible, whatever the layers say.
-
+is possible, whatever the layers say. That includes attaching a repository to an
+existing space (`PUT /api/spaces/{space}/remote/assets`): `409 setting_restricted`
+when the space has none; a space that already
+has one keeps it and may reconnect it.
 `storage.assets.ownStorageExempt` (site only, default `true`): when on, a tenant
 that stores on a target of its own (its own organisation or host connection,
 `storage.modes` `tenant`, 3.6) is not bound by the site's value or lock for
@@ -9711,10 +9762,10 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `joined_by_domain`, `joined_by_sso` | an account joined by (b) or (d) | `user`, `domain` or `provider`, `role` |
 | `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
 | `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
-| `capabilities_default_changed` | the site's default capabilities changed | `values`, `affected` |
+| `capabilities_default_changed` | the site's default capabilities changed | `values`, `from` and `to` (each key's value before and after), `affected` |
 | `capability_changed` | a tenant's override set or removed | `tenant`, `key`, `from`, `to` |
-| `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `values`, `affected` |
-| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (overrides) |
+| `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `values`, `affected`; `plan_changed` also `from` and `to` (each key's value before and after, `null` for none) |
+| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the overrides, each `{key, value, from, until}`) |
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |

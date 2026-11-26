@@ -2,11 +2,12 @@ import { useState, type FormEvent } from 'react'
 import { CircleCheck, Copy, Plus, Save, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useCreateTenant, useDeleteTenant, useSetTenancy, useTenancy, useTenants, useUpdateTenant } from '@/api/admin'
-import type { CreatedTenant, Tenant, TenantQuotaKey } from '@/api/types'
+import type { CreatedTenant, Tenant } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
+import { TenantLimitsBlock } from './TenantLimits'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,7 +21,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { tt } from '@/i18n/tenants'
 import { tu } from '@/i18n/usage'
-import { bytesToGb, countToText, formatUsed, gbToBytes, parseCount } from '@/lib/usage'
+import { formatUsed } from '@/lib/usage'
 
 const tl = tt.list
 
@@ -286,7 +287,7 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
     })
   }
   return (
-    <div className="grid gap-4 border-t pt-3">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t pt-3">
       <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
         <Field label={tl.nameLabel} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
@@ -351,93 +352,30 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
   )
 }
 
-// What the tenant uses (measured), and the totals it is held to. Only a site administrator opens this page.
+// What the tenant uses (measured), and under it the limits sheet that holds the totals it is held to. Only a site
+// administrator opens this page.
 function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
-  const update = useUpdateTenant()
-  const [people, setPeople] = useState(countToText(tenant.quota.people))
-  const [spaces, setSpaces] = useState(countToText(tenant.quota.spaces))
-  const [bytes, setBytes] = useState(bytesToGb(tenant.quota.bytes))
-  const [pages, setPages] = useState(countToText(tenant.quota.pages))
-  const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
   const u = tenant.usage
-  const save = (e: FormEvent) => {
-    e.preventDefault()
-    setMessage(null)
-    const quota = {
-      people: parseCount(people),
-      spaces: parseCount(spaces),
-      bytes: gbToBytes(bytes),
-      pages: parseCount(pages),
-    }
-    if (Object.values(quota).some((v) => v === undefined)) return setMessage({ tone: 'error', text: tu.tenant.invalid })
-    update.mutate(
-      { id: tenant.id, quota: quota as Record<TenantQuotaKey, number | null> },
-      {
-        onSuccess: () => setMessage({ tone: 'info', text: tu.tenant.saved }),
-        onError: () => setMessage({ tone: 'error', text: tu.tenant.failed }),
-      },
-    )
-  }
   return (
-    <div className="grid gap-3 border-t pt-3" data-slot="tenant-usage-block">
-      <div className="grid gap-0.5">
-        <h4 className="text-sm font-medium">{tu.tenant.usageTitle}</h4>
-        <p className="text-xs text-muted-foreground">{tu.tenant.usageHelp}</p>
-      </div>
-      <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4" data-slot="tenant-numbers">
-        {(['people', 'spaces', 'bytes', 'pages'] as const).map((k) => (
-          <div key={k} className={`min-w-0 ${u.over.includes(k) ? 'text-destructive' : ''}`} data-quota={k}>
-            <dt className="text-xs text-muted-foreground">{tu.quotas[k]}</dt>
-            <dd className="tabular-nums break-words">{formatUsed(k, u[k])}</dd>
-          </div>
-        ))}
-      </dl>
-      {u.over.length > 0 && (
-        <p className="text-xs text-destructive">{tu.tenant.over(u.over.map((k) => tu.quotas[k]).join('、'))}</p>
-      )}
-      <form onSubmit={save} className="grid gap-3" noValidate>
+    <>
+      <div className="grid gap-3 border-t pt-3" data-slot="tenant-usage-block">
         <div className="grid gap-0.5">
-          <h4 className="text-sm font-medium">{tu.tenant.quotaTitle}</h4>
-          <p className="text-xs text-muted-foreground">{tu.tenant.quotaHelp}</p>
+          <h4 className="text-sm font-medium">{tu.tenant.usageTitle}</h4>
+          <p className="text-xs text-muted-foreground">{tu.tenant.usageHelp}</p>
         </div>
-        <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
-        <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4">
-          <Field
-            label={tu.tenant.people}
-            value={people}
-            inputMode="numeric"
-            placeholder={tu.noLimit}
-            onChange={(e) => setPeople(e.target.value)}
-          />
-          <Field
-            label={tu.tenant.spaces}
-            value={spaces}
-            inputMode="numeric"
-            placeholder={tu.noLimit}
-            onChange={(e) => setSpaces(e.target.value)}
-          />
-          <Field
-            label={tu.tenant.bytes}
-            value={bytes}
-            inputMode="decimal"
-            placeholder={tu.noLimit}
-            onChange={(e) => setBytes(e.target.value)}
-          />
-          <Field
-            label={tu.tenant.pages}
-            value={pages}
-            inputMode="numeric"
-            placeholder={tu.noLimit}
-            onChange={(e) => setPages(e.target.value)}
-          />
-        </div>
-        <div>
-          <Button type="submit" size="sm" disabled={update.isPending}>
-            <Save aria-hidden="true" />
-            {update.isPending ? tu.tenant.saving : tu.tenant.save}
-          </Button>
-        </div>
-      </form>
-    </div>
+        <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4" data-slot="tenant-numbers">
+          {(['people', 'spaces', 'bytes', 'pages'] as const).map((k) => (
+            <div key={k} className={`min-w-0 ${u.over.includes(k) ? 'text-destructive' : ''}`} data-quota={k}>
+              <dt className="text-xs text-muted-foreground">{tu.quotas[k]}</dt>
+              <dd className="tabular-nums break-words">{formatUsed(k, u[k])}</dd>
+            </div>
+          ))}
+        </dl>
+        {u.over.length > 0 && (
+          <p className="text-xs text-destructive">{tu.tenant.over(u.over.map((k) => tu.quotas[k]).join('、'))}</p>
+        )}
+      </div>
+      <TenantLimitsBlock tenant={tenant} />
+    </>
   )
 }

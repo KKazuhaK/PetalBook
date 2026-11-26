@@ -281,10 +281,11 @@ func New(opt Options) *Handler {
 		// Each tenant's capabilities and limits, in memory. If the state
 		// database cannot be read every capability stays on, which is what a
 		// server without the sheet does.
-		if ls, err := sheets.New(s.bgCtx, sheets.Config{Store: opt.Store, Clock: sheets.RealClock(s.now), Invalidate: s.settings, Logger: s.log}); err != nil {
+		if ls, err := sheets.New(s.bgCtx, sheets.Config{Store: opt.Store, Clock: sheets.RealClock(s.now), Invalidate: s.settings, OnBoundary: s.auditBoundary, Logger: s.log}); err != nil {
 			s.log.Error("the limits sheet could not be read; every capability is on", "error", err)
 		} else {
 			s.limits, s.caps = ls, ls
+			s.quota.UseSheets(ls)
 		}
 	}
 	if s.spaces != nil && !s.single {

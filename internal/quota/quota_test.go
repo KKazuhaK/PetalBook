@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"petalbook.app/server/internal/limits"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -27,13 +28,38 @@ func TestOwnLimitsRoundTripAndEmptyIsNone(t *testing.T) {
 	if *back.Spaces != 5 || *back.Pages != 100 || back.Bytes != nil {
 		t.Fatalf("%+v", back)
 	}
-	tl := ParseTenant(`{"people": 10, "spaces": null, "bytes": 5, "other": 1}`)
-	if *tl.People != 10 || tl.Spaces != nil || *tl.Bytes != 5 || tl.Pages != nil {
-		t.Fatalf("%+v", tl)
-	}
-	if ParseTenant("{}") != (Tenant{}) || ParseTenant("") != (Tenant{}) {
-		t.Fatal("no totals")
-	}
+}
+
+// A tenant's totals are its values of the limits sheet: null is no limit.
+func TestATenantsTotalsAreItsSheetsValues(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		ls, err := limits.New(ctx, limits.Config{Store: st})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ls.Close()
+		svc := New(st, settings.New(st), nil, nil)
+		if svc.Totals(store.DefaultTenantID) != (Tenant{}) {
+			t.Fatal("without a sheet there are no totals")
+		}
+		svc.UseSheets(ls)
+		if svc.Totals(store.DefaultTenantID) != (Tenant{}) {
+			t.Fatal("the defaults are no limits")
+		}
+		set := func(k, v string) {
+			if _, err := ls.SetManual(ctx, store.DefaultTenantID, "U1", map[string]*limits.Change{k: {Value: []byte(v)}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		set("other.people", "10")
+		set("storage.quota.bytes", "5")
+		set("storage.quota.spaces", "null")
+		tl := svc.Totals(store.DefaultTenantID)
+		if *tl.People != 10 || tl.Spaces != nil || *tl.Bytes != 5 || tl.Pages != nil {
+			t.Fatalf("%+v", tl)
+		}
+	})
 }
 
 func TestOverMeansMoreThanTheLimit(t *testing.T) {
@@ -173,9 +199,13 @@ func TestSpaceLimitsAreThePersonsAndTheTenants(t *testing.T) {
 		if err := store.SetUserQuota(ctx, st.Q(), store.AllTenants(), "U1", Own{Spaces: n(3)}.Encode()); err != nil {
 			t.Fatal(err)
 		}
-		tn, _ := store.GetTenant(ctx, st.Q(), store.DefaultTenantID)
-		tn.Quota, tn.Updated = `{"spaces": 9}`, time.Now()
-		if err := st.UpdateTenant(ctx, *tn); err != nil {
+		ls, err := limits.New(ctx, limits.Config{Store: st})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ls.Close()
+		svc.UseSheets(ls)
+		if _, err := ls.SetManual(ctx, store.DefaultTenantID, "U1", map[string]*limits.Change{"storage.quota.spaces": {Value: []byte("9")}}); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := svc.SpaceLimits(ctx, u); err != nil || got != (spaces.SpaceLimits{Person: 3, Tenant: 9}) {

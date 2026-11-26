@@ -59,6 +59,11 @@ Decided:
     preview (what will stop, how many people or spaces are affected), then uses
     the second confirmation of 3.5. If it is not in use, the change is made
     directly.
+    **Known gap after 3.6 part 4:** the preview and confirmation are not built
+    for `sync.assetsRepository` (spaces with an attachment repository keep it;
+    only new ones are refused) or `storage.modes` (no space records its mode, so
+    there is no count). They arrive with the first thing that can be counted,
+    with `change_capabilities` in `POST /api/admin/confirm`.
   - **Every site-wide setting can be "default" or "forced"** (a general rule the
     owner restated on 2026-11-23): each site-wide setting supports both uses: only
     giving a default (`allow`, which the layers below can change), limiting the

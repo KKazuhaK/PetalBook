@@ -45,26 +45,17 @@ type tenantResp struct {
 	Updated string            `json:"updated"`
 }
 
-var quotaKeys = []string{"people", "spaces", "bytes", "pages"}
-
-func parseQuota(raw string) map[string]*int64 {
-	out := map[string]*int64{}
-	for _, k := range quotaKeys {
-		out[k] = nil
-	}
-	var m map[string]*int64
-	if json.Unmarshal([]byte(raw), &m) == nil {
-		for _, k := range quotaKeys {
-			out[k] = m[k]
-		}
-	}
-	return out
+// quotaOf is the tenant's totals in force, from its limits sheet: read only
+// here, set through PUT …/limits.
+func (s *server) quotaOf(tenant string) map[string]*int64 {
+	t := s.quota.Totals(tenant)
+	return map[string]*int64{"people": t.People, "spaces": t.Spaces, "bytes": t.Bytes, "pages": t.Pages}
 }
 
 // toTenant is the tenant as the API shows it, with the usage row u (one
 // lookup of its own, or one query for a page: see usageOf).
 func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage) (tenantResp, error) {
-	r := tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: parseQuota(t.Quota),
+	r := tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(t.ID),
 		Usage: toTenantUsage(u), Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
 	e, err := s.settings.Get(ctx, t.ID, "registration.open")
 	if err != nil {
@@ -273,7 +264,7 @@ func (s *server) adminCreateTenant(c *call) {
 		}
 	}
 	now := time.Now().UTC()
-	t := store.Tenant{ID: page.NewID(now), Slug: req.Slug, Name: name, Quota: "{}", Created: now, Updated: now}
+	t := store.Tenant{ID: page.NewID(now), Slug: req.Slug, Name: name, Created: now, Updated: now}
 	err = s.opt.Store.CreateTenant(ctx, t)
 	switch {
 	case errors.Is(err, store.ErrTenantLimit):
@@ -338,7 +329,10 @@ func (s *server) adminPatchTenant(c *call) {
 	for k := range req {
 		switch k {
 		case "name":
-		case "slug", "disabled", "quota":
+		case "quota":
+			writeError(c.w, http.StatusBadRequest, "invalid", "The totals are set through PUT /api/admin/tenants/{tenant}/limits (other.people, storage.quota.*).")
+			return
+		case "slug", "disabled":
 			if !c.can(authz.SiteTenantsManage) {
 				writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may change "+k+".")
 				return
@@ -406,30 +400,6 @@ func (s *server) adminPatchTenant(c *call) {
 			changed["disabled"], t.Disabled = v, v
 		}
 	}
-	if raw, ok := req["quota"]; ok {
-		var in map[string]json.RawMessage
-		if json.Unmarshal(raw, &in) != nil {
-			writeError(c.w, http.StatusBadRequest, "invalid", "Quota is an object.")
-			return
-		}
-		q := parseQuota(t.Quota)
-		for k, v := range in {
-			if k != "people" && k != "spaces" && k != "bytes" && k != "pages" {
-				writeError(c.w, http.StatusBadRequest, "invalid", "Quota has people, spaces, bytes and pages.")
-				return
-			}
-			var n *int64
-			if json.Unmarshal(v, &n) != nil || n != nil && (*n < 0 || *n > 1<<50) {
-				writeError(c.w, http.StatusBadRequest, "invalid", "quota."+k+" is a number from 0, or null for no limit.")
-				return
-			}
-			q[k] = n
-		}
-		b, _ := json.Marshal(q)
-		if string(b) != t.Quota {
-			changed["quota"], t.Quota = q, string(b)
-		}
-	}
 	if len(changed) > 0 {
 		t.Updated = time.Now().UTC()
 		if err := s.opt.Store.UpdateTenant(c.r.Context(), t); err != nil {
@@ -449,9 +419,6 @@ func (s *server) adminPatchTenant(c *call) {
 			s.fail(c.w, err)
 			return
 		}
-	}
-	if _, ok := changed["quota"]; ok && s.quota != nil {
-		_ = s.quota.Evaluate(c.r.Context(), []store.Touched{{TenantID: t.ID}})
 	}
 	u, err := s.usageOf(c.r.Context(), t.ID)
 	if err == nil {
@@ -494,6 +461,9 @@ func (s *server) adminDeleteTenant(c *call) {
 	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	if s.limits != nil {
+		s.limits.Forget(t.ID)
 	}
 	s.audit(c, auth.AuditEvent{Kind: "tenant_deleted", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug}})
 	c.w.WriteHeader(http.StatusNoContent)
