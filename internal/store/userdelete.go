@@ -249,7 +249,7 @@ func PlanUserDeletion(ctx context.Context, q Q, sc Scope, userID, heir string, t
 		return nil, err
 	}
 	p.GitHub = gh > 0
-	rows, err = q.Query(ctx, `SELECT provider FROM provider_authorizations WHERE user_id = ? ORDER BY provider`, userID)
+	rows, err = q.Query(ctx, `SELECT provider_id FROM linked_accounts WHERE user_id = ? AND `+repoLinkSQL+` ORDER BY provider_id`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -684,8 +684,7 @@ func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Tim
 		`DELETE FROM oauth_grant_spaces WHERE grant_id IN (SELECT id FROM oauth_grants WHERE user_id = ?)`,
 		`DELETE FROM oauth_grants WHERE user_id = ?`,
 		`DELETE FROM github_authorizations WHERE user_id = ?`,
-		`DELETE FROM provider_authorizations WHERE user_id = ?`,
-		`DELETE FROM provider_leftovers WHERE user_id = ?`,
+		`DELETE FROM repo_leftovers WHERE user_id = ?`,
 		`DELETE FROM github_leftovers WHERE user_id = ?`,
 		`DELETE FROM usage WHERE kind = 'user' AND id = ?`,
 		`DELETE FROM user_emails WHERE user_id = ?`,

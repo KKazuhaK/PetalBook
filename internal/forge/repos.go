@@ -18,15 +18,15 @@ import (
 
 // connected is the user's connection when it is usable, with its token; nil
 // when there is none or it has expired.
-func (p *Provider) connected(ctx context.Context, userID string) (*store.ProviderAuthorization, string, error) {
-	row, err := store.GetProviderAuthorization(ctx, p.m.opt.Store.Q(), p.id, userID)
+func (p *Provider) connected(ctx context.Context, userID string) (*store.RepoLink, string, error) {
+	row, err := store.GetRepoLink(ctx, p.m.opt.Store.Q(), p.id, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, "", nil
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	if row.State != store.GitHubOK {
+	if row.State != store.LinkOK {
 		return row, "", nil
 	}
 	tok, err := p.UserToken(ctx, userID)
@@ -79,17 +79,17 @@ func (p *Provider) asUser(ctx context.Context, userID, tok string, call func(tok
 // token that has no refresh token to renew with is ended too, as it can do
 // nothing more.
 func (p *Provider) afterUnauthorized(ctx context.Context, userID, tok string) (string, error) {
-	row, err := store.GetProviderAuthorization(ctx, p.m.opt.Store.Q(), p.id, userID)
+	row, err := store.GetRepoLink(ctx, p.m.opt.Store.Q(), p.id, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return "", p.notConnected()
 	}
 	if err != nil {
 		return "", err
 	}
-	if row.State != store.GitHubOK {
+	if row.State != store.LinkOK {
 		return "", p.notConnected()
 	}
-	cur, err := p.m.opt.Secrets.Open(p.sealBinding(userID), purposeAccess, row.AccessEnc)
+	cur, err := p.m.tokens.OpenAccess(row)
 	if err != nil {
 		return "", err
 	}
@@ -98,10 +98,10 @@ func (p *Provider) afterUnauthorized(ctx context.Context, userID, tok string) (s
 	case string(cur) != tok:
 		fresh, err = p.UserToken(ctx, userID)
 	case row.RefreshEnc == "":
-		p.expire(ctx, row) // only if the row is still the one the token came from
+		p.m.tokens.Expire(ctx, row) // only if the row is still the one the token came from
 		return "", p.notConnected()
 	default:
-		fresh, err = p.renew(ctx, userID, true)
+		fresh, err = p.m.tokens.Renew(ctx, p.id, userID)
 	}
 	switch {
 	case errors.Is(err, ErrNoAuthorization), errors.Is(err, ErrAuthorizationExpired):
@@ -114,7 +114,7 @@ func (p *Provider) afterUnauthorized(ctx context.Context, userID, tok string) (s
 
 // ready is what every call made for a person needs: the provider is set up and
 // theirs to use, and they are connected; it returns their token.
-func (p *Provider) ready(ctx context.Context, userID string) (*store.ProviderAuthorization, string, error) {
+func (p *Provider) ready(ctx context.Context, userID string) (*store.RepoLink, string, error) {
 	if _, _, err := p.need(); err != nil {
 		return nil, "", err
 	}
@@ -183,7 +183,7 @@ func (p *Provider) OwnersQ(ctx context.Context, userID, cursor, q string) ([]con
 	var list []ownerInfo
 	var next int
 	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
-		list, next, err = p.d.owners(ctx, p.c, tok, &account{ID: row.AccountID, Login: row.Login}, page, q)
+		list, next, err = p.d.owners(ctx, p.c, tok, &account{ID: row.Subject, Login: row.Login}, page, q)
 		return err
 	})
 	if err != nil {
@@ -249,7 +249,7 @@ func (p *Provider) PlanCreate(ctx context.Context, userID, owner string) (*conne
 	}
 	var o *ownerInfo
 	err = p.asUser(ctx, userID, tok, func(tok string) (err error) {
-		o, err = p.d.findOwner(ctx, p.c, tok, &account{ID: row.AccountID, Login: row.Login}, owner)
+		o, err = p.d.findOwner(ctx, p.c, tok, &account{ID: row.Subject, Login: row.Login}, owner)
 		return err
 	})
 	if err != nil {

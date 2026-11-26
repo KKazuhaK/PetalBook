@@ -1241,7 +1241,7 @@ func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.
 					t.Fatal(err)
 				}
 			}
-			if err := store.PutProviderAuthorization(ctx, a.st.Q(), store.ProviderAuthorization{Provider: "gl", UserID: user, AccountID: "9", Login: "olive", State: "ok", Connected: now, Updated: now}); err != nil {
+			if err := putTestLink(ctx, a.st.Q(), "gl", user, "9", "olive", now); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -1252,7 +1252,7 @@ func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.
 			t.Fatalf("the preview does not list the provider: %s", pre.raw)
 		}
 		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
-		if n := a.countRows(t, `SELECT COUNT(*) FROM provider_authorizations WHERE user_id = '`+f.ownerID+`'`); n != 0 {
+		if n := a.countRows(t, `SELECT COUNT(*) FROM linked_accounts WHERE user_id = '`+f.ownerID+`'`); n != 0 {
 			t.Fatalf("%d connections survive the deletion", n)
 		}
 		// Whatever is still there when they are purged goes with them.
@@ -1260,7 +1260,7 @@ func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
 		waitPurges(t, a)
-		if n := a.countRows(t, `SELECT COUNT(*) FROM provider_authorizations WHERE user_id = '`+f.ownerID+`'`); n != 0 {
+		if n := a.countRows(t, `SELECT COUNT(*) FROM linked_accounts WHERE user_id = '`+f.ownerID+`'`); n != 0 {
 			t.Fatalf("%d connections survive the purge", n)
 		}
 	})
@@ -1325,4 +1325,11 @@ func TestAPersonsPurgeLeavesASpaceWhoseOwnPurgeRuns(t *testing.T) {
 			t.Fatalf("the child's directory stayed: %v", err)
 		}
 	})
+}
+
+// putTestLink stores a repository link: a person's connection to an account at a provider.
+func putTestLink(ctx context.Context, q store.Q, provider, user, subject, login string, now time.Time) error {
+	_, err := store.PutRepoLink(ctx, q, store.RepoLink{ID: provider + "-" + user, ProviderID: provider, UserID: user, Subject: subject, Login: login,
+		AccessEnc: "sealed", State: store.LinkOK, Connected: now, Updated: now})
+	return err
 }

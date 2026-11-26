@@ -549,7 +549,8 @@ func runServe(ctx context.Context, c serveConfig) error {
 		run(mgr.Run)
 		run(mgr.RunPull)
 		run(ghs.RunRenew)
-		run(fgs.RunRenew)
+		run(fgs.Tokens().Run)
+		run(fgs.RunReload)
 	}
 	if svc != nil {
 		run(svc.Run)

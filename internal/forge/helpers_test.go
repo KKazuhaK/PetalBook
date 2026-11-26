@@ -64,6 +64,13 @@ func newFake(t *testing.T, kind string, clk forgetest.Clocker) *forgetest.Fake {
 // newHarness makes a manager over the store, unsafe (the fake is on loopback, plain http).
 func newHarness(t *testing.T, st *store.Store, kind string) *harness {
 	t.Helper()
+	return newHarnessWith(t, st, kind, nil)
+}
+
+// newHarnessWith is newHarness with the token service's clock of sleeps in the
+// test's hands (nil: the real one).
+func newHarnessWith(t *testing.T, st *store.Store, kind string, after func(time.Duration) (<-chan time.Time, func())) *harness {
+	t.Helper()
 	clk := forgetest.NewClock()
 	f := newFake(t, kind, clk)
 	box := secret.NewBoxWithKey([32]byte{7, 8, 9})
@@ -71,6 +78,9 @@ func newHarness(t *testing.T, st *store.Store, kind string) *harness {
 	reg := connections.NewRegistry(connections.NewGit())
 	opt := forge.Options{Store: st, Secrets: box, Registry: reg, PublicURL: publicURL, Now: clk.Now, Unsafe: true,
 		Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+	if after != nil {
+		opt.Tokens = connections.NewTokens(connections.TokenOptions{Store: st, Secrets: box, Registry: reg, Now: clk.Now, Logger: opt.Logger, After: after})
+	}
 	mgr, err := forge.NewManager(ctx, opt)
 	if err != nil {
 		t.Fatal(err)

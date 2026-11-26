@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -240,18 +241,18 @@ func TestDormantFollowsUseConnectionsAndRemotes(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := store.PutProviderAuthorization(ctx, q, store.ProviderAuthorization{Provider: "gl", UserID: "Ub", AccountID: "7", Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+		if err := putLink(ctx, q, "gl", "Ub", "7", "b", now); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
 		consistent(t, st)
-		if err := store.DeleteProviderAuthorization(ctx, q, "gl", "Ub"); err != nil {
+		if err := store.DeleteRepoLink(ctx, q, "gl", "Ub"); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{dormant: 1})
 		consistent(t, st)
-		if err := store.PutProviderAuthorization(ctx, q, store.ProviderAuthorization{Provider: "gl2", UserID: "Ub", AccountID: "8", Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+		if err := putLink(ctx, q, "gl2", "Ub", "8", "b", now); err != nil {
 			t.Fatal(err)
 		}
 		wantCounters(t, st, store.UsageUser, "Ub", counters{connected: 1})
@@ -1187,7 +1188,7 @@ func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
 		settled, release, connectDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 		go func() {
 			connectDone <- st.Tx(ctx, func(q store.Q) error {
-				if err := store.PutProviderAuthorization(ctx, q, store.ProviderAuthorization{Provider: "gl", UserID: "Ub", AccountID: "7", Login: "b", State: "ok", Connected: now, Updated: now}); err != nil {
+				if err := putLink(ctx, q, "gl", "Ub", "7", "b", now); err != nil {
 					return err
 				}
 				close(settled)
@@ -1217,4 +1218,11 @@ func TestConnectedHoldsWhenADisconnectRacesAConnect(t *testing.T) {
 		wantCounters(t, st, store.UsageTenant, tenB, counters{spaces: 1, connected: 1})
 		consistent(t, st)
 	})
+}
+
+// putLink stores a repository link: a person's connection to an account at a provider.
+func putLink(ctx context.Context, q store.Q, provider, user, subject, login string, now time.Time) error {
+	_, err := store.PutRepoLink(ctx, q, store.RepoLink{ID: provider + "-" + user, ProviderID: provider, UserID: user, Subject: subject, Login: login,
+		AccessEnc: "sealed", State: store.LinkOK, Connected: now, Updated: now})
+	return err
 }

@@ -640,7 +640,8 @@ CREATE TABLE linked_accounts (
   access_expires  BIGINT NOT NULL DEFAULT 0,
   refresh_expires BIGINT NOT NULL DEFAULT 0,
   scopes          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',  -- ok, expired, revoked
+  renew_at        BIGINT NOT NULL DEFAULT 0,             -- when the one renewal loop renews the refresh token (built in 5b)
+  state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',  -- ok, expired (the person authorises again), revoked
   version         BIGINT NOT NULL DEFAULT 1,
   is_admin        BIGINT NOT NULL DEFAULT 0,             -- an admin on a GitLab/Gitea host
   label           TEXT COLLATE "C" NOT NULL DEFAULT '',
@@ -651,7 +652,7 @@ CREATE TABLE linked_accounts (
   UNIQUE (provider_id, user_id)
 );
 CREATE INDEX linked_accounts_user ON linked_accounts(user_id);
-CREATE INDEX linked_accounts_renew ON linked_accounts(state, refresh_expires) WHERE refresh_enc <> '';
+CREATE INDEX linked_accounts_renew ON linked_accounts(renew_at) WHERE refresh_enc <> '' AND state = 'ok';  -- 5b: "the next one due" and "all due now"
 
 -- Installations of an App-kind provider (GitHub today), and the tenants each is shared with.
 CREATE TABLE provider_installations (

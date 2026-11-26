@@ -16,7 +16,7 @@ import (
 // the background measurement, whose rows carry the space's tenant) takes a Scope, or is on the allowlist below with the reason it may look
 // across tenants (or needs no scope because the row it works on has already
 // been found inside one). The tables of 2.7 that hang off a user or a space
-// (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) follow the same rule.
+// (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, repo_leftovers, remotes) follow the same rule.
 // scopeAllowlist is every exported function that touches the five tables
 // without a Scope parameter. The comment of each is the reason. A function
 // that gains a Scope, or is removed, must leave the list (the test says so), so
@@ -134,45 +134,35 @@ var scopeAllowlist = map[string]string{
 	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
 	// tenant's: owner), set up by site administrators; a connection and a reminder are
 	// their user's; the account link is unique per provider on the whole server ---
-	"ListProviders":                    "the sign-in providers of every owner, loaded at start and shown to site administrators; the service keeps a tenant's apart from the site's",
-	"GetProvider":                      "a sign-in provider by its id, for site administrators",
-	"InsertProvider":                   "a sign-in provider made by a site administrator",
-	"UpdateProvider":                   "a sign-in provider changed by a site administrator",
-	"DeleteProvider":                   "a sign-in provider removed by a site administrator; the accounts linked to it go with it",
-	"LockProviderGroups":               "serialises a sign-in's group sync with a change of the provider",
-	"SetProviderStatus":                "what a fetch of the provider's discovery document or metadata found",
-	"ListConnProviderRows":             "the server's providers, loaded at start and shown to site administrators; visibility by owner is the registry's rule",
-	"GetConnProviderRow":               "a provider by its id, for administrators and the provider's own reads",
-	"CountConnProviderRows":            "how many providers an owner has, for the limit",
-	"InsertConnProviderRow":            "a provider set up by a site administrator",
-	"UpdateConnProviderRow":            "a provider changed by a site administrator",
-	"SetConnProviderState":             "what a check of a provider's host found, written only to the application it was made with",
-	"ExpireProviderAuthorizations":     "the provider's application was replaced by a site administrator: every connection to it ends",
-	"SetConnProviderPartial":           "what a check of a provider's host found",
-	"GetProviderAuthorization":         "one person's connection, by the id of a user already found in scope",
-	"ProviderAccountUser":              "an account on a host links to one PetalBook user on the whole server; callers learn only that it is taken (account_in_use)",
-	"ReplaceProviderTokens":            "one person's connection, by the id of a user already found",
-	"ExpireProviderAuthorization":      "one person's connection, by the id of a user already found",
-	"DeleteUserProviderAuthorizations": "a person being deleted: their connections go with them",
-	"DeleteProviderAuthorization":      "the caller's own connection, or that of a user being deleted",
-	"DueProviderRenewals":              "background job: the daily renewal of the connections of every tenant",
-	"ListProviderAuthorizations":       "the provider was removed (site administrators only): every connection to it is revoked",
-	"CountProviderAuthorizations":      "the provider's own count, shown to site administrators only",
-	"CountProviderSpaces":              "the provider's own count, shown to site administrators only",
-	"CountUserProviderSpaces":          "the spaces syncing through one person's connection: same-tenant, as connecting checks",
-	"PutProviderLeftover":              "a reminder of the caller's own, by the id of a user already found",
-	"ListProviderLeftovers":            "the caller's own reminders, by the id of a user already found",
-	"DeleteProviderLeftover":           "the caller's own reminder, by the id of a user already found",
-	"MemberStanding":                   "one person's roles on a space already found: memberships are same-tenant by construction",
-	"GetRemote":                        "the remote of a space already opened by the caller",
-	"PutRemote":                        "the remote of a space already opened, or one being made in the caller's tenant",
-	"UpdateRemoteStatus":               "the remote of an open space, by its id",
-	"DeleteRemote":                     "the remote of a space already opened by the caller",
-	"RemoteStates":                     "the server's map of sync states, read by space id",
-	"MarkAssetsUsed":                   "the attachment repository of an open space, by its id",
-	"MarkAssetsMoved":                  "the attachment repository of a space whose move the server runs, by its id",
-	"SetAssetsMoveJob":                 "the attachment repository of a space already opened by the caller",
-	"AssetRepositories":                "the server's map of spaces with an attachment repository, read by space id",
+	"ListProviders":           "the sign-in providers of every owner, loaded at start and shown to site administrators; the service keeps a tenant's apart from the site's",
+	"GetProvider":             "a sign-in provider by its id, for site administrators",
+	"InsertProvider":          "a sign-in provider made by a site administrator",
+	"UpdateProvider":          "a sign-in provider changed by a site administrator",
+	"DeleteProvider":          "a sign-in provider removed by a site administrator; the accounts linked to it go with it",
+	"LockProviderGroups":      "serialises a sign-in's group sync with a change of the provider",
+	"SetProviderStatus":       "what a fetch of the provider's discovery document or metadata found",
+	"ListConnProviderRows":    "the server's providers, loaded at start and shown to site administrators; visibility by owner is the registry's rule",
+	"GetConnProviderRow":      "a provider by its id, for administrators and the provider's own reads",
+	"CountConnProviderRows":   "how many providers an owner has, for the limit",
+	"InsertConnProviderRow":   "a provider set up by a site administrator",
+	"UpdateConnProviderRow":   "a provider changed by a site administrator",
+	"SetConnProviderState":    "what a check of a provider's host found, written only to the application it was made with",
+	"SetConnProviderPartial":  "what a check of a provider's host found",
+	"CountProviderSpaces":     "the provider's own count, shown to site administrators only",
+	"CountUserProviderSpaces": "the spaces syncing through one person's connection: same-tenant, as connecting checks",
+	"PutRepoLeftover":         "a reminder of the caller's own, by the id of a user already found",
+	"ListRepoLeftovers":       "the caller's own reminders, by the id of a user already found",
+	"DeleteRepoLeftover":      "the caller's own reminder, by the id of a user already found",
+	"MemberStanding":          "one person's roles on a space already found: memberships are same-tenant by construction",
+	"GetRemote":               "the remote of a space already opened by the caller",
+	"PutRemote":               "the remote of a space already opened, or one being made in the caller's tenant",
+	"UpdateRemoteStatus":      "the remote of an open space, by its id",
+	"DeleteRemote":            "the remote of a space already opened by the caller",
+	"RemoteStates":            "the server's map of sync states, read by space id",
+	"MarkAssetsUsed":          "the attachment repository of an open space, by its id",
+	"MarkAssetsMoved":         "the attachment repository of a space whose move the server runs, by its id",
+	"SetAssetsMoveJob":        "the attachment repository of a space already opened by the caller",
+	"AssetRepositories":       "the server's map of spaces with an attachment repository, read by space id",
 	// --- 3.1: server storage. The disk, its policy and the cache of clones are the
 	// server's own (site administrators only, docs/design/milestones/phase-3-tenants.md, the 3.3 table); a space's
 	// records are reached by the id of a space already found ---
@@ -246,7 +236,7 @@ func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(stale)
 	for _, m := range missing {
-		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, provider_authorizations, provider_leftovers, remotes) or space_measure and takes no Scope: give it one, or put it on the allowlist with the reason", m)
+		t.Errorf("%s touches users, spaces, groups, invites, audit_log or a GitHub table (github_authorizations, github_installations, github_installation_tenants, github_leftovers, providers, repo_leftovers, remotes) or space_measure and takes no Scope: give it one, or put it on the allowlist with the reason", m)
 	}
 	for _, s := range stale {
 		t.Error(s)
@@ -290,7 +280,7 @@ func touches(body *ast.BlockStmt) bool {
 // each row carries the space's tenant_id.
 // The tables of 2.7 count as well: a GitHub connection is a user's and a remote
 // a space's, so a function that reaches them across users needs a reason.
-var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|providers|provider_authorizations|provider_leftovers|remotes|space_measure)\b`)
+var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|spaces|groups|invites|audit_log|github_authorizations|github_installations|github_installation_tenants|github_leftovers|providers|repo_leftovers|remotes|space_measure)\b`)
 
 // A function that reads people leaves out the ones in the recycle bin
 // (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the

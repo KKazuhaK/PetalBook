@@ -53,6 +53,11 @@ const (
 	// {"by", "reason", "until"}; ref is the view). Made by nothing while the
 	// owner decides whether the person is told (api.notifyViewedPerson).
 	NotifyViewedAs = "viewed_as"
+	// NotifyLinkReauth: a linked account's tokens could not be renewed (the
+	// grant was revoked or ended) and the person must authorise it again
+	// (payload {"provider", "name", "login"}; ref is the provider). Written once
+	// per link that stops working.
+	NotifyLinkReauth = "link_reauth"
 )
 
 // NotifyKind is one entry of the registry.
@@ -77,6 +82,7 @@ var NotifyKinds = []NotifyKind{
 	{NotifyPasswordSet, false, "an administrator setting a temporary password"},
 	{NotifyEmailReleased, false, "another account proving an address the person held unverified"},
 	{NotifyViewedAs, false, ""},
+	{NotifyLinkReauth, false, "the renewal of a linked account's tokens failing for good"},
 }
 
 // KnownNotifyKind says whether the registry has the kind.

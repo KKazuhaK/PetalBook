@@ -5342,6 +5342,7 @@ kinds (a registry in the server's code, `store.NotifyKinds`):
 | `account_changed` | someone else changed the person's name, username or address (`PATCH /api/users/{id}`); nothing is said of what they did themselves; written with the `user_changed` row | `{"fields": ["name", "username", "email", "emailVerified"], "by"}`, never the values |
 | `password_set` | an administrator gave the person a temporary password; written with the `password_set_by_admin` row | `{"by"}` |
 | `email_released` | an address the person held unverified moved to the account that proved it; written with the `email_released` row | `{"email"}` |
+| `link_reauth` | a linked account's tokens could not be renewed for good (the host revoked or ended the grant): the person connects it again; written once, by the write that marks the link `expired`; `ref` is the provider | `{"provider", "name", "login"}` |
 | `viewed_as` | reserved: an administrator viewed the app as the person; made only once the owner decides the person is told (see "Viewing as a person"); it would be written with the `view_as_started` row | `{"by", "reason", "until"}` |
 
 There is no catch-all kind: each event of an account or a space is a kind of its
@@ -6511,7 +6512,7 @@ reviewed and tested):
   sign-in by username or identity, the background jobs.
   2.7's tables follow the same rule: a GitHub connection hangs off its user and
   a remote off its space, so they carry no `tenant_id`; the methods that reach
-  across users (the daily renewal, the App's counts and the revocation when the
+  across users (the renewal of every person's tokens, the App's counts and the revocation when the
   App is removed, both site administrators only) and the App's installations
   (site-wide) are on the same list with their reasons.
 - **Links between rows are checked by the database write itself**: adding a
@@ -10802,10 +10803,17 @@ One OAuth application per host, configured by an administrator.
   2.7.
 - Access and refresh tokens are sealed separately. Renewal: when an access
   token is within 5 minutes of expiry on use, one renewal per person at a time,
-  the new pair stored before use; once a day, refresh tokens that expire within
-  30 days. A revoked or expired refresh token turns the connection `expired`
+  the new pair stored before use; in the background, one loop for every kind of
+  provider (internal/connections) renews refresh tokens at `renew_at`, the time
+  the pair was made with: in the last tenth of the refresh token's life and
+  within 30 days of its end. The loop sleeps until the soonest `renew_at` or
+  until a link is stored, renews a few links at a time, tries a link again
+  after 5 minutes, then 10, 20 and so on up to 6 hours when the host cannot be
+  asked, and never polls. A revoked or expired refresh token turns the connection `expired`
   and its spaces' remotes `connection_expired`, as 2.7 does: reads work, writes
-  answer `503`, drafts are kept.
+  answer `503`, drafts are kept. The person gets one `link_reauth` notification
+  (the write that marks the link `expired` writes it, in one transaction, so a
+  loop and a request that give up together tell once).
 - One account on a host (host and account id) links to one PetalBook user on
   the server: `409 account_in_use`.
 - Disconnecting revokes at the host when it can, and always deletes the
@@ -10829,11 +10837,12 @@ One OAuth application per host, configured by an administrator.
 ### Storage, audit, errors
 
 - Migration: the next free number at merge time (0023 when 3.5–3.7 are in
-  first; built as 0019), SQLite and PostgreSQL. `providers` (id,
-  type, host, name, owner, client id, sealed secret, state, updated by and at);
-  `provider_authorizations` (provider, user, account id, login, sealed tokens,
-  expiries, state, version; unique `(provider, account_id)` and
-  `(provider, user_id)`).
+  first; built as 0019), SQLite and PostgreSQL. Since consolidation 5b: a
+  GitLab or Gitea host is a row of `providers` (`kind` `gitlab` or `gitea`,
+  `repos = 1`), a person's connection a row of `linked_accounts` (`subject` is the
+  account id on the host, sealed tokens, expiries, `renew_at`, `state`, `version`;
+  unique `(provider_id, subject)` and `(provider_id, user_id)`), the reminders
+  of empty repositories rows of `repo_leftovers`.
 - Audit: 2.7b's `connection_provider_changed`, `account_connected`,
   `account_disconnected`.
 - Errors: 2.7b's generic codes; `provider_limit` (409).

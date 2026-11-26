@@ -126,7 +126,7 @@ func TestTheDeletionPreviewReturnsAConnectionsError(t *testing.T) {
 		if _, err := store.PlanUserDeletion(ctx, st.Q(), store.AllTenants(), "U1", "", nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.Q().Exec(ctx, `DROP TABLE provider_authorizations`); err != nil {
+		if _, err := st.Q().Exec(ctx, `DROP TABLE linked_accounts`); err != nil {
 			t.Fatal(err)
 		}
 		if p, err := store.PlanUserDeletion(ctx, st.Q(), store.AllTenants(), "U1", "", nil); err == nil {

@@ -28,7 +28,7 @@ func TestAnAccessTokenTheHostDroppedIsRenewedNotTheConnectionEnded(t *testing.T)
 		if n := h.f.Count("POST", "/") - before; n != 1 {
 			t.Fatalf("%d renewals", n)
 		}
-		row, err := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, err := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if err != nil || row.State != "ok" || row.RefreshEnc == "" || row.Version != 2 {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -61,7 +61,7 @@ func TestARequestWithAnOldTokenDoesNotEndAConnectionAParallelOneRenewed(t *testi
 		if n := h.f.Count("POST", "/") - before; n != 1 {
 			t.Fatalf("%d renewals, want the one", n)
 		}
-		row, err := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, err := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if err != nil || row.State != "ok" || row.RefreshEnc == "" || row.Version != 2 {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -246,7 +246,7 @@ func TestTokensOfAReplacedApplicationAreNotUsed(t *testing.T) {
 		if _, err := p.UserToken(ctx, "U1"); !errors.Is(err, forge.ErrAuthorizationExpired) {
 			t.Fatalf("a token of the old application was used: %v", err)
 		}
-		row, _ := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, _ := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if row.State != "expired" || row.AccessEnc != "" || row.RefreshEnc != "" {
 			t.Fatalf("%+v", row)
 		}
@@ -307,16 +307,16 @@ func TestRenewalFollowsTheTokensOwnLifeNotAFixedWindow(t *testing.T) {
 		// life (73 hours), not from 30 days out, as a fixed window did.
 		for _, d := range []time.Duration{24 * time.Hour, 624 * time.Hour} { // 706, then 82 hours to go
 			h.clk.Advance(d)
-			if n := p.RenewDue(ctx); n != 0 {
+			if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 				t.Fatalf("%d renewed with %v gone", n, d)
 			}
 		}
 		h.clk.Advance(10 * time.Hour) // 72 hours to go
-		if n := p.RenewDue(ctx); n != 1 {
+		if n := h.mgr.Tokens().RenewDue(ctx); n != 1 {
 			t.Fatalf("%d renewed in the last tenth", n)
 		}
 		h.clk.Advance(48 * time.Hour)
-		if n := p.RenewDue(ctx); n != 0 {
+		if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 			t.Fatalf("%d renewed two days after a renewal", n)
 		}
 	})

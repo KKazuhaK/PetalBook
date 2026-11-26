@@ -9,5 +9,6 @@
   "account_changed",
   "password_set",
   "email_released",
-  "viewed_as"
+  "viewed_as",
+  "link_reauth"
 ]
