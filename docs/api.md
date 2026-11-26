@@ -786,7 +786,7 @@ how many. At most 100,000 rows or 90 days are kept.
 | `identity_linked`, `identity_unlinked` | an identity was attached or removed | `provider`, `by` (`user`, `email`, `admin`) |
 | `sessions_ended` | a site administrator ended a person's session or all of them | `by` (`admin`), `count` |
 | `passkey_added`, `passkey_removed` | a passkey was registered or deleted | `passkey`, `by` (`user`, `admin`) |
-| `security_changed` | `PUT /api/admin/security` changed something | `from`, `to`: the changed fields only, never a secret (a secret shows as `"changed"`) |
+| `secret_changed` | a secret of the site or of a tenant was set or cleared (see "Secrets") | `name`, `scope` (`site`, `tenant`), `change` (`set`, `cleared`); never the value. The captcha's secret and the mail password also write it, through their own forms, as `setting_changed` with `key` `captcha.secret` and `to` `"changed"`, and `mail_changed` |
 | `provider_created`, `provider_changed`, `provider_deleted` | a sign-in provider changed | `slug`, `kind`, the changed fields (secrets as `"changed"`) |
 | `user_changed` | an administrator changed `role`, `disabled`, `passkeyRequired`, `email` or `emailVerified` | the changed fields |
 | `token_created` | an API token was made (`POST /api/account/tokens`) | `token` (id), `name`, `access`, `spaces` (ids); never the secret |
@@ -2415,7 +2415,7 @@ The administrators' endpoints add `key_invalid`, `app_rejected`,
 
 ### A site policy for remotes (milestone 3.1)
 
-Reserved in 2.7, specified in "Server storage": `GET/PUT /api/admin/storage`
+Reserved in 2.7, specified in "Server storage": `GET /api/admin/storage` and the settings `storage.*`
 and `409 remote_required`. 2.7 already makes a space and its repository in one
 step that either succeeds whole or leaves no space, so 3.1 adds a check before
 step 1 and nothing else to that order.
@@ -2471,85 +2471,82 @@ from the working tree and the index exactly as now. Only reads of what is not
 on the server (an old version, an attachment not in the cache, any file of an
 evicted space) wait for the network.
 
-### `GET /api/admin/storage`, `PUT /api/admin/storage`
+### The storage policy and `GET /api/admin/storage`
 
-Site administrators only (3.3: the server's disk, its policy and its cache are
-the server's own, not a tenant's; a tenant administrator gets `403 forbidden`).
-In the administrators' web page these settings are the storage part of
-"存储与同步" (Storage & sync), above the connections (see "Connections").
+Site administrators write the policy; the server's disk, its policy and its
+cache are the server's own, not a tenant's. In the administrators' web page they
+are the storage part of "存储与同步" (Storage & sync), above the connections
+(see "Connections"). The policy is layered settings of the site, written with
+`PUT /api/admin/settings/{key}`; `PUT /api/admin/storage` is gone (`405`).
+
+| Key | Kind | Default |
+|---|---|---|
+| `storage.remotes.require` | text | `""` (none), `"any"` or the id of a provider |
+| `storage.remotes.scope` | choice | `new` (or `all`) |
+| `storage.remotes.graceDays` | limit | 30 (0–365) |
+| `storage.hosts` | list | the hosts of `--remote-host`, else `github.com`, `gitlab.com`, `codeberg.org`, `bitbucket.org` |
+| `storage.localSpaces.maxBytes` | limit or null | `null` (else at least 1 MiB) |
+| `cache.partial` | boolean | `true` where Git can |
+| `cache.evictAfterDays` | limit or null | 14 (1–365) |
+| `cache.minIdleHours` | limit | 24 (1–720) |
+| `cache.clonesBytes` | limit or null | `null` (else at least 1 GiB) |
+| `cache.minFreeBytes` | limit or null | 10 GiB (at least 0) |
+| `cache.assetsBytes` | limit | 5 GiB (at least 64 MiB) |
+
+They apply to the next request, without a restart. `400 invalid` for a value
+outside its range. All are server-wide for now (the requirement is worked out
+over every space at once); a tenant's own tightening of it is later work.
+
+`GET /api/admin/storage` keeps what is not a setting:
 
 ```json
-{"remotes": {"require": "github", "scope": "all", "graceDays": 30, "since": "2026-12-01T00:00:00Z"},
- "hosts": {"allowed": ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"], "fromFlag": false},
- "localSpaces": {"maxBytes": 524288000},
- "cache": {"partial": true, "evictAfterDays": 14, "minIdleHours": 24,
-           "clonesBytes": null, "minFreeBytes": 10737418240, "assetsBytes": 5368709120},
+{"remotes": {"since": "2026-12-01T00:00:00Z"},
  "git": {"version": "2.53.0", "partialClone": true},
- "affected": {"inGrace": 3, "overdue": 0, "exempt": 1}}
+ "affected": {"inGrace": 3, "overdue": 0, "exempt": 1},
+ "summary": { … }}
 ```
 
-`PUT` takes any of `remotes`, `hosts`, `localSpaces` and `cache`,
-each partly (what it leaves out stays), and answers as `GET`; `git` and
-`affected` are read only. The settings are in the state database and apply to
-the next request, without a restart. `400 invalid` for a value outside its
-range.
+(`summary`, below, is as before; `git.version` is for site administrators
+only.) A write of `storage.remotes.require` or `.scope` answers the setting
+with `remotes: {"InGrace": 3, "Overdue": 0, "Exempt": 1}` besides: how many
+spaces the requirement now asks something of.
 
-- `remotes.require`: `null` (no requirement, the default), `"any"` (a space
-  must follow a remote on an allowed host) or the id of a provider, such as
-  `"github"` (a repository on that platform with a `connection` credential
+- `storage.remotes.require`: `""` (no requirement, the default), `"any"` (a
+  space must follow a remote on an allowed host) or the id of a provider, such
+  as `"github"` (a repository on that platform with a `connection` credential
   through it, see "Connections"; `409 provider_not_configured`, with
   `provider`, while the provider is not set up; `"git"` is `400 invalid`,
   `"any"` is what takes a plain address).
-- `remotes.scope`: `"new"` (spaces made from now on; the default) or `"all"`.
-- `remotes.graceDays`: 0 to 365, default 30. How long an existing space has to
-  meet a requirement that `scope: "all"` puts on it. `since` is when the
-  requirement took its present form (`require` or `scope` changed), set by the
-  server; a space's deadline is `since + graceDays` (below).
-- `hosts.allowed`: the hosts a remote may be on, what `--remote-host` sets
-  today (`"*"` allows any). When the server was started with `--remote-host`,
-  the flag wins: `fromFlag` is `true` and a `PUT` of `hosts` answers
+- `storage.remotes.scope`: `"new"` (spaces made from now on; the default) or
+  `"all"`.
+- `storage.remotes.graceDays`: how long an existing space has to meet a
+  requirement that `scope: "all"` puts on it. `since` (in `GET`, a record of the
+  server, never a setting) is when the requirement took its present form
+  (`require` or `scope` changed): the server sets it in the transaction of the
+  write; a space's deadline is `since + graceDays` (below).
+- `storage.hosts`: the hosts a remote may be on, what `--remote-host` sets
+  (`"*"` allows any). When the server was started with `--remote-host`, the flag
+  wins: the setting's site view has `fromFlag: true` and a write answers
   `409 conflict`. A connection's provider is held to the same list (its host,
   as 2.7b checks `--remote-host`): a provider whose host is not allowed cannot
   be used to connect or make a space.
-- `localSpaces.maxBytes`: `null` (no limit, the default) or at least 1 MiB.
-  See "A limit on local spaces".
+- `storage.localSpaces.maxBytes`: see "A limit on local spaces".
 - `cache.partial`: whether spaces that follow a remote are cloned partially
-  (default `true` when `git.partialClone` is, see "Partial clones").
-- `cache.evictAfterDays`: 1 to 365, or `null` for never; default 14. A space
-  not used for that long is evicted.
-- `cache.minIdleHours`: 1 to 720, default 24. A space used more recently than
-  this is never evicted, also when the disk is short (no space is fetched and
-  dropped over and over).
-- `cache.clonesBytes`: `null` (no budget, the default) or at least 1 GiB: the
-  most that the clones of spaces that follow a remote may take together.
-- `cache.minFreeBytes`: `null` or at least 0; default 10 GiB. When the disk of
-  the data directory has less room than this, spaces are evicted as for an
-  exceeded budget.
-- `cache.assetsBytes`: at least 64 MiB, default 5 GiB: the attachment cache,
-  shared by all spaces with an attachment repository.
+  (see "Partial clones"). `git.partialClone` is `false` when Git is older than
+  2.44 (it cannot refuse to fetch on its own); then a write of `true` answers
+  `409 conflict` and the value in force is `false`. Eviction works with any Git.
+- `cache.evictAfterDays`: `null` for never. A space not used for that long is
+  evicted. `cache.minIdleHours`: a space used more recently than this is never
+  evicted, also when the disk is short (no space is fetched and dropped over and
+  over). `cache.clonesBytes`: the most that the clones of spaces that follow a
+  remote may take together. `cache.minFreeBytes`: when the disk of the data
+  directory has less room than this, spaces are evicted as for an exceeded
+  budget. `cache.assetsBytes`: the attachment cache, shared by all spaces with an
+  attachment repository.
 - Where a new space's attachments go is not here: it is the layered setting
-  `storage.assets` (see "Where attachments go"), which had been `assets.newSpaces`
-  in this record.
-- `git.version` is the Git the server runs; `git.partialClone` is `false` when
-  it is older than 2.44 (it cannot refuse to fetch on its own, see "Partial
-  clones"). Then `cache.partial` is `false` and a `PUT` of `true` answers
-  `409 conflict`. Eviction works with any Git.
+  `storage.assets` (see "Where attachments go").
 - `affected` counts the spaces the policy now asks something of: in their grace
   period, past their deadline, and exempted.
-
-**Layers.** These settings are the site's, stored as one record of the state
-database and not in 3.3's layered settings (`GET /api/admin/settings`
-does not list them). Following "the layering of settings and locks", each has
-a default and says whether lower layers may change it; in 3.1 every one of
-them is locked at the site: they decide how the server uses its own disk and
-whom it trusts, and a space's settings live in `space.yml`, which anyone who
-can push to its remote can change. The tenant layer is reserved (see
-"Tenants, registration and mail"): a tenant's administrators will be able to
-make `remotes.require`, `remotes.graceDays` and `localSpaces.maxBytes`
-stricter (require a remote, a provider rather than `"any"`, a shorter grace
-period, a smaller limit) and never looser. The two per-space values below
-(pinned, exempt) are records of the state database, not settings of the
-space.
 
 ### Requiring a remote
 
@@ -4423,20 +4420,25 @@ browsers never do (a key stays on the server, an interface is asked once a
 period however many people look, everybody sees the same text, and the
 protection of the network is in one place).
 
-#### `GET /api/admin/daily`, `PUT /api/admin/daily`
+#### `GET /api/admin/daily`
 
 ```json
-{"default": {"kind": "space", "space": "01JD3K8Q7Z", "source": {"folder": "文案", "zh-Hans": {"tag": "诗"}}},
- "allow": {"own": true, "api": true},
- "languages": ["zh-Hans", "en"],
+{"knownLanguages": [ /* below */ ],
  "apis": [ /* interfaces, below */ ],
  "providers": [ /* built-in interfaces, below */ ],
  "lines": {"total": 6, "byLang": {"zh-Hans": 3, "en": 2, "": 1}, "max": 5000}}
 ```
 
-`PUT` takes any of `default`, `languages` and `allow` (what it leaves out stays;
-any other key is `400 invalid`) and answers as `GET`; `lines`, `apis` and
-`providers` are read-only here.
+The interfaces, the providers and the lines only. The default, the languages and
+what spaces may do are layered settings of the site: `daily.default`,
+`daily.languages`, `daily.own` and `daily.api`, written with
+`PUT /api/admin/settings/{key}` (the value of each is what the field below
+describes, `daily.own` and `daily.api` being `allow.own` and `allow.api`);
+`PUT /api/admin/daily` is gone (`405`). The record of the daily text in the
+state database holds the interfaces and the built-in providers' state, and none
+of these. `daily.default` and `daily.languages` are checked by the daily text's
+code, with its error codes (`bad_language` and the others below), before the
+write.
 
 - `default` is `null`, `{"kind": "list"}` (the lines below),
   `{"kind": "sources", "sources": {"": [ … ], "zh": [ … ]}}`, a list of sources
@@ -4576,7 +4578,7 @@ second line only.
   be chosen by spaces and is used.
 
 `PUT` makes the interface or replaces it, and answers as
-`GET /api/admin/daily`. Changes of the settings (these, `PUT /api/admin/daily`
+`GET /api/admin/daily`. Changes of the settings (these
 and `DELETE`) are made one at a time, in a transaction that holds the
 settings: two administrators saving at once both keep their change. `DELETE` removes it and
 answers the same; `404` for an id that is not there. `400 invalid` for anything
@@ -6484,7 +6486,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer), `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer, which holds machine access, tenancy, the sign-in and storage policy), `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -6495,14 +6497,22 @@ From 3.5 and 3.6 this table is replaced by the one in "Tenant autonomy"
 `GET /api/session` returns the user with these fields; the web app shows the
 site-only pages of `/admin` to site administrators only.
 
-### `GET /api/admin/tenancy`, `PUT /api/admin/tenancy`
+### Tenancy: the setting `features.tenancy`
 
-Site administrators. `{"enabled": false, "tenants": 1}`. `enabled` (default
-`false`) is whether tenants other than the default one may be made. `PUT`
-takes `{"enabled": true}`; `tenants` is read only. Switching it off does not
-touch tenants that exist: they keep working, and no new one can be made.
+`features.tenancy` (boolean, default `false`, site only: whether tenants other
+than the default one exist is the server's) is written with
+`PUT /api/admin/settings/features.tenancy` (site administrators; see "Settings
+by layer"). It is read from the settings' cache: a request that makes or lists
+tenants costs no query for it. Switching it off does not touch tenants that
+exist: they keep working, and no new one can be made (`409 tenants_off`).
+`GET /api/admin/tenancy` and `PUT /api/admin/tenancy` are gone (`404`); the
+number of tenants is `count` on the list below.
 
 ### `GET /api/admin/tenants?q={text}&cursor={cursor}&limit={n}`
+
+The answer is `{"items": […], "next": "…", "count": 2}`: `count` is how many
+tenants the server has, the default one included (it was `tenants` of
+`/api/admin/tenancy`).
 
 Site administrators. `{"items": [Tenant], "next": "…"}`, the default tenant
 first, then by name; `q` keeps names or slugs containing it (ignoring case, as
@@ -6624,8 +6634,8 @@ The settings of 3.3 (others join this table as they are made):
   with. The person layer is a site or tenant administrator's override on the
   user (`PATCH /api/users/{id}` with `quota`), not something people set for
   themselves.
-- **Reserved for 3.1** (merged; its settings are still the site's own record,
-  `GET`/`PUT /api/admin/storage`, and not in this table yet):
+- **Reserved for 3.1** (merged; its settings are now `storage.remotes.*`,
+  `storage.localSpaces.maxBytes`, `storage.hosts` and `cache.*`, see "The storage policy"):
   `storage.remotes.require` (choice, ordered `null` < `any` < a provider's id,
   2.7b), `storage.remotes.graceDays` and `storage.localSpaces.maxBytes`
   (limits) join with layers site and tenant, and the site's `lower` defaults
@@ -6881,6 +6891,47 @@ which addresses), and a personal space, as for an invite. Refusals:
 address); `403 registration_closed` when registration was closed since (pending
 registrations are not honoured after closing); `409 exists` when the username
 was taken in between by an administrator. `registered` goes to the audit log.
+
+### Secrets
+
+One table, `secrets`, holds every secret the server keeps for the site and for
+each tenant, sealed with the server's key (`secret.key`) and bound to its scope
+and name: the GitHub App's private key, client secret and webhook secret
+(`github.appKey`, `github.clientSecret`, `github.webhookSecret`), the mail
+password (`mail.password`), the captcha provider's secret (`captcha.secret`),
+and what a tenant's own sender, sign-in and App will need. It is in the state
+database, so a backup or a move of it carries them. Settings hold policy only: no
+read of a setting can return a secret.
+
+**Write-only.** An answer says whether a secret is set and when it changed,
+never its value; the value goes only to the code that uses it. Nothing logs it
+and no audit row holds it (`secret_changed` has the name and `set` or `cleared`).
+
+A site administrator manages the site's; a tenant administrator only their own
+tenant's, and only those the site allows the tenant: `mail.password` needs the
+feature `mail.ownSender` for the tenant, else `403 feature_off` (with `feature`);
+the others are the site's alone for now (`404 not_found` for a tenant).
+
+#### `GET /api/admin/secrets`, `GET /api/admin/tenants/{tenant}/secrets`
+
+`{"secrets": [{"name": "mail.password", "set": true, "updatedAt": "2026-11-26T08:00:00Z"}]}`
+for the names the scope may hold (`updatedAt` absent while not set). The site's
+needs `site.settings.manage`, a tenant's `tenant.settings.read` in that tenant
+(a site administrator in any; another tenant's is `404`).
+
+#### `PUT /api/admin/secrets/{name}`, `PUT /api/admin/tenants/{tenant}/secrets/{name}`
+
+Takes `{"value": "…"}` (not empty, at most 16 KiB) and answers the list as `GET`.
+The GitHub App's secrets answer `409 conflict`: they are changed with the
+connection (`/api/admin/connections/github`), which checks them with GitHub. The
+mail password and the captcha secret are also written by their own forms
+(`PUT /api/admin/mail` `password`, `PUT /api/admin/security`
+`captcha.secret`).
+
+#### `DELETE /api/admin/secrets/{name}`, `DELETE /api/admin/tenants/{tenant}/secrets/{name}`
+
+Clears it (`200`, with the list; also when there was none). A tenant may clear
+what it left when the site took the feature away.
 
 ### Email verification
 
@@ -7218,7 +7269,7 @@ before the milestone is released.
 ### What the first part of 3.3 does and does not do
 
 Done: the tenant model, `siteAdmin` and `tenant` on the User, data isolation, the
-administrator split, `/api/admin/tenancy`, the tenants, layered settings with
+administrator split, the tenancy switch (`features.tenancy`), the tenants, layered settings with
 locks (`/api/admin/settings`, the tenants' settings, `GET /api/settings`), the
 daily text's switches and default on that mechanism, and a provider's `tenant`.
 
@@ -7514,7 +7565,7 @@ most 200, by `lastUsed`).
 - **`grace_spaces` and `overdue_spaces` are not kept by difference.** They change
   with the clock and with the policy, not only with a write, so one grouped
   query over the spaces that lack what is required sets them: every hour, when
-  `PUT /api/admin/storage` changes the policy, and with the daily recount. They
+  a write of `storage.remotes.*` changes the policy, and with the daily recount. They
   can be an hour behind the clock; the filters `deadline=grace|overdue` of the
   list of spaces compute from the policy and `created` at the time of the
   request and are not behind.
@@ -8301,7 +8352,7 @@ set up).
 
 #### Settings: `storage.siteBudget`, `storage.advanced`
 
-Set through `PUT /api/admin/storage` (site administrators), which takes
+Reserved: the storage policy is layered settings now, and these would be too, as the site's settings, where they would take
 `storage.siteBudget` (optional) and an optional `storage.advanced` object;
 fields left out keep their values, `null` restores a field's default.
 
@@ -9712,11 +9763,12 @@ own organisation**.
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
 | `GET /api/admin/audit/download` | their tenant's rows, with `data.auditDownload` | every row |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/access`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `PUT /api/admin/storage`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `PUT /api/admin/storage`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
 
-`/api/admin/access` and `/api/admin/security` remain the site's layer; the
-tenant's layer of the same switches is `…/tenants/{tenant}/settings` and
-`…/security`.
+The machine-access switches are the settings `features.tokens` and
+`features.mcp`: the site's layer is `/api/admin/settings`, the tenant's
+`…/tenants/{tenant}/settings`. `/api/admin/security` keeps the captcha's keys
+and what the sign-in policy means now.
 
 ### Permission keys
 
@@ -10678,55 +10730,73 @@ Milestone 3.1 adds `storage` (see "Server storage").
 
 ### Security settings
 
-The 安全 page of `/admin`. The settings are in the state database. The server
-reads them once and keeps them in memory: a `PUT` takes effect at the next
-request, without a restart, and a change made by the command-line tool
-(`petalbook security reset`) within `CacheTTL` (5 minutes; one small query of a
-revision number, not one per request).
+The 安全 page of `/admin`. The sign-in policy is layered settings of the site,
+the same for every tenant (the sign-in page comes before any tenant is known),
+written with `PUT /api/admin/settings/{key}` and read with
+`GET /api/admin/settings`:
+
+| Key | Kind | Default | |
+|---|---|---|---|
+| `signin.mode` | choice | `dual` | `dual`, `sso_first`, `sso_redirect` or `local_only` |
+| `signin.ssoOnly` | boolean | `false` | refuse password and passkey sign-in for everyone who is not an administrator |
+| `features.passkeys` | boolean | `true` | passkeys on for the whole server |
+| `signin.passkeyRoles` | list | `[]` | the roles a passkey is required of: `admin`, `member` |
+| `captcha.provider` | choice | `image` | `image`, `turnstile`, `recaptcha` or `hcaptcha` |
+| `captcha.contexts` | document | all off | `{"login", "invite", "setup", "forgot", "register": {"on", "when": "always"\|"after_failures", "failures": 1–100}}`; a partial document is merged over the current one, and the answer is the whole |
+| `signin.lockout.enabled`, `.minutes`, `.scope` | boolean, 1–10080, choice | `false`, 15, `ip_account` | `ip_account`, `ip` or `account` |
+| `signin.perMinute`, `signin.maxFailures`, `signin.windowMinutes` | limits | 10, 10, 15 | as in "Rate limit, failure caps and lockout" |
+| `sessions.idleDays`, `sessions.maxDays` | limits | 30, 90 (the `--session-*` flags) | 1–365 and 1–3650, `maxDays` at least `idleDays` |
+
+The server works the policy out from them once for each set of their values (a
+request costs one atomic load and the settings' cache), so a write applies to
+the next request. A change by another process (`petalbook security reset`, a
+standby server) is seen through the settings' revision, read at most once every
+60 seconds on a request.
+
+The checks that look at more than one value are the settings' own, and refuse
+the write that breaks them (`400` unless stated):
+
+| `error` | When |
+|---|---|
+| `local_admin_required` | `signin.ssoOnly` to `true`, or `signin.mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while it is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
+| `sso_only_with_registration` | `signin.ssoOnly` to `true` while any tenant's registration is open in effect (see "Registration") |
+| `captcha_site_key_required` | a context switched on with a third-party provider and no site key, or a change of provider while a context is on (the keys belong to the provider: a new provider has none) |
+| `captcha_secret_required` | a context switched on with a third-party provider and no secret |
+| `captcha_needs_public_url` | a third-party provider without `--public-url` (its host name is what the answer is checked against) |
+| `passkey_unavailable` | `signin.passkeyRoles` not empty, or `features.passkeys` on again with requirements, while passkeys cannot work (no suitable public URL) |
+| `passkey_requirement_unsatisfiable` | `features.passkeys` off while passkeys are required of someone (lift the requirements first) |
+| `invalid` | a role, a mode, a context or a number that is none, or out of range (never clamped) |
+
+Every write is one `setting_changed` row of the audit log. (`security_changed`
+is gone.)
 
 #### `GET /api/admin/security`
 
+What the policy means now, and the captcha's keys; nothing of the policy itself:
+
 ```json
 {
-  "login": {"mode": "dual", "effectiveMode": "dual", "ssoOnly": false, "ssoOnlyInEffect": false, "ssoAvailable": true},
-  "passkeys": {"enabled": true, "available": true, "requireRoles": [], "required": 2, "requiredWithout": 1},
-  "captcha": {
-    "provider": "image", "siteKey": "", "hasSecret": false,
-    "contexts": {
-      "login":  {"on": false, "when": "after_failures", "failures": 3},
-      "invite": {"on": false, "when": "after_failures", "failures": 3},
-      "setup":  {"on": false, "when": "after_failures", "failures": 3}
-    }
-  },
-  "lockout": {"enabled": false, "minutes": 15, "scope": "ip_account"},
-  "limits": {"perMinute": 10, "maxFailures": 10, "windowMinutes": 15, "sessionIdleDays": 30, "sessionMaxDays": 90},
+  "login": {"effectiveMode": "dual", "ssoOnlyInEffect": false, "ssoAvailable": true},
+  "passkeys": {"available": true, "required": 2, "requiredWithout": 1},
+  "captcha": {"siteKey": "", "hasSecret": false},
   "passwordAdmins": 1,
   "notices": []
 }
 ```
 
-- `login.mode` is what is stored; `effectiveMode` what the sign-in page uses
-  (`local_only` with no enabled provider: the page says so, and the choice is
-  kept for when one is added). `ssoAvailable`: some provider is enabled.
-- `login.ssoOnly`: refuse password and passkey sign-in for everyone who is not
-  an administrator (`403 local_login_refused`, checked after the password, so
-  it tells nothing to someone who does not know it). Administrators are never
-  refused: when the identity provider breaks, they can still sign in and fix
-  it. `ssoOnlyInEffect` is `false` while the page offers no provider
-  (`effectiveMode` is `local_only`): refusing passwords then would leave people
-  a form that always fails and nothing else.
-- `passkeys.enabled` (default `true`) switches passkeys on for the whole
-  server; `available` is whether they can work (see "Passkeys"). `requireRoles`
-  is `[]`, `["admin"]` or `["admin", "member"]`. `required` counts the people a
-  passkey is required of (by role or by themselves), `requiredWithout` those of
-  them who have none yet and will be held at their next sign-in.
-- `captcha.provider` is `image`, `turnstile`, `recaptcha` or `hcaptcha`.
-  `siteKey` is public (it goes into the page). The secret is never returned:
-  `hasSecret` says whether one is stored. `contexts.*.when` is `always` or
-  `after_failures`; `failures` is 1 to 100.
-- `lockout` and `limits` as in "Rate limit, failure caps and lockout".
-  `sessionIdleDays` is 1 to 365, `sessionMaxDays` 1 to 3650 and at least
-  `sessionIdleDays`.
+- `effectiveMode` is what the sign-in page uses (`local_only` with no enabled
+  provider: the page says so, and the choice is kept for when one is added).
+  `ssoAvailable`: some provider is enabled. `ssoOnlyInEffect` is `false` while
+  the page offers no provider: refusing passwords then would leave people a form
+  that always fails and nothing else. Administrators are never refused by
+  `ssoOnly` (`403 local_login_refused` for everyone else, checked after the
+  password): when the identity provider breaks, they can still sign in.
+- `passkeys.available` is whether passkeys can work (see "Passkeys"); `required`
+  counts the people a passkey is required of (by role or by themselves),
+  `requiredWithout` those of them who have none yet and will be held at their
+  next sign-in.
+- `captcha.siteKey` is public (it goes into the page). The secret is never
+  returned: `hasSecret` says whether one is stored.
 - `passwordAdmins` counts the enabled administrators with a password: the ones
   who can still sign in if every provider fails.
 - `notices`: things the administrators should know, each `{"code", "message"}`:
@@ -10736,25 +10806,13 @@ revision number, not one per request).
 
 #### `PUT /api/admin/security`
 
-Takes any of the blocks `login`, `passkeys`, `captcha`, `lockout`, `limits`,
-and within a block any of its fields; what is left out stays. A secret is
-`captcha.secret`: absent keeps the stored one, `""` clears it. Everything sent
-is checked before anything is stored, so a refusal changes nothing. A value out
-of range is refused, never clamped. `200` with the settings as `GET` answers,
-and one `security_changed` row in the audit log.
-
-Refusals (`400` unless stated):
-
-| `error` | When |
-|---|---|
-| `invalid` | an unknown field value: a mode, scope, provider, context or role that does not exist, or a number out of range (the message names the field) |
-| `local_admin_required` | `ssoOnly: true`, or a `mode` other than `local_only` while `ssoOnly` is on and the stored mode is `local_only`, while no enabled administrator has a password. Creating or enabling a provider while `ssoOnly` is on is refused the same way, and while `ssoOnly` is stored (in effect or not) the last enabled administrator with a password cannot be made a member or disabled (`409 conflict`) |
-| `sso_only_with_registration` | `ssoOnly: true` while any tenant's registration is open in effect (from 3.3; see "Registration") |
-| `captcha_site_key_required` | a third-party provider with a context switched on and no `siteKey` |
-| `captcha_secret_required` | a third-party provider with a context switched on and no secret; a secret stored for another provider does not count, so changing provider needs the new secret in the same request |
-| `captcha_needs_public_url` | a third-party provider without `--public-url` (its host name is what the answer is checked against) |
-| `passkey_unavailable` | `requireRoles` not empty, or `passkeys.enabled: true` with requirements, while passkeys cannot work (no suitable public URL) |
-| `passkey_requirement_unsatisfiable` | `passkeys.enabled: false` while passkeys are required of someone (lift the requirements first) |
+Takes `{"captcha": {"siteKey": "…", "secret": "…"}}` and nothing else (`400
+invalid`): the part of the sign-in policy that is not a setting. The site key is
+a record of the server; the secret is the secret `captcha.secret` (see
+"Secrets"), absent keeps the stored one and `""` clears it. `400
+invalid` while the provider is `image`, which has no keys. `captcha_secret_required`
+and `captcha_site_key_required` when a context is on and the change would leave
+none. A change of `captcha.provider` clears both. `200` with the view as `GET`.
 
 ### Sign-in providers
 
@@ -10966,28 +11024,36 @@ The audit log (see "Audit log" under "Signing in"), newest first:
 
 The command-line rescue for settings that keep everyone out: sets the login
 mode to `dual`, `ssoOnly` off, lockout off, every captcha context off and
-`passkeys.requireRoles` to `[]`. Providers, people and per-person
+`passkeys.requireRoles` to `[]`: it writes the rows of `signin.ssoOnly`,
+`signin.mode`, `signin.lockout.enabled`, `captcha.contexts` and
+`signin.passkeyRoles`, and nothing else. Providers, people and per-person
 requirements are untouched (`petalbook user passwd` sets a password). A
-running server sees it within 5 minutes; it is recorded in the audit log with
-`actor` `null` and `detail.by` `"cli"`.
+running server sees it within 60 seconds (the settings' revision); it is
+recorded in the audit log as `setting_changed` with `actor` `null` and
+`detail.by` `"cli"`.
 
 ### Machine access
 
-#### `GET /api/admin/access`, `PUT /api/admin/access`
+#### The settings `features.tokens` and `features.mcp`
 
-```json
-{"tokens": true, "mcp": true, "oauth": true}
-```
+Two booleans, on by default, with a site layer and a tenant layer
+(`PUT /api/admin/settings/{key}` for the site's,
+`PUT /api/admin/tenants/{tenant}/settings/{key}` for a tenant's, which a site
+rule or lock can force: "Settings by layer"). `GET /api/admin/access` and `PUT
+/api/admin/access` are gone (`404`).
 
-`tokens`: API tokens are accepted (off: every API token answers
-`403 tokens_off`; nothing is deleted, and turning it on again brings them back).
-OAuth grants are not API tokens: they keep working on `/mcp` until `mcp` is
-switched off. `mcp`: `/mcp`
-and the OAuth endpoints are served (off: `404`; grants are kept). Both are on
-by default. `oauth` is read only: whether the authorization server is there,
-which needs `mcp` and `--public-url`. `PUT` takes `tokens` and `mcp`, each
-optional, and answers the same object; the change applies to the next request.
-Kept in the state database.
+`features.tokens`: API tokens of the people of the tenant are accepted (off:
+every API token of the tenant answers `403 tokens_off`; nothing is deleted, and
+turning it on again brings them back). It is known once the token's owner is,
+so an unknown token is `401 token_invalid` whatever the settings say. OAuth
+grants are not API tokens: they keep working on `/mcp` until `features.mcp` is
+switched off for the tenant.
+
+`features.mcp`: `/mcp` is served to the tenant's people (off: `404 not_found`
+after the credential is read; grants are kept). The authorization server's own
+endpoints (`/.well-known/…`, `/oauth/…`) answer `404` while the site's own value
+is off. Both are read from the settings' cache, so no request costs a query for
+them.
 
 #### `GET /api/admin/tokens?user={id}&cursor={cursor}&limit={n}`
 
