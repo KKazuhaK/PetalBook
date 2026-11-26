@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/perm"
@@ -22,6 +23,13 @@ type access struct {
 	// orSelf waives need for a caller acting on themselves: when the {user} of
 	// the path is the caller, being a member is enough (anyone may leave).
 	orSelf bool
+	// memberOnly: a space route that an administrator who is not a member of
+	// the space never reaches, whatever keys they hold (its remote: pointing
+	// it elsewhere is taking the space over, which is its own audited
+	// endpoint, POST /api/admin/spaces/{space}/takeover).
+	memberOnly bool
+	// key is what a route outside spaces asks of the caller (kindKey).
+	key authz.Key
 }
 
 type kind int
@@ -29,8 +37,7 @@ type kind int
 const (
 	kindPublic kind = iota + 1
 	kindSignedIn
-	kindAdmin
-	kindSiteAdmin
+	kindKey
 	kindSpace
 )
 
@@ -39,13 +46,25 @@ var (
 	public = access{kind: kindPublic}
 	// signedIn needs a session.
 	signedIn = access{kind: kindSignedIn}
-	// admin needs a session of an administrator of a tenant (or of the server):
-	// what it shows and changes is the caller's tenant's (see adminScope).
-	admin = access{kind: kindAdmin}
-	// siteAdmin needs a session of an administrator of the whole server: the
-	// server's own settings and the tenants themselves.
-	siteAdmin = access{kind: kindSiteAdmin}
 )
+
+// needs is a route outside spaces that asks for a permission key: a site key
+// of the server's own things, or a tenant key, which is checked in the
+// caller's own tenant (what the route shows and changes is that tenant's, see
+// adminScope; a site administrator holds every tenant key in every tenant).
+func needs(k authz.Key) access {
+	if k.Scope() == authz.ScopeSpace {
+		panic("api: a space key is asked by inSpace, not needs")
+	}
+	return access{kind: kindKey, key: k}
+}
+
+// inSpaceMembers is inSpace for a member of the space only (see memberOnly).
+func inSpaceMembers(need perm.Perm) access {
+	a := inSpace(need)
+	a.memberOnly = true
+	return a
+}
 
 // inSpaceOrSelf is inSpace, except that the caller may do it to themselves.
 func inSpaceOrSelf(need perm.Perm) access {
@@ -145,102 +164,104 @@ var routeTable = []route{
 	{"GET", "/api/groups", signedIn, true, false, false, (*server).findGroups},
 	{"GET", "/api/settings", signedIn, true, false, false, (*server).mySettings},
 
-	{"GET", "/api/users", admin, true, false, false, (*server).listUsers},
-	{"GET", "/api/users/{id}", admin, true, false, false, (*server).getUser},
-	{"PATCH", "/api/users/{id}", admin, true, false, false, (*server).patchUser},
-	{"GET", "/api/users/{id}/memberships", admin, true, false, false, (*server).userMemberships},
+	{"GET", "/api/users", needs(authz.TenantUsersRead), true, false, false, (*server).listUsers},
+	{"GET", "/api/users/{id}", needs(authz.TenantUsersRead), true, false, false, (*server).getUser},
+	{"PATCH", "/api/users/{id}", needs(authz.TenantUsersManage), true, false, false, (*server).patchUser},
+	{"GET", "/api/users/{id}/memberships", needs(authz.TenantUsersRead), true, false, false, (*server).userMemberships},
 	// The sessions and connected accounts of a person are for administrators of the whole server (a tenant's administrator is answered 404).
-	{"GET", "/api/users/{id}/sessions", admin, true, false, false, (*server).userSessions},
-	{"DELETE", "/api/users/{id}/sessions", admin, true, false, false, (*server).endUserSessions},
-	{"DELETE", "/api/users/{id}/sessions/{session}", admin, true, false, false, (*server).endUserSession},
-	{"GET", "/api/users/{id}/identities", admin, true, false, false, (*server).userIdentities},
-	{"DELETE", "/api/users/{id}/identities/{identity}", admin, true, false, false, (*server).disconnectUserIdentity},
-	{"DELETE", "/api/users/{id}", admin, true, false, false, (*server).adminDeleteUser},
-	{"POST", "/api/invites", admin, true, false, false, (*server).createInvite},
-	{"GET", "/api/invites", admin, true, false, false, (*server).listInvites},
-	{"DELETE", "/api/invites/{id}", admin, true, false, false, (*server).deleteInvite},
+	{"GET", "/api/users/{id}/sessions", needs(authz.TenantUsersRead), true, false, false, (*server).userSessions},
+	{"DELETE", "/api/users/{id}/sessions", needs(authz.TenantUsersManage), true, false, false, (*server).endUserSessions},
+	{"DELETE", "/api/users/{id}/sessions/{session}", needs(authz.TenantUsersManage), true, false, false, (*server).endUserSession},
+	{"GET", "/api/users/{id}/identities", needs(authz.TenantUsersRead), true, false, false, (*server).userIdentities},
+	{"DELETE", "/api/users/{id}/identities/{identity}", needs(authz.TenantUsersManage), true, false, false, (*server).disconnectUserIdentity},
+	{"DELETE", "/api/users/{id}", needs(authz.TenantUsersDelete), true, false, false, (*server).adminDeleteUser},
+	{"POST", "/api/invites", needs(authz.TenantInvitesManage), true, false, false, (*server).createInvite},
+	{"GET", "/api/invites", needs(authz.TenantInvitesManage), true, false, false, (*server).listInvites},
+	{"DELETE", "/api/invites/{id}", needs(authz.TenantInvitesManage), true, false, false, (*server).deleteInvite},
 
-	{"GET", "/api/admin/usage", admin, true, false, false, (*server).adminUsage},
-	{"GET", "/api/admin/spaces", admin, true, false, false, (*server).adminListSpaces},
-	{"GET", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminGetSpace},
-	{"POST", "/api/admin/spaces/{space}/size", admin, true, false, false, (*server).adminResizeSpace},
-	{"PUT", "/api/admin/spaces/{space}/storage", siteAdmin, true, false, false, (*server).adminPutSpaceStorage},
-	{"POST", "/api/admin/spaces/{space}/evict", siteAdmin, true, false, false, (*server).adminEvictSpace},
-	{"GET", "/api/admin/storage", admin, true, false, false, (*server).adminGetStorage},
-	{"GET", "/api/admin/storage/people", admin, true, false, false, (*server).adminListPeople},
-	{"GET", "/api/admin/storage/people/{user}", admin, true, false, false, (*server).adminGetPerson},
-	{"PUT", "/api/admin/storage", siteAdmin, true, false, false, (*server).adminPutStorage},
-	{"POST", "/api/admin/spaces/{space}/transfer", admin, true, false, false, (*server).adminTransferSpace},
-	{"POST", "/api/admin/spaces/{space}/disable", admin, true, false, false, (*server).adminDisableSpace},
-	{"POST", "/api/admin/spaces/{space}/enable", admin, true, false, false, (*server).adminEnableSpace},
-	{"DELETE", "/api/admin/spaces/{space}", admin, true, false, false, (*server).adminDeleteSpace},
-	{"GET", "/api/admin/spaces/{space}/deletion", admin, true, false, false, (*server).adminSpaceDeletion},
-	{"POST", "/api/admin/spaces/{space}/view", admin, true, false, false, (*server).adminOpenView},
-	{"DELETE", "/api/admin/spaces/{space}/view", admin, true, false, false, (*server).adminEndView},
-	{"GET", "/api/admin/recycle", admin, true, false, false, (*server).adminListRecycle},
-	{"POST", "/api/admin/recycle/{item}/restore", admin, true, false, false, (*server).adminRestoreItem},
-	{"DELETE", "/api/admin/recycle/{item}", siteAdmin, true, false, false, (*server).adminPurgeItem},
-	{"POST", "/api/admin/confirm", admin, true, false, false, (*server).adminConfirm},
-	{"POST", "/api/admin/bulk", admin, true, false, false, (*server).adminBulk},
-	{"GET", "/api/admin/jobs/{id}", admin, true, false, false, (*server).adminGetJob},
-	{"GET", "/api/admin/users/{user}/deletion", admin, true, false, false, (*server).adminUserDeletion},
-	{"POST", "/api/admin/exports", admin, true, false, false, (*server).adminCreateExport},
-	{"GET", "/api/admin/exports", admin, true, false, false, (*server).adminListExports},
-	{"GET", "/api/admin/exports/{id}", admin, true, false, false, (*server).adminGetExport},
-	{"DELETE", "/api/admin/exports/{id}", admin, true, false, false, (*server).adminDeleteExport},
-	{"GET", "/api/admin/exports/{id}/download", admin, true, false, false, (*server).adminDownloadExport},
-	{"GET", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminGetDaily},
-	{"PUT", "/api/admin/daily", siteAdmin, true, false, false, (*server).adminPutDaily},
-	{"GET", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminGetDailyLines},
-	{"POST", "/api/admin/daily/lines/preview", siteAdmin, true, false, false, (*server).adminPreviewDailyLines},
-	{"PUT", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminPutDailyLines},
-	{"DELETE", "/api/admin/daily/lines", siteAdmin, true, false, false, (*server).adminDeleteDailyLines},
-	{"PUT", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminPutDailyAPI},
-	{"DELETE", "/api/admin/daily/apis/{id}", siteAdmin, true, false, false, (*server).adminDeleteDailyAPI},
-	{"PUT", "/api/admin/daily/providers/{id}", siteAdmin, true, false, false, (*server).adminPutDailyProvider},
-	{"POST", "/api/admin/daily/try", siteAdmin, true, false, false, (*server).adminTryDailyAPI},
-	{"GET", "/api/admin/connections", siteAdmin, true, false, false, (*server).adminListConnections},
-	{"POST", "/api/admin/connections", siteAdmin, true, false, false, (*server).adminCreateConnection},
-	{"GET", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminGetConnection},
-	{"PUT", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminPutConnection},
-	{"PATCH", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminPutConnection},
-	{"POST", "/api/admin/connections/{provider}/manifest", siteAdmin, true, false, false, (*server).adminConnectionManifest},
-	{"POST", "/api/admin/connections/{provider}/manifest/retry", siteAdmin, true, false, false, (*server).adminConnectionManifestRetry},
-	{"POST", "/api/admin/connections/{provider}/check", siteAdmin, true, false, false, (*server).adminCheckConnection},
-	{"DELETE", "/api/admin/connections/{provider}", siteAdmin, true, false, false, (*server).adminDeleteConnection},
-	{"GET", "/api/admin/connections/{provider}/installations", siteAdmin, true, false, false, (*server).adminConnectionInstallations},
-	{"PUT", "/api/admin/connections/{provider}/installations/{id}", siteAdmin, true, false, false, (*server).adminPutConnectionInstallation},
-	{"GET", "/api/admin/status", siteAdmin, true, false, false, (*server).adminStatus},
-	{"GET", "/api/admin/access", siteAdmin, true, false, false, (*server).adminGetAccess},
-	{"PUT", "/api/admin/access", siteAdmin, true, false, false, (*server).adminPutAccess},
-	{"GET", "/api/admin/groups", admin, true, false, false, (*server).adminListGroups},
-	{"POST", "/api/admin/groups", admin, true, false, false, (*server).adminCreateGroup},
-	{"GET", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminGetGroup},
-	{"PATCH", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminPatchGroup},
-	{"DELETE", "/api/admin/groups/{group}", admin, true, false, false, (*server).adminDeleteGroup},
-	{"GET", "/api/admin/groups/{group}/members", admin, true, false, false, (*server).adminGroupMembers},
-	{"POST", "/api/admin/groups/{group}/members", admin, true, false, false, (*server).adminAddGroupMembers},
-	{"DELETE", "/api/admin/groups/{group}/members/{user}", admin, true, false, false, (*server).adminRemoveGroupMember},
-	{"GET", "/api/admin/groups/{group}/spaces", admin, true, false, false, (*server).adminGroupSpaces},
-	{"GET", "/api/admin/tenancy", siteAdmin, true, false, false, (*server).adminGetTenancy},
-	{"PUT", "/api/admin/tenancy", siteAdmin, true, false, false, (*server).adminPutTenancy},
-	{"GET", "/api/admin/tenants", siteAdmin, true, false, false, (*server).adminListTenants},
-	{"POST", "/api/admin/tenants", siteAdmin, true, false, false, (*server).adminCreateTenant},
-	{"GET", "/api/admin/tenants/{tenant}", admin, true, false, false, (*server).adminGetTenant},
-	{"PATCH", "/api/admin/tenants/{tenant}", admin, true, false, false, (*server).adminPatchTenant},
-	{"DELETE", "/api/admin/tenants/{tenant}", siteAdmin, true, false, false, (*server).adminDeleteTenant},
-	{"GET", "/api/admin/tenants/{tenant}/settings", admin, true, false, false, (*server).adminGetTenantSettings},
-	{"PUT", "/api/admin/tenants/{tenant}/settings/{key}", admin, true, false, false, (*server).adminPutTenantSetting},
-	{"GET", "/api/admin/settings", siteAdmin, true, false, false, (*server).adminGetSettings},
-	{"PUT", "/api/admin/settings/{key}", siteAdmin, true, false, false, (*server).adminPutSetting},
-	{"GET", "/api/admin/tokens", admin, true, false, false, (*server).adminListTokens},
-	{"DELETE", "/api/admin/tokens/{id}", admin, true, false, false, (*server).adminRevokeToken},
-	{"GET", "/api/admin/grants", admin, true, false, false, (*server).adminListGrants},
-	{"DELETE", "/api/admin/grants/{id}", admin, true, false, false, (*server).adminRevokeGrant},
+	{"GET", "/api/admin/usage", needs(authz.TenantUsageRead), true, false, false, (*server).adminUsage},
+	{"GET", "/api/admin/spaces", needs(authz.TenantSpacesRead), true, false, false, (*server).adminListSpaces},
+	{"GET", "/api/admin/spaces/{space}", needs(authz.TenantSpacesRead), true, false, false, (*server).adminGetSpace},
+	{"POST", "/api/admin/spaces/{space}/size", needs(authz.TenantSpacesManage), true, false, false, (*server).adminResizeSpace},
+	{"PUT", "/api/admin/spaces/{space}/storage", needs(authz.SiteStorageManage), true, false, false, (*server).adminPutSpaceStorage},
+	{"POST", "/api/admin/spaces/{space}/evict", needs(authz.SiteStorageManage), true, false, false, (*server).adminEvictSpace},
+	{"GET", "/api/admin/storage", needs(authz.TenantStorageRead), true, false, false, (*server).adminGetStorage},
+	{"GET", "/api/admin/storage/people", needs(authz.TenantStorageRead), true, false, false, (*server).adminListPeople},
+	{"GET", "/api/admin/storage/people/{user}", needs(authz.TenantStorageRead), true, false, false, (*server).adminGetPerson},
+	{"PUT", "/api/admin/storage", needs(authz.SiteStorageManage), true, false, false, (*server).adminPutStorage},
+	{"POST", "/api/admin/spaces/{space}/transfer", needs(authz.TenantSpacesTakeover), true, false, false, (*server).adminTransferSpace},
+	{"POST", "/api/admin/spaces/{space}/takeover", needs(authz.TenantSpacesTakeover), true, false, false, (*server).adminTakeOverSpace},
+	{"POST", "/api/admin/spaces/{space}/disable", needs(authz.TenantSpacesManage), true, false, false, (*server).adminDisableSpace},
+	{"POST", "/api/admin/spaces/{space}/enable", needs(authz.TenantSpacesManage), true, false, false, (*server).adminEnableSpace},
+	{"DELETE", "/api/admin/spaces/{space}", needs(authz.TenantSpacesDelete), true, false, false, (*server).adminDeleteSpace},
+	{"GET", "/api/admin/spaces/{space}/deletion", needs(authz.TenantSpacesDelete), true, false, false, (*server).adminSpaceDeletion},
+	{"POST", "/api/admin/spaces/{space}/view", needs(authz.TenantDataView), true, false, false, (*server).adminOpenView},
+	{"DELETE", "/api/admin/spaces/{space}/view", needs(authz.TenantDataView), true, false, false, (*server).adminEndView},
+	{"GET", "/api/admin/recycle", needs(authz.TenantRecycleRead), true, false, false, (*server).adminListRecycle},
+	{"POST", "/api/admin/recycle/{item}/restore", needs(authz.TenantRecycleRestore), true, false, false, (*server).adminRestoreItem},
+	{"DELETE", "/api/admin/recycle/{item}", needs(authz.SiteRecyclePurge), true, false, false, (*server).adminPurgeItem},
+	{"POST", "/api/admin/confirm", needs(authz.TenantBulkRun), true, false, false, (*server).adminConfirm},
+	{"POST", "/api/admin/bulk", needs(authz.TenantBulkRun), true, false, false, (*server).adminBulk},
+	{"GET", "/api/admin/jobs/{id}", needs(authz.TenantBulkRun), true, false, false, (*server).adminGetJob},
+	{"GET", "/api/admin/users/{user}/deletion", needs(authz.TenantUsersDelete), true, false, false, (*server).adminUserDeletion},
+	{"POST", "/api/admin/exports", needs(authz.TenantDataExport), true, false, false, (*server).adminCreateExport},
+	{"GET", "/api/admin/exports", needs(authz.TenantDataExport), true, false, false, (*server).adminListExports},
+	{"GET", "/api/admin/exports/{id}", needs(authz.TenantDataExport), true, false, false, (*server).adminGetExport},
+	{"DELETE", "/api/admin/exports/{id}", needs(authz.TenantDataExport), true, false, false, (*server).adminDeleteExport},
+	{"GET", "/api/admin/exports/{id}/download", needs(authz.TenantDataExport), true, false, false, (*server).adminDownloadExport},
+	{"GET", "/api/admin/daily", needs(authz.SiteDailyManage), true, false, false, (*server).adminGetDaily},
+	{"PUT", "/api/admin/daily", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDaily},
+	{"GET", "/api/admin/daily/lines", needs(authz.SiteDailyManage), true, false, false, (*server).adminGetDailyLines},
+	{"POST", "/api/admin/daily/lines/preview", needs(authz.SiteDailyManage), true, false, false, (*server).adminPreviewDailyLines},
+	{"PUT", "/api/admin/daily/lines", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDailyLines},
+	{"DELETE", "/api/admin/daily/lines", needs(authz.SiteDailyManage), true, false, false, (*server).adminDeleteDailyLines},
+	{"PUT", "/api/admin/daily/apis/{id}", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDailyAPI},
+	{"DELETE", "/api/admin/daily/apis/{id}", needs(authz.SiteDailyManage), true, false, false, (*server).adminDeleteDailyAPI},
+	{"PUT", "/api/admin/daily/providers/{id}", needs(authz.SiteDailyManage), true, false, false, (*server).adminPutDailyProvider},
+	{"POST", "/api/admin/daily/try", needs(authz.SiteDailyManage), true, false, false, (*server).adminTryDailyAPI},
+	{"GET", "/api/admin/connections", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminListConnections},
+	{"POST", "/api/admin/connections", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminCreateConnection},
+	{"GET", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminGetConnection},
+	{"PUT", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminPutConnection},
+	{"PATCH", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminPutConnection},
+	{"POST", "/api/admin/connections/{provider}/manifest", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminConnectionManifest},
+	{"POST", "/api/admin/connections/{provider}/manifest/retry", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminConnectionManifestRetry},
+	{"POST", "/api/admin/connections/{provider}/check", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminCheckConnection},
+	{"DELETE", "/api/admin/connections/{provider}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminDeleteConnection},
+	{"GET", "/api/admin/connections/{provider}/installations", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminConnectionInstallations},
+	{"PUT", "/api/admin/connections/{provider}/installations/{id}", needs(authz.SiteConnectionsManage), true, false, false, (*server).adminPutConnectionInstallation},
+	{"GET", "/api/admin/status", needs(authz.SiteStatusRead), true, false, false, (*server).adminStatus},
+	{"GET", "/api/admin/access", needs(authz.SiteAccessManage), true, false, false, (*server).adminGetAccess},
+	{"PUT", "/api/admin/access", needs(authz.SiteAccessManage), true, false, false, (*server).adminPutAccess},
+	{"GET", "/api/admin/groups", needs(authz.TenantGroupsRead), true, false, false, (*server).adminListGroups},
+	{"POST", "/api/admin/groups", needs(authz.TenantGroupsManage), true, false, false, (*server).adminCreateGroup},
+	{"GET", "/api/admin/groups/{group}", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGetGroup},
+	{"PATCH", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminPatchGroup},
+	{"DELETE", "/api/admin/groups/{group}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminDeleteGroup},
+	{"GET", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGroupMembers},
+	{"POST", "/api/admin/groups/{group}/members", needs(authz.TenantGroupsManage), true, false, false, (*server).adminAddGroupMembers},
+	{"DELETE", "/api/admin/groups/{group}/members/{user}", needs(authz.TenantGroupsManage), true, false, false, (*server).adminRemoveGroupMember},
+	{"GET", "/api/admin/groups/{group}/spaces", needs(authz.TenantGroupsRead), true, false, false, (*server).adminGroupSpaces},
+	{"GET", "/api/admin/tenancy", needs(authz.SiteTenancyManage), true, false, false, (*server).adminGetTenancy},
+	{"PUT", "/api/admin/tenancy", needs(authz.SiteTenancyManage), true, false, false, (*server).adminPutTenancy},
+	{"GET", "/api/admin/tenants", needs(authz.SiteTenantsManage), true, false, false, (*server).adminListTenants},
+	{"POST", "/api/admin/tenants", needs(authz.SiteTenantsManage), true, false, false, (*server).adminCreateTenant},
+	{"GET", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsRead), true, false, false, (*server).adminGetTenant},
+	{"PATCH", "/api/admin/tenants/{tenant}", needs(authz.TenantSettingsWrite), true, false, false, (*server).adminPatchTenant},
+	{"DELETE", "/api/admin/tenants/{tenant}", needs(authz.SiteTenantsManage), true, false, false, (*server).adminDeleteTenant},
+	{"GET", "/api/admin/tenants/{tenant}/settings", needs(authz.TenantSettingsRead), true, false, false, (*server).adminGetTenantSettings},
+	{"PUT", "/api/admin/tenants/{tenant}/settings/{key}", needs(authz.TenantSettingsWrite), true, false, false, (*server).adminPutTenantSetting},
+	{"GET", "/api/admin/settings", needs(authz.SiteSettingsManage), true, false, false, (*server).adminGetSettings},
+	{"PUT", "/api/admin/settings/{key}", needs(authz.SiteSettingsManage), true, false, false, (*server).adminPutSetting},
+	{"GET", "/api/admin/tokens", needs(authz.TenantTokensRead), true, false, false, (*server).adminListTokens},
+	{"DELETE", "/api/admin/tokens/{id}", needs(authz.TenantTokensRevoke), true, false, false, (*server).adminRevokeToken},
+	{"GET", "/api/admin/grants", needs(authz.TenantTokensRead), true, false, false, (*server).adminListGrants},
+	{"GET", "/api/admin/permissions", needs(authz.TenantPermissionsRead), true, false, false, (*server).adminPermissions},
+	{"DELETE", "/api/admin/grants/{id}", needs(authz.TenantTokensRevoke), true, false, false, (*server).adminRevokeGrant},
 
 	{"GET", "/api/spaces", signedIn, false, false, false, (*server).listSpaces},
 	{"GET", "/api/sync/heads", signedIn, false, false, false, (*server).syncHeads},
-	{"POST", "/api/spaces", signedIn, true, false, false, (*server).createSpace},
+	{"POST", "/api/spaces", needs(authz.TenantSpacesCreate), true, false, false, (*server).createSpace},
 	{"PATCH", "/api/spaces/{space}", inSpace(perm.Manage), true, false, false, (*server).renameSpace},
 
 	{"GET", "/api/spaces/{space}/pages", inSpace(perm.Read), false, false, false, (*server).listPages},
@@ -319,28 +340,32 @@ var routeTable = []route{
 	{"DELETE", "/api/spaces/{space}/members/{user}", inSpaceOrSelf(perm.Members), true, false, false, (*server).removeMember},
 
 	{"GET", "/api/spaces/{space}/remote", inSpace(perm.Manage), true, false, false, (*server).getRemote},
-	{"POST", "/api/spaces/{space}/remote/key", inSpace(perm.Manage), true, false, false, (*server).remoteKey},
-	{"PUT", "/api/spaces/{space}/remote", inSpace(perm.Manage), true, false, false, (*server).putRemote},
-	{"DELETE", "/api/spaces/{space}/remote", inSpace(perm.Manage), true, false, false, (*server).deleteRemote},
+	{"POST", "/api/spaces/{space}/remote/key", inSpaceMembers(perm.Manage), true, false, false, (*server).remoteKey},
+	{"PUT", "/api/spaces/{space}/remote", inSpaceMembers(perm.Manage), true, false, false, (*server).putRemote},
+	{"DELETE", "/api/spaces/{space}/remote", inSpaceMembers(perm.Manage), true, false, false, (*server).deleteRemote},
 	{"POST", "/api/spaces/{space}/remote/sync", inSpace(perm.Manage), true, false, false, (*server).syncRemote},
-	{"POST", "/api/spaces/{space}/remote/accept", inSpace(perm.Manage), true, false, false, (*server).acceptRemote},
+	{"POST", "/api/spaces/{space}/remote/accept", inSpaceMembers(perm.Manage), true, false, false, (*server).acceptRemote},
 	{"GET", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).getAssetsRemote},
-	{"PUT", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).putAssetsRemote},
-	{"DELETE", "/api/spaces/{space}/remote/assets", inSpace(perm.Manage), true, false, false, (*server).deleteAssetsRemote},
-	{"POST", "/api/spaces/{space}/remote/assets/move", inSpace(perm.Manage), true, false, false, (*server).moveAssets},
+	{"PUT", "/api/spaces/{space}/remote/assets", inSpaceMembers(perm.Manage), true, false, false, (*server).putAssetsRemote},
+	{"DELETE", "/api/spaces/{space}/remote/assets", inSpaceMembers(perm.Manage), true, false, false, (*server).deleteAssetsRemote},
+	{"POST", "/api/spaces/{space}/remote/assets/move", inSpaceMembers(perm.Manage), true, false, false, (*server).moveAssets},
 }
 
 // RouteInfo describes a route for tests and tooling.
 type RouteInfo struct {
 	Method, Pattern string
-	Public          bool      // no session needed
-	Admin           bool      // a tenant's or the server's administrator
-	SiteAdmin       bool      // the server's administrator only
-	Space           bool      // a route on {space}
-	Perm            perm.Perm // what a space route asks of the caller in the space
-	OrSelf          bool      // the permission is waived for the caller's own {user}
-	AccountsOnly    bool
-	Upload          bool // the body is a file, sent as application/octet-stream
+	Public          bool // no session needed
+	// Key is the permission key a route outside spaces asks for ("" for none).
+	Key       string
+	Admin     bool      // it asks for a tenant key that only administrators hold
+	SiteAdmin bool      // it asks for a site key
+	Space     bool      // a route on {space}
+	Perm      perm.Perm // what a space route asks of the caller in the space
+	OrSelf    bool      // the permission is waived for the caller's own {user}
+	// MemberOnly: an administrator who is not a member never reaches it.
+	MemberOnly   bool
+	AccountsOnly bool
+	Upload       bool // the body is a file, sent as application/octet-stream
 }
 
 // Routes lists every endpoint with its access.
@@ -348,8 +373,14 @@ func Routes() []RouteInfo {
 	out := make([]RouteInfo, len(routeTable))
 	for i, r := range routeTable {
 		a := r.access
-		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Admin: a.kind == kindAdmin, SiteAdmin: a.kind == kindSiteAdmin,
-			Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf, AccountsOnly: r.accountsOnly, Upload: r.upload}
+		out[i] = RouteInfo{Method: r.method, Pattern: r.pattern, Public: a.kind == kindPublic, Space: a.kind == kindSpace, Perm: a.need, OrSelf: a.orSelf,
+			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload}
+		if a.kind == kindKey {
+			out[i].Key = a.key.Name()
+			out[i].SiteAdmin = a.key.Scope() == authz.ScopeSite
+			member, _ := authz.RoleSet(authz.RoleMember)
+			out[i].Admin = a.key.Scope() == authz.ScopeTenant && !member.Has(a.key)
+		}
 	}
 	return out
 }
@@ -416,13 +447,12 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "passkey_required", "Register a passkey to continue.")
 			return
 		}
-		if rt.access.kind == kindAdmin && c.p.User.Role != "admin" {
-			writeError(w, http.StatusForbidden, "forbidden", "Only an administrator may do that.")
-			return
-		}
-		if rt.access.kind == kindSiteAdmin && !c.isSiteAdmin() {
-			writeError(w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may do that.")
-			return
+		if rt.access.kind == kindKey {
+			// A route outside spaces acts in the caller's own tenant.
+			if err := s.allow(c, rt.access.key, c.p.User.TenantID); err != nil {
+				s.refuse(w, err)
+				return
+			}
 		}
 		// The switch for offline copies comes before the space is opened: an
 		// evicted space is not restored for a request that is refused anyway,
@@ -541,6 +571,12 @@ func (s *server) openSpace(c *call, rt route) bool {
 		return false
 	}
 	c.sp = h
+	if h.Info.ViaAdmin && rt.access.memberOnly {
+		h.Release()
+		c.sp = nil
+		writeError(w, http.StatusForbidden, "takeover_required", "Only a member of the space may do that; an administrator takes the space over first.")
+		return false
+	}
 	if h.Info.ViaAdmin {
 		h.Info.Perms, h.Info.Viewing = s.withView(c, rt, h.Info.Perms, spaceID)
 	}
@@ -560,7 +596,7 @@ func (s *server) openSpace(c *call, rt route) bool {
 // else the owner of the session cookie.
 func (s *server) principal(r *http.Request) (*auth.Principal, error) {
 	if s.single {
-		return &auth.Principal{User: s.local}, nil
+		return &auth.Principal{User: s.local, Access: s.localAccess}, nil
 	}
 	ck, err := r.Cookie(s.auth.SessionCookieName())
 	if err != nil {

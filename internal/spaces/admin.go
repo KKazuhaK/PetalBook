@@ -167,23 +167,23 @@ func (m *Manager) SetDisabled(ctx context.Context, sc store.Scope, id string, di
 // changed, and a user who was not a member becomes one. A personal space
 // belongs to its person and cannot be transferred. The Git author of later
 // commits becomes the new owner, in the space if it is open now.
-func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID string) error {
+func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID string) (*Transferred, error) {
 	sp, err := m.adminSpace(ctx, sc, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sp.Personal {
-		return ErrPersonalSpace
+		return nil, ErrPersonalSpace
 	}
 	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), userID)
 	if errors.Is(err, store.ErrNotFound) {
-		return ErrUserNotFound
+		return nil, ErrUserNotFound
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if u.Disabled {
-		return ErrUserDisabled
+		return nil, ErrUserDisabled
 	}
 	m.adminMu.Lock()
 	defer m.adminMu.Unlock()
@@ -203,14 +203,20 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 		return err
 	})
 	if errors.Is(err, store.ErrNotFound) {
-		return ErrNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	m.MembershipChanged(touched...)
 	m.usageMoved(ctx, before, after)
 	m.forgetAuthor(u.ID)
+	out := &Transferred{Name: sp.Name, TenantID: sp.TenantID}
+	for _, t := range touched {
+		if t != u.ID {
+			out.Previous = append(out.Previous, t)
+		}
+	}
 	m.mu.Lock()
 	e := m.open[id]
 	m.mu.Unlock()
@@ -224,7 +230,14 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 		default: // still opening: it reads the owner from the database
 		}
 	}
-	return nil
+	return out, nil
+}
+
+// Transferred is what a transfer did: the space's name and tenant, and the
+// owners it made editors.
+type Transferred struct {
+	Name, TenantID string
+	Previous       []string
 }
 
 func (m *Manager) rel(p string) string {

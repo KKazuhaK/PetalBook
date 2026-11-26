@@ -58,6 +58,7 @@ import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
 import { sha256Hex } from './sha256.ts'
 import { createQuotaBook } from './quotaBook.ts'
 import { createManageBook } from './manageBook.ts'
+import { PERMISSIONS, permissionsOfRole } from './permissions.ts'
 import { createMailBook } from './mailBook.ts'
 import { createNotifyBook, type DerivedProblems } from './notifyBook.ts'
 import { createSignInBook, type PasskeyRec, type ProviderRec, type SignInBookOptions } from './signInBook.ts'
@@ -3042,6 +3043,14 @@ export function createMockServer(options: MockOptions = {}) {
     if (leaving === 'owner' && others < 1)
       throw new HttpError(409, 'last_owner', 'a space needs at least one owner; make someone else an owner first')
   }
+  // An administrator who is not a member does not make or unmake owners, nor give themselves a role: that is taking
+  // the space over (docs/api.md, "Taking over a space").
+  const takeoverRequired = () =>
+    new HttpError(
+      403,
+      'takeover_required',
+      'Only a member of the space may change its owners, give an administrator a role in it, or change its remote; an administrator takes the space over first.',
+    )
   const routeMembers = (
     me: UserRec,
     s: SpaceRec,
@@ -3049,6 +3058,7 @@ export function createMockServer(options: MockOptions = {}) {
     rest: string,
     body: Record<string, unknown>,
     query = '',
+    viaAdmin = false,
   ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
     if (rest === '/members' && method === 'GET') {
@@ -3063,6 +3073,7 @@ export function createMockServer(options: MockOptions = {}) {
       const name = typeof body.username === 'string' ? body.username.trim().toLowerCase() : ''
       const u = [...users.values()].find((x) => x.username === name)
       if (!u || u.disabled) throw new HttpError(404, 'user_not_found', 'there is no such user')
+      if (viaAdmin && (role === 'owner' || u.id === me.id)) throw takeoverRequired()
       if (s.members.has(u.id)) throw new HttpError(409, 'exists', 'that user is a member of this space already')
       s.members.set(u.id, { role, joined: ++counter })
       if (u.id !== me.id) notifyBook.add(u.id, 'invite', s.id, { space: s.name, role, by: me.name })
@@ -3077,6 +3088,7 @@ export function createMockServer(options: MockOptions = {}) {
         const role = checkRole(body.role)
         const cur = s.members.get(userId)
         if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
+        if (viaAdmin && (role === 'owner' || cur.role === 'owner' || userId === me.id)) throw takeoverRequired()
         if (cur.role !== role) {
           keepOneOwner(s, userId, cur.role)
           cur.role = role
@@ -3095,6 +3107,7 @@ export function createMockServer(options: MockOptions = {}) {
             )
         }
         if (!cur) throw new HttpError(404, 'not_found', 'that user is not a member of this space')
+        if (viaAdmin && cur.role === 'owner') throw takeoverRequired()
         keepOneOwner(s, userId, cur.role)
         s.members.delete(userId)
         return { status: 204 }
@@ -3189,7 +3202,7 @@ export function createMockServer(options: MockOptions = {}) {
       putStorage(body)
       return j(storageBody())
     }
-    const one = /^\/admin\/spaces\/([^/]+)(?:\/(size|transfer|disable|enable|storage|evict))?$/.exec(path)
+    const one = /^\/admin\/spaces\/([^/]+)(?:\/(size|transfer|takeover|disable|enable|storage|evict))?$/.exec(path)
     if (one) {
       const id = decodeURIComponent(one[1])
       const s = adminSpaceOf(id)
@@ -3201,21 +3214,38 @@ export function createMockServer(options: MockOptions = {}) {
           s.size = { bytes: sizeOf(s), at: now(), pages: s.store.ids().length }
           quotaBook.evaluate()
           return j({ sizeBytes: s.size.bytes, sizeAt: rfc3339(s.size.at) })
-        case 'transfer': {
+        case 'transfer':
+        case 'takeover': {
           if (method !== 'POST') break
+          // Taking over is a transfer to the caller, with a reason (docs/api.md, "Taking over a space").
+          const takeover = one[2] === 'takeover'
+          const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+          if (takeover && (reason.length < 1 || reason.length > 500))
+            throw new HttpError(
+              400,
+              'invalid',
+              'Reason is from 1 to 500 characters: why the space is being taken over.',
+            )
           if (s.personal)
             throw new HttpError(
               409,
               'personal_space',
               'a personal space belongs to one person and cannot be transferred or deleted',
             )
-          const u = typeof body.userId === 'string' ? users.get(body.userId) : undefined
+          const u = takeover ? me : typeof body.userId === 'string' ? users.get(body.userId) : undefined
           if (!u) throw new HttpError(404, 'user_not_found', 'there is no such user')
           if (u.disabled) throw new HttpError(409, 'user_disabled', 'that user is disabled and cannot own a space')
-          for (const m of s.members.values()) if (m.role === 'owner') m.role = 'editor'
+          const previous: string[] = []
+          for (const [id, m] of s.members)
+            if (m.role === 'owner' && id !== u.id) {
+              m.role = 'editor'
+              previous.push(id)
+            }
           const had = s.members.get(u.id)
           if (had) had.role = 'owner'
           else s.members.set(u.id, { role: 'owner', joined: ++counter })
+          const event = takeover ? 'space_taken_over' : 'space_transferred'
+          for (const id of previous) notifyBook.add(id, 'system', s.id, { event, space: s.name, by: me.name, reason })
           return { status: 204 }
         }
         case 'disable':
@@ -4154,7 +4184,9 @@ export function createMockServer(options: MockOptions = {}) {
       const ended = endedReasonOf(ctx)
       const base = {
         mode,
-        user: ctx.user ? publicUser(ctx.user) : null,
+        user: ctx.user
+          ? { ...publicUser(ctx.user), permissions: permissionsOfRole(ctx.user.role, isSiteAdmin(ctx.user)) }
+          : null,
         ...(ended ? { endedReason: ended } : {}),
         setup: accounts && users.size === 0,
         hold: accounts && ctx.token && ctx.user && held.has(ctx.token) ? ('passkey' as const) : null,
@@ -4710,6 +4742,11 @@ export function createMockServer(options: MockOptions = {}) {
       const me = requireAdmin(ctx)
       return routeAdmin(me, ctx.token, method, path, url, body)
     }
+    if (path === '/admin/permissions' && method === 'GET') {
+      accountsOnly()
+      requireAdmin(ctx)
+      return j({ permissions: PERMISSIONS })
+    }
     if (path === '/settings' && method === 'GET') {
       requireUser(ctx)
       return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
@@ -4984,6 +5021,14 @@ export function createMockServer(options: MockOptions = {}) {
               ctx.token,
               method === 'GET' && (rest === '/members' || rest === '/members/effective'),
             )
+      // An administrator who is not a member manages the space, but its remote is for members (3.6).
+      const viaAdmin = accounts && !groupBook.has(s, me.id)
+      if (
+        viaAdmin &&
+        method !== 'GET' &&
+        (rest === '/remote' || (rest.startsWith('/remote/') && rest !== '/remote/sync'))
+      )
+        throw takeoverRequired()
       // Any request that opens the space is a use; one that needs files restores an evicted space (the lists are
       // answered by the index, which an evicted space keeps).
       s.lastUsed = now()
@@ -5008,11 +5053,11 @@ export function createMockServer(options: MockOptions = {}) {
       }
       if (rest === '/members' || rest.startsWith('/members/')) {
         // Leaving needs no more than being a member: the permission check above is waived for it.
-        return routeMembers(me, s, method, rest, body, url.search)
+        return routeMembers(me, s, method, rest, body, url.search, viaAdmin)
       }
       if (rest === '/groups' || rest.startsWith('/groups/')) {
         accountsOnly()
-        const r = groupBook.routeSpace(me, s, method, rest, body)
+        const r = groupBook.routeSpace(me, s, method, rest, body, viaAdmin ? takeoverRequired : undefined)
         if (r) return r
       }
       return routeSpace(me, s, method, rest, url, body, raw)

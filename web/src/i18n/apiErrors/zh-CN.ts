@@ -56,6 +56,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   member_via_group: '这个人是通过组加入的，请在组里移除。',
   default_tenant: '默认组织不能这样改。',
   tenant_limit: '组织数量已达上限。',
+  capability_off: '你的组织没有这项功能。',
+  takeover_required: '只有空间的成员才能改它的所有者或远程仓库。管理员需要先接管这个空间。',
   tenant_not_empty: '这个组织里还有用户、空间、组、邀请或回收站里的内容，不能直接移走。',
   tenants_off: '多组织功能没有打开。',
   not_fixable: '这种问题不能在这里修复。',
@@ -138,7 +140,4 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   path_reveals_secret: (p) => `${p.field ? `“${p.field}”的` : ''}取值路径会把密钥显示出来，已被拒绝。`,
   link_uses_header: '链接不能用带请求头的接口。',
   skip_too_large: '要跳过的内容太多了。',
-
-  // Not sent by the server today; kept for the pages that name it.
-  capability_off: '这个组织没有开通这项功能。',
 }

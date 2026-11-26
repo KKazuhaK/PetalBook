@@ -107,7 +107,7 @@ func (s *server) tokenPrincipal(r *http.Request, secret string) (*auth.Principal
 	}
 	if s.single {
 		// The built-in user as the server has it, not a copy read at another time.
-		p.User = s.local
+		p.User, p.Access = s.local, s.localAccess
 	}
 	return p, nil
 }

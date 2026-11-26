@@ -181,7 +181,7 @@ func TestAtLeastOneOwnerCountsDirectOwnersOnly(t *testing.T) {
 		if err := f.m.RemoveMember(ctx, boss, h, "boss"); !errors.Is(err, ErrLastOwner) {
 			t.Fatalf("leaving: %v", err)
 		}
-		if _, err := f.m.SetMemberRole(ctx, h, "boss", perm.Editor); !errors.Is(err, ErrLastOwner) {
+		if _, err := f.m.SetMemberRole(ctx, h, "", "boss", perm.Editor); !errors.Is(err, ErrLastOwner) {
 			t.Fatalf("demoting: %v", err)
 		}
 	})

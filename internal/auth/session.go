@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -67,7 +68,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		s.endSession(ctx, id, snap.userID, store.EndExpired)
 		return nil, ended(store.EndExpired, "Your session has ended; sign in again.")
 	}
-	u, err := s.cachedUser(ctx, snap.userID)
+	u, access, err := s.cachedEntry(ctx, snap.userID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.endSession(ctx, id, "", "")
@@ -116,7 +117,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if err := s.st.NoteActive(ctx, u.ID, now); err != nil {
 		s.log.Warn("could not record a person's last use", "error", err)
 	}
-	return &Principal{User: *u, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
+	return &Principal{User: *u, Access: access, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
 }
 
 // releaseHold forgets, in the cache, that a session was held.
@@ -136,19 +137,27 @@ func (s *Service) CachedUser(ctx context.Context, id string) (*store.User, error
 }
 
 func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error) {
+	u, _, err := s.cachedEntry(ctx, id)
+	return u, err
+}
+
+// cachedEntry is cachedUser with what the person holds outside spaces, which
+// is built only when the entry is loaded: a request reads both from memory.
+func (s *Service) cachedEntry(ctx context.Context, id string) (*store.User, authz.Subject, error) {
 	now := s.now()
 	s.cmu.Lock()
 	if c := s.users[id]; c != nil && now.Sub(c.loaded) <= s.cfg.CacheTTL {
-		u := c.u
+		u, access := c.u, c.access
 		s.cmu.Unlock()
-		return &u, nil
+		return &u, access, nil
 	}
 	gen := s.gen
 	s.cmu.Unlock()
 	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), id) // by session or token: the account decides the tenant
 	if err != nil {
-		return nil, err
+		return nil, authz.Subject{}, err
 	}
+	access := AccessOf(*u)
 	s.cmu.Lock()
 	// If the user changed while we read, what we read may be the old row:
 	// use it for this request only.
@@ -159,10 +168,16 @@ func (s *Service) cachedUser(ctx context.Context, id string) (*store.User, error
 				break
 			}
 		}
-		s.users[id] = &cachedUser{u: *u, loaded: now}
+		s.users[id] = &cachedUser{u: *u, access: access, loaded: now}
 	}
 	s.cmu.Unlock()
-	return u, nil
+	return u, access, nil
+}
+
+// AccessOf is what an account holds outside spaces, from its role and
+// site-administrator flag (3.7 adds its memberships of organizations).
+func AccessOf(u store.User) authz.Subject {
+	return authz.SubjectFor(u.Role, u.SiteAdmin, u.TenantID)
 }
 
 // ended is the refusal of a cookie whose session is gone, with why when it is known.

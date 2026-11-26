@@ -934,9 +934,68 @@ export interface User {
 export type EndedReason = 'expired' | 'signed_out_elsewhere' | 'password_changed' | 'disabled'
 export const ENDED_REASONS: readonly EndedReason[] = ['expired', 'signed_out_elsewhere', 'password_changed', 'disabled']
 
+// A permission key (docs/api.md, "Permission keys"): what a route outside spaces needs. The list is the server's
+// registry, in its order (a test of the server compares the two).
+export type PermissionKey =
+  | 'site.settings.manage'
+  | 'site.security.manage'
+  | 'site.signin.manage'
+  | 'site.mail.manage'
+  | 'site.access.manage'
+  | 'site.tenancy.manage'
+  | 'site.tenants.manage'
+  | 'site.connections.manage'
+  | 'site.daily.manage'
+  | 'site.status.read'
+  | 'site.storage.manage'
+  | 'site.recycle.purge'
+  | 'tenant.settings.read'
+  | 'tenant.settings.write'
+  | 'tenant.users.read'
+  | 'tenant.users.manage'
+  | 'tenant.users.delete'
+  | 'tenant.invites.manage'
+  | 'tenant.groups.read'
+  | 'tenant.groups.manage'
+  | 'tenant.spaces.create'
+  | 'tenant.spaces.read'
+  | 'tenant.spaces.manage'
+  | 'tenant.spaces.takeover'
+  | 'tenant.spaces.delete'
+  | 'tenant.data.view'
+  | 'tenant.data.export'
+  | 'tenant.storage.read'
+  | 'tenant.recycle.read'
+  | 'tenant.recycle.restore'
+  | 'tenant.bulk.run'
+  | 'tenant.usage.read'
+  | 'tenant.audit.read'
+  | 'tenant.tokens.read'
+  | 'tenant.tokens.revoke'
+  | 'tenant.permissions.read'
+  | 'space.read'
+  | 'space.write'
+  | 'space.members.manage'
+  | 'space.manage'
+
+// One key of the registry (GET /api/admin/permissions).
+export interface PermissionInfo {
+  name: PermissionKey
+  scope: 'site' | 'tenant' | 'space'
+  // The tenant capability the key needs ("" for none).
+  capability: string
+  description: string
+}
+
+// The signed-in user as GET /api/session has them: with the keys they hold in their own tenant. Absent on a user the
+// app put into the session itself (after signing in) until the session is read again.
+export interface SessionUser extends User {
+  permissions?: PermissionKey[]
+}
+
 export interface SessionInfo {
   mode: 'single' | 'accounts'
-  user: User | null
+  user: SessionUser | null
   // True while there is no user at all: the app shows the first-run page.
   setup: boolean
   // Why the session of this browser's cookie ended, when that is why nobody is signed in (absent otherwise).

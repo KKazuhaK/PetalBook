@@ -33,11 +33,36 @@ var routeAccessCallers = []string{"site admin", "tenant admin", "member", "token
 
 // routeAccessChanged are the decisions that differ from the golden file on
 // purpose: route -> caller -> the decision now.
+//
+// 3.6 part 1 closed the administrators' way to a space's remote: an
+// administrator who is not a member of the space managed it with members and
+// manage, which let them point its remote at a repository of their own. The
+// remote is now for members only, and an administrator takes the space over
+// first (POST /api/admin/spaces/{space}/takeover). The same holds for its
+// owners and for giving themselves a role, which the handler refuses (the
+// route is still reached): see TestATenantAdministratorTakesASpaceOverOnlyExplicitly.
 var routeAccessChanged = map[string]map[string]string{}
+
+func init() {
+	for _, r := range []string{
+		"POST /api/spaces/{space}/remote/key",
+		"PUT /api/spaces/{space}/remote",
+		"DELETE /api/spaces/{space}/remote",
+		"POST /api/spaces/{space}/remote/accept",
+		"PUT /api/spaces/{space}/remote/assets",
+		"DELETE /api/spaces/{space}/remote/assets",
+		"POST /api/spaces/{space}/remote/assets/move",
+	} {
+		routeAccessChanged[r] = map[string]string{"site admin": "403 takeover_required", "tenant admin": "403 takeover_required"}
+	}
+}
 
 // routeAccessAdded are the routes added after the golden file was written,
 // with their decision for each caller.
-var routeAccessAdded = map[string][4]string{}
+var routeAccessAdded = map[string][4]string{
+	"GET /api/admin/permissions":              {"ok", "ok", "403 forbidden", "403 token_scope"},
+	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
+}
 
 type routeAccessFx struct {
 	a                       *acc

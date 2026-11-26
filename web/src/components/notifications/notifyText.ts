@@ -65,9 +65,19 @@ export function describeNotification(n: NotificationItem): Described {
         space: n.ref,
       }
     }
+    case 'system':
+      // An administrator took over or transferred a space the person owned.
+      if (p.event === 'space_taken_over' || p.event === 'space_transferred') {
+        const title = p.event === 'space_taken_over' ? p2.takeover.takenTitle : p2.takeover.transferredTitle
+        return {
+          title: title(str(p.by), str(p.space)),
+          body: p2.takeover.body(str(p.reason)),
+          to: spaceUrls(n.ref).home(),
+        }
+      }
+      return { title: p2.system.title, body: p2.system.body, to: n.ref ? spaceUrls(n.ref).home() : '' }
     case 'mention':
     case 'todo':
-    case 'system':
       return { title: p2[n.kind].title, body: p2[n.kind].body, to: n.ref ? spaceUrls(n.ref).home() : '' }
     default:
       return { title: p2.unknown, body: '', to: '' }

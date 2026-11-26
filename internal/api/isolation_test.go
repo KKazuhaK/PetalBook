@@ -178,6 +178,7 @@ type isoEntry struct {
 var isolationRoutes = map[string]isoEntry{
 	"GET /api/meta":                        {kind: isoList},
 	"GET /api/session":                     {kind: isoExempt, reason: "the caller's own user"},
+	"GET /api/admin/permissions":           {kind: isoExempt, reason: "the registry of permission keys: the same for every tenant"},
 	"POST /api/setup":                      {kind: isoExempt, reason: "public: nothing of a tenant"},
 	"POST /api/login":                      {kind: isoExempt, reason: "public: the account that signs in decides the tenant"},
 	"POST /api/logout":                     {kind: isoExempt, reason: "the caller's own session"},
@@ -296,6 +297,7 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/admin/exports/{id}/download":            {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
 	"POST /api/admin/spaces/{space}/size":             {kind: isoParam},
 	"POST /api/admin/spaces/{space}/transfer":         {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"userId": f.userB} }},
+	"POST /api/admin/spaces/{space}/takeover":         {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"reason": "taking over"} }},
 	"POST /api/admin/spaces/{space}/disable":          {kind: isoParam},
 	"POST /api/admin/spaces/{space}/enable":           {kind: isoParam},
 	"DELETE /api/admin/spaces/{space}":                {kind: isoParam},

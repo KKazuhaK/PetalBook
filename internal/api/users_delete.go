@@ -271,7 +271,7 @@ func (s *server) deleteUser(ctx context.Context, in deleteUserIn, id string) (*d
 	out := &deletedUser{}
 	var left []store.UserLeft
 	for _, t := range plan.Transfer {
-		if err := s.spaces.Transfer(ctx, sc, t.Space.ID, t.To); err != nil {
+		if _, err := s.spaces.Transfer(ctx, sc, t.Space.ID, t.To); err != nil {
 			return nil, err
 		}
 		tr := store.UserTransfer{Space: t.Space.ID, Name: t.Space.Name, To: t.To, ToUsername: t.ToUsername}

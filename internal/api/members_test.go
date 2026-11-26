@@ -172,9 +172,11 @@ func TestAnAdministratorManagesEverySpaceAndReadsOnlyInAView(t *testing.T) {
 		boss.do("GET", "/api/spaces/0000000000/tree", nil).want(t, 404, "not_found")
 		boss.do("GET", "/api/spaces/not-an-id/tree", nil).want(t, 404, "not_found")
 		tm.outsider.do("GET", base+"/tree", nil).want(t, 404, "not_found")
-		// An administrator is a person like any other in a space they do belong to.
+		// An administrator does not make themselves a member (that is taking the
+		// space over, 3.6); once a member, they are a person like any other.
 		boss.do("GET", base+"/tree", nil).want(t, 403, "no_permission")
-		boss.do("POST", base+"/members", map[string]any{"username": "kazuha", "role": "viewer"}).want(t, 201, "")
+		boss.do("POST", base+"/members", map[string]any{"username": "kazuha", "role": "viewer"}).want(t, 403, "takeover_required")
+		tm.owner.do("POST", base+"/members", map[string]any{"username": "kazuha", "role": "viewer"}).want(t, 201, "")
 		boss.do("GET", base+"/tree", nil).want(t, 200, "")
 	})
 }
@@ -264,9 +266,10 @@ func TestASpaceKeepsAnOwner(t *testing.T) {
 		tm.owner.do("DELETE", base+"/"+tm.ownerID, nil).want(t, 204, "")
 		tm.editor.do("DELETE", base+"/"+tm.editorID, nil).want(t, 409, "last_owner")
 		tm.editor.do("PATCH", base+"/"+tm.editorID, map[string]any{"role": "viewer"}).want(t, 409, "last_owner")
-		// An administrator is no exception.
+		// An administrator who is not a member does not remove an owner at all
+		// (3.6: that is taking the space over).
 		boss := a.addUser("kazuha", pw, "admin")
-		boss.do("DELETE", base+"/"+tm.editorID, nil).want(t, 409, "last_owner")
+		boss.do("DELETE", base+"/"+tm.editorID, nil).want(t, 403, "takeover_required")
 	})
 }
 

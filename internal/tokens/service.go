@@ -183,7 +183,7 @@ func (s *Service) Authenticate(ctx context.Context, secret, ip string) (*auth.Pr
 			s.log.Warn("could not record a person's last use", "error", err)
 		}
 	}
-	return &auth.Principal{User: *u, Grant: e.grant}, nil
+	return &auth.Principal{User: *u, Access: auth.AccessOf(*u), Grant: e.grant}, nil
 }
 
 // lookup finds the entry of a token hash in memory, else reads it once. nil

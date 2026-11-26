@@ -59,7 +59,7 @@ func newShared(t *testing.T, st *store.Store) *sharedFixture {
 	f.space = info.ID
 	h := f.open(f.owner)
 	defer h.Release()
-	if _, err := mgr.AddMember(ctx, h, f.editor.Username, perm.Editor); err != nil {
+	if _, err := mgr.AddMember(ctx, h, "", f.editor.Username, perm.Editor); err != nil {
 		t.Fatal(err)
 	}
 	p, err := h.Space.Create(space.Author{}, space.CreateInput{Meta: page.Meta{{Key: "title", Value: "P"}}, Body: "base\n"})
@@ -109,7 +109,7 @@ func (f *sharedFixture) setRole(role string) {
 	f.t.Helper()
 	h := f.open(f.owner)
 	defer h.Release()
-	if _, err := f.mgr.SetMemberRole(ctx, h, f.editor.ID, role); err != nil {
+	if _, err := f.mgr.SetMemberRole(ctx, h, "", f.editor.ID, role); err != nil {
 		f.t.Fatal(err)
 	}
 }

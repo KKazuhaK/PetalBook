@@ -93,8 +93,10 @@ func TestAConnectionSyncsOnlySpacesOfItsOwnTenant(t *testing.T) {
 		connectGitHub(t, a, f.root, "root-gh")
 		body := map[string]any{"url": a.fake.URL + "/root-gh/wiki.git", "credential": map[string]any{"type": "connection", "provider": "github", "via": "user"}}
 		calls := len(a.fake.Requests())
+		// From 3.6 the remote of a space is for its members only: an
+		// administrator is refused before anything else is looked at.
 		r := f.root.do("PUT", "/api/spaces/"+f.spaceB+"/remote", body)
-		if r.code != 403 || r.body["error"] != "forbidden" {
+		if r.code != 403 || r.body["error"] != "takeover_required" {
 			t.Fatalf("%d %s", r.code, r.raw)
 		}
 		if len(a.fake.Requests()) != calls {

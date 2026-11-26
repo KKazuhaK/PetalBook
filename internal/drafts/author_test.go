@@ -52,7 +52,7 @@ func TestSweeperWritesADraftAsItsUser(t *testing.T) {
 		}
 		defer h.Release()
 		sp := h.Space
-		if _, err := mgr.AddMember(ctx, h, bo.Username, "editor"); err != nil {
+		if _, err := mgr.AddMember(ctx, h, "", bo.Username, "editor"); err != nil {
 			t.Fatal(err)
 		}
 		clk := &clock{t: time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)}

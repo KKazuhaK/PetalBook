@@ -58,6 +58,11 @@ var (
 	ErrPersonalSpace = errors.New("a personal space belongs to one person")
 	// ErrDataDirInUse: another server runs on this data directory.
 	ErrDataDirInUse = errors.New("another server uses this data directory (DATA/serve.lock is held)")
+	// ErrTakeover: an administrator who is not a member asked for what only
+	// taking the space over gives: to make or unmake an owner, to give
+	// themselves (or a group of theirs) a role in it, or to change its remote.
+	// Taking over is its own audited action (Manager.Transfer).
+	ErrTakeover = errors.New("an administrator who is not a member takes the space over for that")
 	// ErrUserDisabled: the user cannot sign in, so cannot own a space.
 	ErrUserDisabled = errors.New("that user is disabled")
 	errClosed       = errors.New("the server is shutting down")
@@ -105,8 +110,10 @@ type Info struct {
 	Assets string
 }
 
-// AdminPerms is what an administrator who is not a member may do in a space:
-// manage it and its people. Not read, and never write.
+// AdminPerms is what an administrator who is not a member may do in a space
+// (the key tenant.spaces.manage): manage it and its people. Not read, and never
+// write. Members excludes owners and the administrator themselves
+// (ErrTakeover), and the remote routes are for members only.
 var AdminPerms = perm.Of(perm.Members, perm.Manage)
 
 // Handle is an open space together with the caller's view of it. Release it

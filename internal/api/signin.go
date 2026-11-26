@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -49,18 +50,18 @@ var signinRoutes = []route{
 	{"PATCH", "/api/account/passkeys/{id}", signedIn, true, false, false, (*server).renameAccountPasskey},
 	{"DELETE", "/api/account/passkeys/{id}", signedIn, true, false, false, (*server).deleteAccountPasskey},
 
-	{"GET", "/api/users/{id}/passkeys", admin, true, false, false, (*server).listUserPasskeys},
-	{"DELETE", "/api/users/{id}/passkeys/{passkey}", admin, true, false, false, (*server).deleteUserPasskey},
+	{"GET", "/api/users/{id}/passkeys", needs(authz.TenantUsersRead), true, false, false, (*server).listUserPasskeys},
+	{"DELETE", "/api/users/{id}/passkeys/{passkey}", needs(authz.TenantUsersManage), true, false, false, (*server).deleteUserPasskey},
 
-	{"GET", "/api/admin/security", siteAdmin, true, false, false, (*server).adminGetSecurity},
-	{"PUT", "/api/admin/security", siteAdmin, true, false, false, (*server).adminPutSecurity},
-	{"GET", "/api/admin/auth/providers", siteAdmin, true, false, false, (*server).adminListProviders},
-	{"POST", "/api/admin/auth/providers", siteAdmin, true, false, false, (*server).adminCreateProvider},
-	{"GET", "/api/admin/auth/providers/{slug}", siteAdmin, true, false, false, (*server).adminGetProvider},
-	{"PATCH", "/api/admin/auth/providers/{slug}", siteAdmin, true, false, false, (*server).adminPatchProvider},
-	{"DELETE", "/api/admin/auth/providers/{slug}", siteAdmin, true, false, false, (*server).adminDeleteProvider},
-	{"POST", "/api/admin/auth/providers/{slug}/refresh", siteAdmin, true, false, false, (*server).adminRefreshProvider},
-	{"GET", "/api/admin/audit", admin, true, false, false, (*server).adminAudit},
+	{"GET", "/api/admin/security", needs(authz.SiteSecurityManage), true, false, false, (*server).adminGetSecurity},
+	{"PUT", "/api/admin/security", needs(authz.SiteSecurityManage), true, false, false, (*server).adminPutSecurity},
+	{"GET", "/api/admin/auth/providers", needs(authz.SiteSigninManage), true, false, false, (*server).adminListProviders},
+	{"POST", "/api/admin/auth/providers", needs(authz.SiteSigninManage), true, false, false, (*server).adminCreateProvider},
+	{"GET", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage), true, false, false, (*server).adminGetProvider},
+	{"PATCH", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage), true, false, false, (*server).adminPatchProvider},
+	{"DELETE", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage), true, false, false, (*server).adminDeleteProvider},
+	{"POST", "/api/admin/auth/providers/{slug}/refresh", needs(authz.SiteSigninManage), true, false, false, (*server).adminRefreshProvider},
+	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead), true, false, false, (*server).adminAudit},
 }
 
 func init() { routeTable = append(routeTable, signinRoutes...) }

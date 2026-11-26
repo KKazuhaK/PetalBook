@@ -20,6 +20,7 @@ import type {
   CreatedTenant,
   AdminUsageList,
   OwnQuota,
+  PermissionInfo,
   SettingLower,
   SiteSetting,
   Tenancy,
@@ -162,6 +163,12 @@ export const adminApi = {
   adminResizeSpace: (id: string) => request<SpaceSize>(`/admin/spaces/${enc(id)}/size`, { method: 'POST' }),
   adminTransferSpace: (id: string, userId: string) =>
     request<void>(`/admin/spaces/${enc(id)}/transfer`, { method: 'POST', body: { userId } }),
+  // Makes the caller the owner of a space they manage without being a member; audited, and the owners are told.
+  adminTakeOverSpace: (id: string, reason: string) =>
+    request<void>(`/admin/spaces/${enc(id)}/takeover`, { method: 'POST', body: { reason } }),
+  // The registry of permission keys.
+  adminPermissions: (signal?: AbortSignal) =>
+    request<{ permissions: PermissionInfo[] }>('/admin/permissions', { signal }),
   adminDisableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/disable`, { method: 'POST' }),
   adminEnableSpace: (id: string) => request<void>(`/admin/spaces/${enc(id)}/enable`, { method: 'POST' }),
   // Deleting recycles the space (3.5): the answer is the recycle item. `reason` is for the audit log.

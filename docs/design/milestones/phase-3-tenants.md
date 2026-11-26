@@ -916,6 +916,14 @@ the product falls into three kinds:
   using none of the site's resources (outbound requests still go through the
   site's checks and total cap, see below).
 
+Who may change these items is a **permission key** of the item (3.6 part 1,
+built): every administration route names one, a site administrator holds every
+site and tenant key, a tenant administrator every tenant key of their tenant,
+and no key of the site or a tenant reaches a space's content. Managing a space
+one is not a member of no longer includes its owners or its remote: that is the
+explicit, audited takeover. See
+[auth-and-permissions.md §16.1](../auth-and-permissions.md#161-permission-keys-36-part-1-built).
+
 There is also a layer of **capabilities** (decided by the owner on 2026-11-23,
 done in 3.6, see the 3.6 contract in
 [phase-3-autonomy-and-providers.md](phase-3-autonomy-and-providers.md)): one
