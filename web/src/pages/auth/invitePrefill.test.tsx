@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { tu } from '@/i18n/usage'
 import InvitePage from './InvitePage'
 
@@ -10,7 +10,7 @@ import InvitePage from './InvitePage'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -31,7 +31,7 @@ async function open(fill?: { username: string; name: string; email: string }) {
   window.location.hash = '#inv-fill'
   m = await mount(routes, {
     entries: ['/invite'],
-    server: { mode: 'accounts', invite: { token: 'inv-fill', role: 'admin', fill } },
+    fixtures: { mode: 'accounts', invite: { token: 'inv-fill', role: 'admin', fill } },
   })
   await settle(() => document.querySelector('form input[autocomplete="username"]') !== null, 'the form')
 }

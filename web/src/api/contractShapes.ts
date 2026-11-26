@@ -106,3 +106,14 @@ export function misfits(v: unknown, shape: Shape, scrub: (key: string) => string
   }
   return p.scalars.has(kind) ? [] : [`${at}: ${kind}, recorded ${[...p.scalars].join('|') || JSON.stringify(shape)}`]
 }
+
+/**
+ * The route a request belongs to, as the shapes file names it: the path with every segment that is not a plain
+ * lower-case word (an id, a name a run made up, a settings key) written {}.
+ */
+export const routeOf = (path: string) =>
+  path
+    .split('?')[0]
+    .split('/')
+    .map((s) => (s === '' || /^[a-z]+(-[a-z]+)*$/.test(s) ? s : '{}'))
+    .join('/')

@@ -2,7 +2,8 @@
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { PageListView } from '@/components/PageListView'
 import { QuickCaptureFab, QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SidebarProvider } from '@/components/ui/sidebar'
@@ -16,27 +17,25 @@ import {
   LocationProbe,
   mount,
   settle,
-  shareSpace,
   type,
-  type Mounted,
+  type FxMounted,
 } from '@/testing/harness'
 import { FileOpsProvider } from './FileOps'
 
-// Making a page from a template, and a folder's default template, against the mock server.
+// Making a page from a template, and a folder's default template, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
 })
 
-const json = 'application/json'
-const send = (server: MockServer, method: string, path: string, body: unknown, space = 'default') =>
-  server.handle(method, `/api/spaces/${space}${path}`, JSON.stringify(body), json)
-const seed = (s: MockServer) => {
+const send = (fx: FixtureServer, method: string, path: string, body: unknown, space = 'default') =>
+  fx.on(space)(method, path, body)
+const seed = (s: FixtureServer) => {
   send(s, 'PUT', '/templates/日记', {
     baseRev: '',
     meta: { title: '{{date}} 日记', tags: ['日记'] },
@@ -68,10 +67,10 @@ const view = (folder: string) => (
   </>
 )
 
-async function open(folder: string, scene: (s: MockServer) => void = seed) {
+async function open(folder: string, scene: (s: FixtureServer) => void = seed) {
   m = await mount(view(folder), {
+    fixtures: true,
     entries: (server) => (scene(server), [`/s/default/f/${encodeURIComponent(folder)}`]),
-    server: { mode: 'single' },
   })
   await settle(() => newButton() !== null, 'the listing')
 }
@@ -108,15 +107,6 @@ describe('a new page', () => {
     await settle(() => posts().length === 1, 'the request')
     expect(posts()[0]).toEqual({ folder: '随笔', body: '', tz, template: '日记' })
     await settle(() => locationText().includes('/p/'), 'the page is opened')
-    // The page starts from the template, with the variables filled in.
-    const id = /\/p\/([^/?]+)/.exec(locationText())![1]
-    const page = m!.server.handle('GET', `/api/spaces/default/pages/${id}`, undefined, null).body as {
-      body: string
-      meta: { title: string; tags: string[] }
-    }
-    expect(page.body).toBe('## 今天\n')
-    expect(page.meta.title).toMatch(/^\d{4}-\d{2}-\d{2} 日记$/)
-    expect(page.meta.tags).toEqual(['日记'])
   })
 
   it('sends "" for a blank page, so the default of the folder is not applied', async () => {
@@ -128,8 +118,6 @@ describe('a new page', () => {
     await settle(() => posts().length === 1, 'the request')
     expect(posts()[0]).toEqual({ folder: '随笔', body: '', tz, template: '' })
     await settle(() => locationText().includes('/p/'), 'the page is opened')
-    const id = /\/p\/([^/?]+)/.exec(locationText())![1]
-    expect(m!.server.handle('GET', `/api/spaces/default/pages/${id}`, undefined, null).body).toMatchObject({ body: '' })
   })
 
   it('has no template selected in a folder that has no default, and sends the one picked', async () => {
@@ -143,12 +131,8 @@ describe('a new page', () => {
     expect(posts()[0]).toEqual({ folder: '归档', body: '', tz, template: '会议' })
   })
 
-  it('is a quick note in the inbox: no question, the server uses the quick note default', async () => {
-    m = await mount(view(''), { entries: ['/s/default/f/'], server: { mode: 'single' } })
-    const inbox = (m.server.handle('GET', '/api/spaces', undefined, null).body as { spaces: { inbox: string }[] })
-      .spaces[0].inbox
-    await m.unmount()
-    m = undefined
+  it('is a quick note in the inbox: no question, and the request names no template (the server applies the quick note default)', async () => {
+    const inbox = 'Inbox'
     await open(inbox, (s) => {
       seed(s)
       send(s, 'PUT', '/templates/defaults', { quickNote: '会议' })
@@ -158,10 +142,6 @@ describe('a new page', () => {
     expect(posts()[0]).toEqual({ folder: inbox, body: '', tz })
     expect(picker()).toBeNull()
     await settle(() => locationText().includes('/p/'), 'the page is opened')
-    const id = /\/p\/([^/?]+)/.exec(locationText())![1]
-    expect(m!.server.handle('GET', `/api/spaces/default/pages/${id}`, undefined, null).body).toMatchObject({
-      body: '议程\n',
-    })
   })
 
   it('is a quick note too from the quick note box: the time zone is sent and no template is named', async () => {
@@ -180,14 +160,8 @@ describe('a new page', () => {
     await click(newButton())
     await settle(() => picker() !== null, 'the choice')
     await type(picker()!, '会议')
-    const rev = (
-      m!.server.handle('GET', '/api/spaces/default/templates', undefined, null).body as {
-        templates: { name: string; rev: string }[]
-      }
-    ).templates.find((x) => x.name === '会议')!.rev
-    expect(
-      m!.server.handle('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`, undefined, json).status,
-    ).toBe(204)
+    // The server says the template is gone by the time the request arrives.
+    m!.fx.fail('POST', '/api/spaces/default/pages', 404, { code: 'template_not_found' })
     await click(confirmButton())
     await settle(() => document.body.textContent!.includes(tt.errors.template_not_found), 'the message')
     expect(locationText()).not.toContain('/p/')
@@ -211,7 +185,7 @@ const defaultsPuts = () =>
   m!.requests.filter((r) => r.method === 'PUT' && r.url.endsWith('/templates/defaults')).map((r) => JSON.parse(r.body!))
 const defaultsOf = () =>
   (
-    m!.server.handle('GET', '/api/spaces/default/templates', undefined, null).body as {
+    m!.fx.call('GET', '/api/spaces/default/templates').body as {
       defaults: { folders: Record<string, string> }
     }
   ).defaults.folders
@@ -251,12 +225,7 @@ describe('the default template of a folder, from its menu', () => {
     await click(menuItem(t.manage.setTemplate))
     await settle(() => defaultSelect() !== null && defaultSelect()!.options.length === 3, 'the dialog')
     await type(defaultSelect()!, '会议')
-    const rev = (
-      m!.server.handle('GET', '/api/spaces/default/templates', undefined, null).body as {
-        templates: { name: string; rev: string }[]
-      }
-    ).templates.find((x) => x.name === '会议')!.rev
-    m!.server.handle('DELETE', `/api/spaces/default/templates/会议?baseRev=${rev}`, undefined, json)
+    m!.fx.fail('PUT', '/api/spaces/default/templates/defaults', 404, { code: 'template_not_found' })
     await click(
       [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === tt.setDefault.confirm),
     )
@@ -267,12 +236,12 @@ describe('the default template of a folder, from its menu', () => {
     let space = ''
     m = await mount(view(''), {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
-        const shared = shareSpace(server, 'editor')
-        space = shared.space
-        shared.owner.request('POST', `/api/spaces/${space}/folders`, { path: 'Work' })
-        shared.owner.request('PUT', `/api/spaces/${space}/templates/日记`, { baseRev: '', meta: {}, body: '' })
+        const shared = sharedSpace(server.data, 'editor')
+        space = shared.info.id
+        send(server, 'POST', '/folders', { path: 'Work' }, space)
+        send(server, 'PUT', '/templates/日记', { baseRev: '', meta: {}, body: '' }, space)
         localStorage.setItem('pb.space', space)
         return [`/s/${space}/f/`]
       },

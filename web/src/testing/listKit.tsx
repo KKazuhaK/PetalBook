@@ -1,7 +1,8 @@
-// Shared pieces for the tests of the listings of a folder or a tag: the routes, a way to talk to the mock server
+// Shared pieces for the tests of the listings of a folder or a tag: the routes, a way to talk to the server
 // behind the app's back, and a typed folder with a few pages.
 
 import { Route, Routes } from 'react-router'
+import type { FixtureServer } from '@/api/fixtures/server'
 import type { MockServer } from '@/api/mock/server'
 import { FolderList, TagList } from '@/pages/Lists'
 import { FileOpsProvider } from '@/components/files/FileOps'
@@ -34,16 +35,18 @@ export const listShell = (
 )
 
 export type Send = (method: string, path: string, body?: unknown) => { status: number; body: any }
-// Requests to the single-user space, as another browser would make them.
+// Requests to the single-user space, as another browser would make them (to the mock or the fixture server).
 export const sender =
-  (server: MockServer, space = 'default'): Send =>
+  (server: MockServer | FixtureServer, space = 'default'): Send =>
   (method, path, body) =>
-    server.handle(
-      method,
-      `/api/spaces/${space}${path}`,
-      body === undefined ? undefined : JSON.stringify(body),
-      'application/json',
-    ) as { status: number; body: any }
+    'on' in server
+      ? server.on(space)(method, path, body)
+      : (server.handle(
+          method,
+          `/api/spaces/${space}${path}`,
+          body === undefined ? undefined : JSON.stringify(body),
+          'application/json',
+        ) as { status: number; body: any })
 
 export const TASK = {
   title: '任务',
@@ -57,7 +60,7 @@ export const TASK = {
 }
 
 // A typed folder `Work` with four pages (one in each column of a board, and one with no status).
-export function seedWork(server: MockServer, space = 'default', send: Send = sender(server, space)) {
+export function seedWork(server: MockServer | FixtureServer, space = 'default', send: Send = sender(server, space)) {
   send('PUT', '/types/task', TASK)
   send('POST', '/folders', { path: 'Work' })
   send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
@@ -83,4 +86,12 @@ export function putViews(send: Send, scope: Record<string, string>, views: Recor
       .join('&'),
   )
   return send('PUT', '/views', { ...scope, baseRev: cur.rev, views })
+}
+
+// Views as a person's hand in space.yml leaves them: no usable id, so each is served as "@n", n its place from 0.
+export function handWrittenViews(fx: FixtureServer, folder: string, views: Record<string, unknown>[]) {
+  fx.data.spaces[0].views[`folder=${folder}`] = {
+    rev: '',
+    views: views.map((v, i) => ({ filter: [], hidden: [], group: '', sort: '', ...v, id: `@${i}` })) as never,
+  }
 }

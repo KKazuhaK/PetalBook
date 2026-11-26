@@ -17,13 +17,16 @@ import { Toaster } from 'sonner'
 import { api, markSignedIn } from '@/api/client'
 import { mockFetch } from '@/api/mock/fetch'
 import { createMockServer, MOCK_ADMIN, type MockOptions, type MockServer } from '@/api/mock/server'
+import type { FixtureOptions } from '@/api/fixtures/data/model'
+import { fixtureFetch } from '@/api/fixtures/fetch'
+import { createFixtureServer, type FixtureServer } from '@/api/fixtures/server'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/providers/theme'
 
-export interface Mounted {
+// What a mounted page was given: the mock server, or (with `fixtures`) a fixture server (src/api/fixtures).
+export interface MountedBase {
   host: HTMLElement
   root: Root
-  server: MockServer
   qc: QueryClient
   requests: {
     method: string
@@ -34,6 +37,12 @@ export interface Mounted {
     viewAs?: string | null
   }[]
   unmount: () => Promise<void>
+}
+export interface Mounted extends MountedBase {
+  server: MockServer
+}
+export interface FxMounted extends MountedBase {
+  fx: FixtureServer
 }
 
 // jsdom has no media queries, resize observers or scrolling; the components ask for them.
@@ -70,23 +79,30 @@ export const locationText = () => document.querySelector('[data-testid="location
 export const locationState = () =>
   JSON.parse(document.querySelector('[data-testid="location"]')?.getAttribute('data-state') ?? 'null')
 
-export async function mount(
-  ui: ReactNode,
-  options: {
-    // Where to start; a function is given the server, for a scene made first (see `shareSpace`).
-    entries?: InitialEntry[] | ((server: MockServer) => InitialEntry[])
-    index?: number
-    server?: MockOptions
-    signIn?: boolean
-    delay?: (method: string, url: string) => number
-    // A data router with these routes, for what needs one (`useBlocker`); `ui` is then not used.
-    routes?: RouteObject[]
-  } = {},
-): Promise<Mounted> {
-  const server = createMockServer({ now: () => Date.now(), ...options.server })
-  const requests: Mounted['requests'] = []
+interface MountOptions<S> {
+  // Where to start; a function is given the server, for a scene made first (see `shareSpace`).
+  entries?: InitialEntry[] | ((server: S) => InitialEntry[])
+  index?: number
+  signIn?: boolean
+  delay?: (method: string, url: string) => number
+  // A data router with these routes, for what needs one (`useBlocker`); `ui` is then not used.
+  routes?: RouteObject[]
+}
+type MockMount = MountOptions<MockServer> & { server?: MockOptions; fixtures?: undefined }
+type FixtureMount = MountOptions<FixtureServer> & { fixtures: FixtureOptions | true; server?: undefined }
+
+export async function mount(ui: ReactNode, options: FixtureMount): Promise<FxMounted>
+export async function mount(ui: ReactNode, options?: MockMount): Promise<Mounted>
+export async function mount(ui: ReactNode, options: MockMount | FixtureMount = {}): Promise<Mounted | FxMounted> {
+  const now = () => Date.now()
+  const fx = options.fixtures
+    ? createFixtureServer({ now, ...(options.fixtures === true ? {} : options.fixtures) })
+    : null
+  const server = fx ? null : createMockServer({ now, ...options.server })
+  const scene = (options.entries ?? ['/']) as InitialEntry[] | ((s: MockServer & FixtureServer) => InitialEntry[])
+  const requests: MountedBase['requests'] = []
   const real = globalThis.fetch
-  const mocked = mockFetch(server)
+  const mocked = fx ? fixtureFetch(fx) : mockFetch(server!)
   // Every request is noted when it is made; some can be held back, so one can
   // be seen to be cancelled while it is on its way.
   globalThis.fetch = async (input, init) => {
@@ -110,7 +126,7 @@ export async function mount(
   document.body.appendChild(host)
   const root = createRoot(host)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const entries = typeof options.entries === 'function' ? options.entries(server) : (options.entries ?? ['/'])
+  const entries = typeof scene === 'function' ? scene((fx ?? server) as MockServer & FixtureServer) : scene
   const router = options.routes
     ? createMemoryRouter(
         [
@@ -149,7 +165,7 @@ export async function mount(
   return {
     host,
     root,
-    server,
+    ...(fx ? { fx } : { server: server! }),
     qc,
     requests,
     unmount: async () => {

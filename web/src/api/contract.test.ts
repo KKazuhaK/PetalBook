@@ -47,7 +47,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ApiError, api, fileUrl, markSignedIn, request, spaceApi, type SpaceApi } from './client'
 import { adminApi } from './admin'
-import { join, misfits, shapeOf, type Shape } from './contractShapes'
+import { join, misfits, routeOf, shapeOf, type Shape } from './contractShapes'
 import type {
   AdminSpace,
   CatalogBatch,
@@ -85,12 +85,6 @@ const recorded: Record<string, Shape> = existsSync(SHAPES_FILE)
 const observed = new Map<string, Shape>()
 const problems = new Set<string>()
 let scrubbed: string[] = []
-const routeOf = (path: string) =>
-  path
-    .split('?')[0]
-    .split('/')
-    .map((s) => (s === '' || /^[a-z]+(-[a-z]+)*$/.test(s) ? s : '{}'))
-    .join('/')
 // A key a run made up (a property named after it) or an id (a map by space) is written without it.
 const scrub = (key: string) =>
   scrubbed.reduce((k, r) => k.split(r).join('{run}'), key).replace(/^[0-9A-HJKMNP-TV-Z]{10,26}$/, '{id}')

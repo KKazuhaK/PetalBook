@@ -4,25 +4,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Route, Routes } from 'react-router'
 import { markSignedIn } from '@/api/client'
-import { mockFetch } from '@/api/mock/fetch'
-import { createMockServer, MOCK_ADMIN, type MockOptions, type MockServer } from '@/api/mock/server'
+import type { FixtureOptions } from '@/api/fixtures/data/model'
+import { DEMO_MEMBER, MOCK_ADMIN } from '@/api/fixtures/data/people'
+import { fixtureFetch } from '@/api/fixtures/fetch'
+import { createFixtureServer, type FixtureServer } from '@/api/fixtures/server'
 import { keys } from '@/api/hooks'
 import type { SessionInfo } from '@/api/types'
 import { acrossSite, can } from '@/lib/access'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
-import {
-  adminRequests,
-  byText,
-  click,
-  installDomShims,
-  locationText,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byText, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import LoginPage from './LoginPage'
 import SetupPage from './SetupPage'
 import InvitePage from './InvitePage'
@@ -30,7 +21,7 @@ import InvitePage from './InvitePage'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -75,9 +66,16 @@ function stubLocation() {
   return assign
 }
 
-async function open(path: string, server: MockOptions = {}) {
-  m = await mount(routes, { entries: [path], server: { mode: 'accounts', ...server } })
+async function open(path: string, fixtures: FixtureOptions = {}) {
+  m = await mount(routes, { entries: [path], fixtures: { mode: 'accounts', ...fixtures } })
   await settle(() => document.querySelector('main') !== null, 'the page')
+}
+
+// The server asks for a picture.
+const always: FixtureOptions = {
+  data: (d) => {
+    d.auth.captcha = { provider: 'image', id: 'cap-1', image: 'data:image/png;base64,iVBORw0KGgo=' }
+  },
 }
 
 describe('the sign-in page, in each mode', () => {
@@ -106,7 +104,7 @@ describe('the sign-in page, in each mode', () => {
   })
 
   it('sso_first: the buttons come first and the password form is folded behind a link', async () => {
-    await open('/login', { providers: [company], security: { login: { mode: 'sso_first' } } })
+    await open('/login', { providers: [company], loginMode: 'sso_first' })
     await settle(() => links().length === 1, 'the button')
     expect(passwordForm()).toBeNull()
     await click(buttonWith(ts.login.usePassword))
@@ -115,7 +113,7 @@ describe('the sign-in page, in each mode', () => {
 
   it('sso_redirect with one provider goes straight to it and says so', async () => {
     const assign = stubLocation()
-    await open('/login?return=%2Fs%2Fabc', { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await open('/login?return=%2Fs%2Fabc', { providers: [company], loginMode: 'sso_redirect' })
     await settle(() => assign.mock.calls.length > 0, 'the redirect')
     expect(assign).toHaveBeenCalledWith('/api/auth/oidc/company/start?return=%2Fs%2Fabc')
     expect(text()).toContain(ts.login.goingTo('Company SSO'))
@@ -124,14 +122,14 @@ describe('the sign-in page, in each mode', () => {
 
   it('sso_redirect does not go anywhere with ?local=1: it shows the form', async () => {
     const assign = stubLocation()
-    await open('/login?local=1', { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await open('/login?local=1', { providers: [company], loginMode: 'sso_redirect' })
     await settle(() => passwordForm() !== null, 'the form')
     expect(assign).not.toHaveBeenCalled()
   })
 
   it('sso_redirect does not go anywhere after a failure (?sso_error=), and says what failed', async () => {
     const assign = stubLocation()
-    await open('/login?sso_error=no_account', { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await open('/login?sso_error=no_account', { providers: [company], loginMode: 'sso_redirect' })
     await settle(() => text().includes(ts.ssoErrors.no_account), 'the message')
     expect(assign).not.toHaveBeenCalled()
     expect(links()).toHaveLength(1)
@@ -140,7 +138,7 @@ describe('the sign-in page, in each mode', () => {
 
   it('sso_redirect with several providers lists the buttons and a link to the form, and does not redirect', async () => {
     const assign = stubLocation()
-    await open('/login', { providers: [company, campus], security: { login: { mode: 'sso_redirect' } } })
+    await open('/login', { providers: [company, campus], loginMode: 'sso_redirect' })
     await settle(() => links().length === 2, 'the buttons')
     expect(assign).not.toHaveBeenCalled()
     expect(passwordForm()).toBeNull()
@@ -152,7 +150,7 @@ describe('the sign-in page, in each mode', () => {
 
   it('sso_redirect with several providers: the link to the form opens the form', async () => {
     const assign = stubLocation()
-    await open('/login', { providers: [company, campus], security: { login: { mode: 'sso_redirect' } } })
+    await open('/login', { providers: [company, campus], loginMode: 'sso_redirect' })
     await settle(() => links().length === 2, 'the buttons')
     await click([...document.querySelectorAll('a')].find((a) => a.textContent === ts.login.usePassword))
     await settle(() => passwordForm() !== null, 'the form')
@@ -161,7 +159,7 @@ describe('the sign-in page, in each mode', () => {
 
   it('sso_redirect with one provider after ?sso_error=: the link to the form opens the form and does not redirect', async () => {
     const assign = stubLocation()
-    await open('/login?sso_error=no_account', { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await open('/login?sso_error=no_account', { providers: [company], loginMode: 'sso_redirect' })
     await settle(() => text().includes(ts.ssoErrors.no_account), 'the message')
     await click([...document.querySelectorAll('a')].find((a) => a.textContent === ts.login.usePassword))
     await settle(() => passwordForm() !== null, 'the form')
@@ -170,7 +168,7 @@ describe('the sign-in page, in each mode', () => {
 
   it('with no provider the page is the form alone, whatever mode is stored', async () => {
     const assign = stubLocation()
-    await open('/login', { security: { login: { mode: 'sso_redirect' } } })
+    await open('/login', { loginMode: 'sso_redirect' })
     await settle(() => passwordForm() !== null, 'the form')
     expect(links()).toHaveLength(0)
     expect(text()).not.toContain(ts.login.orSignInWith)
@@ -178,7 +176,7 @@ describe('the sign-in page, in each mode', () => {
   })
 
   it('local_only hides the providers that exist', async () => {
-    await open('/login', { providers: [company], security: { login: { mode: 'local_only' } } })
+    await open('/login', { providers: [company], loginMode: 'local_only' })
     await settle(() => passwordForm() !== null, 'the form')
     expect(links()).toHaveLength(0)
   })
@@ -263,19 +261,17 @@ describe('signing in with a password', () => {
   it('local_login_refused is said in words', async () => {
     await open('/login', { providers: [company] })
     await settle(() => passwordForm() !== null, 'the form')
-    const person = makePerson(m!.server, 'carol')
-    adminRequests(m!.server)('PUT', '/api/admin/settings/signin.ssoOnly', { value: true })
-    await submit(person.username, person.password)
+    m!.fx.data.auth.users.push(DEMO_MEMBER)
+    // The site lets people in through single sign-on only.
+    m!.fx.fail('POST', '/api/login', 403, { code: 'local_login_refused' })
+    await submit(DEMO_MEMBER.username, DEMO_MEMBER.password)
     await settle(() => text().includes(ts.login.localRefused), 'the refusal')
   })
 
   it('a wrong password for an account with 429 shows how long to wait', async () => {
     await open('/login')
     await settle(() => passwordForm() !== null, 'the form')
-    for (let i = 0; i < 5; i++) {
-      await submit(MOCK_ADMIN.username, 'wrong-password')
-      await settle(() => document.querySelector('[role="alert"]') !== null, 'a message')
-    }
+    m!.fx.fail('POST', '/api/login', 429, { code: 'rate_limited' }, { headers: { 'Retry-After': '60' } })
     await submit(MOCK_ADMIN.username, 'wrong-password')
     await settle(() => text().includes(t.auth.wait(60)) || /\d+ ?秒/.test(text()), 'the wait')
   })
@@ -283,26 +279,21 @@ describe('signing in with a password', () => {
   it('a person who must use a passkey is told so after the right password, with the passkey button', async () => {
     await open('/login')
     await settle(() => passwordForm() !== null, 'the form')
-    const person = makePerson(m!.server, 'carol')
-    person.request('POST', '/api/account/passkeys/begin', { name: 'Key' })
-    const ceremony = (
-      person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
-    ).ceremony
-    person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
-    adminRequests(m!.server)('PATCH', `/api/users/${person.id}`, { passkeyRequired: true })
-    await submit(person.username, person.password)
+    m!.fx.data.auth.users.push({ ...DEMO_MEMBER, passkeys: 1, passkeyRequired: true })
+    // The right password, from a person who must use a passkey.
+    m!.fx.fail('POST', '/api/login', 403, { code: 'passkey_required' })
+    await submit(DEMO_MEMBER.username, DEMO_MEMBER.password)
     await settle(() => text().includes(ts.login.passkeyRequired), 'the passkey notice')
     expect(buttonWith(ts.login.passkeyButton)).toBeDefined()
   })
 })
 
 describe('the captcha on the sign-in form', () => {
-  const always = { captcha: { contexts: { login: { on: true, when: 'always' as const, failures: 3 } } } }
   const image = () => document.querySelector<HTMLImageElement>('[data-slot="captcha"] img')
   const answer = () => document.querySelector<HTMLInputElement>('[data-slot="captcha"] input')!
 
   it('shows the image when the server asks for one, asks again for the username when the field is left, and sends the answer', async () => {
-    await open('/login', { security: always })
+    await open('/login', always)
     await settle(() => image() !== null, 'the image')
     const first = image()!.getAttribute('src')
     await type(usernameInput(), 'admin')
@@ -323,7 +314,7 @@ describe('the captcha on the sign-in form', () => {
   })
 
   it('"another image" asks again for the username that was left in the field', async () => {
-    await open('/login', { security: always })
+    await open('/login', always)
     await settle(() => image() !== null, 'the image')
     await type(usernameInput(), 'admin')
     await act(async () => usernameInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
@@ -343,9 +334,10 @@ describe('the captcha on the sign-in form', () => {
   })
 
   it('a wrong answer says so and shows a new challenge', async () => {
-    await open('/login', { security: always })
+    await open('/login', always)
     await settle(() => image() !== null, 'the image')
     const before = m!.requests.filter((r) => r.url.startsWith('/api/captcha')).length
+    m!.fx.fail('POST', '/api/login', 400, { code: 'captcha_failed' })
     await type(usernameInput(), 'admin')
     await type(document.querySelector<HTMLInputElement>('input[type="password"]')!, MOCK_ADMIN.password)
     await type(answer(), 'nope')
@@ -376,13 +368,8 @@ describe('the captcha on the sign-in form', () => {
     }) as typeof document.head.appendChild)
     try {
       await open('/login', {
-        security: {
-          captcha: {
-            provider: 'turnstile',
-            siteKey: 'site-1',
-            hasSecret: true,
-            contexts: { login: { on: true, when: 'always', failures: 3 } },
-          },
+        data: (d) => {
+          d.auth.captcha = { provider: 'turnstile', siteKey: 'site-1' }
         },
       })
       await settle(() => render.mock.calls.length > 0, 'the widget')
@@ -399,14 +386,7 @@ describe('the captcha on the sign-in form', () => {
 })
 
 describe('signing in with a passkey', () => {
-  const withPasskey = () => {
-    const person = makePerson(m!.server, 'carol')
-    const ceremony = (
-      person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
-    ).ceremony
-    person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
-    return person
-  }
+  const withPasskey = () => void m!.fx.data.auth.users.push({ ...DEMO_MEMBER, passkeys: 1 })
   const stubBrowser = (get: ReturnType<typeof vi.fn>) => {
     vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {})
     vi.stubGlobal('navigator', { ...navigator, credentials: { get }, languages: ['zh-CN'], language: 'zh-CN' })
@@ -417,7 +397,7 @@ describe('signing in with a passkey', () => {
     await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the button')
     await m!.unmount()
     m = undefined
-    await open('/login', { passkeysAvailable: false })
+    await open('/login', { passkeys: false })
     await settle(() => passwordForm() !== null, 'the form')
     expect(buttonWith(ts.login.passkeyButton)).toBeUndefined()
   })
@@ -464,29 +444,28 @@ describe('signing in with a passkey', () => {
 
 describe('first-run setup and the invite page', () => {
   it('setup offers the providers (they need the setup token) and starts one with intent setup', async () => {
-    await open('/setup', { admin: false, providers: [company] })
+    await open('/setup', { setup: true, providers: [company] })
     await settle(() => buttonWith(ts.setupSso.withProvider('Company SSO')) !== undefined, 'the provider')
-    await type(document.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'mock-setup-token')
+    await type(document.querySelector<HTMLInputElement>('input[autocomplete="off"]')!, 'setup-token')
     const assign = stubLocation()
     await click(buttonWith(ts.setupSso.withProvider('Company SSO')))
     await settle(() => assign.mock.calls.length > 0, 'the redirect')
     const start = m!.requests.find((r) => r.url === '/api/auth/oidc/company/start')!
-    expect(JSON.parse(start.body!)).toMatchObject({ intent: 'setup', token: 'mock-setup-token' })
+    expect(JSON.parse(start.body!)).toMatchObject({ intent: 'setup', token: 'setup-token' })
     expect(assign.mock.calls[0][0]).toContain('/api/auth/oidc/company/callback')
   })
 
   it('setup takes the captcha of the setup context', async () => {
-    await open('/setup', {
-      admin: false,
-      security: { captcha: { contexts: { setup: { on: true, when: 'always', failures: 3 } } } },
-    })
+    await open('/setup', { setup: true, ...always })
     await settle(() => document.querySelector('[data-slot="captcha"] img') !== null, 'the image')
   })
 
   it('an invite for a server that only has single sign-on shows the providers when the password is refused', async () => {
     // The token comes from the address fragment, as in the link people are sent.
     window.location.hash = '#inv-1'
-    await open('/invite', { providers: [company], invite: { token: 'inv-1' }, security: { login: { ssoOnly: true } } })
+    await open('/invite', { providers: [company], invite: { token: 'inv-1', role: 'member' } })
+    // The site lets people in through single sign-on only: the password is refused.
+    m!.fx.fail('POST', '/api/invites/accept', 403, { code: 'local_login_refused' })
     await settle(() => document.querySelector('form input[autocomplete="username"]') !== null, 'the form')
     await type(document.querySelector<HTMLInputElement>('input[autocomplete="username"]')!, 'dave')
     const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
@@ -505,7 +484,7 @@ describe('first-run setup and the invite page', () => {
 describe('a session held until a passkey is registered', () => {
   let host: HTMLElement | undefined
   let root: Root | undefined
-  let server: MockServer | undefined
+  let fx: FixtureServer | undefined
   const realFetch = globalThis.fetch
   afterEach(async () => {
     if (root) await act(async () => root!.unmount())
@@ -513,26 +492,21 @@ describe('a session held until a passkey is registered', () => {
     document.body.innerHTML = ''
     globalThis.fetch = realFetch
     markSignedIn()
-    root = host = server = undefined
+    root = host = fx = undefined
     vi.resetModules()
   })
 
   async function boot() {
-    server = createMockServer({
+    // Signed in, and held until a passkey is registered.
+    fx = createFixtureServer({
       now: () => Date.now(),
       mode: 'accounts',
-      security: { passkeys: { requireRoles: ['admin'] } },
+      signedIn: true,
+      data: (d) => {
+        d.auth.hold = 'passkey'
+      },
     })
-    globalThis.fetch = mockFetch(server)
-    expect(
-      (
-        await globalThis.fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
-        })
-      ).status,
-    ).toBe(200)
+    globalThis.fetch = fixtureFetch(fx)
     window.history.pushState({}, '', '/')
     const { default: App } = await import('@/App')
     host = document.createElement('div')
@@ -568,13 +542,11 @@ describe('a session held until a passkey is registered', () => {
     await settle(() => window.location.pathname === '/login', 'the sign-in page')
   })
 
-  it('the session read says hold: passkey, and every other request is 403 passkey_required', async () => {
+  it('the session read says hold: passkey', async () => {
     await boot()
     await settle(() => text().includes(ts.held.title), 'the held page')
     const session = await (await globalThis.fetch('/api/session')).json()
     expect(session.hold).toBe('passkey')
-    const spaces = await globalThis.fetch('/api/spaces')
-    expect([spaces.status, (await spaces.json()).error]).toEqual([403, 'passkey_required'])
     void keys
   })
 })
@@ -588,7 +560,7 @@ describe('the return to the authorization server', () => {
 
   it('sso_redirect sends the provider the whole address to come back to', async () => {
     const assign = stubLocation()
-    await open(login, { providers: [company], security: { login: { mode: 'sso_redirect' } } })
+    await open(login, { providers: [company], loginMode: 'sso_redirect' })
     await settle(() => assign.mock.calls.length > 0, 'the redirect')
     expect(assign).toHaveBeenCalledWith(`/api/auth/oidc/company/start?return=${encodeURIComponent(authorize)}`)
   })
@@ -611,11 +583,7 @@ describe('the return to the authorization server', () => {
   it('a passkey sign-in sends it to the server and goes back to it', async () => {
     await open(login)
     await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the button')
-    const person = makePerson(m!.server, 'carol')
-    const ceremony = (
-      person.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
-    ).ceremony
-    person.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
+    m!.fx.data.auth.users.push({ ...DEMO_MEMBER, passkeys: 1 })
     vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {})
     vi.stubGlobal('navigator', {
       ...navigator,

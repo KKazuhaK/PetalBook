@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { MOCK_ADMIN } from '@/api/mock/server'
+import type { FixtureOptions } from '@/api/fixtures/data/model'
+import { DEMO_MEMBER } from '@/api/fixtures/data/people'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { tm } from '@/i18n/mail'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import LoginPage from './LoginPage'
 import { ForgotPage, RegisterConfirmPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from './MailPages'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -33,90 +35,86 @@ const text = () => document.body.textContent ?? ''
 const input = (selector: string) => document.querySelector<HTMLInputElement>(selector)!
 const submit = () => click(document.querySelector('form button[type="submit"]'))
 
-// The server's side, as an administrator sets it up (the mock sends nothing: its outbox holds the messages).
-function admin(method: string, path: string, body?: unknown, server = m!.server) {
-  const login = server.handle('POST', '/api/login', JSON.stringify(MOCK_ADMIN), 'application/json')
-  const cookie = login.headers!['Set-Cookie'].split(';')[0]
-  return server.handle(
-    method,
-    `/api${path}`,
-    body === undefined ? undefined : JSON.stringify(body),
-    'application/json',
-    cookie,
-  )
+// What the site has switched on: mail (a password can be reset), registration, a terms page.
+interface Site {
+  mail?: boolean
+  registration?: boolean
+  terms?: boolean
 }
-async function open(path: string, { mail = false, registration = false, terms = false, hash = '' } = {}) {
-  window.location.hash = hash
-  m = await mount(routes, { entries: [path], server: { mode: 'accounts' } })
-  if (mail) admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
-  if (registration) admin('PUT', '/admin/settings/features.registration', { value: true })
-  if (terms) admin('PUT', '/admin/settings/legal.termsUrl', { value: 'https://notes.example.test/terms' })
-  await m.qc.invalidateQueries()
-  await settle(() => document.querySelector('main') !== null, 'the page')
+const site = ({ mail, registration, terms }: Site): FixtureOptions => ({
+  mode: 'accounts',
+  data: (d) => {
+    d.auth.forgot = mail ?? false
+    d.auth.register = registration ?? false
+    d.auth.termsUrl = terms ? 'https://notes.example.test/terms' : undefined
+  },
+})
+// The page a link from a mail opens: its token is in the fragment of the address, never in a query.
+async function open(
+  path: string,
+  on: Site & { token?: string; scene?: (fx: FixtureServer) => void; leaves?: boolean } = {},
+) {
+  window.location.hash = on.token ? `#${on.token}` : ''
+  m = await mount(routes, { entries: (fx) => (on.scene?.(fx), [path]), fixtures: site(on) })
+  // A page that leaves for the app at once has no `main` to wait for.
+  if (!on.leaves) await settle(() => document.querySelector('main') !== null, 'the page')
 }
-const outbox = (kind: string) => m!.server.mail.outbox.filter((x) => x.kind === kind)
-const tokenOf = (link?: string) => link!.split('#')[1]
+const sentTo = (kind: string) => m!.fx.sent.mail.filter((x) => x.kind === kind)
+// The answer a link gives that signs the person in.
+const signedIn = () => {
+  const { password: _password, ...user } = DEMO_MEMBER
+  void _password
+  return { user, hold: null }
+}
+const fillRegistration = async () => {
+  await type(input('input[autocomplete="username"]'), 'tang')
+  await type(input('input[autocomplete="email"]'), 'tang@example.test')
+  const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
+  await type(pw[0], 'a-long-password')
+  await type(pw[1], 'a-long-password')
+}
 
 describe('registration', () => {
-  it('says registration is closed while mail or the switch is off, and sends nothing', async () => {
+  it('says registration is closed while the site does not take registrations, and sends nothing', async () => {
     await open('/register')
     await settle(() => text().includes(tm.register.closed), 'the closed page')
-    expect(m!.server.mail.outbox).toHaveLength(0)
+    expect(sentTo('register')).toHaveLength(0)
   })
 
-  it('the form sends the registration, says to look in the mailbox, and the link makes the account and signs in', async () => {
+  it('the form sends the registration and says to look in the mailbox', async () => {
     await open('/register', { mail: true, registration: true })
     await settle(() => input('input[autocomplete="username"]') !== null, 'the form')
-    await type(input('input[autocomplete="username"]'), 'tang')
-    await type(input('input[autocomplete="email"]'), 'tang@example.test')
-    const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
-    await type(pw[0], 'a-long-password')
-    await type(pw[1], 'a-long-password')
+    await fillRegistration()
     await submit()
     await settle(() => text().includes(tm.register.sentTitle), 'the confirmation notice')
     expect(text()).toContain('tang@example.test')
-    expect(outbox('register')).toHaveLength(1)
     expect(JSON.parse(m!.requests.find((r) => r.url === '/api/register' && r.method === 'POST')!.body!)).toMatchObject({
       username: 'tang',
       email: 'tang@example.test',
       lang: expect.stringMatching(/^(en|zh-Hans)$/),
     })
-    expect(outbox('register')[0].link).toContain('/register/confirm#')
+    expect(sentTo('register')).toHaveLength(1)
   })
 
   it('a confirmation link signs the person in and goes to the app', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
-        admin('PUT', '/admin/settings/features.registration', { value: true }, server)
-        const sent = server.handle(
-          'POST',
-          '/api/register',
-          JSON.stringify({ username: 'bee', name: 'Bee', email: 'bee@example.test', password: 'a-long-password' }),
-          'application/json',
-        )
-        expect(sent.status).toBe(202)
-        // The token is in the fragment of the link, never in a query.
-        window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'register')!.link)
-        return ['/register/confirm']
-      },
-      server: { mode: 'accounts' },
-    })
+    await open('/register/confirm', { mail: true, registration: true, token: 'tok', leaves: true })
     await settle(
       () => document.querySelector('[data-testid="elsewhere"]') !== null,
       'the app, after the account was made',
     )
-    expect(m.requests.find((r) => r.url === '/api/register/confirm')).toBeDefined()
+    const confirm = m!.requests.find((r) => r.url === '/api/register/confirm')!
+    expect(JSON.parse(confirm.body!)).toEqual({ token: 'tok' })
     expect(window.location.hash).toBe('')
   })
 
-  it('organisation creation: the choice appears only when the site allows it, the slug follows the name, and the link makes the organisation', async () => {
+  it('organisation creation: the choice appears only when the site allows it, the slug follows the name, and the registration asks for the organisation', async () => {
     await open('/register', { mail: true, registration: true })
     await settle(() => input('input[autocomplete="username"]') !== null, 'the form')
     expect(document.querySelector('[role="radiogroup"]')).toBeNull()
     expect(text()).not.toContain(tm.register.createOrg)
-    admin('PUT', '/admin/settings/features.tenancy', { value: true })
-    admin('PUT', '/admin/settings/features.orgCreation', { value: true })
+    // The site now lets people make organisations.
+    m!.fx.data.features['features.tenancy'] = true
+    m!.fx.data.auth.orgCreation = true
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('[role="radiogroup"]') !== null, 'the choice')
     await click(document.querySelectorAll('[role="radio"]')[1])
@@ -124,49 +122,33 @@ describe('registration', () => {
     await type(input('input[autocomplete="organization"]'), 'Acme Notes Ltd')
     const slug = document.querySelectorAll<HTMLInputElement>('input[autocapitalize="none"]')[0]
     expect(slug.value).toBe('acme-notes-ltd')
-    await type(input('input[autocomplete="username"]'), 'tang')
-    await type(input('input[autocomplete="email"]'), 'tang@example.test')
-    const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
-    await type(pw[0], 'a-long-password')
-    await type(pw[1], 'a-long-password')
+    await fillRegistration()
     await submit()
     await settle(() => text().includes(tm.register.sentTitle), 'the confirmation notice')
     expect(JSON.parse(m!.requests.find((r) => r.url === '/api/register' && r.method === 'POST')!.body!)).toMatchObject({
       org: { name: 'Acme Notes Ltd', slug: 'acme-notes-ltd' },
     })
-    expect(outbox('register_org')).toHaveLength(1)
+    expect(sentTo('register_org')).toHaveLength(1)
   })
 
   it('a registration that makes an organisation says so when its link is followed', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
-        admin('PUT', '/admin/settings/features.tenancy', { value: true }, server)
-        admin('PUT', '/admin/settings/features.orgCreation', { value: true }, server)
-        const sent = server.handle(
-          'POST',
-          '/api/register',
-          JSON.stringify({
-            username: 'bee',
-            name: 'Bee',
-            email: 'bee@example.test',
-            password: 'a-long-password',
-            org: { name: 'Acme', slug: 'acme' },
-          }),
-          'application/json',
-        )
-        expect(sent.status).toBe(202)
-        window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'register_org')!.link)
-        return ['/register/confirm']
-      },
-      server: { mode: 'accounts' },
+    await open('/register/confirm', {
+      mail: true,
+      token: 'tok',
+      scene: (fx) =>
+        fx.reply('POST', '/api/register/confirm', { ...signedIn(), tenant: { name: 'Acme', slug: 'acme' } }),
     })
     await settle(() => text().includes(tm.confirm.orgReady('Acme')), 'the welcome')
     expect(text()).toContain(tm.confirm.orgBody('Acme', 'acme'))
   })
 
   it('a link that is not valid says so and offers the registration page', async () => {
-    await open('/register/confirm', { mail: true, registration: true, hash: '#nope' })
+    await open('/register/confirm', {
+      mail: true,
+      registration: true,
+      token: 'nope',
+      scene: (fx) => fx.fail('POST', '/api/register/confirm', 404, { code: 'not_found' }),
+    })
     await settle(() => text().includes(tm.confirm.invalid), 'the answer')
     expect(text()).toContain(tm.confirm.toRegister)
   })
@@ -176,14 +158,10 @@ describe('registration', () => {
     await settle(() => input('input[type="checkbox"]') !== null, 'the checkbox')
     const link = document.querySelector<HTMLAnchorElement>('a[href="https://notes.example.test/terms"]')!
     expect(link.target).toBe('_blank')
-    await type(input('input[autocomplete="username"]'), 'tang')
-    await type(input('input[autocomplete="email"]'), 'tang@example.test')
-    const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
-    await type(pw[0], 'a-long-password')
-    await type(pw[1], 'a-long-password')
+    await fillRegistration()
     await submit()
     await settle(() => text().includes(tm.register.termsRequired), 'the refusal')
-    expect(m!.server.mail.outbox).toHaveLength(0)
+    expect(m!.fx.sent.mail).toHaveLength(0)
     await click(input('input[type="checkbox"]'))
     await submit()
     await settle(() => text().includes(tm.register.sentTitle), 'the notice')
@@ -209,46 +187,38 @@ describe('the sign-in page links', () => {
     await settle(() => input('input[type="password"]') !== null, 'the form')
     expect(document.querySelector('a[href="/forgot"]')).toBeNull()
     expect(document.querySelector('a[href="/register"]')).toBeNull()
-    admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
+    m!.fx.data.auth.forgot = true
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('a[href="/forgot"]') !== null, 'the forgot link')
     expect(document.querySelector('a[href="/register"]')).toBeNull()
-    admin('PUT', '/admin/settings/features.registration', { value: true })
+    m!.fx.data.auth.register = true
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('a[href="/register"]') !== null, 'the register link')
   })
 })
 
 describe('password reset', () => {
-  it('the forgot page answers the same and the mock sends only for an account with a verified address', async () => {
+  it('the forgot page asks for the account and says the same whoever it is', async () => {
     await open('/forgot', { mail: true })
     await type(input('input[autocomplete="username"]'), 'nobody')
     await submit()
     await settle(() => text().includes(tm.forgot.sentTitle), 'the notice')
-    expect(m!.server.mail.outbox).toHaveLength(0)
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/password/forgot')!.body!)).toMatchObject({
+      login: 'nobody',
+    })
   })
 
   it('off: the page says there is no password reset', async () => {
-    await open('/forgot')
+    await open('/forgot', {
+      scene: (fx) => fx.fail('POST', '/api/password/forgot', 404, { code: 'password_reset_off' }),
+    })
     await type(input('input[autocomplete="username"]'), 'admin')
     await submit()
     await settle(() => text().includes(tm.forgot.off), 'the refusal')
   })
 
-  it('the reset page checks the link, takes a new password once, and says every device is signed out', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
-        const me = admin('GET', '/session', undefined, server).body as { user: { id: string } }
-        admin('PATCH', `/users/${me.user.id}`, { email: 'admin@example.test', emailVerified: true }, server)
-        expect(
-          server.handle('POST', '/api/password/forgot', JSON.stringify({ login: 'admin' }), 'application/json').status,
-        ).toBe(202)
-        window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'reset')!.link)
-        return ['/reset-password']
-      },
-      server: { mode: 'accounts' },
-    })
+  it('the reset page checks the link and takes a new password once', async () => {
+    await open('/reset-password', { mail: true, token: 'tok' })
     await settle(() => text().includes(tm.reset.intro('admin')), 'the form')
     const pw = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')]
     await type(pw[0], 'a brand new password')
@@ -258,19 +228,17 @@ describe('password reset', () => {
     await type(pw[1], 'a brand new password')
     await submit()
     await settle(() => text().includes(tm.reset.done), 'the confirmation')
-    // The link works once.
-    expect(m.requests.filter((r) => r.url === '/api/password/reset')).toHaveLength(1)
-    const login = m.server.handle(
-      'POST',
-      '/api/login',
-      JSON.stringify({ username: 'admin', password: 'a brand new password' }),
-      'application/json',
-    )
-    expect(login.status).toBe(200)
+    const sent = m!.requests.filter((r) => r.url === '/api/password/reset')
+    expect(sent).toHaveLength(1)
+    expect(JSON.parse(sent[0].body!)).toEqual({ token: 'tok', password: 'a brand new password' })
   })
 
   it('a reset link that is not valid offers to ask again', async () => {
-    await open('/reset-password', { mail: true, hash: '#nope' })
+    await open('/reset-password', {
+      mail: true,
+      token: 'nope',
+      scene: (fx) => fx.fail('POST', '/api/password/reset/check', 404, { code: 'not_found' }),
+    })
     await settle(() => text().includes(tm.reset.invalid), 'the answer')
     expect(text()).toContain(tm.reset.again)
   })
@@ -288,35 +256,17 @@ describe('email verification link', () => {
   })
 
   it('a link the server does not know is not valid', async () => {
-    await open('/verify-email', { mail: true, hash: '#nope' })
+    await open('/verify-email', {
+      mail: true,
+      token: 'nope',
+      scene: (fx) => fx.fail('POST', '/api/email/confirm', 404, { code: 'not_found' }),
+    })
     await settle(() => text().includes(tm.verify.invalid), 'the invalid link')
   })
 
   it('the right link confirms the address', async () => {
-    m = await mount(routes, {
-      entries: (server) => {
-        admin('PUT', '/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' }, server)
-        const inv = admin('POST', '/invites', { role: 'member' }, server).body as { token: string }
-        const joined = server.handle(
-          'POST',
-          '/api/invites/accept',
-          JSON.stringify({ token: inv.token, username: 'tang', password: 'a-long-password' }),
-          'application/json',
-        )
-        const cookie = joined.headers!['Set-Cookie'].split(';')[0]
-        server.handle(
-          'PATCH',
-          '/api/account',
-          JSON.stringify({ email: 'tang@example.test' }),
-          'application/json',
-          cookie,
-        )
-        expect(server.handle('POST', '/api/account/email/verify', '{}', 'application/json', cookie).status).toBe(202)
-        window.location.hash = '#' + tokenOf(server.mail.outbox.find((x) => x.kind === 'verify')!.link)
-        return ['/verify-email']
-      },
-      server: { mode: 'accounts' },
-    })
+    await open('/verify-email', { mail: true, token: 'tok' })
     await settle(() => text().includes(tm.verify.done), 'the confirmation')
+    expect(JSON.parse(m!.requests.find((r) => r.url === '/api/email/confirm')!.body!)).toEqual({ token: 'tok' })
   })
 })

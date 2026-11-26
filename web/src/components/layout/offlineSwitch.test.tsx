@@ -6,7 +6,7 @@ import { Route, Routes } from 'react-router'
 import { api } from '@/api/client'
 import { DEFAULT_CONFIG, configure, hasCopy } from '@/lib/offline'
 import { freshDevice } from '@/lib/offline/testkit'
-import { adminRequests, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import { installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { OfflineSync } from './OfflineSync'
 
 // The app keeps the copies up to date only while the administrators allow offline copies (features.offline).
@@ -14,7 +14,7 @@ import { OfflineSync } from './OfflineSync'
 beforeAll(installDomShims)
 beforeEach(freshDevice)
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -41,15 +41,12 @@ const lateRoutes = (
   </Routes>
 )
 const heads = () => m!.requests.filter((r) => r.url.startsWith('/api/sync/heads')).length
-const setting = (value: boolean) =>
-  adminRequests(m!.server)('PUT', '/api/admin/settings/features.offline', {
-    value,
-    lower: { mode: value ? 'allow' : 'lock' },
-  })
+// The administrators switch features.offline.
+const setting = (value: boolean) => void (m!.fx.data.features['features.offline'] = value)
 
 describe('the app when offline copies are allowed or not', () => {
   it("polls while allowed; when turned off it deletes this account's copies and stops asking", async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/'] })
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/'] })
     const user = (await api.session()).user!.id
     const space = (await api.spaces()).spaces[0].id
     await configure(user, space, { ...DEFAULT_CONFIG })
@@ -72,11 +69,10 @@ describe('the app when offline copies are allowed or not', () => {
     let user = ''
     m = await mount(lateRoutes, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
-        const admin = adminRequests(server)
-        admin('PUT', '/api/admin/settings/features.offline', { value: false, lower: { mode: 'lock' } })
-        user = (admin('GET', '/api/session').body as { user: { id: string } }).user.id
+        server.data.features['features.offline'] = false
+        user = server.data.auth.users[0].id
         return ['/']
       },
     })
@@ -89,7 +85,7 @@ describe('the app when offline copies are allowed or not', () => {
   })
 
   it('a server that cannot say (the setting is not asked yet) deletes nothing', async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/'] })
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/'] })
     const user = (await api.session()).user!.id
     const space = (await api.spaces()).spaces[0].id
     await configure(user, space, { ...DEFAULT_CONFIG })

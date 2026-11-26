@@ -807,6 +807,9 @@ export interface ReasonCode {
 }
 
 export type ErrorCode =
+  | 'template_not_found'
+  | 'template_limit'
+  | 'template_too_large'
   | 'file_too_large'
   | 'heir_required'
   | 'owner_required'

@@ -6,8 +6,9 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { markSignedIn } from '@/api/client'
-import { mockFetch } from '@/api/mock/fetch'
-import { createMockServer } from '@/api/mock/server'
+import type { FixtureOptions } from '@/api/fixtures/data/model'
+import { fixtureFetch } from '@/api/fixtures/fetch'
+import { createFixtureServer } from '@/api/fixtures/server'
 import { PageListView } from '@/components/PageListView'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
@@ -60,14 +61,10 @@ const settle = async (check: () => boolean, what: string) => {
 const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 const menuItems = () => [...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent?.trim())
 
-async function mount(
-  initial: string,
-  ui: (path: string) => React.ReactNode,
-  options: Parameters<typeof createMockServer>[0] = {},
-) {
-  const server = createMockServer({ now: () => Date.now(), ...options })
+async function mount(initial: string, ui: (path: string) => React.ReactNode, options: FixtureOptions = {}) {
+  const fx = createFixtureServer({ now: () => Date.now(), ...options })
   restoreFetch = globalThis.fetch
-  globalThis.fetch = mockFetch(server)
+  globalThis.fetch = fixtureFetch(fx)
   markSignedIn()
   host = document.createElement('div')
   document.body.appendChild(host)
