@@ -61,8 +61,7 @@ func (s *server) tenantSecretAllowed(c *call, tenant, name string) bool {
 		return false
 	}
 	if on, _ := e.Value.(bool); !on {
-		writeJSON(c.w, http.StatusForbidden, errorBody{Error: "feature_off", Feature: sp.Feature,
-			Message: "This organization does not have the feature " + sp.Feature + "."})
+		s.refuse(c.w, featureOffError(sp.Feature, ""))
 		return false
 	}
 	return true

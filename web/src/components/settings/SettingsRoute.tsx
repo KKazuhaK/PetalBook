@@ -4,6 +4,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-route
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { ArrowLeft, X } from 'lucide-react'
 import { useActiveSpace, useSession } from '@/api/hooks'
+import { useFeature } from '@/lib/features'
 import { can } from '@/lib/permissions'
 import { PageFallback } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -51,6 +52,8 @@ export default function SettingsRoute() {
   const spacesReady = !resolving
 
   const current = spaces.find((s) => s.id === space)
+  const tokens = useFeature('features.tokens')
+  const mcp = useFeature('features.mcp')
   const visibility: Visibility = {
     mode: session?.mode,
     signedIn: !!session?.user,
@@ -60,6 +63,8 @@ export default function SettingsRoute() {
     canManage: can(current, 'manage'),
     canMembers: can(current, 'members'),
     disabled: current?.disabled === true,
+    tokens,
+    mcp,
   }
   const shown = visibleSections(visibility)
   const section = resolveSection(requested, visibility)

@@ -713,7 +713,7 @@ function suite(target: Target) {
         )
 
         it.skipIf(!!REAL)(
-          'mock only: with MCP off the consent endpoints are 404, and the grants are kept and listed',
+          'mock only: with MCP off the consent endpoints answer 403 feature_off, and the grants are kept and listed',
           async () => {
             const m = await newMember(uniq('oa6'))
             const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
@@ -727,9 +727,9 @@ function suite(target: Target) {
             try {
               await putSite(admin, 'features.mcp', false)
               expect(await siteValue(admin, 'features.mcp')).toBe(false)
-              expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('not_found')
+              expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('feature_off')
               expect((await call(m.browser, 'POST', '/api/oauth/consent', { req: 'x', approve: false })).status).toBe(
-                404,
+                403,
               )
               expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(1)
             } finally {
@@ -1554,9 +1554,8 @@ function suite(target: Target) {
               200,
             )
             const slug = slugOf('tn')
-            expect((await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })).json.error).toBe(
-              'tenants_off',
-            )
+            const off = await call(admin, 'POST', '/api/admin/tenants', { slug, name: 'Acme' })
+            expect([off.status, off.json.error, off.json.feature]).toEqual([403, 'feature_off', 'features.tenancy'])
             expect(
               (await call(admin, 'PUT', '/api/admin/settings/features.tenancy', { value: true })).json.site.value,
             ).toBe(true)
@@ -7035,7 +7034,7 @@ function suite(target: Target) {
     })
 
     it.skipIf(!accounts)(
-      'features.offline: when the site locks it off, the four sync endpoints answer 403 offline_off; it is a setting a person only reads',
+      'features.offline: when the site locks it off, the four sync endpoints answer 403 feature_off; a person reads it among the features',
       async () => {
         const routes = [
           syncUrl('/sync/catalog'),
@@ -7044,14 +7043,7 @@ function suite(target: Target) {
           `/api/sync/heads?space=${spaceId}`,
         ]
         const mineOf = async (c: typeof admin) =>
-          (
-            (await call(c, 'GET', '/api/settings')).json.settings as {
-              key: string
-              effective: unknown
-              space?: unknown
-              person?: unknown
-            }[]
-          ).find((x) => x.key === 'features.offline')
+          ((await call(c, 'GET', '/api/settings')).json.features as Record<string, boolean>)['features.offline']
         const def = (
           (await call(admin, 'GET', '/api/admin/settings')).json.settings as {
             key: string
@@ -7061,7 +7053,7 @@ function suite(target: Target) {
           }[]
         ).find((x) => x.key === 'features.offline')!
         expect([def.kind, def.layers, def.site.value]).toEqual(['boolean', ['site', 'tenant'], true])
-        expect(await mineOf(admin)).toEqual({ key: 'features.offline', effective: true })
+        expect(await mineOf(admin)).toBe(true)
         try {
           expect(
             (
@@ -7071,10 +7063,14 @@ function suite(target: Target) {
               })
             ).status,
           ).toBe(200)
-          expect((await mineOf(admin))?.effective).toBe(false)
+          expect(await mineOf(admin)).toBe(false)
           for (const path of routes) {
             const got = await call(admin, 'GET', path)
-            expect([got.status, got.json.error], path).toEqual([403, 'offline_off'])
+            expect([got.status, got.json.error, got.json.feature], path).toEqual([
+              403,
+              'feature_off',
+              'features.offline',
+            ])
           }
           // Nothing else is refused.
           expect((await call(admin, 'GET', `/api/spaces/${spaceId}/pages`)).status).toBe(200)
@@ -7091,7 +7087,7 @@ function suite(target: Target) {
           expect(
             (await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/features.offline`, { value: false })).status,
           ).toBe(200)
-          expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).json.error).toBe('offline_off')
+          expect((await call(admin, 'GET', `/api/sync/heads?space=${spaceId}`)).json.error).toBe('feature_off')
         } finally {
           await call(admin, 'PUT', `/api/admin/tenants/${t.id}/settings/features.offline`, { value: true })
         }

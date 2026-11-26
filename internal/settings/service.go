@@ -8,6 +8,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,7 +80,8 @@ type Service struct {
 	// window of one of its rules.
 	siteGen atomic.Uint64
 	planGen atomic.Uint64
-	serials atomic.Uint64 // numbers the snapshots (see Site)
+	serials atomic.Uint64 // numbers the snapshots (see Site, Version)
+	boot    string        // names this process, so that a Version of another one never matches
 	slots   sync.Map      // tenant id ("" for the site alone) -> *slot
 
 	// plans is every rule of every plan, read again when planGen moves.
@@ -145,7 +147,7 @@ func Of(st *store.Store) *Service {
 
 // New makes the service over the Definitions.
 func New(st *store.Store) *Service {
-	s := &Service{st: st, byK: map[string]*Def{}, bind: map[string]SiteBinding{}, now: time.Now, revCheck: RevCheck,
+	s := &Service{st: st, byK: map[string]*Def{}, bind: map[string]SiteBinding{}, now: time.Now, revCheck: RevCheck, boot: strconv.FormatInt(time.Now().UnixNano(), 36),
 		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }}
 	s.defs = Definitions()
 	for _, d := range s.defs {
@@ -365,6 +367,19 @@ func (s *Service) For(ctx context.Context, tenant string) (map[string]*Effective
 	return p.m, nil
 }
 
+// Version names what For answers for a tenant now: it changes whenever the
+// tenant's settings are computed again (a write, a rule's window, another
+// process's change), and it is never the same in another process. A client
+// that holds an answer made from it asks again only when it differs (the ETag
+// of GET /api/settings). One read of the cache.
+func (s *Service) Version(ctx context.Context, tenant string) (string, error) {
+	p, err := s.snapshotOf(ctx, tenant)
+	if err != nil {
+		return "", err
+	}
+	return s.boot + "." + strconv.FormatUint(p.serial, 36), nil
+}
+
 func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, error) {
 	v, ok := s.slots.Load(tenant)
 	if !ok {
@@ -403,7 +418,7 @@ func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, err
 	if err != nil {
 		return nil, err
 	}
-	p := &snapshot{site: site, tenant: gen, plan: plan, next: next, m: m}
+	p := &snapshot{site: site, tenant: gen, plan: plan, next: next, m: m, serial: s.serials.Add(1)}
 	sl.snap.Store(p)
 	return p, nil
 }

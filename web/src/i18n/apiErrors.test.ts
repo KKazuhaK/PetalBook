@@ -20,6 +20,7 @@ describe('the texts of the server error codes', () => {
     quota: 'spaces',
     spaces: '2',
     accounts: '4',
+    feature: 'offline copies',
     wait: '30 s',
   }
   for (const [name, table] of [
@@ -44,6 +45,13 @@ describe('the texts of the server error codes', () => {
     const extra = Object.keys(apiErrorsEn).filter((c) => !codes.includes(c))
     expect(extra).toEqual([])
     expect(Object.keys(apiErrorsZhCN).filter((c) => !codes.includes(c))).toEqual(extra)
+  })
+  it('names the feature that is off in the feature_off text, in both languages', () => {
+    for (const table of [apiErrorsEn, apiErrorsZhCN]) {
+      const text = table.feature_off
+      expect(typeof text === 'function' && text({ feature: 'offline copies' })).toContain('offline copies')
+      expect(typeof text === 'function' && text({})).not.toBe('')
+    }
   })
   it('says the limit and what a file was in the file_too_large text', () => {
     const en = apiErrorsEn.file_too_large

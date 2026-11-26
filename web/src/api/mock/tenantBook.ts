@@ -943,28 +943,32 @@ export function createTenantBook(o: TenantBookOptions) {
     return { items: items.map(tenantOut), next: from + limit < all.length ? items[items.length - 1].id : '' }
   }
 
+  // Every feature (a boolean named features.*, and mail.ownSender) as it stands for a tenant (GET /api/settings).
+  const features = (tenant: string) =>
+    Object.fromEntries(
+      DEFS.filter((d) => d.kind === 'boolean' && (d.key.startsWith('features.') || d.key === 'mail.ownSender')).map(
+        (d) => [d.key, effectiveOf(tenant, d).effective === true],
+      ),
+    )
+
   // The settings of one person's layers (GET /api/settings).
   const mine = (tenant: string) =>
-    DEFS.filter((d) => d.layers.includes('space') || d.key === 'features.offline' || d.key === 'storage.assets').map(
-      (d) => {
-        const e = effectiveOf(tenant, d)
-        if (d.key === 'storage.assets') {
-          const r = assetsRule(tenant)
-          return { key: d.key, effective: r.default, allowed: r.allowed, locked: r.locked }
-        }
-        // Not the person's to change: a client only reads whether it may keep offline copies.
-        if (!d.layers.includes('space')) return { key: d.key, effective: e.effective }
-        const on = e.effective === true
-        const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
-        const source =
-          lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)
-        return {
-          key: d.key,
-          effective: e.effective,
-          space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) },
-        }
-      },
-    )
+    DEFS.filter((d) => d.layers.includes('space') || d.key === 'storage.assets').map((d) => {
+      const e = effectiveOf(tenant, d)
+      if (d.key === 'storage.assets') {
+        const r = assetsRule(tenant)
+        return { key: d.key, effective: r.default, allowed: r.allowed, locked: r.locked }
+      }
+      const on = e.effective === true
+      const lockedBy = siteLower(d).mode === 'lock' ? 'site' : e.tenant?.lower?.mode === 'lock' ? 'tenant' : undefined
+      const source =
+        lockedBy ?? (!on ? (e.tenant && e.tenant.value !== null && e.tenant.inEffect ? 'tenant' : 'site') : undefined)
+      return {
+        key: d.key,
+        effective: e.effective,
+        space: { canChange: on && !lockedBy, inEffect: on, ...(source ? { source } : {}) },
+      }
+    })
 
   // What the layer below the tenant may do with a setting: a site administrator answers to the site's rule only, anyone
   // else to the stricter of the site's and the tenant's.
@@ -1001,6 +1005,7 @@ export function createTenantBook(o: TenantBookOptions) {
   }
   return {
     mine,
+    features,
     assetsRule,
     lowerFor,
     quotaOf,
@@ -1031,7 +1036,15 @@ export function createTenantBook(o: TenantBookOptions) {
           return j({ ...page(all, url.searchParams.get('cursor') ?? '', limit), count: tenants.size })
         }
         if (method === 'POST') {
-          if (!enabledNow()) throw new HttpError(409, 'tenants_off', 'more than the default tenant is switched off')
+          if (!enabledNow())
+            throw new HttpError(
+              403,
+              'feature_off',
+              'The multiple tenants feature is turned off for this organization.',
+              {
+                feature: 'features.tenancy',
+              },
+            )
           const name = typeof body.name === 'string' ? body.name.trim() : ''
           if (!name || name.length > 80 || typeof body.slug !== 'string' || !SLUG.test(body.slug))
             bad('slug is 2 to 32 characters of a-z, 0-9 and -; name is 1 to 80 characters')

@@ -14,6 +14,8 @@ export interface ErrorParams {
   field?: string
   // The quota that ran out, and how many spaces or accounts a refusal counts.
   quota?: string
+  // The feature that is off (403 feature_off), in words.
+  feature?: string
   spaces?: string
   accounts?: string
   // How long to wait before asking again (Retry-After), as a phrase.

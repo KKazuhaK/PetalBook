@@ -52,7 +52,7 @@ func TestTenancyIsASettingAndTheCountIsOnTheTenantList(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 409, "tenants_off")
+		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 403, "feature_off")
 		root.do("PUT", "/api/admin/settings/features.tenancy", map[string]any{"value": true}).want(t, 200, "")
 		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 201, "")
 		if n := root.do("GET", "/api/admin/tenants", nil).want(t, 200, "").body["count"]; n != float64(2) {
@@ -60,7 +60,7 @@ func TestTenancyIsASettingAndTheCountIsOnTheTenantList(t *testing.T) {
 		}
 		// Off again at once: the switch is read from the settings' cache, which the write dropped.
 		root.do("PUT", "/api/admin/settings/features.tenancy", map[string]any{"value": false}).want(t, 200, "")
-		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "more", "name": "More"}).want(t, 409, "tenants_off")
+		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "more", "name": "More"}).want(t, 403, "feature_off")
 	})
 }
 

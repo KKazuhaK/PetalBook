@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { t } from '@/i18n'
 import { tk } from '@/i18n/tokens'
+import { Feature } from '@/lib/features'
 import GrantsSection from './GrantsSection'
 import { SettingsSection } from './SettingsParts'
 
@@ -32,6 +33,20 @@ const EXPIRY_CHOICES = [30, 90, 365, 0] as const
 // API tokens (accounts mode): make one, see the ones there are, revoke one. The
 // secret of a new token is shown here once, from the response that made it.
 export default function TokensPanel() {
+  // Tokens and MCP are features an administrator may have switched off: what needs one that is off is not shown.
+  return (
+    <div className="grid w-full min-w-0 grid-cols-1 gap-8">
+      <Feature name="features.tokens" fallback={<p className="text-sm text-muted-foreground">{tk.off}</p>}>
+        <TokensBlock />
+      </Feature>
+      <Feature name="features.mcp">
+        <GrantsSection />
+      </Feature>
+    </div>
+  )
+}
+
+function TokensBlock() {
   const qc = useQueryClient()
   const list = useQuery({ queryKey: keys.tokens, queryFn: ({ signal }) => api.tokens(signal), staleTime: 15_000 })
   const [making, setMaking] = useState(false)
@@ -112,7 +127,6 @@ export default function TokensPanel() {
           </ul>
         )}
       </SettingsSection>
-      <GrantsSection />
       <AlertDialog open={revoking !== null} onOpenChange={(open) => !open && setRevoking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -48,37 +48,37 @@ var heldForPasskey = map[string]bool{
 
 // signinRoutes are the routes of milestone 2.8, joined to the table at start-up.
 var signinRoutes = []route{
-	{"GET", "/api/auth/providers", public, true, false, false, (*server).getAuthProviders},
-	{"GET", "/api/captcha", public, true, false, false, (*server).getCaptcha},
+	{"GET", "/api/auth/providers", public.always(), true, false, false, (*server).getAuthProviders},
+	{"GET", "/api/captcha", public.always(), true, false, false, (*server).getCaptcha},
 
-	{"GET", "/api/auth/{kind}/{slug}/start", public, true, false, false, (*server).ssoStartGET},
-	{"POST", "/api/auth/{kind}/{slug}/start", public, true, true, false, (*server).ssoStartPOST},
-	{"GET", "/api/auth/oidc/{slug}/callback", public, true, false, false, (*server).oidcSlugCallback},
-	{"GET", "/api/auth/github/{slug}/callback", public, true, false, false, (*server).oidcSlugCallback},
-	{"POST", samlACSPattern, public, true, false, false, (*server).samlACS},
-	{"GET", "/api/auth/saml/{slug}/metadata", public, true, false, false, (*server).samlMetadata},
+	{"GET", "/api/auth/{kind}/{slug}/start", public.always(), true, false, false, (*server).ssoStartGET},
+	{"POST", "/api/auth/{kind}/{slug}/start", public.always(), true, true, false, (*server).ssoStartPOST},
+	{"GET", "/api/auth/oidc/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
+	{"GET", "/api/auth/github/{slug}/callback", public.always(), true, false, false, (*server).oidcSlugCallback},
+	{"POST", samlACSPattern, public.always(), true, false, false, (*server).samlACS},
+	{"GET", "/api/auth/saml/{slug}/metadata", public.always(), true, false, false, (*server).samlMetadata},
 
-	{"POST", "/api/auth/passkey/begin", public, true, false, false, (*server).passkeyBegin},
-	{"POST", "/api/auth/passkey/finish", public, true, false, false, (*server).passkeyFinish},
+	{"POST", "/api/auth/passkey/begin", public.always(), true, false, false, (*server).passkeyBegin},
+	{"POST", "/api/auth/passkey/finish", public.always(), true, false, false, (*server).passkeyFinish},
 
-	{"GET", "/api/account/passkeys", signedIn, true, false, false, (*server).listAccountPasskeys},
-	{"POST", "/api/account/passkeys/begin", signedIn, true, false, false, (*server).accountPasskeyBegin},
-	{"POST", "/api/account/passkeys/finish", signedIn, true, false, false, (*server).accountPasskeyFinish},
-	{"PATCH", "/api/account/passkeys/{id}", signedIn, true, false, false, (*server).renameAccountPasskey},
-	{"DELETE", "/api/account/passkeys/{id}", signedIn, true, false, false, (*server).deleteAccountPasskey},
+	{"GET", "/api/account/passkeys", signedIn.always(), true, false, false, (*server).listAccountPasskeys},
+	{"POST", "/api/account/passkeys/begin", signedIn.always(), true, false, false, (*server).accountPasskeyBegin},
+	{"POST", "/api/account/passkeys/finish", signedIn.always(), true, false, false, (*server).accountPasskeyFinish},
+	{"PATCH", "/api/account/passkeys/{id}", signedIn.always(), true, false, false, (*server).renameAccountPasskey},
+	{"DELETE", "/api/account/passkeys/{id}", signedIn.always(), true, false, false, (*server).deleteAccountPasskey},
 
-	{"GET", "/api/users/{id}/passkeys", needs(authz.TenantUsersRead), true, false, false, (*server).listUserPasskeys},
-	{"DELETE", "/api/users/{id}/passkeys/{passkey}", needs(authz.TenantUsersManage), true, false, false, (*server).deleteUserPasskey},
+	{"GET", "/api/users/{id}/passkeys", needs(authz.TenantUsersRead).always(), true, false, false, (*server).listUserPasskeys},
+	{"DELETE", "/api/users/{id}/passkeys/{passkey}", needs(authz.TenantUsersManage).always(), true, false, false, (*server).deleteUserPasskey},
 
-	{"GET", "/api/admin/security", needs(authz.SiteSecurityManage), true, false, false, (*server).adminGetSecurity},
-	{"PUT", "/api/admin/security", needs(authz.SiteSecurityManage), true, false, false, (*server).adminPutSecurity},
-	{"GET", "/api/admin/auth/providers", needs(authz.SiteSigninManage), true, false, false, (*server).adminListProviders},
-	{"POST", "/api/admin/auth/providers", needs(authz.SiteSigninManage), true, false, false, (*server).adminCreateProvider},
-	{"GET", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage), true, false, false, (*server).adminGetProvider},
-	{"PATCH", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage), true, false, false, (*server).adminPatchProvider},
-	{"DELETE", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage), true, false, false, (*server).adminDeleteProvider},
-	{"POST", "/api/admin/auth/providers/{slug}/refresh", needs(authz.SiteSigninManage), true, false, false, (*server).adminRefreshProvider},
-	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead), true, false, false, (*server).adminAudit},
+	{"GET", "/api/admin/security", needs(authz.SiteSecurityManage).always(), true, false, false, (*server).adminGetSecurity},
+	{"PUT", "/api/admin/security", needs(authz.SiteSecurityManage).always(), true, false, false, (*server).adminPutSecurity},
+	{"GET", "/api/admin/auth/providers", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminListProviders},
+	{"POST", "/api/admin/auth/providers", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminCreateProvider},
+	{"GET", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminGetProvider},
+	{"PATCH", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminPatchProvider},
+	{"DELETE", "/api/admin/auth/providers/{slug}", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminDeleteProvider},
+	{"POST", "/api/admin/auth/providers/{slug}/refresh", needs(authz.SiteSigninManage).always(), true, false, false, (*server).adminRefreshProvider},
+	{"GET", "/api/admin/audit", needs(authz.TenantAuditRead).always(), true, false, false, (*server).adminAudit},
 }
 
 func init() { routeTable = append(routeTable, signinRoutes...) }

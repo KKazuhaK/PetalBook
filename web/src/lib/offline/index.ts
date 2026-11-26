@@ -25,7 +25,6 @@ export {
   POLL_MS,
 } from './poller'
 export { isOffline, useOffline } from './status'
-export { useOfflineAllowed } from './allowed'
 export {
   CopyClosedError,
   DEFAULT_CONFIG,

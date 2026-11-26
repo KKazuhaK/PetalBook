@@ -38,8 +38,7 @@ func (e *accessError) Error() string { return e.msg }
 func (s *server) allow(c *call, k authz.Key, tenant string) error {
 	switch authz.Decide(c.r.Context(), c.p.Access, k, tenant, s.features()) {
 	case authz.FeatureOff:
-		return &accessError{status: http.StatusForbidden, code: "feature_off", key: k.Name(), feature: k.Feature(),
-			msg: "This organization does not have the feature " + k.Feature() + "."}
+		return featureOffError(k.Feature(), k.Name())
 	case authz.Denied:
 		msg := "Only an administrator may do that."
 		if k.Scope() == authz.ScopeSite {

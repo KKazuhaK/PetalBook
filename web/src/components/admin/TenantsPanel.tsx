@@ -47,7 +47,7 @@ export function tenantError(e: unknown): string {
       return tl.errors.exists
     case 'invalid':
       return tl.errors.invalid
-    case 'tenants_off':
+    case 'feature_off': // features.tenancy: the only feature a tenant call needs
       return tl.errors.tenants_off
     case 'tenant_limit':
       return tl.errors.tenant_limit
@@ -110,12 +110,14 @@ function TenantList({ enabled }: { enabled: boolean }) {
     <SettingsSection title={tl.title} id="tenants-heading">
       <div className="flex flex-wrap items-center gap-3">
         {!enabled && <p className="text-xs text-muted-foreground">{tl.off}</p>}
-        <AdminPageActions>
-          <Button type="button" disabled={!enabled} onClick={() => setCreating(true)}>
-            <Plus aria-hidden="true" />
-            {tl.create}
-          </Button>
-        </AdminPageActions>
+        {enabled && (
+          <AdminPageActions>
+            <Button type="button" onClick={() => setCreating(true)}>
+              <Plus aria-hidden="true" />
+              {tl.create}
+            </Button>
+          </AdminPageActions>
+        )}
       </div>
       {made?.invite && <InviteNotice tenant={made} onClose={() => setMade(null)} />}
       {list.data.length === 0 ? (

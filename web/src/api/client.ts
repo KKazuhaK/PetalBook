@@ -2,6 +2,7 @@
 
 import { t } from '@/i18n'
 import { apiErrorText, type ErrorParams } from '@/i18n/apiErrors'
+import { featureName } from '@/i18n/featureNames'
 import { formatBytes } from '@/lib/bytes'
 import { noteNetworkOk } from '@/lib/offline/status'
 import { forgetLastAccount } from '@/lib/lastAccount'
@@ -10,7 +11,7 @@ import { ENDED_REASONS } from './types'
 import type {
   RegisterInfo,
   RegisterInput,
-  MySetting,
+  MySettings,
   EffectiveMemberList,
   GroupMember,
   GroupRef,
@@ -196,6 +197,7 @@ export function errorParams(code: string, body: unknown, retryAfter: number | un
     header: str(b.header),
     field: str(b.field),
     quota: str(b.quota),
+    feature: featureName(str(b.feature)),
     spaces: count(b.spaces),
     accounts: count(b.accounts),
     wait: retryAfter ? t.auth.wait(retryAfter) : undefined,
@@ -834,7 +836,7 @@ export const api = {
   // --- API tokens ---
   // What each setting that a space or a person can change comes to for the caller, and who keeps it from changing (3.3).
   settings: (space?: string, signal?: AbortSignal) =>
-    request<{ settings: MySetting[] }>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
+    request<MySettings>(`/settings${space ? `?space=${enc(space)}` : ''}`, { signal }),
   tokens: (signal?: AbortSignal) => request<{ tokens: ApiToken[] }>('/account/tokens', { signal }),
   // `expiresInDays` 0 is a token that never expires; left out, 90 days.
   createToken: (input: { name: string; access: TokenAccess; spaces: string[]; expiresInDays?: number }) =>

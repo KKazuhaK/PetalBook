@@ -38,7 +38,7 @@ export const onSynced = (l: Listener) => {
   return () => void listeners.delete(l)
 }
 
-// The server says offline copies are turned off (403 offline_off): everything this account keeps on the device is
+// The server says offline copies are turned off (403 feature_off): everything this account keeps on the device is
 // deleted, and the ones listening (the app, to ask the setting again) are told.
 const offListeners = new Set<(user: string) => void>()
 export const onOfflineOff = (l: (user: string) => void) => {

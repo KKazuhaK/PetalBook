@@ -14,7 +14,6 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/page"
-	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -89,19 +88,6 @@ func (s *server) toTenantRef(id string) *tenantRefResp {
 }
 
 func tenantNotFound(c *call) { writeError(c.w, http.StatusNotFound, "not_found", "No such tenant.") }
-
-// --- the switch ------------------------------------------------------------------------
-
-// tenancyEnabled is the setting features.tenancy: whether tenants besides the
-// default one may exist. One read of the settings' cache, no query.
-func (s *server) tenancyEnabled(ctx context.Context) (bool, error) {
-	e, err := s.settings.Get(ctx, "", settings.FeatureTenancy)
-	if err != nil {
-		return false, err
-	}
-	on, _ := e.Value.(bool)
-	return on, nil
-}
 
 // --- the tenants -----------------------------------------------------------------------
 
@@ -204,15 +190,6 @@ func (s *server) adminCreateTenant(c *call) {
 		return
 	}
 	ctx := c.r.Context()
-	on, err := s.tenancyEnabled(ctx)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	if !on {
-		writeError(c.w, http.StatusConflict, "tenants_off", "More than the default tenant is switched off; switch features.tenancy on in the site settings.")
-		return
-	}
 	name, ok := cleanTenantName(req.Name)
 	if !ok || !tenantSlugRE.MatchString(req.Slug) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters.")
@@ -222,6 +199,7 @@ func (s *server) adminCreateTenant(c *call) {
 	// before the tenant is made, so a bad one makes nothing. Each may be "": the
 	// person fills it in when they accept (a username they must).
 	var fill auth.InviteFill
+	var err error
 	if req.Admin != nil {
 		if fill, err = s.auth.CleanInviteFill(ctx, auth.InviteFill{Username: req.Admin.Username, Name: req.Admin.Name, Email: req.Admin.Email}); err != nil {
 			s.fail(c.w, err)

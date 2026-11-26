@@ -16,7 +16,7 @@ const TEXT_BATCH = 100
 // Bodies are fetched at most this many requests at a time.
 const TEXT_PARALLEL = 4
 
-// 'off': the server says offline copies are turned off for this account's tenant (403 offline_off).
+// 'off': the server says offline copies are turned off for this account's tenant (403 feature_off for features.offline).
 // 'cleared': the copy was cleared (or the account signed out) while it synced; the sync stopped and wrote nothing.
 export type Outcome = 'ok' | 'offline' | 'gone' | 'disabled' | 'off' | 'error' | 'cleared'
 export interface SyncResult {
@@ -38,7 +38,12 @@ export interface SyncOptions {
 export function classify(e: unknown): { outcome: Outcome; message: string } {
   if (e instanceof ApiError) {
     if (e.status === 404) return { outcome: 'gone', message: e.message }
-    if (e.status === 403 && e.code === 'offline_off') return { outcome: 'off', message: e.message }
+    if (
+      e.status === 403 &&
+      e.code === 'feature_off' &&
+      (e.body as { feature?: string } | undefined)?.feature === 'features.offline'
+    )
+      return { outcome: 'off', message: e.message }
     if (e.status === 403 && e.code === 'space_disabled') return { outcome: 'disabled', message: e.message }
     if (e.code === 'network' || e.code === 'timeout') return { outcome: 'offline', message: e.message }
     return { outcome: 'error', message: e.message }

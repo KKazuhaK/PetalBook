@@ -55,6 +55,9 @@ func init() {
 	} {
 		routeAccessChanged[r] = map[string]string{"site admin": "403 takeover_required", "tenant admin": "403 takeover_required"}
 	}
+	// A route that declares a feature is refused while the tenant does not have it (3.6 part 6): more
+	// tenants are off in this fixture, so a site administrator is told so, as the route's key comes first.
+	routeAccessChanged["POST /api/admin/tenants"] = map[string]string{"site admin": "403 feature_off"}
 }
 
 // routeAccessAdded are the routes added after the golden file was written,

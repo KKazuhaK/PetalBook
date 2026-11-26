@@ -31,7 +31,6 @@ export const apiErrorsZhCN: ApiErrorTexts = {
       : `文件超过了单个文件的上限${p.limit ? ` ${p.limit}` : ''}。`,
   space_full: '这个空间已满，放不下更多了。',
   exports_full: '导出文件占满了可用的空间，请先删除一些，或等它们过期。',
-  offline_off: '这个组织没有开放离线副本。',
   changes_expired: '离线记录的位置太旧了，请重新读取目录。',
 
   // Spaces, members and groups.
@@ -57,12 +56,11 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   member_via_group: '这个人是通过组加入的，请在组里移除。',
   default_tenant: '默认组织不能这样改。',
   tenant_limit: '组织数量已达上限。',
-  feature_off: '你的组织没有这项功能。',
+  feature_off: (p) => (p.feature ? `你的组织关闭了「${p.feature}」功能。` : '你的组织没有这项功能。'),
   takeover_required: '只有空间的成员才能改它的所有者或远程仓库。管理员需要先接管这个空间。',
   plan_in_use: '还有组织在用这个套餐，先给它们换一个。',
   plan_limit: '套餐数量已经到上限。',
   tenant_not_empty: '这个组织里还有用户、空间、组、邀请或回收站里的内容，不能直接移走。',
-  tenants_off: '多组织功能没有打开。',
   not_fixable: '这种问题不能在这里修复。',
   remote_required: '这个空间需要先连接远程仓库。',
   confirm_stale: '确认之后情况有变化，请重新确认。',

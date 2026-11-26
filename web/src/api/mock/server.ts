@@ -2167,11 +2167,16 @@ export function createMockServer(options: MockOptions = {}) {
       throw tooLarge(limit, size, typeof meta?.title === 'string' && meta.title !== '' ? meta.title : 'page')
     }
   }
-  // The four sync endpoints are refused when offline copies are off for the caller's tenant (features.offline).
-  const offlineAllowed = () => {
-    if (tenantBook.effective('features.offline') === false)
-      throw new HttpError(403, 'offline_off', 'offline copies are turned off for this tenant')
+  // A route that belongs to a feature is refused while the caller's tenant does not have it, before anything else of it
+  // is looked at (the server's access.on).
+  const featureGate = (key: string) => {
+    if (tenantBook.effective(key) === false)
+      throw new HttpError(403, 'feature_off', `The ${key} feature is turned off for this organization.`, {
+        feature: key,
+      })
   }
+  // The four sync endpoints belong to features.offline.
+  const offlineAllowed = () => featureGate('features.offline')
   // Storage management (docs/api.md, "Storage management"): where bytes live, the lists, the recycle bin, the previews,
   // the confirmations and jobs, the exports and the audited view. Everything it calls on is read when asked for.
   const manage = createManageBook({
@@ -3347,6 +3352,8 @@ export function createMockServer(options: MockOptions = {}) {
     body: Record<string, unknown>,
   ): MockResponse => {
     const j = (b: unknown, status = 200): MockResponse => ({ status, body: b })
+    // The audited view belongs to features.adminView, which a site administrator is not bound by.
+    if (/^\/admin\/spaces\/[^/]+\/view$/.test(path) && !isSiteAdmin(me)) featureGate('features.adminView')
     const managed = manage.route(me, token, method, path, url, body)
     if (managed) return managed
     if (path === '/admin/spaces' && method === 'GET') return manage.listSpaces(me, token, url)
@@ -4683,7 +4690,10 @@ export function createMockServer(options: MockOptions = {}) {
             .sort(newestFirst)
             .map(publicToken),
         })
-      if (path === '/account/tokens' && method === 'POST') return createToken(me, body)
+      if (path === '/account/tokens' && method === 'POST') {
+        featureGate('features.tokens')
+        return createToken(me, body)
+      }
       const tok = /^\/account\/tokens\/([^/]+)$/.exec(path)
       if (tok && method === 'DELETE') {
         revokeToken(decodeURIComponent(tok[1]), me.id, me.id)
@@ -4888,6 +4898,7 @@ export function createMockServer(options: MockOptions = {}) {
     if (path === '/oauth/consent') {
       accountsOnly()
       const me = requireUser(ctx)
+      featureGate('features.mcp')
       requireOAuth()
       if (method === 'GET') return j(consentInfo(me, takePending(me, url.searchParams.get('req'), true)))
       if (method === 'POST') return decideConsent(me, body)
@@ -4958,7 +4969,10 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/settings' && method === 'GET') {
       requireUser(ctx)
-      return { status: 200, body: { settings: tenantBook.mine(DEFAULT_TENANT) } }
+      return {
+        status: 200,
+        body: { features: tenantBook.features(DEFAULT_TENANT), settings: tenantBook.mine(DEFAULT_TENANT) },
+      }
     }
     if (
       path.startsWith('/admin/tenan') ||

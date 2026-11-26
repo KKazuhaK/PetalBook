@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@/providers/theme'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -16,6 +16,7 @@ import { FolderList, RecentList, SearchList, TagList } from '@/pages/Lists'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { RememberAccount } from '@/components/auth/RememberAccount'
 import { loginUrl } from '@/lib/auth'
+import { refreshFeaturesOnRefusal } from '@/lib/features'
 import { installSyncedPrefs } from '@/lib/syncedPrefs'
 import { t } from '@/i18n'
 
@@ -74,7 +75,11 @@ function PrefsGate({ userId, children }: { userId: string; children: ReactNode }
 
 const later = (el: ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
-export const queryClient = new QueryClient({
+// A request refused with 403 feature_off means what is on screen is out of date: the features are read again, and what
+// needs the feature goes away.
+export const queryClient: QueryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: (e) => refreshFeaturesOnRefusal(queryClient, e) }),
+  mutationCache: new MutationCache({ onError: (e) => refreshFeaturesOnRefusal(queryClient, e) }),
   defaultOptions: {
     queries: {
       // Reads are answered from the copy on the device when the server cannot be reached (src/lib/offline), so a

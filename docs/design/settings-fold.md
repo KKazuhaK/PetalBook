@@ -325,7 +325,7 @@ with the reason given in the registry.
 | `integrations.daily` | `features.ownDaily` | bool, S+rule, `true` |
 | `integrations.tokens` + `machine_access.tokens` | `features.tokens` | bool, S+T, `true` |
 | `integrations.mcp` + `machine_access.mcp` | `features.mcp` | bool, S+T, `true` |
-| `other.offline` + `offline.copies` | `features.offline` | bool, S+T, `true` (the endpoints keep `403 offline_off`) |
+| `other.offline` + `offline.copies` | `features.offline` | bool, S+T, `true` (the endpoints answer `403 feature_off`, step (b)) |
 | `other.registration` + `registration.open` | `features.registration` | bool, S+T, `false`, site lower lock |
 | `sync.assetsRepository` | **dropped**: a per-tenant rule restricting `storage.assets` to `[space]`. `AssetsInput.RepositoryOff` goes | — |
 | `storage.modes` | `storage.mode` | choice `server` / `own` / `tenant`, S+T. Restrict = the allowed modes |

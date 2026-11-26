@@ -60,6 +60,10 @@ export interface Visibility {
   // That space is switched off: its members cannot be listed, but a member may
   // still leave it, and that is on the members section.
   disabled?: boolean
+  // Whether the tenant has the features API tokens and MCP: false when an administrator switched it off, undefined while
+  // that is not known (the section is offered; the server decides).
+  tokens?: boolean
+  mcp?: boolean
 }
 
 // Single-user mode has no account, no remote repository and no members: only
@@ -70,9 +74,11 @@ export function visibleSections(v: Visibility): SectionDef[] {
   if (v.mode === undefined) return []
   return SECTIONS.filter((s) => {
     switch (s.id) {
+      case 'tokens':
+        // Tokens and MCP grants share the section: it is not offered when both are off.
+        return v.mode === 'accounts' && v.signedIn && (v.tokens !== false || v.mcp !== false)
       case 'profile':
       case 'security':
-      case 'tokens':
       case 'connections':
       case 'usage':
         return v.mode === 'accounts' && v.signedIn

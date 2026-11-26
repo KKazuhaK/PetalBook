@@ -71,6 +71,7 @@ import { BulkDialog } from './manage/BulkDialog'
 import { DeleteSpaceDialog } from './manage/DeleteSpaceDialog'
 import { ExportDialog } from './manage/ExportDialog'
 import { LocationBadge, useIsSite } from './manage/shared'
+import { useFeature } from '@/lib/features'
 import { ViewDialog } from './manage/ViewDialog'
 import { spaceUrls } from '@/lib/urls'
 import { useCursorPages } from '@/lib/useCursorPages'
@@ -447,6 +448,7 @@ function RowActions({
   onExempt: () => void
 }) {
   const sp = ta.spaces
+  const viewing = useFeature('features.adminView')
   return (
     <>
       <RowAction
@@ -475,10 +477,13 @@ function RowActions({
               {sp.disable}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => onAction('view')}>
-            <Eye />
-            {tg.spaces.view}
-          </DropdownMenuItem>
+          {/* The audited view is the feature features.adminView; a site administrator is not bound by it. */}
+          {(site || viewing !== false) && (
+            <DropdownMenuItem onClick={() => onAction('view')}>
+              <Eye />
+              {tg.spaces.view}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onClick={() => onAction('export')}>
             <Download />
             {tg.spaces.export}
