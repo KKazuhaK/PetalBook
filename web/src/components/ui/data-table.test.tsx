@@ -663,6 +663,42 @@ describe('fitting the columns to their content', () => {
     expect(saved()).toBeNull()
   })
 
+  it('does not measure again for a new array of the same rows, nor at all while widths are saved', async () => {
+    let reads = 0
+    const real = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute('data-fit')) reads++
+      return real.call(this)
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    function Again() {
+      const [n, setN] = useState(0)
+      return (
+        <>
+          <button type="button" data-testid="again" onClick={() => setN(n + 1)}>
+            {n}
+          </button>
+          <Probe rows={long.map((r) => ({ ...r }))} />
+        </>
+      )
+    }
+    m = await mount(<Again />)
+    const first = reads
+    expect(first).toBeGreaterThan(0)
+    await click(document.querySelector('[data-testid="again"]'))
+    await click(document.querySelector('[data-testid="again"]'))
+    expect(reads).toBe(first)
+    await m.unmount()
+    m = undefined
+    reads = 0
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
+    )
+    m = await mount(<Probe rows={long} />)
+    expect(reads).toBe(0)
+  })
+
   it('shrinks the long columns toward their least width before it scrolls', async () => {
     measure()
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700)
@@ -676,11 +712,13 @@ describe('fitting the columns to their content', () => {
     expect(document.querySelector('table')!.style.minWidth).toBe(`${480 + 196}px`)
   })
 
-  it('has no scrollbar of its own, and fades its edges instead, for a mouse as for a finger', async () => {
+  it('hides its scrollbar and fades its left edge on a touch screen only, and never fades over the sticky actions', async () => {
     m = await mount(<Probe rows={long} />)
     const box = document.querySelector<HTMLElement>('[data-slot="data-table"] > div')!
-    expect(box.className).toContain('[scrollbar-width:none]')
-    expect(box.className).not.toContain('pointer-coarse:[scrollbar-width:none]')
+    expect(box.className).toContain('pointer-coarse:[scrollbar-width:none]')
+    expect(box.className).not.toMatch(/(^|\s)\[scrollbar-width:none\]/)
+    // The fade never covers the sticky actions column at the right.
+    expect(box.className).toContain('[--fade-right:0px]!')
   })
 
   it('keeps a width the person set over the content, and goes back to it on reset', async () => {

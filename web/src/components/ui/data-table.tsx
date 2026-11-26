@@ -12,7 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react'
-import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
+import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
 import {
   ArrowDown,
   ArrowUp,
@@ -331,19 +331,22 @@ export function DataTable<T>(props: DataTableProps<T>) {
       const ids = Object.keys(next)
       return ids.length === Object.keys(prev).length && ids.every((k) => prev[k] === next[k]) ? prev : next
     })
+  // What the rows are, not which array holds them: a list that builds a new array each render does not measure again.
   const shownKey = shown.map((c) => c.id).join()
+  const rowsKey = rows.map(rowId).join('\u0001')
+  const hasSaved = Object.keys(prefs.widths).length > 0
   useLayoutEffect(() => {
-    if (!measurable) return
+    if (!measurable || hasSaved) return
     // Layout is read from the DOM after it is committed, before it is painted: the one place this can be known.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     keepNatural(measureFit())
-  }, [measurable, rows, shownKey, prefs.density, loading, error])
+  }, [measurable, hasSaved, rowsKey, shownKey, prefs.density, loading, error])
   // The columns' widths are whole pixels of the room they share. (A `calc()` with a percentage is not a width a
   // `<col>` understands: the browser took it for auto, every column came out the same and no drag changed anything.)
   // A box never measured (a test, a hidden tab) keeps plain percentages.
   // Nobody has set a width (and none is being dragged): each column starts as wide as its content.
   const auto =
-    boxW > 0 && !draft && Object.keys(prefs.widths).length === 0 && shown.length > 0
+    boxW > 0 && !draft && !hasSaved && shown.length > 0
       ? autoWidths(
           shown.map((c) => ({
             id: c.id,
@@ -609,7 +612,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       {selection && selection.selected.size > 0 && bulk}
       <div
         ref={box}
-        className={`${scrollFadeClass} rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
+        className={`${scrollFadeTouchClass} [--fade-right:0px]! rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
         aria-busy={fetching || loading || undefined}
       >
         <table
