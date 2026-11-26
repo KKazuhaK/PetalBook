@@ -139,23 +139,6 @@ func (s *server) jobActor(ctx context.Context, id string, sc actingScope) (store
 	return actor, access, nil
 }
 
-type jobResp struct {
-	ID     string             `json:"id"`
-	Action string             `json:"action"`
-	Total  int64              `json:"total"`
-	Done   int64              `json:"done"`
-	Failed []store.JobFailure `json:"failed"`
-	State  string             `json:"state"`
-}
-
-func jobOf(j *store.Job) jobResp {
-	f := j.Failed
-	if f == nil {
-		f = []store.JobFailure{}
-	}
-	return jobResp{j.ID, bulkParamsOf(j).Action, j.Total, j.Done, f, j.State}
-}
-
 func (s *server) adminBulk(c *call) {
 	var req struct {
 		Confirm string `json:"confirm"`
@@ -214,21 +197,6 @@ func (s *server) adminBulk(c *call) {
 	writeJSON(c.w, http.StatusAccepted, struct {
 		Job jobResp `json:"job"`
 	}{jobOf(job)})
-}
-
-func (s *server) adminGetJob(c *call) {
-	j, err := s.jobs.Get(c.r.Context(), c.reach(), c.r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(c.w, http.StatusNotFound, "not_found", "No such job.")
-		return
-	}
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusOK, struct {
-		Job jobResp `json:"job"`
-	}{jobOf(j)})
 }
 
 // Run runs a bulk job's items. A panic in an item fails the job (with that

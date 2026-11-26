@@ -79,7 +79,7 @@ func TestTheDeletionOfAPersonIsPlannedByTheContractsRules(t *testing.T) {
 		f := newUdFix(t, a)
 		// A remote token of olive's own syncs Team: after the transfer it stops until reconnected.
 		if err := store.PutRemote(context.Background(), a.st.Q(), store.Remote{SpaceID: f.sid, URL: "https://github.com/o/team.git", Branch: "main", CredType: store.CredConnection,
-			Provider: store.ProviderGitHub, GHVia: "user", GHUserID: f.ownerID, State: "ok", Updated: a.clock.Now()}); err != nil {
+			Provider: store.ProviderGitHub, Via: "user", CredUserID: f.ownerID, State: "ok", Updated: a.clock.Now()}); err != nil {
 			t.Fatal(err)
 		}
 		pre := f.admin.do("GET", "/api/admin/users/"+f.ownerID+"/deletion", nil).want(t, 200, "")
@@ -373,7 +373,7 @@ func TestPurgingAPersonDeletesTheirDataLeavesATombstoneAndRetiresTheName(t *test
 		binDirs := a.dir + "/recycle"
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		// Their personal data is gone; the row stays as a tombstone.
 		for _, q := range []string{
 			`SELECT COUNT(*) FROM passwords WHERE user_id = '` + f.ownerID + `'`,
@@ -436,7 +436,7 @@ func TestAPurgedUsernameIsFreeByDefaultAndNeverWhenTheSiteSaysSo(t *testing.T) {
 			item := f.admin.do("DELETE", "/api/users/"+id, map[string]any{"heir": f.editorID}).want(t, 200, "").body["id"].(string)
 			tok := confirmFor(t, f.admin, "purge", "items", item)
 			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-			a.mgr.WaitPurges()
+			waitPurges(t, a)
 		}
 		take := func(username string) result {
 			inv := f.admin.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "")
@@ -719,7 +719,7 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		// Purging the item of a person who is not deleted must not touch their data.
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		if n := a.countRows(t, `SELECT COUNT(*) FROM passwords WHERE user_id = '`+f.ownerID+`'`); n != 1 {
 			t.Fatal("a purge of an item whose person is not deleted deleted their data")
 		}
@@ -732,9 +732,9 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		stop.Store("purge-user:spaces")
 		tok = confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		stop.Store("")
-		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`' AND state = 'purging'`); n != 1 {
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`' AND job_id <> ''`); n != 1 {
 			t.Fatal("the item is not left purging")
 		}
 		if n := a.countRows(t, `SELECT COUNT(*) FROM passwords WHERE user_id = '`+f.ownerID+`'`); n != 1 {
@@ -761,24 +761,23 @@ func TestAnExportOfAPersonHoldsTheirPersonalSpaceAndTheSpacesNobodyElseIsIn(t *t
 		f := newUdFix(t, a)
 		personal := f.owner.personalSpace()
 		x := f.admin.do("POST", "/api/admin/exports", map[string]any{"user": f.ownerID}).want(t, 202, "")
+		done := waitExport(t, f.admin, exportJob(x))
+		if done["state"] != "ready" {
+			t.Fatalf("%v", done)
+		}
 		var names []string
-		for _, s := range x.body["spaces"].([]any) {
+		for _, s := range done["spaces"].([]any) {
 			names = append(names, s.(map[string]any)["space"].(string))
 		}
 		if len(names) != 2 || !hasID(names, personal) || !hasID(names, f.alone) {
-			t.Fatalf("%v", x.raw)
-		}
-		if done := waitExport(t, f.admin, x.body["id"].(string)); done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
 		f.admin.do("POST", "/api/admin/exports", map[string]any{"user": fakeID}).want(t, 404, "user_not_found")
 		// Once the person is in the bin the same call exports what went with them.
 		f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "")
 		y := f.admin.do("POST", "/api/admin/exports", map[string]any{"user": f.ownerID}).want(t, 202, "")
-		if n := len(y.body["spaces"].([]any)); n != 2 {
-			t.Fatalf("%v", y.raw)
-		}
-		if done := waitExport(t, f.admin, y.body["id"].(string)); done["state"] != "ready" {
+		done = waitExport(t, f.admin, exportJob(y))
+		if n := len(done["spaces"].([]any)); n != 2 || done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
 	})
@@ -806,7 +805,7 @@ func TestPurgingAStaleItemOfAPersonLeavesALaterDeletionWhole(t *testing.T) {
 			t.Helper()
 			tok := confirmFor(t, f.admin, "purge", "items", item)
 			f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-			a.mgr.WaitPurges()
+			waitPurges(t, a)
 			if err := a.mgr.FinishRecycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -1260,9 +1259,70 @@ func TestDeletingAPersonCountsAndEndsTheirConnectionsToEveryProvider(t *testing.
 		connect(f.ownerID)
 		tok := confirmFor(t, f.admin, "purge", "items", item)
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
-		a.mgr.WaitPurges()
+		waitPurges(t, a)
 		if n := a.countRows(t, `SELECT COUNT(*) FROM provider_authorizations WHERE user_id = '`+f.ownerID+`'`); n != 0 {
 			t.Fatalf("%d connections survive the purge", n)
+		}
+	})
+}
+
+// A person's purge leaves a space of theirs whose own purge is under way to
+// that purge (never two walks deleting one directory); once that one has ended
+// without finishing, the next look finishes it.
+func TestAPersonsPurgeLeavesASpaceWhoseOwnPurgeRuns(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newUdFix(t, a)
+		ctx := context.Background()
+		f.owner.personalSpace()
+		item := f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "").body["id"].(string)
+		waitPurges(t, a)
+		var child string
+		if err := a.st.Q().QueryRow(ctx, `SELECT id FROM recycle_items WHERE parent = ? ORDER BY id LIMIT 1`, item).Scan(&child); err != nil {
+			t.Fatal(err)
+		}
+		// The child's own purge runs (on another runner: this one never claims it).
+		if err := store.InsertJob(ctx, a.st.Q(), store.Job{ID: "0000000CP1", TenantID: store.DefaultTenantID, Kind: store.JobRecyclePurge, State: store.JobRunning,
+			Subject: child, LockKey: "elsewhere", Runner: "other", Created: a.clock.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.st.Q().Exec(ctx, `UPDATE recycle_items SET job_id = '0000000CP1' WHERE id = ?`, child); err != nil {
+			t.Fatal(err)
+		}
+		childDir := a.mgr.RecycleDir(child)
+		if _, err := os.Stat(childDir); err != nil {
+			t.Fatalf("the child's directory: %v", err)
+		}
+		_, done, err := a.mgr.StartPurge(ctx, store.AllTenants(), item, spaces.PurgeBy{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case r := <-done:
+			if r.Err != nil {
+				t.Fatalf("the person's purge: %v", r.Err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("the person's purge did not end")
+		}
+		if _, err := os.Stat(childDir); err != nil {
+			t.Fatalf("the person's purge deleted the directory a running purge holds: %v", err)
+		}
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+child+`' AND job_id = '0000000CP1'`); n != 1 {
+			t.Fatal("the child was taken from its own purge")
+		}
+		// That purge ends without finishing: the next look finishes the child.
+		if err := store.SetJobState(ctx, a.st.Q(), "0000000CP1", store.JobRunning, store.JobFailed, a.clock.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.mgr.FinishRecycle(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+child+`'`); n != 0 {
+			t.Fatal("the child was not finished")
+		}
+		if _, err := os.Stat(childDir); !os.IsNotExist(err) {
+			t.Fatalf("the child's directory stayed: %v", err)
 		}
 	})
 }

@@ -14,6 +14,7 @@ import (
 
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/secret"
 	"petalbook.app/server/internal/space"
@@ -149,6 +150,11 @@ func (f *rm) open(mod ...func(*Options)) *Manager {
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	// The server's jobs runner, as the API gives it: the moves of attachments
+	// run on it, and m.Close closes it.
+	r := jobs.New(jobs.Options{Store: f.st})
+	m.UseJobs(r)
+	r.Start()
 	f.t.Cleanup(func() { m.Close() })
 	return m
 }
@@ -225,7 +231,7 @@ func TestConnectStoresTheCredentialEncryptedAndReopensAsARemoteSpace(t *testing.
 			t.Fatalf("%+v", v)
 		}
 		// The token is encrypted in the database and the key is in a private file.
-		row, err := store.GetRemote(ctx, st.Q(), in.ID)
+		row, err := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
 		if err != nil || row.TokenEnc == "" || strings.Contains(row.TokenEnc, "ghp_S3cret") || !row.Connected() {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -289,7 +295,7 @@ func TestSSHKeyBeforeConnectingAndRotation(t *testing.T) {
 		if got, got2, _ := f.m.SSHKey(ctx, h, false); got != pub || got2 != fp {
 			t.Fatal("a second call made another key")
 		}
-		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
 		if row.Connected() || strings.Contains(row.PrivKeyEnc, "PRIVATE") || row.PrivKeyEnc == "" {
 			t.Fatalf("%+v", row)
 		}
@@ -380,12 +386,12 @@ func TestReconnectingKeepsTheStoredTokenAndDisconnectDeletesEverything(t *testin
 		if _, err := f.m.Connect(ctx, h, tokenReq(remote)); err != nil {
 			t.Fatal(err)
 		}
-		before, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		before, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
 		// Same address and branch, no token given: the stored one is kept.
 		if _, err := f.m.Connect(ctx, h, ConnectRequest{URL: remote, CredType: CredToken, Username: "someone"}); err != nil {
 			t.Fatal(err)
 		}
-		after, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		after, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
 		if after.TokenEnc != before.TokenEnc || after.Username != "someone" {
 			t.Fatalf("%+v", after)
 		}
@@ -396,7 +402,7 @@ func TestReconnectingKeepsTheStoredTokenAndDisconnectDeletesEverything(t *testin
 		if err := f.m.Disconnect(ctx, h); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.GetRemote(ctx, st.Q(), in.ID); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("the credential is still stored: %v", err)
 		}
 		if l, _ := f.m.List(ctx, f.user.ID); l[0].Sync != "local" {
@@ -439,7 +445,7 @@ func TestSyncStateInTheListFollowsTheRemote(t *testing.T) {
 		if state() != "offline" {
 			t.Fatal(state())
 		}
-		row, _ := store.GetRemote(ctx, st.Q(), in.ID)
+		row, _ := store.GetRemote(ctx, st.Q(), in.ID, store.RoleContent)
 		if row.State != "offline" {
 			t.Fatalf("not stored: %+v", row)
 		}
@@ -492,7 +498,7 @@ func TestRewrittenHistoryThroughTheManager(t *testing.T) {
 		if v, _ := f.m.Remote(ctx, h); v.State != "ok" || v.Rewritten != nil {
 			t.Fatalf("%+v", v)
 		}
-		row, _ := store.GetRemote(ctx, st.Q(), h.Info.ID)
+		row, _ := store.GetRemote(ctx, st.Q(), h.Info.ID, store.RoleContent)
 		if row.State != "ok" || row.RemoteTip != "" || row.LastGood != tip {
 			t.Fatalf("%+v", row)
 		}

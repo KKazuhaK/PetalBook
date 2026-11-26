@@ -110,7 +110,7 @@ func newTenFx(t *testing.T, a *acc) *tenFx {
 	// B's recycle bin and B's exports (3.5).
 	spaceB2 := f.admB.do("POST", "/api/spaces", map[string]any{"name": "Space B2"}).want(t, 201, "").body["id"].(string)
 	f.itemB = f.admB.do("DELETE", "/api/admin/spaces/"+spaceB2, nil).want(t, 200, "").body["id"].(string)
-	f.exportB = f.admB.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["id"].(string)
+	f.exportB = f.admB.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
 	tok := f.admB.do("POST", "/api/admin/confirm", map[string]any{"action": "export", "spaces": []string{f.spaceB}}).want(t, 200, "").body["confirm"].(string)
 	f.jobB = f.admB.do("POST", "/api/admin/bulk", map[string]any{"confirm": tok}).want(t, 202, "").body["job"].(map[string]any)["id"].(string)
 	a.auth.FlushAudit(ctx)
@@ -305,7 +305,7 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/bulk":                    {kind: isoExempt, reason: "names nothing: the token holds the ids, bound to the caller who asked for it, and a confirmation cannot be asked for an id outside the caller's tenant (404; see the confirm entry and TestABulkJobRunsOneItemAtATimeAndListsWhatFailed)"},
 	"GET /api/admin/jobs/{id}":                {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.jobB} }},
 	"GET /api/admin/exports":                  {kind: isoList},
-	"GET /api/admin/exports/{id}":             {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
+	"GET /api/admin/jobs":                     {kind: isoList},
 	"DELETE /api/admin/exports/{id}":          {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
 	"GET /api/admin/exports/{id}/download":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.exportB} }},
 	"POST /api/admin/spaces/{space}/size":     {kind: isoParam},
@@ -568,14 +568,14 @@ func TestTenantsAreIsolatedOnEveryRoute(t *testing.T) {
 		// Nothing of B changed, and no link joins two tenants.
 		a.auth.FlushAudit(context.Background())
 		for q, want := range map[string]int{
-			`SELECT COUNT(*) FROM spaces WHERE id = '` + f.spaceB + `' AND disabled = 0`:          1,
-			`SELECT COUNT(*) FROM groups WHERE id = '` + f.groupB + `' AND name = 'Group B'`:      1,
-			`SELECT COUNT(*) FROM groups WHERE id = '` + f.syncedB + `'`:                          1,
-			`SELECT COUNT(*) FROM users WHERE id = '` + f.userB + `' AND disabled = 0`:            1,
-			`SELECT COUNT(*) FROM tenants WHERE id = '` + f.tenB + `' AND name = 'Acme'`:          1,
-			`SELECT COUNT(*) FROM invites WHERE id = '` + f.inviteB + `'`:                         1,
-			`SELECT COUNT(*) FROM recycle_items WHERE id = '` + f.itemB + `' AND state = 'ready'`: 1,
-			`SELECT COUNT(*) FROM exports WHERE id = '` + f.exportB + `'`:                         1,
+			`SELECT COUNT(*) FROM spaces WHERE id = '` + f.spaceB + `' AND disabled = 0`:      1,
+			`SELECT COUNT(*) FROM groups WHERE id = '` + f.groupB + `' AND name = 'Group B'`:  1,
+			`SELECT COUNT(*) FROM groups WHERE id = '` + f.syncedB + `'`:                      1,
+			`SELECT COUNT(*) FROM users WHERE id = '` + f.userB + `' AND disabled = 0`:        1,
+			`SELECT COUNT(*) FROM tenants WHERE id = '` + f.tenB + `' AND name = 'Acme'`:      1,
+			`SELECT COUNT(*) FROM invites WHERE id = '` + f.inviteB + `'`:                     1,
+			`SELECT COUNT(*) FROM recycle_items WHERE id = '` + f.itemB + `' AND job_id = ''`: 1,
+			`SELECT COUNT(*) FROM jobs WHERE id = '` + f.exportB + `'`:                        1,
 		} {
 			var n int
 			if err := a.st.Q().QueryRow(context.Background(), q).Scan(&n); err != nil || n != want {

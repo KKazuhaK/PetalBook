@@ -54,7 +54,6 @@ GET /api/admin/connections/{provider}/installations	ok	403 forbidden	403 forbidd
 GET /api/admin/daily	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/exports	ok	ok	403 forbidden	403 token_scope
-GET /api/admin/exports/{id}	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/exports/{id}/download	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/grants	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/groups	ok	ok	403 forbidden	403 token_scope

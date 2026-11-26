@@ -542,7 +542,7 @@ func TestAFailedChangeOfCredentialKeepsTheSpaceConnected(t *testing.T) {
 		if g.body["url"] != url || g.body["credential"].(map[string]any)["type"] != "token" {
 			t.Fatalf("the space forgot the remote it follows: %s", g.raw)
 		}
-		row, err := store.GetRemote(context.Background(), a.st.Q(), sid)
+		row, err := store.GetRemote(context.Background(), a.st.Q(), sid, store.RoleContent)
 		if err != nil || !row.Connected() || row.URL != url || row.CredType != "token" || row.TokenEnc == "" {
 			t.Fatalf("stored row: %+v %v", row, err)
 		}

@@ -95,7 +95,6 @@ func TestTenantForeignKeys(t *testing.T) {
 			`INSERT INTO invites(id, tenant_id, token_hash, role, created_by, created, expires) VALUES ('I1', 'nowhere', 'h', 'member', 'U1', 0, 0)`,
 			`INSERT INTO usage(kind, id, tenant_id) VALUES ('tenant', 'nowhere', 'nowhere')`,
 			`INSERT INTO recycle_items(id, tenant_id, kind, deleted_at) VALUES ('R1', 'nowhere', 'space', 0)`,
-			`INSERT INTO exports(id, tenant_id, made_by, created, expires) VALUES ('E1', 'nowhere', 'U1', 0, 0)`,
 			`INSERT INTO jobs(id, tenant_id, kind, created, updated) VALUES ('B1', 'nowhere', 'bulk', 0, 0)`,
 			`INSERT INTO registrations(id, tenant_id, username, name, email, password_hash, token_hash, created, expires) VALUES ('R1', 'nowhere', 'r', 'r', 'r@x', 'h', 'h', 0, 0)`,
 		} {
@@ -127,14 +126,14 @@ func TestDeletingATenantMovesItsLeftovers(t *testing.T) {
 		if _, err := st.Q().Exec(ctx, `DELETE FROM recycle_items WHERE id = 'R1'`); err != nil {
 			t.Fatal(err)
 		}
-		// A tombstone, an export and a job do not keep it.
+		// A tombstone and jobs (an export is one) do not keep it.
 		if err := store.InsertUser(ctx, st.Q(), store.User{ID: "U1", Username: "deleted-U1", Name: "", Role: "member", Created: now, TenantID: tn}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := st.Q().Exec(ctx, `UPDATE users SET deleted_at = 1 WHERE id = 'U1'`); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.InsertExport(ctx, st.Q(), store.Export{ID: "E1", TenantID: tn, MadeBy: "U1", State: "ready", Created: now, Expires: now}); err != nil {
+		if err := store.InsertJob(ctx, st.Q(), store.Job{ID: "E1", TenantID: tn, Kind: store.JobExport, MadeBy: "U1", State: "done", Created: now, Expires: now}); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.InsertJob(ctx, st.Q(), store.Job{ID: "B1", TenantID: tn, Kind: "bulk", MadeBy: "U1", Total: 1, State: "done", Created: now}); err != nil {
@@ -146,10 +145,8 @@ func TestDeletingATenantMovesItsLeftovers(t *testing.T) {
 		if n := count(t, st, `SELECT COUNT(*) FROM users WHERE id = 'U1' AND tenant_id = ?`, store.DefaultTenantID); n != 1 {
 			t.Fatal("the tombstone did not move to the default tenant")
 		}
-		for _, table := range []string{"exports", "jobs"} {
-			if n := count(t, st, `SELECT COUNT(*) FROM `+table+` WHERE tenant_id = ? AND site_only = 1`, store.DefaultTenantID); n != 1 {
-				t.Fatalf("the %s row did not become the site's", table)
-			}
+		if n := count(t, st, `SELECT COUNT(*) FROM jobs WHERE tenant_id = ? AND site_only = 1`, store.DefaultTenantID); n != 2 {
+			t.Fatalf("%d of the 2 job rows (an export and a bulk job) became the site's", n)
 		}
 	})
 }

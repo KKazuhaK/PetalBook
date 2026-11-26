@@ -12,8 +12,8 @@ import type {
   AuthProvider,
   ProviderInput,
   SecurityNotice,
-  BulkJob,
   ExportRec,
+  Job,
   Group,
   GroupSpaceRef,
   Invite,
@@ -70,7 +70,7 @@ export interface AdminData {
   audit: AuditItem[]
   recycle: RecycleItem[]
   exports: ExportRec[]
-  jobs: BulkJob[]
+  jobs: Job[]
   tokens: AdminToken[]
   grants: AdminGrant[]
   daily: AdminDailyBody

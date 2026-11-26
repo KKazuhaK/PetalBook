@@ -351,7 +351,7 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	endStaging := func() { m.mu.Lock(); delete(m.staging, id); m.mu.Unlock() }
 	defer endStaging()
 	row := store.Remote{SpaceID: id, URL: gh.RepoURL(repo.Owner, repo.Name), Branch: "main", CredType: CredConnection, Provider: g.Provider, State: store.RemoteOK,
-		GHVia: cred.Via, GHInstallationID: cred.InstallationID, GHRepoID: cred.RepoID, GHUserID: cred.UserID, Updated: m.opt.Now()}
+		Via: cred.Via, InstallationID: cred.InstallationID, RepoID: cred.RepoID, CredUserID: cred.UserID, Updated: m.opt.Now()}
 	if err := m.connectRetry(ctx, stg.sp, *m.remoteOptions(id, &row)); err != nil {
 		return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
 	}
@@ -360,8 +360,8 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 	if arepo != nil {
 		// The attachment repository is looked at with the credential it will keep:
 		// the first fetch proves it works, before the space is recorded.
-		arow = &store.Remote{SpaceID: id, URL: gh.RepoURL(arepo.Owner, arepo.Name), Branch: "main", CredType: CredConnection, Provider: g.Provider, State: store.RemoteOK,
-			GHVia: acred.Via, GHInstallationID: acred.InstallationID, GHRepoID: acred.RepoID, GHUserID: acred.UserID, Updated: m.opt.Now()}
+		arow = &store.Remote{SpaceID: id, Role: store.RoleAssets, URL: gh.RepoURL(arepo.Owner, arepo.Name), Branch: "main", CredType: CredConnection, Provider: g.Provider, State: store.RemoteOK,
+			Via: acred.Via, InstallationID: acred.InstallationID, RepoID: acred.RepoID, CredUserID: acred.UserID, Updated: m.opt.Now()}
 		if err := m.probeAssetsRepo(ctx, id, arow); err != nil {
 			os.RemoveAll(m.assetsDir(id))
 			return Info{}, failed(connections.CodePushFailed, http.StatusBadGateway, err)
@@ -380,7 +380,7 @@ func (m *Manager) CreateWithSync(ctx context.Context, userID, name, inbox string
 			return err
 		}
 		if arow != nil {
-			if err := store.PutAssetRemote(ctx, q, *arow); err != nil {
+			if err := store.PutRemote(ctx, q, *arow); err != nil {
 				return err
 			}
 		}

@@ -161,6 +161,7 @@
    "username": "string"
   },
   "id": "string",
+  "job": "string",
   "kind": "string",
   "problems": [
    "string"
@@ -206,6 +207,7 @@
    "username": "string"
   },
   "id": "string",
+  "job": "null",
   "kind": "string",
   "problems": "null",
   "purgeAt": "string",
@@ -532,6 +534,7 @@
    "username": "string"
   },
   "id": "string",
+  "job": "null",
   "kind": "string",
   "problems": "null",
   "purgeAt": "string",
@@ -1150,7 +1153,9 @@
   "items": [
    {
     "bytes": "number",
+    "bytesDone": "number",
     "created": "string",
+    "done": "number",
     "expires": "string",
     "history": "boolean",
     "id": "string",
@@ -1168,6 +1173,7 @@
     ],
     "state": "string",
     "tenant": "string",
+    "total": "number",
     "warnings": []
    }
   ],
@@ -1177,32 +1183,6 @@
   "error": "string",
   "message": "string",
   "permission": "string"
- },
- "GET /api/admin/exports/{} 200": {
-  "bytes": "number",
-  "created": "string",
-  "expires": "string",
-  "history": "boolean",
-  "id": "string",
-  "madeBy": {
-   "id": "string",
-   "username": "string"
-  },
-  "spaces": [
-   {
-    "name": "string",
-    "open": "boolean",
-    "space": "string",
-    "spaceId": "string"
-   }
-  ],
-  "state": "string",
-  "tenant": "string",
-  "warnings": []
- },
- "GET /api/admin/exports/{} 404": {
-  "error": "string",
-  "message": "string"
  },
  "GET /api/admin/grants 404": {
   "error": "string",
@@ -1257,15 +1237,61 @@
   ],
   "next": "string"
  },
+ "GET /api/admin/jobs 200": {
+  "items": [
+   {
+    "action?": "string",
+    "bytesDone": "number",
+    "bytesTotal": "number",
+    "created": "string",
+    "done": "number",
+    "error": "string",
+    "expires": "null|string",
+    "failed": [],
+    "id": "string",
+    "kind": "string",
+    "madeBy": {
+     "id": "string",
+     "username": "string"
+    },
+    "state": "string",
+    "subject": "string",
+    "total": "number",
+    "updated": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/jobs 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
  "GET /api/admin/jobs/{} 200": {
   "job": {
-   "action": "string",
+   "action?": "string",
+   "bytesDone": "number",
+   "bytesTotal": "number",
+   "created": "string",
    "done": "number",
+   "error": "string",
+   "expires": "null|string",
    "failed": [],
    "id": "string",
+   "kind": "string",
+   "madeBy": {
+    "id": "string",
+    "username": "string"
+   },
    "state": "string",
-   "total": "number"
+   "subject": "string",
+   "total": "number",
+   "updated": "string"
   }
+ },
+ "GET /api/admin/jobs/{} 404": {
+  "error": "string",
+  "message": "string"
  },
  "GET /api/admin/mail 200": {
   "enabled": "boolean",
@@ -1373,6 +1399,7 @@
      "username": "string"
     },
     "id": "string",
+    "job": "null|string",
     "kind": "string",
     "problems": {
      "$or": [
@@ -4359,11 +4386,23 @@
  "POST /api/admin/bulk 202": {
   "job": {
    "action": "string",
+   "bytesDone": "number",
+   "bytesTotal": "number",
+   "created": "string",
    "done": "number",
+   "error": "string",
+   "expires": "null",
    "failed": [],
    "id": "string",
+   "kind": "string",
+   "madeBy": {
+    "id": "string",
+    "username": "string"
+   },
    "state": "string",
-   "total": "number"
+   "subject": "string",
+   "total": "number",
+   "updated": "string"
   }
  },
  "POST /api/admin/bulk 404": {
@@ -4443,26 +4482,25 @@
   "url": "string"
  },
  "POST /api/admin/exports 202": {
-  "bytes": "number",
-  "created": "string",
-  "expires": "string",
-  "history": "boolean",
-  "id": "string",
-  "madeBy": {
+  "job": {
+   "bytesDone": "number",
+   "bytesTotal": "number",
+   "created": "string",
+   "done": "number",
+   "error": "string",
+   "expires": "string",
+   "failed": [],
    "id": "string",
-   "username": "string"
-  },
-  "spaces": [
-   {
-    "name": "string",
-    "open": "boolean",
-    "space": "string",
-    "spaceId": "string"
-   }
-  ],
-  "state": "string",
-  "tenant": "string",
-  "warnings": []
+   "kind": "string",
+   "madeBy": {
+    "id": "string",
+    "username": "string"
+   },
+   "state": "string",
+   "subject": "string",
+   "total": "number",
+   "updated": "string"
+  }
  },
  "POST /api/admin/groups 201": {
   "created": "string",

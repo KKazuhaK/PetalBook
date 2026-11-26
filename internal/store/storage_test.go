@@ -125,7 +125,7 @@ func TestStoragePolicyQueries(t *testing.T) {
 			t.Fatalf("a pinned space is a candidate: %+v", cs)
 		}
 		store.SetSpacePinned(ctx, q, "S2", false)
-		if err := store.UpdateRemoteStatus(ctx, q, "S2", store.RemoteStatus{State: store.RemoteOffline}, t0); err != nil {
+		if err := store.UpdateRemoteStatus(ctx, q, "S2", store.RoleContent, store.RemoteStatus{State: store.RemoteOffline}, t0); err != nil {
 			t.Fatal(err)
 		}
 		if cs, _ = store.EvictionCandidates(ctx, q, t0.Add(2*day), 10); len(cs) != 0 {

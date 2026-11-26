@@ -227,8 +227,15 @@ func TestAPanickingKindDoesNotStopTheRunner(t *testing.T) {
 			t.Fatalf("a job whose %s panicked: %+v", id, j)
 		}
 	}
-	if j := waitEnded(t, f.k); j.ID != "ended" || j.State != store.JobDone {
-		t.Fatalf("%+v", j)
+	// Each job's end is told to its kind, the two that broke before they could
+	// start included (their end is audited like any other).
+	got := map[string]string{}
+	for range 3 {
+		j := waitEnded(t, f.k)
+		got[j.ID] = j.State
+	}
+	if got["class"] != store.JobFailed || got["queues"] != store.JobFailed || got["ended"] != store.JobDone {
+		t.Fatalf("ended: %v", got)
 	}
 	<-f.r.wakeup
 	// The runner goes on.

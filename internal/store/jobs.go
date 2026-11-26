@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -215,9 +216,12 @@ func SetJobState(ctx context.Context, q Q, id, from, to string, now time.Time) e
 const JobKeep = 30 * 24 * time.Hour
 
 // PruneJobs deletes the jobs that ended before the given time (the daily pass;
-// a queued or running job is never deleted). It reads jobs_updated.
+// a queued or running job is never deleted, nor an export, whose file its days
+// decide (ExpiredExports), nor a job that holds a recycle item). It reads
+// jobs_updated.
 func PruneJobs(ctx context.Context, q Q, before time.Time) (int64, error) {
-	res, err := q.Exec(ctx, `DELETE FROM jobs WHERE updated < ? AND state NOT IN ('queued', 'running')`, ms(before))
+	res, err := q.Exec(ctx, `DELETE FROM jobs WHERE updated < ? AND state NOT IN ('queued', 'running') AND expires = 0
+		AND id NOT IN (SELECT job_id FROM recycle_items WHERE job_id <> '')`, ms(before))
 	if err != nil {
 		return 0, err
 	}
@@ -261,4 +265,83 @@ func TenantsOf(ctx context.Context, q Q, kind string, ids []string) (map[string]
 		out[id] = t
 	}
 	return out, rows.Err()
+}
+
+// DeleteJob removes the row of a job that has ended (an export deleted or
+// expired).
+func DeleteJob(ctx context.Context, q Q, id string) error {
+	res, err := q.Exec(ctx, `DELETE FROM jobs WHERE id = ? AND state NOT IN ('queued', 'running')`, id)
+	return oneRow(res, err)
+}
+
+// jobCond is which jobs the scope sees (as GetJob has it).
+func jobCond(sc Scope) (string, []any) {
+	cond, args := sc.cond("tenant_id")
+	if !sc.all {
+		cond += " AND site_only = 0"
+	}
+	return cond, args
+}
+
+// JobFilter picks a page of ListJobs.
+type JobFilter struct {
+	// Kinds, when set, are the kinds listed ("export", "bulk", ...).
+	Kinds []string
+	// State, when set, is the state listed.
+	State string
+	// After is the cursor of the page ("<created ms>:<id>"; "" for the first).
+	After string
+	Limit int
+}
+
+// ListJobs returns a page of the jobs the scope sees, newest first; next is the
+// cursor of the following page. It reads jobs_tenant for a tenant; the table
+// holds the jobs of the last month and the active ones, so the whole server's
+// list is a scan of a few rows.
+func ListJobs(ctx context.Context, q Q, sc Scope, f JobFilter) (out []*Job, next string, err error) {
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+	cond, args := jobCond(sc)
+	where := []string{cond}
+	if len(f.Kinds) > 0 {
+		where = append(where, `kind IN (`+strings.TrimSuffix(strings.Repeat("?, ", len(f.Kinds)), ", ")+`)`)
+		for _, k := range f.Kinds {
+			args = append(args, k)
+		}
+	}
+	if f.State != "" {
+		where, args = append(where, `state = ?`), append(args, f.State)
+	}
+	if f.After != "" {
+		at, id, ok := strings.Cut(f.After, ":")
+		n, perr := strconv.ParseInt(at, 10, 64)
+		if !ok || perr != nil {
+			return nil, "", ErrBadCursor
+		}
+		where = append(where, `(created < ? OR (created = ? AND id < ?))`)
+		args = append(args, n, n, id)
+	}
+	args = append(args, f.Limit+1)
+	rows, err := q.Query(ctx, `SELECT `+jobCols+` FROM jobs WHERE `+strings.Join(where, " AND ")+` ORDER BY created DESC, id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		out = append(out, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if len(out) > f.Limit {
+		out = out[:f.Limit]
+		last := out[len(out)-1]
+		next = strconv.FormatInt(ms(last.Created), 10) + ":" + last.ID
+	}
+	return out, next, nil
 }

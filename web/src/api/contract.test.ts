@@ -3382,24 +3382,38 @@ function suite(target: Target) {
           const sp = await ownedSpace(owner, `Exported ${run}`)
           const made = await call(admin, 'POST', '/api/admin/exports', { spaces: [sp.id] })
           expect(made.status).toBe(202)
-          const ready = await waitFor(
-            async () => (await call(admin, 'GET', `/api/admin/exports/${made.json.id}`)).json,
-            (e) => e.state === 'ready' || e.state === 'failed',
-            'the export',
+          expect(made.json.job).toEqual(expect.objectContaining({ kind: 'export', total: 1 }))
+          const id = made.json.job.id as string
+          // One job shape for every kind: the export is read as a job, and listed with the other jobs.
+          const job = await waitFor(
+            async () => (await call(admin, 'GET', `/api/admin/jobs/${id}`)).json.job,
+            (j) => j.state === 'done' || j.state === 'failed',
+            'the export job',
           )
+          expect([job.state, job.done, job.kind]).toEqual(['done', 1, 'export'])
+          expect(job.bytesDone).toBeGreaterThan(0)
+          expect(Date.parse(job.expires)).toBeGreaterThan(Date.now())
+          const listed = (await call(admin, 'GET', '/api/admin/jobs?kind=export')).json
+          expect((listed.items as { id: string }[]).some((j) => j.id === id)).toBe(true)
+          // The list of every kind: bulk jobs have no expiry, an export has one.
+          const every = (await call(admin, 'GET', '/api/admin/jobs')).json.items as {
+            id: string
+            expires: string | null
+          }[]
+          expect(every.find((j) => j.id === id)?.expires).toEqual(expect.any(String))
+          expect(every.some((j) => j.expires === null)).toBe(true)
+          expect(typeof listed.next).toBe('string')
+          const ready = ((await call(admin, 'GET', '/api/admin/exports')).json.items as { id: string }[]).find(
+            (e) => e.id === id,
+          ) as Record<string, unknown>
           expect(ready.state).toBe('ready')
-          expect(Date.parse(ready.expires)).toBeGreaterThan(Date.now())
+          expect(Date.parse(ready.expires as string)).toBeGreaterThan(Date.now())
           expect(ready.spaces).toEqual([{ space: sp.id, name: `Exported ${run}`, spaceId: sp.id, open: true }])
-          expect(
-            ((await call(admin, 'GET', '/api/admin/exports')).json.items as { id: string }[]).some(
-              (e) => e.id === made.json.id,
-            ),
-          ).toBe(true)
-          const dl = await call(admin, 'GET', `/api/admin/exports/${made.json.id}/download`)
+          const dl = await call(admin, 'GET', `/api/admin/exports/${id}/download`)
           expect(dl.status).toBe(200)
           expect(dl.headers.get('Content-Disposition')).toMatch(/attachment/)
-          expect((await call(admin, 'DELETE', `/api/admin/exports/${made.json.id}`)).status).toBe(204)
-          expect((await call(admin, 'GET', `/api/admin/exports/${made.json.id}`)).status).toBe(404)
+          expect((await call(admin, 'DELETE', `/api/admin/exports/${id}`)).status).toBe(204)
+          expect((await call(admin, 'GET', `/api/admin/jobs/${id}`)).status).toBe(404)
         })
 
         it('a member reaches none of it', async () => {
@@ -3408,6 +3422,7 @@ function suite(target: Target) {
             ['GET', '/api/admin/storage/people'],
             ['GET', '/api/admin/recycle'],
             ['GET', '/api/admin/exports'],
+            ['GET', '/api/admin/jobs'],
             ['POST', '/api/admin/confirm'],
             ['GET', '/api/admin/storage'],
           ] as const) {

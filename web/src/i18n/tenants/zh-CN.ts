@@ -254,6 +254,7 @@ export const tenantsZhCN = {
       recycle: '回收站',
       audit: '审计日志',
       exports: '导出',
+      jobs: '后台任务',
       users: '用户',
       accounts: '账号',
       offline: '离线',
@@ -297,6 +298,8 @@ export const tenantsZhCN = {
       'audit.keepMode': '天数和条数怎样组合',
       'audit.optionalKeepDays': '可选类别的记录保留的天数',
       'recycle.days': '回收站保留的天数',
+      'jobs.maxRunning': '全站同时运行的后台任务数',
+      'jobs.perTenant': '一个组织同时运行的后台任务数',
       'users.emailNonAscii': '允许含非 ASCII 字符的邮箱',
       'accounts.multipleEmails': '一个账号可以有多个邮箱',
       'storage.assets': '附件放在哪里',
@@ -394,6 +397,10 @@ export const tenantsZhCN = {
       'audit.keepMode': '“或”：既比天数旧、又不在最新的几条里才删。“且”：满足其一就删。只有全站管理员能设。',
       'audit.optionalKeepDays':
         '可选类别（登录成功、阅读、下载、API 调用）的记录再早于这个天数也会删，最多 90 天。只有全站管理员能设。',
+      'jobs.maxRunning':
+        '批量操作、导出和搬移在整台服务器上同时运行的数量，其余的排队等。调低不会停掉正在运行的任务。只有全站管理员能设。',
+      'jobs.perTenant':
+        '一个组织同时能运行多少个这类任务（默认 1）。全站管理员可以用规则或套餐为某个组织调高或封顶；组织自己不能改。',
       'recycle.days': '删除的空间和人先在回收站保留多少天，之后才真正清除。只有全站管理员能设。',
       'accounts.multipleEmails':
         '默认关。开启后，一个人可以给账号添加更多邮箱（点开发给它的链接后才生效），把验证过的邮箱设为主邮箱，删除其他邮箱；任何验证过的邮箱都能登录。每个邮箱在整个服务器上仍然唯一。再关掉时，多出的邮箱会保留，但不显示，也不能用来登录。全站可以允许、限制或锁定它；组织在此范围内自己决定。',

@@ -109,9 +109,9 @@ func GetDeletionFacts(ctx context.Context, q Q, sc Scope, id string) (DeletionFa
 		(SELECT COUNT(*) FROM space_members m WHERE m.space_id = s.id),
 		(SELECT COUNT(*) FROM space_groups g WHERE g.space_id = s.id),
 		(SELECT COUNT(*) FROM drafts d WHERE d.space_id = s.id),
-		COALESCE((SELECT r.url FROM remotes r WHERE r.space_id = s.id), ''),
-		COALESCE((SELECT r.state FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), ''),
-		COALESCE((SELECT r.url FROM asset_remotes r WHERE r.space_id = s.id), '')
+		COALESCE((SELECT r.url FROM remotes r WHERE r.space_id = s.id AND r.role = 'content'), ''),
+		COALESCE((SELECT r.state FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), ''),
+		COALESCE((SELECT r.url FROM remotes r WHERE r.space_id = s.id AND r.role = 'assets'), '')
 		FROM spaces s WHERE s.id = ? AND `+cond, append([]any{id}, args...)...).
 		Scan(&f.Pages, &f.Bytes, &size, &index, &f.Members, &f.Groups, &f.Drafts, &f.Remote, &f.RemoteState, &f.AssetsRemote)
 	if err != nil {

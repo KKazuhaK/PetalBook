@@ -134,3 +134,57 @@ func TestTheDeletionPreviewReturnsAConnectionsError(t *testing.T) {
 		}
 	})
 }
+
+// A space whose attachment repository syncs through the person's own
+// connection stops syncing with them as one whose own repository does: the
+// plan of their deletion says so for both.
+func TestTheDeletionPlanNamesAnAttachmentRepositoryOnThePersonsConnection(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		now := time.Now()
+		mkUser(t, st, "OLIVE", "olive", "member")
+		mkUser(t, st, "EDDIE", "eddie", "member")
+		for _, sid := range []string{"S00000000C", "S00000000A"} {
+			if err := store.InsertSpace(ctx, st.Q(), store.DefaultTenantID, sid, sid, "", "", now); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.AddMember(ctx, st.Q(), sid, "OLIVE", "owner", now); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.AddMember(ctx, st.Q(), sid, "EDDIE", "editor", now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		mine := store.Remote{URL: "https://github.com/o/r.git", Branch: "main", CredType: store.CredConnection, Provider: store.ProviderGitHub,
+			Via: "user", CredUserID: "OLIVE", State: "ok", Updated: now}
+		plain := store.Remote{URL: "https://example.test/o/r.git", Branch: "main", CredType: "token", Provider: store.ProviderGit, State: "ok", Updated: now}
+		// S00000000C: its own repository on olive's connection. S00000000A: its
+		// own repository with a token, its attachment repository on olive's
+		// connection.
+		for _, r := range []store.Remote{
+			withRemote(mine, "S00000000C", store.RoleContent),
+			withRemote(plain, "S00000000A", store.RoleContent),
+			withRemote(mine, "S00000000A", store.RoleAssets),
+		} {
+			if err := store.PutRemote(ctx, st.Q(), r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		p, err := store.PlanUserDeletion(ctx, st.Q(), store.AllTenants(), "OLIVE", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, tr := range p.Transfer {
+			got[tr.Space.ID] = tr.Credential
+		}
+		if len(got) != 2 || got["S00000000C"] != "user" || got["S00000000A"] != "user" {
+			t.Fatalf("transfers and their credentials: %v", got)
+		}
+	})
+}
+
+func withRemote(r store.Remote, spaceID, role string) store.Remote {
+	r.SpaceID, r.Role = spaceID, role
+	return r
+}

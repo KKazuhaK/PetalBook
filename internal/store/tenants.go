@@ -449,9 +449,9 @@ func (s *Store) UpdateTenant(ctx context.Context, t Tenant) error {
 // refuse: pending registrations, its share of the GitHub App's installations
 // and its usage row are deleted; a sign-in provider that put new accounts here
 // puts them in the default tenant; the tombstones of purged people (kept only
-// so the audit log can name them), the exports and the bulk jobs move to the
-// default tenant, the exports and jobs as site administrators' own (site_only),
-// where they expire and are pruned as any other. The audit log keeps its rows:
+// so the audit log can name them), the jobs (bulk actions and exports) move to
+// the default tenant, as site administrators' own (site_only), where they
+// expire and are pruned as any other. The audit log keeps its rows:
 // its tenant_id is not a foreign key.
 func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 	err := s.Tx(ctx, func(q Q) error {
@@ -496,7 +496,6 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		}
 		for _, st := range []string{
 			`UPDATE users SET tenant_id = '` + DefaultTenantID + `' WHERE tenant_id = ? AND deleted_at IS NOT NULL`,
-			`UPDATE exports SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
 			`UPDATE jobs SET tenant_id = '` + DefaultTenantID + `', site_only = 1 WHERE tenant_id = ?`,
 			`DELETE FROM usage WHERE tenant_id = ?`,
 		} {

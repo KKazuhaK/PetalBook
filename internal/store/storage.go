@@ -43,7 +43,7 @@ func GetSpaceStorage(ctx context.Context, q Q, id string) (SpaceStorage, error) 
 	var s SpaceStorage
 	var used, pinned, exempt, assets int64
 	err := q.QueryRow(ctx, `SELECT last_used, cache_state, pinned, exempt, index_bytes,
-		(SELECT COUNT(*) FROM asset_remotes ar WHERE ar.space_id = spaces.id AND ar.url <> '') FROM spaces WHERE id = ?`, id).
+		(SELECT COUNT(*) FROM remotes ar WHERE ar.space_id = spaces.id AND ar.role = 'assets' AND ar.url <> '') FROM spaces WHERE id = ?`, id).
 		Scan(&used, &s.Cache, &pinned, &exempt, &s.IndexBytes, &assets)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, ErrNotFound
@@ -188,9 +188,9 @@ func (p RemotePolicy) Deadline(created time.Time) (time.Time, bool) {
 // or one that goes through the required provider's connection.
 func lacksRemote(p RemotePolicy) (string, []any) {
 	if p.Require == "any" {
-		return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '')`, nil
+		return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '')`, nil
 	}
-	return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = ?)`, []any{p.Require}
+	return `NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '' AND r.cred_type = 'connection' AND r.provider = ?)`, []any{p.Require}
 }
 
 // policyConds is the SQL that says a space s is asked for a remote it does not
@@ -250,10 +250,10 @@ type StorageSums struct {
 func SumStorage(ctx context.Context, q Q) (StorageSums, error) {
 	var s StorageSums
 	err := q.QueryRow(ctx, `SELECT
-		COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '') THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN s.cache_state = 'evicted' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN s.cache_state = 'partial' AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '') THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN s.cache_state NOT IN ('evicted', 'partial') AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN s.cache_state = 'partial' AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN s.cache_state NOT IN ('evicted', 'partial') AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '') THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN s.cache_state = 'evicted' THEN 0 ELSE COALESCE(s.size_bytes, 0) END), 0),
 		COALESCE(SUM(s.index_bytes), 0)
 		FROM spaces s`).Scan(&s.Local, &s.Evicted, &s.Partial, &s.Full, &s.CloneBytes, &s.IndexBytes)
@@ -274,7 +274,7 @@ type Candidate struct {
 // A space that was never used has last_used 0 and goes first.
 func EvictionCandidates(ctx context.Context, q Q, idleBefore time.Time, limit int) ([]Candidate, error) {
 	rows, err := q.Query(ctx, `SELECT s.id, s.last_used, COALESCE(s.size_bytes, 0)
-		FROM spaces s JOIN remotes r ON r.space_id = s.id
+		FROM spaces s JOIN remotes r ON r.space_id = s.id AND r.role = 'content'
 		WHERE r.url <> '' AND r.state = 'ok' AND s.pinned = 0 AND s.cache_state NOT IN ('evicted', 'evicting') AND s.last_used < ?
 		ORDER BY s.last_used, s.id LIMIT ?`, ms(idleBefore), limit)
 	if err != nil {
@@ -301,7 +301,7 @@ func EvictionCandidates(ctx context.Context, q Q, idleBefore time.Time, limit in
 func CloneBytesOfRemoteSpaces(ctx context.Context, q Q) (int64, error) {
 	var n int64
 	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(COALESCE(s.size_bytes, 0)), 0) FROM spaces s
-		WHERE s.cache_state NOT IN ('evicted') AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.url <> '')`).Scan(&n)
+		WHERE s.cache_state NOT IN ('evicted') AND EXISTS (SELECT 1 FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> '')`).Scan(&n)
 	return n, err
 }
 
@@ -322,8 +322,8 @@ func GetPolicyFacts(ctx context.Context, q Q, id string) (PolicyFacts, error) {
 	var personal sql.NullString
 	err := q.QueryRow(ctx, `SELECT s.created, s.personal_of, s.exempt,
 		(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0),
-		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), ''),
-		COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '')
+		COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), ''),
+		COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), '')
 		FROM spaces s WHERE s.id = ?`, id).Scan(&created, &personal, &exempt, &ownerExempt, &f.CredType, &f.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, ErrNotFound

@@ -271,6 +271,7 @@ export const tenantsEn: TenantsMessages = {
       recycle: 'Recycle bin',
       audit: 'Audit log',
       exports: 'Exports',
+      jobs: 'Background jobs',
       users: 'Users',
       accounts: 'Accounts',
       offline: 'Offline',
@@ -315,6 +316,8 @@ export const tenantsEn: TenantsMessages = {
       'audit.keepMode': 'How the days and the row count combine',
       'audit.optionalKeepDays': 'Days rows of the optional categories are kept',
       'recycle.days': 'Days the recycle bin keeps things',
+      'jobs.maxRunning': 'Background jobs running at once on the server',
+      'jobs.perTenant': 'Background jobs running at once for one organisation',
       'users.emailNonAscii': 'Allow email addresses with characters outside ASCII',
       'accounts.multipleEmails': 'More than one email address per account',
       'storage.assets': 'Where attachments go',
@@ -421,6 +424,10 @@ export const tenantsEn: TenantsMessages = {
         'or: a row goes only when it is both older than the days and outside the newest rows. and: a row goes when it is either. Site administrators only.',
       'audit.optionalKeepDays':
         'Rows of the optional categories (sign-ins, reads, downloads, API calls) also go after this many days, at most 90. Site administrators only.',
+      'jobs.maxRunning':
+        'How many bulk actions, exports and moves run at the same time on the whole server; the others wait their turn. Lowering it stops nothing that is running. Site administrators only.',
+      'jobs.perTenant':
+        'How many of those one organisation may run at the same time (1 by default). A site rule or a plan can raise or cap it for one organisation; organisations cannot change it themselves.',
       'recycle.days':
         'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
       'accounts.multipleEmails':

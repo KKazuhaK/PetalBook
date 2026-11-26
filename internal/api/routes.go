@@ -31,6 +31,9 @@ type access struct {
 	memberOnly bool
 	// key is what a route outside spaces asks of the caller (kindKey).
 	key authz.Key
+	// orKeys are further keys any one of which admits the caller in place of
+	// key (needsAny): the handler narrows what each one shows.
+	orKeys []authz.Key
 	// feature is the tenant feature the route belongs to (a boolean setting,
 	// features.*): handle answers 403 feature_off before the handler when the
 	// caller's tenant does not have it. alwaysOn says the route belongs to no
@@ -87,6 +90,26 @@ func needs(k authz.Key) access {
 		panic("api: a space key is asked by inSpace, not needs")
 	}
 	return access{kind: kindKey, key: k, feature: k.Feature()}
+}
+
+// needsAny is needs for a route that any one of the keys admits (the jobs,
+// which each kind's own key lets a person follow): the handler narrows the
+// answer to what the keys the caller holds show. The keys are of one scope and
+// one feature, so the route's feature and capacity do not depend on which.
+func needsAny(k authz.Key, more ...authz.Key) access {
+	a := needs(k)
+	for _, m := range more {
+		if m.Scope() != k.Scope() || m.Feature() != k.Feature() {
+			panic("api: the keys of needsAny are of one scope and one feature (" + m.Name() + ")")
+		}
+	}
+	a.orKeys = more
+	return a
+}
+
+// keys are every key that admits the caller to a kindKey route.
+func (a access) keys() []authz.Key {
+	return append([]authz.Key{a.key}, a.orKeys...)
 }
 
 // inSpaceMembers is inSpace for a member of the space only (see memberOnly).
@@ -239,11 +262,12 @@ var routeTable = []route{
 	{"DELETE", "/api/admin/recycle/{item}", needs(authz.SiteRecyclePurge).always(), true, false, false, (*server).adminPurgeItem},
 	{"POST", "/api/admin/confirm", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminConfirm},
 	{"POST", "/api/admin/bulk", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminBulk},
-	{"GET", "/api/admin/jobs/{id}", needs(authz.TenantBulkRun).always(), true, false, false, (*server).adminGetJob},
+	// The jobs: each kind's key lets a person follow that kind (jobKeyOf).
+	{"GET", "/api/admin/jobs", needsAny(authz.TenantBulkRun, authz.TenantDataExport, authz.TenantRecycleRead).always(), true, false, false, (*server).adminListJobs},
+	{"GET", "/api/admin/jobs/{id}", needsAny(authz.TenantBulkRun, authz.TenantDataExport, authz.TenantRecycleRead).always(), true, false, false, (*server).adminGetJob},
 	{"GET", "/api/admin/users/{user}/deletion", needs(authz.TenantUsersDelete).always(), true, false, false, (*server).adminUserDeletion},
 	{"POST", "/api/admin/exports", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminCreateExport},
 	{"GET", "/api/admin/exports", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminListExports},
-	{"GET", "/api/admin/exports/{id}", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminGetExport},
 	{"DELETE", "/api/admin/exports/{id}", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminDeleteExport},
 	{"GET", "/api/admin/exports/{id}/download", needs(authz.TenantDataExport).always(), true, false, false, (*server).adminDownloadExport},
 	{"GET", "/api/admin/daily", needs(authz.SiteDailyManage).always(), true, false, false, (*server).adminGetDaily},
@@ -408,6 +432,8 @@ type RouteInfo struct {
 	Public          bool // no session needed
 	// Key is the permission key a route outside spaces asks for ("" for none).
 	Key string
+	// OrKeys are further keys any one of which admits the caller instead of Key.
+	OrKeys []string
 	// Feature is the feature the route belongs to ("" for none); AlwaysOn says
 	// it was stated that it belongs to none.
 	Feature   string
@@ -434,6 +460,9 @@ func Routes() []RouteInfo {
 			MemberOnly: a.memberOnly, AccountsOnly: r.accountsOnly, Upload: r.upload, Viewable: viewableRoutes[r.method+" "+r.pattern]}
 		if a.kind == kindKey {
 			out[i].Key = a.key.Name()
+			for _, k := range a.orKeys {
+				out[i].OrKeys = append(out[i].OrKeys, k.Name())
+			}
 			out[i].SiteAdmin = a.key.Scope() == authz.ScopeSite
 			member, _ := authz.RoleSet(authz.RoleMember)
 			out[i].Admin = a.key.Scope() == authz.ScopeTenant && !member.Has(a.key)
@@ -539,7 +568,19 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		if rt.access.kind == kindKey {
 			// A route outside spaces acts in the acting tenant: the caller's
 			// own, or the one the scope header names.
-			if err := s.allow(c, rt.access.key, c.tenant()); err != nil {
+			// Any one of the route's keys admits; the refusal names the first.
+			var err error
+			for i, k := range rt.access.keys() {
+				e := s.allow(c, k, c.tenant())
+				if e == nil {
+					err = nil
+					break
+				}
+				if i == 0 {
+					err = e
+				}
+			}
+			if err != nil {
 				s.refuse(w, err)
 				return
 			}

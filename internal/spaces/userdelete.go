@@ -108,24 +108,37 @@ func (m *Manager) RestoreUser(ctx context.Context, sc store.Scope, itemID string
 	if it.Kind != store.RecycleUser {
 		return nil, ErrNotFound
 	}
-	if !m.holdItem(it.ID) {
-		return nil, ErrBusyItem
+	// The restore is a job, which this waits for.
+	_, done, err := m.holdAndEnqueue(ctx, it, store.JobRecycleRestore, "", "", "", RecycleParams{})
+	if err != nil {
+		return nil, err
 	}
-	defer m.letItem(it.ID)
-	if err := store.SetRecycleState(ctx, m.opt.Store.Q(), it.ID, store.RecycleReady, store.RecycleRestoring, m.opt.Now()); err != nil {
-		return nil, mapItemErr(err)
+	r, err := wait(ctx, done)
+	if err != nil {
+		return nil, err
 	}
+	res, _ := r.Value.(*UserRestored)
+	if r.Err != nil && res == nil {
+		return nil, r.Err
+	}
+	// A restore that stopped part-way returns what it did with its error.
+	return res, r.Err
+}
+
+// restoreUserItem is what the restore job of a person's item does; the item is
+// held by the job.
+func (m *Manager) restoreUserItem(ctx context.Context, it *store.RecycleItem) (*UserRestored, error) {
 	if err := m.recycleStep("restore-user:marked"); err != nil {
 		return nil, err
 	}
 	var out store.UserRestoreOutcome
-	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
+	err := m.opt.Store.Tx(ctx, func(q store.Q) error {
 		var err error
 		out, err = store.RestoreUserRows(ctx, q, it, m.opt.Now())
 		return err
 	})
 	if err != nil {
-		store.SetRecycleState(context.WithoutCancel(ctx), m.opt.Store.Q(), it.ID, store.RecycleRestoring, store.RecycleReady, m.opt.Now())
+		m.releaseHeld(ctx, it)
 		return nil, err
 	}
 	res := &UserRestored{Skipped: out.Skipped, Transfers: out.Transfers, Left: out.Left}
@@ -193,21 +206,46 @@ func (m *Manager) purgeUserItem(ctx context.Context, it *store.RecycleItem) erro
 	}
 	for i := range children {
 		c := &children[i]
-		if !m.holdItem(c.ID) {
-			return ErrBusyItem // an action of this process has it; the purge is finished later
-		}
-		err := store.SetRecycleState(ctx, m.opt.Store.Q(), c.ID, store.RecycleReady, store.RecyclePurging, m.opt.Now())
+		// Each space of the person is purged under the hold of this job. One
+		// whose own purge is queued or running is left to it (never two walks
+		// deleting one directory); one that a purge of its own left when it
+		// ended (it is purging) is handed to this job and finished.
+		err := store.HoldRecycleItem(ctx, m.opt.Store.Q(), c.ID, it.JobID)
 		if errors.Is(err, store.ErrNotFound) {
-			m.letItem(c.ID)
 			continue
 		}
-		if err != nil && c.State != store.RecyclePurging {
-			m.letItem(c.ID)
+		if errors.Is(err, store.ErrBusyItem) {
+			cur, gerr := store.GetRecycleItem(ctx, m.opt.Store.Q(), store.AllTenants(), c.ID, false)
+			if errors.Is(gerr, store.ErrNotFound) {
+				continue
+			}
+			if gerr != nil {
+				return gerr
+			}
+			if cur.State != store.RecyclePurging {
+				return ErrBusyItem // another action has it; the purge is finished later
+			}
+			if cur.JobID == it.JobID {
+				err = nil // this job holds it already (a run cut short)
+			} else {
+				j, jerr := store.GetJob(ctx, m.opt.Store.Q(), store.AllTenants(), cur.JobID)
+				if jerr == nil && !store.JobEnded(j.State) {
+					continue // its own purge is under way, and finishes it
+				}
+				if jerr != nil && !errors.Is(jerr, store.ErrNotFound) {
+					return jerr
+				}
+				err = store.HandRecycleItem(ctx, m.opt.Store.Q(), c.ID, cur.JobID, it.JobID)
+				if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrBusyItem) {
+					continue // gone, or taken up by another job meanwhile
+				}
+			}
+			c.JobID = it.JobID
+		}
+		if err != nil {
 			return err
 		}
-		err = m.finishPurge(ctx, c)
-		m.letItem(c.ID)
-		if err != nil {
+		if err := m.finishPurge(ctx, c); err != nil {
 			return err
 		}
 	}

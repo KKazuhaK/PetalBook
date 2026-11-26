@@ -2233,6 +2233,8 @@ export interface RecycleItem {
   purgeAt: string
   reason: string
   state: RecycleState
+  // The job that holds the item (follow it with GET /admin/jobs/{id}); null at rest.
+  job: string | null
   // false (with `problems`) while the item is moving, being restored or purged, or when a directory is missing.
   restorable: boolean
   problems: string[]
@@ -2341,14 +2343,38 @@ export interface ConfirmResult {
   // Why something cannot be done: `user` or `space` is an id.
   blockers: { user?: string; space?: string; reason: string }[]
 }
-export type JobState = 'queued' | 'running' | 'done' | 'interrupted' | 'failed'
-export interface BulkJob {
+// A background action: one shape for every kind (docs/api.md, "Jobs"). `total` and `done` count the items (the spaces of
+// an export), `bytesDone` the bytes written; `subject` is what a recycle job works on; `action` is a bulk job's;
+// `expires` is when an export's file goes.
+export type JobState = 'queued' | 'running' | 'done' | 'interrupted' | 'failed' | 'cancelled'
+export type JobKind = 'bulk' | 'export' | 'recycle.move' | 'recycle.restore' | 'recycle.purge'
+export interface Job {
   id: string
-  action: ConfirmAction
+  kind: JobKind
+  subject: string
+  action?: ConfirmAction
+  state: JobState
   total: number
   done: number
+  bytesTotal: number
+  bytesDone: number
   failed: { id: string; error: string; code?: string }[]
-  state: JobState
+  error: string
+  created: string
+  updated: string
+  expires: string | null
+  madeBy: { id: string; username: string }
+}
+export interface JobList {
+  items: Job[]
+  next: string
+}
+export interface JobsParams {
+  kind?: JobKind
+  state?: JobState
+  tenant?: string
+  cursor?: string
+  limit?: number
 }
 export type ExportState = 'queued' | 'running' | 'ready' | 'failed'
 export interface ExportRec {
@@ -2365,6 +2391,10 @@ export interface ExportRec {
   bytes: number
   created: string
   expires: string
+  // The job's progress: the spaces made into the zip so far, and the bytes written.
+  total: number
+  done: number
+  bytesDone: number
 }
 export interface ExportList {
   items: ExportRec[]

@@ -428,9 +428,9 @@ func queryAdminSpaces(ctx context.Context, q Q, where, orderBy string, args []an
 			p.last_used, p.cache_state, p.pinned, p.exempt, p.index_bytes, p.cred_type, p.provider, p.owner_exempt, p.has_assets, p.location, p.remote_state, p.name_key
 		FROM (SELECT s.id, s.name, s.name_key, s.personal_of, s.inbox, s.created, s.disabled, s.size_bytes, s.tenant_id,
 			s.last_used, s.cache_state, s.pinned, s.exempt, s.index_bytes, s.location, s.remote_state,
-			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '') AS cred_type,
-			COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.url <> ''), '') AS provider,
-			(SELECT COUNT(*) FROM asset_remotes ar WHERE ar.space_id = s.id AND ar.url <> '') AS has_assets,
+			COALESCE((SELECT r.cred_type FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), '') AS cred_type,
+			COALESCE((SELECT r.provider FROM remotes r WHERE r.space_id = s.id AND r.role = 'content' AND r.url <> ''), '') AS provider,
+			(SELECT COUNT(*) FROM remotes ar WHERE ar.space_id = s.id AND ar.role = 'assets' AND ar.url <> '') AS has_assets,
 			(SELECT COUNT(*) FROM space_members om JOIN users ou ON ou.id = om.user_id WHERE om.space_id = s.id AND om.role = 'owner' AND ou.remote_exempt <> 0) AS owner_exempt,
 			(SELECT COUNT(*) FROM space_members m WHERE m.space_id = s.id) AS members,
 			(SELECT m.user_id FROM space_members m WHERE m.space_id = s.id AND m.role = 'owner' ORDER BY m.created, m.user_id LIMIT 1) AS owner_id
@@ -701,8 +701,8 @@ func GetStorageSummary(ctx context.Context, q Q, sc Scope) (StorageSummary, erro
 	if err := q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM recycle_items WHERE `+rc, ra...).Scan(&s.RecycleItems, &s.RecycleBytes); err != nil {
 		return s, err
 	}
-	ec, ea := exportCond(sc)
-	err = q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM exports WHERE state = 'ready' AND `+ec, ea...).Scan(&s.ExportItems, &s.ExportBytes)
+	ec, ea := jobCond(sc)
+	err = q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(bytes_done), 0) FROM jobs WHERE kind = 'export' AND state = 'done' AND `+ec, ea...).Scan(&s.ExportItems, &s.ExportBytes)
 	return s, err
 }
 
