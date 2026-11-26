@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { Download, RefreshCw, SlidersHorizontal, X } from 'lucide-react'
 import { adminApi, auditQuery, useAuditKinds, useAuditLog, useTenants } from '@/api/admin'
 import type { AuditCapacity, AuditCategory, AuditFilters, AuditItem } from '@/api/types'
@@ -14,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { useAcrossSite } from './TenantScope'
 import { useFeature } from '@/lib/features'
+import { scopeOfClient } from '@/lib/scopedClient'
 import { absoluteTime } from '@/lib/time'
 import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
@@ -92,6 +94,8 @@ export function AuditSection() {
   const rows = log.data?.pages.flatMap((p) => p.items) ?? []
   const phone = usePhone()
   const downloadOn = useFeature('features.auditDownload') !== false
+  // The scope of the client the log is read through: the download is the same rows.
+  const scope = scopeOfClient(useQueryClient())
   const count = activeCount(filters)
   const fields = <Fields filters={filters} set={set} />
   return (
@@ -131,7 +135,7 @@ export function AuditSection() {
           </Button>
           {downloadOn && (
             <a
-              href={adminApi.auditDownloadUrl(filters)}
+              href={adminApi.auditDownloadUrl(filters, scope)}
               download
               title={ta.downloadHelp}
               className={buttonVariants({ variant: 'outline', className: phone ? 'h-10' : undefined })}

@@ -378,3 +378,50 @@ func TestARefusedRequestRecordsNoConsoleOpening(t *testing.T) {
 		}
 	})
 }
+
+// ?scope=tenant:<id> is the header for what a browser fetches by its address
+// (the audit's CSV): on an administration route's GET only, read exactly as the
+// header is, so it narrows and never widens; with the header too, or on a
+// write, it is refused. Elsewhere the name is not the scope's and is ignored.
+func TestTheScopeQueryParameterIsTheHeader(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		inB := "scope=tenant:" + f.tenB
+		a.auth.FlushAudit(context.Background())
+
+		// The site administrator's download in B's scope holds B's rows only.
+		whole := f.root.do("GET", "/api/admin/audit/download", nil).want(t, 200, "")
+		if !strings.Contains(whole.raw, ","+store.DefaultTenantID+",") {
+			t.Fatalf("the whole site's download has no row of A: %s", whole.raw)
+		}
+		r := f.root.do("GET", "/api/admin/audit/download?"+inB, nil).want(t, 200, "")
+		lines := strings.Split(strings.TrimSpace(r.raw), "\n")
+		if len(lines) < 2 {
+			t.Fatalf("no rows in B's scope: %s", r.raw)
+		}
+		for _, l := range lines[1:] {
+			if cells := strings.Split(l, ","); len(cells) < 6 || cells[5] != f.tenB {
+				t.Errorf("a row outside B's scope: %s", l)
+			}
+		}
+		users := names(t, f.root.do("GET", "/api/users?"+inB, nil).want(t, 200, ""), "users", "username")
+		if slices.Contains(users, "mem-a") || !slices.Contains(users, "mem-b") {
+			t.Fatalf("users in B's scope: %v", users)
+		}
+
+		// It never widens, and is validated as the header is.
+		f.admA.do("GET", "/api/admin/audit/download?"+inB, nil).want(t, 404, "not_found")
+		f.memB.do("GET", "/api/users?"+inB, nil).want(t, 404, "not_found")
+		f.root.do("GET", "/api/admin/settings?"+inB, nil).want(t, 403, "forbidden")
+		for _, bad := range []string{"tenant:", "site", f.tenB} {
+			f.root.do("GET", "/api/users?scope="+bad, nil).want(t, 400, "invalid")
+		}
+		f.root.do("GET", "/api/users?"+inB+"&"+inB, nil).want(t, 400, "invalid")
+		f.root.do("GET", "/api/users?"+inB, nil, scopeHeader, "tenant:"+f.tenB).want(t, 400, "invalid")
+		// Not for a write: the header is how a write names its scope.
+		f.root.do("PATCH", "/api/users/"+f.userB+"?"+inB, map[string]any{"name": "x"}).want(t, 400, "invalid")
+		// A person's own routes do not read it.
+		f.root.do("GET", "/api/account?"+inB, nil).want(t, 200, "")
+	})
+}

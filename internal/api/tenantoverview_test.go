@@ -1,8 +1,11 @@
 package api_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/store"
 )
 
@@ -49,5 +52,43 @@ func TestTenantOverview(t *testing.T) {
 		f.memB.do("GET", p, nil).want(t, 403, "forbidden")
 		f.root.do("GET", "/api/admin/tenants/"+f.tenB+"/overview", nil, scopeHeader, "tenant:"+store.DefaultTenantID).want(t, 404, "not_found")
 		f.admB.do("GET", "/api/admin/tenants/"+fakeID+"/overview", nil).want(t, 404, "not_found")
+	})
+}
+
+// The overview's recent administrative activity holds the rows an
+// administrator acted in (a capacity) and the admin and security categories:
+// not sign-ins, page reads or downloads, however many of them are newer.
+func TestTenantOverviewRecentActivityIsAdministrative(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		ctx := context.Background()
+		now := time.Now()
+		var rows []store.AuditRow
+		for i := 0; i < 15; i++ {
+			rows = append(rows, store.AuditRow{ID: store.NewAuditID(now.Add(time.Hour)), At: now.Add(time.Hour), Kind: "login", TenantID: f.tenB, Username: "noise"})
+		}
+		capID := store.NewAuditID(now.Add(2 * time.Hour))
+		rows = append(rows, store.AuditRow{ID: capID, At: now.Add(2 * time.Hour), Kind: "login", Category: "signins", TenantID: f.tenB, Username: "acting", Capacity: auditlog.CapacityTenantAdmin})
+		if err := store.InsertAudit(ctx, a.st.Q(), rows); err != nil {
+			t.Fatal(err)
+		}
+		r := f.root.do("GET", "/api/admin/tenants/"+f.tenB+"/overview", nil).want(t, 200, "")
+		got := r.body["recentAdminActivity"].([]any)
+		if len(got) < 2 {
+			t.Fatalf("%d rows: %v", len(got), got)
+		}
+		if first := got[0].(map[string]any); first["id"] != capID {
+			t.Errorf("the newest row is %v, want the one with a capacity", first)
+		}
+		for _, x := range got {
+			row := x.(map[string]any)
+			if row["username"] == "noise" {
+				t.Errorf("a sign-in with no capacity is listed: %v", row)
+			}
+			if c := row["category"]; row["capacity"] == nil && c != "admin" && c != "security" {
+				t.Errorf("row %v is neither administrative nor done in a capacity", row)
+			}
+		}
 	})
 }

@@ -113,6 +113,10 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
+function NotYet() {
+  return <span className="text-sm font-normal text-muted-foreground">{to.notMeasured}</span>
+}
+
 function Card({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
   return (
     <section className={`min-w-0 rounded-lg border p-4 ${className}`}>
@@ -129,6 +133,7 @@ function Overview({ o }: { o: TenantOverview }) {
   const used = share(u.bytes, limit)
   const { userPath } = useAdminPaths()
   const more = o.adminCount - o.admins.length
+  const measured = !!u.measuredAt
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-2" data-slot="tenant-overview">
       <Card title={to.identity}>
@@ -148,11 +153,13 @@ function Overview({ o }: { o: TenantOverview }) {
       </Card>
       <Card title={to.counts}>
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <Stat label={to.people} value={formatUsed('people', u.people)} />
+          {/* People, spaces and pages are the stored counts of the last measurement: before the first one they are
+              not zeros but unknown. Administrators and groups are read live. */}
+          <Stat label={to.people} value={measured ? formatUsed('people', u.people) : <NotYet />} />
           <Stat label={to.admins} value={o.adminCount.toLocaleString()} />
-          <Stat label={to.spaces} value={formatUsed('spaces', u.spaces)} />
+          <Stat label={to.spaces} value={measured ? formatUsed('spaces', u.spaces) : <NotYet />} />
           <Stat label={to.groups} value={o.groups.toLocaleString()} />
-          <Stat label={to.pages} value={formatUsed('pages', u.pages)} />
+          <Stat label={to.pages} value={measured ? formatUsed('pages', u.pages) : <NotYet />} />
         </dl>
       </Card>
       <Card title={to.storage}>

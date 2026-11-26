@@ -1,18 +1,20 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { LogOut, UserCog } from 'lucide-react'
 import { keys, useSession } from '@/api/hooks'
 import { acrossSite } from '@/lib/access'
-import { setScopeNow } from '@/lib/adminScope'
+import { scopedClient } from '@/lib/scopedClient'
 import { adminPath, adminTenantPath, adminUserPath, type AdminSection } from '@/lib/urls'
 import { Button } from '@/components/ui/button'
 import { tt } from '@/i18n/tenants'
 
 // The console's acting scope (docs/design/3-6-c.md section 5): the whole site (null), or one tenant, in which a site
-// administrator acts as that tenant's administrator. Everything under a TenantScope asks the server with the scope
-// header (the API client reads it from lib/adminScope), shows no site-only page, builds its links inside the scope,
-// and keeps its own copy of what the server answered, so a list read in one scope is never shown in another.
+// administrator acts as that tenant's administrator. Everything under a TenantScope reads and writes through the
+// tenant's own QueryClient, whose queries and mutations carry the scope header (lib/adminScope), shows no site-only
+// page, builds its links inside the scope, and keeps its own copy of what the server answered, so a list read in one
+// scope is never shown in another. What is above it (the tenant's page around its scoped tabs, the console's frame)
+// reads through the site's client and never carries the header.
 
 const ScopeContext = createContext<string | null>(null)
 
@@ -38,18 +40,18 @@ export function useAcrossSite(): boolean {
   return acrossSite(useSession().data?.user) && scope === null
 }
 
-// Shows its children in a tenant's scope (or, with null, the whole site's). The scope is told to the API client while
-// this renders, before anything under it asks the server.
+// Shows its children in a tenant's scope (or, with null, the whole site's): under the tenant's QueryClient, one for
+// each tenant (the tabs of its page share it). A write made in it has the site's client read the tenants again.
 export function TenantScope({ tenant, children }: { tenant: string | null; children: ReactNode }) {
-  setScopeNow(tenant)
   const main = useQueryClient()
+  const who = useSession().data?.user?.id ?? null
   const client = useMemo(() => {
     if (tenant === null) return main
-    const c = new QueryClient({ defaultOptions: main.getDefaultOptions() })
+    const c = scopedClient(main, tenant, who, keys.tenants)
     const session = main.getQueryData(keys.session)
-    if (session) c.setQueryData(keys.session, session)
+    if (session && c.getQueryData(keys.session) === undefined) c.setQueryData(keys.session, session)
     return c
-  }, [main, tenant])
+  }, [main, tenant, who])
   return (
     <ScopeContext.Provider value={tenant}>
       {client === main ? children : <QueryClientProvider client={client}>{children}</QueryClientProvider>}

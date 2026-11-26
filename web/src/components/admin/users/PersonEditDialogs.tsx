@@ -10,6 +10,7 @@ import { ResponsiveDialog } from '@/components/people/ResponsiveDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { tp } from '@/i18n/people'
+import { useInScope } from '@/lib/scopedClient'
 
 // Whether the organization's sign-in supplies this person's name and address: they have a connected sign-in. What it
 // supplies may be overwritten the next time they sign in through it, so an edit made here may not last.
@@ -49,6 +50,7 @@ export function EditPersonDialog(props: DialogProps) {
 }
 
 function EditPersonInner({ u, open, onOpenChange }: DialogProps) {
+  const inScope = useInScope()
   const after = useAfterEdit()
   const [name, setName] = useState(u.name)
   const [username, setUsername] = useState(u.username)
@@ -66,7 +68,7 @@ function EditPersonInner({ u, open, onOpenChange }: DialogProps) {
     setBusy(true)
     setError('')
     try {
-      await adminApi.updateUser(u.id, body)
+      await inScope(() => adminApi.updateUser(u.id, body))
       await after()
       toast.success(tp.admin.edited)
       onOpenChange(false)
@@ -123,6 +125,7 @@ export function ChangePersonEmailDialog(props: DialogProps) {
 }
 
 function ChangePersonEmailInner({ u, open, onOpenChange }: DialogProps) {
+  const inScope = useInScope()
   const after = useAfterEdit()
   const [email, setEmail] = useState('')
   const [mode, setMode] = useState<'verify' | 'mark'>('verify')
@@ -136,7 +139,7 @@ function ChangePersonEmailInner({ u, open, onOpenChange }: DialogProps) {
     setBusy(true)
     setError('')
     try {
-      const r = await adminApi.updateUser(u.id, { email: email.trim(), emailMode: mode })
+      const r = await inScope(() => adminApi.updateUser(u.id, { email: email.trim(), emailMode: mode }))
       await after()
       setResult(
         mode === 'mark' || r.verification === undefined
@@ -225,6 +228,7 @@ export function TemporaryPasswordDialog(props: DialogProps) {
 }
 
 function TemporaryPasswordInner({ u, open, onOpenChange }: DialogProps) {
+  const inScope = useInScope()
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -235,7 +239,7 @@ function TemporaryPasswordInner({ u, open, onOpenChange }: DialogProps) {
     setBusy(true)
     setError('')
     try {
-      await adminApi.setTemporaryPassword(u.id, password)
+      await inScope(() => adminApi.setTemporaryPassword(u.id, password))
       toast.success(tp.admin.temporaryDone)
       onOpenChange(false)
     } catch (err) {

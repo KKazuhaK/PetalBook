@@ -6,7 +6,7 @@ import { featureName } from '@/i18n/featureNames'
 import { formatBytes } from '@/lib/bytes'
 import { noteNetworkOk } from '@/lib/offline/status'
 import { forgetLastAccount } from '@/lib/lastAccount'
-import { scopeHeaderFor } from '@/lib/adminScope'
+import { scopeHeaderFor, scopeOfRequest } from '@/lib/adminScope'
 
 import { ENDED_REASONS } from './types'
 import type {
@@ -366,6 +366,8 @@ export async function request<T>(
   path: string,
   { method = 'GET', body, keepalive, signal, blob }: RequestOptions = {},
 ): Promise<T> {
+  // The scope is the caller's, decided now, before the first await (lib/adminScope).
+  const scope = scopeOfRequest(signal)
   const barePath = path.split('?')[0]
   const isSignIn = SIGN_IN_PATHS.test(barePath)
   if (signedOut && !isSignIn) throw new ApiError(401, 'unauthenticated', t.errors.signedOut)
@@ -392,7 +394,7 @@ export async function request<T>(
       headers: {
         Accept: 'application/json',
         // The console in a tenant's scope names it on every administration call (the one place that does).
-        ...scopeHeaderFor(path),
+        ...scopeHeaderFor(path, scope),
         ...(payload === undefined ? {} : { 'Content-Type': blob ? 'application/octet-stream' : 'application/json' }),
       },
       body: payload,

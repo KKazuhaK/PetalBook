@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-query'
 import { API_BASE, ApiError, enc, request } from './client'
 import { keys } from './hooks'
+import { SCOPE_PARAM } from '@/lib/adminScope'
 import {
   dailyOf,
   dailyWrites,
@@ -357,9 +358,12 @@ export const adminApi = {
   },
   // The registry of kinds with their categories, and which optional categories are on in the caller's scope.
   auditKinds: (signal?: AbortSignal) => request<AuditKinds>('/admin/audit/kinds', { signal }),
-  // The address of the CSV of a filter (the browser downloads it; the server streams it).
-  auditDownloadUrl: (filters: Partial<AuditFilters>) => {
-    const qs = auditQuery(filters).toString()
+  // The address of the CSV of a filter (the browser downloads it; the server streams it). A link cannot carry the scope
+  // header, so in a tenant's scope the address names it (?scope=, which the server reads as the header).
+  auditDownloadUrl: (filters: Partial<AuditFilters>, scope: string | null = null) => {
+    const q = auditQuery(filters)
+    if (scope) q.set(SCOPE_PARAM, `tenant:${scope}`)
+    const qs = q.toString()
     return `${API_BASE}/admin/audit/download${qs ? `?${qs}` : ''}`
   },
 

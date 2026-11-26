@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { enc, request } from './client'
 import { keys } from './hooks'
 import { tp } from '@/i18n/people'
+import { useInScope } from '@/lib/scopedClient'
 
 export type { BatchAnswer, BatchRowIn, BatchRowOut, BatchStatus, PersonRef } from './peopleTypes'
 import type { BatchAnswer, BatchRowIn, PersonRef } from './peopleTypes'
@@ -70,10 +71,13 @@ export function useBatchRunner(run: BatchRunner) {
 // The picker's way of adding: the picked people go in one batch, and a row that did not go in is told in words.
 export function usePickRunner(run: BatchRunner) {
   const changed = useBatchChanged()
+  const inScope = useInScope()
   return async (picks: { key: string }[], role?: string) => {
-    const answer = await run(
-      picks.map((p) => (role ? { user: p.key, role } : { user: p.key })),
-      false,
+    const answer = await inScope(() =>
+      run(
+        picks.map((p) => (role ? { user: p.key, role } : { user: p.key })),
+        false,
+      ),
     )
     await changed()
     const bad = answer.results.filter((r) => r.status !== 'ok' && r.status !== 'already_member')

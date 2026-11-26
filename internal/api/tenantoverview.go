@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
 
+	"petalbook.app/server/internal/auditlog"
+	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
@@ -60,7 +63,7 @@ func (s *server) adminTenantOverview(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	admins, adminCount, err := store.TenantAdmins(ctx, q, t.ID, overviewAdmins)
+	admins, adminCount, err := store.TenantAdmins(ctx, q, store.InTenant(t.ID), overviewAdmins)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -92,8 +95,7 @@ func (s *server) adminTenantOverview(c *call) {
 	// The audit is read by those who hold the key to it; the rest get none.
 	recent := []overviewAuditResp{}
 	if c.p.Access.Can(authz.TenantAuditRead, t.ID) {
-		f := store.AuditFilter{HideSite: !c.siteWide(authz.TenantAuditRead)}
-		rows, _, err := s.auth.ListAudit(ctx, store.InTenant(t.ID), f, overviewAudit)
+		rows, err := s.recentAdminActivity(ctx, t.ID, !c.siteWide(authz.TenantAuditRead))
 		if err != nil {
 			s.fail(c.w, err)
 			return
@@ -111,6 +113,40 @@ func (s *server) adminTenantOverview(c *call) {
 		FeaturesOff  []string            `json:"featuresOff"`
 		RecentActive []overviewAuditResp `json:"recentAdminActivity"`
 	}{base, createdBy, groups, adminOut, adminCount, off, recent})
+}
+
+// recentAdminActivity is the newest overviewAudit rows of the tenant's audit
+// that are administrative: done in an administrator's capacity, or of the admin
+// or security categories. Page reads, downloads, sign-ins and API calls are
+// left out. Each of the four is one index range read with a LIMIT, merged by
+// id, so a tenant with millions of reads costs no more than one with none.
+func (s *server) recentAdminActivity(ctx context.Context, tenant string, hideSite bool) ([]auth.AuditEntry, error) {
+	sc := store.InTenant(tenant)
+	filters := []store.AuditFilter{
+		{Categories: []string{string(auditlog.Admin), string(auditlog.Security)}},
+		{Capacity: auditlog.CapacitySiteAdmin},
+		{Capacity: auditlog.CapacityTenantAdmin},
+	}
+	seen := map[string]bool{}
+	var all []auth.AuditEntry
+	for _, f := range filters {
+		f.HideSite = hideSite
+		rows, _, err := s.auth.ListAudit(ctx, sc, f, overviewAudit)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			if !seen[r.ID] {
+				seen[r.ID] = true
+				all = append(all, r)
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
+	if len(all) > overviewAudit {
+		all = all[:overviewAudit]
+	}
+	return all, nil
 }
 
 func nullableStr(v string) any {

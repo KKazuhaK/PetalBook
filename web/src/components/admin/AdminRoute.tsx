@@ -1,12 +1,10 @@
 import { Navigate, useLocation } from 'react-router'
-import { useEffect, useRef } from 'react'
 import { ApiError } from '@/api/client'
 import { useTenant } from '@/api/admin'
 import { useSession } from '@/api/hooks'
 import { PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { acrossSite } from '@/lib/access'
-import { setScopeNow } from '@/lib/adminScope'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -38,18 +36,6 @@ export default function AdminRoute() {
   const scope = scoped ? parts[1] : null
   const rest = scoped ? parts.slice(2) : parts
   const siteUser = acrossSite(useSession().data?.user)
-  // The scope is told to the API client while the scope renders; leaving the console forgets it.
-  // (React's development double-mount unmounts and mounts again at once: only a real unmount forgets it.)
-  const alive = useRef(false)
-  useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-      queueMicrotask(() => {
-        if (!alive.current) setScopeNow(null)
-      })
-    }
-  }, [])
   // A tenant's own administrator has no scope to enter: their console is their tenant's already.
   if (scope !== null && !siteUser) return <Navigate to={['/admin', ...rest].join('/')} replace />
   return (
@@ -64,6 +50,7 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
   const { path } = useAdminPaths()
   const site = acrossSite(useSession().data?.user) && scope === null
   const tenant = useTenant(scope)
+  const ownTenant = useSession().data?.user?.tenant?.name
   const sections = navFor(site)
   const person = first === 'user' && second !== undefined
   // A tenant's own page: `/admin/tenants/<id>/<tab>`; the list's two pages are tenants and plans.
@@ -97,7 +84,7 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
       ) : (
         <AdminPageHeader
           title={section.label}
-          description={(tc.pageHelp as Record<string, string>)[`${section.key}/${tab?.key}`]}
+          description={pageHelp(`${section.key}/${tab?.key}`, site, scope !== null ? tenant.data?.name : ownTenant)}
         >
           {tabs.length > 1 && (
             <AdminTabs
@@ -112,4 +99,11 @@ function Console({ scope, segments }: { scope: string | null; segments: string[]
       )}
     </AdminLayout>
   )
+}
+
+// A page's line of help: in a tenant (its own administrator, or the site's in its scope) the pages that speak of the
+// whole server speak of the tenant.
+function pageHelp(key: string, site: boolean, tenantName: string | undefined): string | undefined {
+  const inTenant = site ? undefined : tc.pageHelpTenant[key]
+  return inTenant ? inTenant(tenantName) : (tc.pageHelp as Record<string, string>)[key]
 }

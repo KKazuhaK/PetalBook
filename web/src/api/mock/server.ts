@@ -4553,11 +4553,27 @@ export function createMockServer(options: MockOptions = {}) {
   // The header PetalBook-Scope: tenant:<id> of a request, as the server reads it (internal/api/scope.go): only an
   // administration endpoint takes it; a tenant that is not the caller's to read is told not to exist; the answer is
   // the tenant to act in.
-  const enterScope = (header: string | null, target: string, cookie: string | null | undefined): string | null => {
+  // On an administration GET the query parameter ?scope= stands for the header (what a link fetches cannot send one);
+  // on a write, or with the header too, it is refused.
+  const enterScope = (
+    method: string,
+    headerIn: string | null,
+    target: string,
+    cookie: string | null | undefined,
+  ): string | null => {
+    const u = new URL(target, 'http://mock.local')
+    const path = u.pathname.replace(/^\/api/, '')
+    const admin = /^\/(admin|users|invites)(\/|$)/.test(path)
+    let header = headerIn
+    const params = u.searchParams.getAll('scope')
+    if (admin && params.length > 0) {
+      if (method.toUpperCase() !== 'GET') throw new HttpError(400, 'invalid', '?scope= is for reads only.')
+      if (header !== null || params.length > 1)
+        throw new HttpError(400, 'invalid', 'PetalBook-Scope is tenant:<id>, once.')
+      header = params[0]
+    }
     if (header === null) return null
-    const path = new URL(target, 'http://mock.local').pathname.replace(/^\/api/, '')
-    if (!/^\/(admin|users|invites)(\/|$)/.test(path))
-      throw new HttpError(400, 'invalid', 'PetalBook-Scope is for administration endpoints only.')
+    if (!admin) throw new HttpError(400, 'invalid', 'PetalBook-Scope is for administration endpoints only.')
     const id = /^tenant:(.+)$/.exec(header)?.[1]
     if (!id || id.trim() !== id) throw new HttpError(400, 'invalid', 'PetalBook-Scope is tenant:<id>.')
     const me = contextOf(cookie).user
@@ -5626,7 +5642,7 @@ export function createMockServer(options: MockOptions = {}) {
       counter++
       acting = null
       try {
-        acting = enterScope(scope ?? null, target, cookie)
+        acting = enterScope(method, scope ?? null, target, cookie)
         sweepAll()
         const upload =
           method.toUpperCase() === 'POST' && /^\/api\/spaces\/[^/?]+\/(pages\/[^/?]+\/assets|import)(\?|$)/.test(target)

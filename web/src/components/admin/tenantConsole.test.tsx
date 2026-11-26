@@ -1,20 +1,12 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { tt } from '@/i18n/tenants'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  locationText,
-  mount,
-  settle,
-  type Mounted,
-} from '@/testing/harness'
+import { adminRequests, click, installDomShims, locationText, mount, settle, type Mounted } from '@/testing/harness'
 import { AdminGate } from './AdminGate'
 
 // A tenant's page for the site (/admin/tenants/<id>/<tab>) and the console in its scope (/admin/t/<id>/...): the scope
@@ -64,12 +56,30 @@ describe("the console in a tenant's scope", () => {
     const users = m!.requests.filter((r) => r.url.startsWith('/api/users'))
     expect(users.length).toBeGreaterThan(0)
     for (const r of users) expect(r.scope).toBe(`tenant:${tenant}`)
+    // The page speaks of the tenant, not of the server.
+    await settle(
+      () =>
+        document.querySelector('[data-slot="page-description"]')?.textContent ===
+        tc.pageHelpTenant['users/all']('Acme'),
+      'the tenant-worded help',
+    )
     // The session is not an administration call: it never carries the header.
     for (const r of m!.requests.filter((x) => x.url.startsWith('/api/session'))) expect(r.scope).toBeFalsy()
 
-    // The whole site's console, in the same page, sends none.
-    await click(byLabel(tc.back('')) ?? document.querySelector('aside a[href="/"]'))
-    await settle(() => locationText() === '/', 'out of the console')
+    // Out of the console (once it has loaded: the way back leads to the space shown last, known once the spaces are
+    // read), nothing carries the header, even what the site's cache reads again.
+    const backLink = () =>
+      [...document.querySelectorAll<HTMLAnchorElement>('aside a[aria-label]')].find((a) =>
+        a.getAttribute('aria-label')!.startsWith(tc.back('').trim()),
+      )
+    await settle(() => backLink() !== undefined, 'the console')
+    const before = m!.requests.length
+    await click(backLink())
+    await settle(() => !locationText().startsWith('/admin'), 'out of the console')
+    await act(() => m!.qc.invalidateQueries())
+    await act(() => m!.qc.refetchQueries({ type: 'all' }))
+    expect(m!.requests.length).toBeGreaterThan(before)
+    expect(m!.requests.slice(before).filter((r) => r.scope)).toEqual([])
   })
 
   it('sends none in the whole site, and none on the tenant page except for the people, spaces and audit tabs', async () => {
@@ -89,6 +99,32 @@ describe("the console in a tenant's scope", () => {
     await click(tab)
     await settle(() => scoped().some((r) => r.url.startsWith('/api/users')), 'the members, in scope')
     expect(locationText()).toBe(`/admin/tenants/${tenant}/members`)
+
+    // The page around the tab is the site's: its overview and the server's status, read again while the members
+    // show, carry no header.
+    const before = m!.requests.length
+    await act(() => m!.qc.invalidateQueries())
+    const site = () =>
+      m!.requests
+        .slice(before)
+        .filter((r) => r.url === `/api/admin/tenants/${tenant}/overview` || r.url.startsWith('/api/admin/status'))
+    await settle(
+      () => site().some((r) => r.url.includes('/overview')) && site().some((r) => r.url.includes('/status')),
+      'the overview and the status, again',
+    )
+    for (const r of site()) expect(r.scope, r.url).toBeFalsy()
+  })
+
+  it("downloads the audit of the scope it shows: the tenant's tab names the scope in the address, the site's not", async () => {
+    await open((id) => `/admin/tenants/${id}/audit`)
+    await settle(() => document.querySelector('[data-slot="audit-download"]') !== null, 'the download')
+    const scopedHref = document.querySelector<HTMLAnchorElement>('[data-slot="audit-download"]')!.getAttribute('href')!
+    expect(new URL(scopedHref, 'http://x').searchParams.get('scope')).toBe(`tenant:${tenant}`)
+
+    await open(() => '/admin/audit')
+    await settle(() => document.querySelector('[data-slot="audit-download"]') !== null, 'the download')
+    const siteHref = document.querySelector<HTMLAnchorElement>('[data-slot="audit-download"]')!.getAttribute('href')!
+    expect(new URL(siteHref, 'http://x').searchParams.has('scope')).toBe(false)
   })
 
   it('shows a banner that names the tenant and leads out to its page, and only what a tenant administrator sees', async () => {
@@ -117,9 +153,14 @@ describe("the console in a tenant's scope", () => {
     for (const a of document.querySelectorAll<HTMLAnchorElement>(`aside nav[aria-label="${tc.nav}"] a`))
       expect(a.getAttribute('href')).toMatch(new RegExp(`^/admin/t/${tenant}/`))
 
+    const before = m!.requests.length
     await click(exit)
-    await settle(() => document.querySelector('[data-slot="scope-banner"]') === null, 'the banner is gone')
+    await settle(() => document.querySelector('[data-slot="tenant-overview"]') !== null, 'the tenant page')
+    expect(document.querySelector('[data-slot="scope-banner"]')).toBeNull()
     expect(locationText()).toBe(`/admin/tenants/${tenant}`)
+    // After Exit, no request carries the header.
+    expect(m!.requests.slice(before).length).toBeGreaterThan(0)
+    expect(m!.requests.slice(before).filter((r) => r.scope)).toEqual([])
   })
 
   it('has no banner in the whole site, whose sidebar has the site pages', async () => {
@@ -157,5 +198,15 @@ describe("a tenant's page", () => {
     expect(manage.getAttribute('href')).toBe(`/admin/t/${tenant}/users/all`)
     await click(manage)
     await settle(() => document.querySelector('[data-slot="scope-banner"]') !== null, 'in the console')
+  })
+
+  it('shows the stored counts as not measured before the first measurement, and the administrators live', async () => {
+    await open((id) => `/admin/tenants/${id}/overview`)
+    await settle(() => document.querySelector('[data-slot="tenant-overview"]') !== null, 'the overview')
+    const stat = (label: string) => document.querySelector(`[data-stat="${label}"] dd`)!.textContent
+    expect(stat(tt.detail.overview.people)).toBe(tt.detail.overview.notMeasured)
+    expect(stat(tt.detail.overview.spaces)).toBe(tt.detail.overview.notMeasured)
+    expect(stat(tt.detail.overview.pages)).toBe(tt.detail.overview.notMeasured)
+    expect(stat(tt.detail.overview.admins)).toBe('0')
   })
 })
