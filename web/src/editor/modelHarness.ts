@@ -1,6 +1,6 @@
 // A model-based test of the whole editing path: the real SaveController, the real
 // restore logic and local-draft store, against the in-memory server (whose draft
-// rules the contract tests keep equal to the real server's), driven by many
+// rules the Go tests of the drafts keep in step with the real server's), driven by many
 // random sequences of what a person and the server's world can do. Seeded and
 // deterministic: a failure prints the seed and the steps, and
 //   MODEL_SEED=<seed> npx vitest run src/editor/model.mixed.test.ts

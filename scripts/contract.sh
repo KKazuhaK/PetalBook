@@ -2,9 +2,9 @@
 # Runs the web app's API contract tests against the real server, twice: once
 # against a single-user server and once against an accounts-mode server.
 #
-# The web tests normally run against an in-memory mock. A mock can drift from
-# the server it stands in for, so this starts the built binary on empty
-# temporary data and runs the same assertions through real HTTP.
+# The contract suite (web/src/api/contract.test.ts) runs only against the real
+# server: this starts the built binary on empty temporary data and runs the
+# assertions through real HTTP. The default web test run does not include it.
 #
 #   single-user: PETALBOOK_API is the server's address.
 #   accounts:    the same, plus PETALBOOK_CONTRACT_USER and
@@ -17,6 +17,10 @@
 # PETALBOOK_DATABASE when that is set; scripts/contract-postgres.sh uses this to
 # run against PostgreSQL.
 #
+# Every JSON answer is also checked against its shape (keys and types, no
+# values) in web/src/api/fixtures/recorded/shapes.json. With PETALBOOK_RECORD=1
+# the file is made again from the answers of both runs instead of being checked.
+#
 # Usage: scripts/contract.sh [path-to-binary]
 set -euo pipefail
 
@@ -24,6 +28,13 @@ bin="${1:-./petalbook}"
 [ -x "$bin" ] || { echo "no binary at $bin; run 'make build' first" >&2; exit 2; }
 
 work="$(mktemp -d)"
+# A recording starts from nothing, so a shape that is no longer answered goes.
+# The accounts-only run (contract-postgres.sh) does not record.
+if [ -n "${PETALBOOK_CONTRACT_ACCOUNTS_ONLY:-}" ]; then
+  unset PETALBOOK_RECORD
+elif [ "${PETALBOOK_RECORD:-}" = 1 ]; then
+  rm -f web/src/api/fixtures/recorded/shapes.json
+fi
 port="${PETALBOOK_CONTRACT_PORT:-18080}"
 pid=""
 cleanup() {

@@ -17,7 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "test:contract": "vitest run src/api/contract.test.ts"
+    "test:contract": "vitest run --mode contract"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

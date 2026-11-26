@@ -3,7 +3,7 @@ import { createMockServer, MOCK_ADMIN } from './server.ts'
 import { AUDIT_CATEGORIES, categoryOfKind, isSiteKind } from './auditKinds.ts'
 
 // The mock's audit log with categories, the registry of kinds, the filters and the CSV: the contract of docs/api.md
-// ("Audit log"). The registry is compared with the real server's in contract.test.ts.
+// ("Audit log"). The real server's registry is tested in Go (internal/auditlog).
 
 function world() {
   let clock = Date.parse('2026-11-23T08:00:00Z')

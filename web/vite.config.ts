@@ -44,7 +44,9 @@ export default defineConfig(async ({ mode }) => {
       // later on a busy runner than on a laptop; one second was too little there.
       // A test that passes waits no longer: polling stops as soon as it holds.
       expect: { poll: { timeout: 5_000 } },
-      include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+      // The contract suite needs a real server (make contract) and has its own mode.
+      include: mode === 'contract' ? ['src/api/contract.test.ts'] : ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+      exclude: mode === 'contract' ? [] : ['**/node_modules/**', 'src/api/contract.test.ts'],
       // Worker threads start faster and use less memory than forked processes, which
       // matters most on a runner with two cores. Every file still gets a fresh jsdom
       // (isolate stays on: some files keep state in modules and in the window).

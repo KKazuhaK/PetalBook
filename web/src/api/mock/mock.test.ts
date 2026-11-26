@@ -1,5 +1,5 @@
 // What only the mock promises: its seed data and its test hooks. The contract
-// itself is tested in ../contract.test.ts.
+// itself is tested against the real server in ../contract.test.ts (make contract).
 import { describe, expect, it } from 'vitest'
 import { createMockServer } from './server'
 

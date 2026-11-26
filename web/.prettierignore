@@ -10,3 +10,5 @@ package-lock.json
 # Static files served as they are, and test data that other code reads byte for byte.
 public
 src/markdown/__fixtures__
+# Written by the contract run (PETALBOOK_RECORD=1), not by hand.
+src/api/fixtures/recorded
