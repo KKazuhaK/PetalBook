@@ -26,7 +26,6 @@ import (
 	"petalbook.app/server/internal/assetrepo"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/gitstore"
-	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/store"
 )
@@ -51,7 +50,6 @@ type assetState struct {
 	repos     map[string]*assetrepo.Repo
 	moving    map[string]bool   // spaces whose uploads go into assets/: a move is queued, or copying
 	phase     map[string]string // the phase of each move queued or running here (MoveCopying, MoveSwitching)
-	jobs      *jobs.Runner      // the server's jobs runner (UseJobs)
 	pinned    map[string]bool
 	tenants   map[string]string // the tenant of each space the cache named, remembered (AssetBytesOfTenant)
 	connected map[string]bool   // spaces that have an attachment repository; nil until first needed

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useCreateExport } from '@/api/manage'
-import type { ExportRec, ExportRequest } from '@/api/types'
+import type { ExportRequest, Job } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { useAdminPaths } from '../TenantScope'
 import { tg } from '@/i18n/manage'
+import { JobWatch } from './JobProgress'
 import { daysLeft, manageError, useIsSite, tapTarget, fitScreen } from './shared'
 
 // Starts an export of some spaces (or recycle items). The history is the site's.
@@ -32,12 +33,12 @@ export function ExportDialog({
   const { path: adminPath } = useAdminPaths()
   const [history, setHistory] = useState(false)
   const [error, setError] = useState('')
-  const [made, setMade] = useState<ExportRec | null>(null)
+  const [made, setMade] = useState<Job | null>(null)
   const go = () => {
     setError('')
     make.mutate(
       { ...request, history: site && history },
-      { onSuccess: setMade, onError: (e) => setError(manageError(e)) },
+      { onSuccess: (r) => setMade(r.job), onError: (e) => setError(manageError(e)) },
     )
   }
   return (
@@ -50,9 +51,12 @@ export function ExportDialog({
           <DialogDescription>{tg.exports.dialogHelp}</DialogDescription>
         </DialogHeader>
         {made ? (
-          <p role="status" className="text-sm">
-            {tg.exports.started(Math.max(1, daysLeft(made.expires)))}
-          </p>
+          <div className="grid gap-3">
+            <p role="status" className="text-sm">
+              {tg.exports.started(Math.max(1, made.expires ? daysLeft(made.expires) : 1))}
+            </p>
+            <JobWatch id={made.id} />
+          </div>
         ) : (
           <>
             {site && (

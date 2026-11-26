@@ -3,15 +3,16 @@
 // Kept apart from admin.ts, which is the older half of the administration's calls.
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { enc, request } from './client'
+import { ApiError, enc, request } from './client'
 import { keys } from './hooks'
 import type {
-  BulkJob,
   ConfirmRequest,
   ConfirmResult,
   ExportList,
-  ExportRec,
   ExportRequest,
+  Job,
+  JobList,
+  JobsParams,
   PeopleParams,
   RecycleItem,
   RecycleList,
@@ -88,17 +89,17 @@ export const manageApi = {
   // --- the second confirmation, and the bulk actions ---
   confirm: (input: ConfirmRequest) => request<ConfirmResult>('/admin/confirm', { method: 'POST', body: input }),
   bulk: (confirm: string) =>
-    request<{ job: BulkJob }>('/admin/bulk', {
+    request<{ job: Job }>('/admin/bulk', {
       method: 'POST',
       body: { confirm },
     }),
-  job: (id: string, signal?: AbortSignal) => request<{ job: BulkJob }>(`/admin/jobs/${enc(id)}`, { signal }),
+  job: (id: string, signal?: AbortSignal) => request<{ job: Job }>(`/admin/jobs/${enc(id)}`, { signal }),
+  jobs: (p: JobsParams = {}, signal?: AbortSignal) => request<JobList>(`/admin/jobs${query({ ...p })}`, { signal }),
 
   // --- exports ---
-  createExport: (input: ExportRequest) => request<ExportRec>('/admin/exports', { method: 'POST', body: input }),
+  createExport: (input: ExportRequest) => request<{ job: Job }>('/admin/exports', { method: 'POST', body: input }),
   exports: (cursor?: string, signal?: AbortSignal) =>
     request<ExportList>(`/admin/exports${query({ cursor })}`, { signal }),
-  exportOf: (id: string, signal?: AbortSignal) => request<ExportRec>(`/admin/exports/${enc(id)}`, { signal }),
   deleteExport: (id: string) => request<void>(`/admin/exports/${enc(id)}`, { method: 'DELETE' }),
 
   // --- the audited, read-only view of a space ---
@@ -156,7 +157,8 @@ export function usePerson(id: string, tenant?: string) {
   })
 }
 
-// The list is read again while any item on it is being moved, restored or purged (its `state`), until it is at rest or gone.
+// An item that is being moved, restored or purged shows its job (`item.job`, see useJob), which reads the list again
+// when it ends: the list itself is not polled.
 export function useRecycle(params: { tenant?: string; kind?: string; q?: string }) {
   return useInfiniteQuery({
     queryKey: [...RECYCLE_KEY, 'list', JSON.stringify(params)],
@@ -165,8 +167,6 @@ export function useRecycle(params: { tenant?: string; kind?: string; q?: string 
       manageApi.recycle({ ...params, cursor: pageParam || undefined, limit: MANAGE_PAGE_SIZE }, signal),
     getNextPageParam: (last) => last.next || undefined,
     staleTime: 5_000,
-    refetchInterval: (q) =>
-      q.state.data?.pages.some((p) => p.items.some((i) => i.state !== 'ready')) ? pollMs.value : false,
   })
 }
 
@@ -243,20 +243,45 @@ export function useStartBulk() {
     mutationFn: (confirm: string) => manageApi.bulk(confirm),
   })
 }
-// A job is asked about while it is queued or running, and once more when it ends (so what it did shows).
+export const jobActive = (j: { state: string } | undefined) => !!j && (j.state === 'queued' || j.state === 'running')
+// A refusal (403: no key for the kind; 404: no such job, or not the caller's) is not asked again: it would answer the
+// same. A 429 and the server's own failures are asked again at the next tick.
+const refused = (e: unknown) => e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429
+
+// A job is asked about while it is queued or running, and once more when it ends (so what it did shows: the lists it
+// changed, the recycle bin and the exports, are read again then). It is the one poller of every kind of job.
 export function useJob(id: string | null) {
   const changed = useStorageChanged()
+  const qc = useQueryClient()
   return useQuery({
     queryKey: [...JOB_KEY, id ?? ''],
     enabled: !!id,
     queryFn: async ({ signal }) => {
       const { job } = await manageApi.job(id!, signal)
-      if (job.state !== 'queued' && job.state !== 'running') void changed()
+      if (!jobActive(job)) {
+        void changed()
+        void qc.invalidateQueries({ queryKey: EXPORTS_KEY })
+      }
       return job
     },
     refetchInterval: (q) =>
-      q.state.data && q.state.data.state !== 'queued' && q.state.data.state !== 'running' ? false : pollMs.value,
+      refused(q.state.error) || (q.state.data && !jobActive(q.state.data)) ? false : pollMs.value,
     staleTime: 0,
+  })
+}
+
+// A page of jobs (newest first), read again only while one on it is queued or running.
+export function useJobs(params: Omit<JobsParams, 'cursor' | 'limit'>, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: [...JOB_KEY, 'list', JSON.stringify(params)],
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) =>
+      manageApi.jobs({ ...params, cursor: pageParam || undefined, limit: MANAGE_PAGE_SIZE }, signal),
+    getNextPageParam: (last) => last.next || undefined,
+    enabled,
+    staleTime: 0,
+    refetchInterval: (q) =>
+      !refused(q.state.error) && q.state.data?.pages.some((p) => p.items.some(jobActive)) ? pollMs.value : false,
   })
 }
 
@@ -268,10 +293,6 @@ export function useExports(enabled = true) {
     getNextPageParam: (last) => last.next || undefined,
     enabled,
     staleTime: 5_000,
-    refetchInterval: (q) =>
-      q.state.data?.pages.some((p) => p.items.some((i) => i.state === 'queued' || i.state === 'running'))
-        ? pollMs.value
-        : false,
   })
 }
 export function useCreateExport() {

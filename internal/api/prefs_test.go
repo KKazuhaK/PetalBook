@@ -124,11 +124,11 @@ func TestPrefsOfOneAreNeverReadOrWrittenByAnother(t *testing.T) {
 		// And an export an administrator makes of the space does not carry it.
 		a.clock.Advance(time.Minute)
 		r := f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{pid}}).want(t, 202, "")
-		done := waitExport(t, f.root, r.body["id"].(string))
+		done := waitExport(t, f.root, exportJob(r))
 		if done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
-		dl := f.root.do("GET", "/api/admin/exports/"+r.body["id"].(string)+"/download", nil)
+		dl := f.root.do("GET", "/api/admin/exports/"+exportJob(r)+"/download", nil)
 		for name, body := range unzipped(t, []byte(dl.raw)) {
 			if strings.HasSuffix(name, "prefs.yml") || strings.Contains(body, "secret: mine") && !strings.HasSuffix(name, "history.bundle") {
 				t.Errorf("the export holds %s", name)

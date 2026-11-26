@@ -75,28 +75,6 @@ func (m *Manager) assetsHook(step string) error {
 	return nil
 }
 
-// UseJobs gives the manager the server's jobs runner: the moves of
-// attachments are registered on it, and enqueued and read through it. Call it
-// before the runner's Start, which takes up the moves a stop left. Close
-// closes the runner (the API closes it first; a second close does nothing).
-func (m *Manager) UseJobs(r *jobs.Runner) {
-	if m.single != nil {
-		return
-	}
-	m.AssetCache()
-	m.as.mu.Lock()
-	m.as.jobs = r
-	m.as.mu.Unlock()
-	r.Register(MoveKind, moveKind{m})
-}
-
-func (m *Manager) runner() *jobs.Runner {
-	m.AssetCache()
-	m.as.mu.Lock()
-	defer m.as.mu.Unlock()
-	return m.as.jobs
-}
-
 // StartMove starts moving the attachments of the space into its attachment
 // repository, as a job made by the given person. started is false (and nothing
 // is done) when assets/ has no files.

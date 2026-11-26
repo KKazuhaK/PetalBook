@@ -523,7 +523,7 @@ func TestRecycleCrashesAreFinishedAtTheNextStart(t *testing.T) {
 					t.Fatal("restored an item that was being moved")
 				}
 				f.crashAt("")
-				if err := f.m.recoverRecycle(ctx, 0); err != nil {
+				if err := f.m.FinishRecycle(ctx); err != nil {
 					t.Fatal(err)
 				}
 				it = f.item(item.ID)
@@ -575,7 +575,7 @@ func TestRestoreCrashesAreUndoneAtTheNextStart(t *testing.T) {
 					t.Fatalf("%v", err)
 				}
 				f.crashAt("")
-				if err := f.m.recoverRecycle(ctx, 0); err != nil {
+				if err := f.m.FinishRecycle(ctx); err != nil {
 					t.Fatal(err)
 				}
 				it := f.item(item.ID)
@@ -632,7 +632,7 @@ func TestPurgeDeletesOnlyAfterTheDaysAndFinishesAfterACrash(t *testing.T) {
 			t.Fatal("restored an item that was being purged")
 		}
 		f.crashAt("")
-		if err := f.m.recoverRecycle(ctx, 0); err != nil {
+		if err := f.m.FinishRecycle(ctx); err != nil {
 			t.Fatal(err)
 		}
 		f.noItem(item.ID)
@@ -884,7 +884,7 @@ func TestARestoreWhoseItemWasTakenPutsNothingBack(t *testing.T) {
 		f.pause = func(step string) {
 			if step == "restore:moved-cache" {
 				// What another holder would do: the item is ready again.
-				if _, err := st.Q().Exec(ctx, `UPDATE recycle_items SET state = 'ready' WHERE id = ?`, item.ID); err != nil {
+				if _, err := st.Q().Exec(ctx, `UPDATE recycle_items SET job_id = '' WHERE id = ?`, item.ID); err != nil {
 					t.Error(err)
 				}
 			}
@@ -970,7 +970,7 @@ func TestACopyAcrossFilesystemsCutShortIsFinished(t *testing.T) {
 		}
 		item := f.itemOfSpace(info.ID)
 		f.crashAt("")
-		if err := f.m.recoverRecycle(ctx, 0); err != nil {
+		if err := f.m.FinishRecycle(ctx); err != nil {
 			t.Fatal(err)
 		}
 		it := f.item(item.ID)

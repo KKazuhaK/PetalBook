@@ -20,16 +20,43 @@ import (
 	"time"
 )
 
-// The states of a recycle item. moving: the rows are already gone from the live
-// tables and the directories are being moved to DATA/recycle/<id>; a crash
-// leaves it and the next start finishes the move. restoring and purging are
-// held while a restore or a purge runs, so the two never run at once.
+// The states of a recycle item, as its holding job says (recycle_items.job_id;
+// the kind of that job): ready is at rest, no job holds it. moving: the rows
+// are already gone from the live tables and the directories are being moved to
+// DATA/recycle/<id>. restoring and purging: a restore or a purge holds it, so
+// the two never run at once (the lock key of the jobs is recycle:<id> too).
 const (
 	RecycleMoving    = "moving"
 	RecycleReady     = "ready"
 	RecycleRestoring = "restoring"
 	RecyclePurging   = "purging"
 )
+
+// The kinds of the jobs that hold a recycle item.
+const (
+	JobRecycleMove    = "recycle.move"
+	JobRecycleRestore = "recycle.restore"
+	JobRecyclePurge   = "recycle.purge"
+)
+
+// RecycleLock is the lock key of the jobs on an item: one at a time.
+func RecycleLock(item string) string { return "recycle:" + item }
+
+// recycleStateOf is the state of an item whose job is of this kind ("": none).
+func recycleStateOf(jobID, kind string) string {
+	switch kind {
+	case JobRecycleRestore:
+		return RecycleRestoring
+	case JobRecyclePurge:
+		return RecyclePurging
+	case JobRecycleMove:
+		return RecycleMoving
+	}
+	if jobID != "" {
+		return RecycleMoving // its job is gone: the move is repeatable
+	}
+	return RecycleReady
+}
 
 // The kinds of item.
 const (
@@ -63,19 +90,21 @@ type RecycleItem struct {
 	DeletedAt                time.Time
 	DeletedBy, DeletedByName string
 	Reason                   string
-	State                    string
-	StateAt                  time.Time
-	Records                  string
+	// JobID is the job that holds the item ("" at rest), and State what that
+	// job does with it.
+	JobID, State string
+	Records      string
 }
 
-const recycleCols = `id, tenant_id, kind, space_id, user_id, parent, name, personal, dirs, bytes, deleted_at, deleted_by, deleted_by_name, reason, state, state_at`
+const recycleCols = `id, tenant_id, kind, space_id, user_id, parent, name, personal, dirs, bytes, deleted_at, deleted_by, deleted_by_name, reason, job_id,
+	COALESCE((SELECT kind FROM jobs WHERE jobs.id = recycle_items.job_id), '')`
 
 func scanRecycle(sc interface{ Scan(...any) error }, withRecords bool) (*RecycleItem, error) {
 	var it RecycleItem
-	var personal, deleted, stateAt int64
-	var dirs string
+	var personal, deleted int64
+	var dirs, jobKind string
 	dest := []any{&it.ID, &it.TenantID, &it.Kind, &it.SpaceID, &it.UserID, &it.Parent, &it.Name, &personal, &dirs, &it.Bytes, &deleted,
-		&it.DeletedBy, &it.DeletedByName, &it.Reason, &it.State, &stateAt}
+		&it.DeletedBy, &it.DeletedByName, &it.Reason, &it.JobID, &jobKind}
 	if withRecords {
 		dest = append(dest, &it.Records)
 	}
@@ -85,7 +114,7 @@ func scanRecycle(sc interface{ Scan(...any) error }, withRecords bool) (*Recycle
 		}
 		return nil, err
 	}
-	it.Personal, it.DeletedAt, it.StateAt = personal != 0, fromMS(deleted), fromMS(stateAt)
+	it.Personal, it.DeletedAt, it.State = personal != 0, fromMS(deleted), recycleStateOf(it.JobID, jobKind)
 	_ = json.Unmarshal([]byte(dirs), &it.Dirs)
 	return &it, nil
 }
@@ -177,10 +206,13 @@ func RecycleChildren(ctx context.Context, q Q, parent string) ([]RecycleItem, er
 	return out, rows.Err()
 }
 
-// RecycleNotAtRest lists the items that a crash may have left half done, for
-// the start to finish: the oldest state change first.
-func RecycleNotAtRest(ctx context.Context, q Q) ([]RecycleItem, error) {
-	rows, err := q.Query(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE state <> 'ready' ORDER BY state_at, id`)
+// RecycleStuck lists the items a job holds that is not queued or running any
+// more (it failed, or the server stopped it): what a failure or a crash left
+// half done, for the hourly look and the start to take up again. It reads
+// recycle_items_busy, a few rows.
+func RecycleStuck(ctx context.Context, q Q) ([]RecycleItem, error) {
+	rows, err := q.Query(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE job_id <> ''
+		AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.id = recycle_items.job_id AND jobs.state IN ('queued', 'running')) ORDER BY deleted_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,18 +233,34 @@ func RecycleNotAtRest(ctx context.Context, q Q) ([]RecycleItem, error) {
 // user's own item waits for the spaces recycled with them to go first (they
 // are older or equal, and purged first, as they are found first).
 func NextExpiredRecycle(ctx context.Context, q Q, before time.Time) (it *RecycleItem, ok bool, err error) {
-	it, err = scanRecycle(q.QueryRow(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE deleted_at < ? AND state = 'ready' ORDER BY deleted_at, CASE kind WHEN 'space' THEN 0 ELSE 1 END, id LIMIT 1`, ms(before)), false)
+	it, err = scanRecycle(q.QueryRow(ctx, `SELECT `+recycleCols+` FROM recycle_items WHERE deleted_at < ? AND job_id = '' ORDER BY deleted_at, CASE kind WHEN 'space' THEN 0 ELSE 1 END, id LIMIT 1`, ms(before)), false)
 	if errors.Is(err, ErrNotFound) {
 		return nil, false, nil
 	}
 	return it, err == nil, err
 }
 
-// SetRecycleState moves an item from one state to another, and reports
-// ErrBusyItem when it was not in the first (somebody else holds it) and
-// ErrNotFound when there is no such item.
-func SetRecycleState(ctx context.Context, q Q, id, from, to string, now time.Time) error {
-	res, err := q.Exec(ctx, `UPDATE recycle_items SET state = ?, state_at = ? WHERE id = ? AND state = ?`, to, ms(now), id, from)
+// HoldRecycleItem makes a job the holder of an item at rest: ErrBusyItem when
+// a job holds it already, and ErrNotFound when there is no such item. Call it
+// in the transaction that inserts the job.
+func HoldRecycleItem(ctx context.Context, q Q, id, job string) error {
+	return moveRecycleJob(ctx, q, id, "", job)
+}
+
+// ReleaseRecycleItem puts an item the job holds at rest (ErrBusyItem: another
+// job holds it, or none does).
+func ReleaseRecycleItem(ctx context.Context, q Q, id, job string) error {
+	return moveRecycleJob(ctx, q, id, job, "")
+}
+
+// HandRecycleItem passes an item from a job that ended to a new one (the
+// hourly look takes up a move or a purge a failure left).
+func HandRecycleItem(ctx context.Context, q Q, id, from, to string) error {
+	return moveRecycleJob(ctx, q, id, from, to)
+}
+
+func moveRecycleJob(ctx context.Context, q Q, id, from, to string) error {
+	res, err := q.Exec(ctx, `UPDATE recycle_items SET job_id = ? WHERE id = ? AND job_id = ?`, to, id, from)
 	if err != nil {
 		return err
 	}
@@ -233,10 +281,10 @@ func SetRecycleDirs(ctx context.Context, q Q, id string, dirs []string) error {
 	return oneRow(res, err)
 }
 
-// DeleteRecycleItem removes the row of an item that was purged. It must be in
-// the state purging.
+// DeleteRecycleItem removes the row of an item that was purged. A job must hold
+// it.
 func DeleteRecycleItem(ctx context.Context, q Q, id string) error {
-	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND state = 'purging'`, id)
+	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND job_id <> ''`, id)
 	return oneRow(res, err)
 }
 
@@ -362,6 +410,9 @@ type RecycleSpaceIn struct {
 	// is recycled with ("" for none).
 	ItemID, Parent string
 	SpaceID        string
+	// JobID is the recycle.move job that holds the new item (inserted in the
+	// same transaction).
+	JobID string
 	// By is who deleted it; Reason why (free text).
 	By, ByName, Reason string
 	// Dirs are the directories that exist and will be moved.
@@ -380,7 +431,7 @@ type RecycledSpace struct {
 }
 
 // RecycleSpaceRows moves a space's rows into a recycle item: the item is made
-// with state "moving" (the directories are moved after this commits, see
+// held by the job in.JobID, a move (the directories are moved after this commits, see
 // internal/spaces), the space's usage is taken out of the quotas, and every
 // live row of the space is deleted. Call it in a transaction. It returns the
 // item and the people whose lists the space was in (members and the people of
@@ -440,9 +491,9 @@ func RecycleSpaceRows(ctx context.Context, q Q, sc Scope, in RecycleSpaceIn) (ou
 	if in.Dirs == nil {
 		dirs = []byte("[]")
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO recycle_items(id, tenant_id, kind, space_id, user_id, parent, name, name_key, personal, records, dirs, bytes, deleted_at, deleted_by, deleted_by_name, reason, state, state_at)
-		VALUES (?, ?, 'space', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'moving', ?)`,
-		in.ItemID, sp.TenantID, in.SpaceID, in.Parent, sp.Name, FoldName(sp.Name), b2i(sp.Personal), string(raw), string(dirs), bytesHeld, ms(in.Now), in.By, in.ByName, in.Reason, ms(in.Now)); err != nil {
+	if _, err := q.Exec(ctx, `INSERT INTO recycle_items(id, tenant_id, kind, space_id, user_id, parent, name, name_key, personal, records, dirs, bytes, deleted_at, deleted_by, deleted_by_name, reason, job_id)
+		VALUES (?, ?, 'space', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.ItemID, sp.TenantID, in.SpaceID, in.Parent, sp.Name, FoldName(sp.Name), b2i(sp.Personal), string(raw), string(dirs), bytesHeld, ms(in.Now), in.By, in.ByName, in.Reason, in.JobID); err != nil {
 		return out, err
 	}
 	if err := forgetSpaceUsage(ctx, q, in.SpaceID); err != nil {
@@ -561,7 +612,8 @@ func castParam(v any) (sqlText string, args []any) {
 // groups that no longer exist (or are deleted) are left out and listed. When
 // no owner is left, owner must name one (ErrOwnerRequired otherwise); an owner
 // given is made an owner either way. A space with the id existing again is
-// ErrRestoreConflict. The item must be in state restoring.
+// ErrRestoreConflict. The item must be held by this restore's job
+// (item.JobID).
 //
 // The quotas count the space again (a restore is never refused for a quota).
 func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string, withPerson bool, now time.Time) (RestoreOutcome, error) {
@@ -570,7 +622,7 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 		return out, fmt.Errorf("recycle item %s is not a space", item.ID)
 	}
 	var raw string
-	if err := q.QueryRow(ctx, `SELECT records FROM recycle_items WHERE id = ? AND state = 'restoring'`, item.ID).Scan(&raw); err != nil {
+	if err := q.QueryRow(ctx, `SELECT records FROM recycle_items WHERE id = ? AND job_id = ? AND job_id <> ''`, item.ID, item.JobID).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, ErrBusyItem
 		}
@@ -748,10 +800,10 @@ func RestoreSpaceRows(ctx context.Context, q Q, item *RecycleItem, owner string,
 		return out, err
 	}
 	out.AssetsRemote = ar > 0
-	// The item must still be this restore's: one that is not restoring any more
+	// The item must still be this restore's: one that its job does not hold any more
 	// was taken from it (its directories may be back in the bin), and nothing
 	// is put back (the transaction rolls back).
-	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND state = 'restoring'`, item.ID)
+	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND job_id = ? AND job_id <> ''`, item.ID, item.JobID)
 	if err != nil {
 		return out, err
 	}

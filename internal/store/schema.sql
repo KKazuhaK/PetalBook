@@ -933,9 +933,10 @@ CREATE INDEX provider_leftovers_user ON provider_leftovers(user_id);
 
 -- The recycle bin (3.5): one row per space or person that went into it. A
 -- space's rows are kept whole in records (JSON) and are gone from the live
--- tables; dirs lists the directories that were moved; state is moving, ready,
--- restoring or purging; parent is the item of the person a space was recycled
--- with ('' for none).
+-- tables; dirs lists the directories that were moved; job_id is the job that
+-- holds the item (recycle.move, recycle.restore or recycle.purge: what the
+-- item is doing) and '' for one at rest; parent is the item of the person a
+-- space was recycled with ('' for none).
 CREATE TABLE recycle_items (
   id              TEXT COLLATE "C" PRIMARY KEY,
   tenant_id       TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
@@ -953,36 +954,15 @@ CREATE TABLE recycle_items (
   deleted_by      TEXT COLLATE "C" NOT NULL DEFAULT '',
   deleted_by_name TEXT COLLATE "C" NOT NULL DEFAULT '',
   reason          TEXT COLLATE "C" NOT NULL DEFAULT '',
-  state           TEXT COLLATE "C" NOT NULL DEFAULT 'ready',
-  state_at        BIGINT NOT NULL DEFAULT 0
+  job_id          TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE INDEX recycle_items_tenant ON recycle_items(tenant_id, deleted_at DESC, id DESC);
 CREATE INDEX recycle_items_purge ON recycle_items(deleted_at);
 CREATE INDEX recycle_items_parent ON recycle_items(parent);
 CREATE INDEX recycle_items_space ON recycle_items(space_id);
--- Items that are not at rest (a crash leaves them): a few rows, found at start.
-CREATE INDEX recycle_items_busy ON recycle_items(state) WHERE state <> 'ready';
-
--- A zip of what some spaces hold, made on request (state: queued, running,
--- ready, failed) and kept until expires. site_only marks an export only site
--- administrators see, whatever tenant_id says.
-CREATE TABLE exports (
-  id           TEXT COLLATE "C" PRIMARY KEY,
-  tenant_id    TEXT COLLATE "C" NOT NULL REFERENCES tenants(id),
-  made_by      TEXT COLLATE "C" NOT NULL,
-  made_by_name TEXT COLLATE "C" NOT NULL DEFAULT '',
-  spaces       TEXT COLLATE "C" NOT NULL DEFAULT '[]',
-  history      BIGINT NOT NULL DEFAULT 0,
-  site_only    BIGINT NOT NULL DEFAULT 0,
-  state        TEXT COLLATE "C" NOT NULL DEFAULT 'queued',
-  error        TEXT COLLATE "C" NOT NULL DEFAULT '',
-  bytes        BIGINT NOT NULL DEFAULT 0,
-  path         TEXT COLLATE "C" NOT NULL DEFAULT '',
-  created      BIGINT NOT NULL,
-  expires      BIGINT NOT NULL
-);
-CREATE INDEX exports_tenant ON exports(tenant_id, created DESC, id DESC);
-CREATE INDEX exports_expires ON exports(expires);
+-- Items that are not at rest (a job holds them; one a crash or a failure left
+-- is found again by the hourly look): a few rows.
+CREATE INDEX recycle_items_busy ON recycle_items(job_id) WHERE job_id <> '';
 
 -- Every username a purge has freed, case folded.
 CREATE TABLE retired_usernames (

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/index"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/store"
 	"petalbook.app/server/internal/store/storetest"
 )
@@ -34,7 +35,7 @@ func TestTheHourlyJobLeavesARestoreThatFinishedMeanwhileAlone(t *testing.T) {
 		}
 		// A: a deletion cut short, left moving (the job's first item).
 		f.crashAt("recycle:rows")
-		if _, err := f.m.RecycleSpace(ctx, store.AllTenants(), a.ID, RecycleOptions{}); !errors.Is(err, errRecycleCrash) {
+		if _, err := f.m.RecycleSpace(ctx, store.AllTenants(), a.ID, RecycleOptions{}); err != nil {
 			t.Fatalf("%v", err)
 		}
 		f.crashAt("")
@@ -68,7 +69,7 @@ func TestTheHourlyJobLeavesARestoreThatFinishedMeanwhileAlone(t *testing.T) {
 		<-restoreHeld
 		f.advance(2 * time.Minute)
 		job := make(chan error, 1)
-		go func() { job <- f.m.recoverRecycle(ctx, time.Minute) }()
+		go func() { job <- f.m.FinishRecycle(ctx) }()
 		// The job is busy with A; B's restore finishes and lets B go.
 		<-jobHeld
 		close(restoreGo)
@@ -223,16 +224,21 @@ func TestACopyAcrossFilesystemsWhoseDeleteIsCutShortKeepsTheSpaceWhole(t *testin
 				}()
 				if mode == "crash" {
 					<-cut
-					f.m.letItem(item.ID)
-					if err := f.m.recoverRecycle(ctx, 0); err != nil {
+					// What a start does with a restore that was running: the kind's
+					// Recover undoes it.
+					j, err := store.GetJob(ctx, st.Q(), store.AllTenants(), f.item(item.ID).JobID)
+					if err != nil {
 						t.Fatal(err)
+					}
+					if out := (recycleKind{f.m, store.JobRecycleRestore}).Recover(ctx, j); out != jobs.Fail {
+						t.Fatalf("a restore is undone and ended failed, not %s", out)
 					}
 					close(cutGo)
 				}
 				if err := <-done; err == nil {
 					t.Fatal("the restore whose delete was cut short succeeded")
 				}
-				if err := f.m.recoverRecycle(ctx, 0); err != nil {
+				if err := f.m.FinishRecycle(ctx); err != nil {
 					t.Fatal(err)
 				}
 				f.mu.Lock()
@@ -303,7 +309,7 @@ func TestACopyToTheBinWhoseDeleteIsCutShortIsFinished(t *testing.T) {
 			t.Fatal(err)
 		}
 		item := f.itemOfSpace(info.ID)
-		if err := f.m.recoverRecycle(ctx, 0); err != nil {
+		if err := f.m.FinishRecycle(ctx); err != nil {
 			t.Fatal(err)
 		}
 		f.mu.Lock()

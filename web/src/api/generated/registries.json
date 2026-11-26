@@ -709,6 +709,8 @@
     "recycle.days",
     "exports.days",
     "exports.maxBytes",
+    "jobs.maxRunning",
+    "jobs.perTenant",
     "users.emailNonAscii",
     "accounts.multipleEmails",
     "users.reuseUsernames",

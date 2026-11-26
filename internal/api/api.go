@@ -286,10 +286,15 @@ func New(opt Options) *Handler {
 	s.settings.SetFileCeiling(opt.MaxUpload)
 	s.bindRecycle()
 	s.bindDraftFileLimit()
-	s.jobs = jobs.New(jobs.Options{Store: opt.Store, Logger: s.log, Now: now, WriteFault: jobWriteFault})
+	s.jobs = jobs.New(jobs.Options{Store: opt.Store, Logger: s.log, Now: now, WriteFault: jobWriteFault,
+		MaxRunning: func() int { return s.jobLimit("", settings.JobsMaxRunning, 2) },
+		PerTenant:  func(tenant string) int { return s.jobLimit(tenant, settings.JobsPerTenant, 1) }})
 	s.jobs.Register(bulkKindName, bulkKind{s})
-	if s.spaces != nil && !s.single {
-		s.spaces.UseJobs(s.jobs) // the moves of attachments
+	if opt.Spaces != nil && opt.Store != nil {
+		// The exports, the actions of the recycle bin and the moves of
+		// attachments run on the same runner.
+		opt.Spaces.UseJobs(s.jobs)
+		opt.Spaces.SetRecycleEnded(s.purgeEnded)
 	}
 	s.jobs.Start()
 	s.bindDailySettings()

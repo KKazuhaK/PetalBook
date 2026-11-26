@@ -244,6 +244,78 @@ describe('exports', () => {
     await settle(() => exportsList().length === 0 && text().includes(tg.exports.empty), 'deleted')
   })
 
+  it('shows the progress of an export that is being made, from its job', async () => {
+    await open('/admin/spaces/deleted', (d) => {
+      const me = { id: d.auth.users[0].id, username: 'admin' }
+      const at = new Date().toISOString()
+      d.admin.exports.push({
+        id: 'EXRUN',
+        tenant: '0000000000',
+        madeBy: me,
+        spaces: [{ space: 'x', name: '在做的', spaceId: 'x', open: false }],
+        history: false,
+        state: 'running',
+        warnings: [],
+        bytes: 0,
+        created: at,
+        expires: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        total: 3,
+        done: 1,
+        bytesDone: 2048,
+      })
+      d.admin.jobs.push({
+        id: 'EXRUN',
+        kind: 'export',
+        subject: '',
+        state: 'running',
+        total: 3,
+        done: 1,
+        bytesTotal: 0,
+        bytesDone: 2048,
+        failed: [],
+        error: '',
+        created: at,
+        updated: at,
+        expires: null,
+        madeBy: me,
+      })
+    })
+    await settle(() => text().includes(tg.jobs.progress(1, 3, '2 KB')), 'the progress')
+    expect(document.querySelector('[data-slot="export-job"] [role="progressbar"]')!.getAttribute('aria-valuenow')).toBe(
+      '1',
+    )
+  })
+
+  it('stops asking about a job the server refuses to show', async () => {
+    await open(
+      '/admin/spaces/deleted',
+      (d) => {
+        const at = new Date().toISOString()
+        d.admin.exports.push({
+          id: 'EXNO',
+          tenant: '0000000000',
+          madeBy: { id: d.auth.users[0].id, username: 'admin' },
+          spaces: [{ space: 'x', name: '不给看', spaceId: 'x', open: false }],
+          history: false,
+          state: 'running',
+          warnings: [],
+          bytes: 0,
+          created: at,
+          expires: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          total: 3,
+          done: 1,
+          bytesDone: 0,
+        })
+      },
+      (fx) => fx.fail('GET', '/api/admin/jobs/:id', 403, { code: 'forbidden' }),
+    )
+    await settle(() => requests('GET', '/api/admin/jobs/EXNO').length > 0, 'the job asked about')
+    const asked = requests('GET', '/api/admin/jobs/EXNO').length
+    // Ten polls' worth of time: a 403 is not asked again.
+    await act(() => new Promise((r) => setTimeout(r, pollMs.value * 10)))
+    expect(requests('GET', '/api/admin/jobs/EXNO').length).toBe(asked)
+  })
+
   it('says what could not be included, and what failed, and drops an export when it expires', async () => {
     await open('/admin/spaces/deleted', (d) => {
       d.admin.exports.push({
@@ -257,6 +329,9 @@ describe('exports', () => {
         bytes: 0,
         created: new Date().toISOString(),
         expires: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        total: 1,
+        done: 1,
+        bytesDone: 0,
       })
     })
     await settle(

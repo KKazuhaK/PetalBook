@@ -32,6 +32,12 @@ const (
 	RecycleDays     = "recycle.days"
 	ExportsDays     = "exports.days"
 	ExportsMaxBytes = "exports.maxBytes"
+	// JobsMaxRunning is how many bulk actions, exports and moves run at once on
+	// the server; JobsPerTenant how many for one organisation. Site only (no
+	// tenant layer, as quota.*): a site rule for one tenant, or its plan, may
+	// raise or cap its own. Read at each dispatch of the jobs runner.
+	JobsMaxRunning = "jobs.maxRunning"
+	JobsPerTenant  = "jobs.perTenant"
 	// UsersReuseUsernames is whether a username a purge freed may be taken again:
 	// "after_purge" (anyone may, once the person is purged) or "never". Site only:
 	// usernames are unique on the whole server.
@@ -205,6 +211,9 @@ func baseDefinitions() []*Def {
 		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
 		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow},
 			ServerWide: "the room all exports take together on the server's disk"},
+		{Key: JobsMaxRunning, Kind: Limit, Layers: []Layer{Site}, Default: int64(2), Min: 1, Max: 64, Lower: Lower{Mode: Allow},
+			ServerWide: "the jobs run on the server's own cores and disk"},
+		{Key: JobsPerTenant, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: int64(1), Min: 1, Max: 64, Lower: Lower{Mode: Allow}},
 		{Key: UsersEmailNonASCII, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow},
 			ServerWide: "addresses are unique on the whole server"},
 		{Key: AccountsMultipleEmails, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}},

@@ -241,6 +241,7 @@ export function addRecycled(
     purgeAt: new Date(at + 30 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
     reason: '',
     state: 'ready',
+    job: null,
     restorable: true,
     problems: null as unknown as string[],
     ...extra,

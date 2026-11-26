@@ -3,7 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useConfirm, useJob, useStartBulk } from '@/api/manage'
 import type {
-  BulkJob,
+  Job,
   ConfirmAction,
   ConfirmRequest,
   ConfirmResult,
@@ -71,7 +71,7 @@ function PlanLine({ line }: { line: ConfirmResult['plan'][number] }) {
   )
 }
 
-export function JobView({ job }: { job: BulkJob }) {
+export function JobView({ job }: { job: Job }) {
   const done = job.state !== 'queued' && job.state !== 'running'
   const bad = job.failed
   return (

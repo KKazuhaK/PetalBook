@@ -99,6 +99,15 @@ type Ender interface {
 	Ended(ctx context.Context, j *store.Job)
 }
 
+// Result is how a job ended, for the process that waited for it (EnqueueWait):
+// Err is what the handler returned (nil: done; ErrClosed: the runner closed
+// before the job ended), Value what it left with Progress.Return.
+type Result struct {
+	Job   *store.Job
+	Err   error
+	Value any
+}
+
 // QueueEnder is a Handler told when one of its jobs ended in the queue without
 // running (cancelled there, broken before it could start, or ended there by a
 // restart's outcome), with the job as it ended: what the kind keeps for its
@@ -141,6 +150,15 @@ type Options struct {
 	// After is the clock of the retries of a scan or claim that failed
 	// (default time.After).
 	After func(time.Duration) <-chan time.Time
+	// MaxRunning and PerTenant, when set, are the limits of the classes that
+	// have one (Bulk and IO: the settings jobs.maxRunning and jobs.perTenant).
+	// MaxRunning is the server's total of those classes together; PerTenant
+	// applies to each class on its own (a tenant runs up to that many bulk
+	// actions and that many exports or moves). They are read each time the runner decides what to
+	// start, so a change applies at the next dispatch; a lowered limit stops
+	// nothing that runs. Unset, a class keeps its own numbers.
+	MaxRunning func() int
+	PerTenant  func(tenant string) int
 	// Fault, when set, runs before the runner's scan ("scan") and each claim
 	// ("claim") and fails it with the error it returns (tests).
 	Fault func(op string) error
@@ -209,8 +227,19 @@ type Runner struct {
 	// backoff is the last wait before a retry; retrying, that one is pending.
 	backoff  time.Duration
 	retrying bool
+	// watch are the jobs somebody waits for (EnqueueWait), each channel
+	// buffered for its one result.
+	watch map[string]chan Result
+	// idle is closed (and replaced) whenever a job has ended and released its
+	// slots: WaitIdle looks again then.
+	idle chan struct{}
+	// running counts the goroutines of jobs, until their Ended is done.
+	running int
 	// afterClaim, when set, runs after a claim that worked (tests).
 	afterClaim func(id string)
+	// beforeCancelWrite, when set, runs in Cancel between reading a job's row
+	// and writing its cancel (tests).
+	beforeCancelWrite func(id string)
 
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -239,7 +268,7 @@ func New(opt Options) *Runner {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	r := &Runner{opt: opt, log: log, wakeup: make(chan struct{}, 1), handlers: map[string]Handler{}, live: map[string]*Progress{},
-		mine: map[string]bool{}, server: map[string]int{}, tenant: map[string]map[string]int{}, claiming: map[string]*claim{}}
+		mine: map[string]bool{}, server: map[string]int{}, tenant: map[string]map[string]int{}, claiming: map[string]*claim{}, watch: map[string]chan Result{}, idle: make(chan struct{})}
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	return r
 }
@@ -349,30 +378,72 @@ func (r *Runner) Wake() {
 // Kind must be set; Created is set to now. ErrClosed: the runner is closing
 // and nothing was added. store.ErrJobLocked: an active job holds its lock key.
 func (r *Runner) Enqueue(ctx context.Context, j store.Job) (*store.Job, error) {
+	out, _, err := r.enqueue(ctx, j, nil, false)
+	return out, err
+}
+
+// EnqueueWait is Enqueue for a caller that waits for the job: with is run in
+// the same transaction as the insert (a record that must point at the job; its
+// error adds nothing), and the channel gets the job's Result once it has ended
+// and its end is written, or ErrClosed when the runner closes first. The
+// channel holds the one result, so a caller that never reads costs nothing.
+func (r *Runner) EnqueueWait(ctx context.Context, j store.Job, with func(q store.Q) error) (*store.Job, <-chan Result, error) {
+	return r.enqueue(ctx, j, with, true)
+}
+
+func (r *Runner) enqueue(ctx context.Context, j store.Job, with func(q store.Q) error, watch bool) (*store.Job, <-chan Result, error) {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return nil, ErrClosed
+		return nil, nil, ErrClosed
 	}
 	if r.handlers[j.Kind] == nil {
 		r.mu.Unlock()
-		return nil, fmt.Errorf("%w %q", ErrNoKind, j.Kind)
+		return nil, nil, fmt.Errorf("%w %q", ErrNoKind, j.Kind)
 	}
 	// Close waits for an enqueue under way, and settles what it added.
 	r.wg.Add(1)
 	r.mine[j.ID] = true
+	var ch chan Result
+	if watch {
+		ch = make(chan Result, 1)
+		r.watch[j.ID] = ch
+	}
 	r.mu.Unlock()
 	defer r.wg.Done()
 	j.State, j.Created = store.JobQueued, r.opt.Now()
-	if err := store.InsertJob(ctx, r.opt.Store.Q(), j); err != nil {
+	var err error
+	if with == nil {
+		err = store.InsertJob(ctx, r.opt.Store.Q(), j)
+	} else {
+		err = r.opt.Store.Tx(ctx, func(q store.Q) error {
+			if err := store.InsertJob(ctx, q, j); err != nil {
+				return err
+			}
+			return with(q)
+		})
+	}
+	if err != nil {
 		r.mu.Lock()
 		delete(r.mine, j.ID)
+		delete(r.watch, j.ID)
 		r.mu.Unlock()
-		return nil, err
+		return nil, nil, err
 	}
 	j.Updated = j.Created
 	r.Wake()
-	return &j, nil
+	return &j, ch, nil
+}
+
+// deliver gives a job's result to whoever waits for it.
+func (r *Runner) deliver(id string, res Result) {
+	r.mu.Lock()
+	ch := r.watch[id]
+	delete(r.watch, id)
+	r.mu.Unlock()
+	if ch != nil {
+		ch <- res
+	}
 }
 
 // Get returns a job in the scope: from memory while this runner runs it (no
@@ -396,6 +467,23 @@ func (r *Runner) Get(ctx context.Context, sc store.Scope, id string) (*store.Job
 // once its handler returns. ErrEnded: it had ended; store.ErrNotFound: there
 // is no such job in the scope, or another process runs it.
 func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
+	// A job claimed between Cancel's look at the memory and its write of the
+	// row is in the memory by the next look.
+	for try := 0; ; try++ {
+		err := r.cancelOnce(ctx, sc, id)
+		if !errors.Is(err, errRaced) {
+			return err
+		}
+		if try >= 3 {
+			return store.ErrNotFound // another process runs it
+		}
+	}
+}
+
+// errRaced: the row was queued when read and running when written.
+var errRaced = errors.New("jobs: claimed while it was being cancelled")
+
+func (r *Runner) cancelOnce(ctx context.Context, sc store.Scope, id string) error {
 	r.mu.Lock()
 	if p := r.live[id]; p != nil {
 		snap := p.snapshot()
@@ -435,16 +523,53 @@ func (r *Runner) Cancel(ctx context.Context, sc store.Scope, id string) error {
 	if store.JobEnded(j.State) {
 		return ErrEnded
 	}
+	if r.beforeCancelWrite != nil {
+		r.beforeCancelWrite(id)
+	}
 	err = store.SetJobState(ctx, r.opt.Store.Q(), id, store.JobQueued, store.JobCancelled, r.opt.Now())
 	if err == nil {
 		r.endedInQueue(j, store.JobCancelled)
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		if j, gerr := store.GetJob(ctx, r.opt.Store.Q(), sc, id); gerr == nil && store.JobEnded(j.State) {
+		// Not queued any more: ended, or claimed since the row was read.
+		cur, gerr := store.GetJob(ctx, r.opt.Store.Q(), sc, id)
+		switch {
+		case gerr != nil:
+			return gerr
+		case store.JobEnded(cur.State):
 			return ErrEnded
 		}
+		return errRaced
+	}
+	if err == nil {
+		j.State = store.JobCancelled
+		r.deliver(id, Result{Job: j, Err: context.Canceled})
+		r.wentIdle()
 	}
 	return err
+}
+
+// WaitIdle returns once no job is queued or running (tests, and a caller that
+// wants the work over): it looks again each time a job ends. A job that cannot
+// start (a kind this runner has no handler for) holds it until ctx ends.
+func (r *Runner) WaitIdle(ctx context.Context) error {
+	for {
+		r.mu.Lock()
+		ch, running := r.idle, r.running
+		r.mu.Unlock()
+		act, err := store.ActiveJobs(ctx, r.opt.Store.Q())
+		if err != nil {
+			return err
+		}
+		if len(act) == 0 && running == 0 {
+			return nil
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // Close stops the runner: no job is enqueued or started any more, the running
@@ -473,12 +598,20 @@ func (r *Runner) Close() {
 			r.log.Error("jobs still running when the wait for them ended; the next start recovers them", "jobs", ids, "wait", r.opt.StopWait)
 		}
 		r.mu.Lock()
+		var waiting []chan Result
+		for id, ch := range r.watch {
+			waiting = append(waiting, ch)
+			delete(r.watch, id)
+		}
 		var mine []string
 		for id := range r.mine {
 			mine = append(mine, id)
 		}
 		r.mine = map[string]bool{}
 		r.mu.Unlock()
+		for _, ch := range waiting {
+			ch <- Result{Err: ErrClosed}
+		}
 		for _, id := range mine {
 			j, err := store.GetJob(context.Background(), r.opt.Store.Q(), store.AllTenants(), id)
 			if err != nil || j.State != store.JobQueued {
@@ -571,7 +704,7 @@ func (r *Runner) dispatch() error {
 		var cl Class
 		var queues []string
 		if !r.guard(j, "Class", func() { cl, queues = h.Class(), queuesOf(h, j) }) {
-			r.failQueued(j)
+			r.failQueued(h, j)
 			continue
 		}
 		if !r.take(cl, queues) {
@@ -594,6 +727,9 @@ func (r *Runner) dispatch() error {
 			delete(r.claiming, j.ID)
 			r.mu.Unlock()
 			r.release(cl, queues)
+			if !ok && err == nil {
+				r.wentIdle() // lost to a cancel or another runner: it may have ended
+			}
 			continue
 		}
 		if r.afterClaim != nil {
@@ -606,14 +742,39 @@ func (r *Runner) dispatch() error {
 }
 
 // failQueued ends a queued job failed: its kind broke before it could start.
-func (r *Runner) failQueued(j *store.Job) {
+// Its end is told to the kind like any other (Ended), so that it is audited.
+func (r *Runner) failQueued(h Handler, j *store.Job) {
 	end := *j
 	end.State, end.Error = store.JobFailed, "an internal error stopped the job"
 	err := store.EndJob(context.Background(), r.opt.Store.Q(), end, store.JobQueued, r.opt.Now())
-	if err == nil {
-		r.endedInQueue(j, store.JobFailed)
-	} else if !errors.Is(err, store.ErrNotFound) {
-		r.log.Warn("could not record that a job broke", "job", j.ID, "error", err)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			r.log.Warn("could not record that a job broke", "job", j.ID, "error", err)
+		}
+		return
+	}
+	r.endedInQueue(j, store.JobFailed)
+	end.Updated = r.opt.Now()
+	r.ended(context.Background(), h, &end)
+	r.deliver(j.ID, Result{Job: &end, Err: errPanicked})
+	r.wentIdle()
+}
+
+// wentIdle wakes WaitIdle: a job has ended (and released its slots, if it held
+// any), so it looks again.
+func (r *Runner) wentIdle() {
+	r.mu.Lock()
+	close(r.idle)
+	r.idle = make(chan struct{})
+	r.mu.Unlock()
+}
+
+// ended tells an Ender kind that a job has ended and its end is written.
+func (r *Runner) ended(ctx context.Context, h Handler, end *store.Job) {
+	if e, ok := h.(Ender); ok {
+		ectx, cancel := context.WithTimeout(ctx, endedWait)
+		r.guard(end, "Ended", func() { e.Ended(ectx, end) })
+		cancel()
 	}
 }
 
@@ -627,19 +788,28 @@ func queuesOf(h Handler, j *store.Job) []string {
 }
 
 // take takes a slot of the class on the server and for each tenant, all or
-// none.
+// none. Each class counts its own jobs per tenant (a long bulk action does not
+// hold a tenant's exports); the classes with limits share the server's count.
 func (r *Runner) take(cl Class, tenants []string) bool {
+	group, perServer := r.limited(cl)
+	perTenant := make(map[string]int, len(tenants))
+	if cl.PerTenant > 0 {
+		for _, t := range tenants {
+			perTenant[t] = cl.PerTenant
+			if r.opt.PerTenant != nil {
+				perTenant[t] = max(1, r.opt.PerTenant(t))
+			}
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if cl.PerServer > 0 && r.server[cl.Name] >= cl.PerServer {
+	if perServer > 0 && r.server[group] >= perServer {
 		return false
 	}
 	per := r.tenant[cl.Name]
-	if cl.PerTenant > 0 {
-		for _, t := range tenants {
-			if per[t] >= cl.PerTenant {
-				return false
-			}
+	for _, t := range tenants {
+		if cl.PerTenant > 0 && per[t] >= perTenant[t] {
+			return false
 		}
 	}
 	if per == nil {
@@ -649,11 +819,28 @@ func (r *Runner) take(cl Class, tenants []string) bool {
 	for _, t := range tenants {
 		per[t]++
 	}
-	r.server[cl.Name]++
+	r.server[group]++
 	return true
 }
 
+// limitedName is the server's slot group of the classes that the settings limit.
+const limitedName = "limited"
+
+// limited is the group the class counts its server slots in, and the group's
+// limit: the classes with limits (bulk actions, exports and moves) share one,
+// whose number is the setting's (jobs.maxRunning, the server's total).
+func (r *Runner) limited(cl Class) (string, int) {
+	if cl.PerTenant == 0 && cl.PerServer == 0 {
+		return cl.Name, 0
+	}
+	if r.opt.MaxRunning != nil {
+		return limitedName, max(1, r.opt.MaxRunning())
+	}
+	return limitedName, cl.PerServer
+}
+
 func (r *Runner) release(cl Class, tenants []string) {
+	group, _ := r.limited(cl)
 	r.mu.Lock()
 	per := r.tenant[cl.Name]
 	for _, t := range tenants {
@@ -661,7 +848,7 @@ func (r *Runner) release(cl Class, tenants []string) {
 			delete(per, t)
 		}
 	}
-	r.server[cl.Name]--
+	r.server[group]--
 	r.mu.Unlock()
 }
 
@@ -683,6 +870,7 @@ func (r *Runner) start(h Handler, j *store.Job, cl Class, queues []string) {
 		stop()
 	}
 	r.wg.Add(1)
+	r.running++
 	r.mu.Unlock()
 	go func() {
 		defer r.wg.Done()
@@ -690,6 +878,10 @@ func (r *Runner) start(h Handler, j *store.Job, cl Class, queues []string) {
 		r.run(ctx, h, j, p)
 		r.release(cl, queues)
 		r.Wake()
+		r.mu.Lock()
+		r.running--
+		r.mu.Unlock()
+		r.wentIdle()
 	}()
 }
 
@@ -747,13 +939,13 @@ func (r *Runner) run(ctx context.Context, h Handler, j *store.Job, p *Progress) 
 	r.mu.Lock()
 	delete(r.live, j.ID)
 	r.mu.Unlock()
-	if e, ok := h.(Ender); ok {
-		// A context of its own: the job's may have ended (Close), and what
-		// Ended records (the audit row of the end) must not be lost to it.
-		ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endedWait)
-		r.guard(&end, "Ended", func() { e.Ended(ectx, &end) })
-		cancel()
-	}
+	// A context of its own: the job's may have ended (Close), and what Ended
+	// records (the audit row of the end) must not be lost to it.
+	r.ended(context.WithoutCancel(ctx), h, &end)
+	p.mu.Lock()
+	value := p.value
+	p.mu.Unlock()
+	r.deliver(j.ID, Result{Job: &end, Err: err, Value: value})
 }
 
 // call runs the handler; a panic is logged and reported as errPanicked.
@@ -809,6 +1001,22 @@ type Progress struct {
 	// than done.
 	broken    bool
 	cancelled bool
+	value     any
+}
+
+// Return leaves a value for the process that waits for the job (EnqueueWait):
+// what the request that started it answers with. It is not kept in the row.
+func (p *Progress) Return(v any) {
+	p.mu.Lock()
+	p.value = v
+	p.mu.Unlock()
+}
+
+// SetResult sets the job's result (JSON), written with its end.
+func (p *Progress) SetResult(b []byte) {
+	p.mu.Lock()
+	p.job.Result = b
+	p.mu.Unlock()
 }
 
 // Item names the item the job is working on (a panic lists it as failed).

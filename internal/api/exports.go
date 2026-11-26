@@ -12,8 +12,8 @@ import (
 )
 
 // Exports (docs/api.md, "Exports"): a zip of what some spaces hold, made in the
-// background, kept for exports.days, audited when it is made and when it is
-// downloaded.
+// background by a job of kind "export" (internal/jobs), kept for exports.days,
+// audited when it is made and when it is downloaded.
 
 // exportSourceResp is one space an export holds: `space` for a live space and
 // `item` for one that was in the recycle bin, `name` as it was, `spaceId` the
@@ -39,14 +39,40 @@ type exportResp struct {
 	Bytes    int64              `json:"bytes"`
 	Created  string             `json:"created"`
 	Expires  string             `json:"expires"`
+	// Total, Done and BytesDone are the job's progress: the spaces made into the
+	// zip so far, and the bytes written.
+	Total     int64 `json:"total"`
+	Done      int64 `json:"done"`
+	BytesDone int64 `json:"bytesDone"`
+}
+
+// The states an export shows: its job's, as they have been since before it was
+// one (a job that is done is ready; one that ended any other way is failed).
+const (
+	exportQueued  = "queued"
+	exportRunning = "running"
+	exportReady   = "ready"
+	exportFailed  = "failed"
+)
+
+func exportStateOf(j *store.Job) string {
+	switch j.State {
+	case store.JobQueued:
+		return exportQueued
+	case store.JobRunning:
+		return exportRunning
+	case store.JobDone:
+		return exportReady
+	}
+	return exportFailed
 }
 
 // exportsOf is the answer's form of exports: one query for all the spaces they
 // hold says which can be opened by the caller.
-func (s *server) exportsOf(c *call, rows []store.Export) ([]exportResp, error) {
+func (s *server) exportsOf(c *call, rows []*store.Job) ([]exportResp, error) {
 	var ids []string
-	for _, e := range rows {
-		for _, src := range e.Spaces {
+	for _, j := range rows {
+		for _, src := range store.ExportParamsOf(j).Spaces {
 			ids = append(ids, sourceSpace(src))
 		}
 	}
@@ -55,8 +81,8 @@ func (s *server) exportsOf(c *call, rows []store.Export) ([]exportResp, error) {
 		return nil, err
 	}
 	out := make([]exportResp, len(rows))
-	for i, e := range rows {
-		out[i] = exportOf(e, open)
+	for i, j := range rows {
+		out[i] = exportOf(j, open)
 	}
 	return out, nil
 }
@@ -69,19 +95,24 @@ func sourceSpace(src store.ExportSource) string {
 	return src.Space
 }
 
-func exportOf(e store.Export, open map[string]bool) exportResp {
-	out := exportResp{ID: e.ID, Tenant: e.TenantID, MadeBy: recycleUserRef{e.MadeBy, e.MadeByName}, Spaces: make([]exportSourceResp, len(e.Spaces)), History: e.History, State: e.State,
-		Bytes: e.Bytes, Created: rfc3339(e.Created), Expires: rfc3339(e.Expires), Warnings: []string{}}
-	for i, src := range e.Spaces {
+func exportOf(j *store.Job, open map[string]bool) exportResp {
+	params := store.ExportParamsOf(j)
+	out := exportResp{ID: j.ID, Tenant: j.TenantID, MadeBy: recycleUserRef{j.MadeBy, j.MadeByName}, Spaces: make([]exportSourceResp, len(params.Spaces)), History: params.History,
+		State: exportStateOf(j), Created: rfc3339(j.Created), Expires: rfc3339(j.Expires), Warnings: []string{}, Total: j.Total, Done: j.Done, BytesDone: j.BytesDone}
+	for i, src := range params.Spaces {
 		id := sourceSpace(src)
 		out.Spaces[i] = exportSourceResp{Space: src.Space, Item: src.Item, Name: src.Name, SpaceID: id, Open: open[id]}
 	}
-	switch e.State {
-	case store.ExportFailed:
-		out.Error = e.Error
-	case store.ExportReady:
+	switch out.State {
+	case exportFailed:
+		out.Error = j.Error
+		if out.Error == "" {
+			out.Error = "The server stopped before the export was made."
+		}
+	case exportReady:
+		out.Bytes = j.BytesDone
 		// What a finished export could not include is listed, not hidden.
-		for _, l := range splitLines(e.Error) {
+		for _, l := range splitLines(store.ExportResultOf(j).Warnings) {
 			out.Warnings = append(out.Warnings, l)
 		}
 	}
@@ -143,7 +174,7 @@ func (s *server) adminCreateExport(c *call) {
 			tenant = t
 		}
 	}
-	e, err := s.spaces.StartExport(c.r.Context(), spaces.ExportRequest{TenantID: tenant, By: c.user().ID, ByName: c.user().Username, Sources: sources, History: req.History,
+	e, err := s.spaces.StartExport(c.r.Context(), spaces.ExportRequest{TenantID: tenant, By: c.user().ID, ByName: c.user().Username, Capacity: c.scope.capacity, Sources: sources, History: req.History,
 		SiteOnly: exportSiteOnly(c.siteWide(authz.TenantDataExport), req.History, personal, len(tenants))})
 	if err != nil {
 		s.fail(c.w, err)
@@ -158,12 +189,9 @@ func (s *server) adminCreateExport(c *call) {
 		}
 	}
 	s.auditRow(c, "export_created", tenant, map[string]any{"export": e.ID, "spaces": ids, "history": req.History})
-	out, err := s.exportsOf(c, []store.Export{*e})
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
-	writeJSON(c.w, http.StatusAccepted, out[0])
+	writeJSON(c.w, http.StatusAccepted, struct {
+		Job jobResp `json:"job"`
+	}{jobOf(e)})
 }
 
 // exportSiteOnly says whether an export is the site's: one made by who exports
@@ -191,7 +219,7 @@ func (s *server) adminListExports(c *call) {
 	if !ok {
 		return
 	}
-	rows, next, err := store.ListExports(c.r.Context(), s.opt.Store.Q(), sc, q.Get("cursor"), limit)
+	rows, next, err := store.ListJobs(c.r.Context(), s.opt.Store.Q(), sc, store.JobFilter{Kinds: []string{store.JobExport}, After: q.Get("cursor"), Limit: limit})
 	if errors.Is(err, store.ErrBadCursor) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "That cursor is not one this list gave.")
 		return
@@ -211,8 +239,11 @@ func (s *server) adminListExports(c *call) {
 	}{items, next})
 }
 
-func (s *server) exportFound(c *call) (*store.Export, bool) {
-	e, err := store.GetExport(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
+func (s *server) exportFound(c *call) (*store.Job, bool) {
+	e, err := store.GetJob(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
+	if err == nil && e.Kind != store.JobExport {
+		err = store.ErrNotFound
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such export.")
 		return nil, false
@@ -224,28 +255,17 @@ func (s *server) exportFound(c *call) (*store.Export, bool) {
 	return e, true
 }
 
-func (s *server) adminGetExport(c *call) {
-	if e, ok := s.exportFound(c); ok {
-		out, err := s.exportsOf(c, []store.Export{*e})
-		if err != nil {
-			s.fail(c.w, err)
-			return
-		}
-		writeJSON(c.w, http.StatusOK, out[0])
-	}
-}
-
 func (s *server) adminDeleteExport(c *call) {
 	e, ok := s.exportFound(c)
 	if !ok {
 		return
 	}
-	if e.State == store.ExportRunning || e.State == store.ExportQueued {
+	if !store.JobEnded(e.State) {
 		writeError(c.w, http.StatusConflict, "busy", "The export is being made.")
 		return
 	}
 	s.spaces.DeleteExportFile(e)
-	if err := store.DeleteExport(c.r.Context(), s.opt.Store.Q(), e.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := store.DeleteJob(c.r.Context(), s.opt.Store.Q(), e.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.fail(c.w, err)
 		return
 	}
@@ -258,7 +278,7 @@ func (s *server) adminDownloadExport(c *call) {
 	if !ok {
 		return
 	}
-	if e.State != store.ExportReady || s.spaces.ExportPath(e) == "" {
+	if e.State != store.JobDone || s.spaces.ExportPath(e) == "" {
 		writeError(c.w, http.StatusConflict, "busy", "The export is not ready.")
 		return
 	}

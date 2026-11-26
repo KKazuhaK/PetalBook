@@ -205,6 +205,7 @@ export const manageEn = {
       done: 'Done',
       interrupted: 'Interrupted: the server restarted, and what was not done was not done',
       failed: 'The job broke and stopped',
+      cancelled: 'Cancelled',
     },
     doneAll: (n: number) => `All ${n} done.`,
     doneSome: (ok: number, bad: number) => `${ok} done, ${bad} did not work.`,
@@ -376,6 +377,17 @@ export const manageEn = {
     started: (days: number) => `The export has started. It stays for ${days} days once it is ready.`,
     goList: 'See the exports',
     personalSkipped: 'Personal spaces cannot be exported by organisation administrators.',
+  },
+  // The progress of a job that is not a bulk action (an export, an action of the recycle bin).
+  jobs: {
+    progress: (done: number, total: number, bytes: string) =>
+      bytes ? `${done} of ${total} · ${bytes} written` : `${done} of ${total}`,
+    queued: 'Waiting for its turn…',
+    running: 'Working…',
+    done: 'Done',
+    failed: (why: string) => (why ? `Did not finish: ${why}` : 'Did not finish'),
+    interrupted: 'The server stopped before it finished.',
+    cancelled: 'Cancelled',
   },
   view: {
     title: (name: string) => `View the contents of “${name}”`,
