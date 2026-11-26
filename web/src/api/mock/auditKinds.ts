@@ -107,6 +107,8 @@ export const AUDIT_CATEGORIES: MockAuditCategory[] = [
       { name: 'space_transferred', site: false },
       { name: 'space_viewed', site: false },
       { name: 'page_viewed', site: false },
+      { name: 'view_as_started', site: false },
+      { name: 'view_as_ended', site: false },
       { name: 'export_created', site: false },
       { name: 'export_deleted', site: false },
       { name: 'export_downloaded', site: false },

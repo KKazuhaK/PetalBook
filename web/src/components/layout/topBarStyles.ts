@@ -4,9 +4,10 @@
 const base =
   'relative inline-flex shrink-0 items-center justify-center rounded-lg border border-input bg-background text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60 aria-pressed:bg-muted data-popup-open:bg-accent'
 
-/** The bar itself: 56 px under the safe area at the top, with room at the sides for a notch in landscape. */
+/** The bar itself: 56 px under the safe area at the top (and the banner of a view as a person, in its tab), with room
+ *  at the sides for a notch in landscape. */
 export const topBarFrame =
-  'sticky top-0 z-30 flex h-(--topbar-h) shrink-0 items-center gap-2 border-b bg-background/85 pt-[env(safe-area-inset-top)] pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] backdrop-blur'
+  'sticky top-0 z-30 flex h-(--topbar-h) shrink-0 items-center gap-2 border-b bg-background/85 pt-(--app-top) pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] backdrop-blur'
 
 /** The room a bar has for its controls, in rem (the unit of the `@[..rem]/topbar` queries), read from any element in
  *  it, for the menus that are drawn outside the bar and so cannot use a container query. 0 when it is not laid out. */

@@ -32,6 +32,7 @@ export const notifyZhCN = {
     account_changed: '账号变更',
     password_set: '密码',
     email_released: '邮箱',
+    viewed_as: '以你的身份查看',
   },
   unreadMark: '未读',
   moreProblems: (n: number) => `还有 ${n} 个空间有问题。`,
@@ -90,6 +91,10 @@ export const notifyZhCN = {
     emailReleased: {
       title: (email: string) => `你的邮箱“${email}”已转给另一个账号`,
       body: '这个邮箱还没有验证，而另一个人证明了它是自己的。请在个人资料里设置你自己的邮箱。',
+    },
+    viewedAs: {
+      title: (by: string) => (by ? `${by} 以你的身份查看了应用` : '管理员以你的身份查看了应用'),
+      body: (reason: string) => (reason ? `只读，没有改动任何内容。原因：${reason}` : '只读，没有改动任何内容。'),
     },
     takeover: {
       takenTitle: (by: string, space: string) => `${by} 接管了「${space}」`,

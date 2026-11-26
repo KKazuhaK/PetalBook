@@ -21,6 +21,7 @@ import { useOpenSettings, type SettingsState } from '@/components/settings/useSe
 import { NameDialog } from './NameDialog'
 import { NewSpaceDialog } from './NewSpaceDialog'
 import { SyncIndicator } from './SyncIndicator'
+import { viewAsId } from '@/lib/viewAs'
 
 // Accounts mode only: the space in use, the others to switch to, and making or
 // renaming one. The space is in the address, so switching is navigating.
@@ -65,17 +66,22 @@ export function SpaceSwitcher() {
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setDialog('new')}>{t.spaces.new}</DropdownMenuItem>
-            {/* Renaming is for whoever may manage the space. */}
-            <DropdownMenuItem disabled={!can(current, 'manage')} onClick={() => setDialog('rename')}>
-              {t.spaces.rename}
-            </DropdownMenuItem>
-            {/* Everyone sees the settings (the members, at least); what they may change there depends on the permissions. */}
-            <DropdownMenuItem disabled={!current} onClick={() => id && openSettings('general')}>
-              {t.spaces.settings}
-              <ProblemDot className="ml-auto" />
-            </DropdownMenuItem>
+            {/* A view as a person makes nothing, and its settings are not the person's to show (lib/viewAs). */}
+            {viewAsId() === null && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setDialog('new')}>{t.spaces.new}</DropdownMenuItem>
+                {/* Renaming is for whoever may manage the space. */}
+                <DropdownMenuItem disabled={!can(current, 'manage')} onClick={() => setDialog('rename')}>
+                  {t.spaces.rename}
+                </DropdownMenuItem>
+                {/* Everyone sees the settings (the members, at least); what they may change there depends on the permissions. */}
+                <DropdownMenuItem disabled={!current} onClick={() => id && openSettings('general')}>
+                  {t.spaces.settings}
+                  <ProblemDot className="ml-auto" />
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         {id && <SyncIndicator space={id} sync={syncOf(current)} />}

@@ -42,6 +42,7 @@ var (
 	TenantSpacesTakeover  = Register("tenant.spaces.takeover", ScopeTenant, "", "Take over a space (become its owner) or transfer it; audited, and its owners are told")
 	TenantSpacesDelete    = Register("tenant.spaces.delete", ScopeTenant, "", "Delete spaces")
 	TenantDataView        = Register("tenant.data.view", ScopeTenant, "features.adminView", "Open an audited, read-only view of a space")
+	TenantUsersViewAs     = Register("tenant.users.viewAs", ScopeTenant, "features.adminView", "View the app as a person sees it: read only, for an hour, audited; never personal spaces, drafts or the person's account")
 	TenantDataExport      = Register("tenant.data.export", ScopeTenant, "", "Export spaces and download the exports")
 	TenantStorageRead     = Register("tenant.storage.read", ScopeTenant, "", "Read the storage used by the tenant and its people")
 	TenantRecycleRead     = Register("tenant.recycle.read", ScopeTenant, "", "List the recycle bin")

@@ -80,7 +80,8 @@ var registered = []Kind{
 	{Name: "bulk_finished", Category: Admin},
 
 	// data: deleting, restoring, purging, exporting, taking over and
-	// transferring spaces, space views, opening a page in a view.
+	// transferring spaces, space views, views as a person, opening a page in
+	// a view.
 	{Name: "space_deleted", Category: Data},
 	{Name: "space_restored", Category: Data},
 	{Name: "space_purged", Category: Data},
@@ -88,6 +89,8 @@ var registered = []Kind{
 	{Name: "space_transferred", Category: Data},
 	{Name: "space_viewed", Category: Data},
 	{Name: "page_viewed", Category: Data},
+	{Name: "view_as_started", Category: Data},
+	{Name: "view_as_ended", Category: Data},
 	{Name: "export_created", Category: Data},
 	{Name: "export_deleted", Category: Data},
 	{Name: "export_downloaded", Category: Data},

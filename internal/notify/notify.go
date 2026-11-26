@@ -27,6 +27,7 @@ var (
 	AccountChanged   = Event{store.NotifyAccountChanged, "user_changed"}
 	PasswordSet      = Event{store.NotifyPasswordSet, "password_set_by_admin"}
 	EmailReleased    = Event{store.NotifyEmailReleased, "email_released"}
+	ViewedAs         = Event{store.NotifyViewedAs, "view_as_started"}
 )
 
 // Entry is what happened.

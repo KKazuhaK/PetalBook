@@ -9,6 +9,7 @@ import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
 import { AppSidebar } from './AppSidebar'
 import { QuickCaptureProvider } from './QuickCapture'
 import { OfflineBanner, OfflineSync } from './OfflineSync'
+import { viewAsId } from '@/lib/viewAs'
 
 // On a phone the sidebar is a drawer; it should close once a destination is picked.
 function CloseMobileOnNavigate() {
@@ -27,9 +28,15 @@ export function AppShell() {
         <SearchDialogProvider>
           <FileOpsProvider>
             <CloseMobileOnNavigate />
-            <OfflineSync />
-            <BrowserNotifier />
-            <OnboardingHost />
+            {/* None of these in a view as a person: the copies on the device, the notices and the tour are the
+                administrator's own, or the person's (lib/viewAs). */}
+            {viewAsId() === null && (
+              <>
+                <OfflineSync />
+                <BrowserNotifier />
+                <OnboardingHost />
+              </>
+            )}
             {!inAdmin && <AppSidebar />}
             <SidebarInset className="min-w-0">
               <OfflineBanner />

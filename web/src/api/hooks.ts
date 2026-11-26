@@ -64,6 +64,7 @@ import type {
   ViewList,
   ViewScope,
 } from './types'
+import { viewAsId } from '../lib/viewAs.ts'
 
 // Everything of one space is under ['space', id, …], so switching space never
 // shows another space's data and one invalidation covers a space.
@@ -1498,7 +1499,8 @@ export function useReadingPages(params: Omit<ListParams, 'cursor' | 'limit' | 'b
 export function useCanFavorite(): boolean {
   const { id, spaces } = useActiveSpace()
   const space = spaces.find((s) => s.id === id)
-  return can(space, 'read') && !!space && space.role !== ''
+  // Favourites are the person's own: never in a view as a person (lib/viewAs).
+  return can(space, 'read') && !!space && space.role !== '' && viewAsId() === null
 }
 
 export function useFavorites(enabled = true) {
