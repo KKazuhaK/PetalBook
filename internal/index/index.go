@@ -23,7 +23,7 @@ import (
 
 // schemaVersion changes whenever the tables or the way text is tokenised
 // change; an index with another version is thrown away and rebuilt.
-const schemaVersion = 13
+const schemaVersion = 14
 
 const schema = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

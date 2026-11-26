@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
+import cases from '../../../../internal/page/testdata/excerpts.json'
 import type { Page } from '@/api/types'
 import { t } from '@/i18n'
 import { DEFAULT_CONFIG } from './store'
 import { configure } from './manager'
 import { noteOpened } from './index'
+import { excerptOf } from './reader'
 import { isOffline } from './status'
 import { make, network, S, type Net } from './testkit'
 import { syncSpace } from './sync'
@@ -252,5 +254,18 @@ describe('a page that is opened', () => {
     await s.setConfig({ ...DEFAULT_CONFIG, mode: 'text', recent: false })
     await noteOpened('default', p)
     expect(await s.opened()).toEqual([])
+  })
+})
+
+describe('excerptOf', () => {
+  // The cases the server's excerpt builder is tested with (internal/page/testdata/excerpts.json).
+  it.each(cases)('matches the server: $name', ({ body, excerpt }) => {
+    expect(excerptOf(body)).toBe(excerpt)
+  })
+
+  it('counts the marker inside the 400 characters', () => {
+    const ex = excerptOf('- [x] ' + '花'.repeat(600))
+    expect(Array.from(ex)).toHaveLength(400)
+    expect(ex.startsWith('[x] 花')).toBe(true)
   })
 })

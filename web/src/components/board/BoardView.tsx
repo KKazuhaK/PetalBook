@@ -23,6 +23,7 @@ import {
 import { hasValue, showValue } from '@/lib/pageTypes'
 import { t } from '@/i18n'
 import { tb } from '@/i18n/boards'
+import { ExcerptText } from '@/components/files/ExcerptText'
 
 // The board of a folder or a tag: a column per value of one property, the pages as cards in them. Every column is
 // asked for on its own, twenty cards at a time, by the filter that picks its pages (the value, "none of the options",
@@ -437,14 +438,18 @@ function Card({
             <div className="font-medium leading-snug break-words">{line}</div>
             {row.excerpt && (
               <div className="mt-1 line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
-                {row.excerpt}
+                <ExcerptText text={row.excerpt} />
               </div>
             )}
           </>
         ) : (
           // Without a title the start of the text stands in for it.
           <div className="line-clamp-2 leading-snug break-words">
-            {row.excerpt || <span className="text-muted-foreground">{tb.board.untitled}</span>}
+            {row.excerpt ? (
+              <ExcerptText text={row.excerpt} />
+            ) : (
+              <span className="text-muted-foreground">{tb.board.untitled}</span>
+            )}
           </div>
         )}
       </Link>

@@ -19,6 +19,7 @@ import { endDrag, startDrag } from './dnd'
 import { ENTRY_ATTR, MoreButton } from './FileContextMenu'
 import { useFileOps } from './FileOps'
 import { useDropTarget } from './useDropTarget'
+import { ExcerptText } from './ExcerptText'
 
 export interface Picked {
   shift: boolean
@@ -310,7 +311,7 @@ export function PageCard({ page, urls, state }: { page: PageSummary; urls: Space
                 : {}),
             }}
           >
-            {page.excerpt}
+            <ExcerptText text={page.excerpt} />
           </div>
         ) : (
           empty && <div className="text-sm text-muted-foreground">{t.list.untitledHint}</div>

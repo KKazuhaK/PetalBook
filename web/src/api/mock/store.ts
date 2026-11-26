@@ -26,6 +26,7 @@ import { TAG_COLORS, parseTagColor } from '../../lib/tagColors.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { gitBlobId } from './sha1.ts'
 import { createFeedBook, SYNC_PAGES_BYTES } from './feedBook.ts'
+import { excerptOf } from '../../lib/excerpt.ts'
 import { excerptAround, linksOf } from './linkBook.ts'
 import { SEED_EMPTY_FOLDERS, seedPages } from './seed.ts'
 
@@ -105,17 +106,6 @@ function plain(markdown: string): string {
     .replace(/[*_`~|]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-// The text of a page for a listing: up to 400 characters, one line per
-// non-blank line of the body (docs/api.md, "Page summary").
-function excerptOf(markdown: string): string {
-  const lines = markdown
-    .replace(/```[^\n]*\n([\s\S]*?)```/g, '$1')
-    .split('\n')
-    .map((l) => plain(l))
-    .filter(Boolean)
-  return Array.from(lines.join('\n')).slice(0, 400).join('')
 }
 
 function firstLine(body: string): string {

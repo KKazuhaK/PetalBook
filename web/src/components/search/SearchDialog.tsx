@@ -21,6 +21,7 @@ import { TagChip } from '@/components/TagChip'
 import { Button } from '@/components/ui/button'
 import { DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { NativeSelect } from '@/components/ui/native-select'
+import { ExcerptText } from '@/components/files/ExcerptText'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { useDebounced } from '@/lib/useDebounced'
 import { t } from '@/i18n'
@@ -366,7 +367,7 @@ function Result({
         </div>
         {page.excerpt && (
           <div className="mt-1 line-clamp-2 text-[0.8rem] leading-snug break-words text-muted-foreground">
-            <Highlighted text={page.excerpt} query={query} />
+            <ExcerptText text={page.excerpt} body={(l) => <Highlighted text={l} query={query} />} />
           </div>
         )}
         {page.tags && page.tags.length > 0 && (
@@ -422,7 +423,9 @@ function Preview({ page }: { page: PageSummary | undefined }) {
             </div>
           )}
           {page.excerpt ? (
-            <p className="text-[0.85rem] leading-relaxed break-words whitespace-pre-line">{page.excerpt}</p>
+            <p className="text-[0.85rem] leading-relaxed break-words whitespace-pre-line">
+              <ExcerptText text={page.excerpt} />
+            </p>
           ) : (
             <p className="text-sm text-muted-foreground">{t.search.previewEmpty}</p>
           )}

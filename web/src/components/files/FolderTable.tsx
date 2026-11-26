@@ -12,6 +12,7 @@ import { fromHeaderSort, rowKey, toHeaderSort, type TableRow } from '@/lib/folde
 import { useFolderStyle, usePageStyle } from '@/lib/icons/useStyles'
 import { absoluteTime, relativeTime } from '@/lib/time'
 import { useDropTarget } from './useDropTarget'
+import { ExcerptText } from './ExcerptText'
 import { MoreButton } from './FileContextMenu'
 import { ENTRY_ATTR } from './FileContextMenu'
 import { useFileOps } from './FileOps'
@@ -126,7 +127,11 @@ function TitleCell({ row, state, mobile = false }: { row: TableRow; state: Entry
         >
           {name}
         </span>
-        {!mobile && sub && <span className="block truncate text-xs text-muted-foreground">{sub}</span>}
+        {!mobile && sub && (
+          <span className="block truncate text-xs text-muted-foreground">
+            <ExcerptText text={sub} />
+          </span>
+        )}
       </span>
     </Link>
   )

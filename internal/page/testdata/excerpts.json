@@ -1,0 +1,14 @@
+[
+  {"name": "done and open", "body": "- [x] 浇花\n- [ ] 回信", "excerpt": "[x] 浇花\n[ ] 回信"},
+  {"name": "upper X is normalised", "body": "* [X] 大写", "excerpt": "[x] 大写"},
+  {"name": "nested", "body": "- [ ] 一\n    - [x] 二\n\t- [ ] 三", "excerpt": "[ ] 一\n[x] 二\n[ ] 三"},
+  {"name": "no dash", "body": "[x] 没有横线", "excerpt": "[x] 没有横线"},
+  {"name": "ordered", "body": "1. [ ] 编号", "excerpt": "[ ] 编号"},
+  {"name": "markup inside", "body": "- [x] **粗**和[链接](http://a.b)", "excerpt": "[x] 粗和链接"},
+  {"name": "not a task", "body": "- [y] 不是\n- 中间 [x] 也不是", "excerpt": "[y] 不是\n中间 [x] 也不是"},
+  {"name": "mixed with text", "body": "# 标题\n\n正文\n\n- [x] 完成\n- 普通项", "excerpt": "标题\n正文\n[x] 完成\n普通项"},
+  {"name": "quoted task", "body": "> - [x] q", "excerpt": "[x] q"},
+  {"name": "nested quote task", "body": "> > - [ ] deep", "excerpt": "[ ] deep"},
+  {"name": "paren ordered", "body": "1) [x] t", "excerpt": "[x] t"},
+  {"name": "task in a fence", "body": "```\n- [x] t\n  *a*\n```\nafter", "excerpt": "- [x] t\n*a*\nafter"}
+]
