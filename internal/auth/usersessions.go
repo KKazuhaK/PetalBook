@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -23,10 +24,10 @@ type SessionView struct {
 	Current bool
 }
 
-// siteTarget is the person a site administrator looks at, or NotFound for
-// anyone else asking.
+// siteTarget is the person looked at by who reads people across the site (a
+// site administrator), or NotFound for anyone else asking.
 func (s *Service) siteTarget(ctx context.Context, actor *Principal, userID string) (*store.User, error) {
-	if actor == nil || actor.User.Role != "admin" || !actor.User.SiteAdmin {
+	if actor == nil || !actor.Access.SiteWide(authz.TenantUsersRead) {
 		return nil, errf(NotFound, "No such user.")
 	}
 	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), userID)

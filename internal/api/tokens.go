@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/perm"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -344,7 +345,7 @@ func (s *server) revokeToken(c *call, owner string) {
 // administrator and the caller is not one: a tenant administrator may not end
 // what a site administrator holds (as with changing the account itself).
 func (s *server) refuseSiteAdminOwner(c *call, userID string) bool {
-	if cu := c.user(); cu.SiteAdmin && cu.Role == "admin" {
+	if c.can(authz.SiteAdminsManage) {
 		return false
 	}
 	u, err := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), userID)
@@ -355,7 +356,7 @@ func (s *server) refuseSiteAdminOwner(c *call, userID string) bool {
 		s.fail(c.w, err)
 		return true
 	}
-	if u.SiteAdmin {
+	if u.IsSiteAdmin() {
 		writeError(c.w, http.StatusForbidden, "forbidden", "Only a site administrator may change a site administrator.")
 		return true
 	}

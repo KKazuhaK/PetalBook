@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -77,7 +78,7 @@ func (s *server) recycleItemOf(it store.RecycleItem, days int, with []store.Recy
 // person's own space is left out of what they are shown (it comes back with the
 // person all the same).
 func withFor(c *call, with []store.RecycleItem) []store.RecycleItem {
-	if c.isSiteAdmin() {
+	if c.can(authz.SiteSpacesPersonal) {
 		return with
 	}
 	out := with[:0:0]
@@ -372,7 +373,7 @@ func (s *server) planSpaces(c *call, sc store.Scope, req confirmRequest) (confir
 }
 
 func (s *server) planItems(c *call, sc store.Scope, req confirmRequest) (confirmPlan, bool) {
-	if req.Action == "purge" && !c.isSiteAdmin() {
+	if req.Action == "purge" && !c.can(authz.SiteRecyclePurge) {
 		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may purge the recycle bin early.")
 		return confirmPlan{}, false
 	}

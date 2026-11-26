@@ -48,6 +48,8 @@ type Store struct {
 	people noted
 	// tenantState is which tenants are disabled (see TenantDisabled).
 	tenantState atomic.Pointer[tenantState]
+	// customRoles is whether any custom role may exist (see CustomRoles).
+	customRoles atomic.Bool
 	// localeWarning is what is wrong with a PostgreSQL database's locale ("" when
 	// nothing is; see LocaleWarning).
 	localeWarning string
@@ -207,6 +209,10 @@ func Open(ctx context.Context, target string) (*Store, error) {
 		return nil, redact(err, target)
 	}
 	if err := s.loadTenantState(ctx); err != nil {
+		s.Close()
+		return nil, redact(err, target)
+	}
+	if err := s.loadCustomRoles(ctx); err != nil {
 		s.Close()
 		return nil, redact(err, target)
 	}

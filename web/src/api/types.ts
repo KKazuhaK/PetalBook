@@ -949,6 +949,8 @@ export type PermissionKey =
   | 'site.status.read'
   | 'site.storage.manage'
   | 'site.recycle.purge'
+  | 'site.admins.manage'
+  | 'site.spaces.personal'
   | 'tenant.settings.read'
   | 'tenant.settings.write'
   | 'tenant.users.read'

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -209,9 +210,9 @@ type UserPatch struct {
 	PasskeyRequired *bool
 	Email           *string
 	EmailVerified   *bool
-	// SiteAdmin makes an administrator one of the whole server; only a site
-	// administrator may send it.
-	SiteAdmin *bool
+	// MakeSiteAdmin makes an administrator one of the whole server, or ends
+	// it; only who manages site administrators may send it.
+	MakeSiteAdmin *bool
 	// RemoteExempt leaves the spaces the user owns out of the storage policy's
 	// requirement of a remote (milestone 3.1). The requirement is the site's,
 	// so only a site administrator may send it.
@@ -224,6 +225,17 @@ type UserPatch struct {
 // administrator with a password.
 func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID string, patch UserPatch) (*store.User, error) {
 	actorID := actor.ID
+	access, err := s.SubjectOf(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	// What the actor may do beyond changing people of their tenant: change
+	// administrators of the whole server (and make or end one), and exempt a
+	// person from the site's requirement of a remote.
+	admins, storage := access.Can(authz.SiteAdminsManage, ""), access.Can(authz.SiteStorageManage, "")
+	// An address is vouched for, for merging a sign-in, by who manages people
+	// across the site; one of a tenant administrator alone is marked as such.
+	vouches := access.SiteWide(authz.TenantUsersManage)
 	if patch.Role != nil {
 		if err := checkRole(*patch.Role); err != nil {
 			return nil, err
@@ -246,7 +258,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	var out *store.User
 	changed := map[string]any{}
 	exemptChanged := false
-	err := s.st.Tx(ctx, func(q store.Q) error {
+	err = s.st.Tx(ctx, func(q store.Q) error {
 		// A person of another tenant is no person at all.
 		u, err := store.GetUser(ctx, q, store.ScopeOf(actor), targetID)
 		if err != nil {
@@ -255,14 +267,13 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			}
 			return err
 		}
-		isSite := actor.SiteAdmin && actor.Role == "admin"
-		if u.SiteAdmin && !isSite {
+		if u.IsSiteAdmin() && !admins {
 			return errf(Forbidden, "Only a site administrator may change a site administrator.")
 		}
-		if patch.SiteAdmin != nil && !isSite {
+		if patch.MakeSiteAdmin != nil && !admins {
 			return errf(Forbidden, "Only a site administrator may make or end a site administrator.")
 		}
-		if patch.RemoteExempt != nil && !isSite {
+		if patch.RemoteExempt != nil && !storage {
 			return errf(Forbidden, "Only a site administrator may exempt a person from the site's requirement of a remote.")
 		}
 		role, disabled := u.Role, u.Disabled
@@ -277,22 +288,22 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		}
 		// Promoting someone in the default tenant gives what administrators of it
 		// always had: the server (a site administrator may say otherwise).
-		site := u.SiteAdmin
+		site := u.IsSiteAdmin()
 		switch {
-		case patch.SiteAdmin != nil:
-			site = *patch.SiteAdmin
-		case isSite && role == "admin" && u.Role != "admin" && u.TenantID == store.DefaultTenantID:
+		case patch.MakeSiteAdmin != nil:
+			site = *patch.MakeSiteAdmin
+		case admins && store.IsAdminRole(role) && !u.IsAdmin() && u.TenantID == store.DefaultTenantID:
 			site = true
 		}
-		if role != "admin" {
+		if !store.IsAdminRole(role) {
 			site = false
 		}
-		if patch.SiteAdmin != nil && *patch.SiteAdmin && role != "admin" {
+		if patch.MakeSiteAdmin != nil && *patch.MakeSiteAdmin && !store.IsAdminRole(role) {
 			return errf(Invalid, "A site administrator must be an administrator.")
 		}
 		// One of a disabled tenant cannot sign in, so is not counted: losing
 		// them loses no one.
-		losesAdmin := u.SiteAdmin && !u.Disabled && !s.st.TenantDisabled(u.TenantID) && (!site || disabled)
+		losesAdmin := u.IsSiteAdmin() && !u.Disabled && !s.st.TenantDisabled(u.TenantID) && (!site || disabled)
 		if losesAdmin {
 			if n, err := store.CountEnabledAdmins(ctx, q); err != nil {
 				return err
@@ -317,7 +328,7 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			}
 			changed["role"] = role
 		}
-		if site != u.SiteAdmin {
+		if site != u.IsSiteAdmin() {
 			if err := store.SetSiteAdmin(ctx, q, u.ID, site); err != nil {
 				return err
 			}
@@ -362,14 +373,14 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			// count for merging a sign-in (see mergeByEmail): they could give a
 			// person of their tenant someone else's address.
 			by := ""
-			if verified && !isSite {
+			if verified && !vouches {
 				by = store.VerifiedByTenantAdmin
 			}
 			// A site administrator's true always counts: it clears the mark of
 			// an address only a tenant administrator vouched for, even when the
 			// address was already shown as verified.
 			clearMark := false
-			if verified && isSite && patch.EmailVerified != nil && newEmail == u.Email && u.EmailVerified {
+			if verified && vouches && patch.EmailVerified != nil && newEmail == u.Email && u.EmailVerified {
 				if cur, err := store.EmailVerifiedBy(ctx, q, u.ID); err != nil {
 					return err
 				} else {
@@ -491,10 +502,16 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	if tenantID == "" {
 		tenantID = actor.TenantID
 	}
-	isSite := actor.SiteAdmin && actor.Role == "admin"
-	if !isSite && tenantID != actor.TenantID {
+	access, err := s.SubjectOf(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	// Inviting into another tenant is for who invites across the site; making
+	// a site administrator, for who manages them.
+	if !access.Can(authz.TenantInvitesManage, tenantID) {
 		return nil, errf(NotFound, "No such tenant.")
 	}
+	admins := access.Can(authz.SiteAdminsManage, "")
 	if t, err := store.GetTenant(ctx, s.st.Q(), tenantID); errors.Is(err, store.ErrNotFound) {
 		return nil, errf(NotFound, "No such tenant.")
 	} else if err != nil {
@@ -502,9 +519,9 @@ func (s *Service) CreateInvite(ctx context.Context, actor store.User, tenantID, 
 	} else if t.Disabled {
 		return nil, errf(Conflict, "That tenant is disabled.")
 	}
-	site := role == "admin" && isSite && tenantID == store.DefaultTenantID
+	site := store.IsAdminRole(role) && admins && tenantID == store.DefaultTenantID
 	if siteAdmin != nil {
-		if *siteAdmin && (!isSite || role != "admin") {
+		if *siteAdmin && (!admins || !store.IsAdminRole(role)) {
 			return nil, errf(Forbidden, "Only a site administrator can invite a site administrator.")
 		}
 		site = *siteAdmin
@@ -713,7 +730,7 @@ func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without s
 		}
 	}
 	st := s.sec(ctx)
-	if s.ssoOnlyInEffect(st) && u.Role != "admin" {
+	if s.ssoOnlyInEffect(st) && !u.IsAdmin() {
 		return n, nil
 	}
 	if _, err := store.GetPasswordHash(ctx, q, userID); err == nil {

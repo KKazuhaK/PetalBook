@@ -22,6 +22,7 @@ import { noteOpened } from '@/lib/offline'
 import { clearPendingMethod } from '@/lib/lastAccount'
 import { parseTagColor } from '../lib/tagColors.ts'
 import { can, permissionsOf, type SpacePermissions } from '../lib/permissions.ts'
+import { can as holds } from '../lib/access.ts'
 import { propsOfMeta } from '../lib/pageTypes.ts'
 import type {
   AssetsRemote,
@@ -307,7 +308,7 @@ export function useActiveSpace(): { id: string | null; spaces: SpaceInfo[]; reso
 // search was.
 function useViewedSpace(space: string | null, wanted: boolean) {
   const session = useSession().data
-  const admin = session?.mode === 'accounts' && session.user?.role === 'admin'
+  const admin = session?.mode === 'accounts' && holds(session.user, 'tenant.data.view')
   return useQuery({
     queryKey: keys.viewedSpace(space ?? ''),
     enabled: wanted && admin,

@@ -26,6 +26,7 @@ import { absoluteTime } from '@/lib/time'
 import { adminPath, adminUserPath } from '@/lib/urls'
 import { useCursorPages } from '@/lib/useCursorPages'
 import { useDebounced } from '@/lib/useDebounced'
+import { acrossSite, adminKindOf, isAdminAccount } from '@/lib/access'
 import { useTablePrefs } from '@/lib/tablePrefs'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
@@ -71,7 +72,7 @@ export function UsersList() {
   const list = useUsersPage({ ...params, cursor: pages.cursor || undefined })
   const rows = list.data?.users ?? []
   const next = list.data?.next ?? ''
-  const siteAdmin = me?.siteAdmin !== false
+  const site = acrossSite(me)
 
   const columns = useMemo<Column<User>[]>(
     () => [
@@ -108,10 +109,10 @@ export function UsersList() {
         priority: 2,
         cell: (u) => (
           <span className="flex items-center gap-1.5">
-            {u.role === 'admin' ? t.roles.admin : t.roles.member}
-            {u.role === 'admin' && u.siteAdmin !== undefined && (
+            {isAdminAccount(u) ? t.roles.admin : t.roles.member}
+            {isAdminAccount(u) && u.siteAdmin !== undefined && (
               <Badge variant="outline" data-slot="admin-kind">
-                {u.siteAdmin ? tc.users.adminKinds.site : tc.users.adminKinds.tenant}
+                {adminKindOf(u) === 'site' ? tc.users.adminKinds.site : tc.users.adminKinds.tenant}
               </Badge>
             )}
           </span>
@@ -185,10 +186,7 @@ export function UsersList() {
     [me?.id],
   )
   // The tenant is the same for everyone in a single-tenant server: a column of one value is left to those who ask.
-  const shownColumns = useMemo(
-    () => (siteAdmin ? columns : columns.filter((c) => c.id !== 'tenant')),
-    [columns, siteAdmin],
-  )
+  const shownColumns = useMemo(() => (site ? columns : columns.filter((c) => c.id !== 'tenant')), [columns, site])
 
   const toggle = async (u: User) => {
     const done = await change(u, { disabled: !u.disabled })
@@ -223,7 +221,7 @@ export function UsersList() {
             <option value="">{tc.users.roleAll}</option>
             <option value="member">{tc.users.roleMember}</option>
             <option value="admin">{tc.users.roleAdmin}</option>
-            {siteAdmin && <option value="site">{tc.users.roleSite}</option>}
+            {site && <option value="site">{tc.users.roleSite}</option>}
           </NativeSelect>
         </div>
         <div className="w-36 max-sm:w-[calc(50%-0.25rem)]">

@@ -35,6 +35,44 @@ func (s Subject) SiteWide(k Key) bool { return s.Site.Has(k) }
 // and its tenant keys there.
 func (s Subject) In(tenant string) Set { return s.Site.Union(s.Tenant[tenant]) }
 
+// Grant is a custom role a person holds, directly or through a group, as the
+// subject is built from it: the role's scope and keys, and where it is held
+// (Tenant "" is across the site).
+type Grant struct {
+	Scope  Scope
+	Keys   Set
+	Tenant string
+}
+
+// WithGrants is the subject with the keys of custom roles added. s is not
+// changed (a subject is shared once built). The guardrails of the scopes hold
+// whatever a stored role lists:
+//   - a site role held across the site adds its site and tenant keys to Site;
+//     held in one tenant, only its tenant keys, there;
+//   - a tenant role adds only tenant keys, in the tenant it is held in (one
+//     held nowhere adds nothing): a role of a tenant never reaches the site;
+//   - a space role is the space level's (reserved) and adds nothing here, and
+//     no space key is ever held outside a space.
+func (s Subject) WithGrants(gs []Grant) Subject {
+	if len(gs) == 0 {
+		return s
+	}
+	tenantKeys := OfScope(ScopeTenant)
+	out := Subject{Site: s.Site, Tenant: make(map[string]Set, len(s.Tenant)+len(gs))}
+	for t, set := range s.Tenant {
+		out.Tenant[t] = set
+	}
+	for _, g := range gs {
+		switch {
+		case g.Scope == ScopeSite && g.Tenant == "":
+			out.Site = out.Site.Union(g.Keys.Intersect(OfScope(ScopeSite).Union(tenantKeys)))
+		case (g.Scope == ScopeSite || g.Scope == ScopeTenant) && g.Tenant != "":
+			out.Tenant[g.Tenant] = out.Tenant[g.Tenant].Union(g.Keys.Intersect(tenantKeys))
+		}
+	}
+	return out
+}
+
 // The built-in roles. They are code, not rows: custom roles (a later part of
 // 3.6) are stored, and these stay as they are.
 const (

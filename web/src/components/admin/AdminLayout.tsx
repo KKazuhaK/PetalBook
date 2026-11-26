@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useActiveSpace, useSession } from '@/api/hooks'
+import { can } from '@/lib/access'
 import { Logo } from '@/components/brand/Logo'
 import { topBarButton, topBarFrame } from '@/components/layout/topBarStyles'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
@@ -47,7 +48,7 @@ export function AdminLayout({
   const { id, spaces } = useActiveSpace()
   const space = spaces.find((s) => s.id === id)
   // Only the administrators of the whole server may read the build (it is in the server's status).
-  const site = useSession().data?.user?.siteAdmin !== false
+  const site = can(useSession().data?.user, 'site.status.read')
   const toggle = () =>
     setCollapsed((c) => {
       try {

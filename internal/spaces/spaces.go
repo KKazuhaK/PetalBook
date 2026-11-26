@@ -536,7 +536,21 @@ func (m *Manager) list(ctx context.Context, userID string) ([]Info, error) {
 // costs one primary-key query to learn that the space exists; that is the only
 // path that touches the database, and only administrators take it.
 func (m *Manager) Open(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
-	return m.openFor(ctx, user, spaceID, true)
+	return m.openForIndex(ctx, user, authz.Subject{}, false, spaceID, true, false)
+}
+
+// OpenAs is Open for a request whose caller holds access outside spaces (the
+// session cache's subject, custom roles included): whether an administrator
+// who is not a member reaches the space is asked of it.
+func (m *Manager) OpenAs(ctx context.Context, user store.User, access authz.Subject, spaceID string) (*Handle, error) {
+	return m.openForIndex(ctx, user, access, true, spaceID, true, false)
+}
+
+// AccessOf is what an account holds outside spaces by its built-in role, for
+// a caller that has no subject of its own (the session cache's has its custom
+// roles too).
+func AccessOf(u store.User) authz.Subject {
+	return authz.SubjectFor(u.Role, u.SiteAdmin, u.TenantID)
 }
 
 // OpenMember is Open for a credential that is not the person's own session
@@ -544,26 +558,30 @@ func (m *Manager) Open(ctx context.Context, user store.User, spaceID string) (*H
 // is not open to it, so a space the user is not a member of is ErrNotFound
 // whatever their role. No query: the membership comes from the cached list.
 func (m *Manager) OpenMember(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
-	return m.openFor(ctx, user, spaceID, false)
-}
-
-func (m *Manager) openFor(ctx context.Context, user store.User, spaceID string, viaAdmin bool) (*Handle, error) {
-	return m.openForIndex(ctx, user, spaceID, viaAdmin, false)
+	return m.openForIndex(ctx, user, authz.Subject{}, false, spaceID, false, false)
 }
 
 // OpenIndex is Open for a request that only reads what the index answers (a
 // list, the tree, tags, links, checks): an evicted space is opened by its
 // index and is not restored. The handle says IndexOnly in that case.
 func (m *Manager) OpenIndex(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
-	return m.openForIndex(ctx, user, spaceID, true, true)
+	return m.openForIndex(ctx, user, authz.Subject{}, false, spaceID, true, true)
+}
+
+// OpenIndexAs is OpenIndex with the caller's subject (see OpenAs).
+func (m *Manager) OpenIndexAs(ctx context.Context, user store.User, access authz.Subject, spaceID string) (*Handle, error) {
+	return m.openForIndex(ctx, user, access, true, spaceID, true, true)
 }
 
 // OpenMemberIndex is OpenMember for such a request.
 func (m *Manager) OpenMemberIndex(ctx context.Context, user store.User, spaceID string) (*Handle, error) {
-	return m.openForIndex(ctx, user, spaceID, false, true)
+	return m.openForIndex(ctx, user, authz.Subject{}, false, spaceID, false, true)
 }
 
-func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID string, viaAdmin, indexOnly bool) (*Handle, error) {
+// openForIndex opens for user; access is what they hold outside spaces when
+// haveAccess, else it is built from their built-in role, only on the path of
+// an administrator who is not a member (a member costs nothing for it).
+func (m *Manager) openForIndex(ctx context.Context, user store.User, access authz.Subject, haveAccess bool, spaceID string, viaAdmin, indexOnly bool) (*Handle, error) {
 	var err error
 	var in Info
 	var found bool
@@ -588,7 +606,9 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID str
 		// Who may manage a space they are not a member of holds
 		// tenant.spaces.manage there: asked first in their own tenant (no query
 		// for anyone else), then in the space's.
-		access := authz.SubjectFor(user.Role, user.SiteAdmin, user.TenantID)
+		if !haveAccess {
+			access = AccessOf(user)
+		}
 		if !access.Can(authz.TenantSpacesManage, user.TenantID) && !access.SiteWide(authz.TenantSpacesManage) {
 			return nil, ErrNotFound
 		}
@@ -607,8 +627,9 @@ func (m *Manager) openForIndex(ctx context.Context, user store.User, spaceID str
 		}
 		// A person's own space is not an organisation's: a tenant's administrator
 		// does not reach it at all, as if it were not there (3.5; a site
-		// administrator, who may read any file on the disk, does).
-		if sp.Personal && !user.SiteAdmin {
+		// administrator, who may read any file on the disk, does: the key
+		// site.spaces.personal).
+		if sp.Personal && !access.Can(authz.SiteSpacesPersonal, "") {
 			return nil, ErrNotFound
 		}
 		// An administrator who is not a member manages the space (its members,

@@ -3,10 +3,13 @@ package api
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -321,18 +324,49 @@ func (s *server) adminGroupMembers(c *call) {
 func (s *server) adminAddGroupMembers(c *call) {
 	var req struct {
 		UserIDs []string `json:"userIds"`
+		// Reason makes adding oneself to a group that reaches spaces one does
+		// not an explicit, audited takeover of what it reaches.
+		Reason *string `json:"reason"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, 64<<10) {
 		return
 	}
 	id := c.r.PathValue("group")
-	added, already, ids, err := s.spaces.AddGroupPeople(c.r.Context(), store.ScopeOf(c.user()), id, req.UserIDs)
+	join := spaces.GroupJoin{By: c.user().ID}
+	reason := ""
+	if req.Reason != nil {
+		reason = strings.TrimSpace(*req.Reason)
+		if n := len([]rune(reason)); n < 1 || n > 500 {
+			writeError(c.w, http.StatusBadRequest, "invalid", "Reason is from 1 to 500 characters: why you are joining the spaces this group is in.")
+			return
+		}
+		// The takeover key, in the group's tenant (a group the caller does not
+		// see is answered as missing by AddGroupPeople).
+		if slices.Contains(req.UserIDs, c.user().ID) {
+			if g, err := s.spaces.Group(c.r.Context(), store.ScopeOf(c.user()), id); err == nil {
+				if err := s.allow(c, authz.TenantSpacesTakeover, g.TenantID); err != nil {
+					s.refuse(c.w, err)
+					return
+				}
+				join.Explicit = true
+			}
+		}
+	}
+	added, already, ids, gained, err := s.spaces.AddGroupPeople(c.r.Context(), store.ScopeOf(c.user()), id, req.UserIDs, join)
+	if errors.Is(err, spaces.ErrTakeover) {
+		writeError(c.w, http.StatusForbidden, "takeover_required", "Adding yourself to this group gives you a role in spaces you are not a member of: send a reason to do it as an audited takeover.")
+		return
+	}
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
 	}
 	if added > 0 {
-		s.auditGroup(c, s.groupTenant(c, id), "group_member_added", "", map[string]any{"group": id, "users": ids})
+		tenant := s.groupTenant(c, id)
+		s.auditGroup(c, tenant, "group_member_added", "", map[string]any{"group": id, "users": ids})
+		if len(gained) > 0 {
+			s.auditGroup(c, tenant, "group_self_added", c.user().ID, map[string]any{"group": id, "spaces": gained, "reason": reason})
+		}
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Added   int `json:"added"`

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -14,7 +15,7 @@ import (
 
 // siteOnly answers "no such user" to anyone but an administrator of the server.
 func (s *server) siteOnly(c *call) bool {
-	if c.isSiteAdmin() {
+	if c.siteWide(authz.TenantUsersRead) {
 		return true
 	}
 	writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
@@ -155,7 +156,7 @@ func (s *server) userMemberships(c *call) {
 		Groups []groupItem `json:"groups"`
 	}{[]spaceItem{}, []groupItem{}}
 	for _, sp := range spaces {
-		if sp.Personal && !c.isSiteAdmin() {
+		if sp.Personal && !c.can(authz.SiteSpacesPersonal) {
 			continue
 		}
 		if len(out.Spaces) < maxMemberships {

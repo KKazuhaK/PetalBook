@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -40,12 +41,52 @@ func TestEveryAdminRouteHasAKey(t *testing.T) {
 			t.Errorf("%s: SiteAdmin does not follow its key's scope", name)
 		}
 	}
-	// A site or tenant key no route names would be a key nobody can use.
+	// A site or tenant key no route names would be a key nobody can use,
+	// unless a handler asks it for what it does beyond its route's key.
 	for _, in := range authz.All() {
-		if in.Scope != authz.ScopeSpace && !used[in.Name] {
+		if in.Scope != authz.ScopeSpace && !used[in.Name] && askedInHandlers[in.Name] == "" {
 			t.Errorf("no route names %s", in.Name)
 		}
 	}
+	src := ""
+	for _, dir := range []string{".", "../auth", "../spaces"} {
+		files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		for _, f := range files {
+			if !strings.HasSuffix(f, "_test.go") {
+				b, err := os.ReadFile(f)
+				if err != nil {
+					t.Fatal(err)
+				}
+				src += string(b)
+			}
+		}
+	}
+	for name := range askedInHandlers {
+		k, ok := authz.Lookup(name)
+		if !ok {
+			t.Errorf("%s is not registered", name)
+			continue
+		}
+		if !strings.Contains(src, "authz."+goName(k.Name())) {
+			t.Errorf("no handler asks %s", name)
+		}
+	}
+}
+
+// askedInHandlers are the keys no route names: a handler asks them for part of
+// what it does (part 2 of 3.6 moved the checks of the site administrator there).
+var askedInHandlers = map[string]string{
+	"site.admins.manage":   "changing, deleting, resetting a site administrator, or making one (accounts, tokens, passkeys, deletion)",
+	"site.spaces.personal": "personal spaces in the bin, exports, views, a person's page, and managing one without being its member",
+}
+
+// goName is the Go name of a key: site.admins.manage is SiteAdminsManage.
+func goName(name string) string {
+	var b strings.Builder
+	for _, p := range strings.Split(name, ".") {
+		b.WriteString(strings.ToUpper(p[:1]) + p[1:])
+	}
+	return b.String()
 }
 
 // The table of keys in docs/api.md and the PermissionKey union of the web app

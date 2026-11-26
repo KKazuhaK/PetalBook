@@ -13,6 +13,7 @@ import { tc } from '@/i18n/console'
 import { ts } from '@/i18n/storage'
 import { tsec } from '@/i18n/security'
 import { tt } from '@/i18n/tenants'
+import { isAdminAccount } from '@/lib/access'
 import { OwnLimits } from '../OwnLimits'
 import type { UserPatch } from './useUserChange'
 
@@ -89,7 +90,7 @@ export function PersonProfile({
             <option value="admin">{t.roles.admin}</option>
           </NativeSelect>
         </div>
-        {u.role === 'admin' && site && u.siteAdmin !== undefined && (
+        {isAdminAccount(u) && site && u.siteAdmin !== undefined && (
           <label className="flex min-h-10 items-center gap-3 text-sm">
             <Switch
               checked={u.siteAdmin}

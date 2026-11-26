@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
@@ -605,7 +606,7 @@ func (s *Service) canUsePassword(ctx context.Context, q store.Q, u store.User) (
 	} else if err != nil {
 		return false, err
 	}
-	return !(s.ssoOnlyInEffect(s.sec(ctx)) && u.Role != "admin"), nil
+	return !(s.ssoOnlyInEffect(s.sec(ctx)) && !u.IsAdmin()), nil
 }
 
 // resetLinks makes a reset link for each account that can use a password and
@@ -758,8 +759,12 @@ func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, ip, 
 	} else if err != nil {
 		return err
 	}
-	if u.SiteAdmin && !(actor.SiteAdmin && actor.Role == "admin") {
-		return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
+	if u.IsSiteAdmin() {
+		if access, err := s.SubjectOf(ctx, actor); err != nil {
+			return err
+		} else if !access.Can(authz.SiteAdminsManage, "") {
+			return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
+		}
 	}
 	if err := s.needMail(); err != nil {
 		return err

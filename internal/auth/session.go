@@ -157,7 +157,10 @@ func (s *Service) cachedEntry(ctx context.Context, id string) (*store.User, auth
 	if err != nil {
 		return nil, authz.Subject{}, err
 	}
-	access := AccessOf(*u)
+	access, err := s.SubjectOf(ctx, *u)
+	if err != nil {
+		return nil, authz.Subject{}, err
+	}
 	s.cmu.Lock()
 	// If the user changed while we read, what we read may be the old row:
 	// use it for this request only.
@@ -174,10 +177,58 @@ func (s *Service) cachedEntry(ctx context.Context, id string) (*store.User, auth
 	return u, access, nil
 }
 
-// AccessOf is what an account holds outside spaces, from its role and
-// site-administrator flag (3.7 adds its memberships of organizations).
+// AccessOf is what an account holds outside spaces by its built-in role: from
+// its role and site-administrator flag (3.7 adds its memberships of
+// organizations). SubjectOf adds the custom roles it holds.
 func AccessOf(u store.User) authz.Subject {
 	return authz.SubjectFor(u.Role, u.SiteAdmin, u.TenantID)
+}
+
+// SubjectOf is what an account holds outside spaces: its built-in role and
+// the custom roles given to it or to its groups. The grants are read only
+// while some custom role exists (store.Store.CustomRoles, one atomic load), so
+// a server without any pays nothing. The session cache keeps the result; a
+// rule about an actor that is not a request's (a bulk job, the account
+// functions given a store.User) asks here.
+func (s *Service) SubjectOf(ctx context.Context, u store.User) (authz.Subject, error) {
+	sub := AccessOf(u)
+	if !s.st.CustomRoles() {
+		return sub, nil
+	}
+	held, err := store.HeldRoles(ctx, s.st.Q(), u.ID)
+	if err != nil {
+		return authz.Subject{}, err
+	}
+	gs := make([]authz.Grant, 0, len(held))
+	for _, h := range held {
+		if h.SpaceID != "" {
+			continue // the space level's (reserved)
+		}
+		var sc authz.Scope
+		switch h.Scope {
+		case store.RoleScopeSite:
+			sc = authz.ScopeSite
+		case store.RoleScopeTenant:
+			sc = authz.ScopeTenant
+		default:
+			continue
+		}
+		keys, unknown := authz.SetOf(h.Keys)
+		if len(unknown) > 0 {
+			s.log.Warn("a custom role names keys that do not exist; they grant nothing", "keys", unknown)
+		}
+		gs = append(gs, authz.Grant{Scope: sc, Keys: keys, Tenant: h.TenantID})
+	}
+	return sub.WithGrants(gs), nil
+}
+
+// RolesChanged follows a change of custom roles or their grants: every cached
+// person is read again, with what they hold now.
+func (s *Service) RolesChanged() {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	s.gen++
+	clear(s.users)
 }
 
 // ended is the refusal of a cookie whose session is gone, with why when it is known.

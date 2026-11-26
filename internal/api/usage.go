@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/quota"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
@@ -262,7 +263,7 @@ func (s *server) mergeOwnQuota(c *call, target store.User, raw json.RawMessage, 
 		return "", false
 	}
 	own := quota.ParseOwn(cur)
-	site := c.isSiteAdmin()
+	site := c.can(authz.SiteTenantsManage)
 	eff, err := s.settings.For(c.r.Context(), target.TenantID)
 	if err != nil {
 		s.fail(c.w, err)

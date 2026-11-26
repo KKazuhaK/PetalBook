@@ -165,14 +165,63 @@ What the conventions above became in code:
   (the owner's decision, 2026-11-25), which makes the one membership that joins
   two tenants (`TransferOwnership` accepts it only for a site administrator); a
   tenant administrator only within their tenant; a personal space nobody.
-  Groups that hold the owner role keep it for now and their people are told;
-  part 2 decides to remove or lower a group's owner role on a takeover.
+  Groups that held the owner role become editors (part 2, below).
 - Whether someone reaches a space they are not a member of is decided by
   `tenant.spaces.manage` in the space's tenant, not by the role name.
 - Token and OAuth principals carry no `Access`: no route outside spaces takes
   them, so nothing is built for them per request.
-- Left for later parts: the in-handler `isSiteAdmin()` checks and the inline
-  `Role == "admin"` comparisons become key checks (part 2, with custom roles);
-  an administrator may still add themselves to a group that is already a member
-  of a space through the group administration (`tenant.groups.manage`), which
-  part 2 has to decide together with roles.
+- Left for later parts then: the in-handler checks and the group path, done in
+  part 2 (16.2).
+
+### 16.2 One authorisation path, custom-role tables (3.6 part 2, built)
+
+- **Every check asks a key.** What a handler decides beyond its route's key
+  asks the caller's subject: `c.can(key)` (held in their own tenant, a site
+  key across the site) or `c.siteWide(key)` (a tenant key held in every
+  tenant) in `internal/api`, `Subject.Can`/`SiteWide` in `internal/auth` and
+  `internal/spaces`. Two site keys were added for what only a site
+  administrator did and no route names: `site.admins.manage` (change, delete,
+  make or end a site administrator, reset their password or passkeys, end
+  their sessions and tokens) and `site.spaces.personal` (personal spaces in the
+  bin, in exports, in views, on a person's page, and managing one without
+  being its member). The other moved checks use existing keys: the disk and
+  restore counts and evict/pin are `site.storage.manage`; a tenant's slug,
+  state and quota and a quota above the tenant's are `site.tenants.manage`;
+  an early purge `site.recycle.purge`; a history export, a site-only export or
+  job, the site's audit rows, a site-set setting, reading a person's sessions
+  and invites into another tenant are the route's tenant key held across the
+  site. The built-in roles decide exactly as before.
+- **Rules about the account acted on** ask `store.User`: `IsAdmin()` (an
+  administrator is never merged by address and may sign in with a password
+  under ssoOnly), `IsSiteAdmin()` (the last enabled one is kept; only who
+  holds `site.admins.manage` changes one), and `store.IsAdminRole` for an
+  invitation's role.
+- **A source scan** (`internal/boundary`, go/ast, about 0.1 s) fails on a
+  role compared with `"admin"` or `.SiteAdmin` used as a condition outside
+  `internal/authz` and `internal/store`; copying the field is allowed. A
+  vitest does the same for the web app outside `src/lib/access.ts`, whose
+  `can(key)` reads `user.permissions`.
+- **Custom roles are stored, with no endpoint yet.** `roles` (id, tenant_id
+  `''` for the site's, scope, name, keys as a JSON list of key names, created,
+  updated) and `role_grants` (role_id, subject_kind `user`|`group`,
+  subject_id, tenant_id, space_id; indexed on the subject). The session cache
+  builds a subject from the built-in role and, only while
+  `Store.CustomRoles()` says some role exists (one atomic load, read at start,
+  set when a role is inserted), from the person's grants and their groups'
+  (one query, two index reads). Guardrails in the builder: a tenant role adds
+  only tenant keys, in the tenant it is held in; a site role held in a tenant
+  only its tenant keys there; space grants are the space level's and add
+  nothing outside spaces. A renamed key keeps working in stored roles through
+  `authz.Alias`; a name that is no key grants nothing and is logged. A
+  tenant's roles and grants go with the tenant, a group's grants with the
+  group. `auth.Service.RolesChanged` drops the cached people when roles or
+  grants change.
+- **The group path is closed.** An administrator adding themselves to a group
+  that gives them more in some space than they hold (directly or through
+  another group) is `403 takeover_required`; with a `reason` it needs
+  `tenant.spaces.takeover` and is audited (`group_self_added`, with the
+  spaces). Adding other people is unchanged. The check is in
+  `spaces.AddGroupPeople`, inside its transaction.
+- **Owner groups on a takeover or transfer** become editors in the same
+  transaction (`store.DemoteOwnerGroups`), their people's lists are dropped at
+  once, and the audit row's `ownerGroups` names them.

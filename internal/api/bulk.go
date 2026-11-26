@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
@@ -163,15 +164,23 @@ func (s *server) jobTenants(ctx context.Context, req confirmRequest, caller stor
 // jobActor is the administrator who started a job as they are now: each item
 // is done with their rights of the moment, and one who is no longer an
 // administrator (or is disabled or deleted) is not obeyed any more.
-func (s *server) jobActor(ctx context.Context, id string) (store.User, error) {
+func (s *server) jobActor(ctx context.Context, id string) (store.User, authz.Subject, error) {
+	gone := &auth.Error{Kind: auth.Forbidden, Msg: "The administrator who started the job may not do this any more."}
 	u, err := store.GetUser(ctx, s.opt.Store.Q(), store.AllTenants(), id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && (u.Role != "admin" || u.Disabled)) {
-		return store.User{}, &auth.Error{Kind: auth.Forbidden, Msg: "The administrator who started the job may not do this any more."}
+	if errors.Is(err, store.ErrNotFound) || (err == nil && u.Disabled) {
+		return store.User{}, authz.Subject{}, gone
 	}
 	if err != nil {
-		return store.User{}, err
+		return store.User{}, authz.Subject{}, err
 	}
-	return *u, nil
+	access, err := s.subjectOf(ctx, *u)
+	if err != nil {
+		return store.User{}, authz.Subject{}, err
+	}
+	if !access.Can(authz.TenantBulkRun, u.TenantID) {
+		return store.User{}, authz.Subject{}, gone
+	}
+	return *u, access, nil
 }
 
 type jobResp struct {
@@ -242,7 +251,7 @@ func (s *server) adminBulk(c *call) {
 		tenant = queue[0]
 	}
 	job := store.BulkJob{ID: page.NewID(s.now()), TenantID: tenant, MadeBy: c.user().ID, Action: e.req.Action, Total: len(ids), State: store.JobQueued,
-		SiteOnly: c.isSiteAdmin(), Created: s.now()}
+		SiteOnly: c.siteWide(authz.TenantBulkRun), Created: s.now()}
 	if err := store.InsertBulkJob(c.r.Context(), s.opt.Store.Q(), job); err != nil {
 		s.fail(c.w, err)
 		return
@@ -334,8 +343,9 @@ func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmReque
 		err := ctx.Err()
 		if err == nil {
 			var cur store.User
-			if cur, err = s.jobActor(ctx, actor.ID); err == nil {
-				err = s.bulkExport(ctx, req, cur)
+			var access authz.Subject
+			if cur, access, err = s.jobActor(ctx, actor.ID); err == nil {
+				err = s.bulkExport(ctx, req, cur, access)
 			}
 		}
 		switch {
@@ -357,9 +367,9 @@ func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmReque
 				finish(store.JobInterrupted)
 				return
 			}
-			cur, err := s.jobActor(ctx, actor.ID)
+			cur, access, err := s.jobActor(ctx, actor.ID)
 			if err == nil {
-				err = s.bulkItem(ctx, req, id, cur, ip, job.ID)
+				err = s.bulkItem(ctx, req, id, cur, access, ip, job.ID)
 			}
 			if err != nil && ctx.Err() != nil {
 				// Cut short by the close: not this item's failure.
@@ -391,7 +401,8 @@ func errorCodeOf(s *server, err error) (string, string) {
 }
 
 // bulkItem does one item of a job with the rules of the action's own endpoint.
-func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, actor store.User, ip, job string) error {
+func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, actor store.User, access authz.Subject, ip, job string) error {
+	can := func(k authz.Key) bool { return access.Can(k, actor.TenantID) }
 	sc := store.AdminScopeOf(actor)
 	by := func(kind string, tenant string, detail map[string]any) {
 		if s.auth == nil {
@@ -411,26 +422,26 @@ func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, ac
 	case "disable_spaces", "enable_spaces":
 		return s.spaces.SetDisabled(ctx, sc, id, req.Action == "disable_spaces")
 	case "evict":
-		if !(actor.SiteAdmin && actor.Role == "admin") {
+		if !can(authz.SiteStorageManage) {
 			return &auth.Error{Kind: auth.Forbidden, Msg: "Only an administrator of the whole server may do that."}
 		}
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		return s.spaces.Evict(ectx, id, spaces.EvictOptions{AdminRequest: true})
 	case "pin", "unpin":
-		if !(actor.SiteAdmin && actor.Role == "admin") {
+		if !can(authz.SiteStorageManage) {
 			return &auth.Error{Kind: auth.Forbidden, Msg: "Only an administrator of the whole server may do that."}
 		}
 		return s.spaces.SetPinned(ctx, id, req.Action == "pin")
 	case "delete_users":
-		_, err := s.deleteUser(ctx, deleteUserIn{Actor: actor, IP: ip, Heir: req.Heir, Transfers: req.Transfers, Reason: "bulk", Bulk: job}, id)
+		_, err := s.deleteUser(ctx, deleteUserIn{Actor: actor, Access: access, IP: ip, Heir: req.Heir, Transfers: req.Transfers, Reason: "bulk", Bulk: job}, id)
 		return err
 	case "disable_users", "enable_users":
 		off := req.Action == "disable_users"
 		_, err := s.auth.UpdateUser(ctx, actor, ip, id, auth.UserPatch{Disabled: &off})
 		return err
 	case "purge":
-		if !(actor.SiteAdmin && actor.Role == "admin") {
+		if !can(authz.SiteRecyclePurge) {
 			return &auth.Error{Kind: auth.Forbidden, Msg: "Only an administrator of the whole server may purge the recycle bin early."}
 		}
 		it, err := s.spaces.PurgeItem(ctx, sc, id)
@@ -475,14 +486,14 @@ func mapNotFound(err error) error {
 }
 
 // bulkExport makes one export of the spaces and items of a confirmed export.
-func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store.User) error {
+func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store.User, access authz.Subject) error {
 	sc := store.AdminScopeOf(actor)
 	var sources []store.ExportSource
 	tenants := map[string]bool{}
 	personal := false
 	for _, id := range req.Spaces {
 		sp, err := store.GetSpace(ctx, s.opt.Store.Q(), sc, id)
-		if err != nil || (sp.Personal && !(actor.SiteAdmin && actor.Role == "admin")) {
+		if err != nil || (sp.Personal && !access.Can(authz.SiteSpacesPersonal, "")) {
 			return spaces.ErrNotFound
 		}
 		sources = append(sources, store.ExportSource{Space: sp.ID, SpaceID: sp.ID, Name: sp.Name})
@@ -509,6 +520,6 @@ func (s *server) bulkExport(ctx context.Context, req confirmRequest, actor store
 		}
 	}
 	_, err = s.spaces.StartExport(ctx, spaces.ExportRequest{TenantID: tenant, By: actor.ID, ByName: actor.Username, Sources: sources,
-		SiteOnly: exportSiteOnly(actor, false, personal, len(tenants))})
+		SiteOnly: exportSiteOnly(access.SiteWide(authz.TenantDataExport), false, personal, len(tenants))})
 	return err
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -104,7 +105,7 @@ func (s *server) adminCreateExport(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Name from 1 to "+strconv.Itoa(maxConfirmIDs)+" spaces or recycle items to export.")
 		return
 	}
-	if req.History && !c.isSiteAdmin() {
+	if req.History && !c.siteWide(authz.TenantDataExport) {
 		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may export the history.")
 		return
 	}
@@ -128,7 +129,7 @@ func (s *server) adminCreateExport(c *call) {
 	}
 	for _, id := range req.Items {
 		it, ok := items[id]
-		if !ok || it.Kind != store.RecycleSpace || (it.Personal && !c.isSiteAdmin()) {
+		if !ok || it.Kind != store.RecycleSpace || (it.Personal && !c.can(authz.SiteSpacesPersonal)) {
 			writeError(c.w, http.StatusNotFound, "not_found", "No such item in the recycle bin.")
 			return
 		}
@@ -143,7 +144,7 @@ func (s *server) adminCreateExport(c *call) {
 		}
 	}
 	e, err := s.spaces.StartExport(c.r.Context(), spaces.ExportRequest{TenantID: tenant, By: c.user().ID, ByName: c.user().Username, Sources: sources, History: req.History,
-		SiteOnly: exportSiteOnly(c.user(), req.History, personal, len(tenants))})
+		SiteOnly: exportSiteOnly(c.siteWide(authz.TenantDataExport), req.History, personal, len(tenants))})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -165,13 +166,14 @@ func (s *server) adminCreateExport(c *call) {
 	writeJSON(c.w, http.StatusAccepted, out[0])
 }
 
-// exportSiteOnly says whether an export is the site's: one a site administrator
-// made, and in any case one that holds a history bundle, a personal space or
-// the spaces of more than one tenant. A tenant administrator never sees such an
+// exportSiteOnly says whether an export is the site's: one made by who exports
+// across the site (siteWide: a site administrator), and in any case one that
+// holds a history bundle, a personal space or the spaces of more than one
+// tenant. A tenant administrator never sees such an
 // export, whatever tenant its row names (docs/api.md, "Exports": what a tenant
 // administrator made is seen by that tenant's administrators and the site's).
-func exportSiteOnly(by store.User, history, personal bool, tenants int) bool {
-	return (by.SiteAdmin && by.Role == "admin") || history || personal || tenants > 1
+func exportSiteOnly(siteWide, history, personal bool, tenants int) bool {
+	return siteWide || history || personal || tenants > 1
 }
 
 func (s *server) adminListExports(c *call) {
@@ -304,7 +306,7 @@ func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user st
 			return false
 		}
 		for _, ch := range children {
-			if ch.State == store.RecycleReady && (!ch.Personal || c.isSiteAdmin()) {
+			if ch.State == store.RecycleReady && (!ch.Personal || c.can(authz.SiteSpacesPersonal)) {
 				*itemIDs = append(*itemIDs, ch.ID)
 			}
 		}
@@ -316,7 +318,7 @@ func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user st
 		return false
 	}
 	for _, r := range plan.Recycle {
-		if !r.Personal || c.isSiteAdmin() {
+		if !r.Personal || c.can(authz.SiteSpacesPersonal) {
 			*spaceIDs = append(*spaceIDs, r.ID)
 		}
 	}

@@ -4,6 +4,7 @@ import { LogOut, Settings, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { applySession, useSession } from '@/api/hooks'
+import { administers } from '@/lib/access'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,7 +64,7 @@ export function UserMenu() {
           <Settings />
           {t.userMenu.settings}
         </DropdownMenuItem>
-        {user.role === 'admin' && (
+        {administers(user) && (
           <DropdownMenuItem onClick={() => navigate(adminPath())}>
             <ShieldCheck />
             {t.userMenu.admin}

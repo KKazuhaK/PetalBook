@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router'
 import { useSession, useSpaces } from '@/api/hooks'
+import { administers } from '@/lib/access'
 import {
   readOnboarding,
   requestOnboarding,
@@ -25,7 +26,7 @@ export function OnboardingHost() {
   // The tour waits for the person's file (or for its read to have failed): this browser may not have their copy yet.
   const prefsKnown = usePrefsSettled()
   const started = useRef<string | null>(null)
-  const admin = user?.role === 'admin'
+  const admin = administers(user)
   // Not over the administration or the settings, which are where a person goes on purpose.
   const calm = !pathname.startsWith('/admin') && !pathname.startsWith('/settings')
   useEffect(() => {

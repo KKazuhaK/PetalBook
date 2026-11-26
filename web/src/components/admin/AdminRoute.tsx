@@ -2,6 +2,7 @@ import { Link, Navigate, useLocation } from 'react-router'
 import { useRef } from 'react'
 import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { useSession } from '@/api/hooks'
+import { acrossSite } from '@/lib/access'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
 import { adminPath } from '@/lib/urls'
 import { t } from '@/i18n'
@@ -24,7 +25,7 @@ export default function AdminRoute() {
     .filter(Boolean)
     .slice(1)
     .map((s) => decodeURIComponent(s))
-  const site = useSession().data?.user?.siteAdmin !== false
+  const site = acrossSite(useSession().data?.user)
   const sections = navFor(site)
   const person = first === 'user' && second !== undefined
   const section = person ? sections.find((s) => s.key === 'users') : sections.find((s) => s.key === first)

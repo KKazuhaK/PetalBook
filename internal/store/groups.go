@@ -87,8 +87,13 @@ func UpdateGroup(ctx context.Context, q Q, id, name, description string, now tim
 }
 
 // DeleteGroup deletes a group; its memberships and its places in spaces go
-// with it (the keys cascade). Nothing else is deleted.
+// with it (the keys cascade), and so do the custom roles it held. Nothing
+// else is deleted.
 func DeleteGroup(ctx context.Context, q Q, id string) error {
+	// The roles it held are no one's now (the subject of a grant is no foreign key).
+	if _, err := q.Exec(ctx, `DELETE FROM role_grants WHERE subject_kind = 'group' AND subject_id = ?`, id); err != nil {
+		return err
+	}
 	res, err := q.Exec(ctx, `DELETE FROM groups WHERE id = ?`, id)
 	return oneRow(res, err)
 }
@@ -228,6 +233,31 @@ func OwnerGroupsOf(ctx context.Context, q Q, spaceID string) (groups, people []s
 	people, err = strCol(ctx, q, `SELECT DISTINCT gm.user_id FROM space_groups sg JOIN group_members gm ON gm.group_id = sg.group_id
 		WHERE sg.space_id = ? AND sg.role = 'owner' ORDER BY gm.user_id`, spaceID)
 	return groups, people, err
+}
+
+// DemoteOwnerGroups makes every group that holds the owner role in a space an
+// editor there (a takeover or a transfer: the space has one owner's say).
+func DemoteOwnerGroups(ctx context.Context, q Q, spaceID string) error {
+	_, err := q.Exec(ctx, `UPDATE space_groups SET role = 'editor' WHERE space_id = ? AND role = 'owner'`, spaceID)
+	return err
+}
+
+// GroupSpaceRoles is the role a group holds in each of its spaces, by space id.
+func GroupSpaceRoles(ctx context.Context, q Q, groupID string) (map[string]string, error) {
+	rows, err := q.Query(ctx, `SELECT space_id, role FROM space_groups WHERE group_id = ?`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var s, r string
+		if err := rows.Scan(&s, &r); err != nil {
+			return nil, err
+		}
+		out[s] = r
+	}
+	return out, rows.Err()
 }
 
 func strCol(ctx context.Context, q Q, query string, args ...any) ([]string, error) {

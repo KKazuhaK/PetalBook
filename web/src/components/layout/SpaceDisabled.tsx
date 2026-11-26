@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import { Ban } from 'lucide-react'
 import { useActiveSpace, useSession } from '@/api/hooks'
+import { can } from '@/lib/access'
 import type { SpaceInfo } from '@/api/types'
 import { TopBar } from '@/components/layout/TopBar'
 import { adminPath, spaceUrls } from '@/lib/urls'
@@ -11,7 +12,7 @@ import { t } from '@/i18n'
 export function SpaceDisabled({ space }: { space: SpaceInfo }) {
   const session = useSession().data
   const { spaces } = useActiveSpace()
-  const admin = session?.mode === 'accounts' && session.user?.role === 'admin'
+  const admin = session?.mode === 'accounts' && can(session.user, 'tenant.spaces.manage')
   const other = spaces.find((s) => s.id !== space.id && !s.disabled)
   return (
     <>

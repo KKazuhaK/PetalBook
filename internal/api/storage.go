@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -108,7 +109,7 @@ func (s *server) adminGetStorage(c *call) {
 		// exemptions are the site's to count).
 		aff = spaces.Affected{InGrace: int(sum.Remotes.InGrace), Overdue: int(sum.Remotes.Overdue)}
 	}
-	writeJSON(c.w, http.StatusOK, storageGetResp{s.storageBody(s.spaces.Storage(), aff, c.isSiteAdmin()), sum})
+	writeJSON(c.w, http.StatusOK, storageGetResp{s.storageBody(s.spaces.Storage(), aff, c.can(authz.SiteStorageManage)), sum})
 }
 
 // section decodes one section of a PUT: an object of known keys.

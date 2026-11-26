@@ -1,6 +1,7 @@
 import { CircleHelp, GitBranch, Route, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { useSession } from '@/api/hooks'
+import { administers } from '@/lib/access'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { requestOnboarding } from '@/lib/onboarding'
@@ -31,7 +32,7 @@ export function HelpMenu() {
             {to.help.repo}
           </DropdownMenuItem>
         )}
-        {session.user.role === 'admin' && accounts && (
+        {administers(session.user) && accounts && (
           <DropdownMenuItem onClick={() => navigate(adminPath('daily'))}>
             <ShieldCheck />
             {to.help.admin}

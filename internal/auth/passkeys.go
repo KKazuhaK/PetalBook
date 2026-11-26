@@ -20,6 +20,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/store"
 )
 
@@ -376,7 +377,7 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		return nil, "", fail("disabled", u)
 	}
-	if s.ssoOnlyInEffect(st) && u.Role != "admin" {
+	if s.ssoOnlyInEffect(st) && !u.IsAdmin() {
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey", "reason": "local_login_refused"}})
 		return nil, "", errLocalRefused()
 	}
@@ -543,7 +544,7 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 			return err
 		}
 		// The rule of UpdateUser: a site administrator is changed by site administrators only.
-		if u.SiteAdmin && !(actor.User.SiteAdmin && actor.User.Role == "admin") {
+		if u.IsSiteAdmin() && !actor.Access.Can(authz.SiteAdminsManage, "") {
 			return errf(Forbidden, "Only a site administrator may change a site administrator.")
 		}
 	}

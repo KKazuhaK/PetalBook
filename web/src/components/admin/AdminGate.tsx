@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { useSession } from '@/api/hooks'
+import { administers } from '@/lib/access'
 import { PageFallback } from '@/components/common'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 
@@ -12,7 +13,7 @@ const AdminRoute = lazy(() => import('./AdminRoute'))
 // never fetches the chunk.
 export function AdminGate() {
   const session = useSession().data
-  if (session?.mode !== 'accounts' || session.user?.role !== 'admin') return <NotFoundPage />
+  if (session?.mode !== 'accounts' || !administers(session.user)) return <NotFoundPage />
   return (
     <Suspense fallback={<PageFallback />}>
       <AdminRoute />
