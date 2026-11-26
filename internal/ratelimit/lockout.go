@@ -208,7 +208,7 @@ func (t *Lockout) LockIfAtCap(key string, max int, window, lock time.Duration) b
 		if t.sk.count(key, now, window) < max {
 			return false
 		}
-		t.sk.lock(key, max, lock)
+		t.sk.lock(key, max)
 		return true
 	}
 	if e == nil || !e.until.IsZero() || e.n < max || lock <= 0 {
@@ -328,9 +328,10 @@ func (t *Lockout) countSketch(key string, now time.Time, window time.Duration, m
 	if max > 0 && res.N >= max {
 		res.AtCap = true
 		res.First = true
-		if lock > 0 {
-			sk.lock(key, max, lock)
-			res.Locked, res.LockFor, res.Wait = true, lock, lock
+		if lock > 0 { // held to the end of the next window, not the whole lock
+			sk.lock(key, max)
+			hold := min(lock, sk.held(now, window))
+			res.Locked, res.LockFor, res.Wait = true, hold, hold
 		}
 		return res
 	}

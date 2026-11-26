@@ -63,9 +63,11 @@
 // never below its failures of the last window, so it is held back at its cap
 // no later than an entry would be (a collision or the older half can only
 // hold it earlier or longer: one to two windows). A Lockout "locks" a key
-// there by topping its count up to the cap for at least the lock (the
-// sketch's windows are at least the longest lock); there is no lock state
-// that another key could share. LockedFor, Blocked, Count, Reserve and
+// there by topping its count up to the cap: it is held to the end of the next
+// window, one to two windows whatever the lock (the sketch's window is always
+// the table's, so a long lock cannot make noise last), so a key with no entry
+// can try about its cap a window, never without limit; a key with an entry
+// keeps its whole lock. There is no lock state that another key could share. LockedFor, Blocked, Count, Reserve and
 // LockIfAtCap read it for keys with no entry, and a free entry forgotten to
 // make room hands its failures to it. Nobody can aim collisions at a chosen
 // key without the seed. Without this, a table filled with locks let one known

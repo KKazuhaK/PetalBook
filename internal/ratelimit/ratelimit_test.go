@@ -553,8 +553,9 @@ func TestSustainedOneOffFailuresDoNotHoldBackNewKeys(t *testing.T) {
 }
 
 // A key with no entry is never held back later than an entry would be: its
-// failures still count after the sketch rolls to a new window, and a lock
-// longer than the window holds it for at least the lock.
+// failures still count after the sketch rolls to a new window. Its lock, of
+// three windows here, holds it to the end of the next sketch window (the
+// sketch's window is the table's, never the lock's).
 func TestASketchedKeyCountsAcrossTheRollAndKeepsItsLock(t *testing.T) {
 	c := newClock()
 	window, lock := 15*time.Minute, 45*time.Minute
@@ -565,19 +566,20 @@ func TestASketchedKeyCountsAcrossTheRollAndKeepsItsLock(t *testing.T) {
 	c.t = c.t.Add(window - time.Second)
 	f.Fail("victim", max, window, 0)
 	c.t = c.t.Add(2 * time.Second) // the sketch has rolled; the key's own window has not ended
-	if r := f.Fail("victim", max, window, lock); !r.AtCap || !r.Locked || r.Wait != lock {
-		t.Fatalf("the failures before the roll were forgotten: %+v", r)
+	r := f.Fail("victim", max, window, lock)
+	if hold := 2*window - time.Second; !r.AtCap || !r.Locked || r.Wait != hold || r.LockFor != hold {
+		t.Fatalf("the failures before the roll were forgotten, or the hold is not to the next window's end: %+v", r)
 	}
-	c.t = c.t.Add(lock - time.Second)
+	c.t = c.t.Add(r.Wait - time.Second)
 	if _, locked := f.LockedFor("victim", window); !locked {
-		t.Fatal("the lock ended before its time")
+		t.Fatal("the lock ended before the next window did")
 	}
 	if _, ok, _ := f.Reserve("victim", max, window); ok {
 		t.Fatal("a locked name may try")
 	}
-	c.t = c.t.Add(2 * lock)
+	c.t = c.t.Add(2 * time.Second)
 	if _, locked := f.LockedFor("victim", window); locked {
-		t.Fatal("the lock never ended")
+		t.Fatal("the sketch held the key longer than two windows")
 	}
 }
 
@@ -624,5 +626,39 @@ func TestRefundAfterEvictionTakesNothingFromOthers(t *testing.T) {
 	f.Refund("a") // a's attempt turned out well
 	if n := f.Count("victim", window); n < 3 {
 		t.Fatalf("a refund of a forgotten entry took the victim's failures: %d", n)
+	}
+}
+
+// The sketch's window is the table's, whatever the lock: a long lock must not
+// make the sketch keep other keys' failures (noise) for as long as the lock.
+// A key locked in the sketch is held at least to the end of the window, and
+// one to two windows in all; a key with an entry keeps its whole lock.
+func TestALongLockDoesNotStretchTheSketchWindow(t *testing.T) {
+	c := newClock()
+	window, lock := 15*time.Minute, 7*24*time.Hour
+	const max = 3
+	f := NewLockout(3, c.now)
+	fillWithLocks(f, window, lock)
+	var r Result
+	for range max {
+		r = f.Fail("victim", max, window, lock)
+	}
+	if !r.Locked || !r.AtCap {
+		t.Fatalf("the name was not locked at its cap: %+v", r)
+	}
+	f.Fail("bot", max, window, lock) // one failure of another key: noise
+	c.t = c.t.Add(window - time.Second)
+	if _, locked := f.LockedFor("victim", window); !locked {
+		t.Fatal("a key locked in the sketch was let go before the window ended")
+	}
+	c.t = c.t.Add(window + 2*time.Second)
+	if n := f.Count("bot", window); n != 0 {
+		t.Fatalf("the noise outlived two windows: %d", n)
+	}
+	if _, locked := f.LockedFor("victim", window); locked {
+		t.Fatal("the sketch held the key for the whole lock: its window was stretched")
+	}
+	if _, locked := f.LockedFor("l0", window); !locked {
+		t.Fatal("a key with an entry lost its long lock")
 	}
 }

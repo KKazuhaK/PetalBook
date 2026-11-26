@@ -22,11 +22,15 @@ import (
 // every failure of a key's own window (which started no earlier than a window
 // ago) is in its count: rolling over counts longer, never shorter.
 //
-// A sketch window is at least as long as the longest lock asked of the sketch
-// (hold), and a lock tops the key's count in the current half up to its cap:
-// the key is then refused until that half is dropped, at least a window and
-// so at least the lock later. There is no lock state of its own: a key is held
-// back only by its own count, never by a cell another key locked.
+// The sketch's window is always the table's, whatever the lock: a longer one
+// would keep other keys' failures (noise) for as long as the lock, and with a
+// lock of days a trickle of one-off failures would fill the sketch. A lock
+// tops the key's count in the current half up to its cap, so the key is refused
+// until that half is dropped: to the end of the next window, one to two
+// windows in all, however long the lock. A key with no entry can therefore try
+// about its cap a window, never without limit; a key with an entry keeps its
+// whole lock. There is no lock state of its own: a key is held back only by its
+// own count, never by a cell another key locked.
 //
 // Cells are uint16 and stop at their top (sat); a saturated cell reads as
 // above any cap.
@@ -43,13 +47,12 @@ const (
 
 type sketch struct {
 	seed   maphash.Seed
-	width  int      // cells a row, a power of two
-	cells  []uint16 // two halves of sketchRows*width cells
-	cur    int      // the current half, 0 or 1
-	used   [2]bool  // something was counted in the half since it was zeroed
-	start  time.Time
-	hold   time.Duration // the longest lock asked of the sketch
-	capMax int           // the cap of the latest lock (LockedFor reads it)
+	width  int       // cells a row, a power of two
+	cells  []uint16  // two halves of sketchRows*width cells
+	cur    int       // the current half, 0 or 1
+	used   [2]bool   // something was counted in the half since it was zeroed
+	start  time.Time // the current window began
+	capMax int       // the cap of the latest lock (LockedFor reads it)
 }
 
 func newSketch(now time.Time, width int) *sketch {
@@ -59,12 +62,10 @@ func newSketch(now time.Time, width int) *sketch {
 	return &sketch{seed: maphash.MakeSeed(), width: width, cells: make([]uint16, 2*sketchRows*width), start: now}
 }
 
-func (s *sketch) period(window time.Duration) time.Duration { return max(window, s.hold) }
-
 // at rolls the sketch forward to now: one window over drops the older half,
 // two drop both.
 func (s *sketch) at(now time.Time, window time.Duration) {
-	p := s.period(window)
+	p := window
 	switch {
 	case now.Before(s.start.Add(p)):
 	case now.Before(s.start.Add(2 * p)):
@@ -99,7 +100,13 @@ func (s *sketch) quiet(now time.Time, window time.Duration) bool {
 // wait is how long until the current window ends (at least a second): a key
 // held back now is held at least that long.
 func (s *sketch) wait(now time.Time, window time.Duration) time.Duration {
-	return fullWait(s.start.Add(s.period(window)), now)
+	return fullWait(s.start.Add(window), now)
+}
+
+// held is how long a key locked now stays held: until the current half is
+// dropped, the end of the next window.
+func (s *sketch) held(now time.Time, window time.Duration) time.Duration {
+	return fullWait(s.start.Add(2*window), now)
 }
 
 func (s *sketch) hash(key string) uint64 { return maphash.String(s.seed, key) }
@@ -181,11 +188,10 @@ func (s *sketch) minOf(h int, x uint64) uint16 {
 	return m
 }
 
-// lock holds the key back for at least lock: its count in the current half
-// is topped up to the cap, and the sketch's windows are at least lock long,
-// so the count stays at the cap until that half is dropped.
-func (s *sketch) lock(key string, capMax int, lock time.Duration) {
-	s.hold, s.capMax = max(s.hold, lock), capMax
+// lock holds the key back until the current half is dropped (see held): its
+// count there is topped up to the cap.
+func (s *sketch) lock(key string, capMax int) {
+	s.capMax = capMax
 	x := s.hash(key)
 	s.addTo(x, capMax-int(s.minOf(s.cur, x)))
 }
