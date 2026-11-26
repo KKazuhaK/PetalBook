@@ -116,6 +116,11 @@ func badRequest(status int, code, desc string) *Problem {
 // consent goes back to the client's redirect_uri: the only redirect with an
 // error is access_denied, after the person refused (Decide).
 func (s *Service) Begin(r *http.Request, userID string) (string, *Problem) {
+	if on, err := s.onForUser(r.Context(), userID); err != nil {
+		return "", badRequest(http.StatusInternalServerError, "server_error", "could not read the machine access setting")
+	} else if !on {
+		return "", badRequest(http.StatusForbidden, "access_denied", "MCP is switched off for your organization")
+	}
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	if clientID == "" {

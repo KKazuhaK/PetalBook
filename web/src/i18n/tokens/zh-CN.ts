@@ -53,7 +53,7 @@ export const tokensZhCN = {
     title: '机器访问',
     switchTitle: 'API 令牌',
     switchHelp:
-      '关掉后，所有 API 令牌都会被拒绝（403 tokens_off），但不会被删除；再打开就恢复。已连接的应用（OAuth）仍能用 MCP，要停掉它们请关闭 MCP。',
+      '关掉后，API 令牌会被拒绝（403 tokens_off），但不会被删除；再打开就恢复。规则决定各组织能否自己改：锁定会把这个值强制用于所有组织，在这里关掉时默认选锁定；选允许则只作为默认值。已连接的应用（OAuth）仍能用 MCP，要停掉它们请关闭 MCP。',
     switchLabel: '允许使用 API 令牌',
     switchFailed: '没能改这个开关',
     loadFailed: '读不出机器访问的设置',

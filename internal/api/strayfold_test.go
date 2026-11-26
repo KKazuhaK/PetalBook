@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"petalbook.app/server/internal/store"
@@ -230,6 +231,56 @@ func TestSecretsAreWriteOnlyAndScoped(t *testing.T) {
 		var n int
 		if err := a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM secrets WHERE value LIKE '%a-very-secret%'`).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("a secret is in the table in the clear: %d %v", n, err)
+		}
+	})
+}
+
+// The generic secrets endpoint is held to what the captcha form is: the secret
+// of a third-party captcha in use cannot go, or nobody could sign in.
+func TestTheCaptchaSecretStaysWhileTheCaptchaIsOn(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		on := map[string]any{"login": map[string]any{"on": true, "when": "always"}}
+		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "turnstile", "siteKey": "1x00", "secret": "s3cret-value", "contexts": on}})
+		admin.do("DELETE", "/api/admin/secrets/captcha.secret", nil).want(t, 400, "captcha_secret_required")
+		admin.do("PUT", "/api/admin/secrets/captcha.secret", map[string]any{"value": ""}).want(t, 400, "invalid")
+		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["captcha"].(map[string]any)["hasSecret"] != true {
+			t.Fatal("the secret went")
+		}
+		// Replacing it is fine; with the captcha off, so is clearing it.
+		admin.do("PUT", "/api/admin/secrets/captcha.secret", map[string]any{"value": "another"}).want(t, 200, "")
+		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": false}}}})
+		admin.do("DELETE", "/api/admin/secrets/captcha.secret", nil).want(t, 200, "")
+		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["captcha"].(map[string]any)["hasSecret"] != false {
+			t.Fatal(g.raw)
+		}
+	})
+}
+
+// A captcha switched on and its secret cleared at the same moment: each alone
+// is fine, both would keep everybody out. The sign-in policy's writes take
+// one lock, so one of them sees the other.
+func TestTheCaptchaAndItsSecretAreNotChangedAtOnce(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "turnstile", "siteKey": "1x00", "secret": "s3cret-value"}})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			admin.doRaw("PUT", "/api/admin/settings/captcha.contexts", map[string]any{"value": map[string]any{"login": map[string]any{"on": true, "when": "always"}}})
+		}()
+		go func() {
+			defer wg.Done()
+			admin.doRaw("DELETE", "/api/admin/secrets/captcha.secret", nil)
+		}()
+		wg.Wait()
+		g := admin.do("GET", "/api/admin/security", nil).want(t, 200, "").body["captcha"].(map[string]any)
+		login := g["contexts"].(map[string]any)["login"].(map[string]any)
+		if login["on"] == true && g["hasSecret"] != true {
+			t.Fatalf("a captcha is on without its secret: %v", g)
 		}
 	})
 }

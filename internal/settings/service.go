@@ -1,13 +1,17 @@
 package settings
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"petalbook.app/server/internal/store"
 )
@@ -34,6 +38,11 @@ type SiteBinding struct {
 	// ReadOnly, when it returns true, makes the site value one a flag set: it
 	// cannot be written (409 conflict).
 	ReadOnly func() bool
+	// Lock, when set, is held across a site write's Check, the write and the
+	// drop of the cache. Settings whose checks look at each other share one, so
+	// that two writes, each fine alone, cannot both pass checks the other
+	// would fail (the sign-in policy's lockout checks).
+	Lock *sync.Mutex
 }
 
 // Service reads and writes the layered settings.
@@ -602,6 +611,10 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 	if !ok {
 		return 0, &Error{Code: CodeNotFound, Msg: "no such setting"}
 	}
+	if b, _ := s.binding(key); b.Lock != nil {
+		b.Lock.Lock()
+		defer b.Lock.Unlock()
+	}
 	var val any
 	if ch.HasValue {
 		b, bound := s.binding(key)
@@ -621,81 +634,178 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		lower = &l
 	}
 	err = s.write(ctx, func(q store.Q) error {
-		row, err := store.GetLayered(ctx, q, string(Site), "", key, store.SourceManual)
-		if errors.Is(err, store.ErrNotFound) {
-			row, err = &store.LayeredRow{Layer: string(Site), Key: key}, nil
-		}
-		if err != nil {
-			return err
-		}
-		// The value is held to the site's own restriction as it will be.
-		if ch.HasValue {
-			l := d.Lower
-			switch {
-			case ch.HasLower && lower != nil:
-				l = *lower
-			case !ch.HasLower && row.Lower != "":
-				// Into a value of its own, as in siteView: d.Lower's Max is shared.
-				var rl Lower
-				if err := json.Unmarshal([]byte(row.Lower), &rl); err != nil {
-					return err
-				}
-				l = rl
-			}
-			// null is no limit where a limit may be none, else the default.
-			cmp := val
-			if cmp == nil && !d.Nullable {
-				cmp = d.Default
-			}
-			if err := aboveMax(d, l, cmp); err != nil {
-				return err
-			}
-		}
-		var before any
-		if ch.HasValue {
-			b, bound := s.binding(key)
-			if bound && b.After != nil {
-				v, err := s.siteView(ctx, q, d, row)
-				if err != nil {
-					return err
-				}
-				before = v.Value
-			}
-			if bound && b.Set != nil {
-				if err := b.Set(ctx, q, val); err != nil {
-					return err
-				}
-			} else {
-				raw, err := json.Marshal(val)
-				if err != nil {
-					return err
-				}
-				row.Value = string(raw)
-			}
-		}
-		if ch.HasLower {
-			row.Lower = ""
-			if lower != nil {
-				raw, _ := json.Marshal(lower)
-				row.Lower = string(raw)
-			}
-		}
-		row.Updated, row.SetBy = s.now(), ch.By
-		if err := store.PutLayered(ctx, q, *row); err != nil {
-			return err
-		}
-		if b, _ := s.binding(key); ch.HasValue && b.After != nil {
-			if err := b.After(ctx, q, before, val); err != nil {
-				return err
-			}
-		}
-		if ch.HasLower {
+		_, err := s.putSite(ctx, q, d, ch, val, lower, false)
+		if err == nil && ch.HasLower {
 			affected, err = s.affected(ctx, q, d, lower)
 		}
 		return err
 	})
 	s.Invalidate()
 	return affected, err
+}
+
+// putSite writes the site's row of a setting in the transaction q: the value
+// (already checked) when ch.HasValue, through the binding's Set and After when
+// it has them, and the rule when ch.HasLower. before is the value in effect
+// before, read when wantBefore or when the binding follows changes (After).
+func (s *Service) putSite(ctx context.Context, q store.Q, d *Def, ch Change, val any, lower *Lower, wantBefore bool) (before any, err error) {
+	key := d.Key
+	row, err := store.GetLayered(ctx, q, string(Site), "", key, store.SourceManual)
+	if errors.Is(err, store.ErrNotFound) {
+		row, err = &store.LayeredRow{Layer: string(Site), Key: key}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b, bound := s.binding(key)
+	// The value is held to the site's own restriction as it will be.
+	if ch.HasValue {
+		l := d.Lower
+		switch {
+		case ch.HasLower && lower != nil:
+			l = *lower
+		case !ch.HasLower && row.Lower != "":
+			// Into a value of its own, as in siteView: d.Lower's Max is shared.
+			var rl Lower
+			if err := json.Unmarshal([]byte(row.Lower), &rl); err != nil {
+				return nil, err
+			}
+			l = rl
+		}
+		// null is no limit where a limit may be none, else the default.
+		cmp := val
+		if cmp == nil && !d.Nullable {
+			cmp = d.Default
+		}
+		if err := aboveMax(d, l, cmp); err != nil {
+			return nil, err
+		}
+		if wantBefore || bound && b.After != nil {
+			v, err := s.siteView(ctx, q, d, row)
+			if err != nil {
+				return nil, err
+			}
+			before = v.Value
+		}
+		if bound && b.Set != nil {
+			if err := b.Set(ctx, q, val); err != nil {
+				return nil, err
+			}
+		} else {
+			raw, err := json.Marshal(val)
+			if err != nil {
+				return nil, err
+			}
+			row.Value = string(raw)
+		}
+	}
+	if ch.HasLower {
+		row.Lower = ""
+		if lower != nil {
+			raw, _ := json.Marshal(lower)
+			row.Lower = string(raw)
+		}
+	}
+	row.Updated, row.SetBy = s.now(), ch.By
+	if err := store.PutLayered(ctx, q, *row); err != nil {
+		return nil, err
+	}
+	if ch.HasValue && bound && b.After != nil {
+		if err := b.After(ctx, q, before, val); err != nil {
+			return nil, err
+		}
+	}
+	return before, nil
+}
+
+// KeyValue is a site value ForceSite writes.
+type KeyValue struct {
+	Key   string
+	Value any
+}
+
+// Changed is a site value ForceSite changed: what it was and what it is.
+type Changed struct {
+	Key      string
+	From, To any
+}
+
+// ForceSite writes site values in one transaction, all or none, counted in
+// settings_rev so that a running server sees them: the rescue of a sign-in
+// policy that keeps everyone out ("petalbook security reset"). The values are
+// held to their shape, but not to the bindings' checks, which look at other
+// values to refuse a change that would lock people out; so it is only for
+// values that let people in. The bindings' Set and After run as in SetSite,
+// and their locks are held. It answers the values that changed.
+func (s *Service) ForceSite(ctx context.Context, by string, vals []KeyValue) ([]Changed, error) {
+	type item struct {
+		d   *Def
+		val any
+	}
+	items := make([]item, 0, len(vals))
+	var locks []*sync.Mutex
+	for _, kv := range vals {
+		d, ok := s.byK[kv.Key]
+		if !ok {
+			return nil, &Error{Code: CodeNotFound, Msg: "no such setting"}
+		}
+		b, bound := s.binding(kv.Key)
+		if bound && b.ReadOnly != nil && b.ReadOnly() {
+			return nil, &Error{Code: CodeConflict, Msg: kv.Key + " is set by a command-line flag; change the flag"}
+		}
+		val := kv.Value
+		if d.Kind != Doc {
+			var err error
+			if val, err = d.Value(val); err != nil {
+				return nil, err
+			}
+		}
+		items = append(items, item{d, val})
+		if b.Lock != nil && !slices.Contains(locks, b.Lock) {
+			locks = append(locks, b.Lock)
+		}
+	}
+	// Always in one order, so that two of these cannot wait on each other.
+	slices.SortFunc(locks, func(a, b *sync.Mutex) int {
+		return cmp.Compare(uintptr(unsafe.Pointer(a)), uintptr(unsafe.Pointer(b)))
+	})
+	for _, l := range locks {
+		l.Lock()
+		defer l.Unlock()
+	}
+	var changed []Changed
+	err := s.write(ctx, func(q store.Q) error {
+		changed = changed[:0]
+		for _, it := range items {
+			before, err := s.putSite(ctx, q, it.d, Change{HasValue: true, Value: it.val, By: by}, it.val, nil, true)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(normal(before), normal(it.val)) {
+				changed = append(changed, Changed{Key: it.d.Key, From: before, To: it.val})
+			}
+		}
+		return nil
+	})
+	s.Invalidate()
+	if err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
+// normal is a value as JSON has it, so that values of one meaning compare equal
+// whatever Go type holds them.
+func normal(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if json.Unmarshal(raw, &out) != nil {
+		return v
+	}
+	return out
 }
 
 // affected counts the tenants whose own value the site's new rule forbids, or

@@ -56,7 +56,7 @@ export const tokensEn: TokensMessages = {
     title: 'Machine access',
     switchTitle: 'API tokens',
     switchHelp:
-      'Off, every API token is refused (403 tokens_off) but none is deleted; on again, they work again. Connected apps (OAuth) keep working on MCP until MCP is switched off.',
+      'Off, API tokens are refused (403 tokens_off) but none is deleted; on again, they work again. The rule says whether each organization may change it: Lock forces the value on all of them, and is what switching it off here proposes; Allow makes it only the default. Connected apps (OAuth) keep working on MCP until MCP is switched off.',
     switchLabel: 'Accept API tokens',
     switchFailed: 'Could not change the switch',
     loadFailed: 'Could not load the machine access settings',

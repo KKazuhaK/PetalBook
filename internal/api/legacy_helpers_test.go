@@ -147,15 +147,20 @@ func (c *client) legacyAccess(method string, body any) result {
 		if !ok {
 			return lgBad
 		}
-		var steps [][2]any
-		if v, ok := req["tokens"]; ok {
-			steps = append(steps, [2]any{"features.tokens", v})
-		}
-		if v, ok := req["mcp"]; ok {
-			steps = append(steps, [2]any{"features.mcp", v})
-		}
-		if r, ok := c.putKeys(steps); !ok {
-			return r
+		// The old switch was for everybody: off is forced off (a lock), as the
+		// Access panel does; on is the default, which tenants may change.
+		for _, k := range []string{"tokens", "mcp"} {
+			v, ok := req[k]
+			if !ok {
+				continue
+			}
+			body := map[string]any{"value": v, "lower": nil}
+			if v == false {
+				body["lower"] = map[string]any{"mode": "lock"}
+			}
+			if r := c.doRaw("PUT", "/api/admin/settings/features."+k, body); r.code != http.StatusOK {
+				return r
+			}
 		}
 	}
 	s, refused := c.trySettings()

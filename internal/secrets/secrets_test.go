@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -119,7 +120,7 @@ func TestWhoMayHoldWhichSecret(t *testing.T) {
 				t.Errorf("%q in %q: %v", c.name, c.tenant, err)
 			}
 		}
-		if err := set(t, s, st, "", secrets.MailPassword, "   "); err == nil {
+		if err := set(t, s, st, "", secrets.MailPassword, ""); err == nil {
 			t.Error("an empty secret was stored")
 		}
 		if err := set(t, s, st, "", secrets.MailPassword, strings.Repeat("k", secrets.MaxBytes+1)); err == nil {
@@ -131,4 +132,48 @@ func TestWhoMayHoldWhichSecret(t *testing.T) {
 			t.Fatalf("%+v %v", l, err)
 		}
 	})
+}
+
+// A secret is stored as given: spaces at either end may be part of it. Only
+// an empty value is refused.
+func TestASecretKeepsItsSpaces(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setup(t, st)
+		if err := set(t, s, st, "", secrets.MailPassword, "  pass word \t"); err != nil {
+			t.Fatal(err)
+		}
+		if v, ok, err := s.Open(ctx, st.Q(), "", secrets.MailPassword); err != nil || !ok || v != "  pass word \t" {
+			t.Fatalf("%q %v %v", v, ok, err)
+		}
+		if err := set(t, s, st, "", secrets.MailPassword, "   "); err != nil {
+			t.Fatalf("a value of spaces is a value: %v", err)
+		}
+		var se *secrets.Error
+		if err := set(t, s, st, "", secrets.MailPassword, ""); !errors.As(err, &se) || se.Code != "invalid" {
+			t.Fatal(err)
+		}
+	})
+}
+
+// The key of the first that gives one is kept, whoever asks at the same time.
+func TestOfKeepsTheFirstKeyUnderConcurrentCallers(t *testing.T) {
+	t.Parallel()
+	st := storetest.Open(t, "sqlite")
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			secrets.Of(st, secret.NewBoxWithKey([32]byte{byte(i + 1)}))
+		}()
+	}
+	wg.Wait()
+	s := secrets.Of(st, nil)
+	if err := st.Tx(ctx, func(q store.Q) error { return s.Set(ctx, q, "", secrets.MailPassword, "x", "U1") }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := secrets.Of(st, secret.NewBoxWithKey([32]byte{9})).Open(ctx, st.Q(), "", secrets.MailPassword); err != nil || !ok {
+		t.Fatalf("a later key replaced the first: %v", err)
+	}
 }

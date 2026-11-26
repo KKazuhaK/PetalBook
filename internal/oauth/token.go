@@ -50,7 +50,8 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ownerUsable says the person a grant acts for may still use the server.
+// ownerUsable says the person a grant acts for may still use the server, and
+// MCP with it.
 func (s *Service) ownerUsable(ctx context.Context, userID string) (bool, error) {
 	u, err := s.cfg.Users.CachedUser(ctx, userID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -59,7 +60,11 @@ func (s *Service) ownerUsable(ctx context.Context, userID string) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	return !u.Disabled && !s.cfg.Store.TenantDisabled(u.TenantID), nil
+	if u.Disabled || s.cfg.Store.TenantDisabled(u.TenantID) {
+		return false, nil
+	}
+	// Nor a person whose tenant has MCP off.
+	return s.OnFor(ctx, u.TenantID)
 }
 
 func (s *Service) exchangeCode(w http.ResponseWriter, r *http.Request) {

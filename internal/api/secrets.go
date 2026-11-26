@@ -79,7 +79,10 @@ func (s *server) managed(c *call, name string) bool {
 	return false
 }
 
-// putSecret stores the value of the body, replacing the secret.
+// putSecret stores the value of the body, replacing the secret. An empty value
+// is refused (clearing is DELETE, which is held to what needs the secret); the
+// GitHub App's secrets, whose absence would break the App, are managed
+// elsewhere; the mail password may go, since a mail server may need none.
 func (s *server) putSecret(c *call, tenant, name string) {
 	if s.managed(c, name) {
 		return
@@ -111,7 +114,13 @@ func (s *server) deleteSecret(c *call, tenant, name string) {
 		return
 	}
 	ctx := c.r.Context()
-	err := s.opt.Store.Tx(ctx, func(q store.Q) error { return s.vault.Clear(ctx, q, tenant, name) })
+	var err error
+	if tenant == "" && name == secrets.CaptchaSecret && s.auth != nil {
+		// Not while a third-party captcha needs it: nobody could sign in.
+		err = s.auth.ClearCaptchaSecret(ctx)
+	} else {
+		err = s.opt.Store.Tx(ctx, func(q store.Q) error { return s.vault.Clear(ctx, q, tenant, name) })
+	}
 	if err != nil {
 		s.failSecret(c, err)
 		return

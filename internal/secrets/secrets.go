@@ -12,7 +12,7 @@ package secrets
 import (
 	"context"
 	"errors"
-	"strings"
+	"sync/atomic"
 	"time"
 
 	"petalbook.app/server/internal/secret"
@@ -73,16 +73,16 @@ func (e *Error) Error() string { return e.Msg }
 // Service reads and writes the secrets of one store.
 type Service struct {
 	st  *store.Store
-	box *secret.Box
+	box atomic.Pointer[secret.Box]
 	now func() time.Time
 }
 
 // Of returns the secrets of a store: one for all who ask, made with the box of
-// the first that gives one.
+// the first that gives one (callers may ask at the same time).
 func Of(st *store.Store, box *secret.Box) *Service {
-	s := st.Shared("secrets", func() any { return &Service{st: st, box: box, now: time.Now} }).(*Service)
-	if s.box == nil && box != nil {
-		s.box = box
+	s := st.Shared("secrets", func() any { return &Service{st: st, now: time.Now} }).(*Service)
+	if box != nil {
+		s.box.CompareAndSwap(nil, box)
 	}
 	return s
 }
@@ -116,17 +116,18 @@ func (s *Service) Set(ctx context.Context, q store.Q, tenant, name, value, by st
 	if err := check(tenant, name); err != nil {
 		return err
 	}
-	value = strings.TrimSpace(value)
+	// Stored as given: spaces at either end may be part of a secret.
 	if value == "" {
 		return &Error{"invalid", "A secret is not empty; clear it instead."}
 	}
 	if len(value) > MaxBytes {
 		return &Error{"invalid", "A secret is at most 16 KiB."}
 	}
-	if s.box == nil {
+	box := s.box.Load()
+	if box == nil {
 		return errors.New("secrets: no key to seal with")
 	}
-	sealed, err := s.box.Seal(scopeKey(tenant), name, []byte(value))
+	sealed, err := box.Seal(scopeKey(tenant), name, []byte(value))
 	if err != nil {
 		return err
 	}
@@ -151,10 +152,11 @@ func (s *Service) Open(ctx context.Context, q store.Q, tenant, name string) (val
 	if err != nil {
 		return "", false, err
 	}
-	if s.box == nil {
+	box := s.box.Load()
+	if box == nil {
 		return "", false, errors.New("secrets: no key to open with")
 	}
-	b, err := s.box.Open(scopeKey(tenant), name, r.Sealed)
+	b, err := box.Open(scopeKey(tenant), name, r.Sealed)
 	if err != nil {
 		return "", false, err
 	}

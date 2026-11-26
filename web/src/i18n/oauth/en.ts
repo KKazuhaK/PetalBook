@@ -58,7 +58,7 @@ export const oauthEn: OAuthMessages = {
   admin: {
     mcpTitle: 'MCP and OAuth',
     mcpHelp:
-      'Off, /mcp and the whole authorization server (discovery, authorization, tokens, registration) answer 404; grants are kept and can still be listed and disconnected, and come back when it is on.',
+      'Off and locked for every organization (what switching it off here proposes), /mcp and the whole authorization server (discovery, authorization, tokens, registration) answer 404; off but allowed, it is off by default and an organization may switch it on for its people. Grants are kept and can still be listed and disconnected, and come back when it is on.',
     mcpLabel: 'Serve MCP and OAuth',
     switchFailed: 'Could not change the switch',
     all: 'Everyone’s connected apps',

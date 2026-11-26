@@ -1105,3 +1105,43 @@ func TestOAuthEndpointsAnswerInTheOAuthShape(t *testing.T) {
 		}
 	})
 }
+
+// The authorization server follows the features.mcp of the person it acts for
+// (their tenant's), as /mcp does: at the authorization, the code's exchange and
+// each refresh.
+func TestOAuthFollowsTheTenantsMCP(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, oa(), func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		gA := grant(t, a, f.memA, "read", f.spaceA)
+		gB := grant(t, a, f.memB, "read", f.spaceB)
+		// The site's on, tenant B's off: B's people are refused, A's are not.
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.mcp", map[string]any{"value": false}).want(t, 200, "")
+		_, ch := pkcePair("b")
+		if r := f.memB.do("GET", "/oauth/authorize?"+params(gB.cid, ch).query(), nil); r.code != 403 {
+			t.Fatalf("an authorization for a tenant without MCP: %d %s", r.code, r.raw)
+		}
+		refreshWith(t, a, gB.cid, gB.refresh).want(t, 400, "invalid_grant")
+		r := refreshWith(t, a, gA.cid, gA.refresh).want(t, 200, "")
+		gA.refresh = r.body["refresh_token"].(string)
+		// A code approved before the switch is not exchanged after it.
+		v, ch := pkcePair("c")
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.mcp", map[string]any{"value": nil}).want(t, 200, "")
+		code := approve(t, f.memB, params(gB.cid, ch), "read", f.spaceB)
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.mcp", map[string]any{"value": false}).want(t, 200, "")
+		exchange(t, a, gB.cid, code, v).want(t, 400, "invalid_grant")
+
+		// The site's off but not forced, tenant B's on: the server answers, for B only.
+		f.root.do("PUT", "/api/admin/settings/features.mcp", map[string]any{"value": false}).want(t, 200, "")
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/features.mcp", map[string]any{"value": true}).want(t, 200, "")
+		a.newClient("").do("GET", "/.well-known/oauth-authorization-server", nil).want(t, 200, "")
+		grant(t, a, f.memB, "read", f.spaceB)
+		refreshWith(t, a, gA.cid, gA.refresh).want(t, 400, "invalid_grant")
+		if r := f.memA.do("GET", "/oauth/authorize?"+params(gA.cid, ch).query(), nil); r.code != 403 {
+			t.Fatalf("an authorization for a tenant without MCP: %d %s", r.code, r.raw)
+		}
+		// Forced off for everybody: nothing of it is there.
+		f.root.do("PUT", "/api/admin/settings/features.mcp", map[string]any{"value": false, "lower": map[string]any{"mode": "lock"}}).want(t, 200, "")
+		a.newClient("").do("GET", "/.well-known/oauth-authorization-server", nil).want(t, 404, "not_found")
+	})
+}

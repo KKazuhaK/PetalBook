@@ -236,14 +236,47 @@ function Cell({ label, children }: { label: string; children?: ReactNode }) {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
-// One setting at the site layer: its value and the rule for everything below.
-function SiteRow({ s }: { s: SiteSetting }) {
+// One setting at the site layer: its value and the rule for everything below. Another page may show one with its own
+// words (title, help, the label of the value); with lockWhenOff, switching a feature off makes the rule a lock (off for
+// every organization) until the administrator picks another rule.
+export function SiteRow({
+  s,
+  title,
+  help,
+  label,
+  lockWhenOff = false,
+}: {
+  s: SiteSetting
+  title?: string
+  help?: string
+  label?: string
+  lockWhenOff?: boolean
+}) {
   const put = usePutSetting()
   const [value, setValue] = useState<unknown>(s.site.value)
   const [lower, setLower] = useState<SettingLower>(s.site.lower)
+  // autoLock: the lock is the one switching off proposed; ruleChosen: the administrator picked the rule themselves.
+  const [autoLock, setAutoLock] = useState(false)
+  const [ruleChosen, setRuleChosen] = useState(false)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
   const id = useId()
-  const name = nameOf(s.key)
+  const name = title ?? nameOf(s.key)
+  const changeValue = (v: unknown) => {
+    setValue(v)
+    if (!lockWhenOff || s.kind !== 'boolean' || ruleChosen) return
+    if (v === false && lower.mode === 'allow') {
+      setLower({ mode: 'lock' })
+      setAutoLock(true)
+    } else if (v === true && autoLock) {
+      setLower(s.site.lower)
+      setAutoLock(false)
+    }
+  }
+  const changeLower = (l: SettingLower) => {
+    setLower(l)
+    setAutoLock(false)
+    setRuleChosen(true)
+  }
   const doc = s.kind === 'doc'
   const dirtyValue = !doc && !s.site.fromFlag && !same(value, s.site.value)
   const dirtyLower = !same(lower, s.site.lower)
@@ -266,7 +299,7 @@ function SiteRow({ s }: { s: SiteSetting }) {
           </span>
           {s.site.fromFlag && <Badge variant="secondary">{ts.fromFlag}</Badge>}
         </div>
-        {ts.helps[s.key] && <p className="text-xs text-muted-foreground">{ts.helps[s.key]}</p>}
+        {(help ?? ts.helps[s.key]) && <p className="text-xs text-muted-foreground">{help ?? ts.helps[s.key]}</p>}
         <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
       </div>
       <div className={CONTROLS}>
@@ -276,10 +309,10 @@ function SiteRow({ s }: { s: SiteSetting }) {
               kind={s.kind}
               value={value}
               disabled={!!s.site.fromFlag || put.isPending}
-              label={name}
+              label={label ?? name}
               choices={s.choices}
               words={ts.choices[s.key]}
-              onChange={setValue}
+              onChange={changeValue}
             />
           )}
         </Cell>
@@ -291,7 +324,7 @@ function SiteRow({ s }: { s: SiteSetting }) {
             label={`${name}: ${ts.rule}`}
             choices={s.choices}
             words={ts.choices[s.key]}
-            onChange={setLower}
+            onChange={changeLower}
           />
         </Cell>
         <Cell label="">

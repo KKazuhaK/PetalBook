@@ -419,6 +419,21 @@ func (s *Service) MCPOn(ctx context.Context, tenant string) (bool, error) {
 	return s.featureOn(ctx, tenant, settings.FeatureMCP)
 }
 
+// MCPAnywhere says whether MCP can be on for anybody: the site's features.mcp
+// is on, or off without being forced, so that a tenant may switch it on for
+// itself. While it is false the authorization server is not there at all.
+func (s *Service) MCPAnywhere(ctx context.Context) (bool, error) {
+	if s.set == nil {
+		return true, nil
+	}
+	e, err := s.set.Get(ctx, "", settings.FeatureMCP)
+	if err != nil {
+		return false, err
+	}
+	on, _ := e.Value.(bool)
+	return on || e.Site.Lower.Mode == settings.Allow, nil
+}
+
 func (s *Service) featureOn(ctx context.Context, tenant, key string) (bool, error) {
 	if s.set == nil {
 		return true, nil

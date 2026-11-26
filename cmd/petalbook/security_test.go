@@ -1,10 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/settings"
+	"petalbook.app/server/internal/space"
+	"petalbook.app/server/internal/spaces"
+	"petalbook.app/server/internal/store"
 )
 
 func TestSecurityResetBringsPasswordSignInBack(t *testing.T) {
@@ -79,4 +87,104 @@ func TestSecurityResetBringsPasswordSignInBack(t *testing.T) {
 	if !found {
 		t.Fatalf("the reset is not in the audit log: %v", audit)
 	}
+}
+
+// lockWithTurnstile sets a policy that keeps everyone out, with a third-party
+// captcha, as an administrator of a server with a public URL would: through a
+// state handle of its own, as another process.
+func lockWithTurnstile(t *testing.T, data string) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(data, "petalbook.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	mgr, err := spaces.NewAccounts(spaces.Options{Store: st, DataDir: data, Committer: space.DefaultCommitter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	svc, err := auth.New(ctx, auth.Config{Store: st, Spaces: mgr, Password: passwordParams, PublicURL: "https://notes.example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := settings.Of(st)
+	put := func(key string, v any) {
+		t.Helper()
+		if _, err := set.SetSite(ctx, key, settings.Change{HasValue: true, Value: v, By: "admin"}); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+	}
+	put(settings.CaptchaProvider, "turnstile")
+	siteKey, secret := "1x00", "s3cret"
+	if err := svc.UpdateCaptchaKeys(ctx, "admin", "", &siteKey, &secret); err != nil {
+		t.Fatal(err)
+	}
+	put(settings.CaptchaContexts, map[string]any{"login": map[string]any{"on": true, "when": "always"}})
+	put(settings.SigninMode, "local_only")
+	put(settings.SigninLockoutEnabled, true)
+	put(settings.SigninPasskeyRoles, []string{"member"})
+}
+
+// checkReset reads the state as a fresh process would: every key the reset
+// names is reset, the captcha's provider is kept, and each change is audited.
+func checkReset(t *testing.T, data string) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(data, "petalbook.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m, _, err := settings.New(st).Site(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, _ := m[settings.CaptchaContexts].Value.(map[string]any)["login"].(map[string]any)
+	if m[settings.SigninMode].Value != "dual" || m[settings.SigninSSOOnly].Value != false || m[settings.SigninLockoutEnabled].Value != false ||
+		login["on"] != false || len(m[settings.SigninPasskeyRoles].Value.([]string)) != 0 || m[settings.CaptchaProvider].Value != "turnstile" {
+		t.Fatalf("not reset: mode %v ssoOnly %v lockout %v login %v roles %v provider %v", m[settings.SigninMode].Value, m[settings.SigninSSOOnly].Value,
+			m[settings.SigninLockoutEnabled].Value, login, m[settings.SigninPasskeyRoles].Value, m[settings.CaptchaProvider].Value)
+	}
+	rows, err := store.ListAudit(ctx, st.Q(), store.AllTenants(), false, "setting_changed", "", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audited := map[string]bool{}
+	for _, r := range rows {
+		var d map[string]any
+		json.Unmarshal([]byte(r.Detail), &d)
+		if d["by"] == "cli" && r.Actor == "" {
+			k, _ := d["key"].(string)
+			audited[k] = true
+		}
+	}
+	for _, k := range []string{settings.SigninMode, settings.SigninLockoutEnabled, settings.CaptchaContexts, settings.SigninPasskeyRoles} {
+		if !audited[k] {
+			t.Errorf("the reset of %s is not in the audit log: %v", k, audited)
+		}
+	}
+}
+
+// The reset is the rescue: it works with a third-party captcha on, which the
+// command line (no --public-url) could not set, with the server stopped and
+// with it running.
+func TestSecurityResetWithAThirdPartyCaptcha(t *testing.T) {
+	needGit(t)
+	data := filepath.Join(tempDir(t), "data")
+	if _, err := runIn(t, "first password here\n", "user", "add", "--data", data, "--username", "kazuha", "--admin"); err != nil {
+		t.Fatal(err)
+	}
+	lockWithTurnstile(t, data)
+	if out, err := runIn(t, "", "security", "reset", "--data", data); err != nil {
+		t.Fatalf("server stopped: %q %v", out, err)
+	}
+	checkReset(t, data)
+	start(t, serveConfig{data: data, commitIdle: time.Hour, commitMax: time.Hour})
+	lockWithTurnstile(t, data)
+	if out, err := runIn(t, "", "security", "reset", "--data", data); err != nil {
+		t.Fatalf("server running: %q %v", out, err)
+	}
+	checkReset(t, data)
 }

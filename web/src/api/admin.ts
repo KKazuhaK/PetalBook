@@ -1067,21 +1067,6 @@ export function useMachineAccess(enabled = true) {
   })
 }
 
-export function useSetMachineAccess() {
-  const write = useWriteSettings()
-  return {
-    ...write,
-    mutate: (input: { tokens?: boolean; mcp?: boolean }, o?: Parameters<typeof write.mutate>[1]) =>
-      write.mutate(
-        [
-          ...(input.tokens === undefined ? [] : [{ key: K.tokens, value: input.tokens }]),
-          ...(input.mcp === undefined ? [] : [{ key: K.mcp, value: input.mcp }]),
-        ],
-        o,
-      ),
-  }
-}
-
 export const ADMIN_TOKENS_PAGE = 50
 
 // Every person's tokens, a cursor page at a time.

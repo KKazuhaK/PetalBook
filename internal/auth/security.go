@@ -308,7 +308,13 @@ func (s *Service) bindSettings() {
 	days := func(d time.Duration) int64 { return max(1, int64(d/(24*time.Hour))) }
 	set.SetDefault(settings.SessionsIdleDays, days(s.cfg.SessionIdle))
 	set.SetDefault(settings.SessionsMaxDays, max(days(s.cfg.SessionMax), days(s.cfg.SessionIdle)))
-	bind := set.Bind
+	// One lock for the writes of the sign-in policy (and the captcha's keys,
+	// UpdateCaptchaKeys): its checks look at each other's values, and two
+	// writes at once could each pass a check the other then breaks.
+	bind := func(key string, b settings.SiteBinding) {
+		b.Lock = &s.keysMu
+		set.Bind(key, b)
+	}
 	bind(settings.SigninMode, settings.SiteBinding{Check: func(ctx context.Context, _ string, v any) (any, error) {
 		// Leaving local_only while ssoOnly is on needs a way out.
 		if st := s.sec(ctx); st.Login.SSOOnly && st.Login.Mode == ModeLocalOnly && v != ModeLocalOnly {
@@ -483,7 +489,7 @@ func (s *Service) UpdateCaptchaKeys(ctx context.Context, actorID, ip string, sit
 		if len(*secret) > 2048 {
 			return errf(Invalid, "captcha.secret is at most 2048 bytes.")
 		}
-		hasSecret = strings.TrimSpace(*secret) != ""
+		hasSecret = *secret != "" // stored as given, spaces and all
 	}
 	if anyOn(st.Captcha.Contexts) {
 		if err := s.needCaptchaKeys(key, hasSecret); err != nil {
@@ -498,7 +504,7 @@ func (s *Service) UpdateCaptchaKeys(ctx context.Context, actorID, ip string, sit
 			}
 		}
 		if secret != nil {
-			if strings.TrimSpace(*secret) == "" {
+			if *secret == "" {
 				return s.vault.Clear(ctx, q, "", secrets.CaptchaSecret)
 			}
 			return s.vault.Set(ctx, q, "", secrets.CaptchaSecret, *secret, actorID)
@@ -520,35 +526,56 @@ func (s *Service) UpdateCaptchaKeys(ctx context.Context, actorID, ip string, sit
 	return nil
 }
 
+// ClearCaptchaSecret removes the captcha's secret, as DELETE
+// /api/admin/secrets/captcha.secret asks: refused, as the captcha form refuses
+// it, while a third-party captcha is on somewhere, since nobody could pass it.
+func (s *Service) ClearCaptchaSecret(ctx context.Context) error {
+	s.keysMu.Lock()
+	defer s.keysMu.Unlock()
+	st := s.sec(ctx)
+	if st.Captcha.Provider != CaptchaImage && anyOn(st.Captcha.Contexts) {
+		if err := s.needCaptchaKeys(st.Captcha.SiteKey, false); err != nil {
+			return err
+		}
+	}
+	err := s.st.Tx(ctx, func(q store.Q) error { return s.vault.Clear(ctx, q, "", secrets.CaptchaSecret) })
+	s.settings.Load().Invalidate()
+	return err
+}
+
 // ResetSecurity is what "petalbook security reset" does: the login mode back
 // to dual, ssoOnly, lockout and every captcha context off, no role required to
-// use a passkey. Providers and people are untouched. It writes the rows of the
-// settings, which a running server notices within settings.RevCheck.
+// use a passkey. Providers (of sign-in and of the captcha), their keys and
+// people are untouched. It is the rescue, so it must work whatever the policy
+// is and wherever it runs (the command line has no --public-url): the values
+// are written in one transaction past the checks, which only refuse a change
+// that could lock people out, and these values only let people in. Each
+// changed key is in the audit log, by "cli"; settings_rev is moved, which a
+// running server notices within settings.RevCheck.
 func (s *Service) ResetSecurity(ctx context.Context) error {
-	set := s.settings.Load()
 	st := s.sec(ctx)
 	off := map[string]CaptchaCtx{}
 	for k, c := range st.Captcha.Contexts {
 		c.On = false
 		off[k] = c
 	}
-	// ssoOnly first: the mode may not leave local_only while it is on.
-	steps := []struct {
-		key string
-		v   any
-	}{
-		{settings.SigninSSOOnly, false},
-		{settings.SigninMode, ModeDual},
-		{settings.SigninLockoutEnabled, false},
-		{settings.CaptchaContexts, contextsDoc(off)},
-		{settings.SigninPasskeyRoles, []string{}},
+	changed, err := s.settings.Load().ForceSite(ctx, "cli", []settings.KeyValue{
+		{Key: settings.SigninSSOOnly, Value: false},
+		{Key: settings.SigninMode, Value: ModeDual},
+		{Key: settings.SigninLockoutEnabled, Value: false},
+		{Key: settings.CaptchaContexts, Value: contextsDoc(off)},
+		{Key: settings.SigninPasskeyRoles, Value: []string{}},
+	})
+	if err != nil {
+		return err
 	}
-	for _, x := range steps {
-		if _, err := set.SetSite(ctx, x.key, settings.Change{HasValue: true, Value: x.v, By: "cli"}); err != nil {
-			return err
-		}
+	for _, c := range changed {
+		s.Audit(AuditEvent{Kind: "setting_changed", Tenant: "-", Detail: map[string]any{
+			"key": c.Key, "layer": "site", "source": "manual", "from": c.From, "to": c.To, "by": "cli", "reset": "security"}})
 	}
-	s.Audit(AuditEvent{Kind: "setting_changed", Tenant: "-", Detail: map[string]any{"by": "cli", "reset": "security"}})
+	if len(changed) == 0 {
+		s.Audit(AuditEvent{Kind: "setting_changed", Tenant: "-", Detail: map[string]any{"by": "cli", "reset": "security"}})
+	}
 	s.FlushAudit(ctx)
 	return nil
 }

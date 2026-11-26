@@ -6,6 +6,7 @@ import {
   adminRequests,
   byLabel,
   click,
+  type,
   installDomShims,
   makePerson,
   mount,
@@ -16,6 +17,7 @@ import { MOCK_ADMIN, type MockServer } from '@/api/mock/server'
 import { oa } from '@/i18n/oauth'
 import { tc } from '@/i18n/console'
 import { tk } from '@/i18n/tokens'
+import { tt } from '@/i18n/tenants'
 import { AdminGate } from './AdminGate'
 
 // The administration's "machine access" page, against the mock server.
@@ -40,11 +42,17 @@ const routes = (
 const text = () => document.body.textContent ?? ''
 const items = () => [...document.querySelectorAll<HTMLElement>('[data-slot="token-item"]')]
 const SETTING = '/api/admin/settings/'
-// The writes the page made: the key and the value (the two switches are the settings features.tokens and features.mcp).
+// The writes the page made: the key and the body (the two switches are the settings features.tokens and features.mcp).
 const puts = (m: Mounted) =>
   m.requests
     .filter((r) => r.method === 'PUT' && r.url.startsWith(SETTING))
-    .map((r) => [r.url.slice(SETTING.length), JSON.parse(r.body!).value])
+    .map((r) => [r.url.slice(SETTING.length), JSON.parse(r.body!)])
+// A feature's row: its switch, its rule for the organizations, and its save button.
+const row = (key: string) => document.querySelector<HTMLElement>(`[data-key="${key}"]`)!
+const ruleOf = (key: string) => row(key).querySelectorAll<HTMLSelectElement>('select')[0]
+const saveOf = (key: string) =>
+  [...row(key).querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes(tt.settings.save))!
+const checked = (label: string) => byLabel(label)!.getAttribute('aria-checked')
 const siteValues = (m: Mounted) => {
   const list = (
     adminRequests(m.server)('GET', '/api/admin/settings').body as {
@@ -65,15 +73,43 @@ describe('machine access', () => {
     expect(text()).toContain(tk.admin.empty)
   })
 
-  it('switches API tokens off and on, and the server is told', async () => {
+  it('switches API tokens off, forced for every organization unless the rule says otherwise', async () => {
+    m = await open()
+    await settle(() => document.querySelector('[role="switch"]') !== null, 'the switch')
+    expect(ruleOf('features.tokens').value).toBe('allow')
+    await click(byLabel(tk.admin.switchLabel))
+    expect(checked(tk.admin.switchLabel)).toBe('false')
+    // Off proposes a lock: off for everybody, as the switch always was.
+    expect(ruleOf('features.tokens').value).toBe('lock')
+    await click(saveOf('features.tokens'))
+    await settle(() => puts(m!).length === 1, 'saved')
+    expect(puts(m)).toEqual([['features.tokens', { value: false, lower: { mode: 'lock' } }]])
+    expect(siteValues(m)).toEqual({ tokens: false, mcp: true })
+    // On again, and the organizations may choose for themselves again.
+    await settle(
+      () => ruleOf('features.tokens').value === 'lock' && checked(tk.admin.switchLabel) === 'false',
+      'read back',
+    )
+    await click(byLabel(tk.admin.switchLabel))
+    await type(ruleOf('features.tokens'), 'allow')
+    await click(saveOf('features.tokens'))
+    await settle(() => puts(m!).length === 2, 'saved again')
+    expect(puts(m)[1]).toEqual(['features.tokens', { value: true, lower: { mode: 'allow' } }])
+    expect(siteValues(m)).toEqual({ tokens: true, mcp: true })
+  })
+
+  it('makes off only the default when the administrator allows the organizations to choose', async () => {
     m = await open()
     await settle(() => document.querySelector('[role="switch"]') !== null, 'the switch')
     await click(byLabel(tk.admin.switchLabel))
-    await settle(() => document.querySelector('[role="switch"]')!.getAttribute('aria-checked') === 'false', 'off')
-    expect(puts(m)).toEqual([['features.tokens', false]])
-    expect(siteValues(m)).toEqual({ tokens: false, mcp: true })
+    await type(ruleOf('features.tokens'), 'allow')
+    // On and off again does not lock what the administrator chose.
     await click(byLabel(tk.admin.switchLabel))
-    await settle(() => document.querySelector('[role="switch"]')!.getAttribute('aria-checked') === 'true', 'on again')
+    await click(byLabel(tk.admin.switchLabel))
+    expect(ruleOf('features.tokens').value).toBe('allow')
+    await click(saveOf('features.tokens'))
+    await settle(() => puts(m!).length === 1, 'saved')
+    expect(puts(m)).toEqual([['features.tokens', { value: false }]])
   })
 
   it("lists everyone's tokens with their owners and revokes one", async () => {
@@ -152,11 +188,9 @@ describe('MCP and OAuth in the machine access', () => {
     expect(document.querySelector('[data-slot="oauth-status"]')).toBeNull()
     expect(document.querySelectorAll('[role="switch"]')).toHaveLength(2)
     await click(byLabel(oa.admin.mcpLabel))
-    await settle(
-      () => document.querySelector(`[aria-label="${oa.admin.mcpLabel}"]`)!.getAttribute('aria-checked') === 'false',
-      'off',
-    )
-    expect(puts(m)).toEqual([['features.mcp', false]])
+    await click(saveOf('features.mcp'))
+    await settle(() => puts(m!).length === 1, 'saved')
+    expect(puts(m)).toEqual([['features.mcp', { value: false, lower: { mode: 'lock' } }]])
     // The tokens' switch is its own.
     expect(siteValues(m)).toEqual({ tokens: true, mcp: false })
   })
@@ -205,6 +239,7 @@ describe('MCP and OAuth in the machine access', () => {
     })
     await settle(() => grantItems().length === 1, 'the app')
     await click(byLabel(oa.admin.mcpLabel))
+    await click(saveOf('features.mcp'))
     await settle(() => puts(m!).length === 1, 'off')
     expect(grantItems()).toHaveLength(1)
     expect(MOCK_ADMIN.username).toBeTruthy()
