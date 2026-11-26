@@ -1,6 +1,9 @@
 package api
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // HeaderPurpose is what a stored header value is bound to, for tests that
 // write settings as an earlier version saved them.
@@ -34,4 +37,18 @@ func SetUpdateBulkJob(userID string, fail func(state string, try int) error) fun
 func SetBulkJobHook(userID string, f func(ctx context.Context, point, item string)) func() {
 	jobHooks.Store(userID, f)
 	return func() { jobHooks.Delete(userID) }
+}
+
+// AccessDecision runs the access decision of one route on r, with a handler
+// that only answers 299: what the middleware decides, and nothing the handler
+// would do. The path values of r are set by the caller (no mux matches here).
+func AccessDecision(h *Handler, method, pattern string, w http.ResponseWriter, r *http.Request) {
+	for _, rt := range routeTable {
+		if rt.method == method && rt.pattern == pattern {
+			rt.h = func(_ *server, c *call) { c.w.WriteHeader(299) }
+			h.s.handle(rt)(w, r)
+			return
+		}
+	}
+	panic("api: no route " + method + " " + pattern)
 }
