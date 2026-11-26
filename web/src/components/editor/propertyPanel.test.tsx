@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { useState } from 'react'
 import type { PageMeta } from '@/api/types'
 import { tp } from '@/i18n/props'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import PropertyPanel from './PropertyPanel'
 
 // The panel under a page's subtitle: one control per field of its type, reporting
@@ -12,7 +12,7 @@ import PropertyPanel from './PropertyPanel'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -52,9 +52,9 @@ function Harness({
 
 async function open(initial: PageMeta, opts: { readOnly?: boolean; type?: unknown; typeName?: string } = {}) {
   m = await mount(<Harness initial={initial} readOnly={opts.readOnly} typeName={opts.typeName} />, {
-    entries: (server) => {
-      if (opts.type !== null)
-        server.handle('PUT', '/api/spaces/default/types/task', JSON.stringify(opts.type ?? TYPE), 'application/json')
+    fixtures: true,
+    entries: (fx) => {
+      if (opts.type !== null) fx.on()('PUT', '/types/task', opts.type ?? TYPE)
       return ['/']
     },
   })
@@ -245,18 +245,15 @@ describe('the property panel', () => {
   })
 })
 
-// A type with a field of kind `other`, or a damaged file: only the mock can make them.
+// A type with a field of kind `other`, or a damaged file: put in the fixture's data, since a page cannot write them.
 async function mountOther(damaged = false) {
   m = await mount(<Harness initial={{ extra: { a: 1, list: ['x', 'y'] }, status: 'todo' }} />, {
-    entries: (server) => {
-      server.handle(
-        'PUT',
-        '/api/spaces/default/types/task',
-        JSON.stringify({ title: '', fields: [{ key: 'extra', title: '杂项', kind: 'text' }] }),
-        'application/json',
+    fixtures: true,
+    entries: (fx) => {
+      const type = { name: 'task', title: '', rev: 'r1', fields: [{ key: 'extra', title: '杂项', kind: 'other' }] }
+      fx.data.spaces[0].types.push(
+        damaged ? { name: 'task', title: '', rev: 'r1', fields: [], error: '损坏的文件' } : (type as never),
       )
-      if (damaged) server.damageType('default', 'task', '损坏的文件')
-      else server.forceKind('default', 'task', 'extra', 'other')
       return ['/']
     },
   })

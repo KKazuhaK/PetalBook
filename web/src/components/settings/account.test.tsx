@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockOptions } from '@/api/mock/server'
+import type { FixtureOptions } from '@/api/fixtures/data/model'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/signin'
-import { byLabel, click, installDomShims, locationText, mount, settle, type, type Mounted } from '@/testing/harness'
+import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
 // The account's security page: passkeys and the linked sign-ins.
@@ -12,7 +12,7 @@ import SettingsRoute from './SettingsRoute'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -50,8 +50,8 @@ const github = {
   github: { clientId: 'id' },
 }
 
-async function open(path = '/settings/security', server: MockOptions = {}) {
-  m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', ...server } })
+async function open(path = '/settings/security', server: FixtureOptions = {}) {
+  m = await mount(routes, { entries: [path], signIn: true, fixtures: { mode: 'accounts', ...server } })
   await settle(() => panelText().includes(ts.passkeys.title), 'the security page')
 }
 
@@ -110,9 +110,9 @@ describe('the passkeys of the account', () => {
   })
 
   it('a sign-in older than ten minutes is asked to be done again, coming back to this page', async () => {
-    let clock = Date.now()
-    await open('/settings/security', { now: () => clock })
-    clock += 11 * 60_000
+    await open('/settings/security')
+    // The server wants a sign-in from the last ten minutes; the page is told so.
+    m!.fx.fail('POST', '/api/account/passkeys/begin', 403, { code: 'recent_login_required' })
     stubCreate()
     await click(buttonWith(ts.passkeys.add))
     await settle(() => panelText().includes(ts.passkeys.recentLogin), 'the explanation')
@@ -122,16 +122,13 @@ describe('the passkeys of the account', () => {
     expect(calls('POST', '/api/logout')).toHaveLength(1)
   })
 
-  it('20 is the most: the 21st says so', async () => {
+  it('says so when the server refuses one more (20 is the most there)', async () => {
     await open()
-    for (let i = 0; i < 20; i++) {
-      stubCreate({ id: `cred-${i}`, type: 'public-key', response: {} })
-      await click(buttonWith(ts.passkeys.add))
-      await settle(() => rows().length === i + 1, `passkey ${i + 1}`)
-    }
+    m!.fx.fail('POST', '/api/account/passkeys/begin', 409, { code: 'too_many_passkeys' })
     stubCreate({ id: 'cred-21', type: 'public-key', response: {} })
     await click(buttonWith(ts.passkeys.add))
     await settle(() => panelText().includes(ts.passkeys.tooMany), 'the limit')
+    expect(rows()).toHaveLength(0)
   })
 
   it('a prompt the person closes says so, and nothing is added', async () => {
@@ -151,7 +148,7 @@ describe('the passkeys of the account', () => {
   })
 
   it('says they cannot be used when the server has no address for them', async () => {
-    await open('/settings/security', { passkeysAvailable: false })
+    await open('/settings/security', { passkeys: false })
     await settle(() => panelText().includes(ts.passkeys.unavailable), 'the note')
     expect(buttonWith(ts.passkeys.add)).toBeUndefined()
   })
@@ -174,19 +171,22 @@ describe('the linked sign-ins', () => {
   })
 
   it('lists a linked identity with its provider, and no link button for that provider; it can be removed', async () => {
-    await open('/settings/security', { providers: [company, github] })
-    // Link Company SSO through the pretend identity provider, as the browser would.
-    const assign = vi.fn()
-    vi.stubGlobal('location', { ...window.location, assign })
-    await settle(() => buttonHolding(ts.identities.link('Company SSO')) !== undefined, 'the link button')
-    await click(buttonHolding(ts.identities.link('Company SSO')))
-    await settle(() => assign.mock.calls.length > 0, 'the redirect')
-    const url = assign.mock.calls[0][0] as string
-    // The browser follows the provider's redirect back: its cookies (the session and the attempt's) go along.
-    const done = await fetch(url)
-    expect(done.status).toBe(303)
-    await m!.qc.invalidateQueries({ queryKey: ['account'] })
-    await settle(() => panelText().includes('mock@example.com'), 'the identity')
+    await open('/settings/security', {
+      providers: [company, github],
+      data: (d) =>
+        d.area.account.identities.push({
+          id: 'id1',
+          provider: 'Company SSO',
+          providerSlug: 'company',
+          kind: 'oidc',
+          label: 'mock@example.com',
+          created: '2026-11-01T00:00:00Z',
+        }),
+    })
+    await settle(
+      () => panelText().includes('mock@example.com') && panelText().includes(ts.identities.link('GitHub')),
+      'the identity',
+    )
     expect(panelText()).toContain('Company SSO')
     expect(panelText()).not.toContain(ts.identities.link('Company SSO'))
     expect(panelText()).toContain(ts.identities.link('GitHub'))

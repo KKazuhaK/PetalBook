@@ -1,19 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
+import { shareSpace } from '@/api/fixtures/data/scenes'
+import type { FixtureServer } from '@/api/fixtures/server'
+import type { DailyAnswer } from '@/api/types'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { th } from '@/i18n/home'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  locationText,
-  mount,
-  settle,
-  shareSpace,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { sender, type Send } from '@/testing/listKit'
 import { noteWrote, wroteKey } from '@/lib/homePrefs'
 import { tzOffset } from '@/lib/templates'
@@ -22,7 +15,7 @@ import HomePage from './HomePage'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   vi.useRealTimers()
   await m?.unmount()
@@ -80,7 +73,7 @@ describe('the home page, single-user mode', () => {
         for (let i = 0; i < 7; i++) sender(server)('POST', '/pages', { folder: 'Inbox', body: `收件${i}\n` })
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await ready()
     await settle(
@@ -108,17 +101,17 @@ describe('the home page, single-user mode', () => {
   })
 
   it('asks for no more of a big space: the number of requests is the same', async () => {
-    m = await mount(routes, { entries: ['/s/default'], server: { mode: 'single' } })
-    const send = sender(m.server)
+    m = await mount(routes, { entries: ['/s/default'], fixtures: { mode: 'single' } })
+    const send = sender(m.fx)
     for (let i = 0; i < 40; i++) send('POST', '/pages', { folder: '', body: `n${i}\n` })
     await m.unmount()
-    m = await mount(routes, { entries: ['/s/default'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/s/default'], fixtures: { mode: 'single' } })
     await ready()
     expect(spaceRequests().length).toBeLessThanOrEqual(5)
   })
 
   it('the quick note goes to the inbox, empties the box and reads the inbox again', async () => {
-    m = await mount(routes, { entries: ['/s/default'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/s/default'], fixtures: { mode: 'single' } })
     await ready()
     await settle(() => section(th.quick.title)?.querySelector('textarea') != null, 'the box')
     const box = section(th.quick.title)!.querySelector('textarea')!
@@ -138,7 +131,7 @@ describe('the home page, single-user mode', () => {
   })
 
   it('opens a page from the list and has links to the whole list and the inbox', async () => {
-    m = await mount(routes, { entries: ['/s/default'], server: { mode: 'single' } })
+    m = await mount(routes, { entries: ['/s/default'], fixtures: { mode: 'single' } })
     await ready()
     await settle(() => section(th.cont.title)?.querySelector('li a') != null, 'the list')
     expect(section(th.cont.title)!.querySelector('a[href="/s/default/recent"]')).not.toBeNull()
@@ -155,7 +148,7 @@ describe('the text of the day', () => {
         seedTexts(sender(server))
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await ready()
     await settle(() => daily() !== null, 'the text')
@@ -179,7 +172,7 @@ describe('the text of the day', () => {
         seedTexts(sender(server))
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await ready()
     await settle(() => another() !== null, 'the button')
@@ -195,7 +188,7 @@ describe('the text of the day', () => {
         seedTexts(sender(server))
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await ready()
     await settle(() => daily() !== null && another() !== null, 'the text and the button')
@@ -213,17 +206,13 @@ describe('the text of the day', () => {
         seedTexts(sender(server))
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
-    const server = m.server as { handle: (...a: any[]) => unknown }
-    const real = server.handle.bind(server)
-    server.handle = (method: string, url: string, ...rest: unknown[]) =>
-      url.includes('skip=1')
-        ? { status: 400, body: { error: 'skip_too_large', message: 'skip is too large' } }
-        : real(method, url, ...rest)
     await ready()
     await settle(() => daily() !== null && another() !== null, 'the text and the button')
     const first = daily()!.textContent
+    // The server will not go further than the pages it has.
+    m.fx.fail('GET', '/api/spaces/default/daily', 400, { code: 'skip_too_large', message: 'skip is too large' })
     await click(another())
     await settle(() => document.querySelector('[data-slot="daily-skip-limit"]') !== null, 'the note')
     expect(document.querySelector('[data-slot="daily-skip-limit"]')!.textContent).toBe(th.daily.skipLimit)
@@ -238,7 +227,7 @@ describe('the text of the day', () => {
         seedTexts(sender(server), 1)
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await ready()
     await settle(() => daily() !== null, 'the text')
@@ -253,7 +242,7 @@ describe('the text of the day', () => {
         send('PUT', '/daily/settings', { daily: { folder: '空的' } })
         return ['/s/default']
       },
-      server: { mode: 'single' },
+      fixtures: { mode: 'single' },
     })
     await ready()
     await settle(() => document.querySelector('[data-slot="daily-empty"]') !== null, 'the hint')
@@ -263,27 +252,25 @@ describe('the text of the day', () => {
   })
 
   describe('in accounts mode', () => {
-    const open = (
-      scene: (admin: ReturnType<typeof adminRequests>, space: string) => void,
-      options: { entries?: string } = {},
-    ) =>
+    const open = (scene: (fx: FixtureServer, space: string) => void, options: { entries?: string } = {}) =>
       mount(routes, {
         signIn: true,
-        server: { mode: 'accounts' },
-        entries: (server) => {
-          const admin = adminRequests(server)
-          const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-          scene(admin, space)
+        fixtures: { mode: 'accounts' },
+        entries: (fx) => {
+          const space = fx.data.spaces[0].info.id
+          scene(fx, space)
           localStorage.setItem('pb.space', space)
           return [`/s/${space}${options.entries ?? ''}`]
         },
       })
 
+    // What the space's text of the day is, said exactly (which source it comes from is the server's to decide).
+    const says = (fx: FixtureServer, answer: DailyAnswer) => fx.reply('GET', '/api/spaces/:space/daily', answer)
+
     it('a line the administrators pasted: no page, no link', async () => {
-      m = await open((admin) => {
-        admin('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } })
-        admin('PUT', '/api/admin/daily/lines', { lang: '', text: '山色空蒙雨亦奇\t苏轼', format: 'lines' })
-      })
+      m = await open((fx) =>
+        says(fx, { page: null, origin: 'site', quote: { text: '山色空蒙雨亦奇', author: '苏轼' } }),
+      )
       await ready()
       await settle(() => daily() !== null, 'the text')
       expect(daily()!.textContent).toContain('山色空蒙雨亦奇')
@@ -291,25 +278,16 @@ describe('the text of the day', () => {
       expect(daily()!.querySelector('a')).toBeNull()
     })
 
-    const withApi = (id: string) => (admin: ReturnType<typeof adminRequests>, space: string) => {
-      admin('PUT', `/api/admin/daily/apis/${id}`, {
-        id,
-        name: '一言',
-        lang: 'zh',
-        url: 'https://example.org/q',
-        text: 'hitokoto',
-        source: 'from',
-        author: 'from_who',
-        link: 'https://hitokoto.cn?uuid={uuid}',
-        refresh: 'daily',
-        rps: 5,
-        enabled: true,
-      })
-      admin('PUT', `/api/spaces/${space}/daily/prefs`, { inherit: false, apis: [id] })
-    }
+    // An interface's text, with who said it and a link back to its service.
+    const external = (text: string, over: Partial<NonNullable<DailyAnswer['quote']>> = {}): DailyAnswer => ({
+      page: null,
+      origin: 'external',
+      count: 5,
+      quote: { text, source: 'src', author: 'au', link: 'https://hitokoto.cn?uuid=1', ...over },
+    })
 
     it('an external text with who said it, and never a link to somewhere else', async () => {
-      m = await open(withApi('yiyan'))
+      m = await open((fx) => says(fx, external('一言')))
       await ready()
       await settle(() => daily() !== null, 'the text')
       expect(daily()!.textContent).toContain('一言')
@@ -322,17 +300,19 @@ describe('the text of the day', () => {
     })
 
     it('a text that is the last one it said is marked, with the day', async () => {
-      m = await open(withApi('stale-one'))
+      m = await open((fx) => says(fx, external('旧的一言', { stale: true, fetched: '2026-11-20T08:00:00Z' })))
       await ready()
       await settle(() => daily()?.querySelector('[data-slot="daily-stale"]') != null, 'the marker')
       expect(daily()!.querySelector('[data-slot="daily-stale"]')!.textContent).toContain('暂时没有回应')
     })
 
     it('another text from an interface is asked for with skip', async () => {
-      m = await open(withApi('yiyan'))
+      m = await open((fx) => says(fx, external('一言')))
       await ready()
       await settle(() => another() !== null, 'the button')
+      says(m.fx, external('一言 #1'))
       await click(another())
+      await settle(() => m!.requests.some((r) => r.url.includes('skip=1')), 'skip=1 is asked')
       await settle(() => daily()!.textContent!.includes('#1'), 'the next text')
     })
 
@@ -352,9 +332,9 @@ describe('the text of the day', () => {
     it('someone who may only read has no note box, and is not told what to set up', async () => {
       m = await mount(routes, {
         signIn: true,
-        server: { mode: 'accounts' },
-        entries: (server) => {
-          const { space, owner } = shareSpace(server, 'viewer')
+        fixtures: { mode: 'accounts' },
+        entries: (fx) => {
+          const { space, owner } = shareSpace(fx, 'viewer')
           owner.request('POST', `/api/spaces/${space}/folders`, { path: '空的' })
           owner.request('PUT', `/api/spaces/${space}/daily/settings`, { daily: { folder: '空的' } })
           localStorage.setItem('pb.space', space)
@@ -378,7 +358,7 @@ describe('the greeting', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(y, mo - 1, d, h, 0))
   }
-  const opens = () => mount(routes, { entries: ['/s/default'], server: { mode: 'single', empty: true } })
+  const opens = () => mount(routes, { entries: ['/s/default'], fixtures: { mode: 'single', empty: true } })
 
   it('a festival of the table is greeted by name of the day', async () => {
     fixed(2026, 2, 17, 9)
@@ -442,7 +422,7 @@ describe('the greeting', () => {
         for (let i = 0; i < 4; i++) sender(s)('POST', '/pages', { folder: '', body: `别人写的${i}\n` })
         return ['/s/default']
       },
-      server: { mode: 'single', empty: true },
+      fixtures: { mode: 'single', empty: true },
     })
     await ready()
     expect(greeting()).not.toMatch(/刚写完|写得不错|今天写了/)
@@ -461,9 +441,9 @@ describe('the greeting', () => {
     localStorage.setItem('pb.home.variety', 'off')
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const space = (adminRequests(server)('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        const space = fx.data.spaces[0].info.id
         localStorage.setItem('pb.space', space)
         return [`/s/${space}`]
       },

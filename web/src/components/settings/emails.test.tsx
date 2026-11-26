@@ -1,20 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { tm } from '@/i18n/mail'
 import { t } from '@/i18n'
-import {
-  adminRequests,
-  byLabel,
-  byText,
-  click,
-  installDomShims,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, byText, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
 // More than one address per account (accounts.multipleEmails), against the mock server: off, the one address as before;
@@ -23,7 +13,7 @@ import SettingsRoute from './SettingsRoute'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -38,29 +28,28 @@ const routes = (
 const list = () => document.querySelector<HTMLElement>('[data-slot="email-list"]')
 const row = (email: string) => list()?.querySelector<HTMLElement>(`[data-email="${email}"]`) ?? null
 
+const created = '2026-01-05T08:00:00Z'
 // Mail on and the primary address set; `multiple` turns the switch on, and `second` adds a confirmed second address.
-async function open(server: (s: MockServer) => void = () => undefined, wait = () => list() !== null) {
+async function open(scene: (d: FixtureData) => void = () => undefined, wait = () => list() !== null) {
   m = await mount(routes, {
-    entries: (s) => {
-      const admin = adminRequests(s)
-      admin('PUT', '/api/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
-      admin('PATCH', '/api/account', { email: 'admin@example.test' })
-      server(s)
-      return ['/settings/profile']
-    },
+    entries: ['/settings/profile'],
     signIn: true,
-    server: { mode: 'accounts' },
+    fixtures: {
+      mode: 'accounts',
+      data: (d) => {
+        d.auth.forgot = true
+        // The address was typed in the profile, so it is not verified yet.
+        Object.assign(d.auth.users[0], { email: 'admin@example.test', emailVerified: false })
+        scene(d)
+      },
+    },
   })
   await settle(wait, 'the page')
 }
-const multiple = (s: MockServer) =>
-  adminRequests(s)('PUT', '/api/admin/settings/accounts.multipleEmails', { value: true })
-const second = (s: MockServer) => {
-  multiple(s)
-  const admin = adminRequests(s)
-  admin('POST', '/api/account/emails', { email: 'work@example.test' })
-  const token = s.mail.outbox.find((x) => x.to === 'work@example.test')!.token!
-  admin('POST', '/api/email/confirm', { token })
+const multiple = (d: FixtureData) => void (d.features['accounts.multipleEmails'] = true)
+const second = (d: FixtureData) => {
+  multiple(d)
+  d.area.account.emails.push({ email: 'work@example.test', primary: false, verified: true, created })
 }
 
 describe('the email addresses of an account', () => {
@@ -81,7 +70,7 @@ describe('the email addresses of an account', () => {
     await type(document.querySelector<HTMLInputElement>('#add-email-form input')!, 'two@example.test')
     await click(byText('button', tm.emails.send))
     await settle(() => row('two@example.test') !== null, 'the new address')
-    expect(m!.server.mail.outbox.filter((x) => x.kind === 'verify').map((x) => x.to)).toEqual(['two@example.test'])
+    expect(m!.fx.sent.mail.filter((x) => x.kind === 'verify').map((x) => x.to)).toEqual(['two@example.test'])
     expect(row('two@example.test')!.textContent).toContain(tm.emails.unverified)
     expect(byLabel(t.fmt.labelled(tm.emails.verify, 'two@example.test'))).not.toBeNull()
     expect(byLabel(t.fmt.labelled(tm.emails.remove, 'two@example.test'))).not.toBeNull()
@@ -106,25 +95,16 @@ describe('the email addresses of an account', () => {
   })
 
   it('lists a claim of an address another account holds as waiting for confirmation, and withdraws it', async () => {
-    const claim = (s: MockServer) => {
-      multiple(s)
-      const admin = adminRequests(s)
-      // Another account holds the address, not verified.
-      const inv = admin('POST', '/api/invites', { role: 'member' }).body as { token: string }
-      const joined = s.handle(
-        'POST',
-        '/api/invites/accept',
-        JSON.stringify({ token: inv.token, username: 'tang', password: 'a-long-password' }),
-        'application/json',
-      )
-      s.handle(
-        'PATCH',
-        '/api/account',
-        JSON.stringify({ email: 'held@example.test' }),
-        'application/json',
-        joined.headers!['Set-Cookie'].split(';')[0],
-      )
-      admin('POST', '/api/account/emails', { email: 'held@example.test' })
+    // Another account holds the address, not verified: the list says this claim is waiting.
+    const claim = (d: FixtureData) => {
+      multiple(d)
+      d.area.account.emails.push({
+        email: 'held@example.test',
+        primary: false,
+        verified: false,
+        pending: true,
+        created,
+      })
     }
     await open(claim, () => row('held@example.test') !== null)
     expect(row('held@example.test')!.textContent).toContain(tm.emails.pending)

@@ -7,6 +7,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { misfits, routeOf, type Shape } from '../contractShapes'
+import { addNotification, addToken, approveApp, withAuthorizationServer } from './data/area'
+import { githubProvider, leaveRepository } from './data/connections'
+import { addGroup, addPerson } from './data/scenes'
 import { match } from './kit'
 import { ADMIN_UNRECORDED, adminProbes } from './probesAdmin'
 import { createFixtureServer, type FixtureServer } from './server'
@@ -69,6 +72,8 @@ function probes(fx: FixtureServer): Call[] {
   const page = space.pages.find((p) => p.folder === '工作') ?? space.pages[0]
   const other = space.pages.find((p) => p.id !== page.id && p.folder === page.folder) ?? space.pages[1]
   const P = `/api/spaces/default/pages/${page.id}`
+  const olive = fx.data.auth.users.find((u) => u.username === 'olive')!
+  const group = fx.data.admin.groups[0]
   const rev = () => fx.call('GET', P).body.rev as string
   const meta = () => fx.call('GET', P).body.meta as Record<string, unknown>
   return [
@@ -177,6 +182,92 @@ function probes(fx: FixtureServer): Call[] {
     ['POST', '/api/oauth/consent', { req: 'r1', approve: true }],
     ['DELETE', P],
     ['DELETE', '/api/spaces/default/pages/NOPE'],
+    // the platforms a space is stored on
+    ['GET', '/api/connections'],
+    ['POST', '/api/connections/github/authorization/start', { return: '/' }],
+    ['GET', '/api/connections/github/owners'],
+    ['GET', '/api/connections/github/repos?installation=5001'],
+    ['DELETE', '/api/connections/github/leftovers/880100000'],
+    ['DELETE', '/api/connections/github/authorization'],
+    ['GET', '/api/admin/connections'],
+    ['GET', '/api/admin/connections/github'],
+    ['PUT', '/api/admin/connections/github', { appId: '1', privateKey: 'k', clientId: 'c', clientSecret: 's' }],
+    ['POST', '/api/admin/connections/github/check', {}],
+    ['POST', '/api/admin/connections/github/manifest', { organization: 'acme' }],
+    ['POST', '/api/admin/connections/github/manifest/retry', {}],
+    ['GET', '/api/admin/connections/github/installations'],
+    ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
+    ['DELETE', '/api/admin/connections/github'],
+    [
+      'POST',
+      '/api/admin/connections',
+      { id: 'gl', type: 'gitlab', host: 'gl.example', clientId: 'c', clientSecret: 's' },
+    ],
+    ['GET', '/api/admin/connections/gl'],
+    ['PATCH', '/api/admin/connections/gl', { name: 'GL' }],
+    ['POST', '/api/admin/connections/gl/check', {}],
+    ['DELETE', '/api/admin/connections/gl'],
+    // the person's own account (as the administrator, who the probes above may have signed out)
+    ['POST', '/api/login', { username: 'admin', password: 'x' }],
+    ['PATCH', '/api/account', { name: '新名字' }],
+    ['POST', '/api/account/password', { current: 'x', new: 'a-long-password' }],
+    ['DELETE', '/api/account/identities/id1'],
+    ['PATCH', '/api/account/passkeys/pk1', { name: 'Phone' }],
+    ['DELETE', '/api/account/passkeys/pk1'],
+    ['POST', '/api/account/emails', { email: 'second@example.test' }],
+    ['POST', '/api/account/emails/verify', { email: 'second@example.test' }],
+    ['POST', '/api/account/emails/primary', { email: 'second@example.test' }],
+    ['DELETE', '/api/account/emails/second%40example.test'],
+    ['POST', '/api/account/email/verify', {}],
+    ['GET', '/api/account/usage'],
+    ['GET', '/api/account/tokens'],
+    ['POST', '/api/account/tokens', { name: 'n', spaces: ['default'], access: 'read' }],
+    ['DELETE', '/api/account/tokens/token1'],
+    ['GET', '/api/account/grants'],
+    ['DELETE', '/api/account/grants/grant1'],
+    // notifications and preferences
+    ['GET', '/api/notifications'],
+    ['POST', '/api/notifications/read', { ids: ['x'] }],
+    ['POST', '/api/notifications/read-all', {}],
+    ['PATCH', '/api/prefs', { set: { a: 1 } }],
+    // the people of a space, and the groups in it
+    ['GET', '/api/spaces/default/members'],
+    ['POST', '/api/spaces/default/members', { username: 'olive', role: 'viewer' }],
+    [
+      'POST',
+      '/api/spaces/default/members/batch',
+      { rows: [{ user: 'pam' }, { user: 'pam' }, { user: 'admin' }, { user: 'nobody' }, { user: '' }], dryRun: true },
+    ],
+    ['GET', '/api/spaces/default/members/effective'],
+    ['PATCH', `/api/spaces/default/members/${olive.id}`, { role: 'editor' }],
+    ['DELETE', `/api/spaces/default/members/${olive.id}`],
+    ['POST', '/api/spaces/default/groups', { groupId: group.id, role: 'viewer' }],
+    ['PATCH', `/api/spaces/default/groups/${group.id}`, { role: 'editor' }],
+    ['DELETE', `/api/spaces/default/groups/${group.id}`],
+    ['GET', '/api/spaces/default/people?q=ol'],
+    ['GET', '/api/people?q=ol'],
+    ['GET', '/api/groups?q=eng'],
+    // the day's text
+    ['GET', '/api/spaces/default/daily/settings'],
+    ['PUT', '/api/spaces/default/daily/settings', { daily: { folder: '工作' } }],
+    ['GET', '/api/spaces/default/daily/prefs'],
+    ['PUT', '/api/spaces/default/daily/prefs', { inherit: true, apis: [] }],
+    // what the editor and the settings read
+    ['GET', `${other.id ? `/api/spaces/default/pages/${other.id}` : P}/links`],
+    ['GET', `/api/spaces/default/pages/${other.id}/backlinks`],
+    ['POST', '/api/spaces/default/types/task/rename-field', { baseRev: 'x', from: 'status', to: 'state' }],
+    ['GET', '/api/spaces/default/templates/diary'],
+    // the remote repository
+    ['PUT', '/api/spaces/default/remote', { url: 'https://example.test/n.git', credential: { type: 'token' } }],
+    ['GET', '/api/spaces/default/remote'],
+    ['POST', '/api/spaces/default/remote/key', {}],
+    ['POST', '/api/spaces/default/remote/sync', {}],
+    ['POST', '/api/spaces/default/remote/accept', { commit: 'c' }],
+    ['PUT', '/api/spaces/default/remote/assets', { url: 'https://example.test/a.git', credential: { type: 'token' } }],
+    ['GET', '/api/spaces/default/remote/assets'],
+    ['POST', '/api/spaces/default/remote/assets/move', {}],
+    ['DELETE', '/api/spaces/default/remote/assets'],
+    ['DELETE', '/api/spaces/default/remote'],
   ]
 }
 
@@ -199,6 +290,38 @@ const UNRECORDED: Record<string, string> = {
   'POST /api/oauth/consent 200': 'needs an authorization client',
   'POST /api/setup 200': 'needs a server with no account',
   ...ADMIN_UNRECORDED,
+  'PATCH /api/account/passkeys/{} 200': 'needs a passkey',
+  'POST /api/account/emails 202': 'needs mail',
+  'POST /api/account/emails/verify 200': 'needs mail',
+  'POST /api/account/email/verify 200': 'needs mail',
+  'GET /api/account/grants 200': 'needs an authorization server',
+  'POST /api/spaces/default/members 200': 'the contract suite adds people through the batch',
+  'POST /api/spaces/default/groups 200':
+    'needs a group, which the contract suite makes only through the administration',
+  'POST /api/spaces/default/types/task/rename-field 200': 'the contract suite does not rename a field yet',
+  'PUT /api/spaces/default/remote 200': 'needs a remote repository',
+  'GET /api/spaces/default/remote 200': 'needs a remote repository',
+  'POST /api/spaces/default/remote/sync 200': 'needs a remote repository',
+  'POST /api/spaces/default/remote/accept 200': 'needs a remote repository',
+  'PUT /api/spaces/default/remote/assets 200': 'needs a remote repository',
+  'GET /api/spaces/default/remote/assets 200': 'needs a remote repository',
+  'POST /api/spaces/default/remote/assets/move 200': 'needs a remote repository',
+  'GET /api/connections 200': 'needs a platform',
+  'POST /api/connections/github/authorization/start 200': 'needs a platform',
+  'GET /api/connections/github/owners 200': 'needs a platform',
+  'GET /api/connections/github/repos 200': 'needs a platform',
+  'GET /api/admin/connections 200': 'needs a platform',
+  'GET /api/admin/connections/github 200': 'needs a platform',
+  'PUT /api/admin/connections/github 200': 'needs a platform',
+  'POST /api/admin/connections/github/check 200': 'needs a platform',
+  'POST /api/admin/connections/github/manifest 200': 'needs a platform',
+  'POST /api/admin/connections/github/manifest/retry 200': 'needs a platform',
+  'GET /api/admin/connections/github/installations 200': 'needs a platform',
+  'PUT /api/admin/connections/github/installations/{} 200': 'needs a platform',
+  'POST /api/admin/connections 201': 'needs a platform',
+  'GET /api/admin/connections/gl 200': 'needs a platform',
+  'PATCH /api/admin/connections/gl 200': 'needs a platform',
+  'POST /api/admin/connections/gl/check 200': 'needs a platform',
 }
 
 // A probe is meant to succeed. One that answers 404 is a route that is missing or a probe that is wrong, unless it
@@ -222,6 +345,26 @@ describe('the fixtures against the recorded shapes', () => {
         user: { id: 'u', name: 'n' },
       }
       d.spaces[0].types.push({ name: 'memo', title: '备忘', rev: 'r', fields: [] })
+      githubProvider(d, 'connected')
+      leaveRepository(d, 'tang-gh/poems')
+      addPerson(d, 'olive')
+      addPerson(d, 'pam')
+      d.area.daily.site.default = { kind: 'list' }
+      addGroup(d, 'Engineering')
+      d.spaces[0].templates.push({ name: 'diary', path: '.petalbook/templates/diary.md', rev: 'r', meta: {}, body: '' })
+      d.area.account.passkeys.push({ id: 'pk1', name: 'Key', created: '2026-01-01T00:00:00Z', synced: false })
+      d.area.account.identities.push({
+        id: 'id1',
+        provider: 'Company',
+        providerSlug: 'company',
+        kind: 'oidc',
+        label: 'a@b.c',
+        created: '2026-01-01T00:00:00Z',
+      })
+      addToken(d, 'one')
+      withAuthorizationServer(d)
+      approveApp(d, 'App')
+      addNotification(d, 'invite', 'default', { space: 'S', role: 'editor', by: 'B' })
     },
   })
   const calls = probes(fx)

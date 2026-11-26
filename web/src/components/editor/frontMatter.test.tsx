@@ -6,8 +6,8 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import PageEditor from '@/pages/PageEditor'
 import { t } from '@/i18n'
 import { tp } from '@/i18n/props'
-import type { MockServer } from '@/api/mock/server'
-import { click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import type { FixtureServer } from '@/api/fixtures/server'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 
 // The header of a page is edited by value: the source view holds the body only (and the header's YAML only for an
 // administrator who asks), the keys come from the type, the system fields are shown and not editable, and renaming a
@@ -21,14 +21,13 @@ beforeAll(() => {
   }
 })
 beforeEach(() => localStorage.clear())
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
 })
 
-const send = (server: MockServer, method: string, path: string, body: unknown) =>
-  server.handle(method, `/api/spaces/default${path}`, JSON.stringify(body), 'application/json') as { body: any }
+const send = (fx: FixtureServer, method: string, path: string, body: unknown) => fx.on()(method, path, body)
 const routes = [
   {
     path: '/s/:space/p/:id',
@@ -49,6 +48,7 @@ async function open(mode: 'rich' | 'source' = 'rich') {
   let ids: string[] = []
   m = await mount(null, {
     routes,
+    fixtures: true,
     entries: (server) => {
       send(server, 'PUT', '/types/task', {
         title: '任务',
@@ -76,7 +76,7 @@ async function open(mode: 'rich' | 'source' = 'rich') {
   await settle(() => document.querySelector('[data-slot="system-fields"]') !== null, 'the editor')
   return ids
 }
-const get = (id: string) => send(m!.server, 'GET', `/pages/${id}`, undefined).body
+const get = (id: string) => send(m!.fx, 'GET', `/pages/${id}`, undefined).body
 
 describe('the source view', () => {
   it('shows the body only, and has the header only when an administrator asks for it', async () => {
@@ -183,6 +183,8 @@ describe('the presets of the sources', () => {
     await type(document.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!, '甲\n乙\n甲\n')
     await click([...document.querySelectorAll('[role="dialog"] button')].find((x) => x.textContent === t.icons.save))
     await settle(() => document.querySelector('[role="dialog"]') === null, 'saved')
-    expect(send(m!.server, 'GET', '/appearance', undefined).body.sourcePresets).toEqual(['甲', '乙'])
+    // The page sends the lines as typed; dropping repeats is the server's rule.
+    const put = m!.fx.requests.find((r) => r.method === 'PUT' && r.url.endsWith('/sources/presets'))!
+    expect(JSON.parse(put.body!)).toEqual({ presets: ['甲', '乙', '甲'] })
   })
 })

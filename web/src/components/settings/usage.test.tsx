@@ -3,18 +3,20 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { ApiError } from '@/api/client'
 import { NameDialog } from '@/components/layout/NameDialog'
-import { adminRequests, click, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import type { FixtureServer } from '@/api/fixtures/server'
+import type { AccountUsage } from '@/api/types'
+import { click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { formatBytes } from '@/lib/bytes'
 import { t } from '@/i18n'
 import { tu } from '@/i18n/usage'
 import SettingsRoute from './SettingsRoute'
 
-// The "Usage" section of the account settings, against the mock server.
+// The "Usage" section of the account settings, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -30,16 +32,16 @@ const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-d
 const text = () => dialog()?.textContent ?? ''
 const meter = (k: string) => document.querySelector<HTMLElement>(`[data-slot="usage-meter"][data-quota="${k}"]`)!
 const open = async (
-  scene?: (server: Mounted['server']) => void,
-  server: { mode: 'accounts' | 'single'; empty?: boolean } = { mode: 'accounts' },
+  scene?: (fx: FixtureServer) => void,
+  fixtures: { mode: 'accounts' | 'single'; empty?: boolean } = { mode: 'accounts' },
 ) => {
   m = await mount(routes, {
-    entries: (s) => {
-      scene?.(s)
+    entries: (fx) => {
+      scene?.(fx)
       return ['/settings/usage']
     },
-    signIn: server.mode === 'accounts',
-    server,
+    signIn: fixtures.mode === 'accounts',
+    fixtures,
   })
   await settle(
     () =>
@@ -47,6 +49,16 @@ const open = async (
     'the dialog',
   )
 }
+
+// What the server says the person has used, measured some time ago (the numbers are stored, not counted for the request).
+const usage = (over: Partial<AccountUsage>): AccountUsage => ({
+  spaces: { used: 1, limit: 20 },
+  bytes: { used: 3000, limit: null },
+  pages: { used: 1, limit: null },
+  measuredAt: '2026-11-25T10:00:00Z',
+  notices: [],
+  ...over,
+})
 
 describe('Usage in the account settings', () => {
   it('is an entry of the account group, and shows spaces, disk and pages with their limits; what is not limited says so', async () => {
@@ -69,13 +81,12 @@ describe('Usage in the account settings', () => {
 
   it('shows measured numbers in human units against the limit, with the bar full only up to the limit', async () => {
     await open(
-      (server) => {
-        const admin = adminRequests(server)
-        const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title: 'one' }, body: 'x'.repeat(3000) })
-        admin('POST', `/api/admin/spaces/${space}/size`)
-        admin('PUT', '/api/admin/settings/quota.bytesPerPerson', { value: 10 * 1024 * 1024 })
-      },
+      (fx) =>
+        fx.reply(
+          'GET',
+          '/api/account/usage',
+          usage({ bytes: { used: 3000, limit: 10 * 1024 * 1024 }, pages: { used: 1, limit: null } }),
+        ),
       { mode: 'accounts', empty: true },
     )
     await settle(() => document.querySelector('[data-slot="usage-meters"]') !== null, 'the meters')
@@ -91,15 +102,19 @@ describe('Usage in the account settings', () => {
 
   it("tells a person who is over a limit, and the tenant's total, without stopping them", async () => {
     await open(
-      (server) => {
-        const admin = adminRequests(server)
-        const space = (admin('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        for (const title of ['one', 'two', 'three'])
-          admin('POST', `/api/spaces/${space}/pages`, { folder: '', meta: { title }, body: 'text' })
-        admin('PUT', '/api/admin/settings/quota.pagesPerPerson', { value: 2 })
-        admin('PUT', '/api/admin/tenants/0000000000/settings/quota.bytes', { siteRule: { value: 1 } })
-        admin('POST', `/api/admin/spaces/${space}/size`)
-      },
+      (fx) =>
+        fx.reply(
+          'GET',
+          '/api/account/usage',
+          usage({
+            pages: { used: 3, limit: 2 },
+            bytes: { used: 12, limit: 1 },
+            notices: [
+              { quota: 'pages', scope: 'person', limit: 2, used: 3 },
+              { quota: 'bytes', scope: 'tenant', limit: 1, used: 12 },
+            ],
+          }),
+        ),
       { mode: 'accounts', empty: true },
     )
     await settle(() => document.querySelector('[data-slot="usage-notices"]') !== null, 'the notices')
@@ -154,7 +169,7 @@ describe('Usage in the account settings', () => {
           )
         }
       />,
-      { server: { mode: 'accounts' } },
+      { fixtures: { mode: 'accounts' } },
     )
     await settle(() => document.querySelector('[role="dialog"] form') !== null, 'the dialog')
     await click([...document.querySelectorAll('button')].find((b) => b.textContent === 'make'))

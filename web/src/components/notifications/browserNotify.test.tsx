@@ -6,13 +6,15 @@ import { PreferencesPanel } from '@/components/settings/PreferencesPanel'
 import { BrowserNotifier } from '@/components/notifications/BrowserNotifier'
 import { browserNotifyState, disableBrowserNotify, enableBrowserNotify } from '@/lib/browserNotify'
 import { tn } from '@/i18n/notify'
-import { click, installDomShims, mount, settle, shareSpace, type Mounted } from '@/testing/harness'
+import { addProblems } from '@/api/fixtures/data/area'
+import { invitedBy } from '@/api/fixtures/data/scenes'
+import { click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { browserPrefs, setPrefsStore, type PrefsStore } from '@/lib/prefsStore'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -83,7 +85,7 @@ describe('the opt-in in the preferences', () => {
 
   it('says why before the browser asks, and only then asks', async () => {
     const f = fakeNotification('default')
-    m = await mount(routes, { server: { mode: 'single' } })
+    m = await mount(routes, { fixtures: { mode: 'single' } })
     expect(stateText()).toBe(tn.browser.off)
     await click(sw())
     await settle(() => document.body.textContent!.includes(tn.browser.pre.title), 'the explanation')
@@ -99,7 +101,7 @@ describe('the opt-in in the preferences', () => {
 
   it('"not now" asks nothing and changes nothing', async () => {
     const f = fakeNotification('default')
-    m = await mount(routes, { server: { mode: 'single' } })
+    m = await mount(routes, { fixtures: { mode: 'single' } })
     await click(sw())
     await settle(() => buttonNamed(tn.browser.pre.cancel) !== undefined, 'the explanation')
     await click(buttonNamed(tn.browser.pre.cancel))
@@ -110,14 +112,14 @@ describe('the opt-in in the preferences', () => {
 
   it('explains a refusal and a browser that has none, and cannot be switched on', async () => {
     fakeNotification('denied')
-    m = await mount(routes, { server: { mode: 'single' } })
+    m = await mount(routes, { fixtures: { mode: 'single' } })
     expect(document.body.textContent).toContain(tn.browser.denied)
     expect(sw().getAttribute('aria-disabled')).toBe('true')
     await m.unmount()
     m = undefined
     vi.stubGlobal('Notification', undefined)
     delete (window as { Notification?: unknown }).Notification
-    m = await mount(routes, { server: { mode: 'single' } })
+    m = await mount(routes, { fixtures: { mode: 'single' } })
     expect(document.body.textContent).toContain(tn.browser.unsupported)
   })
 })
@@ -155,7 +157,7 @@ describe('the notice itself', () => {
         <BrowserNotifier />
         <p data-testid="x" />
       </>,
-      { signIn: true, server: { mode: 'accounts' } },
+      { signIn: true, fixtures: { mode: 'accounts' } },
     )
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) !== undefined, 'the first count')
     // The notifier has taken the first count in (its effect runs after the render that brings it), so the next one is
@@ -169,7 +171,7 @@ describe('the notice itself', () => {
   it('says only how many came, by default: no names of spaces or people on the screen', async () => {
     const f = await scene()
     expect(f.shown).toHaveLength(0)
-    shareSpace(m!.server, 'editor', '团队')
+    invitedBy(m!.fx, 'sharer', 'editor', '团队')
     await m!.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => f.shown.length === 1, 'the notice')
     expect(f.shown[0].title).toBe(tn.browser.count(1))
@@ -182,11 +184,11 @@ describe('the notice itself', () => {
     browserPrefs.write('pb.notify.details', true)
     const f = await scene()
     // A problem in a space the person writes in, there before.
-    const own = shareSpace(m!.server, 'editor', '旧的', 'first')
-    m!.server.addOrphan(own.space, { path: 'stray.md', kind: 'no_id', meta: { title: '无 id' }, body: 'x\n' })
+    const own = invitedBy(m!.fx, 'first', 'editor', '旧的', '2026-11-25T09:00:00Z')
+    addProblems(m!.fx.data, own.data.info, { no_id: 1 })
     await m!.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => f.shown.length === 1, 'the first notice')
-    shareSpace(m!.server, 'editor', '团队')
+    invitedBy(m!.fx, 'sharer', 'editor', '团队')
     await m!.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => f.shown.length === 2, 'the notice')
     expect(f.shown[1].title).toContain('把你加入了「团队」')
@@ -195,14 +197,14 @@ describe('the notice itself', () => {
 
   it('is not shown without the opt-in, nor while the page is in front', async () => {
     const f = fakeNotification('granted')
-    m = await mount(<BrowserNotifier />, { signIn: true, server: { mode: 'accounts' } })
+    m = await mount(<BrowserNotifier />, { signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) !== undefined, 'the first count')
-    shareSpace(m.server, 'editor', '团队')
+    invitedBy(m.fx, 'sharer', 'editor', '团队')
     await m.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) === 1, 'the count')
     expect(f.shown).toHaveLength(0)
     browserPrefs.write('pb.notify.browser', true)
-    shareSpace(m.server, 'viewer', '另一个', 'third')
+    invitedBy(m.fx, 'third', 'viewer', '另一个')
     await m.qc.invalidateQueries({ queryKey: ['notifications', 'unread'] })
     await settle(() => m!.qc.getQueryData(['notifications', 'unread']) === 2, 'two')
     // jsdom's document is visible and has focus: nothing is shown over a page that is being looked at.

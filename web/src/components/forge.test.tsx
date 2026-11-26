@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { adminRequests, click, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { connectForge, forgeHost } from '@/api/fixtures/data/connections'
 import { tf } from '@/i18n/forge'
 import { tg } from '@/i18n/github'
 import SettingsRoute from '@/components/settings/SettingsRoute'
@@ -10,14 +11,14 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { NewSpaceDialog } from '@/components/layout/NewSpaceDialog'
 import { useState } from 'react'
 
-// What the app shows of the hosts with an OAuth application (GitLab, Gitea, Forgejo, Codeberg), against the mock
+// What the app shows of the hosts with an OAuth application (GitLab, Gitea, Forgejo, Codeberg), against the fixture
 // server: the administrators' cards, and the account's "connected accounts" row. The words come from the server's
 // provider (its name, its capabilities); nothing here depends on a platform's name.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -36,7 +37,6 @@ const field = (label: string) =>
     `#${[...form().querySelectorAll('label')].find((l) => l.textContent === label)!.getAttribute('for')}`,
   )!
 const save = () => button(tf.admin.save, form())
-const forge = (body: Record<string, unknown>) => adminRequests(m!.server)('POST', '/api/_mock/forge', body)
 
 const adminRoutes = (
   <SidebarProvider>
@@ -69,7 +69,7 @@ describe('the hosts in the administration', () => {
     m = await mount(adminRoutes, {
       entries: ['/admin/storage/connections'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
     })
     await settle(() => text().includes(tf.admin.none), 'the empty list')
     await addHost({ name: 'Acme GitLab' })
@@ -94,7 +94,7 @@ describe('the hosts in the administration', () => {
     m = await mount(adminRoutes, {
       entries: ['/admin/storage/connections'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
     })
     await settle(() => button(tf.admin.add) !== undefined, 'the add button')
     await click(button(tf.admin.add))
@@ -116,7 +116,7 @@ describe('the hosts in the administration', () => {
     m = await mount(adminRoutes, {
       entries: ['/admin/storage/connections'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
     })
     await settle(() => button(tf.admin.add) !== undefined, 'the add button')
     await click(button(tf.admin.add))
@@ -128,13 +128,13 @@ describe('the hosts in the administration', () => {
     await type(field(tf.admin.id), 'x')
     await type(field(tf.admin.clientId), 'c')
     await type(field(tf.admin.clientSecret), 'wrong')
+    m.fx.fail('POST', '/api/admin/connections', 400, { code: 'invalid', reason: 'client_rejected' }, { times: 1 })
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.client_rejected), 'the client refusal')
-    await type(field(tf.admin.host), 'private.example')
-    await type(field(tf.admin.clientSecret), 'right')
+    m.fx.fail('POST', '/api/admin/connections', 400, { code: 'invalid', reason: 'host_not_public' }, { times: 1 })
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.host_not_public), 'the public-address refusal')
-    await type(field(tf.admin.host), 'gitlab.down.example')
+    m.fx.fail('POST', '/api/admin/connections', 400, { code: 'invalid', reason: 'host_unreachable' }, { times: 1 })
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.host_unreachable), 'the unreachable host')
     // The form is still there with what was typed, and nothing was saved.
@@ -146,14 +146,19 @@ describe('the hosts in the administration', () => {
     m = await mount(adminRoutes, {
       entries: ['/admin/storage/connections'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts', data: (d) => void forgeHost(d) },
     })
-    await settle(() => button(tf.admin.add) !== undefined, 'the add button')
-    await addHost({ name: 'Acme GitLab' })
     await settle(() => button(tf.admin.edit) !== undefined, 'the card')
     await click(button(tf.admin.edit))
     await type(field(tf.admin.name), 'Renamed')
     await type(field(tf.admin.clientSecret), 'wrong')
+    m.fx.fail(
+      'PATCH',
+      '/api/admin/connections/gitlab-acme',
+      400,
+      { code: 'invalid', reason: 'client_rejected' },
+      { times: 1 },
+    )
     await click(save())
     await settle(() => text().includes(tf.admin.errors.reasons.client_rejected), 'the refusal')
     await type(field(tf.admin.clientSecret), 'a-new-secret')
@@ -171,10 +176,8 @@ describe('the hosts in the administration', () => {
     m = await mount(adminRoutes, {
       entries: ['/admin/storage/connections'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts', data: (d) => void forgeHost(d) },
     })
-    await settle(() => button(tf.admin.add) !== undefined, 'the add button')
-    await addHost()
     await settle(() => button(tf.admin.check) !== undefined, 'the card')
     await click(button(tf.admin.check))
     await settle(
@@ -182,7 +185,7 @@ describe('the hosts in the administration', () => {
       'the check',
     )
     // Someone connects: the host cannot be removed.
-    forge({ provider: 'gitlab-acme', connect: 'tang-fg' })
+    connectForge(m.fx.data, 'gitlab-acme', 'tang-fg')
     await m.qc.invalidateQueries()
     await settle(() => text().includes(tf.admin.usage(0, 1)), 'the connection counted')
     await click(button(tf.admin.remove))
@@ -192,7 +195,7 @@ describe('the hosts in the administration', () => {
     await click(button(tf.admin.cancel, dialog()!))
     await settle(() => dialog() === null, 'the dialog closing')
     // When nobody is connected it goes.
-    adminRequests(m.server)('DELETE', '/api/connections/gitlab-acme/authorization')
+    m.fx.call('DELETE', '/api/connections/gitlab-acme/authorization')
     await m.qc.invalidateQueries()
     await settle(() => text().includes(tf.admin.usage(0, 0)), 'the count back to none')
   })
@@ -200,17 +203,16 @@ describe('the hosts in the administration', () => {
 
 describe('the connected accounts of the account page', () => {
   async function open(entry = '/settings/connections') {
-    m = await mount(settingsRoutes, { signIn: true, server: { mode: 'accounts' }, entries: [entry] })
-    adminRequests(m.server)('POST', '/api/admin/connections', {
-      id: 'gitlab-acme',
-      type: 'gitlab',
-      host: 'gitlab.acme.example',
-      name: 'Acme GitLab',
-      clientId: 'c',
-      clientSecret: 's',
+    m = await mount(settingsRoutes, {
+      signIn: true,
+      fixtures: { mode: 'accounts', data: (d) => void forgeHost(d) },
+      entries: [entry],
     })
-    await m.qc.invalidateQueries()
     await settle(() => panel() !== null, 'the settings')
+  }
+  const connect = async (extra: Parameters<typeof connectForge>[3] = {}) => {
+    connectForge(m!.fx.data, 'gitlab-acme', 'tang-fg', extra)
+    await m!.qc.invalidateQueries()
   }
 
   it('has a row for the host, in its own name, with one button to connect and no installation words', async () => {
@@ -238,8 +240,7 @@ describe('the connected accounts of the account page', () => {
 
   it('shows a connection and disconnects it, with the host named in the words', async () => {
     await open()
-    forge({ provider: 'gitlab-acme', connect: 'tang-fg' })
-    await m!.qc.invalidateQueries()
+    await connect()
     await settle(() => panel()!.textContent!.includes('tang-fg'), 'the connection')
     expect(panel()!.textContent).toContain(tf.account.accountHelp('Acme GitLab'))
     expect(panel()!.textContent).not.toContain(tg.account.needsInstallBody)
@@ -255,12 +256,10 @@ describe('the connected accounts of the account page', () => {
 
   it('warns when the connected account is an administrator of the host, and only then', async () => {
     await open()
-    forge({ provider: 'gitlab-acme', connect: 'tang-fg' })
-    await m!.qc.invalidateQueries()
+    await connect()
     await settle(() => panel()!.textContent!.includes('tang-fg'), 'the connection')
     expect(panel()!.textContent).not.toContain(tf.account.adminTitle)
-    forge({ provider: 'gitlab-acme', connect: 'tang-fg', admin: true })
-    await m!.qc.invalidateQueries()
+    await connect({ admin: true })
     await settle(() => panel()!.textContent!.includes(tf.account.adminTitle), 'the warning')
     expect(panel()!.textContent).toContain(tf.account.adminBody('Acme GitLab'))
     expect(document.querySelector('[role="alert"]')).toBeTruthy()
@@ -268,9 +267,7 @@ describe('the connected accounts of the account page', () => {
 
   it('shows an expired connection with the words of its host and offers to connect again', async () => {
     await open()
-    forge({ provider: 'gitlab-acme', connect: 'tang-fg' })
-    forge({ provider: 'gitlab-acme', expire: true })
-    await m!.qc.invalidateQueries()
+    await connect({ expired: true })
     await settle(() => panel()!.textContent!.includes(tf.account.expiredBody('Acme GitLab')), 'the notice')
     expect(button(tg.account.reconnect, panel()!)).toBeTruthy()
   })
@@ -290,16 +287,11 @@ describe('the connected accounts of the account page', () => {
       const [open, setOpen] = useState(true)
       return <NewSpaceDialog open={open} onOpenChange={setOpen} onCreated={() => {}} />
     }
-    m = await mount(<Harness />, { signIn: true, server: { mode: 'accounts' }, entries: ['/'] })
-    adminRequests(m.server)('POST', '/api/admin/connections', {
-      id: 'gitlab-acme',
-      type: 'gitlab',
-      host: 'gitlab.acme.example',
-      name: 'Acme GitLab',
-      clientId: 'c',
-      clientSecret: 's',
+    m = await mount(<Harness />, {
+      signIn: true,
+      fixtures: { mode: 'accounts', data: (d) => void forgeHost(d) },
+      entries: ['/'],
     })
-    await m.qc.invalidateQueries()
     await settle(() => text().includes(tg.newSpace.whereSync('Acme GitLab')), 'the option')
     expect(text()).not.toContain(tg.newSpace.whereSync('GitHub'))
   })

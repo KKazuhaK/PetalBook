@@ -4,26 +4,17 @@ import { Route, Routes } from 'react-router'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/groups'
 import { tp } from '@/i18n/people'
-import type { MockServer } from '@/api/mock/server'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  shareSpace,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import type { FixtureServer } from '@/api/fixtures/server'
+import { addGroup, addPerson, shareSpace } from '@/api/fixtures/data/scenes'
+import { click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
 
-// The groups of a space's members, the view of everyone who can reach it, and "My groups", against the mock server.
+// The groups of a space's members, the view of everyone who can reach it, and "My groups", against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -46,19 +37,16 @@ const sent = () =>
   m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
 
 // The signed-in administrator owns 'Team'; two local groups exist, 'Engineering' with tang in it.
-async function openAsOwner(scene?: (server: MockServer, space: string) => void) {
+async function openAsOwner(scene?: (fx: FixtureServer, space: string) => void) {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const admin = adminRequests(server)
-      const space = (admin('POST', '/api/spaces', { name: 'Team' }).body as { id: string }).id
-      const tang = makePerson(server, 'tang')
-      const eng = (admin('POST', '/api/admin/groups', { name: 'Engineering', source: 'local' }).body as { id: string })
-        .id
-      admin('POST', '/api/admin/groups', { name: 'Operations', source: 'local' })
-      admin('POST', `/api/admin/groups/${eng}/members`, { userIds: [tang.id] })
-      scene?.(server, space)
+    fixtures: { mode: 'accounts' },
+    entries: (fx) => {
+      const space = (fx.call('POST', '/api/spaces', { name: 'Team' }).body as { id: string }).id
+      const tang = addPerson(fx.data, 'tang')
+      addGroup(fx.data, 'Engineering', [tang.id])
+      addGroup(fx.data, 'Operations')
+      scene?.(fx, space)
       localStorage.setItem('pb.space', space)
       return ['/settings/members']
     },
@@ -103,11 +91,9 @@ describe('the groups of a space: an owner', () => {
   })
 
   it('asks for a group before adding, and changes a role and removes a group after asking', async () => {
-    await openAsOwner((server, space) => {
-      const admin = adminRequests(server)
-      const list = admin('GET', '/api/admin/groups').body as { items: { id: string; name: string }[] }
-      admin('POST', `/api/spaces/${space}/groups`, {
-        groupId: list.items.find((g) => g.name === 'Engineering')!.id,
+    await openAsOwner((fx, space) => {
+      fx.on(space)('POST', '/groups', {
+        groupId: fx.data.admin.groups.find((g) => g.name === 'Engineering')!.id,
         role: 'viewer',
       })
     })
@@ -130,11 +116,9 @@ describe('the groups of a space: an owner', () => {
   })
 
   it('shows everyone who can reach the space with how, and filters them', async () => {
-    await openAsOwner((server, space) => {
-      const admin = adminRequests(server)
-      const list = admin('GET', '/api/admin/groups').body as { items: { id: string; name: string }[] }
-      admin('POST', `/api/spaces/${space}/groups`, {
-        groupId: list.items.find((g) => g.name === 'Engineering')!.id,
+    await openAsOwner((fx, space) => {
+      fx.on(space)('POST', '/groups', {
+        groupId: fx.data.admin.groups.find((g) => g.name === 'Engineering')!.id,
         role: 'editor',
       })
     })
@@ -154,12 +138,10 @@ describe('the groups of a space: an owner', () => {
   })
 
   it('marks a member who is also in a group, with the role the two give together', async () => {
-    await openAsOwner((server, space) => {
-      const admin = adminRequests(server)
-      admin('POST', `/api/spaces/${space}/members`, { username: 'tang', role: 'viewer' })
-      const list = admin('GET', '/api/admin/groups').body as { items: { id: string; name: string }[] }
-      admin('POST', `/api/spaces/${space}/groups`, {
-        groupId: list.items.find((g) => g.name === 'Engineering')!.id,
+    await openAsOwner((fx, space) => {
+      fx.on(space)('POST', '/members', { username: 'tang', role: 'viewer' })
+      fx.on(space)('POST', '/groups', {
+        groupId: fx.data.admin.groups.find((g) => g.name === 'Engineering')!.id,
         role: 'editor',
       })
     })
@@ -172,15 +154,11 @@ describe('the groups of a space: without the members permission', () => {
   it('a viewer sees the groups, and cannot change or add any', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        const g = (
-          adminRequests(server)('POST', '/api/admin/groups', { name: 'Engineering', source: 'synced' }).body as {
-            id: string
-          }
-        ).id
-        owner.request('POST', `/api/spaces/${space}/groups`, { groupId: g, role: 'editor' })
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        const { space } = shareSpace(fx, 'viewer')
+        const g = addGroup(fx.data, 'Engineering', [], 'synced').id
+        fx.on(space)('POST', '/groups', { groupId: g, role: 'editor' })
         localStorage.setItem('pb.space', space)
         return ['/settings/members']
       },
@@ -193,7 +171,7 @@ describe('the groups of a space: without the members permission', () => {
   })
 
   it('a personal space has no groups', async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/settings/members'] })
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/settings/members'] })
     await settle(() => panelText().includes(t.members.personalNote), 'the personal space')
     expect(panelText()).not.toContain(tgs.title)
   })
@@ -203,13 +181,9 @@ describe('my groups', () => {
   it('lists the groups the person is in, by name and kind', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: { mode: 'accounts' },
-      entries: (server) => {
-        const admin = adminRequests(server)
-        const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users[0].id
-        const g = (admin('POST', '/api/admin/groups', { name: 'Engineering', source: 'local' }).body as { id: string })
-          .id
-        admin('POST', `/api/admin/groups/${g}/members`, { userIds: [me] })
+      fixtures: { mode: 'accounts' },
+      entries: (fx) => {
+        addGroup(fx.data, 'Engineering', [fx.data.auth.users[0].id])
         return ['/settings/profile']
       },
     })
@@ -220,7 +194,7 @@ describe('my groups', () => {
   })
 
   it('says so when there are none', async () => {
-    m = await mount(routes, { signIn: true, server: { mode: 'accounts' }, entries: ['/settings/profile'] })
+    m = await mount(routes, { signIn: true, fixtures: { mode: 'accounts' }, entries: ['/settings/profile'] })
     await settle(() => panelText().includes(tg.account.none), 'the note')
   })
 })

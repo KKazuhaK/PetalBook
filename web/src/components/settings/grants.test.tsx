@@ -1,18 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import { MOCK_ADMIN, type MockServer } from '@/api/mock/server'
-import { adminRequests, byLabel, click, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import { approveApp, withAuthorizationServer } from '@/api/fixtures/data/area'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import { byLabel, click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { oa } from '@/i18n/oauth'
 import { tk } from '@/i18n/tokens'
 import SettingsRoute from './SettingsRoute'
 
-// "Connected apps" in the account settings, against the mock server.
+// "Connected apps" in the account settings, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -28,22 +29,18 @@ const dialog = () => document.querySelector<HTMLElement>('[data-slot="settings-d
 const text = () => dialog()?.textContent ?? ''
 const items = () => [...document.querySelectorAll<HTMLElement>('[data-slot="grant-item"]')]
 
-// A person approves a client on the consent page: the mock makes the grant then.
-const approve = (server: MockServer, name: string, access: 'read' | 'write' = 'write') => {
-  const request = adminRequests(server)
-  const req = server.startAuthorization(MOCK_ADMIN.username, { clientName: name })
-  const space = (request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-  request('POST', '/api/oauth/consent', { req, approve: true, spaces: [space], access })
-}
-
-const open = async (oauth: boolean, seed?: (server: MockServer) => void) => {
+// `seed` approves apps; the server has an authorization server only when `oauth`.
+const open = async (oauth: boolean, seed?: (d: FixtureData) => void) => {
   m = await mount(routes, {
-    entries: (server) => {
-      seed?.(server)
-      return ['/settings/tokens']
-    },
+    entries: ['/settings/tokens'],
     signIn: true,
-    server: { mode: 'accounts', oauth },
+    fixtures: {
+      mode: 'accounts',
+      data: (d) => {
+        if (oauth) withAuthorizationServer(d)
+        seed?.(d)
+      },
+    },
   })
   await settle(() => dialog() !== null && text().includes(tk.create), 'the tokens page')
 }
@@ -65,7 +62,7 @@ describe('connected apps in the account settings', () => {
   })
 
   it('lists an approved app with its access, its spaces and its identifier', async () => {
-    await open(true, (s) => approve(s, 'Notes helper'))
+    await open(true, (d) => approveApp(d, 'Notes helper'))
     await settle(() => items().length === 1, 'the app')
     const li = items()[0]
     expect(li.textContent).toContain('Notes helper')
@@ -75,9 +72,9 @@ describe('connected apps in the account settings', () => {
   })
 
   it('disconnects one after asking, and the list is read again', async () => {
-    await open(true, (s) => {
-      approve(s, 'Keep')
-      approve(s, 'Drop')
+    await open(true, (d) => {
+      approveApp(d, 'Keep')
+      approveApp(d, 'Drop')
     })
     await settle(() => items().length === 2, 'both apps')
     await click(byLabel(oa.yours.revokeLabel('Drop')))
@@ -96,7 +93,7 @@ describe('connected apps in the account settings', () => {
   })
 
   it('a long name and a long identifier cannot widen the page', async () => {
-    await open(true, (s) => approve(s, 'x'.repeat(100)))
+    await open(true, (d) => approveApp(d, 'x'.repeat(100)))
     await settle(() => items().length === 1, 'the app')
     const li = items()[0]
     expect(li.className).toMatch(/grid-cols-1/)

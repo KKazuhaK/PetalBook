@@ -22,8 +22,8 @@ import { draftRoutes } from './routes/drafts.ts'
 import { fileRoutes } from './routes/files.ts'
 import { syncRoutes } from './routes/sync.ts'
 import { checkRoutes } from './routes/check.ts'
-import { quietRoutes } from './routes/quiet.ts'
 import { viewRoutes } from './routes/views.ts'
+import { areaRoutes } from './routes/area.ts'
 
 export interface Sent {
   method: string
@@ -75,7 +75,7 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
     ...viewRoutes,
     ...syncRoutes,
     ...checkRoutes,
-    ...quietRoutes,
+    ...areaRoutes,
     ...adminRoutes,
   ]
 

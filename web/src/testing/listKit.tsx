@@ -88,6 +88,11 @@ export function putViews(send: Send, scope: Record<string, string>, views: Recor
   return send('PUT', '/views', { ...scope, baseRev: cur.rev, views })
 }
 
+// A page as the fixture server holds it now (in any space), and the draft stored for it.
+export const peek = (fx: FixtureServer, id: string) => fx.data.spaces.flatMap((s) => s.pages).find((p) => p.id === id)
+export const peekDraft = (fx: FixtureServer, id: string) =>
+  fx.data.spaces.map((s) => s.drafts[id]).find((d) => d !== undefined)
+
 // Views as a person's hand in space.yml leaves them: no usable id, so each is served as "@n", n its place from 0.
 export function handWrittenViews(fx: FixtureServer, folder: string, views: Record<string, unknown>[]) {
   fx.data.spaces[0].views[`folder=${folder}`] = {
