@@ -100,6 +100,26 @@ describe('palettes', () => {
       expect(contrast(vars['muted-foreground'], vars.accent), 'muted-foreground on accent').toBeGreaterThanOrEqual(3)
     })
 
+    it(`${name}: the controls take the petal colour and stay readable and visible in it`, () => {
+      expect(vars.primary, 'primary is the petal colour').toBe(vars.brand)
+      expect(vars['primary-foreground'], 'primary-foreground is onBrand').toBe(vars['sidebar-primary-foreground'])
+      expect(vars.ring, 'the focus ring is the petal colour').toBe(vars.brand)
+      // Text on a primary button, at rest and under the hover and pressed mixes of button.tsx.
+      expect(contrast(vars['primary-foreground'], vars.primary), 'button text').toBeGreaterThanOrEqual(AA)
+      for (const pct of [12, 20]) {
+        const shade = mix(vars.foreground, pct, vars.primary)
+        expect(
+          contrast(vars['primary-foreground'], shade),
+          `button text at ${pct}% toward foreground`,
+        ).toBeGreaterThanOrEqual(AA)
+      }
+      // Non-text: the switch, checkbox, bar and focus ring against what they sit on.
+      for (const surface of ['background', 'card', 'sidebar']) {
+        expect(contrast(vars.ring, vars[surface]), `focus ring on ${surface}`).toBeGreaterThanOrEqual(3)
+        expect(contrast(vars.primary, vars[surface]), `controls on ${surface}`).toBeGreaterThanOrEqual(3)
+      }
+    })
+
     it(`${name}: the petal colour, the error colour and the success pair are readable`, () => {
       // Used as text and icons on the page background.
       expect(contrast(vars.brand, vars.background), 'brand on background').toBeGreaterThanOrEqual(3)
