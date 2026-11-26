@@ -17,6 +17,17 @@
 -- everything else in this file. A comment line "-- dialect: postgres" (or
 -- sqlite) right before a statement runs it on that database only (schema.go).
 
+-- Plans (3.6): a named set of values of the limits sheet (docs/api.md, "Plans").
+-- settings is JSON (the API's "values"; "values" is reserved in SQLite), only the keys the plan sets. It comes before tenants, which
+-- may name one.
+CREATE TABLE plans (
+  id          TEXT COLLATE "C" PRIMARY KEY,
+  slug        TEXT COLLATE "C" NOT NULL UNIQUE,
+  name        TEXT COLLATE "C" NOT NULL,
+  description TEXT COLLATE "C" NOT NULL DEFAULT '',
+  settings    TEXT COLLATE "C" NOT NULL DEFAULT '{}'
+);
+
 -- Tenants (3.3). Every user, space, group, invite, registration, usage row,
 -- recycle item, export and bulk job belongs to one, by a foreign key. The
 -- default tenant (0000000000, slug default) is made with the database
@@ -28,8 +39,26 @@ CREATE TABLE tenants (
   name_key TEXT COLLATE "C" NOT NULL DEFAULT '',
   disabled BIGINT NOT NULL DEFAULT 0,
   quota    TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  plan_id  TEXT COLLATE "C" REFERENCES plans(id),
   created  BIGINT NOT NULL,
   updated  BIGINT NOT NULL
+);
+
+-- The overrides of a tenant's limits sheet (3.6, internal/limits): one value of
+-- one key from one source, 'manual' (a site administrator) or 'billing' (the
+-- internal billing module). value is JSON ('null' is a value: no limit).
+-- starts and ends (milliseconds, NULL for none) are the API's from and until:
+-- the value counts from starts up to, not including, ends.
+CREATE TABLE tenant_limits (
+  tenant_id TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  key       TEXT COLLATE "C" NOT NULL,
+  source    TEXT COLLATE "C" NOT NULL CHECK (source IN ('manual', 'billing')),
+  value     TEXT COLLATE "C" NOT NULL,
+  starts    BIGINT,
+  ends      BIGINT,
+  set_by    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  updated   BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, key, source)
 );
 
 -- People. username is stored in lower case and unique on the whole server.

@@ -8421,8 +8421,11 @@ and the site administrators' editing. No prices, billing, trials or renewals.
 - `tenant.selfService.plan` (site only, `null` by default): the plan of the
   tenants made by organisation sign-up; `null` means the site's default.
 
-**Cost.** Each tenant's effective set is held in memory (about twenty keys; a
-thousand tenants take a few hundred kilobytes). It is computed at start, and
+**Cost.** Each tenant's effective set is held in memory (about thirty keys; a
+thousand tenants take about 0.5 MB with five overrides each, at most 1.3 MB with
+every key overridden, and a tenant with no override or plan shares the site's
+sheet: 74 KB for a thousand). It is kept by `internal/limits`: an immutable
+sheet per tenant behind an atomic pointer, so a check takes no lock. It is computed at start, and
 again for one tenant when its overrides or plan change, or for the tenants of a
 plan when the plan or the site's default changes. A check is one map lookup,
 never a query. A change also moves the tenant's settings generation (3.3), so
@@ -8453,8 +8456,24 @@ present of `manual`, `billing`, `plan`, `site`: **manual wins**. The source
 
 **Optional start and end dates.** A `manual` or `billing` value may carry
 `from` and `until` (RFC 3339, either optional), e.g. a temporary extra quota
-for one month. Outside its window a value is absent. The server keeps the next
-boundary in memory and recomputes the one tenant at that time; nothing polls.
+for one month. Outside its window a value is absent: it counts from `from`
+(inclusive) up to `until` (exclusive). The server keeps the overrides in memory
+and one timer, set for the next start or end across all tenants; when it fires
+it recomputes the tenants that have a boundary behind them and sets itself for
+the next, and a write moves it. With nothing dated there is no timer; nothing
+polls.
+
+**Built in 3.6 part 3** (`internal/limits`, no endpoint yet): the registry of
+keys with their types, defaults and descriptions (every key of the two tables;
+the quota and per-person totals are one limit each, `storage.quota.spaces`,
+`.bytes`, `.pages` and `storage.perPerson.…`, as this table lists them); the
+sheets; `SetManual` (one transaction, then that one tenant is recomputed and
+the settings are told to compute again); and `BillingWriter`, an interface with
+no implementation. `internal/authz` asks the sheet (`On`) for the capability of
+a key: a key with no capability, or a capability the registry does not know,
+stays on, and a holder of the key across the site is never limited. `null` is a
+value of a limit (no limit), so a manual `{"value": null}` beats a plan's
+number; a bare `null` in a *write* removes the manual value, as above.
 
 #### `GET /api/admin/tenants/{tenant}/limits`, `PUT …/limits`
 
@@ -9636,10 +9655,12 @@ development and demo databases open; it promises no data-preserving upgrade
 (where a development database has one address on several accounts, the oldest
 keeps it and the others' `email` is cleared, so the unique index can be made).
 
-- Capabilities, limits and plans: `plans` (id, slug, name, description, values
-  JSON); `tenants.plan_id`; `tenant_limits` (tenant, key, value JSON, source
-  `manual` or `billing`, `from`, `until`; primary key `(tenant_id, key, source)`),
-  the overrides of the limits sheet, capabilities included;
+- Capabilities, limits and plans: `plans` (id, slug, name, description,
+  `settings` JSON: the API's `values`, which SQLite reserves as a name);
+  `tenants.plan_id`; `tenant_limits` (tenant, key, source `manual` or `billing`,
+  value JSON, `starts`, `ends` (the API's `from` and `until`, which SQL
+  reserves), `set_by`, `updated`; primary key `(tenant_id, key, source)`), the
+  overrides of the limits sheet, capabilities included;
   `tenant_usage_daily` (tenant, day, key, value; primary key
   `(tenant_id, day, key)`); the site's default in `site_settings` key
   `capabilities`. 3.3's `tenants.quota` columns are dropped (the totals are
