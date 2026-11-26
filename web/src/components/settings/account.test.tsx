@@ -124,7 +124,7 @@ describe('the passkeys of the account', () => {
 
   it('says so when the server refuses one more (20 is the most there)', async () => {
     await open()
-    m!.fx.fail('POST', '/api/account/passkeys/begin', 422, { code: 'too_many_passkeys' })
+    m!.fx.fail('POST', '/api/account/passkeys/begin', 409, { code: 'too_many_passkeys' })
     stubCreate({ id: 'cred-21', type: 'public-key', response: {} })
     await click(buttonWith(ts.passkeys.add))
     await settle(() => panelText().includes(ts.passkeys.tooMany), 'the limit')

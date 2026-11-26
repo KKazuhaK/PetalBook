@@ -94,7 +94,7 @@ describe('API tokens in the settings', () => {
     expect(text()).toContain(tk.spaceRequired)
     expect(apiCalls('POST')).toEqual([])
     // The fiftieth is the last: the server refuses the 51st and the page says why.
-    m!.fx.fail('POST', '/api/account/tokens', 422, { code: 'token_limit' })
+    m!.fx.fail('POST', '/api/account/tokens', 400, { code: 'token_limit' })
     await click(dialog().querySelector('input[type="checkbox"]'))
     await type(name(), 'one too many')
     await click(button(tk.submit))

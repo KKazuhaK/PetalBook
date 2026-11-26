@@ -103,13 +103,4 @@ export const editorRoutes: Route[] = [
       return { type, pages, skipped }
     },
   ],
-  [
-    'PUT',
-    '/api/spaces/:space/sources/presets',
-    (c) => {
-      const s = spaceOf(c)
-      s.sourcePresets = c.body.presets ?? null
-      return { presets: s.sourcePresets }
-    },
-  ],
 ]

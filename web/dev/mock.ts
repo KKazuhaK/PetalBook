@@ -43,7 +43,7 @@ function optionsFromEnv(): FixtureOptions {
       { slug: 'campus', kind: 'saml', name: 'Campus login', order: 1 },
     ],
     invite: { token: INVITE_TOKEN, role: 'member' },
-    data: seedAccounts,
+    data: mode === 'setup' ? undefined : seedAccounts,
   }
 }
 
