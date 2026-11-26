@@ -164,6 +164,11 @@ type cachedSession struct {
 	persisted time.Time // the last_used the database has
 	held      bool
 	loaded    time.Time
+	// The context and the proofs reserved for 3.7, as read with the session.
+	// Never written back; the map is replaced whole (UpdateSessionState drops
+	// the entry), never changed in place.
+	currentTenant string
+	proofs        map[string]store.Proof
 }
 
 type cachedUser struct {

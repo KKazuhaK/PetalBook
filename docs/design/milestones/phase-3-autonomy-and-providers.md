@@ -806,6 +806,19 @@ day the owner brought "one account in several organizations" forward from phase 
 (formerly 5.14) to here, following Notion. The design is written after 3.6 is
 merged.
 
+**Session shapes reserved in 3.6** (no behaviour yet): `sessions` has
+`current_tenant` ('' is the person's own context), `proofs` (JSON: tenant id to
+`{method, provider, at, seen}`, method `sso|domain|password|passkey|social`, times
+in epoch milliseconds) and `client` (`web|app`, which picks the site-set sliding
+lifetime: app 30 days, web 7). An organization that enforces its SSO or verified
+domain gates only its own context: its spaces open only in a session that holds a
+live proof for it; switching between verified contexts is free. Sign-in fills
+`client` (`web` until a request says otherwise) and the home proof. The session
+cache keeps what it read, never writes it back, and the hourly update writes
+`last_used` only; `current_tenant` and `proofs` change only through
+`UpdateSessionState`, which drops the session's cache entry. A request adds no
+query and no write.
+
 Decided:
 
 - **A person's home and organizations**: each account has one home

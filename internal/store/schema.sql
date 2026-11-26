@@ -165,7 +165,17 @@ CREATE TABLE sessions (
   -- own name for itself (cut to 200 bytes) and how they signed in ("password",
   -- "passkey", "sso:<provider slug>", "invite", "registration", "reset").
   user_agent TEXT COLLATE "C" NOT NULL DEFAULT '',
-  method     TEXT COLLATE "C" NOT NULL DEFAULT ''
+  method     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  -- Reserved for 3.7 (several organizations per account). current_tenant is the
+  -- context the session is in ('' is the person's own). proofs is JSON: a map
+  -- from tenant id to {method, provider, at, seen}, the verification each
+  -- organization holds in this session (method sso|domain|password|passkey|
+  -- social; at and seen are epoch milliseconds; a proof lives while its
+  -- organization's site-set sliding lifetime does). client picks that lifetime
+  -- (web|app).
+  current_tenant TEXT COLLATE "C" NOT NULL DEFAULT '',
+  proofs         TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  client         TEXT COLLATE "C" NOT NULL DEFAULT 'web'
 );
 CREATE INDEX sessions_user ON sessions(user_id, last_used);
 CREATE INDEX sessions_last_used ON sessions(last_used);

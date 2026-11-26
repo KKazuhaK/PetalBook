@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -19,6 +20,41 @@ type Session struct {
 	// UserAgent and Method are what the administrator's list of a person's
 	// sessions shows (see the schema); empty when not known.
 	UserAgent, Method string
+	// Reserved for 3.7 (see the schema): the client ("web" or "app", "" is
+	// "web"), the context the session is in ("" is the person's own) and the
+	// proof each organization holds, by tenant id.
+	Client        string
+	CurrentTenant string
+	Proofs        map[string]Proof
+}
+
+// Proof is how a person verified themselves to one organization in a session.
+// Method is sso, domain, password, passkey or social; At and Seen are epoch
+// milliseconds (when it was made, and when it was last used).
+type Proof struct {
+	Method   string `json:"method"`
+	Provider string `json:"provider,omitempty"`
+	At       int64  `json:"at"`
+	Seen     int64  `json:"seen"`
+}
+
+func encodeProofs(p map[string]Proof) string {
+	if len(p) == 0 {
+		return "{}"
+	}
+	b, _ := json.Marshal(p) // a map of plain values cannot fail
+	return string(b)
+}
+
+func decodeProofs(s string) map[string]Proof {
+	p := map[string]Proof{}
+	if s != "" {
+		_ = json.Unmarshal([]byte(s), &p) // a damaged value is no proof
+	}
+	if p == nil {
+		p = map[string]Proof{}
+	}
+	return p
 }
 
 // MaxUserAgent is the longest user agent a session keeps (bytes).
@@ -29,8 +65,12 @@ func InsertSession(ctx context.Context, q Q, s Session) error {
 	if len(ua) > MaxUserAgent {
 		ua = strings.ToValidUTF8(ua[:MaxUserAgent], "")
 	}
-	_, err := q.Exec(ctx, `INSERT INTO sessions(id, user_id, created, last_used, held, user_agent, method) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.UserID, ms(s.Created), ms(s.LastUsed), b2i(s.Held), ua, s.Method)
+	client := s.Client
+	if client == "" {
+		client = "web"
+	}
+	_, err := q.Exec(ctx, `INSERT INTO sessions(id, user_id, created, last_used, held, user_agent, method, current_tenant, proofs, client) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.UserID, ms(s.Created), ms(s.LastUsed), b2i(s.Held), ua, s.Method, s.CurrentTenant, encodeProofs(s.Proofs), client)
 	return err
 }
 
@@ -74,19 +114,20 @@ func EndUserSession(ctx context.Context, q Q, id, userID, reason string, at time
 // ended ("" when no record is kept) with ErrNotFound: one query either way, so a
 // cookie that is not a session costs one round trip, not two.
 func LookupSession(ctx context.Context, q Q, id string) (*Session, string, error) {
-	var userID, reason sql.NullString
+	var userID, reason, cur, proofs, client sql.NullString
 	var created, used, held sql.NullInt64
-	err := q.QueryRow(ctx, `SELECT s.user_id, s.created, s.last_used, s.held, e.reason
+	err := q.QueryRow(ctx, `SELECT s.user_id, s.created, s.last_used, s.held, e.reason, s.current_tenant, s.proofs, s.client
 		FROM (SELECT CAST(? AS TEXT) AS id) k
 		LEFT JOIN sessions s ON s.id = k.id
-		LEFT JOIN session_ends e ON e.id = k.id`, id).Scan(&userID, &created, &used, &held, &reason)
+		LEFT JOIN session_ends e ON e.id = k.id`, id).Scan(&userID, &created, &used, &held, &reason, &cur, &proofs, &client)
 	if err != nil {
 		return nil, "", err
 	}
 	if !userID.Valid {
 		return nil, reason.String, ErrNotFound
 	}
-	return &Session{ID: id, UserID: userID.String, Created: fromMS(created.Int64), LastUsed: fromMS(used.Int64), Held: held.Int64 != 0}, "", nil
+	return &Session{ID: id, UserID: userID.String, Created: fromMS(created.Int64), LastUsed: fromMS(used.Int64), Held: held.Int64 != 0,
+		Client: client.String, CurrentTenant: cur.String, Proofs: decodeProofs(proofs.String)}, "", nil
 }
 
 func GetSession(ctx context.Context, q Q, id string) (*Session, error) {
@@ -100,7 +141,34 @@ func GetSession(ctx context.Context, q Q, id string) (*Session, error) {
 	return &s, err
 }
 
+// GetSessionState is a session with the fields reserved for 3.7 (client,
+// current context, proofs).
+func GetSessionState(ctx context.Context, q Q, id string) (*Session, error) {
+	s, err := GetSession(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	var proofs string
+	if err := q.QueryRow(ctx, `SELECT current_tenant, proofs, client FROM sessions WHERE id = ?`, id).Scan(&s.CurrentTenant, &proofs, &s.Client); err != nil {
+		return nil, err
+	}
+	s.Proofs = decodeProofs(proofs)
+	return s, nil
+}
+
+// UpdateSessionState sets the context a session is in and its proofs. ErrNotFound
+// when there is no such session.
+func UpdateSessionState(ctx context.Context, q Q, id, currentTenant string, proofs map[string]Proof) error {
+	res, err := q.Exec(ctx, `UPDATE sessions SET current_tenant = ?, proofs = ? WHERE id = ?`, currentTenant, encodeProofs(proofs), id)
+	if err != nil {
+		return err
+	}
+	return oneRow(res, nil)
+}
+
 // TouchSession records use. Callers do it at most once an hour per session.
+// It writes last_used only: the context and proofs change through
+// UpdateSessionState, never from a copy that may be old.
 func TouchSession(ctx context.Context, q Q, id string, at time.Time) error {
 	_, err := q.Exec(ctx, `UPDATE sessions SET last_used = ? WHERE id = ?`, ms(at), id)
 	return err
