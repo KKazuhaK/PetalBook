@@ -149,6 +149,11 @@ func (s *server) ssoStartJSON(c *call, kind, slug string) {
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
+	// Only an administrator's own route starts a test (TestBegin).
+	if req.Intent == "test" {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Unknown intent.")
+		return
+	}
 	bp := auth.BeginParams{Intent: req.Intent, Token: req.Token, Return: req.Return}
 	if c.p != nil {
 		u := c.user()

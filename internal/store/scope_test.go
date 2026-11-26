@@ -296,6 +296,7 @@ var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|space
 // (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
 // users table that does not say deleted_at is on this list with the reason.
 var deletedAllowlist = map[string]string{
+	"EndSessionsByMethod":     "ends the sessions that started through a provider when it is deleted, whatever tenant their people are in",
 	"EndTenantSessions":       "ends every session of a tenant's people when it is disabled; ending the (already ended) sessions of a deleted person too is harmless",
 	"DeleteTenantSessionEnds": "forgets a tenant's `disabled` records when it is enabled again; a deleted person's records go with the rest",
 	"GetUserAny":              "names a deleted person on purpose: the recycle bin and the audit log show them",

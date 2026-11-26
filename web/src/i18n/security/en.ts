@@ -268,7 +268,8 @@ export const securityEn: SecurityMessages = {
     secretNew: 'New secret',
     secretWillClear: 'The secret is cleared when you save',
     deleteTitle: (name: string) => `Delete ${name}?`,
-    deleteHelp: 'The identities people linked stay, and come back if a provider with the same issuer is added again.',
+    deleteHelp:
+      'Deleting it removes the accounts people linked to it and ends the sessions they started through it. They have to link again to a new provider. Anyone who can sign in only through it is locked out.',
     deleteInUseTitle: (name: string) => `${name} is the only way in for some people`,
     deleteInUse: (n: number) =>
       `${n} account${n === 1 ? ' has' : 's have'} no password, no passkey and no other provider, so deleting it would lock ${n === 1 ? 'it' : 'them'} out. Delete anyway?`,

@@ -11362,6 +11362,11 @@ from the `NameID` only when its format is `emailAddress`; with neither the
 sign-in is refused with `sso_error=saml_no_email`, which tells the administrator
 to map an email attribute. Use "Test sign-in" to see what the provider sends.
 
+Behaviour change: a site SAML provider with `mergeVerifiedEmail` on now vouches
+for the address it sends (it counts as verified, as an OpenID Connect
+provider's `email_verified: true` does), and a SAML sign-in without an address
+is refused with `saml_no_email` instead of going on with none.
+
 `github`:
 
 ```json
@@ -11399,6 +11404,8 @@ Any fields but `slug`, `kind` and `owner`. `clientSecret` absent keeps the store
 with the same issuer brings none of them back). Without `force=1`, refused with
 `409 provider_in_use` (and `{"accounts": n}`) when some account has no other way
 to sign in: no password, no passkey, no linked account at another provider.
+The sessions that started through the provider (`sso:<slug>`) end with it, and
+answer `401 signed_out_elsewhere` afterwards.
 
 #### `POST /api/admin/providers/{id}/check`
 

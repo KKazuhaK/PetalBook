@@ -93,3 +93,41 @@ func TestAdministratorsCanTestAProviderBeforeTurningItOn(t *testing.T) {
 		}
 	})
 }
+
+// Only the administrator's own route starts a test: the public start refuses
+// the intent, even for a signed-in person, and makes nothing pending.
+func TestThePublicStartRefusesTheTestIntent(t *testing.T) {
+	t.Parallel()
+	f := newIDPFor(t, "one")
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"enabled": false})).want(t, 201, "")
+		member := a.addUser("tang", pw, "member")
+		r := member.do("POST", "/api/auth/oidc/one/start", map[string]any{"intent": "test"}).want(t, 400, "invalid")
+		if r.resp.Header.Get("Set-Cookie") != "" {
+			t.Fatal("a pending sign-in was made")
+		}
+	})
+}
+
+// Deleting a provider ends the sessions that started through it, and no others.
+func TestDeletingAProviderEndsTheSessionsStartedThroughIt(t *testing.T) {
+	t.Parallel()
+	f := newIDPFor(t, "one")
+	f.addUser("alice", testidp.Claims{"sub": "sub-alice", "preferred_username": "alice", "email": "alice@example.test", "name": "Alice A", "email_verified": true})
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
+		via := a.newClient("")
+		if loc := f.signIn2(t, via, "one", "alice", map[string]any{}); loc == "" || signedInAs(t, via) != "alice" {
+			t.Fatalf("not signed in: %q", loc)
+		}
+		admin.do("DELETE", "/api/admin/providers/one?force=1", nil).want(t, 204, "")
+		if signedInAs(t, via) != "" {
+			t.Fatal("the session started through the deleted provider lives on")
+		}
+		if signedInAs(t, admin) != "kazuha" {
+			t.Fatal("another session ended")
+		}
+	})
+}

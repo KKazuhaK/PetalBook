@@ -249,7 +249,10 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 		if _, err := store.FindLink(context.Background(), a.st.Q(), "one", "sub-alice"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
-		c.do("GET", "/api/auth/oidc/one/start", nil)
+		// The sessions that started through it end with it.
+		c.do("GET", "/api/account/links", nil).want(t, 401, "unauthenticated")
+		f.do("GET", "/api/account/links", nil).want(t, 401, "unauthenticated")
+		c = e
 		admin.do("POST", "/api/admin/providers", one.providerBody("again", map[string]any{"order": 3})).want(t, 201, "")
 		pl = admin.do("GET", "/api/admin/providers/again", nil).want(t, 200, "")
 		if pl.body["people"] != float64(0) {

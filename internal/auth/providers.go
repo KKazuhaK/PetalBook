@@ -1138,6 +1138,10 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, id string, fo
 		if err := store.DeleteProvider(ctx, q, id); err != nil {
 			return err
 		}
+		// The sessions that started through it end with it.
+		if err := store.EndSessionsByMethod(ctx, q, "sso:"+cur.row.Slug, store.EndElsewhere, s.now()); err != nil {
+			return err
+		}
 		var err error
 		dropped, err = s.cfg.Spaces.DropProvider(ctx, q, id)
 		return err
@@ -1148,6 +1152,7 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, id string, fo
 	if err != nil {
 		return err
 	}
+	s.forgetSessions()
 	s.cfg.Spaces.MembershipChanged(dropped...)
 	if err := s.reloadProviders(ctx); err != nil {
 		return err

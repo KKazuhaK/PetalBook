@@ -192,6 +192,17 @@ func DeleteUserSessions(ctx context.Context, q Q, userID, keep, reason string, a
 	return err
 }
 
+// EndSessionsByMethod ends every session that started with method (such as
+// "sso:<slug>"), recording reason for each.
+func EndSessionsByMethod(ctx context.Context, q Q, method, reason string, at time.Time) error {
+	if _, err := q.Exec(ctx, `INSERT INTO session_ends(id, user_id, reason, ended) SELECT id, user_id, ?, ? FROM sessions WHERE method = ?
+		ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, ended = excluded.ended`, reason, ms(at), method); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `DELETE FROM sessions WHERE method = ?`, method)
+	return err
+}
+
 // Why a session ended without the person signing out.
 const (
 	EndExpired   = "expired"              // idle or past its absolute lifetime

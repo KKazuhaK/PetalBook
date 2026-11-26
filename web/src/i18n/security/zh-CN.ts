@@ -236,7 +236,8 @@ export const securityZhCN = {
     secretNew: '新的密钥',
     secretWillClear: '保存时会清除密钥',
     deleteTitle: (name: string) => `删除 ${name}？`,
-    deleteHelp: '人们已绑定的身份会保留，如果之后用同一个签发方再加回来，它们就恢复。',
+    deleteHelp:
+      '删除后，人们绑定到它的账号会被移除，通过它开始的会话也会结束；他们需要重新绑定到新的提供方。只能通过它登录的人将无法登录。',
     deleteInUseTitle: (name: string) => `${name} 是一些人唯一的登录方式`,
     deleteInUse: (n: number) =>
       `有 ${n} 个账号既没有密码和 passkey，也没有别的提供方，删掉它他们就进不来了。仍然要删吗？`,
