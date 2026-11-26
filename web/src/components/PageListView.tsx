@@ -441,16 +441,23 @@ function Listing({ source }: { source: ListSource }) {
   // Read before the status checks below narrow `query` (a failed "load more" leaves the list in place).
   const nextError = query.isFetchNextPageError ? query.error : null
   const fetchNext = query.fetchNextPage
-  const items = query.data?.pages.flatMap((p) => p.items) ?? []
+  const pages = query.data?.pages
+  const items = useMemo(() => pages?.flatMap((p) => p.items) ?? [], [pages])
   const spaceName = ops?.spaceName ?? t.nav.rootFolder
   const title = titleOf(source, spaceName)
   useDocumentTitle(`${title} · ${t.appName}`)
 
   // Subfolders, from the tree: it lists every folder with the pages directly in it.
   // They are not listed while the pages are filtered: a folder has none of the things a filter asks about.
-  const folders = source.kind === 'folder' && ops && !filtered ? childFolders(ops.index, source.folder) : []
-  const tableRows: TableRow[] =
-    filesTable || filesPhone ? arrangeRows(folders, items, mixed, state.sort || '-updated') : []
+  const folders = useMemo(
+    () => (source.kind === 'folder' && ops && !filtered ? childFolders(ops.index, source.folder) : []),
+    [source, ops, filtered],
+  )
+  // Kept while nothing it is made of changes: the table measures its cells again only when its rows change.
+  const tableRows = useMemo<TableRow[]>(
+    () => (filesTable || filesPhone ? arrangeRows(folders, items, mixed, state.sort || '-updated') : []),
+    [filesTable, filesPhone, folders, items, mixed, state.sort],
+  )
 
   // Everything selectable, in the order shown (for shift-click ranges).
   const lookup = new Map<string, FileItem>()
