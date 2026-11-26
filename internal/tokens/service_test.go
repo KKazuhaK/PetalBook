@@ -47,7 +47,7 @@ func (u *users) CachedUser(_ context.Context, id string) (*store.User, error) {
 	if u.gone[id] {
 		return nil, store.ErrNotFound
 	}
-	return &store.User{ID: id, Username: id, Disabled: u.disabled[id]}, nil
+	return &store.User{ID: id, Username: id, Role: "admin", SiteAdmin: true, Disabled: u.disabled[id]}, nil
 }
 
 type fixture struct {
@@ -111,6 +111,11 @@ func TestAuthenticate(t *testing.T) {
 		if p.User.ID != "A" || g == nil || g.Kind != "token" || g.ID != tok.ID || !g.Write || g.Access() != "write" ||
 			fmt.Sprint(g.Spaces) != "[S1 S2]" || !g.Names("S1") || g.Names("S3") || p.SessionID != "" {
 			t.Fatalf("%+v %+v", p, g)
+		}
+		// A token holds no permission key (no route outside spaces takes one):
+		// nothing is built for it on a request.
+		if !p.Access.Site.Empty() || p.Access.Tenant != nil {
+			t.Fatalf("a token's principal has keys: %+v", p.Access)
 		}
 		// What is stored is the hash, never the secret.
 		var n int

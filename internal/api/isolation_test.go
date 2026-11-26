@@ -587,7 +587,8 @@ func (f *tenFx) countOf(q string) int {
 func assertNoCrossTenantMemberships(t *testing.T, a *acc) {
 	t.Helper()
 	for name, q := range map[string]string{
-		"space_members": `SELECT COUNT(*) FROM space_members m JOIN spaces s ON s.id = m.space_id JOIN users u ON u.id = m.user_id WHERE s.tenant_id <> u.tenant_id`,
+		// A site administrator who took a space over explicitly is the one exception (3.6).
+		"space_members": `SELECT COUNT(*) FROM space_members m JOIN spaces s ON s.id = m.space_id JOIN users u ON u.id = m.user_id WHERE s.tenant_id <> u.tenant_id AND NOT (u.role = 'admin' AND u.site_admin = 1)`,
 		"group_members": `SELECT COUNT(*) FROM group_members m JOIN groups g ON g.id = m.group_id JOIN users u ON u.id = m.user_id WHERE g.tenant_id <> u.tenant_id`,
 		"space_groups":  `SELECT COUNT(*) FROM space_groups x JOIN spaces s ON s.id = x.space_id JOIN groups g ON g.id = x.group_id WHERE s.tenant_id <> g.tenant_id`,
 		"token spaces":  `SELECT COUNT(*) FROM api_token_spaces x JOIN api_tokens k ON k.id = x.token_id JOIN users u ON u.id = k.user_id JOIN spaces s ON s.id = x.space_id WHERE s.tenant_id <> u.tenant_id`,

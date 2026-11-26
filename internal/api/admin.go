@@ -125,6 +125,11 @@ func (s *server) adminTransferSpace(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is at most 500 characters.")
 		return
 	}
+	if req.UserID == c.user().ID {
+		// Becoming the owner oneself is taking the space over, which says why.
+		writeError(c.w, http.StatusForbidden, "takeover_required", "To become the owner yourself, take the space over: POST /api/admin/spaces/{space}/takeover, with a reason.")
+		return
+	}
 	s.transferSpace(c, req.UserID, reason, "space_transferred")
 }
 

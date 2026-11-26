@@ -102,7 +102,8 @@ func (s *Service) Authenticate(ctx context.Context, raw, ip string) (*auth.Princ
 			s.log.Warn("could not record a person's last use", "error", err)
 		}
 	}
-	return &auth.Principal{User: *u, Access: auth.AccessOf(*u), Grant: g}, nil
+	// No Access: an access token is for /mcp only, so none is built.
+	return &auth.Principal{User: *u, Grant: g}, nil
 }
 
 // verify checks an access token in process. Whatever is wrong with it is one of

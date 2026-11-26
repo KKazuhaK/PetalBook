@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"petalbook.app/server/internal/page"
@@ -168,6 +169,18 @@ func (m *Manager) SetDisabled(ctx context.Context, sc store.Scope, id string, di
 // belongs to its person and cannot be transferred. The Git author of later
 // commits becomes the new owner, in the space if it is open now.
 func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID string) (*Transferred, error) {
+	return m.transfer(ctx, sc, id, userID, false)
+}
+
+// TakeOver makes by the owner of the space, as Transfer does: the explicit
+// takeover (3.6). An administrator of the whole server may take over a space of
+// any tenant (and becomes its member, the one membership across tenants);
+// anyone else only one of their own tenant. A personal space never.
+func (m *Manager) TakeOver(ctx context.Context, sc store.Scope, id string, by store.User) (*Transferred, error) {
+	return m.transfer(ctx, sc, id, by.ID, by.Role == "admin" && by.SiteAdmin)
+}
+
+func (m *Manager) transfer(ctx context.Context, sc store.Scope, id, userID string, siteAdmin bool) (*Transferred, error) {
 	sp, err := m.adminSpace(ctx, sc, id)
 	if err != nil {
 		return nil, err
@@ -175,7 +188,11 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 	if sp.Personal {
 		return nil, ErrPersonalSpace
 	}
-	u, err := store.GetUser(ctx, m.opt.Store.Q(), store.InTenant(sp.TenantID), userID)
+	userScope := store.InTenant(sp.TenantID)
+	if siteAdmin {
+		userScope = store.AllTenants()
+	}
+	u, err := store.GetUser(ctx, m.opt.Store.Q(), userScope, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrUserNotFound
 	}
@@ -187,7 +204,7 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 	}
 	m.adminMu.Lock()
 	defer m.adminMu.Unlock()
-	var touched []string
+	var touched, ownerGroups, groupOwners []string
 	var before, after store.Touched
 	err = m.opt.Store.Tx(ctx, func(q store.Q) error {
 		if err := store.LockSpace(ctx, q, id); err != nil {
@@ -196,7 +213,12 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 		if before, err = store.SpaceCountedFor(ctx, q, id); err != nil {
 			return err
 		}
-		if touched, err = store.TransferOwnership(ctx, q, id, u.ID, m.opt.Now()); err != nil {
+		if touched, err = store.TransferOwnership(ctx, q, id, u.ID, m.opt.Now(), siteAdmin); err != nil {
+			return err
+		}
+		// Groups that hold the owner role keep it (part 2 of 3.6 decides what a
+		// takeover does to them); their people are told.
+		if ownerGroups, groupOwners, err = store.OwnerGroupsOf(ctx, q, id); err != nil {
 			return err
 		}
 		after, err = store.SpaceCountedFor(ctx, q, id)
@@ -211,10 +233,15 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 	m.MembershipChanged(touched...)
 	m.usageMoved(ctx, before, after)
 	m.forgetAuthor(u.ID)
-	out := &Transferred{Name: sp.Name, TenantID: sp.TenantID}
+	out := &Transferred{Name: sp.Name, TenantID: sp.TenantID, OwnerGroups: ownerGroups}
 	for _, t := range touched {
 		if t != u.ID {
 			out.Previous = append(out.Previous, t)
+		}
+	}
+	for _, p := range groupOwners {
+		if p != u.ID && !slices.Contains(out.Previous, p) {
+			out.GroupOwners = append(out.GroupOwners, p)
 		}
 	}
 	m.mu.Lock()
@@ -233,11 +260,14 @@ func (m *Manager) Transfer(ctx context.Context, sc store.Scope, id, userID strin
 	return out, nil
 }
 
-// Transferred is what a transfer did: the space's name and tenant, and the
-// owners it made editors.
+// Transferred is what a transfer did: the space's name and tenant, the owners
+// it made editors, and the groups that hold the owner role still, with their
+// people (other than the new owner and Previous).
 type Transferred struct {
 	Name, TenantID string
 	Previous       []string
+	OwnerGroups    []string
+	GroupOwners    []string
 }
 
 func (m *Manager) rel(p string) string {

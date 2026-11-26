@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"petalbook.app/server/internal/authz"
+	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
 
@@ -105,21 +106,28 @@ func (s *server) adminTakeOverSpace(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is from 1 to 500 characters: why the space is being taken over.")
 		return
 	}
-	s.transferSpace(c, c.user().ID, reason, "space_taken_over")
+	s.transferSpace(c, "", reason, "space_taken_over")
 }
 
-// transferSpace makes userID the owner of the {space} and the other owners its
-// editors, and records it: an audit row of kind, and a notice to each owner it
-// replaced.
+// transferSpace makes userID (the caller, for "": a takeover) the owner of the
+// {space} and the other owners its editors, and records it: an audit row of
+// kind, and a notice to each owner it replaced.
 func (s *server) transferSpace(c *call, userID, reason, kind string) {
 	id := c.r.PathValue("space")
-	t, err := s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), id, userID)
+	var t *spaces.Transferred
+	var err error
+	if userID == "" {
+		userID = c.user().ID
+		t, err = s.spaces.TakeOver(c.r.Context(), store.AdminScopeOf(c.user()), id, c.user())
+	} else {
+		t, err = s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), id, userID)
+	}
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	s.auditRow(c, kind, t.TenantID, map[string]any{"space": id, "to": userID, "previous": t.Previous, "reason": reason})
-	for _, owner := range t.Previous {
+	s.auditRow(c, kind, t.TenantID, map[string]any{"space": id, "to": userID, "previous": t.Previous, "ownerGroups": t.OwnerGroups, "reason": reason})
+	for _, owner := range append(append([]string(nil), t.Previous...), t.GroupOwners...) {
 		// A failure is only logged: the transfer is done.
 		if err := store.NotifyUser(c.r.Context(), s.opt.Store.Q(), owner, store.NotifySystem, id,
 			map[string]string{"event": kind, "space": t.Name, "by": c.user().Name, "reason": reason}, s.now()); err != nil {

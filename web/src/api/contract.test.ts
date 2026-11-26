@@ -2381,6 +2381,9 @@ function suite(target: Target) {
           expect(
             (await call(admin, 'POST', `${base}/members`, { username: other.user.username, role: 'viewer' })).status,
           ).toBe(201)
+          // A transfer to oneself is a takeover without a reason.
+          const self = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/transfer`, { userId: me.id })
+          expect([self.status, self.json.error]).toEqual([403, 'takeover_required'])
           const none = await call(admin, 'POST', `/api/admin/spaces/${sp.id}/takeover`, { reason: ' ' })
           expect([none.status, none.json.error]).toEqual([400, 'invalid'])
           expect(

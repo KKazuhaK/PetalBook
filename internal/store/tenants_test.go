@@ -70,13 +70,13 @@ func TestLinksAcrossTenantsAreRefusedByTheStatement(t *testing.T) {
 		if n := count(t, st, `SELECT COUNT(*) FROM group_members WHERE user_id = 'Ub'`); n != 1 {
 			t.Fatalf("%d memberships of the person of tenant B; only the group of their own tenant counts", n)
 		}
-		if _, err := store.TransferOwnership(ctx, q, "Sa", "Ub", now); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.TransferOwnership(ctx, q, "Sa", "Ub", now, false); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("a transfer to a person of another tenant: %v", err)
 		}
 		if n := count(t, st, `SELECT COUNT(*) FROM space_members WHERE space_id = 'Sa' AND user_id = 'Ua' AND role = 'owner'`); n != 1 {
 			t.Fatal("the failed transfer changed the owners")
 		}
-		if _, err := store.TransferOwnership(ctx, q, "Sa", "Ua", now); err != nil {
+		if _, err := store.TransferOwnership(ctx, q, "Sa", "Ua", now, false); err != nil {
 			t.Fatal(err)
 		}
 		assertNoCrossTenantLinks(t, st)

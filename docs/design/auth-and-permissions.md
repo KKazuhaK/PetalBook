@@ -160,9 +160,17 @@ What the conventions above became in code:
   (`space_taken_over`), and each replaced owner gets a `system` notification.
   `…/transfer` needs the same key and is audited and told the same way. The
   built-in tenant (and site) administrator holds `takeover`, but only these two
-  endpoints use it. A site administrator can take over only a space of their
-  own tenant (the owner must belong to the space's tenant); in another tenant
-  they transfer it to someone of that tenant.
+  endpoints use it, and a transfer to oneself is refused (it would be a takeover
+  without a reason). A site administrator may take over a space of any tenant
+  (the owner's decision, 2026-11-25), which makes the one membership that joins
+  two tenants (`TransferOwnership` accepts it only for a site administrator); a
+  tenant administrator only within their tenant; a personal space nobody.
+  Groups that hold the owner role keep it for now and their people are told;
+  part 2 decides to remove or lower a group's owner role on a takeover.
+- Whether someone reaches a space they are not a member of is decided by
+  `tenant.spaces.manage` in the space's tenant, not by the role name.
+- Token and OAuth principals carry no `Access`: no route outside spaces takes
+  them, so nothing is built for them per request.
 - Left for later parts: the in-handler `isSiteAdmin()` checks and the inline
   `Role == "admin"` comparisons become key checks (part 2, with custom roles);
   an administrator may still add themselves to a group that is already a member

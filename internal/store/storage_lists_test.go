@@ -165,7 +165,7 @@ func TestUsageCountsWhereTheStorageLives(t *testing.T) {
 		}
 		mkSameTenantUser(t, st, "Ub2", tenA)
 		if err := st.Tx(ctx, func(q store.Q) error {
-			_, err := store.TransferOwnership(ctx, q, "Sa", "Ub2", now.Add(time.Hour))
+			_, err := store.TransferOwnership(ctx, q, "Sa", "Ub2", now.Add(time.Hour), false)
 			return err
 		}); err != nil {
 			t.Fatal(err)
@@ -1043,7 +1043,7 @@ func TestCountersStayWhereTheRecountPutsThemUnderMixedChanges(t *testing.T) {
 				_ = store.AddMember(ctx, q, pick(spaces), pick(users), []string{"owner", "editor", "viewer"}[rng.Intn(3)], now) // may be a member already
 			case op == 2:
 				if err := st.Tx(ctx, func(q store.Q) error {
-					_, err := store.TransferOwnership(ctx, q, pick(spaces), pick(users), now)
+					_, err := store.TransferOwnership(ctx, q, pick(spaces), pick(users), now, false)
 					return err
 				}); err != nil {
 					t.Fatal(err)

@@ -9594,15 +9594,25 @@ saying so. That is closed:
   (`ref` is the space). `409 personal_space` for a personal space; a personal
   space is not found for a tenant administrator, as for every administration
   route. After it the administrator is a member, and the remote and owners are
-  theirs to change. The caller must belong to the space's tenant (`404 user_not_found`
-  otherwise): a site administrator transfers a space of another tenant to
-  someone of it instead.
+  theirs to change. A **site administrator** may take over a space of any
+  tenant (the owner's decision, 2026-11-25): they become its owner although
+  they are of another tenant, the one membership that joins two tenants. A
+  **tenant administrator** only within their tenant (another tenant's space is
+  `404 not_found`). A **personal space is never taken over**, by anyone:
+  `409 personal_space`.
+- **Groups that hold the owner role** keep it in this part: a takeover or a
+  transfer changes only the owners who were added directly, and the people of
+  each owner group are told as well (the audit row lists the groups as
+  `ownerGroups`). Part 2 of 3.6 removes or lowers a group's owner role on a
+  takeover.
 - A built-in tenant administrator holds `tenant.spaces.takeover`, but only this
   endpoint (and `…/transfer`) uses it; it never widens what they may do in a
   space implicitly. The same holds for a site administrator.
 - `POST /api/admin/spaces/{space}/transfer` needs `tenant.spaces.takeover`
   too, takes an optional `reason`, is audited as `space_transferred` (same
-  detail) and tells the owners it replaced (`event: "space_transferred"`).
+  detail) and tells the owners it replaced (`event: "space_transferred"`). A
+  transfer to oneself is `403 takeover_required`: becoming the owner oneself is
+  the takeover, with its reason.
 
 ### Storage of this section
 
@@ -9673,7 +9683,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |
 | `audit_downloaded` | someone downloaded audit rows | `from`, `to`, `kind`, `rows` |
-| `space_taken_over`, `space_transferred` | an administrator took a space over, or transferred it | `space`, `to`, `previous`, `reason` |
+| `space_taken_over`, `space_transferred` | an administrator took a space over, or transferred it | `space`, `to`, `previous`, `ownerGroups`, `reason` |
 
 Every row about a tenant carries `by.role` (`site` or `tenant`). Tenant
 administrators see their tenant's rows of these kinds, the site

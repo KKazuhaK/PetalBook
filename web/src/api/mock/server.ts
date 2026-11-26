@@ -3232,6 +3232,8 @@ export function createMockServer(options: MockOptions = {}) {
               'personal_space',
               'a personal space belongs to one person and cannot be transferred or deleted',
             )
+          // Becoming the owner oneself is the takeover, with its reason.
+          if (!takeover && body.userId === me.id) throw takeoverRequired()
           const u = takeover ? me : typeof body.userId === 'string' ? users.get(body.userId) : undefined
           if (!u) throw new HttpError(404, 'user_not_found', 'there is no such user')
           if (u.disabled) throw new HttpError(409, 'user_disabled', 'that user is disabled and cannot own a space')
