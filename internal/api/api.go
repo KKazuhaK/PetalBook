@@ -28,6 +28,7 @@ import (
 	"petalbook.app/server/internal/drafts"
 	"petalbook.app/server/internal/gitstore"
 	"petalbook.app/server/internal/index"
+	sheets "petalbook.app/server/internal/limits"
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/quota"
@@ -129,9 +130,11 @@ type server struct {
 	settings *settings.Service
 	// quota knows which limits apply and notices crossings (accounts mode).
 	quota *quota.Service
-	// caps says which capabilities each tenant has; nil: all of them (the
-	// capabilities of 3.6 are not there yet).
-	caps authz.Capabilities
+	// limits is each tenant's limits sheet (accounts mode; nil in single-user
+	// mode, which has no tenants to limit) and caps, the same service, says
+	// which capabilities each tenant has; nil: all of them.
+	limits *sheets.Service
+	caps   authz.Capabilities
 	// localAccess is what the built-in user of single-user mode holds.
 	localAccess authz.Subject
 	single      bool
@@ -176,6 +179,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.h.ServeHTTP(w, r.WithContext(spaces.WithRestoringAnswer(r.Context())))
 }
 
+// Limits is the limits sheet of the tenants (nil in single-user mode).
+func (h *Handler) Limits() *sheets.Service { return h.s.limits }
+
 // Close stops the background work the handler started and waits for it to
 // end. Call it after the HTTP server has stopped and before the spaces, the
 // services and the database under it are closed; it may be called again.
@@ -201,6 +207,9 @@ func (s *server) goBg(f func(ctx context.Context)) bool {
 }
 
 func (s *server) close() {
+	if s.limits != nil {
+		s.limits.Close()
+	}
 	s.flushAllPrefs()
 	s.bgMu.Lock()
 	s.bgClosed = true
@@ -269,6 +278,14 @@ func New(opt Options) *Handler {
 	if s.auth != nil {
 		s.auth.UseSettings(s.settings)
 		s.bindQuota()
+		// Each tenant's capabilities and limits, in memory. If the state
+		// database cannot be read every capability stays on, which is what a
+		// server without the sheet does.
+		if ls, err := sheets.New(s.bgCtx, sheets.Config{Store: opt.Store, Clock: sheets.RealClock(s.now), Invalidate: s.settings, Logger: s.log}); err != nil {
+			s.log.Error("the limits sheet could not be read; every capability is on", "error", err)
+		} else {
+			s.limits, s.caps = ls, ls
+		}
 	}
 	if s.spaces != nil && !s.single {
 		s.bindAssetsPolicy()
