@@ -4,29 +4,22 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { toast } from 'sonner'
 import { pollMs } from '@/api/manage'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { ta } from '@/i18n/admin'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { tg } from '@/i18n/manage'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { addPerson, addSpace, asTenantAdmin } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 import { fitScreen, tapTarget } from './manage/shared'
 
 // Storage management in the administration: the summary, the lists of people and spaces, what counts toward quotas,
 // deleting a space or a person with a preview, bulk actions with a second confirmation and a job, and the differences
-// between a site administrator and a tenant administrator.
+// between a site administrator and a tenant administrator, against the fixture server. What a job does while it runs,
+// and the plan the server makes for a person who leaves, are its answers: a test says the ones it needs with
+// `fx.reply` and `fx.fail`.
 
 beforeAll(() => {
   installDomShims()
@@ -34,7 +27,7 @@ beforeAll(() => {
 })
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   toast.dismiss()
   await m?.unmount()
@@ -65,22 +58,12 @@ const queries = (prefix: string) =>
 const sent = (method: string, prefix: string) =>
   m!.requests.filter((r) => r.method === method && r.url.startsWith(prefix))
 
-// The signed-in administrator becomes one of a tenant, as another site administrator exists.
-const asTenantAdmin = (server: MockServer) => {
-  const admin = adminRequests(server)
-  makePerson(server, 'second', 'admin')
-  const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-    (u) => u.username === 'admin',
-  )!
-  admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
-}
-
-async function open(section: string, scene?: (server: MockServer) => void) {
+async function open(section: string, scene?: (d: FixtureData) => void, setup?: (fx: FxMounted['fx']) => void) {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts', maxSpaces: 0 },
-    entries: (server) => {
-      scene?.(server)
+    fixtures: { mode: 'accounts', data: (d) => void scene?.(d) },
+    entries: (fx) => {
+      setup?.(fx)
       return [`/admin/${section}`]
     },
   })
@@ -117,11 +100,20 @@ const typeCount = async (n: number) => {
 }
 const confirmButton = () => buttonIn(dlg(), tg.bulk.confirm)!
 
+// The leaver owns a space that one other person is in; an heir is somebody else.
+const people = (d: FixtureData) => {
+  const leaver = addPerson(d, 'leaver')
+  addPerson(d, 'viewer')
+  addPerson(d, 'heir')
+  addSpace(d, '共有的', { owner: leaver, extra: { members: 2 } })
+}
+
 describe('the summary and the list of people', () => {
   it('shows what the server holds at the top, with the free disk for a site administrator', async () => {
-    await open('storage/manage', (server) => {
-      const tang = makePerson(server, 'tang')
-      tang.request('POST', '/api/spaces', { name: '团队' })
+    await open('storage/manage', (d) => {
+      const tang = addPerson(d, 'tang')
+      addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+      addSpace(d, '团队', { owner: tang })
     })
     await settle(() => document.querySelector('[data-slot="storage-summary"]') !== null, 'the summary')
     const card = (k: string) => document.querySelector(`[data-card="${k}"]`)?.textContent ?? ''
@@ -134,17 +126,22 @@ describe('the summary and the list of people', () => {
   })
 
   it('does not tell a tenant administrator the free disk', async () => {
-    await open('storage/manage', asTenantAdmin)
+    await open('storage/manage', asTenantAdmin, (fx) => {
+      // The server leaves the free disk out of what it tells a tenant administrator.
+      const { summary, ...rest } = fx.call('GET', '/api/admin/storage').body
+      const { diskFreeBytes: _disk, ...held } = summary
+      void _disk
+      fx.reply('GET', '/api/admin/storage', { ...rest, summary: held })
+    })
     await settle(() => document.querySelector('[data-slot="storage-summary"]') !== null, 'the summary')
     expect(document.querySelector('[data-card="disk"]')).toBeNull()
     expect(document.querySelector('[data-card="held"]')).not.toBeNull()
   })
 
   it('lists people with what counts and what is held, sorted and filtered by the server', async () => {
-    await open('storage/manage', (server) => {
-      const tang = makePerson(server, 'tang')
-      tang.request('POST', '/api/spaces', { name: '她的空间' })
-      makePerson(server, 'wu')
+    await open('storage/manage', (d) => {
+      addPerson(d, 'tang')
+      addPerson(d, 'wu')
     })
     await settle(() => personRows().length === 3, 'three people')
     // A click on a header sorts by it on the server; a second click turns the order round.
@@ -166,11 +163,11 @@ describe('the summary and the list of people', () => {
 
   it('opens a person to see their spaces, each with where it is stored and whether it counts', async () => {
     let space = ''
-    await open('storage/manage', (server) => {
-      const tang = makePerson(server, 'tang')
-      space = (tang.request('POST', '/api/spaces', { name: '在自己远端' }).body as { id: string }).id
-      tang.request('POST', '/api/spaces', { name: '只在服务器' })
-      server.manage.setLocation(space, 'own')
+    await open('storage/manage', (d) => {
+      const tang = addPerson(d, 'tang')
+      addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+      space = addSpace(d, '在自己远端', { owner: tang, extra: { location: 'own', counted: false } }).info.id
+      addSpace(d, '只在服务器', { owner: tang })
     })
     await settle(() => personRows().length === 2, 'people')
     await click(byLabel(tg.people.openFor('名 tang')))
@@ -188,9 +185,10 @@ describe('the summary and the list of people', () => {
   })
 
   it("shows a tenant administrator no personal space in a person's spaces", async () => {
-    await open('storage/manage', (server) => {
-      makePerson(server, 'tang').request('POST', '/api/spaces', { name: '团队' })
-      asTenantAdmin(server)
+    // The server leaves personal spaces out of what a tenant administrator is shown.
+    await open('storage/manage', (d) => {
+      addSpace(d, '团队', { owner: addPerson(d, 'tang') })
+      asTenantAdmin(d)
     })
     await settle(() => personRows().length >= 2, 'people')
     await click(byLabel(tg.people.openFor('名 tang')))
@@ -206,10 +204,10 @@ describe('the summary and the list of people', () => {
 
 describe('the list of spaces', () => {
   it('says where each space is stored and whether it counts, and sorts and filters on the server', async () => {
-    await open('spaces', (server) => {
-      const tang = makePerson(server, 'tang')
-      const id = (tang.request('POST', '/api/spaces', { name: '外面的' }).body as { id: string }).id
-      server.manage.setLocation(id, 'tenant')
+    await open('spaces', (d) => {
+      const tang = addPerson(d, 'tang')
+      addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+      addSpace(d, '外面的', { owner: tang, extra: { location: 'tenant', counted: false } })
     })
     await settle(() => rows().length === 3, 'spaces')
     const loc = (name: string) => rowOf(name).querySelector('[data-slot="space-location"]')!
@@ -229,12 +227,11 @@ describe('the list of spaces', () => {
   })
 
   it("offers a tenant administrator no personal space and nothing that is the site's", async () => {
-    await open('spaces', (server) => {
-      makePerson(server, 'tang').request('POST', '/api/spaces', { name: '团队' })
-      asTenantAdmin(server)
+    await open('spaces', (d) => {
+      addSpace(d, '团队', { owner: addPerson(d, 'tang') })
+      asTenantAdmin(d)
     })
-    await settle(() => rows().length === 1, 'only the shared space')
-    expect(rows()[0].textContent).toContain('团队')
+    await settle(() => rows().some((r) => r.textContent!.includes('团队')), 'the shared space')
     expect(text()).toContain(tg.spaces.personalNote)
     await openMenu('团队')
     expect(menuItem('常驻服务器')).toBeUndefined()
@@ -248,10 +245,10 @@ describe('the list of spaces', () => {
 
 describe('deleting a space', () => {
   it('previews what happens, says how long it stays in the bin, and the result points to the bin', async () => {
-    await open('spaces', (server) => {
-      const tang = makePerson(server, 'tang')
-      const id = (tang.request('POST', '/api/spaces', { name: '要删的' }).body as { id: string }).id
-      tang.request('POST', `/api/spaces/${id}/pages`, { meta: { title: '一页' }, body: 'x\n' })
+    await open('spaces', (d) => {
+      const tang = addPerson(d, 'tang')
+      addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+      addSpace(d, '要删的', { owner: tang })
     })
     await settle(() => rows().length === 3, 'spaces')
     await openMenu('要删的')
@@ -269,14 +266,6 @@ describe('deleting a space', () => {
 })
 
 describe('deleting a person', () => {
-  const people = (server: MockServer) => {
-    const leaver = makePerson(server, 'leaver')
-    const viewer = makePerson(server, 'viewer')
-    makePerson(server, 'heir')
-    const shared = (leaver.request('POST', '/api/spaces', { name: '共有的' }).body as { id: string }).id
-    leaver.request('POST', `/api/spaces/${shared}/members`, { username: 'viewer', role: 'viewer' })
-    void viewer
-  }
   const openPerson = async () => {
     await settle(() => personRows().length >= 4, 'people')
     await click(byLabel(t.fmt.labelled(tc.table.more, '名 leaver')))
@@ -304,8 +293,8 @@ describe('deleting a person', () => {
     await click(confirm())
     await settle(() => text().includes(tg.del.user.deleted('leaver')), 'in the bin')
     const body = JSON.parse(sent('DELETE', '/api/users/')[0].body!) as { heir: string }
-    expect(body.heir).toBe(m!.server.userId('heir'))
-    expect(m!.server.manage.recycled().map((i) => i.name)).toContain('leaver')
+    expect(body.heir).toBe(m!.fx.data.auth.users.find((u) => u.username === 'heir')!.id)
+    expect(m!.fx.data.admin.recycle.map((i) => i.user?.username)).toContain('leaver')
   })
 
   it('refuses to delete yourself: the plan says so and the button stays off', async () => {
@@ -317,9 +306,10 @@ describe('deleting a person', () => {
 })
 
 describe('bulk actions', () => {
-  const three = (server: MockServer) => {
-    const tang = makePerson(server, 'tang')
-    for (const n of ['甲', '乙', '丙']) tang.request('POST', '/api/spaces', { name: n })
+  const three = (d: FixtureData) => {
+    const tang = addPerson(d, 'tang')
+    addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+    for (const n of ['甲', '乙', '丙']) addSpace(d, n, { owner: tang })
   }
 
   it('shows the plan, wants the number typed, runs a job with its progress and then says it is done', async () => {
@@ -333,6 +323,13 @@ describe('bulk actions', () => {
     expect(confirmButton().disabled).toBe(true)
     await typeCount(2)
     expect(confirmButton().disabled).toBe(false)
+    // The job is running when first asked after, and done by the next.
+    m!.fx.reply(
+      'GET',
+      '/api/admin/jobs/:id',
+      { job: { id: 'j1', action: 'delete_spaces', total: 2, done: 1, failed: [], state: 'running' } },
+      { times: 1 },
+    )
     await click(confirmButton())
     await settle(() => document.querySelector('[data-slot="job"]') !== null, 'the job')
     await settle(
@@ -350,8 +347,17 @@ describe('bulk actions', () => {
   it('lists what did not work and goes on with the rest', async () => {
     await open('spaces', three)
     await settle(() => rows().length === 5, 'spaces')
-    // One named space is busy (by name: spaces made in the same millisecond list in either order).
-    m!.server.manage.busy(rowOf('乙').dataset.space!)
+    // One named space is busy: the job does the other and lists this one as failed.
+    m!.fx.reply('GET', '/api/admin/jobs/:id', {
+      job: {
+        id: 'j1',
+        action: 'delete_spaces',
+        total: 2,
+        done: 1,
+        failed: [{ id: rowOf('乙').dataset.space!, error: 'busy', code: 'busy' }],
+        state: 'done',
+      },
+    })
     await bulk(['乙', '甲'], tg.bulk.actions.delete_spaces)
     await typeCount(2)
     await click(confirmButton())
@@ -366,10 +372,8 @@ describe('bulk actions', () => {
     await settle(() => rows().length === 5, 'spaces')
     await bulk(['甲', '乙'], tg.bulk.actions.disable_spaces)
     await typeCount(2)
-    // Someone adds a member to one of them meanwhile.
-    const id = rowOf('甲').dataset.space!
-    const other = makePerson(m!.server, 'late')
-    adminRequests(m!.server)('POST', `/api/spaces/${id}/members`, { username: other.username, role: 'viewer' })
+    // Someone adds a member to one of them meanwhile: the server finds the plan out of date, once.
+    m!.fx.fail('POST', '/api/admin/bulk', 409, { code: 'confirm_stale' }, { times: 1 })
     await click(confirmButton())
     await settle(() => document.querySelector('[data-slot="stale"]') !== null, 'the stale notice')
     expect(sent('POST', '/api/admin/bulk')).toHaveLength(1)
@@ -387,13 +391,17 @@ describe('bulk actions', () => {
   it('shows a job that waits its turn, and one the server restart interrupted', async () => {
     await open('spaces', three)
     await settle(() => rows().length === 5, 'spaces')
-    m!.server.manage.holdJobs(true)
+    const job = (state: string, done: number) => ({
+      job: { id: 'j1', action: 'disable_spaces', total: 2, done, failed: [], state },
+    })
+    // The job waits its turn for a while; then the server restarts and it is interrupted.
+    m!.fx.reply('GET', '/api/admin/jobs/:id', job('interrupted', 0))
+    m!.fx.reply('GET', '/api/admin/jobs/:id', job('queued', 0), { times: 25 })
     await bulk(['甲', '乙'], tg.bulk.actions.disable_spaces)
     await typeCount(2)
     await click(confirmButton())
     await settle(() => document.querySelector('[data-slot="job"]')?.getAttribute('data-state') === 'queued', 'queued')
     expect(dlg().textContent).toContain(tg.bulk.states.queued)
-    m!.server.manage.interruptJobs()
     await settle(
       () => document.querySelector('[data-slot="job"]')?.getAttribute('data-state') === 'interrupted',
       'interrupted',
@@ -405,7 +413,9 @@ describe('bulk actions', () => {
   it('shows a job that broke', async () => {
     await open('spaces', three)
     await settle(() => rows().length === 5, 'spaces')
-    m!.server.manage.breakJobs(true)
+    m!.fx.reply('GET', '/api/admin/jobs/:id', {
+      job: { id: 'j1', action: 'disable_spaces', total: 2, done: 0, failed: [], state: 'failed' },
+    })
     await bulk(['甲', '乙'], tg.bulk.actions.disable_spaces)
     await typeCount(2)
     await click(confirmButton())
@@ -413,13 +423,7 @@ describe('bulk actions', () => {
     expect(dlg().textContent).toContain(tg.bulk.states.failed)
   })
   it('drops the confirmation of an heir that was cleared and asks for the plan again', async () => {
-    await open('storage/manage', (server) => {
-      const leaver = makePerson(server, 'leaver')
-      makePerson(server, 'viewer')
-      makePerson(server, 'heir')
-      const shared = (leaver.request('POST', '/api/spaces', { name: '共有的' }).body as { id: string }).id
-      leaver.request('POST', `/api/spaces/${shared}/members`, { username: 'viewer', role: 'viewer' })
-    })
+    await open('storage/manage', people)
     await settle(() => personRows().length >= 4, 'people')
     await click(byLabel(tg.people.selectFor('名 leaver')))
     await click(buttonIn(document.querySelector('[data-slot="bulk-bar"]'), tg.bulk.actions.delete_users))
@@ -442,32 +446,13 @@ describe('bulk actions', () => {
   })
 
   it('asks again with the chosen heir when the plan for them failed, and confirms only a plan made with them', async () => {
-    await open('storage/manage', (server) => {
-      const leaver = makePerson(server, 'leaver')
-      makePerson(server, 'viewer')
-      makePerson(server, 'heir')
-      const shared = (leaver.request('POST', '/api/spaces', { name: '共有的' }).body as { id: string }).id
-      leaver.request('POST', `/api/spaces/${shared}/members`, { username: 'viewer', role: 'viewer' })
-    })
+    await open('storage/manage', people)
     await settle(() => personRows().length >= 4, 'people')
     await click(byLabel(tg.people.selectFor('名 leaver')))
     await click(buttonIn(document.querySelector('[data-slot="bulk-bar"]'), tg.bulk.actions.delete_users))
     await settle(() => document.querySelector('[data-slot="needs-heir"]') !== null, 'the heir is asked for')
     // The plan with the heir fails once.
-    let failing = true
-    const through = globalThis.fetch
-    globalThis.fetch = async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
-      if (failing && init?.method === 'POST' && url.startsWith('/api/admin/confirm')) {
-        failing = false
-        await through(input, init) // noted, and its answer dropped
-        return new Response(JSON.stringify({ error: 'down', code: 'internal' }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      return through(input, init)
-    }
+    m!.fx.fail('POST', '/api/admin/confirm', 500, { code: 'internal' }, { times: 1 })
     const pick = () => document.querySelector<HTMLSelectElement>('select[aria-label="' + tg.bulk.heir + '"]')!
     await settle(() => pick().options.length > 1, 'people to choose')
     const heirId = [...pick().options].find((o) => o.textContent?.includes('heir'))!.value
@@ -496,9 +481,10 @@ describe('on a phone', () => {
   }
 
   it('fits the deletion of a space and the bulk dialog to the screen, with big enough buttons', async () => {
-    await open('spaces', (server) => {
-      const tang = makePerson(server, 'tang')
-      for (const n of ['甲', '乙']) tang.request('POST', '/api/spaces', { name: n })
+    await open('spaces', (d) => {
+      const tang = addPerson(d, 'tang')
+      addSpace(d, 'tang 的空间', { owner: tang, personal: true })
+      for (const n of ['甲', '乙']) addSpace(d, n, { owner: tang })
     })
     await settle(() => rows().length === 4, 'spaces')
     await openMenu('甲')

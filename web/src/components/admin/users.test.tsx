@@ -7,8 +7,7 @@ import { t } from '@/i18n'
 import { tsec } from '@/i18n/security'
 import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import type { FixtureData } from '@/api/fixtures/data/model'
-import { sharedSpace } from '@/api/fixtures/data/model'
-import { addGroup, addPerson, asTenantAdmin } from '@/testing/adminScene'
+import { addGroup, addPerson, addSpace, asTenantAdmin } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // The list of people (paged, searched, filtered and sorted by the server) and a person's page with its tabs, against
@@ -213,7 +212,8 @@ describe("a person's page", () => {
   it('lists the spaces they belong to and the groups they are in, and what they hold', async () => {
     await open('/admin', (d) => {
       const amy = addPerson(d, 'amy')
-      sharedSpace(d, 'owner', '她的团队')
+      addSpace(d, '她的空间', { owner: amy, personal: true })
+      addSpace(d, '她的团队', { owner: amy })
       addGroup(d, '编辑组', 'local', { members: [amy.id] })
       return `/admin/user/${amy.id}/spaces`
     })

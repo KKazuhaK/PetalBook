@@ -3,14 +3,16 @@
 // they decide nothing.
 
 import { emptySpace, type FixtureData, type SpaceData } from '@/api/fixtures/data/model'
-import { DEFAULT_TENANT, type GroupRec, type PersonRec } from '@/api/fixtures/data/admin'
+import { DEFAULT_TENANT, makeProvider, type GroupRec, type PersonRec } from '@/api/fixtures/data/admin'
 import { DEMO_MEMBER, type UserRec } from '@/api/fixtures/data/people'
 import type {
   AdminGrant,
   AdminSpace,
   AdminToken,
   AuthProvider,
+  ProviderInput,
   Plan,
+  RecycleItem,
   SettingLower,
   SiteSetting,
   Tenant,
@@ -100,31 +102,20 @@ export function addGroup(
   return g
 }
 
-// A sign-in provider of the site (an OIDC one unless said).
-export function addProvider(d: FixtureData, slug: string, name: string, extra: Partial<AuthProvider> = {}) {
-  const at = '2026-11-20T08:00:00Z'
-  const p: AuthProvider = {
-    slug,
-    kind: 'oidc',
-    name,
-    icon: '',
-    enabled: true,
-    order: d.admin.providers.length + 1,
-    autoCreate: false,
-    mergeVerifiedEmail: false,
-    groups: { enabled: false, claim: '', missing: 'keep', map: [] },
-    oidc: {
-      issuer: 'https://sso.example',
-      clientId: 'x',
-      hasSecret: true,
-      scopes: ['openid', 'email', 'profile'],
-      legacyCallback: false,
-      redirectUrl: '',
-    },
-    status: { ok: true, checked: at, message: '' },
-    people: 0,
-    created: at,
-    updated: at,
+// A sign-in provider of the site (an OIDC one unless said); `input` is what its form would have sent.
+export function addProvider(
+  d: FixtureData,
+  slug: string,
+  name: string,
+  input: ProviderInput = {},
+  extra: Partial<AuthProvider> = {},
+) {
+  const p = {
+    ...makeProvider(
+      { slug, name, oidc: { issuer: 'https://sso.example', clientId: 'x', clientSecret: 'x' }, ...input },
+      '2026-11-20T08:00:00Z',
+      d.admin.providers.length + 1,
+    ),
     ...extra,
   }
   d.admin.providers.push(p)
@@ -133,18 +124,20 @@ export function addProvider(d: FixtureData, slug: string, name: string, extra: P
   return p
 }
 
-// A space of its own that the console lists: owned by `owner` (the signed-in person when none is named).
+// A space that the console lists: owned by `owner` (the signed-in person when none is named). `outside`: one the
+// signed-in person only administers, so it is not in their own list of spaces.
 export function addSpace(
   d: FixtureData,
   name: string,
-  opts: { owner?: UserRec; personal?: boolean; extra?: Partial<AdminSpace> } = {},
+  opts: { owner?: UserRec; personal?: boolean; outside?: boolean; extra?: Partial<AdminSpace> } = {},
 ): SpaceData {
   const s = emptySpace({
-    id: `01SP${(d.spaces.length + 1).toString().padStart(6, '0')}`,
+    id: `01SP${(d.spaces.length + d.admin.otherSpaces.length + 1).toString().padStart(6, '0')}`,
     name,
     personal: !!opts.personal,
   })
-  d.spaces.push(s)
+  if (opts.outside) d.admin.otherSpaces.push(s)
+  else d.spaces.push(s)
   const owner = opts.owner
   if (owner || opts.extra)
     d.admin.spaceExtra[s.info.id] = {
@@ -216,4 +209,34 @@ export function addGrant(d: FixtureData, owner: UserRec, client: string): AdminG
   }
   d.admin.grants.push(g)
   return g
+}
+
+// Something in the recycle bin: a space or a person, deleted just now (the bin keeps it 30 days).
+export function addRecycled(
+  d: FixtureData,
+  kind: 'space' | 'user',
+  name: string,
+  extra: Partial<RecycleItem> = {},
+): RecycleItem {
+  const me = d.auth.users[0]
+  const at = Date.now()
+  const item: RecycleItem = {
+    id: `01RC${(d.admin.recycle.length + 1).toString().padStart(6, '0')}`,
+    kind,
+    tenant: DEFAULT_TENANT,
+    space: kind === 'space' ? { id: `gone-${name}`, name, personal: false } : null,
+    user: kind === 'user' ? { id: `gone-${name}`, username: name } : null,
+    with: [],
+    bytes: 0,
+    deletedAt: new Date(at).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    deletedBy: { id: me.id, username: me.username },
+    purgeAt: new Date(at + 30 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    reason: '',
+    state: 'ready',
+    restorable: true,
+    problems: null as unknown as string[],
+    ...extra,
+  }
+  d.admin.recycle.push(item)
+  return item
 }

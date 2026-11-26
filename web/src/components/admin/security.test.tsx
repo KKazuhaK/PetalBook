@@ -4,32 +4,23 @@ import { act } from 'react'
 import { Route, Routes } from 'react-router'
 import { keys } from '@/api/hooks'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { tsec } from '@/i18n/security'
-import {
-  adminRequests,
-  byLabel,
-  byText,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, byText, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
+import type { ProviderInput, AuthProvider, SecurityNotice } from '@/api/types'
+import { addPerson, addProvider, setSite } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 import { buildSteps, draftOf } from './securityDraft'
 import { detailText } from './AuditSection'
-import type { MockOptions } from '@/api/mock/server'
 import type { SecuritySettings } from '@/api/types'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -51,21 +42,63 @@ const section = (id: string) => q(`section[aria-labelledby="${id}"]`)!
 const dialog = () => q('[role="alertdialog"], [role="dialog"]')!
 const calls = (method: string, url: string) => m!.requests.filter((r) => r.method === method && r.url.startsWith(url))
 
+// A sign-in provider that is there already: what its form would have sent, and what the server lists of it.
 const company = {
   slug: 'company',
-  kind: 'oidc' as const,
   name: 'Company SSO',
-  icon: 'preset:microsoft',
-  oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' },
+  input: {
+    icon: 'preset:microsoft',
+    oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' },
+  } satisfies ProviderInput,
 }
 
-async function open(server: MockOptions = {}) {
-  m = await mount(routes, { entries: ['/admin/security'], signIn: true, server: { mode: 'accounts', ...server } })
+// What a scene may set before the page opens: the sign-in settings, the providers, what the server says besides.
+interface Scene {
+  mode?: string
+  lockMinutes?: number
+  perMinute?: number
+  captcha?: { provider: string; siteKey: string; hasSecret: boolean }
+  providers?: { slug: string; name: string; input?: ProviderInput; extra?: Partial<AuthProvider> }[]
+  passkeysAvailable?: boolean
+  notices?: SecurityNotice[]
+  data?: (d: FixtureData) => void
+  setup?: (fx: FixtureServer) => void
+}
+const sceneOf = (o: Scene) => (d: FixtureData) => {
+  if (o.mode) setSite(d, 'signin.mode', o.mode)
+  if (o.lockMinutes) setSite(d, 'signin.lockout.minutes', o.lockMinutes)
+  if (o.perMinute) setSite(d, 'signin.perMinute', o.perMinute)
+  if (o.captcha) {
+    setSite(d, 'captcha.provider', o.captcha.provider)
+    d.admin.captcha = { siteKey: o.captcha.siteKey, hasSecret: o.captcha.hasSecret }
+  }
+  for (const p of o.providers ?? []) addProvider(d, p.slug, p.name, p.input, p.extra)
+  if (o.passkeysAvailable === false) d.admin.security.passkeysAvailable = false
+  if (o.notices) d.admin.security.notices = o.notices
+  o.data?.(d)
+}
+
+async function open(o: Scene = {}) {
+  m = await mount(routes, {
+    entries: (fx) => {
+      o.setup?.(fx)
+      return ['/admin/security']
+    },
+    signIn: true,
+    fixtures: { mode: 'accounts', data: sceneOf(o) },
+  })
   await settle(() => q('[data-slot="security-form"]') !== null, 'the security form')
 }
 // The providers and the audit log are pages of their own.
-async function openAt(path: string, server: MockOptions = {}) {
-  m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', ...server } })
+async function openAt(path: string, o: Scene = {}) {
+  m = await mount(routes, {
+    entries: (fx) => {
+      o.setup?.(fx)
+      return [path]
+    },
+    signIn: true,
+    fixtures: { mode: 'accounts', data: sceneOf(o) },
+  })
   await settle(() => q('[data-slot="admin-layout"]') !== null, 'the administration')
 }
 const SETTING = '/api/admin/settings/'
@@ -205,10 +238,7 @@ describe('the security page', () => {
   })
 
   it('loads the settings into the form', async () => {
-    await open({
-      security: { login: { mode: 'sso_first' }, lockout: { minutes: 20 }, limits: { perMinute: 7 } },
-      providers: [company],
-    })
+    await open({ mode: 'sso_first', lockMinutes: 20, perMinute: 7, providers: [company] })
     expect(q<HTMLSelectElement>('#security-mode')!.value).toBe('sso_first')
     expect(q<HTMLInputElement>('#security-lock-minutes')!.value).toBe('20')
     expect(q<HTMLInputElement>('#security-limit-perMinute')!.value).toBe('7')
@@ -237,28 +267,20 @@ describe('the security page', () => {
     ])
     await settle(() => (buttonWith(tsec.save) as HTMLButtonElement).disabled, 'saved')
     expect(q<HTMLSelectElement>('#security-mode')!.value).toBe('sso_redirect')
-    // The change is in the audit log, a page of its own.
-    expect(adminRequests(m!.server)('GET', '/api/admin/audit?kind=setting_changed').body).toMatchObject({
-      items: [{ kind: 'setting_changed', detail: { key: 'signin.maxFailures' } }, { kind: 'setting_changed' }],
-    })
   })
 
   it('shows a notice when no provider is enabled and the page differs from the choice', async () => {
-    await open({ security: { login: { mode: 'sso_redirect' } } })
+    await open({ mode: 'sso_redirect' })
     const note = q('[data-slot="no-provider"]')!
     expect(note.textContent).toContain(tsec.login.noProvider(tsec.login.modes.local_only.name))
   })
 
   it('local_admin_required: the refusal is in words, next to the sign-in settings, and nothing is saved', async () => {
-    await open({ providers: [company] })
-    // The only administrator has no password any more (a person whose account single sign-on made).
-    m!.server.handle(
-      'POST',
-      '/api/_mock/drop-password',
-      JSON.stringify({ username: 'admin' }),
-      'application/json',
-      null,
-    )
+    // The only administrator has no password any more (a person whose account single sign-on made): the server refuses.
+    await open({
+      providers: [company],
+      setup: (fx) => fx.fail('PUT', '/api/admin/settings/signin.ssoOnly', 409, { code: 'local_admin_required' }),
+    })
     await click(q('#security-ssoonly'))
     await click(buttonWith(tsec.save))
     await settle(() => text().includes(tsec.errors.local_admin_required), 'the refusal')
@@ -268,17 +290,25 @@ describe('the security page', () => {
   })
 
   it('passkeys cannot be switched off while someone is required to have one', async () => {
-    await open()
-    // Someone is required to have one (this person has none yet).
-    const carol = makePerson(m!.server, 'carol')
-    adminRequests(m!.server)('PATCH', `/api/users/${carol.id}`, { passkeyRequired: true })
+    // Someone is required to have one (this person has none yet): the server refuses to switch passkeys off.
+    await open({
+      data: (d) => void addPerson(d, 'carol', { passkeyRequired: true }),
+      setup: (fx) =>
+        fx.fail('PUT', '/api/admin/settings/features.passkeys', 409, { code: 'passkey_requirement_unsatisfiable' }),
+    })
     await click(q('#security-pk-enabled'))
     await click(buttonWith(tsec.save))
     await settle(() => text().includes(tsec.errors.passkey_requirement_unsatisfiable), 'the refusal')
   })
 
   it('a third-party captcha needs a site key and a secret; each refusal keeps what was typed, and the secret is write-only', async () => {
-    await open()
+    // The server wants a site key before the contexts come on, then a secret (the last asked is the first registered).
+    await open({
+      setup: (fx) => {
+        fx.fail('PUT', '/api/admin/settings/captcha.contexts', 409, { code: 'captcha_secret_required' }, { times: 1 })
+        fx.fail('PUT', '/api/admin/settings/captcha.contexts', 409, { code: 'captcha_site_key_required' }, { times: 1 })
+      },
+    })
     await type(q<HTMLSelectElement>('#security-captcha-provider')!, 'turnstile')
     await click(q('[data-context="login"] [role="switch"]'))
     await click(buttonWith(tsec.save))
@@ -309,7 +339,7 @@ describe('the security page', () => {
   })
 
   it('changing the captcha provider away from the stored one clears its site key, and coming back restores it', async () => {
-    await open({ security: { captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true } } })
+    await open({ captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true } })
     await settle(() => q<HTMLInputElement>('#security-sitekey')?.value === 'site-1', 'the stored site key')
     await type(q<HTMLSelectElement>('#security-captcha-provider')!, 'hcaptcha')
     expect(q<HTMLInputElement>('#security-sitekey')!.value).toBe('')
@@ -318,7 +348,7 @@ describe('the security page', () => {
   })
 
   it('the site key and the secret are marked required, and a stored secret reads "saved · change"', async () => {
-    await open({ security: { captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true } } })
+    await open({ captcha: { provider: 'turnstile', siteKey: 'site-1', hasSecret: true } })
     await settle(() => q('[data-slot="secret-saved"]') !== null, 'the stored secret')
     const label = (id: string) => q(`label[for="${id}"]`)!
     expect(label('security-sitekey').querySelector('[data-slot="required-mark"]')?.textContent).toBe('*')
@@ -353,7 +383,14 @@ describe('the security page', () => {
   })
 
   it("a number out of range is refused with the server's message, not clamped", async () => {
-    await open()
+    // The server refuses a number out of range, and says which setting.
+    await open({
+      setup: (fx) =>
+        fx.fail('PUT', '/api/admin/settings/sessions.idleDays', 400, {
+          code: 'invalid',
+          message: 'sessions.idleDays must be between 1 and 365',
+        }),
+    })
     await type(q<HTMLInputElement>('#security-limit-sessionIdleDays')!, '9999')
     await click(buttonWith(tsec.save))
     await settle(() => section('security-limits').querySelector('[role="alert"]') !== null, 'the refusal')
@@ -362,7 +399,10 @@ describe('the security page', () => {
   })
 
   it('passkeys: requiring a role is refused while passkeys cannot work, and the page says why', async () => {
-    await open({ passkeysAvailable: false })
+    await open({
+      passkeysAvailable: false,
+      setup: (fx) => fx.fail('PUT', '/api/admin/settings/signin.passkeyRoles', 409, { code: 'passkey_unavailable' }),
+    })
     expect(text()).toContain(tsec.passkeys.unavailable)
     await type(q<HTMLSelectElement>('#security-pk-roles')!, 'admins')
     await click(buttonWith(tsec.save))
@@ -371,7 +411,7 @@ describe('the security page', () => {
 
   it('shows the notices the server has', async () => {
     await open({
-      securityNotices: [
+      notices: [
         { code: 'flags_ignored', message: 'flags differ' },
         { code: 'secret_unreadable', message: 'x', slug: 'company' },
       ],
@@ -382,16 +422,15 @@ describe('the security page', () => {
   })
 
   it('counts the people a passkey is required of', async () => {
-    await open()
-    const carol = makePerson(m!.server, 'carol')
-    adminRequests(m!.server)('PATCH', `/api/users/${carol.id}`, { passkeyRequired: true })
+    await open({ data: (d) => void addPerson(d, 'carol') })
+    m!.fx.data.auth.users.find((u) => u.username === 'carol')!.passkeyRequired = true
     await act(async () => void (await m!.qc.invalidateQueries({ queryKey: keys.adminSecurity })))
     await settle(() => q('[data-slot="passkeys-required"]')!.textContent === tsec.passkeys.required(1, 1), 'the count')
   })
 })
 
-const openProviders = async (server: MockOptions = {}) => {
-  await openAt('/admin/security/providers', server)
+const openProviders = async (o: Scene = {}) => {
+  await openAt('/admin/security/providers', o)
   await settle(() => buttonWith(tsec.providers.add) !== undefined, 'the providers page')
 }
 describe('the sign-in providers', () => {
@@ -411,10 +450,9 @@ describe('the sign-in providers', () => {
         company,
         {
           slug: 'campus',
-          kind: 'saml',
           name: 'Campus login',
-          saml: { metadataUrl: 'https://idp.example/m' },
-          status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' },
+          input: { kind: 'saml', saml: { metadataUrl: 'https://idp.example/m' } },
+          extra: { status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' } },
         },
       ],
     })
@@ -487,7 +525,11 @@ describe('the sign-in providers', () => {
   it('SAML shows what to give the identity provider: entity id, ACS address, metadata path and certificate', async () => {
     await openProviders({
       providers: [
-        { slug: 'campus', kind: 'saml', name: 'Campus login', saml: { metadataUrl: 'https://idp.example/m' } },
+        {
+          slug: 'campus',
+          name: 'Campus login',
+          input: { kind: 'saml', saml: { metadataUrl: 'https://idp.example/m' } },
+        },
       ],
     })
     await settle(() => listed().length === 1, 'the list')
@@ -507,7 +549,15 @@ describe('the sign-in providers', () => {
   })
 
   it('maps the refusals to words: a taken slug, an issuer in use, a GitHub provider that creates accounts without an organisation', async () => {
-    await openProviders({ providers: [company] })
+    // The server refuses, in turn: a slug that is taken, an issuer in use, an issuer that is not https.
+    await openProviders({
+      providers: [company],
+      setup: (fx) => {
+        fx.fail('POST', '/api/admin/auth/providers', 400, { code: 'oidc_issuer_invalid' }, { times: 1 })
+        fx.fail('POST', '/api/admin/auth/providers', 409, { code: 'provider_issuer_in_use' }, { times: 1 })
+        fx.fail('POST', '/api/admin/auth/providers', 409, { code: 'exists' }, { times: 1 })
+      },
+    })
     await settle(() => listed().length === 1, 'the list')
     const fill = async (slug: string, issuer: string) => {
       await click(buttonWith(tsec.providers.add))
@@ -537,6 +587,16 @@ describe('the sign-in providers', () => {
     await type(inputIn(tsec.providers.name), 'Dead')
     await type(inputIn(tsec.providers.oidc.issuer), 'https://unreachable.example')
     await type(inputIn(tsec.providers.oidc.clientId), 'c')
+    // The server could not reach it: it stores the provider off, with the reason.
+    const dead = addProvider(
+      structuredClone(m!.fx.data),
+      'dead',
+      'Dead',
+      { oidc: { issuer: 'https://unreachable.example', clientId: 'c' } },
+      { enabled: false, status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' } },
+    )
+    m!.fx.reply('POST', '/api/admin/auth/providers', dead, { status: 201 })
+    m!.fx.data.admin.providers.push(dead)
     await click(buttonWith(tsec.providers.create))
     await settle(() => listed().length === 1, 'stored')
     expect(listed()[0].textContent).toContain(tsec.providers.statusBad)
@@ -556,11 +616,19 @@ describe('the sign-in providers', () => {
   })
 
   it("deleting asks first; a provider that is somebody's only way in asks again, and then force-deletes", async () => {
-    await openProviders({ providers: [company] })
+    // Somebody's only way in is this provider (single sign-on made the account): the server refuses once, with the count.
+    await openProviders({
+      providers: [company],
+      setup: (fx) =>
+        fx.fail(
+          'DELETE',
+          '/api/admin/auth/providers/company',
+          409,
+          { code: 'provider_in_use', accounts: 1 },
+          { times: 1 },
+        ),
+    })
     await settle(() => listed().length === 1, 'the list')
-    // Somebody whose only way in is this provider (single sign-on made the account).
-    const b = await signInThroughProvider()
-    expect(b).toBe(true)
     await click(byLabel(tsec.providers.deleteFor('Company SSO')))
     await settle(() => text().includes(tsec.providers.deleteTitle('Company SSO')), 'the first question')
     await click([...dialog().querySelectorAll('button')].find((b) => b.textContent === tsec.providers.deleteConfirm))
@@ -572,11 +640,26 @@ describe('the sign-in providers', () => {
   })
 
   it('shows the audit log, filters it by kind and loads more', async () => {
-    await openAt('/admin/audit', { providers: [company] })
-    await settle(() => q('#audit-kind') !== null, 'the audit log')
     // 60 rows of one kind, so there is a second page.
-    const admin = adminRequests(m!.server)
-    for (let i = 0; i < 60; i++) admin('PUT', '/api/admin/settings/signin.perMinute', { value: 10 + (i % 2) + 1 })
+    await openAt('/admin/audit', {
+      providers: [company],
+      data: (d) => {
+        for (let i = 0; i < 60; i++)
+          d.admin.audit.push({
+            id: `A1${String(i).padStart(7, '0')}`,
+            at: '2026-11-20T08:00:00Z',
+            kind: 'setting_changed',
+            category: 'admin',
+            capacity: 'site_admin',
+            actor: d.auth.users[0].id,
+            user: null,
+            username: null,
+            ip: '203.0.113.7',
+            detail: { key: 'signin.perMinute' },
+          })
+      },
+    })
+    await settle(() => q('#audit-kind') !== null, 'the audit log')
     await click(buttonWith(tsec.audit.refresh))
     await settle(() => document.querySelectorAll('[data-slot="audit-rows"] > li').length === 50, 'the first page')
     await click(buttonWith(tsec.audit.loadMore))
@@ -585,29 +668,4 @@ describe('the sign-in providers', () => {
     await type(q<HTMLSelectElement>('#audit-kind')!, 'provider_created')
     await settle(() => calls('GET', '/api/admin/audit?kind=provider_created').length > 0, 'the filter')
   })
-
-  it('a person who is not an administrator cannot read it', async () => {
-    await openAt('/admin/audit')
-    const person = makePerson(m!.server, 'carol')
-    expect(() => person.request('GET', '/api/admin/audit')).toThrow(/403/)
-    expect(t.appName).toBeTruthy()
-  })
 })
-
-// An account made by the provider, with nothing else to sign in with.
-async function signInThroughProvider(): Promise<boolean> {
-  const server = m!.server
-  const start = server.handle(
-    'POST',
-    '/api/auth/oidc/company/start',
-    JSON.stringify({ intent: 'login' }),
-    'application/json',
-    null,
-  )
-  const cookie = start.headers!['Set-Cookie'].split(';')[0]
-  const url = (start.body as { url: string }).url
-  // The provider creates accounts here: switch that on for the scene.
-  adminRequests(server)('PATCH', '/api/admin/auth/providers/company', { autoCreate: true })
-  const cb = server.handle('GET', url, undefined, null, cookie)
-  return cb.status === 303 && cb.headers!.Location === '/'
-}

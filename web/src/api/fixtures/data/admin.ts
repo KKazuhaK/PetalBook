@@ -10,6 +10,8 @@ import type {
   AdminToken,
   AuditItem,
   AuthProvider,
+  ProviderInput,
+  SecurityNotice,
   BulkJob,
   ExportRec,
   Group,
@@ -27,6 +29,7 @@ import type {
   Tenant,
   TenantSetting,
 } from '../../types.ts'
+import type { SpaceData } from './model.ts'
 import { DAILY_LANGUAGES, DAILY_PROVIDERS } from './dailyRegistry.ts'
 import { SETTING_DEFS } from './settingDefs.ts'
 
@@ -60,6 +63,8 @@ export interface AdminData {
   secrets: { site: Record<string, SecretMeta>; tenants: Record<string, Record<string, SecretMeta>> }
   mail: MailSettings
   captcha: { siteKey: string; hasSecret: boolean }
+  // What the sign-in security page is told besides the settings: whether passkeys can work here, and its notices.
+  security: { passkeysAvailable: boolean; notices: SecurityNotice[] }
   providers: AuthProvider[]
   audit: AuditItem[]
   recycle: RecycleItem[]
@@ -70,6 +75,8 @@ export interface AdminData {
   daily: AdminDailyBody
   // The administrators' own lines of daily text, by language.
   dailyLines: Record<string, { text: string; author: string; source: string }[]>
+  // Spaces the signed-in person is not a member of: the console lists them, their own list of spaces does not.
+  otherSpaces: SpaceData[]
   invites: (Invite & { tenant: string })[]
   // What a space has for the console beyond what a person's list of spaces says (its owner, its size, its storage).
   spaceExtra: Record<string, Partial<AdminSpace>>
@@ -137,6 +144,7 @@ export function createAdminData(now: number, admin: { id: string; username: stri
       queue: { waiting: 0, sentLastHour: 0, failedLastHour: 0 },
     },
     captcha: { siteKey: '', hasSecret: false },
+    security: { passkeysAvailable: true, notices: [] },
     providers: [],
     audit: [
       {
@@ -164,10 +172,97 @@ export function createAdminData(now: number, admin: { id: string; username: stri
       lines: { total: 0, byLang: {}, max: 5000 },
     },
     dailyLines: {},
+    otherSpaces: [],
     invites: [],
     spaceExtra: {},
     people: {},
     views: {},
     confirms: {},
   }
+}
+
+const SITE = 'https://notes.example.com'
+
+// A sign-in provider as the console lists it, made from what a person typed: the secrets only as "set", and the
+// addresses the identity provider needs worked out from the slug.
+export function makeProvider(input: ProviderInput & { slug: string }, at: string, order: number): AuthProvider {
+  const kind = input.kind ?? 'oidc'
+  const url = `${SITE}/api/auth/${kind}/${input.slug}`
+  const p: AuthProvider = {
+    slug: input.slug,
+    kind,
+    name: input.name ?? input.slug,
+    icon: input.icon ?? '',
+    enabled: input.enabled ?? true,
+    order: input.order ?? order,
+    autoCreate: input.autoCreate ?? false,
+    mergeVerifiedEmail: input.mergeVerifiedEmail ?? false,
+    groups: { enabled: false, claim: '', missing: 'keep', map: [], ...input.groups },
+    status: { ok: true, checked: at, message: '' },
+    people: 0,
+    created: at,
+    updated: at,
+  }
+  if (kind === 'oidc') {
+    const { clientSecret, ...rest } = input.oidc ?? {}
+    p.oidc = {
+      issuer: '',
+      clientId: '',
+      scopes: ['openid', 'email', 'profile'],
+      legacyCallback: false,
+      ...rest,
+      hasSecret: !!clientSecret,
+      redirectUrl: `${url}/callback`,
+    }
+  }
+  if (kind === 'github') {
+    const { clientSecret, ...rest } = input.github ?? {}
+    p.github = {
+      baseUrl: '',
+      clientId: '',
+      organizations: [],
+      ...rest,
+      hasSecret: !!clientSecret,
+      redirectUrl: `${url}/callback`,
+    }
+  }
+  if (kind === 'saml') {
+    p.saml = {
+      metadataUrl: '',
+      metadataXml: '',
+      nameIdFormat: '',
+      signRequests: false,
+      allowIdpInitiated: false,
+      attributes: { email: 'email', name: 'name', username: 'username' },
+      ...input.saml,
+      idpEntityId: '',
+      entityId: `${url}/metadata`,
+      acsUrl: `${url}/acs`,
+      metadataPath: `/api/auth/saml/${input.slug}/metadata`,
+      certificate: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+      certificateExpires: '2036-11-20T08:00:00Z',
+    }
+  }
+  return p
+}
+
+// A change to a provider: the fields sent, a secret kept as "set".
+export function changeProvider(p: AuthProvider, input: ProviderInput, at: string): AuthProvider {
+  const { oidc, saml, github, groups, kind: _kind, slug: _slug, ...top } = input
+  void _kind
+  void _slug
+  Object.assign(p, top, { updated: at })
+  if (groups) p.groups = { ...p.groups, ...groups }
+  if (oidc && p.oidc) {
+    const { clientSecret, ...rest } = oidc
+    Object.assign(p.oidc, rest)
+    if (clientSecret !== undefined) p.oidc.hasSecret = clientSecret !== ''
+  }
+  if (github && p.github) {
+    const { clientSecret, ...rest } = github
+    Object.assign(p.github, rest)
+    if (clientSecret !== undefined) p.github.hasSecret = clientSecret !== ''
+  }
+  if (saml && p.saml) Object.assign(p.saml, saml)
+  return p
 }

@@ -191,7 +191,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['GET', '/api/admin/storage/people/01FXDAVE01'],
     ['GET', '/api/admin/usage'],
     ['POST', `${S}/size`],
-    ['POST', '/api/admin/confirm', { action: 'delete_spaces', spaces: ['default'] }],
+    ['POST', '/api/admin/confirm', { action: 'pin', spaces: ['default'] }],
     [
       'POST',
       '/api/admin/bulk',
@@ -276,13 +276,13 @@ export function adminProbes(fx: FixtureServer): Call[] {
         headers: [],
       },
     ],
-    ['PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }],
     ['POST', '/api/admin/daily/try', { api: {}, lang: 'en', date: '2026-11-20' }],
     ['PUT', '/api/admin/daily/lines', { lang: 'en', text: 'one\ttwo\nthree', format: 'lines' }],
     ['GET', '/api/admin/daily/lines?lang=en'],
     ['POST', '/api/admin/daily/lines/preview', { text: 'one', format: 'lines' }],
     ['DELETE', '/api/admin/daily/lines?lang=en'],
     ['DELETE', '/api/admin/daily/apis/quotes'],
+    ['PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }],
     ['DELETE', `/api/users/01FXDAVE01`],
   ]
 }

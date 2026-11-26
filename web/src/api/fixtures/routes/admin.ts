@@ -8,6 +8,7 @@ import type {
   AdminStorageBody,
   AuditItem,
   ConfirmResult,
+  DailyApi,
   Group,
   GroupPerson,
   PersonUsage,
@@ -15,18 +16,29 @@ import type {
   RestoreResult,
   SiteSetting,
   StoragePerson,
+  SpaceDeletionPreview,
   Tenant,
   TenantSetting,
   User,
+  UserDeletionPlan,
 } from '../../types.ts'
 import { TENANT_KEYS } from '../data/settingDefs.ts'
-import { AUDIT_CATEGORIES, DEFAULT_TENANT, type GroupRec, type PersonRec } from '../data/admin.ts'
-import type { FixtureData } from '../data/model.ts'
+import {
+  changeProvider,
+  makeProvider,
+  AUDIT_CATEGORIES,
+  DEFAULT_TENANT,
+  type GroupRec,
+  type PersonRec,
+} from '../data/admin.ts'
+import type { FixtureData, SpaceData } from '../data/model.ts'
 import type { UserRec } from '../data/people.ts'
 import { add, find, newId, paged, remove, reply, rfc3339, type Ctx, type Route } from '../kit.ts'
 
 const now = (c: Ctx) => rfc3339(c.now())
 const A = (c: Ctx) => c.data.admin
+// Every space of the server: the ones the signed-in person belongs to, and the ones they only administer.
+const spacesOf = (c: Ctx) => [...c.data.spaces, ...A(c).otherSpaces]
 const signedIn = (d: FixtureData) => d.auth.users.find((u) => u.id === d.auth.signedIn) ?? d.auth.users[0]
 const who = (u: Pick<UserRec, 'id' | 'username' | 'name'>) => ({ id: u.id, username: u.username, name: u.name })
 const has = (text: string, q: string | null) => !q || text.toLowerCase().includes(q.toLowerCase())
@@ -56,7 +68,7 @@ function userView(c: Ctx, u: UserRec, shown: 'list' | 'one' | 'change' = 'list')
 // --- spaces ---------------------------------------------------------------------------------------------------------
 
 function adminSpace(c: Ctx, id: string): AdminSpace {
-  const s = find(c.data.spaces, (x) => x.info.id === id, 'the space')
+  const s = find(spacesOf(c), (x) => x.info.id === id, 'the space')
   const owner = who(c.data.auth.users.find((u) => u.id === c.data.auth.signedIn) ?? c.data.auth.users[0] ?? DEAD)
   const extra = A(c).spaceExtra[id] ?? {}
   return {
@@ -134,7 +146,7 @@ function tenantSetting(c: Ctx, tenant: string, def: SiteSetting): TenantSetting 
 
 function tenantView(c: Ctx, t: Tenant): Tenant {
   if (!t.default) return t
-  return { ...t, usage: { ...t.usage, people: c.data.auth.users.length, spaces: c.data.spaces.length } }
+  return { ...t, usage: { ...t.usage, people: c.data.auth.users.length, spaces: spacesOf(c).length } }
 }
 
 function secretsOf(c: Ctx, tenant?: string) {
@@ -144,18 +156,68 @@ function secretsOf(c: Ctx, tenant?: string) {
   return rows
 }
 
+// What deleting a person does, worked out from the spaces they own: the ones nobody else is in go to the bin with
+// them, the shared ones go to the heir named (and need one when none is).
+function deletionPlan(c: Ctx, u: UserRec, heir?: string): UserDeletionPlan {
+  const owned = spacesOf(c)
+    .map((s) => adminSpace(c, s.info.id))
+    .filter((s) => s.owner?.id === u.id)
+  const ref = (s: AdminSpace) => ({ id: s.id, name: s.name, personal: s.personal })
+  const shared = owned.filter((s) => !s.personal && s.members > 1)
+  const to = heir ? c.data.auth.users.find((x) => x.id === heir) : undefined
+  return {
+    user: { id: u.id, username: u.username },
+    recycle: owned.filter((s) => !shared.includes(s)).map((s) => ({ space: ref(s), bytes: 0 })),
+    transfer: to ? shared.map((s) => ({ space: ref(s), to: { id: to.id, username: to.username }, why: 'heir' })) : [],
+    leave: [],
+    revoke: { tokens: 0, grants: 0, passkeys: 0, identities: 0, github: false, sessions: 0, connections: [] },
+    groups: 0,
+    needsHeir: to ? [] : shared.map(ref),
+    blockers: u.id === c.data.auth.signedIn ? [{ reason: 'self' }] : [],
+    bytes: 0,
+    recycleDays: 30,
+  }
+}
+
+function spacePreview(c: Ctx, s: SpaceData): SpaceDeletionPreview {
+  return {
+    space: { id: s.info.id, name: s.info.name },
+    pages: s.pages.length,
+    bytes: 0,
+    heldBytes: 0,
+    attachments: { inSpace: null, repository: false },
+    members: adminSpace(c, s.info.id).members,
+    groups: 0,
+    drafts: 0,
+    remote: { url: '', kept: false },
+    assetsRemote: { url: '', kept: false },
+    cache: 'local',
+    exportable: true,
+    recycleDays: 30,
+  }
+}
+
 // --- a confirmed action ---------------------------------------------------------------------------------------------
 
 function confirmPlan(c: Ctx): ConfirmResult {
-  const b = c.body as { action: string; spaces?: string[]; users?: string[]; items?: string[] }
-  const token = newId(c.data, '01CF')
+  const b = c.body as { action: string; spaces?: string[]; users?: string[]; items?: string[]; heir?: string }
+  const token = `c_${newId(c.data, '')}`
   A(c).confirms[token] = { action: b.action, spaces: b.spaces ?? [], users: b.users ?? [], items: b.items ?? [] }
   const spaces = (b.spaces ?? []).map((id) => {
-    const s = c.data.spaces.find((x) => x.info.id === id)
+    const s = spacesOf(c).find((x) => x.info.id === id)
+    if (s && b.action === 'delete_spaces') return spacePreview(c, s)
     return { space: { id, name: s?.info.name ?? id }, action: b.action }
   })
+  const needsHeir: ConfirmResult['needsHeir'] = []
+  const blockers: ConfirmResult['blockers'] = []
   const users = (b.users ?? []).map((id) => {
     const u = c.data.auth.users.find((x) => x.id === id)
+    if (u && b.action === 'delete_users') {
+      const p = deletionPlan(c, u, b.heir)
+      if (p.needsHeir.length) needsHeir.push({ user: id, spaces: p.needsHeir })
+      for (const k of p.blockers) blockers.push({ user: id, reason: k.reason })
+      return p
+    }
     return { user: { id, username: u?.username ?? id }, action: b.action }
   })
   const items = (b.items ?? []).map((id) => {
@@ -176,9 +238,41 @@ function confirmPlan(c: Ctx): ConfirmResult {
     count: plan.length,
     plan,
     bytes: 0,
-    needsHeir: [],
-    blockers: [],
+    needsHeir,
+    blockers,
   }
+}
+
+// What a confirmed action does to the things it named: the job is done at once, and the records show the result.
+function applyBulk(c: Ctx, plan: { action: string; spaces: string[]; users: string[]; items: string[] }) {
+  for (const id of plan.spaces) {
+    const s = spacesOf(c).find((x) => x.info.id === id)
+    if (!s) continue
+    const extra = A(c).spaceExtra[id] ?? {}
+    const storage = (patch: object) =>
+      (A(c).spaceExtra[id] = { ...extra, storage: { ...adminSpace(c, id).storage, ...patch } })
+    if (plan.action === 'disable_spaces') s.info.disabled = true
+    else if (plan.action === 'enable_spaces') s.info.disabled = false
+    else if (plan.action === 'pin') storage({ pinned: true })
+    else if (plan.action === 'unpin') storage({ pinned: false })
+    else if (plan.action === 'evict') storage({ cache: 'evicted' })
+    else if (plan.action === 'delete_spaces') {
+      for (const list of [c.data.spaces, A(c).otherSpaces]) if (list.includes(s)) remove(list, s)
+      recycled(c, { kind: 'space', space: { id, name: s.info.name, personal: s.info.personal } })
+    }
+  }
+  for (const id of plan.users) {
+    const u = c.data.auth.users.find((x) => x.id === id)
+    if (!u) continue
+    if (plan.action === 'disable_users') u.disabled = true
+    else if (plan.action === 'enable_users') u.disabled = false
+    else if (plan.action === 'delete_users') {
+      remove(c.data.auth.users, u)
+      recycled(c, { kind: 'user', user: { id, username: u.username } })
+    }
+  }
+  if (plan.action === 'restore' || plan.action === 'purge')
+    A(c).recycle = A(c).recycle.filter((r) => !plan.items.includes(r.id))
 }
 
 export const adminRoutes: Route[] = [
@@ -241,12 +335,10 @@ export const adminRoutes: Route[] = [
     'GET',
     '/api/users/:id/memberships',
     (c) => ({
-      spaces: c.data.spaces.map((s) => ({
-        id: s.info.id,
-        name: s.info.name,
-        role: s.info.role,
-        personal: s.info.personal,
-      })),
+      // The spaces a person owns (the console's records know no other membership).
+      spaces: spacesOf(c)
+        .filter((s) => adminSpace(c, s.info.id).owner?.id === userOf(c, c.params.id).id)
+        .map((s) => ({ id: s.info.id, name: s.info.name, role: 'owner', personal: s.info.personal })),
       groups: A(c)
         .groups.filter((g) => g.members.includes(c.params.id))
         .map((g) => ({ id: g.id, name: g.name, source: g.source })),
@@ -330,21 +422,7 @@ export const adminRoutes: Route[] = [
   [
     'GET',
     '/api/admin/users/:id/deletion',
-    (c) => {
-      const u = userOf(c, c.params.id)
-      return {
-        user: { id: u.id, username: u.username },
-        recycle: [],
-        transfer: [],
-        leave: [],
-        revoke: { tokens: 0, grants: 0, passkeys: 0, identities: 0, github: false, sessions: 0, connections: [] },
-        groups: 0,
-        needsHeir: [],
-        blockers: [],
-        bytes: 0,
-        recycleDays: 30,
-      }
-    },
+    (c) => deletionPlan(c, userOf(c, c.params.id), c.query.get('heir') ?? undefined),
   ],
   [
     'POST',
@@ -363,7 +441,7 @@ export const adminRoutes: Route[] = [
     '/api/admin/spaces',
     (c) => {
       const q = c.query
-      const rows = c.data.spaces
+      const rows = spacesOf(c)
         .map((s) => adminSpace(c, s.info.id))
         .filter((s) => has(s.name, q.get('q')))
         .filter((s) => !q.get('cache') || s.storage.cache === q.get('cache'))
@@ -424,19 +502,19 @@ export const adminRoutes: Route[] = [
   [
     'POST',
     '/api/admin/spaces/:id/disable',
-    (c) => void (find(c.data.spaces, (s) => s.info.id === c.params.id).info.disabled = true),
+    (c) => void (find(spacesOf(c), (s) => s.info.id === c.params.id).info.disabled = true),
   ],
   [
     'POST',
     '/api/admin/spaces/:id/enable',
-    (c) => void (find(c.data.spaces, (s) => s.info.id === c.params.id).info.disabled = false),
+    (c) => void (find(spacesOf(c), (s) => s.info.id === c.params.id).info.disabled = false),
   ],
   [
     'DELETE',
     '/api/admin/spaces/:id',
     (c) => {
-      const s = find(c.data.spaces, (x) => x.info.id === c.params.id, 'the space')
-      remove(c.data.spaces, s)
+      const s = find(spacesOf(c), (x) => x.info.id === c.params.id, 'the space')
+      for (const list of [c.data.spaces, A(c).otherSpaces]) if (list.includes(s)) remove(list, s)
       return recycled(c, {
         kind: 'space',
         space: { id: s.info.id, name: s.info.name, personal: s.info.personal },
@@ -447,24 +525,11 @@ export const adminRoutes: Route[] = [
   [
     'GET',
     '/api/admin/spaces/:id/deletion',
-    (c) => {
-      const s = find(c.data.spaces, (x) => x.info.id === c.params.id, 'the space')
-      return {
-        space: { id: s.info.id, name: s.info.name },
-        pages: s.pages.length,
-        bytes: 0,
-        heldBytes: 0,
-        attachments: { inSpace: null, repository: false },
-        members: 1,
-        groups: 0,
-        drafts: 0,
-        remote: { url: '', kept: false },
-        assetsRemote: { url: '', kept: false },
-        cache: 'local',
-        exportable: true,
-        recycleDays: 30,
-      }
-    },
+    (c) =>
+      spacePreview(
+        c,
+        find(spacesOf(c), (x) => x.info.id === c.params.id, 'the space'),
+      ),
   ],
   [
     'POST',
@@ -484,14 +549,14 @@ export const adminRoutes: Route[] = [
       startedAt: now(c),
       uptimeSeconds: 0,
       database: 'sqlite',
-      spaces: c.data.spaces.length,
+      spaces: spacesOf(c).length,
       users: c.data.auth.users.length,
-      openSpaces: c.data.spaces.length,
+      openSpaces: spacesOf(c).length,
       diskFreeBytes: 50 * 1024 ** 3,
       goVersion: 'go1.27.4',
       build: { commit: '3f9c2ab', time: '2026-11-25T22:48:00Z', timeKind: 'commit', modified: false },
       storage: {
-        spaces: { local: c.data.spaces.length, full: 0, partial: 0, evicted: 0, restoring: 0 },
+        spaces: { local: spacesOf(c).length, full: 0, partial: 0, evicted: 0, restoring: 0 },
         cloneBytes: 0,
         indexBytes: 0,
         assetCacheBytes: 0,
@@ -514,7 +579,7 @@ export const adminRoutes: Route[] = [
       affected: { inGrace: 0, overdue: 0, exempt: 0 },
       summary: {
         tenant: null,
-        spaces: { local: c.data.spaces.length, full: 0, partial: 0, evicted: 0, archived: 0, restoring: 0 },
+        spaces: { local: spacesOf(c).length, full: 0, partial: 0, evicted: 0, archived: 0, restoring: 0 },
         people: c.data.auth.users.length,
         dormant: 0,
         heldBytes: 0,
@@ -544,7 +609,12 @@ export const adminRoutes: Route[] = [
     '/api/admin/storage/people/:id',
     (c) => {
       const u = userOf(c, c.params.id)
-      return { ...storagePerson(c, u), items: c.data.spaces.map((s) => adminSpace(c, s.info.id)) }
+      return {
+        ...storagePerson(c, u),
+        items: spacesOf(c)
+          .map((s) => adminSpace(c, s.info.id))
+          .filter((s) => s.owner?.id === u.id),
+      }
     },
   ],
   [
@@ -559,7 +629,7 @@ export const adminRoutes: Route[] = [
           return {
             user: who(u),
             tenant: u.tenant?.id ?? DEFAULT_TENANT,
-            spaces: c.data.spaces.length,
+            spaces: spacesOf(c).length,
             bytes: 0,
             pages: 0,
             limits: {
@@ -618,6 +688,7 @@ export const adminRoutes: Route[] = [
     (c) => {
       const plan = find(Object.entries(A(c).confirms), ([k]) => k === c.body.confirm, 'the confirmation')[1]
       const total = plan.spaces.length + plan.users.length + plan.items.length
+      applyBulk(c, plan)
       const job = add(A(c).jobs, {
         id: newId(c.data, '01JB'),
         action: plan.action as never,
@@ -643,7 +714,7 @@ export const adminRoutes: Route[] = [
         spaces: [
           ...((c.body.spaces ?? []) as string[]).map((id) => ({
             space: id,
-            name: c.data.spaces.find((s) => s.info.id === id)?.info.name ?? id,
+            name: spacesOf(c).find((s) => s.info.id === id)?.info.name ?? id,
             spaceId: id,
             open: true,
           })),
@@ -1063,21 +1134,7 @@ export const adminRoutes: Route[] = [
   ],
 
   // --- sign-in security and providers ---
-  [
-    'GET',
-    '/api/admin/security',
-    (c) => ({
-      login: {
-        effectiveMode: siteOf(c, 'signin.mode').site.value,
-        ssoOnlyInEffect: false,
-        ssoAvailable: A(c).providers.length > 0,
-      },
-      passkeys: { available: true, required: 0, requiredWithout: 0 },
-      captcha: A(c).captcha,
-      passwordAdmins: c.data.auth.users.filter((u) => u.role === 'admin').length,
-      notices: [],
-    }),
-  ],
+  ['GET', '/api/admin/security', (c) => securityBody(c)],
   [
     'PUT',
     '/api/admin/security',
@@ -1085,48 +1142,23 @@ export const adminRoutes: Route[] = [
       const cap = c.body.captcha ?? {}
       if ('siteKey' in cap) A(c).captcha.siteKey = cap.siteKey
       if ('secret' in cap) A(c).captcha.hasSecret = cap.secret !== ''
-      return {
-        login: { effectiveMode: siteOf(c, 'signin.mode').site.value, ssoOnlyInEffect: false, ssoAvailable: false },
-        passkeys: { available: true, required: 0, requiredWithout: 0 },
-        captcha: A(c).captcha,
-        passwordAdmins: 1,
-        notices: [],
-      }
+      return securityBody(c)
     },
   ],
   ['GET', '/api/admin/auth/providers', (c) => ({ providers: A(c).providers })],
   [
     'POST',
     '/api/admin/auth/providers',
-    (c) => {
-      const at = now(c)
-      const b = c.body
-      return reply(
-        201,
-        add(A(c).providers, {
-          icon: '',
-          enabled: true,
-          order: A(c).providers.length + 1,
-          autoCreate: false,
-          mergeVerifiedEmail: false,
-          groups: { enabled: false, claim: '', missing: 'keep', map: [] },
-          status: { ok: true, checked: at, message: '' },
-          people: 0,
-          created: at,
-          updated: at,
-          ...b,
-        }),
-      )
-    },
+    (c) => reply(201, add(A(c).providers, makeProvider(c.body, now(c), A(c).providers.length + 1))),
   ],
   [
     'PATCH',
     '/api/admin/auth/providers/:slug',
     (c) =>
-      Object.assign(
+      changeProvider(
         find(A(c).providers, (p) => p.slug === c.params.slug, 'the provider'),
         c.body,
-        { updated: now(c) },
+        now(c),
       ),
   ],
   [
@@ -1186,7 +1218,7 @@ export const adminRoutes: Route[] = [
   ],
 
   // --- the daily text of the server ---
-  ['GET', '/api/admin/daily', (c) => A(c).daily],
+  ['GET', '/api/admin/daily', (c) => dailyBody(c)],
   [
     'PUT',
     '/api/admin/daily/apis/:id',
@@ -1200,7 +1232,7 @@ export const adminRoutes: Route[] = [
       }
       if (at >= 0) d.apis[at] = api
       else d.apis.push(api)
-      return d
+      return dailyBody(c)
     },
   ],
   [
@@ -1209,7 +1241,7 @@ export const adminRoutes: Route[] = [
     (c) => {
       const d = A(c).daily
       d.apis = d.apis.filter((a) => a.id !== c.params.id)
-      return d
+      return dailyBody(c)
     },
   ],
   ['GET', '/api/admin/daily/lines', (c) => ({ lines: A(c).dailyLines[c.query.get('lang') ?? ''] ?? [] })],
@@ -1218,10 +1250,13 @@ export const adminRoutes: Route[] = [
     '/api/admin/daily/lines',
     (c) => {
       const d = A(c).daily
-      const lines = linesOf(c.body.text ?? '')
+      const given = c.body.lines as { text: string; author?: string; source?: string }[] | undefined
+      const lines = given
+        ? given.map((l) => ({ text: l.text, author: l.author ?? '', source: l.source ?? '' }))
+        : linesOf(c.body.text ?? '')
       A(c).dailyLines[c.body.lang] = lines
       d.lines = countLines(A(c).dailyLines, d.lines.max)
-      return d
+      return dailyBody(c)
     },
   ],
   ['POST', '/api/admin/daily/lines/preview', (c) => ({ lines: linesOf(c.body.text ?? '') })],
@@ -1232,7 +1267,7 @@ export const adminRoutes: Route[] = [
       const d = A(c).daily
       delete A(c).dailyLines[c.query.get('lang') ?? '']
       d.lines = countLines(A(c).dailyLines, d.lines.max)
-      return d
+      return dailyBody(c)
     },
   ],
   ['POST', '/api/admin/daily/try', (c) => ({ ok: true, message: '', url: c.body.api?.url ?? '' })],
@@ -1242,7 +1277,7 @@ export const adminRoutes: Route[] = [
     (c) => {
       const p = find(A(c).daily.providers, (x) => x.id === c.params.id, 'the provider')
       Object.assign(p, c.body)
-      return A(c).daily
+      return dailyBody(c)
     },
   ],
 ]
@@ -1262,6 +1297,56 @@ const countLines = (byLang: Record<string, unknown[]>, max: number) => ({
   max,
 })
 
+// What the sign-in page tells the console: the mode that works now (a single-sign-on mode with no provider to sign in
+// through falls back to the password), who must have a passkey, and the keys of the captcha.
+function securityBody(c: Ctx) {
+  const mode = siteOf(c, 'signin.mode').site.value as string
+  const providers = A(c).providers.filter((p) => p.enabled).length
+  const required = c.data.auth.users.filter((u) => u.passkeyRequired)
+  return {
+    login: {
+      effectiveMode: mode !== 'dual' && providers === 0 ? 'local_only' : mode,
+      ssoOnlyInEffect: false,
+      ssoAvailable: providers > 0,
+    },
+    passkeys: {
+      available: A(c).security.passkeysAvailable,
+      required: required.length,
+      requiredWithout: required.filter((u) => !(u.passkeys ?? person(c, u.id).passkeys.length)).length,
+    },
+    captcha: A(c).captcha,
+    passwordAdmins: c.data.auth.users.filter((u) => u.role === 'admin').length,
+    notices: A(c).security.notices,
+  }
+}
+
+// The daily-text page's body: the interfaces people saved, and each built-in provider that is switched on, which the
+// page lists among them (and cannot edit).
+function dailyBody(c: Ctx) {
+  const d = A(c).daily
+  const builtin = d.providers
+    .filter((p) => p.enabled)
+    .map((p): DailyApi => ({
+      id: p.id,
+      name: p.name,
+      lang: p.languages[0] ?? '',
+      url: '',
+      headers: [],
+      text: '',
+      source: '',
+      author: '',
+      link: '',
+      refresh: p.refresh,
+      refreshMinutes: p.minutes,
+      skipNew: p.skipNew,
+      rps: p.rps,
+      enabled: true,
+      builtin: true,
+      languages: p.languages,
+    }))
+  return { ...d, apis: [...d.apis, ...builtin] }
+}
+
 function groupView({ members, spaceRefs, ...g }: GroupRec): Group {
   return { ...g, people: members.length, spaces: spaceRefs.length }
 }
@@ -1275,7 +1360,7 @@ function storagePerson(c: Ctx, u: UserRec): StoragePerson {
     firstWrite: null,
     dormant: false,
     connected: false,
-    spaces: c.data.spaces.length,
+    spaces: spacesOf(c).length,
     remoteSpaces: 0,
     evictedSpaces: 0,
     pinnedSpaces: 0,
