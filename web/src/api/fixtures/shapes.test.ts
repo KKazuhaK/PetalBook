@@ -88,6 +88,7 @@ function probes(fx: FixtureServer): Call[] {
     ['GET', '/api/auth/providers'],
     ['GET', '/api/captcha'],
     ['GET', '/api/account'],
+    ['GET', '/api/account/links'],
     ['GET', '/api/spaces'],
     ['POST', '/api/spaces', { name: '另一个空间' }],
     ['PATCH', '/api/spaces/default', { name: '我的笔记' }],
@@ -211,7 +212,8 @@ function probes(fx: FixtureServer): Call[] {
     ['POST', '/api/login', { username: 'admin', password: 'x' }],
     ['PATCH', '/api/account', { name: '新名字' }],
     ['POST', '/api/account/password', { current: 'x', new: 'a-long-password' }],
-    ['DELETE', '/api/account/identities/id1'],
+    ['DELETE', '/api/account/links/id1'],
+    ['POST', '/api/account/links/company/start', { purpose: 'signin', return: '/settings' }],
     ['PATCH', '/api/account/passkeys/pk1', { name: 'Phone' }],
     ['DELETE', '/api/account/passkeys/pk1'],
     ['POST', '/api/account/emails', { email: 'second@example.test' }],
@@ -278,6 +280,8 @@ const UNRECORDED: Record<string, string> = {
   'POST /api/auth/oidc/company/start 200': 'needs a provider',
   'POST /api/auth/oidc/{}/start 200': 'needs a provider',
   'POST /api/auth/oidc/start 200': 'needs a provider',
+  'POST /api/account/links/company/start 200': 'needs a provider',
+  'POST /api/account/links/{}/start 200': 'needs a provider',
   'POST /api/auth/passkey/begin 200': 'needs a passkey',
   'POST /api/auth/passkey/finish 200': 'needs a passkey',
   'POST /api/account/passkeys/begin 200': 'needs a passkey',
@@ -353,12 +357,14 @@ describe('the fixtures against the recorded shapes', () => {
       addGroup(d, 'Engineering')
       d.spaces[0].templates.push({ name: 'diary', path: '.petalbook/templates/diary.md', rev: 'r', meta: {}, body: '' })
       d.area.account.passkeys.push({ id: 'pk1', name: 'Key', created: '2026-01-01T00:00:00Z', synced: false })
-      d.area.account.identities.push({
+      d.area.account.links.push({
         id: 'id1',
+        providerId: 'company',
         provider: 'Company',
-        providerSlug: 'company',
+        slug: 'company',
         kind: 'oidc',
         label: 'a@b.c',
+        signin: true,
         created: '2026-01-01T00:00:00Z',
       })
       addToken(d, 'one')

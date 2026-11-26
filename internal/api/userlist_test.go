@@ -131,12 +131,12 @@ func TestUserSessionsAndIdentitiesAreForSiteAdministrators(t *testing.T) {
 				t.Fatalf("a tenant's administrator saw a personal space: %s", m.raw)
 			}
 		}
-		for _, p := range []string{"/sessions", "/identities"} {
+		for _, p := range []string{"/sessions", "/links"} {
 			f.admA.do("GET", path+p, nil).want(t, 404, "not_found")
 		}
 		f.admA.do("DELETE", path+"/sessions", nil).want(t, 404, "not_found")
 		f.admA.do("DELETE", path+"/sessions/"+fakeID, nil).want(t, 404, "not_found")
-		f.admA.do("DELETE", path+"/identities/"+fakeID, nil).want(t, 404, "not_found")
+		f.admA.do("DELETE", path+"/links/"+fakeID, nil).want(t, 404, "not_found")
 		f.memA.do("GET", path+"/sessions", nil).want(t, 403, "forbidden")
 		desktop.do("GET", "/api/account", nil).want(t, 200, "")
 
@@ -208,17 +208,18 @@ func TestUserSessionsAndIdentitiesAreForSiteAdministrators(t *testing.T) {
 		}
 
 		// Connected accounts: listed, and disconnected (the person has a password, so it is not their only way in).
-		if err := store.InsertIdentity(t.Context(), a.st.Q(), store.Identity{ID: "IDENT00001", UserID: f.userA, Issuer: "https://idp.example", Subject: "abc", Label: "mem@idp", Created: a.clock.Now()}); err != nil {
+		insertProviderRow(t, a, "idp")
+		if err := store.InsertLink(t.Context(), a.st.Q(), store.Link{ID: "IDENT00001", ProviderID: "idp", UserID: f.userA, Subject: "abc", SignIn: true, Label: "mem@idp", Created: a.clock.Now()}); err != nil {
 			t.Fatal(err)
 		}
-		ids := f.root.do("GET", path+"/identities", nil).want(t, 200, "").body["identities"].([]any)
+		ids := f.root.do("GET", path+"/links", nil).want(t, 200, "").body["links"].([]any)
 		if len(ids) != 1 || ids[0].(map[string]any)["id"] != "IDENT00001" || ids[0].(map[string]any)["label"] != "mem@idp" {
 			t.Fatalf("%v", ids)
 		}
-		f.admA.do("DELETE", path+"/identities/IDENT00001", nil).want(t, 404, "not_found")
-		f.root.do("DELETE", path+"/identities/"+fakeID, nil).want(t, 404, "not_found")
-		f.root.do("DELETE", path+"/identities/IDENT00001", nil).want(t, 204, "")
-		if ids := f.root.do("GET", path+"/identities", nil).want(t, 200, "").body["identities"].([]any); len(ids) != 0 {
+		f.admA.do("DELETE", path+"/links/IDENT00001", nil).want(t, 404, "not_found")
+		f.root.do("DELETE", path+"/links/"+fakeID, nil).want(t, 404, "not_found")
+		f.root.do("DELETE", path+"/links/IDENT00001", nil).want(t, 204, "")
+		if ids := f.root.do("GET", path+"/links", nil).want(t, 200, "").body["links"].([]any); len(ids) != 0 {
 			t.Fatalf("%v", ids)
 		}
 
@@ -229,10 +230,11 @@ func TestUserSessionsAndIdentitiesAreForSiteAdministrators(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, id := range []string{"IDENT00002", "IDENT00003"} {
-			if err := store.InsertIdentity(t.Context(), a.st.Q(), store.Identity{ID: id, UserID: "NOPASS0001", Issuer: "https://gone.example/" + id, Subject: id, Created: a.clock.Now()}); err != nil {
+			insertProviderRow(t, a, "gone-"+id)
+			if err := store.InsertLink(t.Context(), a.st.Q(), store.Link{ID: id, ProviderID: "gone-" + id, UserID: "NOPASS0001", Subject: id, SignIn: true, Created: a.clock.Now()}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		f.root.do("DELETE", "/api/users/NOPASS0001/identities/IDENT00002", nil).want(t, 409, "conflict")
+		f.root.do("DELETE", "/api/users/NOPASS0001/links/IDENT00002", nil).want(t, 409, "last_method")
 	})
 }

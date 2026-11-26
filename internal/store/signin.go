@@ -10,35 +10,47 @@ import (
 
 // --- sign-in providers -------------------------------------------------------
 
-// ProviderRow is a sign-in provider as stored. Config is JSON with nothing
-// secret in it; SecretEnc is sealed.
+// ProviderSite is the owner of a provider the whole server shares; any other
+// owner is a tenant's id.
+const ProviderSite = "site"
+
+// ProviderRow is a provider used to sign in, as stored in providers
+// (signin = 1). Config is JSON with nothing secret in it; SecretEnc is sealed.
 type ProviderRow struct {
+	// ID is the row's own id: the slug for a site provider, a generated id for
+	// a tenant's. Accounts are linked by it, never by Issuer.
+	ID string
+	// Owner is ProviderSite or the id of the tenant that owns the row.
+	Owner                  string
 	Slug, Kind, Name, Icon string
 	Enabled                bool
 	Position               int
 	AutoCreate             bool
-	MergeVerifiedEmail     bool
-	LegacyCallback         bool
-	Issuer                 string
-	Config                 string
-	SecretEnc              string
-	Cache                  string
-	StatusOK               bool
-	StatusChecked          time.Time
-	StatusMessage          string
-	Created, Updated       time.Time
+	// MergeVerifiedEmail is trust_email_optin: the administrator's word that
+	// the addresses this (site-owned, custom) provider gives are verified.
+	MergeVerifiedEmail bool
+	LegacyCallback     bool
+	// Issuer is what the administrator typed (display and discovery only).
+	Issuer           string
+	Config           string
+	SecretEnc        string
+	Cache            string
+	StatusOK         bool
+	StatusChecked    time.Time
+	StatusMessage    string
+	Created, Updated time.Time
 	// GroupsVersion is bumped by UpdateProvider (see LockProviderGroups).
 	GroupsVersion int64
-	// TenantID is where autoCreate puts new accounts.
+	// TenantID is where autoCreate puts new accounts (jit_tenant).
 	TenantID string
 }
 
-const providerCols = `slug, kind, name, icon, enabled, position, auto_create, merge_verified_email, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, tenant_id`
+const providerCols = `id, owner, slug, kind, name, icon, enabled, position, auto_create, trust_email_optin, legacy_callback, issuer, config, secret_enc, cache, status_ok, status_checked, status_message, created, updated, groups_version, jit_tenant`
 
 func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	var p ProviderRow
 	var en, pos, ac, mv, lc, ok, chk, cr, up int64
-	if err := sc.Scan(&p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID); err != nil {
+	if err := sc.Scan(&p.ID, &p.Owner, &p.Slug, &p.Kind, &p.Name, &p.Icon, &en, &pos, &ac, &mv, &lc, &p.Issuer, &p.Config, &p.SecretEnc, &p.Cache, &ok, &chk, &p.StatusMessage, &cr, &up, &p.GroupsVersion, &p.TenantID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -52,9 +64,10 @@ func scanProvider(sc interface{ Scan(...any) error }) (*ProviderRow, error) {
 	return &p, nil
 }
 
-// ListProviders returns every provider in the administrators' order.
+// ListProviders returns every sign-in provider (of every owner) in the
+// administrators' order.
 func ListProviders(ctx context.Context, q Q) ([]ProviderRow, error) {
-	rows, err := q.Query(ctx, `SELECT `+providerCols+` FROM sign_in_providers ORDER BY position, name, slug`)
+	rows, err := q.Query(ctx, `SELECT `+providerCols+` FROM providers WHERE signin = 1 ORDER BY position, name, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -70,26 +83,31 @@ func ListProviders(ctx context.Context, q Q) ([]ProviderRow, error) {
 	return out, rows.Err()
 }
 
-// GetProvider returns one provider or ErrNotFound.
-func GetProvider(ctx context.Context, q Q, slug string) (*ProviderRow, error) {
-	return scanProvider(q.QueryRow(ctx, `SELECT `+providerCols+` FROM sign_in_providers WHERE slug = ?`, slug))
+// GetProvider returns one sign-in provider by its id or ErrNotFound.
+func GetProvider(ctx context.Context, q Q, id string) (*ProviderRow, error) {
+	return scanProvider(q.QueryRow(ctx, `SELECT `+providerCols+` FROM providers WHERE id = ? AND signin = 1`, id))
 }
 
-// InsertProvider adds a provider; a taken slug is a unique violation.
+// InsertProvider adds a sign-in provider; a taken id, or a slug taken by the
+// owner, is a unique violation.
 func InsertProvider(ctx context.Context, q Q, p ProviderRow) error {
-	_, err := q.Exec(ctx, `INSERT INTO sign_in_providers(`+providerCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Slug, p.Kind, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
+	owner := p.Owner
+	if owner == "" {
+		owner = ProviderSite
+	}
+	_, err := q.Exec(ctx, `INSERT INTO providers(`+providerCols+`, signin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+		p.ID, owner, p.Slug, p.Kind, p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
 		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Created), ms(p.Updated), p.GroupsVersion, tenantOrDefault(p.TenantID))
 	return err
 }
 
-// UpdateProvider replaces everything but the slug, the kind and the creation
-// time, and bumps the groups version.
+// UpdateProvider replaces everything but the id, the owner, the slug, the kind
+// and the creation time, and bumps the groups version.
 func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
-	res, err := q.Exec(ctx, `UPDATE sign_in_providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, merge_verified_email = ?, legacy_callback = ?, issuer = ?,
-		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, tenant_id = ?, groups_version = groups_version + 1 WHERE slug = ?`,
+	res, err := q.Exec(ctx, `UPDATE providers SET name = ?, icon = ?, enabled = ?, position = ?, auto_create = ?, trust_email_optin = ?, legacy_callback = ?, issuer = ?,
+		config = ?, secret_enc = ?, cache = ?, status_ok = ?, status_checked = ?, status_message = ?, updated = ?, jit_tenant = ?, groups_version = groups_version + 1 WHERE id = ? AND signin = 1`,
 		p.Name, p.Icon, b2i(p.Enabled), p.Position, b2i(p.AutoCreate), b2i(p.MergeVerifiedEmail), b2i(p.LegacyCallback), p.Issuer,
-		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), tenantOrDefault(p.TenantID), p.Slug)
+		p.Config, p.SecretEnc, p.Cache, b2i(p.StatusOK), zeroMS(p.StatusChecked), p.StatusMessage, ms(p.Updated), tenantOrDefault(p.TenantID), p.ID)
 	return oneRow(res, err)
 }
 
@@ -97,8 +115,8 @@ func UpdateProvider(ctx context.Context, q Q, p ProviderRow) error {
 // its groups version is still version. It reports false, locking nothing, when
 // the provider has changed since or is gone: a write of the provider holds the
 // row until it commits, so this waits for it and then sees the new version.
-func LockProviderGroups(ctx context.Context, q Q, slug string, version int64) (bool, error) {
-	err := oneRow(q.Exec(ctx, `UPDATE sign_in_providers SET slug = slug WHERE slug = ? AND groups_version = ?`, slug, version))
+func LockProviderGroups(ctx context.Context, q Q, id string, version int64) (bool, error) {
+	err := oneRow(q.Exec(ctx, `UPDATE providers SET id = id WHERE id = ? AND groups_version = ?`, id, version))
 	if errors.Is(err, ErrNotFound) {
 		return false, nil
 	}
@@ -107,61 +125,52 @@ func LockProviderGroups(ctx context.Context, q Q, slug string, version int64) (b
 
 // SetProviderStatus records the result of a discovery or metadata fetch (and
 // the document, when it succeeded).
-func SetProviderStatus(ctx context.Context, q Q, slug string, ok bool, at time.Time, message, cache string, keepCache bool) error {
+func SetProviderStatus(ctx context.Context, q Q, id string, ok bool, at time.Time, message, cache string, keepCache bool) error {
 	if keepCache {
-		_, err := q.Exec(ctx, `UPDATE sign_in_providers SET status_ok = ?, status_checked = ?, status_message = ? WHERE slug = ?`, b2i(ok), ms(at), message, slug)
+		_, err := q.Exec(ctx, `UPDATE providers SET status_ok = ?, status_checked = ?, status_message = ? WHERE id = ?`, b2i(ok), ms(at), message, id)
 		return err
 	}
-	_, err := q.Exec(ctx, `UPDATE sign_in_providers SET status_ok = ?, status_checked = ?, status_message = ?, cache = ? WHERE slug = ?`, b2i(ok), ms(at), message, cache, slug)
+	_, err := q.Exec(ctx, `UPDATE providers SET status_ok = ?, status_checked = ?, status_message = ?, cache = ? WHERE id = ?`, b2i(ok), ms(at), message, cache, id)
 	return err
 }
 
-// DeleteProvider removes a provider; the identities of its people stay.
-func DeleteProvider(ctx context.Context, q Q, slug string) error {
-	res, err := q.Exec(ctx, `DELETE FROM sign_in_providers WHERE slug = ?`, slug)
+// DeleteProvider removes a sign-in provider and, by cascade, the accounts its
+// people linked to it.
+func DeleteProvider(ctx context.Context, q Q, id string) error {
+	res, err := q.Exec(ctx, `DELETE FROM providers WHERE id = ? AND signin = 1`, id)
 	return oneRow(res, err)
 }
 
-// ProviderPeople counts the accounts with an identity of each issuer.
+// ProviderPeople counts the accounts linked to each provider (by provider id).
 func ProviderPeople(ctx context.Context, q Q) (map[string]int, error) {
-	rows, err := q.Query(ctx, `SELECT issuer, COUNT(DISTINCT user_id) FROM identities GROUP BY issuer`)
+	rows, err := q.Query(ctx, `SELECT provider_id, COUNT(*) FROM linked_accounts WHERE signin = 1 GROUP BY provider_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]int{}
 	for rows.Next() {
-		var iss string
+		var id string
 		var n int
-		if err := rows.Scan(&iss, &n); err != nil {
+		if err := rows.Scan(&id, &n); err != nil {
 			return nil, err
 		}
-		out[iss] = n
+		out[id] = n
 	}
 	return out, rows.Err()
 }
 
-// UsersWithOnlyIssuer counts the accounts that have an identity of this issuer
-// and no other way to sign in: no password, no passkey, no identity of another
-// issuer.
-func UsersWithOnlyIssuer(ctx context.Context, q Q, issuer string) (int, error) {
+// UsersWithOnlyProvider counts the accounts that have a sign-in link to this
+// provider and no other way to sign in: no password, no passkey, no sign-in
+// link to another provider.
+func UsersWithOnlyProvider(ctx context.Context, q Q, providerID string) (int, error) {
 	var n int
-	err := q.QueryRow(ctx, `SELECT COUNT(DISTINCT i.user_id) FROM identities i
-		WHERE i.issuer = ?
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM linked_accounts i
+		WHERE i.provider_id = ? AND i.signin = 1
 		AND NOT EXISTS (SELECT 1 FROM passwords p WHERE p.user_id = i.user_id)
 		AND NOT EXISTS (SELECT 1 FROM passkeys k WHERE k.user_id = i.user_id)
-		AND NOT EXISTS (SELECT 1 FROM identities o WHERE o.user_id = i.user_id AND o.issuer <> ?)`, issuer, issuer).Scan(&n)
+		AND NOT EXISTS (SELECT 1 FROM linked_accounts o WHERE o.user_id = i.user_id AND o.signin = 1 AND o.provider_id <> ?)`, providerID, providerID).Scan(&n)
 	return n, err
-}
-
-// UserHasIdentityOf reports whether the user has an identity of the issuer.
-func UserHasIdentityOf(ctx context.Context, q Q, userID, issuer string) (bool, error) {
-	var one int
-	err := q.QueryRow(ctx, `SELECT 1 FROM identities WHERE user_id = ? AND issuer = ? LIMIT 1`, userID, issuer).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 // --- site settings -----------------------------------------------------------
@@ -310,9 +319,9 @@ func PasskeyCounts(ctx context.Context, q Q) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// IdentityCounts returns how many identities each user has.
-func IdentityCounts(ctx context.Context, q Q) (map[string]int, error) {
-	rows, err := q.Query(ctx, `SELECT user_id, COUNT(*) FROM identities GROUP BY user_id`)
+// LinkCounts returns how many sign-in links each user has.
+func LinkCounts(ctx context.Context, q Q) (map[string]int, error) {
+	rows, err := q.Query(ctx, `SELECT user_id, COUNT(*) FROM linked_accounts WHERE signin = 1 GROUP BY user_id`)
 	if err != nil {
 		return nil, err
 	}

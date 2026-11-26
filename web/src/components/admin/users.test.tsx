@@ -262,7 +262,7 @@ describe("a person's sessions and connected accounts", () => {
     await open('/admin', (d) => {
       const amy = addPerson(d, 'amy')
       id = amy.id
-      d.admin.people[amy.id] = { sessions: [session('s1')], identities: [], passkeys: [] }
+      d.admin.people[amy.id] = { sessions: [session('s1')], links: [], passkeys: [] }
       return `/admin/user/${amy.id}/sessions`
     })
     await settle(() => document.querySelectorAll('[data-slot="sessions"] li').length === 1, 'the session')
@@ -285,7 +285,7 @@ describe("a person's sessions and connected accounts", () => {
   it('ends every session at once, after asking', async () => {
     await open('/admin', (d) => {
       const amy = addPerson(d, 'amy')
-      d.admin.people[amy.id] = { sessions: [session('s1'), session('s2', 'password')], identities: [], passkeys: [] }
+      d.admin.people[amy.id] = { sessions: [session('s1'), session('s2', 'password')], links: [], passkeys: [] }
       return `/admin/user/${amy.id}/sessions`
     })
     await settle(() => document.querySelectorAll('[data-slot="sessions"] li').length >= 1, 'the sessions')
@@ -305,7 +305,7 @@ describe("a person's sessions and connected accounts", () => {
       const me = d.auth.users[0]
       d.admin.people[me.id] = {
         sessions: [session('s1', 'password', { current: true }), session('s2', 'password')],
-        identities: [],
+        links: [],
         passkeys: [],
       }
       return `/admin/user/${me.id}/sessions`
@@ -336,13 +336,15 @@ describe("a person's sessions and connected accounts", () => {
       const amy = addPerson(d, 'amy')
       d.admin.people[amy.id] = {
         sessions: [],
-        identities: [
+        links: [
           {
             id: 'IDENT00001',
+            providerId: 'company',
             provider: 'company',
             slug: 'company',
             kind: 'oidc',
             label: 'amy@idp.example',
+            signin: true,
             created: '2026-11-20T08:00:00Z',
           },
         ],
@@ -350,7 +352,7 @@ describe("a person's sessions and connected accounts", () => {
       }
       return `/admin/user/${amy.id}/security`
     })
-    await settle(() => document.querySelector('[data-identity="IDENT00001"]') !== null, 'the account')
+    await settle(() => document.querySelector('[data-link="IDENT00001"]') !== null, 'the account')
     expect(text()).toContain('amy@idp.example')
     await click(byLabel(tc.person.security.disconnectFor('company · amy@idp.example')))
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
@@ -359,8 +361,8 @@ describe("a person's sessions and connected accounts", () => {
         (b) => b.textContent === tc.person.security.disconnect,
       ),
     )
-    await settle(() => document.querySelector('[data-identity]') === null, 'disconnected')
-    expect(m!.requests.filter((r) => r.method === 'DELETE' && r.url.includes('/identities/'))).toHaveLength(1)
+    await settle(() => document.querySelector('[data-link]') === null, 'disconnected')
+    expect(m!.requests.filter((r) => r.method === 'DELETE' && r.url.includes('/links/'))).toHaveLength(1)
   })
 
   it("are a site administrator's alone: a tenant's administrator has no tab, no address and no calls", async () => {
@@ -376,8 +378,8 @@ describe("a person's sessions and connected accounts", () => {
     ).not.toContain(tc.person.tabs.sessions)
     await click([...document.querySelectorAll('nav a')].find((a) => a.textContent === tc.person.tabs.security))
     await settle(() => document.querySelector('[data-slot="person-security"]') !== null, 'security')
-    expect(document.querySelector('[data-slot="identities"]')).toBeNull()
+    expect(document.querySelector('[data-slot="links"]')).toBeNull()
     expect(text()).not.toContain(tc.person.security.connected)
-    expect(m!.requests.filter((r) => /\/(sessions|identities)/.test(r.url))).toEqual([])
+    expect(m!.requests.filter((r) => /\/(sessions|links)/.test(r.url))).toEqual([])
   })
 })

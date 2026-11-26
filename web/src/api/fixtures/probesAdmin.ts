@@ -15,10 +15,12 @@ export const ADMIN_UNRECORDED: Record<string, string> = {
   'POST /api/admin/mail/test 200': 'needs mail',
   'GET /api/admin/security 200': 'no contract case reads the sign-in security yet',
   'PUT /api/admin/security 200': 'needs a captcha',
-  'GET /api/admin/auth/providers 200': 'needs a provider',
-  'POST /api/admin/auth/providers 201': 'needs a provider',
-  'PATCH /api/admin/auth/providers/other 200': 'needs a provider',
-  'POST /api/admin/auth/providers/company/refresh 200': 'needs a provider',
+  'GET /api/admin/providers 200': 'needs a provider',
+  'POST /api/admin/providers 201': 'needs a provider',
+  'PATCH /api/admin/providers/other 200': 'needs a provider',
+  'POST /api/admin/providers/company/check 200': 'needs a provider',
+  'POST /api/admin/providers/company/test 200': 'needs a provider',
+  'GET /api/admin/providers/company/test 200': 'needs a provider',
   'GET /api/admin/grants 200': 'needs an authorization client',
   'PUT /api/admin/daily/providers/hitokoto 200': 'no contract case changes a provider yet',
 }
@@ -28,7 +30,7 @@ type Call = [method: string, path: string, body?: unknown | (() => unknown)]
 export function adminProbes(fx: FixtureServer): Call[] {
   const d = fx.data
   const at = '2026-11-20T08:00:00Z'
-  // A second person with a sign-in, an identity and a passkey, a group, a plan, a tenant, a token and a grant.
+  // A second person with a sign-in, a linked sign-in and a passkey, a group, a plan, a tenant, a token and a grant.
   d.auth.users.push({
     ...d.auth.users[0],
     id: '01FXDAVE01',
@@ -40,7 +42,18 @@ export function adminProbes(fx: FixtureServer): Call[] {
   })
   d.admin.people['01FXDAVE01'] = {
     sessions: [{ id: 's1', userAgent: 'Firefox', method: 'password', created: at, lastUsed: at }],
-    identities: [{ id: 'i1', provider: 'oidc', slug: 'company', kind: 'oidc', label: 'dave@company', created: at }],
+    links: [
+      {
+        id: 'i1',
+        providerId: 'company',
+        provider: 'Company',
+        slug: 'company',
+        kind: 'oidc',
+        label: 'dave@company',
+        signin: true,
+        created: at,
+      },
+    ],
     passkeys: [{ id: 'k1', name: 'Key', created: at, lastUsed: null, synced: false }],
   }
   d.admin.groups.push({
@@ -87,6 +100,8 @@ export function adminProbes(fx: FixtureServer): Call[] {
     owner: { id: d.auth.users[0].id, username: d.auth.users[0].username, name: d.auth.users[0].name },
   })
   d.admin.providers.push({
+    id: 'company',
+    owner: 'site',
     slug: 'company',
     kind: 'oidc',
     name: 'Company',
@@ -191,10 +206,10 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['PATCH', U, { name: '戴夫' }],
     ['GET', `${U}/memberships`],
     ['GET', `${U}/sessions`],
-    ['GET', `${U}/identities`],
+    ['GET', `${U}/links`],
     ['GET', `${U}/passkeys`],
     ['DELETE', `${U}/passkeys/k1`],
-    ['DELETE', `${U}/identities/i1`],
+    ['DELETE', `${U}/links/i1`],
     ['DELETE', `${U}/sessions/s1`],
     ['DELETE', `${U}/sessions`],
     ['POST', `${U}/password`, { password: 'a-long-password' }],
@@ -277,11 +292,13 @@ export function adminProbes(fx: FixtureServer): Call[] {
     ['POST', '/api/admin/mail/test', { to: 'a@example.test' }],
     ['GET', '/api/admin/security'],
     ['PUT', '/api/admin/security', { captcha: { siteKey: 'k' } }],
-    ['GET', '/api/admin/auth/providers'],
-    ['POST', '/api/admin/auth/providers', { slug: 'other', kind: 'oidc', name: 'Other' }],
-    ['PATCH', '/api/admin/auth/providers/other', { name: 'Other 2' }],
-    ['POST', '/api/admin/auth/providers/company/refresh'],
-    ['DELETE', '/api/admin/auth/providers/other'],
+    ['GET', '/api/admin/providers'],
+    ['POST', '/api/admin/providers', { slug: 'other', kind: 'oidc', name: 'Other' }],
+    ['PATCH', '/api/admin/providers/other', { name: 'Other 2' }],
+    ['POST', '/api/admin/providers/company/check'],
+    ['POST', '/api/admin/providers/company/test'],
+    ['GET', '/api/admin/providers/company/test'],
+    ['DELETE', '/api/admin/providers/other'],
     ['GET', '/api/admin/audit'],
     ['GET', '/api/admin/audit/kinds'],
     ['GET', '/api/admin/tokens'],

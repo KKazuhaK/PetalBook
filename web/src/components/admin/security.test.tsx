@@ -7,11 +7,22 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { ta } from '@/i18n/admin'
 import { tsec } from '@/i18n/security'
-import { byLabel, byText, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import {
+  byLabel,
+  byText,
+  click,
+  installDomShims,
+  locationText,
+  mount,
+  settle,
+  type,
+  type FxMounted,
+} from '@/testing/harness'
 import type { FixtureData } from '@/api/fixtures/data/model'
 import type { FixtureServer } from '@/api/fixtures/server'
 import type { ProviderInput, AuthProvider, SecurityNotice } from '@/api/types'
 import { addPerson, addProvider, setSite } from '@/testing/adminScene'
+import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { AdminGate } from './AdminGate'
 import { buildSteps, draftOf } from './securityDraft'
 import { detailText } from './AuditSection'
@@ -476,7 +487,7 @@ describe('the sign-in providers', () => {
     await type(inputIn(tsec.providers.oidc.clientSecret), 'shh')
     await click(buttonWith(tsec.providers.create))
     await settle(() => listed().length === 1, 'the new provider')
-    const post = JSON.parse(calls('POST', '/api/admin/auth/providers')[0].body!)
+    const post = JSON.parse(calls('POST', '/api/admin/providers')[0].body!)
     expect(post).toMatchObject({
       slug: 'acme',
       kind: 'oidc',
@@ -553,9 +564,9 @@ describe('the sign-in providers', () => {
     await openProviders({
       providers: [company],
       setup: (fx) => {
-        fx.fail('POST', '/api/admin/auth/providers', 400, { code: 'oidc_issuer_invalid' }, { times: 1 })
-        fx.fail('POST', '/api/admin/auth/providers', 409, { code: 'provider_issuer_in_use' }, { times: 1 })
-        fx.fail('POST', '/api/admin/auth/providers', 409, { code: 'exists' }, { times: 1 })
+        fx.fail('POST', '/api/admin/providers', 400, { code: 'oidc_issuer_invalid' }, { times: 1 })
+        fx.fail('POST', '/api/admin/providers', 409, { code: 'domain_required' }, { times: 1 })
+        fx.fail('POST', '/api/admin/providers', 409, { code: 'exists' }, { times: 1 })
       },
     })
     await settle(() => listed().length === 1, 'the list')
@@ -573,7 +584,7 @@ describe('the sign-in providers', () => {
     await type(inputIn(tsec.providers.slug), 'other')
     await type(inputIn(tsec.providers.oidc.issuer), 'https://login.example/v2.0')
     await click(buttonWith(tsec.providers.create))
-    await settle(() => form().textContent!.includes(tsec.providers.errors.provider_issuer_in_use), 'issuer in use')
+    await settle(() => form().textContent!.includes(tsec.providers.errors.domain_required), 'domain required')
     await type(inputIn(tsec.providers.oidc.issuer), 'http://insecure.example')
     await click(buttonWith(tsec.providers.create))
     await settle(() => form().textContent!.includes(tsec.providers.errors.oidc_issuer_invalid), 'issuer invalid')
@@ -595,13 +606,13 @@ describe('the sign-in providers', () => {
       { oidc: { issuer: 'https://unreachable.example', clientId: 'c' } },
       { enabled: false, status: { ok: false, checked: '2026-11-23T08:00:00Z', message: 'no route to host' } },
     )
-    m!.fx.reply('POST', '/api/admin/auth/providers', dead, { status: 201 })
+    m!.fx.reply('POST', '/api/admin/providers', dead, { status: 201 })
     m!.fx.data.admin.providers.push(dead)
     await click(buttonWith(tsec.providers.create))
     await settle(() => listed().length === 1, 'stored')
     expect(listed()[0].textContent).toContain(tsec.providers.statusBad)
     // Left at its default, "enabled" is not asked for, so the server keeps it off.
-    expect(JSON.parse(calls('POST', '/api/admin/auth/providers')[0].body!)).not.toHaveProperty('enabled')
+    expect(JSON.parse(calls('POST', '/api/admin/providers')[0].body!)).not.toHaveProperty('enabled')
     expect(listed()[0].textContent).toContain(tsec.providers.disabled)
   })
 
@@ -609,10 +620,50 @@ describe('the sign-in providers', () => {
     await openProviders({ providers: [company] })
     await settle(() => listed().length === 1, 'the list')
     await click(listed()[0].querySelector('[role="switch"]'))
-    await settle(() => calls('PATCH', '/api/admin/auth/providers/company').length === 1, 'patched')
-    expect(JSON.parse(calls('PATCH', '/api/admin/auth/providers/company')[0].body!)).toEqual({ enabled: false })
+    await settle(() => calls('PATCH', '/api/admin/providers/company').length === 1, 'patched')
+    expect(JSON.parse(calls('PATCH', '/api/admin/providers/company')[0].body!)).toEqual({ enabled: false })
     await click(byLabel(tsec.providers.refreshFor('Company SSO')))
-    await settle(() => calls('POST', '/api/admin/auth/providers/company/refresh').length === 1, 'refreshed')
+    await settle(() => calls('POST', '/api/admin/providers/company/check').length === 1, 'refreshed')
+  })
+
+  it('"Test sign-in" asks for the address and sends the browser there', async () => {
+    await openProviders({ providers: [company] })
+    await settle(() => listed().length === 1, 'the list')
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign })
+    await click(byLabel(tsec.providers.testFor('Company SSO')))
+    await settle(() => assign.mock.calls.length === 1, 'the redirect')
+    expect(calls('POST', '/api/admin/providers/company/test')).toHaveLength(1)
+    expect(assign.mock.calls[0][0]).toBe('/admin/security/providers?provider_test=company')
+  })
+
+  it('coming back from a test sign-in shows what the provider sent, once, and clears the address', async () => {
+    await openAt('/admin/security/providers?provider_test=company', {
+      providers: [company],
+      setup: (fx) => {
+        fx.data.admin.providerTests.company = {
+          subject: 'sub-42',
+          email: 'tester@example.test',
+          emailTrusted: false,
+          name: 'Test Person',
+          username: 'tester',
+          at: '2026-11-26T08:00:00Z',
+        }
+      },
+    })
+    await settle(() => text().includes(tsec.providers.testTitle), 'the result')
+    await settle(() => text().includes('sub-42'), 'the subject')
+    expect(text()).toContain(`tester@example.test (${tsec.providers.testUnverified})`)
+    expect(text()).toContain('Test Person')
+    expect(calls('GET', '/api/admin/providers/company/test')).toHaveLength(1)
+    await settle(() => !locationText().includes('provider_test'), 'the address is clean')
+  })
+
+  it('coming back from a failed test sign-in says why', async () => {
+    await openAt('/admin/security/providers?sso_error=saml_no_email', { providers: [company] })
+    await settle(() => text().includes(tsec.providers.testTitle), 'the dialog')
+    expect(text()).toContain(ssoErrorMessage('saml_no_email'))
+    expect(calls('GET', '/api/admin/providers/company/test')).toHaveLength(0)
   })
 
   it("deleting asks first; a provider that is somebody's only way in asks again, and then force-deletes", async () => {
@@ -620,13 +671,7 @@ describe('the sign-in providers', () => {
     await openProviders({
       providers: [company],
       setup: (fx) =>
-        fx.fail(
-          'DELETE',
-          '/api/admin/auth/providers/company',
-          409,
-          { code: 'provider_in_use', accounts: 1 },
-          { times: 1 },
-        ),
+        fx.fail('DELETE', '/api/admin/providers/company', 409, { code: 'provider_in_use', accounts: 1 }, { times: 1 }),
     })
     await settle(() => listed().length === 1, 'the list')
     await click(byLabel(tsec.providers.deleteFor('Company SSO')))
@@ -636,7 +681,7 @@ describe('the sign-in providers', () => {
     expect(text()).toContain(tsec.providers.deleteInUse(1))
     await click([...dialog().querySelectorAll('button')].find((b) => b.textContent === tsec.providers.deleteForce))
     await settle(() => listed().length === 0, 'deleted')
-    expect(calls('DELETE', '/api/admin/auth/providers/company?force=1')).toHaveLength(1)
+    expect(calls('DELETE', '/api/admin/providers/company?force=1')).toHaveLength(1)
   })
 
   it('shows the audit log, filters it by kind and loads more', async () => {

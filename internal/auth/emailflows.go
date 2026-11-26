@@ -818,9 +818,9 @@ func (s *Service) resetLinks(ctx context.Context, accounts []store.User, by, act
 // provider of its identity, else the enabled providers, else "single sign-on".
 func (s *Service) providerNameFor(ctx context.Context, u store.User) string {
 	var names []string
-	if ids, err := store.ListIdentities(ctx, s.st.Q(), u.ID); err == nil {
+	if ids, err := store.ListLinks(ctx, s.st.Q(), u.ID); err == nil {
 		for _, id := range ids {
-			if n, _, _ := s.providerOf(id.Issuer); n != "" && !slices.Contains(names, n) {
+			if n, _, _ := s.providerByID(id.ProviderID); n != "" && !slices.Contains(names, n) {
 				names = append(names, n)
 			}
 		}

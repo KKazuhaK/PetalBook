@@ -48,7 +48,7 @@ async function open(
         carol = addPerson(d, 'carol', carolExtra)
         d.admin.people[carol.id] = {
           sessions: [],
-          identities: [],
+          links: [],
           passkeys: [{ id: 'cred-carol', name: 'Lost phone', created: '2026-11-20T08:00:00Z', synced: false }],
         }
         scene?.(d)

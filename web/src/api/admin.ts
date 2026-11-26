@@ -86,7 +86,8 @@ import type {
   User,
   UsersPage,
   UsersParams,
-  PersonIdentity,
+  Link,
+  ProviderTestResult,
   PersonMemberships,
   PersonSession,
   AdminGrantList,
@@ -133,10 +134,9 @@ export const adminApi = {
   endUserSession: (id: string, session: string) =>
     request<void>(`/users/${enc(id)}/sessions/${enc(session)}`, { method: 'DELETE' }),
   endUserSessions: (id: string) => request<{ ended: number }>(`/users/${enc(id)}/sessions`, { method: 'DELETE' }),
-  userIdentities: (id: string, signal?: AbortSignal) =>
-    request<{ identities: PersonIdentity[] }>(`/users/${enc(id)}/identities`, { signal }),
-  disconnectUserIdentity: (id: string, identity: string) =>
-    request<void>(`/users/${enc(id)}/identities/${enc(identity)}`, { method: 'DELETE' }),
+  userLinks: (id: string, signal?: AbortSignal) => request<{ links: Link[] }>(`/users/${enc(id)}/links`, { signal }),
+  disconnectUserLink: (id: string, link: string) =>
+    request<void>(`/users/${enc(id)}/links/${enc(link)}`, { method: 'DELETE' }),
   // `quota` sets the person's own limits: a number each, or null to follow the tenant; the keys left out stay.
   // `remoteExempt` (site administrators) leaves the spaces the person owns out of the requirement of a remote.
   updateUser: (
@@ -340,15 +340,19 @@ export const adminApi = {
   // The captcha's credentials, the one thing this endpoint writes; `secret` is write-only ("" clears it).
   putSecurity: (captcha: CaptchaCredentials) =>
     request<SecurityBody>('/admin/security', { method: 'PUT', body: { captcha } }),
-  authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/auth/providers', { signal }),
+  authProviders: (signal?: AbortSignal) => request<{ providers: AuthProvider[] }>('/admin/providers', { signal }),
   createAuthProvider: (input: ProviderInput) =>
-    request<AuthProvider>('/admin/auth/providers', { method: 'POST', body: input }),
-  patchAuthProvider: (slug: string, input: ProviderInput) =>
-    request<AuthProvider>(`/admin/auth/providers/${enc(slug)}`, { method: 'PATCH', body: input }),
-  deleteAuthProvider: (slug: string, force = false) =>
-    request<void>(`/admin/auth/providers/${enc(slug)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
-  refreshAuthProvider: (slug: string) =>
-    request<AuthProvider>(`/admin/auth/providers/${enc(slug)}/refresh`, { method: 'POST' }),
+    request<AuthProvider>('/admin/providers', { method: 'POST', body: input }),
+  patchAuthProvider: (id: string, input: ProviderInput) =>
+    request<AuthProvider>(`/admin/providers/${enc(id)}`, { method: 'PATCH', body: input }),
+  deleteAuthProvider: (id: string, force = false) =>
+    request<void>(`/admin/providers/${enc(id)}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+  checkAuthProvider: (id: string) => request<AuthProvider>(`/admin/providers/${enc(id)}/check`, { method: 'POST' }),
+  // A test sign-in: the address to send the browser to, even while the provider is off. It comes back to
+  // /admin/security/providers?provider_test=<id>, where the result is read once.
+  testAuthProvider: (id: string) => request<{ url: string }>(`/admin/providers/${enc(id)}/test`, { method: 'POST' }),
+  authProviderTestResult: (id: string, signal?: AbortSignal) =>
+    request<{ result: ProviderTestResult | null }>(`/admin/providers/${enc(id)}/test`, { signal }),
   audit: (params: Partial<AuditFilters> & { cursor?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const q = auditQuery(params)
     if (params.cursor) q.set('cursor', params.cursor)

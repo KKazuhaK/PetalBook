@@ -343,18 +343,6 @@ func (s *server) getAccount(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	type ident struct {
-		ID           string `json:"id"`
-		Provider     string `json:"provider"`
-		ProviderSlug string `json:"providerSlug"`
-		Kind         string `json:"kind"`
-		Label        string `json:"label"`
-		Created      string `json:"created"`
-	}
-	ids := make([]ident, len(v.Identities))
-	for i, x := range v.Identities {
-		ids[i] = ident{x.ID, x.Provider, x.Slug, x.Kind, x.Label, rfc3339(x.Created)}
-	}
 	groups, err := s.spaces.GroupsOf(c.r.Context(), c.user().ID)
 	if err != nil {
 		s.fail(c.w, err)
@@ -373,11 +361,10 @@ func (s *server) getAccount(c *call) {
 	writeJSON(c.w, http.StatusOK, struct {
 		User        userResp      `json:"user"`
 		HasPassword bool          `json:"hasPassword"`
-		Identities  []ident       `json:"identities"`
 		Passkeys    []passkeyResp `json:"passkeys"`
 		Groups      []groupRef    `json:"groups"`
 		Emails      []emailResp   `json:"emails"`
-	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys), toGroupRefs(groups), withClaims(toEmails(emails), claims)})
+	}{s.toUser(v.User), v.HasPassword, toPasskeys(v.Passkeys), toGroupRefs(groups), withClaims(toEmails(emails), claims)})
 }
 
 func (s *server) patchAccount(c *call) {
@@ -419,8 +406,69 @@ func (s *server) changePassword(c *call) {
 	c.w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) unlinkIdentity(c *call) {
-	if err := s.auth.UnlinkIdentity(c.r.Context(), c.user().ID, c.r.PathValue("id")); err != nil {
+// signinLinkResp is a linked account as its owner, or an administrator, sees it.
+type signinLinkResp struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"providerId"`
+	Provider   string `json:"provider"`
+	Slug       string `json:"slug"`
+	Kind       string `json:"kind"`
+	Label      string `json:"label"`
+	SignIn     bool   `json:"signin"`
+	Created    string `json:"created"`
+}
+
+func toLinks(rows []auth.LinkView) []signinLinkResp {
+	items := make([]signinLinkResp, len(rows))
+	for i, r := range rows {
+		items[i] = signinLinkResp{r.ID, r.ProviderID, r.Provider, r.Slug, r.Kind, r.Label, r.SignIn, rfc3339(r.Created)}
+	}
+	return items
+}
+
+func (s *server) listAccountLinks(c *call) {
+	rows, err := s.auth.Links(c.r.Context(), c.user().ID)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		Links []signinLinkResp `json:"links"`
+	}{toLinks(rows)})
+}
+
+// accountLinkStart starts linking the signed-in person to an account at a
+// provider: it answers the address to send the browser to. One account per
+// provider: a second is refused (already_linked) until the first is unlinked.
+func (s *server) accountLinkStart(c *call) {
+	var req struct {
+		Purpose string `json:"purpose"`
+		Return  string `json:"return"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
+		return
+	}
+	if req.Purpose != "" && req.Purpose != "signin" {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Purpose is signin.")
+		return
+	}
+	u := c.user()
+	res, err := s.auth.LinkBegin(c.r.Context(), c.r.PathValue("provider"), &u, req.Return, s.auth.ClientAddr(c.r))
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	http.SetCookie(c.w, res.Cookie)
+	if res.Binding != nil {
+		http.SetCookie(c.w, res.Binding)
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		URL string `json:"url"`
+	}{res.URL})
+}
+
+func (s *server) unlinkAccount(c *call) {
+	if err := s.auth.UnlinkAccount(c.r.Context(), c.user().ID, c.r.PathValue("id")); err != nil {
 		s.fail(c.w, err)
 		return
 	}

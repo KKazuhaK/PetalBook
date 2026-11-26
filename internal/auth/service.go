@@ -92,9 +92,14 @@ type Config struct {
 	CaptchaEndpoint string
 	// Mail is for tests: the clock, backoff and trusted roots of the mail
 	// service. Mail is off until an administrator enables it, whatever this says.
-	Mail   mail.Options
-	Logger *slog.Logger
-	Now    func() time.Time
+	Mail mail.Options
+	// OrgDomains lists the verified email domains of a tenant. Domain
+	// verification arrives with 3.6 (d); until it is set no tenant has any, so
+	// no tenant-owned sign-in provider can be turned on and none vouches for an
+	// address (see orgSignInGate, trustsEmail).
+	OrgDomains func(ctx context.Context, tenantID string) []string
+	Logger     *slog.Logger
+	Now        func() time.Time
 }
 
 // Service is safe for concurrent use.
@@ -150,6 +155,8 @@ type Service struct {
 	negative map[string]negative
 
 	pending *pendingStore
+	// ptests are the results of the administrators' test sign-ins (providertest.go).
+	ptests providerTests
 
 	// Mail (see mailcfg.go): the sender, the caps of an hour, and the settings
 	// that say whether registration is open (set by the API's constructor).
@@ -631,13 +638,16 @@ type NewTenant struct {
 // errOrgLimit is the refusal of an organisation over the person's cap.
 var errOrgLimit = coded(403, "org_limit", "No more organisations can be made.")
 
-// IdentityParams is an external identity to attach.
+// IdentityParams is a linked account to attach: the provider's own id (never
+// its issuer), the subject there, and what the provider said of the address.
 type IdentityParams struct {
-	Issuer, Subject, Label string
+	ProviderID, Subject, Label string
+	Email                      string
+	EmailTrusted               bool
 }
 
-// errInUse is an identity another account already has.
-var errInUse = errf(Conflict, "That identity belongs to another account.")
+// errInUse is an account another person has linked already.
+var errInUse = errf(Conflict, "That account is linked to another person.")
 
 // CreateUser makes an account with its personal space. Everything that must
 // stand or fall together (the row, the password, the identity, the invite, the
@@ -826,8 +836,8 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 				}
 			}
 			if p.Identity != nil {
-				if err := store.InsertIdentity(ctx, q, store.Identity{ID: s.newID(), UserID: cand.ID, Issuer: p.Identity.Issuer,
-					Subject: p.Identity.Subject, Label: p.Identity.Label, Created: s.now()}); err != nil {
+				if err := store.InsertLink(ctx, q, store.Link{ID: s.newID(), ProviderID: p.Identity.ProviderID, UserID: cand.ID, Subject: p.Identity.Subject,
+					Email: p.Identity.Email, EmailTrusted: p.Identity.EmailTrusted, SignIn: true, Label: p.Identity.Label, Created: s.now(), LastUsed: s.now()}); err != nil {
 					return err
 				}
 			}
@@ -846,6 +856,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			}
 			err = errf(Exists, "That username is taken.")
 		}
+		if errors.Is(err, store.ErrLinkSubjectTaken) {
+			err = errInUse
+		}
 		if on, ok := store.UniqueOn(err); ok {
 			switch {
 			case p.NewTenant != nil && store.TenantSlugClash(err) && attempt < 20:
@@ -857,8 +870,6 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 					continue
 				}
 				err = errf(Exists, "That username is taken.")
-			case strings.Contains(on, "identities") || strings.Contains(on, "subject"):
-				err = errInUse
 			case attempt < 5:
 				continue // the generated id was taken: try another
 			}

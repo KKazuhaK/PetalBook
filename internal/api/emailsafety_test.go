@@ -157,7 +157,7 @@ func TestALookalikeAddressFromAProviderNeverMerges(t *testing.T) {
 	f.addUser("kel", testidp.Claims{"sub": "s-kel", "preferred_username": "kel", "email": lookKelvin, "email_verified": true, "name": "kel"})
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true})).want(t, 201, "")
 		ctx := context.Background()
 		for _, p := range [][2]string{{"tom-local", "tom@github.test"}, {"kim-local", "kim@example.test"}} {
 			if _, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: p[0], Role: "member", Password: pw, Email: p[1], EmailVerified: true}); err != nil {

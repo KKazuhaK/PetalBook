@@ -139,16 +139,6 @@ CREATE TABLE passwords (
   must_change BIGINT NOT NULL DEFAULT 0
 );
 
-CREATE TABLE identities (
-  id      TEXT COLLATE "C" PRIMARY KEY,
-  user_id TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  issuer  TEXT COLLATE "C" NOT NULL,
-  subject TEXT COLLATE "C" NOT NULL,
-  label   TEXT COLLATE "C" NOT NULL DEFAULT '',
-  created BIGINT NOT NULL,
-  UNIQUE (issuer, subject)
-);
-CREATE INDEX identities_user ON identities(user_id);
 
 -- A held session may only register a passkey and sign out.
 CREATE TABLE sessions (
@@ -632,34 +622,6 @@ CREATE TABLE github_leftovers (
 );
 CREATE INDEX github_leftovers_repo ON github_leftovers(repo_id);
 
--- Sign-in providers (2.8). config is JSON with nothing secret in it,
--- secret_enc the sealed client secret (or SAML signing key), cache the
--- discovery document or the identity provider's metadata. issuer is checked
--- unique in code, because '' may repeat. tenant_id is where autoCreate puts new
--- accounts; groups_version is bumped by every change of the row.
-CREATE TABLE sign_in_providers (
-  slug                 TEXT COLLATE "C" PRIMARY KEY,
-  kind                 TEXT COLLATE "C" NOT NULL,
-  name                 TEXT COLLATE "C" NOT NULL,
-  icon                 TEXT COLLATE "C" NOT NULL DEFAULT '',
-  enabled              BIGINT NOT NULL DEFAULT 0,
-  position             BIGINT NOT NULL DEFAULT 0,
-  auto_create          BIGINT NOT NULL DEFAULT 0,
-  merge_verified_email BIGINT NOT NULL DEFAULT 0,
-  legacy_callback      BIGINT NOT NULL DEFAULT 0,
-  issuer               TEXT COLLATE "C" NOT NULL DEFAULT '',
-  config               TEXT COLLATE "C" NOT NULL DEFAULT '{}',
-  secret_enc           TEXT COLLATE "C" NOT NULL DEFAULT '',
-  cache                TEXT COLLATE "C" NOT NULL DEFAULT '',
-  status_ok            BIGINT NOT NULL DEFAULT 0,
-  status_checked       BIGINT NOT NULL DEFAULT 0,
-  status_message       TEXT COLLATE "C" NOT NULL DEFAULT '',
-  created              BIGINT NOT NULL,
-  updated              BIGINT NOT NULL,
-  groups_version       BIGINT NOT NULL DEFAULT 0,
-  tenant_id            TEXT COLLATE "C" NOT NULL DEFAULT '0000000000' REFERENCES tenants(id)
-);
-CREATE INDEX sign_in_providers_issuer ON sign_in_providers(issuer);
 
 -- credential is the JSON of the WebAuthn credential; rp_id is the host the
 -- passkey was made for.
@@ -873,28 +835,116 @@ CREATE INDEX usage_nspaces_all ON usage(kind, spaces DESC, id) WHERE kind = 'use
 CREATE INDEX usage_grace ON usage(tenant_id, id) WHERE kind = 'user' AND grace_spaces > 0;
 CREATE INDEX usage_overdue ON usage(tenant_id, id) WHERE kind = 'user' AND overdue_spaces > 0;
 
--- Connections to GitLab and Gitea/Forgejo/Codeberg (3.8). One row of providers
--- is one OAuth application on one host. owner is 'site' or the id of the tenant
--- that owns the provider (a plain column: 'site' is no tenant).
+-- Every outside system a person can sign in with or connect repositories to
+-- (consolidation 5). owner is 'site' or the id of the tenant that owns the row
+-- (org SSO); slug is the URL name, unique per owner; for a site row the id is
+-- the slug, for a tenant's row a generated id. signin and repos say what the row
+-- may be used for. issuer is what an administrator typed (an OIDC iss, a SAML
+-- entity id) and only for display and discovery: no account is ever found by
+-- it, only by the row's own id (linked_accounts). config is JSON with nothing
+-- secret in it, secret_enc the sealed client secret (or SAML signing key),
+-- cache the discovery document or the identity provider's metadata. jit_tenant
+-- is where autoCreate puts new accounts; trust_email_optin is a site-owned
+-- custom OIDC or SAML provider's "its address is verified" switch; groups_version
+-- is bumped by every change of the row. The GitLab and Gitea rows (repos = 1)
+-- keep their state in status_ok and status_checked.
 CREATE TABLE providers (
-  id               TEXT COLLATE "C" PRIMARY KEY,
-  type             TEXT COLLATE "C" NOT NULL,
-  host             TEXT COLLATE "C" NOT NULL,
-  scheme           TEXT COLLATE "C" NOT NULL DEFAULT 'https',
-  name             TEXT COLLATE "C" NOT NULL,
-  owner            TEXT COLLATE "C" NOT NULL DEFAULT 'site',
-  client_id        TEXT COLLATE "C" NOT NULL,
-  secret_enc       TEXT COLLATE "C" NOT NULL,
-  state            TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
-  platform_version TEXT COLLATE "C" NOT NULL DEFAULT '',
-  partial_sync     TEXT COLLATE "C" NOT NULL DEFAULT 'unknown',
-  partial_checked  BIGINT NOT NULL DEFAULT 0,
-  checked          BIGINT NOT NULL DEFAULT 0,
-  updated_by       TEXT COLLATE "C" NOT NULL DEFAULT '',
-  created          BIGINT NOT NULL,
-  updated          BIGINT NOT NULL
+  id                TEXT COLLATE "C" PRIMARY KEY,
+  owner             TEXT COLLATE "C" NOT NULL DEFAULT 'site',
+  slug              TEXT COLLATE "C" NOT NULL,
+  kind              TEXT COLLATE "C" NOT NULL CHECK (kind IN ('oidc', 'saml', 'github', 'gitlab', 'gitea', 'google', 'microsoft', 'apple')),
+  name              TEXT COLLATE "C" NOT NULL,
+  icon              TEXT COLLATE "C" NOT NULL DEFAULT '',
+  signin            BIGINT NOT NULL DEFAULT 0,
+  repos             BIGINT NOT NULL DEFAULT 0,
+  enabled           BIGINT NOT NULL DEFAULT 0,
+  position          BIGINT NOT NULL DEFAULT 0,
+  issuer            TEXT COLLATE "C" NOT NULL DEFAULT '',
+  host              TEXT COLLATE "C" NOT NULL DEFAULT '',
+  scheme            TEXT COLLATE "C" NOT NULL DEFAULT 'https',
+  client_id         TEXT COLLATE "C" NOT NULL DEFAULT '',
+  secret_enc        TEXT COLLATE "C" NOT NULL DEFAULT '',
+  config            TEXT COLLATE "C" NOT NULL DEFAULT '{}',
+  jit_tenant        TEXT COLLATE "C" NOT NULL DEFAULT '',
+  auto_create       BIGINT NOT NULL DEFAULT 0,
+  trust_email_optin BIGINT NOT NULL DEFAULT 0,
+  legacy_callback   BIGINT NOT NULL DEFAULT 0,
+  cache             TEXT COLLATE "C" NOT NULL DEFAULT '',
+  status_ok         BIGINT NOT NULL DEFAULT 0,
+  status_checked    BIGINT NOT NULL DEFAULT 0,
+  status_message    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  platform_version  TEXT COLLATE "C" NOT NULL DEFAULT '',
+  partial_sync      TEXT COLLATE "C" NOT NULL DEFAULT 'unknown',
+  partial_checked   BIGINT NOT NULL DEFAULT 0,
+  groups_version    BIGINT NOT NULL DEFAULT 0,
+  updated_by        TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created           BIGINT NOT NULL,
+  updated           BIGINT NOT NULL,
+  UNIQUE (owner, slug)
 );
-CREATE UNIQUE INDEX providers_owner_host ON providers(owner, host);
+CREATE UNIQUE INDEX providers_owner_host ON providers(owner, kind, host) WHERE host <> '';
+
+-- A person's account at a provider: one per (provider, person), and one person
+-- per (provider, subject). subject is the OIDC sub, the SAML NameID, or the
+-- numeric id on GitHub, GitLab or Gitea. An account is found by the provider's
+-- own id and the subject, never by an issuer string. The token columns are for
+-- repository links (GitHub, GitLab, Gitea); a sign-in link has none.
+CREATE TABLE linked_accounts (
+  id              TEXT COLLATE "C" PRIMARY KEY,
+  provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+  user_id         TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  subject         TEXT COLLATE "C" NOT NULL,
+  login           TEXT COLLATE "C" NOT NULL DEFAULT '',
+  email           TEXT COLLATE "C" NOT NULL DEFAULT '',
+  email_trusted   BIGINT NOT NULL DEFAULT 0,
+  signin          BIGINT NOT NULL DEFAULT 0,
+  access_enc      TEXT COLLATE "C" NOT NULL DEFAULT '',
+  refresh_enc     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  access_expires  BIGINT NOT NULL DEFAULT 0,
+  refresh_expires BIGINT NOT NULL DEFAULT 0,
+  scopes          TEXT COLLATE "C" NOT NULL DEFAULT '',
+  state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
+  version         BIGINT NOT NULL DEFAULT 1,
+  is_admin        BIGINT NOT NULL DEFAULT 0,
+  label           TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created         BIGINT NOT NULL,
+  last_used       BIGINT NOT NULL DEFAULT 0,
+  updated         BIGINT NOT NULL,
+  UNIQUE (provider_id, subject),
+  UNIQUE (provider_id, user_id)
+);
+CREATE INDEX linked_accounts_user ON linked_accounts(user_id);
+CREATE INDEX linked_accounts_renew ON linked_accounts(state, refresh_expires) WHERE refresh_enc <> '';
+
+-- Reserved (consolidation 5, 3.6): built empty, nothing reads or writes them yet.
+-- A site provider shared with a tenant, or one of its installations.
+CREATE TABLE provider_shares (
+  provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+  installation_id BIGINT NOT NULL DEFAULT 0,
+  tenant_id       TEXT COLLATE "C" NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  PRIMARY KEY (provider_id, installation_id, tenant_id)
+);
+CREATE INDEX provider_shares_tenant ON provider_shares(tenant_id);
+
+-- Where the spaces of an owner ('site' or a tenant id) get repositories made automatically.
+CREATE TABLE storage_targets (
+  id              TEXT COLLATE "C" PRIMARY KEY,
+  owner           TEXT COLLATE "C" NOT NULL,
+  provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+  installation_id BIGINT NOT NULL DEFAULT 0,
+  namespace       TEXT COLLATE "C" NOT NULL,
+  namespace_id    TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created         BIGINT NOT NULL,
+  updated         BIGINT NOT NULL
+);
+
+-- An identity provider's group claim value mapped to a PetalBook group.
+CREATE TABLE group_mappings (
+  provider_id TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+  value       TEXT COLLATE "C" NOT NULL,
+  group_id    TEXT COLLATE "C" NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (provider_id, value, group_id)
+);
 
 -- A person's connection to an account on a provider's host. One account on a
 -- host links to one user, and a user has one connection per provider.

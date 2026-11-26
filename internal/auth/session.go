@@ -338,6 +338,15 @@ func (s *Service) evictUser(userID, keep string) {
 // deleted or brought back.
 func (s *Service) Forget(userID string) { s.evictUser(userID, "") }
 
+// forgetSessions empties the cache of sessions, for sessions ended in the
+// database by something other than one person (a provider deleted).
+func (s *Service) forgetSessions() {
+	s.cmu.Lock()
+	s.gen++
+	clear(s.sessions)
+	s.cmu.Unlock()
+}
+
 // forgetRefusals empties the cache of refused cookies, so that a reason that is
 // no longer true (a person enabled again) is not given for its 30 seconds.
 func (s *Service) forgetRefusals() {

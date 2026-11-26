@@ -77,38 +77,25 @@ func (s *server) endUserSessions(c *call) {
 	}{n})
 }
 
-type identityResp struct {
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	Slug     string `json:"slug"`
-	Kind     string `json:"kind"`
-	Label    string `json:"label"`
-	Created  string `json:"created"`
-}
-
-func (s *server) userIdentities(c *call) {
+func (s *server) userLinks(c *call) {
 	if !s.siteOnly(c) {
 		return
 	}
-	rows, err := s.auth.UserIdentities(c.r.Context(), c.p, c.r.PathValue("id"))
+	rows, err := s.auth.UserLinks(c.r.Context(), c.p, c.r.PathValue("id"))
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	items := make([]identityResp, len(rows))
-	for i, r := range rows {
-		items[i] = identityResp{r.ID, r.Provider, r.Slug, r.Kind, r.Label, rfc3339(r.Created)}
-	}
 	writeJSON(c.w, http.StatusOK, struct {
-		Identities []identityResp `json:"identities"`
-	}{items})
+		Links []signinLinkResp `json:"links"`
+	}{toLinks(rows)})
 }
 
-func (s *server) disconnectUserIdentity(c *call) {
+func (s *server) disconnectUserLink(c *call) {
 	if !s.siteOnly(c) {
 		return
 	}
-	if err := s.auth.DisconnectIdentity(c.r.Context(), c.p, c.r.PathValue("id"), c.r.PathValue("identity"), s.auth.ClientAddr(c.r)); err != nil {
+	if err := s.auth.DisconnectLink(c.r.Context(), c.p, c.r.PathValue("id"), c.r.PathValue("link"), s.auth.ClientAddr(c.r)); err != nil {
 		s.fail(c.w, err)
 		return
 	}

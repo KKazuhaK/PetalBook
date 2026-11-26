@@ -569,7 +569,7 @@
    }
   ]
  },
- "DELETE /api/users/{}/identities/{} 404": {
+ "DELETE /api/users/{}/links/{} 404": {
   "error": "string",
   "message": "string"
  },
@@ -602,7 +602,6 @@
    }
   ],
   "hasPassword": "boolean",
-  "identities": [],
   "passkeys": [],
   "user": {
    "created": "string",
@@ -638,6 +637,9 @@
  "GET /api/account/grants 404": {
   "error": "string",
   "message": "string"
+ },
+ "GET /api/account/links 200": {
+  "links": []
  },
  "GET /api/account/passkeys 403": {
   "error": "string",
@@ -1055,15 +1057,6 @@
    }
   ]
  },
- "GET /api/admin/auth/providers 403": {
-  "error": "string",
-  "message": "string",
-  "permission": "string"
- },
- "GET /api/admin/auth/providers 404": {
-  "error": "string",
-  "message": "string"
- },
  "GET /api/admin/capabilities 404": {
   "error": "string",
   "message": "string"
@@ -1384,6 +1377,15 @@
   "tenants": "number"
  },
  "GET /api/admin/plans/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/providers 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/providers 404": {
   "error": "string",
   "message": "string"
  },
@@ -3927,10 +3929,10 @@
   "error": "string",
   "message": "string"
  },
- "GET /api/users/{}/identities 200": {
-  "identities": []
+ "GET /api/users/{}/links 200": {
+  "links": []
  },
- "GET /api/users/{}/identities 403": {
+ "GET /api/users/{}/links 403": {
   "error": "string",
   "message": "string",
   "permission": "string"
@@ -4381,11 +4383,6 @@
   "error": "string",
   "message": "string"
  },
- "POST /api/admin/auth/providers 403": {
-  "error": "string",
-  "message": "string",
-  "permission": "string"
- },
  "POST /api/admin/bulk 202": {
   "job": {
    "action": "string",
@@ -4578,6 +4575,11 @@
  "POST /api/admin/plans 409": {
   "error": "string",
   "message": "string"
+ },
+ "POST /api/admin/providers 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
  },
  "POST /api/admin/recycle/{}/restore 200": {
   "left?": [

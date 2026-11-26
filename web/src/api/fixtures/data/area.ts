@@ -11,7 +11,7 @@ import type {
   Grant,
   ConnectionOwner,
   ConnectionRepo,
-  Identity,
+  Link,
   NotificationItem,
   Passkey,
   Provider,
@@ -27,7 +27,7 @@ export interface AccountData {
   passkeys: Passkey[]
   // The name the next passkey is given: what the begin call was asked for.
   passkeyName: string
-  identities: Identity[]
+  links: Link[]
   // The addresses beyond the one on the account (the account's own address is always listed first).
   emails: AccountEmail[]
   tokens: ApiToken[]
@@ -86,7 +86,7 @@ export interface AreaData {
 
 export function createArea(): AreaData {
   return {
-    account: { passkeys: [], passkeyName: '', identities: [], emails: [], tokens: [], grants: null },
+    account: { passkeys: [], passkeyName: '', links: [], emails: [], tokens: [], grants: null },
     daily: {
       settings: {},
       prefs: {},

@@ -299,8 +299,8 @@ func TestAPasskeyIsNotTheOnlyWayInWhenItWouldBeTheLast(t *testing.T) {
 		c.register(t, key, "key").want(t, 201, "")
 		acct := c.do("GET", "/api/account", nil).want(t, 200, "")
 		// With a passkey the identity may go; then the passkey is the only way in.
-		ident := acct.body["identities"].([]any)[0].(map[string]any)["id"].(string)
-		c.do("DELETE", "/api/account/identities/"+ident, nil).want(t, 204, "")
+		ident := c.do("GET", "/api/account/links", nil).want(t, 200, "").body["links"].([]any)[0].(map[string]any)["id"].(string)
+		c.do("DELETE", "/api/account/links/"+ident, nil).want(t, 204, "")
 		pk := acct.body["passkeys"].([]any)[0].(map[string]any)["id"].(string)
 		c.do("DELETE", "/api/account/passkeys/"+pk, nil).want(t, 409, "conflict")
 		// An administrator may remove it (a lost device); the person then has to be let in another way.
@@ -360,7 +360,7 @@ func TestPasskeysAreRequiredByRoleAndByPerson(t *testing.T) {
 		d.signInWithPasskey(t, key, "tang", "").want(t, 200, "")
 		// Single sign-in is not held: the provider decides how its people prove who they are.
 		f.addUser("tang-sso", testidp.Claims{"sub": "s-tang", "preferred_username": "tang-sso"})
-		if u, err := a.auth.CreateUser(t.Context(), auth.CreateParams{Username: "ssoman", Role: "member", Identity: &auth.IdentityParams{Issuer: f.srv.URL, Subject: "s-tang", Label: "x"}}); err != nil || u == nil {
+		if u, err := a.auth.CreateUser(t.Context(), auth.CreateParams{Username: "ssoman", Role: "member", Identity: &auth.IdentityParams{ProviderID: "sso", Subject: "s-tang", Label: "x"}}); err != nil || u == nil {
 			t.Fatal(err)
 		}
 		e := a.newClient("")

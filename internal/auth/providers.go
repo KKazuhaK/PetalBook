@@ -128,8 +128,11 @@ type PublicProvider struct {
 
 // providerSet is every provider, in memory.
 type providerSet struct {
-	mu     sync.RWMutex
-	list   []*providerRT
+	mu   sync.RWMutex
+	list []*providerRT
+	// byID has every provider (of every owner); bySlug only the site's: the
+	// public routes name a provider by slug, and a slug means a site provider.
+	byID   map[string]*providerRT
 	bySlug map[string]*providerRT
 	pub    atomic.Pointer[[]PublicProvider]
 	// anyOn is whether some provider is enabled.
@@ -137,23 +140,32 @@ type providerSet struct {
 }
 
 func newProviderSet() *providerSet {
-	p := &providerSet{bySlug: map[string]*providerRT{}}
+	p := &providerSet{byID: map[string]*providerRT{}, bySlug: map[string]*providerRT{}}
 	empty := []PublicProvider{}
 	p.pub.Store(&empty)
 	return p
 }
 
+// get is the site provider with the slug: what the public sign-in routes
+// resolve. A tenant's provider is never reached by a slug alone.
 func (p *providerSet) get(slug string) *providerRT {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.bySlug[slug]
 }
 
+// getID is the provider (of any owner) with the id.
+func (p *providerSet) getID(id string) *providerRT {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.byID[id]
+}
+
 func (p *providerSet) legacy() *providerRT {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	for _, rt := range p.list {
-		if rt.row.LegacyCallback && rt.row.Kind == KindOIDC {
+		if rt.row.LegacyCallback && rt.row.Kind == KindOIDC && rt.row.Owner == store.ProviderSite {
 			return rt
 		}
 	}
@@ -172,9 +184,14 @@ func (p *providerSet) all() []*providerRT {
 
 func (p *providerSet) set(list []*providerRT) {
 	pub := []PublicProvider{}
+	byID := make(map[string]*providerRT, len(list))
 	by := make(map[string]*providerRT, len(list))
 	on := false
 	for _, rt := range list {
+		byID[rt.row.ID] = rt
+		if rt.row.Owner != store.ProviderSite {
+			continue
+		}
 		by[rt.row.Slug] = rt
 		if rt.row.Enabled {
 			on = true
@@ -182,7 +199,7 @@ func (p *providerSet) set(list []*providerRT) {
 		}
 	}
 	p.mu.Lock()
-	p.list, p.bySlug = list, by
+	p.list, p.byID, p.bySlug = list, byID, by
 	p.mu.Unlock()
 	p.pub.Store(&pub)
 	p.anyOn.Store(on)
@@ -226,7 +243,7 @@ func (s *Service) newRT(row store.ProviderRow) *providerRT {
 		return rt
 	}
 	if row.SecretEnc != "" {
-		purpose := "provider:" + row.Slug
+		purpose := "provider:" + row.ID
 		if row.Kind == KindSAML {
 			purpose += ":key"
 		}
@@ -244,11 +261,11 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 	}
 	old := map[string]*providerRT{}
 	for _, rt := range s.provs.all() {
-		old[rt.row.Slug] = rt
+		old[rt.row.ID] = rt
 	}
 	list := make([]*providerRT, 0, len(rows))
 	for _, row := range rows {
-		if o := old[row.Slug]; o != nil && !slices.Contains(rebuild, row.Slug) && o.row.Updated.Equal(row.Updated) && o.row.GroupsVersion == row.GroupsVersion {
+		if o := old[row.ID]; o != nil && !slices.Contains(rebuild, row.ID) && o.row.Updated.Equal(row.Updated) && o.row.GroupsVersion == row.GroupsVersion {
 			list = append(list, o)
 			continue
 		}
@@ -262,6 +279,10 @@ func (s *Service) reloadProviders(ctx context.Context, rebuild ...string) error 
 
 // ProviderView is a provider as the administrators see it.
 type ProviderView struct {
+	// ID is the provider's own id (a site provider's is its slug); Owner is
+	// "site" or the id of the tenant that owns it.
+	ID                 string `json:"id"`
+	Owner              string `json:"owner"`
 	Slug               string `json:"slug"`
 	Kind               string `json:"kind"`
 	Name               string `json:"name"`
@@ -342,7 +363,7 @@ func (s *Service) samlURLs(slug string) (entity, acs, metaPath string) {
 func (s *Service) viewOf(rt *providerRT, people int) ProviderView {
 	row := rt.row
 	ok, checked, msg := rt.status()
-	v := ProviderView{Slug: row.Slug, Kind: row.Kind, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
+	v := ProviderView{ID: row.ID, Owner: row.Owner, Slug: row.Slug, Kind: row.Kind, Name: row.Name, Icon: row.Icon, Enabled: row.Enabled, Order: row.Position,
 		AutoCreate: row.AutoCreate, MergeVerifiedEmail: row.MergeVerifiedEmail, Tenant: row.TenantID, People: people, Groups: groupsView(row.Kind, rt.cfg.Groups),
 		Status:  ProviderStat{OK: ok, Message: msg},
 		Created: rfc3339(row.Created), Updated: rfc3339(row.Updated), SecretUnreadable: rt.secretErr != nil}
@@ -385,14 +406,14 @@ func (s *Service) Providers(ctx context.Context) ([]ProviderView, error) {
 	list := s.provs.all()
 	out := make([]ProviderView, len(list))
 	for i, rt := range list {
-		out[i] = s.viewOf(rt, people[rt.row.Issuer])
+		out[i] = s.viewOf(rt, people[rt.row.ID])
 	}
 	return out, nil
 }
 
 // Provider returns one provider's view.
-func (s *Service) Provider(ctx context.Context, slug string) (*ProviderView, error) {
-	rt := s.provs.get(slug)
+func (s *Service) Provider(ctx context.Context, id string) (*ProviderView, error) {
+	rt := s.provs.getID(id)
 	if rt == nil {
 		return nil, errf(NotFound, "No such provider.")
 	}
@@ -400,7 +421,7 @@ func (s *Service) Provider(ctx context.Context, slug string) (*ProviderView, err
 	if err != nil {
 		return nil, err
 	}
-	v := s.viewOf(rt, people[rt.row.Issuer])
+	v := s.viewOf(rt, people[rt.row.ID])
 	return &v, nil
 }
 
@@ -411,6 +432,9 @@ func (s *Service) PublicProviders() []PublicProvider { return s.provs.publicList
 
 // ProviderInput is a POST or PATCH of a provider: any field.
 type ProviderInput struct {
+	// Owner is "site" (the default) or a tenant's id; it is set when the
+	// provider is made and cannot change.
+	Owner              *string `json:"owner"`
 	Slug               *string `json:"slug"`
 	Kind               *string `json:"kind"`
 	Name               *string `json:"name"`
@@ -537,9 +561,27 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	creating := cur == nil
 	b := &built{}
 	if creating {
-		b.row = store.ProviderRow{Enabled: true, TenantID: store.DefaultTenantID}
+		b.row = store.ProviderRow{Enabled: true, TenantID: store.DefaultTenantID, Owner: store.ProviderSite}
 		if in.Slug == nil || !slugRE.MatchString(*in.Slug) {
 			return nil, providerInvalid("Slug is 1 to 32 characters of a-z, 0-9 and -, starting with a letter or digit.")
+		}
+		if in.Owner != nil && *in.Owner != "" && *in.Owner != store.ProviderSite {
+			t, err := store.GetTenant(ctx, s.st.Q(), *in.Owner)
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, providerInvalid("Owner is site or the id of a tenant.")
+			} else if err != nil {
+				return nil, err
+			}
+			// A tenant's provider puts its new accounts in that tenant, and
+			// starts off: it can be turned on only once the tenant has a
+			// verified domain (see orgSignInGate).
+			b.row.Owner, b.row.TenantID, b.row.Enabled = t.ID, t.ID, false
+		}
+		// A site provider's id is its slug; a tenant's is generated, so the
+		// slug of one organisation never meets another's.
+		b.row.ID = *in.Slug
+		if b.row.Owner != store.ProviderSite {
+			b.row.ID = s.newID()
 		}
 		if in.Kind == nil || !slices.Contains([]string{KindOIDC, KindSAML, KindGitHub}, *in.Kind) {
 			return nil, providerInvalid("Kind is oidc, saml or github.")
@@ -559,6 +601,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		if in.Slug != nil && *in.Slug != cur.row.Slug || in.Kind != nil && *in.Kind != cur.row.Kind {
 			return nil, providerInvalid("Slug and kind cannot be changed.")
+		}
+		if in.Owner != nil && *in.Owner != cur.row.Owner && !(*in.Owner == "" && cur.row.Owner == store.ProviderSite) {
+			return nil, providerInvalid("The owner cannot be changed.")
 		}
 	}
 	kind := b.row.Kind
@@ -603,6 +648,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		}
 		b.row.Position = *in.Order
 	}
+	if in.Tenant != nil && b.row.Owner != store.ProviderSite && *in.Tenant != b.row.Owner {
+		return nil, providerInvalid("A tenant's provider puts new accounts in that tenant.")
+	}
 	if in.Tenant != nil {
 		t, err := store.GetTenant(ctx, s.st.Q(), *in.Tenant)
 		if errors.Is(err, store.ErrNotFound) {
@@ -625,6 +673,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		b.row.AutoCreate = *in.AutoCreate
 	}
 	if in.MergeVerifiedEmail != nil {
+		if *in.MergeVerifiedEmail && b.row.Owner != store.ProviderSite {
+			return nil, providerInvalid("Only the site's own providers can vouch for addresses; an organisation's vouch for its verified domains.")
+		}
 		if *in.MergeVerifiedEmail != b.row.MergeVerifiedEmail {
 			mark("mergeVerifiedEmail")
 		}
@@ -832,6 +883,9 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 		if (b.cfg.MetadataURL == "") == (strings.TrimSpace(b.cfg.MetadataXML) == "") {
 			return nil, providerInvalid("Give exactly one of saml.metadataUrl and saml.metadataXml.")
 		}
+		if b.cfg.Attributes.Email == "" {
+			b.cfg.Attributes.Email = samlDefaultEmailAttr
+		}
 		b.row.Issuer = b.cfg.IDPEntityID
 	}
 	if in.Groups != nil {
@@ -842,20 +896,15 @@ func (s *Service) applyInput(ctx context.Context, cur *providerRT, in ProviderIn
 	if creating {
 		b.changed = nil
 	}
-	// A provider's issuer is its own.
-	if b.row.Issuer != "" {
-		for _, o := range rows {
-			if o.Slug != b.row.Slug && o.Issuer == b.row.Issuer {
-				return nil, coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
-			}
-		}
-	}
+	// Issuers may repeat: an account is found by the provider's own id and the
+	// subject, never by the issuer, so another provider with the same issuer
+	// string (an organisation copying it) reaches none of this one's accounts.
 	if b.row.LegacyCallback {
 		if kind != KindOIDC {
 			return nil, providerInvalid("Only an OpenID Connect provider has a legacy callback.")
 		}
 		for _, o := range rows {
-			if o.Slug != b.row.Slug && o.LegacyCallback {
+			if o.ID != b.row.ID && o.LegacyCallback && o.Owner == store.ProviderSite {
 				return nil, coded(409, "legacy_callback_in_use", "Another provider has the legacy callback.")
 			}
 		}
@@ -878,8 +927,12 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if len(rows) >= maxProviders {
 		return nil, coded(409, "provider_limit", "At most %d providers.", maxProviders)
 	}
+	owner := store.ProviderSite
+	if in.Owner != nil && *in.Owner != "" {
+		owner = *in.Owner
+	}
 	for _, o := range rows {
-		if in.Slug != nil && o.Slug == *in.Slug {
+		if in.Slug != nil && o.Slug == *in.Slug && o.Owner == owner {
 			return nil, coded(409, "exists", "That slug is taken.")
 		}
 	}
@@ -905,17 +958,16 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if err := s.writeBuilt(b, true); err != nil {
 		return nil, err
 	}
-	// What the metadata names may be an identity provider that has a provider already.
-	for _, o := range rows {
-		if b.row.Issuer != "" && o.Issuer == b.row.Issuer {
-			return nil, coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
-		}
-	}
 	if !rt.statusOK && !enabledAsked {
 		b.row.Enabled = false
 	}
-	if in.Enabled == nil && rt.statusOK {
+	if in.Enabled == nil && rt.statusOK && b.row.Owner == store.ProviderSite {
 		b.row.Enabled = true
+	}
+	if b.row.Enabled {
+		if err := s.orgSignInGate(ctx, b.row.Owner); err != nil {
+			return nil, err
+		}
 	}
 	if b.row.Enabled && s.sec(ctx).Login.SSOOnly {
 		if err := s.needPasswordAdmin(ctx); err != nil {
@@ -931,18 +983,18 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 		}
 		return nil, err
 	}
-	if err := s.reloadProviders(ctx, b.row.Slug); err != nil {
+	if err := s.reloadProviders(ctx, b.row.ID); err != nil {
 		return nil, err
 	}
 	s.AuditIn(ctx, AuditEvent{Kind: "provider_created", Actor: actorID, IP: ip, Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
-	return s.Provider(ctx, b.row.Slug)
+	return s.Provider(ctx, b.row.ID)
 }
 
 // UpdateProvider changes a provider; only what is sent changes.
-func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, in ProviderInput) (*ProviderView, error) {
+func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, id string, in ProviderInput) (*ProviderView, error) {
 	providerMu.Lock()
 	defer providerMu.Unlock()
-	cur := s.provs.get(slug)
+	cur := s.provs.getID(id)
 	if cur == nil {
 		return nil, errf(NotFound, "No such provider.")
 	}
@@ -953,6 +1005,11 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 	b, err := s.applyInput(ctx, cur, in, rows)
 	if err != nil {
 		return nil, err
+	}
+	if b.row.Enabled && !cur.row.Enabled {
+		if err := s.orgSignInGate(ctx, b.row.Owner); err != nil {
+			return nil, err
+		}
 	}
 	if b.row.Enabled && !cur.row.Enabled && s.sec(ctx).Login.SSOOnly {
 		if err := s.needPasswordAdmin(ctx); err != nil {
@@ -974,15 +1031,6 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 			return nil, b.metaErr
 		}
 		_ = rt
-		// Metadata that changed may name another identity provider: check again.
-		if b.row.Issuer != "" {
-			rows2, _ := store.ListProviders(ctx, s.st.Q())
-			for _, o := range rows2 {
-				if o.Slug != b.row.Slug && o.Issuer == b.row.Issuer {
-					return nil, coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
-				}
-			}
-		}
 		if err := s.writeBuilt(b, false); err != nil {
 			return nil, err
 		}
@@ -1001,24 +1049,24 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 			return err
 		}
 		var err error
-		dropped, err = s.dropUnmapped(ctx, q, slug, cur.cfg.Groups, b.cfg.Groups)
+		dropped, err = s.dropUnmapped(ctx, q, id, cur.cfg.Groups, b.cfg.Groups)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	s.cfg.Spaces.MembershipChanged(dropped...)
-	if err := s.reloadProviders(ctx, slug); err != nil {
+	if err := s.reloadProviders(ctx, id); err != nil {
 		return nil, err
 	}
 	if len(b.changed) > 0 {
-		d := map[string]any{"slug": slug, "kind": b.row.Kind}
+		d := map[string]any{"slug": cur.row.Slug, "kind": b.row.Kind}
 		for _, f := range b.changed {
 			d[f] = changedValue(b, f)
 		}
 		s.AuditIn(ctx, AuditEvent{Kind: "provider_changed", Actor: actorID, IP: ip, Detail: d})
 	}
-	return s.Provider(ctx, slug)
+	return s.Provider(ctx, id)
 }
 
 func secretChanged(in ProviderInput) bool {
@@ -1034,7 +1082,7 @@ func (s *Service) sealSecret(b *built) error {
 		b.row.SecretEnc = ""
 		return nil
 	}
-	enc, err := s.seal("provider:"+b.row.Slug, b.secret)
+	enc, err := s.seal("provider:"+b.row.ID, b.secret)
 	if err != nil {
 		return err
 	}
@@ -1063,17 +1111,17 @@ func (c provCfg) issuerFor(kind string) string {
 	return c.IDPEntityID
 }
 
-// DeleteProvider removes a provider. Its people's identities stay. Without
-// force it is refused while some account has no other way to sign in.
-func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, force bool) error {
+// DeleteProvider removes a provider and the accounts its people linked to it.
+// Without force it is refused while some account has no other way to sign in.
+func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, id string, force bool) error {
 	providerMu.Lock()
 	defer providerMu.Unlock()
-	cur := s.provs.get(slug)
+	cur := s.provs.getID(id)
 	if cur == nil {
 		return errf(NotFound, "No such provider.")
 	}
-	if !force && cur.row.Issuer != "" {
-		n, err := store.UsersWithOnlyIssuer(ctx, s.st.Q(), cur.row.Issuer)
+	if !force {
+		n, err := store.UsersWithOnlyProvider(ctx, s.st.Q(), id)
 		if err != nil {
 			return err
 		}
@@ -1083,15 +1131,19 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 			return e
 		}
 	}
-	// What the provider brought goes with it, in the same transaction; the
-	// identities stay.
+	// What the provider brought goes with it, in the same transaction, and the
+	// linked accounts with the row (by cascade).
 	var dropped []string
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		if err := store.DeleteProvider(ctx, q, slug); err != nil {
+		if err := store.DeleteProvider(ctx, q, id); err != nil {
+			return err
+		}
+		// The sessions that started through it end with it.
+		if err := store.EndSessionsByMethod(ctx, q, "sso:"+cur.row.Slug, store.EndElsewhere, s.now()); err != nil {
 			return err
 		}
 		var err error
-		dropped, err = s.cfg.Spaces.DropProvider(ctx, q, slug)
+		dropped, err = s.cfg.Spaces.DropProvider(ctx, q, id)
 		return err
 	})
 	if errors.Is(err, store.ErrNotFound) {
@@ -1100,29 +1152,30 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 	if err != nil {
 		return err
 	}
+	s.forgetSessions()
 	s.cfg.Spaces.MembershipChanged(dropped...)
 	if err := s.reloadProviders(ctx); err != nil {
 		return err
 	}
-	s.AuditIn(ctx, AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": slug, "kind": cur.row.Kind}})
+	s.AuditIn(ctx, AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": cur.row.Slug, "kind": cur.row.Kind}})
 	return nil
 }
 
 // RefreshProvider fetches the discovery document or the metadata now.
-func (s *Service) RefreshProvider(ctx context.Context, slug string) (*ProviderView, error) {
+func (s *Service) RefreshProvider(ctx context.Context, id string) (*ProviderView, error) {
 	providerMu.Lock()
 	defer providerMu.Unlock()
-	cur := s.provs.get(slug)
+	cur := s.provs.getID(id)
 	if cur == nil {
 		return nil, errf(NotFound, "No such provider.")
 	}
 	if err := s.refresh(ctx, cur); err != nil && !errors.Is(err, errUnreachable) {
 		return nil, err
 	}
-	if err := s.reloadProviders(ctx, slug); err != nil {
+	if err := s.reloadProviders(ctx, id); err != nil {
 		return nil, err
 	}
-	return s.Provider(ctx, slug)
+	return s.Provider(ctx, id)
 }
 
 // refresh fetches the document of a stored provider and records how it went.
@@ -1141,14 +1194,6 @@ func (s *Service) refresh(ctx context.Context, cur *providerRT) error {
 	if err := s.writeBuilt(b, false); err != nil {
 		return err
 	}
-	if rt.statusOK && b.row.Issuer != cur.row.Issuer && b.row.Issuer != "" {
-		rows, _ := store.ListProviders(ctx, s.st.Q())
-		for _, o := range rows {
-			if o.Slug != b.row.Slug && o.Issuer == b.row.Issuer {
-				return coded(409, "provider_issuer_in_use", "Another provider already has this issuer.")
-			}
-		}
-	}
 	cur.row.Cache = cache
 	if rt.statusOK {
 		b.row.Updated = s.now().UTC()
@@ -1160,7 +1205,7 @@ func (s *Service) refresh(ctx context.Context, cur *providerRT) error {
 		}
 		return nil
 	}
-	return store.SetProviderStatus(ctx, s.st.Q(), cur.row.Slug, false, rt.statusChecked, rt.statusMessage, "", true)
+	return store.SetProviderStatus(ctx, s.st.Q(), cur.row.ID, false, rt.statusChecked, rt.statusMessage, "", true)
 }
 
 var errUnreachable = errors.New("the identity provider could not be reached")
@@ -1360,7 +1405,7 @@ func (s *Service) makeSAMLKey(b *built) error {
 		return err
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	enc, err := s.seal("provider:"+b.row.Slug+":key", string(keyPEM))
+	enc, err := s.seal("provider:"+b.row.ID+":key", string(keyPEM))
 	if err != nil {
 		return err
 	}

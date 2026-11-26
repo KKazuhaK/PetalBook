@@ -165,14 +165,14 @@ func (s *Service) oidcFor(ctx context.Context, rt *providerRT) (*authoidc.Provid
 	if doc != "" {
 		// Reached the provider just now: keep what it said for the next start.
 		rt.statusOK, rt.statusChecked, rt.statusMessage = true, s.now().UTC(), ""
-		go s.storeDiscovery(rt.row.Slug, doc, rt.statusChecked)
+		go s.storeDiscovery(rt.row.ID, doc, rt.statusChecked)
 	}
 	return p, nil
 }
 
-func (s *Service) storeDiscovery(slug, doc string, at time.Time) {
-	if err := store.SetProviderStatus(context.Background(), s.st.Q(), slug, true, at, "", doc, false); err != nil {
-		s.log.Warn("could not store the discovery document", "provider", slug, "error", err)
+func (s *Service) storeDiscovery(id, doc string, at time.Time) {
+	if err := store.SetProviderStatus(context.Background(), s.st.Q(), id, true, at, "", doc, false); err != nil {
+		s.log.Warn("could not store the discovery document", "provider", id, "error", err)
 	}
 }
 
@@ -324,6 +324,17 @@ func (s *Service) samlLinkCookie(slug, value string, maxAge int) *http.Cookie {
 // SAMLCookieName is the cookie name of a provider's attempts.
 func SAMLCookieName(slug string) string { return samlCookieName(slug) }
 
+// LinkBegin starts linking the signed-in user to an account at a provider (by
+// the provider's id; a site provider's id is its slug). A tenant's provider is
+// not reachable yet: it has no sign-in route until 3.6 (d).
+func (s *Service) LinkBegin(ctx context.Context, providerID string, u *store.User, ret, ip string) (*BeginResult, error) {
+	rt := s.provs.getID(providerID)
+	if rt == nil || rt.row.Owner != store.ProviderSite || !s.signInOn(ctx, rt) {
+		return nil, errf(NotFound, "Single sign-on is not configured.")
+	}
+	return s.SSOBegin(ctx, rt.row.Kind, rt.row.Slug, BeginParams{Intent: "link", Return: ret, User: u}, ip)
+}
+
 // SSOBegin starts a sign-in with a provider. kind "oidc" with an empty slug
 // is the pre-2.8 endpoint: the provider with the legacy callback.
 func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams, ip string) (*BeginResult, error) {
@@ -333,19 +344,32 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 	} else {
 		rt = s.provs.get(slug)
 	}
-	if rt == nil || rt.row.Kind != kind || !rt.row.Enabled {
+	if rt == nil || rt.row.Kind != kind {
+		return nil, errf(NotFound, "Single sign-on is not configured.")
+	}
+	// A provider that is off answers only the test an administrator runs on it.
+	if !rt.row.Enabled && p.Intent != "test" {
 		return nil, errf(NotFound, "Single sign-on is not configured.")
 	}
 	switch p.Intent {
 	case "":
 		p.Intent = "login"
 	case "login", "setup", "invite":
+	case "test":
+		if p.User == nil {
+			return nil, errf(Unauthenticated, "Sign in to test a provider.")
+		}
 	case "link":
 		if p.User == nil {
-			return nil, errf(Unauthenticated, "Sign in to link an identity.")
+			return nil, errf(Unauthenticated, "Sign in to link an account.")
+		}
+		if _, err := store.FindUserLink(ctx, s.st.Q(), rt.row.ID, p.User.ID); err == nil {
+			return nil, errAlreadyLinked
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
 		}
 	default:
-		return nil, errf(Invalid, "Intent is login, setup, invite or link.")
+		return nil, errf(Invalid, "Intent is login, setup, invite, link or test.")
 	}
 	if len(p.Token) > 256 {
 		return nil, errf(Invalid, "The token is too long.")
@@ -392,7 +416,7 @@ func (s *Service) SSOBegin(ctx context.Context, kind, slug string, p BeginParams
 		}
 		e.samlID = req.ID
 		out := &BeginResult{URL: req.RedirectURL, Cookie: s.samlCookie(rt.row.Slug, binding, int(pendingTTL/time.Second))}
-		if e.intent == "link" {
+		if e.intent == "link" || e.intent == "test" {
 			tie := randomToken()
 			e.linkBinding = hashToken(tie)
 			out.Binding = s.samlLinkCookie(rt.row.Slug, tie, int(pendingTTL/time.Second))
@@ -427,8 +451,11 @@ func oneParam(q url.Values, k string) (string, bool) {
 
 func failURL(intent, code string) string {
 	base := "/login"
-	if intent == "link" {
+	switch intent {
+	case "link":
 		base = "/settings"
+	case "test":
+		base = "/admin/security/providers"
 	}
 	return base + "?sso_error=" + code
 }
@@ -438,7 +465,7 @@ func (s *Service) ssoFail(kind, slug, intent, code, ip string, clear ...*http.Co
 	// Only a sign-in that was really under way (it has an intent) is written
 	// down: anyone can send a callback that matches nothing, and the log is not
 	// for them to fill.
-	if intent != "" && s.provs.get(slug) != nil {
+	if intent != "" && intent != "test" && s.provs.get(slug) != nil {
 		s.Audit(AuditEvent{Kind: "login_failed", IP: ip, Detail: map[string]any{"method": kind, "reason": code, "provider": slug}})
 	}
 	return Outcome{Redirect: failURL(intent, code), Clear: clear}
@@ -462,7 +489,12 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 		slug = rt.row.Slug
 	}
 	clear := []*http.Cookie{s.ClearSSOCookie()}
-	if rt == nil || !rt.row.Enabled || kind == KindSAML {
+	if rt == nil || kind == KindSAML {
+		return s.ssoFail(kind, slug, "", "provider_unavailable", ip)
+	}
+	// A provider that is off answers only the test an administrator ran on it.
+	off := !rt.row.Enabled
+	if off && binding == "" {
 		return s.ssoFail(kind, slug, "", "provider_unavailable", ip)
 	}
 	state, ok1 := oneParam(q, "state")
@@ -479,6 +511,9 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 			if e, res := s.pending.take(binding, state); res == takeOK && e.slug == slug {
 				intent = e.intent
 			}
+		}
+		if off && intent != "test" {
+			return s.ssoFail(kind, slug, "", "provider_unavailable", ip)
 		}
 		s.log.Warn("sign-in failed at the provider", "provider", slug, "error", sanitizeLog(idpErr))
 		if intent == "" {
@@ -504,6 +539,9 @@ func (s *Service) OIDCComplete(ctx context.Context, slug, binding, sessionToken 
 	}
 	if e.slug != slug || e.kind != kind {
 		return s.ssoFail(kind, slug, e.intent, "expired", ip, clear...)
+	}
+	if off && e.intent != "test" {
+		return s.ssoFail(kind, slug, "", "provider_unavailable", ip, clear...)
 	}
 	fail := func(code string) Outcome { return s.ssoFail(kind, slug, e.intent, code, ip, clear...) }
 	var c claimed
@@ -540,9 +578,11 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		return Outcome{Redirect: failURL("", "rate_limited")}
 	}
 	rt := s.provs.get(slug)
-	if rt == nil || rt.row.Kind != KindSAML || !rt.row.Enabled {
+	if rt == nil || rt.row.Kind != KindSAML {
 		return s.ssoFail(KindSAML, slug, "", "provider_unavailable", ip)
 	}
+	// A provider that is off answers only the test an administrator ran on it.
+	off := !rt.row.Enabled
 	clear := []*http.Cookie{s.samlCookie(slug, "", -1)}
 	linkTie := ""
 	if ck, err := r.Cookie(s.samlLinkCookie(slug, "", 0).Name); err == nil {
@@ -556,6 +596,9 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 	cookieVal := ""
 	if ck, err := r.Cookie(samlCookieName(slug)); err == nil {
 		cookieVal = ck.Value
+	}
+	if off && cookieVal == "" {
+		return s.ssoFail(KindSAML, slug, "", "provider_unavailable", ip)
 	}
 	prov, err := s.samlFor(rt)
 	if err != nil {
@@ -581,8 +624,8 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		if e.slug != slug || e.kind != KindSAML {
 			return s.ssoFail(KindSAML, slug, "", "expired", ip, clear...)
 		}
-		// A link is answered only in the browser that started it.
-		if e.intent == "link" && (e.linkBinding == "" || linkTie == "" || !ctEqual(hashToken(linkTie), e.linkBinding)) {
+		// A link or a test is answered only in the browser that started it.
+		if (e.intent == "link" || e.intent == "test") && (e.linkBinding == "" || linkTie == "" || !ctEqual(hashToken(linkTie), e.linkBinding)) {
 			return s.ssoFail(KindSAML, slug, e.intent, "expired", ip, clear...)
 		}
 		ids = []string{e.samlID}
@@ -590,6 +633,9 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		e = &pendingEntry{kind: KindSAML, slug: slug, intent: "login", ret: "/"}
 	default:
 		return s.ssoFail(KindSAML, slug, "", "expired", ip)
+	}
+	if off && e.intent != "test" {
+		return s.ssoFail(KindSAML, slug, "", "provider_unavailable", ip, clear...)
 	}
 	fail := func(code string) Outcome { return s.ssoFail(KindSAML, slug, e.intent, code, ip, clear...) }
 	_, acs, _ := s.samlURLs(slug)
@@ -612,7 +658,9 @@ func (s *Service) SAMLComplete(ctx context.Context, slug string, r *http.Request
 		return fail("saml_assertion_rejected")
 	}
 	c, err := samlClaims(rt, a)
-	if err != nil {
+	if errors.Is(err, errSAMLNoEmail) {
+		return fail("saml_no_email")
+	} else if err != nil {
 		return fail("saml_assertion_rejected")
 	}
 	return s.finishSSO(ctx, rt, e, c, sessionToken, ip, clear)
@@ -638,6 +686,18 @@ func samlCode(err error) string {
 	return "saml_assertion_rejected"
 }
 
+// errSAMLNoEmail: the assertion carries no address: neither in the attribute the
+// provider names for it nor, with a NameID in the emailAddress format, as the NameID.
+var errSAMLNoEmail = errors.New("the assertion has no email address")
+
+// samlNameIDEmail is the NameID format that says the NameID is an address.
+const samlNameIDEmail = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+func looksLikeEmail(v string) bool {
+	i := strings.IndexByte(v, '@')
+	return i > 0 && i < len(v)-1 && strings.Count(v, "@") == 1
+}
+
 func samlClaims(rt *providerRT, a *authsaml.Assertion) (claimed, error) {
 	sub := strings.TrimSpace(a.NameID)
 	if len(sub) > 255 || !utf8.ValidString(sub) || strings.ContainsFunc(sub, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
@@ -650,21 +710,27 @@ func samlClaims(rt *providerRT, a *authsaml.Assertion) (claimed, error) {
 		}
 		return clip(a.Attribute(name), 254)
 	}
-	email := attr(at.Email)
-	if email == "" && strings.Contains(a.NameIDFormat, "emailAddress") && strings.Contains(sub, "@") {
-		email = clip(sub, 254)
+	// The address is the account's UPN, so it is required: from the attribute
+	// the provider names (mail by default), else the NameID, only when its
+	// format says it is an address. The NameID itself is the subject either way
+	// and need not be the address (a persistent one is recommended: an address
+	// can change).
+	emailAttr := at.Email
+	if emailAttr == "" {
+		emailAttr = samlDefaultEmailAttr
 	}
-	c := claimed{issuer: a.Issuer, subject: sub, name: attr(at.Name), preferred: attr(at.Username), email: email}
-	if c.issuer == "" {
-		c.issuer = rt.cfg.IDPEntityID
+	email := attr(emailAttr)
+	if !looksLikeEmail(email) {
+		email = ""
+		if a.NameIDFormat == samlNameIDEmail && looksLikeEmail(sub) {
+			email = clip(sub, 254)
+		}
 	}
-	// SAML has no verified-address claim: a SAML provider is an organisation's
-	// SSO, trusted only on the domains it verified (see trustsEmail).
-	c.emailVerified = trustsEmail(emailSource{template: tmplSAML, trustOptIn: rt.row.MergeVerifiedEmail, email: email})
+	if email == "" {
+		return claimed{}, errSAMLNoEmail
+	}
+	c := claimed{subject: sub, name: attr(at.Name), preferred: attr(at.Username), email: email, src: emailSource{template: tmplSAML}}
 	c.labelOverride = email
-	if c.labelOverride == "" {
-		c.labelOverride = sub
-	}
 	if g, on := rt.groupsOn(); on {
 		c.groups = samlGroupClaim(g, a.Attributes)
 	}
@@ -675,12 +741,20 @@ func samlClaims(rt *providerRT, a *authsaml.Assertion) (claimed, error) {
 
 // claimed is the verified identity and what the provider says about it.
 type claimed struct {
-	issuer, subject string
-	name            string
-	preferred       string
-	email           string
+	// subject is the account's id at the provider (the OIDC sub, the SAML
+	// NameID, the GitHub user id). With the provider's own id it is all that
+	// finds the account: the issuer plays no part.
+	subject   string
+	name      string
+	preferred string
+	email     string
+	// src is what the sign-in said that the trust rules read; finishSSO adds
+	// what the provider's configuration says (trustSource).
+	src emailSource
 	// emailVerified: the sign-in vouches for the address (trustsEmail).
 	emailVerified bool
+	// providerID is the id of the provider the sign-in went through.
+	providerID string
 	// provider is the slug of the provider (verified_by of an address it
 	// vouched for).
 	provider string
@@ -701,7 +775,7 @@ func (c claimed) label() string {
 }
 
 func (c claimed) params() *IdentityParams {
-	return &IdentityParams{Issuer: c.issuer, Subject: c.subject, Label: c.label()}
+	return &IdentityParams{ProviderID: c.providerID, Subject: c.subject, Label: c.label(), Email: c.email, EmailTrusted: c.emailVerified}
 }
 
 func identityFromAssertion(rt *providerRT, a *authoidc.Assertion) (claimed, error) {
@@ -727,10 +801,11 @@ func identityFromAssertion(rt *providerRT, a *authoidc.Assertion) (claimed, erro
 	if sub == "" || len(sub) > 255 || !utf8.ValidString(sub) || strings.ContainsFunc(sub, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return claimed{}, errors.New("the sub claim is empty or not usable")
 	}
-	// The issuer is the verified token's: the library checked it equals the configured one.
+	// The library checked the token's issuer against the configured one; the
+	// account is found by the provider's id and sub, not by the issuer.
 	email := clip(str("email"), 254)
-	c := claimed{issuer: a.Issuer, subject: sub, name: str("name"), preferred: str("preferred_username"), email: email,
-		emailVerified: trustsEmail(emailSource{template: tmplOIDC, trustOptIn: rt.row.MergeVerifiedEmail, email: email, verified: verified, claims: raw})}
+	c := claimed{subject: sub, name: str("name"), preferred: str("preferred_username"), email: email,
+		src: emailSource{template: tmplOIDC, verified: verified, claims: raw}}
 	if g, on := rt.groupsOn(); on {
 		c.groups = oidcGroupClaim(g, raw)
 	}
@@ -759,7 +834,8 @@ func ssoErr(code string) error { return &ssoError{code} }
 // the attempt with a redirect.
 func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry, c claimed, sessionToken, ip string, clear []*http.Cookie) Outcome {
 	kind, slug := rt.row.Kind, rt.row.Slug
-	c.provider = slug
+	c.provider, c.providerID = slug, rt.row.ID
+	c.emailVerified = trustsEmail(s.trustSource(ctx, rt, c.src, c.email))
 	var user *store.User
 	var created bool
 	var err error
@@ -774,6 +850,11 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 		created = true
 	case "link":
 		err = s.ssoLink(ctx, rt, c, e.userID, sessionToken, ip)
+	case "test":
+		// Nothing is made, linked or signed in: what the provider said is kept
+		// for the administrator who asked, to read once.
+		s.keepTest(e.userID, rt.row.ID, c)
+		return Outcome{Redirect: e.ret, Clear: clear}
 	}
 	if err != nil {
 		var se *ssoError
@@ -803,10 +884,10 @@ func (s *Service) finishSSO(ctx context.Context, rt *providerRT, e *pendingEntry
 }
 
 func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip string) (*store.User, bool, error) {
-	ident, err := store.FindIdentity(ctx, s.st.Q(), c.issuer, c.subject)
+	ident, err := store.FindLink(ctx, s.st.Q(), rt.row.ID, c.subject)
 	switch {
 	case err == nil:
-		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // an identity signs in to its account, whatever tenant
+		u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), ident.UserID) // a link signs in to its account, whatever tenant
 		if errors.Is(err, store.ErrNotFound) {
 			// The person is in the recycle bin (their identities stay attached,
 			// unusable): refused, not made a new account by autoCreate.
@@ -817,6 +898,9 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 		}
 		if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 			return nil, false, ssoErr("disabled")
+		}
+		if err := store.TouchLink(ctx, s.st.Q(), ident, c.email, c.emailVerified, c.label(), s.now()); err != nil {
+			s.log.Warn("could not record the sign-in on its linked account", "provider", rt.row.Slug, "error", err)
 		}
 		return u, false, nil
 	case !errors.Is(err, store.ErrNotFound):
@@ -899,7 +983,7 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 	} else if p, err = s.Authenticate(ctx, sessionToken); err != nil || p.User.ID != userID {
 		return ssoErr("expired")
 	}
-	if ident, err := store.FindIdentity(ctx, s.st.Q(), c.issuer, c.subject); err == nil {
+	if ident, err := store.FindLink(ctx, s.st.Q(), rt.row.ID, c.subject); err == nil {
 		if ident.UserID == userID {
 			return nil
 		}
@@ -907,9 +991,19 @@ func (s *Service) ssoLink(ctx context.Context, rt *providerRT, c claimed, userID
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	err = store.InsertIdentity(ctx, s.st.Q(), store.Identity{ID: s.newID(), UserID: userID, Issuer: c.issuer, Subject: c.subject, Label: c.label(), Created: s.now()})
-	if store.IsUnique(err) {
+	// One account per provider per person: to switch to another, unlink first.
+	if _, err := store.FindUserLink(ctx, s.st.Q(), rt.row.ID, userID); err == nil {
+		return ssoErr("already_linked")
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	err = store.InsertLink(ctx, s.st.Q(), store.Link{ID: s.newID(), ProviderID: rt.row.ID, UserID: userID, Subject: c.subject, Email: c.email, EmailTrusted: c.emailVerified,
+		SignIn: true, Label: c.label(), Created: s.now(), LastUsed: s.now()})
+	switch {
+	case errors.Is(err, store.ErrLinkSubjectTaken):
 		return ssoErr("identity_in_use")
+	case errors.Is(err, store.ErrLinkProviderTaken):
+		return ssoErr("already_linked")
 	}
 	if err == nil {
 		s.Audit(AuditEvent{Kind: "identity_linked", User: userID, Username: p.User.Username, IP: ip, Detail: map[string]any{"provider": rt.row.Slug, "by": "user"}})
@@ -1133,7 +1227,6 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 		}
 	}
 	login := clip(u.Login, 100)
-	return claimed{issuer: rt.cfg.BaseURL, subject: strconv.FormatInt(u.ID, 10), name: clip(u.Name, 100), preferred: login, email: email,
-		emailVerified: trustsEmail(emailSource{template: tmplGitHub, publicGitHub: isPublicGitHub(rt.cfg.BaseURL), trustOptIn: rt.row.MergeVerifiedEmail,
-			email: email, verified: verified}), labelOverride: login, groups: gc}, ""
+	return claimed{subject: strconv.FormatInt(u.ID, 10), name: clip(u.Name, 100), preferred: login, email: email,
+		src: emailSource{template: tmplGitHub, publicGitHub: isPublicGitHub(rt.cfg.BaseURL), verified: verified}, labelOverride: login, groups: gc}, ""
 }

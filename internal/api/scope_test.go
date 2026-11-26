@@ -40,7 +40,7 @@ func TestASiteAdministratorInATenantsScopeActsAsItsAdministrator(t *testing.T) {
 		// administrator as it answers B's administrator.
 		for _, p := range []string{
 			"/api/users", "/api/users/" + f.userB, "/api/users/" + f.userA,
-			"/api/users/" + f.userB + "/sessions", "/api/users/" + f.userB + "/identities",
+			"/api/users/" + f.userB + "/sessions", "/api/users/" + f.userB + "/links",
 			"/api/invites", "/api/admin/usage", "/api/admin/spaces", "/api/admin/spaces/" + f.spaceB,
 			"/api/admin/spaces/" + f.spaceA, "/api/admin/spaces/" + personalB, "/api/admin/storage",
 			"/api/admin/storage/people", "/api/admin/recycle", "/api/admin/groups", "/api/admin/groups/" + f.groupB,
@@ -69,7 +69,7 @@ func TestASiteAdministratorInATenantsScopeActsAsItsAdministrator(t *testing.T) {
 		// Site routes are refused; the same caller without the header is not.
 		for _, rt := range [][2]string{
 			{"GET", "/api/admin/settings"}, {"GET", "/api/admin/tenants"}, {"GET", "/api/admin/secrets"},
-			{"GET", "/api/admin/status"}, {"GET", "/api/admin/plans"}, {"GET", "/api/admin/auth/providers"},
+			{"GET", "/api/admin/status"}, {"GET", "/api/admin/plans"}, {"GET", "/api/admin/providers"},
 			{"DELETE", "/api/admin/recycle/" + fakeID},
 		} {
 			f.root.do(rt[0], rt[1], nil, inB...).want(t, 403, "forbidden")

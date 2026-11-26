@@ -42,12 +42,12 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		gh.users["outsider"] = ghFake{ID: 99, Login: "outsider", Orgs: []string{"somewhere"}}
 		gh.users["unverified"] = ghFake{ID: 100, Login: "newbie", Email: "n@example.test", Verified: false, Orgs: []string{"KazuhaHub"}}
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
+		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
 		// The fake is not github.com (an Enterprise server, to the server): its
 		// verified addresses count only with the provider's trust switch.
 		body := gh.body("gh", map[string]any{"autoCreate": true, "mergeVerifiedEmail": true})
 		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
-		p := admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")
+		p := admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		g := p.body["github"].(map[string]any)
 		if g["redirectUrl"] != testPublic+"/api/auth/github/gh/callback" || g["hasSecret"] != true || g["baseUrl"] != gh.srv.URL || strings.Contains(p.raw, "gh-secret") {
 			t.Fatal(p.raw)
@@ -65,13 +65,13 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		if u["name"] != "Octo Cat" || u["email"] != "octo@example.test" || u["emailVerified"] != true || u["role"] != "member" {
 			t.Fatal(u)
 		}
-		// The identity is the base address and the numeric id, never the login name.
-		if _, err := store.FindIdentity(context.Background(), a.st.Q(), gh.srv.URL, "4711"); err != nil {
+		// The linked account is the provider id and the numeric id, never the login name.
+		if _, err := store.FindLink(context.Background(), a.st.Q(), "gh", "4711"); err != nil {
 			t.Fatal(err)
 		}
-		acct := c.do("GET", "/api/account", nil).want(t, 200, "")
-		id := acct.body["identities"].([]any)[0].(map[string]any)
-		if id["kind"] != "github" || id["providerSlug"] != "gh" || id["label"] != "Octo-Cat" {
+		acct := c.do("GET", "/api/account/links", nil).want(t, 200, "")
+		id := acct.body["links"].([]any)[0].(map[string]any)
+		if id["kind"] != "github" || id["slug"] != "gh" || id["label"] != "Octo-Cat" {
 			t.Fatal(acct.raw)
 		}
 		// The person renames their GitHub account: the same person signs in.
@@ -89,7 +89,7 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		if end, _ := gh.signIn(t, e, "gh", "outsider", map[string]any{}); end != "/login?sso_error=not_allowed" || signedInAs(t, e) != "" {
 			t.Fatal(end)
 		}
-		if _, err := store.FindIdentity(context.Background(), a.st.Q(), gh.srv.URL, "99"); err == nil {
+		if _, err := store.FindLink(context.Background(), a.st.Q(), "gh", "99"); err == nil {
 			t.Fatal("an identity was made for someone not allowed")
 		}
 		// An address that is not verified is kept as it is, unverified.
@@ -99,7 +99,7 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 			t.Fatal(u)
 		}
 		// The Enterprise server's verified flag without the trust switch: not trusted.
-		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"mergeVerifiedEmail": false}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"mergeVerifiedEmail": false}).want(t, 200, "")
 		gh.users["ghe"] = ghFake{ID: 101, Login: "ghe-user", Email: "ghe@example.test", Verified: true, Orgs: []string{"KazuhaHub"}}
 		g2 := a.newClient("")
 		gh.signIn(t, g2, "gh", "ghe", map[string]any{})
@@ -118,17 +118,17 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		if end, _ := gh.signIn(t, tang, "gh", "tang-gh", map[string]any{"intent": "link", "return": "/settings"}); end != "/settings" {
 			t.Fatal(end)
 		}
-		if ids := tang.do("GET", "/api/account", nil).body["identities"].([]any); len(ids) != 1 {
+		if ids := tang.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 1 {
 			t.Fatal(ids)
 		}
 		// A provider that does not create accounts: no_account for someone nobody has.
-		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"autoCreate": false}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"autoCreate": false}).want(t, 200, "")
 		gh.users["fresh"] = ghFake{ID: 8, Login: "fresh", Orgs: []string{"KazuhaHub"}}
 		if end, _ := gh.signIn(t, a.newClient(""), "gh", "fresh", map[string]any{}); end != "/login?sso_error=no_account" {
 			t.Fatal(end)
 		}
 		// Without an organisation named, anyone with a GitHub account may sign in to an account they have, and none is created.
-		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 200, "")
 		if end, q := gh.signIn(t, a.newClient(""), "gh", "member", map[string]any{}); end != "/" || q["scope"] != "read:user user:email" {
 			t.Fatalf("%s %v", end, q)
 		}
@@ -143,7 +143,7 @@ func TestGitHubRefusedCodeAndBadSecret(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		body := gh.body("gh", map[string]any{})
 		body["github"].(map[string]any)["clientSecret"] = "wrong-secret"
-		admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		c := a.newClient("")
 		if end, _ := gh.signIn(t, c, "gh", "x", map[string]any{}); end != "/login?sso_error=idp_error" {
 			t.Fatal(end)

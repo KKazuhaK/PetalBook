@@ -35,7 +35,10 @@ func TestTrustsEmail(t *testing.T) {
 		{"custom off", emailSource{template: tmplOIDC, email: "a@idp.test", verified: true}, false},
 		{"custom on, verified", emailSource{template: tmplOIDC, email: "a@idp.test", verified: true, trustOptIn: true}, true},
 		{"custom on, unverified", emailSource{template: tmplOIDC, email: "a@idp.test", trustOptIn: true}, false},
-		{"saml with the switch", emailSource{template: tmplSAML, email: "a@idp.test", verified: true, trustOptIn: true}, false},
+		{"saml with the switch", emailSource{template: tmplSAML, email: "a@idp.test", trustOptIn: true}, true},
+		{"saml without the switch", emailSource{template: tmplSAML, email: "a@idp.test", verified: true}, false},
+		{"org saml on its domain", emailSource{template: tmplSAML, org: true, email: "a@acme.test", orgDomains: []string{"acme.test"}}, true},
+		{"org saml, the switch is not an org's", emailSource{template: tmplSAML, org: true, email: "a@evil.test", orgDomains: []string{"acme.test"}, trustOptIn: true}, false},
 		{"no address", emailSource{template: tmplGoogle, verified: true}, false},
 	} {
 		if got := trustsEmail(c.src); got != c.want {

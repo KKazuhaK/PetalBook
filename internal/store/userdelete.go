@@ -236,7 +236,7 @@ func PlanUserDeletion(ctx context.Context, q Q, sc Scope, userID, heir string, t
 		{&p.Tokens, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ? AND revoked = 0`},
 		{&p.Grants, `SELECT COUNT(*) FROM oauth_grants WHERE user_id = ?`},
 		{&p.Passkeys, `SELECT COUNT(*) FROM passkeys WHERE user_id = ?`},
-		{&p.Identity, `SELECT COUNT(*) FROM identities WHERE user_id = ?`},
+		{&p.Identity, `SELECT COUNT(*) FROM linked_accounts WHERE user_id = ? AND signin = 1`},
 		{&p.Sessions, `SELECT COUNT(*) FROM sessions WHERE user_id = ?`},
 	}
 	for _, c := range counts {
@@ -670,7 +670,7 @@ func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Tim
 	for _, stmt := range []string{
 		`DELETE FROM passwords WHERE user_id = ?`,
 		`DELETE FROM passkeys WHERE user_id = ?`,
-		`DELETE FROM identities WHERE user_id = ?`,
+		`DELETE FROM linked_accounts WHERE user_id = ?`,
 		`DELETE FROM sessions WHERE user_id = ?`,
 		`DELETE FROM email_tokens WHERE user_id = ?`,
 		`DELETE FROM favorites WHERE user_id = ?`,

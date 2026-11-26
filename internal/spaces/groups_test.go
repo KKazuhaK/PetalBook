@@ -904,7 +904,7 @@ func TestRevokingRacesAnAddToTheGroup(t *testing.T) {
 func (f *gfix) provider(slug string) store.ProviderRow {
 	f.t.Helper()
 	now := time.Now()
-	p := store.ProviderRow{Slug: slug, Kind: "oidc", Name: slug, Config: "{}", Created: now, Updated: now}
+	p := store.ProviderRow{ID: slug, Owner: store.ProviderSite, Slug: slug, Kind: "oidc", Name: slug, Config: "{}", Created: now, Updated: now}
 	if err := store.InsertProvider(ctx, f.st.Q(), p); err != nil {
 		f.t.Fatal(err)
 	}

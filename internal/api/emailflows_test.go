@@ -362,10 +362,10 @@ func TestAnSSOOnlyAccountIsToldToSignInWithTheProviderNotGivenALink(t *testing.T
 	eachAccounts(t, accOpts{httpc: anyTLSClient()}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
 		enableMail(t, root, srv)
-		root.do("POST", "/api/admin/auth/providers", idp.providerBody("home", map[string]any{"name": "Home IdP"})).want(t, 201, "")
+		root.do("POST", "/api/admin/providers", idp.providerBody("home", map[string]any{"name": "Home IdP"})).want(t, 201, "")
 		// An account made through the provider has no password.
 		if _, err := a.auth.CreateUser(context.Background(), auth.CreateParams{Username: "sso", Role: "member", Email: "sso@example.test", EmailVerified: true,
-			Identity: &auth.IdentityParams{Issuer: idp.srv.URL, Subject: "s1", Label: "sso"}}); err != nil {
+			Identity: &auth.IdentityParams{ProviderID: "home", Subject: "s1", Label: "sso"}}); err != nil {
 			t.Fatal(err)
 		}
 		verifiedUser(t, a, "pw", "pw@example.test")

@@ -77,6 +77,7 @@ export const keys = {
   adminSecurity: ['admin', 'security'] as const,
   adminProviders: ['admin', 'providers'] as const,
   accountUsage: ['account', 'usage'] as const,
+  accountLinks: ['account', 'links'] as const,
   adminUsage: (tenant: string, over: boolean) => ['admin', 'usage', tenant, over] as const,
   adminGroups: ['admin', 'groups'] as const,
   adminGroupList: (q: string, source: string) => ['admin', 'groups', 'list', q, source] as const,
@@ -788,6 +789,16 @@ export function useAccount(enabled = true) {
   return useQuery({
     queryKey: keys.account,
     queryFn: ({ signal }) => api.account(signal),
+    staleTime: Infinity,
+    enabled,
+  })
+}
+
+// The sign-ins the caller has linked: a query of its own, replaced when one is linked or unlinked.
+export function useAccountLinks(enabled = true) {
+  return useQuery({
+    queryKey: keys.accountLinks,
+    queryFn: ({ signal }) => api.accountLinks(signal),
     staleTime: Infinity,
     enabled,
   })

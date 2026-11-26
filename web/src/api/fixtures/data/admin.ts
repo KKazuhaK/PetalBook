@@ -19,7 +19,8 @@ import type {
   Invite,
   MailSettings,
   Passkey,
-  PersonIdentity,
+  Link,
+  ProviderTestResult,
   PersonUsage,
   PersonSession,
   Plan,
@@ -41,10 +42,10 @@ export interface GroupRec extends Group {
   spaceRefs: GroupSpaceRef[]
 }
 
-// What the console shows of one person besides the account: sign-ins, linked identities, passkeys, memberships.
+// What the console shows of one person besides the account: sign-ins, linked sign-ins, passkeys, memberships.
 export interface PersonRec {
   sessions: PersonSession[]
-  identities: PersonIdentity[]
+  links: Link[]
   passkeys: Passkey[]
   lastActive?: string
   // What the person holds, as measured, and the totals they are over.
@@ -84,6 +85,8 @@ export interface AdminData {
   // Whose view of a space or a person this session has open.
   views: Record<string, { since: string; until: string }>
   // The plan a confirmation was asked for, by token.
+  // A test sign-in's result, kept until it is read once.
+  providerTests: Record<string, ProviderTestResult>
   confirms: Record<string, { action: string; spaces: string[]; users: string[]; items: string[] }>
 }
 
@@ -177,6 +180,7 @@ export function createAdminData(now: number, admin: { id: string; username: stri
     spaceExtra: {},
     people: {},
     views: {},
+    providerTests: {},
     confirms: {},
   }
 }
@@ -189,6 +193,8 @@ export function makeProvider(input: ProviderInput & { slug: string }, at: string
   const kind = input.kind ?? 'oidc'
   const url = `${SITE}/api/auth/${kind}/${input.slug}`
   const p: AuthProvider = {
+    id: input.slug,
+    owner: input.owner ?? 'site',
     slug: input.slug,
     kind,
     name: input.name ?? input.slug,

@@ -134,6 +134,13 @@ var scopeAllowlist = map[string]string{
 	// --- 3.8: GitLab and Gitea providers. A provider is the server's own (or its
 	// tenant's: owner), set up by site administrators; a connection and a reminder are
 	// their user's; the account link is unique per provider on the whole server ---
+	"ListProviders":                    "the sign-in providers of every owner, loaded at start and shown to site administrators; the service keeps a tenant's apart from the site's",
+	"GetProvider":                      "a sign-in provider by its id, for site administrators",
+	"InsertProvider":                   "a sign-in provider made by a site administrator",
+	"UpdateProvider":                   "a sign-in provider changed by a site administrator",
+	"DeleteProvider":                   "a sign-in provider removed by a site administrator; the accounts linked to it go with it",
+	"LockProviderGroups":               "serialises a sign-in's group sync with a change of the provider",
+	"SetProviderStatus":                "what a fetch of the provider's discovery document or metadata found",
 	"ListConnProviderRows":             "the server's providers, loaded at start and shown to site administrators; visibility by owner is the registry's rule",
 	"GetConnProviderRow":               "a provider by its id, for administrators and the provider's own reads",
 	"CountConnProviderRows":            "how many providers an owner has, for the limit",
@@ -289,6 +296,7 @@ var sqlTable = regexp.MustCompile(`(?is)\b(FROM|JOIN|INTO|UPDATE)\s+(users|space
 // (docs/api.md, "Deleting a user": a deleted person is invisible). A query on the
 // users table that does not say deleted_at is on this list with the reason.
 var deletedAllowlist = map[string]string{
+	"EndSessionsByMethod":     "ends the sessions that started through a provider when it is deleted, whatever tenant their people are in",
 	"EndTenantSessions":       "ends every session of a tenant's people when it is disabled; ending the (already ended) sessions of a deleted person too is harmless",
 	"DeleteTenantSessionEnds": "forgets a tenant's `disabled` records when it is enabled again; a deleted person's records go with the rest",
 	"GetUserAny":              "names a deleted person on purpose: the recycle bin and the audit log show them",
@@ -320,7 +328,6 @@ var deletedAllowlist = map[string]string{
 	"CountOtherEnabledOwners": "owners of a space already opened: a deleted person has none left",
 	"MemberStanding":          "the roles of a person's memberships: a deleted person has none left",
 	"ListUserSpaces":          "the spaces of a person by their own memberships: a deleted person has none left",
-	"UserHasIdentityOf":       "an identity of a person by id",
 	"GetTermsAccepted":        "the person's own record, by id",
 	"SetTermsAccepted":        "the person's own record, by id",
 	"EmailVerifiedBy":         "the person's own record, by id",

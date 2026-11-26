@@ -135,14 +135,14 @@ func (f *tenFx) bIDs() []string {
 func (f *tenFx) addMappedB(t *testing.T, idp *fakeIDP) {
 	t.Helper()
 	f.syncedB = f.admB.mkGroup(t, "Synced B", "synced")
-	f.root.do("POST", "/api/admin/auth/providers", idp.providerBody("acme-sso", map[string]any{"tenant": f.tenB})).want(t, 201, "")
-	f.root.do("PATCH", "/api/admin/auth/providers/acme-sso", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("staff", f.syncedB)}}).want(t, 200, "")
+	f.root.do("POST", "/api/admin/providers", idp.providerBody("acme-sso", map[string]any{"tenant": f.tenB})).want(t, 201, "")
+	f.root.do("PATCH", "/api/admin/providers/acme-sso", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("staff", f.syncedB)}}).want(t, 200, "")
 }
 
 // mappingsOfB is how many entries of acme-sso's map there are.
 func (f *tenFx) mappingsOfB(t *testing.T) int {
 	t.Helper()
-	g := f.root.do("GET", "/api/admin/auth/providers/acme-sso", nil).want(t, 200, "").body["groups"].(map[string]any)
+	g := f.root.do("GET", "/api/admin/providers/acme-sso", nil).want(t, 200, "").body["groups"].(map[string]any)
 	return len(g["map"].([]any))
 }
 
@@ -204,28 +204,30 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/auth/passkey/begin":         {kind: isoExempt, reason: "public sign-in"},
 	"POST /api/auth/passkey/finish":        {kind: isoExempt, reason: "public sign-in"},
 
-	"GET /api/account":                    {kind: isoExempt, reason: "the caller's own account"},
-	"PATCH /api/account":                  {kind: isoExempt, reason: "the caller's own account"},
-	"POST /api/account/password":          {kind: isoExempt, reason: "the caller's own account"},
-	"POST /api/account/email/verify":      {kind: isoExempt, reason: "the caller's own account"},
-	"POST /api/account/emails":            {kind: isoExempt, reason: "the caller's own account (an address is unique on the whole server, whatever the tenant)"},
-	"POST /api/account/emails/verify":     {kind: isoExempt, reason: "the caller's own account"},
-	"POST /api/account/emails/primary":    {kind: isoExempt, reason: "the caller's own account"},
-	"DELETE /api/account/emails/{email}":  {kind: isoExempt, reason: "the caller's own account"},
-	"DELETE /api/account/identities/{id}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"GET /api/account/usage":              {kind: isoExempt, reason: "the caller's own usage"},
-	"GET /api/account/tokens":             {kind: isoList},
-	"POST /api/account/tokens":            {kind: isoExempt, reason: "a token for the caller's own spaces (a space of another tenant is not one of them: tested in the tenant tests)"},
-	"DELETE /api/account/tokens/{id}":     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.tokenB} }},
-	"GET /api/account/grants":             {kind: isoList},
-	"DELETE /api/account/grants/{id}":     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.grantB} }},
-	"GET /api/oauth/consent":              {kind: isoExempt, reason: "the caller's own consent screen"},
-	"POST /api/oauth/consent":             {kind: isoExempt, reason: "the caller's own consent"},
-	"GET /api/account/passkeys":           {kind: isoExempt, reason: "the caller's own passkeys"},
-	"POST /api/account/passkeys/begin":    {kind: isoExempt, reason: "the caller's own passkeys"},
-	"POST /api/account/passkeys/finish":   {kind: isoExempt, reason: "the caller's own passkeys"},
-	"PATCH /api/account/passkeys/{id}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"DELETE /api/account/passkeys/{id}":   {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"GET /api/account":                         {kind: isoExempt, reason: "the caller's own account"},
+	"PATCH /api/account":                       {kind: isoExempt, reason: "the caller's own account"},
+	"POST /api/account/password":               {kind: isoExempt, reason: "the caller's own account"},
+	"POST /api/account/email/verify":           {kind: isoExempt, reason: "the caller's own account"},
+	"POST /api/account/emails":                 {kind: isoExempt, reason: "the caller's own account (an address is unique on the whole server, whatever the tenant)"},
+	"POST /api/account/emails/verify":          {kind: isoExempt, reason: "the caller's own account"},
+	"POST /api/account/emails/primary":         {kind: isoExempt, reason: "the caller's own account"},
+	"DELETE /api/account/emails/{email}":       {kind: isoExempt, reason: "the caller's own account"},
+	"GET /api/account/links":                   {kind: isoExempt, reason: "the caller's own linked accounts"},
+	"POST /api/account/links/{provider}/start": {kind: isoExempt, reason: "the caller's own account; the provider is the server's"},
+	"DELETE /api/account/links/{id}":           {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"GET /api/account/usage":                   {kind: isoExempt, reason: "the caller's own usage"},
+	"GET /api/account/tokens":                  {kind: isoList},
+	"POST /api/account/tokens":                 {kind: isoExempt, reason: "a token for the caller's own spaces (a space of another tenant is not one of them: tested in the tenant tests)"},
+	"DELETE /api/account/tokens/{id}":          {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.tokenB} }},
+	"GET /api/account/grants":                  {kind: isoList},
+	"DELETE /api/account/grants/{id}":          {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.grantB} }},
+	"GET /api/oauth/consent":                   {kind: isoExempt, reason: "the caller's own consent screen"},
+	"POST /api/oauth/consent":                  {kind: isoExempt, reason: "the caller's own consent"},
+	"GET /api/account/passkeys":                {kind: isoExempt, reason: "the caller's own passkeys"},
+	"POST /api/account/passkeys/begin":         {kind: isoExempt, reason: "the caller's own passkeys"},
+	"POST /api/account/passkeys/finish":        {kind: isoExempt, reason: "the caller's own passkeys"},
+	"PATCH /api/account/passkeys/{id}":         {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"DELETE /api/account/passkeys/{id}":        {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
 
 	// 2.7: a GitHub connection is the caller's own; the App is the server's; an installation
 	// is shared by a site administrator with chosen tenants, and only their people use it.
@@ -263,17 +265,17 @@ var isolationRoutes = map[string]isoEntry{
 	"POST /api/admin/members/batch": {kind: isoParam, body: func(f *tenFx, id string) any {
 		return map[string]any{"tenant": id, "rows": []map[string]any{{"user": "new@example.test", "role": "member"}}}
 	}, ids: func(f *tenFx) map[string]string { return map[string]string{} }},
-	"GET /api/invites":                             {kind: isoList},
-	"DELETE /api/invites/{id}":                     {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.inviteB} }},
-	"GET /api/users/{id}":                          {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"GET /api/users/{id}/memberships":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"GET /api/users/{id}/sessions":                 {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"DELETE /api/users/{id}/sessions":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"DELETE /api/users/{id}/sessions/{session}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "session": fakeID} }},
-	"GET /api/users/{id}/identities":               {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"DELETE /api/users/{id}/identities/{identity}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "identity": fakeID} }},
-	"GET /api/users/{id}/passkeys":                 {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
-	"DELETE /api/users/{id}/passkeys/{passkey}":    {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "passkey": fakeID} }},
+	"GET /api/invites":                          {kind: isoList},
+	"DELETE /api/invites/{id}":                  {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.inviteB} }},
+	"GET /api/users/{id}":                       {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"GET /api/users/{id}/memberships":           {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"GET /api/users/{id}/sessions":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"DELETE /api/users/{id}/sessions":           {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"DELETE /api/users/{id}/sessions/{session}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "session": fakeID} }},
+	"GET /api/users/{id}/links":                 {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"DELETE /api/users/{id}/links/{link}":       {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "link": fakeID} }},
+	"GET /api/users/{id}/passkeys":              {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB} }},
+	"DELETE /api/users/{id}/passkeys/{passkey}": {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"id": f.userB, "passkey": fakeID} }},
 
 	"GET /api/admin/spaces":         {kind: isoList},
 	"GET /api/admin/spaces/{space}": {kind: isoParam},

@@ -295,7 +295,7 @@ func (s *Service) syncGroups(ctx context.Context, rt *providerRT, userID, userna
 			}
 		}
 	}
-	res, err := s.cfg.Spaces.SyncProviderGroups(ctx, userID, slug, rt.row.GroupsVersion, want)
+	res, err := s.cfg.Spaces.SyncProviderGroups(ctx, userID, rt.row.ID, rt.row.GroupsVersion, want)
 	if err != nil {
 		s.log.Error("could not sync the groups of a sign-in", "provider", slug, "user", userID, "error", err)
 		return
@@ -366,7 +366,7 @@ func (s *Service) UnmapGroup(ctx context.Context, groupID string) error {
 		if err := store.UpdateProvider(ctx, s.st.Q(), row); err != nil {
 			return err
 		}
-		touched = append(touched, row.Slug)
+		touched = append(touched, row.ID)
 	}
 	if len(touched) == 0 {
 		return nil

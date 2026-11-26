@@ -247,7 +247,7 @@ describe('the groups mapping of a sign-in provider', () => {
     await click(button(tsec.providers.save, document.querySelector('[data-slot="provider-form"]')!))
     await settle(
       () =>
-        m!.requests.some((r) => r.method === 'PATCH' && r.url === '/api/admin/auth/providers/company') ||
+        m!.requests.some((r) => r.method === 'PATCH' && r.url === '/api/admin/providers/company') ||
         document.querySelector('[role="alert"]') !== null,
       'saved',
     )

@@ -31,7 +31,7 @@ func (s *Service) importFlags(ctx context.Context) error {
 			Slug string `json:"slug"`
 		}
 		_ = json.Unmarshal([]byte(raw), &done)
-		rt := s.provs.get(done.Slug)
+		rt := s.provs.getID(done.Slug)
 		if rt == nil || !s.flagsMatch(rt, c) {
 			s.flagsIgnored.Store(true)
 			s.log.Warn("the --oidc-* flags differ from the provider stored in the state database, which is what counts now; they change nothing and will be removed in a later version", "provider", done.Slug)
@@ -54,7 +54,7 @@ func (s *Service) importFlags(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	row := store.ProviderRow{Slug: "sso", Kind: KindOIDC, Name: name, Enabled: true, AutoCreate: c.AutoCreate, LegacyCallback: true,
+	row := store.ProviderRow{ID: "sso", Owner: store.ProviderSite, Slug: "sso", Kind: KindOIDC, Name: name, Enabled: true, AutoCreate: c.AutoCreate, LegacyCallback: true,
 		Issuer: c.Issuer, Config: string(rawCfg), Created: now, Updated: now}
 	if c.ClientSecret != "" {
 		if row.SecretEnc, err = s.seal("provider:sso", c.ClientSecret); err != nil {

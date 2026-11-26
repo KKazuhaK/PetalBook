@@ -2,7 +2,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
 import type { FixtureOptions } from '@/api/fixtures/data/model'
+import type { Link } from '@/api/types'
 import { t } from '@/i18n'
+import { apiErrorText } from '@/i18n/apiErrors'
 import { ts } from '@/i18n/signin'
 import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import SettingsRoute from './SettingsRoute'
@@ -154,8 +156,20 @@ describe('the passkeys of the account', () => {
   })
 })
 
+const linkOf = (extra: Partial<Link> = {}): Link => ({
+  id: 'id1',
+  providerId: 'company',
+  provider: 'Company SSO',
+  slug: 'company',
+  kind: 'oidc',
+  label: 'mock@example.com',
+  signin: true,
+  created: '2026-11-01T00:00:00Z',
+  ...extra,
+})
+
 describe('the linked sign-ins', () => {
-  it('offers to link each enabled provider, and goes to the provider with intent "link"', async () => {
+  it('offers to link each enabled provider, and starts the link on the account route', async () => {
     await open('/settings/security', { providers: [company, github] })
     await settle(() => panelText().includes(ts.identities.link('Company SSO')), 'the link buttons')
     expect(panelText()).toContain(ts.identities.link('GitHub'))
@@ -163,29 +177,21 @@ describe('the linked sign-ins', () => {
     vi.stubGlobal('location', { ...window.location, assign })
     await click(buttonHolding(ts.identities.link('Company SSO')))
     await settle(() => assign.mock.calls.length > 0, 'the redirect')
-    expect(JSON.parse(calls('POST', '/api/auth/oidc/company/start')[0].body!)).toEqual({
-      intent: 'link',
+    expect(JSON.parse(calls('POST', '/api/account/links/company/start')[0].body!)).toEqual({
+      purpose: 'signin',
       return: '/settings',
     })
-    expect(assign.mock.calls[0][0]).toContain('/api/auth/oidc/company/callback')
+    expect(assign.mock.calls[0][0]).toContain('/callback')
   })
 
-  it('lists a linked identity with its provider, and no link button for that provider; it can be removed', async () => {
+  it('lists a linked account with its provider, and no link button for that provider; it can be removed', async () => {
     await open('/settings/security', {
       providers: [company, github],
-      data: (d) =>
-        d.area.account.identities.push({
-          id: 'id1',
-          provider: 'Company SSO',
-          providerSlug: 'company',
-          kind: 'oidc',
-          label: 'mock@example.com',
-          created: '2026-11-01T00:00:00Z',
-        }),
+      data: (d) => d.area.account.links.push(linkOf()),
     })
     await settle(
       () => panelText().includes('mock@example.com') && panelText().includes(ts.identities.link('GitHub')),
-      'the identity',
+      'the link',
     )
     expect(panelText()).toContain('Company SSO')
     expect(panelText()).not.toContain(ts.identities.link('Company SSO'))
@@ -194,8 +200,28 @@ describe('the linked sign-ins', () => {
     await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
     await click(buttonWith(t.settings.removeConfirm, document.querySelector('[role="alertdialog"]')!))
     await settle(() => !panelText().includes('mock@example.com'), 'removed')
-    expect(calls('DELETE', '/api/account/identities/')).toHaveLength(1)
+    expect(calls('DELETE', '/api/account/links/')).toHaveLength(1)
     expect(panelText()).toContain(ts.identities.link('Company SSO'))
+  })
+
+  it('the server refusing a second link at a provider says so', async () => {
+    await open('/settings/security', { providers: [company] })
+    await settle(() => panelText().includes(ts.identities.link('Company SSO')), 'the link button')
+    // Linked elsewhere since the page was loaded: the server answers 409.
+    m!.fx.fail('POST', '/api/account/links/company/start', 409, { code: 'already_linked' })
+    await click(buttonHolding(ts.identities.link('Company SSO')))
+    await settle(() => panelText().includes(apiErrorText('already_linked', {})!), 'the refusal')
+  })
+
+  it('unlinking the last way to sign in says it is the only way, and keeps the link', async () => {
+    await open('/settings/security', { providers: [company], data: (d) => d.area.account.links.push(linkOf()) })
+    await settle(() => panelText().includes('mock@example.com'), 'the link')
+    m!.fx.fail('DELETE', '/api/account/links/id1', 409, { code: 'last_method' })
+    await click([...dialog()!.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === t.settings.remove))
+    await settle(() => document.querySelector('[role="alertdialog"]') !== null, 'the question')
+    await click(buttonWith(t.settings.removeConfirm, document.querySelector('[role="alertdialog"]')!))
+    await settle(() => panelText().includes(t.settings.onlyWay), 'the refusal')
+    expect(panelText()).toContain('mock@example.com')
   })
 })
 

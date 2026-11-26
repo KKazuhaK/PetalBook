@@ -50,3 +50,7 @@ func errUnauth() *Error { return errf(Unauthenticated, "Wrong username or passwo
 func coded(status int, code, format string, a ...any) *Error {
 	return &Error{Kind: Coded, Status: status, Code: code, Msg: fmt.Sprintf(format, a...)}
 }
+
+// errAlreadyLinked: the person has an account linked at the provider already
+// (one per provider; to switch to another, unlink the first).
+var errAlreadyLinked = coded(409, "already_linked", "You already have an account linked at this provider; unlink it first to link another.")
