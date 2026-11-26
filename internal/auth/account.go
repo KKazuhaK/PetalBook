@@ -572,16 +572,26 @@ type InviteFill struct {
 // follows the site's rule on addresses outside ASCII, and one another account
 // holds is 409 email_taken (the invite would make an account it cannot have).
 func (s *Service) CleanInviteFill(ctx context.Context, f InviteFill) (InviteFill, error) {
-	out, err := cleanInviteFill(f)
+	out, err := s.cleanInviteFillFor(ctx, f)
 	if err != nil || out.Email == "" {
-		return out, err
-	}
-	if _, err := s.cleanEmailFor(ctx, out.Email); err != nil {
 		return out, err
 	}
 	if _, err := store.EmailOwner(ctx, s.st.Q(), out.Email); err == nil {
 		return out, errEmailTaken()
 	} else if !errors.Is(err, store.ErrNotFound) {
+		return out, err
+	}
+	return out, nil
+}
+
+// cleanInviteFillFor is CleanInviteFill without the look for an account that
+// holds the address (a batch looks for all of them at once).
+func (s *Service) cleanInviteFillFor(ctx context.Context, f InviteFill) (InviteFill, error) {
+	out, err := cleanInviteFill(f)
+	if err != nil || out.Email == "" {
+		return out, err
+	}
+	if _, err := s.cleanEmailFor(ctx, out.Email); err != nil {
 		return out, err
 	}
 	return out, nil

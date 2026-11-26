@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -22,6 +24,53 @@ func addPerson(t *testing.T, q store.Q, id, tenant, email string, verified bool)
 	if err := store.InsertUser(ctx, q, u); err != nil {
 		t.Fatalf("%s: %v", id, err)
 	}
+}
+
+// countQ counts the statements a Q is given.
+type countQ struct {
+	store.Q
+	n int
+}
+
+func (c *countQ) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	c.n++
+	return c.Q.Query(ctx, query, args...)
+}
+
+// EmailsHeld answers as EmailOwner does for each key (another tenant's
+// account, a deleted one, any spelling the key folds), in one statement per
+// 200 keys.
+func TestEmailsHeldIsEmailOwnerInChunks(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		addPerson(t, q, "HELD", store.DefaultTenantID, "Held@Example.test", false)
+		addPerson(t, q, "GONE", store.DefaultTenantID, "gone@example.test", true)
+		if _, err := q.Exec(ctx, `UPDATE users SET deleted_at = ?, recycle_item = 'R1' WHERE id = 'GONE'`, time.Now().UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		keys := []string{"held@example.test", "gone@example.test"}
+		for i := len(keys); i < 401; i++ {
+			keys = append(keys, "free"+strconv.Itoa(i)+"@example.test")
+		}
+		c := &countQ{Q: q}
+		got, err := store.EmailsHeld(ctx, c, keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.n != 3 {
+			t.Fatalf("%d statements for 401 keys", c.n)
+		}
+		for _, k := range keys[:3] {
+			_, err := store.EmailOwner(ctx, q, k)
+			if want := err == nil; got[k] != want {
+				t.Fatalf("%s: held %v, EmailOwner %v", k, got[k], err)
+			}
+		}
+		if len(got) != 2 {
+			t.Fatal(got)
+		}
+	})
 }
 
 // One address is one account on the whole server: another tenant, another

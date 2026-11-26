@@ -277,6 +277,29 @@ func EmailOwner(ctx context.Context, q Q, email string) (*EmailRow, error) {
 	return scanEmailRow(q.QueryRow(ctx, `SELECT `+emailRowCols+` FROM user_emails e JOIN users u ON u.id = e.user_id WHERE e.email_key = ? AND e.email_key <> ''`, key))
 }
 
+// EmailsHeld says which of the keys (EmailKey form) an account holds, under
+// the rule of EmailOwner (verified or not, primary or not, a deleted account
+// too): one statement per 200 keys on the unique index of the key.
+func EmailsHeld(ctx context.Context, q Q, keys []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for i := 0; i < len(keys); i += 200 {
+		chunk := keys[i:min(i+200, len(keys))]
+		args := make([]any, len(chunk))
+		for j, k := range chunk {
+			args[j] = k
+		}
+		got, err := strCol(ctx, q, `SELECT e.email_key FROM user_emails e JOIN users u ON u.id = e.user_id WHERE e.email_key <> '' AND e.email_key IN (`+
+			strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range got {
+			out[k] = true
+		}
+	}
+	return out, nil
+}
+
 // UserByVerifiedEmail is the account that signs in or resets by an address:
 // the one that holds it verified (EmailRow.Holds; any of its addresses,
 // primary or not), and is not deleted. row is the address that matched, as
