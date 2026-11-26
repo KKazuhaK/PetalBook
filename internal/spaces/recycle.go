@@ -789,7 +789,7 @@ func (m *Manager) recoverItem(ctx context.Context, it *store.RecycleItem) error 
 func (m *Manager) FinishRecycle(ctx context.Context) error { return m.recoverRecycle(ctx, 0) }
 
 // sweepTombstonesDaily deletes the rows of purged people that nothing refers to
-// any more, the bulk jobs that ended more than BulkJobKeep ago and old notifications, once a day.
+// any more, the jobs that ended more than JobKeep ago and old notifications, once a day.
 func (m *Manager) sweepTombstonesDaily(ctx context.Context) {
 	m.recycle.mu.Lock()
 	due := m.opt.Now().Sub(m.recycle.swept) >= tombstoneEvery
@@ -805,10 +805,10 @@ func (m *Manager) sweepTombstonesDaily(ctx context.Context) {
 	} else if n > 0 {
 		m.log.Info("deleted the rows of purged people that nothing refers to", "count", n)
 	}
-	if n, err := store.PruneBulkJobs(ctx, m.opt.Store.Q(), m.opt.Now().Add(-store.BulkJobKeep)); err != nil && ctx.Err() == nil {
-		m.log.Warn("could not delete the bulk jobs that ended long ago", "error", err)
+	if n, err := store.PruneJobs(ctx, m.opt.Store.Q(), m.opt.Now().Add(-store.JobKeep)); err != nil && ctx.Err() == nil {
+		m.log.Warn("could not delete the jobs that ended long ago", "error", err)
 	} else if n > 0 {
-		m.log.Info("deleted the bulk jobs that ended long ago", "count", n)
+		m.log.Info("deleted the jobs that ended long ago", "count", n)
 	}
 	if n, err := store.TrimNotifications(ctx, m.opt.Store.Q(), m.opt.Now()); err != nil && ctx.Err() == nil {
 		m.log.Warn("could not trim the notifications", "error", err)

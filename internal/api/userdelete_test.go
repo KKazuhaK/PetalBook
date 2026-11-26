@@ -667,10 +667,10 @@ func TestAJobThatWasRunningWhenTheServerStoppedReadsInterrupted(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO bulk_jobs(id, tenant_id, made_by, action, total, done, failed, state, created, updated) VALUES ('JOB0000001', ?, 'x', 'delete_spaces', 5, 2, '[]', 'running', 1, 1)`, store.DefaultTenantID); err != nil {
+		if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO jobs(id, tenant_id, kind, made_by, params, total, done, failed, state, created, updated) VALUES ('JOB0000001', ?, 'bulk', 'x', '{"action": "delete_spaces"}', 5, 2, '[]', 'running', 1, 1)`, store.DefaultTenantID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO bulk_jobs(id, tenant_id, made_by, action, total, done, failed, state, created, updated) VALUES ('JOB0000002', ?, 'x', 'purge', 1, 1, '[]', 'done', 1, 1)`, store.DefaultTenantID); err != nil {
+		if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO jobs(id, tenant_id, kind, made_by, params, total, done, failed, state, created, updated) VALUES ('JOB0000002', ?, 'bulk', 'x', '{"action": "purge"}', 1, 1, '[]', 'done', 1, 1)`, store.DefaultTenantID); err != nil {
 			t.Fatal(err)
 		}
 		// A new server over the same database (a restart).
@@ -1079,7 +1079,7 @@ func TestClosingTheHandlerInterruptsABulkJobAndWaitsForIt(t *testing.T) {
 			}
 		}
 		closed.Store(true)
-		j, err := store.GetBulkJob(context.Background(), a.st.Q(), store.AllTenants(), id)
+		j, err := store.GetJob(context.Background(), a.st.Q(), store.AllTenants(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1092,7 +1092,7 @@ func TestClosingTheHandlerInterruptsABulkJobAndWaitsForIt(t *testing.T) {
 		// A job asked for after Close is refused, and its row does not stay queued.
 		c = f.admin.do("POST", "/api/admin/confirm", map[string]any{"action": "enable_users", "users": []string{f.viewerID}}).want(t, 200, "")
 		f.admin.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 503, "unavailable")
-		if n := a.countRows(t, `SELECT COUNT(*) FROM bulk_jobs WHERE state IN ('queued', 'running')`); n != 0 {
+		if n := a.countRows(t, `SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running')`); n != 0 {
 			t.Fatalf("%d jobs are left queued or running", n)
 		}
 		a.h.Close() // a second Close is harmless
@@ -1148,13 +1148,51 @@ func TestASiteAdministratorsJobIsQueuedByTheTenantItWorksOn(t *testing.T) {
 		c := f.root.do("POST", "/api/admin/confirm", map[string]any{"action": "disable_spaces", "spaces": []string{f.spaceB}}).want(t, 200, "")
 		j := f.root.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}).want(t, 202, "").body["job"].(map[string]any)
 		waitJob(t, f.root, j["id"].(string))
-		if n := f.countOf(`SELECT COUNT(*) FROM bulk_jobs WHERE id = '` + j["id"].(string) + `' AND tenant_id = '` + f.tenB + `'`); n != 1 {
+		if n := f.countOf(`SELECT COUNT(*) FROM jobs WHERE id = '` + j["id"].(string) + `' AND tenant_id = '` + f.tenB + `'`); n != 1 {
 			t.Fatal("the job is not queued by the tenant it works on")
 		}
 		for _, cl := range []*client{f.admA, f.admB} {
 			cl.do("GET", "/api/admin/jobs/"+j["id"].(string), nil).want(t, 404, "not_found")
 		}
 		f.root.do("POST", "/api/admin/spaces/"+f.spaceB+"/enable", nil).want(t, 204, "")
+	})
+}
+
+// A bulk job a site administrator starts in a tenant's scope runs in it: the row
+// is that tenant's (its administrator sees it), it keeps the capacity of the
+// request, and the audit rows of its items and its end record that capacity.
+func TestABulkJobStartedInATenantsScopeKeepsItsScopeAndCapacity(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		inB := []string{scopeHeader, "tenant:" + f.tenB}
+		extra := f.admB.do("POST", "/api/spaces", map[string]any{"name": "Extra"}).want(t, 201, "").body["id"].(string)
+		c := f.root.do("POST", "/api/admin/confirm", map[string]any{"action": "delete_spaces", "spaces": []string{f.spaceB, extra}}, inB...).want(t, 200, "")
+		j := f.root.do("POST", "/api/admin/bulk", map[string]any{"confirm": c.body["confirm"]}, inB...).want(t, 202, "").body["job"].(map[string]any)
+		id := j["id"].(string)
+		if done := waitJob(t, f.admB, id); done["done"] != float64(2) || done["state"] != "done" {
+			t.Fatalf("%v", done)
+		}
+		if n := f.countOf(`SELECT COUNT(*) FROM jobs WHERE id = '` + id + `' AND tenant_id = '` + f.tenB + `' AND capacity = 'site_admin' AND site_only = 0`); n != 1 {
+			t.Fatal("the job's row does not keep the tenant and the capacity it was started in")
+		}
+		a.auth.FlushAudit(context.Background())
+		for _, kind := range []string{"space_deleted", "bulk_finished"} {
+			n := 0
+			for _, r := range f.admB.audit(t, kind) {
+				d, _ := r["detail"].(map[string]any)
+				if d["bulk"] != id && d["job"] != id {
+					continue // the fixture's own rows
+				}
+				n++
+				if r["capacity"] != "site_admin" {
+					t.Fatalf("%s: %v", kind, r)
+				}
+			}
+			if n == 0 {
+				t.Fatalf("no %s rows of the job", kind)
+			}
+		}
 	})
 }
 
