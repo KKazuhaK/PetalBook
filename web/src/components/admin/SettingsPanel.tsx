@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { Save } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { useSession } from '@/api/hooks'
@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { tt } from '@/i18n/tenants'
@@ -479,17 +480,103 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   )
 }
 
+// The order the groups come in: what an administrator reaches for first. Any other prefix follows, by name.
+const GROUP_ORDER = [
+  'features',
+  'quota',
+  'rate',
+  'signin',
+  'sessions',
+  'captcha',
+  'storage',
+  'cache',
+  'files',
+  'registration',
+  'legal',
+  'daily',
+  'mail',
+  'recycle',
+  'exports',
+  'users',
+  'offline',
+]
+const groupOf = (key: string) => key.split('.')[0]
+
+// Settings gathered by the first word of their key, in the order above: a strip of the groups to jump to (it scrolls
+// sideways without a bar, its edges fading where there is more), then each group with its rows.
+function Grouped<T extends { key: string }>({
+  items,
+  idPrefix,
+  render,
+}: {
+  items: T[]
+  idPrefix: string
+  render: (item: T) => ReactNode
+}) {
+  const strip = useRef<HTMLDivElement>(null)
+  useScrollFade(strip)
+  const groups = new Map<string, T[]>()
+  for (const it of items) groups.set(groupOf(it.key), [...(groups.get(groupOf(it.key)) ?? []), it])
+  const order = [...groups.keys()].sort((a, b) => {
+    const ia = GROUP_ORDER.indexOf(a)
+    const ib = GROUP_ORDER.indexOf(b)
+    return (ia < 0 ? GROUP_ORDER.length : ia) - (ib < 0 ? GROUP_ORDER.length : ib) || a.localeCompare(b)
+  })
+  const label = (g: string) => ts.groups[g] ?? g
+  const jump = (g: string) =>
+    document.getElementById(`${idPrefix}-${g}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  return (
+    <div className="grid min-w-0 gap-6">
+      <nav aria-label={ts.groupsLabel} data-slot="setting-groups">
+        <div ref={strip} className={`${scrollFadeClass} -mx-1 flex gap-2 px-1 py-1`}>
+          {order.map((g) => (
+            <Button
+              key={g}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-10 shrink-0 lg:h-8"
+              data-group={g}
+              onClick={() => jump(g)}
+            >
+              {label(g)}
+            </Button>
+          ))}
+        </div>
+      </nav>
+      {order.map((g) => (
+        <section
+          key={g}
+          id={`${idPrefix}-${g}`}
+          aria-labelledby={`${idPrefix}-${g}-h`}
+          data-slot="setting-group"
+          data-group={g}
+          className="grid min-w-0 scroll-mt-4 gap-2"
+        >
+          <div className="flex items-baseline gap-2">
+            <h3 id={`${idPrefix}-${g}-h`} className="text-sm font-semibold">
+              {label(g)}
+            </h3>
+            <span className="text-xs text-muted-foreground">{ts.groupCount(groups.get(g)!.length)}</span>
+          </div>
+          <ul className="divide-y overflow-hidden rounded-lg border">{groups.get(g)!.map(render)}</ul>
+        </section>
+      ))}
+    </div>
+  )
+}
+
 function SiteLayer() {
   const q = useSiteSettings()
   if (q.isPending) return <PageFallback />
   if (q.isError) return <ErrorState message={ts.loadFailed} onRetry={() => void q.refetch()} />
   return (
     <SettingsSection title={ts.siteLayer} id="settings-site-heading" description={ts.siteHelp}>
-      <ul className="divide-y overflow-hidden rounded-lg border">
-        {q.data.settings.map((s) => (
-          <SiteRow key={`${s.key}:${JSON.stringify(s.site)}`} s={s} />
-        ))}
-      </ul>
+      <Grouped
+        items={q.data.settings}
+        idPrefix="site"
+        render={(s) => <SiteRow key={`${s.key}:${JSON.stringify(s.site)}`} s={s} />}
+      />
     </SettingsSection>
   )
 }
@@ -500,19 +587,19 @@ function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; i
   if (q.isError) return <ErrorState message={ts.loadFailed} onRetry={() => void q.refetch()} />
   return (
     <SettingsSection title={ts.tenantLayer(name)} id="settings-tenant-heading" description={ts.tenantHelp}>
-      <ul className="divide-y overflow-hidden rounded-lg border">
-        {/* A site-only setting the site may set for one tenant is in the list too; its own editor comes later. */}
-        {q.data.settings
-          .filter((s) => s.layers.includes('tenant'))
-          .map((s) => (
-            <TenantRow
-              key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`}
-              tenant={tenant}
-              s={s}
-              isSite={isSite}
-            />
-          ))}
-      </ul>
+      {/* A site-only setting the site may set for one tenant is in the list too; its own editor comes later. */}
+      <Grouped
+        items={q.data.settings.filter((s) => s.layers.includes('tenant'))}
+        idPrefix="tenant"
+        render={(s) => (
+          <TenantRow
+            key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`}
+            tenant={tenant}
+            s={s}
+            isSite={isSite}
+          />
+        )}
+      />
     </SettingsSection>
   )
 }

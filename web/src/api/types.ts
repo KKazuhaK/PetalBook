@@ -1926,6 +1926,8 @@ export interface Tenant extends TenantRef {
   disabled: boolean
   registration: { open: boolean }
   quota: Record<TenantQuotaKey, number | null>
+  // The plan the tenant has, null for none.
+  plan: PlanRef | null
   usage: TenantUsage
   created: string
   updated: string
@@ -1942,6 +1944,38 @@ export interface Tenancy {
   tenants: number
 }
 export type CreatedTenant = Tenant & { invite?: CreatedInvite }
+
+// --- plans (docs/api.md, "Plans") ---
+
+export interface PlanRef {
+  slug: string
+  name: string
+}
+// One rule of a plan: a value, a lock or a restriction, with no dates. A limit the tenant also sets must cap
+// (restrict with a max, or lock) when it has a value.
+export interface PlanRule {
+  value?: unknown
+  lower?: SettingLower | null
+}
+export interface Plan extends PlanRef {
+  description: string
+  rules: Record<string, PlanRule>
+  tenants: number
+}
+export interface PlanWrite {
+  name?: string
+  description?: string
+  // A key with null leaves the plan.
+  rules?: Record<string, PlanRule | null>
+}
+// What a change of plan cleared: the manual rules the tenant had.
+export interface ClearedRule {
+  key: string
+  value: unknown
+  lower: SettingLower | null
+  from?: string
+  until?: string
+}
 
 // --- quotas and usage (3.3) ---
 

@@ -38,10 +38,12 @@ type tenantResp struct {
 	Registration struct {
 		Open bool `json:"open"`
 	} `json:"registration"`
-	Quota   map[string]*int64 `json:"quota"`
-	Usage   tenantUsageResp   `json:"usage"`
-	Created string            `json:"created"`
-	Updated string            `json:"updated"`
+	Quota map[string]*int64 `json:"quota"`
+	// Plan is the plan the tenant has, null for none.
+	Plan    *planRefResp    `json:"plan"`
+	Usage   tenantUsageResp `json:"usage"`
+	Created string          `json:"created"`
+	Updated string          `json:"updated"`
 }
 
 // quotaOf is the tenant's totals in force, from its quota.* settings: read only
@@ -53,9 +55,12 @@ func (s *server) quotaOf(ctx context.Context, tenant string) map[string]*int64 {
 
 // toTenant is the tenant as the API shows it, with the usage row u (one
 // lookup of its own, or one query for a page: see usageOf).
-func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage) (tenantResp, error) {
-	r := tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(ctx, t.ID),
+func (s *server) toTenant(ctx context.Context, t store.Tenant, u store.Usage) (r tenantResp, err error) {
+	r = tenantResp{ID: t.ID, Slug: t.Slug, Name: t.Name, Default: t.IsDefault(), Disabled: t.Disabled, Quota: s.quotaOf(ctx, t.ID),
 		Usage: toTenantUsage(u), Created: rfc3339(t.Created), Updated: rfc3339(t.Updated)}
+	if r.Plan, err = s.planRef(ctx, t.ID); err != nil {
+		return r, err
+	}
 	e, err := s.settings.Get(ctx, t.ID, "features.registration")
 	if err != nil {
 		return r, err

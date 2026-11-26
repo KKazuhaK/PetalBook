@@ -1,13 +1,27 @@
 import { useState, type FormEvent } from 'react'
-import { CircleCheck, Copy, Plus, Save, Trash2 } from 'lucide-react'
+import { CircleCheck, Copy, Package, Plus, Save, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/client'
-import { useCreateTenant, useDeleteTenant, useSetTenancy, useTenancy, useTenants, useUpdateTenant } from '@/api/admin'
+import {
+  useCreateTenant,
+  useDeleteTenant,
+  usePlans,
+  usePutTenantPlan,
+  useSetTenancy,
+  useTenancy,
+  useTenants,
+  useTenantSettings,
+  useUpdateTenant,
+} from '@/api/admin'
 import type { CreatedTenant, Tenant } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
-import { TenantRulesBlock } from './TenantRules'
+import { TenantRulesBlock, lowerText, showValue } from './TenantRules'
+import { nameOf } from './RuleDialog'
+import { NativeSelect } from '@/components/ui/native-select'
+import { Label } from '@/components/ui/label'
+import { absoluteTime } from '@/lib/time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -308,6 +322,7 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
         </div>
       </form>
       <TenantUsageBlock tenant={tenant} />
+      <TenantPlanBlock tenant={tenant} />
       {!tenant.default && (
         <div className="flex flex-wrap items-start gap-3">
           <div className="grid max-w-prose gap-1">
@@ -377,5 +392,129 @@ function TenantUsageBlock({ tenant }: { tenant: Tenant }) {
       </div>
       <TenantRulesBlock tenant={tenant} />
     </>
+  )
+}
+
+// The tenant's plan, and the way to change it. A change of plan clears every manual rule of the tenant, so the dialog that
+// confirms it lists them, and what the server cleared is listed after.
+function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
+  const tp = tt.plans.tenantPlan
+  const plans = usePlans()
+  const sheet = useTenantSettings(tenant.id)
+  const put = usePutTenantPlan()
+  const current = tenant.plan?.slug ?? ''
+  const [picked, setPicked] = useState(current)
+  const [asking, setAsking] = useState(false)
+  const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
+  // The manual rules the change will clear, as the tenant has them now.
+  const manual = (sheet.data?.settings ?? [])
+    .map((s) => ({ s, rule: s.tenant?.rules?.find((r) => r.source === 'manual') }))
+    .filter((x) => !!x.rule)
+  const names = new Map((plans.data ?? []).map((p) => [p.slug, p.name]))
+  const target = picked ? (names.get(picked) ?? picked) : tp.none
+  const change = () => {
+    put.mutate(
+      { tenant: tenant.id, plan: picked || null },
+      {
+        onSuccess: (r) => {
+          setAsking(false)
+          const head = r.plan ? tp.changed(r.plan.name) : tp.changedNone
+          setMessage({
+            tone: 'info',
+            text: r.cleared.length ? `${head}. ${tp.cleared(r.cleared.map((c) => nameOf(c.key)).join('、'))}` : head,
+          })
+        },
+        onError: () => {
+          setAsking(false)
+          setMessage({ tone: 'error', text: tp.failed })
+        },
+      },
+    )
+  }
+  return (
+    <div className="grid min-w-0 gap-3 border-t pt-3" data-slot="tenant-plan">
+      <div className="grid gap-0.5">
+        <h4 className="text-sm font-medium">{tp.label}</h4>
+        <p className="text-xs text-muted-foreground">{tt.plans.help}</p>
+      </div>
+      <FormMessage tone={message?.tone}>{message?.text}</FormMessage>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="grid min-w-0 flex-1 basis-48 gap-1.5 sm:max-w-xs">
+          <Label htmlFor={`plan-${tenant.id}`}>{tp.label}</Label>
+          <NativeSelect
+            id={`plan-${tenant.id}`}
+            className="h-10 w-full lg:h-8"
+            value={picked}
+            disabled={plans.isPending}
+            onChange={(e) => setPicked(e.target.value)}
+          >
+            <option value="">{tp.none}</option>
+            {(plans.data ?? []).map((p) => (
+              <option key={p.slug} value={p.slug}>
+                {p.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-10 lg:h-8"
+          disabled={picked === current || put.isPending}
+          onClick={() => setAsking(true)}
+        >
+          <Package aria-hidden="true" />
+          {tp.change}
+        </Button>
+      </div>
+      {asking && (
+        <Dialog open onOpenChange={(o) => !o && setAsking(false)}>
+          <DialogContent sheet className="sm:max-w-md" data-slot="plan-change">
+            <DialogHeader>
+              <DialogTitle className="pr-8">{tp.changeTitle(tenant.name)}</DialogTitle>
+              <DialogDescription>
+                {tp.label}: {tenant.plan?.name ?? tp.none} → {target}
+              </DialogDescription>
+            </DialogHeader>
+            <p className="text-sm">{tp.changeHelp}</p>
+            {manual.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-slot="nothing-to-clear">
+                {tp.nothingToClear}
+              </p>
+            ) : (
+              <div className="grid gap-1.5" data-slot="to-clear">
+                <p className="text-sm font-medium">{tp.willClear}</p>
+                <ul className="max-h-56 divide-y overflow-y-auto rounded-lg border text-sm">
+                  {manual.map(({ s, rule }) => (
+                    <li key={s.key} className="grid gap-0.5 px-3 py-2" data-key={s.key}>
+                      <span className="[overflow-wrap:anywhere]">{nameOf(s.key)}</span>
+                      <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                        {[
+                          rule!.value === null || rule!.value === undefined ? '' : showValue(s, rule!.value),
+                          lowerText(s, rule!.lower),
+                          rule!.from ? `${absoluteTime(rule!.from)} →` : '',
+                          rule!.until ? `→ ${absoluteTime(rule!.until)}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAsking(false)}>
+                {tl.cancel}
+              </Button>
+              <Button type="button" disabled={put.isPending} onClick={change}>
+                {put.isPending ? tp.working : tp.confirm}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
   )
 }
