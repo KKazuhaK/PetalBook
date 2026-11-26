@@ -83,9 +83,9 @@ jobs:
                 Makefile | .github/*) web=true ;;
               esac
               # The contract tests (make contract) run in the postgres job, against the real
-              # server, so a change to the web client or its types needs that job too.
+              # server, so a change to the web client, its types or its test runner needs that job too.
               case "$f" in
-                web/src/api/*) contract=true ;;
+                web/src/api/* | web/vite.config.ts | web/package.json | web/package-lock.json) contract=true ;;
               esac
               # internal/links/links_test.go reads this fixture, so it counts for both.
               case "$f" in
@@ -99,9 +99,11 @@ jobs:
               contract=true
             fi
           fi
-          echo "go=$go" >> "$GITHUB_OUTPUT"
-          echo "web=$web" >> "$GITHUB_OUTPUT"
-          echo "contract=$contract" >> "$GITHUB_OUTPUT"
+          {
+            echo "go=$go"
+            echo "web=$web"
+            echo "contract=$contract"
+          } >> "$GITHUB_OUTPUT"
           echo "go=$go web=$web contract=$contract"
 
   # Everything that only reads the code: formatting, go vet, go mod tidy, the web
