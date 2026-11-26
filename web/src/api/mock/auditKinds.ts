@@ -132,7 +132,10 @@ export const AUDIT_CATEGORIES: MockAuditCategory[] = [
     core: false,
     setting: 'audit.reads',
     def: false,
-    kinds: [{ name: 'page_read', site: false }, { name: 'file_read', site: false }],
+    kinds: [
+      { name: 'page_read', site: false },
+      { name: 'file_read', site: false },
+    ],
   },
   {
     id: 'downloads',
