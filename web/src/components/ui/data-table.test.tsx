@@ -768,4 +768,26 @@ describe('row actions in a narrow box', () => {
     // The column of the actions shrinks with them.
     expect(parseFloat(document.querySelector<HTMLElement>('colgroup > col:last-child')!.style.width)).toBeLessThan(120)
   })
+
+  it('lets the first column go below its least width in a narrow box where it would not fit, rather than scroll', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(250)
+    function Wide() {
+      const prefs = useTablePrefs('wide')
+      return (
+        <DataTable
+          prefs={prefs}
+          columns={[{ id: 'name', header: 'Name', required: true, min: 200, cell: (r: Row) => r.name }]}
+          rows={ROWS}
+          rowId={(r) => r.id}
+          rowLabel={(r) => r.name}
+          empty="Nobody."
+          actions={(r) => <RowAction label="View" ariaLabel={`View ${r.name}`} onClick={() => {}} />}
+        />
+      )
+    }
+    m = await mount(<Wide />)
+    // 250 less the 96 of the actions leaves 154: the column takes its narrow least width, 140, and nothing scrolls.
+    expect(document.querySelector('table')!.style.minWidth).toBe('236px')
+    expect(parseFloat(document.querySelector('col')!.style.width)).toBe(154)
+  })
 })

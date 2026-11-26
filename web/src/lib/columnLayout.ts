@@ -207,3 +207,16 @@ export function fitColumn(
   for (const k of others) out[k] = (have[k] / rest) * (1 - px / room)
   return clampShares(out, mins, room)
 }
+
+// The least width of each column: what it declares, unless the box is narrow and those together do not fit the room,
+// when each may go down to its narrow least width (never above its declared one).
+export function leastWidths(
+  cols: readonly { id: string; min: number; narrowMin: number }[],
+  room: number,
+  narrow: boolean,
+): Record<string, number> {
+  const fits = cols.reduce((n, c) => n + c.min, 0) <= room
+  const out: Record<string, number> = {}
+  for (const c of cols) out[c.id] = narrow && !fits ? Math.min(c.min, c.narrowMin) : c.min
+  return out
+}

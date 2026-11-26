@@ -30,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { tc } from '@/i18n/console'
 import {
   autoWidths,
+  leastWidths,
   clampShares,
   dropColumn,
   fitColumn,
@@ -61,6 +62,9 @@ export interface Column<T> {
   cell: (row: T) => ReactNode
   // The least width, in pixels (default 96): the table never squeezes the column further, it scrolls.
   min?: number
+  // The least width in a narrow box (under 640px) whose columns do not fit at their least widths (default 140, or
+  // `min` if that is less): the column gives way to it before the table scrolls.
+  narrowMin?: number
   // The share of the room left over once every column has its content's width, against the others (default 1).
   weight?: number
   // The most width the column takes to fit its content, in pixels (default 320): a longer text is cut there, ends in
@@ -264,14 +268,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const narrow = boxW > 0 && boxW < NARROW_BOX
   const lastW = actions ? (narrow ? NARROW_ACTIONS_W : ACTIONS_W + SETTINGS_W) : SETTINGS_W
   const fixed = (selection ? SELECT_W : 0) + lastW
-  const minOf = (c: Column<T>) => c.min ?? 96
+  const declaredMin = (c: Column<T>) => c.min ?? 96
 
   // What still fits: the least important column goes first (the last of those, when equal) until the rest fit. A
   // width of 0 is a box that was never measured (a test, a hidden tab): nothing is taken away.
   const shown = (() => {
     const list = [...chosen]
     if (boxW <= 0) return list
-    const total = () => list.reduce((n, c) => n + minOf(c), fixed)
+    const total = () => list.reduce((n, c) => n + declaredMin(c), fixed)
     while (total() > boxW) {
       let worst = -1
       list.forEach((c, i) => {
@@ -287,6 +291,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   // The widths, as shares: the saved ones while resizing are a draft, saved when the pointer is let go.
   const [draft, setDraft] = useState<Record<string, number> | null>(null)
+  // The least widths as they are in this box: the declared ones, or in a narrow box where those do not fit, the narrow ones.
+  const least = leastWidths(
+    shown.map((c) => ({ id: c.id, min: declaredMin(c), narrowMin: c.narrowMin ?? Math.min(declaredMin(c), 140) })),
+    Math.max(0, boxW - fixed),
+    narrow,
+  )
+  const minOf = (c: Column<T>) => least[c.id] ?? declaredMin(c)
   const tableMin = shown.reduce((n, c) => n + minOf(c), fixed)
   const table = useRef<HTMLTableElement>(null)
 

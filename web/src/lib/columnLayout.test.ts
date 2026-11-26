@@ -5,6 +5,7 @@ import {
   dropColumn,
   dropGap,
   fitColumn,
+  leastWidths,
   type FitColumn,
   moveColumn,
   pixelWidths,
@@ -155,5 +156,19 @@ describe('auto fit', () => {
     const tight = fitColumn({ a: 0.5, b: 0.25, c: 0.25 }, 'a', 900, 1000, { a: 100, b: 100, c: 100 })
     expect(tight.a).toBeCloseTo(0.8)
     expect(tight.b).toBeCloseTo(0.1)
+  })
+})
+
+describe('least widths in a narrow box', () => {
+  const cols = [
+    { id: 'a', min: 180, narrowMin: 140 },
+    { id: 'b', min: 100, narrowMin: 100 },
+  ]
+  it('keeps the declared least widths while they fit, narrow or not', () => {
+    expect(leastWidths(cols, 300, true)).toEqual({ a: 180, b: 100 })
+    expect(leastWidths(cols, 100, false)).toEqual({ a: 180, b: 100 })
+  })
+  it('takes the narrow ones only in a narrow box where the declared ones do not fit', () => {
+    expect(leastWidths(cols, 250, true)).toEqual({ a: 140, b: 100 })
   })
 })
