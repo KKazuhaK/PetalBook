@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { misfits, routeOf, type Shape } from '../contractShapes'
 import { match } from './kit'
+import { ADMIN_UNRECORDED, adminProbes } from './probesAdmin'
 import { createFixtureServer, type FixtureServer } from './server'
 
 const recorded = JSON.parse(readFileSync('src/api/fixtures/recorded/shapes.json', 'utf8')) as Record<string, Shape>
@@ -71,6 +72,7 @@ function probes(fx: FixtureServer): Call[] {
   const rev = () => fx.call('GET', P).body.rev as string
   const meta = () => fx.call('GET', P).body.meta as Record<string, unknown>
   return [
+    ...adminProbes(fx),
     ['GET', '/api/session'],
     ['GET', '/api/meta'],
     ['GET', '/api/settings'],
@@ -196,6 +198,7 @@ const UNRECORDED: Record<string, string> = {
   'GET /api/oauth/consent 200': 'needs an authorization client',
   'POST /api/oauth/consent 200': 'needs an authorization client',
   'POST /api/setup 200': 'needs a server with no account',
+  ...ADMIN_UNRECORDED,
 }
 
 // A probe is meant to succeed. One that answers 404 is a route that is missing or a probe that is wrong, unless it

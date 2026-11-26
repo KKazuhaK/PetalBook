@@ -16,6 +16,7 @@ import type {
   SpaceInfo,
   TemplateDefaults,
 } from '../../types.ts'
+import { createAdminData, type AdminData } from './admin.ts'
 import { DEMO_EMPTY_FOLDERS, DEMO_NAME, DEMO_PAGES, DEMO_TAG_COLORS } from './demo.ts'
 import { DEMO_SINGLE_USER, DEMO_ADMIN, SETUP_TOKEN, type UserRec } from './people.ts'
 
@@ -126,6 +127,8 @@ export const DEFAULT_FEATURES: Record<string, boolean> = {
 export interface FixtureData {
   auth: AuthData
   features: Record<string, boolean>
+  // What the administration console reads (data/admin.ts).
+  admin: AdminData
   spaces: SpaceData[]
   // Counters for ids and versions, so a run is repeatable.
   counter: number
@@ -251,6 +254,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       consents: {},
     },
     features: { ...DEFAULT_FEATURES },
+    admin: createAdminData(now, user),
     spaces: [space],
     counter: 0,
     sent: { mail: [] },

@@ -16,6 +16,7 @@ import type { ErrorCode } from '../types.ts'
 import { createData, type FixtureData, type FixtureOptions } from './data/model.ts'
 import { isReply, match, Refusal, type Route } from './kit.ts'
 import type { Reply } from './kit.ts'
+import { adminRoutes } from './routes/admin.ts'
 import { authRoutes } from './routes/auth.ts'
 import { draftRoutes } from './routes/drafts.ts'
 import { fileRoutes } from './routes/files.ts'
@@ -66,7 +67,15 @@ export function createFixtureServer(options: FixtureOptions = {}): FixtureServer
   const data = createData({ ...options, now })
   const requests: Sent[] = []
   const overrides: Override[] = []
-  const routes: Route[] = [...authRoutes, ...fileRoutes, ...draftRoutes, ...viewRoutes, ...syncRoutes, ...quietRoutes]
+  const routes: Route[] = [
+    ...authRoutes,
+    ...fileRoutes,
+    ...draftRoutes,
+    ...viewRoutes,
+    ...syncRoutes,
+    ...quietRoutes,
+    ...adminRoutes,
+  ]
 
   function handle(
     method: string,

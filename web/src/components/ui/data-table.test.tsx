@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { DataTable, RowAction, type Column, type DataTableSort } from '@/components/ui/data-table'
 import { readPrefs, shares, sanitize, useTablePrefs, orderIds, PAGE_SIZES } from '@/lib/tablePrefs'
 import { tc } from '@/i18n/console'
-import { click, installDomShims, mount, press, settle, type, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, press, settle, type, type FxMounted } from '@/testing/harness'
 
 // The table that every long list of the administration is made of: its columns, widths, density and page size are
 // the reader's, kept in this browser only; what does not fit leaves by priority, and the rest scrolls in its own box.
@@ -13,7 +13,7 @@ import { click, installDomShims, mount, press, settle, type, type Mounted } from
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -90,7 +90,7 @@ const saved = () => JSON.parse(localStorage.getItem('pb.table.probe') ?? 'null')
 
 describe('the table', () => {
   it('shows the columns and a row each, the actions at the right end, and a ghost icon for the settings', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
     expect(document.querySelectorAll('tbody tr[data-row]')).toHaveLength(2)
     expect([...document.querySelectorAll('tbody tr')[0].querySelectorAll('button')].map((b) => b.textContent)).toEqual([
@@ -105,15 +105,15 @@ describe('the table', () => {
   })
 
   it('says so when there is nothing, and what went wrong with a way to try again', async () => {
-    m = await mount(<Probe rows={[]} />)
+    m = await mount(<Probe rows={[]} />, { fixtures: true })
     expect(document.body.textContent).toContain('Nobody.')
     await m.unmount()
-    m = await mount(<Probe rows={[]} error="Could not load." />)
+    m = await mount(<Probe rows={[]} error="Could not load." />, { fixtures: true })
     expect(document.body.textContent).toContain('Could not load.')
   })
 
   it('hides and shows a column from the settings, and keeps the choice in this browser only', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await open()
     const box = (name: string) =>
       [...document.querySelectorAll<HTMLLabelElement>('[data-slot="popover-content"] label')]
@@ -130,18 +130,18 @@ describe('the table', () => {
   })
 
   it('reorders the columns, and a saved order is read again when the page opens', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await open()
     await click(document.querySelector(`button[aria-label="${tc.table.moveUp('Seen')}"]`))
     expect(headers()).toEqual(['name', 'role', 'seen', 'mail'])
     expect(saved().order).toEqual(['name', 'role', 'seen', 'mail'])
     await m.unmount()
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     expect(headers()).toEqual(['name', 'role', 'seen', 'mail'])
   })
 
   it('has a density and a page size, and goes back to how it was on reset', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await open()
     await click(
       [...document.querySelectorAll('[data-slot="popover-content"] button')].find(
@@ -173,7 +173,7 @@ describe('the table', () => {
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
       throw new Error('blocked')
     })
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
     await open()
     await click(
@@ -186,7 +186,7 @@ describe('the table', () => {
   })
 
   it('keeps a width as a share of the table, never as pixels, and never below the least width', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const handle = document.querySelector<HTMLElement>('[role="separator"]')!
     await press(handle, 'ArrowRight')
     await press(handle, 'ArrowRight')
@@ -216,7 +216,7 @@ describe('the table', () => {
       if (type.startsWith('pointer')) removed.push(type)
       remove(type, listener, options)
     })
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const handle = document.querySelector<HTMLElement>('[role="separator"]')!
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 100 }))
@@ -229,7 +229,7 @@ describe('the table', () => {
 
   it('takes the least important columns away first when the box is narrow, and scrolls inside its own box', async () => {
     const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(660)
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     // 660 less the 148 + 48 of the actions and the settings leaves 464: the mail (160) is the one that does not fit.
     expect(headers()).toEqual(['name', 'role', 'seen'])
     expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(1))
@@ -243,7 +243,7 @@ describe('the table', () => {
   it('keeps a column the person switched on and scrolls, squeezes the default ones, and brings squeezing back on reset', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(660)
     localStorage.setItem('pb.table.probe', JSON.stringify({ hidden: [], shown: ['mail'], custom: true }))
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     // The mail (160) was chosen: it stays, and the seen (priority 3) leaves instead; the box scrolls.
     expect(headers()).toEqual(['name', 'role', 'mail'])
     expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(1))
@@ -261,7 +261,7 @@ describe('the table', () => {
 
   it('records a column switched on in the settings as chosen, and one switched off as not', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(2000)
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await open()
     const box = (label: string) =>
       [...document.querySelectorAll<HTMLInputElement>('[data-slot="popover-content"] input[type="checkbox"]')].find(
@@ -275,7 +275,7 @@ describe('the table', () => {
 
   it('sorts by a header that can be sorted by, and says which way', async () => {
     const seen: DataTableSort[] = []
-    m = await mount(<Probe onSort={(s) => seen.push(s)} />)
+    m = await mount(<Probe onSort={(s) => seen.push(s)} />, { fixtures: true })
     const th = (id: string) => document.querySelector(`thead th[data-column="${id}"]`)!
     expect(th('name').getAttribute('aria-sort')).toBe('ascending')
     expect(th('role').getAttribute('aria-sort')).toBeNull()
@@ -302,7 +302,7 @@ describe('the table', () => {
         />
       )
     }
-    m = await mount(<Picking />)
+    m = await mount(<Picking />, { fixtures: true })
     expect(document.querySelector('[data-slot="bulk"]')).toBeNull()
     await click(document.querySelector(`input[aria-label="${tc.table.selectRow('Bo')}"]`))
     expect([...picks.at(-1)!]).toEqual(['b'])
@@ -315,7 +315,7 @@ describe('the table', () => {
 
   it('moves between pages with previous and next, and the buttons are off at the ends', async () => {
     const moves: string[] = []
-    m = await mount(<Probe hasNext onPage={(d) => moves.push(d)} />)
+    m = await mount(<Probe hasNext onPage={(d) => moves.push(d)} />, { fixtures: true })
     const button = (label: string) =>
       [...document.querySelectorAll('[data-slot="table-footer"] button')].find(
         (b) => b.textContent === label,
@@ -406,7 +406,7 @@ const placeHeaders = () => {
 describe('moving a column by dragging its header', () => {
   it('drags with a mouse: a ghost and a drop indicator while it goes, the new order kept when it lands', async () => {
     const onSort = vi.fn()
-    m = await mount(<Probe onSort={onSort} />)
+    m = await mount(<Probe onSort={onSort} />, { fixtures: true })
     placeHeaders()
     // Seen (the fourth, at 300 to 400) is taken by its middle and dropped before Role (100 to 200).
     await pointer('pointerdown', th('seen'), 350)
@@ -432,13 +432,13 @@ describe('moving a column by dragging its header', () => {
     // The click that lets go of the header is not a sort.
     expect(onSort).not.toHaveBeenCalled()
     await m.unmount()
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     expect(headers()).toEqual(['name', 'seen', 'role', 'mail'])
   })
 
   it('leaves a click alone: a press with no travel still sorts, and a drop where it was changes nothing', async () => {
     const onSort = vi.fn()
-    m = await mount(<Probe onSort={onSort} />)
+    m = await mount(<Probe onSort={onSort} />, { fixtures: true })
     placeHeaders()
     await pointer('pointerdown', th('seen'), 350)
     await pointer('pointermove', window, 352)
@@ -453,7 +453,7 @@ describe('moving a column by dragging its header', () => {
   })
 
   it('stops at Escape, and a cancelled touch changes nothing', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     placeHeaders()
     await pointer('pointerdown', th('seen'), 350)
     await pointer('pointermove', window, 100)
@@ -465,7 +465,7 @@ describe('moving a column by dragging its header', () => {
   })
 
   it('takes a finger only after a press, so a swipe still scrolls and the page is held still once it has hold', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     placeHeaders()
     vi.useFakeTimers()
     try {
@@ -495,7 +495,7 @@ describe('moving a column by dragging its header', () => {
   })
 
   it('moves with Alt and an arrow on a header, keeps focus on it, and says where it went', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await press(th('role'), 'ArrowLeft', { altKey: true })
     expect(headers()).toEqual(['role', 'name', 'mail', 'seen'])
     expect(saved().order).toEqual(['role', 'name', 'mail', 'seen'])
@@ -515,7 +515,7 @@ describe('moving a column by dragging its header', () => {
   })
 
   it('has no tick column or actions column to move: they are not headers of the order', async () => {
-    m = await mount(<Probe selected={new Set()} onSelect={() => {}} />)
+    m = await mount(<Probe selected={new Set()} onSelect={() => {}} />, { fixtures: true })
     placeHeaders()
     await press(th('name'), 'ArrowLeft', { altKey: true })
     expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
@@ -529,7 +529,7 @@ describe('moving a column by dragging its header', () => {
   })
 
   it('puts the columns back from the settings without touching the density', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     await press(th('seen'), 'ArrowLeft', { altKey: true })
     await open()
     await click(
@@ -550,7 +550,7 @@ describe('moving a column by dragging its header', () => {
 describe('resizing a column', () => {
   it('follows the pointer in pixels of the room the columns share, and every column keeps its least width', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const widthOf = (i: number) => parseFloat(document.querySelectorAll('col')[i].style.width)
     // 1000 less the actions (148) and the settings (48): 804 to share, as pixels the browser can lay out.
     expect(document.querySelectorAll('col')[0].style.width).toMatch(/px$/)
@@ -583,7 +583,7 @@ describe('resizing a column', () => {
       'pb.table.probe',
       JSON.stringify({ widths: { name: 0.6, role: 0.02, mail: 0.2, seen: 0.18 }, custom: true }),
     )
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const w = [...document.querySelectorAll('col')].slice(0, 4).map((c) => parseFloat(c.style.width))
     expect(w[1]).toBeGreaterThanOrEqual(100)
     expect(w[0]).toBeGreaterThanOrEqual(120)
@@ -592,7 +592,7 @@ describe('resizing a column', () => {
   })
 
   it('goes back to the usual proportion of the two columns on a double click', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const edge = document.querySelector<HTMLElement>('[role="separator"]')!
     await press(edge, 'ArrowRight')
     await press(edge, 'ArrowRight')
@@ -609,7 +609,7 @@ describe('resizing a column', () => {
   })
 
   it('takes a double press on an edge for a double click, and does not save a press with no travel', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const edge = document.querySelector<HTMLElement>('[role="separator"]')!
     await pointer('pointerdown', edge, 100)
     await pointer('pointerup', window, 100)
@@ -617,7 +617,7 @@ describe('resizing a column', () => {
   })
 
   it('has a hit area a finger can use, takes no scroll of the page, and shows its grip only on hover or focus', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const edge = document.querySelector<HTMLElement>('[role="separator"]')!
     expect(edge.className).toContain('touch-none')
     expect(edge.className).toContain('w-4')
@@ -633,7 +633,7 @@ describe('resizing a column', () => {
 describe('no vertical lines', () => {
   const VERTICAL = /(^|:)(border-(x|l|r|s|e)(-|$)|divide-x|shadow-\[-?\d+px_0|ring-x|after:w-px|before:w-px)/
   it('draws no line between columns, in the header, the rows, the columns or the sticky one', async () => {
-    m = await mount(<Probe selected={new Set()} onSelect={() => {}} />)
+    m = await mount(<Probe selected={new Set()} onSelect={() => {}} />, { fixtures: true })
     const cells = document.querySelectorAll('table, table > *, thead th, tbody td, tbody th, col, tr')
     expect(cells.length).toBeGreaterThan(10)
     for (const el of cells) {
@@ -654,7 +654,7 @@ describe('no vertical lines', () => {
   })
 
   it('shades the sticky column softly instead of cutting it with a line, only while there is more to scroll', async () => {
-    m = await mount(<Probe />)
+    m = await mount(<Probe />, { fixtures: true })
     const cell = document.querySelector<HTMLElement>('tbody td:last-child')!
     expect(cell.className).toContain('before:bg-linear-to-l')
     expect(cell.className).toContain('before:opacity-(--sticky-shade,0)')
@@ -688,7 +688,7 @@ describe('fitting the columns to their content', () => {
 
   it('starts each column at its content, cuts a long one at its cap, and shares the rest', async () => {
     measure()
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     // Content with the padding: name and seen below their least (120, 100), role 224, mail 624 capped at 320.
     // 804 of room less 764 leaves 40, ten to each column.
     expect(widths()).toEqual([130, 234, 330, 110])
@@ -715,7 +715,7 @@ describe('fitting the columns to their content', () => {
         </>
       )
     }
-    m = await mount(<Again />)
+    m = await mount(<Again />, { fixtures: true })
     const first = reads
     expect(first).toBeGreaterThan(0)
     await click(document.querySelector('[data-testid="again"]'))
@@ -728,14 +728,14 @@ describe('fitting the columns to their content', () => {
       'pb.table.probe',
       JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
     )
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     expect(reads).toBe(0)
   })
 
   it('shrinks the long columns toward their least width before it scrolls', async () => {
     measure()
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700)
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     // 504 of room against 764 of content: the least widths (480) fit, so the table does not overflow.
     const w = widths()
     expect(w.reduce((n, x) => n + x, 0)).toBe(504)
@@ -746,7 +746,7 @@ describe('fitting the columns to their content', () => {
   })
 
   it('hides its scrollbar and fades its left edge on a touch screen only, and never fades over the sticky actions', async () => {
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     const box = document.querySelector<HTMLElement>('[data-slot="data-table"] > div')!
     expect(box.className).toContain('pointer-coarse:[scrollbar-width:none]')
     expect(box.className).not.toMatch(/(^|\s)\[scrollbar-width:none\]/)
@@ -760,7 +760,7 @@ describe('fitting the columns to their content', () => {
       'pb.table.probe',
       JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
     )
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     expect(widths()).toEqual([201, 201, 201, 201])
     await open()
     await click(
@@ -778,7 +778,7 @@ describe('fitting the columns to their content', () => {
       'pb.table.probe',
       JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
     )
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     const edges = () => document.querySelectorAll<HTMLElement>('[role="separator"]')
     await act(async () => {
       edges()[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
@@ -792,7 +792,7 @@ describe('fitting the columns to their content', () => {
 
   it('gives a cut cell its full text as a tooltip, once the pointer is on it', async () => {
     measure()
-    m = await mount(<Probe rows={long} />)
+    m = await mount(<Probe rows={long} />, { fixtures: true })
     const cell = document.querySelector<HTMLElement>('tbody td[data-column="mail"] > div')!
     vi.spyOn(cell, 'scrollWidth', 'get').mockReturnValue(624)
     vi.spyOn(cell, 'clientWidth', 'get').mockReturnValue(306)
@@ -825,14 +825,14 @@ describe('row actions in a narrow box', () => {
 
   it('keeps the label of an action while the box is wide', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
-    m = await mount(<Acting />)
+    m = await mount(<Acting />, { fixtures: true })
     expect(action().textContent).toBe('View')
     expect(document.querySelectorAll('col')[4].style.width).toBe('196px')
   })
 
   it('shows only the icon, with its name and a tooltip and a 40px target, once the box is under 640px', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500)
-    m = await mount(<Acting />)
+    m = await mount(<Acting />, { fixtures: true })
     expect(action().textContent).toBe('')
     expect(action().getAttribute('title')).toBe('View')
     expect(action().className).toContain('size-10')
@@ -856,7 +856,7 @@ describe('row actions in a narrow box', () => {
         />
       )
     }
-    m = await mount(<Wide />)
+    m = await mount(<Wide />, { fixtures: true })
     // 250 less the 96 of the actions leaves 154: the column takes its narrow least width, 140, and nothing scrolls.
     expect(document.querySelector('table')!.style.minWidth).toBe('236px')
     expect(parseFloat(document.querySelector('col')!.style.width)).toBe(154)
