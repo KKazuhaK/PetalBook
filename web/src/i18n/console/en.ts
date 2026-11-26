@@ -88,7 +88,8 @@ export const consoleEn: ConsoleMessages = {
     view: 'View',
     more: 'More actions',
     actions: 'Actions',
-    hiddenNarrow: (n) => `The screen is narrow, so ${n} columns are hidden; change this in the table settings.`,
+    hiddenNarrow: (n) =>
+      `The screen is narrow, so ${n} columns are hidden. Columns you chose stay and scroll; change this in the table settings.`,
   },
   users: {
     search: 'Search users',

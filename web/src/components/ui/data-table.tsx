@@ -279,7 +279,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     while (total() > boxW) {
       let worst = -1
       list.forEach((c, i) => {
-        if (c.required || (c.priority ?? 1) <= 1) return
+        if (c.required || prefs.shown.includes(c.id) || (c.priority ?? 1) <= 1) return
         if (worst < 0 || (c.priority ?? 1) >= (list[worst].priority ?? 1)) worst = i
       })
       if (worst < 0) break
@@ -722,12 +722,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   order={ordered.map((c) => c.id)}
                   density={prefs.density}
                   pageSize={prefs.pageSize}
-                  onHidden={(hidden) => update({ hidden })}
+                  onToggle={(id, on) =>
+                    update({
+                      hidden: on ? hiddenIds.filter((h) => h !== id) : [...hiddenIds, id],
+                      shown: on ? [...prefs.shown.filter((h) => h !== id), id] : prefs.shown.filter((h) => h !== id),
+                    })
+                  }
                   onOrder={(order) => update({ order })}
                   onDensity={(density) => update({ density })}
                   onPageSize={(n) => update({ pageSize: n })}
                   onReset={reset}
-                  onResetColumns={() => update({ order: [], hidden: [], widths: {}, custom: false })}
+                  onResetColumns={() => update({ order: [], hidden: [], shown: [], widths: {}, custom: false })}
                 />
               </th>
             </tr>
@@ -887,7 +892,7 @@ function TableSettings<T>({
   order,
   density,
   pageSize,
-  onHidden,
+  onToggle,
   onOrder,
   onDensity,
   onPageSize,
@@ -899,7 +904,7 @@ function TableSettings<T>({
   order: string[]
   density: Density
   pageSize: number
-  onHidden: (h: string[]) => void
+  onToggle: (id: string, on: boolean) => void
   onOrder: (o: string[]) => void
   onDensity: (d: Density) => void
   onPageSize: (n: number) => void
@@ -943,7 +948,7 @@ function TableSettings<T>({
                     className="size-4 accent-[var(--color-primary)]"
                     checked={c.required || !hidden.includes(c.id)}
                     disabled={c.required}
-                    onChange={(e) => onHidden(e.target.checked ? hidden.filter((h) => h !== c.id) : [...hidden, c.id])}
+                    onChange={(e) => onToggle(c.id, e.target.checked)}
                   />
                   <span className="truncate">{c.header}</span>
                 </label>
