@@ -32,6 +32,7 @@ import (
 	"petalbook.app/server/internal/oauth"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/quota"
+	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/sentence"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/space"
@@ -153,7 +154,7 @@ type server struct {
 	prefs prefsHub
 	// peopleGate limits the people search per person, batchGate the rows of
 	// batches per person (see batch.go).
-	peopleGate, batchGate rateGate
+	peopleGate, batchGate *ratelimit.Window
 	// Background work (the bulk jobs) is started with goBg: it runs with bgCtx,
 	// which Close cancels, and Close waits for it on bg.
 	bgCtx    context.Context
@@ -252,6 +253,9 @@ func New(opt Options) *Handler {
 	if s.now == nil {
 		s.now = time.Now
 	}
+	now := func() time.Time { return s.now() }
+	s.peopleGate = ratelimit.NewWindow(maxGateKeys, peopleWindow, ratelimit.EvictFree, now)
+	s.batchGate = ratelimit.NewWindow(maxGateKeys, batchWindow, ratelimit.EvictFree, now)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))

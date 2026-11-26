@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -21,7 +20,8 @@ import (
 const (
 	// batchBody is the most a batch may weigh: 1000 rows with a name and a few groups.
 	batchBody = 1 << 20
-	// peopleWindow and peoplePerWindow are the rate of the people search, per person.
+	// peopleWindow and peoplePerWindow are the rate of the people search, per
+	// person, in a fixed window from the person's first search.
 	peopleWindow    = 10 * time.Second
 	peoplePerWindow = 20
 	// batchWindow and batchRowsPerWindow are the rows of batches (dry runs
@@ -31,56 +31,8 @@ const (
 	batchRowsPerWindow = 5000
 )
 
-// rateGate counts what a person spends in a sliding window. It holds the
-// recent spending of those who spent lately, and drops the rest as it goes.
-type rateGate struct {
-	mu   sync.Mutex
-	seen map[string][]spent
-}
-
-type spent struct {
-	at time.Time
-	n  int
-}
-
-// take spends n of id's allowance of per in window; false: wait (the time given).
-func (g *rateGate) take(id string, now time.Time, n, per int, window time.Duration) (time.Duration, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.seen == nil {
-		g.seen = map[string][]spent{}
-	}
-	if len(g.seen) > 10_000 {
-		for k, l := range g.seen {
-			if now.Sub(l[len(l)-1].at) >= window {
-				delete(g.seen, k)
-			}
-		}
-	}
-	l := g.seen[id]
-	cut := 0
-	for cut < len(l) && now.Sub(l[cut].at) >= window {
-		cut++
-	}
-	l = l[cut:]
-	sum := 0
-	for _, e := range l {
-		sum += e.n
-	}
-	if sum+n > per {
-		g.seen[id] = l
-		// The wait is until enough of the oldest has left the window.
-		for _, e := range l {
-			sum -= e.n
-			if sum+n <= per {
-				return e.at.Add(window).Sub(now), false
-			}
-		}
-		return window, false
-	}
-	g.seen[id] = append(l, spent{now, n})
-	return 0, true
-}
+// maxGateKeys bounds each gate: one entry per person who spent in the window.
+const maxGateKeys = 10_000
 
 // findPeople is the picker's search: the enabled people of a tenant whose
 // username starts with, or whose name holds, the query. It gives the id,
@@ -135,7 +87,7 @@ func (s *server) searchPeople(c *call, sc store.Scope) {
 		writeError(c.w, http.StatusNotFound, "not_found", "There are no other people.")
 		return
 	}
-	if wait, ok := s.peopleGate.take(c.user().ID, s.now(), 1, peoplePerWindow, peopleWindow); !ok {
+	if wait, ok, _ := s.peopleGate.Take(c.user().ID, 1, peoplePerWindow); !ok {
 		c.w.Header().Set("Retry-After", retrySeconds(wait))
 		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Searching too often; wait a moment.")
 		return
@@ -240,7 +192,7 @@ func (s *server) readBatch(c *call) (batchReq, bool) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Rows holds 1 to "+itoa(spaces.MaxBatchRows)+" rows.")
 		return req, false
 	}
-	if wait, ok := s.batchGate.take(c.user().ID, s.now(), len(req.Rows), batchRowsPerWindow, batchWindow); !ok {
+	if wait, ok, _ := s.batchGate.Take(c.user().ID, len(req.Rows), batchRowsPerWindow); !ok {
 		c.w.Header().Set("Retry-After", retrySeconds(wait))
 		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Too many rows in a short time; wait a moment.")
 		return req, false

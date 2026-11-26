@@ -4,148 +4,9 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"petalbook.app/server/internal/ratelimit"
 )
-
-func TestMinuteLimiterCountsAFixedMinute(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	l := newMinuteLimiter(100, clk.now)
-	for range 10 {
-		if _, ok, _ := l.take("a", 10); !ok {
-			t.Fatal("refused within the allowance")
-		}
-	}
-	wait, ok, first := l.take("a", 10)
-	if ok || !first || wait <= 0 || wait > time.Minute {
-		t.Fatalf("%v %v %v", wait, ok, first)
-	}
-	if _, ok, first := l.take("a", 10); ok || first {
-		t.Fatal("the audit log is told once per window")
-	}
-	if _, ok, _ := l.take("b", 10); !ok {
-		t.Fatal("another address shares the allowance")
-	}
-	clk.t = clk.t.Add(time.Minute)
-	if _, ok, _ := l.take("a", 10); !ok {
-		t.Fatal("the next minute starts again")
-	}
-	// A new limit applies at once.
-	if _, ok, _ := l.take("c", 1); !ok {
-		t.Fatal()
-	}
-	if _, ok, _ := l.take("c", 1); ok {
-		t.Fatal("a lower limit did not apply")
-	}
-}
-
-func TestFailTableWindowCapAndReserve(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	f := newFailTable(100, clk.now)
-	const max, window = 3, 15 * time.Minute
-	for range 3 {
-		if _, ok, _ := f.reserve("ip", max, window); !ok {
-			t.Fatal("blocked within the cap")
-		}
-	}
-	wait, ok, first := f.reserve("ip", max, window)
-	if ok || !first || wait != window {
-		t.Fatalf("%v %v %v", wait, ok, first)
-	}
-	// The window ends where it began, from the first failure.
-	clk.t = clk.t.Add(10 * time.Minute)
-	if wait, ok, first := f.reserve("ip", max, window); ok || first || wait != 5*time.Minute {
-		t.Fatalf("%v %v %v", wait, ok, first)
-	}
-	clk.t = clk.t.Add(5 * time.Minute)
-	if _, ok, _ := f.reserve("ip", max, window); !ok {
-		t.Fatal("still blocked after the window")
-	}
-	// A reservation given back leaves nothing.
-	f.reset("ip")
-	f.reserve("x", max, window)
-	f.refund("x")
-	f.refund("x")
-	if f.size() != 0 {
-		t.Fatal("the entry stays")
-	}
-}
-
-func TestFailTableLocksAndTheLockOutlastsTheWindow(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	f := newFailTable(100, clk.now)
-	const max = 2
-	window, lock := 5*time.Minute, 30*time.Minute
-	f.fail("k", max, window, lock)
-	r := f.fail("k", max, window, lock)
-	if !r.atCap || !r.locked || r.wait != lock || !r.first {
-		t.Fatalf("%+v", r)
-	}
-	clk.t = clk.t.Add(10 * time.Minute) // the window is over, the lock is not
-	if wait, locked := f.lockedFor("k", window); !locked || wait != 20*time.Minute {
-		t.Fatalf("%v %v", wait, locked)
-	}
-	if _, blocked := f.blocked("k", max, window); !blocked {
-		t.Fatal("a locked key tries")
-	}
-	// More failures while locked change nothing.
-	if r := f.fail("k", max, window, lock); r.locked || r.wait != 20*time.Minute {
-		t.Fatalf("%+v", r)
-	}
-	clk.t = clk.t.Add(20 * time.Minute)
-	if _, locked := f.lockedFor("k", window); locked || f.count("k", window) != 0 {
-		t.Fatal("the lock did not end")
-	}
-	// Without a lock the cap alone lasts the window.
-	f.fail("n", max, window, 0)
-	if r := f.fail("n", max, window, 0); !r.atCap || r.locked {
-		t.Fatalf("%+v", r)
-	}
-}
-
-func TestFailTableIsBoundedAndKeepsLockedKeysLongest(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	f := newFailTable(50, clk.now)
-	window, lock := time.Hour, time.Hour
-	f.fail("locked", 1, window, lock)
-	for i := range 1000 {
-		f.fail("k"+strconv.Itoa(i), 5, window, 0)
-	}
-	if n := f.size(); n > 50 {
-		t.Fatalf("%d keys with a bound of 50", n)
-	}
-	if _, locked := f.lockedFor("locked", window); !locked {
-		t.Fatal("a locked key was evicted while others were not locked")
-	}
-	// When every key is locked the longest-unseen goes.
-	for i := range 100 {
-		f.fail("l"+strconv.Itoa(i), 1, window, lock)
-	}
-	if n := f.size(); n > 50 {
-		t.Fatalf("%d keys", n)
-	}
-	m := newMinuteLimiter(20, clk.now)
-	for i := range 500 {
-		m.take("k"+strconv.Itoa(i), 5)
-	}
-	if m.size() > 20 {
-		t.Fatalf("%d minute entries", m.size())
-	}
-}
-
-func TestLockIfAtCapLocksOnlyAKeyThatReachedTheCap(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
-	f := newFailTable(100, clk.now)
-	f.reserve("ip", 2, time.Hour)
-	if f.lockIfAtCap("ip", 2, time.Hour, time.Hour) {
-		t.Fatal("locked below the cap")
-	}
-	f.reserve("ip", 2, time.Hour)
-	if !f.lockIfAtCap("ip", 2, time.Hour, time.Hour) {
-		t.Fatal("not locked at the cap")
-	}
-	if f.lockIfAtCap("ip", 2, time.Hour, time.Hour) {
-		t.Fatal("locked twice")
-	}
-}
 
 func TestTheAuditQueueDropsWhenFullAndSaysSo(t *testing.T) {
 	s := &Service{audit: newAuditLog(), now: time.Now}
@@ -166,37 +27,72 @@ func TestTheAuditQueueDropsWhenFullAndSaysSo(t *testing.T) {
 	}
 }
 
-// A full table refuses a new key rather than forget an old one: forgetting
-// would give a capped address its allowance back.
-func TestAFullHourCapTableRefusesInsteadOfForgetting(t *testing.T) {
-	now := time.Unix(1_000_000, 0)
-	h := newHourCaps(3)
-	if _, ok := h.take(now, capKey{"to:victim", 1}); !ok {
-		t.Fatal("refused within the allowance")
-	}
-	if _, ok := h.take(now, capKey{"to:victim", 1}); ok {
-		t.Fatal("the cap is not kept")
-	}
-	refused := 0
-	for i := range 10 {
-		if _, ok := h.take(now.Add(time.Duration(i)*time.Second), capKey{"to:flood" + strconv.Itoa(i), 1}); !ok {
-			refused++
+// Each limiter keeps the limits it had before it moved to internal/ratelimit.
+func TestTheLimitersKeepTheirLimits(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
+	s := &Service{}
+	s.initLimits(clk.now)
+
+	// Requests a minute per address: the setting's number, a fixed minute.
+	for range 10 {
+		if _, ok, _ := s.perMin.Take("ip:a", 1, 10); !ok {
+			t.Fatal("perMin refused within the allowance")
 		}
 	}
-	if refused == 0 || h.size() > 3 {
-		t.Fatalf("refused %d, size %d", refused, h.size())
+	if wait, ok, first := s.perMin.Take("ip:a", 1, 10); ok || !first || wait != time.Minute {
+		t.Fatalf("perMin: %v %v %v", wait, ok, first)
 	}
-	if _, ok := h.take(now.Add(time.Minute), capKey{"to:victim", 1}); ok {
-		t.Fatal("flooding the table gave the capped key its allowance back")
+	// One throttled audit row per address, reason and minute.
+	if _, ok, _ := s.auditIP.Take("r|a", 1, 1); !ok {
+		t.Fatal()
 	}
-	// All or none: a refusal for room spends nothing of the other key.
-	h2 := newHourCaps(1)
-	h2.take(now, capKey{"by:ip", 5})
-	if _, ok := h2.take(now, capKey{"by:ip", 5}, capKey{"to:new", 3}); ok {
-		t.Fatal("no room, yet allowed")
+	if wait, ok, _ := s.auditIP.Take("r|a", 1, 1); ok || wait != time.Minute {
+		t.Fatalf("auditIP: %v %v", wait, ok)
 	}
-	// Room comes back an hour after a key was last used.
-	if _, ok := h.take(now.Add(2*time.Hour), capKey{"to:later", 1}); !ok {
-		t.Fatal("expired keys keep the table full")
+	// Starts of single sign-on: a burst of 20, then one every two seconds.
+	for range 20 {
+		if _, ok := s.starts.Take("a"); !ok {
+			t.Fatal("starts refused within the burst")
+		}
+	}
+	if wait, ok := s.starts.Take("a"); ok || wait != 2*time.Second {
+		t.Fatalf("starts: %v %v", wait, ok)
+	}
+	// Mail: 3 an hour per address, 5 per caller, all or none.
+	for i := range 3 {
+		if _, ok := s.mailSlot("v@example.com", "ip"+strconv.Itoa(i)); !ok {
+			t.Fatal("mail refused within the cap")
+		}
+	}
+	if wait, ok := s.mailSlot("v@example.com", "ip9"); ok || wait != time.Hour {
+		t.Fatalf("mail per address: %v %v", wait, ok)
+	}
+	for i := range 5 {
+		s.mailSlot("p"+strconv.Itoa(i)+"@example.com", "caller")
+	}
+	if _, ok := s.mailSlot("q@example.com", "caller"); ok {
+		t.Fatal("the caller's cap of 5 is not kept")
+	}
+	// The failure tables take their cap, window and lock from the settings at
+	// each call; a lock outlasts the window.
+	window, lock := 15*time.Minute, 30*time.Minute
+	for range 9 {
+		s.failUser.Fail("u", 10, window, lock)
+	}
+	if r := s.failUser.Fail("u", 10, window, lock); !r.Locked || r.Wait != lock {
+		t.Fatalf("failUser: %+v", r)
+	}
+	// Bounds: 10,000 keys, the test mail 4, registrations per tenant 2,000.
+	for i := range maxLimitKeys + 100 {
+		s.failPair.Fail("p"+strconv.Itoa(i), 10, window, 0)
+	}
+	if n := s.failPair.Len(); n != maxLimitKeys {
+		t.Fatalf("failPair holds %d keys", n)
+	}
+	for i := range 10 {
+		s.testCaps.TakeAll(ratelimit.Cost{Key: "t" + strconv.Itoa(i), Limit: 10})
+	}
+	if n := s.testCaps.Len(); n != 4 {
+		t.Fatalf("testCaps holds %d keys", n)
 	}
 }

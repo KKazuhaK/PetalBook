@@ -3,23 +3,30 @@ package tokens
 import (
 	"sync"
 	"time"
+
+	"petalbook.app/server/internal/ratelimit"
 )
 
-// Limiter counts failed token attempts per client address and blocks a client
-// that fails too often for a while. State is in memory only, and bounded: the
-// table forgets arbitrary clients when it is full.
+// Limiter counts failed token attempts (or, for OAuth, registrations) per
+// client address and blocks a client that reaches Max in a Window until the
+// window ends. State is in memory only, in a ratelimit.Lockout of maxClients
+// keys: a full table forgets the clients with the fewest failures first, never
+// a blocked one, and blocks newcomers while every client in it is blocked.
 type Limiter struct {
 	Max    int           // failures allowed per Window; default 10
 	Window time.Duration // default 1 minute
 	Now    func() time.Time
 
-	mu sync.Mutex
-	m  map[string]*bucket
+	once sync.Once
+	t    *ratelimit.Lockout
 }
 
-type bucket struct {
-	count int
-	start time.Time
+// maxClients bounds the memory of the limiter.
+const maxClients = 10000
+
+func (l *Limiter) table() *ratelimit.Lockout {
+	l.once.Do(func() { l.t = ratelimit.NewLockout(maxClients, l.now) })
+	return l.t
 }
 
 func (l *Limiter) now() time.Time {
@@ -44,53 +51,15 @@ func (l *Limiter) params() (int, time.Duration) {
 // and for how many more seconds.
 func (l *Limiter) Blocked(ip string) (bool, int) {
 	max, w := l.params()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.m[ip]
-	if b == nil {
+	d, blocked := l.table().Blocked(ip, max, w)
+	if !blocked {
 		return false, 0
 	}
-	now := l.now()
-	if now.Sub(b.start) >= w {
-		delete(l.m, ip)
-		return false, 0
-	}
-	if b.count >= max {
-		return true, int((w-now.Sub(b.start))/time.Second + 1)
-	}
-	return false, 0
+	return true, int(d/time.Second + 1)
 }
-
-// maxClients bounds the memory of the limiter.
-const maxClients = 10000
 
 // Fail records a failed attempt.
 func (l *Limiter) Fail(ip string) {
-	_, w := l.params()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.m == nil {
-		l.m = map[string]*bucket{}
-	}
-	now := l.now()
-	b := l.m[ip]
-	if b == nil || now.Sub(b.start) >= w {
-		if b == nil && len(l.m) >= maxClients {
-			for k, o := range l.m { // a stale window first, else any client
-				if now.Sub(o.start) >= w {
-					delete(l.m, k)
-					break
-				}
-			}
-			if len(l.m) >= maxClients {
-				for k := range l.m {
-					delete(l.m, k)
-					break
-				}
-			}
-		}
-		b = &bucket{start: now}
-		l.m[ip] = b
-	}
-	b.count++
+	max, w := l.params()
+	l.table().Fail(ip, max, w, 0)
 }

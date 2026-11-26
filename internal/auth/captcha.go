@@ -95,10 +95,10 @@ func (s *Service) captchaRequired(st *secState, ctxName, ip, username string) bo
 	if c.When == "always" {
 		return true
 	}
-	if s.failIP.count("ip:"+ip, st.window) >= c.Failures {
+	if s.failIP.Count("ip:"+ip, st.window) >= c.Failures {
 		return true
 	}
-	return ctxName == CtxLogin && username != "" && s.failUser.count(userKey(username), st.window) >= c.Failures
+	return ctxName == CtxLogin && username != "" && s.failUser.Count(userKey(username), st.window) >= c.Failures
 }
 
 // CaptchaFor answers GET /api/captcha.

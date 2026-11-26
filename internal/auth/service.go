@@ -31,6 +31,7 @@ import (
 	"petalbook.app/server/internal/mail"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/perm"
+	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/secret"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/spaces"
@@ -111,10 +112,10 @@ type Service struct {
 	// Limits, all in memory and bounded: requests per address per minute, and
 	// failures by address, by username and by the pair; the starts of single
 	// sign-on have their own allowance.
-	perMin                     *minuteLimiter
-	auditIP                    *minuteLimiter // auditThrottled: one row per address, reason and minute
-	failIP, failUser, failPair *failTable
-	starts                     *bucketLimiter
+	perMin                     *ratelimit.Window
+	auditIP                    *ratelimit.Window // auditThrottled: one row per address, reason and minute
+	failIP, failUser, failPair *ratelimit.Lockout
+	starts                     *ratelimit.Bucket
 
 	// The security settings in force (see security.go), the audit log, the
 	// providers, passkeys and captcha.
@@ -151,9 +152,9 @@ type Service struct {
 	// that say whether registration is open (set by the API's constructor).
 	mail     *mail.Service
 	mailMu   sync.Mutex
-	mailCaps *hourCaps // messages per address and per caller
-	testCaps *hourCaps // test messages
-	regCaps  *hourCaps // registrations per tenant
+	mailCaps *ratelimit.Window // messages per address and per caller
+	testCaps *ratelimit.Window // test messages
+	regCaps  *ratelimit.Window // registrations per tenant
 	settings atomic.Pointer[settings.Service]
 }
 
@@ -275,17 +276,11 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	s := &Service{
 		cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now, hasher: h,
-		perMin:   newMinuteLimiter(maxLimitKeys, cfg.Now),
-		auditIP:  newMinuteLimiter(maxLimitKeys, cfg.Now),
-		failIP:   newFailTable(maxLimitKeys, cfg.Now),
-		failUser: newFailTable(maxLimitKeys, cfg.Now),
-		failPair: newFailTable(maxLimitKeys, cfg.Now),
-		starts:   newBucketLimiter(10_000, 30, 20, cfg.Now),
-		audit:    newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
+		audit: newAuditLog(), provs: newProviderSet(), replay: authsaml.NewMemoryReplayCache(authsaml.DefaultReplayCacheCapacity),
 		sessions: map[string]*cachedSession{}, users: map[string]*cachedUser{}, negative: map[string]negative{},
-		pending:  newPendingStore(cfg.Now),
-		mailCaps: newHourCaps(maxLimitKeys), testCaps: newHourCaps(4), regCaps: newHourCaps(2000),
+		pending: newPendingStore(cfg.Now),
 	}
+	s.initLimits(cfg.Now)
 	mo := cfg.Mail
 	if mo.Now == nil {
 		mo.Now = cfg.Now
