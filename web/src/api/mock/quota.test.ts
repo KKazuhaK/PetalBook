@@ -183,7 +183,7 @@ describe('the mock tenant usage and the prefilled invite', () => {
 
   it("makes a real invite for a new tenant's first administrator, which the form that accepts it starts with", () => {
     const w = world()
-    w.req('PUT', '/admin/tenancy', { enabled: true }, w.root)
+    w.req('PUT', '/admin/settings/features.tenancy', { value: true }, w.root)
     const made = w.req(
       'POST',
       '/admin/tenants',

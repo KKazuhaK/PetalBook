@@ -96,7 +96,7 @@ describe('the mock gives the stable codes', () => {
     const call = admin()
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
     for (const bad of ['cn', 'english', 'zh_CN']) {
-      expect(call('PUT', '/api/admin/daily', { languages: [bad] })).toMatchObject({
+      expect(call('PUT', '/api/admin/settings/daily.languages', { value: [bad] })).toMatchObject({
         status: 400,
         body: { error: 'bad_language' },
       })
@@ -121,9 +121,13 @@ describe('the mock gives the stable codes', () => {
         call('POST', '/api/admin/daily/try', { api: { ...GOOD, url: 'https://quotes.example.org/q' }, lang: bad }),
       ).toMatchObject({ status: 400, body: { error: 'bad_language' } })
     }
-    const r = call('PUT', '/api/admin/daily', { languages: ['zh', 'ZH-hant', 'pt-br', 'en', 'EN'] })
-    expect(r).toMatchObject({ status: 200, body: { languages: ['zh-Hans', 'zh-Hant', 'pt-BR', 'en'] } })
-    expect((r.body as { knownLanguages: { tag: string }[] }).knownLanguages[0]).toEqual({
+    const r = call('PUT', '/api/admin/settings/daily.languages', { value: ['zh', 'ZH-hant', 'pt-br', 'en', 'EN'] })
+    expect(r).toMatchObject({ status: 200, body: { site: { value: ['zh-Hans', 'zh-Hant', 'pt-BR', 'en'] } } })
+    // The policy is not written at /api/admin/daily any more, which answers the interfaces and lines.
+    expect(call('PUT', '/api/admin/daily', { languages: ['en'] }).status).toBe(405)
+    const read = call('GET', '/api/admin/daily').body as { knownLanguages: { tag: string }[]; languages?: unknown }
+    expect(read.languages).toBeUndefined()
+    expect(read.knownLanguages[0]).toEqual({
       tag: 'zh-Hans',
       name: '中文（简体）',
       english: 'Chinese (Simplified)',
@@ -135,18 +139,24 @@ describe('the mock gives the stable codes', () => {
   it('the default may be an interface for each language: api_not_found for one that is not set up', () => {
     const call = admin()
     put(call, {})
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': ['nothing'] } } })).toMatchObject({
+    expect(
+      call('PUT', '/api/admin/settings/daily.default', { value: { kind: 'api', apis: { '': ['nothing'] } } }),
+    ).toMatchObject({
       status: 400,
       body: { error: 'api_not_found' },
     })
     expect(
-      call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { zh: ['quotes'], '': ['quotes'] } } }),
+      call('PUT', '/api/admin/settings/daily.default', {
+        value: { kind: 'api', apis: { zh: ['quotes'], '': ['quotes'] } },
+      }),
     ).toMatchObject({
       status: 200,
-      body: { default: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['quotes'] } } },
+      body: { site: { value: { kind: 'api', apis: { 'zh-Hans': ['quotes'], '': ['quotes'] } } } },
     })
     // A single id is no list.
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { '': 'quotes' } } })).toMatchObject({
+    expect(
+      call('PUT', '/api/admin/settings/daily.default', { value: { kind: 'api', apis: { '': 'quotes' } } }),
+    ).toMatchObject({
       status: 400,
     })
     const space = (call('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
@@ -302,7 +312,7 @@ describe('what each code says, in both languages', () => {
 describe("the daily text is in the reader's language only", () => {
   it('lines in Chinese are not given to an English reader, and 一言 is refused under English', () => {
     const call = admin()
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'list' } }).status).toBe(200)
+    expect(call('PUT', '/api/admin/settings/daily.default', { value: { kind: 'list' } }).status).toBe(200)
     expect(call('PUT', '/api/admin/daily/lines', { lang: 'zh-Hans', text: '中文的一行', format: 'lines' }).status).toBe(
       200,
     )
@@ -312,7 +322,9 @@ describe("the daily text is in the reader's language only", () => {
     expect(daily('zh-CN').quote?.text).toBe('中文的一行')
     expect(daily('en').quote).toBeUndefined()
     expect(call('PUT', '/api/admin/daily/providers/hitokoto', { enabled: true }).status).toBe(200)
-    expect(call('PUT', '/api/admin/daily', { default: { kind: 'api', apis: { en: ['hitokoto'] } } })).toMatchObject({
+    expect(
+      call('PUT', '/api/admin/settings/daily.default', { value: { kind: 'api', apis: { en: ['hitokoto'] } } }),
+    ).toMatchObject({
       status: 400,
     })
   })

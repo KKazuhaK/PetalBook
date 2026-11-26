@@ -424,6 +424,10 @@ export function createMailBook(o: MailBookOptions) {
     noteChange,
     cleanUserTokens,
     cancelClosed,
+    // The SMTP password, as the secrets endpoints change it (write-only).
+    setPassword: (v: string) => {
+      mail.password = v
+    },
     pendingCount: () => pending.size,
     isRecord,
   }

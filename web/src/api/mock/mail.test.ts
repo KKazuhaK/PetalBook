@@ -133,13 +133,13 @@ describe('the mock mail', () => {
   it('ssoOnly and open registration exclude each other, in both directions', () => {
     const w = world()
     w.enable()
-    expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).status).toBe(200)
+    expect(w.req('PUT', '/admin/settings/signin.ssoOnly', { value: true }, w.root).status).toBe(200)
     expect(w.req('PUT', '/admin/settings/features.registration', { value: true }, w.root).body.error).toBe(
       'sso_only_with_registration',
     )
-    w.req('PUT', '/admin/security', { login: { ssoOnly: false } }, w.root)
+    w.req('PUT', '/admin/settings/signin.ssoOnly', { value: false }, w.root)
     expect(w.req('PUT', '/admin/settings/features.registration', { value: true }, w.root).status).toBe(200)
-    expect(w.req('PUT', '/admin/security', { login: { ssoOnly: true } }, w.root).body.error).toBe(
+    expect(w.req('PUT', '/admin/settings/signin.ssoOnly', { value: true }, w.root).body.error).toBe(
       'sso_only_with_registration',
     )
   })

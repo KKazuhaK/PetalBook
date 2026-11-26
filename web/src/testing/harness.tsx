@@ -221,6 +221,14 @@ export function asPerson(server: MockServer, cookie: string | null) {
 }
 const cookieOf = (setCookie: string | undefined) => setCookie?.split(';')[0] ?? null
 
+// Writes site settings, one request each (PUT /api/admin/settings/{key}): the policy that once had endpoints of its own.
+export function putSettings(
+  call: (method: string, path: string, body?: unknown) => unknown,
+  values: Record<string, unknown>,
+) {
+  for (const [key, value] of Object.entries(values)) call('PUT', `/api/admin/settings/${key}`, { value })
+}
+
 export const adminRequests = (server: MockServer) => {
   const login = server.handle(
     'POST',

@@ -14,7 +14,7 @@ import type {
   PublicProvider,
   Role,
   SecurityNotice,
-  SecurityPatch,
+  SecurityBody,
   SecuritySettings,
 } from '../types.ts'
 import { HttpError, isRecord } from './store.ts'
@@ -88,9 +88,6 @@ export interface SignInBookOptions {
   notices?: SecurityNotice[]
 }
 
-const MODES: LoginMode[] = ['dual', 'sso_first', 'sso_redirect', 'local_only']
-const SCOPES = ['ip_account', 'ip', 'account']
-const CAPTCHAS: CaptchaProvider[] = ['image', 'turnstile', 'recaptcha', 'hcaptcha']
 const CONTEXTS: CaptchaContext[] = ['login', 'invite', 'setup', 'forgot', 'register']
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,31}$/
 export const MAX_PROVIDERS = 50
@@ -485,7 +482,8 @@ export function createSignInBook(o: SignInBookOptions) {
     for (const u of o.users()) if (u.role === 'admin' && !u.disabled && u.passwordHash !== undefined) n++
     return n
   }
-  const view = (): SecuritySettings => {
+  // What GET /api/admin/security says: only what is derived from the settings, and the captcha's keys.
+  const view = (): SecurityBody => {
     let required = 0
     let without = 0
     for (const u of o.users()) {
@@ -495,207 +493,223 @@ export function createSignInBook(o: SignInBookOptions) {
     }
     return {
       login: {
-        mode: security.login.mode,
         effectiveMode: effectiveMode(),
-        ssoOnly: security.login.ssoOnly,
         ssoOnlyInEffect: ssoOnlyInEffect(),
         ssoAvailable: enabledProviders().length > 0,
       },
-      passkeys: {
-        enabled: security.passkeys.enabled,
-        available: o.passkeysAvailable,
-        requireRoles: [...security.passkeys.requireRoles],
-        required,
-        requiredWithout: without,
-      },
+      passkeys: { available: o.passkeysAvailable, required, requiredWithout: without },
       captcha: {
-        provider: security.captcha.provider,
         siteKey: security.captcha.siteKey,
         hasSecret: (security.captcha.secretFor as string) === security.captcha.provider,
-        contexts: {
-          login: { ...security.captcha.contexts.login },
-          invite: { ...security.captcha.contexts.invite },
-          setup: { ...security.captcha.contexts.setup },
-          forgot: { ...security.captcha.contexts.forgot },
-          register: { ...security.captcha.contexts.register },
-        },
       },
-      lockout: { ...security.lockout },
-      limits: { ...security.limits },
       passwordAdmins: passwordAdmins(),
       notices: [...(o.notices ?? [])],
     }
   }
 
-  const putSecurity = (body: Record<string, unknown>, actor: string): SecuritySettings => {
-    const patch = body as SecurityPatch
-    const known = ['login', 'passkeys', 'captcha', 'lockout', 'limits']
-    for (const k of Object.keys(body)) if (!known.includes(k)) bad(`不认识 ${k}`)
-    // Everything is checked on a copy first, so a refusal changes nothing.
-    const next = structuredClone(security)
-    const from: Record<string, unknown> = {}
-    const to: Record<string, unknown> = {}
-    const set = <T>(block: string, field: string, current: T, value: T) => {
-      if (JSON.stringify(current) !== JSON.stringify(value)) {
-        from[`${block}.${field}`] = current
-        to[`${block}.${field}`] = value
-      }
-      return value
-    }
-    const only = (block: unknown, name: string, fields: string[]): Record<string, unknown> => {
-      if (!isRecord(block)) return bad(`${name} 要是对象`)
-      for (const k of Object.keys(block)) if (!fields.includes(k)) bad(`${name}.${k} 不认识`)
-      return block
-    }
-    if (patch.login !== undefined) {
-      const b = only(patch.login, 'login', ['mode', 'ssoOnly'])
-      if (b.mode !== undefined)
-        next.login.mode = set('login', 'mode', security.login.mode, oneOf(b.mode, MODES, 'login.mode'))
-      if (b.ssoOnly !== undefined) {
-        if (b.ssoOnly === true && !security.login.ssoOnly && o.registrationOpen?.())
-          throw new HttpError(400, 'sso_only_with_registration', '有租户开着注册时不能只允许单点登录')
-        next.login.ssoOnly = set('login', 'ssoOnly', security.login.ssoOnly, bool(b.ssoOnly, 'login.ssoOnly'))
-      }
-    }
-    if (patch.passkeys !== undefined) {
-      const b = only(patch.passkeys, 'passkeys', ['enabled', 'requireRoles'])
-      if (b.enabled !== undefined)
-        next.passkeys.enabled = set(
-          'passkeys',
-          'enabled',
-          security.passkeys.enabled,
-          bool(b.enabled, 'passkeys.enabled'),
-        )
-      if (b.requireRoles !== undefined) {
-        // Only the sets the contract allows: none, the administrators, or everyone.
-        const r = b.requireRoles
-        const text = Array.isArray(r) ? JSON.stringify([...r].sort()) : ''
-        if (!['[]', '["admin"]', '["admin","member"]'].includes(text)) bad('passkeys.requireRoles 不对')
-        const roles = (r as Role[]).slice().sort((x) => (x === 'admin' ? -1 : 1))
-        next.passkeys.requireRoles = set('passkeys', 'requireRoles', security.passkeys.requireRoles, roles)
-      }
-    }
-    if (patch.lockout !== undefined) {
-      const b = only(patch.lockout, 'lockout', ['enabled', 'minutes', 'scope'])
-      if (b.enabled !== undefined)
-        next.lockout.enabled = set('lockout', 'enabled', security.lockout.enabled, bool(b.enabled, 'lockout.enabled'))
-      if (b.minutes !== undefined)
-        next.lockout.minutes = set(
-          'lockout',
-          'minutes',
-          security.lockout.minutes,
-          int(b.minutes, 1, 10_080, 'lockout.minutes'),
-        )
-      if (b.scope !== undefined)
-        next.lockout.scope = set(
-          'lockout',
-          'scope',
-          security.lockout.scope,
-          oneOf(b.scope, SCOPES as SecuritySettings['lockout']['scope'][], 'lockout.scope'),
-        )
-    }
-    if (patch.limits !== undefined) {
-      const b = only(patch.limits, 'limits', [
-        'perMinute',
-        'maxFailures',
-        'windowMinutes',
-        'sessionIdleDays',
-        'sessionMaxDays',
-      ])
-      const ranges: Record<string, [number, number]> = {
-        perMinute: [1, 10_000],
-        maxFailures: [1, 1000],
-        windowMinutes: [1, 1440],
-        sessionIdleDays: [1, 365],
-        sessionMaxDays: [1, 3650],
-      }
-      for (const [k, [lo, hi]] of Object.entries(ranges)) {
-        if (b[k] !== undefined)
-          (next.limits as Record<string, number>)[k] = set(
-            'limits',
-            k,
-            (security.limits as Record<string, number>)[k],
-            int(b[k], lo, hi, `limits.${k}`),
-          )
-      }
-      if (next.limits.sessionMaxDays < next.limits.sessionIdleDays)
-        bad('limits.sessionMaxDays 不能小于 sessionIdleDays')
-    }
-    let secretGiven: string | undefined
-    if (patch.captcha !== undefined) {
-      const b = only(patch.captcha, 'captcha', ['provider', 'siteKey', 'secret', 'contexts'])
-      if (b.provider !== undefined)
-        next.captcha.provider = set(
-          'captcha',
-          'provider',
-          security.captcha.provider,
-          oneOf(b.provider, CAPTCHAS, 'captcha.provider'),
-        )
-      if (b.siteKey !== undefined) {
-        if (typeof b.siteKey !== 'string' || b.siteKey.length > 200) bad('captcha.siteKey 不对')
-        next.captcha.siteKey = set('captcha', 'siteKey', security.captcha.siteKey, b.siteKey)
-      }
-      if (b.secret !== undefined) {
-        if (typeof b.secret !== 'string' || b.secret.length > 500) bad('captcha.secret 不对')
-        secretGiven = b.secret
-        next.captcha.secretFor = b.secret === '' ? '' : next.captcha.provider
-        from['captcha.secret'] = '…'
-        to['captcha.secret'] = 'changed'
-      }
-      if (b.contexts !== undefined) {
-        const cs = only(b.contexts, 'captcha.contexts', CONTEXTS)
-        for (const c of CONTEXTS) {
-          if (cs[c] === undefined) continue
-          const x = only(cs[c], `captcha.contexts.${c}`, ['on', 'when', 'failures'])
-          const cur = security.captcha.contexts[c]
-          if (x.on !== undefined) next.captcha.contexts[c].on = set(`captcha.${c}`, 'on', cur.on, bool(x.on, `${c}.on`))
-          if (x.when !== undefined)
-            next.captcha.contexts[c].when = set(
-              `captcha.${c}`,
-              'when',
-              cur.when,
-              oneOf(x.when, ['always', 'after_failures'] as const, `${c}.when`),
-            )
-          if (x.failures !== undefined)
-            next.captcha.contexts[c].failures = set(
-              `captcha.${c}`,
-              'failures',
-              cur.failures,
-              int(x.failures, 1, 100, `${c}.failures`),
-            )
-        }
-      }
-    }
-    // What the stored secret is for changes with the provider: one for another provider does not count.
-    if (
-      secretGiven === undefined &&
-      next.captcha.provider !== security.captcha.provider &&
-      next.captcha.secretFor !== next.captcha.provider
-    )
-      next.captcha.secretFor = ''
-    if (next.login.ssoOnly && !security.login.ssoOnly && passwordAdmins() === 0)
-      bad('没有带密码的启用管理员，不能开启「只许单点登录」', 'local_admin_required')
-    const third = next.captcha.provider !== 'image'
-    if (third && CONTEXTS.some((c) => next.captcha.contexts[c].on)) {
-      if (!next.captcha.siteKey) bad('第三方验证码需要站点密钥', 'captcha_site_key_required')
-      if (next.captcha.secretFor !== next.captcha.provider)
-        bad('第三方验证码需要密钥（换提供方要在同一次请求里给新的）', 'captcha_secret_required')
-      if (!o.publicUrl) bad('第三方验证码需要公开地址（--public-url）', 'captcha_needs_public_url')
-    }
-    let required = 0
-    for (const u of o.users())
-      if (!u.disabled && (u.passkeyRequired || next.passkeys.requireRoles.includes(u.role))) required++
-    if (
-      patch.passkeys !== undefined &&
-      !o.passkeysAvailable &&
-      (next.passkeys.requireRoles.length > 0 || (next.passkeys.enabled && required > 0))
-    ) {
+  const requiredCount = (roles: Role[]) => {
+    let n = 0
+    for (const u of o.users()) if (!u.disabled && (u.passkeyRequired || roles.includes(u.role))) n++
+    return n
+  }
+  // The server's checkPasskeys: a passkey setting that would leave someone locked out, or that cannot be served.
+  const checkPasskeys = (enabled: boolean, roles: Role[], curEnabled: boolean) => {
+    const required = requiredCount(roles)
+    if ((roles.length > 0 && !o.passkeysAvailable) || (enabled && !curEnabled && required > 0 && !o.passkeysAvailable))
       bad('现在不能使用 passkey（需要合适的公开地址）', 'passkey_unavailable')
+    if (!enabled && required > 0) bad('还有人被要求使用 passkey，请先取消要求', 'passkey_requirement_unsatisfiable')
+  }
+  const anyContextOn = (c: SecuritySettings['captcha']['contexts']) => CONTEXTS.some((x) => c[x].on)
+  const needKeys = (siteKey: string, hasSecret: boolean) => {
+    if (!siteKey) bad('第三方验证码需要站点密钥', 'captcha_site_key_required')
+    if (!hasSecret) bad('第三方验证码需要密钥（换提供方后要给新的）', 'captcha_secret_required')
+  }
+  const needPasswordAdmin = () => {
+    if (passwordAdmins() === 0) bad('没有带密码的启用管理员，不能开启「只许单点登录」', 'local_admin_required')
+  }
+
+  // The settings the sign-in policy keeps, by key. The kinds and ranges are checked by the settings' own list; what is
+  // checked here is what looks at more than one value.
+  const SETTINGS = [
+    'features.passkeys',
+    'signin.mode',
+    'signin.ssoOnly',
+    'signin.passkeyRoles',
+    'signin.lockout.enabled',
+    'signin.lockout.minutes',
+    'signin.lockout.scope',
+    'signin.perMinute',
+    'signin.maxFailures',
+    'signin.windowMinutes',
+    'sessions.idleDays',
+    'sessions.maxDays',
+    'captcha.provider',
+    'captcha.contexts',
+  ]
+  const settingGet = (key: string): unknown => {
+    switch (key) {
+      case 'features.passkeys':
+        return security.passkeys.enabled
+      case 'signin.mode':
+        return security.login.mode
+      case 'signin.ssoOnly':
+        return security.login.ssoOnly
+      case 'signin.passkeyRoles':
+        return [...security.passkeys.requireRoles]
+      case 'signin.lockout.enabled':
+        return security.lockout.enabled
+      case 'signin.lockout.minutes':
+        return security.lockout.minutes
+      case 'signin.lockout.scope':
+        return security.lockout.scope
+      case 'signin.perMinute':
+        return security.limits.perMinute
+      case 'signin.maxFailures':
+        return security.limits.maxFailures
+      case 'signin.windowMinutes':
+        return security.limits.windowMinutes
+      case 'sessions.idleDays':
+        return security.limits.sessionIdleDays
+      case 'sessions.maxDays':
+        return security.limits.sessionMaxDays
+      case 'captcha.provider':
+        return security.captcha.provider
+      case 'captcha.contexts':
+        return structuredClone(security.captcha.contexts)
     }
-    if (!next.passkeys.enabled && required > 0)
-      bad('还有人被要求使用 passkey，请先取消要求', 'passkey_requirement_unsatisfiable')
-    Object.assign(security, next)
-    record('security_changed', { actor, detail: { from, to } })
+    return undefined
+  }
+  // Checks and stores one value (already of its kind and within its range).
+  const settingPut = (key: string, value: unknown, actor: string): void => {
+    const before = settingGet(key)
+    switch (key) {
+      case 'features.passkeys':
+        checkPasskeys(value === true, security.passkeys.requireRoles, security.passkeys.enabled)
+        security.passkeys.enabled = value === true
+        break
+      case 'signin.mode':
+        if (security.login.ssoOnly && security.login.mode === 'local_only' && value !== 'local_only')
+          needPasswordAdmin()
+        security.login.mode = value as LoginMode
+        break
+      case 'signin.ssoOnly':
+        if (value === true && !security.login.ssoOnly) {
+          if (o.registrationOpen?.())
+            throw new HttpError(400, 'sso_only_with_registration', '有租户开着注册时不能只允许单点登录')
+          needPasswordAdmin()
+        }
+        security.login.ssoOnly = value === true
+        break
+      case 'signin.passkeyRoles': {
+        const list = value as string[]
+        if (list.some((r) => r !== 'admin' && r !== 'member')) bad('signin.passkeyRoles 只有 admin 和 member')
+        const roles = (['admin', 'member'] as Role[]).filter((r) => list.includes(r))
+        checkPasskeys(security.passkeys.enabled, roles, security.passkeys.enabled)
+        security.passkeys.requireRoles = roles
+        break
+      }
+      case 'signin.lockout.enabled':
+        security.lockout.enabled = value === true
+        break
+      case 'signin.lockout.minutes':
+        security.lockout.minutes = value as number
+        break
+      case 'signin.lockout.scope':
+        security.lockout.scope = value as SecuritySettings['lockout']['scope']
+        break
+      case 'signin.perMinute':
+        security.limits.perMinute = value as number
+        break
+      case 'signin.maxFailures':
+        security.limits.maxFailures = value as number
+        break
+      case 'signin.windowMinutes':
+        security.limits.windowMinutes = value as number
+        break
+      case 'sessions.idleDays':
+        if ((value as number) > security.limits.sessionMaxDays) bad('sessions.maxDays 不能小于 sessions.idleDays')
+        security.limits.sessionIdleDays = value as number
+        break
+      case 'sessions.maxDays':
+        if ((value as number) < security.limits.sessionIdleDays) bad('sessions.maxDays 不能小于 sessions.idleDays')
+        security.limits.sessionMaxDays = value as number
+        break
+      case 'captcha.provider': {
+        const next = value as CaptchaProvider
+        if (next !== security.captcha.provider && next !== 'image') {
+          if (!o.publicUrl) bad('第三方验证码需要公开地址（--public-url）', 'captcha_needs_public_url')
+          // A secret belongs to the provider it was made for: a new provider has none.
+          if (anyContextOn(security.captcha.contexts)) bad('第三方验证码需要站点密钥', 'captcha_site_key_required')
+        }
+        if (next !== security.captcha.provider) {
+          security.captcha.siteKey = ''
+          security.captcha.secretFor = ''
+        }
+        security.captcha.provider = next
+        break
+      }
+      case 'captcha.contexts': {
+        // A partial document is merged over the current one; the answer is the whole.
+        if (!isRecord(value)) bad('captcha.contexts 要是对象')
+        const doc = value as Record<string, unknown>
+        const next = structuredClone(security.captcha.contexts)
+        for (const [c, x] of Object.entries(doc)) {
+          if (!(CONTEXTS as string[]).includes(c)) bad(`captcha.contexts.${c} 不认识`)
+          if (!isRecord(x)) bad(`captcha.contexts.${c} 要是对象`)
+          const one = x as Record<string, unknown>
+          for (const k of Object.keys(one)) if (!['on', 'when', 'failures'].includes(k)) bad(`${c}.${k} 不认识`)
+          const cur = next[c as CaptchaContext]
+          if (one.on !== undefined) cur.on = bool(one.on, `${c}.on`)
+          if (one.when !== undefined) cur.when = oneOf(one.when, ['always', 'after_failures'] as const, `${c}.when`)
+          if (one.failures !== undefined) cur.failures = int(one.failures, 1, 100, `${c}.failures`)
+        }
+        if (security.captcha.provider !== 'image') {
+          if (!o.publicUrl) bad('第三方验证码需要公开地址（--public-url）', 'captcha_needs_public_url')
+          if (anyContextOn(next))
+            needKeys(security.captcha.siteKey, security.captcha.secretFor === security.captcha.provider)
+        }
+        security.captcha.contexts = next
+        break
+      }
+      default:
+        throw new HttpError(404, 'not_found', 'no such setting')
+    }
+    if (JSON.stringify(before) !== JSON.stringify(settingGet(key)))
+      record('setting_changed', {
+        actor,
+        detail: { key, layer: 'site', from: before, to: settingGet(key) },
+      })
+  }
+
+  // PUT /api/admin/security: the captcha's credentials, the one part of the policy that is not a setting.
+  const putCredentials = (body: Record<string, unknown>, actor: string): SecurityBody => {
+    for (const k of Object.keys(body)) if (k !== 'captcha') bad(`不认识 ${k}`)
+    if (!isRecord(body.captcha)) return bad('captcha 要是对象')
+    const b = body.captcha as Record<string, unknown>
+    for (const k of Object.keys(b)) if (k !== 'siteKey' && k !== 'secret') bad(`captcha.${k} 不认识`)
+    if (b.siteKey === undefined && b.secret === undefined) return view()
+    if (security.captcha.provider === 'image') bad('内置的图片验证码没有密钥，请先选一个提供方')
+    let siteKey = security.captcha.siteKey
+    if (b.siteKey !== undefined) {
+      if (typeof b.siteKey !== 'string' || b.siteKey.trim().length > 512) bad('captcha.siteKey 最多 512 个字符')
+      siteKey = (b.siteKey as string).trim()
+    }
+    let hasSecret = security.captcha.secretFor === security.captcha.provider
+    if (b.secret !== undefined) {
+      if (typeof b.secret !== 'string' || b.secret.length > 2048) bad('captcha.secret 最多 2048 字节')
+      hasSecret = (b.secret as string).trim() !== ''
+    }
+    if (anyContextOn(security.captcha.contexts)) needKeys(siteKey, hasSecret)
+    if (siteKey !== security.captcha.siteKey)
+      record('setting_changed', {
+        actor,
+        detail: { key: 'captcha.siteKey', layer: 'site', from: security.captcha.siteKey, to: siteKey },
+      })
+    security.captcha.siteKey = siteKey
+    if (b.secret !== undefined) {
+      security.captcha.secretFor = hasSecret ? security.captcha.provider : ''
+      record('setting_changed', { actor, detail: { key: 'captcha.secret', layer: 'site', to: 'changed' } })
+    }
     return view()
   }
 
@@ -727,7 +741,15 @@ export function createSignInBook(o: SignInBookOptions) {
     record,
     auditList,
     view,
-    putSecurity,
+    putCredentials,
+    settingGet,
+    settingPut,
+    SETTINGS,
+    // The secret of the captcha, as the secrets list tells it.
+    captchaSecretSet: () => (security.captcha.secretFor as string) === security.captcha.provider,
+    setCaptchaSecret: (v: string | null) => {
+      security.captcha.secretFor = v === null ? '' : security.captcha.provider
+    },
     publicProviders,
     effectiveMode,
     ssoOnlyInEffect,

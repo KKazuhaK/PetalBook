@@ -1081,12 +1081,6 @@ export interface ConsentDecision {
   spaces?: string[]
   access?: TokenAccess
 }
-export interface MachineAccess {
-  tokens: boolean
-  mcp: boolean
-  // Whether the authorization server is there; read only.
-  oauth: boolean
-}
 
 export type ProviderKind = 'oidc' | 'saml' | 'github'
 
@@ -1374,10 +1368,22 @@ export interface AdminSpaceStorage {
   assets: 'space' | 'repository'
   remote: RemoteNotice | null
 }
+// What GET /api/admin/storage answers: only what is measured or derived. The policy is the storage.* and cache.*
+// settings (AdminStorage puts them together).
+// `git.version` and the summary's `spaces.restoring` are the site's: a tenant administrator is not told them.
+export interface AdminStorageBody {
+  remotes: { since: string | null }
+  git: { version?: string; partialClone: boolean }
+  // `exempt` is the site's: a tenant administrator is not told it.
+  affected: { inGrace: number; overdue: number; exempt?: number }
+  // What the server holds (docs/api.md, "GET /api/admin/storage"); `diskFreeBytes` is for site administrators only.
+  summary?: StorageSummary
+}
+// The storage policy as the page shows it: the settings read from /api/admin/settings, with what is derived.
 export interface AdminStorage {
-  // require: null, 'any', or the id of a provider (2.7b's connections, such as 'github').
+  // require: null, 'any', or the id of a provider (2.7b's connections, such as 'github'); the setting's "" is null here.
   remotes: { require: string | null; scope: 'new' | 'all'; graceDays: number; since: string | null }
-  // `fromFlag`, `cache.minFreeBytes`, `git.version` and the summary's `spaces.restoring` are the site's: a tenant administrator is not told them.
+  // `fromFlag` is the site's: read only here.
   hosts: { allowed: string[]; fromFlag?: boolean }
   localSpaces: { maxBytes: number | null }
   cache: {
@@ -1385,14 +1391,11 @@ export interface AdminStorage {
     evictAfterDays: number | null
     minIdleHours: number
     clonesBytes: number | null
-    minFreeBytes?: number | null
+    minFreeBytes: number | null
     assetsBytes: number
   }
-  git: { version?: string; partialClone: boolean }
-  // `exempt` is the site's: a tenant administrator is not told it.
-  affected: { inGrace: number; overdue: number; exempt?: number }
-  // What the server holds (docs/api.md, "GET /api/admin/storage"); `diskFreeBytes` is for site administrators only.
-  summary?: StorageSummary
+  git: AdminStorageBody['git']
+  affected: AdminStorageBody['affected']
 }
 export interface StorageSummary {
   // null for the whole server.
@@ -1411,9 +1414,9 @@ export interface StorageSummary {
   diskFreeBytes?: number
   measuredAt: string | null
 }
-// What a PUT may change: any of the sections, each partly.
+// What the page changes: any of the sections, each partly; each field is one setting.
 export interface PutAdminStorage {
-  remotes?: Partial<AdminStorage['remotes']>
+  remotes?: Partial<Omit<AdminStorage['remotes'], 'since'>>
   hosts?: { allowed?: string[] }
   localSpaces?: { maxBytes?: number | null }
   cache?: Partial<AdminStorage['cache']>
@@ -1639,16 +1642,20 @@ export type DailyDefault =
   | { kind: 'api'; apis: Record<string, string[]>; options?: DailyOptionChoice }
   // Each language lists sources of any kind, in order: tried in turn by day, the next when one has nothing.
   | { kind: 'sources'; sources: Record<string, DailySourceItem[]> }
-export interface AdminDaily {
-  default: DailyDefault
-  languages: string[]
+// What GET /api/admin/daily answers: the interfaces, providers and lines. The default, the languages and what spaces
+// may do are the daily.* settings (AdminDaily puts them together).
+export interface AdminDailyBody {
   // The common languages to pick from; any valid tag may still be typed.
   knownLanguages: KnownLanguage[]
   apis: DailyApi[]
   providers: DailyProvider[]
   lines: { total: number; byLang: Record<string, number>; max: number }
-  // Whether spaces may use a source of their own and pick an external interface; absent until the server has them.
-  allow?: DailyAllow
+}
+export interface AdminDaily extends AdminDailyBody {
+  default: DailyDefault
+  languages: string[]
+  // Whether spaces may use a source of their own and pick an external interface.
+  allow: DailyAllow
 }
 export interface DailyTryResult {
   ok: boolean
@@ -1687,6 +1694,16 @@ export interface SecurityNotice {
   slug?: string
   field?: string
 }
+// What GET /api/admin/security answers: what the sign-in policy means now, and the captcha's keys (the secret only as
+// set or not). The policy itself is the signin.*, sessions.*, captcha.* and features.passkeys settings.
+export interface SecurityBody {
+  login: { effectiveMode: LoginMode; ssoOnlyInEffect: boolean; ssoAvailable: boolean }
+  passkeys: { available: boolean; required: number; requiredWithout: number }
+  captcha: { siteKey: string; hasSecret: boolean }
+  passwordAdmins: number
+  notices: SecurityNotice[]
+}
+// The security page's view: the settings and what is derived, put together (api/settingsFold.ts).
 export interface SecuritySettings {
   login: {
     mode: LoginMode
@@ -1713,18 +1730,10 @@ export interface SecuritySettings {
   passwordAdmins: number
   notices: SecurityNotice[]
 }
-// What `PUT /api/admin/security` takes: any block, any field of it; `captcha.secret` is write-only.
-export interface SecurityPatch {
-  login?: Partial<{ mode: LoginMode; ssoOnly: boolean }>
-  passkeys?: Partial<{ enabled: boolean; requireRoles: Role[] }>
-  captcha?: Partial<{
-    provider: CaptchaProvider
-    siteKey: string
-    secret: string
-    contexts: Partial<Record<CaptchaContext, Partial<CaptchaContextSettings>>>
-  }>
-  lockout?: Partial<{ enabled: boolean; minutes: number; scope: LockoutScope }>
-  limits?: Partial<SecuritySettings['limits']>
+// What `PUT /api/admin/security` takes: the captcha's credentials only; the secret is write-only ("" removes it).
+export interface CaptchaCredentials {
+  siteKey?: string
+  secret?: string
 }
 
 export interface OidcSettings {
@@ -1924,7 +1933,10 @@ export interface Tenant extends TenantRef {
 export interface TenantList {
   items: Tenant[]
   next: string
+  // How many tenants there are in all.
+  count: number
 }
+// Whether tenants besides the default one may exist (features.tenancy), and how many there are.
 export interface Tenancy {
   enabled: boolean
   tenants: number
@@ -1985,6 +1997,8 @@ export interface SiteSetting {
   // The values of a choice setting, loosest first.
   choices?: string[]
   site: { value: unknown; lower: SettingLower; fromFlag?: boolean }
+  // The server's own, with no tenant layer: the reason, in words.
+  serverWide?: string
   // Set by PUT when the new rule makes this many tenants' values ineffective.
   affected?: number
 }
@@ -2346,4 +2360,11 @@ export interface PrefsAnswer {
   // false: the person has no personal space to keep them in, so this browser does.
   personal: boolean
   prefs: Record<string, unknown>
+}
+
+// --- secrets (write-only: the API says whether one is set and when it changed, never its value) ---
+export interface SecretMeta {
+  name: string
+  set: boolean
+  updatedAt?: string
 }
