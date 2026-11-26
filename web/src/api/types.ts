@@ -1008,7 +1008,7 @@ export interface SessionInfo {
   // Why the session of this browser's cookie ended, when that is why nobody is signed in (absent otherwise).
   endedReason?: EndedReason
   // `passkey`: the signed-in person must register a passkey before anything else.
-  hold?: 'passkey' | null
+  hold?: 'passkey' | 'password' | null
   // Absent in single-user mode.
   methods?: { password: boolean; oidc: { name: string } | null }
   // The API token the request was made with; the app's own requests have none.
