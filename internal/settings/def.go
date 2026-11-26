@@ -88,6 +88,12 @@ type Def struct {
 	// the registry's test checks it.
 	ForTenant  bool
 	ServerWide string
+	// Outward marks a boolean that lets content leave the organisation or be
+	// seen without signing in (public links, publishing, anonymous access,
+	// external sharing, machine access). The stricter first-start profiles
+	// (profile.go) switch every such setting off, and their test fails for one
+	// that is not listed.
+	Outward bool
 }
 
 // Has reports whether the setting exists in layer l.

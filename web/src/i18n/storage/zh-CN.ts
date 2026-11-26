@@ -63,6 +63,10 @@ export const storageZhCN: StorageMessages = {
     assets: {
       title: '附件仓库',
       help: '附件放在第二个叫 <名字>-assets 的仓库里，让空间自己的仓库保持很小。放在哪里（默认或强制）在「按层设置」里的 storage.assets 设。',
+      ownExemptTitle: '放在自己存储上的空间不受此限制',
+      ownExemptHelp:
+        '开着（默认）：所有者把空间放在自己存储位置上时，不受全站对附件位置的规则约束，由所有者自己决定。关掉：全站的默认或锁定对这些空间同样有效。全站可以对每个组织分别允许、限制或锁定。',
+      ownExemptLabel: '放在自己存储上的空间不受附件位置规则约束',
     },
     errors: {
       failed: '没能保存设置。',
