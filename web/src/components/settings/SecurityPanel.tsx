@@ -118,7 +118,7 @@ function PasswordSection({ account }: { account: AccountInfo }) {
 
 // The form is built when the dialog opens and dropped when it closes, so it
 // starts empty each time.
-function PasswordForm({ account, onDone }: { account: AccountInfo; onDone: (message: string) => void }) {
+export function PasswordForm({ account, onDone }: { account: AccountInfo; onDone: (message: string) => void }) {
   const qc = useQueryClient()
   const has = account.hasPassword
   const [current, setCurrent] = useState('')

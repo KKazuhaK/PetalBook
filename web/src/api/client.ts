@@ -280,7 +280,7 @@ function markSignedOut(reason: EndedReason | undefined) {
 // `passkey_required`. The app learns of it once, from whichever request hit it, and
 // shows the passkey page (a hold that began after the session was read).
 
-type HoldListener = () => void
+type HoldListener = (hold: 'passkey' | 'password') => void
 const holdListeners = new Set<HoldListener>()
 export function onHold(fn: HoldListener): () => void {
   holdListeners.add(fn)
@@ -444,7 +444,8 @@ export async function request<T>(
       throw new ApiError(res.status, 'forbidden', message)
     }
     if (res.status === 401 && !isSignIn) markSignedOut(endedReasonOf(err.reason))
-    if (res.status === 403 && err.error === 'passkey_required' && !isSignIn) holdListeners.forEach((fn) => fn('passkey'))
+    if (res.status === 403 && err.error === 'passkey_required' && !isSignIn)
+      holdListeners.forEach((fn) => fn('passkey'))
     if (res.status === 403 && err.error === 'password_change_required' && !isSignIn)
       holdListeners.forEach((fn) => fn('password'))
     if (err.error === 'unavailable') unavailableListeners.forEach((fn) => fn())

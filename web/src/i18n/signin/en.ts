@@ -118,6 +118,9 @@ export const signinEn: SigninMessages = {
     required: 'The administrators require your account to sign in with a passkey.',
   },
   held: {
+    passwordTitle: 'Choose a new password',
+    passwordHelp:
+      'An administrator gave you a temporary password. Choose your own to continue; use the temporary one as the current password.',
     title: 'Set up a passkey to continue',
     help: 'The administrators require your account to sign in with a passkey. Add your first one and you can carry on.',
     continue: 'Continue',

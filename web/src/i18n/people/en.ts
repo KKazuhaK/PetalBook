@@ -101,4 +101,57 @@ export const peopleEn: PeopleMessages = {
     empty: 'There are no members yet.',
   },
   failed: 'That did not work',
+  profile: {
+    editProfile: 'Edit profile',
+    change: 'Change',
+    avatar: 'Avatar',
+    avatarNote: 'The avatar is the first letter of the name, so it changes with the name.',
+    name: 'Name',
+    username: 'Username',
+    usernameHelp:
+      '2 to 32 characters: letters, digits, dots, underscores and hyphens. You sign in with the new one after this.',
+    email: 'Email',
+    noEmail: 'No email address yet',
+    language: 'Language',
+    save: 'Save',
+    saving: 'Saving…',
+    saved: 'Saved',
+    newEmail: 'New email address',
+    changeEmail: 'Change email',
+    changeEmailHelp: 'A verification email goes to the new address; the old address gets a note with no link in it.',
+    emailSent: (email: string) =>
+      `A verification email was sent to ${email}. The address counts as verified once its link is opened.`,
+    emailNotSent:
+      'The address was changed, but the verification email was not sent (mail is not set up, or sending is capped).',
+    password: 'Password',
+    passwordNote: 'The password is changed under Security, and asks for the current one.',
+    goSecurity: 'Go to Security',
+  },
+  admin: {
+    managed: 'Managed by the organization sign-in',
+    managedWarn:
+      'This field comes from the organization sign-in: it may be overwritten the next time they sign in through it.',
+    emailMode: 'What to do with this address',
+    modeVerify: 'Send a verification email',
+    modeVerifyHelp:
+      'The new address is sent a link; it counts as verified once it is opened. The old address gets a note.',
+    modeMark: 'Mark as verified',
+    modeMarkHelp:
+      'It counts as verified without an email. A site administrator’s mark counts; a tenant administrator’s is shown but does not hold the address.',
+    saveEmail: 'Change email',
+    edited: 'Saved. The person gets a notice.',
+    emailSent: (email: string) => `A verification email was sent to ${email}.`,
+    emailNotSent:
+      'The address was changed, but the verification email was not sent (mail is not set up, or sending is capped).',
+    password: 'Password',
+    passwordHelp: 'You never see their password. Send a reset link, or set a temporary one.',
+    sendReset: 'Send reset link',
+    setTemporary: 'Set a temporary password…',
+    temporaryTitle: 'Set a temporary password',
+    temporaryHelp:
+      'They must replace it as soon as they sign in with it, and every session they have now ends. You will not see it again after it is set.',
+    temporaryField: 'Temporary password',
+    temporarySet: 'Set',
+    temporaryDone: 'The temporary password is set and their sessions have ended.',
+  },
 }

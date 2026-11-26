@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
+import { tp } from '@/i18n/people'
 import { tsec } from '@/i18n/security'
 import {
   adminRequests,
@@ -145,21 +146,33 @@ describe('users and their sign-in', () => {
 
   it('edits the email, and says whether it is verified', async () => {
     const carol = await open(person(''))
-    await settle(
-      () => document.querySelector('[data-slot="person-profile"] input[type="email"]') !== null,
-      'the details',
+    await settle(() => document.querySelector('[data-slot="person-values"]') !== null, 'the details')
+    // The values are read-only; the address has its own button, which opens a dialog.
+    expect(document.querySelector('[data-slot="person-profile"] input[type="email"]')).toBeNull()
+    await click(
+      [...document.querySelectorAll<HTMLElement>('[data-slot="person-values"] button')].find(
+        (b) => b.textContent === tp.profile.change,
+      ),
     )
+    await settle(() => document.querySelector('#change-person-email-form') !== null, 'the dialog')
     await type(
-      document.querySelector<HTMLInputElement>('[data-slot="person-profile"] input[type="email"]')!,
+      document.querySelector<HTMLInputElement>('#change-person-email-form input[type="email"]')!,
       'carol@example.com',
     )
     await click(
-      [...document.querySelectorAll<HTMLElement>('[data-slot="person-profile"] button')].find(
-        (b) => b.textContent === tsec.users.saveEmail,
+      [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
+        (b) => b.textContent === tp.admin.saveEmail,
       ),
     )
     await settle(() => calls('PATCH', `/api/users/${carol.id}`).length === 1, 'patched')
-    expect(JSON.parse(calls('PATCH', `/api/users/${carol.id}`)[0].body!)).toEqual({ email: 'carol@example.com' })
+    // Verify is the default way: the person is sent a link; the old address is told by the server.
+    expect(JSON.parse(calls('PATCH', `/api/users/${carol.id}`)[0].body!)).toEqual({
+      email: 'carol@example.com',
+      emailMode: 'verify',
+    })
+    await click(
+      [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find((b) => b.textContent === tp.done),
+    )
     // Setting an address without saying so leaves it unverified; the switch confirms it.
     await settle(() => byLabel(tsec.users.emailVerified)?.hasAttribute('disabled') === false, 'the switch is usable')
     await click(byLabel(tsec.users.emailVerified))

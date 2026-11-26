@@ -36,6 +36,7 @@ const VerifyEmailPage = MailPage('VerifyEmailPage')
 const ForgotPage = MailPage('ForgotPage')
 const ResetPasswordPage = MailPage('ResetPasswordPage')
 const HeldPage = lazy(() => import('@/pages/auth/HeldPage'))
+const PasswordChangePage = lazy(() => import('@/pages/auth/PasswordChangePage'))
 const ConsentPage = lazy(() => import('@/pages/auth/ConsentPage'))
 const SettingsRoute = lazy(() => import('@/components/settings/SettingsRoute'))
 const ImportPage = lazy(() => import('@/pages/ImportPage'))
@@ -110,6 +111,8 @@ function AuthGate() {
     if (!s.user) return <Navigate to={loginUrl(pathname + search)} replace />
     // A person who must have a passkey and has none: nothing but the page to set one up.
     if (s.hold === 'passkey') return later(<HeldPage />)
+    // A person who signed in with a temporary password: nothing but the page to choose their own.
+    if (s.hold === 'password') return later(<PasswordChangePage />)
   }
   return (
     <PrefsGate key={s.user?.id ?? 'local'} userId={s.user?.id ?? 'local'}>
@@ -205,8 +208,8 @@ export default function App() {
   // Every request answers 403 `passkey_required` while the session is held: the session says so from then on.
   useEffect(
     () =>
-      onHold(() => {
-        queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, hold: 'passkey' })
+      onHold((hold) => {
+        queryClient.setQueryData<SessionInfo>(keys.session, (prev) => prev && { ...prev, hold })
       }),
     [],
   )

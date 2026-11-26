@@ -9,6 +9,7 @@ import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
+import { tp } from '@/i18n/people'
 import { ts } from '@/i18n/signin'
 import {
   byLabel,
@@ -84,11 +85,17 @@ describe('the settings dialog, accounts mode, administrator', () => {
     expect(groups).toEqual([t.settingsUi.groups.account, t.settingsUi.groups.space])
   })
 
-  it('profile: only the name and the email', async () => {
+  it('profile: the values are read-only, and editing is in dialogs', async () => {
     await open('/settings/profile')
-    await settle(() => dialog()?.querySelector('input[autocomplete="name"]') !== null, 'profile loaded')
+    await settle(() => dialog()?.querySelector('[data-slot="profile-values"]') !== null, 'profile loaded')
     expect(heading()).toBe(t.settingsUi.sections.profile)
-    expect(dialog()!.querySelector<HTMLInputElement>('input[autocomplete="name"]')!.value).toBe('管理员')
+    expect(dialog()!.querySelector('input[autocomplete="name"]')).toBeNull()
+    expect(dialog()!.querySelector('[data-slot="profile-values"]')!.textContent).toContain('管理员')
+    await click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === tp.profile.editProfile))
+    await settle(() => document.querySelector('#edit-profile-form') !== null, 'the dialog')
+    expect(document.querySelector<HTMLInputElement>('#edit-profile-form input[autocomplete="name"]')!.value).toBe(
+      '管理员',
+    )
     expect(dialog()!.querySelector('input[type="password"]')).toBeNull()
     expect(panelText()).not.toContain(t.settings.identities)
     expect(dialog()!.querySelector('[aria-current="page"]')!.textContent).toBe(t.settingsUi.sections.profile)

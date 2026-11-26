@@ -1,20 +1,22 @@
-import { useState, type FormEvent } from 'react'
-import { Save } from 'lucide-react'
+import { useState } from 'react'
+import { Pencil } from 'lucide-react'
 import { useSecuritySettings } from '@/api/admin'
 import type { Role, User } from '@/api/types'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
 import { ts } from '@/i18n/storage'
+import { tp } from '@/i18n/people'
 import { tsec } from '@/i18n/security'
 import { tt } from '@/i18n/tenants'
-import { isAdminAccount } from '@/lib/access'
+import { adminKindOf, isAdminAccount } from '@/lib/access'
 import { OwnLimits } from '../OwnLimits'
+import { ChangePersonEmailDialog, EditPersonDialog, isManaged } from './PersonEditDialogs'
 import type { UserPatch } from './useUserChange'
 
 // What an administrator may change about who a person is: their address, their role and their own limits.
@@ -29,40 +31,42 @@ export function PersonProfile({
   save: (patch: UserPatch) => Promise<unknown>
   site: boolean
 }) {
-  const [email, setEmail] = useState(u.email)
-  const [saved, setSaved] = useState(false)
-  const saveEmail = async (e: FormEvent) => {
-    e.preventDefault()
-    setSaved(false)
-    // An address set on its own is not verified; saying so is the next switch.
-    if (await save({ email: email.trim() })) setSaved(true)
-  }
+  const [editing, setEditing] = useState(false)
+  const [changingEmail, setChangingEmail] = useState(false)
+  // A site administrator is edited by site administrators only; the server refuses anyone else.
+  const canEdit = site || adminKindOf(u) !== 'site'
   return (
     <div className="grid min-w-0 gap-8" data-slot="person-profile">
       <SettingsSection title={tc.person.profile.account} id="person-account">
-        <form className="grid min-w-0 grid-cols-1 gap-2 sm:flex sm:items-end" onSubmit={(e) => void saveEmail(e)}>
-          <div className="grid min-w-0 gap-1.5 sm:max-w-sm sm:flex-1">
-            <Label htmlFor={`email-${u.id}`}>{tsec.users.email}</Label>
-            <Input
-              id={`email-${u.id}`}
-              type="email"
-              className="h-10"
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value)
-                setSaved(false)
-              }}
-              autoComplete="off"
-            />
+        <dl className="grid gap-3 rounded-lg border p-3 text-sm sm:grid-cols-[8rem_1fr]" data-slot="person-values">
+          <dt className="text-muted-foreground">{tp.profile.name}</dt>
+          <dd className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="break-words">{u.name}</span>
+            {isManaged(u) && <Badge variant="secondary">{tp.admin.managed}</Badge>}
+          </dd>
+          <dt className="text-muted-foreground">{tp.profile.username}</dt>
+          <dd className="min-w-0 break-words">{u.username}</dd>
+          <dt className="text-muted-foreground">{tp.profile.email}</dt>
+          <dd className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="break-all">{u.email || tp.profile.noEmail}</span>
+            {isManaged(u) && u.email && <Badge variant="secondary">{tp.admin.managed}</Badge>}
+            {canEdit && (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setChangingEmail(true)}>
+                {tp.profile.change}
+              </Button>
+            )}
+          </dd>
+        </dl>
+        {canEdit && (
+          <div>
+            <Button type="button" variant="outline" className="h-10" disabled={busy} onClick={() => setEditing(true)}>
+              <Pencil aria-hidden="true" />
+              {tp.profile.editProfile}
+            </Button>
           </div>
-          <Button type="submit" variant="outline" className="h-10" disabled={busy || email.trim() === u.email}>
-            <Save aria-hidden="true" />
-            {tsec.users.saveEmail}
-          </Button>
-          <span role="status" className="text-xs text-muted-foreground">
-            {saved ? tsec.users.emailSaved : ''}
-          </span>
-        </form>
+        )}
+        <EditPersonDialog u={u} open={editing} onOpenChange={setEditing} />
+        <ChangePersonEmailDialog u={u} open={changingEmail} onOpenChange={setChangingEmail} />
         <label className="flex min-h-10 min-w-0 items-start gap-3 text-sm">
           <Switch
             checked={u.emailVerified}

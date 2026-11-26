@@ -106,6 +106,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   email_not_ascii: 'Email addresses with characters outside ASCII are not accepted on this server.',
   terms_required: 'Accept the terms first.',
   passkey_required: 'This account has to sign in with a passkey first.',
+  password_change_required: 'Choose a new password of your own first.',
   passkey_failed: 'The passkey check did not pass.',
   passkey_unavailable: 'This account has no passkey it can use, so one cannot be required.',
   passkey_requirement_unsatisfiable: 'Some people have no passkey yet, so everyone cannot be required to use one now.',

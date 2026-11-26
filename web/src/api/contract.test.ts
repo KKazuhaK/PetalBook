@@ -791,6 +791,39 @@ function suite(target: Target) {
       })
 
       describe('users', () => {
+        it("an administrator edits a person's name and username and sets a temporary password; their next sign-in is held until they choose their own", async () => {
+          const p = await newMember(uniq('te'))
+          const name = uniq('renamed')
+          const r = await call(admin, 'PATCH', `/api/users/${p.user.id}`, { name: 'New Name', username: name })
+          expect(r.status).toBe(200)
+          expect(r.json.user).toMatchObject({ name: 'New Name', username: name })
+          const bad = await call(admin, 'PATCH', `/api/users/${p.user.id}`, { username: 'no spaces' })
+          expect([bad.status, bad.json.error]).toEqual([400, 'invalid'])
+          const mode = await call(admin, 'PATCH', `/api/users/${p.user.id}`, { emailMode: 'sometimes' })
+          expect([mode.status, mode.json.error]).toEqual([400, 'invalid'])
+          const short = await call(admin, 'POST', `/api/users/${p.user.id}/password`, { password: 'short' })
+          expect([short.status, short.json.error]).toEqual([400, 'invalid'])
+          const temp = 'temporary-pass-1'
+          expect((await call(admin, 'POST', `/api/users/${p.user.id}/password`, { password: temp })).status).toBe(204)
+          // Their session ended; signing in with the temporary password works but is held.
+          expect((await call(p.browser, 'GET', '/api/spaces')).status).toBe(401)
+          const again = browser()
+          expect((await call(again, 'POST', '/api/login', { username: name, password: temp })).status).toBe(200)
+          expect((await call(again, 'GET', '/api/session')).json.hold).toBe('password')
+          const held = await call(again, 'GET', '/api/spaces')
+          expect([held.status, held.json.error]).toEqual([403, 'password_change_required'])
+          expect(
+            (await call(again, 'POST', '/api/account/password', { current: temp, new: 'my-own-password-2' })).status,
+          ).toBe(204)
+          expect((await call(again, 'GET', '/api/session')).json.hold).toBeNull()
+          expect((await call(again, 'GET', '/api/spaces')).status).toBe(200)
+          // A person renames themself too.
+          const own = uniq('own')
+          const mine = await call(again, 'PATCH', '/api/account', { username: own })
+          expect(mine.status).toBe(200)
+          expect(mine.json.user.username).toBe(own)
+        })
+
         it('finds users by part of a username or name, ignoring case, and caps the count; no parameters is everyone', async () => {
           const m = await newMember(uniq('fu'))
           const all = (await as(admin, () => adminApi.users())).users

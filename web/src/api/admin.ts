@@ -125,7 +125,8 @@ export const adminApi = {
       quota?: Partial<OwnQuota>
       remoteExempt?: boolean
     },
-  ) => request<{ user: User; verification?: 'sent' | 'not_sent' }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
+  ) =>
+    request<{ user: User; verification?: 'sent' | 'not_sent' }>(`/users/${enc(id)}`, { method: 'PATCH', body: input }),
   // The passkeys of one person, for an administrator who removes a lost one.
   userPasskeys: (id: string, signal?: AbortSignal) =>
     request<{ passkeys: Passkey[] }>(`/users/${enc(id)}/passkeys`, { signal }),

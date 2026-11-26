@@ -113,6 +113,8 @@ export const signinZhCN = {
     required: '管理员要求你的账号用 passkey 登录。',
   },
   held: {
+    passwordTitle: '设置新密码',
+    passwordHelp: '管理员给你设了一个临时密码。请先换成自己的密码再继续；“当前密码”里填那个临时密码。',
     title: '先设置一个 passkey',
     help: '管理员要求你的账号用 passkey 登录。添加第一个 passkey 后就可以继续使用了。',
     continue: '继续',
