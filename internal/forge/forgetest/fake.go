@@ -353,6 +353,14 @@ func (f *Fake) OnRequest(fn func(method, path string)) {
 	f.mu.Unlock()
 }
 
+// SetDown makes the API answer 503 (or answer again) while requests are being
+// served: a test that has a background loop asking the host sets it so.
+func (f *Fake) SetDown(down bool) {
+	f.mu.Lock()
+	f.Down = down
+	f.mu.Unlock()
+}
+
 // ExpireRefresh makes a person's refresh tokens end now.
 func (f *Fake) ExpireRefresh(login string) {
 	f.mu.Lock()

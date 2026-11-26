@@ -888,7 +888,14 @@ CREATE UNIQUE INDEX providers_owner_host ON providers(owner, kind, host) WHERE h
 -- per (provider, subject). subject is the OIDC sub, the SAML NameID, or the
 -- numeric id on GitHub, GitLab or Gitea. An account is found by the provider's
 -- own id and the subject, never by an issuer string. The token columns are for
--- repository links (GitHub, GitLab, Gitea); a sign-in link has none.
+-- repository links (GitHub, GitLab, Gitea; sealed, bound to the provider and the
+-- person); a sign-in link has none. version counts replacements of the tokens.
+-- state is ok, or expired: the tokens are gone and the person must authorise
+-- again. renew_at is when the one renewal loop next renews the refresh token (0:
+-- never); the partial index serves "the next one due" and "all due now".
+-- renewing_until is the lease of the one process asking the host for a new pair
+-- (0: none): a refresh token used twice is dead at some hosts, so a renewal
+-- claims the row first, and a lease left by a process that died ends by itself.
 CREATE TABLE linked_accounts (
   id              TEXT COLLATE "C" PRIMARY KEY,
   provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
@@ -903,6 +910,8 @@ CREATE TABLE linked_accounts (
   access_expires  BIGINT NOT NULL DEFAULT 0,
   refresh_expires BIGINT NOT NULL DEFAULT 0,
   scopes          TEXT COLLATE "C" NOT NULL DEFAULT '',
+  renew_at        BIGINT NOT NULL DEFAULT 0,
+  renewing_until  BIGINT NOT NULL DEFAULT 0,
   state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
   version         BIGINT NOT NULL DEFAULT 1,
   is_admin        BIGINT NOT NULL DEFAULT 0,
@@ -914,7 +923,7 @@ CREATE TABLE linked_accounts (
   UNIQUE (provider_id, user_id)
 );
 CREATE INDEX linked_accounts_user ON linked_accounts(user_id);
-CREATE INDEX linked_accounts_renew ON linked_accounts(state, refresh_expires) WHERE refresh_enc <> '';
+CREATE INDEX linked_accounts_renew ON linked_accounts(renew_at) WHERE refresh_enc <> '' AND state = 'ok';
 
 -- Reserved (consolidation 5, 3.6): built empty, nothing reads or writes them yet.
 -- A site provider shared with a tenant, or one of its installations.
@@ -946,40 +955,20 @@ CREATE TABLE group_mappings (
   PRIMARY KEY (provider_id, value, group_id)
 );
 
--- A person's connection to an account on a provider's host. One account on a
--- host links to one user, and a user has one connection per provider.
-CREATE TABLE provider_authorizations (
-  provider        TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-  user_id         TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  account_id      TEXT COLLATE "C" NOT NULL,
-  login           TEXT COLLATE "C" NOT NULL,
-  access_enc      TEXT COLLATE "C" NOT NULL DEFAULT '',
-  refresh_enc     TEXT COLLATE "C" NOT NULL DEFAULT '',
-  access_expires  BIGINT NOT NULL DEFAULT 0,
-  refresh_expires BIGINT NOT NULL DEFAULT 0,
-  state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
-  version         BIGINT NOT NULL DEFAULT 1,
-  is_admin        BIGINT NOT NULL DEFAULT 0,
-  connected       BIGINT NOT NULL,
-  updated         BIGINT NOT NULL,
-  PRIMARY KEY (provider, user_id),
-  UNIQUE (provider, account_id)
-);
-CREATE INDEX provider_authorizations_renew ON provider_authorizations(state, refresh_expires, provider, user_id);
-CREATE INDEX provider_authorizations_user ON provider_authorizations(user_id);
-
-CREATE TABLE provider_leftovers (
-  provider   TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-  user_id    TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  repo_id    BIGINT NOT NULL,
-  full_name  TEXT COLLATE "C" NOT NULL,
-  html_url   TEXT COLLATE "C" NOT NULL,
-  space_name TEXT COLLATE "C" NOT NULL DEFAULT '',
-  created    BIGINT NOT NULL,
-  PRIMARY KEY (provider, user_id, repo_id)
-);
+-- A reminder that a failed attempt to make a space with a new repository left
+-- an empty one on a provider. repo_id is the platform's own id of it, as text.
 -- Deleting a person deletes their reminders (the foreign key's cascade).
-CREATE INDEX provider_leftovers_user ON provider_leftovers(user_id);
+CREATE TABLE repo_leftovers (
+  provider_id TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+  user_id     TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  repo_id     TEXT COLLATE "C" NOT NULL,
+  full_name   TEXT COLLATE "C" NOT NULL,
+  html_url    TEXT COLLATE "C" NOT NULL,
+  space_name  TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created     BIGINT NOT NULL,
+  PRIMARY KEY (provider_id, user_id, repo_id)
+);
+CREATE INDEX repo_leftovers_user ON repo_leftovers(user_id);
 
 -- The recycle bin (3.5): one row per space or person that went into it. A
 -- space's rows are kept whole in records (JSON) and are gone from the live

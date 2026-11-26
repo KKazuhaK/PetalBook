@@ -28,7 +28,7 @@ func TestAnAccessTokenTheHostDroppedIsRenewedNotTheConnectionEnded(t *testing.T)
 		if n := h.f.Count("POST", "/") - before; n != 1 {
 			t.Fatalf("%d renewals", n)
 		}
-		row, err := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, err := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if err != nil || row.State != "ok" || row.RefreshEnc == "" || row.Version != 2 {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -61,7 +61,7 @@ func TestARequestWithAnOldTokenDoesNotEndAConnectionAParallelOneRenewed(t *testi
 		if n := h.f.Count("POST", "/") - before; n != 1 {
 			t.Fatalf("%d renewals, want the one", n)
 		}
-		row, err := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, err := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if err != nil || row.State != "ok" || row.RefreshEnc == "" || row.Version != 2 {
 			t.Fatalf("%+v %v", row, err)
 		}
@@ -233,8 +233,11 @@ func TestTokensOfAReplacedApplicationAreNotUsed(t *testing.T) {
 	each(t, func(t *testing.T, h *harness) {
 		p := h.add("main").(*forge.Provider)
 		h.user("U1", "tang")
+		h.user("U2", "wu")
 		h.f.AddUser("tang-h")
+		h.f.AddUser("wu-h")
 		h.connect(p, "U1", "tang-h")
+		h.connect(p, "U2", "wu-h")
 		if _, err := p.UserToken(ctx, "U1"); err != nil {
 			t.Fatal(err)
 		}
@@ -246,22 +249,33 @@ func TestTokensOfAReplacedApplicationAreNotUsed(t *testing.T) {
 		if _, err := p.UserToken(ctx, "U1"); !errors.Is(err, forge.ErrAuthorizationExpired) {
 			t.Fatalf("a token of the old application was used: %v", err)
 		}
-		row, _ := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, _ := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if row.State != "expired" || row.AccessEnc != "" || row.RefreshEnc != "" {
 			t.Fatalf("%+v", row)
+		}
+		// Each person whose connection ended is told, once, as for any other ending.
+		for _, u := range []string{"U1", "U2"} {
+			notes := reauthNotes(t, h, u)
+			want := `{"login":"` + map[string]string{"U1": "tang-h", "U2": "wu-h"}[u] + `","name":"Test main","provider":"main"}`
+			if len(notes) != 1 || notes[0].Ref != "main" || notes[0].Payload != want {
+				t.Fatalf("%s: %+v", u, notes)
+			}
 		}
 		// The person connects again, to the new one.
 		h.connect(p, "U1", "tang-h")
 		if _, err := p.UserToken(ctx, "U1"); err != nil {
 			t.Fatal(err)
 		}
-		// A new secret of the same application keeps the connections.
+		// A new secret of the same application keeps the connections, and tells nobody.
 		h.f.ClientSecret = "rotated-client-secret-0123456789"
 		if _, err := p.AdminSave(ctx, []byte(`{"clientSecret":"rotated-client-secret-0123456789"}`)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := p.UserToken(ctx, "U1"); err != nil {
 			t.Fatalf("a new secret ended the connections: %v", err)
+		}
+		if n := len(reauthNotes(t, h, "U1")); n != 1 {
+			t.Fatalf("%d notifications", n)
 		}
 	})
 }
@@ -307,16 +321,16 @@ func TestRenewalFollowsTheTokensOwnLifeNotAFixedWindow(t *testing.T) {
 		// life (73 hours), not from 30 days out, as a fixed window did.
 		for _, d := range []time.Duration{24 * time.Hour, 624 * time.Hour} { // 706, then 82 hours to go
 			h.clk.Advance(d)
-			if n := p.RenewDue(ctx); n != 0 {
+			if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 				t.Fatalf("%d renewed with %v gone", n, d)
 			}
 		}
 		h.clk.Advance(10 * time.Hour) // 72 hours to go
-		if n := p.RenewDue(ctx); n != 1 {
+		if n := h.mgr.Tokens().RenewDue(ctx); n != 1 {
 			t.Fatalf("%d renewed in the last tenth", n)
 		}
 		h.clk.Advance(48 * time.Hour)
-		if n := p.RenewDue(ctx); n != 0 {
+		if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 			t.Fatalf("%d renewed two days after a renewal", n)
 		}
 	})

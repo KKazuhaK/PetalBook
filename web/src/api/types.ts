@@ -2472,6 +2472,7 @@ export const NOTIFY_KINDS = [
   'password_set',
   'email_released',
   'viewed_as',
+  'link_reauth',
 ] as const
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]
 

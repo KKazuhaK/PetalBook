@@ -15,8 +15,6 @@ import (
 const (
 	attemptTTL      = 10 * time.Minute
 	attemptCapacity = 10_000
-	renewBefore     = 5 * time.Minute
-	maxUserTokens   = 10_000
 )
 
 // attempt is one authorisation between start and the callback.

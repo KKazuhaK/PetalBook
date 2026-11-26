@@ -33,6 +33,7 @@ export const notifyEn: NotifyMessages = {
     password_set: 'Password',
     email_released: 'Email address',
     viewed_as: 'Viewed as you',
+    link_reauth: 'Linked accounts',
   },
   unreadMark: 'Unread',
   moreProblems: (n: number) => (n === 1 ? 'And 1 more space has problems.' : `And ${n} more spaces have problems.`),
@@ -91,6 +92,13 @@ export const notifyEn: NotifyMessages = {
     emailReleased: {
       title: (email: string) => `Your email address “${email}” moved to another account`,
       body: 'It was not verified, and someone proved it is theirs. Set an address of your own in your profile.',
+    },
+    linkReauth: {
+      title: (name: string) => `Connect your ${name} account again`,
+      body: (login: string) =>
+        login
+          ? `${login} could not be renewed: the access was revoked or has ended. Spaces that sync through it wait until you connect again.`
+          : 'The access was revoked or has ended. Spaces that sync through it wait until you connect again.',
     },
     viewedAs: {
       title: (by: string) => (by ? `${by} viewed the app as you` : 'An administrator viewed the app as you'),

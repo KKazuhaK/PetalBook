@@ -187,6 +187,14 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 		bulk(t, st, "spaces", "id, name, name_key, created", n, 200, func(i int) []any {
 			return []any{fmt.Sprintf("S%05d", i), "s", "s", now}
 		})
+		// Repository links, with refresh tokens that end over the next few days.
+		if err := store.InsertConnProviderRow(ctx, st.Q(), store.ConnProviderRow{ID: "bulkgt", Type: "gitea", Host: "bulkgt.example.com", Scheme: "https", Name: "b",
+			Owner: store.ConnProviderSite, State: "ok", Created: time.Now(), Updated: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		bulk(t, st, "linked_accounts", "id, provider_id, user_id, subject, access_enc, refresh_enc, refresh_expires, renew_at, created, updated", n, 200, func(i int) []any {
+			return []any{fmt.Sprintf("K%05d", i), "bulkgt", fmt.Sprintf("U%05d", i), fmt.Sprintf("%d", i), "a", "r", now + int64(i)*2000, now + int64(i)*1000, now, now}
+		})
 		// Both roles of every space; one in fifty through a person's link, one
 		// in fifty through an installation.
 		bulk(t, st, "remotes", "space_id, role, url, updated, cred_type, via, installation_id, cred_user_id", 2*n, 200, func(i int) []any {
@@ -211,7 +219,7 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 				// store.TenantAdmins.
 				{`SELECT id FROM users WHERE tenant_id = ? AND role = 'admin' AND deleted_at IS NULL ORDER BY created, id LIMIT 10`, "users_admins"},
 				{`SELECT 1 FROM invites WHERE created_by = ?`, "invites_created_by"},
-				{`SELECT 1 FROM provider_leftovers WHERE user_id = ?`, "provider_leftovers_user"},
+				{`SELECT 1 FROM repo_leftovers WHERE user_id = ?`, "repo_leftovers_user"},
 				{`SELECT id FROM session_ends WHERE ended < ?`, "session_ends_ended"},
 				// "The spaces using a connection", both roles in one scan
 				// (store.CountUserProviderSpaces, PlanUserDeletion, GitHubSpaceCounts).
@@ -229,6 +237,20 @@ func TestLookupsUseTheirIndexes(t *testing.T) {
 				}
 				if plan := explain(t, st, q, c.sql, args...); !strings.Contains(plan, c.index) {
 					t.Errorf("%s does not read %s:\n%s", c.sql, c.index, plan)
+				}
+			}
+			// The renewal loop's two reads: the links due now (a page of them after a
+			// cursor) and the next time one is due.
+			for _, c := range []struct {
+				sql  string
+				args []any
+			}{
+				{`SELECT id FROM linked_accounts WHERE refresh_enc <> '' AND state = 'ok' AND renew_at > 0 AND renew_at <= ?
+					AND (renew_at > ? OR (renew_at = ? AND id > ?)) ORDER BY renew_at, id LIMIT ?`, []any{now + 500_000, now + 100_000, now + 100_000, "K00100", 50}},
+				{`SELECT MIN(renew_at) FROM linked_accounts WHERE refresh_enc <> '' AND state = 'ok' AND renew_at > ?`, []any{now + 500_000}},
+			} {
+				if plan := explain(t, st, q, c.sql, c.args...); !strings.Contains(plan, "linked_accounts_renew") {
+					t.Errorf("%s does not read linked_accounts_renew:\n%s", c.sql, plan)
 				}
 			}
 		})

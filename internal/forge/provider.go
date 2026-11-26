@@ -24,10 +24,6 @@ type Provider struct {
 	mu       sync.Mutex
 	row      store.ConnProviderRow // guarded by mu
 	secret   string                // the client secret, in memory only (guarded by mu)
-	tokens   map[string]cachedUser // by PetalBook user id
-	renewing map[string]*renewal
-	gens     map[string]uint64 // see tokenGen
-	genAll   uint64
 	attempts *attemptStore
 	onChange func(userID string)
 	// partialBusy is set while the host is asked whether it can filter a fetch.
@@ -36,6 +32,7 @@ type Provider struct {
 
 var (
 	_ connections.Provider     = (*Provider)(nil)
+	_ connections.Refresher    = (*Provider)(nil)
 	_ connections.Administered = (*Provider)(nil)
 	_ connections.GitUser      = (*Provider)(nil)
 	_ connections.Connected    = (*Provider)(nil)
@@ -113,7 +110,7 @@ func (p *Provider) Info(ctx context.Context, userID string) (*connections.Info, 
 
 // Login is the caller's account name on the host, "" when not connected.
 func (p *Provider) Login(ctx context.Context, userID string) string {
-	a, err := store.GetProviderAuthorization(ctx, p.m.opt.Store.Q(), p.id, userID)
+	a, err := store.GetRepoLink(ctx, p.m.opt.Store.Q(), p.id, userID)
 	if err != nil {
 		return ""
 	}
@@ -122,7 +119,7 @@ func (p *Provider) Login(ctx context.Context, userID string) string {
 
 func (p *Provider) connection(ctx context.Context, userID string) (*connections.Connection, error) {
 	db := p.m.opt.Store.Q()
-	a, err := store.GetProviderAuthorization(ctx, db, p.id, userID)
+	a, err := store.GetRepoLink(ctx, db, p.id, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
 	}
@@ -133,11 +130,11 @@ func (p *Provider) connection(ctx context.Context, userID string) (*connections.
 	if err != nil {
 		return nil, err
 	}
-	return &connections.Connection{Login: a.Login, AccountID: a.AccountID, State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n, Admin: a.Admin}, nil
+	return &connections.Connection{Login: a.Login, AccountID: a.Subject, State: a.State, Connected: a.Connected, RefreshExpires: a.RefreshExpires, Spaces: n, Admin: a.Admin}, nil
 }
 
 func (p *Provider) leftovers(ctx context.Context, userID string) ([]connections.Leftover, error) {
-	rows, err := store.ListProviderLeftovers(ctx, p.m.opt.Store.Q(), p.id, userID)
+	rows, err := store.ListRepoLeftovers(ctx, p.m.opt.Store.Q(), p.id, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,13 +152,13 @@ const leftoverTimeout = 10 * time.Second
 func (p *Provider) RecordLeftover(ctx context.Context, userID string, repo *connections.Repo, spaceName string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leftoverTimeout)
 	defer cancel()
-	return store.PutProviderLeftover(ctx, p.m.opt.Store.Q(), store.ProviderLeftover{Provider: p.id, UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
+	return store.PutRepoLeftover(ctx, p.m.opt.Store.Q(), store.RepoLeftover{ProviderID: p.id, UserID: userID, RepoID: repo.ID, FullName: repo.FullName,
 		HTMLURL: repo.HTMLURL, SpaceName: spaceName, Created: p.m.opt.Now()})
 }
 
 // DismissLeftover forgets the user's reminder of a repository; there being none is fine.
 func (p *Provider) DismissLeftover(ctx context.Context, userID string, repoID int64) error {
-	_, err := store.DeleteProviderLeftover(ctx, p.m.opt.Store.Q(), p.id, userID, repoID)
+	_, err := store.DeleteRepoLeftover(ctx, p.m.opt.Store.Q(), p.id, userID, repoID)
 	return err
 }
 
@@ -283,7 +280,7 @@ func (p *Provider) AdminView(ctx context.Context) (any, error) {
 // AdminCounts is how many people are connected and spaces sync through the provider.
 func (p *Provider) AdminCounts(ctx context.Context) (int, int, error) {
 	db := p.m.opt.Store.Q()
-	n, err := store.CountProviderAuthorizations(ctx, db, p.id)
+	n, err := store.CountProviderLinks(ctx, db, p.id)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -349,7 +346,7 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	if otherApp {
 		// Tokens of another application are not this one's to use: everyone
 		// connects again. (A new secret of the same application keeps them.)
-		if _, err := store.ExpireProviderAuthorizations(ctx, p.m.opt.Store.Q(), p.id, p.m.opt.Now()); err != nil {
+		if _, err := store.ExpireProviderLinks(ctx, p.m.opt.Store.Q(), p.id, row.Name, p.m.opt.Now()); err != nil {
 			return nil, err
 		}
 	}
@@ -362,7 +359,7 @@ func (p *Provider) AdminSave(ctx context.Context, body []byte) (any, error) {
 	p.secret = secret
 	p.mu.Unlock()
 	if newClient {
-		p.dropAllTokens() // what was cached is read again (and, of another application, is gone from the database)
+		p.m.tokens.DropProvider(p.id) // what was cached is read again (and, of another application, is gone from the database)
 	}
 	p.changed("")
 	return p.AdminView(ctx)
@@ -441,7 +438,7 @@ func (p *Provider) AdminDelete(ctx context.Context) error {
 	}
 	delete(p.m.provs, p.id)
 	p.m.opt.Registry.Remove(p.id)
-	p.dropAllTokens()
+	p.m.tokens.DropProvider(p.id)
 	return nil
 }
 

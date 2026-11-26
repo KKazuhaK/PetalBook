@@ -43,3 +43,17 @@ describe('the notice of a temporary password', () => {
     expect(d.body).toBe(tn.items.passwordSet.body)
   })
 })
+
+describe('the notice that a linked account needs connecting again', () => {
+  it('names the provider and the account and leads to the connections', () => {
+    const d = describeNotification(note('link_reauth', { provider: 'main', name: 'Codeberg', login: 'tang-h' }))
+    expect(d.title).toBe(tn.items.linkReauth.title('Codeberg'))
+    expect(d.body).toBe(tn.items.linkReauth.body('tang-h'))
+    expect(d.title).toContain('Codeberg')
+    expect(d.to).toBe('/settings/connections')
+  })
+
+  it('falls back to the provider id when the name is missing', () => {
+    expect(describeNotification(note('link_reauth', { provider: 'main' })).title).toContain('main')
+  })
+})

@@ -407,7 +407,7 @@ func TestAPersonConnectsOnceWithPKCE(t *testing.T) {
 			t.Fatalf("%+v", in.Connection)
 		}
 		// The tokens are sealed in the database, apart.
-		row, _ := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, _ := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		for _, s := range h.f.AllTokens() {
 			if strings.Contains(row.AccessEnc, s) || strings.Contains(row.RefreshEnc, s) {
 				t.Fatal("a token is stored as it is")
@@ -579,7 +579,7 @@ func TestAnExpiringTokenIsRenewedOnceAtATime(t *testing.T) {
 		}
 		// The new pair is the stored one, the old refresh token is spent, and a
 		// restart reads the new pair.
-		row, _ := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, _ := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if row.Version != 2 || row.State != "ok" {
 			t.Fatalf("%+v", row)
 		}
@@ -639,7 +639,7 @@ func TestTheDailyRenewalKeepsRefreshTokensThatWouldEnd(t *testing.T) {
 				t.Fatalf("%v", in.Connection.RefreshExpires)
 			}
 			h.clk.Advance(1000 * 24 * time.Hour)
-			if n := p.RenewDue(ctx); n != 0 {
+			if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 				t.Fatalf("%d renewed", n)
 			}
 			return
@@ -650,11 +650,11 @@ func TestTheDailyRenewalKeepsRefreshTokensThatWouldEnd(t *testing.T) {
 		}
 		before := h.f.Count("POST", "/login/oauth/access_token")
 		h.clk.Advance(20 * 24 * time.Hour) // 250 hours to go: not in the last tenth of its life
-		if n := p.RenewDue(ctx); n != 0 {
+		if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 			t.Fatalf("%d renewed early", n)
 		}
 		h.clk.Advance(180 * time.Hour) // 70 hours to go
-		if n := p.RenewDue(ctx); n != 1 {
+		if n := h.mgr.Tokens().RenewDue(ctx); n != 1 {
 			t.Fatalf("%d renewed", n)
 		}
 		if h.f.Count("POST", "/login/oauth/access_token")-before != 1 {
@@ -667,7 +667,7 @@ func TestTheDailyRenewalKeepsRefreshTokensThatWouldEnd(t *testing.T) {
 		// The new refresh token has all its life ahead: no request again for weeks.
 		for _, d := range []time.Duration{24 * time.Hour, 10 * 24 * time.Hour} {
 			h.clk.Advance(d)
-			if n := p.RenewDue(ctx); n != 0 {
+			if n := h.mgr.Tokens().RenewDue(ctx); n != 0 {
 				t.Fatalf("%d renewed", n)
 			}
 		}
@@ -688,7 +688,7 @@ func TestARefreshTokenThatEndedExpiresTheConnectionWithoutCrashing(t *testing.T)
 		if in, _ := p.Info(ctx, "U1"); in.Connection.State != "expired" {
 			t.Fatalf("%+v", in.Connection)
 		}
-		row, _ := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1")
+		row, _ := store.GetRepoLink(ctx, h.st.Q(), "main", "U1")
 		if row.AccessEnc != "" || row.RefreshEnc != "" {
 			t.Fatal("an expired connection keeps its tokens")
 		}
@@ -742,7 +742,7 @@ func TestDisconnectingRevokesWhereTheHostCanAndAlwaysDeletes(t *testing.T) {
 				t.Fatal("the token still works at the host")
 			}
 		}
-		if _, err := store.GetProviderAuthorization(ctx, h.st.Q(), "main", "U1"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := store.GetRepoLink(ctx, h.st.Q(), "main", "U1"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("%v", err)
 		}
 		if _, err := p.UserToken(ctx, "U1"); !errors.Is(err, forge.ErrNoAuthorization) {

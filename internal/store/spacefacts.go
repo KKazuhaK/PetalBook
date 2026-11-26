@@ -178,9 +178,9 @@ func (s *Store) NoteWrite(ctx context.Context, userID string, at time.Time) erro
 }
 
 // hasConnectionSQL is the condition that a person has a connection: a GitHub
-// authorization or one of any provider of 2.7b. id is the SQL of their id.
+// authorization or a repository link (a row of linked_accounts that holds tokens or lost them: not a sign-in only). id is the SQL of their id.
 func hasConnectionSQL(id string) string {
-	return `(EXISTS (SELECT 1 FROM github_authorizations ga WHERE ga.user_id = ` + id + `) OR EXISTS (SELECT 1 FROM provider_authorizations pa WHERE pa.user_id = ` + id + `))`
+	return `(EXISTS (SELECT 1 FROM github_authorizations ga WHERE ga.user_id = ` + id + `) OR EXISTS (SELECT 1 FROM linked_accounts la WHERE la.user_id = ` + id + ` AND (la.access_enc <> '' OR la.state <> 'ok')))`
 }
 
 // settleConnected makes the person's usage row say whether they have a

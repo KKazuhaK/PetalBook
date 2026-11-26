@@ -5,9 +5,9 @@
 // implements connections.Provider; what differs between the two platforms is
 // the driver (gitlab.go, gitea.go), and everything else is shared.
 //
-// State is in the state database (providers, provider_authorizations,
-// provider_leftovers; every secret sealed with the server's key) and in memory
-// (access tokens, and the authorisations in progress). A provider reaches its
+// State is in the state database (providers, linked_accounts, repo_leftovers;
+// every secret sealed with the server's key) and in memory (the authorisations
+// in progress; the access tokens are the token service's, internal/connections). A provider reaches its
 // host only through a client that refuses addresses that are not public.
 package forge
 
@@ -59,10 +59,12 @@ type Options struct {
 	// Unsafe lets a host be plain http and on a private or loopback address
 	// (tests, and a lab), as --remote-unsafe lets a remote be.
 	Unsafe bool
-	// RenewEvery is how often the connections that need it are renewed (default
-	// a day), and RenewWithin how close to its end a refresh token must be for
-	// that (default 30 days).
-	RenewEvery, RenewWithin time.Duration
+	// Tokens is the token service that keeps the people's tokens and renews them
+	// (one for every kind of provider); nil makes the manager's own.
+	Tokens *connections.Tokens
+	// ReloadEvery is how often RunReload looks for providers another process of
+	// the database set up (default a day).
+	ReloadEvery time.Duration
 }
 
 // Manager holds the providers an administrator set up and makes new ones.
@@ -74,6 +76,7 @@ type Manager struct {
 	mu          sync.Mutex // serialises making and removing providers
 	hostAllowed func(host string) error
 	provs       map[string]*Provider
+	tokens      *connections.Tokens
 }
 
 var _ connections.Creator = (*Manager)(nil)
@@ -89,14 +92,14 @@ func NewManager(ctx context.Context, opt Options) (*Manager, error) {
 	if opt.Logger == nil {
 		opt.Logger = slog.New(slog.DiscardHandler)
 	}
-	if opt.RenewEvery <= 0 {
-		opt.RenewEvery = 24 * time.Hour
+	if opt.ReloadEvery <= 0 {
+		opt.ReloadEvery = 24 * time.Hour
 	}
-	if opt.RenewWithin <= 0 {
-		opt.RenewWithin = 30 * 24 * time.Hour
+	if opt.Tokens == nil {
+		opt.Tokens = connections.NewTokens(connections.TokenOptions{Store: opt.Store, Secrets: opt.Secrets, Registry: opt.Registry, Now: opt.Now, Logger: opt.Logger})
 	}
 	opt.PublicURL = strings.TrimRight(opt.PublicURL, "/")
-	m := &Manager{opt: opt, log: opt.Logger, hc: newHTTPClient(opt.Unsafe), provs: map[string]*Provider{}}
+	m := &Manager{opt: opt, log: opt.Logger, hc: newHTTPClient(opt.Unsafe), provs: map[string]*Provider{}, tokens: opt.Tokens}
 	if err := m.Reload(ctx); err != nil {
 		return nil, err
 	}
@@ -161,7 +164,7 @@ func secretPurpose(owner string) string {
 // (the server's key changed) leaves the provider there but not set up: the
 // administrator saves the secret again.
 func (m *Manager) build(r store.ConnProviderRow) *Provider {
-	p := &Provider{m: m, d: m.driverFor(r.Type), id: r.ID, row: r, tokens: map[string]cachedUser{}, renewing: map[string]*renewal{}, gens: map[string]uint64{},
+	p := &Provider{m: m, d: m.driverFor(r.Type), id: r.ID, row: r,
 		attempts: newAttemptStore(m.opt.Now, attemptCapacity)}
 	p.c = &client{base: r.Scheme + "://" + r.Host, hc: m.hc, now: m.opt.Now, log: m.log}
 	if r.SecretEnc != "" {
@@ -508,14 +511,14 @@ func (m *Manager) remove(id string) {
 	m.opt.Registry.Remove(id)
 }
 
-// RunRenew renews the connections that need it now and then once every
-// RenewEvery, until ctx ends.
-func (m *Manager) RunRenew(ctx context.Context) {
-	first := time.Minute
-	if m.opt.RenewEvery < first {
-		first = m.opt.RenewEvery
-	}
-	t := time.NewTimer(first)
+// Tokens is the token service the providers use.
+func (m *Manager) Tokens() *connections.Tokens { return m.tokens }
+
+// RunReload adds the providers another process of this database set up, once
+// every ReloadEvery, until ctx ends. (Renewing tokens is the token service's
+// loop, Tokens().Run.)
+func (m *Manager) RunReload(ctx context.Context) {
+	t := time.NewTicker(m.opt.ReloadEvery)
 	defer t.Stop()
 	for {
 		select {
@@ -523,22 +526,9 @@ func (m *Manager) RunRenew(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		// A host another process of this database set up appears here too.
 		if err := m.Reload(ctx); err != nil {
 			m.log.Warn("could not look for providers set up elsewhere", "error", err)
 		}
-		m.mu.Lock()
-		list := make([]*Provider, 0, len(m.provs))
-		for _, p := range m.provs {
-			list = append(list, p)
-		}
-		m.mu.Unlock()
-		for _, p := range list {
-			if n := p.RenewDue(ctx); n > 0 {
-				m.log.Info("renewed authorisations", "provider", p.id, "count", n)
-			}
-		}
-		t.Reset(m.opt.RenewEvery)
 	}
 }
 

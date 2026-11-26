@@ -68,6 +68,13 @@ export function describeNotification(n: NotificationItem): Described {
     // Someone proved an address the person held unverified (3.6).
     case 'email_released':
       return { title: p2.emailReleased.title(str(p.email)), body: p2.emailReleased.body, to: settingsPath('profile') }
+    // A linked account's tokens could not be renewed: the person connects it again.
+    case 'link_reauth':
+      return {
+        title: p2.linkReauth.title(str(p.name, str(p.provider))),
+        body: p2.linkReauth.body(str(p.login)),
+        to: settingsPath('connections'),
+      }
     // An administrator viewed the app as the person (made only once the owner decides the person is told).
     case 'viewed_as':
       return { title: p2.viewedAs.title(str(p.by)), body: p2.viewedAs.body(str(p.reason)), to: '' }
