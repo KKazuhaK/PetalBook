@@ -141,59 +141,9 @@ func SearchUsers(ctx context.Context, q Q, d Dialect, sc Scope, query string, en
 	return out, rows.Err()
 }
 
-// InsertUser adds a user. A taken username or id is a unique violation (see UniqueOn).
-func InsertUser(ctx context.Context, q Q, u User) error {
-	if u.TenantID == "" {
-		u.TenantID = DefaultTenantID
-	}
-	_, err := q.Exec(ctx, `INSERT INTO users(`+userCols+`, name_key, email_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Username, u.Name, u.Email, u.Role, b2i(u.Disabled), ms(u.Created), b2i(u.EmailVerified), b2i(u.PasskeyRequired), u.TenantID, b2i(u.SiteAdmin), b2i(u.RemoteExempt),
-		FoldName(u.Name), storedEmailKey(u.Email))
-	if err != nil {
-		return err
-	}
-	return usageOfNewUser(ctx, q, u.ID, u.TenantID, u.Created)
-}
-
-// UpdateProfile sets the name and email, and whether the email is verified.
-func UpdateProfile(ctx context.Context, q Q, id, name, email string, verified bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET name = ?, name_key = ?, email = ?, email_key = ?, email_verified = ? WHERE id = ?`,
-		name, FoldName(name), email, storedEmailKey(email), b2i(verified), id)
-	return oneRow(res, err)
-}
-
 // SetRemoteExempt sets whether the storage policy leaves this user's spaces out.
 func SetRemoteExempt(ctx context.Context, q Q, id string, exempt bool) error {
 	res, err := q.Exec(ctx, `UPDATE users SET remote_exempt = ? WHERE id = ?`, b2i(exempt), id)
-	return oneRow(res, err)
-}
-
-// VerifiedByTenantAdmin is the email_verified_by of an address only a tenant
-// administrator vouched for.
-const VerifiedByTenantAdmin = "tenant_admin"
-
-// SetEmail sets a user's address, whether it is verified, and who vouched for
-// it ("" or VerifiedByTenantAdmin).
-func SetEmail(ctx context.Context, q Q, id, email string, verified bool, by string) error {
-	res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_key = ?, email_verified = ?, email_verified_by = ? WHERE id = ?`, email, storedEmailKey(email), b2i(verified), by, id)
-	return oneRow(res, err)
-}
-
-// EmailVerifiedBy is who vouched for a user's verified address ("" or
-// VerifiedByTenantAdmin).
-func EmailVerifiedBy(ctx context.Context, q Q, id string) (string, error) {
-	var by string
-	err := q.QueryRow(ctx, `SELECT email_verified_by FROM users WHERE id = ?`, id).Scan(&by)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	return by, err
-}
-
-// SetEmailVerified marks the address verified or not, by the person
-// themself: it counts for merging a sign-in.
-func SetEmailVerified(ctx context.Context, q Q, id string, verified bool) error {
-	res, err := q.Exec(ctx, `UPDATE users SET email_verified = ?, email_verified_by = '' WHERE id = ?`, b2i(verified), id)
 	return oneRow(res, err)
 }
 
@@ -201,34 +151,6 @@ func SetEmailVerified(ctx context.Context, q Q, id string, verified bool) error 
 func SetPasskeyRequired(ctx context.Context, q Q, id string, required bool) error {
 	res, err := q.Exec(ctx, `UPDATE users SET passkey_required = ? WHERE id = ?`, b2i(required), id)
 	return oneRow(res, err)
-}
-
-// EmailKey is the form addresses are compared in: ASCII, with A to Z made
-// lower case and nothing else changed. ok is false for an address with any
-// other character: Unicode case mapping makes look-alikes equal (U+0130 and
-// U+212A lower to "i" and "k"), so such an address equals no other.
-func EmailKey(email string) (key string, ok bool) {
-	b := []byte(email)
-	for i, c := range b {
-		if c >= 0x80 {
-			return "", false
-		}
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b), true
-}
-
-// storedEmailKey is what users.email_key holds for an address: its EmailKey, or
-// ” for an empty address and for one that is not ASCII (which no lookup finds).
-// Every write of users.email writes it too.
-func storedEmailKey(email string) string {
-	key, ok := EmailKey(email)
-	if !ok {
-		return ""
-	}
-	return key
 }
 
 // personMatches is the condition that the person (users row with the alias
@@ -239,40 +161,6 @@ func storedEmailKey(email string) string {
 func personMatches(alias, query string) (string, []any) {
 	pat := "%" + likeEscape(FoldName(query)) + "%"
 	return `(` + alias + `username LIKE ? ESCAPE '\' OR ` + alias + `name_key LIKE ? ESCAPE '\')`, []any{pat, pat}
-}
-
-// UsersByEmail returns the users whose address equals email in EmailKey form
-// (at most limit; limit <= 0: all), by the index users_email on the stored key.
-// An address that is not ASCII matches nobody, and a stored one that is not
-// ASCII is matched by nothing.
-func UsersByEmail(ctx context.Context, q Q, d Dialect, sc Scope, email string, limit int) ([]User, error) {
-	key, ok := EmailKey(email)
-	if !ok || key == "" {
-		return nil, nil
-	}
-	cond, cargs := sc.cond("tenant_id")
-	// email_key <> '' is the partial index's condition, written out so that
-	// SQLite (which cannot infer it from "= ?") uses it.
-	sqlText := `SELECT ` + userCols + ` FROM users WHERE email_key = ? AND email_key <> '' AND deleted_at IS NULL AND ` + cond + ` ORDER BY created, id`
-	args := append([]any{key}, cargs...)
-	if limit > 0 {
-		sqlText += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	rows, err := q.Query(ctx, sqlText, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []User
-	for rows.Next() {
-		u, err := scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *u)
-	}
-	return out, rows.Err()
 }
 
 // inEnabledTenant is the condition on a users row (alias u) of a tenant that is

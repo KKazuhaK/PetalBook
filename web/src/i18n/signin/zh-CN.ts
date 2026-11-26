@@ -38,6 +38,7 @@ export const signinZhCN = {
     not_allowed: '你不在这个登录方式要求的组织里，所以不能登录。',
     disabled: '这个账号已被停用。',
     identity_in_use: '这个登录身份已经属于另一个账号。',
+    email_in_use: '另一个账号已经在用这个邮箱。请先登录那个账号，再在账号设置里关联这个登录方式。',
     invite_invalid: '邀请无效、已过期或已被用过。',
     setup_invalid: '设置令牌不对，或者已经有管理员了。',
     rate_limited: '请求太频繁，请稍等一会儿再试。',

@@ -836,6 +836,8 @@ export type ErrorCode =
   | 'terms_required'
   | 'email_verified'
   | 'email_unverified'
+  | 'email_taken'
+  | 'email_not_ascii'
   | 'sso_only_with_registration'
   | 'bad_language'
   | 'api_not_found'

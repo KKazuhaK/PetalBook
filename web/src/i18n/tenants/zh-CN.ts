@@ -170,6 +170,7 @@ export const tenantsZhCN = {
       'quota.pagesPerPerson': '每人的页面数上限',
       'files.maxBytes': '单个文件的大小上限（字节）',
       'recycle.days': '回收站保留的天数',
+      'users.emailNonAscii': '允许含非 ASCII 字符的邮箱',
       'storage.assets': '附件放在哪里',
       'storage.assets.ownStorageExempt': '使用自己存储的组织不受此限制',
     } as Record<string, string>,
@@ -186,6 +187,8 @@ export const tenantsZhCN = {
       'files.maxBytes':
         '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',
       'recycle.days': '删除的空间和人先在回收站保留多少天，之后才真正清除。只有全站管理员能设。',
+      'users.emailNonAscii':
+        '默认关闭：含非 ASCII 字符的邮箱（@ 前是 Unicode 名字，或国际化域名）会被拒绝。开启后可以使用，并按统一的形式比较（域名转成 punycode，名字规范化并忽略大小写），所以仍然不会重复。给这类邮箱发信需要支持 SMTPUTF8 的邮件中继。只有全站管理员能设。',
       'storage.assets':
         '新建并同步到平台的空间，附件是放在空间自己的仓库，还是放在单独的附件仓库（<名字>-assets）。默认是单独的仓库。顺序：全站锁定 > 全站为某个租户强制 > 全站默认 > 租户默认 > 空间所有者；没有远端的空间附件始终在空间里。租户的限额表关掉附件仓库时只能放在空间里。',
       'storage.assets.ownStorageExempt':

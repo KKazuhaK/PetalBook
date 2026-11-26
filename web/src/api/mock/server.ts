@@ -1414,6 +1414,18 @@ export function createMockServer(options: MockOptions = {}) {
     if (body.email !== undefined) {
       if (typeof body.email !== 'string' || body.email.length > 254) throw new HttpError(400, 'invalid', '邮箱不合法')
       const email = body.email.trim()
+      // As the server (3.6): outside ASCII only when the site allows it, and an
+      // address belongs to one account (compared folded; the server's key also
+      // turns the domain into punycode).
+      // eslint-disable-next-line no-control-regex
+      if (/[^\x00-\x7f]/.test(email) && tenantBook.effective('users.emailNonAscii') !== true)
+        throw new HttpError(400, 'email_not_ascii', '这个服务器不接受含非 ASCII 字符的邮箱')
+      const key = (e: string) => e.normalize('NFC').toLowerCase()
+      if (
+        email !== '' &&
+        [...users.values()].some((x) => x.id !== u.id && x.email !== '' && key(x.email) === key(email))
+      )
+        throw new HttpError(409, 'email_taken', '另一个账号已经在用这个邮箱')
       // Changing the address takes the "verified" away.
       if (email !== u.email) {
         mailBook.noteChange({ email: u.email, emailVerified: u.emailVerified })

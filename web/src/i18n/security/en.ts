@@ -193,9 +193,9 @@ export const securityEn: SecurityMessages = {
     orderHelp: 'Lower numbers come first.',
     autoCreate: 'Create an account at the first sign-in',
     autoCreateHelp: 'When nobody has the identity, make a member account. Off by default.',
-    mergeVerifiedEmail: 'Merge into an existing account by verified email',
+    mergeVerifiedEmail: "Trust this provider's verified email addresses",
     mergeVerifiedEmailHelp:
-      'When on, an address this provider says is verified signs people in to the existing account with the same verified address (never an administrator’s). SAML has no “verified” claim, so turning it on means you vouch for every address it sends. Only for providers you trust.',
+      'When on, an address this OpenID Connect provider marks as verified (email_verified) counts as verified here: a new account gets it verified, and it moves from an account that has it unverified. It never signs anyone in to an existing account: who already has the address links this provider from their account. SAML has no such claim, so a SAML provider never vouches for an address. Off by default; only for providers you trust.',
     oidc: {
       issuer: 'Issuer',
       issuerHelp: 'An address starting with https.',
@@ -361,7 +361,7 @@ export const securityEn: SecurityMessages = {
     loadPasskeysFailed: 'Could not load the passkeys',
     email: 'Email',
     emailVerified: 'Email verified',
-    emailVerifiedHelp: 'Only a verified address can be matched by a provider that merges by verified email.',
+    emailVerifiedHelp: 'Only a verified address signs in by email and gets password reset links.',
     saveEmail: 'Save email',
     emailSaved: 'Email saved',
     verified: 'Verified',

@@ -684,6 +684,7 @@ func PurgeUserData(ctx context.Context, q Q, userID, itemID string, now time.Tim
 		`DELETE FROM provider_leftovers WHERE user_id = ?`,
 		`DELETE FROM github_leftovers WHERE user_id = ?`,
 		`DELETE FROM usage WHERE kind = 'user' AND id = ?`,
+		`DELETE FROM user_emails WHERE user_id = ?`,
 	} {
 		if _, err := q.Exec(ctx, stmt, userID); err != nil {
 			return err

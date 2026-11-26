@@ -325,26 +325,32 @@ func TestResetMailIsCappedPerAddressAndPerCaller(t *testing.T) {
 	})
 }
 
-func TestAnAddressSeveralAccountsShareGetsOneMessageWithALinkForEach(t *testing.T) {
+// A reset by address reads a verified address of an account, on the whole
+// server: one held unverified finds nobody, and an account of another tenant
+// is found as its username would find it. The link goes to the stored address.
+func TestAResetByAddressFindsAVerifiedAddressOnly(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		srv := fakeMail(t)
-		root := a.setup("root", pw)
-		enableMail(t, root, srv)
-		verifiedUser(t, a, "one", "shared@example.test")
-		verifiedUser(t, a, "two", "shared@example.test")
-		forgot(a.newClient(""), "shared@example.test").want(t, 202, "")
-		m := srv.Wait(1)[0]
-		toks := m.Tokens()
-		if len(toks) != 2 || !strings.Contains(m.Text, "one:") || !strings.Contains(m.Text, "two:") {
-			t.Fatalf("%s", m.Text)
+		f := newTenFx(t, a)
+		enableMail(t, f.root, srv)
+		ctx := context.Background()
+		if err := store.SetEmail(ctx, a.st.Q(), f.userA, "Mem@Example.test", true, ""); err != nil {
+			t.Fatal(err)
 		}
-		anon := a.newClient("")
-		anon.do("POST", "/api/password/reset", map[string]any{"token": toks[0], "password": "a brand new password"}).want(t, 204, "")
-		anon.do("POST", "/api/password/reset", map[string]any{"token": toks[1], "password": "a brand new password"}).want(t, 204, "")
+		verifiedUser(t, a, "squat", "")
+		if err := store.SetEmail(ctx, a.st.Q(), mustUserID(t, a, "squat"), "held@example.test", false, ""); err != nil {
+			t.Fatal(err)
+		}
+		forgot(a.newClient("203.0.113.1"), "held@example.test").want(t, 202, "")
+		forgot(a.newClient("203.0.113.2"), "MEM@example.test").want(t, 202, "")
+		m := srv.Wait(1)[0]
+		if m.To != "Mem@Example.test" || len(m.Tokens()) != 1 {
+			t.Fatalf("%s: %s", m.To, m.Text)
+		}
 		settle()
-		if len(srv.Messages()) != 1 {
-			t.Fatal("more than one message")
+		if n := len(srv.Messages()); n != 1 {
+			t.Fatalf("%d messages", n)
 		}
 	})
 }

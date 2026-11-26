@@ -97,6 +97,8 @@ const DEFS: Def[] = [
   { key: 'storage.assets.ownStorageExempt', kind: 'boolean', layers: ['site'], def: true, lower: { mode: 'allow' } },
   // How many days a deleted space or person stays in the recycle bin (3.5); the site's alone.
   { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
+  // Whether addresses outside ASCII may be set (3.6); the site's alone.
+  { key: 'users.emailNonAscii', kind: 'boolean', layers: ['site'], def: false, lower: { mode: 'allow' } },
 ]
 const FILES_KEY = 'files.maxBytes'
 

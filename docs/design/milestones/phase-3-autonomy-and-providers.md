@@ -462,19 +462,72 @@ Decided:
     writing it). `POST /api/login` takes `identifier` (replacing the old
     `username`).
   - An email is unique across all accounts site-wide (including disabled ones and
-    those in the recycle bin, released only on purge), and comparison follows the
-    rule of 3.3: only ASCII A to Z are lowercased. One `email_key` column and a
-    unique index are stored, with a single index lookup at sign-in. **There are no
-    exceptions.** Changing it to an address someone else already uses answers
-    `409 email_taken`, and invitations and admin account creation are the same.
-    When an address is already taken at sign-up, the same `202` as in 3.3 is
+    those in the recycle bin, released only on purge), verified or not. **There
+    are no exceptions.** Changing it to an address someone else already uses
+    answers `409 email_taken`, and invitations and admin account creation are the
+    same. When an address is already taken at sign-up, the same `202` as in 3.3 is
     answered, and a "you already have an account" email is sent to that account
     (3.3 only looked inside this tenant, now it looks site-wide). An address held
-    only "unverified" by another account goes, at sign-up confirmation, to the
-    person confirming it; the original account's email is cleared and the person
-    is told in the site. When the address an identity provider gives is already
-    used by another account, the merge rules of 2.8 apply, and if it cannot be
-    merged an account with no email is created.
+    only "unverified" by another account goes, at sign-up confirmation (or a
+    trusted sign-in, below), to the person proving it; the original account's
+    email is cleared, the person is told in the site, and `email_released` is
+    audited. A verified holder is never displaced.
+  - Built in part 5 (owner decisions 2026-11-25):
+    - **Storage.** `user_emails` (account, address, key, primary, verified, who
+      vouched, created), unique on the key and on one primary per account. The
+      primary address is the UPN; `users.email*` is its copy, written in the same
+      transaction by `store.SetPrimaryEmail` (a test checks they never drift, and
+      another that nothing else in the store writes the copy). The shape already
+      allows several addresses per account (several rows, each verified or not,
+      an atomic primary switch, removing one that is not primary) for the
+      follow-up behind `accounts.multipleEmails`; signing in and resetting by
+      address read a verified row of `user_emails`, never `users.email`. The old
+      `users_email (tenant_id, email_key)` index is dropped.
+    - **The key.** The domain as IDNA (UTS #46) punycode, lower case; the local
+      part ASCII-lowercased when ASCII, otherwise NFC, case folded, NFC. So
+      `用户@例子.公司` and its punycode form are one address, and turning the
+      setting below on and off never lets two accounts share one. Folding joins
+      what may be two mailboxes (U+017F folds to "s"): they count as one address
+      for uniqueness, but proving one never takes the other from its holder.
+      Before part 5 an address outside ASCII got an empty key and escaped
+      uniqueness.
+    - **Addresses outside ASCII** are behind the site setting
+      `users.emailNonAscii` (site only, off by default; `users.` like
+      `users.reuseUsernames`, since addresses are unique on the whole server).
+      Off: refused with `400 email_not_ascii` wherever an address is set, and a
+      typed one finds nobody. On: accepted and compared by the key. Mail to them
+      needs a relay with SMTPUTF8.
+    - **Sign-in never attaches to an account by its address.** 2.8's merge by
+      verified address is removed. An address the sign-in vouches for that
+      another account holds verified ends in `sso_error=email_in_use`: the
+      person signs in to that account and links the provider there. One held
+      unverified moves to the new account; one the sign-in does not vouch for is
+      left out of it.
+    - **Which sign-ins vouch for an address** is one function, `trustsEmail`;
+      the address is then verified with `verified_by = provider:<slug>`. Google
+      and Apple: `email_verified=true`. GitHub: an address its API lists as
+      verified, on github.com only (a GitHub Enterprise server needs the
+      provider's trust switch: its administrators can mark any address
+      verified). Microsoft: only `xms_edov`, or an address on a verified domain;
+      never its plain `email` claim (the "nOAuth" takeover). An organisation's
+      SSO (OIDC or SAML): only addresses on its verified domains, so nothing
+      until domain verification exists (a configured SAML provider is treated
+      so). A configured OIDC provider: only with the administrators' opt-in (the
+      provider's `mergeVerifiedEmail` switch, now "trust this provider's
+      verified email addresses", default off) and `email_verified`. Google,
+      Apple and Microsoft arrive with step (d)'s templates; the rule is wired
+      for the kinds of today.
+    - **A tenant administrator's "mark verified"** (`verified_by = tenant_admin`)
+      shows as verified but holds the address no more than an unverified one
+      (`store.EmailRow.Holds`): whoever proves the address takes it, it finds
+      nobody for a reset, and the member may confirm it themself, which clears
+      the mark. A site administrator's mark counts as verified.
+    - **Known issue after 3.6 part 5:** an existing account cannot claim an
+      address another account holds unverified just by setting it
+      (`PATCH /api/account` is `409 email_taken`, not a pending change); only a
+      new registration's confirmation or a trusted SSO sign-in takes it, or an
+      administrator clears it first. Follow-up, with the several-addresses PR:
+      "add email, then confirm" takes an unverified address.
   - Together with "ask for the email first" above: the first step of the sign-in
     page asks for an email or username, `discover` looks only at the domain, if
     there is SSO it goes to SSO, and otherwise the second step asks for the

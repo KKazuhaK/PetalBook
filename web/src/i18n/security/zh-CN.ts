@@ -165,9 +165,9 @@ export const securityZhCN = {
     orderHelp: '数字小的按钮在前。',
     autoCreate: '第一次登录时自动建号',
     autoCreateHelp: '没有人有这个身份时，建一个成员账号。默认关闭。',
-    mergeVerifiedEmail: '按已验证的邮箱并入已有账号',
+    mergeVerifiedEmail: '信任这个提供方验证过的邮箱',
     mergeVerifiedEmailHelp:
-      '开启后，这个提供方声明已验证的邮箱，会让人进入邮箱相同且已验证的现有账号（不含管理员）。SAML 没有“已验证”的声明，开启就等于你担保它给的每个邮箱。请只对你信任的提供方开启。',
+      '开启后，这个 OpenID Connect 提供方标为已验证（email_verified）的邮箱，在这里也算已验证：新账号直接得到已验证的邮箱，未验证地占用这个邮箱的账号会失去它。它永远不会让人登录进已有账号：已经有这个邮箱的人，要在自己的账号里关联这个提供方。SAML 没有这样的声明，所以 SAML 提供方从不为邮箱担保。默认关闭；请只对你信任的提供方开启。',
     oidc: {
       issuer: '签发方（issuer）',
       issuerHelp: '以 https 开头的地址。',
@@ -323,7 +323,7 @@ export const securityZhCN = {
     loadPasskeysFailed: '无法读取 passkey',
     email: '邮箱',
     emailVerified: '邮箱已验证',
-    emailVerifiedHelp: '只有已验证的邮箱，才会被开了“按已验证邮箱并入”的提供方用来匹配账号。',
+    emailVerifiedHelp: '只有已验证的邮箱才能用来按邮箱登录和接收重设密码的链接。',
     saveEmail: '保存邮箱',
     emailSaved: '邮箱已保存',
     verified: '已验证',

@@ -162,6 +162,33 @@ func atomically(ctx context.Context, q Q, fn func(Q) error) error {
 	return fn(q)
 }
 
+// guarded is atomically for a function whose failure the caller may survive:
+// when q already is the caller's transaction, fn runs under a savepoint that
+// is rolled back when fn fails. A failed statement (a unique violation) aborts
+// a PostgreSQL transaction, so without it the caller could not go on with its
+// transaction; and on both databases fn's earlier writes go with it.
+func guarded(ctx context.Context, q Q, fn func(Q) error) error {
+	if b, ok := q.(bound); ok {
+		if _, isDB := b.r.(*sql.DB); isDB {
+			return b.s.Tx(ctx, fn)
+		}
+	}
+	if _, err := q.Exec(ctx, `SAVEPOINT guarded`); err != nil {
+		return err
+	}
+	if err := fn(q); err != nil {
+		if _, rerr := q.Exec(ctx, `ROLLBACK TO SAVEPOINT guarded`); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		if _, rerr := q.Exec(ctx, `RELEASE SAVEPOINT guarded`); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		return err
+	}
+	_, err := q.Exec(ctx, `RELEASE SAVEPOINT guarded`)
+	return err
+}
+
 // isPostgres reports whether q runs on PostgreSQL.
 func isPostgres(q Q) bool {
 	b, ok := q.(bound)

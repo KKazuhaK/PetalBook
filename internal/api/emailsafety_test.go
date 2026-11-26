@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -28,17 +29,17 @@ func TestALookalikeAddressNeverReachesAnAccountsMail(t *testing.T) {
 		verifiedUser(t, a, "kim", "kim@example.test")
 		anon := a.newClient("")
 		for i, addr := range []string{lookDotI, lookKelvin} {
-			reg(anon, map[string]any{"username": "probe" + string(rune('a'+i)), "email": addr}).want(t, 400, "invalid")
+			reg(anon, map[string]any{"username": "probe" + string(rune('a'+i)), "email": addr}).want(t, 400, "email_not_ascii")
 			forgot(a.newClient("203.0.113."+string(rune('1'+i))), addr).want(t, 202, "")
 		}
 		settle()
 		if n := len(srv.Messages()); n != 0 {
 			t.Fatalf("%d messages went out for look-alike addresses: %+v", n, srv.Messages())
 		}
-		// The address is ASCII wherever it is set.
+		// The address is ASCII wherever it is set, while users.emailNonAscii is off.
 		c := a.addUser("tang", pw, "member")
-		c.do("PATCH", "/api/account", map[string]any{"email": lookDotI}).want(t, 400, "invalid")
-		root.do("PATCH", "/api/users/"+mustUserID(t, a, "tang"), map[string]any{"email": lookKelvin, "emailVerified": true}).want(t, 400, "invalid")
+		c.do("PATCH", "/api/account", map[string]any{"email": lookDotI}).want(t, 400, "email_not_ascii")
+		root.do("PATCH", "/api/users/"+mustUserID(t, a, "tang"), map[string]any{"email": lookKelvin, "emailVerified": true}).want(t, 400, "email_not_ascii")
 	})
 }
 
@@ -81,31 +82,32 @@ func TestTheDomainAllowListComparesASCIIOnly(t *testing.T) {
 	})
 }
 
-func TestUsersByEmailNeverFoldsBeyondASCII(t *testing.T) {
+// A look-alike domain is another domain (IDNA, not Unicode lower case); the
+// Kelvin sign is canonically "K" (NFC), so that spelling is kim's own address.
+func TestALookupByAddressNeverFoldsALookAlikeDomain(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		a.setup("root", pw)
 		ctx := context.Background()
 		verifiedUser(t, a, "tom", "tom@github.test")
 		verifiedUser(t, a, "kim", "KIM@example.test")
-		// A row stored before addresses were ASCII only.
 		a.addUser("old", pw, "member")
 		if err := store.SetEmail(ctx, a.st.Q(), mustUserID(t, a, "old"), "old@gİthub.test", true, ""); err != nil {
 			t.Fatal(err)
 		}
-		for _, c := range []struct {
-			email string
-			want  int
-		}{
-			{"tom@github.test", 1}, {"TOM@GITHUB.TEST", 1}, {"kim@example.test", 1},
-			{lookDotI, 0}, {lookKelvin, 0}, {"old@github.test", 0}, {"old@gİthub.test", 0}, {"old@gi̇thub.test", 0},
+		for _, c := range []struct{ email, want string }{
+			{"tom@github.test", "tom"}, {"TOM@GITHUB.TEST", "tom"}, {"kim@example.test", "kim"}, {lookKelvin, "kim"},
+			{lookDotI, ""}, {"old@github.test", ""},
 		} {
-			us, err := store.UsersByEmail(ctx, a.st.Q(), a.st.Dialect(), store.AllTenants(), c.email, 0)
-			if err != nil {
+			got := ""
+			u, _, err := store.UserByVerifiedEmail(ctx, a.st.Q(), c.email)
+			if err == nil {
+				got = u.Username
+			} else if !errors.Is(err, store.ErrNotFound) {
 				t.Fatal(err)
 			}
-			if len(us) != c.want {
-				t.Errorf("%q: %d accounts, want %d", c.email, len(us), c.want)
+			if got != c.want {
+				t.Errorf("%q: %q, want %q", c.email, got, c.want)
 			}
 		}
 	})
@@ -127,7 +129,7 @@ func TestAStoredNonASCIIAddressGetsNoAccountMail(t *testing.T) {
 		}
 		forgot(a.newClient("203.0.113.1"), "old").want(t, 202, "")
 		f.root.do("POST", "/api/users/"+uid+"/password-reset", map[string]any{}).want(t, 409, "email_unverified")
-		c.do("PATCH", "/api/account", map[string]any{"email": "old@gİthub.test"}).want(t, 400, "invalid")
+		c.do("PATCH", "/api/account", map[string]any{"email": "old@gİthub.test"}).want(t, 400, "email_not_ascii")
 		// A name change keeps the stored address as it is.
 		if u := c.do("PATCH", "/api/account", map[string]any{"name": "Old"}).want(t, 200, "").user(); u["email"] != "old@gİthub.test" {
 			t.Fatal(u)
@@ -135,7 +137,7 @@ func TestAStoredNonASCIIAddressGetsNoAccountMail(t *testing.T) {
 		if err := store.SetEmail(ctx, a.st.Q(), uid, "old@gİthub.test", false, ""); err != nil {
 			t.Fatal(err)
 		}
-		c.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 400, "invalid")
+		c.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 400, "email_not_ascii")
 		settle()
 		if n := len(srv.Messages()); n != 0 {
 			t.Fatalf("%d messages to a non-ASCII address", n)
@@ -284,5 +286,30 @@ func TestATenantAdministratorsMarkGetsNoResetLink(t *testing.T) {
 		// A site administrator's mark counts.
 		f.root.do("PATCH", "/api/users/"+f.userA, map[string]any{"emailVerified": true}).want(t, 200, "")
 		f.root.do("POST", "/api/users/"+f.userA+"/password-reset", map[string]any{}).want(t, 202, "")
+	})
+}
+
+// A member whose address only a tenant administrator marked may confirm it
+// themself; that clears the mark, and the address then gets a reset link.
+func TestAMemberConfirmsAnAddressATenantAdministratorMarked(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		srv := fakeMail(t)
+		f := newTenFx(t, a)
+		enableMail(t, f.root, srv)
+		f.admA.do("PATCH", "/api/users/"+f.userA, map[string]any{"email": "mem@example.test", "emailVerified": true}).want(t, 200, "")
+		before := len(srv.Messages())
+		f.memA.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 202, "")
+		tok := srv.Wait(before + 1)[before].Token(t)
+		a.newClient("").do("POST", "/api/email/confirm", map[string]any{"token": tok}).want(t, 204, "")
+		if by, _ := store.EmailVerifiedBy(context.Background(), a.st.Q(), f.userA); by != "" {
+			t.Fatalf("by %q", by)
+		}
+		f.memA.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 409, "email_verified")
+		before = len(srv.Messages())
+		forgot(a.newClient("203.0.113.4"), "mem@example.test").want(t, 202, "")
+		if m := srv.Wait(before + 1)[before]; !contains(m.Text, "/reset-password#") {
+			t.Fatal("no reset link")
+		}
 	})
 }

@@ -66,6 +66,10 @@ export function describeNotification(n: NotificationItem): Described {
       }
     }
     case 'system':
+      // Someone proved an address the person held unverified (3.6).
+      if (p.event === 'email_released') {
+        return { title: p2.emailReleased.title(str(p.email)), body: p2.emailReleased.body, to: settingsPath('profile') }
+      }
       // An administrator took over or transferred a space the person owned.
       if (p.event === 'space_taken_over' || p.event === 'space_transferred') {
         const title = p.event === 'space_taken_over' ? p2.takeover.takenTitle : p2.takeover.transferredTitle

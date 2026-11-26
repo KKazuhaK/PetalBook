@@ -61,13 +61,15 @@ CREATE TABLE tenant_limits (
 );
 
 -- People. username is stored in lower case and unique on the whole server.
--- name_key is the name folded by Go (FoldName) and email_key the address as
--- addresses are compared (EmailKey: ASCII with A to Z in lower case; '' for an
--- address that is not ASCII, which matches nothing): every write of name or
--- email writes them too, so a search or a lookup by address reads a column
--- instead of calling a function on every row.
--- email_verified_by says who vouched for a verified address ('' the person, a
--- provider or a site administrator; 'tenant_admin' a tenant administrator
+-- name_key is the name folded by Go (FoldName): every write of the name writes
+-- it too, so a search reads a column instead of calling a function on every
+-- row. email, email_key, email_verified and email_verified_by are a copy of
+-- the primary row of user_emails (below), written with it in one transaction
+-- (SetPrimaryEmail), so the lists and the search need no join; nothing looks
+-- an account up by them.
+-- email_verified_by says who vouched for a verified address ('' the person or
+-- a site administrator; 'provider:<slug>' a trusted sign-in; 'tenant_admin' a
+-- tenant administrator
 -- alone, which does not count for merging a sign-in by address).
 -- terms_accepted is JSON (at, termsUrl, privacyUrl; '' when never asked), quota
 -- a person's own limits (JSON; '' follows the tenant and the site).
@@ -102,9 +104,6 @@ CREATE TABLE users (
 );
 CREATE INDEX users_created ON users(created);
 CREATE INDEX users_role ON users(role, disabled);
--- Sign-in, password reset and the merge of a sign-in by address look people up
--- by address within a tenant.
-CREATE INDEX users_email ON users(tenant_id, email_key) WHERE email_key <> '';
 -- The lists of people read this partial index, which holds only those who are
 -- not deleted.
 CREATE INDEX users_live ON users(tenant_id, created, id) WHERE deleted_at IS NULL;
@@ -115,6 +114,28 @@ CREATE INDEX users_live_name ON users(tenant_id, name_key, id) WHERE deleted_at 
 CREATE INDEX users_live_name_all ON users(name_key, id) WHERE deleted_at IS NULL;
 CREATE INDEX users_live_active ON users(tenant_id, last_active DESC, id) WHERE deleted_at IS NULL;
 CREATE INDEX users_live_active_all ON users(last_active DESC, id) WHERE deleted_at IS NULL;
+
+-- The addresses of people (3.6). An address belongs to one account on the
+-- whole server, verified or not, and also to a deleted one until it is purged
+-- (the purge deletes its rows). email_key is the address as addresses are
+-- compared (EmailKey: the domain as IDNA punycode, the local part NFC and case
+-- folded; '' for one that has no key, which matches nothing). One primary
+-- address per account, its UPN, copied to users.email*. Signing in and
+-- resetting by address read a verified row; there may be several rows per
+-- account (the others are not primary).
+-- verified_by as users.email_verified_by.
+CREATE TABLE user_emails (
+  user_id     TEXT COLLATE "C" NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email       TEXT COLLATE "C" NOT NULL,
+  email_key   TEXT COLLATE "C" NOT NULL,
+  is_primary  BIGINT NOT NULL DEFAULT 0,
+  verified    BIGINT NOT NULL DEFAULT 0,
+  verified_by TEXT COLLATE "C" NOT NULL DEFAULT '',
+  created     BIGINT NOT NULL,
+  PRIMARY KEY (user_id, email)
+);
+CREATE UNIQUE INDEX user_emails_key ON user_emails(email_key) WHERE email_key <> '';
+CREATE UNIQUE INDEX user_emails_primary ON user_emails(user_id) WHERE is_primary = 1;
 
 CREATE TABLE passwords (
   user_id TEXT COLLATE "C" PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -181,6 +181,7 @@ export const tenantsEn: TenantsMessages = {
       'quota.pagesPerPerson': 'Pages one person may have',
       'files.maxBytes': 'Largest size of one file (bytes)',
       'recycle.days': 'Days the recycle bin keeps things',
+      'users.emailNonAscii': 'Allow email addresses with characters outside ASCII',
       'storage.assets': 'Where attachments go',
       'storage.assets.ownStorageExempt': 'Organizations on their own storage are not bound by this',
     },
@@ -200,6 +201,8 @@ export const tenantsEn: TenantsMessages = {
         "The largest a single write may be: every page, attachment and file of an import counts, images too. The site's value is --max-upload and cannot be changed here; an organisation may set any value up to it. Over it, saving is refused and what you wrote stays where it is.",
       'recycle.days':
         'How many days deleted spaces and people stay in the recycle bin before they are purged. Site administrators only.',
+      'users.emailNonAscii':
+        'Off by default: an address with characters outside ASCII (a Unicode name before the @, an internationalised domain) is refused. On: it is accepted and compared in one form (the domain as punycode, the name normalised and case folded), so it stays unique. Mail to such an address needs a mail relay that supports SMTPUTF8. Site administrators only.',
       'storage.assets':
         "Whether a new space synced to a platform keeps its attachments in its own repository or in a separate attachments repository (<name>-assets). Separate is the default. Order: the site's lock, the site's lock for one tenant, the site's default, the tenant's default, then the space's owner. A space with no remote keeps attachments in the space. When a tenant's limits table turns the attachments repository off, only the space is possible.",
       'storage.assets.ownStorageExempt':

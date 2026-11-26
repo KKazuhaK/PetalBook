@@ -10,5 +10,10 @@ func SetDraftRaceHook(fn func()) { testHookAfterDraftRead = fn }
 // check of the GitHub account and its write; nil removes it.
 func SetGitHubPutRaceHook(fn func()) { testHookBeforeGitHubPut = fn }
 
+// SetEmailInsertRaceHook makes every SetPrimaryEmail call fn with its
+// transaction between its check of who holds the address and its insert; nil
+// removes it.
+func SetEmailInsertRaceHook(fn func(Q)) { testHookBeforeEmailInsert = fn }
+
 // ReloadCustomRoles reads again whether any custom role exists, as Open does.
 func (s *Store) ReloadCustomRoles() error { return s.loadCustomRoles(context.Background()) }
