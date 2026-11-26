@@ -31,7 +31,7 @@ export const consoleZhCN = {
   table: {
     settings: '表格设置',
     columns: '显示的列',
-    columnsHelp: '勾选要显示的列，用箭头调整顺序。',
+    columnsHelp: '勾选要显示的列；拖动表头或用箭头调整顺序。',
     moveUp: (c: string) => `把「${c}」往前移`,
     moveDown: (c: string) => `把「${c}」往后移`,
     density: '行高',
@@ -39,6 +39,8 @@ export const consoleZhCN = {
     comfortable: '舒适',
     pageSize: '每页条数',
     reset: '恢复默认',
+    resetColumns: '恢复列的默认设置',
+    moved: (c: string, n: number, total: number) => `「${c}」已移到第 ${n} 列，共 ${total} 列`,
     previous: '上一页',
     next: '下一页',
     page: (n: number) => `第 ${n} 页`,

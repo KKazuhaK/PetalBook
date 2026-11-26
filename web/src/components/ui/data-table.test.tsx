@@ -200,7 +200,7 @@ describe('the table', () => {
     expect(widths.name).toBeGreaterThan(widths.role)
     expect(localStorage.getItem('pb.table.probe')).not.toMatch(/px/)
     // The columns have their widths as shares of the table's width.
-    expect(document.querySelector('col:nth-child(1)')!.getAttribute('style')).toContain('calc(')
+    expect(document.querySelector('col:nth-child(1)')!.getAttribute('style')).toContain('%')
   })
 
   it('takes its listeners off the window when it goes away in the middle of a drag', async () => {
@@ -327,5 +327,308 @@ describe('the saved preferences', () => {
       { a: 0.75, b: 0.25 },
     )
     expect(kept).toEqual({ a: 0.75, b: 0.25 })
+    // A column with no saved share (it was hidden, or a wider screen shows it) gets its weight's share, not its weight.
+    const wider = shares(
+      [
+        { id: 'a', weight: 1 },
+        { id: 'b', weight: 1 },
+        { id: 'c', weight: 2 },
+      ],
+      { a: 0.5, b: 0.5 },
+    )
+    expect(wider.a).toBeCloseTo(0.5 / 1.5)
+    expect(wider.c).toBeCloseTo(0.5 / 1.5)
+    expect(wider.a + wider.b + wider.c).toBeCloseTo(1)
+  })
+})
+
+// Dragging, resizing and moving by keyboard. jsdom has no layout, so the headers are given places: column i is 100
+// wide from i * 100, and the box and table 1000 wide where a width is wanted.
+const pointer = (type: string, target: EventTarget, x: number, kind: 'mouse' | 'touch' = 'mouse') =>
+  act(async () => {
+    const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: 0, button: 0 })
+    Object.defineProperty(e, 'pointerId', { value: 1 })
+    Object.defineProperty(e, 'pointerType', { value: kind })
+    target.dispatchEvent(e)
+  })
+const th = (id: string) => document.querySelector<HTMLElement>(`thead th[data-column="${id}"]`)!
+const placeHeaders = () => {
+  const at = (el: HTMLElement) => [...document.querySelectorAll('thead th[data-column]')].indexOf(el)
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const i = this.matches('thead th[data-column]') ? at(this) : 0
+    return {
+      left: i * 100,
+      right: i * 100 + 100,
+      top: 0,
+      bottom: 40,
+      width: 100,
+      height: 40,
+      x: i * 100,
+      y: 0,
+    } as DOMRect
+  })
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(100)
+}
+
+describe('moving a column by dragging its header', () => {
+  it('drags with a mouse: a ghost and a drop indicator while it goes, the new order kept when it lands', async () => {
+    const onSort = vi.fn()
+    m = await mount(<Probe onSort={onSort} />)
+    placeHeaders()
+    // Seen (the fourth, at 300 to 400) is taken by its middle and dropped before Role (100 to 200).
+    await pointer('pointerdown', th('seen'), 350)
+    expect(document.querySelector('[data-slot="column-ghost"]')).toBeNull()
+    await pointer('pointermove', window, 340)
+    expect(document.querySelector('[data-slot="column-ghost"]')?.textContent).toBe('Seen')
+    await pointer('pointermove', window, 120)
+    expect(document.querySelectorAll('[data-slot="drop-indicator"]')).toHaveLength(1)
+    expect(th('role').querySelector('[data-slot="drop-indicator"]')).not.toBeNull()
+    // (The browser makes the click right after the release, before anything else runs.)
+    await act(async () => {
+      const up = new MouseEvent('pointerup', { bubbles: true, clientX: 120 })
+      Object.defineProperty(up, 'pointerId', { value: 1 })
+      window.dispatchEvent(up)
+      th('seen')
+        .querySelector('button')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+    expect(document.querySelector('[data-slot="column-ghost"]')).toBeNull()
+    expect(document.querySelector('[data-slot="drop-indicator"]')).toBeNull()
+    expect(headers()).toEqual(['name', 'seen', 'role', 'mail'])
+    expect(saved().order).toEqual(['name', 'seen', 'role', 'mail'])
+    // The click that lets go of the header is not a sort.
+    expect(onSort).not.toHaveBeenCalled()
+    await m.unmount()
+    m = await mount(<Probe />)
+    expect(headers()).toEqual(['name', 'seen', 'role', 'mail'])
+  })
+
+  it('leaves a click alone: a press with no travel still sorts, and a drop where it was changes nothing', async () => {
+    const onSort = vi.fn()
+    m = await mount(<Probe onSort={onSort} />)
+    placeHeaders()
+    await pointer('pointerdown', th('seen'), 350)
+    await pointer('pointermove', window, 352)
+    await pointer('pointerup', window, 352)
+    await click(th('seen').querySelector('button'))
+    expect(onSort).toHaveBeenCalledTimes(1)
+    await pointer('pointerdown', th('seen'), 350)
+    await pointer('pointermove', window, 380)
+    await pointer('pointerup', window, 380)
+    expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
+    expect(saved()).toBeNull()
+  })
+
+  it('stops at Escape, and a cancelled touch changes nothing', async () => {
+    m = await mount(<Probe />)
+    placeHeaders()
+    await pointer('pointerdown', th('seen'), 350)
+    await pointer('pointermove', window, 100)
+    expect(document.querySelector('[data-slot="column-ghost"]')).not.toBeNull()
+    await press(document, 'Escape')
+    expect(document.querySelector('[data-slot="column-ghost"]')).toBeNull()
+    await pointer('pointerup', window, 100)
+    expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
+  })
+
+  it('takes a finger only after a press, so a swipe still scrolls and the page is held still once it has hold', async () => {
+    m = await mount(<Probe />)
+    placeHeaders()
+    vi.useFakeTimers()
+    try {
+      // A swipe before the press is long enough: no drag.
+      await pointer('pointerdown', th('seen'), 350, 'touch')
+      await pointer('pointermove', window, 300, 'touch')
+      await act(async () => void vi.advanceTimersByTime(400))
+      expect(document.querySelector('[data-slot="column-ghost"]')).toBeNull()
+      await pointer('pointerup', window, 300, 'touch')
+      // A press that stays put: the column is taken, the page does not scroll, and it can be dropped.
+      await pointer('pointerdown', th('seen'), 350, 'touch')
+      await act(async () => void vi.advanceTimersByTime(349))
+      expect(document.querySelector('[data-slot="column-ghost"]')).toBeNull()
+      await act(async () => void vi.advanceTimersByTime(2))
+      expect(document.querySelector('[data-slot="column-ghost"]')).not.toBeNull()
+      const scroll = new Event('touchmove', { bubbles: true, cancelable: true })
+      window.dispatchEvent(scroll)
+      expect(scroll.defaultPrevented).toBe(true)
+      await pointer('pointermove', window, 120, 'touch')
+      await pointer('pointerup', window, 120, 'touch')
+      expect(headers()).toEqual(['name', 'seen', 'role', 'mail'])
+      // (The guard that eats the click after a drop takes itself off on the next tick.)
+      await act(async () => void vi.advanceTimersByTime(10))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moves with Alt and an arrow on a header, keeps focus on it, and says where it went', async () => {
+    m = await mount(<Probe />)
+    await press(th('role'), 'ArrowLeft', { altKey: true })
+    expect(headers()).toEqual(['role', 'name', 'mail', 'seen'])
+    expect(saved().order).toEqual(['role', 'name', 'mail', 'seen'])
+    expect(document.activeElement).toBe(th('role'))
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(tc.table.moved('Role', 1, 4))
+    // At the start nothing moves; without Alt the arrow is not a move.
+    await press(th('role'), 'ArrowLeft', { altKey: true })
+    await press(th('name'), 'ArrowRight')
+    expect(headers()).toEqual(['role', 'name', 'mail', 'seen'])
+    // On a header that sorts, focus is on its button, and that moves too.
+    const sortable = th('seen').querySelector('button')!
+    sortable.focus()
+    await press(sortable, 'ArrowLeft', { altKey: true })
+    expect(headers()).toEqual(['role', 'name', 'seen', 'mail'])
+    expect(document.activeElement).toBe(th('seen').querySelector('button'))
+    expect(th('role').getAttribute('aria-keyshortcuts')).toContain('Alt+ArrowLeft')
+  })
+
+  it('has no tick column or actions column to move: they are not headers of the order', async () => {
+    m = await mount(<Probe selected={new Set()} onSelect={() => {}} />)
+    placeHeaders()
+    await press(th('name'), 'ArrowLeft', { altKey: true })
+    expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
+    expect(document.querySelector('thead th:first-child input[type="checkbox"]')).not.toBeNull()
+    expect(document.querySelector('thead th:last-child [data-slot="table-settings"]')).not.toBeNull()
+    expect(document.querySelector('thead th:first-child')?.hasAttribute('data-column')).toBe(false)
+    await pointer('pointerdown', document.querySelector('thead th:first-child')!, 20)
+    await pointer('pointermove', window, 500)
+    expect(document.querySelector('[data-slot="column-ghost"]')).toBeNull()
+    await pointer('pointerup', window, 500)
+  })
+
+  it('puts the columns back from the settings without touching the density', async () => {
+    m = await mount(<Probe />)
+    await press(th('seen'), 'ArrowLeft', { altKey: true })
+    await open()
+    await click(
+      [...document.querySelectorAll('[data-slot="popover-content"] button')].find(
+        (b) => b.textContent === tc.table.compact,
+      ),
+    )
+    await click(
+      [...document.querySelectorAll('[data-slot="popover-content"] button')].find(
+        (b) => b.textContent === tc.table.resetColumns,
+      ),
+    )
+    expect(headers()).toEqual(['name', 'role', 'mail', 'seen'])
+    expect(saved()).toMatchObject({ order: [], hidden: [], widths: {}, custom: false, density: 'compact' })
+  })
+})
+
+describe('resizing a column', () => {
+  it('follows the pointer in pixels of the room the columns share, and every column keeps its least width', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    m = await mount(<Probe />)
+    const widthOf = (i: number) => parseFloat(document.querySelectorAll('col')[i].style.width)
+    // 1000 less the actions (148) and the settings (48): 804 to share, as pixels the browser can lay out.
+    expect(document.querySelectorAll('col')[0].style.width).toMatch(/px$/)
+    const sum = () => [0, 1, 2, 3, 4].reduce((n, i) => n + widthOf(i), 0)
+    expect(sum()).toBe(804 + 196)
+    const edge = document.querySelector<HTMLElement>('[role="separator"]')!
+    const before = [widthOf(0), widthOf(1)]
+    await pointer('pointerdown', edge, 100)
+    await pointer('pointermove', window, 140)
+    expect(widthOf(0)).toBeCloseTo(before[0] + 40, 0)
+    expect(widthOf(1)).toBeCloseTo(before[1] - 40, 0)
+    // Pulled far past the neighbour's least width (100), it stops there and the others stay as they were.
+    await pointer('pointermove', window, 5000)
+    expect(widthOf(1)).toBeCloseTo(100, 0)
+    await pointer('pointerup', window, 5000)
+    expect(saved().widths.role).toBeCloseTo(100 / 804, 3)
+    expect(Object.values(saved().widths as Record<string, number>).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5)
+    expect(sum()).toBe(804 + 196)
+    // The other way: the first column stops at its own least width (120).
+    const again = document.querySelector<HTMLElement>('[role="separator"]')!
+    await pointer('pointerdown', again, 400)
+    await pointer('pointermove', window, -5000)
+    await pointer('pointerup', window, -5000)
+    expect(widthOf(0)).toBeCloseTo(120, 0)
+  })
+
+  it('lifts a saved width that is below the least, and shares what it took from the others', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.6, role: 0.02, mail: 0.2, seen: 0.18 }, custom: true }),
+    )
+    m = await mount(<Probe />)
+    const w = [...document.querySelectorAll('col')].slice(0, 4).map((c) => parseFloat(c.style.width))
+    expect(w[1]).toBeGreaterThanOrEqual(100)
+    expect(w[0]).toBeGreaterThanOrEqual(120)
+    expect(w[2]).toBeGreaterThanOrEqual(160)
+    expect(w[3]).toBeGreaterThanOrEqual(100)
+  })
+
+  it('goes back to the usual proportion of the two columns on a double click', async () => {
+    m = await mount(<Probe />)
+    const edge = document.querySelector<HTMLElement>('[role="separator"]')!
+    await press(edge, 'ArrowRight')
+    await press(edge, 'ArrowRight')
+    const moved = saved().widths
+    expect(moved.name).toBeGreaterThan(moved.role)
+    await act(async () => {
+      edge.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    const back = saved().widths
+    // Equal weights: the two share what they had between them evenly again; the others are as they were.
+    expect(back.name).toBeCloseTo(back.role, 5)
+    expect(back.name + back.role).toBeCloseTo(moved.name + moved.role, 5)
+    expect(back.mail).toBeCloseTo(moved.mail, 5)
+  })
+
+  it('takes a double press on an edge for a double click, and does not save a press with no travel', async () => {
+    m = await mount(<Probe />)
+    const edge = document.querySelector<HTMLElement>('[role="separator"]')!
+    await pointer('pointerdown', edge, 100)
+    await pointer('pointerup', window, 100)
+    expect(saved()).toBeNull()
+  })
+
+  it('has a hit area a finger can use, takes no scroll of the page, and shows its grip only on hover or focus', async () => {
+    m = await mount(<Probe />)
+    const edge = document.querySelector<HTMLElement>('[role="separator"]')!
+    expect(edge.className).toContain('touch-none')
+    expect(edge.className).toContain('w-4')
+    expect(edge.className).toContain('pointer-coarse:w-6')
+    expect(edge.className).toContain('cursor-col-resize')
+    const grip = edge.firstElementChild as HTMLElement
+    expect(grip.className).toContain('opacity-0')
+    expect(grip.className).toContain('group-hover/th:opacity-100')
+    expect(grip.className).toContain('group-focus-within/th:opacity-100')
+  })
+})
+
+describe('no vertical lines', () => {
+  const VERTICAL = /(^|:)(border-(x|l|r|s|e)(-|$)|divide-x|shadow-\[-?\d+px_0|ring-x|after:w-px|before:w-px)/
+  it('draws no line between columns, in the header, the rows, the columns or the sticky one', async () => {
+    m = await mount(<Probe selected={new Set()} onSelect={() => {}} />)
+    const cells = document.querySelectorAll('table, table > *, thead th, tbody td, tbody th, col, tr')
+    expect(cells.length).toBeGreaterThan(10)
+    for (const el of cells) {
+      const bad = el.className
+        .toString()
+        .split(/\s+/)
+        .filter((c) => VERTICAL.test(c))
+      expect(bad, el.outerHTML.slice(0, 80)).toEqual([])
+    }
+    // The grips (hover and focus only) are not a line at rest either.
+    for (const grip of document.querySelectorAll('[role="separator"]')) {
+      expect(grip.className).not.toMatch(/(^|\s)(after|before):/)
+      expect(grip.className).not.toMatch(/(^|\s)border/)
+    }
+    // The rows keep their horizontal lines.
+    expect(document.querySelector('tbody')!.className).toContain('divide-y')
+    expect(document.querySelector('thead')!.className).toContain('border-b')
+  })
+
+  it('shades the sticky column softly instead of cutting it with a line, only while there is more to scroll', async () => {
+    m = await mount(<Probe />)
+    const cell = document.querySelector<HTMLElement>('tbody td:last-child')!
+    expect(cell.className).toContain('before:bg-linear-to-l')
+    expect(cell.className).toContain('before:opacity-(--sticky-shade,0)')
+    expect(cell.className).not.toContain('shadow-')
+    // Nothing to scroll in a box that was never measured: the shade is off.
+    expect(
+      document.querySelector<HTMLElement>('[data-slot="data-table"] > div')!.style.getPropertyValue('--sticky-shade'),
+    ).toBe('0')
   })
 })
