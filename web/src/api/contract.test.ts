@@ -1,8 +1,8 @@
 // The API contract (docs/api.md), asserted through the real client and real
-// `fetch`. The same suite runs against either implementation:
+// `fetch` against a real server. There is no mock here: scripts/contract.sh
+// (make contract) starts the built binary on empty temporary data and runs this
+// file against it, once as a single-user server and once in accounts mode.
 //
-//   npm run test:contract
-//       the in-memory mock, twice: as a single-user server and in accounts mode
 //   PETALBOOK_API=http://127.0.0.1:18080 npm run test:contract
 //       a real server started on an EMPTY space (`serve --space DIR`): single-user mode
 //   PETALBOOK_API=http://127.0.0.1:18080 PETALBOOK_CONTRACT_USER=admin PETALBOOK_CONTRACT_PASSWORD=... npm run test:contract
@@ -11,12 +11,16 @@
 //       jar) and works in the first space of `GET /api/spaces`. It creates its own members
 //       through invites, under names made unique per run, and disables them at the end.
 //
-// In single-user mode the page, folder, tag and draft tests run against space
-// `default`, and the account endpoints are asserted to answer 404. Sign-in
-// through OpenID Connect is exercised against the mock only: a real server in
-// this setup has no provider. Tests that need a server's clock (the server's
-// own draft commits) or its rate limiter are marked "mock only" in their names:
-// a real server would have to be waited on, or locked out, to run them.
+// `npm test` does not run this file. What needs a clock, a provider or a remote
+// that a real server does not have here (sign-in through a provider, OAuth
+// consent, GitHub, the server's draft commits, a remote in each of its states,
+// rate limits) is tested in Go, next to the code that owns the rule.
+//
+// Every JSON answer is also compared with the shape recorded in
+// fixtures/recorded/shapes.json (keys and types, no values); a new key, a
+// missing key or a changed type fails the last test of the run. After a change
+// of the API, record again with `PETALBOOK_RECORD=1 make contract` and commit
+// the file. The fixtures of the web tests are checked against the same shapes.
 //
 // A real accounts server throttles failed sign-ins and bad invite tokens per
 // client address (ten in a window, then a wait until the window ends). The suite
@@ -26,25 +30,24 @@
 //
 // History is written by Git commits, which a real server makes a few seconds
 // after the file is written and may join (two quick saves can be one commit),
-// so the tests against a real server wait for the newest version to show up and
-// never count versions exactly; the mock, which commits on the spot, is held to
-// exact counts in mock.test.ts. The remote repository tests need a remote: on
-// a real server only what needs none is asserted (a local space, the key,
-// addresses and hosts that are refused); the four outcomes of connecting, the
-// states and the 503s are asserted on the mock. Set PETALBOOK_CONTRACT_HOSTS_OPEN=1
-// when the server was started with `--remote-host '*'` (no host is then refused).
+// so the tests wait for the newest version to show up and never count versions
+// exactly. The remote repository tests need a remote: here only what needs none
+// is asserted (a local space, the key, addresses and hosts that are refused).
+// Set PETALBOOK_CONTRACT_HOSTS_OPEN=1 when the server was started with
+// `--remote-host '*'` (no host is then refused).
 //
 // It creates all its own data (under names made unique per run) and never
-// assumes anything else is in the space. Where the mock and the server
-// differ, the mock is wrong.
+// assumes anything else is in the space.
 
+// Node's own modules: the web app has no Node typings, and the test runs in Node.
+// @ts-expect-error TS2591
+import { createHash } from 'node:crypto'
+// @ts-expect-error TS2591
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ApiError, api, fileUrl, markSignedIn, request, spaceApi, type SpaceApi } from './client'
-import { AUDIT_CATEGORIES } from './mock/auditKinds'
 import { adminApi } from './admin'
-import { mockFetch } from './mock/fetch'
-import { sha256Hex } from './mock/sha256'
-import { createMockServer, MOCK_ADMIN, type MockServer } from './mock/server'
+import { join, misfits, shapeOf, type Shape } from './contractShapes'
 import type {
   AdminSpace,
   CatalogBatch,
@@ -62,26 +65,68 @@ import type {
 
 declare const process: { env: Record<string, string | undefined> }
 const REAL = process.env.PETALBOOK_API?.replace(/\/+$/, '')
+if (!REAL) throw new Error('the contract tests run against a real server: run make contract')
 const CONTRACT_USER = process.env.PETALBOOK_CONTRACT_USER
 const CONTRACT_PASSWORD = process.env.PETALBOOK_CONTRACT_PASSWORD
 const HOSTS_OPEN = process.env.PETALBOOK_CONTRACT_HOSTS_OPEN === '1'
+const RECORD = process.env.PETALBOOK_RECORD === '1'
 const realFetch = globalThis.fetch
+
+// The tests run in web/ (npm --prefix web, as scripts/contract.sh does).
+const SHAPES_DIR = 'src/api/fixtures/recorded'
+const SHAPES_FILE = `${SHAPES_DIR}/shapes.json`
+
+// The shapes of the answers: "METHOD route status" -> shape. A route is the
+// path with every segment that is not a plain lower-case word (an id, a name
+// this run made up, a settings key) written {}.
+const recorded: Record<string, Shape> = existsSync(SHAPES_FILE)
+  ? (JSON.parse(readFileSync(SHAPES_FILE, 'utf8')) as Record<string, Shape>)
+  : {}
+const observed = new Map<string, Shape>()
+const problems = new Set<string>()
+let scrubbed: string[] = []
+const routeOf = (path: string) =>
+  path
+    .split('?')[0]
+    .split('/')
+    .map((s) => (s === '' || /^[a-z]+(-[a-z]+)*$/.test(s) ? s : '{}'))
+    .join('/')
+// A key a run made up (a property named after it) or an id (a map by space) is written without it.
+const scrub = (key: string) =>
+  scrubbed.reduce((k, r) => k.split(r).join('{run}'), key).replace(/^[0-9A-HJKMNP-TV-Z]{10,26}$/, '{id}')
+async function observe(method: string, path: string, res: Response) {
+  if (!/json/.test(res.headers.get('Content-Type') ?? '')) return
+  let body: unknown
+  try {
+    body = JSON.parse(await res.clone().text())
+  } catch {
+    return
+  }
+  const key = `${method.toUpperCase()} ${routeOf(path)} ${res.status}`
+  const shape = shapeOf(body, scrub)
+  const had = observed.get(key)
+  observed.set(key, had === undefined ? shape : join(had, shape))
+  if (RECORD) return
+  const known = recorded[key]
+  if (known === undefined) problems.add(`${key}: no recorded shape`)
+  else for (const m of misfits(body, known, scrub)) problems.add(`${key}: ${m}`)
+}
+function writeShapes() {
+  const merged: Record<string, Shape> = { ...recorded }
+  for (const [key, shape] of observed) merged[key] = key in merged ? join(merged[key], shape) : shape
+  const sorted = Object.fromEntries(Object.entries(merged).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+  mkdirSync(SHAPES_DIR, { recursive: true })
+  writeFileSync(SHAPES_FILE, JSON.stringify(sorted, null, 1) + '\n')
+}
 
 interface Target {
   name: string
   mode: 'single' | 'accounts'
 }
-const targets: Target[] = REAL
-  ? [
-      {
-        name: CONTRACT_USER && CONTRACT_PASSWORD ? 'real server, accounts mode' : 'real server, single-user mode',
-        mode: CONTRACT_USER && CONTRACT_PASSWORD ? 'accounts' : 'single',
-      },
-    ]
-  : [
-      { name: 'mock, single-user mode', mode: 'single' },
-      { name: 'mock, accounts mode', mode: 'accounts' },
-    ]
+const target: Target =
+  CONTRACT_USER && CONTRACT_PASSWORD
+    ? { name: 'real server, accounts mode', mode: 'accounts' }
+    : { name: 'real server, single-user mode', mode: 'single' }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
@@ -119,18 +164,16 @@ const failure = async (p: Promise<unknown>): Promise<ApiError> => {
   throw new Error('expected the request to fail')
 }
 
-for (const target of targets) {
-  describe(target.name, () => suite(target))
-}
+describe(target.name, () => suite(target))
 
 function suite(target: Target) {
   const accounts = target.mode === 'accounts'
   // Everything this run creates lives under this folder / carries this suffix.
-  const run = Math.random().toString(36).slice(2, 8)
+  // It starts with a digit, so that no name this run makes up looks like a word in a route.
+  const run = `${Math.floor(Math.random() * 10)}${Math.random().toString(36).slice(2, 7)}`
+  scrubbed = [run]
   const root = `c${run}`
 
-  let server: MockServer | undefined
-  let clock = Date.now()
   let base: typeof fetch
   let admin: Browser
   let spaceId = 'default'
@@ -169,7 +212,7 @@ function suite(target: Target) {
       body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
       redirect: 'manual',
     })
-    if (res.status === 429 && !opts.expect429 && REAL) {
+    if (res.status === 429 && !opts.expect429) {
       const wait = Number(res.headers.get('Retry-After')) || 1
       // A wait longer than a test may take is a cap the run has used up, not a
       // per-minute pause: say so at once instead of retrying until the timeout.
@@ -230,18 +273,16 @@ function suite(target: Target) {
   }
 
   beforeAll(async () => {
-    if (REAL) base = (input, init) => realFetch(REAL + String(input), init)
-    else {
-      server = createMockServer({ empty: true, mode: target.mode, now: () => clock, oidc: null, oauth: true })
-      base = mockFetch(server, { jar: false })
+    base = async (input, init) => {
+      const res = await realFetch(REAL + String(input), init)
+      await observe(init?.method ?? 'GET', String(input), res)
+      return res
     }
     admin = browser()
     globalThis.fetch = admin.fetch
     if (accounts) {
-      const user = REAL ? CONTRACT_USER! : MOCK_ADMIN.username
-      const password = REAL ? CONTRACT_PASSWORD! : MOCK_ADMIN.password
-      await api.login({ username: user, password })
-      if (REAL) {
+      await api.login({ username: CONTRACT_USER!, password: CONTRACT_PASSWORD! })
+      {
         // The suite signs in far more often than ten times a minute from one
         // address, and makes more failures from it (wrong passwords, bad
         // invite, email and reset tokens) than the per-address cap allows in
@@ -274,7 +315,7 @@ function suite(target: Target) {
   afterAll(async () => {
     globalThis.fetch = admin.fetch
     for (const id of created.users) await adminApi.updateUser(id, { disabled: true }).catch(() => undefined)
-    if (REAL && accounts && savedLimits) {
+    if (accounts && savedLimits) {
       for (const [key, value] of [
         ['signin.perMinute', savedLimits.perMinute],
         ['signin.maxFailures', savedLimits.maxFailures],
@@ -625,151 +666,6 @@ function suite(target: Target) {
               .status,
           ).toBe(200)
         })
-      })
-
-      describe('OAuth consent and grants', () => {
-        // A real server needs an MCP client to start a request, and --public-url: the mock plays both.
-        const start = (username: string, o?: Parameters<MockServer['startAuthorization']>[1]) =>
-          server!.startAuthorization(username, o)
-
-        it.skipIf(!!REAL)(
-          'mock only: a person approves a request with the spaces they pick, and the grant is theirs to see and to revoke',
-          async () => {
-            const m = await newMember(uniq('oa1'))
-            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0]
-            const req = start(m.user.username, { clientName: 'Notes helper' })
-            const info = await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)
-            expect(info.status).toBe(200)
-            expect(info.json).toMatchObject({
-              client: { name: 'Notes helper', id: 'pbc_mock' },
-              redirectHost: 'localhost:7777',
-              punycode: false,
-              scopes: ['read', 'write'],
-              user: { id: m.user.id },
-            })
-            expect(info.json.spaces.find((s: { id: string }) => s.id === mine.id)).toMatchObject({ personal: true })
-            const done = await call(m.browser, 'POST', '/api/oauth/consent', {
-              req,
-              approve: true,
-              spaces: [mine.id],
-              access: 'write',
-            })
-            expect(done.status).toBe(200)
-            const back = new URL(done.json.redirect)
-            expect([back.origin + back.pathname, back.searchParams.get('state')]).toEqual([
-              'http://localhost:7777/callback',
-              'st4te',
-            ])
-            expect(back.searchParams.get('code')).toBeTruthy()
-            expect(back.searchParams.get('iss')).toBeTruthy()
-            // Decided once.
-            expect(
-              (await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine.id] })).json
-                .error,
-            ).toBe('not_found')
-            const list = (await call(m.browser, 'GET', '/api/account/grants')).json.grants
-            expect(list).toHaveLength(1)
-            expect(list[0]).toMatchObject({
-              client: { name: 'Notes helper', id: 'pbc_mock' },
-              access: 'write',
-              spaces: [{ id: mine.id, name: mine.name }],
-            })
-            expect(typeof list[0].created).toBe('string')
-            const other = await newMember(uniq('oa2'))
-            expect((await call(other.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
-            expect((await call(other.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).json.error).toBe(
-              'not_found',
-            )
-            expect((await call(m.browser, 'DELETE', `/api/account/grants/${list[0].id}`)).status).toBe(204)
-            expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
-          },
-        )
-
-        it.skipIf(!!REAL)(
-          "mock only: a request is the one person's, and a bad answer is 400 and keeps it",
-          async () => {
-            const m = await newMember(uniq('oa3'))
-            const other = await newMember(uniq('oa4'))
-            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-            const theirs = (await call(other.browser, 'GET', '/api/spaces')).json.spaces[0].id
-            const req = start(m.user.username, { scopes: ['read'] })
-            expect((await call(other.browser, 'GET', `/api/oauth/consent?req=${req}`)).json.error).toBe('not_found')
-            expect(
-              (await call(other.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [theirs] })).json
-                .error,
-            ).toBe('not_found')
-            for (const bad of [
-              { spaces: [] },
-              { spaces: [theirs] },
-              { spaces: [mine], access: 'write' },
-              { spaces: [mine], access: 'root' },
-            ]) {
-              const r = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, ...bad })
-              expect([r.status, r.json.error], JSON.stringify(bad)).toEqual([400, 'invalid'])
-            }
-            expect((await call(m.browser, 'GET', `/api/oauth/consent?req=${req}`)).status).toBe(200)
-            const denied = await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: false })
-            expect(denied.status).toBe(200)
-            expect(new URL(denied.json.redirect).searchParams.get('error')).toBe('access_denied')
-            expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toEqual([])
-          },
-        )
-
-        it.skipIf(!!REAL)(
-          "mock only: an administrator lists everyone's grants a page at a time and revokes one; others are refused",
-          async () => {
-            const m = await newMember(uniq('oa5'))
-            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-            for (let i = 0; i < 3; i++) {
-              const req = start(m.user.username, { clientName: `app ${i}` })
-              await call(m.browser, 'POST', '/api/oauth/consent', { req, approve: true, spaces: [mine] })
-              clock += 1000
-            }
-            const first = await call(admin, 'GET', `/api/admin/grants?user=${m.user.id}&limit=2`)
-            expect(first.status).toBe(200)
-            expect(first.json.items).toHaveLength(2)
-            expect(first.json.items[0].owner).toMatchObject({ id: m.user.id, username: m.user.username })
-            expect(first.json.next).not.toBe('')
-            const rest = await call(
-              admin,
-              'GET',
-              `/api/admin/grants?user=${m.user.id}&limit=2&cursor=${first.json.next}`,
-            )
-            expect(rest.json.items).toHaveLength(1)
-            expect(rest.json.next).toBe('')
-            expect((await call(m.browser, 'GET', '/api/admin/grants')).json.error).toBe('forbidden')
-            expect((await call(admin, 'GET', '/api/admin/grants?limit=0')).status).toBe(400)
-            expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(204)
-            expect((await call(admin, 'DELETE', `/api/admin/grants/${first.json.items[0].id}`)).status).toBe(404)
-            expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(2)
-          },
-        )
-
-        it.skipIf(!!REAL)(
-          'mock only: with MCP off the consent endpoints answer 403 feature_off, and the grants are kept and listed',
-          async () => {
-            const m = await newMember(uniq('oa6'))
-            const mine = (await call(m.browser, 'GET', '/api/spaces')).json.spaces[0].id
-            await call(m.browser, 'POST', '/api/oauth/consent', {
-              req: start(m.user.username),
-              approve: true,
-              spaces: [mine],
-            })
-            const before = { mcp: await siteValue(admin, 'features.mcp') }
-            expect(before.mcp).toBe(true)
-            try {
-              await putSite(admin, 'features.mcp', false)
-              expect(await siteValue(admin, 'features.mcp')).toBe(false)
-              expect((await call(m.browser, 'GET', '/api/oauth/consent?req=x')).json.error).toBe('feature_off')
-              expect((await call(m.browser, 'POST', '/api/oauth/consent', { req: 'x', approve: false })).status).toBe(
-                403,
-              )
-              expect((await call(m.browser, 'GET', '/api/account/grants')).json.grants).toHaveLength(1)
-            } finally {
-              await putSite(admin, 'features.mcp', before.mcp)
-            }
-          },
-        )
       })
 
       describe('API tokens', () => {
@@ -3103,525 +2999,6 @@ function suite(target: Target) {
         })
       })
 
-      // GitHub (docs/api.md, "GitHub"). There is no GitHub behind a real server in this setup: the mock plays it.
-      describe.skipIf(!!REAL)('GitHub (mock only)', () => {
-        const KEY =
-          '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n'
-        const CLIENT = 'Iv23liMockClientId'
-        const putApp = (b: Browser, body: unknown) => call(b, 'PUT', '/api/admin/connections/github', body)
-        const mockHook = (body: unknown) => call(admin, 'POST', '/api/_mock/github', body)
-        const codeOf = (r: { json: any }) => r.json?.error
-        // The GitHub provider's entry in GET /api/connections.
-        const ghProvider = async (b: Browser) =>
-          ((await call(b, 'GET', '/api/connections')).json.providers as { id: string }[]).find(
-            (p) => p.id === 'github',
-          ) as any
-
-        // Plays the browser through connecting a GitHub account.
-        const connectAccount = async (b: Browser, ret = '/settings/connections') => {
-          const start = await call(b, 'POST', '/api/connections/github/authorization/start', { return: ret })
-          expect(start.status).toBe(200)
-          const cb = await call(b, 'GET', start.json.url, undefined, {})
-          return cb
-        }
-
-        it('starts with no App: everyone is told so, and every other endpoint answers 409 provider_not_configured', async () => {
-          const m = await newMember(uniq('gh0'))
-          const info = { json: await ghProvider(m.browser) }
-          expect(info.json).toMatchObject({
-            id: 'github',
-            configured: false,
-            app: null,
-            userAuthorization: false,
-            connection: null,
-            leftovers: [],
-          })
-          const off = await call(admin, 'GET', '/api/admin/connections/github')
-          expect(off.json).toMatchObject({ configured: false })
-          expect(off.json.callbackUrl).toMatch(/\/api\/connections\/github\/authorization\/callback$/)
-          for (const [method, path, body] of [
-            ['POST', '/api/connections/github/authorization/start', {}],
-            ['GET', '/api/connections/github/owners'],
-            ['GET', '/api/connections/github/repos?mine=true'],
-            ['GET', '/api/admin/connections/github/installations'],
-            ['PUT', '/api/admin/connections/github/installations/5001', { tenants: [] }],
-          ] as const) {
-            const r = await call(
-              method.startsWith('P') && path.startsWith('/api/admin')
-                ? admin
-                : path.startsWith('/api/admin')
-                  ? admin
-                  : m.browser,
-              method,
-              path,
-              body,
-            )
-            expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([409, 'provider_not_configured'])
-          }
-          const sp = await call(m.browser, 'POST', '/api/spaces', {
-            name: 'Gh',
-            storage: { sync: { provider: 'github', owner: 'kazuhahub', name: 'x' } },
-          })
-          expect([sp.status, codeOf(sp)]).toEqual([409, 'provider_not_configured'])
-        })
-
-        it('is for administrators to set up: a member gets 403, a refused check saves nothing, and no secret is ever returned', async () => {
-          const m = await newMember(uniq('gh1'))
-          for (const [method, path, body] of [
-            ['GET', '/api/admin/connections/github'],
-            ['PUT', '/api/admin/connections/github', {}],
-            ['DELETE', '/api/admin/connections/github'],
-            ['GET', '/api/admin/connections/github/installations'],
-          ] as const) {
-            const r = await call(m.browser, method, path, body)
-            expect([r.status, codeOf(r)], `${method} ${path}`).toEqual([403, 'forbidden'])
-          }
-          expect(codeOf(await putApp(admin, { appId: '1234567' }))).toBe('invalid')
-          expect(codeOf(await putApp(admin, { appId: '1234567', privateKey: 'nonsense' }))).toBe('key_invalid')
-          expect(
-            codeOf(await putApp(admin, { appId: '1234567', privateKey: KEY, clientId: CLIENT, clientSecret: 'wrong' })),
-          ).toBe('client_rejected')
-          expect(((await call(admin, 'GET', '/api/admin/connections/github')).json as any).configured).toBe(false)
-          const saved = await putApp(admin, {
-            appId: '1234567',
-            privateKey: KEY,
-            clientId: CLIENT,
-            clientSecret: 'a-secret',
-          })
-          expect(saved.status).toBe(200)
-          expect(saved.json).toMatchObject({
-            configured: true,
-            appId: '1234567',
-            clientId: CLIENT,
-            slug: 'petalbook-notes',
-            privateKey: { set: true },
-            clientSecret: { set: true },
-            userAuthorization: true,
-            missing: [],
-            spaces: 0,
-          })
-          expect(saved.json.privateKey.fingerprint).toMatch(/^SHA256:/)
-          expect(JSON.stringify(saved.json)).not.toContain('a-secret')
-          expect(JSON.stringify(saved.json)).not.toContain('PRIVATE KEY')
-          // Saving again with the key and the secret left out keeps them.
-          const again = await putApp(admin, { appId: '1234567' })
-          expect(again.json).toMatchObject({ privateKey: { set: true }, clientSecret: { set: true } })
-          const seen = { json: await ghProvider(m.browser) }
-          expect(seen.json).toMatchObject({
-            app: {
-              name: 'PetalBook Notes',
-              slug: 'petalbook-notes',
-              htmlUrl: expect.any(String),
-              installUrl: expect.stringContaining('/installations/new'),
-            },
-            userAuthorization: true,
-            connection: null,
-          })
-        })
-
-        it('connects an account only from the browser that started it, once, and disconnects', async () => {
-          const m = await newMember(uniq('gh2'))
-          const other = await newMember(uniq('gh3'))
-          const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', {
-            return: '/settings/connections',
-          })
-          expect(start.json.url).toContain('/api/connections/github/authorization/callback')
-          // Another browser, or no session: expired, nothing is connected.
-          const stray = await call(other.browser, 'GET', start.json.url, undefined, {})
-          expect([stray.status, stray.headers.get('Location')]).toEqual([
-            303,
-            '/settings?provider=github&connection_error=expired',
-          ])
-          const ok = await call(m.browser, 'GET', start.json.url, undefined, {})
-          expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/settings/connections'])
-          const replay = await call(m.browser, 'GET', start.json.url, undefined, {})
-          expect(replay.headers.get('Location')).toBe('/settings?provider=github&connection_error=expired')
-          const info = { json: await ghProvider(m.browser) }
-          expect(info.json.connection).toMatchObject({ state: 'ok', spaces: 0 })
-          expect(typeof info.json.connection.login).toBe('string')
-          expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
-          expect((await ghProvider(m.browser)).connection).toBeNull()
-          expect((await call(m.browser, 'DELETE', '/api/connections/github/authorization')).status).toBe(204)
-        })
-
-        it('lists the accounts to create in and the repositories to connect, a page at a time', async () => {
-          const m = await newMember(uniq('gh4'))
-          expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos?mine=true'))).toBe('not_connected')
-          await connectAccount(m.browser)
-          const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
-          expect(owners.status).toBe(200)
-          expect(owners.json.items[0]).toMatchObject({ type: 'User', via: 'user', installationId: null })
-          const org = owners.json.items.find((o: any) => o.login === 'kazuhahub')
-          expect(org).toMatchObject({ type: 'Organization', via: 'user', installationId: expect.any(Number) })
-          expect(typeof owners.json.next).toBe('string')
-          const repos = await call(m.browser, 'GET', `/api/connections/github/repos?installation=${org.installationId}`)
-          expect(repos.status).toBe(200)
-          expect(repos.json.items[0]).toMatchObject({
-            id: expect.any(Number),
-            fullName: expect.stringContaining('kazuhahub/'),
-            private: expect.any(Boolean),
-            defaultBranch: 'main',
-            canPush: true,
-          })
-          expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/repos'))).toBe('invalid')
-          expect(
-            codeOf(
-              await call(
-                m.browser,
-                'GET',
-                `/api/connections/github/repos?installation=${org.installationId}&mine=true`,
-              ),
-            ),
-          ).toBe('invalid')
-          expect((await call(m.browser, 'GET', '/api/connections/github/repos?installation=99')).status).toBe(404)
-          expect(codeOf(await call(m.browser, 'GET', '/api/connections/github/owners?cursor=zzz'))).toBe('invalid')
-        })
-
-        it("shares an organisation's installation with a tenant, and a member without a GitHub account there can then use it", async () => {
-          const list = await call(admin, 'GET', '/api/admin/connections/github/installations')
-          expect(list.status).toBe(200)
-          const item = list.json.items.find((i: any) => i.account.login === 'petal-team')
-          expect(item).toMatchObject({
-            account: { type: 'Organization' },
-            repositorySelection: 'selected',
-            suspended: false,
-            tenants: [],
-            spaces: 0,
-          })
-          expect(codeOf(await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {}))).toBe(
-            'invalid',
-          )
-          expect(
-            codeOf(
-              await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { shared: true }),
-            ),
-          ).toBe('invalid')
-          expect(
-            codeOf(
-              await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {
-                tenants: ['01ZZZZZZZZ'],
-              }),
-            ),
-          ).toBe('invalid')
-          expect(
-            (await call(admin, 'PUT', '/api/admin/connections/github/installations/424242', { tenants: [] })).status,
-          ).toBe(404)
-          const put = await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, {
-            tenants: ['0000000000'],
-          })
-          expect(put.json).toMatchObject({ id: item.id, tenants: ['0000000000'] })
-          const m = await newMember(uniq('gh5'))
-          const owners = await call(m.browser, 'GET', '/api/connections/github/owners')
-          expect(owners.json.items).toEqual([
-            { login: 'petal-team', type: 'Organization', via: 'app', installationId: item.id, needsInstall: false },
-          ])
-          const made = await call(m.browser, 'POST', '/api/spaces', {
-            name: `Shared ${run}`,
-            storage: {
-              sync: {
-                provider: 'github',
-                owner: 'petal-team',
-                name: `shared-${run}`,
-                private: false,
-                description: 'd',
-              },
-            },
-          })
-          expect(made.status).toBe(201)
-          const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-          expect(remote.json).toMatchObject({
-            state: 'ok',
-            errorCode: '',
-            credential: {
-              type: 'connection',
-              provider: 'github',
-              via: 'app',
-              installationId: item.id,
-              account: 'petal-team',
-            },
-          })
-          // The App cannot be removed while a space syncs through it.
-          expect(codeOf(await call(admin, 'DELETE', '/api/admin/connections/github'))).toBe('provider_in_use')
-          await call(m.browser, 'DELETE', `/api/spaces/${made.json.id}/remote`)
-          expect(
-            (await call(admin, 'PUT', `/api/admin/connections/github/installations/${item.id}`, { tenants: [] })).json
-              .tenants,
-          ).toEqual([])
-        })
-
-        it('creates a space with a new repository, or connects it to one that is there, and says why it could not', async () => {
-          const m = await newMember(uniq('gh6'))
-          await connectAccount(m.browser)
-          const body = (extra: Record<string, unknown>) => ({
-            name: `Repo ${run}`,
-            storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `notes-${run}`, ...extra } },
-          })
-          const made = await call(m.browser, 'POST', '/api/spaces', body({ private: true, description: 'Notes' }))
-          expect(made.status).toBe(201)
-          expect(made.headers.get('Location')).toBe(`/api/spaces/${made.json.id}`)
-          expect(made.json.sync).toBe('ok')
-          const remote = await call(m.browser, 'GET', `/api/spaces/${made.json.id}/remote`)
-          expect(remote.json).toMatchObject({
-            url: `https://github.com/kazuhahub/notes-${run}.git`,
-            branch: 'main',
-            state: 'ok',
-            errorCode: '',
-            credential: {
-              type: 'connection',
-              provider: 'github',
-              via: 'app',
-              account: 'kazuhahub',
-              repoId: expect.any(Number),
-            },
-          })
-          expect(JSON.stringify(remote.json)).not.toMatch(/token|secret/i)
-          // The same name again: taken; create: false uses it.
-          expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({})))).toBe('name_taken')
-          expect((await call(m.browser, 'POST', '/api/spaces', body({ create: false }))).status).toBe(201)
-          expect(
-            codeOf(
-              await call(m.browser, 'POST', '/api/spaces', {
-                name: 'x',
-                storage: { sync: { provider: 'github', owner: 'nobody-here', name: 'x' } },
-              }),
-            ),
-          ).toBe('owner_not_allowed')
-          expect(codeOf(await call(m.browser, 'POST', '/api/spaces', body({ name: 'bad name' })))).toBe('invalid')
-          expect((await mockHook({ trap: 'noPermission' })).status).toBe(200)
-          const refused = await call(m.browser, 'POST', '/api/spaces', body({ name: `other-${run}` }))
-          expect([refused.status, codeOf(refused)]).toEqual([403, 'provider_refused'])
-          await mockHook({ trap: 'noPermission', on: false })
-          const spaces = (await call(m.browser, 'GET', '/api/spaces')).json.spaces as SpaceInfo[]
-          expect(spaces.filter((x) => x.name === `Repo ${run}`).length).toBe(2)
-        })
-
-        it('reminds a person of an empty repository a failed space left, until a space connects to it or they dismiss it', async () => {
-          const m = await newMember(uniq('gh6b'))
-          const other = await newMember(uniq('gh6c'))
-          await connectAccount(m.browser)
-          expect((await ghProvider(m.browser)).leftovers).toEqual([])
-          const body = (name: string, create = true) => ({
-            name: 'Kept',
-            storage: { sync: { provider: 'github', owner: 'kazuhahub', name, create } },
-          })
-          await mockHook({ trap: 'pushFails' })
-          const failed = await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`))
-          expect([failed.status, codeOf(failed)]).toEqual([502, 'push_failed'])
-          const second = await call(m.browser, 'POST', '/api/spaces', body(`left2-${run}`))
-          await mockHook({ trap: 'pushFails', on: false })
-          const list = (await ghProvider(m.browser)).leftovers
-          expect(list).toHaveLength(2)
-          expect(list[1]).toMatchObject({
-            repoId: failed.json.repo.id,
-            fullName: `kazuhahub/left-${run}`,
-            htmlUrl: failed.json.repo.htmlUrl,
-            spaceName: 'Kept',
-            created: expect.stringMatching(/Z$/),
-          })
-          // Newest first, and only the person's own.
-          expect(list[0].repoId).toBe(second.json.repo.id)
-          expect((await ghProvider(other.browser)).leftovers).toEqual([])
-          // A connection that is refused (a branch name that cannot be used) leaves the reminder.
-          const sp = await ownedSpace(m, 'Refused')
-          const refused = await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, {
-            url: `https://github.com/kazuhahub/left2-${run}.git`,
-            branch: 'bad branch',
-            credential: { type: 'connection', provider: 'github', via: 'user' },
-          })
-          expect([refused.status, codeOf(refused)]).toEqual([400, 'invalid'])
-          expect((await ghProvider(m.browser)).leftovers).toHaveLength(2)
-          // A space connecting to the repository (here by create: false) answers its reminder.
-          expect((await call(m.browser, 'POST', '/api/spaces', body(`left-${run}`, false))).status).toBe(201)
-          expect((await ghProvider(m.browser)).leftovers.map((l: any) => l.repoId)).toEqual([second.json.repo.id])
-          // Dismissing is the person's own, and fine when it is gone already.
-          expect(
-            (await call(other.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status,
-          ).toBe(204)
-          expect((await ghProvider(m.browser)).leftovers).toHaveLength(1)
-          expect(
-            (await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status,
-          ).toBe(204)
-          expect(
-            (await call(m.browser, 'DELETE', `/api/connections/github/leftovers/${second.json.repo.id}`)).status,
-          ).toBe(204)
-          expect((await ghProvider(m.browser)).leftovers).toEqual([])
-          expect((await call(m.browser, 'DELETE', '/api/connections/github/leftovers/nope')).status).toBe(404)
-        })
-
-        it("switches a space to the App or to the user's connection with PUT .../remote", async () => {
-          const m = await newMember(uniq('gh7'))
-          await connectAccount(m.browser)
-          const sp = await ownedSpace(m, 'Switch')
-          const put = (credential: unknown, url = 'https://github.com/kazuhahub/wiki.git') =>
-            call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, { url, credential })
-          expect(codeOf(await put({ type: 'connection', provider: 'github' }))).toBe('invalid')
-          expect(
-            codeOf(await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://example.com/a/b.git')),
-          ).toBe('invalid')
-          const app = await put(
-            { type: 'connection', provider: 'github', via: 'app' },
-            'git@github.com:kazuhahub/wiki.git',
-          )
-          expect(app.status).toBe(200)
-          expect(app.json).toMatchObject({
-            url: 'https://github.com/kazuhahub/wiki.git',
-            credential: { type: 'connection', provider: 'github', via: 'app' },
-          })
-          const mine = { json: await ghProvider(m.browser) }
-          expect(mine.json.connection.spaces).toBe(0)
-          const user = await put(
-            { type: 'connection', provider: 'github', via: 'user' },
-            'https://github.com/kazuhahub/notes.git',
-          )
-          expect(user.json).toMatchObject({
-            credential: {
-              type: 'connection',
-              provider: 'github',
-              via: 'user',
-              user: { id: m.user.id, username: m.user.username },
-              login: expect.any(String),
-            },
-          })
-          expect((await ghProvider(m.browser)).connection.spaces).toBe(1)
-          expect([
-            (await put({ type: 'connection', provider: 'github', via: 'app' }, 'https://github.com/none/x.git')).status,
-          ]).toEqual([409])
-          // An expired connection puts the space in error with a code that says why; connecting again and syncing fixes it.
-          await mockHook({ expire: true, user: m.user.id })
-          const bad = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
-          expect(bad.json).toMatchObject({ state: 'error', errorCode: 'connection_expired' })
-          expect((await ghProvider(m.browser)).connection.state).toBe('expired')
-          await connectAccount(m.browser)
-          const fixed = await call(m.browser, 'POST', `/api/spaces/${sp.id}/remote/sync`)
-          expect(fixed.json).toMatchObject({ state: 'ok', errorCode: '' })
-        })
-
-        it('connects through the installation page in one flow, and tells the personal account that needs the App', async () => {
-          const m = await newMember(uniq('gh10'))
-          const start = await call(m.browser, 'POST', '/api/connections/github/authorization/start', {
-            return: '/settings/connections',
-            install: true,
-          })
-          expect(start.status).toBe(200)
-          expect(start.json.url).toContain('setup_action=install')
-          const cb = await call(m.browser, 'GET', start.json.url, undefined, {})
-          expect([cb.status, cb.headers.get('Location')]).toEqual([303, '/settings/connections'])
-          expect((await ghProvider(m.browser)).connection).toMatchObject({ state: 'ok' })
-          // An organisation that has to approve the installation first.
-          const asked = await call(m.browser, 'POST', '/api/connections/github/authorization/start', {
-            return: '/settings/connections',
-            install: true,
-          })
-          const pending = await call(
-            m.browser,
-            'GET',
-            asked.json.url.replace('setup_action=install', 'setup_action=request'),
-            undefined,
-            {},
-          )
-          expect(pending.headers.get('Location')).toBe('/settings?provider=github&connection_error=requested')
-          // The own account of someone the App is not installed on: marked, and refused with the way out.
-          const other = await newMember(uniq('gh11'))
-          await connectAccount(other.browser)
-          await mockHook({ trap: 'personalNeedsInstall' })
-          try {
-            const owners = await call(other.browser, 'GET', '/api/connections/github/owners')
-            expect(owners.json.items[0]).toMatchObject({ type: 'User', needsInstall: true })
-            expect(owners.json.items.filter((o: any) => o.needsInstall)).toHaveLength(1)
-            const login = owners.json.items[0].login
-            const refused = await call(other.browser, 'POST', '/api/spaces', {
-              name: 'Own',
-              storage: { sync: { provider: 'github', owner: login, name: `own-${run}` } },
-            })
-            expect([refused.status, codeOf(refused)]).toEqual([409, 'app_not_installed'])
-            expect(refused.json.installUrl).toContain('/installations/new')
-          } finally {
-            await mockHook({ trap: 'personalNeedsInstall', on: false })
-          }
-          expect((await call(m.browser, 'GET', '/api/connections/github/owners')).json.items[0].needsInstall).toBe(
-            false,
-          )
-        })
-
-        it('names the permission an App lacks, and the re-check shows what GitHub says now', async () => {
-          const m = await newMember(uniq('gh12'))
-          await connectAccount(m.browser)
-          await mockHook({ trap: 'missingPermission' })
-          try {
-            const r = await call(m.browser, 'POST', '/api/spaces', {
-              name: 'Perm',
-              storage: { sync: { provider: 'github', owner: 'kazuhahub', name: `perm-${run}` } },
-            })
-            expect([r.status, codeOf(r)]).toEqual([403, 'app_missing_permission'])
-            expect(r.json.missing).toEqual(['administration'])
-          } finally {
-            await mockHook({ trap: 'missingPermission', on: false })
-          }
-          // GitHub's side changes; the view keeps the last check until it is asked again.
-          const before = (await call(admin, 'GET', '/api/admin/connections/github')).json
-          expect(before).toMatchObject({ missing: [], gaps: [], anyAccount: true })
-          await mockHook({
-            side: {
-              permissions: { administration: 'write', metadata: 'read' },
-              gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }],
-              anyAccount: false,
-            },
-          })
-          expect((await call(admin, 'GET', '/api/admin/connections/github')).json).toMatchObject({
-            missing: [],
-            gaps: [],
-            anyAccount: true,
-          })
-          const checked = await call(admin, 'POST', '/api/admin/connections/github/check', {})
-          expect(checked.status).toBe(200)
-          expect(checked.json).toMatchObject({
-            missing: ['contents'],
-            gaps: [{ installationId: 5001, account: 'kazuhahub', missing: ['contents'] }],
-            anyAccount: false,
-          })
-          expect((await call(admin, 'GET', '/api/admin/connections/github')).json.missing).toEqual(['contents'])
-          await mockHook({
-            side: {
-              permissions: { administration: 'write', contents: 'write', metadata: 'read' },
-              gaps: [],
-              anyAccount: true,
-            },
-          })
-          expect((await call(admin, 'POST', '/api/admin/connections/github/check', {})).json).toMatchObject({
-            missing: [],
-            gaps: [],
-            anyAccount: true,
-          })
-        })
-
-        it('checks the organisation and name before making the App, and does not replace one that is in use', async () => {
-          const m = await newMember(uniq('gh13'))
-          await connectAccount(m.browser)
-          expect(
-            codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { organization: 'a/b' })),
-          ).toBe('invalid')
-          expect(
-            codeOf(await call(admin, 'POST', '/api/admin/connections/github/manifest', { name: 'x'.repeat(35) })),
-          ).toBe('invalid')
-          const used = await call(admin, 'POST', '/api/admin/connections/github/manifest', {
-            organization: 'kazuhahub',
-          })
-          expect([used.status, codeOf(used)]).toEqual([409, 'provider_in_use'])
-        })
-
-        it("puts other remotes' error states under errorCode too", async () => {
-          // A member of their own, so the administrator's spaces stay under the default quota of 20 for the rest of the run.
-          const m = await newMember(uniq('gh9'))
-          const sp = await ownedSpace(m, 'Plain')
-          await call(m.browser, 'PUT', `/api/spaces/${sp.id}/remote`, {
-            url: 'https://github.com/a/b.git',
-            credential: { type: 'token', token: 'x' },
-          })
-          const r = await call(m.browser, 'GET', `/api/spaces/${sp.id}/remote`)
-          expect(r.json.errorCode).toBe('')
-        })
-      })
-
       describe("server storage (the site's policy, the pin and the exemption, the requirement of a remote)", () => {
         // What GET /api/admin/storage answers: what is measured and derived. The policy is the storage.* and cache.*
         // settings of the site.
@@ -3709,40 +3086,6 @@ function suite(target: Target) {
           // The administrator's spaces count against their quota (3.3), which the later tests need.
           expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
         })
-
-        it.skipIf(!!REAL)(
-          'mock only: connects one, moves the attachments with progress, and cannot take it away after',
-          async () => {
-            const sp = await ownedSpace({ browser: admin }, 'Followed')
-            await call(admin, 'PUT', `/api/spaces/${sp.id}/remote`, {
-              url: 'https://github.com/a/b.git',
-              credential: { type: 'token', token: 'x' },
-            })
-            const base = `/api/spaces/${sp.id}/remote/assets`
-            const put = await call(admin, 'PUT', base, {
-              url: 'https://github.com/a/b-assets.git',
-              credential: { type: 'token', token: 'x' },
-            })
-            expect(put.status).toBe(200)
-            expect(put.json).toMatchObject({ url: 'https://github.com/a/b-assets.git', state: 'ok', move: null })
-            const listed = (await call(admin, 'GET', '/api/spaces')).json.spaces.find((x: SpaceInfo) => x.id === sp.id)
-            expect(listed.storage.assets).toBe('repository')
-            // Nothing in assets/: nothing to move.
-            expect((await call(admin, 'POST', base + '/move')).status).toBe(200)
-            const page = (await call(admin, 'POST', `/api/spaces/${sp.id}/pages`, { title: 'P' })).json
-            await spaceApi(sp.id).uploadAsset(page.id, new Blob(['PNG']), 'a.png')
-            const mv = await call(admin, 'POST', base + '/move')
-            expect(mv.status).toBe(202)
-            expect(mv.json.move).toMatchObject({ state: 'copying', files: 1, filesDone: 0, error: '' })
-            expect((await call(admin, 'POST', base + '/move')).status).toBe(409)
-            let state = 'copying'
-            for (let i = 0; i < 6 && state !== 'done'; i++) state = (await call(admin, 'GET', base)).json.move.state
-            expect(state).toBe('done')
-            const del = await call(admin, 'DELETE', base)
-            expect([del.status, del.json.error]).toEqual([409, 'conflict'])
-            expect((await call(admin, 'DELETE', `/api/admin/spaces/${sp.id}`)).status).toBe(200)
-          },
-        )
 
         it('is for administrators only', async () => {
           const m = await newMember(uniq('stad'))
@@ -3841,7 +3184,7 @@ function suite(target: Target) {
           for (let i = 0; i < 120; i++) {
             const v = await read()
             if (done(v)) return v
-            await new Promise((r) => setTimeout(r, REAL ? 250 : 5))
+            await new Promise((r) => setTimeout(r, 250))
           }
           throw new Error(`never happened: ${what}`)
         }
@@ -4942,23 +4285,20 @@ function suite(target: Target) {
     })
 
     // The mock rewrites no links when a page is renamed.
-    it.skipIf(!REAL)(
-      'server only: a save rebased over a rename answers a textRev of its own; text typed on it keeps the rewrite',
-      async () => {
-        const tg = await mk(`${root}/textrev-b`, { title: `乙${run}` }, 'x\n')
-        const text = `[看](../textrev-b/乙${run}.md "看乙")\n`
-        const a = await mk(`${root}/textrev-a`, { title: `甲${run}` }, text)
-        // The page it links to is renamed while a is open: the server rewrites the link.
-        await S.savePage(tg.id, { baseRev: tg.rev, meta: { ...tg.meta, title: `丙${run}` }, body: tg.body })
-        const saved = await S.savePage(a.id, { baseRev: a.rev, meta: a.meta, body: text + '一\n' })
-        expect(saved.body).toBe(`[看](../textrev-b/丙${run}.md "看乙")\n一\n`)
-        expect(saved.textRev).toBeTruthy()
-        expect(saved.textRev).not.toBe(saved.rev)
-        // Typed while the save was out, on the old text: based on textRev.
-        const next = await S.savePage(a.id, { baseRev: saved.textRev!, meta: saved.meta, body: text + '一\n二\n' })
-        expect(next.body).toBe(`[看](../textrev-b/丙${run}.md "看乙")\n一\n二\n`)
-      },
-    )
+    it('a save rebased over a rename answers a textRev of its own; text typed on it keeps the rewrite', async () => {
+      const tg = await mk(`${root}/textrev-b`, { title: `乙${run}` }, 'x\n')
+      const text = `[看](../textrev-b/乙${run}.md "看乙")\n`
+      const a = await mk(`${root}/textrev-a`, { title: `甲${run}` }, text)
+      // The page it links to is renamed while a is open: the server rewrites the link.
+      await S.savePage(tg.id, { baseRev: tg.rev, meta: { ...tg.meta, title: `丙${run}` }, body: tg.body })
+      const saved = await S.savePage(a.id, { baseRev: a.rev, meta: a.meta, body: text + '一\n' })
+      expect(saved.body).toBe(`[看](../textrev-b/丙${run}.md "看乙")\n一\n`)
+      expect(saved.textRev).toBeTruthy()
+      expect(saved.textRev).not.toBe(saved.rev)
+      // Typed while the save was out, on the old text: based on textRev.
+      const next = await S.savePage(a.id, { baseRev: saved.textRev!, meta: saved.meta, body: text + '一\n二\n' })
+      expect(next.body).toBe(`[看](../textrev-b/丙${run}.md "看乙")\n一\n二\n`)
+    })
 
     it('a stale baseRev is 409 conflict carrying the current page, and nothing is overwritten', async () => {
       const p = await mk(`${root}/conflict`, { title: `冲突${run}` }, '起点\n')
@@ -5629,22 +4969,6 @@ function suite(target: Target) {
         const r = await call(admin, 'GET', `${SP_PAGES}?${q}`)
         expect([r.status, r.json?.error]).toEqual([400, 'invalid'])
       }
-    })
-
-    it.skipIf(!!REAL)('mock only: a created range picks pages by their own created day (set with a save)', async () => {
-      const older = await mk(f, { title: `旧${run}` })
-      const saved = await S.savePage(older.id, {
-        baseRev: older.rev,
-        meta: { ...older.meta, created: '2020-03-15' },
-        body: older.body,
-      })
-      expect(saved.meta.created).toBe('2020-03-15')
-      expect(ids(await walk({ folder: f, createdFrom: '2020-03-15', createdTo: '2020-03-15' }))).toEqual([older.id])
-      expect(ids(await walk({ folder: f, createdTo: '2020-03-14' }))).toEqual([])
-      expect(ids(await walk({ folder: f, createdTo: '2020-03-16' }))).toEqual([older.id])
-      expect(ids(await walk({ folder: f, createdFrom: '2020-03-16', updatedFrom: dayOf(saved.updated) }))).toEqual(
-        expect.arrayContaining([titled.id]),
-      )
     })
   })
 
@@ -6779,43 +6103,7 @@ function suite(target: Target) {
       expect((await S.fixCheck({ kind: 'not_in_type', path: cur.path, baseRev: fixed.rev })).rev).toBe(fixed.rev)
     })
 
-    // Only a server whose files are written by hand can have these: the mock is given them.
-    it('mock only: a file without an id, with a broken header or with an id that is taken; no_id is fixed with the rev it lists', async () => {
-      if (REAL) return
-      const taken = await mk(folder, { title: `占了${run}` }, 'x\n')
-      server!.addOrphan(spaceId, {
-        path: `${folder}/noid.md`,
-        kind: 'no_id',
-        meta: { title: `无id${run}`, custom: 1 },
-        body: 'orphan\n',
-      })
-      server!.addOrphan(spaceId, { path: `${folder}/broken.md`, kind: 'bad_header', line: 3 })
-      server!.addOrphan(spaceId, { path: `${folder}/twin.md`, kind: 'duplicate_id', id: taken.id })
-      const items = await walkChecks()
-      const n = at(items, 'no_id', `${folder}/noid.md`)!
-      expect(n).toMatchObject({ fix: 'add_id' })
-      expect(n.id).toBeUndefined()
-      expect(n.rev).toMatch(/^[0-9a-f]{40}$/)
-      expect(n.detail).toBeUndefined()
-      expect(at(items, 'bad_header', `${folder}/broken.md`)).toMatchObject({ fix: null, detail: { line: 3 } })
-      expect(at(items, 'duplicate_id', `${folder}/twin.md`)).toMatchObject({
-        id: taken.id,
-        fix: null,
-        detail: { paths: [taken.path, `${folder}/twin.md`] },
-      })
-      const stale = await failure(S.fixCheck({ kind: 'no_id', path: n.path, baseRev: '0'.repeat(40) }))
-      expect([stale.status, stale.code]).toEqual([409, 'conflict'])
-      const made = await S.fixCheck({ kind: 'no_id', path: n.path, baseRev: n.rev })
-      expect(made.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/)
-      expect(made).toMatchObject({ path: n.path, body: 'orphan\n' })
-      expect(made.meta).toMatchObject({ id: made.id, title: `无id${run}`, custom: 1 })
-      expect((await S.getPage(made.id)).path).toBe(n.path)
-      expect(at(await walkChecks(), 'no_id', n.path)).toBeUndefined()
-      const again = await failure(S.fixCheck({ kind: 'no_id', path: `${folder}/broken.md`, baseRev: '0'.repeat(40) }))
-      expect([400, 409]).toContain(again.status)
-    })
-
-    it('needs write to fix and read to list: the mock and a real server answer 400 invalid for a fix with no path or rev', async () => {
+    it('needs write to fix and read to list: a real server answers 400 invalid for a fix with no path or rev', async () => {
       const r = await call(admin, 'POST', `/api/spaces/${spaceId}/checks/fix`, { kind: 'no_id' })
       expect([r.status, r.json.error]).toEqual([400, 'invalid'])
     })
@@ -7530,70 +6818,11 @@ function suite(target: Target) {
       expect(got.path).toBe(moved.path)
       expect(got.draft).toMatchObject({ version: r.version, body: 'y\n' })
     })
-
-    it.skipIf(!!REAL)(
-      'mock only: the server commits a draft that has been quiet for 2 minutes, but not before; a stale one is left alone; then the old version is refused',
-      async () => {
-        const p = await mk(`${root}/dr16`, { title: `自动提交${run}` }, 'x\n')
-        const r = await store(p, { body: 'auto\n' })
-        clock += 119_000
-        expect((await S.getPage(p.id)).body).toBe('x\n')
-        clock += 2_000
-        const got = await S.getPage(p.id)
-        expect(got.body).toBe('auto\n')
-        expect(got.rev).not.toBe(p.rev)
-        expect('draft' in got).toBe(false)
-        // The next store still carries the old version: refused, with the file as it is now.
-        const e = await failure(S.putDraft(p.id, { ...draftOf(p, { body: 'more\n' }), prev: r.version }))
-        expect(e.draft).toBeNull()
-        expect(e.current?.body).toBe('auto\n')
-
-        const q = await mk(`${root}/dr16b`, { title: `过期不提交${run}` }, 'x\n')
-        const moved = await S.savePage(q.id, { baseRev: q.rev, meta: q.meta, body: 'else\n' })
-        await store(q, { body: 'mine\n' })
-        clock += 30 * 60_000
-        const stale = await S.getPage(q.id)
-        expect(stale.body).toBe('else\n')
-        expect(stale.rev).toBe(moved.rev)
-        expect(stale.draft).toMatchObject({ body: 'mine\n', stale: true })
-      },
-    )
-
-    it.skipIf(!!REAL)(
-      'mock only: the server removes a stale draft that says what the file says (a leftover), and leaves a stale one that differs',
-      async () => {
-        const p = await mk(`${root}/dr16c`, { title: `留存${run}` }, '起点\n')
-        const moved = await S.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '一样的字\n' })
-        const same = await store(p, { body: '一样的字\n' })
-        expect(same.stale).toBe(true)
-        const q = await mk(`${root}/dr16d`, { title: `不同${run}` }, '起点\n')
-        await S.savePage(q.id, { baseRev: q.rev, meta: q.meta, body: '别处的字\n' })
-        await store(q, { body: '我的字\n' })
-        clock += 30 * 60_000
-        expect('draft' in (await S.getPage(p.id))).toBe(false)
-        expect((await S.getPage(p.id)).rev).toBe(moved.rev)
-        expect((await S.getPage(q.id)).draft).toMatchObject({ body: '我的字\n', stale: true })
-      },
-    )
-
-    it.skipIf(!!REAL)(
-      'mock only: a draft stored again and again is committed 10 minutes after it was first stored',
-      async () => {
-        const p = await mk(`${root}/dr17`, { title: `十分钟${run}` }, 'x\n')
-        let prev = ''
-        for (let i = 0; i < 6; i++) {
-          prev = (await store(p, { body: `v${i}\n` }, prev)).version
-          clock += 100_000
-        }
-        // Never quiet for 2 minutes, yet 10 have passed.
-        expect((await S.getPage(p.id)).body).toBe('v5\n')
-      },
-    )
   })
 
   describe('files', () => {
     const enc = encodeURIComponent
-    const hash8 = (data: Uint8Array) => sha256Hex(data).slice(0, 8)
+    const hash8 = (data: Uint8Array) => createHash('sha256').update(data).digest('hex').slice(0, 8)
     const bytesOf = (s: string) => new TextEncoder().encode(s)
     // Built by Node's own Response, not by jsdom: a real `fetch` only knows how to send its own kind of Blob.
     const blobOf = (data: Uint8Array) => new Response(data as BodyInit).blob()
@@ -7827,7 +7056,7 @@ function suite(target: Target) {
     const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
     // Against a real server the commit comes a few seconds after the write.
     const eventually = async <T>(fn: () => Promise<T>, done: (v: T) => boolean, ms = 25_000): Promise<T> => {
-      const end = Date.now() + (REAL ? ms : 0)
+      const end = Date.now() + ms
       for (;;) {
         const v = await fn()
         if (done(v) || Date.now() >= end) return v
@@ -8046,16 +7275,13 @@ function suite(target: Target) {
       }
     })
 
-    it('the registry: the same categories and kinds as the mock holds, optional categories with their switches', async () => {
+    it('the registry: categories with their kinds, the optional ones with their switches', async () => {
       const k = await adminApi.auditKinds()
-      expect(k.categories.map((c) => c.id)).toEqual(AUDIT_CATEGORIES.map((c) => c.id))
+      expect(k.categories.length).toBeGreaterThan(1)
       for (const c of k.categories) {
-        const mine = AUDIT_CATEGORIES.find((x) => x.id === c.id)!
-        expect(c.core).toBe(mine.core)
-        expect(c.setting).toBe(mine.setting)
-        expect(c.kinds.map((x) => `${x.name}:${x.site}`).sort(), c.id).toEqual(
-          mine.kinds.map((x) => `${x.name}:${x.site}`).sort(),
-        )
+        expect(c.kinds.length, c.id).toBeGreaterThan(0)
+        // A category that can be switched off names the setting that does it; a core one cannot be.
+        expect(c.core, c.id).toBe(!c.setting)
       }
     })
 
@@ -8073,921 +7299,12 @@ function suite(target: Target) {
     })
   })
 
-  describe.skipIf(!accounts || !!REAL)(
-    'mock only (a real server has no remote to talk to): connecting, states and unavailable writes',
-    () => {
-      const fresh = async (name: string) => {
-        const sp = await api.createSpace(`${name}${run}`.slice(0, 40))
-        const R = spaceApi(sp.id)
-        ids.set(R, sp.id)
-        return { id: sp.id, R }
-      }
-      const token = { type: 'token' as const, username: 'u', token: 'secret-token-1' }
-      const list = async (id: string) => (await api.spaces()).spaces.find((x) => x.id === id)!
-      const ids = new Map<SpaceApi, string>()
-      const spaceIdOf = (R: SpaceApi) => ids.get(R)!
-      const titles = async (R: SpaceApi) =>
-        (await R.listPages({ recursive: true, folder: '' })).items.map((i) => i.title)
-
-      it('connecting to a remote with no such branch pushes the space: 200 with the remote, state ok, a sync time, and the token never comes back', async () => {
-        const { id, R } = await fresh('推送')
-        const r = await R.connectRemote({ url: url('github.com'), credential: token })
-        expect(r).toMatchObject({
-          url: url('github.com'),
-          branch: 'main',
-          state: 'ok',
-          error: '',
-          rewritten: null,
-          credential: { type: 'token', username: 'u' },
-        })
-        expect(r.lastSync).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-        expect(JSON.stringify(r)).not.toContain('secret-token-1')
-        expect(await R.getRemote()).toEqual(r)
-        expect((await list(id)).sync).toBe('ok')
-      })
-
-      it('the branch defaults to main and can be named', async () => {
-        const { R } = await fresh('分支')
-        expect((await R.connectRemote({ url: url('github.com'), branch: 'notes', credential: token })).branch).toBe(
-          'notes',
-        )
-        expect((await R.connectRemote({ url: url('gitlab.com'), credential: token })).branch).toBe('main')
-      })
-
-      it("a pristine space takes the remote's content", async () => {
-        const { R } = await fresh('接收')
-        expect(await titles(R)).toEqual([])
-        await R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
-        expect((await titles(R)).length).toBeGreaterThan(0)
-      })
-
-      it('a space with pages: a remote that is ahead moves it forward, one that is behind changes nothing here', async () => {
-        const a = await fresh('前进')
-        await a.R.createPage({ meta: { title: '本地页面' } })
-        await a.R.connectRemote({ url: url('github.com', 'ahead.git'), credential: token })
-        expect(await titles(a.R)).toContain('本地页面')
-        expect((await titles(a.R)).length).toBeGreaterThan(1)
-        const b = await fresh('落后')
-        await b.R.createPage({ meta: { title: '本地页面' } })
-        await b.R.connectRemote({ url: url('github.com', 'behind.git'), credential: token })
-        expect(await titles(b.R)).toEqual(['本地页面'])
-      })
-
-      it('both sides with content of their own is 409 conflict, and the space stays local', async () => {
-        const { id, R } = await fresh('分叉')
-        await R.createPage({ meta: { title: '我的' } })
-        const e = await failure(R.connectRemote({ url: url('github.com', 'diverged.git'), credential: token }))
-        expect([e.status, e.code]).toEqual([409, 'conflict'])
-        expect(e.message).not.toBe('')
-        expect((await failure(R.getRemote())).status).toBe(404)
-        expect((await list(id)).sync).toBe('local')
-      })
-
-      it('a remote that cannot be reached, or refuses the credential, is 503 unavailable with a message, and nothing changes', async () => {
-        const { id, R } = await fresh('连不上')
-        for (const word of ['unreachable', 'refused']) {
-          const e = await failure(R.connectRemote({ url: url('github.com', `${word}.git`), credential: token }))
-          expect([e.status, e.code], word).toEqual([503, 'unavailable'])
-          expect(e.message).not.toBe('')
-        }
-        expect((await failure(R.getRemote())).status).toBe(404)
-        expect((await list(id)).sync).toBe('local')
-      })
-
-      it('a token left out keeps the stored one; with none stored it is 400; the user name defaults', async () => {
-        const { R } = await fresh('令牌')
-        const none = await failure(
-          R.connectRemote({ url: url('github.com'), credential: { type: 'token', username: 'u' } }),
-        )
-        expect([none.status, none.code]).toEqual([400, 'invalid'])
-        const first = await R.connectRemote({ url: url('github.com'), credential: { type: 'token', token: 'tok-1' } })
-        expect(first.credential).toEqual({ type: 'token', username: 'x-access-token' })
-        expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
-        const again = await R.connectRemote({
-          url: url('github.com', 'other.git'),
-          credential: { type: 'token', username: 'me' },
-        })
-        expect(again.credential).toEqual({ type: 'token', username: 'me' })
-        expect(server!.storedToken(spaceIdOf(R))).toBe('tok-1')
-        await R.connectRemote({ url: url('github.com', 'other.git'), credential: { type: 'token', token: 'tok-2' } })
-        expect(server!.storedToken(spaceIdOf(R))).toBe('tok-2')
-      })
-
-      it('SSH: the key from /remote/key is the credential, the host key is shown, and the address must be an SSH one', async () => {
-        const { R } = await fresh('密钥')
-        const key = await R.remoteKey()
-        const r = await R.connectRemote({ url: 'git@github.com:me/notes.git', credential: { type: 'ssh' } })
-        expect(r.credential).toEqual({ type: 'ssh', publicKey: key.publicKey, fingerprint: key.fingerprint })
-        expect(r.hostKey).toMatch(/^SHA256:/)
-        for (const [u, c] of [
-          [url('github.com'), { type: 'ssh' }],
-          ['git@github.com:me/x.git', token],
-        ] as const) {
-          const e = await failure(R.connectRemote({ url: u, credential: c }))
-          expect([e.status, e.code]).toEqual([400, 'invalid'])
-        }
-        const e = await failure(R.remoteKey(true))
-        expect([e.status, e.code]).toEqual([409, 'conflict'])
-        expect(
-          (await R.connectRemote({ url: 'ssh://git@gitlab.com:2222/me/notes.git', credential: { type: 'ssh' } })).state,
-        ).toBe('ok')
-      })
-
-      it('a space connected without making a key first still gets one', async () => {
-        const { R } = await fresh('自动密钥')
-        const r = await R.connectRemote({ url: 'git@codeberg.org:me/notes.git', credential: { type: 'ssh' } })
-        expect(r.credential.type === 'ssh' && r.credential.publicKey).toMatch(/^ssh-/)
-      })
-
-      it('while the remote is unreachable, writes are 503 unavailable and change nothing; reads and drafts go on; the draft is written once it is back', async () => {
-        const { id, R } = await fresh('离线')
-        const p = await R.createPage({ meta: { title: '页' }, body: '旧\n' })
-        await R.connectRemote({ url: url('github.com'), credential: token })
-        server!.setRemote(id, 'offline', { error: '连接超时' })
-        const remote = await R.getRemote()
-        expect(remote).toMatchObject({ state: 'offline', error: '连接超时' })
-        expect((await list(id)).sync).toBe('offline')
-        const refused = async (fn: () => Promise<unknown>) => {
-          const e = await failure(fn())
-          expect([e.status, e.code]).toEqual([503, 'unavailable'])
-          expect(e.message).not.toBe('')
-        }
-        await refused(() => R.createPage({ meta: { title: '新' } }))
-        await refused(() => R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: '改\n' }))
-        await refused(() => R.movePage(p.id, '别处'))
-        // A draft is stored; a commit is refused and keeps it.
-        const d = await R.putDraft(p.id, { prev: '', baseRev: p.rev, meta: p.meta, body: '草稿里的\n' })
-        await refused(() => R.commitPage(p.id, d.version))
-        expect((await R.getPage(p.id)).draft?.version).toBe(d.version)
-        await refused(() => R.deletePage(p.id))
-        expect((await R.getPage(p.id)).body).toBe('旧\n')
-        expect(await titles(R)).toEqual(['页'])
-        // The server's own commit waits for the remote.
-        clock += 20 * 60_000
-        server!.sweep()
-        expect((await R.getPage(p.id)).body).toBe('旧\n')
-        server!.remoteReachable(id, true)
-        const back = await R.syncRemote()
-        expect(back).toMatchObject({ state: 'ok', error: '' })
-        expect((await list(id)).sync).toBe('ok')
-        server!.sweep()
-        expect((await R.getPage(p.id)).body).toBe('草稿里的\n')
-      })
-
-      it('a sync while the remote is still out of reach answers 200 with state offline', async () => {
-        const { id, R } = await fresh('仍离线')
-        await R.connectRemote({ url: url('github.com'), credential: token })
-        server!.setRemote(id, 'offline')
-        expect((await R.syncRemote()).state).toBe('offline')
-      })
-
-      it('a rewritten remote pauses writes until its new history is accepted with the commit shown; a wrong commit is 409', async () => {
-        const { id, R } = await fresh('改写')
-        const p = await R.createPage({ meta: { title: '页' } })
-        await R.connectRemote({ url: url('github.com'), credential: token })
-        const e0 = await failure(R.acceptRemote('a'.repeat(40)))
-        expect([e0.status, e0.code]).toEqual([409, 'conflict'])
-        server!.setRemote(id, 'rewritten')
-        const r = await R.getRemote()
-        expect(r.state).toBe('rewritten')
-        expect(r.rewritten).toEqual({
-          lastGood: expect.stringMatching(/^[0-9a-f]{40}$/),
-          remote: expect.stringMatching(/^[0-9a-f]{40}$/),
-        })
-        expect((await list(id)).sync).toBe('rewritten')
-        expect((await R.getPage(p.id)).id).toBe(p.id)
-        const e = await failure(R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' }))
-        expect([e.status, e.code]).toEqual([503, 'unavailable'])
-        // Syncing does not clear it.
-        expect((await R.syncRemote()).state).toBe('rewritten')
-        const wrong = await failure(R.acceptRemote('b'.repeat(40)))
-        expect([wrong.status, wrong.code]).toEqual([409, 'conflict'])
-        const accepted = await R.acceptRemote(r.rewritten!.remote)
-        expect(accepted).toMatchObject({ state: 'ok', rewritten: null, error: '' })
-        expect((await R.savePage(p.id, { baseRev: p.rev, meta: p.meta, body: 'x\n' })).body).toBe('x\n')
-      })
-
-      it('state `error` carries the text to show', async () => {
-        const { id, R } = await fresh('出错')
-        await R.connectRemote({ url: url('github.com'), credential: token })
-        server!.setRemote(id, 'error', { error: '凭据被拒绝' })
-        expect(await R.getRemote()).toMatchObject({ state: 'error', error: '凭据被拒绝' })
-        expect((await list(id)).sync).toBe('error')
-      })
-
-      it('disconnecting is 204: the space is local again with all its pages, and the stored token is gone', async () => {
-        const { id, R } = await fresh('断开')
-        await R.createPage({ meta: { title: '留着' } })
-        await R.connectRemote({ url: url('github.com'), credential: token })
-        await R.disconnectRemote()
-        expect((await failure(R.getRemote())).status).toBe(404)
-        expect((await list(id)).sync).toBe('local')
-        expect(await titles(R)).toEqual(['留着'])
-        expect(server!.storedToken(id)).toBeUndefined()
-        expect((await failure(R.disconnectRemote())).status).toBe(404)
-        expect((await failure(R.syncRemote())).status).toBe(404)
-      })
-
-      it('a space of someone else is 404 for the remote endpoints too', async () => {
-        const r = await call(admin, 'GET', '/api/spaces/01ZZZZZZZZ/remote')
-        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
-      })
-
-      it('a host the administrator allows with `*` takes any', async () => {
-        const open = createMockServer({
-          empty: true,
-          mode: 'accounts',
-          now: () => clock,
-          oidc: null,
-          remote: { hosts: ['*'] },
-        })
-        const b = newBrowser(mockFetch(open, { jar: false }))
-        await as(b, async () => {
-          await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
-          const sp = await api.createSpace('任意主机')
-          expect(
-            (await spaceApi(sp.id).connectRemote({ url: url('git.anywhere.example'), credential: token })).state,
-          ).toBe('ok')
-        })
-      })
-
-      it('the mock can start a space in a state (for the app to be seen by hand)', async () => {
-        const m = createMockServer({
-          empty: true,
-          mode: 'accounts',
-          now: () => clock,
-          oidc: null,
-          remote: { start: 'offline' },
-        })
-        const b = newBrowser(mockFetch(m, { jar: false }))
-        await as(b, async () => {
-          await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })
-          const first = (await api.spaces()).spaces[0]
-          expect(first.sync).toBe('offline')
-          expect(await spaceApi(first.id).getRemote()).toMatchObject({ state: 'offline' })
-        })
-      })
-    },
-  )
-
-  describe.skipIf(!accounts || !!REAL)(
-    'mock only (skipped on a real server: no provider, no clean first run, and the rate limiter would lock us out): single sign-on, setup, rate limits',
-    () => {
-      let sso: MockServer
-      let ssoFetch: typeof fetch
-      const ssoBrowser = () => newBrowser(ssoFetch)
-      const start = async (b: Browser, body: Record<string, unknown>) =>
-        (await call(b, 'POST', '/api/auth/oidc/start', body)).json as { url: string }
-      // What the provider's redirect does: the browser follows the url.
-      const callback = (b: Browser, url: string) => call(b, 'GET', url)
-
-      beforeAll(() => {
-        sso = createMockServer({
-          empty: true,
-          mode: 'accounts',
-          admin: false,
-          now: () => clock,
-          oidc: { name: 'Company SSO', sub: 'sub-1' },
-          setupToken: 'tok',
-        })
-        ssoFetch = mockFetch(sso, { jar: false })
-      })
-
-      it('without a provider, start is 404', async () => {
-        const r = await call(admin, 'POST', '/api/auth/oidc/start', { intent: 'login' })
-        expect([r.status, r.json.error]).toEqual([404, 'not_found'])
-      })
-
-      it('session is `setup: true` while there is no user, and names the provider', async () => {
-        const s = (await call(ssoBrowser(), 'GET', '/api/session')).json
-        expect(s).toMatchObject({
-          mode: 'accounts',
-          user: null,
-          setup: true,
-          methods: { password: true, oidc: { name: 'Company SSO' } },
-        })
-      })
-
-      it('setup: a wrong token is 403 forbidden, a bad username or password 400; then 201 with a session and a personal space; after that 409 exists', async () => {
-        const b = ssoBrowser()
-        const wrong = await call(b, 'POST', '/api/setup', {
-          token: 'nope',
-          username: 'boss',
-          password: 'a-long-password',
-        })
-        expect([wrong.status, wrong.json.error]).toEqual([403, 'forbidden'])
-        expect(
-          (await call(b, 'POST', '/api/setup', { token: 'tok', username: 'B', password: 'a-long-password' })).status,
-        ).toBe(400)
-        expect(
-          (await call(b, 'POST', '/api/setup', { token: 'tok', username: 'boss', password: 'short' })).status,
-        ).toBe(400)
-        const ok = await call(b, 'POST', '/api/setup', { token: 'tok', username: 'Boss', password: 'a-long-password' })
-        expect(ok.status).toBe(201)
-        expect(ok.json.user).toMatchObject({ username: 'boss', name: 'boss', role: 'admin' })
-        expect(((await call(b, 'GET', '/api/spaces')).json.spaces as SpaceInfo[])[0].personal).toBe(true)
-        expect((await call(ssoBrowser(), 'GET', '/api/session')).json.setup).toBe(false)
-        const again = await call(ssoBrowser(), 'POST', '/api/setup', {
-          token: 'tok',
-          username: 'second',
-          password: 'a-long-password',
-        })
-        expect([again.status, again.json.error]).toEqual([409, 'exists'])
-      })
-
-      it('login through the provider: an identity nobody has is redirected to /login?sso_error=no_account; a linked one signs in and goes to the return path', async () => {
-        const b = ssoBrowser()
-        const first = await start(b, { intent: 'login', return: '/s/abc' })
-        const denied = await callback(b, first.url)
-        expect([denied.status, denied.headers.get('Location')]).toEqual([303, '/login?sso_error=no_account'])
-
-        // Link it from a signed-in account, then sign in with it.
-        const me = ssoBrowser()
-        expect((await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(
-          200,
-        )
-        const link = await start(me, { intent: 'link', return: '/settings' })
-        const linked = await callback(me, link.url)
-        expect([linked.status, linked.headers.get('Location')]).toEqual([303, '/settings'])
-        const acct = (await call(me, 'GET', '/api/account')).json
-        expect(acct.identities).toEqual([
-          expect.objectContaining({ provider: 'Company SSO', label: expect.any(String) }),
-        ])
-
-        const b2 = ssoBrowser()
-        const again = await start(b2, { intent: 'login', return: '/s/abc' })
-        const ok = await callback(b2, again.url)
-        expect([ok.status, ok.headers.get('Location')]).toEqual([303, '/s/abc'])
-        expect((await call(b2, 'GET', '/api/session')).json.user.username).toBe('boss')
-      })
-
-      it('the return path must be a plain path inside the app: anything else becomes /', async () => {
-        const me = ssoBrowser()
-        await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-        for (const bad of ['//evil.example', 'https://evil.example/x', '/a\\b', '', 'relative']) {
-          const b = ssoBrowser()
-          const s = await start(b, { intent: 'login', return: bad })
-          const r = await callback(b, s.url)
-          expect(r.headers.get('Location'), bad).toBe('/')
-        }
-      })
-
-      it('an attempt is used once, belongs to the browser that started it, and expires after 10 minutes: /login?sso_error=expired', async () => {
-        const b = ssoBrowser()
-        const s = await start(b, { intent: 'login' })
-        expect((await callback(b, s.url)).headers.get('Location')).toBe('/')
-        expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=expired')
-        const other = ssoBrowser()
-        const s2 = await start(b, { intent: 'login' })
-        expect((await callback(other, s2.url)).headers.get('Location')).toBe('/login?sso_error=expired')
-        const s3 = await start(b, { intent: 'login' })
-        clock += 11 * 60_000
-        expect((await callback(b, s3.url)).headers.get('Location')).toBe('/login?sso_error=expired')
-      })
-
-      it('the provider refusing is idp_error; link failures go to /settings?sso_error=', async () => {
-        const b = ssoBrowser()
-        const s = await start(b, { intent: 'login' })
-        expect((await callback(b, `${s.url}&error=access_denied`)).headers.get('Location')).toBe(
-          '/login?sso_error=idp_error',
-        )
-        const me = ssoBrowser()
-        await call(me, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-        const l = await start(me, { intent: 'link' })
-        expect((await callback(me, `${l.url}&error=access_denied`)).headers.get('Location')).toBe(
-          '/settings?sso_error=idp_error',
-        )
-      })
-
-      it('link needs a session; an identity another user has is identity_in_use; invite and setup tokens are checked', async () => {
-        const anon = ssoBrowser()
-        const noSession = await call(anon, 'POST', '/api/auth/oidc/start', { intent: 'link' })
-        expect(noSession.status).toBe(401)
-
-        const boss = ssoBrowser()
-        await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-        const inv = (await call(boss, 'POST', '/api/invites', { role: 'member' })).json
-        // `boss` already has sub-1, so an invite through the same identity cannot create a second account.
-        const b = ssoBrowser()
-        const s = await start(b, { intent: 'invite', token: inv.token })
-        expect((await callback(b, s.url)).headers.get('Location')).toBe('/login?sso_error=identity_in_use')
-        const bad = await start(ssoBrowser(), { intent: 'invite', token: 'nope' })
-        expect(bad.url).toContain('/api/auth/oidc/callback')
-        const b2 = ssoBrowser()
-        const s2 = await start(b2, { intent: 'invite', token: 'nope' })
-        expect((await callback(b2, s2.url)).headers.get('Location')).toBe('/login?sso_error=invite_invalid')
-        const b3 = ssoBrowser()
-        const s3 = await start(b3, { intent: 'setup', token: 'tok' })
-        expect((await callback(b3, s3.url)).headers.get('Location')).toBe('/login?sso_error=setup_invalid')
-      })
-
-      it('a disabled user signing in through the provider is /login?sso_error=disabled; the last identity of a user with no password cannot be removed (409)', async () => {
-        const boss = ssoBrowser()
-        await call(boss, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })
-        const sso2 = createMockServer({
-          empty: true,
-          mode: 'accounts',
-          now: () => clock,
-          oidc: { name: 'Company SSO', autoCreate: true, sub: 'sub-9' },
-          admin: { username: 'root', password: 'a-long-password' },
-        })
-        const f2 = mockFetch(sso2, { jar: false })
-        const mine = newBrowser(f2)
-        const s = (await call(mine, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
-        // autoCreate: a member account appears and is signed in.
-        expect((await callback(mine, s.url)).headers.get('Location')).toBe('/')
-        const acct = (await call(mine, 'GET', '/api/account')).json
-        expect(acct.hasPassword).toBe(false)
-        expect(acct.user.role).toBe('member')
-        const only = acct.identities[0].id
-        const refused = await call(mine, 'DELETE', `/api/account/identities/${only}`)
-        expect([refused.status, refused.json.error]).toEqual([409, 'conflict'])
-        // Set a password (no `current`), after which it can go.
-        expect((await call(mine, 'POST', '/api/account/password', { new: 'a-long-password' })).status).toBe(204)
-        expect((await call(mine, 'DELETE', `/api/account/identities/${only}`)).status).toBe(204)
-        expect((await call(mine, 'GET', '/api/account')).json.identities).toEqual([])
-
-        const rootB = newBrowser(f2)
-        await call(rootB, 'POST', '/api/login', { username: 'root', password: 'a-long-password' })
-        const users = (await call(rootB, 'GET', '/api/users')).json.users as User[]
-        const member = users.find((u) => u.role === 'member')!
-        // Re-link, disable, and sign in through the provider.
-        const l = (await call(mine, 'POST', '/api/auth/oidc/start', { intent: 'link' })).json
-        await callback(mine, l.url)
-        await call(rootB, 'PATCH', `/api/users/${member.id}`, { disabled: true })
-        const again = newBrowser(f2)
-        const s2 = (await call(again, 'POST', '/api/auth/oidc/start', { intent: 'login' })).json
-        expect((await callback(again, s2.url)).headers.get('Location')).toBe('/login?sso_error=disabled')
-      })
-
-      it('too many wrong passwords against one name is 429 rate_limited with Retry-After, even for the right password, until the wait is over', async () => {
-        const b = ssoBrowser()
-        for (let i = 0; i < 5; i++)
-          expect(
-            (
-              await call(b, 'POST', '/api/login', { username: 'boss', password: 'wrong-wrong' }, JSON_HEADERS, {
-                expect429: true,
-              })
-            ).status,
-          ).toBe(401)
-        const r = await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' }, JSON_HEADERS, {
-          expect429: true,
-        })
-        expect([r.status, r.json.error]).toEqual([429, 'rate_limited'])
-        expect(Number(r.headers.get('Retry-After'))).toBeGreaterThan(0)
-        const e = await as(b, () => failure(api.login({ username: 'boss', password: 'a-long-password' })))
-        expect(e.retryAfter).toBeGreaterThan(0)
-        clock += 61_000
-        expect((await call(b, 'POST', '/api/login', { username: 'boss', password: 'a-long-password' })).status).toBe(
-          200,
-        )
-      })
-    },
-  )
-  // The sign-in providers, passkeys, captcha, security settings and audit log (milestone 2.8).
-  describe.skipIf(!accounts || !!REAL)(
-    'mock only (skipped on a real server: it starts from known settings): providers, passkeys, captcha, security settings and the audit log',
-    () => {
-      let s28: MockServer
-      let f28: typeof fetch
-      const b28 = () => newBrowser(f28)
-      const inAs = async (user = MOCK_ADMIN.username, password = MOCK_ADMIN.password) => {
-        const b = b28()
-        expect((await call(b, 'POST', '/api/login', { username: user, password })).status).toBe(200)
-        return b
-      }
-      const company = {
-        slug: 'company',
-        kind: 'oidc',
-        name: 'Company SSO',
-        icon: 'preset:microsoft',
-        oidc: { issuer: 'https://login.example/v2.0', clientId: 'id', clientSecret: 'x' },
-      }
-
-      beforeAll(() => {
-        s28 = createMockServer({ empty: true, mode: 'accounts', now: () => clock, oidc: null })
-        f28 = mockFetch(s28, { jar: false })
-      })
-
-      it("the sign-in page's providers: none at first (local_only), then the enabled ones in order with their icon, and what the mode says", async () => {
-        const root = await inAs()
-        const none = await call(b28(), 'GET', '/api/auth/providers')
-        expect(none.headers.get('Cache-Control')).toBe('no-store')
-        expect(none.json).toEqual({
-          providers: [],
-          loginMode: 'local_only',
-          local: true,
-          sso: false,
-          passkey: true,
-          register: false,
-          forgot: false,
-          orgCreation: false,
-        })
-        const made = await call(root, 'POST', '/api/admin/auth/providers', company)
-        expect(made.status).toBe(201)
-        expect(made.json).toMatchObject({
-          slug: 'company',
-          kind: 'oidc',
-          enabled: true,
-          people: 0,
-          status: { ok: true },
-          oidc: { hasSecret: true, redirectUrl: 'https://notes.example.com/api/auth/oidc/company/callback' },
-        })
-        expect(made.json.oidc).not.toHaveProperty('clientSecret')
-        const list = (await call(b28(), 'GET', '/api/auth/providers')).json
-        expect(list).toEqual({
-          providers: [{ slug: 'company', kind: 'oidc', name: 'Company SSO', icon: 'preset:microsoft' }],
-          loginMode: 'dual',
-          local: true,
-          sso: true,
-          passkey: true,
-          register: false,
-          forgot: false,
-          orgCreation: false,
-        })
-        await putSite(root, 'signin.mode', 'sso_redirect')
-        expect((await call(b28(), 'GET', '/api/auth/providers')).json).toMatchObject({
-          loginMode: 'sso_redirect',
-          local: false,
-          sso: true,
-        })
-        await putSite(root, 'signin.mode', 'dual')
-      })
-
-      it("a provider's start: GET is a 303 to the provider, a disabled or unknown one goes to /login?sso_error=provider_unavailable, POST gives {url}", async () => {
-        const go = await call(b28(), 'GET', '/api/auth/oidc/company/start?return=%2Fs%2Fabc')
-        expect(go.status).toBe(303)
-        expect(go.headers.get('Location')).toContain('/api/auth/oidc/company/callback')
-        expect(go.headers.get('Set-Cookie')).toBeTruthy()
-        const unknown = await call(b28(), 'GET', '/api/auth/oidc/nobody/start')
-        expect([unknown.status, unknown.headers.get('Location')]).toEqual([
-          303,
-          '/login?sso_error=provider_unavailable',
-        ])
-        expect((await call(b28(), 'POST', '/api/auth/oidc/nobody/start', { intent: 'login' })).status).toBe(404)
-        expect((await call(b28(), 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json.url).toContain(
-          '/api/auth/oidc/company/callback?state=',
-        )
-      })
-
-      it('the provider refusals have their own codes', async () => {
-        const root = await inAs()
-        const refused = async (body: Record<string, unknown>) => {
-          const r = await call(root, 'POST', '/api/admin/auth/providers', body)
-          return [r.status, r.json.error]
-        }
-        expect(await refused({ ...company })).toEqual([409, 'exists'])
-        expect(await refused({ ...company, slug: 'second' })).toEqual([409, 'provider_issuer_in_use'])
-        expect(
-          await refused({ ...company, slug: 'http', oidc: { issuer: 'http://x.example', clientId: 'c' } }),
-        ).toEqual([400, 'oidc_issuer_invalid'])
-        expect(
-          await refused({ slug: 'gh', kind: 'github', name: 'GitHub', autoCreate: true, github: { clientId: 'c' } }),
-        ).toEqual([400, 'auto_create_needs_org'])
-        expect(
-          await refused({
-            slug: 'saml',
-            kind: 'saml',
-            name: 'S',
-            saml: { metadataUrl: 'https://x.example/bad-metadata' },
-          }),
-        ).toEqual([400, 'saml_metadata_invalid'])
-        expect(
-          await refused({
-            slug: 'Bad Slug',
-            kind: 'oidc',
-            name: 'S',
-            oidc: { issuer: 'https://y.example', clientId: 'c' },
-          }),
-        ).toEqual([400, 'invalid'])
-      })
-
-      it('an unreachable provider is stored switched off with status.ok false; refresh looks again', async () => {
-        const root = await inAs()
-        const r = await call(root, 'POST', '/api/admin/auth/providers', {
-          slug: 'dead',
-          kind: 'oidc',
-          name: 'Dead',
-          oidc: { issuer: 'https://unreachable.example', clientId: 'c' },
-        })
-        expect([r.status, r.json.enabled, r.json.status.ok]).toEqual([201, false, false])
-        const again = await call(root, 'POST', '/api/admin/auth/providers/dead/refresh')
-        expect([again.status, again.json.status.ok]).toEqual([200, false])
-        expect((await call(root, 'DELETE', '/api/admin/auth/providers/dead')).status).toBe(204)
-      })
-
-      it("deleting a provider that is somebody's only way in is 409 provider_in_use with the count, until force=1", async () => {
-        const root = await inAs()
-        await call(root, 'PATCH', '/api/admin/auth/providers/company', { autoCreate: true })
-        const b = b28()
-        const st = (await call(b, 'POST', '/api/auth/oidc/company/start', { intent: 'login' })).json
-        const cb = await call(b, 'GET', st.url)
-        expect(cb.status).toBe(303)
-        const refused = await call(root, 'DELETE', '/api/admin/auth/providers/company')
-        expect([refused.status, refused.json.error, refused.json.accounts]).toEqual([409, 'provider_in_use', 1])
-        const acct = (await call(b, 'GET', '/api/account')).json
-        expect(acct.identities).toEqual([
-          expect.objectContaining({ provider: 'Company SSO', providerSlug: 'company', kind: 'oidc' }),
-        ])
-        expect((await call(root, 'DELETE', '/api/admin/auth/providers/company?force=1')).status).toBe(204)
-        // The identity stays, with no provider.
-        expect((await call(b, 'GET', '/api/account')).json.identities[0]).toMatchObject({ providerSlug: '', kind: '' })
-      })
-
-      it('security: the sign-in policy is settings, with the defaults, a change that is kept, and each refusal; GET /api/admin/security has only what is derived', async () => {
-        const root = await inAs()
-        const read = (key: string) => siteValue(root, key)
-        expect(
-          await Promise.all(['signin.mode', 'signin.ssoOnly', 'features.passkeys', 'signin.passkeyRoles'].map(read)),
-        ).toEqual(['dual', false, true, []])
-        expect(
-          await Promise.all(['signin.lockout.enabled', 'signin.lockout.minutes', 'signin.lockout.scope'].map(read)),
-        ).toEqual([false, 15, 'ip_account'])
-        expect(
-          await Promise.all(
-            [
-              'signin.perMinute',
-              'signin.maxFailures',
-              'signin.windowMinutes',
-              'sessions.idleDays',
-              'sessions.maxDays',
-            ].map(read),
-          ),
-        ).toEqual([10, 10, 15, 30, 90])
-        expect(await read('captcha.provider')).toBe('image')
-        expect(await read('captcha.contexts')).toMatchObject({
-          login: { on: false, when: 'after_failures', failures: 3 },
-          register: { on: false },
-        })
-        const got = (await call(root, 'GET', '/api/admin/security')).json
-        expect(got).toMatchObject({
-          login: { effectiveMode: expect.any(String), ssoOnlyInEffect: false, ssoAvailable: expect.any(Boolean) },
-          passkeys: { available: true, required: 0, requiredWithout: 0 },
-          captcha: { siteKey: '', hasSecret: false },
-          notices: [],
-        })
-        for (const k of ['settings', 'lockout', 'limits']) expect(got[k], k).toBeUndefined()
-        expect(got.login.mode).toBeUndefined()
-        const bad = async (key: string, value: unknown) => {
-          const r = await putSite(root, key, value)
-          return [r.status, r.json.error]
-        }
-        expect(await bad('signin.mode', 'nope')).toEqual([400, 'invalid'])
-        expect(await bad('sessions.idleDays', 400)).toEqual([400, 'invalid'])
-        // The lifetimes are checked against each other.
-        expect(await bad('sessions.idleDays', 100)).toEqual([400, 'invalid'])
-        expect(await bad('signin.perMinute', 0)).toEqual([400, 'invalid'])
-        expect(await bad('signin.passkeyRoles', ['nobody'])).toEqual([400, 'invalid'])
-      })
-
-      it('security: the captcha keys are the one thing PUT /api/admin/security writes; the secret is write-only and belongs to its provider', async () => {
-        const root = await inAs()
-        const keys = (body: unknown) => call(root, 'PUT', '/api/admin/security', body)
-        const refusal = async (key: string, value: unknown) => {
-          const r = await putSite(root, key, value)
-          return [r.status, r.json.error]
-        }
-        // Anything but the captcha's keys is refused here.
-        expect((await keys({ lockout: { minutes: 20 } })).status).toBe(400)
-        expect((await keys({ captcha: { provider: 'turnstile' } })).status).toBe(400)
-        // The built-in image captcha has no keys.
-        expect((await keys({ captcha: { siteKey: 'k' } })).json.error).toBe('invalid')
-        expect(await putSite(root, 'signin.lockout.enabled', true).then((r) => r.status)).toBe(200)
-        expect(await putSite(root, 'signin.lockout.minutes', 20).then((r) => r.status)).toBe(200)
-        expect(await putSite(root, 'signin.lockout.scope', 'ip').then((r) => r.status)).toBe(200)
-        expect(await siteValue(root, 'signin.lockout.minutes')).toBe(20)
-        // A third-party provider: its keys, then the contexts that need them.
-        expect((await putSite(root, 'captcha.provider', 'turnstile')).status).toBe(200)
-        expect(await refusal('captcha.contexts', { login: { on: true } })).toEqual([400, 'captcha_site_key_required'])
-        expect((await keys({ captcha: { siteKey: 'k' } })).json.captcha).toEqual({ siteKey: 'k', hasSecret: false })
-        expect(await refusal('captcha.contexts', { login: { on: true } })).toEqual([400, 'captcha_secret_required'])
-        const withSecret = await keys({ captcha: { secret: 's' } })
-        expect(withSecret.json.captcha).toEqual({ siteKey: 'k', hasSecret: true })
-        expect(JSON.stringify(withSecret.json)).not.toContain('"s"')
-        // A partial document is merged over the current one; the answer is the whole.
-        const on = await putSite(root, 'captcha.contexts', { login: { on: true, when: 'always' } })
-        expect(on.status).toBe(200)
-        expect(on.json.site.value).toMatchObject({
-          login: { on: true, when: 'always', failures: 3 },
-          invite: { on: false },
-        })
-        // Another provider while a context is on is refused; with the contexts off it works, and clears the keys.
-        expect(await refusal('captcha.provider', 'hcaptcha')).toEqual([400, 'captcha_site_key_required'])
-        // Clearing the secret while a context needs it is refused.
-        expect((await keys({ captcha: { secret: '' } })).json.error).toBe('captcha_secret_required')
-        await putSite(root, 'captcha.contexts', { login: { on: false } })
-        expect((await putSite(root, 'captcha.provider', 'hcaptcha')).status).toBe(200)
-        expect((await call(root, 'GET', '/api/admin/security')).json.captcha).toEqual({ siteKey: '', hasSecret: false })
-        // Put back.
-        await putSite(root, 'captcha.provider', 'image')
-        await putSites(root, {
-          'signin.lockout.enabled': false,
-          'signin.lockout.minutes': 15,
-          'signin.lockout.scope': 'ip_account',
-        })
-      })
-
-      it("ssoOnly: in effect only while a provider is enabled; then a member's password is refused after it was checked, an administrator's is not", async () => {
-        const root = await inAs()
-        // With no provider the page offers no button, so refusing passwords would lock the door.
-        expect((await putSite(root, 'signin.ssoOnly', true)).json.site.value).toBe(true)
-        expect((await call(root, 'GET', '/api/admin/security')).json.login).toMatchObject({
-          ssoOnlyInEffect: false,
-          effectiveMode: 'local_only',
-          ssoAvailable: false,
-        })
-        await putSite(root, 'signin.ssoOnly', false)
-        expect(
-          (
-            await call(root, 'POST', '/api/admin/auth/providers', {
-              ...company,
-              slug: 'acme',
-              oidc: { issuer: 'https://acme.example', clientId: 'c' },
-            })
-          ).status,
-        ).toBe(201)
-        const member = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
-        const joined = await call(b28(), 'POST', '/api/invites/accept', {
-          token: member.token,
-          username: 'sso-m',
-          password: 'a-long-password',
-        })
-        expect(joined.status).toBe(201)
-        expect((await putSite(root, 'signin.ssoOnly', true)).status).toBe(200)
-        const refused = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
-        expect([refused.status, refused.json.error]).toEqual([403, 'local_login_refused'])
-        // A wrong password still gets the ordinary answer: the code says nothing to someone who does not know it.
-        expect((await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })).status).toBe(
-          401,
-        )
-        expect(
-          (await call(b28(), 'POST', '/api/login', { username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }))
-            .status,
-        ).toBe(200)
-        // No invite for a member can be accepted with a password.
-        const inv2 = (await call(root, 'POST', '/api/invites', { role: 'member' })).json
-        expect(
-          (
-            await call(b28(), 'POST', '/api/invites/accept', {
-              token: inv2.token,
-              username: 'sso-m2',
-              password: 'a-long-password',
-            })
-          ).json.error,
-        ).toBe('local_login_refused')
-        await putSite(root, 'signin.ssoOnly', false)
-      })
-
-      it('captcha: asked for by the context, an image is answered once, a wrong or missing answer is 400 captcha_failed; unknown contexts are 400', async () => {
-        const root = await inAs()
-        await putSite(root, 'captcha.contexts', { login: { on: true, when: 'always' } })
-        expect((await call(b28(), 'GET', '/api/captcha?ctx=invite')).json).toEqual({ required: false })
-        expect((await call(b28(), 'GET', '/api/captcha?ctx=forgot')).json).toEqual({ required: false })
-        expect((await call(b28(), 'GET', '/api/captcha?ctx=nope')).status).toBe(400)
-        const c = (await call(b28(), 'GET', '/api/captcha?ctx=login&account=x')).json
-        expect(c).toMatchObject({
-          required: true,
-          provider: 'image',
-          id: expect.any(String),
-          image: expect.stringMatching(/^data:image\//),
-        })
-        const missing = await call(b28(), 'POST', '/api/login', {
-          username: MOCK_ADMIN.username,
-          password: MOCK_ADMIN.password,
-        })
-        expect([missing.status, missing.json.error]).toEqual([400, 'captcha_failed'])
-        const wrong = await call(b28(), 'POST', '/api/login', {
-          username: MOCK_ADMIN.username,
-          password: MOCK_ADMIN.password,
-          captcha: { id: c.id, answer: 'zzzz' },
-        })
-        expect([wrong.status, wrong.json.error]).toEqual([400, 'captcha_failed'])
-        // Used once, right or wrong: the same challenge cannot be answered again.
-        const reused = await call(b28(), 'POST', '/api/login', {
-          username: MOCK_ADMIN.username,
-          password: MOCK_ADMIN.password,
-          captcha: { id: c.id, answer: '4821' },
-        })
-        expect(reused.json.error).toBe('captcha_failed')
-        const fresh = (await call(b28(), 'GET', '/api/captcha?ctx=login')).json
-        expect(
-          (
-            await call(b28(), 'POST', '/api/login', {
-              username: MOCK_ADMIN.username,
-              password: MOCK_ADMIN.password,
-              captcha: { id: fresh.id, answer: '4821' },
-            })
-          ).status,
-        ).toBe(200)
-        await putSite(root, 'captcha.contexts', { login: { on: false } })
-      })
-
-      it('after_failures: a name that failed enough asks for a captcha, others do not', async () => {
-        const root = await inAs()
-        await putSite(root, 'captcha.contexts', { login: { on: true, when: 'after_failures', failures: 2 } })
-        expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(false)
-        for (let i = 0; i < 2; i++)
-          await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'wrong-wrong' })
-        expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=sso-m')).json.required).toBe(true)
-        expect((await call(b28(), 'GET', '/api/captcha?ctx=login&account=someone-else')).json.required).toBe(false)
-        await putSite(root, 'captcha.contexts', { login: { on: false } })
-      })
-
-      it('passkeys: register (named, a credential once), sign in with it, rename, delete; a ceremony is used once; a required person is held until they have one', async () => {
-        const root = await inAs()
-        const me = await inAs('sso-m', 'a-long-password')
-        const begin = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'MacBook' })
-        expect(begin.status).toBe(200)
-        expect(begin.json.options).toMatchObject({
-          challenge: expect.any(String),
-          user: { name: 'sso-m' },
-          excludeCredentials: [],
-        })
-        const done = await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, {
-          id: 'cred-m',
-          type: 'public-key',
-          response: {},
-        })
-        expect(done.status).toBe(201)
-        expect(done.json.passkeys).toEqual([expect.objectContaining({ name: 'MacBook', synced: false })])
-        expect(
-          (await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${begin.json.ceremony}`, { id: 'cred-m2' }))
-            .json.error,
-        ).toBe('passkey_failed')
-        const again = await call(me, 'POST', '/api/account/passkeys/begin', { name: 'Again' })
-        expect(again.json.options.excludeCredentials).toHaveLength(1)
-        expect(
-          (await call(me, 'POST', `/api/account/passkeys/finish?ceremony=${again.json.ceremony}`, { id: 'cred-m' }))
-            .json.error,
-        ).toBe('exists')
-        // Sign in with it: discoverable, then by name.
-        const lg = await call(b28(), 'POST', '/api/auth/passkey/begin', {})
-        const ok = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}&return=%2Fs%2Fx`, {
-          id: 'cred-m',
-        })
-        expect([ok.status, ok.json.return, ok.json.user.username]).toEqual([200, '/s/x', 'sso-m'])
-        const bad = await call(b28(), 'POST', `/api/auth/passkey/finish?ceremony=${lg.json.ceremony}`, { id: 'cred-m' })
-        expect([bad.status, bad.json.error]).toEqual([401, 'passkey_failed'])
-        const named = await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'sso-m' })
-        expect(named.json.options.allowCredentials).toEqual([{ type: 'public-key', id: 'cred-m' }])
-        // A name nobody has looks the same: one made-up credential.
-        expect(
-          (await call(b28(), 'POST', '/api/auth/passkey/begin', { username: 'nobody-here' })).json.options
-            .allowCredentials,
-        ).toHaveLength(1)
-        // Required of this person: the password is right, so the answer says passkey_required.
-        const uid = (await call(me, 'GET', '/api/account')).json.user.id
-        expect(
-          (await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: true })).json.user.passkeyRequired,
-        ).toBe(true)
-        const must = await call(b28(), 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })
-        expect([must.status, must.json.error]).toEqual([403, 'passkey_required'])
-        // Rename and delete; the admin sees them and can delete one.
-        const id = done.json.passkeys[0].id
-        expect((await call(me, 'PATCH', `/api/account/passkeys/${id}`, { name: 'Phone' })).json.name).toBe('Phone')
-        const list = (await call(root, 'GET', `/api/users/${uid}/passkeys`)).json.passkeys
-        expect(list.map((p: { name: string }) => p.name)).toEqual(['Phone'])
-        expect(
-          (await call(root, 'GET', '/api/users')).json.users.find((u: { id: string }) => u.id === uid),
-        ).toMatchObject({ passkeys: 1, sso: 0 })
-        expect((await call(root, 'DELETE', `/api/users/${uid}/passkeys/${id}`)).status).toBe(204)
-        // With none left and one required, the next password sign-in is held: only the passkey endpoints and sign-out work.
-        const held = b28()
-        expect(
-          (await call(held, 'POST', '/api/login', { username: 'sso-m', password: 'a-long-password' })).status,
-        ).toBe(200)
-        expect((await call(held, 'GET', '/api/session')).json.hold).toBe('passkey')
-        expect((await call(held, 'GET', '/api/spaces')).json.error).toBe('passkey_required')
-        expect((await call(held, 'GET', '/api/account')).status).toBe(200)
-        const hb = await call(held, 'POST', '/api/account/passkeys/begin', { name: 'New' })
-        expect(
-          (await call(held, 'POST', `/api/account/passkeys/finish?ceremony=${hb.json.ceremony}`, { id: 'cred-new' }))
-            .status,
-        ).toBe(201)
-        expect((await call(held, 'GET', '/api/session')).json.hold).toBe(null)
-        expect((await call(held, 'GET', '/api/spaces')).status).toBe(200)
-        await call(root, 'PATCH', `/api/users/${uid}`, { passkeyRequired: false })
-      })
-
-      it('the audit log: newest first, filtered by kind and user, with a cursor', async () => {
-        const root = await inAs()
-        const all = (await call(root, 'GET', '/api/admin/audit?limit=5')).json
-        expect(all.items).toHaveLength(5)
-        expect(all.next).toBeTruthy()
-        for (let i = 1; i < all.items.length; i++) expect(all.items[i - 1].id > all.items[i].id).toBe(true)
-        const more = (await call(root, 'GET', `/api/admin/audit?limit=5&cursor=${all.next}`)).json
-        expect(more.items[0].id).toBe(all.next)
-        const kinds = (await call(root, 'GET', '/api/admin/audit?kind=setting_changed&limit=200')).json.items
-        expect(kinds.length).toBeGreaterThan(0)
-        expect(kinds.every((r: { kind: string }) => r.kind === 'setting_changed')).toBe(true)
-        expect(kinds[0]).toMatchObject({
-          actor: expect.any(String),
-          detail: { key: expect.any(String), layer: 'site' },
-        })
-        // A secret is never in it.
-        expect(JSON.stringify(kinds)).not.toContain('"s"')
-        expect((await call(root, 'GET', '/api/admin/audit?limit=0')).status).toBe(400)
-      })
-    },
-  )
+  // Kept last: it reports what the run saw.
+  it('every answer has the shape recorded from the server (record again with PETALBOOK_RECORD=1 make contract)', () => {
+    if (RECORD) return
+    expect([...problems].sort(), 're-record: PETALBOOK_RECORD=1 make contract').toEqual([])
+  })
+  afterAll(() => {
+    if (RECORD) writeShapes()
+  })
 }

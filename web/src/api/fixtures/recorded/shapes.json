@@ -1,0 +1,7111 @@
+{
+ "DELETE /api/account/emails/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/account/grants/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/account/tokens/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/daily/apis/{} 200": {
+  "apis": [
+   {
+    "author": "string",
+    "enabled": "boolean",
+    "headers": [],
+    "id": "string",
+    "lang": "string",
+    "langMap": {},
+    "link": "string",
+    "name": "string",
+    "refresh": "string",
+    "refreshMinutes": "number",
+    "rps": "number",
+    "skipNew": "boolean",
+    "source": "string",
+    "text": "string",
+    "url": "string"
+   }
+  ],
+  "knownLanguages": [
+   {
+    "english": "string",
+    "name": "string",
+    "tag": "string"
+   }
+  ],
+  "lines": {
+   "byLang": {},
+   "max": "number",
+   "total": "number"
+  },
+  "providers": [
+   {
+    "enabled": "boolean",
+    "id": "string",
+    "languages": [
+     "string"
+    ],
+    "maxRps": "number",
+    "minutes": "number",
+    "name": "string",
+    "note": "string",
+    "options": [
+     {
+      "default?": "string",
+      "key": "string",
+      "kind": "string",
+      "param": "string",
+      "values": [
+       {
+        "label": {
+         "en": "string",
+         "zh": "string"
+        },
+        "value": "string"
+       }
+      ]
+     }
+    ],
+    "refresh": "string",
+    "rps": "number",
+    "site": "string",
+    "skipNew": "boolean"
+   }
+  ]
+ },
+ "DELETE /api/admin/daily/apis/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/daily/lines 200": {
+  "apis": [],
+  "knownLanguages": [
+   {
+    "english": "string",
+    "name": "string",
+    "tag": "string"
+   }
+  ],
+  "lines": {
+   "byLang": {
+    "?": "number",
+    "en?": "number"
+   },
+   "max": "number",
+   "total": "number"
+  },
+  "providers": [
+   {
+    "enabled": "boolean",
+    "id": "string",
+    "languages": [
+     "string"
+    ],
+    "maxRps": "number",
+    "minutes": "number",
+    "name": "string",
+    "note": "string",
+    "options": [
+     {
+      "default?": "string",
+      "key": "string",
+      "kind": "string",
+      "param": "string",
+      "values": [
+       {
+        "label": {
+         "en": "string",
+         "zh": "string"
+        },
+        "value": "string"
+       }
+      ]
+     }
+    ],
+    "refresh": "string",
+    "rps": "number",
+    "site": "string",
+    "skipNew": "boolean"
+   }
+  ]
+ },
+ "DELETE /api/admin/daily/lines 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/groups/{} 409": {
+  "error": "string",
+  "mappings": "number",
+  "message": "string",
+  "spaces": "number"
+ },
+ "DELETE /api/admin/groups/{}/members/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/plans/{} 409": {
+  "error": "string",
+  "message": "string",
+  "tenants": "number"
+ },
+ "DELETE /api/admin/recycle/{} 202": {
+  "bytes": "number",
+  "deletedAt": "string",
+  "deletedBy": {
+   "id": "string",
+   "username": "string"
+  },
+  "id": "string",
+  "kind": "string",
+  "problems": [
+   "string"
+  ],
+  "purgeAt": "string",
+  "reason": "string",
+  "restorable": "boolean",
+  "space": {
+   "id": "string",
+   "name": "string",
+   "personal": "boolean"
+  },
+  "state": "string",
+  "tenant": "string",
+  "user": "null",
+  "with": []
+ },
+ "DELETE /api/admin/recycle/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/recycle/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/secrets/{} 200": {
+  "secrets": [
+   {
+    "name": "string",
+    "set": "boolean"
+   }
+  ]
+ },
+ "DELETE /api/admin/spaces/default 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/spaces/{} 200": {
+  "bytes": "number",
+  "deletedAt": "string",
+  "deletedBy": {
+   "id": "string",
+   "username": "string"
+  },
+  "id": "string",
+  "kind": "string",
+  "problems": "null",
+  "purgeAt": "string",
+  "reason": "string",
+  "restorable": "boolean",
+  "space": {
+   "id": "string",
+   "name": "string",
+   "personal": "boolean"
+  },
+  "state": "string",
+  "tenant": "string",
+  "user": "null",
+  "with": []
+ },
+ "DELETE /api/admin/spaces/{} 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "DELETE /api/admin/spaces/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/spaces/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/tenants/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/admin/tenants/{}/secrets/{} 200": {
+  "secrets": [
+   {
+    "name": "string",
+    "set": "boolean"
+   }
+  ]
+ },
+ "DELETE /api/admin/tokens/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/favorites 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "DELETE /api/spaces/default/favorites 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/folders 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/folders 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/folders 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/members/local 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/pages/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/pages/{}/draft 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "draft": {
+   "$or": [
+    "null",
+    {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/templates/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/templates/{} 409": {
+  "current": {
+   "body": "string",
+   "meta": {
+    "mood": "string",
+    "tags": [
+     "string"
+    ],
+    "title": "string",
+    "type": "string"
+   },
+   "name": "string",
+   "path": "string",
+   "rev": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/types/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/default/types/{} 409": {
+  "current": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "options?": [
+      "string"
+     ],
+     "schema": {
+      "enum?": [
+       "string"
+      ],
+      "title": "string",
+      "type": "string"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/favorites 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "DELETE /api/spaces/{}/favorites 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/folders 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/folders 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/folders 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/members/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/members/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/pages/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/pages/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/pages/{}/draft 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "draft": {
+   "$or": [
+    "null",
+    {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/remote/assets 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/templates/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/templates/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/templates/{} 409": {
+  "current": {
+   "body": "string",
+   "meta": {
+    "mood": "string",
+    "tags": [
+     "string"
+    ],
+    "title": "string",
+    "type": "string"
+   },
+   "name": "string",
+   "path": "string",
+   "rev": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/types/task 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/types/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/spaces/{}/types/{} 409": {
+  "current": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "options?": [
+      "string"
+     ],
+     "schema": {
+      "enum?": [
+       "string"
+      ],
+      "title": "string",
+      "type": "string"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/users/{} 200": {
+  "bytes": "number",
+  "deletedAt": "string",
+  "deletedBy": {
+   "id": "string",
+   "username": "string"
+  },
+  "id": "string",
+  "kind": "string",
+  "problems": "null",
+  "purgeAt": "string",
+  "reason": "string",
+  "restorable": "boolean",
+  "space": "null",
+  "state": "string",
+  "tenant": "string",
+  "user": {
+   "id": "string",
+   "username": "string"
+  },
+  "with": [
+   {
+    "bytes": "number",
+    "id": "string",
+    "space": {
+     "id": "string",
+     "name": "string",
+     "personal": "boolean"
+    }
+   }
+  ]
+ },
+ "DELETE /api/users/{} 409": {
+  "error": "string",
+  "message": "string",
+  "spaces": [
+   {
+    "id": "string",
+    "name": "string"
+   }
+  ]
+ },
+ "DELETE /api/users/{}/identities/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "DELETE /api/users/{}/sessions 200": {
+  "ended": "number"
+ },
+ "DELETE /api/users/{}/sessions 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "DELETE /api/users/{}/sessions/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account 200": {
+  "emails": [
+   {
+    "created": "string",
+    "email": "string",
+    "primary": "boolean",
+    "verified": "boolean"
+   }
+  ],
+  "groups": [
+   {
+    "id": "string",
+    "name": "string",
+    "source": "string"
+   }
+  ],
+  "hasPassword": "boolean",
+  "identities": [],
+  "passkeys": [],
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "GET /api/account 401": {
+  "error": "string",
+  "message": "string",
+  "reason?": "string"
+ },
+ "GET /api/account 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account/grants 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account/passkeys 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account/passkeys 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account/tokens 200": {
+  "tokens": [
+   {
+    "access": "string",
+    "created": "string",
+    "expires": "string",
+    "id": "string",
+    "lastUsed": "null",
+    "name": "string",
+    "prefix": "string",
+    "revoked": "null|string",
+    "spaces": [
+     {
+      "id": "string",
+      "name": "string"
+     }
+    ],
+    "state": "string"
+   }
+  ]
+ },
+ "GET /api/account/tokens 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/account/usage 200": {
+  "bytes": {
+   "limit": "null",
+   "used": "number"
+  },
+  "measuredAt": "null",
+  "notices": [],
+  "pages": {
+   "limit": "null|number",
+   "used": "number"
+  },
+  "spaces": {
+   "limit": "null|number",
+   "used": "number"
+  }
+ },
+ "GET /api/account/usage 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/access 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/audit 200": {
+  "items": [
+   {
+    "actor": "null|string",
+    "at": "string",
+    "capacity": "null|string",
+    "category": "string",
+    "detail": {
+     "access?": "string",
+     "action?": "string",
+     "affected?": [],
+     "bulk?": "string",
+     "by?": "string",
+     "bytes?": "number",
+     "category?": "string",
+     "change?": "string",
+     "cleared?": [
+      {
+       "inEffect": "boolean",
+       "key": "string",
+       "lower": "null",
+       "setBy": "string",
+       "source": "string",
+       "until?": "string",
+       "value": "number"
+      }
+     ],
+     "count?": "number",
+     "counts?": {
+      "already_member": "number",
+      "duplicate": "number",
+      "invalid": "number",
+      "not_found": "number",
+      "ok": "number"
+     },
+     "created?": "boolean",
+     "description?": "string",
+     "disabled?": "boolean",
+     "dryRun?": "boolean",
+     "email?": "string",
+     "export?": "string",
+     "failed?": "number",
+     "from?": {
+      "$or": [
+       "null|string",
+       {
+        "features.adminView?": "null",
+        "files.maxBytes?": "null",
+        "inEffect?": "boolean",
+        "lower?": {
+         "$or": [
+          "null",
+          {
+           "max?": "number",
+           "mode": "string"
+          }
+         ]
+        },
+        "next?": "string",
+        "quota.people?": {
+         "lower": {
+          "max": "number",
+          "mode": "string"
+         },
+         "value": "number"
+        },
+        "quota.spaces?": "null",
+        "rules?": [
+         {
+          "from?": "string",
+          "inEffect": "boolean",
+          "lower": {
+           "$or": [
+            "null",
+            {
+             "max?": "number",
+             "mode": "string"
+            }
+           ]
+          },
+          "setBy": "string",
+          "source": "string",
+          "until?": "string",
+          "value": "boolean|null|number|string"
+         }
+        ],
+        "siteLocked?": "boolean",
+        "value?": {
+         "$or": [
+          "boolean|null|number|string",
+          [
+           "string"
+          ],
+          {
+           "kind": "string",
+           "sources?": {
+            "": [
+             {
+              "kind": "string"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       }
+      ]
+     },
+     "group?": "string",
+     "history?": "boolean",
+     "item?": "string",
+     "job?": "string",
+     "key?": "string",
+     "layer?": "string",
+     "limit?": "number",
+     "method?": "string",
+     "name?": "string",
+     "old?": {
+      "disabled?": "boolean",
+      "email?": "string",
+      "name?": "string",
+      "remoteExempt?": "boolean",
+      "role?": "string",
+      "siteAdmin?": "boolean",
+      "username?": "string"
+     },
+     "origin?": "string",
+     "ownerGroups?": "null",
+     "people?": "number",
+     "plan?": "string",
+     "previous?": [
+      "string"
+     ],
+     "quota?": {
+      "$or": [
+       "string",
+       {
+        "bytes": "null",
+        "pages": "null|number",
+        "spaces": "null|number"
+       }
+      ]
+     },
+     "reason?": "string",
+     "recycled?": [
+      "string"
+     ],
+     "remoteExempt?": "boolean",
+     "results?": [
+      {
+       "role": "string",
+       "row": "number",
+       "status": "string",
+       "user": "string"
+      }
+     ],
+     "role?": {
+      "$or": [
+       "string",
+       {
+        "new": "string",
+        "old": "string"
+       }
+      ]
+     },
+     "rows?": "number",
+     "rules?": {
+      "$or": [
+       "null",
+       {
+        "features.adminView?": {
+         "lower": {
+          "mode": "string"
+         },
+         "value": "boolean"
+        },
+        "files.maxBytes?": {
+         "lower": {
+          "max": "number",
+          "mode": "string"
+         },
+         "value": "number"
+        },
+        "quota.pages?": {
+         "lower": {
+          "max": "number",
+          "mode": "string"
+         },
+         "value": "number"
+        },
+        "quota.people?": {
+         "$or": [
+          "null",
+          {
+           "lower": {
+            "max": "number",
+            "mode": "string"
+           },
+           "value": "number"
+          }
+         ]
+        },
+        "quota.spaces?": {
+         "lower": "null",
+         "value": "number"
+        }
+       }
+      ]
+     },
+     "scope?": "string",
+     "siteAdmin?": "boolean",
+     "slug?": "string",
+     "source?": "string",
+     "space?": "string",
+     "spaces?": {
+      "$or": [
+       "number",
+       [
+        "string"
+       ]
+      ]
+     },
+     "temporary?": "boolean",
+     "tenant?": "string",
+     "to?": {
+      "$or": [
+       "null|string",
+       {
+        "features.adminView?": {
+         "lower": {
+          "mode": "string"
+         },
+         "value": "boolean"
+        },
+        "files.maxBytes?": {
+         "lower": {
+          "max": "number",
+          "mode": "string"
+         },
+         "value": "number"
+        },
+        "inEffect?": "boolean",
+        "lower?": {
+         "$or": [
+          "null",
+          {
+           "max?": "number",
+           "mode": "string"
+          }
+         ]
+        },
+        "next?": "string",
+        "quota.people?": "null",
+        "quota.spaces?": {
+         "lower": "null",
+         "value": "number"
+        },
+        "rules?": [
+         {
+          "from?": "string",
+          "inEffect": "boolean",
+          "lower": {
+           "$or": [
+            "null",
+            {
+             "max?": "number",
+             "mode": "string"
+            }
+           ]
+          },
+          "setBy": "string",
+          "source": "string",
+          "until?": "string",
+          "value": "boolean|null|number|string"
+         }
+        ],
+        "siteLocked?": "boolean",
+        "value?": {
+         "$or": [
+          "boolean|null|number|string",
+          [
+           "string"
+          ],
+          {
+           "kind": "string",
+           "sources?": {
+            "": [
+             {
+              "kind": "string"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       }
+      ]
+     },
+     "token?": "string",
+     "transfers?": [
+      {
+       "space": "string",
+       "to": "string"
+      }
+     ],
+     "truncated?": "boolean",
+     "used?": "number",
+     "user?": "string",
+     "username?": "string",
+     "users?": [
+      "string"
+     ],
+     "window?": {
+      "from": "null|string",
+      "until": "string"
+     }
+    },
+    "id": "string",
+    "ip": "string",
+    "kind": "string",
+    "user": "null|string",
+    "username": "string"
+   }
+  ],
+  "next": "null|string"
+ },
+ "GET /api/admin/audit 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/audit 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/audit 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/audit/download 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/audit/kinds 200": {
+  "categories": [
+   {
+    "core": "boolean",
+    "id": "string",
+    "kinds": [
+     {
+      "name": "string",
+      "site": "boolean"
+     }
+    ],
+    "on": "boolean",
+    "setting": "null|string"
+   }
+  ]
+ },
+ "GET /api/admin/auth/providers 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/auth/providers 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/capabilities 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/daily 200": {
+  "apis": [
+   {
+    "author": "string",
+    "enabled": "boolean",
+    "headers": [],
+    "id": "string",
+    "lang": "string",
+    "langMap": {},
+    "link": "string",
+    "name": "string",
+    "refresh": "string",
+    "refreshMinutes": "number",
+    "rps": "number",
+    "skipNew": "boolean",
+    "source": "string",
+    "text": "string",
+    "url": "string"
+   }
+  ],
+  "knownLanguages": [
+   {
+    "english": "string",
+    "name": "string",
+    "tag": "string"
+   }
+  ],
+  "lines": {
+   "byLang": {
+    "?": "number",
+    "en?": "number",
+    "zh-Hans?": "number"
+   },
+   "max": "number",
+   "total": "number"
+  },
+  "providers": [
+   {
+    "enabled": "boolean",
+    "id": "string",
+    "languages": [
+     "string"
+    ],
+    "maxRps": "number",
+    "minutes": "number",
+    "name": "string",
+    "note": "string",
+    "options": [
+     {
+      "default?": "string",
+      "key": "string",
+      "kind": "string",
+      "param": "string",
+      "values": [
+       {
+        "label": {
+         "en": "string",
+         "zh": "string"
+        },
+        "value": "string"
+       }
+      ]
+     }
+    ],
+    "refresh": "string",
+    "rps": "number",
+    "site": "string",
+    "skipNew": "boolean"
+   }
+  ]
+ },
+ "GET /api/admin/daily 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/daily 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/daily/lines 200": {
+  "lines": [
+   {
+    "author": "string",
+    "source": "string",
+    "text": "string"
+   }
+  ]
+ },
+ "GET /api/admin/exports 200": {
+  "items": [
+   {
+    "bytes": "number",
+    "created": "string",
+    "expires": "string",
+    "history": "boolean",
+    "id": "string",
+    "madeBy": {
+     "id": "string",
+     "username": "string"
+    },
+    "spaces": [
+     {
+      "name": "string",
+      "open": "boolean",
+      "space": "string",
+      "spaceId": "string"
+     }
+    ],
+    "state": "string",
+    "tenant": "string",
+    "warnings": []
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/exports 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/exports/{} 200": {
+  "bytes": "number",
+  "created": "string",
+  "expires": "string",
+  "history": "boolean",
+  "id": "string",
+  "madeBy": {
+   "id": "string",
+   "username": "string"
+  },
+  "spaces": [
+   {
+    "name": "string",
+    "open": "boolean",
+    "space": "string",
+    "spaceId": "string"
+   }
+  ],
+  "state": "string",
+  "tenant": "string",
+  "warnings": []
+ },
+ "GET /api/admin/exports/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/grants 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/groups 200": {
+  "items": [
+   {
+    "created": "string",
+    "description": "string",
+    "id": "string",
+    "mappedFrom": [],
+    "name": "string",
+    "people": "number",
+    "source": "string",
+    "spaces": "number",
+    "updated": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/groups 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/groups/{} 200": {
+  "created": "string",
+  "description": "string",
+  "id": "string",
+  "mappedFrom": [],
+  "name": "string",
+  "people": "number",
+  "source": "string",
+  "spaces": "number",
+  "updated": "string"
+ },
+ "GET /api/admin/groups/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/groups/{}/members 200": {
+  "items": [
+   {
+    "added": "string",
+    "disabled": "boolean",
+    "from": [],
+    "name": "string",
+    "userId": "string",
+    "username": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/jobs/{} 200": {
+  "job": {
+   "action": "string",
+   "done": "number",
+   "failed": [],
+   "id": "string",
+   "state": "string",
+   "total": "number"
+  }
+ },
+ "GET /api/admin/mail 200": {
+  "enabled": "boolean",
+  "from": "string",
+  "fromName": "string",
+  "hasPassword": "boolean",
+  "host": "string",
+  "port": "number",
+  "queue": {
+   "failedLastHour": "number",
+   "sentLastHour": "number",
+   "waiting": "number"
+  },
+  "replyTo": "string",
+  "security": "string",
+  "status": {
+   "checked": "null",
+   "message": "string",
+   "ok": "boolean"
+  },
+  "username": "string"
+ },
+ "GET /api/admin/mail 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/permissions 200": {
+  "permissions": [
+   {
+    "description": "string",
+    "feature": "string",
+    "name": "string",
+    "scope": "string"
+   }
+  ]
+ },
+ "GET /api/admin/permissions 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/permissions 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/plans 200": {
+  "plans": [
+   {
+    "description": "string",
+    "name": "string",
+    "rules": {
+     "quota.people": {
+      "lower": {
+       "max": "number",
+       "mode": "string"
+      },
+      "value": "number"
+     }
+    },
+    "slug": "string",
+    "tenants": "number"
+   }
+  ]
+ },
+ "GET /api/admin/plans 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/plans/{} 200": {
+  "description": "string",
+  "name": "string",
+  "rules": {
+   "features.adminView": {
+    "lower": {
+     "mode": "string"
+    },
+    "value": "boolean"
+   }
+  },
+  "slug": "string",
+  "tenants": "number"
+ },
+ "GET /api/admin/plans/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/recycle 200": {
+  "items": [
+   {
+    "bytes": "number",
+    "deletedAt": "string",
+    "deletedBy": {
+     "id": "string",
+     "username": "string"
+    },
+    "id": "string",
+    "kind": "string",
+    "problems": {
+     "$or": [
+      "null",
+      [
+       "string"
+      ]
+     ]
+    },
+    "purgeAt": "string",
+    "reason": "string",
+    "restorable": "boolean",
+    "space": {
+     "id": "string",
+     "name": "string",
+     "personal": "boolean"
+    },
+    "state": "string",
+    "tenant": "string",
+    "user": "null",
+    "with": []
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/recycle 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/secrets 200": {
+  "secrets": [
+   {
+    "name": "string",
+    "set": "boolean",
+    "updatedAt?": "string"
+   }
+  ]
+ },
+ "GET /api/admin/secrets 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/security 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/security 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/settings 200": {
+  "settings": [
+   {
+    "choices?": [
+     "string"
+    ],
+    "forTenant?": "boolean",
+    "key": "string",
+    "kind": "string",
+    "layers": [
+     "string"
+    ],
+    "serverWide?": "string",
+    "site": {
+     "fromFlag?": "boolean",
+     "lower": {
+      "max?": "number",
+      "mode": "string"
+     },
+     "value": {
+      "$or": [
+       "boolean|null|number|string",
+       [
+        "string"
+       ],
+       {
+        "forgot?": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "invite?": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "kind?": "string",
+        "login?": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "register?": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "setup?": {
+         "failures": "number",
+         "on": "boolean",
+         "when": "string"
+        },
+        "sources?": {
+         "": [
+          {
+           "kind": "string"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "GET /api/admin/settings 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/spaces 200": {
+  "items": [
+   {
+    "counted": "boolean",
+    "created": "string",
+    "disabled": "boolean",
+    "id": "string",
+    "inbox": "string",
+    "location": "string",
+    "members": "number",
+    "name": "string",
+    "owner": {
+     "id": "string",
+     "name": "string",
+     "username": "string"
+    },
+    "personal": "boolean",
+    "sizeAt": "null|string",
+    "sizeBytes": "null|number",
+    "storage": {
+     "assetCacheBytes": "number",
+     "assets": "string",
+     "cache": "string",
+     "cloneBytes": "number",
+     "exempt": "boolean",
+     "indexBytes": "number",
+     "lastUsed": "string",
+     "pinned": "boolean",
+     "remote": "null"
+    },
+    "sync": "string",
+    "tenant": "string",
+    "view": {
+     "$or": [
+      "null",
+      {
+       "since": "string",
+       "until": "string"
+      }
+     ]
+    }
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/spaces 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/spaces 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/spaces 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/spaces/default 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/spaces/{} 200": {
+  "counted": "boolean",
+  "created": "string",
+  "disabled": "boolean",
+  "id": "string",
+  "inbox": "string",
+  "location": "string",
+  "members": "number",
+  "name": "string",
+  "owner": {
+   "id": "string",
+   "name": "string",
+   "username": "string"
+  },
+  "personal": "boolean",
+  "sizeAt": "null",
+  "sizeBytes": "null",
+  "storage": {
+   "assetCacheBytes": "number",
+   "assets": "string",
+   "cache": "string",
+   "cloneBytes": "number",
+   "exempt": "boolean",
+   "indexBytes": "number",
+   "lastUsed": "string",
+   "pinned": "boolean",
+   "remote": "null"
+  },
+  "sync": "string",
+  "tenant": "string",
+  "view": {
+   "$or": [
+    "null",
+    {
+     "since": "string",
+     "until": "string"
+    }
+   ]
+  }
+ },
+ "GET /api/admin/spaces/{} 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/spaces/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/spaces/{}/deletion 200": {
+  "assetsRemote": {
+   "kept": "boolean",
+   "url": "string"
+  },
+  "attachments": {
+   "inSpace": "null",
+   "repository": "boolean"
+  },
+  "bytes": "number",
+  "cache": "string",
+  "drafts": "number",
+  "exportable": "boolean",
+  "groups": "number",
+  "heldBytes": "number",
+  "members": "number",
+  "pages": "number",
+  "recycleDays": "number",
+  "remote": {
+   "kept": "boolean",
+   "url": "string"
+  },
+  "space": {
+   "id": "string",
+   "name": "string"
+  }
+ },
+ "GET /api/admin/status 200": {
+  "build": {
+   "commit": "string",
+   "modified": "boolean",
+   "time": "string",
+   "timeKind": "string"
+  },
+  "database": "string",
+  "diskFreeBytes": "number",
+  "goVersion": "string",
+  "openSpaces": "number",
+  "spaces": "number",
+  "startedAt": "string",
+  "storage": {
+   "assetCacheBytes": "number",
+   "assetsBudget": "number",
+   "cloneBytes": "number",
+   "clonesBudget": "null",
+   "indexBytes": "number",
+   "remotes": {
+    "inGrace": "number",
+    "overdue": "number"
+   },
+   "restoresWaiting": "number",
+   "spaces": {
+    "evicted": "number",
+    "full": "number",
+    "local": "number",
+    "partial": "number",
+    "restoring": "number"
+   }
+  },
+  "uptimeSeconds": "number",
+  "users": "number",
+  "version": "string"
+ },
+ "GET /api/admin/status 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/status 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/storage 200": {
+  "affected": {
+   "exempt": "number",
+   "inGrace": "number",
+   "overdue": "number"
+  },
+  "git": {
+   "partialClone": "boolean",
+   "version": "string"
+  },
+  "remotes": {
+   "since": "null"
+  },
+  "summary": {
+   "assetCacheBytes": "number",
+   "diskFreeBytes": "number",
+   "dormant": "number",
+   "exports": {
+    "bytes": "number",
+    "items": "number"
+   },
+   "heldBytes": "number",
+   "measuredAt": "string",
+   "people": "number",
+   "recycle": {
+    "bytes": "number",
+    "items": "number"
+   },
+   "recycleDays": "number",
+   "remotes": {
+    "inGrace": "number",
+    "overdue": "number"
+   },
+   "spaces": {
+    "archived": "number",
+    "evicted": "number",
+    "full": "number",
+    "local": "number",
+    "partial": "number",
+    "restoring": "number"
+   },
+   "tenant": "null",
+   "usageBytes": "number"
+  }
+ },
+ "GET /api/admin/storage 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/storage/people 200": {
+  "items": [
+   {
+    "connected": "boolean",
+    "created": "string",
+    "dormant": "boolean",
+    "evictedSpaces": "number",
+    "firstWrite": "null",
+    "graceSpaces": "number",
+    "heldBytes": "number",
+    "lastActive": "string",
+    "measuredAt": "null",
+    "overdueSpaces": "number",
+    "pinnedSpaces": "number",
+    "remoteSpaces": "number",
+    "spaces": "number",
+    "tenant": "string",
+    "usageBytes": "number",
+    "user": {
+     "disabled": "boolean",
+     "id": "string",
+     "name": "string",
+     "username": "string"
+    }
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/storage/people 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/storage/people 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/storage/people/{} 200": {
+  "connected": "boolean",
+  "created": "string",
+  "dormant": "boolean",
+  "evictedSpaces": "number",
+  "firstWrite": "null",
+  "graceSpaces": "number",
+  "heldBytes": "number",
+  "items": [
+   {
+    "counted": "boolean",
+    "created": "string",
+    "disabled": "boolean",
+    "id": "string",
+    "inbox": "string",
+    "location": "string",
+    "members": "number",
+    "name": "string",
+    "owner": {
+     "id": "string",
+     "name": "string",
+     "username": "string"
+    },
+    "personal": "boolean",
+    "sizeAt": "null",
+    "sizeBytes": "null",
+    "storage": {
+     "assetCacheBytes": "number",
+     "assets": "string",
+     "cache": "string",
+     "cloneBytes": "number",
+     "exempt": "boolean",
+     "indexBytes": "number",
+     "lastUsed": "string",
+     "pinned": "boolean",
+     "remote": "null"
+    },
+    "sync": "string",
+    "tenant": "string",
+    "view": "null"
+   }
+  ],
+  "lastActive": "string",
+  "measuredAt": "null",
+  "overdueSpaces": "number",
+  "pinnedSpaces": "number",
+  "remoteSpaces": "number",
+  "spaces": "number",
+  "tenant": "string",
+  "usageBytes": "number",
+  "user": {
+   "disabled": "boolean",
+   "id": "string",
+   "name": "string",
+   "username": "string"
+  }
+ },
+ "GET /api/admin/storage/people/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/tenants 200": {
+  "count": "number",
+  "items": [
+   {
+    "created": "string",
+    "createdBy": "string",
+    "default": "boolean",
+    "disabled": "boolean",
+    "id": "string",
+    "name": "string",
+    "origin": "string",
+    "plan": "null",
+    "quota": {
+     "bytes": "null",
+     "pages": "null",
+     "people": "null",
+     "spaces": "null"
+    },
+    "registration": {
+     "open": "boolean"
+    },
+    "slug": "string",
+    "updated": "string",
+    "usage": {
+     "bytes": "number",
+     "measuredAt": "null|string",
+     "over": [],
+     "pages": "number",
+     "people": "number",
+     "spaces": "number"
+    }
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/tenants 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/tenants 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/tenants/{} 200": {
+  "created": "string",
+  "createdBy": "string",
+  "default": "boolean",
+  "disabled": "boolean",
+  "id": "string",
+  "name": "string",
+  "origin": "string",
+  "plan": {
+   "$or": [
+    "null",
+    {
+     "name": "string",
+     "slug": "string"
+    }
+   ]
+  },
+  "quota": {
+   "bytes": "null",
+   "pages": "null",
+   "people": "null",
+   "spaces": "null"
+  },
+  "registration": {
+   "open": "boolean"
+  },
+  "slug": "string",
+  "updated": "string",
+  "usage": {
+   "bytes": "number",
+   "measuredAt": "null",
+   "over": [],
+   "pages": "number",
+   "people": "number",
+   "spaces": "number"
+  }
+ },
+ "GET /api/admin/tenants/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/tenants/{}/capabilities 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/tenants/{}/limits 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/tenants/{}/secrets 200": {
+  "secrets": [
+   {
+    "name": "string",
+    "set": "boolean"
+   }
+  ]
+ },
+ "GET /api/admin/tenants/{}/settings 200": {
+  "settings": [
+   {
+    "choices?": [
+     "string"
+    ],
+    "effective": {
+     "$or": [
+      "boolean|null|number|string",
+      []
+     ]
+    },
+    "key": "string",
+    "kind": "string",
+    "layers": [
+     "string"
+    ],
+    "site": {
+     "lower": {
+      "max?": "number",
+      "mode": "string"
+     },
+     "value": {
+      "$or": [
+       "boolean|null|number|string",
+       []
+      ]
+     }
+    },
+    "tenant": {
+     "inEffect": "boolean",
+     "lower": "null",
+     "next?": "string",
+     "rules?": [
+      {
+       "from?": "string",
+       "inEffect": "boolean",
+       "lower": {
+        "$or": [
+         "null",
+         {
+          "max?": "number",
+          "mode": "string"
+         }
+        ]
+       },
+       "setBy": "string",
+       "source": "string",
+       "until?": "string",
+       "value": "boolean|null|number|string"
+      }
+     ],
+     "siteLocked": "boolean",
+     "value": "null|number|string"
+    }
+   }
+  ]
+ },
+ "GET /api/admin/tenants/{}/settings 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/tokens 200": {
+  "items": [
+   {
+    "access": "string",
+    "created": "string",
+    "expires": "string",
+    "id": "string",
+    "lastUsed": "null",
+    "name": "string",
+    "owner": {
+     "id": "string",
+     "name": "string",
+     "username": "string"
+    },
+    "prefix": "string",
+    "revoked": "null",
+    "spaces": [
+     {
+      "id": "string",
+      "name": "string"
+     }
+    ],
+    "state": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/tokens 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/tokens 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/tokens 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/usage 200": {
+  "items": [
+   {
+    "bytes": "number",
+    "limits": {
+     "bytes": "null",
+     "pages": "null",
+     "spaces": "number"
+    },
+    "measuredAt": "null",
+    "over": [],
+    "own": {
+     "bytes": "null",
+     "pages": "null",
+     "spaces": "null"
+    },
+    "ownInEffect": {
+     "bytes": "boolean",
+     "pages": "boolean",
+     "spaces": "boolean"
+    },
+    "pages": "number",
+    "spaces": "number",
+    "tenant": "string",
+    "user": {
+     "id": "string",
+     "name": "string",
+     "username": "string"
+    }
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/admin/usage 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/usage 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/admin/usage 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/admin/users/{}/deletion 200": {
+  "blockers": [],
+  "bytes": "number",
+  "groups": "number",
+  "leave": [],
+  "needsHeir": [
+   {
+    "id": "string",
+    "name": "string"
+   }
+  ],
+  "recycle": [
+   {
+    "bytes": "number",
+    "space": {
+     "id": "string",
+     "name": "string",
+     "personal": "boolean"
+    }
+   }
+  ],
+  "recycleDays": "number",
+  "revoke": {
+   "connections": [],
+   "github": "boolean",
+   "grants": "number",
+   "identities": "number",
+   "passkeys": "number",
+   "sessions": "number",
+   "tokens": "number"
+  },
+  "transfer": [],
+  "user": {
+   "id": "string",
+   "username": "string"
+  }
+ },
+ "GET /api/auth/providers 200": {
+  "forgot": "boolean",
+  "local": "boolean",
+  "loginMode": "string",
+  "orgCreation": "boolean",
+  "passkey": "boolean",
+  "providers": [],
+  "register": "boolean",
+  "sso": "boolean"
+ },
+ "GET /api/auth/providers 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/captcha 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/groups 200": {
+  "groups": [
+   {
+    "id": "string",
+    "name": "string",
+    "source": "string"
+   }
+  ]
+ },
+ "GET /api/groups 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/invites 200": {
+  "invites": [
+   {
+    "created": "string",
+    "createdBy": "string",
+    "expires": "string",
+    "id": "string",
+    "role": "string",
+    "tenant": "string"
+   }
+  ]
+ },
+ "GET /api/invites 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/invites 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/invites 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/meta 200": {
+  "maxImport": "number",
+  "maxUpload": "number",
+  "spaces": [
+   {
+    "directRole": "string",
+    "disabled": "boolean",
+    "id": "string",
+    "inbox": "string",
+    "name": "string",
+    "permissions": [
+     "string"
+    ],
+    "personal": "boolean",
+    "role": "string",
+    "storage?": {
+     "assets": "string",
+     "cache": "string",
+     "remote": "null"
+    },
+    "sync": "string",
+    "viaGroups": "boolean"
+   }
+  ],
+  "version": "string"
+ },
+ "GET /api/notifications 200": {
+  "items": [
+   {
+    "at": "string",
+    "id": "string",
+    "kind": "string",
+    "payload": {
+     "by": "string",
+     "reason?": "string",
+     "role?": "string",
+     "space": "string"
+    },
+    "read": "boolean",
+    "ref": "string"
+   }
+  ],
+  "next": "string",
+  "unread": "number"
+ },
+ "GET /api/notifications 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/notifications 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/notifications 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/notifications/unread 200": {
+  "count": "number"
+ },
+ "GET /api/notifications/unread 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/oauth/consent 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/people 200": {
+  "people": [
+   {
+    "id": "string",
+    "name": "string",
+    "username": "string"
+   }
+  ]
+ },
+ "GET /api/people 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/prefs 200": {
+  "personal": "boolean",
+  "prefs": {
+   "contract.{run}?": {
+    "hidden": [
+     "string"
+    ],
+    "widths": {
+     "name": "number"
+    }
+   },
+   "pb.table.users?": {
+    "pageSize": "number"
+   },
+   "tour?": "string"
+  }
+ },
+ "GET /api/prefs 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/register 200": {
+  "open": "boolean",
+  "orgCreation": {
+   "open": "boolean"
+  }
+ },
+ "GET /api/session 200": {
+  "hold": "null|string",
+  "methods?": {
+   "oidc": "null",
+   "password": "boolean"
+  },
+  "mode": "string",
+  "setup": "boolean",
+  "token": "null",
+  "user": {
+   "$or": [
+    "null",
+    {
+     "created?": "string",
+     "disabled?": "boolean",
+     "email": "string",
+     "emailVerified?": "boolean",
+     "id": "string",
+     "name": "string",
+     "passkeyRequired?": "boolean",
+     "permissions": [
+      "string"
+     ],
+     "role": "string",
+     "siteAdmin?": "boolean",
+     "tenant?": {
+      "id": "string",
+      "name": "string",
+      "slug": "string"
+     },
+     "username": "string"
+    }
+   ]
+  },
+  "viewAs?": {
+   "hidden": "number",
+   "id": "string",
+   "until": "string",
+   "viewer": {
+    "name": "string"
+   }
+  }
+ },
+ "GET /api/settings 200": {
+  "features": {
+   "accounts.multipleEmails": "boolean",
+   "features.adminView": "boolean",
+   "features.auditDownload": "boolean",
+   "features.domains": "boolean",
+   "features.idpAdmins": "boolean",
+   "features.managedAccounts": "boolean",
+   "features.mcp": "boolean",
+   "features.offline": "boolean",
+   "features.orgCreation": "boolean",
+   "features.ownCaptcha": "boolean",
+   "features.ownConnections": "boolean",
+   "features.ownDaily": "boolean",
+   "features.ownSso": "boolean",
+   "features.passkeys": "boolean",
+   "features.registration": "boolean",
+   "features.tenancy": "boolean",
+   "features.tokens": "boolean",
+   "mail.ownSender": "boolean"
+  },
+  "settings": [
+   {
+    "allowed?": [
+     "string"
+    ],
+    "effective": "boolean|string",
+    "key": "string",
+    "locked?": "boolean",
+    "space?": {
+     "canChange": "boolean",
+     "inEffect": "boolean",
+     "source?": "string"
+    }
+   }
+  ]
+ },
+ "GET /api/spaces 200": {
+  "spaces": [
+   {
+    "directRole": "string",
+    "disabled": "boolean",
+    "id": "string",
+    "inbox": "string",
+    "name": "string",
+    "permissions": [
+     "string"
+    ],
+    "personal": "boolean",
+    "role": "string",
+    "storage?": {
+     "assets": "string",
+     "cache": "string",
+     "remote": "null"
+    },
+    "sync": "string",
+    "viaGroups": "boolean"
+   }
+  ]
+ },
+ "GET /api/spaces 401": {
+  "error": "string",
+  "message": "string",
+  "reason?": "string"
+ },
+ "GET /api/spaces 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/appearance 200": {
+  "folders": [
+   {
+    "color?": "string",
+    "folder": "string",
+    "icon": "string"
+   }
+  ],
+  "iconColors": [
+   "string"
+  ],
+  "sourcePresets": {
+   "$or": [
+    "null",
+    [
+     "string"
+    ]
+   ]
+  }
+ },
+ "GET /api/spaces/default/changes 200": {
+  "items": [
+   {
+    "created?": "string",
+    "deleted?": "boolean",
+    "folder?": "string",
+    "id": "string",
+    "label?": "string",
+    "path?": "string",
+    "rev?": "string",
+    "tags?": [],
+    "title?": "string",
+    "type?": "string",
+    "untitled?": "boolean",
+    "updated?": "string"
+   }
+  ],
+  "more": "boolean",
+  "next": "string",
+  "settings": "string",
+  "tree": "string"
+ },
+ "GET /api/spaces/default/changes 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/changes 410": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/checks 200": {
+  "counts": {
+   "bad_header": "number",
+   "broken_link": "number",
+   "duplicate_id": "number",
+   "duplicate_title": "number",
+   "missing_asset": "number",
+   "no_id": "number",
+   "not_in_type": "number",
+   "type_mismatch": "number"
+  },
+  "items": [
+   {
+    "detail": {
+     "fields?": [
+      "string"
+     ],
+     "line?": "number",
+     "paths?": [
+      "string"
+     ],
+     "target?": "string"
+    },
+    "fix": "null|string",
+    "id?": "string",
+    "kind": "string",
+    "message": "string",
+    "path": "string",
+    "rev": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/default/checks 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/daily 200": {
+  "count?": "number",
+  "origin?": "string",
+  "page": {
+   "$or": [
+    "null",
+    {
+     "body": "string",
+     "bodyTruncated": "boolean",
+     "created": "string",
+     "effectiveType": "string",
+     "excerpt": "string",
+     "folder": "string",
+     "id": "string",
+     "label": "string",
+     "path": "string",
+     "source": [],
+     "tags": [
+      "string"
+     ],
+     "title": "string",
+     "type": "string",
+     "untitled": "boolean",
+     "updated": "string"
+    }
+   ]
+  },
+  "reason?": "string"
+ },
+ "GET /api/spaces/default/daily 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/daily/prefs 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/daily/settings 200": {
+  "daily": {
+   "$or": [
+    "null",
+    {
+     "en?": {
+      "filter": [],
+      "folder": "string"
+     },
+     "filter?": [],
+     "folder?": "string",
+     "zh-Hans?": {
+      "filter": [],
+      "folder": "string"
+     }
+    }
+   ]
+  },
+  "inEffect": "boolean"
+ },
+ "GET /api/spaces/default/favorites 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "GET /api/spaces/default/files/assets/{}/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/files/{}/config 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/files/{}/files/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/members 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages 200": {
+  "items": [
+   {
+    "body?": "string",
+    "color?": "string",
+    "created": "string",
+    "effectiveType": "string",
+    "excerpt": "string",
+    "folder": "string",
+    "icon?": "string",
+    "id": "string",
+    "label": "string",
+    "partialProps?": [
+     "string"
+    ],
+    "path": "string",
+    "props?": {
+     "due?": "string",
+     "fine?": "string",
+     "labels?": [
+      "string"
+     ],
+     "list?": [
+      "string"
+     ],
+     "note?": "string",
+     "owner?": "string",
+     "points?": "number",
+     "status?": {
+      "$or": [
+       "string",
+       [
+        "string"
+       ]
+      ]
+     }
+    },
+    "rev?": "string",
+    "source": [
+     "string"
+    ],
+    "subtitle?": "string",
+    "tags": [
+     "string"
+    ],
+    "title?": "string",
+    "type": "string",
+    "untitled": "boolean",
+    "updated": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/default/pages 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/groups 200": {
+  "empty": "number",
+  "groups": [
+   {
+    "count": "number",
+    "value": "string"
+   }
+  ],
+  "truncated": "boolean"
+ },
+ "GET /api/spaces/default/pages/groups 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/nope/history 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/nope/versions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{} 200": {
+  "body": "string",
+  "draft?": {
+   "baseRev": "string",
+   "body": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "labels?": [
+     "string"
+    ],
+    "points?": "number",
+    "status?": "string",
+    "tags?": [
+     "string"
+    ],
+    "title": "string"
+   },
+   "stale": "boolean",
+   "updated": "string",
+   "version": "string"
+  },
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "author?": "string",
+   "colour?": "string",
+   "created": "string",
+   "due?": "string",
+   "flag?": "boolean",
+   "id": "string",
+   "labels?": [
+    "string"
+   ],
+   "nested?": {
+    "a": [
+     {
+      "$or": [
+       "number",
+       {
+        "b": "null"
+       }
+      ]
+     }
+    ]
+   },
+   "points?": "number",
+   "series?": "string",
+   "size?": "number",
+   "slug?": "string",
+   "state?": "string",
+   "status?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "GET /api/spaces/default/pages/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/backlinks 200": {
+  "items": [
+   {
+    "excerpt": "string",
+    "id": "string",
+    "path": "string",
+    "title": "string",
+    "untitled": "boolean"
+   }
+  ],
+  "next": "string",
+  "total": "number"
+ },
+ "GET /api/spaces/default/pages/{}/backlinks 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/backlinks 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/history 200": {
+  "items": [
+   {
+    "author": "string",
+    "change": "string",
+    "commit": "string",
+    "path": "string",
+    "rev": "string",
+    "time": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/default/pages/{}/history 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/history 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/links 200": {
+  "items": [
+   {
+    "broken": "boolean",
+    "id?": "string",
+    "path": "string",
+    "target?": {
+     "id": "string",
+     "path": "string",
+     "title": "string",
+     "untitled": "boolean"
+    },
+    "text": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/pages/{}/links 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/versions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/versions/ffffffffffffffffffffffffffffffffffffffff 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/pages/{}/versions/{} 200": {
+  "author": "string",
+  "body": "string",
+  "commit": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "tags?": [
+    "string"
+   ],
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "time": "string"
+ },
+ "GET /api/spaces/default/pages/{}/versions/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/remote 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/sources 200": {
+  "sources": [
+   {
+    "pages": "number",
+    "source": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/sync/catalog 200": {
+  "changes?": "string",
+  "items": [
+   {
+    "created": "string",
+    "folder": "string",
+    "id": "string",
+    "label": "string",
+    "path": "string",
+    "rev": "string",
+    "tags": [
+     "string"
+    ],
+    "title?": "string",
+    "type": "string",
+    "untitled": "boolean",
+    "updated": "string"
+   }
+  ],
+  "next": "string",
+  "settings": "string",
+  "tree": "string"
+ },
+ "GET /api/spaces/default/sync/catalog 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/sync/catalog 410": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/sync/pages 200": {
+  "missing": [
+   "string"
+  ],
+  "pages": [
+   {
+    "body": "string",
+    "draft?": {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    },
+    "effectiveType": "string",
+    "folder": "string",
+    "header": "string",
+    "id": "string",
+    "meta": {
+     "created": "string",
+     "id": "string",
+     "title": "string"
+    },
+    "path": "string",
+    "rev": "string",
+    "updated": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/sync/pages 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/tags 200": {
+  "tags": [
+   {
+    "color?": "string",
+    "pages": "number",
+    "tag": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/templates 200": {
+  "defaults": {
+   "folders": {
+    "c{run}/tpl?": "string",
+    "c{run}/tplmoved?": "string",
+    "c{run}/tplmoved/in?": "string"
+   },
+   "quickNote": "string"
+  },
+  "templates": [
+   {
+    "meta": {
+     "mood?": "string",
+     "tags?": [
+      "string"
+     ],
+     "title": "string",
+     "type?": "string"
+    },
+    "name": "string",
+    "path": "string",
+    "rev": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/templates/{} 200": {
+  "body": "string",
+  "meta": {
+   "mood?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "type?": "string"
+  },
+  "name": "string",
+  "path": "string",
+  "rev": "string"
+ },
+ "GET /api/spaces/default/templates/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/default/tree 200": {
+  "folders": [
+   {
+    "pages": "number",
+    "path": "string",
+    "updated?": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/types 200": {
+  "bindings": [
+   {
+    "folder": "string",
+    "type": "string"
+   }
+  ],
+  "types": [
+   {
+    "fields": [
+     {
+      "key": "string",
+      "kind": "string",
+      "options?": [
+       "string"
+      ],
+      "schema": {
+       "enum?": [
+        "string"
+       ],
+       "format?": "string",
+       "items?": {
+        "enum": [
+         "string"
+        ],
+        "type": "string"
+       },
+       "title?": "string",
+       "type": "string",
+       "uniqueItems?": "boolean"
+      },
+      "title": "string"
+     }
+    ],
+    "name": "string",
+    "rev": "string",
+    "title": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/views 200": {
+  "rev": "string",
+  "views": [
+   {
+    "cardFields?": [
+     "string"
+    ],
+    "color?": "string",
+    "filter": [
+     {
+      "key": "string",
+      "op": "string",
+      "values": [
+       "null|number|string"
+      ]
+     }
+    ],
+    "group": "string",
+    "hidden": [
+     "string"
+    ],
+    "id": "string",
+    "layout": "string",
+    "name": "string",
+    "sort": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/default/views 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/appearance 200": {
+  "folders": [
+   {
+    "color?": "string",
+    "folder": "string",
+    "icon": "string"
+   }
+  ],
+  "iconColors": [
+   "string"
+  ],
+  "sourcePresets": {
+   "$or": [
+    "null",
+    [
+     "string"
+    ]
+   ]
+  }
+ },
+ "GET /api/spaces/{}/changes 200": {
+  "items": [
+   {
+    "created?": "string",
+    "deleted?": "boolean",
+    "folder?": "string",
+    "id": "string",
+    "label?": "string",
+    "path?": "string",
+    "rev?": "string",
+    "tags?": [],
+    "title?": "string",
+    "type?": "string",
+    "untitled?": "boolean",
+    "updated?": "string"
+   }
+  ],
+  "more": "boolean",
+  "next": "string",
+  "settings": "string",
+  "tree": "string"
+ },
+ "GET /api/spaces/{}/changes 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/changes 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/changes 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/changes 410": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/checks 200": {
+  "counts": {
+   "bad_header": "number",
+   "broken_link": "number",
+   "duplicate_id": "number",
+   "duplicate_title": "number",
+   "missing_asset": "number",
+   "no_id": "number",
+   "not_in_type": "number",
+   "type_mismatch": "number"
+  },
+  "items": [
+   {
+    "detail": {
+     "fields?": [
+      "string"
+     ],
+     "line?": "number",
+     "paths?": [
+      "string"
+     ],
+     "target?": "string"
+    },
+    "fix": "null|string",
+    "id?": "string",
+    "kind": "string",
+    "message": "string",
+    "path": "string",
+    "rev": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/{}/checks 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/daily 200": {
+  "count?": "number",
+  "origin?": "string",
+  "page": {
+   "$or": [
+    "null",
+    {
+     "body": "string",
+     "bodyTruncated": "boolean",
+     "created": "string",
+     "effectiveType": "string",
+     "excerpt": "string",
+     "folder": "string",
+     "id": "string",
+     "label": "string",
+     "path": "string",
+     "source": [],
+     "tags": [
+      "string"
+     ],
+     "title": "string",
+     "type": "string",
+     "untitled": "boolean",
+     "updated": "string"
+    }
+   ]
+  },
+  "quote?": {
+   "source?": "string",
+   "text": "string"
+  },
+  "reason?": "string"
+ },
+ "GET /api/spaces/{}/daily 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/daily/prefs 200": {
+  "allowed": {
+   "api": "boolean",
+   "own": "boolean"
+  },
+  "apis": [],
+  "available": [
+   {
+    "id": "string",
+    "lang": "string",
+    "name": "string"
+   }
+  ],
+  "default": {
+   "$or": [
+    "null",
+    {
+     "kind": "string"
+    }
+   ]
+  },
+  "inherit": "boolean",
+  "languages": [
+   "string"
+  ],
+  "options": {}
+ },
+ "GET /api/spaces/{}/daily/settings 200": {
+  "daily": {
+   "$or": [
+    "null",
+    {
+     "en?": {
+      "filter": [],
+      "folder": "string"
+     },
+     "filter?": [],
+     "folder?": "string",
+     "zh-Hans?": {
+      "filter": [],
+      "folder": "string"
+     }
+    }
+   ]
+  },
+  "inEffect": "boolean"
+ },
+ "GET /api/spaces/{}/favorites 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "GET /api/spaces/{}/files/assets/{}/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/files/{}/config 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/files/{}/files/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/members 200": {
+  "groups": [
+   {
+    "groupId": "string",
+    "name": "string",
+    "people": "number",
+    "role": "string",
+    "source": "string",
+    "yours": "boolean"
+   }
+  ],
+  "members": [
+   {
+    "effectiveRole": "string",
+    "name": "string",
+    "role": "string",
+    "userId": "string",
+    "username": "string",
+    "viaGroups": "boolean",
+    "you": "boolean"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/members 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/members 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/members/effective 200": {
+  "items": [
+   {
+    "directRole": "string",
+    "groups": [
+     {
+      "groupId": "string",
+      "name": "string",
+      "role": "string"
+     }
+    ],
+    "name": "string",
+    "role": "string",
+    "userId": "string",
+    "username": "string",
+    "you": "boolean"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/{}/pages 200": {
+  "items": [
+   {
+    "body?": "string",
+    "color?": "string",
+    "created": "string",
+    "effectiveType": "string",
+    "excerpt": "string",
+    "folder": "string",
+    "icon?": "string",
+    "id": "string",
+    "label": "string",
+    "partialProps?": [
+     "string"
+    ],
+    "path": "string",
+    "props?": {
+     "due?": "string",
+     "fine?": "string",
+     "labels?": [
+      "string"
+     ],
+     "list?": [
+      "string"
+     ],
+     "note?": "string",
+     "owner?": "string",
+     "points?": "number",
+     "status?": {
+      "$or": [
+       "string",
+       [
+        "string"
+       ]
+      ]
+     }
+    },
+    "rev?": "string",
+    "source": [
+     "string"
+    ],
+    "subtitle?": "string",
+    "tags": [
+     "string"
+    ],
+    "title?": "string",
+    "type": "string",
+    "untitled": "boolean",
+    "updated": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/{}/pages 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/groups 200": {
+  "empty": "number",
+  "groups": [
+   {
+    "count": "number",
+    "value": "string"
+   }
+  ],
+  "truncated": "boolean"
+ },
+ "GET /api/spaces/{}/pages/groups 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/nope/history 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/nope/versions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{} 200": {
+  "body": "string",
+  "draft?": {
+   "baseRev": "string",
+   "body": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "labels?": [
+     "string"
+    ],
+    "points?": "number",
+    "status?": "string",
+    "tags?": [
+     "string"
+    ],
+    "title": "string"
+   },
+   "stale": "boolean",
+   "updated": "string",
+   "version": "string"
+  },
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "author?": "string",
+   "colour?": "string",
+   "created": "string",
+   "due?": "string",
+   "flag?": "boolean",
+   "id": "string",
+   "labels?": [
+    "string"
+   ],
+   "nested?": {
+    "a": [
+     {
+      "$or": [
+       "number",
+       {
+        "b": "null"
+       }
+      ]
+     }
+    ]
+   },
+   "points?": "number",
+   "series?": "string",
+   "size?": "number",
+   "slug?": "string",
+   "state?": "string",
+   "status?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "GET /api/spaces/{}/pages/{} 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/backlinks 200": {
+  "items": [
+   {
+    "excerpt": "string",
+    "id": "string",
+    "path": "string",
+    "title": "string",
+    "untitled": "boolean"
+   }
+  ],
+  "next": "string",
+  "total": "number"
+ },
+ "GET /api/spaces/{}/pages/{}/backlinks 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/backlinks 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/history 200": {
+  "items": [
+   {
+    "author": "string",
+    "change": "string",
+    "commit": "string",
+    "path": "string",
+    "rev": "string",
+    "time": "string"
+   }
+  ],
+  "next": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/history 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/history 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/links 200": {
+  "items": [
+   {
+    "broken": "boolean",
+    "id?": "string",
+    "path": "string",
+    "target?": {
+     "id": "string",
+     "path": "string",
+     "title": "string",
+     "untitled": "boolean"
+    },
+    "text": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/pages/{}/links 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/versions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/versions/ffffffffffffffffffffffffffffffffffffffff 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/versions/{} 200": {
+  "author": "string",
+  "body": "string",
+  "commit": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "tags?": [
+    "string"
+   ],
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "time": "string"
+ },
+ "GET /api/spaces/{}/pages/{}/versions/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/people 200": {
+  "people": [
+   {
+    "id": "string",
+    "name": "string",
+    "username": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/people 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/remote 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/remote/assets 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sources 200": {
+  "sources": [
+   {
+    "pages": "number",
+    "source": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/sync/catalog 200": {
+  "changes?": "string",
+  "items": [
+   {
+    "created": "string",
+    "folder": "string",
+    "id": "string",
+    "label": "string",
+    "path": "string",
+    "rev": "string",
+    "tags": [
+     "string"
+    ],
+    "title?": "string",
+    "type": "string",
+    "untitled": "boolean",
+    "updated": "string"
+   }
+  ],
+  "next": "string",
+  "settings": "string",
+  "tree": "string"
+ },
+ "GET /api/spaces/{}/sync/catalog 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/catalog 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/catalog 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/catalog 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/catalog 410": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/pages 200": {
+  "missing": [
+   "string"
+  ],
+  "pages": [
+   {
+    "body": "string",
+    "draft?": {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    },
+    "effectiveType": "string",
+    "folder": "string",
+    "header": "string",
+    "id": "string",
+    "meta": {
+     "created": "string",
+     "id": "string",
+     "title": "string"
+    },
+    "path": "string",
+    "rev": "string",
+    "updated": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/sync/pages 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/pages 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/sync/pages 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/tags 200": {
+  "tags": [
+   {
+    "color?": "string",
+    "pages": "number",
+    "tag": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/templates 200": {
+  "defaults": {
+   "folders": {
+    "c{run}/tpl?": "string",
+    "c{run}/tplmoved?": "string",
+    "c{run}/tplmoved/in?": "string"
+   },
+   "quickNote": "string"
+  },
+  "templates": [
+   {
+    "meta": {
+     "mood?": "string",
+     "tags?": [
+      "string"
+     ],
+     "title": "string",
+     "type?": "string"
+    },
+    "name": "string",
+    "path": "string",
+    "rev": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/templates/{} 200": {
+  "body": "string",
+  "meta": {
+   "mood?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "type?": "string"
+  },
+  "name": "string",
+  "path": "string",
+  "rev": "string"
+ },
+ "GET /api/spaces/{}/templates/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/tree 200": {
+  "folders": [
+   {
+    "pages": "number",
+    "path": "string",
+    "updated?": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/tree 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/tree 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/spaces/{}/types 200": {
+  "bindings": [
+   {
+    "folder": "string",
+    "type": "string"
+   }
+  ],
+  "types": [
+   {
+    "fields": [
+     {
+      "key": "string",
+      "kind": "string",
+      "options?": [
+       "string"
+      ],
+      "schema": {
+       "enum?": [
+        "string"
+       ],
+       "format?": "string",
+       "items?": {
+        "enum": [
+         "string"
+        ],
+        "type": "string"
+       },
+       "title?": "string",
+       "type": "string",
+       "uniqueItems?": "boolean"
+      },
+      "title": "string"
+     }
+    ],
+    "name": "string",
+    "rev": "string",
+    "title": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/views 200": {
+  "rev": "string",
+  "views": [
+   {
+    "cardFields?": [
+     "string"
+    ],
+    "color?": "string",
+    "filter": [
+     {
+      "key": "string",
+      "op": "string",
+      "values": [
+       "null|number|string"
+      ]
+     }
+    ],
+    "group": "string",
+    "hidden": [
+     "string"
+    ],
+    "id": "string",
+    "layout": "string",
+    "name": "string",
+    "sort": "string"
+   }
+  ]
+ },
+ "GET /api/spaces/{}/views 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/sync/heads 200": {
+  "heads": {
+   "default?": "string",
+   "{id}?": "string"
+  },
+  "missing?": [
+   "string"
+  ]
+ },
+ "GET /api/sync/heads 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/sync/heads 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/sync/heads 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "GET /api/users 200": {
+  "next": "string",
+  "users": [
+   {
+    "created": "string",
+    "disabled": "boolean",
+    "email": "string",
+    "emailVerified": "boolean",
+    "id": "string",
+    "lastActive?": "string",
+    "name": "string",
+    "passkeyRequired": "boolean",
+    "passkeys": "number",
+    "quota": {
+     "bytes": "null",
+     "pages": "null",
+     "spaces": "null"
+    },
+    "role": "string",
+    "siteAdmin": "boolean",
+    "sso": "number",
+    "tenant": {
+     "id": "string",
+     "name": "string",
+     "slug": "string"
+    },
+    "username": "string"
+   }
+  ]
+ },
+ "GET /api/users 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/users 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/users 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/users 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/users/{} 200": {
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "emails": [],
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "passkeys": "number",
+   "quota": {
+    "bytes": "null",
+    "pages": "null",
+    "spaces": "null"
+   },
+   "role": "string",
+   "siteAdmin": "boolean",
+   "sso": "number",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "GET /api/users/{} 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/users/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "GET /api/users/{}/identities 200": {
+  "identities": []
+ },
+ "GET /api/users/{}/identities 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/users/{}/memberships 200": {
+  "groups": [],
+  "spaces": [
+   {
+    "id": "string",
+    "name": "string",
+    "personal": "boolean",
+    "role": "string"
+   }
+  ]
+ },
+ "GET /api/users/{}/memberships 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/users/{}/sessions 200": {
+  "sessions": [
+   {
+    "created": "string",
+    "id": "string",
+    "lastUsed": "string",
+    "method": "string",
+    "userAgent": "string"
+   }
+  ]
+ },
+ "GET /api/users/{}/sessions 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "GET /api/users/{}/sessions 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/account 200": {
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "PATCH /api/account 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/account 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/admin/groups/{} 200": {
+  "created": "string",
+  "description": "string",
+  "id": "string",
+  "mappedFrom": [],
+  "name": "string",
+  "people": "number",
+  "source": "string",
+  "spaces": "number",
+  "updated": "string"
+ },
+ "PATCH /api/admin/groups/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/admin/plans/{} 200": {
+  "affected": [],
+  "description": "string",
+  "name": "string",
+  "rules": {
+   "features.adminView?": {
+    "lower": {
+     "mode": "string"
+    },
+    "value": "boolean"
+   },
+   "files.maxBytes?": {
+    "lower": {
+     "max": "number",
+     "mode": "string"
+    },
+    "value": "number"
+   },
+   "quota.spaces?": {
+    "lower": "null",
+    "value": "number"
+   }
+  },
+  "slug": "string",
+  "tenants": "number"
+ },
+ "PATCH /api/admin/plans/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/admin/tenants/{} 200": {
+  "created": "string",
+  "createdBy": "string",
+  "default": "boolean",
+  "disabled": "boolean",
+  "id": "string",
+  "name": "string",
+  "origin": "string",
+  "plan": "null",
+  "quota": {
+   "bytes": "null",
+   "pages": "null",
+   "people": "null",
+   "spaces": "null"
+  },
+  "registration": {
+   "open": "boolean"
+  },
+  "slug": "string",
+  "updated": "string",
+  "usage": {
+   "bytes": "number",
+   "measuredAt": "null",
+   "over": [],
+   "pages": "number",
+   "people": "number",
+   "spaces": "number"
+  }
+ },
+ "PATCH /api/admin/tenants/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/admin/tenants/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/prefs 200": {
+  "personal": "boolean"
+ },
+ "PATCH /api/prefs 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/default 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/default/members/local 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/default/pages/{}/props 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "labels": [
+    "string"
+   ],
+   "owner?": "string",
+   "points": "number",
+   "status": "string",
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "PATCH /api/spaces/default/pages/{}/props 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/default/pages/{}/props 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/default/pages/{}/props 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "labels": [
+     "string"
+    ],
+    "points": "number",
+    "status": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{} 200": {
+  "directRole": "string",
+  "disabled": "boolean",
+  "id": "string",
+  "inbox": "string",
+  "name": "string",
+  "permissions": [
+   "string"
+  ],
+  "personal": "boolean",
+  "role": "string",
+  "storage": {
+   "assets": "string",
+   "cache": "string",
+   "remote": "null"
+  },
+  "sync": "string",
+  "viaGroups": "boolean"
+ },
+ "PATCH /api/spaces/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/groups/{} 200": {
+  "groupId": "string",
+  "name": "string",
+  "people": "number",
+  "role": "string",
+  "source": "string",
+  "yours": "boolean"
+ },
+ "PATCH /api/spaces/{}/groups/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/members/{} 200": {
+  "name": "string",
+  "role": "string",
+  "userId": "string",
+  "username": "string",
+  "you": "boolean"
+ },
+ "PATCH /api/spaces/{}/members/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/members/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/members/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/members/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/pages/{}/props 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "labels?": [
+    "string"
+   ],
+   "owner?": "string",
+   "points?": "number",
+   "status": "string",
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "PATCH /api/spaces/{}/pages/{}/props 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/pages/{}/props 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/pages/{}/props 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/spaces/{}/pages/{}/props 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "labels": [
+     "string"
+    ],
+    "points": "number",
+    "status": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/users/{} 200": {
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "quota": {
+    "bytes": "null",
+    "pages": "null|number",
+    "spaces": "null|number"
+   },
+   "remoteExempt?": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "PATCH /api/users/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/users/{} 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PATCH /api/users/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PATCH /api/users/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/account/emails 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "POST /api/account/emails 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/account/emails/primary 200": {
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "POST /api/account/emails/primary 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/account/password 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/account/password 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/account/tokens 201": {
+  "secret": "string",
+  "token": {
+   "access": "string",
+   "created": "string",
+   "expires": "null|string",
+   "id": "string",
+   "lastUsed": "null",
+   "name": "string",
+   "prefix": "string",
+   "revoked": "null",
+   "spaces": [
+    {
+     "id": "string",
+     "name": "string"
+    }
+   ],
+   "state": "string"
+  }
+ },
+ "POST /api/account/tokens 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/account/tokens 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/auth/providers 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/bulk 202": {
+  "job": {
+   "action": "string",
+   "done": "number",
+   "failed": [],
+   "id": "string",
+   "state": "string",
+   "total": "number"
+  }
+ },
+ "POST /api/admin/bulk 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/bulk 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/confirm 200": {
+  "blockers": [],
+  "bytes": "number",
+  "confirm": "string",
+  "count": "number",
+  "expires": "string",
+  "needsHeir": [],
+  "plan": [
+   {
+    "action": "string",
+    "bytes?": "number",
+    "deletedAt?": "string",
+    "item?": "string",
+    "kind?": "string",
+    "name?": "string",
+    "space?": {
+     "id": "string",
+     "name": "string"
+    }
+   }
+  ]
+ },
+ "POST /api/admin/confirm 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/confirm 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/confirm 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/connections/github/check 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/connections/github/check 409": {
+  "error": "string",
+  "message": "string",
+  "provider": "string"
+ },
+ "POST /api/admin/connections/github/manifest 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/daily/lines/preview 200": {
+  "lines": [
+   {
+    "author?": "string",
+    "source?": "string",
+    "text": "string"
+   }
+  ]
+ },
+ "POST /api/admin/daily/lines/preview 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/daily/try 200": {
+  "message": "string",
+  "ok": "boolean",
+  "url": "string"
+ },
+ "POST /api/admin/exports 202": {
+  "bytes": "number",
+  "created": "string",
+  "expires": "string",
+  "history": "boolean",
+  "id": "string",
+  "madeBy": {
+   "id": "string",
+   "username": "string"
+  },
+  "spaces": [
+   {
+    "name": "string",
+    "open": "boolean",
+    "space": "string",
+    "spaceId": "string"
+   }
+  ],
+  "state": "string",
+  "tenant": "string",
+  "warnings": []
+ },
+ "POST /api/admin/groups 201": {
+  "created": "string",
+  "description": "string",
+  "id": "string",
+  "mappedFrom": [],
+  "name": "string",
+  "people": "number",
+  "source": "string",
+  "spaces": "number",
+  "updated": "string"
+ },
+ "POST /api/admin/groups 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/groups 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/groups/{}/members 200": {
+  "added": "number",
+  "already": "number"
+ },
+ "POST /api/admin/groups/{}/members 404": {
+  "error": "string",
+  "message": "string",
+  "missing": [
+   "string"
+  ]
+ },
+ "POST /api/admin/groups/{}/members 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/mail/test 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/plans 201": {
+  "description": "string",
+  "name": "string",
+  "rules": {
+   "quota.pages?": {
+    "lower": {
+     "max": "number",
+     "mode": "string"
+    },
+    "value": "number"
+   },
+   "quota.people?": {
+    "lower": {
+     "max": "number",
+     "mode": "string"
+    },
+    "value": "number"
+   }
+  },
+  "slug": "string",
+  "tenants": "number"
+ },
+ "POST /api/admin/plans 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/plans 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/plans 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/recycle/{}/restore 200": {
+  "left?": [
+   {
+    "name": "string",
+    "role": "string",
+    "space": "string"
+   }
+  ],
+  "restored": {
+   "item": "string",
+   "space?": {
+    "id": "string",
+    "name": "string"
+   },
+   "spaces?": [
+    "string"
+   ],
+   "user?": {
+    "created": "string",
+    "disabled": "boolean",
+    "email": "string",
+    "emailVerified": "boolean",
+    "id": "string",
+    "name": "string",
+    "passkeyRequired": "boolean",
+    "role": "string",
+    "siteAdmin": "boolean",
+    "tenant": {
+     "id": "string",
+     "name": "string",
+     "slug": "string"
+    },
+    "username": "string"
+   }
+  },
+  "skipped": [],
+  "transfers?": [
+   {
+    "name": "string",
+    "space": "string",
+    "to": "string",
+    "toUsername": "string"
+   }
+  ]
+ },
+ "POST /api/admin/spaces/default/disable 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/default/enable 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/default/size 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/default/takeover 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/default/transfer 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/disable 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/spaces/{}/disable 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/enable 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/spaces/{}/enable 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/evict 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/spaces/{}/evict 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/size 200": {
+  "sizeAt": "string",
+  "sizeBytes": "number"
+ },
+ "POST /api/admin/spaces/{}/size 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/spaces/{}/size 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/takeover 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/takeover 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/admin/spaces/{}/takeover 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/transfer 403": {
+  "error": "string",
+  "message": "string",
+  "permission?": "string"
+ },
+ "POST /api/admin/spaces/{}/transfer 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/transfer 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/spaces/{}/view 200": {
+  "space": "string",
+  "until": "string"
+ },
+ "POST /api/admin/spaces/{}/view 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants 201": {
+  "created": "string",
+  "createdBy": "string",
+  "default": "boolean",
+  "disabled": "boolean",
+  "id": "string",
+  "invite?": {
+   "created": "string",
+   "email": "string",
+   "expires": "string",
+   "id": "string",
+   "name": "string",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": "string",
+   "token": "string",
+   "username": "string"
+  },
+  "name": "string",
+  "origin": "string",
+  "plan": "null",
+  "quota": {
+   "bytes": "null",
+   "pages": "null",
+   "people": "null",
+   "spaces": "null"
+  },
+  "registration": {
+   "open": "boolean"
+  },
+  "slug": "string",
+  "updated": "string",
+  "usage": {
+   "bytes": "number",
+   "measuredAt": "null",
+   "over": [],
+   "pages": "number",
+   "people": "number",
+   "spaces": "number"
+  }
+ },
+ "POST /api/admin/tenants 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "POST /api/admin/tenants 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/admin/users/{}/view-as 200": {
+  "id": "string",
+  "until": "string"
+ },
+ "POST /api/admin/users/{}/view-as 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/auth/oidc/company/start 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/auth/oidc/start 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/auth/passkey/begin 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/email/confirm 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/invites 201": {
+  "created": "string",
+  "expires": "string",
+  "id": "string",
+  "role": "string",
+  "siteAdmin": "boolean",
+  "tenant": "string",
+  "token": "string"
+ },
+ "POST /api/invites 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/invites 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "POST /api/invites/accept 201": {
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "POST /api/invites/accept 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/invites/accept 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/invites/accept 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/invites/check 200": {
+  "email": "string",
+  "expires": "string",
+  "name": "string",
+  "role": "string",
+  "username": "string"
+ },
+ "POST /api/invites/check 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/login 200": {
+  "user": {
+   "created": "string",
+   "disabled": "boolean",
+   "email": "string",
+   "emailVerified": "boolean",
+   "id": "string",
+   "name": "string",
+   "passkeyRequired": "boolean",
+   "role": "string",
+   "siteAdmin": "boolean",
+   "tenant": {
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "username": "string"
+  }
+ },
+ "POST /api/login 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/login 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/logout 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/notifications/read 200": {
+  "unread": "number"
+ },
+ "POST /api/notifications/read 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/notifications/read-all 200": {
+  "unread": "number"
+ },
+ "POST /api/notifications/read-all 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/notifications/read-all 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/oauth/consent 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/password/forgot 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/register 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/setup 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/setup 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces 201": {
+  "directRole": "string",
+  "disabled": "boolean",
+  "id": "string",
+  "inbox": "string",
+  "name": "string",
+  "permissions": [
+   "string"
+  ],
+  "personal": "boolean",
+  "role": "string",
+  "sync": "string",
+  "viaGroups": "boolean"
+ },
+ "POST /api/spaces 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces 403": {
+  "error": "string",
+  "limit": "number",
+  "message": "string",
+  "quota": "string",
+  "used": "number"
+ },
+ "POST /api/spaces 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces 409": {
+  "error": "string",
+  "message": "string",
+  "require": "string"
+ },
+ "POST /api/spaces/default/checks/fix 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "slug": "string",
+   "status": "string",
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/default/checks/fix 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/checks/fix 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/checks/fix 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "colour?": "string",
+    "created": "string",
+    "id": "string",
+    "size?": "number",
+    "slug": "string",
+    "status": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/favorites 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "POST /api/spaces/default/favorites 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/favorites 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/folders 201": {
+  "path": "string"
+ },
+ "POST /api/spaces/default/folders 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/folders 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/folders/move 200": {
+  "path": "string"
+ },
+ "POST /api/spaces/default/folders/move 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/folders/move 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/folders/move 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/import 200": {
+  "files": "number",
+  "pages": "number",
+  "skipped": []
+ },
+ "POST /api/spaces/default/import 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/import 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/members 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages 201": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "color?": "string",
+   "colour?": "string",
+   "created": "string",
+   "due?": "string",
+   "extra?": "number",
+   "fine?": "string",
+   "icon?": "string",
+   "id": "string",
+   "labels?": [
+    "string"
+   ],
+   "list?": [
+    {
+     "$or": [
+      "string",
+      {
+       "x": "number"
+      }
+     ]
+    }
+   ],
+   "mood?": "string",
+   "note?": "string",
+   "obj?": {
+    "a": "number"
+   },
+   "points?": "number|string",
+   "series?": "string",
+   "size?": "number",
+   "slug?": "string",
+   "source?": [
+    "string"
+   ],
+   "state?": "string",
+   "status?": {
+    "$or": [
+     "string",
+     [
+      "string"
+     ]
+    ]
+   },
+   "stray?": "number",
+   "subtitle?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "type?": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/default/pages 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/batch 200": {
+  "pages": "number"
+ },
+ "POST /api/spaces/default/pages/batch 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/batch 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/assets 200": {
+  "name": "string",
+  "path": "string",
+  "size": "number"
+ },
+ "POST /api/spaces/default/pages/{}/assets 201": {
+  "name": "string",
+  "path": "string",
+  "size": "number"
+ },
+ "POST /api/spaces/default/pages/{}/assets 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/assets 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/assets 413": {
+  "error": "string",
+  "limit": "number",
+  "message": "string",
+  "name": "string",
+  "size": "number"
+ },
+ "POST /api/spaces/default/pages/{}/assets 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/commit 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "flag?": "boolean",
+   "id": "string",
+   "nested?": {
+    "a": [
+     {
+      "$or": [
+       "number",
+       {
+        "b": "null"
+       }
+      ]
+     }
+    ]
+   },
+   "series?": "string",
+   "title": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "textRev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/default/pages/{}/commit 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/commit 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/commit 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "draft": {
+   "$or": [
+    "null",
+    {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/pages/{}/move 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/default/pages/{}/move 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/reindex 200": {
+  "ms": "number",
+  "pages": "number"
+ },
+ "POST /api/spaces/default/remote/key 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/remote/sync 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/types/{}/rename-field 200": {
+  "pages": "number",
+  "skipped": [
+   {
+    "id": "string",
+    "path": "string",
+    "reason": "string"
+   }
+  ],
+  "type": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "schema": {
+      "format?": "string",
+      "type": "string"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  }
+ },
+ "POST /api/spaces/default/types/{}/rename-field 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/types/{}/rename-field 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/default/types/{}/rename-field 409": {
+  "current": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "schema": {
+      "format?": "string",
+      "type": "string"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/checks/fix 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "slug": "string",
+   "status": "string",
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/{}/checks/fix 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/checks/fix 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/checks/fix 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "colour?": "string",
+    "created": "string",
+    "id": "string",
+    "size?": "number",
+    "slug": "string",
+    "status": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/favorites 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "POST /api/spaces/{}/favorites 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/favorites 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/folders 201": {
+  "path": "string"
+ },
+ "POST /api/spaces/{}/folders 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/folders 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/folders 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/folders/move 200": {
+  "path": "string"
+ },
+ "POST /api/spaces/{}/folders/move 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/folders/move 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/folders/move 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/groups 201": {
+  "groupId": "string",
+  "name": "string",
+  "people": "number",
+  "role": "string",
+  "source": "string",
+  "yours": "boolean"
+ },
+ "POST /api/spaces/{}/groups 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/groups 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/groups 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/import 200": {
+  "files": "number",
+  "pages": "number",
+  "skipped": []
+ },
+ "POST /api/spaces/{}/import 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/import 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/members 201": {
+  "name": "string",
+  "role": "string",
+  "userId": "string",
+  "username": "string",
+  "you": "boolean"
+ },
+ "POST /api/spaces/{}/members 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/members 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/members 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/members 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/members/batch 200": {
+  "dryRun": "boolean",
+  "results": [
+   {
+    "name?": "string",
+    "role": "string",
+    "row": "number",
+    "status": "string",
+    "user": "string",
+    "userId?": "string",
+    "username?": "string"
+   }
+  ],
+  "summary": {
+   "already_member": "number",
+   "duplicate": "number",
+   "invalid": "number",
+   "not_found": "number",
+   "ok": "number"
+  }
+ },
+ "POST /api/spaces/{}/members/batch 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/members/batch 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages 201": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "color?": "string",
+   "colour?": "string",
+   "created": "string",
+   "due?": "string",
+   "extra?": "number",
+   "fine?": "string",
+   "icon?": "string",
+   "id": "string",
+   "labels?": [
+    "string"
+   ],
+   "list?": [
+    {
+     "$or": [
+      "string",
+      {
+       "x": "number"
+      }
+     ]
+    }
+   ],
+   "mood?": "string",
+   "note?": "string",
+   "obj?": {
+    "a": "number"
+   },
+   "points?": "number|string",
+   "series?": "string",
+   "size?": "number",
+   "slug?": "string",
+   "source?": [
+    "string"
+   ],
+   "state?": "string",
+   "status?": {
+    "$or": [
+     "string",
+     [
+      "string"
+     ]
+    ]
+   },
+   "stray?": "number",
+   "subtitle?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "type?": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/{}/pages 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/batch 200": {
+  "pages": "number"
+ },
+ "POST /api/spaces/{}/pages/batch 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/batch 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/batch 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/assets 200": {
+  "name": "string",
+  "path": "string",
+  "size": "number"
+ },
+ "POST /api/spaces/{}/pages/{}/assets 201": {
+  "name": "string",
+  "path": "string",
+  "size": "number"
+ },
+ "POST /api/spaces/{}/pages/{}/assets 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/assets 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/assets 413": {
+  "error": "string",
+  "limit": "number",
+  "message": "string",
+  "name": "string",
+  "size": "number"
+ },
+ "POST /api/spaces/{}/pages/{}/assets 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/commit 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "flag?": "boolean",
+   "id": "string",
+   "nested?": {
+    "a": [
+     {
+      "$or": [
+       "number",
+       {
+        "b": "null"
+       }
+      ]
+     }
+    ]
+   },
+   "series?": "string",
+   "title": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "textRev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/commit 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/commit 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/commit 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "draft": {
+   "$or": [
+    "null",
+    {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/move 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "id": "string",
+   "title": "string"
+  },
+  "path": "string",
+  "rev": "string",
+  "updated": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/move 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/pages/{}/move 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/reindex 200": {
+  "ms": "number",
+  "pages": "number"
+ },
+ "POST /api/spaces/{}/reindex 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/remote/assets/move 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/remote/key 200": {
+  "fingerprint": "string",
+  "publicKey": "string"
+ },
+ "POST /api/spaces/{}/types/{}/rename-field 200": {
+  "pages": "number",
+  "skipped": [
+   {
+    "id": "string",
+    "path": "string",
+    "reason": "string"
+   }
+  ],
+  "type": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "schema": {
+      "format?": "string",
+      "type": "string"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  }
+ },
+ "POST /api/spaces/{}/types/{}/rename-field 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/types/{}/rename-field 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/spaces/{}/types/{}/rename-field 409": {
+  "current": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "schema": {
+      "format?": "string",
+      "type": "string"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "POST /api/users/{}/password 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/daily 405": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/daily/apis/{} 200": {
+  "apis": [
+   {
+    "author": "string",
+    "enabled": "boolean",
+    "headers": [
+     {
+      "name": "string",
+      "set": "boolean"
+     }
+    ],
+    "id": "string",
+    "lang": "string",
+    "langMap": {},
+    "link": "string",
+    "name": "string",
+    "refresh": "string",
+    "refreshMinutes": "number",
+    "rps": "number",
+    "skipNew": "boolean",
+    "source": "string",
+    "text": "string",
+    "url": "string"
+   }
+  ],
+  "knownLanguages": [
+   {
+    "english": "string",
+    "name": "string",
+    "tag": "string"
+   }
+  ],
+  "lines": {
+   "byLang": {},
+   "max": "number",
+   "total": "number"
+  },
+  "providers": [
+   {
+    "enabled": "boolean",
+    "id": "string",
+    "languages": [
+     "string"
+    ],
+    "maxRps": "number",
+    "minutes": "number",
+    "name": "string",
+    "note": "string",
+    "options": [
+     {
+      "default?": "string",
+      "key": "string",
+      "kind": "string",
+      "param": "string",
+      "values": [
+       {
+        "label": {
+         "en": "string",
+         "zh": "string"
+        },
+        "value": "string"
+       }
+      ]
+     }
+    ],
+    "refresh": "string",
+    "rps": "number",
+    "site": "string",
+    "skipNew": "boolean"
+   }
+  ]
+ },
+ "PUT /api/admin/daily/apis/{} 400": {
+  "error": "string",
+  "field?": "string",
+  "header?": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/daily/apis/{} 401": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/daily/lines 200": {
+  "apis": [],
+  "knownLanguages": [
+   {
+    "english": "string",
+    "name": "string",
+    "tag": "string"
+   }
+  ],
+  "lines": {
+   "byLang": {
+    "?": "number",
+    "en?": "number",
+    "zh-Hans?": "number"
+   },
+   "max": "number",
+   "total": "number"
+  },
+  "providers": [
+   {
+    "enabled": "boolean",
+    "id": "string",
+    "languages": [
+     "string"
+    ],
+    "maxRps": "number",
+    "minutes": "number",
+    "name": "string",
+    "note": "string",
+    "options": [
+     {
+      "default?": "string",
+      "key": "string",
+      "kind": "string",
+      "param": "string",
+      "values": [
+       {
+        "label": {
+         "en": "string",
+         "zh": "string"
+        },
+        "value": "string"
+       }
+      ]
+     }
+    ],
+    "refresh": "string",
+    "rps": "number",
+    "site": "string",
+    "skipNew": "boolean"
+   }
+  ]
+ },
+ "PUT /api/admin/daily/lines 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/daily/lines 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/mail 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/mail 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PUT /api/admin/secrets/nothing 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/secrets/{} 200": {
+  "secrets": [
+   {
+    "name": "string",
+    "set": "boolean",
+    "updatedAt?": "string"
+   }
+  ]
+ },
+ "PUT /api/admin/secrets/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/secrets/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/security 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PUT /api/admin/settings/{} 200": {
+  "affected?": "number",
+  "choices?": [
+   "string"
+  ],
+  "forTenant?": "boolean",
+  "key": "string",
+  "kind": "string",
+  "layers": [
+   "string"
+  ],
+  "remotes?": {
+   "exempt": "number",
+   "inGrace": "number",
+   "overdue": "number"
+  },
+  "serverWide?": "string",
+  "site": {
+   "lower": {
+    "max?": "number",
+    "mode": "string"
+   },
+   "value": {
+    "$or": [
+     "boolean|null|number|string",
+     [
+      "string"
+     ],
+     {
+      "kind": "string",
+      "sources?": {
+       "": [
+        {
+         "kind": "string"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ },
+ "PUT /api/admin/settings/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/settings/{} 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PUT /api/admin/settings/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/settings/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/spaces/{}/storage 200": {
+  "counted": "boolean",
+  "created": "string",
+  "disabled": "boolean",
+  "id": "string",
+  "inbox": "string",
+  "location": "string",
+  "members": "number",
+  "name": "string",
+  "owner": {
+   "id": "string",
+   "name": "string",
+   "username": "string"
+  },
+  "personal": "boolean",
+  "sizeAt": "null",
+  "sizeBytes": "null",
+  "storage": {
+   "assetCacheBytes": "number",
+   "assets": "string",
+   "cache": "string",
+   "cloneBytes": "number",
+   "exempt": "boolean",
+   "indexBytes": "number",
+   "lastUsed": "string",
+   "pinned": "boolean",
+   "remote": "null"
+  },
+  "sync": "string",
+  "tenant": "string",
+  "view": "null"
+ },
+ "PUT /api/admin/spaces/{}/storage 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PUT /api/admin/storage 405": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/tenants/{}/plan 200": {
+  "cleared": [
+   {
+    "inEffect": "boolean",
+    "key": "string",
+    "lower": "null",
+    "setBy": "string",
+    "source": "string",
+    "until?": "string",
+    "value": "number"
+   }
+  ],
+  "plan": {
+   "$or": [
+    "null",
+    {
+     "name": "string",
+     "slug": "string"
+    }
+   ]
+  }
+ },
+ "PUT /api/admin/tenants/{}/plan 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/tenants/{}/plan 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PUT /api/admin/tenants/{}/secrets/{} 200": {
+  "secrets": [
+   {
+    "name": "string",
+    "set": "boolean",
+    "updatedAt": "string"
+   }
+  ]
+ },
+ "PUT /api/admin/tenants/{}/secrets/{} 403": {
+  "error": "string",
+  "feature": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/tenants/{}/secrets/{} 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/tenants/{}/settings/{} 200": {
+  "choices?": [
+   "string"
+  ],
+  "effective": "boolean|null|number|string",
+  "key": "string",
+  "kind": "string",
+  "layers": [
+   "string"
+  ],
+  "site": {
+   "lower": {
+    "max?": "number",
+    "mode": "string"
+   },
+   "value": "boolean|null|number|string"
+  },
+  "tenant": {
+   "inEffect": "boolean",
+   "lower": "null",
+   "next?": "string",
+   "rules?": [
+    {
+     "from?": "string",
+     "inEffect": "boolean",
+     "lower": {
+      "$or": [
+       "null",
+       {
+        "max?": "number",
+        "mode": "string"
+       }
+      ]
+     },
+     "setBy": "string",
+     "source": "string",
+     "until?": "string",
+     "value": "boolean|null|number|string"
+    }
+   ],
+   "siteLocked": "boolean",
+   "value": "boolean|null|number|string"
+  },
+  "warning?": {
+   "code": "string",
+   "keys": [
+    "string"
+   ],
+   "message": "string"
+  }
+ },
+ "PUT /api/admin/tenants/{}/settings/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/admin/tenants/{}/settings/{} 403": {
+  "error": "string",
+  "message": "string",
+  "permission": "string"
+ },
+ "PUT /api/admin/tenants/{}/settings/{} 409": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/daily/prefs 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/daily/settings 200": {
+  "daily": {
+   "$or": [
+    "null",
+    {
+     "en?": {
+      "filter": [],
+      "folder": "string"
+     },
+     "en-US?": {
+      "filter": [],
+      "folder": "string"
+     },
+     "filter?": [
+      {
+       "key": "string",
+       "op": "string",
+       "values": [
+        "string"
+       ]
+      }
+     ],
+     "folder?": "string",
+     "tag?": "string",
+     "type?": "string",
+     "zh-Hans?": {
+      "filter": [],
+      "folder": "string"
+     }
+    }
+   ]
+  },
+  "inEffect": "boolean"
+ },
+ "PUT /api/spaces/default/daily/settings 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/daily/settings 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/favorites/order 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "PUT /api/spaces/default/favorites/order 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/folders/style 200": {
+  "color?": "string",
+  "folder": "string",
+  "icon?": "string"
+ },
+ "PUT /api/spaces/default/folders/style 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/folders/style 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/folders/type 200": {
+  "folder": "string",
+  "type": "string"
+ },
+ "PUT /api/spaces/default/folders/type 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/folders/type 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{} 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "flag?": "boolean",
+   "id": "string",
+   "nested?": {
+    "a": [
+     {
+      "$or": [
+       "number",
+       {
+        "b": "null"
+       }
+      ]
+     }
+    ]
+   },
+   "odd?": "boolean",
+   "points?": "number",
+   "series?": "string",
+   "status?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "数字?": "number",
+   "空?": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "textRev": "string",
+  "updated": "string"
+ },
+ "PUT /api/spaces/default/pages/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{} 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{} 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{}/draft 200": {
+  "baseRev": "string",
+  "stale": "boolean",
+  "updated": "string",
+  "version": "string"
+ },
+ "PUT /api/spaces/default/pages/{}/draft 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{}/draft 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{}/draft 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "draft": {
+   "$or": [
+    "null",
+    {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/pages/{}/draft 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/sources/presets 200": {
+  "presets": {
+   "$or": [
+    "null",
+    [
+     "string"
+    ]
+   ]
+  }
+ },
+ "PUT /api/spaces/default/tags/{} 200": {
+  "color?": "string",
+  "tag": "string"
+ },
+ "PUT /api/spaces/default/tags/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/tags/{} 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/templates/con 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/templates/defaults 200": {
+  "folders": {
+   "c{run}/tpl": "string",
+   "c{run}/tplmv?": "string",
+   "c{run}/tplmv/in?": "string"
+  },
+  "quickNote": "string"
+ },
+ "PUT /api/spaces/default/templates/defaults 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/templates/defaults 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/templates/{} 200": {
+  "body": "string",
+  "meta": {
+   "mood?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "type?": "string"
+  },
+  "name": "string",
+  "path": "string",
+  "rev": "string"
+ },
+ "PUT /api/spaces/default/templates/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/templates/{} 409": {
+  "current?": {
+   "body": "string",
+   "meta": {
+    "mood": "string",
+    "tags": [
+     "string"
+    ],
+    "title": "string",
+    "type": "string"
+   },
+   "name": "string",
+   "path": "string",
+   "rev": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/types/{} 200": {
+  "fields": [
+   {
+    "key": "string",
+    "kind": "string",
+    "options?": [
+     "string"
+    ],
+    "schema": {
+     "enum?": [
+      "string"
+     ],
+     "format?": "string",
+     "items?": {
+      "enum": [
+       "string"
+      ],
+      "type": "string"
+     },
+     "title?": "string",
+     "type": "string",
+     "uniqueItems?": "boolean"
+    },
+    "title": "string"
+   }
+  ],
+  "name": "string",
+  "rev": "string",
+  "title": "string"
+ },
+ "PUT /api/spaces/default/types/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/types/{} 409": {
+  "current": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "options?": [
+      "string"
+     ],
+     "schema": {
+      "enum?": [
+       "string"
+      ],
+      "format?": "string",
+      "items?": {
+       "enum": [
+        "string"
+       ],
+       "type": "string"
+      },
+      "title?": "string",
+      "type": "string",
+      "uniqueItems?": "boolean"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/views 200": {
+  "rev": "string",
+  "views": [
+   {
+    "cardFields?": [
+     "string"
+    ],
+    "color?": "string",
+    "filter": [
+     {
+      "key": "string",
+      "op": "string",
+      "values": [
+       "null|number|string"
+      ]
+     }
+    ],
+    "group": "string",
+    "hidden": [
+     "string"
+    ],
+    "id": "string",
+    "layout": "string",
+    "name": "string",
+    "sort": "string"
+   }
+  ]
+ },
+ "PUT /api/spaces/default/views 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/views 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/default/views 409": {
+  "current": {
+   "rev": "string",
+   "views": [
+    {
+     "cardFields?": [
+      "string"
+     ],
+     "color?": "string",
+     "filter": [
+      {
+       "key": "string",
+       "op": "string",
+       "values": [
+        "null|number|string"
+       ]
+      }
+     ],
+     "group": "string",
+     "hidden": [
+      "string"
+     ],
+     "id": "string",
+     "layout": "string",
+     "name": "string",
+     "sort": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/daily/prefs 200": {
+  "allowed": {
+   "api": "boolean",
+   "own": "boolean"
+  },
+  "apis": [],
+  "available": [],
+  "default": {
+   "kind": "string"
+  },
+  "inherit": "boolean",
+  "languages": [
+   "string"
+  ],
+  "options": {},
+  "sources?": {
+   "": [
+    {
+     "kind": "string",
+     "source?": {
+      "filter": [],
+      "tag": "string"
+     }
+    }
+   ]
+  }
+ },
+ "PUT /api/spaces/{}/daily/prefs 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/daily/settings 200": {
+  "daily": {
+   "$or": [
+    "null",
+    {
+     "en?": {
+      "filter": [],
+      "folder": "string"
+     },
+     "en-US?": {
+      "filter": [],
+      "folder": "string"
+     },
+     "filter?": [
+      {
+       "key": "string",
+       "op": "string",
+       "values": [
+        "string"
+       ]
+      }
+     ],
+     "folder?": "string",
+     "tag?": "string",
+     "type?": "string",
+     "zh-Hans?": {
+      "filter": [],
+      "folder": "string"
+     }
+    }
+   ]
+  },
+  "inEffect": "boolean"
+ },
+ "PUT /api/spaces/{}/daily/settings 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/daily/settings 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/favorites/order 200": {
+  "items": [
+   {
+    "created": "string",
+    "kind": "string",
+    "missing": "boolean",
+    "name": "string",
+    "of?": "string",
+    "ofKind?": "string",
+    "path?": "string",
+    "target": "string"
+   }
+  ],
+  "limit": "number"
+ },
+ "PUT /api/spaces/{}/favorites/order 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/folders/style 200": {
+  "color?": "string",
+  "folder": "string",
+  "icon?": "string"
+ },
+ "PUT /api/spaces/{}/folders/style 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/folders/style 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/folders/type 200": {
+  "folder": "string",
+  "type": "string"
+ },
+ "PUT /api/spaces/{}/folders/type 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/folders/type 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/folders/type 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{} 200": {
+  "body": "string",
+  "effectiveType": "string",
+  "folder": "string",
+  "header": "string",
+  "id": "string",
+  "meta": {
+   "created": "string",
+   "flag?": "boolean",
+   "id": "string",
+   "nested?": {
+    "a": [
+     {
+      "$or": [
+       "number",
+       {
+        "b": "null"
+       }
+      ]
+     }
+    ]
+   },
+   "odd?": "boolean",
+   "points?": "number",
+   "series?": "string",
+   "status?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "数字?": "number",
+   "空?": "string"
+  },
+  "partialProps?": [
+   "string"
+  ],
+  "path": "string",
+  "rev": "string",
+  "textRev": "string",
+  "updated": "string"
+ },
+ "PUT /api/spaces/{}/pages/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{} 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{} 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{}/draft 200": {
+  "baseRev": "string",
+  "stale": "boolean",
+  "updated": "string",
+  "version": "string"
+ },
+ "PUT /api/spaces/{}/pages/{}/draft 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{}/draft 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{}/draft 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{}/draft 409": {
+  "current": {
+   "body": "string",
+   "effectiveType": "string",
+   "folder": "string",
+   "header": "string",
+   "id": "string",
+   "meta": {
+    "created": "string",
+    "id": "string",
+    "title": "string"
+   },
+   "path": "string",
+   "rev": "string",
+   "updated": "string"
+  },
+  "draft": {
+   "$or": [
+    "null",
+    {
+     "baseRev": "string",
+     "body": "string",
+     "meta": {
+      "created": "string",
+      "id": "string",
+      "title": "string"
+     },
+     "stale": "boolean",
+     "updated": "string",
+     "version": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/pages/{}/draft 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/remote 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/remote 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/remote/assets 409": {
+  "error": "string",
+  "message": "string",
+  "require": "string"
+ },
+ "PUT /api/spaces/{}/sources/presets 200": {
+  "presets": {
+   "$or": [
+    "null",
+    [
+     "string"
+    ]
+   ]
+  }
+ },
+ "PUT /api/spaces/{}/tags/blue 200": {
+  "color": "string",
+  "tag": "string"
+ },
+ "PUT /api/spaces/{}/tags/blue 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/tags/{} 200": {
+  "color?": "string",
+  "tag": "string"
+ },
+ "PUT /api/spaces/{}/tags/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/tags/{} 415": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/con 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/defaults 200": {
+  "folders": {
+   "c{run}/tpl": "string",
+   "c{run}/tplmv?": "string",
+   "c{run}/tplmv/in?": "string"
+  },
+  "quickNote": "string"
+ },
+ "PUT /api/spaces/{}/templates/defaults 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/defaults 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/defaults 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/{} 200": {
+  "body": "string",
+  "meta": {
+   "mood?": "string",
+   "tags?": [
+    "string"
+   ],
+   "title?": "string",
+   "type?": "string"
+  },
+  "name": "string",
+  "path": "string",
+  "rev": "string"
+ },
+ "PUT /api/spaces/{}/templates/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/{} 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/templates/{} 409": {
+  "current?": {
+   "body": "string",
+   "meta": {
+    "mood": "string",
+    "tags": [
+     "string"
+    ],
+    "title": "string",
+    "type": "string"
+   },
+   "name": "string",
+   "path": "string",
+   "rev": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/types/task 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/types/{} 200": {
+  "fields": [
+   {
+    "key": "string",
+    "kind": "string",
+    "options?": [
+     "string"
+    ],
+    "schema": {
+     "enum?": [
+      "string"
+     ],
+     "format?": "string",
+     "items?": {
+      "enum": [
+       "string"
+      ],
+      "type": "string"
+     },
+     "title?": "string",
+     "type": "string",
+     "uniqueItems?": "boolean"
+    },
+    "title": "string"
+   }
+  ],
+  "name": "string",
+  "rev": "string",
+  "title": "string"
+ },
+ "PUT /api/spaces/{}/types/{} 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/types/{} 409": {
+  "current": {
+   "fields": [
+    {
+     "key": "string",
+     "kind": "string",
+     "options?": [
+      "string"
+     ],
+     "schema": {
+      "enum?": [
+       "string"
+      ],
+      "format?": "string",
+      "items?": {
+       "enum": [
+        "string"
+       ],
+       "type": "string"
+      },
+      "title?": "string",
+      "type": "string",
+      "uniqueItems?": "boolean"
+     },
+     "title": "string"
+    }
+   ],
+   "name": "string",
+   "rev": "string",
+   "title": "string"
+  },
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/views 200": {
+  "rev": "string",
+  "views": [
+   {
+    "cardFields?": [
+     "string"
+    ],
+    "color?": "string",
+    "filter": [
+     {
+      "key": "string",
+      "op": "string",
+      "values": [
+       "null|number|string"
+      ]
+     }
+    ],
+    "group": "string",
+    "hidden": [
+     "string"
+    ],
+    "id": "string",
+    "layout": "string",
+    "name": "string",
+    "sort": "string"
+   }
+  ]
+ },
+ "PUT /api/spaces/{}/views 400": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/views 403": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/views 404": {
+  "error": "string",
+  "message": "string"
+ },
+ "PUT /api/spaces/{}/views 409": {
+  "current": {
+   "rev": "string",
+   "views": [
+    {
+     "cardFields?": [
+      "string"
+     ],
+     "color?": "string",
+     "filter": [
+      {
+       "key": "string",
+       "op": "string",
+       "values": [
+        "null|number|string"
+       ]
+      }
+     ],
+     "group": "string",
+     "hidden": [
+      "string"
+     ],
+     "id": "string",
+     "layout": "string",
+     "name": "string",
+     "sort": "string"
+    }
+   ]
+  },
+  "error": "string",
+  "message": "string"
+ }
+}

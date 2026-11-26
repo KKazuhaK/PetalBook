@@ -85,8 +85,9 @@ clean:
 	rm -f petalbook
 	find internal/webui/dist -mindepth 1 ! -name placeholder.txt -delete
 
-# The web app's API contract tests, run against the real server instead of
-# the mock they use by default. Installs the web dependencies if missing.
+# The web app's API contract tests, which run only against the real server
+# (npm test leaves them out). PETALBOOK_RECORD=1 records the shapes of the
+# answers instead of checking them. Installs the web dependencies if missing.
 contract: build web/node_modules/.package-lock.json
 	bash scripts/contract.sh ./petalbook
 

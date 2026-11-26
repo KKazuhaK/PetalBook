@@ -3,8 +3,9 @@ name: ci
 # Every check is a make target (see the Makefile); this file only decides
 # where each one runs. A pull request gets lint, go and web, and postgres (the
 # PostgreSQL half of the state-database tests and the contract tests) when it
-# changes Go code, so what main would find is found before the merge. A push to
-# main gets those and the remaining jobs besides. The one check branch protection requires is the "ci" job.
+# changes Go code or the web client's API layer (web/src/api), so what main would
+# find is found before the merge. A push to main gets those and the remaining
+# jobs besides. The one check branch protection requires is the "ci" job.
 on:
   pull_request:
   push:
@@ -38,6 +39,7 @@ jobs:
     outputs:
       go: ${{ steps.diff.outputs.go }}
       web: ${{ steps.diff.outputs.web }}
+      contract: ${{ steps.diff.outputs.contract }}
     steps:
       # The whole history, so the diff against the base branch has both ends.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,9 +55,11 @@ jobs:
           set -euo pipefail
           go=false
           web=false
+          contract=false
           if [ "$EVENT" != "pull_request" ]; then
             go=true
             web=true
+            contract=true
           else
             # --no-renames: a file moved out of the Go or web tree is listed
             # under both names, not only the new one (docs/ would skip the checks).
@@ -78,6 +82,11 @@ jobs:
               case "$f" in
                 Makefile | .github/*) web=true ;;
               esac
+              # The contract tests (make contract) run in the postgres job, against the real
+              # server, so a change to the web client or its types needs that job too.
+              case "$f" in
+                web/src/api/*) contract=true ;;
+              esac
               # internal/links/links_test.go reads this fixture, so it counts for both.
               case "$f" in
                 web/src/markdown/__fixtures__/links.json) go=true ;;
@@ -87,11 +96,13 @@ jobs:
             if [ "$seen" = false ]; then
               go=true
               web=true
+              contract=true
             fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
-          echo "go=$go web=$web"
+          echo "contract=$contract" >> "$GITHUB_OUTPUT"
+          echo "go=$go web=$web contract=$contract"
 
   # Everything that only reads the code: formatting, go vet, go mod tidy, the web
   # typecheck, ESLint and Prettier check, the workflow files, known vulnerabilities, and a
@@ -192,7 +203,7 @@ jobs:
       - run: make web-test
 
   # From here on the jobs need services, a second toolchain, or a long build.
-  # postgres also runs on a pull request that changes Go; the rest only on
+  # postgres also runs on a pull request that changes Go or web/src/api; the rest only on
   # pushes to main.
 
   # On a runner the database is a service container instead of the throwaway
@@ -204,7 +215,7 @@ jobs:
   postgres:
     name: postgres
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.go == 'true' || needs.changes.outputs.contract == 'true'
     runs-on: ubuntu-latest
     # Above scripts/test-postgres.sh's own 20 minutes for go test plus the
     # contract runs, so a slow test ends with go test's report, not a cancel.
