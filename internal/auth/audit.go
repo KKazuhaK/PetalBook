@@ -17,6 +17,10 @@ import (
 const (
 	auditQueueSize = 10_000
 	auditBatch     = 1_000
+	// Past this many queued rows only core rows are queued: an optional row
+	// (reads, downloads, API calls, sign-ins) is dropped, so a flood of them
+	// never crowds a security or admin row out of the queue.
+	auditOptionalLimit = auditQueueSize * 8 / 10
 )
 
 // AuditEvent is one thing worth recording.
@@ -37,7 +41,10 @@ type AuditEvent struct {
 type auditLog struct {
 	ch      chan store.AuditRow
 	dropped atomic.Int64
-	flushMu sync.Mutex
+	// droppedOptional counts the dropped rows (dropped includes them) that were
+	// of an optional category.
+	droppedOptional atomic.Int64
+	flushMu         sync.Mutex
 }
 
 func newAuditLog() *auditLog { return &auditLog{ch: make(chan store.AuditRow, auditQueueSize)} }
@@ -48,11 +55,19 @@ func newAuditLog() *auditLog { return &auditLog{ch: make(chan store.AuditRow, au
 // queued at all.
 func (s *Service) Audit(ev AuditEvent) {
 	k, known := auditlog.Lookup(ev.Kind)
+	optional := false
 	if !known {
 		// Filed under admin (auditlog.CategoryOf); the source scan of
 		// internal/auditlog keeps this from happening.
 		s.log.Warn("an audit row of a kind that is not registered", "kind", ev.Kind)
 	} else if !s.AuditCategoryOn(ev.Tenant, k.Category) {
+		return
+	} else if info, ok := auditlog.CategoryInfo(k.Category); ok && !info.Core {
+		optional = true
+	}
+	if optional && len(s.audit.ch) >= auditOptionalLimit {
+		s.audit.dropped.Add(1)
+		s.audit.droppedOptional.Add(1)
 		return
 	}
 	row, ok := s.audit.row(ev, s.now())
@@ -63,6 +78,9 @@ func (s *Service) Audit(ev AuditEvent) {
 	case s.audit.ch <- row:
 	default:
 		s.audit.dropped.Add(1)
+		if optional {
+			s.audit.droppedOptional.Add(1)
+		}
 	}
 }
 
@@ -89,6 +107,15 @@ func (a *auditLog) row(ev AuditEvent, now time.Time) (store.AuditRow, bool) {
 	id := store.NewAuditID(now)
 	return store.AuditRow{ID: id, At: now.UTC(), Kind: ev.Kind, Actor: ev.Actor, UserID: ev.User, Username: clip(ev.Username, 100), IP: ev.IP, Detail: detail, TenantID: ev.Tenant,
 		Category: string(auditlog.CategoryOf(ev.Kind)), Capacity: ev.Capacity}, true
+}
+
+// AuditWanted says whether an event of the kind would be queued now for the
+// tenant: false for an optional category that is switched off. A caller that
+// has work to do before an event (a dedupe table, a response wrapper) asks first,
+// so a category that is off costs it one cached settings read and nothing else.
+func (s *Service) AuditWanted(tenant, kind string) bool {
+	k, ok := auditlog.Lookup(kind)
+	return !ok || s.AuditCategoryOn(tenant, k.Category)
 }
 
 // AuditCategoryOn says whether rows of the category are written for the tenant
@@ -135,7 +162,11 @@ func (s *Service) FlushAudit(ctx context.Context) {
 			}
 		}
 		if n := a.dropped.Swap(0); n > 0 {
-			if r, ok := a.row(AuditEvent{Kind: "dropped", Detail: map[string]any{"count": n}}, s.now()); ok {
+			d := map[string]any{"count": n}
+			if o := a.droppedOptional.Swap(0); o > 0 {
+				d["optional"] = o
+			}
+			if r, ok := a.row(AuditEvent{Kind: "dropped", Detail: d}, s.now()); ok {
 				rows = append(rows, r)
 			}
 		}

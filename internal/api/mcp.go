@@ -157,6 +157,10 @@ func (s *server) serveMCP(w http.ResponseWriter, r *http.Request, sdk http.Handl
 		writeError(w, http.StatusRequestEntityTooLarge, "invalid", fmt.Sprintf("The request body is larger than %d bytes.", mcpMaxRequest))
 		return
 	}
+	if wrapped, done := s.apiCalls(w, &call{w: w, r: r, p: p}, mcpPath, p.User.TenantID); done != nil {
+		w = wrapped
+		defer done()
+	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
 	ctx := context.WithValue(r.Context(), mcpIdentityKey{}, &mcpIdentity{p})

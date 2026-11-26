@@ -98,4 +98,14 @@ var registered = []Kind{
 
 	// signins: a session was started.
 	{Name: "login", Category: Signins},
+
+	// reads: a member opened a page or a file of a space (once an hour each).
+	{Name: "page_read", Category: Reads},
+	{Name: "file_read", Category: Reads},
+
+	// downloads: a file was downloaded as an attachment (once an hour each).
+	{Name: "file_downloaded", Category: Downloads},
+
+	// api: a request made with an API token or through MCP.
+	{Name: "api_call", Category: API},
 }
