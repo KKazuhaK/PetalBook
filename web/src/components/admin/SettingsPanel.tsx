@@ -314,8 +314,10 @@ function SiteRow({ s }: { s: SiteSetting }) {
 function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; isSite: boolean }) {
   const put = usePutSetting()
   const mine = s.tenant
-  const [follow, setFollow] = useState(mine?.value == null)
-  const [value, setValue] = useState<unknown>(mine?.value ?? s.site.value)
+  // A value the site locked for this tenant lives in the site's rule for it; the tenant's own is kept beside it.
+  const shown = mine?.siteLocked ? (mine.siteRule?.value ?? null) : (mine?.value ?? null)
+  const [follow, setFollow] = useState(shown == null)
+  const [value, setValue] = useState<unknown>(shown ?? s.site.value)
   const [lower, setLower] = useState<SettingLower>(mine?.lower ?? { mode: 'allow' })
   const [siteLock, setSiteLock] = useState(mine?.siteLocked === true)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
@@ -327,7 +329,7 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   const frozen = forcedForTenant && !isSite
   const canForce = isSite && !doc
   const dirtySiteLock = canForce && siteLock !== forcedForTenant
-  const dirtyValue = !doc && !same(follow ? null : value, mine?.value ?? null)
+  const dirtyValue = !doc && !same(follow ? null : value, shown)
   const dirtyLower = !same(lower, mine?.lower ?? { mode: 'allow' })
   const save = () => {
     setMessage(null)
@@ -337,7 +339,8 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
         key: s.key,
         ...(dirtyValue ? { value: follow ? null : value } : {}),
         ...(dirtyLower ? { lower } : {}),
-        ...(dirtySiteLock ? { siteLock } : {}),
+        // While locked for the tenant, a new value is the locked one: it goes with siteLock.
+        ...(dirtySiteLock || (canForce && siteLock && dirtyValue) ? { siteLock } : {}),
       },
       {
         onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),
@@ -456,14 +459,17 @@ function TenantLayer({ tenant, name, isSite }: { tenant: string; name: string; i
   return (
     <SettingsSection title={ts.tenantLayer(name)} id="settings-tenant-heading" description={ts.tenantHelp}>
       <ul className="divide-y overflow-hidden rounded-lg border">
-        {q.data.settings.map((s) => (
-          <TenantRow
-            key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`}
-            tenant={tenant}
-            s={s}
-            isSite={isSite}
-          />
-        ))}
+        {/* A site-only setting the site may set for one tenant is in the list too; its own editor comes later. */}
+        {q.data.settings
+          .filter((s) => s.layers.includes('tenant'))
+          .map((s) => (
+            <TenantRow
+              key={`${tenant}:${s.key}:${JSON.stringify([s.site, s.tenant])}`}
+              tenant={tenant}
+              s={s}
+              isSite={isSite}
+            />
+          ))}
       </ul>
     </SettingsSection>
   )

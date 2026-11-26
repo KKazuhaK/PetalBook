@@ -52,10 +52,10 @@ func (s *Service) AssetsRule(ctx context.Context, tenant string, in AssetsInput)
 			return AssetsRule{}, err
 		}
 		if on, _ := x.Value.(bool); on {
-			// The site's value, its lock and its lock for this tenant do not apply:
-			// the tenant's own value (not one the site set for it) and its own rule do.
+			// The site's value, its lock and its rule for this tenant do not
+			// apply: the tenant's own value and its own rule do.
 			value, below, by = d.Default, Lower{Mode: Allow}, ""
-			if e.Tenant.Value != nil && !e.Tenant.SiteLocked {
+			if e.Tenant.Value != nil {
 				value = e.Tenant.Value
 			}
 			if e.Tenant.Lower != nil {

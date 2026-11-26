@@ -465,6 +465,7 @@ func (s *server) adminDeleteTenant(c *call) {
 	if s.limits != nil {
 		s.limits.Forget(t.ID)
 	}
+	s.settings.Forget(t.ID)
 	s.audit(c, auth.AuditEvent{Kind: "tenant_deleted", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "slug": t.Slug}})
 	c.w.WriteHeader(http.StatusNoContent)
 }

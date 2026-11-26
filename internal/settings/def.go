@@ -78,10 +78,24 @@ type Def struct {
 	// domain list, an address); nil accepts what the kind accepts.
 	Check func(v any) (any, error)
 	// Doc is true when the layers' values are validated elsewhere (Kind Doc).
+
+	// A setting with no tenant layer says one of two things. ForTenant: a site
+	// administrator may still set it for one tenant, as the site's rule for that
+	// tenant (see Rule and Service.SetTenant); the tenant's administrators only
+	// see it. ServerWide: why it must be the same for every tenant (usernames
+	// unique on the whole server, one purge job over the server's disk). Every
+	// definition has exactly one of a tenant layer, ForTenant and ServerWide;
+	// the registry's test checks it.
+	ForTenant  bool
+	ServerWide string
 }
 
 // Has reports whether the setting exists in layer l.
 func (d *Def) Has(l Layer) bool { return slices.Contains(d.Layers, l) }
+
+// PerTenant reports whether the setting can differ between tenants: it has a
+// tenant layer, or a site administrator may force it for one tenant.
+func (d *Def) PerTenant() bool { return d.Has(Tenant) || d.ForTenant }
 
 // Error is a refusal; Code is the API's error code.
 type Error struct {
@@ -100,7 +114,9 @@ const (
 	CodeRestricted = "setting_restricted"
 )
 
-func bad(format string, a ...any) *Error { return &Error{CodeInvalid, fmt.Sprintf(format, a...)} }
+func bad(format string, a ...any) *Error {
+	return &Error{Code: CodeInvalid, Msg: fmt.Sprintf(format, a...)}
+}
 
 // Value checks a value against the kind and range of the definition and
 // returns it in its normal form (a number as int64, a list as []string).

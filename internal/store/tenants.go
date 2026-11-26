@@ -381,7 +381,7 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if c.Users+c.Spaces+c.Groups+c.Invites+c.Recycle > 0 {
 			return &ErrTenantNotEmpty{c.Users, c.Spaces, c.Groups, c.Invites, c.Recycle}
 		}
-		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = 'tenant' AND layer_id = ?`, id); err != nil {
+		if _, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer IN ('tenant', 'site') AND layer_id = ?`, id); err != nil {
 			return err
 		}
 		// Installations shared with it are not any more.

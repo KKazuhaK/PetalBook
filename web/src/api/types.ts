@@ -2029,8 +2029,16 @@ export interface TenantSetting {
   layers: SettingLayer[]
   site: { value: unknown; lower: SettingLower }
   choices?: string[]
-  // siteLocked: a site administrator set and locked this value for this tenant.
-  tenant: { value: unknown; lower: SettingLower | null; inEffect: boolean; siteLocked?: boolean } | null
+  // value and lower are the tenant's own. siteRule is the site's rule for this one tenant: a value in place of the
+  // site's, and the rule the tenant's layer is held to (a lock forces the value, a restriction bounds the tenant's);
+  // siteLocked says that rule is a lock. inEffect of the rule is false while the site's lock over everyone beats it.
+  tenant: {
+    value: unknown
+    lower: SettingLower | null
+    inEffect: boolean
+    siteLocked?: boolean
+    siteRule?: { value: unknown; lower: SettingLower | null; inEffect: boolean }
+  } | null
   effective: unknown
 }
 // What GET /api/settings says of a setting that a space or a person can change.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"petalbook.app/server/internal/store"
@@ -38,20 +39,38 @@ type Service struct {
 	// transaction just before its write.
 	beforeTenantWrite func()
 
-	mu      sync.Mutex
-	ceiling int64 // --max-upload, see SetFileCeiling
-	gen     uint64
-	cache   map[string]*cached // by tenant id ("" for the site alone)
+	// onCompute, set by tests only, runs each time a tenant's settings are read
+	// from the database.
+	onCompute func(tenant string)
+
+	ceiling atomic.Int64 // --max-upload, see SetFileCeiling
+
+	// The cache. A site write bumps siteGen, which every snapshot is checked
+	// against; a tenant write bumps only that tenant's slot. A snapshot is
+	// current while both generations it was computed at are.
+	siteGen atomic.Uint64
+	slots   sync.Map // tenant id ("" for the site alone) -> *slot
 }
 
-type cached struct {
-	gen uint64
-	m   map[string]*Effective
+// slot is one tenant's cache entry. It lives as long as the service (about a
+// hundred bytes a tenant with the map's own); its snapshot is replaced, never
+// changed.
+type slot struct {
+	gen  atomic.Uint64
+	snap atomic.Pointer[snapshot]
+}
+
+type snapshot struct {
+	site, tenant uint64
+	m            map[string]*Effective
+	// follow, in the site's snapshot only, is what a tenant with no row for a
+	// setting sees of it: shared by every such tenant.
+	follow map[string]*Effective
 }
 
 // New makes the service over the Definitions.
 func New(st *store.Store) *Service {
-	s := &Service{st: st, byK: map[string]*Def{}, bind: map[string]SiteBinding{}, now: time.Now, cache: map[string]*cached{}}
+	s := &Service{st: st, byK: map[string]*Def{}, bind: map[string]SiteBinding{}, now: time.Now}
 	s.defs = Definitions()
 	for _, d := range s.defs {
 		s.byK[d.Key] = d
@@ -73,18 +92,14 @@ func (s *Service) SetFileCeiling(max int64) {
 		Set:      func(context.Context, store.Q, any) error { return errors.New("set by --max-upload") },
 		ReadOnly: func() bool { return true },
 	})
-	s.mu.Lock()
-	s.ceiling = max
-	s.mu.Unlock()
+	s.ceiling.Store(max)
 	s.Invalidate()
 }
 
 // FileLimit is files.maxBytes in effect for a tenant: the settings cache's
 // value (one map lookup), at most the ceiling. 0 when no ceiling was set.
 func (s *Service) FileLimit(ctx context.Context, tenant string) int64 {
-	s.mu.Lock()
-	ceil := s.ceiling
-	s.mu.Unlock()
+	ceil := s.ceiling.Load()
 	e, err := s.Get(ctx, tenant, FilesMaxBytes)
 	if err != nil {
 		return ceil
@@ -115,11 +130,18 @@ func (s *Service) SetClock(now func() time.Time) { s.now = now }
 
 // Invalidate drops every cached effective value; the code that changes a bound
 // site value (or anything the settings read) calls it after the change.
-func (s *Service) Invalidate() {
-	s.mu.Lock()
-	s.gen++
-	s.mu.Unlock()
+func (s *Service) Invalidate() { s.siteGen.Add(1) }
+
+// InvalidateTenant drops the cached effective values of one tenant; the
+// others keep theirs.
+func (s *Service) InvalidateTenant(tenant string) {
+	if v, ok := s.slots.Load(tenant); ok {
+		v.(*slot).gen.Add(1)
+	}
 }
+
+// Forget drops the cache entry of a tenant that was deleted.
+func (s *Service) Forget(tenant string) { s.slots.Delete(tenant) }
 
 // SiteView is the site's layer of a setting.
 type SiteView struct {
@@ -137,11 +159,32 @@ type TenantView struct {
 	// InEffect is false while the site's lock or restriction forbids the value
 	// (kept, and in effect again when the rule is lifted).
 	InEffect bool `json:"inEffect"`
-	// SiteLocked is true when a site administrator set this value for the tenant
-	// and locked it: the tenant's administrators cannot change the value or the
-	// rule below it. It beats the site's own value, and the site's lock over
-	// everyone beats it.
+	// SiteLocked is true when the site's rule for this tenant (SiteRule) is a
+	// lock: the tenant's administrators cannot change the value or the rule
+	// below it.
 	SiteLocked bool `json:"siteLocked"`
+	// SiteRule is the site's layer for this one tenant; nil when the site has
+	// none for it.
+	SiteRule *RuleView `json:"siteRule,omitempty"`
+}
+
+// Rule is the site's layer for one tenant: a value the site gives this tenant
+// in place of its own (nil: the site's), and the rule the tenant's layer is
+// held to in place of the site's lower (nil: the site's). A lock is how the
+// site forces a value for one tenant ("this organisation does not have Y" is
+// Y locked off for it), a restriction how it bounds one ("at most 10 spaces").
+// It is the site's choice for that tenant, so it is not held to the site's
+// lower for tenants; only the site's lock over everyone beats it.
+type Rule struct {
+	Value any    `json:"value"`
+	Lower *Lower `json:"lower"`
+}
+
+// RuleView is a Rule as a tenant sees it; InEffect is false while the site's
+// lock over everyone beats it (kept, and back when that lock is lifted).
+type RuleView struct {
+	Rule
+	InEffect bool `json:"inEffect"`
 }
 
 // Effective is a setting as one tenant sees it.
@@ -158,32 +201,56 @@ type Effective struct {
 	// LockedBy the layer whose lock keeps the layers below from changing it (""
 	// when none does): what a client names when it greys a control out.
 	Source, LockedBy Layer
+	// Above is the rule the tenant's layer is held to: the site's lower, or the
+	// site's rule for this tenant when it has one in effect.
+	Above Lower
 }
 
 // For returns every setting as the tenant sees it ("" for the site alone). It
-// is cached by (tenant, generation); a request reads one map.
+// is cached per tenant: warm, a request reads one map and two counters, with
+// no lock and no query. The map is shared; callers do not change it.
 func (s *Service) For(ctx context.Context, tenant string) (map[string]*Effective, error) {
-	s.mu.Lock()
-	if c := s.cache[tenant]; c != nil && c.gen == s.gen {
-		m := c.m
-		s.mu.Unlock()
-		return m, nil
-	}
-	gen := s.gen
-	s.mu.Unlock()
-	m, err := s.compute(ctx, tenant)
+	p, err := s.snapshotOf(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	if s.gen == gen {
-		if len(s.cache) > 2000 {
-			s.cache = map[string]*cached{}
-		}
-		s.cache[tenant] = &cached{gen: gen, m: m}
+	return p.m, nil
+}
+
+func (s *Service) snapshotOf(ctx context.Context, tenant string) (*snapshot, error) {
+	v, ok := s.slots.Load(tenant)
+	if !ok {
+		v, _ = s.slots.LoadOrStore(tenant, &slot{})
 	}
-	s.mu.Unlock()
-	return m, nil
+	sl := v.(*slot)
+	site, gen := s.siteGen.Load(), sl.gen.Load()
+	if p := sl.snap.Load(); p != nil && p.site == site && p.tenant == gen {
+		return p, nil
+	}
+	// The generations are read before the database: a write that commits while
+	// this computes bumps one of them after its commit, so what is stored here
+	// is then never taken for current (at worst it costs the next request a
+	// computation).
+	if s.onCompute != nil {
+		s.onCompute(tenant)
+	}
+
+	if tenant == "" {
+		p, err := s.computeSite(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p.site, p.tenant = site, gen
+		sl.snap.Store(p)
+		return p, nil
+	}
+	m, err := s.computeTenant(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	p := &snapshot{site: site, tenant: gen, m: m}
+	sl.snap.Store(p)
+	return p, nil
 }
 
 // Get is For for one key.
@@ -194,83 +261,38 @@ func (s *Service) Get(ctx context.Context, tenant, key string) (*Effective, erro
 	}
 	e := m[key]
 	if e == nil {
-		return nil, &Error{CodeNotFound, "no such setting"}
+		return nil, &Error{Code: CodeNotFound, Msg: "no such setting"}
 	}
 	return e, nil
 }
 
-func (s *Service) compute(ctx context.Context, tenant string) (map[string]*Effective, error) {
+// computeSite reads the site's layer: the site's own map (no tenant views),
+// and for each setting a tenant may have, what a tenant that has no row for
+// it sees. Those are shared by every such tenant, so a tenant's map holds
+// entries of its own only for the settings it has rows of.
+func (s *Service) computeSite(ctx context.Context) (*snapshot, error) {
 	q := s.st.Q()
-	siteRows, err := store.ListLayered(ctx, q, string(Site), "")
+	rows, err := store.ListLayered(ctx, q, string(Site), "")
 	if err != nil {
 		return nil, err
 	}
-	var tenantRows []store.LayeredRow
-	if tenant != "" {
-		if tenantRows, err = store.ListLayered(ctx, q, string(Tenant), tenant); err != nil {
-			return nil, err
-		}
-	}
-	site, ten := rowsByKey(siteRows), rowsByKey(tenantRows)
-	out := make(map[string]*Effective, len(s.defs))
+	site := rowsByKey(rows)
+	p := &snapshot{m: make(map[string]*Effective, len(s.defs)), follow: map[string]*Effective{}}
 	for _, d := range s.defs {
 		e := &Effective{Def: d}
-		var err error
 		if e.Site, err = s.siteView(ctx, q, d, site[d.Key]); err != nil {
 			return nil, err
 		}
-		e.Value, e.Below, e.Source = e.Site.Value, e.Site.Lower, Site
-		if tenant != "" && d.Has(Tenant) {
-			tv := &TenantView{InEffect: true}
-			if r := ten[d.Key]; r != nil {
-				if r.Value != "" {
-					if tv.Value, err = decode(r.Value); err != nil {
-						return nil, err
-					}
-					if d.Kind != Doc && tv.Value != nil {
-						if nv, err := d.Value(tv.Value); err == nil {
-							tv.Value = nv
-						}
-					}
-					tv.InEffect = tv.Value == nil || e.Site.Lower.Allows(d, tv.Value)
-					// A value the site set for this tenant is not the tenant's to
-					// have forbidden by the site's rule for tenants, only by its lock
-					// over everyone.
-					if r.SiteLocked && tv.Value != nil {
-						tv.SiteLocked = true
-						tv.InEffect = e.Site.Lower.Mode != Lock
-					}
-				}
-				if r.Lower != "" {
-					var l Lower
-					if err := json.Unmarshal([]byte(r.Lower), &l); err != nil {
-						return nil, err
-					}
-					tv.Lower = &l
-				}
-			}
-			e.Tenant = tv
-			if tv.Value != nil && tv.InEffect {
-				e.Value, e.Source = tv.Value, Tenant
-			}
-			if tv.Lower != nil {
-				e.Below = e.Site.Lower.Combine(d, *tv.Lower)
-			}
-			if tv.SiteLocked && tv.InEffect {
-				e.Below = Lower{Mode: Lock}
-			}
-		}
-		switch {
-		case e.Site.Lower.Mode == Lock:
+		e.Value, e.Below, e.Above, e.Source = e.Site.Value, e.Site.Lower, e.Site.Lower, Site
+		if e.Site.Lower.Mode == Lock {
 			e.LockedBy = Site
-		case e.Tenant != nil && e.Tenant.SiteLocked && e.Tenant.InEffect:
-			e.LockedBy = Site
-		case e.Below.Mode == Lock:
-			e.LockedBy = Tenant
 		}
-		out[d.Key] = e
+		p.m[d.Key] = e
+		if d.PerTenant() {
+			p.follow[d.Key] = tenantEffective(d, e.Site, nil, nil)
+		}
 	}
-	return out, nil
+	return p, nil
 }
 
 func rowsByKey(rows []store.LayeredRow) map[string]*store.LayeredRow {
@@ -326,9 +348,13 @@ type Change struct {
 	Lower    *Lower // nil: back to the default (site) or to following (tenant)
 	// Site says a site administrator makes the change to a tenant's layer;
 	// without it the change is a tenant administrator's. HasSiteLock and
-	// SiteLock lock (or free) the tenant's value for the tenant: only a site
-	// administrator may, and only a value that is there can be locked.
+	// SiteLock are the short form of a site rule that locks (or of removing the
+	// site's rule): with SiteLock, Value is the value locked for the tenant.
 	Site, HasSiteLock, SiteLock bool
+	// HasSiteRule and SiteRule set (nil: remove) the site's rule for the
+	// tenant. Only a site administrator may.
+	HasSiteRule bool
+	SiteRule    *Rule
 }
 
 func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any, error) {
@@ -352,13 +378,13 @@ func (s *Service) check(ctx context.Context, d *Def, tenant string, v any) (any,
 func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected int, err error) {
 	d, ok := s.byK[key]
 	if !ok {
-		return 0, &Error{CodeNotFound, "no such setting"}
+		return 0, &Error{Code: CodeNotFound, Msg: "no such setting"}
 	}
 	var val any
 	if ch.HasValue {
 		b, bound := s.bind[key]
 		if bound && b.ReadOnly != nil && b.ReadOnly() {
-			return 0, &Error{CodeConflict, key + " is set by a command-line flag; change the flag"}
+			return 0, &Error{Code: CodeConflict, Msg: key + " is set by a command-line flag; change the flag"}
 		}
 		if val, err = s.check(ctx, d, "", ch.Value); err != nil {
 			return 0, err
@@ -446,131 +472,6 @@ func (s *Service) affected(ctx context.Context, q store.Q, d *Def, lower *Lower)
 		}
 	}
 	return n, nil
-}
-
-// SetTenant changes a tenant's layer. The site's rule decides: locked is
-// setting_locked (for a site administrator too: unlock at the site first), a
-// value or rule outside it is setting_restricted. A value a site administrator
-// locked for this tenant (Change.SiteLock) is the site's to change: the tenant's
-// own administrators get setting_locked, and what the site writes there is not
-// held to the site's rule for tenants, since it is the site's own choice.
-func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) error {
-	d, ok := s.byK[key]
-	if !ok || !d.Has(Tenant) {
-		return &Error{CodeNotFound, "no such setting"}
-	}
-	eff, err := s.Get(ctx, tenant, key)
-	if err != nil {
-		return err
-	}
-	site := eff.Site.Lower
-	cur := eff.Tenant
-	if !ch.Site {
-		if ch.HasSiteLock {
-			return &Error{CodeLocked, key + ": only the site's administrators lock a value for a tenant"}
-		}
-		if cur != nil && cur.SiteLocked {
-			return &Error{CodeLocked, key + " is locked for this tenant by the site's administrators"}
-		}
-	}
-	// Whether the tenant's value ends up locked by the site, and what it is.
-	locking := cur != nil && cur.SiteLocked
-	if ch.HasSiteLock {
-		locking = ch.SiteLock
-	}
-	final := any(nil)
-	if cur != nil {
-		final = cur.Value
-	}
-	if ch.HasValue {
-		final = ch.Value
-	}
-	if final == nil {
-		if ch.HasSiteLock && ch.SiteLock {
-			return bad("%s: a lock for the tenant needs a value to lock", key)
-		}
-		locking = false
-	}
-	forced := ch.Site && locking
-	var val any
-	if ch.HasValue && ch.Value != nil {
-		if site.Mode == Lock && !forced {
-			return &Error{CodeLocked, key + " is locked by the site's administrators"}
-		}
-		if val, err = s.check(ctx, d, tenant, ch.Value); err != nil {
-			return err
-		}
-		if !forced && !site.Allows(d, val) {
-			return &Error{CodeRestricted, key + ": " + describe(d, site)}
-		}
-	}
-	var lower *Lower
-	if ch.HasLower && ch.Lower != nil {
-		l, err := d.CheckLower(*ch.Lower)
-		if err != nil {
-			return err
-		}
-		if !forced {
-			if site.Mode == Lock && l.Mode != Lock {
-				return &Error{CodeLocked, key + " is locked by the site's administrators"}
-			}
-			if !l.Tightens(d, site) {
-				return &Error{CodeRestricted, key + ": the tenant's rule must be at least as strict as the site's"}
-			}
-		}
-		lower = &l
-	}
-	var rawValue, rawLower string
-	if ch.HasValue && ch.Value != nil {
-		raw, err := json.Marshal(val)
-		if err != nil {
-			return err
-		}
-		rawValue = string(raw)
-	}
-	if ch.HasLower && lower != nil {
-		raw, _ := json.Marshal(lower)
-		rawLower = string(raw)
-	}
-	if !ch.Site {
-		// A tenant administrator's write never reads the lock first: the one
-		// statement writes only while the record is not locked, so a lock written
-		// since the cached view was read, even by a transaction that commits while
-		// this one runs, refuses it and is never cleared by it.
-		err = s.st.Tx(ctx, func(q store.Q) error {
-			if s.beforeTenantWrite != nil {
-				s.beforeTenantWrite()
-			}
-			ok, err := store.PutLayeredUnlocked(ctx, q, store.LayeredRow{Layer: string(Tenant), LayerID: tenant, Key: key,
-				Value: rawValue, Lower: rawLower, Updated: s.now()}, ch.HasValue, ch.HasLower)
-			if err == nil && !ok {
-				err = &Error{CodeLocked, key + " is locked for this tenant by the site's administrators"}
-			}
-			return err
-		})
-		s.Invalidate()
-		return err
-	}
-	err = s.st.Tx(ctx, func(q store.Q) error {
-		row, err := store.GetLayered(ctx, q, string(Tenant), tenant, key)
-		if errors.Is(err, store.ErrNotFound) {
-			row, err = &store.LayeredRow{Layer: string(Tenant), LayerID: tenant, Key: key}, nil
-		}
-		if err != nil {
-			return err
-		}
-		if ch.HasValue {
-			row.Value = rawValue
-		}
-		if ch.HasLower {
-			row.Lower = rawLower
-		}
-		row.SiteLocked = locking // only a site administrator's change sets the lock, always explicitly
-		row.Updated = s.now()
-		return store.PutLayered(ctx, q, *row)
-	})
-	s.Invalidate()
-	return err
 }
 
 func describe(d *Def, l Lower) string {

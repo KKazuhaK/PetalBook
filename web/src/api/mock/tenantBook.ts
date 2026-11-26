@@ -24,6 +24,8 @@ interface Def {
   min?: number
   max?: number
   choices?: string[]
+  // A site-only setting a site administrator may set for one tenant (its rule for that tenant).
+  forTenant?: boolean
 }
 // The settings of 3.3, as the server has them (3.1's come with 3.1).
 const DEFS: Def[] = [
@@ -94,7 +96,14 @@ const DEFS: Def[] = [
     lower: { mode: 'allow' },
     choices: ['space', 'repository'],
   },
-  { key: 'storage.assets.ownStorageExempt', kind: 'boolean', layers: ['site'], def: true, lower: { mode: 'allow' } },
+  {
+    key: 'storage.assets.ownStorageExempt',
+    kind: 'boolean',
+    layers: ['site'],
+    def: true,
+    lower: { mode: 'allow' },
+    forTenant: true,
+  },
   // How many days a deleted space or person stays in the recycle bin (3.5); the site's alone.
   { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
   // Whether addresses outside ASCII may be set (3.6); the site's alone.
@@ -201,7 +210,12 @@ export interface TenantBookOptions {
 interface TenantRow {
   value?: unknown // undefined: follows the site
   lower?: SettingLower
-  siteLocked?: boolean // a site administrator set and locked the value for this tenant
+}
+
+// The site's rule for one tenant: a value in place of the site's, and the rule the tenant's layer is held to.
+interface SiteRule {
+  value?: unknown
+  lower?: SettingLower
 }
 
 const ZERO: TenantUsage = { people: 0, spaces: 0, bytes: 0, pages: 0, measuredAt: null, over: [] }
@@ -224,6 +238,7 @@ export function createTenantBook(o: TenantBookOptions) {
   })
   const siteRows = new Map<string, { value?: unknown; lower?: SettingLower }>()
   const tenantRows = new Map<string, Map<string, TenantRow>>()
+  const siteRules = new Map<string, Map<string, SiteRule>>()
   let seq = 1
 
   const siteValue = (d: Def): unknown =>
@@ -254,26 +269,31 @@ export function createTenantBook(o: TenantBookOptions) {
     },
   })
   const tenantView = (tenant: string, d: Def): TenantSetting => {
-    const row = tenantRows.get(tenant)?.get(d.key)
+    const row = d.layers.includes('tenant') ? tenantRows.get(tenant)?.get(d.key) : undefined
+    const rule = siteRules.get(tenant)?.get(d.key)
     const sl = siteLower(d)
+    // The site's rule for this tenant counts unless the site's lock over everyone beats it.
+    const ruleOn = !!rule && sl.mode !== 'lock'
+    const base = ruleOn && rule.value !== undefined && rule.value !== null ? rule.value : siteValue(d)
+    const above = ruleOn && rule.lower ? rule.lower : sl
     const own = row?.value
     const has = own !== undefined && own !== null
-    // A value the site locked for this tenant is in effect unless the site's lock over everyone beats it.
-    const siteLocked = !!row?.siteLocked && has
-    const inEffect = !has || (siteLocked ? sl.mode !== 'lock' : allows(sl, d, own))
+    const inEffect = !has || allows(above, d, own)
+    const v = has && inEffect ? own : base
     return {
       key: d.key,
       kind: d.kind,
       layers: d.layers,
       ...(d.choices ? { choices: d.choices } : {}),
       site: { value: siteValue(d), lower: sl },
-      tenant: { value: own ?? null, lower: row?.lower ?? null, inEffect, siteLocked },
-      effective:
-        d.key === FILES_KEY
-          ? Math.min(o.maxUpload, (has && inEffect ? own : siteValue(d)) as number)
-          : has && inEffect
-            ? own
-            : siteValue(d),
+      tenant: {
+        value: own ?? null,
+        lower: row?.lower ?? null,
+        inEffect,
+        siteLocked: rule?.lower?.mode === 'lock',
+        ...(rule ? { siteRule: { value: rule.value ?? null, lower: rule.lower ?? null, inEffect: ruleOn } } : {}),
+      },
+      effective: d.key === FILES_KEY ? Math.min(o.maxUpload, v as number) : v,
     }
   }
   const effectiveOf = (tenant: string, d: Def) => tenantView(tenant, d)
@@ -368,53 +388,83 @@ export function createTenantBook(o: TenantBookOptions) {
     return { ...siteView(d), ...(affected === undefined ? {} : { affected }) }
   }
   const putTenant = (tenant: string, key: string, body: Record<string, unknown>, bySite: boolean): TenantSetting => {
-    const d = defOf(key, 'tenant')
-    for (const k of Object.keys(body)) if (k !== 'value' && k !== 'lower' && k !== 'siteLock') bad(`unknown field ${k}`)
-    if (!('value' in body) && !('lower' in body) && !('siteLock' in body)) bad('give value, lower, siteLock or any')
+    const d = DEFS.find((x) => x.key === key)
+    if (!d || !(d.layers.includes('tenant') || d.forTenant)) throw new HttpError(404, 'not_found', 'no such setting')
+    const fields = ['value', 'lower', 'siteLock', 'siteRule']
+    for (const k of Object.keys(body)) if (!fields.includes(k)) bad(`unknown field ${k}`)
+    if (!fields.some((k) => k in body)) bad('give value, lower, siteLock, siteRule or any')
+    if (!bySite && ('siteLock' in body || 'siteRule' in body))
+      throw new HttpError(409, 'setting_locked', `${key}: only the site's administrators set a rule for a tenant`)
+    if ('siteLock' in body && 'siteRule' in body) bad(`${key}: give siteRule or siteLock, not both`)
+    const siteOnly = !d.layers.includes('tenant')
+    if (siteOnly && !bySite)
+      throw new HttpError(409, 'setting_locked', `${key} is the site's: only its administrators set it for a tenant`)
+    if (siteOnly && 'lower' in body) bad(`${key} has no tenant layer: give the rule for the tenant as siteRule`)
     const sl = siteLower(d)
-    const rows = tenantRows.get(tenant) ?? new Map<string, TenantRow>()
-    const row = rows.get(key) ?? {}
-    const locked = `${key} is locked for this tenant by the site's administrators`
-    if (!bySite && 'siteLock' in body)
-      throw new HttpError(409, 'setting_locked', `${key}: only the site's administrators lock a value for a tenant`)
-    if (!bySite && row.siteLocked) throw new HttpError(409, 'setting_locked', locked)
-    let locking = !!row.siteLocked
-    if ('siteLock' in body) locking = body.siteLock === true
-    const final = 'value' in body ? body.value : row.value
-    if (final === undefined || final === null) {
-      if (body.siteLock === true) bad(`${key}: a lock for the tenant needs a value to lock`)
-      locking = false
-    }
-    const forced = bySite && locking
-    if ('value' in body && body.value !== null) {
-      if (sl.mode === 'lock' && !forced)
-        throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
-      const v = d.kind === 'doc' ? body.value : checkValue(d, body.value)
-      if (!forced && !allows(sl, d, v))
-        throw new HttpError(409, 'setting_restricted', `${key}: outside the site's rule`)
-      if (key === 'registration.open' && v === true) checkOpening()
-      row.value = v
-    } else if ('value' in body) row.value = undefined
-    if ('lower' in body) {
-      if (body.lower === null) row.lower = undefined
-      else {
-        const l = checkLower(d, body.lower)
-        if (!forced) {
-          if (sl.mode === 'lock' && l.mode !== 'lock')
-            throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
-          if (!tightens(l, d, sl))
-            throw new HttpError(
-              409,
-              'setting_restricted',
-              `${key}: the tenant's rule must be at least as strict as the site's`,
-            )
+    const rules = siteRules.get(tenant) ?? new Map<string, SiteRule>()
+    const cur = rules.get(key)
+    let hasValue = 'value' in body
+    let value = body.value
+    let hasRule = false
+    let rule: SiteRule | undefined
+    if ('siteLock' in body) {
+      hasRule = true
+      if (body.siteLock === true) {
+        rule = { lower: { mode: 'lock' }, value: cur?.value }
+        if (hasValue) {
+          rule.value = value
+          hasValue = false
         }
-        row.lower = l
       }
     }
-    row.siteLocked = locking
-    rows.set(key, row)
-    tenantRows.set(tenant, rows)
+    if ('siteRule' in body) {
+      hasRule = true
+      const r = body.siteRule as { value?: unknown; lower?: unknown } | null
+      rule = r ? { value: r.value, lower: r.lower ? checkLower(d, r.lower) : undefined } : undefined
+    }
+    if (siteOnly && hasValue) {
+      rule = { value, lower: hasRule ? rule?.lower : cur?.lower }
+      hasRule = true
+      hasValue = false
+    }
+    if (rule && rule.value !== undefined && rule.value !== null)
+      rule.value = d.kind === 'doc' ? rule.value : checkValue(d, rule.value)
+    if (!bySite && cur?.lower?.mode === 'lock' && sl.mode !== 'lock')
+      throw new HttpError(409, 'setting_locked', `${key} is locked for this tenant by the site's administrators`)
+    const next = hasRule ? rule : cur
+    const above = next?.lower && sl.mode !== 'lock' ? next.lower : sl
+    const rows = tenantRows.get(tenant) ?? new Map<string, TenantRow>()
+    const row = rows.get(key) ?? {}
+    if (hasValue && value !== null) {
+      if (above.mode === 'lock')
+        throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
+      value = d.kind === 'doc' ? value : checkValue(d, value)
+      if (!allows(above, d, value)) throw new HttpError(409, 'setting_restricted', `${key}: outside the site's rule`)
+    }
+    if (key === 'registration.open' && ((hasValue && value === true) || rule?.value === true)) checkOpening()
+    let lower: SettingLower | undefined
+    if ('lower' in body && body.lower !== null) {
+      lower = checkLower(d, body.lower)
+      if (above.mode === 'lock' && lower.mode !== 'lock')
+        throw new HttpError(409, 'setting_locked', `${key} is locked by the site's administrators`)
+      if (!tightens(lower, d, above))
+        throw new HttpError(
+          409,
+          'setting_restricted',
+          `${key}: the tenant's rule must be at least as strict as the site's`,
+        )
+    }
+    if (hasValue) row.value = value === null ? undefined : value
+    if ('lower' in body) row.lower = lower
+    if (hasValue || 'lower' in body) {
+      rows.set(key, row)
+      tenantRows.set(tenant, rows)
+    }
+    if (hasRule) {
+      if (rule && (rule.value != null || rule.lower)) rules.set(key, rule)
+      else rules.delete(key)
+      siteRules.set(tenant, rules)
+    }
     if (key === 'registration.open') o.onRegistrationChanged()
     if (key.startsWith('quota.')) o.onQuotaChanged()
     return effectiveOf(tenant, d)
@@ -626,7 +676,9 @@ export function createTenantBook(o: TenantBookOptions) {
       const ts = /^\/admin\/tenants\/([^/]+)\/settings$/.exec(path)
       if (ts && method === 'GET') {
         const t = visible(me, decodeURIComponent(ts[1]))
-        return j({ settings: DEFS.filter((d) => d.layers.includes('tenant')).map((d) => effectiveOf(t.id, d)) })
+        return j({
+          settings: DEFS.filter((d) => d.layers.includes('tenant') || d.forTenant).map((d) => effectiveOf(t.id, d)),
+        })
       }
       const tk = /^\/admin\/tenants\/([^/]+)\/settings\/([^/]+)$/.exec(path)
       if (tk && method === 'PUT') {

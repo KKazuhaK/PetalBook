@@ -1590,7 +1590,12 @@ function suite(target: Target) {
             key: string
             choices?: string[]
             effective: unknown
-            tenant: { value: unknown; inEffect: boolean; siteLocked: boolean }
+            tenant: {
+              value: unknown
+              inEffect: boolean
+              siteLocked: boolean
+              siteRule?: { value: unknown; inEffect: boolean }
+            }
             site: { value: unknown; lower: { mode: string } }
           }
           const view = async () =>
@@ -1608,8 +1613,7 @@ function suite(target: Target) {
             expect((await mine({ value: 'nowhere' })).json.error).toBe('invalid')
             expect((await mine({ value: 'space' })).status).toBe(200)
             expect((await view()).effective).toBe('space')
-            // A lock needs a value, and the site's own layer has no lock for a tenant.
-            expect((await mine({ value: null, siteLock: true })).json.error).toBe('invalid')
+            // The site's own layer has no lock for a tenant.
             expect(
               (await call(admin, 'PUT', '/api/admin/settings/storage.assets', { siteLock: true })).json.error,
             ).toBe('invalid')
@@ -1618,16 +1622,24 @@ function suite(target: Target) {
             expect((await call(admin, 'PUT', '/api/admin/settings/storage.assets', { value: 'space' })).status).toBe(
               200,
             )
+            // The locked value is the site's rule for the tenant; the tenant's own value is kept beside it.
             const locked = await view()
-            expect([locked.effective, locked.tenant.siteLocked, locked.tenant.inEffect]).toEqual([
-              'repository',
-              true,
-              true,
-            ])
+            expect([
+              locked.effective,
+              locked.tenant.siteLocked,
+              locked.tenant.siteRule?.value,
+              locked.tenant.siteRule?.inEffect,
+              locked.tenant.value,
+              locked.tenant.inEffect,
+            ]).toEqual(['repository', true, 'repository', true, 'space', false])
             // The site's lock over everyone beats the one for the tenant, which is kept.
             await call(admin, 'PUT', '/api/admin/settings/storage.assets', { lower: { mode: 'lock' } })
             const over = await view()
-            expect([over.effective, over.tenant.value, over.tenant.inEffect]).toEqual(['space', 'repository', false])
+            expect([over.effective, over.tenant.siteRule?.value, over.tenant.siteRule?.inEffect]).toEqual([
+              'space',
+              'repository',
+              false,
+            ])
             // What a person of the default tenant (the administrator here) sees when they make a space: the
             // effective default, what they may ask for, and whether a lock leaves no choice.
             const asked = (

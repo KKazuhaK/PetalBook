@@ -70,7 +70,7 @@ func TestAttachmentsAreSeparateByDefaultAndTheLayeredRulesDecideOverTheAPI(t *te
 		}
 		mk("e", false).want(t, 409, "setting_locked")
 		tv := settingOf(t, admin.do("GET", "/api/admin/tenants/"+store.DefaultTenantID+"/settings", nil).want(t, 200, ""), "storage.assets")["tenant"].(map[string]any)
-		if tv["siteLocked"] != true || tv["value"] != "repository" {
+		if sr, _ := tv["siteRule"].(map[string]any); tv["siteLocked"] != true || sr["value"] != "repository" {
 			t.Fatal(tv)
 		}
 		// The key is the tenant layer's only; the site's own layer has no lock for a tenant.
