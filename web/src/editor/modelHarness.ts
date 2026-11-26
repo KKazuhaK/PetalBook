@@ -1,6 +1,6 @@
 // A model-based test of the whole editing path: the real SaveController, the real
-// restore logic and local-draft store, against the in-memory server (whose draft
-// rules the Go tests of the drafts keep in step with the real server's), driven by many
+// restore logic and local-draft store, against the fixture server (whose draft
+// protocol, routes/drafts.ts, the Go tests of the drafts keep in step with the real server's), driven by many
 // random sequences of what a person and the server's world can do. Seeded and
 // deterministic: a failure prints the seed and the steps, and
 //   MODEL_SEED=<seed> npx vitest run src/editor/model.mixed.test.ts
@@ -48,7 +48,8 @@
 //      was already in a file version).
 
 import { ApiError } from '@/api/client'
-import { createMockServer, type MockServer } from '@/api/mock/server'
+import { createFixtureServer } from '@/api/fixtures/server'
+import { sweepDrafts } from '@/api/fixtures/routes/drafts'
 import type { DraftReceipt, Page, PageDraft } from '@/api/types'
 import type { DocJSON } from '@/markdown'
 import { planRestore, type RestorePlan } from './draftRestore'
@@ -118,22 +119,16 @@ export async function runSequence(
   }
 
   let clock = Date.parse('2026-11-21T08:30:00Z')
-  const server: MockServer = createMockServer({ now: () => clock, empty: true })
+  const fx = createFixtureServer({ now: () => clock, empty: true })
   const ID = (() => {
-    const r = server.handle(
-      'POST',
-      '/api/spaces/default/pages',
-      JSON.stringify({ meta: { title: 'T' }, body: 'F0\n' }),
-      'application/json',
-    )
+    const r = fx.handle('POST', '/api/spaces/default/pages', JSON.stringify({ meta: { title: 'T' }, body: 'F0\n' }))
     return (r.body as Page).id
   })()
   const call = (method: string, path: string, body?: unknown) => {
-    const r = server.handle(
+    const r = fx.handle(
       method,
       `/api/spaces/default/pages/${ID}${path}`,
       body === undefined ? undefined : JSON.stringify(body),
-      method === 'GET' ? null : 'application/json',
     )
     if (TRACE && method !== 'GET')
       log.push(`      ${method} ${path} ${JSON.stringify(body)?.slice(0, 120)} -> ${r.status}`)
@@ -613,7 +608,7 @@ export async function runSequence(
       if (gone) return
       const before = getPage()
       clock += 180_000
-      server.sweep()
+      sweepDrafts(fx.data, clock, 120_000, 600_000)
       const after = getPage()
       fileTextsEver.add(after.body.replace(/\n$/, ''))
       if (after.rev !== before.rev)

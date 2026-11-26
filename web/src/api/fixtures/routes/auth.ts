@@ -1,0 +1,257 @@
+// Who is signed in, and the pages around signing in: sessions, login, logout, setup, invites, providers, captcha,
+// passkeys, registration, password reset, OAuth consent; and the few reads every page makes at start (meta, settings,
+// unread count). A login signs in the person named, whatever password came; a refusal is for `fx.fail`.
+
+import type { SessionInfo, SessionUser, SignInAnswer } from '../../types.ts'
+import type { AuthData } from '../data/model.ts'
+import { DEMO_ADMIN, DEMO_MEMBER, type UserRec } from '../data/people.ts'
+import { add, newId, Refusal, reply, type Ctx, type Route } from '../kit.ts'
+
+const view = ({ password: _p, passkeys: _k, ...user }: UserRec): SessionUser => (void _p, void _k, user)
+const current = (a: AuthData) => a.users.find((u) => u.id === a.signedIn)
+
+// What every sign-in answers: the person with their permissions, and the hold on the session.
+function signIn(a: AuthData, u: UserRec): SignInAnswer {
+  a.signedIn = u.id
+  a.ended = undefined
+  return { user: view(u), hold: a.hold }
+}
+
+// A new account takes after the demo person of its role: what that role holds is declared in data/people.ts.
+const BASE = { admin: DEMO_ADMIN, member: DEMO_MEMBER }
+function accountFrom(c: Ctx, role: keyof typeof BASE): UserRec {
+  const { username, name, email = '', password = '' } = c.body
+  return {
+    ...BASE[role],
+    id: newId(c.data, '01FU'),
+    username,
+    name: name || username,
+    email,
+    password,
+    siteAdmin: false,
+  }
+}
+
+export const authRoutes: Route[] = [
+  [
+    'GET',
+    '/api/session',
+    (c): SessionInfo => {
+      const a = c.data.auth
+      const user = current(a)
+      return {
+        mode: a.mode,
+        user: user ? view(user) : null,
+        setup: a.setup,
+        hold: user ? a.hold : null,
+        ...(a.ended && !user ? { endedReason: a.ended } : {}),
+        ...(a.mode === 'accounts' ? { methods: { password: true, oidc: null } } : {}),
+        token: null,
+      }
+    },
+  ],
+  [
+    'POST',
+    '/api/login',
+    (c) => {
+      const a = c.data.auth
+      const u = a.users.find((x) => x.username === c.body.username)
+      if (!u) throw new Refusal(401, 'unauthenticated', 'wrong username or password')
+      return signIn(a, u)
+    },
+  ],
+  [
+    'POST',
+    '/api/logout',
+    (c) => {
+      c.data.auth.signedIn = null
+    },
+  ],
+  [
+    'POST',
+    '/api/setup',
+    (c) => {
+      const a = c.data.auth
+      const u = add(a.users, accountFrom(c, 'admin'))
+      a.setup = false
+      return signIn(a, u)
+    },
+  ],
+  [
+    'POST',
+    '/api/invites/check',
+    (c) => {
+      const inv = c.data.auth.invite
+      if (!inv || inv.token !== c.body.token) throw new Refusal(404, 'not_found', 'the invite is not valid')
+      return { role: inv.role, expires: '2099-01-01T00:00:00Z', username: '', name: '', email: '', ...inv.fill }
+    },
+  ],
+  [
+    'POST',
+    '/api/invites/accept',
+    (c) => {
+      const a = c.data.auth
+      return reply(201, signIn(a, add(a.users, accountFrom(c, c.data.auth.invite?.role ?? 'member'))))
+    },
+  ],
+  [
+    'GET',
+    '/api/auth/providers',
+    (c) => {
+      const a = c.data.auth
+      return {
+        providers: a.providers.map((p) => ({ slug: p.slug, kind: p.kind, name: p.name, icon: p.icon ?? '' })),
+        loginMode: a.loginMode,
+        local: true,
+        sso: a.providers.length > 0,
+        passkey: a.passkeys,
+        register: a.register,
+        forgot: a.forgot,
+        orgCreation: a.orgCreation,
+      }
+    },
+  ],
+  ['POST', '/api/auth/:kind/:slug/start', (c) => ({ url: `/api/auth/${c.params.kind}/${c.params.slug}/callback` })],
+  ['POST', '/api/auth/oidc/start', () => ({ url: '/api/auth/oidc/callback' })],
+  [
+    'GET',
+    '/api/captcha',
+    (c) => (c.data.auth.captcha ? { required: true, ...c.data.auth.captcha } : { required: false }),
+  ],
+  [
+    'POST',
+    '/api/auth/passkey/begin',
+    () => ({
+      ceremony: 'ceremony-login',
+      options: { challenge: 'Y2hhbGxlbmdl', rpId: 'localhost', timeout: 300000, userVerification: 'required' },
+    }),
+  ],
+  [
+    'POST',
+    '/api/auth/passkey/finish',
+    (c) => {
+      const a = c.data.auth
+      const u = a.users.find((x) => x.passkeys) ?? a.users[0]
+      return { ...signIn(a, u), return: c.query.get('return') ?? '/' }
+    },
+  ],
+  [
+    'POST',
+    '/api/account/passkeys/begin',
+    () => ({
+      ceremony: 'ceremony-register',
+      options: {
+        challenge: 'Y2hhbGxlbmdl',
+        rp: { name: 'PetalBook', id: 'localhost' },
+        user: { id: 'dXNlcg', name: 'user', displayName: 'user' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      },
+    }),
+  ],
+  [
+    'POST',
+    '/api/account/passkeys/finish',
+    (c) => {
+      const a = c.data.auth
+      a.hold = null
+      return { passkeys: [{ id: newId(c.data), name: 'passkey', created: '2026-11-26T00:00:00Z', synced: false }] }
+    },
+  ],
+
+  // registration, password reset, email links
+  [
+    'GET',
+    '/api/register',
+    (c) => ({
+      open: c.data.auth.register,
+      orgCreation: { open: c.data.auth.orgCreation },
+      ...(c.data.auth.termsUrl ? { termsUrl: c.data.auth.termsUrl } : {}),
+    }),
+  ],
+  [
+    'POST',
+    '/api/register',
+    (c) => {
+      c.data.sent.mail.push({ to: c.body.email, kind: c.body.org ? 'register_org' : 'register' })
+      return reply(202, { sent: true })
+    },
+  ],
+  [
+    'POST',
+    '/api/register/confirm',
+    (c) => {
+      const a = c.data.auth
+      return signIn(a, add(a.users, accountFrom(c, 'member')))
+    },
+  ],
+  [
+    'POST',
+    '/api/password/forgot',
+    (c) => {
+      c.data.sent.mail.push({ to: String(c.body.login), kind: 'reset' })
+      return reply(202, { sent: true })
+    },
+  ],
+  ['POST', '/api/password/reset/check', () => ({ username: 'admin', expires: '2099-01-01T00:00:00Z' })],
+  ['POST', '/api/password/reset', () => undefined],
+  ['POST', '/api/email/confirm', () => undefined],
+
+  // OAuth consent
+  [
+    'GET',
+    '/api/oauth/consent',
+    (c) => {
+      const info = c.data.auth.consents[c.query.get('req') ?? '']
+      if (!info) throw new Refusal(404, 'not_found', 'no such request')
+      return info
+    },
+  ],
+  [
+    'POST',
+    '/api/oauth/consent',
+    (c) => ({
+      redirect: c.body.approve ? 'https://client.example/cb?code=ok' : 'https://client.example/cb?error=access_denied',
+    }),
+  ],
+
+  // the person's own account, as the page about it reads it
+  [
+    'GET',
+    '/api/account',
+    (c) => {
+      const u = current(c.data.auth)
+      if (!u) throw new Refusal(401, 'unauthenticated', 'sign in first')
+      const { permissions: _permissions, ...user } = view(u)
+      void _permissions
+      return {
+        user,
+        hasPassword: true,
+        identities: [],
+        passkeys: Array.from({ length: u.passkeys ?? 0 }, (_, i) => ({
+          id: `pk${i}`,
+          name: 'passkey',
+          created: user.created,
+          synced: false,
+        })),
+        groups: [],
+        emails: user.email
+          ? [{ email: user.email, primary: true, verified: user.emailVerified, created: user.created }]
+          : [],
+      }
+    },
+  ],
+
+  // what every page reads at start
+  [
+    'GET',
+    '/api/meta',
+    (c) => ({
+      version: 'fixture',
+      maxUpload: 10 << 20,
+      maxImport: 100 << 20,
+      spaces: c.data.spaces.map((s) => s.info),
+    }),
+  ],
+  ['GET', '/api/settings', (c) => ({ features: c.data.features, settings: [] })],
+  ['GET', '/api/notifications/unread', () => ({ count: 0 })],
+]

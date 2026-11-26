@@ -5,23 +5,14 @@ import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { api } from '@/api/client'
 import { keys, useSession } from '@/api/hooks'
 import type { EndedReason } from '@/api/types'
-import { MOCK_ADMIN, type MockOptions } from '@/api/mock/server'
+import type { FixtureOptions } from '@/api/fixtures/data/model'
+import { DEMO_MEMBER, MOCK_ADMIN } from '@/api/fixtures/data/people'
 import { loginUrl } from '@/lib/auth'
 import { forgetLastAccount, lastAccount, rememberAccount, type LastMethod } from '@/lib/lastAccount'
 import { ts } from '@/i18n/signin'
 import { signinEn } from '@/i18n/signin/en'
 import { t } from '@/i18n'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  locationText,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { RememberAccount } from '@/components/auth/RememberAccount'
 import LoginPage from './LoginPage'
 
@@ -31,7 +22,7 @@ beforeEach(() => {
   sessionStorage.clear()
 })
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -70,20 +61,16 @@ const company = {
   oidc: { issuer: 'https://login.example/v2.0', clientId: 'id' },
 }
 
-async function endSession(mm: Mounted, reason: EndedReason) {
-  await fetch('/api/_mock/end-session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason }),
-  })
+async function endSession(mm: FxMounted, reason: EndedReason) {
+  mm.fx.endSession(reason)
   await mm.qc.invalidateQueries({ queryKey: keys.session })
 }
 
 // The person is in the app at `path`; then their session ends for `reason` (by itself, as far as they know), and the
 // app reads the session again, which lands on the sign-in page.
-async function endedAt(path: string, reason: EndedReason, last: LastMethod | null, server: MockOptions = {}) {
+async function endedAt(path: string, reason: EndedReason, last: LastMethod | null, fixtures: FixtureOptions = {}) {
   if (last) rememberAccount(admin, last)
-  m = await mount(routes, { entries: [path], signIn: true, server: { mode: 'accounts', ...server } })
+  m = await mount(routes, { entries: [path], signIn: true, fixtures: { mode: 'accounts', ...fixtures } })
   await settle(() => document.querySelector('[data-testid="app"]') !== null, 'the app')
   await endSession(m, reason)
   await settle(() => locationText().startsWith('/login'), 'the sign-in page')
@@ -146,7 +133,7 @@ describe('the sign-in page after a session ended', () => {
 
   it('a plain visit says nothing about a remembered account', async () => {
     rememberAccount(admin, { type: 'password' })
-    m = await mount(routes, { entries: ['/login'], server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/login'], fixtures: { mode: 'accounts' } })
     await settle(() => visibleUsername() !== null, 'the form')
     expect(document.querySelector('[role="group"]')).toBeNull()
     expect(text()).not.toContain(ts.ended.expired)
@@ -176,6 +163,7 @@ describe('the last way of signing in is offered again', () => {
   it('password: a wrong password says so and keeps the page', async () => {
     await endedAt('/', 'expired', { type: 'password' })
     await settle(() => passwordInput() !== null, 'the password field')
+    m!.fx.fail('POST', '/api/login', 401, { code: 'unauthenticated' })
     await type(passwordInput()!, 'not it at all')
     await click(document.querySelector('form button[type="submit"]'))
     await settle(() => document.querySelector('[role="alert"]') !== null, 'the refusal')
@@ -185,12 +173,8 @@ describe('the last way of signing in is offered again', () => {
 
   it('passkey: only the passkey button, which names the person, and signing in returns to the page they were on', async () => {
     rememberAccount({ name: '名 carol', username: 'carol', email: '' }, { type: 'passkey' })
-    m = await mount(routes, { entries: ['/s/abc'], signIn: true, server: { mode: 'accounts' } })
-    const carol = makePerson(m.server, 'carol')
-    const ceremony = (
-      carol.request('POST', '/api/account/passkeys/begin', { name: 'Key' }).body as { ceremony: string }
-    ).ceremony
-    carol.request('POST', `/api/account/passkeys/finish?ceremony=${ceremony}`, { id: 'cred-carol' })
+    m = await mount(routes, { entries: ['/s/abc'], signIn: true, fixtures: { mode: 'accounts' } })
+    m.fx.data.auth.users.push({ ...DEMO_MEMBER, name: '名 carol', passkeys: 1 })
     await settle(() => document.querySelector('[data-testid="app"]') !== null, 'the app')
     await endSession(m, 'signed_out_elsewhere')
     await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the passkey button')
@@ -286,7 +270,7 @@ describe('choosing another account', () => {
 
   it('sticks for this visit: the session read again, or the page mounted afresh, does not bring the account back', async () => {
     rememberAccount(admin, { type: 'password' })
-    m = await mount(remountable, { entries: ['/s/abc'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(remountable, { entries: ['/s/abc'], signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => document.querySelector('[data-testid="app"]') !== null, 'the app')
     await endSession(m, 'expired')
     await settle(() => buttonWith(ts.ended.otherAccount) !== undefined, 'the link')
@@ -324,14 +308,18 @@ describe('touch targets', () => {
       .map((e) => e.outerHTML.slice(0, 120))
 
   it('the ordinary page, with every way of signing in and the links', async () => {
-    m = await mount(routes, { entries: ['/login'], server: { mode: 'accounts', providers: [company] } })
-    adminRequests(m.server)('PUT', '/api/admin/mail', {
-      enabled: true,
-      host: 'smtp.example.test',
-      from: 'notes@example.test',
+    // Mail and registration are on: the page links to both.
+    m = await mount(routes, {
+      entries: ['/login'],
+      fixtures: {
+        mode: 'accounts',
+        providers: [company],
+        data: (d) => {
+          d.auth.forgot = true
+          d.auth.register = true
+        },
+      },
     })
-    adminRequests(m.server)('PUT', '/api/admin/settings/features.registration', { value: true })
-    await m.qc.invalidateQueries()
     await settle(() => linkWith(ts.login.withProvider('Company SSO')) !== undefined, 'the page')
     await settle(() => buttonWith(ts.login.passkeyButton) !== undefined, 'the passkey button')
     expect(document.querySelectorAll('main a').length).toBeGreaterThanOrEqual(3)
@@ -341,7 +329,7 @@ describe('touch targets', () => {
   it('single sign-on first, with the form folded', async () => {
     m = await mount(routes, {
       entries: ['/login'],
-      server: { mode: 'accounts', providers: [company], security: { login: { mode: 'sso_first' } } },
+      fixtures: { mode: 'accounts', providers: [company], loginMode: 'sso_first' },
     })
     await settle(() => buttonWith(ts.login.usePassword) !== undefined, 'the page')
     expect(tooSmall()).toEqual([])
@@ -420,7 +408,7 @@ describe('what is kept in the browser', () => {
 
   it('shows the avatar when there is an address for one', async () => {
     rememberAccount({ ...admin, avatarUrl: 'https://img.example/a.png' }, { type: 'password' })
-    m = await mount(routes, { entries: ['/'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, { entries: ['/'], signIn: true, fixtures: { mode: 'accounts' } })
     await settle(() => document.querySelector('[data-testid="app"]') !== null, 'the app')
     await endSession(m, 'expired')
     await settle(() => document.querySelector('[role="group"] img') !== null, 'the avatar')
@@ -433,7 +421,7 @@ describe('what is kept in the browser', () => {
         <RememberAccount />
         {routes}
       </>,
-      { entries: ['/'], signIn: true, server: { mode: 'accounts' } },
+      { entries: ['/'], signIn: true, fixtures: { mode: 'accounts' } },
     )
     await settle(() => lastAccount() !== null, 'the account kept')
     expect(lastAccount()).toMatchObject({ username: MOCK_ADMIN.username, method: { type: 'password' } })

@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { api, spaceApi } from '@/api/client'
-import { adminApi } from '@/api/admin'
 import { spacesOf } from './registry'
 import { onOfflineOff } from './poller'
-import { MOCK_ADMIN } from '@/api/mock/server'
+import { MOCK_ADMIN } from '@/api/fixtures/data/people'
 import { DEFAULT_CONFIG } from './store'
 import { configure, existingStore, hasCopy } from './manager'
 import { pollOnce, startPolling, syncNow, onSynced } from './poller'
@@ -14,7 +13,7 @@ import { syncSpace } from './sync'
 let net: Net
 let me = ''
 beforeEach(async () => {
-  net = network({ mode: 'accounts', oidc: null })
+  net = network({ mode: 'accounts' })
   me = (await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
 })
 afterEach(() => net.restore())
@@ -84,13 +83,12 @@ describe('polling the heads', () => {
   it('a space switched off is kept, read only, not asked about again, and syncs again when it is back', async () => {
     const { a, b } = await twoSpaces()
     await api.updateSpace(a, {}).catch(() => undefined)
-    const adm = (path: string) =>
-      fetch(`/api/admin/spaces/${b}/${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-    expect((await adm('disable')).status).toBe(204)
+    // The administrator switches the space off: the server still lists it, and no longer answers for its heads.
+    const space = net.fx.data.spaces.find((x) => x.info.id === b)!
+    const headsOfA = net.fx.call('GET', `/api/sync/heads?space=${a}`).body.heads
+    space.info.disabled = true
+    net.fx.reply('GET', '/api/sync/heads', { heads: headsOfA, missing: [b] })
+    net.fx.fail('GET', `/api/spaces/${b}/changes`, 403, { code: 'space_disabled' })
     await pollOnce(me)
     const st = await (await existingStore(me, b))!.state()
     expect(st.disabled).toBe(true)
@@ -99,7 +97,8 @@ describe('polling the heads', () => {
     const before = net.requests.length
     await pollOnce(me)
     expect(net.requests.slice(before).filter((r) => r.includes(`/spaces/${b}/`))).toEqual([])
-    expect((await adm('enable')).status).toBe(204)
+    net.fx.clear()
+    space.info.disabled = false
     await pollOnce(me)
     expect((await (await existingStore(me, b))!.state()).disabled).toBe(false)
   })
@@ -223,12 +222,16 @@ describe('the timer', () => {
 })
 
 describe('when the administrators turn offline copies off', () => {
-  const turnOff = () => adminApi.putSiteSetting('features.offline', { value: false, lower: { mode: 'lock' } })
-  const turnOn = () => adminApi.putSiteSetting('features.offline', { value: true, lower: { mode: 'allow' } })
+  // The administrators switch features.offline off: every offline route is refused.
+  const turnOff = () => {
+    for (const path of ['/api/sync/heads', '/api/spaces/:space/changes', '/api/spaces/:space/sync/catalog'])
+      net.fx.fail('GET', path, 403, { code: 'feature_off', feature: 'features.offline' })
+  }
+  const turnOn = () => net.fx.clear()
 
   it('the heads are refused: the copies of the account are deleted, the other requests stop, and the app is told', async () => {
     const { a, b } = await twoSpaces()
-    await turnOff()
+    turnOff()
     const told: string[] = []
     const off = onOfflineOff((u) => told.push(u))
     await pollOnce(me)
@@ -247,7 +250,7 @@ describe('when the administrators turn offline copies off', () => {
     const { a } = await twoSpaces()
     const other = (await configure('another-person', a, { ...DEFAULT_CONFIG }))!
     expect(other).toBeDefined()
-    await turnOff()
+    turnOff()
     const r = await syncNow(me, a)
     expect(r.outcome).toBe('off')
     expect(spacesOf(me)).toEqual([])
@@ -264,9 +267,9 @@ describe('when the administrators turn offline copies off', () => {
 
   it('copies can be kept and synced again once it is turned back on', async () => {
     const { a } = await twoSpaces()
-    await turnOff()
+    turnOff()
     await pollOnce(me)
-    await turnOn()
+    turnOn()
     const store = (await configure(me, a, { ...DEFAULT_CONFIG }))!
     expect((await syncSpace(store)).outcome).toBe('ok')
     expect(hasCopy(me, a)).toBe(true)

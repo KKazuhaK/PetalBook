@@ -3,19 +3,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act, useEffect, type ReactNode } from 'react'
 import { useNavigate, type NavigateFunction } from 'react-router'
 import { toast } from 'sonner'
-import {
-  byLabel,
-  click,
-  installDomShims,
-  locationText,
-  mount,
-  settle,
-  shareSpace,
-  type,
-  type Mounted,
-} from '@/testing/harness'
-import { listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
-import type { MockServer } from '@/api/mock/server'
+import { byLabel, click, installDomShims, locationText, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { handWrittenViews, listShell, putViews, seedWork, sender, TASK, viewsOf } from '@/testing/listKit'
+import { sharedSpace } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { keys, viewsTiming } from '@/api/hooks'
 import { viewIdKey } from '@/lib/savedViews'
 import { viewKey } from '@/lib/listView'
@@ -23,12 +14,12 @@ import { t } from '@/i18n'
 import { tb as tbWords } from '@/i18n/boards'
 import { tp as tpWords } from '@/i18n/props'
 
-// The tabs of saved views above the listing of a folder or a tag, against the mock server.
+// The tabs of saved views above the listing of a folder or a tag, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -51,11 +42,12 @@ const textButton = (label: string) =>
 
 async function open(
   path = '/s/default/f/Work',
-  scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>, server: MockServer) => void,
-  options: Parameters<typeof mount>[1] = {},
+  scene?: (send: ReturnType<typeof sender>, ids: ReturnType<typeof seedWork>, server: FixtureServer) => void,
+  options: { delay?: (method: string, url: string) => number } = {},
 ) {
   m = await mount(withNav(listShell), {
     ...options,
+    fixtures: true,
     entries: (server) => {
       const send = sender(server)
       const ids = seedWork(server)
@@ -67,7 +59,7 @@ async function open(
   return m
 }
 
-const saved = () => viewsOf(sender(m!.server), 'folder=Work')
+const saved = () => viewsOf(sender(m!.fx), 'folder=Work')
 
 // A way to move within the app, as a link or "back" would.
 let nav: NavigateFunction | null = null
@@ -256,7 +248,7 @@ describe('tabs', () => {
     expect(listUrls().at(-1)).toContain('"op":"in"')
     expect(modifiedMark()).not.toBeNull()
     await click(textButton(t.views.save))
-    await settle(() => (viewsOf(sender(m!.server), 'folder=Work').views[0].filter as any[]).length === 1, 'saved')
+    await settle(() => (viewsOf(sender(m!.fx), 'folder=Work').views[0].filter as any[]).length === 1, 'saved')
     expect((await saved()).views[0].filter).toEqual([{ key: 'status', op: 'in', values: ['todo'] }])
   })
 
@@ -424,7 +416,7 @@ describe("while the person's own write of the views is on its way", () => {
     await act(async () => input.form!.requestSubmit())
     await settle(() => puts().length === 1 && off(), 'the rename on its way')
     // Written: another person adds a view, and the views are read again before the answer comes.
-    putViews(sender(m!.server), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
+    putViews(sender(m!.fx), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
     await refetch()
     await new Promise((r) => setTimeout(r, 50))
     expect(tabNames()).toEqual(['全部', '看板'])
@@ -490,7 +482,7 @@ describe("while the person's own write of the views is on its way", () => {
   it('nothing stays off after a refused save (409)', async () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
-    putViews(sender(m!.server), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
+    putViews(sender(m!.fx), FOLDER, [...(await saved()).views, { name: '别人的', layout: 'list' }])
     await click(button(t.view.cards))
     await click(textButton(t.views.save))
     await settle(
@@ -534,6 +526,7 @@ describe('an address that changes before the views are read', () => {
     let id = ''
     m = await mount(withNav(listShell), {
       ...slowViews,
+      fixtures: true,
       entries: (server) => {
         const send = sender(server)
         seedWork(server)
@@ -556,6 +549,7 @@ describe('an address that changes before the views are read', () => {
   it('round 10 (4): "sort=" for the implicit view, which the first list shows is gone: dropped with the word for a link', async () => {
     m = await mount(withNav(listShell), {
       ...slowViews,
+      fixtures: true,
       entries: (server) => {
         seedWork(server)
         putViews(sender(server), FOLDER, [{ name: '甲', layout: 'list', sort: 'title' }])
@@ -580,7 +574,7 @@ describe('when someone else changed the views', () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     // Another person adds a view and renames one.
-    putViews(sender(m!.server), FOLDER, [
+    putViews(sender(m!.fx), FOLDER, [
       { ...(await saved()).views[0], name: '别人改的' },
       (await saved()).views[1],
       { name: '别人的新视图', layout: 'cards' },
@@ -602,7 +596,7 @@ describe('when someone else changed the views', () => {
   it('a rename, a copy and a delete are refused the same way', async () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
-    putViews(sender(m!.server), FOLDER, [(await saved()).views[0]])
+    putViews(sender(m!.fx), FOLDER, [(await saved()).views[0]])
     await click(button(t.views.duplicate))
     await settle(() => document.body.textContent!.includes(t.views.conflict), 'the message')
     await settle(() => tabs().length === 1, 'the views as they are')
@@ -613,7 +607,7 @@ describe('when someone else changed the views', () => {
     await open('/s/default/f/Work', two)
     await settle(() => tabs().length === 2, 'the tabs')
     await click(tab('看板'))
-    putViews(sender(m!.server), FOLDER, [(await saved()).views[0]])
+    putViews(sender(m!.fx), FOLDER, [(await saved()).views[0]])
     await click(button(t.views.rename))
     const input = document.querySelector<HTMLInputElement>(`input[aria-label="${t.views.name}"]`)!
     await type(input, '新名字')
@@ -627,11 +621,10 @@ describe('someone who may only read', () => {
   async function openReadOnly() {
     m = await mount(listShell, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        const send = (method: string, path: string, body?: unknown) =>
-          owner.request(method, `/api/spaces/${space}${path}`, body)
+        const space = sharedSpace(server.data, 'viewer').info.id
+        const send = sender(server, space)
         send('PUT', '/types/task', TASK)
         send('POST', '/folders', { path: 'Work' })
         send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
@@ -670,10 +663,10 @@ describe('someone who may only read', () => {
   it('who has no view at all sees no tabs and no button', async () => {
     m = await mount(listShell, {
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: { mode: 'accounts' },
       entries: (server) => {
-        const { space, owner } = shareSpace(server, 'viewer')
-        owner.request('POST', `/api/spaces/${space}/folders`, { path: 'Work' })
+        const space = sharedSpace(server.data, 'viewer').info.id
+        sender(server, space)('POST', '/folders', { path: 'Work' })
         return [`/s/${space}/f/Work`]
       },
     })
@@ -717,7 +710,7 @@ describe('a tag', () => {
     const body = JSON.parse(puts()[0].body!)
     expect(body).toMatchObject({ tag: '栀子', views: [{ name: '状态', layout: 'board', group: 'status' }] })
     expect(body.folder).toBeUndefined()
-    expect(viewsOf(sender(m!.server), 'tag=%E6%A0%80%E5%AD%90').views).toHaveLength(1)
+    expect(viewsOf(sender(m!.fx), 'tag=%E6%A0%80%E5%AD%90').views).toHaveLength(1)
     expect(localStorage.getItem(viewIdKey('default', 'tag', '栀子'))).toBeTruthy()
   })
 
@@ -741,7 +734,7 @@ describe('a view whose layout this listing cannot show', () => {
     await click(textButton(t.views.save))
     await settle(() => puts().length === 1, 'the save')
     expect(JSON.parse(puts()[0].body!).views[0]).toMatchObject({ name: '表', layout: 'table', sort: 'title' })
-    expect(viewsOf(sender(m!.server), 'tag=%E6%A0%80%E5%AD%90').views[0].layout).toBe('table')
+    expect(viewsOf(sender(m!.fx), 'tag=%E6%A0%80%E5%AD%90').views[0].layout).toBe('table')
   })
 })
 
@@ -754,8 +747,8 @@ async function settleFor<T>(find: () => T | null | undefined): Promise<T> {
 }
 
 describe('a view written by hand', () => {
-  const hand = (_send: unknown, _ids: unknown, server: MockServer) =>
-    server.seedHandWrittenViews('Work', [
+  const hand = (_send: unknown, _ids: unknown, server: FixtureServer) =>
+    handWrittenViews(server, 'Work', [
       { name: '甲', layout: 'list' },
       { name: '乙', layout: 'list' },
     ])
@@ -804,7 +797,7 @@ describe('a view written by hand', () => {
 
   // Another person writes the list: every "@n" gets a real id, in the same order, and a third view is added.
   const otherWrites = async () => {
-    putViews(sender(m!.server), FOLDER, [
+    putViews(sender(m!.fx), FOLDER, [
       { name: '甲', layout: 'list' },
       { name: '乙', layout: 'list' },
       { name: '丙', layout: 'cards' },
@@ -855,14 +848,14 @@ describe('a view written by hand while another person changes the list', () => {
   beforeEach(() => {
     toast.dismiss()
   })
-  const three = (_send: unknown, _ids: unknown, server: MockServer) =>
-    server.seedHandWrittenViews('Work', [
+  const three = (_send: unknown, _ids: unknown, server: FixtureServer) =>
+    handWrittenViews(server, 'Work', [
       { name: '甲', layout: 'list' },
       { name: '乙', layout: 'list' },
       { name: '丙', layout: 'list' },
     ])
   const list = (...names: string[]) => names.map((name) => ({ name, layout: 'list' }))
-  const other = (views: Record<string, unknown>[]) => putViews(sender(m!.server), FOLDER, views)
+  const other = (views: Record<string, unknown>[]) => putViews(sender(m!.fx), FOLDER, views)
   const refetch = async () => {
     await act(async () => {
       await m!.qc.invalidateQueries({ queryKey: keys.views('default', FOLDER) })
@@ -938,7 +931,7 @@ describe('a view written by hand while another person changes the list', () => {
 
   it('drops the changes when two views have the same name and settings, rather than guess', async () => {
     await editSecond((_s, _i, server) =>
-      server.seedHandWrittenViews('Work', [
+      handWrittenViews(server, 'Work', [
         { name: '甲', layout: 'list' },
         { name: '乙', layout: 'list' },
       ]),
@@ -994,7 +987,7 @@ describe('a view written by hand while another person changes the list', () => {
 
   it('keeps the view the person moved: the write answers in the order sent, even for views with the same name', async () => {
     await editSecond((_s, _i, server) =>
-      server.seedHandWrittenViews('Work', [
+      handWrittenViews(server, 'Work', [
         { name: '乙', layout: 'list' },
         { name: '乙', layout: 'list' },
         { name: '丙', layout: 'list' },
@@ -1037,8 +1030,8 @@ describe('a view written by hand, then a new view or a copy', () => {
   beforeEach(() => {
     toast.dismiss()
   })
-  const hand = (_send: unknown, _ids: unknown, server: MockServer) =>
-    server.seedHandWrittenViews('Work', [
+  const hand = (_send: unknown, _ids: unknown, server: FixtureServer) =>
+    handWrittenViews(server, 'Work', [
       { name: '甲', layout: 'list' },
       { name: '乙', layout: 'list' },
     ])
@@ -1165,8 +1158,8 @@ describe('the sort of a view that someone else removes or renames', () => {
       { name: '甲', layout: 'list' },
       { name: '乙', layout: 'list' },
     ])
-  const hand = (_send: unknown, _ids: unknown, server: MockServer) =>
-    server.seedHandWrittenViews('Work', [
+  const hand = (_send: unknown, _ids: unknown, server: FixtureServer) =>
+    handWrittenViews(server, 'Work', [
       { name: '甲', layout: 'list' },
       { name: '乙', layout: 'list' },
     ])
@@ -1194,7 +1187,7 @@ describe('the sort of a view that someone else removes or renames', () => {
     await sortTo('title')
     expect(locationText()).toContain('sort=title')
     expect(locationText()).toContain(`view=${(await saved()).views[1].id}`)
-    putViews(sender(m!.server), FOLDER, [(await saved()).views[0]])
+    putViews(sender(m!.fx), FOLDER, [(await saved()).views[0]])
     await refetch()
     await settle(() => tabs().length === 1, 'the views as they are')
     await expectDropped()
@@ -1206,7 +1199,7 @@ describe('the sort of a view that someone else removes or renames', () => {
     await settle(() => tabs().length === 2, 'the tabs')
     await click(tab('乙'))
     await click(button(t.view.cards))
-    putViews(sender(m!.server), FOLDER, [(await saved()).views[0]])
+    putViews(sender(m!.fx), FOLDER, [(await saved()).views[0]])
     await refetch()
     await settle(() => tabs().length === 1, 'the views as they are')
     await expectDropped()
@@ -1219,7 +1212,7 @@ describe('the sort of a view that someone else removes or renames', () => {
     await click(tab('乙'))
     await sortTo('title')
     expect(locationText()).toContain('view=%401')
-    putViews(sender(m!.server), FOLDER, [
+    putViews(sender(m!.fx), FOLDER, [
       { name: '甲', layout: 'list' },
       { name: '乙乙', layout: 'list' },
     ])
@@ -1234,7 +1227,7 @@ describe('the sort of a view that someone else removes or renames', () => {
     await settle(() => tabs().length === 2, 'the tabs')
     await click(tab('乙'))
     await sortTo('title')
-    m!.server.seedHandWrittenViews('Work', [
+    handWrittenViews(m!.fx, 'Work', [
       { name: '甲', layout: 'list' },
       { name: '乙乙', layout: 'list' },
     ])
@@ -1248,7 +1241,7 @@ describe('the sort of a view that someone else removes or renames', () => {
     await settle(() => tabs().length === 2, 'the tabs')
     await click(tab('乙'))
     await sortTo('title')
-    putViews(sender(m!.server), FOLDER, [
+    putViews(sender(m!.fx), FOLDER, [
       { name: '乙', layout: 'list' },
       { name: '甲', layout: 'list' },
     ])
@@ -1268,6 +1261,7 @@ describe('the sort of a view that someone else removes or renames', () => {
 
   it('the sort in the address belongs to the view it names: opening it shows that view with the sort, another view never gets it', async () => {
     m = await mount(listShell, {
+      fixtures: true,
       entries: (server) => {
         const send = sender(server)
         seedWork(server)

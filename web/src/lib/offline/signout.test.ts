@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { api, currentUserId } from '@/api/client'
-import { MOCK_ADMIN } from '@/api/mock/server'
+import { MOCK_ADMIN } from '@/api/fixtures/data/people'
 import { DEFAULT_CONFIG } from './store'
 import { configure, existingStore, hasCopy, storeFor } from './manager'
 import { syncSpace } from './sync'
@@ -11,7 +11,7 @@ let net: Net
 let me = ''
 let space = ''
 beforeEach(async () => {
-  net = network({ mode: 'accounts', oidc: null })
+  net = network({ mode: 'accounts' })
   me = (await api.login({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password })).user.id
   space = (await api.spaces()).spaces[0].id
 })

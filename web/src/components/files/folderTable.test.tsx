@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { FolderList } from '@/pages/Lists'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tc } from '@/i18n/console'
-import { click, installDomShims, mount, settle, type Mounted } from '@/testing/harness'
+import { click, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
 import { browserPrefs, prefsStore, setPrefsStore, type PrefsStore } from '@/lib/prefsStore'
 import { readPrefs } from '@/lib/tablePrefs'
 
@@ -17,7 +17,7 @@ import { readPrefs } from '@/lib/tablePrefs'
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -40,17 +40,9 @@ const shell = (
     </QuickCaptureProvider>
   </SidebarProvider>
 )
-const send = (server: MockServer, method: string, path: string, body?: unknown) =>
-  server.handle(
-    method,
-    `/api/spaces/default${path}`,
-    body === undefined ? undefined : JSON.stringify(body),
-    'application/json',
-  ) as {
-    body: any
-  }
+const send = (fx: FixtureServer, method: string, path: string, body?: unknown) => fx.on()(method, path, body)
 
-function seed(server: MockServer) {
+function seed(server: FixtureServer) {
   send(server, 'POST', '/folders', { path: 'Notes' })
   send(server, 'POST', '/folders', { path: 'Notes/Sub' })
   const make = (title: string, meta: Record<string, unknown>) =>
@@ -60,7 +52,7 @@ function seed(server: MockServer) {
   make('Charlie', { tags: ['y'], icon: 'flower', color: 'pink' })
 }
 const open = async (entries = '/s/default/f/Notes') => {
-  m = await mount(shell, { entries: (server) => (seed(server), [entries]) })
+  m = await mount(shell, { fixtures: true, entries: (server) => (seed(server), [entries]) })
   await settle(() => document.querySelectorAll('tr[data-row]').length === 4, 'the rows')
 }
 const rowKeys = () => [...document.querySelectorAll('tr[data-row]')].map((r) => r.getAttribute('data-row'))
@@ -89,6 +81,7 @@ describe('the folder as a table', () => {
 
   it("shows a folder's Updated, the newest page below it, and nothing for an empty folder", async () => {
     m = await mount(shell, {
+      fixtures: true,
       entries: (server) => {
         send(server, 'POST', '/folders', { path: 'Notes/Empty' })
         send(server, 'POST', '/pages', { folder: 'Notes/Deep/Er', meta: { title: 'Down' }, body: 'x\n' })
@@ -212,7 +205,7 @@ describe('on a phone', () => {
   it('is rows of a title with a small line of time, tags and sources, and sort and filter behind one button', async () => {
     const restore = phone()
     try {
-      m = await mount(shell, { entries: (server) => (seed(server), ['/s/default/f/Notes']) })
+      m = await mount(shell, { fixtures: true, entries: (server) => (seed(server), ['/s/default/f/Notes']) })
       await settle(() => document.querySelector('[data-slot="phone-rows"]') !== null, 'the rows')
       expect(document.querySelector('table')).toBeNull()
       const rows = [...document.querySelectorAll('[data-slot="phone-rows"] > li')]

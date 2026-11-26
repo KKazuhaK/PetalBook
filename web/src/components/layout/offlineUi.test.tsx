@@ -15,7 +15,7 @@ import { noteNetworkFailure, noteNetworkOk } from '@/lib/offline/status'
 import { freshDevice } from '@/lib/offline/testkit'
 import { syncSpace } from '@/lib/offline/sync'
 import PageEditor from '@/pages/PageEditor'
-import { byLabel, installDomShims, mount, settle, type, type Mounted } from '@/testing/harness'
+import { byLabel, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
 import { sender } from '@/testing/listKit'
 import { OfflineBanner } from './OfflineSync'
 
@@ -31,7 +31,7 @@ beforeEach(() => {
   rememberUser('local')
 })
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -69,7 +69,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
     let id = ''
     m = await mount(null, {
       routes: routesFor(() => id),
-      server: { mode: 'single' },
+      fixtures: true,
       entries: (server) => {
         id = (
           sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }
@@ -103,7 +103,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
     let id = ''
     m = await mount(null, {
       routes: routesFor(() => id),
-      server: { mode: 'single' },
+      fixtures: true,
       entries: (server) => {
         id = (
           sender(server)('POST', '/pages', { meta: { title: '读写' }, body: '正文在这里\n' }).body as { id: string }
@@ -126,7 +126,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
     await act(async () => noteNetworkOk())
     await settle(() => editable() === 'true', 'writable again')
     expect(title().value).toBe('离线前打的标题')
-    const s = sender(m.server)
+    const s = sender(m.fx)
     await settle(
       () =>
         (s('GET', `/pages/${id}`).body as { draft?: { meta: { title?: string } } }).draft?.meta.title ===
@@ -140,7 +140,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
     let id = ''
     m = await mount(null, {
       routes: routesFor(() => id),
-      server: { mode: 'single' },
+      fixtures: true,
       entries: (server) => {
         const s = sender(server)
         const page = s('POST', '/pages', { folder: 'Inbox', meta: { title: '有草稿的页' }, body: '文件正文\n' })
@@ -173,7 +173,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
       'writable, on the draft',
     )
     await type(title(), '新标题')
-    const s = sender(m.server)
+    const s = sender(m.fx)
     const draft = () => (s('GET', `/pages/${id}`).body as { draft?: { body: string; meta: { title?: string } } }).draft
     await settle(() => draft()?.meta.title === '新标题', 'the title reaches the server draft', 400)
     expect(draft()!.body).toBe('文件正文\n我的草稿很重要\n')
@@ -183,7 +183,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
     let id = ''
     m = await mount(null, {
       routes: routesFor(() => id),
-      server: { mode: 'single' },
+      fixtures: true,
       entries: (server) => {
         const page = sender(server)('POST', '/pages', {
           folder: 'Inbox',
@@ -223,7 +223,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
       () => editable() === 'true' && body()!.textContent!.includes('浏览器里没存的字'),
       'writable, on the browser draft',
     )
-    const s = sender(m.server)
+    const s = sender(m.fx)
     await settle(
       () =>
         (s('GET', `/pages/${id}`).body as { draft?: { body: string } }).draft?.body.includes('浏览器里没存的字') ===
@@ -239,7 +239,7 @@ describe('the editor and the banner when the server cannot be reached', () => {
     let bare = ''
     m = await mount(null, {
       routes: routesFor(() => kept),
-      server: { mode: 'single' },
+      fixtures: true,
       entries: (server) => {
         const s = sender(server)
         kept = (
@@ -280,7 +280,7 @@ describe('the search dialog offline', () => {
   it('says that only what is downloaded is searched, and finds the titles and kept text on the device', async () => {
     m = await mount(null, {
       routes: routesFor(() => ''),
-      server: { mode: 'single' },
+      fixtures: true,
       entries: (server) => {
         const s = sender(server)
         s('POST', '/pages', { folder: 'Inbox', meta: { title: '月夜' }, body: '月光很亮\n' })

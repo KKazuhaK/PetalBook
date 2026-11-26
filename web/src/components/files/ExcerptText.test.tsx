@@ -2,17 +2,17 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { ExcerptText } from '@/components/files/ExcerptText'
 import { t } from '@/i18n'
-import { installDomShims, mount, type Mounted } from '@/testing/harness'
+import { installDomShims, mount, type FxMounted } from '@/testing/harness'
 
 beforeAll(installDomShims)
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
 })
 
 const render = async (text: string) => {
-  m = await mount(<p data-ex>{<ExcerptText text={text} />}</p>)
+  m = await mount(<p data-ex>{<ExcerptText text={text} />}</p>, { fixtures: true })
   return m.host.querySelector('[data-ex]')!
 }
 
