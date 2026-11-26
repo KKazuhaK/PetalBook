@@ -100,7 +100,11 @@ func TestAFeatureGateThatCannotReadFailsClosed(t *testing.T) {
 		create().want(t, 400, "invalid")
 		a.h.SetFeatureFault(func(string, string) error { return errors.New("settings read failed") })
 		create().want(t, 500, "internal")
+		// The same for a key that needs a feature (the admin data view): refused, never granted.
+		view := func() result { return f.admA.do("POST", "/api/admin/spaces/"+f.spaceA+"/view", map[string]any{}) }
+		view().want(t, 500, "internal")
 		a.h.SetFeatureFault(nil)
 		create().want(t, 400, "invalid")
+		view().want(t, 400, "invalid")
 	})
 }

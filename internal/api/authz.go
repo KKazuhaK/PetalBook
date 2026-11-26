@@ -36,7 +36,13 @@ func (e *accessError) Error() string { return e.msg }
 //
 // tenant is always explicit: the caller's own for the route table.
 func (s *server) allow(c *call, k authz.Key, tenant string) error {
-	switch authz.Decide(c.r.Context(), c.p.Access, k, tenant, s.features()) {
+	feats := &featureRead{s: s}
+	d := authz.Decide(c.r.Context(), c.p.Access, k, tenant, feats.features())
+	if feats.err != nil {
+		// Not knowing is not "on": whatever Decide made of it, nothing is granted.
+		return feats.err
+	}
+	switch d {
 	case authz.FeatureOff:
 		return featureOffError(k.Feature(), k.Name())
 	case authz.Denied:
@@ -47,6 +53,29 @@ func (s *server) allow(c *call, k authz.Key, tenant string) error {
 		return &accessError{status: http.StatusForbidden, code: "forbidden", key: k.Name(), msg: msg}
 	}
 	return s.verify(c, k, tenant)
+}
+
+// featureRead is the features of one decision, which keeps the failure of a
+// read (authz.Features cannot return one) for allow to refuse on.
+type featureRead struct {
+	s   *server
+	err error
+}
+
+func (f *featureRead) features() authz.Features {
+	if f.s.features() == nil {
+		return nil
+	}
+	return f
+}
+
+func (f *featureRead) On(ctx context.Context, tenant, feature string) bool {
+	if f.err != nil {
+		return true
+	}
+	on, err := f.s.featureOn(ctx, tenant, feature)
+	f.err = err
+	return on
 }
 
 // features is the features of the tenants, which the settings answer; nil in

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"petalbook.app/server/internal/settings"
@@ -58,15 +59,7 @@ func (s *server) featureGate(c *call, rt route) bool {
 	if s.single || s.settings == nil {
 		return true
 	}
-	tenant := c.p.User.TenantID
-	var on bool
-	var err error
-	if s.featureFault != nil {
-		err = s.featureFault(tenant, f)
-	}
-	if err == nil {
-		on, err = s.settings.Feature(c.r.Context(), tenant, f)
-	}
+	on, err := s.featureOn(c.r.Context(), c.p.User.TenantID, f)
 	if err != nil {
 		// Not knowing is not "on": the handler does not run (as the hand checks it replaced answered).
 		s.fail(c.w, err)
@@ -77,4 +70,15 @@ func (s *server) featureGate(c *call, rt route) bool {
 	}
 	s.refuse(c.w, featureOffError(f, ""))
 	return false
+}
+
+// featureOn reads a tenant's feature from the settings' cache; a failed read is
+// an error, never "on".
+func (s *server) featureOn(ctx context.Context, tenant, feature string) (bool, error) {
+	if s.featureFault != nil {
+		if err := s.featureFault(tenant, feature); err != nil {
+			return false, err
+		}
+	}
+	return s.settings.Feature(ctx, tenant, feature)
 }
