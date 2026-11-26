@@ -474,8 +474,8 @@ func cleanDisplayName(in string) (string, error) {
 }
 
 // cleanEmail checks the form of an address: an @ that is neither first nor
-// last, at most 254 bytes, no space, control or format character, < or >, and
-// a store.EmailKey. It lets characters outside ASCII through: whether those
+// last, at most 254 bytes, no space, control or format character, < or >, no
+// dot at the end, and a store.EmailKey (which has no empty label). It lets characters outside ASCII through: whether those
 // may be set is the site's (see Service.cleanEmailFor).
 func cleanEmail(in string) (string, error) {
 	e := strings.TrimSpace(in)
@@ -488,7 +488,9 @@ func cleanEmail(in string) (string, error) {
 	}) {
 		return "", errf(Invalid, "That does not look like an email address.")
 	}
-	if _, ok := store.EmailKey(e); !ok {
+	// The key leaves out the root's dot at the end of the domain (so that it
+	// is not a second spelling); an address that has one is not stored.
+	if _, ok := store.EmailKey(e); !ok || strings.HasSuffix(e, ".") {
 		return "", errf(Invalid, "That does not look like an email address.")
 	}
 	return e, nil
@@ -723,6 +725,9 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 			}
 			// The row without its address, then the address by the rules of
 			// every address (store.SetPrimaryEmail), in the same transaction.
+			// It checks who holds the address in this transaction; another
+			// writer that takes it in between meets the unique index, and the
+			// call's savepoint keeps this transaction usable for DropTakenEmail.
 			row := cand
 			row.Email, row.EmailVerified = "", false
 			if err := store.InsertUser(ctx, q, row); err != nil {

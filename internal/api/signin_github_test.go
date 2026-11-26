@@ -43,7 +43,9 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		gh.users["unverified"] = ghFake{ID: 100, Login: "newbie", Email: "n@example.test", Verified: false, Orgs: []string{"KazuhaHub"}}
 		admin := a.setup("kazuha", pw)
 		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
-		body := gh.body("gh", map[string]any{"autoCreate": true})
+		// The fake is not github.com (an Enterprise server, to the server): its
+		// verified addresses count only with the provider's trust switch.
+		body := gh.body("gh", map[string]any{"autoCreate": true, "mergeVerifiedEmail": true})
 		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
 		p := admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")
 		g := p.body["github"].(map[string]any)
@@ -94,6 +96,14 @@ func TestGitHubSignInNeedsAnOrganisationToCreateAccounts(t *testing.T) {
 		f := a.newClient("")
 		gh.signIn(t, f, "gh", "unverified", map[string]any{})
 		if u := f.do("GET", "/api/session", nil).user(); u["emailVerified"] != false || u["email"] != "n@example.test" {
+			t.Fatal(u)
+		}
+		// The Enterprise server's verified flag without the trust switch: not trusted.
+		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"mergeVerifiedEmail": false}).want(t, 200, "")
+		gh.users["ghe"] = ghFake{ID: 101, Login: "ghe-user", Email: "ghe@example.test", Verified: true, Orgs: []string{"KazuhaHub"}}
+		g2 := a.newClient("")
+		gh.signIn(t, g2, "gh", "ghe", map[string]any{})
+		if u := g2.do("GET", "/api/session", nil).user(); u["emailVerified"] != false || u["email"] != "ghe@example.test" {
 			t.Fatal(u)
 		}
 		// The user's token is used for what GitHub says about them and nothing else.

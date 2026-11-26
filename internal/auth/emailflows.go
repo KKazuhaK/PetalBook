@@ -326,12 +326,13 @@ func domainAllowed(email string, domains []string) bool {
 }
 
 // heldAddress says what a registration for an address meets, on the whole
-// server. decoy: another account holds it verified, or is deleted and keeps it
-// until the purge; the registration is then never confirmed (its link is not
-// sent). exists: that account, with the address as stored, when it may be
-// told (enabled, and the address one that may get account mail). An address
-// held only unverified by a live account is no obstacle: whoever confirms it
-// takes it (CreateUser's TakeUnverified).
+// server. decoy: another account holds it verified (store.EmailRow.Holds), or
+// is deleted and keeps it until the purge; the registration is then never
+// confirmed (its link is not sent). exists: that account, with the address as
+// stored, when it may be told (enabled, and the address one that may get
+// account mail). An address held only unverified by a live account, or marked
+// verified by a tenant administrator alone, is no obstacle: whoever confirms
+// it takes it (CreateUser's TakeUnverified).
 func (s *Service) heldAddress(ctx context.Context, email string) (decoy bool, exists *store.User, err error) {
 	row, err := store.EmailOwner(ctx, s.st.Q(), email)
 	if errors.Is(err, store.ErrNotFound) {
@@ -339,7 +340,7 @@ func (s *Service) heldAddress(ctx context.Context, email string) (decoy bool, ex
 	} else if err != nil {
 		return false, nil, err
 	}
-	if !row.Verified && !row.UserDeleted {
+	if !row.Holds() && !row.UserDeleted {
 		return false, nil, nil
 	}
 	if row.UserDeleted || !s.rowMailable(ctx, *row) {
@@ -363,7 +364,7 @@ func (s *Service) heldAddress(ctx context.Context, email string) (decoy bool, ex
 // administrator (a tenant administrator's mark alone does not count: they
 // could give a person of their tenant their own address), and mailable.
 func (s *Service) rowMailable(ctx context.Context, row store.EmailRow) bool {
-	return row.Verified && row.VerifiedBy != store.VerifiedByTenantAdmin && s.mailable(ctx, row.Email)
+	return row.Holds() && s.mailable(ctx, row.Email)
 }
 
 // resetAddressOK says whether an account's primary address may be sent a

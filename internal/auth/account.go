@@ -371,9 +371,11 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			if patch.EmailVerified != nil {
 				verified = *patch.EmailVerified && newEmail != ""
 			}
-			// An address a tenant administrator alone says is verified does not
-			// count for merging a sign-in (see mergeByEmail): they could give a
-			// person of their tenant someone else's address.
+			// An address a tenant administrator alone says is verified is marked
+			// so: it shows as verified, but holds the address on the server no
+			// more than an unverified one (store.EmailRow.Holds), and gets no
+			// link that signs in: they could give a person of their tenant
+			// someone else's address.
 			by := ""
 			if verified && !vouches {
 				by = store.VerifiedByTenantAdmin

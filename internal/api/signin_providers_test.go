@@ -364,6 +364,7 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 	set("claimfalse", "s-cf", "cf@example.test", false)
 	set("off", "s-off", "off@example.test", true)
 	set("fresh", "s-fresh", "fresh@example.test", true)
+	set("owner", "s-owner", "owner@example.test", true)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		admin.do("POST", "/api/admin/auth/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
@@ -379,6 +380,12 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 		puppet := mk("puppet", "victim@example.test", false) // someone set the victim's address, unverified
 		mk("cf-local", "cf@example.test", true)
 		mk("off-local", "off@example.test", true)
+		// A tenant administrator's mark alone: it never keeps the address
+		// from the person a trusted sign-in vouches for.
+		marked, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: "marked", Role: "member", Password: pw, Email: "owner@example.test", EmailVerified: true, VerifiedBy: store.VerifiedByTenantAdmin})
+		if err != nil {
+			t.Fatal(err)
+		}
 		try := func(key string) (string, *client) {
 			c := a.newClient("")
 			return f.signIn2(t, c, "m", key, map[string]any{}), c
@@ -411,6 +418,16 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 		}
 		if n := rowCount(t, a, `SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'system' AND payload LIKE '%email_released%'`, puppet); n != 1 {
 			t.Fatalf("%d notices", n)
+		}
+		loc, c = try("owner")
+		if who := signedInAs(t, c); loc != "/" || who == "marked" || who == "" {
+			t.Fatalf("%s %q", loc, who)
+		}
+		if u := c.do("GET", "/api/session", nil).user(); u["email"] != "owner@example.test" || u["emailVerified"] != true {
+			t.Fatal(u)
+		}
+		if p, _ := store.GetUser(ctx, a.st.Q(), store.AllTenants(), marked.ID); p.Email != "" {
+			t.Fatalf("the marked account kept %q", p.Email)
 		}
 		// Not vouched for (the claim is false): a new account without it.
 		loc, c = try("claimfalse")

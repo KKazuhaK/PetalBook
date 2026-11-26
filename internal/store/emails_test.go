@@ -86,6 +86,15 @@ func TestAnUnverifiedAddressGoesToWhoeverProvesIt(t *testing.T) {
 		if _, err := store.SetPrimaryEmail(ctx, q, "LATE", "tang@example.test", true, "", store.PrimaryOpts{TakeUnverified: true}); !errors.Is(err, store.ErrEmailTaken) {
 			t.Fatalf("a verified address moved: %v", err)
 		}
+		// A tenant administrator's mark alone is no hold on the address: whoever
+		// proves it takes it.
+		addPerson(t, q, "MARKED", store.DefaultTenantID, "", false)
+		if err := store.SetEmail(ctx, q, "MARKED", "owner@example.test", true, store.VerifiedByTenantAdmin); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := store.SetPrimaryEmail(ctx, q, "LATE", "owner@example.test", true, "", store.PrimaryOpts{TakeUnverified: true}); err != nil || r == nil || r.UserID != "MARKED" {
+			t.Fatalf("a tenant administrator's mark kept the address: %+v %v", r, err)
+		}
 		// A deleted account keeps even an unverified address, until the purge.
 		addPerson(t, q, "GONE", store.DefaultTenantID, "gone@example.test", false)
 		if _, err := q.Exec(ctx, `UPDATE users SET deleted_at = ?, recycle_item = 'R1' WHERE id = 'GONE'`, time.Now().UnixMilli()); err != nil {
@@ -166,6 +175,8 @@ func TestEmailKey(t *testing.T) {
 		{"é@example.test", "é@example.test"}, // NFC
 		{"STRASSE@example.test", "strasse@example.test"},
 		{"Straße@example.test", "strasse@example.test"}, // full folding
+		{"bob@example.com.", "bob@example.com"},         // the root's dot
+		{"bob@例子.公司.", "bob@xn--fsqu00a.xn--55qx5d"},
 	}
 	for _, p := range same {
 		a, okA := store.EmailKey(p[0])
@@ -178,7 +189,9 @@ func TestEmailKey(t *testing.T) {
 	if a, _ := store.EmailKey("tom@gİthub.test"); a == "tom@github.test" {
 		t.Error("a dotted capital I folded into github.test")
 	}
-	for _, bad := range []string{"", "x", "@x", "x@", "a@b@", "x@\xff"} {
+	for _, bad := range []string{"", "x", "@x", "x@", "a@b@", "x@\xff",
+		// Empty labels, as typed or once punycode is decoded.
+		"a@xn--.com", "a@.com", "a@example..com", "a@example.com..", "a@.", "a@例子..公司"} {
 		if k, ok := store.EmailKey(bad); ok {
 			t.Errorf("%q has a key %q", bad, k)
 		}
@@ -189,6 +202,55 @@ func TestEmailKey(t *testing.T) {
 	if k1 == k2 {
 		t.Error("the exact form folded the long s")
 	}
+	if a, _ := store.EmailExactKey("bob@example.com."); a != "bob@example.com" {
+		t.Errorf("the exact form kept the root's dot: %q", a)
+	}
+	if k, ok := store.EmailExactKey("a@xn--.com"); ok {
+		t.Errorf("the exact form keyed an empty label: %q", k)
+	}
+}
+
+// Another writer may take the address between SetPrimaryEmail's check and its
+// insert. The unique index refuses the insert (ErrEmailTaken), and the
+// caller's transaction stays usable: a refused statement aborts a PostgreSQL
+// transaction, and CreateUser goes on without the address.
+func TestAnAddressTakenAtTheInsertLeavesTheTransactionUsable(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		addPerson(t, q, "FIRST", store.DefaultTenantID, "", false)
+		addPerson(t, q, "SECOND", store.DefaultTenantID, "second@example.test", false)
+		// The other writer: another connection on PostgreSQL. SQLite has one
+		// writer, so there it is the transaction itself (its row then goes with
+		// the refused call's work).
+		other := st.Dialect() == store.Postgres
+		store.SetEmailInsertRaceHook(func(q store.Q) {
+			store.SetEmailInsertRaceHook(nil)
+			if other {
+				q = st.Q()
+			}
+			if err := store.SetEmail(ctx, q, "FIRST", "race@example.test", false, ""); err != nil {
+				t.Error(err)
+			}
+		})
+		t.Cleanup(func() { store.SetEmailInsertRaceHook(nil) })
+		err := st.Tx(ctx, func(q store.Q) error {
+			if _, err := store.SetPrimaryEmail(ctx, q, "SECOND", "race@example.test", true, "", store.PrimaryOpts{TakeUnverified: true}); !errors.Is(err, store.ErrEmailTaken) {
+				t.Errorf("the insert: %v", err)
+			}
+			_, err := q.Exec(ctx, `UPDATE users SET name = 'went on' WHERE id = 'SECOND'`)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("the transaction: %v", err)
+		}
+		if n := count(t, st, `SELECT COUNT(*) FROM users WHERE id = 'SECOND' AND name = 'went on' AND email = 'second@example.test'`); n != 1 {
+			t.Fatal("the refused address changed the account, or the transaction did not go on")
+		}
+		if row, err := store.EmailOwner(ctx, q, "race@example.test"); other && (err != nil || row.UserID != "FIRST") {
+			t.Fatalf("%+v %v", row, err)
+		}
+		assertCopies(t, st)
+	})
 }
 
 // assertCopies is the invariant: users.email* equals the primary row of

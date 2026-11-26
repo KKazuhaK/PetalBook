@@ -824,11 +824,12 @@ func (s *Service) ssoLogin(ctx context.Context, rt *providerRT, c claimed, ip st
 	}
 	// Nobody has this identity. It is never attached to an account by its
 	// address: an address the sign-in vouches for that another account holds
-	// verified sends the person to sign in to that account and link the
+	// verified (store.EmailRow.Holds: a tenant administrator's mark alone does
+	// not count) sends the person to sign in to that account and link the
 	// provider there (email_in_use). Making an account is opt-in, and never
 	// the first: that is the administrator's, made with the setup token.
 	if e, err := s.cleanEmailFor(ctx, c.email); err == nil && e != "" && c.emailVerified {
-		if row, err := store.EmailOwner(ctx, s.st.Q(), e); err == nil && row.Verified {
+		if row, err := store.EmailOwner(ctx, s.st.Q(), e); err == nil && row.Holds() {
 			return nil, false, ssoErr("email_in_use")
 		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return nil, false, err
@@ -1133,5 +1134,6 @@ func (s *Service) githubClaims(ctx context.Context, rt *providerRT, code, verifi
 	}
 	login := clip(u.Login, 100)
 	return claimed{issuer: rt.cfg.BaseURL, subject: strconv.FormatInt(u.ID, 10), name: clip(u.Name, 100), preferred: login, email: email,
-		emailVerified: trustsEmail(emailSource{template: tmplGitHub, email: email, verified: verified}), labelOverride: login, groups: gc}, ""
+		emailVerified: trustsEmail(emailSource{template: tmplGitHub, publicGitHub: isPublicGitHub(rt.cfg.BaseURL), trustOptIn: rt.row.MergeVerifiedEmail,
+			email: email, verified: verified}), labelOverride: login, groups: gc}, ""
 }

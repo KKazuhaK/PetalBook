@@ -9374,7 +9374,12 @@ From 3.6 the email address is the main way in; the username stays.
   (lower case; a domain outside ASCII, or one with an `xn--` label, through
   IDNA (UTS #46) to punycode, so `例子.公司` and `xn--fsqu00a.xn--55qx5d` are
   one domain); the local part with `A` to `Z` lower case when it is ASCII,
-  otherwise NFC, case folded (Unicode full folding) and NFC again.
+  otherwise NFC, case folded (Unicode full folding) and NFC again. The root's
+  dot at the end of a domain is left out of the key (`bob@example.com.` is
+  `bob@example.com`), and an address that ends in one is refused where it is
+  set (`400 invalid`); a domain with an empty label, as typed or once its
+  punycode is decoded (`a@xn--.com`, `a@example..com`), has no key and is
+  refused.
 - **Addresses outside ASCII** (a Unicode local part, an internationalised
   domain) are refused with `400 email_not_ascii` while the site setting
   `users.emailNonAscii` is off (the default), wherever an address is set:
@@ -9398,8 +9403,9 @@ From 3.6 the email address is the main way in; the username stays.
   and the placeholder), then `POST /api/auth/discover` decides whether it goes
   to SSO (above), then it asks for the password or offers a passkey.
 - **Setting an address** that another account holds, verified or not, through
-  `PATCH /api/account`, an administrator's `PATCH /api/users/{id}`, or an
-  invite that would make a new account (a new tenant's first administrator):
+  `PATCH /api/account`, an administrator's `PATCH /api/users/{id}`, or any
+  invite whose prefilled address is taken (`POST /api/invites` with an
+  `email`, and a new tenant's first administrator, before anything is made):
   `409 email_taken` (signed in or administrator only, so this tells a
   signed-in person no more than the invite and member pages do). Setting one's
   own address in another case is not a change of holder. Registration keeps
@@ -9422,7 +9428,15 @@ From 3.6 the email address is the main way in; the username stays.
   (`email`, `to`). It moves only when the proved address is the same mailbox
   (equal without the Unicode case folding: NFC, `A` to `Z` lower case); one that
   is equal only once folded is refused like a verified one. A verified holder,
-  and a deleted account until its purge, are never displaced. Setting an
+  and a deleted account until its purge, are never displaced. Verified here
+  means by the person, a trusted sign-in, or a site administrator's "mark
+  verified" (a site administrator vouches for addresses on the whole server).
+  **A tenant administrator's mark alone** (`verified_by` `tenant_admin`) shows
+  as `emailVerified` but holds the address no more than an unverified one: it
+  moves to whoever proves it, a registration for it is no decoy, and a sign-in
+  that vouches for it does not end in `email_in_use`. Otherwise a tenant
+  administrator could give a member of theirs anyone's address, verified, and
+  keep its owner out of it on the whole server. Setting an
   address (`PATCH`) never moves it: who has not proved it gets
   `409 email_taken`.
 - **A sign-in is never attached to an account by its address.** 2.8's merge by
@@ -9438,7 +9452,10 @@ From 3.6 the email address is the main way in; the username stays.
   `verified_by` `provider:<slug>`; any other is unverified.
   - The built-in social providers (3.6's templates): Google and Apple only when
     the token says `email_verified: true`; GitHub only an address its API lists
-    as verified (today's `github` kind); Microsoft only when the token proves
+    as verified (today's `github` kind), and only github.com itself: a GitHub
+    Enterprise server (another `baseUrl`), whose administrators can mark any
+    address verified, only with the provider's `mergeVerifiedEmail` switch on;
+    Microsoft only when the token proves
     the address: the `xms_edov` claim, or an address on a domain verified here.
     Microsoft's plain `email` claim is never trusted (any Entra tenant can put
     any address in it).

@@ -100,3 +100,38 @@ func TestAnAddressOutsideASCIIFollowsTheSiteSetting(t *testing.T) {
 		two.do("PATCH", "/api/account", map[string]any{"email": "émile@example.test"}).want(t, 400, "email_not_ascii")
 	})
 }
+
+// A tenant administrator's "verified" mark counts on their tenant only: it
+// never makes an address theirs to keep from its owner on the whole server.
+// Marked on a member of theirs, the address still goes to whoever confirms it.
+func TestATenantAdministratorsMarkNeverLocksTheOwnerOut(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		srv := fakeMail(t)
+		openRegistration(t, f.root, srv)
+		ctx := context.Background()
+		f.admB.do("PATCH", "/api/users/"+f.userB, map[string]any{"email": "tang@example.test", "emailVerified": true}).want(t, 200, "")
+		if by, _ := store.EmailVerifiedBy(ctx, a.st.Q(), f.userB); by != store.VerifiedByTenantAdmin {
+			t.Fatalf("verified by %q", by)
+		}
+		before := len(srv.Messages())
+		anon := a.newClient("")
+		reg(anon, map[string]any{}).want(t, 202, "")
+		m := srv.Wait(before + 1)[before]
+		if !contains(m.Text, "/register/confirm#") {
+			t.Fatal("the owner's registration got no link")
+		}
+		anon.do("POST", "/api/register/confirm", map[string]any{"token": m.Token(t)}).want(t, 201, "")
+		u, row, err := store.UserByVerifiedEmail(ctx, a.st.Q(), "tang@example.test")
+		if err != nil || u.Username != "tang" || row.VerifiedBy != "" {
+			t.Fatalf("%v %+v %v", u, row, err)
+		}
+		if b, _ := store.GetUser(ctx, a.st.Q(), store.AllTenants(), f.userB); b.Email != "" || b.EmailVerified {
+			t.Fatalf("the member kept %q", b.Email)
+		}
+		if rows := f.root.audit(t, "email_released"); len(rows) != 1 {
+			t.Fatalf("%v", rows)
+		}
+	})
+}

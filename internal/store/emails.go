@@ -83,22 +83,42 @@ func EmailExactKey(email string) (string, bool) {
 	return asciiLower(norm.NFC.String(email[:at])) + "@" + d, true
 }
 
+// domainKey is the domain's part of the key. The root's dot at the end
+// (example.com.) is left out, so that it is not a second spelling of the
+// domain; a domain with an empty label, as typed or once its punycode is
+// decoded (xn--), has no key.
 func domainKey(domain string) (string, bool) {
-	lower := asciiLower(domain)
-	if isASCII(domain) && !strings.Contains(lower, "xn--") {
+	lower := strings.TrimSuffix(asciiLower(domain), ".")
+	if !labelsOK(lower) {
+		return "", false
+	}
+	if isASCII(lower) && !strings.Contains(lower, "xn--") {
 		return lower, true
 	}
 	// A punycode label is decoded first, so that a form that is not canonical
 	// is not a second spelling of the domain.
 	u, err := idna.Lookup.ToUnicode(lower)
-	if err != nil {
+	if err != nil || !labelsOK(u) {
 		return "", false
 	}
 	a, err := idna.Lookup.ToASCII(u)
-	if err != nil || a == "" {
+	if err != nil || !labelsOK(a) {
 		return "", false
 	}
 	return asciiLower(a), true
+}
+
+// labelsOK says whether a domain has no empty label (and is not empty).
+func labelsOK(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	for l := range strings.SplitSeq(domain, ".") {
+		if l == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // EmailIsASCII says whether an address is ASCII only.
@@ -217,6 +237,14 @@ type EmailRow struct {
 	UserDeleted bool
 }
 
+// Holds says whether the account holds the address against everyone on the
+// server: it is verified by the person, a trusted sign-in or a site
+// administrator. A tenant administrator's mark alone does not count: they
+// could give a person of their tenant anyone's address, verified, and keep its
+// owner out of it everywhere. Such an address is held as an unverified one is:
+// whoever proves it takes it (PrimaryOpts.TakeUnverified).
+func (r EmailRow) Holds() bool { return r.Verified && r.VerifiedBy != VerifiedByTenantAdmin }
+
 // VerifiedByProvider is the verified_by of an address a trusted sign-in
 // vouched for: "provider:" and the provider's slug.
 func VerifiedByProvider(slug string) string { return "provider:" + slug }
@@ -295,7 +323,8 @@ type PrimaryOpts struct {
 	// TakeUnverified moves the address from another account that holds it
 	// unverified (and is not deleted): the caller has just proved it (a
 	// confirmed registration, a trusted sign-in), so it applies only when the
-	// address is set verified. A verified holder is never displaced.
+	// address is set verified. A holder that holds it verified (EmailRow.Holds;
+	// a tenant administrator's mark alone does not) is never displaced.
 	TakeUnverified bool
 	// Now is when the row is made (time.Now() when zero).
 	Now time.Time
@@ -323,7 +352,7 @@ func SetPrimaryEmail(ctx context.Context, q Q, userID, email string, verified bo
 	if !verified {
 		by = ""
 	}
-	err = atomically(ctx, q, func(q Q) error {
+	err = guarded(ctx, q, func(q Q) error {
 		released = nil
 		if key != "" {
 			r, err := takeFromOther(ctx, q, userID, email, opts.TakeUnverified && verified)
@@ -351,6 +380,9 @@ func SetPrimaryEmail(ctx context.Context, q Q, userID, email string, verified bo
 			if _, err := q.Exec(ctx, `DELETE FROM user_emails WHERE user_id = ? AND email = ?`, userID, email); err != nil {
 				return err
 			}
+			if testHookBeforeEmailInsert != nil {
+				testHookBeforeEmailInsert(q)
+			}
 			if _, err := q.Exec(ctx, `INSERT INTO user_emails(user_id, email, email_key, is_primary, verified, verified_by, created) VALUES (?, ?, ?, 1, ?, ?, ?)`,
 				userID, email, key, b2i(verified), by, ms(opts.Now)); err != nil {
 				return emailErr(err)
@@ -365,6 +397,10 @@ func SetPrimaryEmail(ctx context.Context, q Q, userID, email string, verified bo
 	return released, nil
 }
 
+// testHookBeforeEmailInsert is called with SetPrimaryEmail's transaction
+// between its check of who holds the address and its insert (tests only).
+var testHookBeforeEmailInsert func(Q)
+
 // takeFromOther checks who else holds the address: nobody, or someone it may
 // be taken from (then it is, and the copy on their users row is cleared).
 func takeFromOther(ctx context.Context, q Q, userID, email string, take bool) (*Released, error) {
@@ -375,7 +411,7 @@ func takeFromOther(ctx context.Context, q Q, userID, email string, take bool) (*
 	if err != nil {
 		return nil, err
 	}
-	if !take || cur.Verified || cur.UserDeleted {
+	if !take || cur.Holds() || cur.UserDeleted {
 		return nil, ErrEmailTaken
 	}
 	// Only the same mailbox: an address that is the holder's only once case
@@ -407,7 +443,7 @@ func AddEmail(ctx context.Context, q Q, userID, email string, verified bool, by 
 	if !verified {
 		by = ""
 	}
-	err = atomically(ctx, q, func(q Q) error {
+	err = guarded(ctx, q, func(q Q) error {
 		r, err := takeFromOther(ctx, q, userID, email, takeUnverified && verified)
 		if err != nil {
 			return err

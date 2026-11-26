@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"petalbook.app/server/internal/store"
@@ -40,7 +41,11 @@ type emailSource struct {
 	// trustOptIn is a configured provider's "trust this provider's verified
 	// addresses" (its mergeVerifiedEmail switch, off by default).
 	trustOptIn bool
-	email      string
+	// publicGitHub: a GitHub provider is github.com itself. A GitHub
+	// Enterprise server's verified flag is its administrators' word (they can
+	// mark any address verified), so it counts only with trustOptIn.
+	publicGitHub bool
+	email        string
 	// verified is the email_verified claim (true or "true"), or for GitHub
 	// that its API lists the address as verified.
 	verified bool
@@ -57,8 +62,10 @@ func trustsEmail(src emailSource) bool {
 		return inDomains(src.email, src.orgDomains)
 	}
 	switch src.template {
-	case tmplGoogle, tmplApple, tmplGitHub:
+	case tmplGoogle, tmplApple:
 		return src.verified
+	case tmplGitHub:
+		return src.verified && (src.publicGitHub || src.trustOptIn)
 	case tmplMicrosoft:
 		// Never the plain email claim: any Entra tenant can put any address
 		// in it ("nOAuth"). Only xms_edov (the address's domain is verified
@@ -72,6 +79,17 @@ func trustsEmail(src emailSource) bool {
 		// an organisation's SSO and waits for verified domains.
 		return false
 	}
+}
+
+// isPublicGitHub says whether a GitHub provider's base URL is github.com (or
+// its API host), not a GitHub Enterprise server.
+func isPublicGitHub(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return h == "github.com" || h == "api.github.com"
 }
 
 // claimTrue reads a boolean claim, true or "true".
