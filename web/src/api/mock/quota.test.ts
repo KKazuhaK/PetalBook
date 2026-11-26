@@ -77,7 +77,7 @@ describe('the mock account usage', () => {
     expect(w.req('GET', '/account/usage', undefined, kai.cookie).body.spaces.limit).toBe(2)
     // The tenant's total of spaces is refused too.
     w.req('PUT', '/admin/settings/quota.spacesPerPerson', { value: 0 }, w.root)
-    w.req('PATCH', '/admin/tenants/0000000000', { quota: { spaces: 4 } }, w.root)
+    w.req('PUT', '/admin/tenants/0000000000/limits', { values: { 'storage.quota.spaces': { value: 4 } } }, w.root)
     const total = w.req('POST', '/spaces', { name: 'D' }, kai.cookie)
     expect([total.status, total.body.error, total.body.limit]).toEqual([403, 'quota_exceeded', 4])
   })
@@ -174,7 +174,7 @@ describe('the mock tenant usage and the prefilled invite', () => {
   it('says what a tenant uses and which of its totals it is over', () => {
     const w = world()
     w.person('kai')
-    w.req('PATCH', '/admin/tenants/0000000000', { quota: { people: 1 } }, w.root)
+    w.req('PUT', '/admin/tenants/0000000000/limits', { values: { 'other.people': { value: 1 } } }, w.root)
     const t = w.req('GET', '/admin/tenants/0000000000', undefined, w.root).body
     expect(t.usage).toMatchObject({ people: 2, spaces: 2, over: ['people'] })
     expect(w.req('GET', '/admin/tenants', undefined, w.root).body.items[0].usage.people).toBe(2)

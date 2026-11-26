@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -141,6 +143,10 @@ type Config struct {
 	Clock Clock
 	// Invalidate is called after any change of any sheet; may be nil.
 	Invalidate Invalidator
+	// OnBoundary is told, outside any lock, of each value that changed because a
+	// dated value started or ended (the audit log's tenant_limit_changed); may
+	// be nil.
+	OnBoundary func(tenant string, a Applied)
 	Logger     *slog.Logger
 }
 
@@ -158,10 +164,11 @@ func (r *row) active(now time.Time) bool {
 
 // Service holds the sheets. Reads (Sheet, On) take no lock and make no query.
 type Service struct {
-	st    *store.Store
-	clock Clock
-	inv   Invalidator
-	log   *slog.Logger
+	st       *store.Store
+	clock    Clock
+	inv      Invalidator
+	boundary func(tenant string, a Applied)
+	log      *slog.Logger
 
 	cur atomic.Pointer[state]
 
@@ -187,7 +194,7 @@ type Service struct {
 // tenants' plans and overrides), computes every sheet and starts the timer for
 // the next start or end of a dated value.
 func New(ctx context.Context, c Config) (*Service, error) {
-	s := &Service{st: c.Store, clock: c.Clock, inv: c.Invalidate, log: c.Logger}
+	s := &Service{st: c.Store, clock: c.Clock, inv: c.Invalidate, boundary: c.OnBoundary, log: c.Logger}
 	if s.clock == nil {
 		s.clock = RealClock(nil)
 	}
@@ -196,7 +203,7 @@ func New(ctx context.Context, c Config) (*Service, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.load(ctx); err != nil {
+	if _, err := s.load(ctx); err != nil {
 		return nil, err
 	}
 	s.schedule()
@@ -205,10 +212,11 @@ func New(ctx context.Context, c Config) (*Service, error) {
 
 // Reload reads every input again and recomputes every sheet: after the site's
 // default, a plan or a tenant's plan was written (those are rare; a limit is
-// written with SetManual, which recomputes one tenant).
-func (s *Service) Reload(ctx context.Context) error {
+// written with SetManual, which recomputes one tenant). It answers the tenants
+// whose sheet is not what it was.
+func (s *Service) Reload(ctx context.Context) (changed []string, err error) {
 	s.mu.Lock()
-	err := s.load(ctx)
+	changed, err = s.load(ctx)
 	if err == nil {
 		s.schedule()
 	}
@@ -216,7 +224,7 @@ func (s *Service) Reload(ctx context.Context) error {
 	if err == nil {
 		s.invalidate()
 	}
-	return err
+	return changed, err
 }
 
 // Close stops the timer.
@@ -230,39 +238,39 @@ func (s *Service) Close() {
 	}
 }
 
-func (s *Service) load(ctx context.Context) error {
+func (s *Service) load(ctx context.Context) ([]string, error) {
 	q := s.st.Q()
 	site := map[string]any{}
 	switch raw, _, err := store.GetSetting(ctx, q, store.SettingCapabilities); {
 	case errors.Is(err, store.ErrNotFound):
 	case err != nil:
-		return err
+		return nil, err
 	default:
 		m, err := parseSet(raw)
 		if err != nil {
-			return fmt.Errorf("the site's capabilities: %w", err)
+			return nil, fmt.Errorf("the site's capabilities: %w", err)
 		}
 		site = m
 	}
 	plans := map[string]map[string]any{}
 	list, err := store.ListPlans(ctx, q)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, p := range list {
 		m, err := parseSet(p.Values)
 		if err != nil {
-			return fmt.Errorf("plan %s: %w", p.Slug, err)
+			return nil, fmt.Errorf("plan %s: %w", p.Slug, err)
 		}
 		plans[p.ID] = m
 	}
 	planOf, err := store.TenantPlanIDs(ctx, q)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	stored, err := store.ListTenantLimits(ctx, q)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rows := map[string][]row{}
 	for _, l := range stored {
@@ -275,10 +283,11 @@ func (s *Service) load(ctx context.Context) error {
 		}
 		rows[l.Tenant] = append(rows[l.Tenant], row{key: l.Key, source: Source(l.Source), v: v, from: l.Starts, until: l.Ends})
 	}
+	old := s.cur.Load()
 	s.site, s.plans, s.planOf, s.rows = site, plans, planOf, rows
 	s.handled = s.clock.Now()
 	s.publishAll(s.handled)
-	return nil
+	return differing(old, s.cur.Load()), nil
 }
 
 // siteSheet makes the sheet of the site's values.
@@ -373,11 +382,11 @@ func (s *Service) On(tenant, capability string) bool {
 // nil *Change removes the value), as set_by by, then computes that tenant's
 // sheet again and tells the settings. Nothing is written when any change is
 // invalid.
-func (s *Service) SetManual(ctx context.Context, tenant, by string, changes map[string]*Change) error {
+func (s *Service) SetManual(ctx context.Context, tenant, by string, changes map[string]*Change) (*Result, error) {
 	return s.set(ctx, tenant, by, store.LimitManual, changes)
 }
 
-func (s *Service) set(ctx context.Context, tenant, by, source string, changes map[string]*Change) error {
+func (s *Service) set(ctx context.Context, tenant, by, source string, changes map[string]*Change) (*Result, error) {
 	type write struct {
 		key string
 		r   row
@@ -389,10 +398,10 @@ func (s *Service) set(ctx context.Context, tenant, by, source string, changes ma
 		if c != nil {
 			v, err := Parse(key, c.Value)
 			if err != nil {
-				return &ValueError{err}
+				return nil, &ValueError{err}
 			}
 			if !c.From.IsZero() && !c.Until.IsZero() && !c.Until.After(c.From) {
-				return &ValueError{fmt.Errorf("%s: until is not after from", key)}
+				return nil, &ValueError{fmt.Errorf("%s: until is not after from", key)}
 			}
 			w.r.v, w.r.from, w.r.until = v, c.From, c.Until
 			if raw, err := json.Marshal(v); err == nil {
@@ -402,13 +411,13 @@ func (s *Service) set(ctx context.Context, tenant, by, source string, changes ma
 		ws = append(ws, w)
 	}
 	if _, ok := s.st.TenantRefOf(tenant); !ok {
-		return store.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return errors.New("limits: closed")
+		return nil, errors.New("limits: closed")
 	}
 	now := s.clock.Now()
 	err := s.st.Tx(ctx, func(q store.Q) error {
@@ -428,8 +437,23 @@ func (s *Service) set(ctx context.Context, tenant, by, source string, changes ma
 	})
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return nil, err
 	}
+	before := s.Sheet(tenant)
+	res := &Result{}
+	for _, w := range ws {
+		if changes[w.key] == nil {
+			continue
+		}
+		if !w.r.from.IsZero() || !w.r.until.IsZero() {
+			for _, r := range s.rows[tenant] {
+				if r.key == w.key && string(r.source) == source && r.from.IsZero() && r.until.IsZero() {
+					res.Replaced = append(res.Replaced, w.key)
+				}
+			}
+		}
+	}
+	slices.Sort(res.Replaced)
 	kept := s.rows[tenant][:0:0]
 	for _, r := range s.rows[tenant] {
 		if _, touched := changes[r.key]; !touched || string(r.source) != source {
@@ -451,17 +475,32 @@ func (s *Service) set(ctx context.Context, tenant, by, source string, changes ma
 	}
 	// The write stops the timer, which may be about to fire for another tenant:
 	// what is due is taken in here, so that it is not forgotten.
+	old := s.cur.Load()
 	tenants := []string{tenant}
-	for _, id := range s.catchUp(now) {
+	due := s.catchUp(now)
+	for _, id := range due {
 		if id != tenant {
 			tenants = append(tenants, id)
 		}
 	}
 	s.publishTenants(now, tenants...)
 	s.schedule()
+	after := s.Sheet(tenant)
 	s.mu.Unlock()
+	for _, w := range ws {
+		a := Applied{Key: w.key, Source: Source(source), Start: w.r.from, End: w.r.until, Removed: changes[w.key] == nil}
+		a.From, _, _ = before.Value(w.key)
+		var src Source
+		a.To, src, _ = after.Value(w.key)
+		if a.Removed {
+			a.Source = src
+		}
+		res.Applied = append(res.Applied, a)
+	}
+	slices.SortFunc(res.Applied, func(a, b Applied) int { return strings.Compare(a.Key, b.Key) })
 	s.invalidate()
-	return nil
+	s.tell(old, s.cur.Load(), due, tenant)
+	return res, nil
 }
 
 // ValueError is a refusal of a value: the caller answers 400 invalid.
@@ -531,6 +570,7 @@ func (s *Service) fire() {
 		return
 	}
 	now := s.clock.Now()
+	old := s.cur.Load()
 	due := s.catchUp(now)
 	if len(due) > 0 {
 		s.publishTenants(now, due...)
@@ -539,6 +579,7 @@ func (s *Service) fire() {
 	s.mu.Unlock()
 	if len(due) > 0 {
 		s.invalidate()
+		s.tell(old, s.cur.Load(), due, "")
 	}
 }
 

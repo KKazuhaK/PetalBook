@@ -201,7 +201,7 @@ func (s *Store) makeSchema(ctx context.Context, q Q, stmts []statement, hash str
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO tenants(id, slug, name, name_key, disabled, quota, created, updated) VALUES (?, ?, 'Default', ?, 0, '{}', ?, ?)`,
+		{`INSERT INTO tenants(id, slug, name, name_key, disabled, created, updated) VALUES (?, ?, 'Default', ?, 0, ?, ?)`,
 			[]any{DefaultTenantID, DefaultTenantSlug, FoldName("Default"), now, now}},
 		{`INSERT INTO usage(kind, id, tenant_id) VALUES ('tenant', ?, ?)`, []any{DefaultTenantID, DefaultTenantID}},
 		{statement{sql: `CREATE TABLE schema_baseline (id BIGINT PRIMARY KEY, hash TEXT COLLATE "C" NOT NULL, made BIGINT NOT NULL)`}.sqlFor(s.dialect), nil},

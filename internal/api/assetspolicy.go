@@ -12,12 +12,14 @@ import (
 // creation path and GET /api/settings ask here, so the dialog's box shows what
 // the server will do.
 //
-// The two inputs the settings cannot know yet are fixed: no tenant is on a
-// target of its own (3.6's storage.modes "tenant"), and no limits table turns
-// sync.assetsRepository off. When those exist this is the one place that passes
-// them, and the rule already honours both.
+// The two inputs the settings cannot know: whether the tenant's spaces are on a
+// storage target of its own, and whether its limits sheet allows an attachment
+// repository (sync.assetsRepository, read from memory). OwnStorage stays false
+// until 3.6's storage targets exist (storage.modes "tenant"); this is the one
+// place that passes it, and the rule already honours it.
 func (s *server) assetsRule(ctx context.Context, tenantID string) (settings.AssetsRule, error) {
-	return s.settings.AssetsRule(ctx, tenantID, settings.AssetsInput{OwnStorage: false, RepositoryOff: false})
+	in := settings.AssetsInput{OwnStorage: false, RepositoryOff: s.limits != nil && !s.limits.Sheet(tenantID).Bool("sync.assetsRepository")}
+	return s.settings.AssetsRule(ctx, tenantID, in)
 }
 
 // bindAssetsPolicy tells the space manager where attachments go for a tenant

@@ -821,6 +821,8 @@ export type ErrorCode =
   | 'tenants_off'
   | 'tenant_limit'
   | 'tenant_not_empty'
+  | 'plan_in_use'
+  | 'plan_limit'
   | 'default_tenant'
   | 'setting_locked'
   | 'setting_restricted'
@@ -1925,6 +1927,40 @@ export interface Tenancy {
   tenants: number
 }
 export type CreatedTenant = Tenant & { invite?: CreatedInvite }
+
+// --- the limits sheet (3.6, docs/api.md "The limits sheet") ---
+
+export type LimitKind = 'boolean' | 'limit' | 'list'
+export type LimitSource = 'site' | 'plan' | 'billing' | 'manual'
+// The value of a key: a boolean, a whole number or null (no limit), or a list of storage modes.
+export type LimitValue = boolean | number | null | string[]
+// One key of a tenant's sheet. `from` and `until` are the window of the value in force; `underlying` is what applies
+// outside it (or when the manual value goes); `manual` is the manual value that is not in force (its window has not
+// begun or has ended); `used` is there for the limits that are counted.
+export interface LimitEntry {
+  key: string
+  kind: LimitKind
+  description: string
+  value: LimitValue
+  source: LimitSource
+  from?: string | null
+  until?: string | null
+  underlying?: { value: LimitValue; source: LimitSource }
+  manual?: { value: LimitValue; from: string | null; until: string | null }
+  used?: number
+}
+export interface PlanRef {
+  slug: string
+  name: string
+}
+export interface TenantLimits {
+  plan: PlanRef | null
+  limits: LimitEntry[]
+  warning?: { code: string; keys: string[]; message: string }
+}
+// What one key is written as: the value, with a window if it has one. `null` for the whole entry removes the manual
+// value; { value: null } is "no limit".
+export type LimitWrite = null | { value: LimitValue; from?: string; until?: string }
 
 // --- quotas and usage (3.3) ---
 

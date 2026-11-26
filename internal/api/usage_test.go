@@ -113,7 +113,7 @@ func TestTheSpaceLimitIsLayeredAndRefused(t *testing.T) {
 			t.Fatalf("%v", u)
 		}
 		// A tenant's total of spaces is refused too, whoever asks.
-		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"quota": map[string]any{"spaces": 7}}).want(t, 200, "")
+		setTotals(t, f.root, f.tenB, map[string]any{"spaces": 7})
 		f.root.do("PATCH", "/api/users/"+f.userB, map[string]any{"quota": map[string]any{"spaces": 50}}).want(t, 200, "")
 		r = mk(f.memB, "B7").want(t, 403, "quota_exceeded")
 		if r.body["limit"] != float64(7) {
@@ -351,7 +351,7 @@ func TestTenantUsageAndItsTotals(t *testing.T) {
 			t.Fatalf("%v", list)
 		}
 		// Bytes and pages and people warn (once), for the tenant and for its administrators.
-		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"quota": map[string]any{"people": 1, "pages": 1, "bytes": 1}}).want(t, 200, "")
+		setTotals(t, f.root, f.tenB, map[string]any{"people": 1, "pages": 1, "bytes": 1})
 		a.auth.FlushAudit(context.Background())
 		rows := f.root.audit(t, "quota_exceeded")
 		kinds := map[string]bool{}
@@ -381,13 +381,13 @@ func TestTenantUsageAndItsTotals(t *testing.T) {
 		f.admB.do("POST", "/api/invites", map[string]any{"role": "member"}).want(t, 201, "")
 		addPages(t, f.admB, spaceB, 1)
 		// Saving the same quota again is not a new crossing.
-		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"quota": map[string]any{"people": 1}}).want(t, 200, "")
+		setTotals(t, f.root, f.tenB, map[string]any{"people": 1})
 		a.auth.FlushAudit(context.Background())
 		if n := len(f.root.audit(t, "quota_exceeded")); n != len(rows) {
 			t.Fatalf("%d rows, was %d", n, len(rows))
 		}
 		// A tenant administrator's cannot set the totals, and they are checked.
-		f.admB.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"quota": map[string]any{"people": 5}}).want(t, 403, "forbidden")
+		f.admB.do("PUT", "/api/admin/tenants/"+f.tenB+"/limits", map[string]any{"values": map[string]any{"other.people": 5}}).want(t, 403, "forbidden")
 	})
 }
 
@@ -698,7 +698,7 @@ func TestOverFollowsTransfersOwnersAndNewPeopleAtOnce(t *testing.T) {
 			t.Fatal("the second crossing of adm-b is not in the audit log")
 		}
 		// The tenant may have 2 people; a third arrives and the tenant is over at once.
-		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"quota": map[string]any{"people": 2}}).want(t, 200, "")
+		setTotals(t, f.root, f.tenB, map[string]any{"people": 2})
 		if got := notices(f.memB, "tenant"); len(got) != 0 {
 			t.Fatalf("%v", got)
 		}

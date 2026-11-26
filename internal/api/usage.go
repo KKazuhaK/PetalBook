@@ -91,17 +91,12 @@ func (s *server) accountUsage(c *call) {
 		notices = append(notices, noticeResp{k, "person", limitValue(k, lim), usedOf(row, k)})
 	}
 	// The tenant's total is the person's business too, once it is over.
-	t, err := store.GetTenant(ctx, q, u.TenantID)
-	if err != nil {
-		s.fail(c.w, err)
-		return
-	}
 	trow, err := store.GetUsage(ctx, q, store.UsageTenant, u.TenantID)
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
-	tl := quota.ParseTenant(t.Quota)
+	tl := s.quota.Totals(u.TenantID)
 	for _, k := range quota.OverTenant(trow, tl) {
 		var l int64
 		switch k {

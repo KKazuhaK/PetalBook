@@ -319,6 +319,8 @@ var isolationRoutes = map[string]isoEntry{
 	"GET /api/admin/tenants/{tenant}":                 {kind: isoParam},
 	"PATCH /api/admin/tenants/{tenant}":               {kind: isoParam, body: func(f *tenFx, id string) any { return map[string]any{"name": "taken over"} }},
 	"GET /api/admin/tenants/{tenant}/settings":        {kind: isoParam},
+	"GET /api/admin/tenants/{tenant}/capabilities":    {kind: isoParam},
+	"GET /api/admin/tenants/{tenant}/limits":          {kind: isoParam},
 	"PUT /api/admin/tenants/{tenant}/settings/{key}":  {kind: isoParam, ids: func(f *tenFx) map[string]string { return map[string]string{"tenant": f.tenB, "key": "legal.termsUrl"} }, body: func(f *tenFx, id string) any { return map[string]any{"value": "https://evil.example"} }},
 
 	// Offline sync (4.1). heads names spaces in its query and answers each back,

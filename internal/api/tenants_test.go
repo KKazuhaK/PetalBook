@@ -93,14 +93,20 @@ func TestTenantCrudAndItsErrors(t *testing.T) {
 		// Reading, changing.
 		root.do("GET", "/api/admin/tenants/"+id, nil).want(t, 200, "")
 		root.do("GET", "/api/admin/tenants/"+fakeID, nil).want(t, 404, "not_found")
-		r = root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"name": "Acme Inc", "slug": "acme-inc", "quota": map[string]any{"people": 5, "bytes": nil}}).want(t, 200, "")
-		if r.body["name"] != "Acme Inc" || r.body["slug"] != "acme-inc" || r.body["quota"].(map[string]any)["people"] != float64(5) {
+		r = root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"name": "Acme Inc", "slug": "acme-inc"}).want(t, 200, "")
+		if r.body["name"] != "Acme Inc" || r.body["slug"] != "acme-inc" {
 			t.Fatal(r.raw)
+		}
+		// The totals are the limits sheet's: read only here, set through PUT …/limits.
+		setTotals(t, root, id, map[string]any{"people": 5, "bytes": nil})
+		if q := root.do("GET", "/api/admin/tenants/"+id, nil).want(t, 200, "").body["quota"].(map[string]any); q["people"] != float64(5) || q["bytes"] != nil {
+			t.Fatalf("%v", q)
 		}
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"slug": "zed"}).want(t, 409, "exists")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"slug": "Bad Slug"}).want(t, 400, "invalid")
-		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"quota": map[string]any{"people": -1}}).want(t, 400, "invalid")
-		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"quota": map[string]any{"mood": 1}}).want(t, 400, "invalid")
+		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"quota": map[string]any{"people": 1}}).want(t, 400, "invalid")
+		root.do("PUT", "/api/admin/tenants/"+id+"/limits", map[string]any{"values": map[string]any{"other.people": -1}}).want(t, 400, "invalid")
+		root.do("PUT", "/api/admin/tenants/"+id+"/limits", map[string]any{"values": map[string]any{"mood": 1}}).want(t, 400, "invalid")
 		root.do("PATCH", "/api/admin/tenants/"+id, map[string]any{"mood": 1}).want(t, 400, "invalid")
 		// The default tenant: neither disabled nor deleted nor renamed by slug.
 		root.do("PATCH", "/api/admin/tenants/"+store.DefaultTenantID, map[string]any{"disabled": true}).want(t, 409, "default_tenant")
@@ -178,7 +184,7 @@ func TestTenantAdministratorsSeeAndChangeOnlyTheirTenant(t *testing.T) {
 		// The tenant administrator reads and renames their own tenant, nothing more.
 		f.admB.do("GET", "/api/admin/tenants/"+f.tenB, nil).want(t, 200, "")
 		f.admB.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"name": "Acme Two"}).want(t, 200, "")
-		for _, body := range []map[string]any{{"slug": "other"}, {"disabled": true}, {"quota": map[string]any{"people": 1}}} {
+		for _, body := range []map[string]any{{"slug": "other"}, {"disabled": true}} {
 			f.admB.do("PATCH", "/api/admin/tenants/"+f.tenB, body).want(t, 403, "forbidden")
 		}
 		// A tenant administrator cannot make a site administrator, or touch one.

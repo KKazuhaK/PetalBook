@@ -182,3 +182,9 @@ func DeleteTenantLimit(ctx context.Context, q Q, tenant, key, source string) err
 	_, err := q.Exec(ctx, `DELETE FROM tenant_limits WHERE tenant_id = ? AND key = ? AND source = ?`, tenant, key, source)
 	return err
 }
+
+// DeleteTenantLimitsOf removes every override of one source of a tenant.
+func DeleteTenantLimitsOf(ctx context.Context, q Q, tenant, source string) error {
+	_, err := q.Exec(ctx, `DELETE FROM tenant_limits WHERE tenant_id = ? AND source = ?`, tenant, source)
+	return err
+}

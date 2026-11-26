@@ -123,7 +123,7 @@ func window(s string, from, until time.Time) *Change {
 func (f *fixture) manual(tenant, key string, c *Change) { f.setAs(tenant, store.LimitManual, key, c) }
 
 func (f *fixture) setAs(tenant, source, key string, c *Change) {
-	if err := f.svc.set(ctx, tenant, "U1", source, map[string]*Change{key: c}); err != nil {
+	if _, err := f.svc.set(ctx, tenant, "U1", source, map[string]*Change{key: c}); err != nil {
 		panic(err)
 	}
 }
@@ -153,7 +153,7 @@ func TestTheFirstPresentSourceWins(t *testing.T) {
 		if err := store.SetTenantPlan(ctx, q, tenB, "P1"); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.svc.Reload(ctx); err != nil {
+		if _, err := f.svc.Reload(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if n, _, src := quota(f, tenB); n != 2000 || src != FromPlan {
@@ -339,17 +339,17 @@ func TestValuesAreCheckedAgainstTheRegistry(t *testing.T) {
 		}
 		for k, c := range bad {
 			var ve *ValueError
-			if err := f.svc.SetManual(ctx, tenB, "U1", map[string]*Change{"signin.domains": raw("false"), k: c}); !errors.As(err, &ve) {
+			if _, err := f.svc.SetManual(ctx, tenB, "U1", map[string]*Change{"signin.domains": raw("false"), k: c}); !errors.As(err, &ve) {
 				t.Fatalf("%s: %v", k, err)
 			}
 		}
 		if !f.svc.Sheet(tenB).Bool("signin.domains") || f.inv.n != 0 {
 			t.Fatal("an invalid change wrote part of itself")
 		}
-		if err := f.svc.SetManual(ctx, "nobody", "U1", map[string]*Change{"signin.sso": raw("false")}); !errors.Is(err, store.ErrNotFound) {
+		if _, err := f.svc.SetManual(ctx, "nobody", "U1", map[string]*Change{"signin.sso": raw("false")}); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
-		if err := f.svc.SetManual(ctx, tenB, "U1", map[string]*Change{"storage.modes": raw(`["own","server"]`)}); err != nil {
+		if _, err := f.svc.SetManual(ctx, tenB, "U1", map[string]*Change{"storage.modes": raw(`["own","server"]`)}); err != nil {
 			t.Fatal(err)
 		}
 		if got := f.svc.Sheet(tenB).List("storage.modes"); !slices.Equal(got, []string{"own", "server"}) {

@@ -58,6 +58,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   tenant_limit: '组织数量已达上限。',
   capability_off: '你的组织没有这项功能。',
   takeover_required: '只有空间的成员才能改它的所有者或远程仓库。管理员需要先接管这个空间。',
+  plan_in_use: '还有组织在用这个套餐，先给它们换一个。',
+  plan_limit: '套餐数量已经到上限。',
   tenant_not_empty: '这个组织里还有用户、空间、组、邀请或回收站里的内容，不能直接移走。',
   tenants_off: '多组织功能没有打开。',
   not_fixable: '这种问题不能在这里修复。',

@@ -38,7 +38,6 @@ CREATE TABLE tenants (
   name     TEXT COLLATE "C" NOT NULL,
   name_key TEXT COLLATE "C" NOT NULL DEFAULT '',
   disabled BIGINT NOT NULL DEFAULT 0,
-  quota    TEXT COLLATE "C" NOT NULL DEFAULT '{}',
   plan_id  TEXT COLLATE "C" REFERENCES plans(id),
   created  BIGINT NOT NULL,
   updated  BIGINT NOT NULL
