@@ -1,6 +1,13 @@
 import { useCallback } from 'react'
-import { MutationCache, QueryClient, useQueryClient, type QueryFunctionContext } from '@tanstack/react-query'
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  useQueryClient,
+  type QueryFunctionContext,
+} from '@tanstack/react-query'
 import { noteSignal, runInScope } from './adminScope'
+import { refreshFeaturesOnRefusal } from './features'
 
 // The QueryClient of a tenant's scope (lib/adminScope): its queries and mutations run in the scope, whatever calls them
 // and whenever, so a request's scope is decided by the cache it belongs to.
@@ -65,7 +72,9 @@ export function scopedClient(
   const refreshMain = () => void main.invalidateQueries({ queryKey: invalidateInMain })
   const client = new QueryClient({
     defaultOptions: main.getDefaultOptions(),
-    mutationCache: new MutationCache({ onSuccess: refreshMain }),
+    // A feature switched off while the console is open is noticed from a refusal, as in the site's client.
+    queryCache: new QueryCache({ onError: (e) => refreshFeaturesOnRefusal(main, e) }),
+    mutationCache: new MutationCache({ onSuccess: refreshMain, onError: (e) => refreshFeaturesOnRefusal(main, e) }),
   })
   tenantOf.set(client, tenant)
   const inScopeFn = scopeFns()

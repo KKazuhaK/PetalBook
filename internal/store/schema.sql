@@ -731,6 +731,7 @@ CREATE INDEX audit_log_tenant_cat ON audit_log(tenant_id, category, id);
 CREATE INDEX audit_log_cat ON audit_log(category, id);
 -- Only the rows written in a capacity: the filter by capacity reads them alone.
 CREATE INDEX audit_log_capacity ON audit_log(capacity, id) WHERE capacity <> '';
+CREATE INDEX audit_log_tenant_capacity ON audit_log(tenant_id, capacity, id) WHERE capacity <> '';
 -- A filter on the actor pages by id; the daily sweep of tombstones asks whether
 -- the audit log still names a person.
 CREATE INDEX audit_log_actor ON audit_log(actor, id);

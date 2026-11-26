@@ -118,8 +118,9 @@ func (s *server) adminTenantOverview(c *call) {
 // recentAdminActivity is the newest overviewAudit rows of the tenant's audit
 // that are administrative: done in an administrator's capacity, or of the admin
 // or security categories. Page reads, downloads, sign-ins and API calls are
-// left out. Each of the four is one index range read with a LIMIT, merged by
-// id, so a tenant with millions of reads costs no more than one with none.
+// left out. Each of the four is one index range read with a LIMIT (the capacity
+// ones on audit_log_tenant_capacity), merged by id, so a tenant with millions of
+// reads costs no more than one with none.
 func (s *server) recentAdminActivity(ctx context.Context, tenant string, hideSite bool) ([]auth.AuditEntry, error) {
 	sc := store.InTenant(tenant)
 	filters := []store.AuditFilter{
