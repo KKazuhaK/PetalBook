@@ -3,11 +3,15 @@ package space
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/KKazuhaK/PetalBook/internal/gitstore"
 )
 
 // queued is a remote space with change A pushed and held right after its
@@ -255,7 +259,10 @@ func TestCloseWithAChangeQueuedSettlesItFirst(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			<-q.aDone
+			// A's push went through before Close: A is done, and stays.
+			if err := <-q.aDone; err != nil {
+				t.Errorf("A, on the remote before Close, was answered %v", err)
+			}
 			q.answer()
 			time.Sleep(50 * time.Millisecond)
 			q.f.net.mu.Lock()
@@ -340,4 +347,100 @@ func TestTheFirstChangeIsAnsweredWhileWritersKeepComing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// killAtUpdateRef runs git like the netRunner it wraps, except for the first
+// move of HEAD once armed: Close is started there, and if the command is then
+// run under a cancelled context, it ends the way a kill at the worst moment
+// ends it (the runner kills git when the context is cancelled): HEAD has
+// moved, and HEAD.lock, which git removes only after that, is left behind.
+type killAtUpdateRef struct {
+	*netRunner
+	armed atomic.Bool
+	fired atomic.Bool
+	close func()
+	ctxOf func() context.Context // the space's own context
+	root  string
+}
+
+func (k *killAtUpdateRef) Run(ctx context.Context, c gitstore.Cmd) (string, string, error) {
+	sub, args := gitstore.Subcommand(c.Args)
+	if sub != "update-ref" || len(args) == 0 || args[0] != "HEAD" || !k.armed.Load() || !k.fired.CompareAndSwap(false, true) {
+		return k.netRunner.Run(ctx, c)
+	}
+	go k.close()
+	for k.ctxOf().Err() == nil { // Close has begun: the space's context is cancelled
+		time.Sleep(time.Millisecond)
+	}
+	if ctx.Err() == nil {
+		return k.netRunner.Run(ctx, c)
+	}
+	out, errOut, err := k.netRunner.Run(context.Background(), c)
+	if err != nil {
+		return out, errOut, err
+	}
+	if err := os.WriteFile(filepath.Join(k.root, ".git", "HEAD.lock"), nil, 0o644); err != nil {
+		return out, errOut, err
+	}
+	return "", "", ctx.Err()
+}
+
+// Closing while a change is being committed: the commit is not cut short
+// half way, so that nothing of it is left behind that the change's undo, or
+// the next start, cannot take back. The test above caught Close killing git
+// between moving HEAD and removing HEAD.lock: the undo could not move HEAD
+// back, the clone kept an unpushed commit with the index of an older one
+// ("MM"), and the space opened again refusing changes.
+func TestCloseWhileAChangeIsCommittedLeavesTheCloneClean(t *testing.T) {
+	t.Parallel()
+	k := &killAtUpdateRef{netRunner: &netRunner{}}
+	f := newRemoteSpace(t, func(o *RemoteOptions) { o.Runner = k })
+	k.root = f.root
+	s := f.s
+	k.ctxOf = func() context.Context { return s.ctx }
+	closed := make(chan error, 1)
+	k.close = func() { closed <- s.Close() }
+	a := mustCreate(t, s, "", meta("title", "A"), "a1\n")
+	tip := f.tip()
+	k.armed.Store(true)
+	if _, err := s.Save(Author{}, a.ID, a.Rev, meta("title", "A"), "a2\n"); err == nil {
+		t.Error("the change was answered as done, though Close cut off its push")
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if !k.fired.Load() {
+		t.Fatal("the change never moved HEAD")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".git", "HEAD.lock")); err == nil {
+		t.Error("Close left HEAD.lock behind")
+	}
+	if got := f.tip(); got != tip {
+		t.Fatalf("the remote moved: %s, was %s", got, tip)
+	}
+	if h := git(t, f.root, "rev-parse", "HEAD"); h != tip {
+		t.Errorf("HEAD %s after Close, the remote %s", h, tip)
+	}
+	if st := git(t, f.root, "status", "--porcelain"); st != "" {
+		t.Errorf("the clone after Close: %q", st)
+	}
+	k.armed.Store(false)
+	o := f.options()
+	o.Status = RemoteStatus{LastGood: tip}
+	f.s = openAt(t, f.root, func(opt *Options) {
+		opt.Committer = "Service <svc@example.test>"
+		opt.Author = "Ann <ann@example.test>"
+		opt.Remote = &o
+	})
+	if st := git(t, f.root, "status", "--porcelain"); st != "" {
+		t.Errorf("the clone after opening again: %q", st)
+	}
+	cur, err := f.s.Get(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Save(Author{}, a.ID, cur.Rev, meta("title", "A"), "a3\n"); err != nil {
+		t.Errorf("the space opened again refuses changes: %v", err)
+	}
+	consistent(t, f.s)
 }

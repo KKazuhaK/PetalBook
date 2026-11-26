@@ -112,6 +112,18 @@ var errDestructive = errors.New("refusing a git command that could rewrite or de
 // allowedConfigKeys are the only "-c key=value" settings passed by callers.
 var allowedConfigKeys = map[string]bool{"commit.gpgsign": true, "core.splitindex": true, "safe.directory": true, "core.quotepath": true, "core.autocrlf": true}
 
+// lockingWrites are the commands that write the index, a ref or the
+// configuration under a lock file. A cancelled context kills git outright
+// (SIGKILL, see setProcessGroup), which leaves it no chance to remove its
+// lock: a kill between moving HEAD and removing HEAD.lock leaves the commit
+// made and every later reset, commit and checkout refused until someone
+// deletes the lock. So cancelling does not stop these (they are local and
+// short; Repo.run); only a deadline does.
+var lockingWrites = map[string]bool{
+	"update-ref": true, "update-index": true, "reset": true, "checkout": true, "read-tree": true,
+	"rm": true, "add": true, "merge": true, "config": true, "remote": true, "init": true,
+}
+
 // Subcommand returns the git subcommand of a command line and its arguments,
 // skipping the global options the runner allows.
 func Subcommand(args []string) (string, []string) { return subcommand(args) }

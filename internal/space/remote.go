@@ -1455,12 +1455,17 @@ func (s *Space) pushGroupLocked(ctx context.Context, r *remote) {
 		perr = r.repo.Push(ctx, r.branch)
 	}()
 	pushed := ""
+	// What a push that went through is recorded with is read from the clone
+	// to the end, even when the space is being closed meanwhile: a change on
+	// the remote is answered as done, never taken back from the clone.
+	local, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	if perr == nil {
 		s.stepped("remote pushed")
-		pushed = r.repo.RemoteTip(ctx, r.branch)
+		pushed = r.repo.RemoteTip(local, r.branch)
 	} else if landed, lerr := s.landedAt(ctx, r, top); lerr == nil && landed {
 		// The answer was lost, but the push went through.
-		pushed = r.repo.RemoteTip(ctx, r.branch)
+		pushed = r.repo.RemoteTip(local, r.branch)
 	} else {
 		moved := lerr == nil && r.repo.RemoteTip(ctx, r.branch) != parent
 		var err error
@@ -1479,7 +1484,7 @@ func (s *Space) pushGroupLocked(ctx context.Context, r *remote) {
 	// Every change whose commit the push has is answered.
 	n := 0
 	for pushed != "" && n < len(r.pending) {
-		if ok, err := r.repo.IsAncestor(ctx, r.pending[n].commit, pushed); err != nil || !ok {
+		if ok, err := r.repo.IsAncestor(local, r.pending[n].commit, pushed); err != nil || !ok {
 			break
 		}
 		n++
@@ -1491,7 +1496,7 @@ func (s *Space) pushGroupLocked(ctx context.Context, r *remote) {
 	}
 	done := r.pending[:n]
 	r.pending = append([]*pendingChange(nil), r.pending[n:]...)
-	s.pushedUpToLocked(ctx, r, pushed, done[len(done)-1].mark)
+	s.pushedUpToLocked(local, r, pushed, done[len(done)-1].mark)
 	for _, pc := range done {
 		close(pc.done)
 		s.packLocked(ctx, r)
