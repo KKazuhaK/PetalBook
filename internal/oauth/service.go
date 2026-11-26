@@ -146,7 +146,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		pending: map[string]*pendingAuth{}, pendingOf: map[string]int{}, codes: map[string]*authCode{}, used: map[string]usedCode{}, replay: map[string]replayEntry{},
 		grants: map[string]*grantEntry{}, gone: map[string]time.Time{}, verified: map[[32]byte]verifiedToken{}}
 	s.cimd = newCIMDFetcher(cfg.CIMDClient, s.now, s.log)
-	s.regLimit = &tokens.Limiter{Max: registerPerWindow, Window: registerWindow, Now: s.now}
+	s.regLimit = &tokens.Limiter{Max: registerPerWindow, Window: registerWindow, Now: s.now, Overflow: true}
 	s.failLimit = &tokens.Limiter{Now: s.now}
 	return s, nil
 }

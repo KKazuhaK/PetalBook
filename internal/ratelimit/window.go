@@ -27,18 +27,32 @@ type Window struct {
 	max    int
 	window time.Duration
 	policy Policy
+	full   Full
+	spill  budget
 	now    Clock
 }
 
-// NewWindow makes a table of at most maxKeys keys with windows of the given length.
+// NewWindow makes a table of at most maxKeys keys with windows of the given
+// length. A full EvictFree table gives newcomers the Overflow bucket, a
+// KeepLive one refuses them (Closed); OnFull changes that.
 func NewWindow(maxKeys int, window time.Duration, policy Policy, now Clock) *Window {
-	return &Window{m: map[string]*entry{}, age: list{age: true}, max: maxKeys, window: window, policy: policy, now: now}
+	full := Overflow
+	if policy == KeepLive {
+		full = Closed
+	}
+	return &Window{m: map[string]*entry{}, age: list{age: true}, max: maxKeys, window: window, policy: policy, full: full, spill: newBudget(maxKeys), now: now}
+}
+
+// OnFull sets what a new key gets when there is no room (see the package doc).
+func (w *Window) OnFull(f Full) *Window {
+	w.full = f
+	return w
 }
 
 // Take spends n of the key's allowance of limit in its window. When that would
 // go over, nothing is spent and wait is how long until the window ends; first
 // reports the first refusal of the window (for an audit log, once per key and
-// window). A full table that cannot make room refuses too, with first false.
+// window). A new key that finds no room gets the table's Full mode.
 func (w *Window) Take(key string, n, limit int) (wait time.Duration, ok, first bool) {
 	now := w.now()
 	w.mu.Lock()
@@ -46,6 +60,15 @@ func (w *Window) Take(key string, n, limit int) (wait time.Duration, ok, first b
 	e := w.live(key, now)
 	if e == nil {
 		if d, room := w.room(1, now, w.policy); !room {
+			switch {
+			case n > limit:
+				return w.window, false, false
+			case w.full == Open:
+				return 0, true, false
+			case w.full == Overflow:
+				d, ok := w.spill.take(float64(n), now)
+				return d, ok, false
+			}
 			return d, false, false
 		}
 		e = w.add(key, now)
@@ -72,7 +95,8 @@ type Cost struct {
 // TakeAll spends one of each key's allowance, all or none; when one is spent
 // it returns how long until its window ends. Room for new keys is made only
 // from windows that are over, whatever the policy: a key of this very call is
-// never forgotten to make room for another.
+// never forgotten to make room for another. It is for Closed tables (mail):
+// without room it refuses.
 func (w *Window) TakeAll(keys ...Cost) (wait time.Duration, ok bool) {
 	now := w.now()
 	w.mu.Lock()

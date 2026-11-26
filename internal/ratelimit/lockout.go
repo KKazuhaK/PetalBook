@@ -22,6 +22,8 @@ type Lockout struct {
 	low   *group // free entries with the fewest failures; groups rise from here
 	spare *group // groups for reuse, so counting allocates nothing
 	max   int
+	full  Full
+	spill budget
 	now   Clock
 }
 
@@ -34,7 +36,14 @@ type group struct {
 
 // NewLockout makes a table of at most maxKeys keys.
 func NewLockout(maxKeys int, now Clock) *Lockout {
-	return &Lockout{m: map[string]*entry{}, age: list{age: true}, max: maxKeys, now: now}
+	return &Lockout{m: map[string]*entry{}, age: list{age: true}, max: maxKeys, spill: newBudget(maxKeys), now: now}
+}
+
+// OnFull sets what a new key's failure (and Blocked) gets when there is no
+// room (see the package doc). Reserve lets a new key try in every mode.
+func (t *Lockout) OnFull(f Full) *Lockout {
+	t.full = f
+	return t
 }
 
 // Result is what one more failure did to a key.
@@ -43,7 +52,7 @@ type Result struct {
 	AtCap   bool          // the key now has max failures, is locked, or could not be counted
 	First   bool          // the first time in this window it reached the cap
 	Locked  bool          // this failure started a lock
-	Full    bool          // the table was full of held keys: nothing was counted, the key is refused
+	Full    bool          // no room for a new key: nothing was counted for it (see OnFull)
 	Wait    time.Duration // until the window ends, or the lock does
 	LockFor time.Duration
 }
@@ -60,7 +69,8 @@ func (t *Lockout) Fail(key string, max int, window, lock time.Duration) Result {
 // blocked: attempts that run together then cannot each be judged against the
 // count from before the burst. first says that this refusal is the first of
 // the window (for an audit log). An attempt that turns out well gives its
-// place back with Refund. A full table refuses a new key (fail closed).
+// place back with Refund. A new key that finds no room tries uncounted: a
+// full table never refuses an attempt that may be right.
 func (t *Lockout) Reserve(key string, max int, window time.Duration) (wait time.Duration, ok, first bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -76,25 +86,34 @@ func (t *Lockout) Reserve(key string, max int, window time.Duration) (wait time.
 			return e.start.Add(window).Sub(now), false, first
 		}
 	}
-	if r := t.count(key, now, window, 0, 0); r.Full {
-		return r.Wait, false, false
+	if _, ok := t.canAdd(now, window); !ok {
+		return 0, true, false
 	}
+	t.count(key, now, window, 0, 0)
 	return 0, true, false
 }
 
 // Blocked says whether the key may not try now, and for how long: it is under
-// lock, has max failures in the current window, or is new to a table full of
-// held keys.
+// lock or has max failures in the current window. A new key that finds no
+// room is blocked only in Closed mode, or in Overflow mode while the overflow
+// bucket is spent.
 func (t *Lockout) Blocked(key string, max int, window time.Duration) (time.Duration, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 	e := t.live(key, window, now)
 	if e == nil {
-		if d, ok := t.canAdd(now, window); !ok {
-			return d, true
+		d, ok := t.canAdd(now, window)
+		switch {
+		case ok || t.full == Open:
+			return 0, false
+		case t.full == Overflow:
+			if w, ok := t.spill.has(now); !ok {
+				return w, true
+			}
+			return 0, false
 		}
-		return 0, false
+		return d, true
 	}
 	if !e.until.IsZero() {
 		return e.until.Sub(now), true
@@ -195,7 +214,16 @@ func (t *Lockout) count(key string, now time.Time, window time.Duration, max int
 	e := t.live(key, window, now)
 	if e == nil {
 		if d, ok := t.room(now, window); !ok {
-			return Result{AtCap: true, Full: true, Wait: d}
+			switch t.full {
+			case Open:
+				return Result{N: 1, Full: true, Wait: window}
+			case Overflow:
+				if w, ok := t.spill.take(1, now); !ok {
+					return Result{N: 1, AtCap: true, Full: true, Wait: w}
+				}
+				return Result{N: 1, Full: true, Wait: window}
+			}
+			return Result{N: 1, AtCap: true, Full: true, Wait: d}
 		}
 		e = &entry{key: key, start: now}
 		t.m[key] = e

@@ -154,7 +154,7 @@ type server struct {
 	prefs prefsHub
 	// peopleGate limits the people search per person, batchGate the rows of
 	// batches per person (see batch.go).
-	peopleGate, batchGate *ratelimit.Window
+	peopleGate, batchGate *ratelimit.Bucket
 	// Background work (the bulk jobs) is started with goBg: it runs with bgCtx,
 	// which Close cancels, and Close waits for it on bg.
 	bgCtx    context.Context
@@ -254,8 +254,8 @@ func New(opt Options) *Handler {
 		s.now = time.Now
 	}
 	now := func() time.Time { return s.now() }
-	s.peopleGate = ratelimit.NewWindow(maxGateKeys, peopleWindow, ratelimit.EvictFree, now)
-	s.batchGate = ratelimit.NewWindow(maxGateKeys, batchWindow, ratelimit.EvictFree, now)
+	s.peopleGate = ratelimit.NewBucket(maxGateKeys, peoplePerMinute, peoplePerWindow, now)
+	s.batchGate = ratelimit.NewBucket(maxGateKeys, batchRowsPerMinute, batchRowsPerWindow, now)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))

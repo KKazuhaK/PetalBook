@@ -27,16 +27,32 @@
 //     (oldest first among equals), in a Bucket the least recently used one
 //     while it still has a token;
 //  3. nothing: when every entry is held — locked, at its cap, or a bucket
-//     with no token — the new key is refused (fail closed) and told to wait
-//     until the first entry runs out. Existing state is never dropped to let a
-//     newcomer in.
+//     with no token — existing state is never dropped to let a newcomer in.
 //
 // A held entry is one that refuses its key now. Flooding the table with new
 // keys therefore cannot wipe a victim's lockout or failure count: new keys
-// carry one failure each and go before any key with more, and a table full of
-// locks turns newcomers away instead of forgetting a lock. A Window made with
-// KeepLive never drops a live entry at all (step 2 is skipped), for caps where
-// forgetting even a partial count gives allowance back (mail).
+// carry one failure each and go before any key with more.
+//
+// # A full table is not a denial of service
+//
+// Filling a table with held entries must not lock everyone else out, so a new
+// key that finds no room is not simply refused. What it gets is the table's
+// Full mode (OnFull):
+//
+//   - Overflow (the default): all such keys share one overflow bucket of
+//     max(16, MaxKeys/100) tokens, refilled at that many a minute. While it
+//     has tokens they pass, uncounted per key; when it is spent they wait.
+//   - Open: they pass, uncounted. For limits on a first request that must
+//     never be turned away (the per-minute allowance of the sign-in
+//     endpoints, the starts of single sign-on, bearer-token checks).
+//   - Closed: they are refused until an entry runs out. Only for caps that
+//     must fail closed and guard no sign-in: outgoing mail (a Window made
+//     with KeepLive, which also never forgets a live entry).
+//
+// A Lockout never refuses a new key's attempt, whatever its mode: Reserve and
+// Blocked let it try (a correct sign-in always gets through), and only a
+// failure spends the overflow bucket; once it is spent, the failure is
+// answered as at its cap (an immediate short lock, the bucket's wait).
 package ratelimit
 
 import (
@@ -111,6 +127,50 @@ func (l *list) toBack(e *entry) {
 	}
 	l.remove(e)
 	l.push(e)
+}
+
+// Full is what a new key gets from a table that has no room for it (see the
+// package doc).
+type Full uint8
+
+const (
+	Overflow Full = iota // a share of one overflow bucket; when it is spent, a wait
+	Open                 // passes, uncounted
+	Closed               // refused until an entry runs out
+)
+
+// budget is the shared overflow bucket of a table.
+type budget struct {
+	tokens, rate, burst float64
+	last                time.Time
+}
+
+func newBudget(maxKeys int) budget {
+	b := float64(max(16, maxKeys/100))
+	return budget{tokens: b, burst: b, rate: b / 60}
+}
+
+// take spends n tokens; when there are not enough it says how long to wait.
+func (b *budget) take(n float64, now time.Time) (time.Duration, bool) {
+	d, ok := b.enough(n, now)
+	if ok {
+		b.tokens -= n
+	}
+	return d, ok
+}
+
+// has says whether a token is left, without spending it.
+func (b *budget) has(now time.Time) (time.Duration, bool) { return b.enough(1, now) }
+
+func (b *budget) enough(n float64, now time.Time) (time.Duration, bool) {
+	if !b.last.IsZero() {
+		b.tokens = min(b.burst, b.tokens+now.Sub(b.last).Seconds()*b.rate)
+	}
+	b.last = now
+	if b.tokens < n {
+		return time.Duration((n - b.tokens) / b.rate * float64(time.Second)), false
+	}
+	return 0, true
 }
 
 // fullWait is what a refused newcomer is told: until the first entry may go,

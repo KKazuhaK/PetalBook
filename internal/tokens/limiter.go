@@ -11,11 +11,14 @@ import (
 // client address and blocks a client that reaches Max in a Window until the
 // window ends. State is in memory only, in a ratelimit.Lockout of maxClients
 // keys: a full table forgets the clients with the fewest failures first, never
-// a blocked one, and blocks newcomers while every client in it is blocked.
+// a blocked one. A new client that finds no room is let through (a correct
+// token is never refused), unless Overflow is set: then new clients share the
+// table's overflow bucket (OAuth registrations, which make rows).
 type Limiter struct {
-	Max    int           // failures allowed per Window; default 10
-	Window time.Duration // default 1 minute
-	Now    func() time.Time
+	Max      int           // failures allowed per Window; default 10
+	Window   time.Duration // default 1 minute
+	Now      func() time.Time
+	Overflow bool
 
 	once sync.Once
 	t    *ratelimit.Lockout
@@ -25,7 +28,13 @@ type Limiter struct {
 const maxClients = 10000
 
 func (l *Limiter) table() *ratelimit.Lockout {
-	l.once.Do(func() { l.t = ratelimit.NewLockout(maxClients, l.now) })
+	l.once.Do(func() {
+		full := ratelimit.Open
+		if l.Overflow {
+			full = ratelimit.Overflow
+		}
+		l.t = ratelimit.NewLockout(maxClients, l.now).OnFull(full)
+	})
 	return l.t
 }
 

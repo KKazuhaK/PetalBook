@@ -96,3 +96,58 @@ func TestTheLimitersKeepTheirLimits(t *testing.T) {
 		t.Fatalf("testCaps holds %d keys", n)
 	}
 }
+
+// An attacker who fills every table with locked or capped keys must not lock
+// everyone out: a new person's correct sign-in still gets through each gate
+// that Login passes (the per-minute allowance, the address's reservation, the
+// locks of the name and the pair), and wrong ones are still held back.
+func TestFullTablesOfLocksDoNotBlockACorrectSignIn(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_000_000, 0)}
+	s := &Service{}
+	s.initLimits(clk.now)
+	st := &secState{window: 15 * time.Minute, lock: 15 * time.Minute}
+	st.Limits.PerMinute, st.Limits.MaxFailures = 10, 10
+	for i := range maxLimitKeys {
+		k := strconv.Itoa(i)
+		s.perMin.Take("ip:x"+k, 10, 10)
+		s.failIP.Fail("ip:x"+k, 1, st.window, st.lock)
+		s.failUser.Fail("x"+k, 1, st.window, st.lock)
+		s.failPair.Fail(pairKey("x"+k, "x"+k), 1, st.window, st.lock)
+	}
+	if s.failPair.Len() != maxLimitKeys || s.perMin.Len() != maxLimitKeys {
+		t.Fatal("the tables are not full")
+	}
+	for i := range 3 * maxLimitKeys { // well past any overflow budget
+		ip, ukey := "new"+strconv.Itoa(i), "user"+strconv.Itoa(i)
+		if _, ok, _ := s.perMin.Take("ip:"+ip, 1, st.Limits.PerMinute); !ok {
+			t.Fatal("the per-minute allowance refused a first request")
+		}
+		if err := s.gateIP(st, ip); err != nil {
+			t.Fatalf("the address's reservation refused a sign-in: %v", err)
+		}
+		if _, locked := s.failUser.LockedFor(ukey, st.window); locked {
+			t.Fatal("a new name is locked")
+		}
+		if _, locked := s.failPair.LockedFor(pairKey(ip, ukey), st.window); locked {
+			t.Fatal("a new pair is locked")
+		}
+		s.failUser.Reset(ukey)
+		s.failPair.Reset(pairKey(ip, ukey))
+		s.refundIP(ip)
+	}
+	if _, locked := s.failPair.LockedFor(pairKey("x0", "x0"), st.window); !locked {
+		t.Fatal("a lock was dropped")
+	}
+	// Wrong passwords of new names spend the overflow bucket, then are
+	// answered as at the cap (429) rather than counted nowhere.
+	capped := false
+	for i := range 1000 {
+		if r := s.failUser.Fail("guess"+strconv.Itoa(i), 10, st.window, st.lock); r.AtCap {
+			capped = true
+			break
+		}
+	}
+	if !capped {
+		t.Fatal("failures of new names are never held back")
+	}
+}

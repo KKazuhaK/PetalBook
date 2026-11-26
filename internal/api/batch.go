@@ -20,18 +20,21 @@ import (
 const (
 	// batchBody is the most a batch may weigh: 1000 rows with a name and a few groups.
 	batchBody = 1 << 20
-	// peopleWindow and peoplePerWindow are the rate of the people search, per
-	// person, in a fixed window from the person's first search.
+	// peoplePerWindow in peopleWindow is the rate of the people search, per
+	// person: a token bucket with that burst, refilled at that average rate.
 	peopleWindow    = 10 * time.Second
 	peoplePerWindow = 20
+	peoplePerMinute = peoplePerWindow * int(time.Minute/peopleWindow)
 	// batchWindow and batchRowsPerWindow are the rows of batches (dry runs
 	// too, all three kinds together) one person may send: a file of 1,000
 	// checked and applied a few times over, never a sweep of the site.
 	batchWindow        = 10 * time.Minute
 	batchRowsPerWindow = 5000
+	batchRowsPerMinute = batchRowsPerWindow * int(time.Minute) / int(batchWindow)
 )
 
-// maxGateKeys bounds each gate: one entry per person who spent in the window.
+// maxGateKeys bounds each gate: one bucket per person who searched or sent
+// rows lately. A full gate gives newcomers the shared overflow bucket.
 const maxGateKeys = 10_000
 
 // findPeople is the picker's search: the enabled people of a tenant whose
@@ -87,7 +90,7 @@ func (s *server) searchPeople(c *call, sc store.Scope) {
 		writeError(c.w, http.StatusNotFound, "not_found", "There are no other people.")
 		return
 	}
-	if wait, ok, _ := s.peopleGate.Take(c.user().ID, 1, peoplePerWindow); !ok {
+	if wait, ok := s.peopleGate.TakeN(c.user().ID, 1); !ok {
 		c.w.Header().Set("Retry-After", retrySeconds(wait))
 		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Searching too often; wait a moment.")
 		return
@@ -192,7 +195,7 @@ func (s *server) readBatch(c *call) (batchReq, bool) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Rows holds 1 to "+itoa(spaces.MaxBatchRows)+" rows.")
 		return req, false
 	}
-	if wait, ok, _ := s.batchGate.Take(c.user().ID, len(req.Rows), batchRowsPerWindow); !ok {
+	if wait, ok := s.batchGate.TakeN(c.user().ID, len(req.Rows)); !ok {
 		c.w.Header().Set("Retry-After", retrySeconds(wait))
 		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Too many rows in a short time; wait a moment.")
 		return req, false
