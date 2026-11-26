@@ -320,8 +320,8 @@ function TenantDetails({ tenant, onGone }: { tenant: Tenant; onGone: () => void 
           </Button>
         </div>
       </form>
-      <TenantUsageBlock tenant={tenant} />
       <TenantPlanBlock tenant={tenant} />
+      <TenantUsageBlock tenant={tenant} />
       {!tenant.default && (
         <div className="flex flex-wrap items-start gap-3">
           <div className="grid max-w-prose gap-1">

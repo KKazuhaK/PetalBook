@@ -845,8 +845,7 @@ export function createTenantBook(o: TenantBookOptions) {
   // A plan's rule is checked as a rule for one tenant; a limit the tenant also sets must cap (restrict or lock).
   const checkPlanRule = (key: string, raw: unknown): PlanRule => {
     const d = DEFS.find((x) => x.key === key)
-    if (!d || !(d.layers.includes('tenant') || d.forTenant))
-      throw new HttpError(404, 'not_found', `no such setting ${key}`)
+    if (!d || !(d.layers.includes('tenant') || d.forTenant)) return bad(`no setting ${key} has a rule for a tenant`)
     const r = raw as { value?: unknown; lower?: unknown } | null
     if (!r || typeof r !== 'object') return bad(`${key}: give a rule`)
     for (const k of Object.keys(r)) if (k !== 'value' && k !== 'lower') bad(`unknown field ${k}`)

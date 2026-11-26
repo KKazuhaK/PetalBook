@@ -1930,6 +1930,152 @@ function suite(target: Target) {
         })
       })
 
+      describe('plans and the plan of a tenant (3.6)', () => {
+        type PlanRuleBody = { value?: unknown; lower?: { mode: string; max?: number } | null }
+        type PlanBody = {
+          slug: string
+          name: string
+          description: string
+          rules: Record<string, PlanRuleBody>
+          tenants: number
+        }
+        const tenant = '/api/admin/tenants/0000000000'
+        const slug = `pl${run}`.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const other = `po${run}`.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const plan = async (s: string) =>
+          (await call(admin, 'GET', `/api/admin/plans/${s}`)).json as unknown as PlanBody
+
+        it('a plan is made with rules, listed, changed (a key with null leaves it) and deleted; the codes are the ones the page needs', async () => {
+          try {
+            const made = await call(admin, 'POST', '/api/admin/plans', {
+              slug,
+              name: 'Team',
+              description: 'Small groups',
+              rules: { 'quota.people': { value: 25, lower: { mode: 'restrict', max: 25 } } },
+            })
+            expect(made.status).toBe(201)
+            expect(made.json).toMatchObject({ slug, name: 'Team', tenants: 0 })
+            expect((made.json as unknown as PlanBody).rules['quota.people']).toMatchObject({
+              value: 25,
+              lower: { mode: 'restrict', max: 25 },
+            })
+            expect((await call(admin, 'POST', '/api/admin/plans', { slug, name: 'Again' })).json.error).toBe('exists')
+            expect((await call(admin, 'POST', '/api/admin/plans', { slug: 'A', name: 'x' })).json.error).toBe('invalid')
+            const list = await call(admin, 'GET', '/api/admin/plans')
+            expect((list.json.plans as PlanBody[]).map((x) => x.slug)).toContain(slug)
+            // A rule the plan gives one setting is checked as a rule for a tenant is.
+            const patched = await call(admin, 'PATCH', `/api/admin/plans/${slug}`, {
+              name: 'Team plus',
+              rules: { 'features.adminView': { value: false, lower: { mode: 'lock' } }, 'quota.people': null },
+            })
+            expect(patched.status).toBe(200)
+            expect(patched.json.affected).toEqual([])
+            const after = await plan(slug)
+            expect(after.name).toBe('Team plus')
+            expect(Object.keys(after.rules)).toEqual(['features.adminView'])
+            expect(
+              (await call(admin, 'PATCH', `/api/admin/plans/${slug}`, { rules: { 'no.such': { value: 1 } } })).status,
+            ).toBe(400)
+          } finally {
+            await call(admin, 'DELETE', `/api/admin/plans/${slug}`)
+          }
+          expect((await call(admin, 'GET', `/api/admin/plans/${slug}`)).status).toBe(404)
+        })
+
+        it('a limit a tenant also sets needs a maximum or a lock in a plan (setting_rule_needs_max); a value above its own maximum is refused', async () => {
+          try {
+            expect((await call(admin, 'POST', '/api/admin/plans', { slug, name: 'Cap' })).status).toBe(201)
+            const bare = await call(admin, 'PATCH', `/api/admin/plans/${slug}`, {
+              rules: { 'files.maxBytes': { value: 1048576 } },
+            })
+            expect([bare.status, bare.json.error]).toEqual([400, 'setting_rule_needs_max'])
+            const above = await call(admin, 'PATCH', `/api/admin/plans/${slug}`, {
+              rules: { 'files.maxBytes': { value: 4194304, lower: { mode: 'restrict', max: 1048576 } } },
+            })
+            expect([above.status, above.json.error]).toEqual([400, 'setting_above_max'])
+            const capped = await call(admin, 'PATCH', `/api/admin/plans/${slug}`, {
+              rules: { 'files.maxBytes': { value: 1048576, lower: { mode: 'restrict', max: 1048576 } } },
+            })
+            expect(capped.status).toBe(200)
+            // A quota has no tenant layer, so a bare value is a plain default for it.
+            expect(
+              (await call(admin, 'PATCH', `/api/admin/plans/${slug}`, { rules: { 'quota.spaces': { value: 5 } } }))
+                .status,
+            ).toBe(200)
+          } finally {
+            await call(admin, 'DELETE', `/api/admin/plans/${slug}`)
+          }
+        })
+
+        it('PUT …/plan gives a tenant a plan and clears every manual rule, dated or not, and answers them as cleared; the tenant says which plan it has', async () => {
+          const put = (key: string, siteRule: unknown) => call(admin, 'PUT', `${tenant}/settings/${key}`, { siteRule })
+          try {
+            expect((await call(admin, 'POST', '/api/admin/plans', { slug, name: 'One' })).status).toBe(201)
+            expect(
+              (
+                await call(admin, 'POST', '/api/admin/plans', {
+                  slug: other,
+                  name: 'Two',
+                  rules: { 'quota.pages': { value: 100, lower: { mode: 'restrict', max: 100 } } },
+                })
+              ).status,
+            ).toBe(201)
+            expect((await call(admin, 'PUT', `${tenant}/plan`, { plan: slug })).json).toMatchObject({
+              plan: { slug },
+              cleared: [],
+            })
+            expect(
+              ((await call(admin, 'GET', tenant)).json as unknown as { plan: { slug: string } | null }).plan,
+            ).toEqual({
+              slug,
+              name: 'One',
+            })
+            // A plan a tenant uses cannot be deleted; the answer counts them.
+            const inUse = await call(admin, 'DELETE', `/api/admin/plans/${slug}`)
+            expect([inUse.status, inUse.json.error, inUse.json.tenants]).toEqual([409, 'plan_in_use', 1])
+            // Manual rules, one with a window: all of them go with a change of plan.
+            expect((await put('quota.people', { value: 7 })).status).toBe(200)
+            const until = new Date(Date.now() + 48 * 3600_000).toISOString().replace(/\.\d+Z$/, 'Z')
+            expect((await put('quota.spaces', { value: 3, until })).status).toBe(200)
+            const changed = await call(admin, 'PUT', `${tenant}/plan`, { plan: other })
+            expect(changed.status).toBe(200)
+            expect(changed.json.plan).toEqual({ slug: other, name: 'Two' })
+            expect((changed.json.cleared as { key: string }[]).map((c) => c.key).sort()).toEqual([
+              'quota.people',
+              'quota.spaces',
+            ])
+            const rows = (await call(admin, 'GET', `${tenant}/settings`)).json.settings as {
+              key: string
+              effective: unknown
+              tenant: { rules?: { source: string; inEffect: boolean }[] }
+            }[]
+            const pages = rows.find((r) => r.key === 'quota.pages')!
+            expect([pages.effective, pages.tenant.rules?.[0]?.source, pages.tenant.rules?.[0]?.inEffect]).toEqual([
+              100,
+              'plan',
+              true,
+            ])
+            expect(rows.find((r) => r.key === 'quota.people')!.tenant.rules).toBeUndefined()
+            expect((await call(admin, 'PUT', `${tenant}/plan`, { plan: 'nowhere' })).json.error).toBe('invalid')
+          } finally {
+            await call(admin, 'PUT', `${tenant}/plan`, { plan: null })
+            await call(admin, 'DELETE', `/api/admin/plans/${slug}`)
+            await call(admin, 'DELETE', `/api/admin/plans/${other}`)
+          }
+          expect(((await call(admin, 'GET', tenant)).json as unknown as { plan: unknown }).plan).toBeNull()
+        })
+
+        it('only the site administrators see the plans', async () => {
+          const m = await newMember(uniq('pm'))
+          for (const [method, path] of [
+            ['GET', '/api/admin/plans'],
+            ['POST', '/api/admin/plans'],
+            ['PUT', `${tenant}/plan`],
+          ] as const)
+            expect((await call(m.browser, method, path, method === 'GET' ? undefined : {})).status, path).toBe(403)
+        })
+      })
+
       describe('quotas and usage (3.3)', () => {
         const slugOf = (p: string) =>
           `${p}${run}`

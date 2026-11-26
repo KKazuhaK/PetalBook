@@ -1352,7 +1352,7 @@ The invitation goes by mail when mail is configured: `mail` on the result is
 anywhere: `token` is given, once, for the administrator to hand over as
 `/invite#{token}`), or `limited` (the cap below is spent: `token` is given). The
 answer's `mail` is `{"configured": bool, "sender": "site" | ""}`. The sender is
-the server's mail; a tenant's own sender (capability `integrations.smtp`) takes
+the server's mail; a tenant's own sender (the feature `mail.ownSender`) takes
 its place when a tenant can configure one. Sending is capped: three messages
 per address per hour (as every account mail) and 300 invitations per
 administrator per hour.
@@ -6370,9 +6370,8 @@ answer as switched off, and no setting can open registration.
 - `features.registration` is the effective value of the setting
   `features.registration` for this tenant (see "Registration").
 - `quota`: the tenant's totals, set by site administrators only; `null` is no
-  limit. From 3.6 they are part of the tenant's capabilities (`storage.quota`,
-  `other.people`; see "Capabilities" under "Tenant autonomy") and `quota` here is
-  read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a space
+  limit. They are the settings `quota.people`, `.spaces`, `.bytes` and `.pages` of the
+  tenant (see "Rules for a tenant") and `quota` here is read only. `usage` is what is measured (see "Quotas"): `measuredAt` is when a space
   of the tenant was last measured (`null`: never; a measurement that failed does
   not count), and `over` lists the totals it
   is over (`people`, `spaces`, `bytes`, `pages`).
@@ -8053,7 +8052,7 @@ recycle items, or a user (their personal space and the spaces of rules 1 and 2).
   space's repository instead of the files at the current commit.
 - **Any space may be exported** by an administrator who may see it (a site
   administrator: every space; a tenant administrator: their tenant's, from 3.6
-  only while the tenant has the capability `features.adminView`, see "Viewing a
+  only while the tenant has the feature `features.adminView`, see "Viewing a
   space" for personal spaces from 3.7), in the recycle bin or not.
   Every export is audited (`export_created`, `export_downloaded`), and every
   owner of the space gets a notice in their account.
@@ -8097,7 +8096,7 @@ than one tenant (only a site administrator can make one).
 Before 3.5 administrators could not read people's pages through the API (1.7).
 From 3.5 they may read any space they may manage, read only, and **every view
 is audited**. From 3.6 a tenant administrator may do so only while the tenant
-has the capability `features.adminView` (`403 feature_off` otherwise; turning it
+has the feature `features.adminView` (`403 feature_off` otherwise; turning it
 off ends the tenant's open views); site administrators always may.
 
 #### `POST /api/admin/spaces/{space}/view`
@@ -8171,7 +8170,7 @@ of file, images included.
 - The **ceiling** is the site's: `--max-upload` (10 MiB by default, at most
   256 MiB) is the site value and its `lower` is `restrict` with `max` equal to
   it, so a tenant can set any value up to it and never above. From 3.6 a
-  tenant's ceiling is its capability `storage.maxFileBytes` (itself at most
+  tenant's ceiling is a rule restricting `files.maxBytes` for it (itself at most
   `--max-upload`). Lowering a ceiling below a tenant's value makes that value
   `inEffect: false` and the ceiling applies.
 - **Where it is enforced**, before the file is written anywhere:
@@ -8298,8 +8297,8 @@ section of the "存储与同步" page that is collapsed and hidden by default.
 - **Pressure** = used ÷ min(budget, free disk + used), computed once a minute
   (`free disk` is one `statfs` of the data directory). Whenever the free disk is
   smaller than what is left of the budget, the disk wins.
-- **Allocated**: the sum of the tenants' storage totals (`storage.quota.bytes`
-  of the limits sheet, 3.6). It may exceed the budget (overcommit); the page
+- **Allocated**: the sum of the tenants' storage totals (`quota.bytes` in
+  effect for each, see "Rules for a tenant"). It may exceed the budget (overcommit); the page
   then shows a warning.
 
 **Bands** (balanced preset, the default):
@@ -8709,7 +8708,7 @@ Owner, 2026-11-23. **Nothing of billing or payment is built now**; this fixes
 where it goes.
 
 - Plans, limits, metering, invoices and renewals belong to an **internal
-  billing module**. It writes the limits sheet through an internal interface
+  billing module**. It writes rules through an internal interface
   (a Go interface in the server, not HTTP), with the source `billing`; plans
   are its data, and 3.6 builds only their storage and the site
   administrators' manual editing ("Plans").
@@ -8717,23 +8716,25 @@ where it goes.
   adapters and their callbacks. Reserved: the adapter interface and
   `POST /api/billing/callbacks/{adapter}`; no route exists.
 - There is **no external billing system's token or API** that changes a tenant:
-  an outside system reaches the limits sheet only through a payment callback
+  an outside system changes a tenant's rules only through a payment callback
   handled by the internal module.
-- The site administrators' manual editing of the sheet (the tenant detail
-  page's "limits and usage") is built, and manual values win over billing.
+- The site administrators' manual editing of the rules (the tenant detail
+  page's "Rules for this tenant", and the plans page) is built, and manual
+  rules win over billing's.
 
 ### A site administrator's view of a tenant
 
-Site administrators see and change every tenant's configuration, capabilities
+Site administrators see and change every tenant's configuration, rules
 and storage mode; every change is audited (owner, 2026-11-23).
 
 - **The tenant detail page** (`/admin/tenants/{slug}` in the web app) has these
   sections: overview (plan, usage, people, spaces per storage mode, recent audit
-  rows), capabilities, settings (every layered key, with the layer its value
-  comes from), storage (mode, storage target, spaces waiting to move), sign-in
+  rows), plan, settings (every layered key, with the layer its value
+  comes from), rules (features, quotas and limits, each with its source and
+  window), storage (mode, storage target, spaces waiting to move), sign-in
   (SSO providers, social choices, domains, joining, managed accounts), mail and
-  integrations (SMTP, captcha, daily text, connections), limits and usage
-  (the limits sheet, with sources and dates, and the usage export), members and
+  integrations (SMTP, captcha, daily text, connections), usage (and the usage
+  export), members and
   administrators, audit. Each section uses the tenant's endpoints of this
   section, which site administrators may read and write for every tenant.
 - `GET /api/admin/tenants/{tenant}/overview` answers the overview from stored
@@ -8760,12 +8761,12 @@ and storage mode; every change is audited (owner, 2026-11-23).
   setting; the storage target takes `siteLock` too.
 - **What a tenant administrator sees**: in the settings, `setBy` (`site` or
   `tenant`: who wrote the tenant layer's value) and `siteLock`; in the
-  capabilities, `source`; on each tenant-owned resource (providers, domains,
+  rules, `source`; on each tenant-owned resource (providers, domains,
   mail, captcha, daily, GitHub, storage target), `updatedBy`
   (`{"role": "site" | "tenant", "user": {"id", "username"}, "at"}`). The pages
   mark what the site set with "由全站管理员设置" and what it locked with
   "由全站管理员锁定".
-- **Audit**: every change to a tenant's capabilities, plan, settings, storage
+- **Audit**: every change to a tenant's rules, plan, settings, storage
   and resources writes a row with the tenant and `by.role` (`site` or
   `tenant`); the tenant's administrators see their tenant's rows, the site
   administrators' changes included.
@@ -8820,16 +8821,15 @@ take about 30 MB. There is no cap on the number of tenants cached.
 {"key": "storage.mode", "kind": "choice", "layers": ["site", "tenant", "space"],
  "site": {"value": "server", "lower": {"mode": "restrict", "options": ["server", "own", "tenant"], "note": "…"}},
  "tenant": {"value": "tenant", "lower": {"mode": "lock"}, "inEffect": true, "setBy": "site", "siteLock": false},
- "capability": {"key": "storage.modes", "on": true, "value": ["own", "tenant"]},
  "effective": "tenant",
  "editable": true, "forced": false, "allowed": ["own", "tenant"], "reason": {"by": "site", "mode": "restrict", "note": "…"}}
 ```
 
 - `editable`: whether this caller may change the tenant's value now (`false`
   when the site forces it, when a site administrator locked the tenant's value,
-  `siteLock`, or when the capability that gates the tenant layer is off).
+  `siteLock`, or when a rule for the tenant leaves it nothing to choose).
 - `setBy`: who wrote the tenant layer's value, `site` or `tenant`.
-- `allowed` is what the site's rule and the tenant's capability both leave.
+- `allowed` is what the site's rule and the rule for the tenant both leave.
 - `forced`: the site locks it. `reason` is then `{"by": "site", "mode": "lock", "note": "…"}`;
   for `tighten` and `restrict` the reason says so as well and `allowed` (or
   `max`) says what is left. The page shows a forced setting read only, greyed,
@@ -8842,46 +8842,33 @@ setting, or anything about another tenant.
 
 ### The layered keys
 
-3.3's keys (and 4.1's `features.offline`) stay as they are; the row of
-`features.offline` below only adds its capability. 3.6 gives a tenant layer (and where it says so a
-space or person layer) to these. "Capability" names what decides whether the
-tenant layer exists for a tenant (without it the tenant follows the site);
-"Site's `lower`" is the default a new server starts with, chosen for what the
-key protects.
+`GET /api/admin/settings` lists every key with its kind and layers (`serverWide`
+gives the reason for a key that has no tenant layer); the registry
+(`internal/settings/registry.go`) is the list. By prefix, with the layers each
+has (S = the site, T = a tenant, Sp = a space, P = a person; "S + rule" is the
+site layer with a rule for one tenant, which is how a feature or a limit of a
+tenant is set, see "Rules for a tenant"; "S!" is the server's alone):
 
-| Key | Kind, strictness | Layers | Capability | Site default | Site's `lower` |
-|---|---|---|---|---|---|
-| `auth.ssoOnly` | boolean, `higher` | site, tenant | `signin.sso` | `false` | `tighten` |
-| `auth.loginMode` | choice (`dual`, `sso_first`, `sso_redirect`, `local_only`) | site, tenant | — | `dual` | `allow` |
-| `auth.passkeys.requireRoles` | list, `superset` stricter | site, tenant | — | `[]` | `tighten` |
-| `auth.social` | list of the site's social providers a tenant's people may use, `subset` | site, tenant | `signin.socialChoice` | all | `tighten` |
-| `session.idleDays`, `session.maxDays` | limits, `lower` | site, tenant | — | 2.8's | `tighten` |
-| `captcha.contexts.register`, `.forgot`, `.invite` | `off` < `after_failures` < `always` | site, tenant | — | 2.8's | `tighten` |
-| `mail.useSite` | boolean: a tenant without its own SMTP sends through the site's | site, tenant | — | `true` | `allow` |
-| `access.tokens`, `access.mcp` | boolean, `false` stricter | site, tenant | `integrations.tokens`, `integrations.mcp` | `true` | `tighten` |
-| `daily.useSiteApis` | boolean: a tenant's spaces may choose the site's interfaces | site, tenant | — | `true` | `allow` |
-| `connections.useSiteApps` | boolean: the tenant's people may connect through the site's providers (2.7b; was `github.useSiteApp`) | site, tenant | — | `true` | `allow` |
-| `storage.mode` | choice `server`, `own`, `tenant` (see "Storage modes") | site, tenant, space | the options are cut to `storage.modes` | `server` | `restrict` to `storage.modes.available` |
-| `storage.remotes.scope` | `new` < `all` | site, tenant | — | `new` | `tighten` |
-| `storage.remotes.graceDays` | limit, `lower` | site, tenant | — | 3.1's | `tighten` |
-| `storage.hosts` | list, `subset` | site, tenant | — | 3.1's `hosts.allowed` (or `--remote-host`) | `restrict` to the site's list, always |
-| `storage.localSpaces.maxBytes` | limit, `lower` | site, tenant | — | 3.1's | `tighten` |
-| `storage.assets` | choice `space` < `repository` | site, tenant, space (the owner's request when the space is made) | `sync.assetsRepository` (off: `space` only) | `repository` | `allow` (the site may `lock` to force, or leave it a default; and force a value for one tenant, below) |
-| `storage.assets.ownStorageExempt` | boolean | site (a site administrator may set it for one tenant) | — | `true` | `allow` |
-| `storage.partial.unsupported` | choice `allow` < `refuse`: remotes that cannot sync partially | site, tenant | — | `allow` | `allow` |
-| `files.maxBytes` | limit (3.5) | site, tenant | — (at most `storage.maxFileBytes`) | `--max-upload` | `restrict`, `max` = the site value |
-| `features.offline` | boolean, `false` stricter (4.1, as built: no space or person layer) | site, tenant | `other.offline` | `true` | `allow` (4.1's; the site may `lock` it or `restrict` it to `[false]`) |
-| `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | limits (3.3) | site, tenant, person | — (at most `storage.perPerson`) | 3.3's | 3.3's |
-| `registration.*` | 3.3 | site, tenant | `other.registration` | 3.3's | `lock` (3.3) |
-| `tenant.selfService` | see "Organisation sign-up" | site | — | `false` | — |
-| `storage.modes.available` | list of modes | site | — | all three | — |
-| `domains.checksPerMinute` | limit: manual domain checks on the server | site | — | 60 | — |
+| Keys | Kind | Layers |
+|---|---|---|
+| `features.tokens`, `features.mcp`, `features.offline`, `features.registration` | boolean | S, T |
+| `features.ownSso`, `.domains`, `.managedAccounts`, `.idpAdmins`, `.adminView`, `.auditDownload`, `.ownCaptcha`, `.ownConnections`, `.ownDaily`; `mail.ownSender` | boolean (features) | S + rule |
+| `features.passkeys`, `features.tenancy` | boolean | S! |
+| `quota.people`, `.spaces`, `.bytes`, `.pages` | limit or none | S + rule (no tenant layer) |
+| `quota.spacesPerPerson`, `.bytesPerPerson`, `.pagesPerPerson` | limit | S, T, P |
+| `rate.apiPerMinute`, `.mcpPerMinute`, `.mailPerDay`, `.outboundPerMinute` | limit or none | S + rule |
+| `storage.mode` | choice `server`, `own`, `tenant` | S, T |
+| `storage.assets` | choice `space` < `repository` | S, T, Sp (the owner's request when the space is made) |
+| `storage.assets.ownStorageExempt`, `storage.pinnedBytes` | boolean, limit | S + rule |
+| `storage.remotes.require`, `.scope`, `.graceDays`, `storage.localSpaces.maxBytes` | text, choice, limits | S, T (the site's lock: a tenant may only tighten) |
+| `storage.hosts`, `cache.*` | list, limits | S! |
+| `files.maxBytes`, `registration.perHour`, `registration.domains`, `legal.*` | limit, list, text | S, T |
+| `daily.own`, `daily.api`, `daily.default` | boolean, boolean, document | S, T, Sp |
+| `daily.languages`, `recycle.days`, `exports.maxBytes`, `users.*` | list, limits, choices | S! (`exports.days`: S + rule) |
+| `signin.*`, `sessions.*`, `captcha.*` | sign-in policy | S! (the sign-in page comes before any tenant is known) |
 
 Notes:
 
-- `auth.*`, `session.*`, `captcha.*` and `access.*` are applied to a person by
-  their tenant, after the account is known; see "What stays the site's" for why
-  some security settings cannot be per tenant.
 - `storage.*` other than `storage.mode` concern `server` spaces and remotes as
   3.1 does; the site may loosen each to `allow` (the site's value is a default)
   or lock it. 3.1's `storage.remotes.require` is derived from `storage.mode`
@@ -8897,7 +8884,7 @@ Notes:
   site's own value still applies. A site administrator's releases from both.
 - **Pinning** (3.1) keeps a space's whole history and attachments on the
   server's disk, so it is the site's: a tenant administrator may pin up to the
-  tenant's capability `storage.pinnedBytes` (`0` by default, so tenant
+  tenant's `storage.pinnedBytes` (`0` by default, so tenant
   administrators cannot pin until the site allows it):
   `409 quota_exceeded` with `quota: "pinnedBytes"`. Evicting is open to tenant
   administrators (it only frees the server's disk).
@@ -8990,7 +8977,7 @@ The inventory's (a) items, and the reasons that matter for security:
 - **The server itself**: `--listen`, `--public-url`, `--data`, `--database`,
   `--trusted-proxy`, `--allow-origin`, the process limits, the secret key,
   tenancy, tenants' creation, deletion, `disabled` and `slug`, **every
-  tenant's limits sheet and plan** (which hold its totals), the server status,
+  tenant's rules and plan** (which hold its totals), the server status,
   3.5's site storage budget and pressure settings (which replace 3.1's cache
   and eviction settings; tenants tune only the fields marked tenant), `storage.modes.available`, the
   recycle bin's retention and the exports' limits of 3.5,
@@ -9008,7 +8995,7 @@ tenant administrator who names another answers `404 not_found`. The site's own
 counterparts keep their 2.x/3.x addresses (`/api/admin/auth/providers`,
 `/api/admin/mail`, …) and stay site administrators only.
 
-Each resource is gated by a capability (see "Capabilities"; `403
+Each resource is gated by a feature (see "Rules for a tenant"; `403
 feature_off` for writes while it is off) and carries `updatedBy`.
 
 All of them are held in memory per tenant, loaded at start and re-read on
@@ -9104,7 +9091,7 @@ tenant's SSO provider:
   answer says how many, and people sign in again by linking.
 
 `POST`/`PATCH`/`DELETE /api/admin/tenants/{tenant}/auth/providers…` need the
-tenant's capability `signin.sso` (`403 feature_off` otherwise). Slugs stay
+tenant's feature `features.ownSso` (`403 feature_off` otherwise). Slugs stay
 unique on the server (they are in the callback addresses registered at the
 identity provider); `409 exists` says only that the slug is taken. `kind`
 `github` is social only.
@@ -9166,7 +9153,7 @@ way to sign in), and an account without a password adds one with
 
 #### Email domains and the SSO entry
 
-A tenant with the capability `signin.domains` claims the email domains its
+A tenant with the feature `features.domains` claims the email domains its
 people use; a **verified** claim routes sign-in for those addresses to the
 tenant's SSO.
 
@@ -9335,7 +9322,7 @@ The tenant's own providers (2.7b). For GitHub:
   …/connections/github`, the shape of 2.7b's `/api/admin/connections/github`),
   only on `github.com`. Its installations (`GET …/connections/github/installations`,
   `PUT …/installations/{id}` with `shared`) are shared within the tenant only.
-  Needs the capability `integrations.connections`. From 3.8 a tenant may also
+  Needs the feature `features.ownConnections`. From 3.8 a tenant may also
   add its own GitLab and Gitea providers here (see "Connections to GitLab and
   Gitea").
 - **The site's App** stays the site's. Sharing one of its installations is per
@@ -9380,14 +9367,14 @@ Option A (owner, 2026-11-23). A space is stored in one of three modes:
   `storage.mode` (site, tenant, space). `lock` forces the site's value on every
   space; `restrict` with `options` (by default: the available modes) makes the
   site's value a default.
-- **A tenant picks only among the modes its capabilities allow**: what is left
-  for the tenant is the site's options that are also in its capability
-  `storage.modes`. The tenant sets its default
+- **A tenant picks only among the modes its rules allow**: what is left
+  for the tenant is the site's options that are also in the restriction a rule
+  for it puts on `storage.mode`. The tenant sets its default
   (`PUT /api/admin/tenants/{tenant}/settings/storage.mode`) and may lock it or
   narrow it for its spaces with its own `lower`. When a space is made, its
   creator chooses among what is left (`POST /api/spaces` takes
   `"storage": {"mode": "tenant"}`, default the effective value): a mode the
-  tenant's capabilities leave out answers `403 feature_off`, one a layer's
+  tenant's rules leave out answers `409 setting_restricted`, one a layer's
   rule leaves out `409 setting_restricted`.
 - The mode is stored on the space (`spaces.storage_mode`, with the target for
   `tenant`) and shown in its `storage` block (3.1); the tenant's `usage` row
@@ -9468,8 +9455,8 @@ true`).
 
 #### When the mode changes
 
-When the tenant changes its default, the site or the tenant's capabilities
-remove a mode, or the tenant changes its target:
+When the tenant changes its default, the site or a rule for the tenant
+removes a mode, or the tenant changes its target:
 
 - New spaces use what is now in effect.
 - **Existing spaces stay where they are and keep working** (a `tenant` space
@@ -9690,7 +9677,7 @@ above), with `defaultRole`. The Provider gains:
   - `groups.map` maps values to the tenant's synced groups, as 3.2.
   - `groups.admins` (a list of values) makes a person the tenant's `admin` while
     their claim has one of the values. **Off unless the site allows it** for the
-    tenant: the capability `signin.idpAdmins` (`false` in the site's default);
+    tenant: the feature `features.idpAdmins` (`false` in the site's default);
     while it is off, `PUT`/`PATCH` with a non-empty `admins` answers
     `403 feature_off`, and turning it off stops promotions at once (people promoted before keep the role
     until their next sign-in, which demotes them). Every promotion and demotion
@@ -9716,7 +9703,7 @@ own organisation**.
 - Confirming the address makes the tenant, then the account in it with
   `role: "admin"` (not `siteAdmin`), with a personal space. The new tenant
   starts with the site's defaults, the plan `tenant.selfService.plan` (site
-  only; `null` means the site's default capabilities, which hold the totals),
+  only; `null` means no plan: the site's defaults),
   and registration closed.
 - **Caps** (site only, changeable by site administrators):
   `tenant.selfService.perPerson` tenants per person (default 3; in 3.6 counted
@@ -9757,11 +9744,11 @@ own organisation**.
 | `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…` | their tenant | every tenant |
 | `DELETE /api/admin/recycle/{item}` (purge early), exports with `history` | `403` | yes |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds | every row |
-| `/api/admin/tenants/{own}`: `GET`, `PATCH name`, `…/overview`, `…/settings`, `…/security`, `…/auth/providers…`, `…/domains…`, `…/join`, `…/join-requests…`, `…/mail…`, `…/captcha`, `…/daily…`, `…/connections…`, `…/storage/target`, `…/storage/moves`, `…/storage/usage`, `…/usage/export` | yes, within the site's rules and the tenant's capabilities (`403 feature_off`), not what a site administrator locked | every tenant, may also set every rule and lock a tenant's value (`siteLock`), never limited by capabilities |
-| `GET /api/admin/tenants/{own}/capabilities`, `GET …/limits` | read only | every tenant |
-| `PUT /api/admin/tenants/{tenant}/capabilities`, `PUT …/limits`, `PUT …/plan`, `/api/admin/capabilities`, `/api/admin/plans…` | `403 forbidden` | yes |
+| `/api/admin/tenants/{own}`: `GET`, `PATCH name`, `…/overview`, `…/settings`, `…/security`, `…/auth/providers…`, `…/domains…`, `…/join`, `…/join-requests…`, `…/mail…`, `…/captcha`, `…/daily…`, `…/connections…`, `…/storage/target`, `…/storage/moves`, `…/storage/usage`, `…/usage/export` | yes, within the site's rules and the tenant's features (`403 feature_off`), not what a site administrator locked | every tenant, may also set every rule and lock a tenant's value (`siteLock`), never limited by features |
+| `GET /api/admin/tenants/{own}/settings` (the rules, with `rules`, `inEffect`, `next`), `GET …/secrets` | read only | every tenant |
+| `PUT /api/admin/tenants/{tenant}/settings/{key}` with `siteRule` or `siteLock`, `PUT …/plan`, `/api/admin/plans…`, `/api/admin/secrets…` | `403 forbidden` | yes |
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
-| `GET /api/admin/audit/download` | their tenant's rows, with `data.auditDownload` | every row |
+| `GET /api/admin/audit/download` | their tenant's rows, with `features.auditDownload` | every row |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
 | `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
 
@@ -10013,7 +10000,7 @@ their tenant's rows, while the tenant has `data.auditDownload`
 | `email_not_ascii` | 400 | an address with characters outside ASCII while `users.emailNonAscii` is off; also asking to verify such a stored address then |
 | `feature_off` | 403 | the tenant does not have the feature (`features.*`) what was asked needs; with `feature` (and `permission`, the key, when a route's key needs it) |
 | `takeover_required` | 403 | an administrator who is not a member of the space asked for what only taking it over gives (see "Taking over a space") |
-| `confirm_required` | 409 | a capability or plan change that stops something in use, without a confirmation; with `plan` |
+| `confirm_required` | 409 | a change of feature or plan that stops something in use, without a confirmation; with `plan` |
 | `plan_in_use` | 409 | deleting a plan that tenants use; with `tenants` |
 | `partial_unsupported` | 409 | connecting a space to a host that cannot sync partially while `storage.partial.unsupported` is `refuse`; with `host` |
 | `storage_target_error` | 502 | the storage target refused to make a space's repository; with `reason`, `status` |
@@ -10194,10 +10181,10 @@ a membership to an existing account; the endpoints keep their shapes.
 Modelled on Notion's managed users. Per verified domain, off by default:
 `PATCH /api/admin/tenants/{tenant}/domains/{domain}` with `{"managed": true}`.
 
-- **Needs**: the tenant's capability `signin.managedAccounts` (`403
+- **Needs**: the tenant's feature `features.managedAccounts` (`403
   feature_off`), the claim verified, and an enabled SSO provider of the
   tenant (or a site provider offered to it) routed to the domain; `409 conflict`
-  otherwise. If the capability is turned off, the claim lapses or the provider
+  otherwise. If the feature is turned off, the claim lapses or the provider
   is removed, managing stops (accounts become personal again, below) and the
   administrators are told.
 - **Preview and confirmation**: `GET …/domains/{domain}/managed` returns the plan
