@@ -11,6 +11,7 @@ import (
 
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/notify"
 	"petalbook.app/server/internal/ratelimit"
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
@@ -391,10 +392,11 @@ func (s *Service) emailReleased(ctx context.Context, r store.Released, to store.
 	if u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), r.UserID); err == nil {
 		s.cfg.Spaces.UserChanged(ctx, *u)
 	}
-	if err := store.NotifyUser(ctx, s.st.Q(), r.UserID, store.NotifySystem, "", map[string]string{"event": "email_released", "email": r.Email}, s.now()); err != nil {
+	err := notify.WithAudit(ctx, s.st.Q(), notify.EmailReleased, notify.Entry{Actor: to.ID, User: r.UserID,
+		Detail: map[string]any{"email": r.Email, "to": to.ID}, To: []string{r.UserID}, Payload: map[string]string{"email": r.Email}, Now: s.now()})
+	if err != nil {
 		s.log.Warn("could not write a notification", "error", err)
 	}
-	s.Audit(AuditEvent{Kind: "email_released", Actor: to.ID, User: r.UserID, Detail: map[string]any{"email": r.Email, "to": to.ID}})
 }
 
 // mailExisting tells an account's stored address, never the address typed,

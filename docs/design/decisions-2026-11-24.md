@@ -160,8 +160,15 @@
   (`store.NotifyKinds`): `problems` (derived, has no rows), `invite` (added to a
   space), `sync` (the remote of a space you own needs a person to look at it, or
   is fine again; merely being offline recovers by itself and does not notify),
-  `mention`, `todo`, `system` (the last three are only reserved, and nothing
-  produces them). The daily cleanup: those older than half a year, and read ones
+  `mention`, `todo` (only reserved, nothing produces them), and one kind for
+  each event of an account or a space that tells a person what someone else did
+  (`space_taken_over`, `space_transferred`, `account_changed`, `password_set`,
+  `email_released`; there is no catch-all `system` kind with the event in the
+  payload, which the filter could not tell apart). Such an event is written by
+  `notify.WithAudit`: its audit row and its notifications in one transaction,
+  from one definition. The web's list of kinds is `web/src/i18n/notifyKinds.json`,
+  written by a Go test, and a web test needs each kind to have its text in both
+  languages. The daily cleanup: those older than half a year, and read ones
   older than 30 days, are deleted, and each person keeps at most the latest 500;
   they are deleted along with the person when the person is deleted.
 - **A space's problems are not copied to every member.** When the list and the

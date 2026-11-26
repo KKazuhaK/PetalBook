@@ -157,7 +157,7 @@ What the conventions above became in code:
   one way is the new key `tenant.spaces.takeover` through
   `POST /api/admin/spaces/{space}/takeover` with a reason: the administrator
   becomes the owner and the owners editors, it is audited
-  (`space_taken_over`), and each replaced owner gets a `system` notification.
+  (`space_taken_over`), and each replaced owner gets a `space_taken_over` notification, written with the audit row in one transaction.
   `…/transfer` needs the same key and is audited and told the same way. The
   built-in tenant (and site) administrator holds `takeover`, but only these two
   endpoints use it, and a transfer to oneself is refused (it would be a takeover
