@@ -2,30 +2,20 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  type,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type Mounted,
-} from '@/testing/harness'
-import { MOCK_ADMIN, type MockServer } from '@/api/mock/server'
+import { byLabel, click, type, installDomShims, mount, settle, type FxMounted } from '@/testing/harness'
+import { addGrant, addPerson, addToken } from '@/testing/adminScene'
 import { oa } from '@/i18n/oauth'
 import { tc } from '@/i18n/console'
 import { tk } from '@/i18n/tokens'
 import { tt } from '@/i18n/tenants'
 import { AdminGate } from './AdminGate'
 
-// The administration's "machine access" page, against the mock server.
+// The administration's "machine access" page, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -43,7 +33,7 @@ const text = () => document.body.textContent ?? ''
 const items = () => [...document.querySelectorAll<HTMLElement>('[data-slot="token-item"]')]
 const SETTING = '/api/admin/settings/'
 // The writes the page made: the key and the body (the two switches are the settings features.tokens and features.mcp).
-const puts = (m: Mounted) =>
+const puts = (m: FxMounted) =>
   m.requests
     .filter((r) => r.method === 'PUT' && r.url.startsWith(SETTING))
     .map((r) => [r.url.slice(SETTING.length), JSON.parse(r.body!)])
@@ -53,16 +43,14 @@ const ruleOf = (key: string) => row(key).querySelectorAll<HTMLSelectElement>('se
 const saveOf = (key: string) =>
   [...row(key).querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes(tt.settings.save))!
 const checked = (label: string) => byLabel(label)!.getAttribute('aria-checked')
-const siteValues = (m: Mounted) => {
+const siteValues = (m: FxMounted) => {
   const list = (
-    adminRequests(m.server)('GET', '/api/admin/settings').body as {
-      settings: { key: string; site: { value: unknown } }[]
-    }
+    m.fx.call('GET', '/api/admin/settings').body as { settings: { key: string; site: { value: unknown } }[] }
   ).settings
   const of = (key: string) => list.find((x) => x.key === key)!.site.value
   return { tokens: of('features.tokens'), mcp: of('features.mcp') }
 }
-const open = () => mount(routes, { entries: ['/admin/security/access'], signIn: true, server: { mode: 'accounts' } })
+const open = () => mount(routes, { entries: ['/admin/security/access'], signIn: true, fixtures: { mode: 'accounts' } })
 
 describe('machine access', () => {
   it('has a page in the administration, with the switch on', async () => {
@@ -114,17 +102,15 @@ describe('machine access', () => {
 
   it("lists everyone's tokens with their owners and revokes one", async () => {
     m = await mount(routes, {
-      entries: (server) => {
-        const person = makePerson(server, 'carol')
-        const space = (person.request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        person.request('POST', '/api/account/tokens', { name: 'carol script', spaces: [space] })
-        const mine = adminRequests(server)
-        const own = (mine('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        mine('POST', '/api/account/tokens', { name: 'admin script', spaces: [own], access: 'write' })
-        return ['/admin/security/access']
-      },
+      entries: ['/admin/security/access'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          addToken(d, addPerson(d, 'carol'), 'carol script')
+          addToken(d, d.auth.users[0], 'admin script', { access: 'write' })
+        },
+      },
     })
     await settle(() => items().length === 2, 'both tokens')
     const carol = items().find((i) => i.textContent?.includes('carol script'))!
@@ -145,18 +131,15 @@ describe('machine access', () => {
 
   it('reads the list a page at a time', async () => {
     m = await mount(routes, {
-      entries: (server) => {
-        const mine = adminRequests(server)
-        const own = (mine('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        // 50 is the most a person may have in use; the 51st is another person's.
-        for (let i = 0; i < 50; i++) mine('POST', '/api/account/tokens', { name: `t${i}`, spaces: [own] })
-        const person = makePerson(server, 'dave')
-        const space = (person.request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-        person.request('POST', '/api/account/tokens', { name: 'dave', spaces: [space] })
-        return ['/admin/security/access']
-      },
+      entries: ['/admin/security/access'],
       signIn: true,
-      server: { mode: 'accounts' },
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          for (let i = 0; i < 50; i++) addToken(d, d.auth.users[0], `t${i}`)
+          addToken(d, addPerson(d, 'dave'), 'dave')
+        },
+      },
     })
     await settle(() => items().length === 50, 'the first page')
     const more = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
@@ -169,19 +152,12 @@ describe('machine access', () => {
 })
 
 const grantItems = () => [...document.querySelectorAll<HTMLElement>('[data-slot="grant-item"]')]
-const approveFor = (server: MockServer, who: string, name: string) => {
-  const person = makePerson(server, who)
-  const space = (person.request('GET', '/api/spaces').body as { spaces: { id: string }[] }).spaces[0].id
-  const req = server.startAuthorization(who, { clientName: name })
-  person.request('POST', '/api/oauth/consent', { req, approve: true, spaces: [space], access: 'write' })
-}
-
 describe('MCP and OAuth in the machine access', () => {
   it('has its own switch, and says nothing of the authorization server', async () => {
     m = await mount(routes, {
       entries: ['/admin/security/access'],
       signIn: true,
-      server: { mode: 'accounts', oauth: true },
+      fixtures: { mode: 'accounts' },
     })
     await settle(() => document.querySelector(`[aria-label="${oa.admin.mcpLabel}"]`) !== null, 'the switch')
     expect(document.querySelector(`[aria-label="${oa.admin.mcpLabel}"]`)!.getAttribute('aria-checked')).toBe('true')
@@ -196,7 +172,15 @@ describe('MCP and OAuth in the machine access', () => {
   })
 
   it('has the two switches and no list of apps when the server has no public address', async () => {
-    m = await mount(routes, { entries: ['/admin/security/access'], signIn: true, server: { mode: 'accounts' } })
+    m = await mount(routes, {
+      // The server has no authorization server to list the apps of: it says there is no such endpoint.
+      entries: (fx) => {
+        fx.fail('GET', '/api/admin/grants', 404, { code: 'not_found' })
+        return ['/admin/security/access']
+      },
+      signIn: true,
+      fixtures: { mode: 'accounts' },
+    })
     await settle(() => document.querySelectorAll('[role="switch"]').length === 2, 'the two switches')
     await new Promise((r) => setTimeout(r, 50))
     expect(text()).not.toContain(oa.admin.all)
@@ -204,13 +188,15 @@ describe('MCP and OAuth in the machine access', () => {
 
   it("lists everyone's connected apps with their owners and disconnects one", async () => {
     m = await mount(routes, {
-      entries: (server) => {
-        approveFor(server, 'carol', 'carol app')
-        approveFor(server, 'dave', 'dave app')
-        return ['/admin/security/access']
-      },
+      entries: ['/admin/security/access'],
       signIn: true,
-      server: { mode: 'accounts', oauth: true },
+      fixtures: {
+        mode: 'accounts',
+        data: (d) => {
+          addGrant(d, addPerson(d, 'carol'), 'carol app')
+          addGrant(d, addPerson(d, 'dave'), 'dave app')
+        },
+      },
     })
     await settle(() => grantItems().length === 2, 'both apps')
     const carol = grantItems().find((i) => i.textContent?.includes('carol app'))!
@@ -230,18 +216,14 @@ describe('MCP and OAuth in the machine access', () => {
 
   it('keeps listing them while MCP is off: they are kept, and may be disconnected', async () => {
     m = await mount(routes, {
-      entries: (server) => {
-        approveFor(server, 'erin', 'erin app')
-        return ['/admin/security/access']
-      },
+      entries: ['/admin/security/access'],
       signIn: true,
-      server: { mode: 'accounts', oauth: true },
+      fixtures: { mode: 'accounts', data: (d) => void addGrant(d, addPerson(d, 'erin'), 'erin app') },
     })
     await settle(() => grantItems().length === 1, 'the app')
     await click(byLabel(oa.admin.mcpLabel))
     await click(saveOf('features.mcp'))
     await settle(() => puts(m!).length === 1, 'off')
     expect(grantItems()).toHaveLength(1)
-    expect(MOCK_ADMIN.username).toBeTruthy()
   })
 })

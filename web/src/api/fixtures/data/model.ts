@@ -240,7 +240,7 @@ export function createData(options: FixtureOptions = {}): FixtureData {
       mode: options.mode ?? 'single',
       setup: options.setup ?? false,
       setupToken: SETUP_TOKEN,
-      users: options.setup ? [] : [user],
+      users: options.setup ? [] : [structuredClone(user)],
       signedIn: accounts ? (options.signedIn ? user.id : null) : user.id,
       hold: null,
       providers: options.providers ?? [],

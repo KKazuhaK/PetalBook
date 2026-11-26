@@ -19,6 +19,7 @@ import type {
   TenantSetting,
   User,
 } from '../../types.ts'
+import { TENANT_KEYS } from '../data/settingDefs.ts'
 import { AUDIT_CATEGORIES, DEFAULT_TENANT, type GroupRec, type PersonRec } from '../data/admin.ts'
 import type { FixtureData } from '../data/model.ts'
 import type { UserRec } from '../data/people.ts'
@@ -126,7 +127,8 @@ function tenantSetting(c: Ctx, tenant: string, def: SiteSetting): TenantSetting 
     ...(def.choices ? { choices: def.choices } : {}),
     site: { value: def.site.value, lower: def.site.lower },
     tenant: own ?? { value: null, lower: null, inEffect: true, siteLocked: false },
-    effective: own && own.value !== null && own.value !== undefined ? own.value : def.site.value,
+    // A rule that is not in effect leaves the site's value.
+    effective: own && own.inEffect && own.value !== null && own.value !== undefined ? own.value : def.site.value,
   }
 }
 
@@ -192,6 +194,10 @@ export const adminRoutes: Route[] = [
         .filter((u) => !q.get('state') || (q.get('state') === 'disabled') === u.disabled)
         .filter((u) => !q.get('enabled') || !u.disabled)
         .map((u) => userView(c, u))
+      // The order the list was asked in (the oldest first when it was not).
+      const by = c.query.get('sort') === 'name' ? 'name' : 'created'
+      const sign = c.query.get('order') === 'desc' ? -1 : 1
+      rows.sort((a, b) => sign * String(a[by]).localeCompare(String(b[by])))
       const p = page(c, rows)
       return { users: p.items, next: p.next }
     },
@@ -215,9 +221,10 @@ export const adminRoutes: Route[] = [
     '/api/users/:id',
     (c) => {
       const u = userOf(c, c.params.id)
-      const { quota, ...rest } = c.body
+      const { quota, emailMode: _mode, ...rest } = c.body
+      void _mode
       Object.assign(u, rest)
-      if (quota) person(c, u.id).quota = { ...person(c, u.id).quota, spaces: null, bytes: null, pages: null, ...quota }
+      if (quota) person(c, u.id).quota = { spaces: null, bytes: null, pages: null, ...person(c, u.id).quota, ...quota }
       return { user: userView(c, u, 'change') }
     },
   ],
@@ -361,6 +368,7 @@ export const adminRoutes: Route[] = [
         .filter((s) => has(s.name, q.get('q')))
         .filter((s) => !q.get('cache') || s.storage.cache === q.get('cache'))
         .filter((s) => !q.get('owner') || s.owner?.id === q.get('owner'))
+        .filter((s) => !q.get('overdue') || s.storage.remote?.overdue)
         .filter((s) => !q.get('pinned') || s.storage.pinned)
         .filter((s) => !q.get('exempt') || s.storage.exempt)
       return page(c, rows)
@@ -391,8 +399,10 @@ export const adminRoutes: Route[] = [
     'POST',
     '/api/admin/spaces/:id/size',
     (c) => {
-      const out = { sizeBytes: 0, sizeAt: now(c) }
-      A(c).spaceExtra[c.params.id] = { ...A(c).spaceExtra[c.params.id], ...out }
+      // What measuring finds is what a test put in the space's record (nothing: an empty directory).
+      const had = A(c).spaceExtra[c.params.id]
+      const out = { sizeBytes: had?.sizeBytes ?? 0, sizeAt: had?.sizeAt ?? now(c) }
+      A(c).spaceExtra[c.params.id] = { ...had, ...out }
       return out
     },
   ],
@@ -542,25 +552,30 @@ export const adminRoutes: Route[] = [
     '/api/admin/usage',
     (c) => {
       const num = (key: string) => (siteOf(c, key).site.value as number | null) ?? null
-      const rows = c.data.auth.users.map((u): PersonUsage => {
-        const own = person(c, u.id).quota ?? { spaces: null, bytes: null, pages: null }
-        return {
-          user: who(u),
-          tenant: u.tenant?.id ?? DEFAULT_TENANT,
-          spaces: c.data.spaces.length,
-          bytes: 0,
-          pages: 0,
-          limits: {
-            spaces: own.spaces ?? num('quota.spacesPerPerson'),
-            bytes: own.bytes ?? num('quota.bytesPerPerson'),
-            pages: own.pages ?? num('quota.pagesPerPerson'),
-          },
-          own,
-          ownInEffect: { spaces: true, bytes: true, pages: true },
-          over: [],
-          measuredAt: null,
-        }
-      })
+      const rows = c.data.auth.users
+        .map((u): PersonUsage => {
+          const rec = person(c, u.id)
+          const own = rec.quota ?? { spaces: null, bytes: null, pages: null }
+          return {
+            user: who(u),
+            tenant: u.tenant?.id ?? DEFAULT_TENANT,
+            spaces: c.data.spaces.length,
+            bytes: 0,
+            pages: 0,
+            limits: {
+              spaces: own.spaces ?? num('quota.spacesPerPerson'),
+              bytes: own.bytes ?? num('quota.bytesPerPerson'),
+              pages: own.pages ?? num('quota.pagesPerPerson'),
+            },
+            own,
+            ownInEffect: { spaces: true, bytes: true, pages: true },
+            over: [],
+            measuredAt: null,
+            ...rec.usage,
+          }
+        })
+        .filter((r) => !c.query.get('over') || r.over.length > 0)
+        .sort((a, b) => b.bytes - a.bytes)
       return page(c, rows)
     },
   ],
@@ -688,7 +703,19 @@ export const adminRoutes: Route[] = [
         created: at,
         updated: at,
       })
-      void admin
+      // A first administrator named: the invite they accept (the token is shown once).
+      if (admin) {
+        const inv = {
+          id: newId(c.data, '01IV'),
+          token: `invite-${t.id}`,
+          role: 'admin' as const,
+          created: at,
+          expires: rfc3339(c.now() + 7 * 86_400_000),
+          username: admin.username,
+          you: false,
+        }
+        return reply(201, { ...t, invite: inv })
+      }
       return reply(201, t)
     },
   ],
@@ -709,7 +736,7 @@ export const adminRoutes: Route[] = [
         c,
         find(A(c).tenants, (x) => x.id === c.params.id, 'the tenant'),
       )
-      const admins = c.data.auth.users.filter((u) => u.role === 'admin')
+      const admins = c.data.auth.users.filter((u) => u.role === 'admin' && (u.tenant?.id ?? DEFAULT_TENANT) === t.id)
       return {
         tenant: t,
         createdByName: '',
@@ -757,7 +784,7 @@ export const adminRoutes: Route[] = [
     '/api/admin/tenants/:id/settings',
     (c) => ({
       settings: A(c)
-        .settings.filter((s) => s.layers.includes('tenant'))
+        .settings.filter((s) => TENANT_KEYS.includes(s.key))
         .map((s) => tenantSetting(c, c.params.id, s)),
     }),
   ],
@@ -771,6 +798,21 @@ export const adminRoutes: Route[] = [
       const b = c.body
       if ('value' in b) own.value = b.value
       if ('lower' in b) own.lower = b.lower
+      if ('siteLock' in b) {
+        own.siteLocked = !!b.siteLock
+        // The site's lock is a manual rule that forces the value.
+        if (own.siteLocked)
+          own.rules = [
+            {
+              source: 'manual',
+              value: own.value,
+              lower: { mode: 'lock' },
+              inEffect: true,
+              setBy: signedIn(c.data).username,
+            },
+          ]
+        else delete own.rules
+      }
       if ('siteRule' in b) {
         if (b.siteRule === null) {
           own.value = null
@@ -967,6 +1009,22 @@ export const adminRoutes: Route[] = [
       const fresh = ids.filter((id) => !g.members.includes(id))
       g.members.push(...fresh)
       return { added: fresh.length, already: ids.length - fresh.length }
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/groups/:id/members/batch',
+    (c) => {
+      const g = find(A(c).groups, (x) => x.id === c.params.id, 'the group')
+      const summary: Record<string, number> = {}
+      const results = (c.body.rows as { user: string }[]).map((r, i) => {
+        const u = c.data.auth.users.find((x) => x.id === r.user || x.username === r.user)
+        const status = !u ? 'not_found' : g.members.includes(u.id) ? 'already_member' : 'ok'
+        if (u && status === 'ok' && !c.body.dryRun) g.members.push(u.id)
+        summary[status] = (summary[status] ?? 0) + 1
+        return { row: i + 1, user: r.user, status, ...(u ? { userId: u.id, username: u.username, name: u.name } : {}) }
+      })
+      return { dryRun: !!c.body.dryRun, results, summary }
     },
   ],
   [

@@ -1,32 +1,24 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { keys } from '@/api/hooks'
 import { tc } from '@/i18n/console'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/tenants'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  type,
-  type Mounted,
-  openTenantPage,
-} from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted, openTenantPage } from '@/testing/harness'
+import { addPerson, addTenant, asTenantAdmin, ownRule, setting, setSite, tenancyOn } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // The administration's Tenants and Settings pages, the administrator kind on a user, and the pages
-// a tenant administrator does not get, against the mock server.
+// a tenant administrator does not get, against the fixture server. What a lock or a maximum does to a value is the
+// server's to work out: a scene puts the rules as the server would list them.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -51,13 +43,14 @@ const navLabels = () =>
 const rowOf = (key: string) => document.querySelector<HTMLElement>(`[data-slot="setting-row"][data-key="${key}"]`)!
 const switchOf = (label: string) => document.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`)!
 
-async function open(section: string, scene?: (server: MockServer) => unknown) {
+async function open(section: string, scene?: (d: FixtureData) => unknown, setup?: (fx: FxMounted['fx']) => void) {
+  let where: unknown
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      const where = scene?.(server)
-      // A scene may send the page to one person's own address.
+    fixtures: { mode: 'accounts', data: (d) => void (where = scene?.(d)) },
+    // A scene may send the page to one person's own address.
+    entries: (fx) => {
+      setup?.(fx)
       return [typeof where === 'string' ? where : `/admin/${section}`]
     },
   })
@@ -98,12 +91,16 @@ describe('the Tenants page', () => {
   })
 
   it('renames, disables and deletes a tenant, and says a slug is taken', async () => {
-    await open('tenants', (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
-      admin('POST', '/api/admin/tenants', { slug: 'zed', name: 'Zed' })
-    })
+    // The server refuses a slug that another tenant has.
+    await open(
+      'tenants',
+      (d) => {
+        tenancyOn(d)
+        addTenant(d, 'acme', 'Acme')
+        addTenant(d, 'zed', 'Zed')
+      },
+      (fx) => fx.fail('PATCH', '/api/admin/tenants/:id', 409, { code: 'exists' }, { times: 1 }),
+    )
     await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 3, 'the tenants')
     await openTenantPage(`${tt.list.open}: Acme`, tt.detail.tabs.danger)
     await settle(() => button(tt.list.disable) !== null, 'the details')
@@ -125,26 +122,10 @@ describe('the Tenants page', () => {
   })
 
   it('tells the organisations people made themselves from the others, and the filter shows only those', async () => {
-    await open('tenants', (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      admin('PUT', '/api/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
-      admin('PUT', '/api/admin/settings/features.orgCreation', { value: true })
-      admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' })
-      server.handle(
-        'POST',
-        '/api/register',
-        JSON.stringify({
-          username: 'bee',
-          name: 'Bee',
-          email: 'bee@example.test',
-          password: 'a-long-password',
-          org: { name: 'Bee Co', slug: 'bee-co' },
-        }),
-        'application/json',
-      )
-      const link = server.mail.outbox.find((x) => x.kind === 'register_org')!.link!
-      server.handle('POST', '/api/register/confirm', JSON.stringify({ token: link.split('#')[1] }), 'application/json')
+    await open('tenants', (d) => {
+      tenancyOn(d)
+      addTenant(d, 'acme', 'Acme')
+      addTenant(d, 'bee-co', 'Bee Co', { origin: 'self' })
     })
     await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 3, 'the tenants')
     expect(document.querySelectorAll('[data-slot="tenant-list"] li')[2].textContent).toContain(tt.list.originSelf)
@@ -157,9 +138,7 @@ describe('the Tenants page', () => {
   })
 
   it('nothing on it can be wider than a phone', async () => {
-    await open('tenants', (server) =>
-      adminRequests(server)('PUT', '/api/admin/settings/features.tenancy', { value: true }),
-    )
+    await open('tenants', (d) => tenancyOn(d))
     await settle(() => button(tt.list.create) !== null, 'the page')
     const has = (el: Element | null, ...c: string[]) => c.every((x) => el?.classList.contains(x))
     // The page column may shrink, rows wrap, and the long help texts break.
@@ -199,10 +178,7 @@ describe('the Settings page', () => {
   })
 
   it('shows the site layer and the tenant layer with the lock source, keeps a value a lock hides and brings it back', async () => {
-    await open('settings', (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/registration.perHour', { lower: { mode: 'restrict', max: 50 } })
-    })
+    await open('settings')
     await settle(
       () => rowOf('registration.perHour') !== undefined && rowOf('registration.perHour') !== null,
       'the settings',
@@ -216,21 +192,26 @@ describe('the Settings page', () => {
       rows[1].querySelector('[role="switch"][aria-label$="' + tt.settings.follow + '"]')!.hasAttribute('data-disabled'),
     ).toBe(true)
     // The site tightens perHour to 10 after the tenant took 30: kept, marked as not in effect.
-    const admin = adminRequests(m!.server)
-    admin('PUT', '/api/admin/tenants/0000000000/settings/registration.perHour', { value: 30 })
-    admin('PUT', '/api/admin/settings/registration.perHour', { lower: { mode: 'restrict', max: 10 } })
+    // (The server works out that the tenant's 30 is above the new maximum: its rule is not in effect.)
+    const d = m!.fx.data
+    ownRule(d, '0000000000', 'registration.perHour', { value: 30, inEffect: false })
+    setting(d, 'registration.perHour').site.lower = { mode: 'restrict', max: 10 }
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('[data-slot="not-in-effect"]') !== null, 'the kept value is marked')
     expect(document.querySelector('[data-slot="not-in-effect"]')!.closest('li')!.textContent).toContain(
       tt.settings.keptHint,
     )
-    admin('PUT', '/api/admin/settings/registration.perHour', { lower: { mode: 'allow' } })
+    ownRule(d, '0000000000', 'registration.perHour', { value: 30, inEffect: true })
+    setting(d, 'registration.perHour').site.lower = { mode: 'allow' }
     await m!.qc.invalidateQueries()
     await settle(() => document.querySelector('[data-slot="not-in-effect"]') === null, 'it counts again')
   })
 
   it("saves a rule at the site, says when it makes tenants' values ineffective, and refuses a bad value in words", async () => {
-    await open('settings')
+    // The server refuses to open registration while mail is not enabled.
+    await open('settings', undefined, (fx) =>
+      fx.fail('PUT', '/api/admin/settings/features.registration', 409, { code: 'mail_not_configured' }),
+    )
     await settle(() => rowOf('registration.perHour') != null, 'the settings')
     // The site layer's perHour row is the first of the two with that key.
     const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.perHour"]')[0]
@@ -336,18 +317,19 @@ describe('the Settings page', () => {
     await click(button(tt.settings.save, row()))
     await settle(() => puts().length === 2, 'forced')
     expect(JSON.parse(puts()[1].body!)).toEqual({ value: 'space', siteLock: true })
-    const got = await fetch('/api/admin/tenants/0000000000/settings').then((r) => r.json())
+    const got = m!.fx.call('GET', '/api/admin/tenants/0000000000/settings').body
     const s = (got.settings as { key: string; effective: unknown }[]).find((x) => x.key === 'storage.assets')!
     expect(s.effective).toBe('space')
   })
 
   it('keeps a forced value forced when its row is switched to follow: the save names the value in effect', async () => {
-    await open('settings', (server) => {
-      adminRequests(server)('PUT', '/api/admin/tenants/0000000000/settings/storage.assets', {
+    await open('settings', (d) =>
+      ownRule(d, '0000000000', 'storage.assets', {
         value: 'space',
-        siteLock: true,
-      })
-    })
+        siteLocked: true,
+        rules: [{ source: 'manual', value: 'space', lower: { mode: 'lock' }, inEffect: true }],
+      }),
+    )
     await settle(
       () => document.querySelectorAll('[data-slot="setting-row"][data-key="storage.assets"]').length === 2,
       'both layers',
@@ -360,7 +342,7 @@ describe('the Settings page', () => {
     await click(button(tt.settings.save, row()))
     await settle(() => puts().length === 1, 'saved')
     expect(JSON.parse(puts()[0].body!)).toEqual({ value: 'space', siteLock: true })
-    const got = await fetch('/api/admin/tenants/0000000000/settings').then((r) => r.json())
+    const got = m!.fx.call('GET', '/api/admin/tenants/0000000000/settings').body
     const s = (got.settings as { key: string; effective: unknown; tenant: { siteLocked?: boolean } }[]).find(
       (x) => x.key === 'storage.assets',
     )!
@@ -368,10 +350,10 @@ describe('the Settings page', () => {
   })
 
   it('starts the editor of a value not in effect from the value in effect, with nothing to save', async () => {
-    await open('settings', (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/tenants/0000000000/settings/registration.perHour', { value: 30 })
-      admin('PUT', '/api/admin/settings/registration.perHour', { lower: { mode: 'restrict', max: 10 } })
+    await open('settings', (d) => {
+      // The tenant took 30 and the site tightened the maximum to 10 after: the rule is kept, not in effect.
+      ownRule(d, '0000000000', 'registration.perHour', { value: 30, inEffect: false })
+      setSite(d, 'registration.perHour', 10, { mode: 'restrict', max: 10 })
     })
     await settle(() => document.querySelector('[data-slot="not-in-effect"]') !== null, 'the kept value')
     const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.perHour"]')[1]
@@ -381,20 +363,27 @@ describe('the Settings page', () => {
   })
 
   it('refuses a site value above its own maximum and says so in the row', async () => {
-    await open('settings')
+    // The server refuses a value above the maximum the site's own rule for perHour allows (50 by default).
+    await open('settings', undefined, (fx) =>
+      fx.fail('PUT', '/api/admin/settings/registration.perHour', 400, { code: 'setting_above_max' }),
+    )
     await settle(() => rowOf('registration.perHour') != null, 'the settings')
     const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.perHour"]')[0]
     const name = tt.settings.names['registration.perHour']
-    // The site's own rule for perHour is at most 50 by default.
     await type(row.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!, '80')
     await click(button(tt.settings.save, row))
     await settle(() => row.textContent!.includes(tt.settings.errors.setting_above_max), 'the refusal')
+    expect(
+      JSON.parse(
+        m!.requests.find((r) => r.method === 'PUT' && r.url === '/api/admin/settings/registration.perHour')!.body!,
+      ),
+    ).toMatchObject({ value: 80 })
   })
 })
 
 describe('administrators and tenants in the Users page and the navigation', () => {
   it('names the kind of administrator, and a site administrator can make or end another', async () => {
-    await open('users', (server) => makePerson(server, 'second', 'admin'))
+    await open('users', (d) => void addPerson(d, 'second', { role: 'admin', siteAdmin: true }))
     await settle(() => document.querySelectorAll('[data-slot="admin-kind"]').length === 2, 'two administrators')
     expect(
       [...document.querySelectorAll('[data-slot="admin-kind"]')].every(
@@ -440,16 +429,9 @@ describe('administrators and tenants in the Users page and the navigation', () =
     ])
     await m!.unmount()
     // Another site administrator exists; the signed-in one is made a tenant administrator.
-    await open('users', (server) => {
-      const admin = adminRequests(server)
-      const other = makePerson(server, 'second', 'admin')
-      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-        (u) => u.username === 'admin',
-      )!
-      expect(other.id).not.toBe(me.id)
-      admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
-      // The server's GitHub App is site-only, as on the server.
-      expect(() => admin('GET', '/api/admin/connections/github')).toThrow(/403/)
+    await open('users', (d) => {
+      addPerson(d, 'second', { role: 'admin', siteAdmin: true })
+      asTenantAdmin(d)
     })
     await settle(() => navLabels().length > 0, 'the navigation')
     expect(navLabels()).toEqual([
@@ -465,20 +447,16 @@ describe('administrators and tenants in the Users page and the navigation', () =
 
   it("the Users page of a tenant administrator never asks for the server's security settings", async () => {
     let second = ''
-    await open('users', (server) => {
-      const admin = adminRequests(server)
-      second = makePerson(server, 'second', 'admin').id
-      const me = (admin('GET', '/api/users').body as { users: { id: string; username: string }[] }).users.find(
-        (u) => u.username === 'admin',
-      )!
-      admin('PATCH', `/api/users/${me.id}`, { siteAdmin: false })
+    await open('users', (d) => {
+      second = addPerson(d, 'second', { role: 'admin', siteAdmin: true }).id
+      asTenantAdmin(d)
       return `/admin/user/${second}/security`
     })
     await settle(() => document.querySelector('[data-slot="person-security"]') !== null, 'the page')
     expect(m!.requests.filter((r) => r.url.startsWith('/api/admin/security'))).toEqual([])
     await m!.unmount()
     // A site administrator's does: it holds the roles a passkey is required of.
-    await open('users', (server) => `/admin/user/${makePerson(server, 'second', 'admin').id}/security`)
+    await open('users', (d) => `/admin/user/${addPerson(d, 'second', { role: 'admin', siteAdmin: true }).id}/security`)
     await settle(
       () => m!.requests.some((r) => r.method === 'GET' && r.url.startsWith('/api/admin/security')),
       'the security settings',

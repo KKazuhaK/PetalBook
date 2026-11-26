@@ -1,32 +1,23 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
+import type { FixtureServer } from '@/api/fixtures/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/i18n'
 import { tg } from '@/i18n/groups'
 import { tp } from '@/i18n/people'
 import { tsec } from '@/i18n/security'
-import {
-  adminRequests,
-  byLabel,
-  click,
-  installDomShims,
-  makePerson,
-  mount,
-  settle,
-  shareSpace,
-  type,
-  type Mounted,
-} from '@/testing/harness'
+import { byLabel, click, installDomShims, mount, settle, type, type FxMounted } from '@/testing/harness'
+import { addGroup, addPerson, addProvider } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
-// The administration's Groups page and the groups mapping of a sign-in provider, against the mock server.
+// The administration's Groups page and the groups mapping of a sign-in provider, against the fixture server.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -60,12 +51,12 @@ const dlg = () => document.querySelector<HTMLElement>('[role="dialog"]')!
 const sent = () =>
   m!.requests.filter((r) => r.method !== 'GET' && r.url !== '/api/login').map((r) => `${r.method} ${r.url}`)
 
-async function openPage(scene?: (server: MockServer) => unknown) {
+async function openPage(scene?: (d: FixtureData) => unknown, setup?: (fx: FixtureServer) => void) {
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts' },
-    entries: (server) => {
-      scene?.(server)
+    fixtures: { mode: 'accounts', data: (d) => void scene?.(d) },
+    entries: (fx) => {
+      setup?.(fx)
       return ['/admin/groups']
     },
   })
@@ -103,7 +94,11 @@ describe('the Groups page', () => {
   })
 
   it('asks for a name, and says when the name is taken (ignoring case)', async () => {
-    await openPage((server) => adminRequests(server)('POST', '/api/admin/groups', { name: 'Staff', source: 'local' }))
+    // The server refuses a name that is taken, whatever the case.
+    await openPage(
+      (d) => addGroup(d, 'Staff'),
+      (fx) => fx.fail('POST', '/api/admin/groups', 409, { code: 'exists' }),
+    )
     await click(button(ta.create))
     await settle(() => dlg()?.textContent?.includes(ta.createTitle) === true, 'the form')
     await click(button(ta.create, dlg()))
@@ -114,10 +109,9 @@ describe('the Groups page', () => {
   })
 
   it('filters by name and by source', async () => {
-    await openPage((server) => {
-      const admin = adminRequests(server)
-      admin('POST', '/api/admin/groups', { name: 'Alpha', source: 'local' })
-      admin('POST', '/api/admin/groups', { name: 'Beta', source: 'synced' })
+    await openPage((d) => {
+      addGroup(d, 'Alpha')
+      addGroup(d, 'Beta', 'synced')
     })
     await settle(() => rows().length === 2, 'both groups')
     await type(document.querySelector<HTMLSelectElement>(`select[aria-label="${ta.source}"]`)!, 'synced')
@@ -130,11 +124,18 @@ describe('the Groups page', () => {
   })
 
   it('adds people by picking them and from a file, checked first, and takes one out', async () => {
-    await openPage((server) => {
-      makePerson(server as never, 'tang')
-      makePerson(server as never, 'wu')
-      adminRequests(server)('POST', '/api/admin/groups', { name: 'Eng', source: 'local' })
-    })
+    await openPage(
+      (d) => {
+        addPerson(d, 'tang')
+        addPerson(d, 'wu')
+        addGroup(d, 'Eng')
+      },
+      // The picker searches the people of the tenant: the one that matches.
+      (fx) => {
+        const tang = fx.data.auth.users.find((u) => u.username === 'tang')!
+        fx.reply('GET', '/api/people', { people: [{ id: tang.id, username: tang.username, name: tang.name }] })
+      },
+    )
     await settle(() => rows().length === 1, 'the group')
     await click(button(t_open('Eng')))
     await settle(() => button(tp.add, dlg()) !== null, 'the group opens')
@@ -172,7 +173,7 @@ describe('the Groups page', () => {
   })
 
   it("shows a synced group's people without a way to change them, and where each came from", async () => {
-    await openPage((server) => adminRequests(server)('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' }))
+    await openPage((d) => addGroup(d, 'Staff', 'synced'))
     await settle(() => rows().length === 1, 'the group')
     await click(button(t_open('Staff')))
     await settle(() => dlg().textContent!.includes(ta.syncedPeopleNote), 'the note')
@@ -180,12 +181,12 @@ describe('the Groups page', () => {
   })
 
   it('lists the spaces a group is in, and deleting one that is in use needs a second, forced, answer', async () => {
-    await openPage((server) => {
-      const admin = adminRequests(server)
-      const g = (admin('POST', '/api/admin/groups', { name: 'Eng', source: 'local' }).body as { id: string }).id
-      const { space } = shareSpace(server as never, 'owner', 'Team')
-      admin('POST', `/api/spaces/${space}/groups`, { groupId: g, role: 'editor' })
-    })
+    await openPage(
+      (d) => addGroup(d, 'Eng', 'local', { spaceRefs: [{ id: '01FSHARE1', name: 'Team', role: 'editor' }] }),
+      // The server refuses to delete a group that is in a space, unless forced.
+      (fx) =>
+        fx.fail('DELETE', '/api/admin/groups/:id', 409, { code: 'group_in_use', spaces: 1, mappings: 0 }, { times: 1 }),
+    )
     await settle(() => rows().length === 1, 'the group')
     expect(rowOf('Eng').textContent).toContain('1')
     await click(button(t_open('Eng')))
@@ -208,23 +209,15 @@ describe('the groups mapping of a sign-in provider', () => {
   const openProviders = async () => {
     m = await mount(routes, {
       signIn: true,
-      server: {
+      fixtures: {
         mode: 'accounts',
-        providers: [
-          {
-            slug: 'company',
-            kind: 'oidc',
-            name: 'Company SSO',
-            oidc: { issuer: 'https://sso.example', clientId: 'x' },
-          },
-        ],
+        data: (d) => {
+          addProvider(d, 'company', 'Company SSO')
+          addGroup(d, 'Staff', 'synced')
+          addGroup(d, 'Local one')
+        },
       },
-      entries: (server) => {
-        const admin = adminRequests(server)
-        admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
-        admin('POST', '/api/admin/groups', { name: 'Local one', source: 'local' })
-        return ['/admin/security/providers']
-      },
+      entries: ['/admin/security/providers'],
     })
     await settle(() => text().includes('Company SSO'), 'the providers')
     await click(byLabel(tsec.providers.editFor('Company SSO')))
@@ -271,24 +264,15 @@ describe('the groups mapping of a sign-in provider', () => {
   it('finds a synced group past the first 200 by its name', async () => {
     m = await mount(routes, {
       signIn: true,
-      server: {
+      fixtures: {
         mode: 'accounts',
-        providers: [
-          {
-            slug: 'company',
-            kind: 'oidc',
-            name: 'Company SSO',
-            oidc: { issuer: 'https://sso.example', clientId: 'x' },
-          },
-        ],
+        data: (d) => {
+          addProvider(d, 'company', 'Company SSO')
+          for (let i = 0; i < 200; i++) addGroup(d, `A${String(i).padStart(3, '0')}`, 'synced')
+          addGroup(d, 'Staff', 'synced')
+        },
       },
-      entries: (server) => {
-        const admin = adminRequests(server)
-        for (let i = 0; i < 200; i++)
-          admin('POST', '/api/admin/groups', { name: `A${String(i).padStart(3, '0')}`, source: 'synced' })
-        admin('POST', '/api/admin/groups', { name: 'Staff', source: 'synced' })
-        return ['/admin/security/providers']
-      },
+      entries: ['/admin/security/providers'],
     })
     await settle(() => text().includes('Company SSO'), 'the providers')
     await click(byLabel(tsec.providers.editFor('Company SSO')))

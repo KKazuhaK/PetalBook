@@ -1,29 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
+import type { FixtureData } from '@/api/fixtures/data/model'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tt } from '@/i18n/tenants'
-import {
-  adminRequests,
-  click,
-  installDomShims,
-  mount,
-  settle,
-  type,
-  type Mounted,
-  openTenantPage,
-} from '@/testing/harness'
+import { click, installDomShims, mount, settle, type, type FxMounted, openTenantPage } from '@/testing/harness'
+import { addPlan, ownRule, tenancyOn, DEFAULT_TENANT } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // The plans page (list, make, edit a plan's rules, the cap a limit must have), the plan of a tenant with the
 // confirmation that lists the manual rules a change clears, and the site settings grouped by key prefix, against the
-// mock server.
+// fixture server. A plan that is in use, and the rules a change of plan clears, are the server's answers: a test says
+// them with `fx.fail` and `fx.reply`.
 
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -49,26 +42,26 @@ const writes = (method: string, url: string) =>
 
 async function open(
   path: string,
-  scene: (server: MockServer) => void = () => {},
+  scene: (d: FixtureData) => void = () => {},
   delay?: (method: string, url: string) => number,
 ) {
   m = await mount(routes, {
     signIn: true,
     delay,
-    server: { mode: 'accounts', empty: true },
-    entries: (server) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      scene(server)
-      return [path]
+    fixtures: {
+      mode: 'accounts',
+      empty: true,
+      data: (d) => {
+        tenancyOn(d)
+        scene(d)
+      },
     },
+    entries: [path],
   })
 }
 describe('the plans page', () => {
   it('lists the plans, makes one, and opens it', async () => {
-    await open('/admin/tenants/plans', (server) => {
-      adminRequests(server)('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} })
-    })
+    await open('/admin/tenants/plans', (d) => void addPlan(d, 'team', 'Team'))
     await settle(() => document.querySelector('[data-plan="team"]') !== null, 'the list')
     expect(document.body.textContent).toContain('Team')
     await click(button(tp.create))
@@ -82,9 +75,7 @@ describe('the plans page', () => {
   })
 
   it('needs a maximum or a lock for a limit a tenant also sets, before anything is sent', async () => {
-    await open('/admin/tenants/plans', (server) => {
-      adminRequests(server)('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} })
-    })
+    await open('/admin/tenants/plans', (d) => void addPlan(d, 'team', 'Team'))
     await settle(() => document.querySelector('[data-plan="team"]') !== null, 'the list')
     await click(button(tp.manageFor('Team')))
     await settle(() => button(tp.addRule) !== null, 'the plan')
@@ -125,11 +116,12 @@ describe('the plans page', () => {
   })
 
   it('refuses a plan a tenant still uses, with the count', async () => {
-    await open('/admin/tenants/plans', (server) => {
-      const admin = adminRequests(server)
-      admin('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} })
-      admin('PUT', '/api/admin/tenants/0000000000/plan', { plan: 'team' })
+    await open('/admin/tenants/plans', (d) => {
+      addPlan(d, 'team', 'Team')
+      d.admin.tenants[0].plan = { slug: 'team', name: 'Team' }
     })
+    // The server refuses to delete a plan a tenant has, and counts them.
+    m!.fx.fail('DELETE', '/api/admin/plans/team', 409, { code: 'plan_in_use', tenants: 1 })
     await settle(() => document.querySelector('[data-plan="team"]') !== null, 'the list')
     await click(button(tp.deleteFor('Team')))
     await settle(() => dlg() !== null, 'the dialog')
@@ -140,10 +132,17 @@ describe('the plans page', () => {
 
 describe('the plan of a tenant', () => {
   it('asks before a change, lists the manual rules it clears, and says what was cleared', async () => {
-    await open('/admin/tenants', (server) => {
-      const admin = adminRequests(server)
-      admin('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} })
-      admin('PUT', '/api/admin/tenants/0000000000/settings/quota.people', { siteRule: { value: 7 } })
+    await open('/admin/tenants', (d) => {
+      addPlan(d, 'team', 'Team')
+      ownRule(d, DEFAULT_TENANT, 'quota.people', {
+        value: 7,
+        rules: [{ source: 'manual', value: 7, lower: null, inEffect: true }],
+      })
+    })
+    // Changing the plan clears the manual rules; the server lists what it cleared.
+    m!.fx.reply('PUT', '/api/admin/tenants/0000000000/plan', {
+      plan: { slug: 'team', name: 'Team' },
+      cleared: [{ key: 'quota.people', value: 7, lower: null }],
     })
     await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)
     await settle(
@@ -165,13 +164,6 @@ describe('the plan of a tenant', () => {
     expect(document.querySelector('[data-slot="tenant-plan"]')!.textContent).toContain(
       tp.tenantPlan.cleared(tt.settings.names['quota.people']),
     )
-    // The manual rule is gone: the setting no longer says manual.
-    await settle(
-      () =>
-        document.querySelector('[data-slot="tenant-rules"] [data-key="quota.people"]')?.getAttribute('data-source') !==
-        'manual',
-      'the rule cleared',
-    )
   })
 })
 
@@ -179,7 +171,7 @@ describe('the plan change confirmation while the rules load', () => {
   it('cannot be confirmed until the tenant rules are read', async () => {
     await open(
       '/admin/tenants',
-      (server) => adminRequests(server)('POST', '/api/admin/plans', { slug: 'team', name: 'Team', rules: {} }),
+      (d) => void addPlan(d, 'team', 'Team'),
       (method, url) => (method === 'GET' && url.startsWith('/api/admin/tenants/0000000000/settings') ? 400 : 0),
     )
     await openTenantPage(`${tt.list.open}: Default`, tt.detail.tabs.plan)

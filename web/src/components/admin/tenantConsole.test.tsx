@@ -2,11 +2,11 @@
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
-import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { tc } from '@/i18n/console'
 import { tt } from '@/i18n/tenants'
-import { adminRequests, click, installDomShims, locationText, mount, settle, type Mounted } from '@/testing/harness'
+import { click, installDomShims, locationText, mount, settle, type FxMounted } from '@/testing/harness'
+import { addTenant, tenancyOn } from '@/testing/adminScene'
 import { AdminGate } from './AdminGate'
 
 // A tenant's page for the site (/admin/tenants/<id>/<tab>) and the console in its scope (/admin/t/<id>/...): the scope
@@ -16,7 +16,7 @@ import { AdminGate } from './AdminGate'
 beforeAll(installDomShims)
 beforeEach(() => localStorage.clear())
 
-let m: Mounted | undefined
+let m: FxMounted | undefined
 afterEach(async () => {
   await m?.unmount()
   m = undefined
@@ -36,13 +36,16 @@ async function open(path: (id: string) => string) {
   await m?.unmount()
   m = await mount(routes, {
     signIn: true,
-    server: { mode: 'accounts', empty: true },
-    entries: (server: MockServer) => {
-      const admin = adminRequests(server)
-      admin('PUT', '/api/admin/settings/features.tenancy', { value: true })
-      tenant = (admin('POST', '/api/admin/tenants', { slug: 'acme', name: 'Acme' }).body as { id: string }).id
-      return [path(tenant)]
+    fixtures: {
+      mode: 'accounts',
+      empty: true,
+      data: (d) => {
+        tenancyOn(d)
+        d.features['features.auditDownload'] = true
+        tenant = addTenant(d, 'acme', 'Acme').id
+      },
     },
+    entries: () => [path(tenant)],
   })
 }
 const sidebarLinks = () =>

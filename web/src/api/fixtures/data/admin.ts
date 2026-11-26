@@ -18,6 +18,7 @@ import type {
   MailSettings,
   Passkey,
   PersonIdentity,
+  PersonUsage,
   PersonSession,
   Plan,
   RecycleItem,
@@ -43,6 +44,8 @@ export interface PersonRec {
   identities: PersonIdentity[]
   passkeys: Passkey[]
   lastActive?: string
+  // What the person holds, as measured, and the totals they are over.
+  usage?: Partial<Pick<PersonUsage, 'spaces' | 'bytes' | 'pages' | 'measuredAt' | 'over'>>
   quota?: { spaces: number | null; bytes: number | null; pages: number | null }
 }
 
