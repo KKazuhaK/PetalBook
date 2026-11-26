@@ -19,6 +19,7 @@ import (
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/connections"
 	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/perm"
 	"petalbook.app/server/internal/secret"
@@ -322,13 +323,17 @@ type Manager struct {
 	remoteMu sync.Mutex      // one connect, disconnect or key change at a time
 	pullWake chan struct{}   // a space with a remote was just opened: pull it now
 
-	st       storageState // the storage policy (storage.go) and its caches
-	ev       evictState   // eviction and restoring (evict.go)
-	cs       cacheStates  // cache states in memory (partial.go)
-	as       assetState   // attachment repositories and their cache (assets.go)
-	recycle  recycleState // the recycle bin (recycle.go)
-	exp      exportState  // exports (export.go)
-	problems problemMemo  // what each space said of its problems last (problems.go)
+	st      storageState // the storage policy (storage.go) and its caches
+	ev      evictState   // eviction and restoring (evict.go)
+	cs      cacheStates  // cache states in memory (partial.go)
+	as      assetState   // attachment repositories and their cache (assets.go)
+	recycle recycleState // the recycle bin (recycle.go)
+	exp     exportState  // exports (export.go)
+	// jobs is the runner of the exports and the recycle actions (jobs.go).
+	jobsMu   sync.Mutex
+	jobs     *jobs.Runner
+	ownsJobs bool
+	problems problemMemo // what each space said of its problems last (problems.go)
 
 	trimMu    sync.Mutex // one trim at a time
 	trimming  bool       // a background trim is queued or running (guarded by mu)
@@ -402,12 +407,9 @@ func NewAccounts(opt Options) (*Manager, error) {
 	m.lock = lock
 	m.initStorage(context.Background())
 	if opt.Serve {
-		if err := m.recoverExports(context.Background()); err != nil {
-			m.log.Warn("could not mark the exports a restart interrupted", "error", err)
-		}
-		if err := m.recoverRecycle(context.Background(), 0); err != nil {
-			m.log.Warn("could not finish the deletions, restores and purges a crash cut short", "error", err)
-		}
+		// The exports and the recycle actions a crash cut short are taken up by
+		// the jobs runner when it starts (each kind's Recover), and what a
+		// failure left by the recycle job's first look (RunRecycle).
 		if err := m.recoverEvictions(context.Background()); err != nil {
 			m.log.Warn("could not finish the evictions and restores a crash cut short", "error", err)
 		}
@@ -1369,10 +1371,9 @@ func (m *Manager) Close() error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	m.exp.wg.Wait()     // exports end when the manager is closed
-	m.recycle.wg.Wait() // so do purges started by a request
-	m.as.wg.Wait()      // moves of attachments end when the manager is closed
-	m.bg.Wait()         // so do the background tasks (their context ends with the manager)
+	m.closeJobs()  // exports and recycle actions end when the manager is closed
+	m.as.wg.Wait() // moves of attachments end when the manager is closed
+	m.bg.Wait()    // so do the background tasks (their context ends with the manager)
 	m.mu.Lock()
 	open := m.open
 	m.open = map[string]*opening{}

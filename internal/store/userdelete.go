@@ -491,9 +491,9 @@ func FinishUserDeletion(ctx context.Context, q Q, sc Scope, in FinishUserDeletio
 	if err := q.QueryRow(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM recycle_items WHERE parent = ?`, UserPendingMarker(in.UserID)).Scan(&bytesHeld); err != nil {
 		return nil, err
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO recycle_items(id, tenant_id, kind, space_id, user_id, parent, name, name_key, personal, records, dirs, bytes, deleted_at, deleted_by, deleted_by_name, reason, state, state_at)
-		VALUES (?, ?, 'user', '', ?, '', ?, ?, 0, ?, '[]', ?, ?, ?, ?, ?, 'ready', ?)`,
-		in.ItemID, u.TenantID, u.ID, u.Username, FoldName(u.Username), string(raw), bytesHeld, ms(in.Now), in.By, in.ByName, in.Reason, ms(in.Now)); err != nil {
+	if _, err := q.Exec(ctx, `INSERT INTO recycle_items(id, tenant_id, kind, space_id, user_id, parent, name, name_key, personal, records, dirs, bytes, deleted_at, deleted_by, deleted_by_name, reason)
+		VALUES (?, ?, 'user', '', ?, '', ?, ?, 0, ?, '[]', ?, ?, ?, ?, ?)`,
+		in.ItemID, u.TenantID, u.ID, u.Username, FoldName(u.Username), string(raw), bytesHeld, ms(in.Now), in.By, in.ByName, in.Reason); err != nil {
 		return nil, err
 	}
 	res, err := q.Exec(ctx, `UPDATE users SET deleted_at = ?, recycle_item = ?, disabled = 1, delete_pending = '' WHERE id = ? AND deleted_at IS NULL`, ms(in.Now), in.ItemID, in.UserID)
@@ -541,7 +541,7 @@ func RestoreUserRows(ctx context.Context, q Q, it *RecycleItem, now time.Time) (
 		return out, errors.New("not a person's item")
 	}
 	var raw string
-	if err := q.QueryRow(ctx, `SELECT records FROM recycle_items WHERE id = ? AND state = 'restoring'`, it.ID).Scan(&raw); err != nil {
+	if err := q.QueryRow(ctx, `SELECT records FROM recycle_items WHERE id = ? AND job_id = ? AND job_id <> ''`, it.ID, it.JobID).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, ErrBusyItem
 		}
@@ -612,9 +612,10 @@ func mapNoRows(err error) error {
 	return err
 }
 
-// DeleteUserItem removes a person's item whose state is restoring or purging.
+// DeleteUserItem removes a person's item that a job holds (a restore or a
+// purge).
 func DeleteUserItem(ctx context.Context, q Q, id string) error {
-	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND state IN ('restoring', 'purging')`, id)
+	res, err := q.Exec(ctx, `DELETE FROM recycle_items WHERE id = ? AND job_id <> ''`, id)
 	return oneRow(res, err)
 }
 
@@ -720,7 +721,7 @@ func UsernameRetired(ctx context.Context, q Q, username string) (bool, error) {
 
 // SweepTombstones hard-deletes the rows of purged people that nothing refers to
 // any more: no audit row names them, they made no invite and used none, no
-// recycle item or export is theirs. It returns how many it deleted. The daily
+// recycle item or job (an export is one) is theirs. It returns how many it deleted. The daily
 // job runs it; the 90 days of the audit log are the usual last reference.
 func SweepTombstones(ctx context.Context, q Q, limit int) (int64, error) {
 	res, err := q.Exec(ctx, `DELETE FROM users WHERE id IN (
@@ -728,7 +729,7 @@ func SweepTombstones(ctx context.Context, q Q, limit int) (int64, error) {
 		AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = u.id OR a.actor = u.id)
 		AND NOT EXISTS (SELECT 1 FROM invites i WHERE i.created_by = u.id OR i.used_by = u.id)
 		AND NOT EXISTS (SELECT 1 FROM recycle_items r WHERE r.user_id = u.id OR r.deleted_by = u.id)
-		AND NOT EXISTS (SELECT 1 FROM exports e WHERE e.made_by = u.id)
+		AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.made_by = u.id)
 		AND NOT EXISTS (SELECT 1 FROM spaces s WHERE s.personal_of = u.id OR s.usage_user = u.id)
 		LIMIT ?)`, limit)
 	if err != nil {

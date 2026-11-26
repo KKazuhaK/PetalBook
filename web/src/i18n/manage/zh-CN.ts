@@ -201,6 +201,7 @@ export const manageZhCN: ManageMessages = {
       done: '做完了',
       interrupted: '被打断了：服务器重启过，没做完的没有做',
       failed: '任务出错停了',
+      cancelled: '已取消',
     },
     doneAll: (n) => `${n} 项都做好了。`,
     doneSome: (ok, bad) => `${ok} 项做好了，${bad} 项没有做成。`,
@@ -359,6 +360,15 @@ export const manageZhCN: ManageMessages = {
     started: (days) => `已开始导出，做好后可以下载，保留 ${days} 天。`,
     goList: '去看导出列表',
     personalSkipped: '个人空间不能导出给组织管理员。',
+  },
+  jobs: {
+    progress: (done, total, bytes) => (bytes ? `${done} / ${total} · 已写入 ${bytes}` : `${done} / ${total}`),
+    queued: '排队中…',
+    running: '正在做…',
+    done: '完成',
+    failed: (why) => (why ? `没做完：${why}` : '没做完'),
+    interrupted: '服务器停止了，没做完。',
+    cancelled: '已取消',
   },
   view: {
     title: (name) => `查看「${name}」的内容`,

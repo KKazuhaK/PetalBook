@@ -337,16 +337,33 @@ func waitExport(t *testing.T, c *client, id string) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		r := c.do("GET", "/api/admin/exports/"+id, nil).want(t, 200, "")
-		switch r.body["state"] {
-		case "ready", "failed":
-			return r.body
+		if row := exportRow(t, c, id); row != nil {
+			switch row["state"] {
+			case "ready", "failed":
+				return row
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the export did not finish")
 	return nil
 }
+
+// exportRow is an export as the list of exports has it (nil: not listed for
+// the caller); GET /api/admin/exports/{id} is gone: the list and
+// GET /api/admin/jobs/{id} answer.
+func exportRow(t *testing.T, c *client, id string) map[string]any {
+	t.Helper()
+	for _, it := range c.do("GET", "/api/admin/exports", nil).want(t, 200, "").body["items"].([]any) {
+		if row := it.(map[string]any); row["id"] == id {
+			return row
+		}
+	}
+	return nil
+}
+
+// exportJob is the id of the job POST /api/admin/exports answered with.
+func exportJob(r result) string { return r.body["job"].(map[string]any)["id"].(string) }
 
 func unzipped(t *testing.T, raw []byte) map[string]string {
 	t.Helper()
@@ -377,8 +394,8 @@ func TestAnExportHoldsTheFilesTheDraftsAndTheRemoteAndIsAudited(t *testing.T) {
 		f.memA.draft(base+"/pages/"+pg.body["id"].(string), pg.body["rev"], "Day one", "we walked, then ran\n").want(t, 200, "")
 
 		r := f.admA.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{sid}}).want(t, 202, "")
-		id := r.body["id"].(string)
-		if r.body["bytes"] != float64(0) || r.body["expires"] == "" {
+		id := exportJob(r)
+		if j := r.body["job"].(map[string]any); j["kind"] != "export" || j["subject"] != "" || j["state"] != "queued" {
 			t.Fatal(r.raw)
 		}
 		done := waitExport(t, f.admA, id)
@@ -433,10 +450,10 @@ func TestAnExportHoldsTheFilesTheDraftsAndTheRemoteAndIsAudited(t *testing.T) {
 		// The history is for site administrators.
 		f.admA.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{sid}, "history": true}).want(t, 403, "forbidden")
 		h := f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{sid}, "history": true}).want(t, 202, "")
-		if done := waitExport(t, f.root, h.body["id"].(string)); done["state"] != "ready" {
+		if done := waitExport(t, f.root, exportJob(h)); done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
-		hf := unzipped(t, []byte(f.root.do("GET", "/api/admin/exports/"+h.body["id"].(string)+"/download", nil).raw))
+		hf := unzipped(t, []byte(f.root.do("GET", "/api/admin/exports/"+exportJob(h)+"/download", nil).raw))
 		if !strings.Contains(hf[folder+"history.bundle"], "# v2 git bundle") {
 			t.Fatalf("no bundle in %v", keys(hf))
 		}
@@ -450,10 +467,10 @@ func TestAnExportHoldsTheFilesTheDraftsAndTheRemoteAndIsAudited(t *testing.T) {
 		// An export of a space in the recycle bin comes from its directory.
 		item := f.admA.do("DELETE", "/api/admin/spaces/"+sid, nil).want(t, 200, "").body["id"].(string)
 		x := f.admA.do("POST", "/api/admin/exports", map[string]any{"items": []string{item}}).want(t, 202, "")
-		if done := waitExport(t, f.admA, x.body["id"].(string)); done["state"] != "ready" {
+		if done := waitExport(t, f.admA, exportJob(x)); done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
-		xf := unzipped(t, []byte(f.admA.do("GET", "/api/admin/exports/"+x.body["id"].(string)+"/download", nil).raw))
+		xf := unzipped(t, []byte(f.admA.do("GET", "/api/admin/exports/"+exportJob(x)+"/download", nil).raw))
 		if !strings.Contains(xf[folder+"Day one.md"], "we walked") || !strings.Contains(xf[folder+"drafts.json"], "then ran") {
 			t.Fatalf("%v", keys(xf))
 		}
@@ -479,7 +496,7 @@ func TestExportsAreLimitedAndExpire(t *testing.T) {
 		admin.do("POST", "/api/admin/exports", map[string]any{"items": []string{fakeID}}).want(t, 404, "not_found")
 		tang.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{sid}}).want(t, 403, "forbidden")
 		// Beyond exports.maxBytes: 507, and nothing is made.
-		if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO exports(id, tenant_id, made_by, spaces, state, bytes, path, created, expires) VALUES ('EX00000001', ?, 'x', '[]', 'ready', ?, 'exports/EX00000001.zip', 1, 99999999999999)`, store.DefaultTenantID, int64(21)<<30); err != nil {
+		if _, err := a.st.Q().Exec(context.Background(), `INSERT INTO jobs(id, tenant_id, kind, made_by, state, bytes_done, result, created, updated, expires) VALUES ('EX00000001', ?, 'export', 'x', 'done', ?, '{"path":"exports/EX00000001.zip"}', 1, 1, 99999999999999)`, store.DefaultTenantID, int64(21)<<30); err != nil {
 			t.Fatal(err)
 		}
 		admin.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{sid}}).want(t, 507, "exports_full")
@@ -488,20 +505,23 @@ func TestExportsAreLimitedAndExpire(t *testing.T) {
 		}
 		admin.do("PUT", "/api/admin/settings/exports.maxBytes", map[string]any{"value": 100 << 30}).want(t, 200, "")
 		r := admin.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{sid}}).want(t, 202, "")
-		waitExport(t, admin, r.body["id"].(string))
+		waitExport(t, admin, exportJob(r))
 		// Seven days later (exports.days) it is gone, file and row.
 		a.clock.Advance(7*24*time.Hour + time.Minute)
 		if err := a.mgr.ExpireExports(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		admin.do("GET", "/api/admin/exports/"+r.body["id"].(string), nil).want(t, 404, "not_found")
+		admin.do("GET", "/api/admin/jobs/"+exportJob(r), nil).want(t, 404, "not_found")
+		if exportRow(t, admin, exportJob(r)) != nil {
+			t.Fatal("an expired export is still listed")
+		}
 	})
 }
 
 func (a *acc) mgrExports(t *testing.T) int {
 	t.Helper()
 	var n int
-	if err := a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM exports`).Scan(&n); err != nil {
+	if err := a.st.Q().QueryRow(context.Background(), `SELECT COUNT(*) FROM jobs WHERE kind = 'export'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -517,17 +537,17 @@ func TestAnExportOfTheSiteIsNeverSeenByATenantAdministrator(t *testing.T) {
 		f := newTenFx(t, a)
 		own := f.memA.personalSpace()
 		made := map[string]string{
-			"personal, with history":   f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{own}, "history": true}).want(t, 202, "").body["id"].(string),
-			"spaces of two tenants":    f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA, f.spaceB}}).want(t, 202, "").body["id"].(string),
-			"a space of the tenant":    f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA}}).want(t, 202, "").body["id"].(string),
-			"a space of the other one": f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["id"].(string),
+			"personal, with history":   f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{own}, "history": true}).want(t, 202, "").body["job"].(map[string]any)["id"].(string),
+			"spaces of two tenants":    f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA, f.spaceB}}).want(t, 202, "").body["job"].(map[string]any)["id"].(string),
+			"a space of the tenant":    f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA}}).want(t, 202, "").body["job"].(map[string]any)["id"].(string),
+			"a space of the other one": f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceB}}).want(t, 202, "").body["job"].(map[string]any)["id"].(string),
 		}
 		for what, id := range made {
 			if done := waitExport(t, f.root, id); done["state"] != "ready" {
 				t.Fatalf("%s: %v", what, done)
 			}
 			for _, c := range []*client{f.admA, f.admB} {
-				c.do("GET", "/api/admin/exports/"+id, nil).want(t, 404, "not_found")
+				c.do("GET", "/api/admin/jobs/"+id, nil).want(t, 404, "not_found")
 				c.do("GET", "/api/admin/exports/"+id+"/download", nil).want(t, 404, "not_found")
 				c.do("DELETE", "/api/admin/exports/"+id, nil).want(t, 404, "not_found")
 				if r := c.do("GET", "/api/admin/exports", nil).want(t, 200, ""); strings.Contains(r.raw, id) {
@@ -537,11 +557,14 @@ func TestAnExportOfTheSiteIsNeverSeenByATenantAdministrator(t *testing.T) {
 			f.root.do("GET", "/api/admin/exports/"+id+"/download", nil).want(t, 200, "")
 		}
 		// A tenant administrator's own export is theirs and the site's.
-		mine := f.admA.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA}}).want(t, 202, "").body["id"].(string)
+		mine := exportJob(f.admA.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{f.spaceA}}).want(t, 202, ""))
 		waitExport(t, f.admA, mine)
 		f.admA.do("GET", "/api/admin/exports/"+mine+"/download", nil).want(t, 200, "")
-		f.root.do("GET", "/api/admin/exports/"+mine, nil).want(t, 200, "")
-		f.admB.do("GET", "/api/admin/exports/"+mine, nil).want(t, 404, "not_found")
+		if exportRow(t, f.root, mine) == nil || exportRow(t, f.admA, mine) == nil || exportRow(t, f.admB, mine) != nil {
+			t.Fatal("the site and the tenant's administrators list it, the other tenant's do not")
+		}
+		f.root.do("GET", "/api/admin/jobs/"+mine, nil).want(t, 200, "")
+		f.admB.do("GET", "/api/admin/jobs/"+mine, nil).want(t, 404, "not_found")
 	})
 }
 

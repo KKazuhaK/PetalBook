@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
@@ -43,7 +44,10 @@ type recycleItemResp struct {
 	Reason    string           `json:"reason"`
 	// State is ready, moving (its directories are being moved), restoring or
 	// purging: only a ready item can be restored or purged.
-	State      string   `json:"state"`
+	State string `json:"state"`
+	// Job is the job that holds the item (null at rest): follow it with
+	// GET /api/admin/jobs/{id}.
+	Job        *string  `json:"job"`
 	Restorable bool     `json:"restorable"`
 	Problems   []string `json:"problems"`
 }
@@ -62,6 +66,9 @@ func (s *server) recycleItemOf(it store.RecycleItem, days int, with []store.Recy
 		DeletedBy: recycleUserRef{it.DeletedBy, it.DeletedByName}, PurgeAt: rfc3339(it.DeletedAt.Add(time.Duration(days) * 24 * time.Hour)),
 		Reason: it.Reason, State: it.State, With: []recycleItemRef{}, Problems: s.spaces.Problems(&it)}
 	out.Restorable = len(out.Problems) == 0
+	if it.JobID != "" {
+		out.Job = &it.JobID
+	}
 	if it.Kind == store.RecycleUser {
 		out.User = &recycleUserRef{it.UserID, it.Name}
 	} else {
@@ -198,21 +205,28 @@ func (s *server) adminPurgeItem(c *call) {
 	if !s.useConfirm(c, c.r.URL.Query().Get("confirm"), confirmRequest{Action: "purge", Items: []string{it.ID}}) {
 		return
 	}
-	// A purge is paced and may take long: it runs in the background and is
-	// audited when it is over. The item is purging meanwhile (a restore of it
+	// A purge is paced and may take long: it is a job on the runner, audited when
+	// it is over (purgeEnded). The item is purging meanwhile (a restore of it
 	// is busy); one that fails stays purging and the hourly job finishes it.
-	actor, ip, capacity := c.user().ID, s.auth.ClientAddr(c.r), c.scope.capacity
-	started, err := s.spaces.StartPurge(c.r.Context(), c.adminReach(), it.ID, func(done *store.RecycleItem, err error) {
-		if err == nil {
-			s.auditPurged(actor, ip, capacity, done, "")
-		}
-	})
+	started, _, err := s.spaces.StartPurge(c.r.Context(), c.adminReach(), it.ID, spaces.PurgeBy{ID: c.user().ID, Name: c.user().Username, Capacity: c.scope.capacity, IP: s.auth.ClientAddr(c.r)})
 	if err != nil {
 		s.fail(c.w, err)
 		return
 	}
 	days := s.recycleDays(c)
 	writeJSON(c.w, http.StatusAccepted, s.recycleItemOf(*started, days, nil))
+}
+
+// purgeEnded audits a purge that a person asked for once its job has ended
+// done (the server's own purge of an item past its days is not audited: no
+// one asked for it).
+func (s *server) purgeEnded(ctx context.Context, j *store.Job) {
+	if j.Kind != store.JobRecyclePurge || j.State != store.JobDone || j.MadeBy == "" {
+		return
+	}
+	r := spaces.PurgeResultOf(j)
+	s.auditPurged(j.MadeBy, spaces.RecycleParamsOf(j).IP, j.Capacity, &store.RecycleItem{ID: j.Subject, TenantID: r.TenantID, Kind: r.Kind, SpaceID: r.SpaceID, UserID: r.UserID,
+		Name: r.Name, Bytes: r.Bytes, Reason: r.Reason}, "")
 }
 
 // auditPurged records that an item was purged.

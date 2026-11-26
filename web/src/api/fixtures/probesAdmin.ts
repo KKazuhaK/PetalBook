@@ -133,6 +133,7 @@ export function adminProbes(fx: FixtureServer): Call[] {
       purgeAt: at,
       reason: '',
       state: 'ready',
+      job: null,
       restorable: true,
       problems: [],
     })
@@ -147,8 +148,27 @@ export function adminProbes(fx: FixtureServer): Call[] {
     bytes: 0,
     created: at,
     expires: at,
+    total: 1,
+    done: 1,
+    bytesDone: 0,
   })
-  d.admin.jobs.push({ id: 'JBSEED', action: 'disable_spaces', total: 1, done: 1, failed: [], state: 'done' })
+  d.admin.jobs.push({
+    id: 'JBSEED',
+    kind: 'bulk',
+    subject: '',
+    action: 'disable_spaces',
+    state: 'done',
+    total: 1,
+    done: 1,
+    bytesTotal: 0,
+    bytesDone: 0,
+    failed: [],
+    error: '',
+    created: at,
+    updated: at,
+    expires: null,
+    madeBy: me,
+  })
   d.spaces[0].checks.push({
     kind: 'no_id',
     path: 'Notes/x.md',
@@ -212,9 +232,10 @@ export function adminProbes(fx: FixtureServer): Call[] {
       }),
     ],
     ['GET', '/api/admin/jobs/JBSEED'],
+    ['GET', '/api/admin/jobs'],
+    ['GET', '/api/admin/jobs?kind=export'],
     ['POST', '/api/admin/exports', { spaces: ['default'] }],
     ['GET', '/api/admin/exports'],
-    ['GET', '/api/admin/exports/EXSEED'],
     ['DELETE', '/api/admin/exports/EXSEED'],
     ['DELETE', S, { reason: 'tidy' }],
     ['GET', '/api/admin/recycle'],

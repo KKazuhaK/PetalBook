@@ -11,6 +11,7 @@ import type {
   DailyApi,
   Group,
   GroupPerson,
+  Job,
   PersonUsage,
   RecycleItem,
   RestoreResult,
@@ -105,6 +106,28 @@ function adminSpace(c: Ctx, id: string): AdminSpace {
 }
 const DEAD = { id: '', username: '', name: '' }
 
+// A job as GET /api/admin/jobs has it: done, unless the caller says otherwise.
+function jobOf(c: Ctx, init: Pick<Job, 'kind'> & Partial<Job>): Job {
+  const me = signedIn(c.data)
+  const at = rfc3339(c.now())
+  return add(A(c).jobs, {
+    id: newId(c.data, '01JB'),
+    subject: '',
+    state: 'done',
+    total: 0,
+    done: 0,
+    bytesTotal: 0,
+    bytesDone: 0,
+    failed: [],
+    error: '',
+    created: at,
+    updated: at,
+    expires: null,
+    madeBy: { id: me.id, username: me.username },
+    ...init,
+  })
+}
+
 function recycled(c: Ctx, init: Partial<RecycleItem>): RecycleItem {
   const me = signedIn(c.data)
   const at = c.now()
@@ -121,6 +144,7 @@ function recycled(c: Ctx, init: Partial<RecycleItem>): RecycleItem {
     purgeAt: rfc3339(at + 30 * 86_400_000),
     reason: '',
     state: 'ready',
+    job: null,
     restorable: true,
     problems: null as unknown as string[],
     ...init,
@@ -679,7 +703,7 @@ export const adminRoutes: Route[] = [
     (c) => {
       const item = find(A(c).recycle, (r) => r.id === c.params.id, 'the item')
       remove(A(c).recycle, item)
-      return reply(202, item)
+      return reply(202, { ...item, state: 'purging', job: newId(c.data, '01JB') })
     },
   ],
   ['POST', '/api/admin/confirm', (c) => confirmPlan(c)],
@@ -690,16 +714,21 @@ export const adminRoutes: Route[] = [
       const plan = find(Object.entries(A(c).confirms), ([k]) => k === c.body.confirm, 'the confirmation')[1]
       const total = plan.spaces.length + plan.users.length + plan.items.length
       applyBulk(c, plan)
-      const job = add(A(c).jobs, {
-        id: newId(c.data, '01JB'),
-        action: plan.action as never,
-        total,
-        done: total,
-        failed: [],
-        state: 'done' as const,
-      })
+      const job = jobOf(c, { kind: 'bulk', action: plan.action as never, total, done: total })
       return reply(202, { job })
     },
+  ],
+  [
+    'GET',
+    '/api/admin/jobs',
+    (c) =>
+      page(
+        c,
+        [...A(c).jobs]
+          .reverse()
+          .filter((j) => !c.query.get('kind') || j.kind === c.query.get('kind'))
+          .filter((j) => !c.query.get('state') || j.state === c.query.get('state')),
+      ),
   ],
   ['GET', '/api/admin/jobs/:id', (c) => ({ job: find(A(c).jobs, (j) => j.id === c.params.id, 'the job') })],
   ['GET', '/api/admin/exports', (c) => page(c, A(c).exports)],
@@ -708,8 +737,9 @@ export const adminRoutes: Route[] = [
     '/api/admin/exports',
     (c) => {
       const me = signedIn(c.data)
+      const id = newId(c.data, '01EX')
       const ex = add(A(c).exports, {
-        id: newId(c.data, '01EX'),
+        id,
         tenant: DEFAULT_TENANT,
         madeBy: { id: me.id, username: me.username },
         spaces: [
@@ -727,19 +757,24 @@ export const adminRoutes: Route[] = [
         bytes: 0,
         created: now(c),
         expires: rfc3339(c.now() + 7 * 86_400_000),
+        total: 0,
+        done: 0,
+        bytesDone: 0,
       })
-      return reply(202, ex)
+      ex.total = ex.done = ex.spaces.length
+      const job = jobOf(c, { id, kind: 'export', total: ex.total, done: ex.done, expires: ex.expires })
+      return reply(202, { job })
     },
   ],
-  ['GET', '/api/admin/exports/:id', (c) => find(A(c).exports, (e) => e.id === c.params.id, 'the export')],
   [
     'DELETE',
     '/api/admin/exports/:id',
-    (c) =>
-      remove(
-        A(c).exports,
-        find(A(c).exports, (e) => e.id === c.params.id),
-      ),
+    (c) => {
+      const ex = find(A(c).exports, (e) => e.id === c.params.id, 'the export')
+      const job = A(c).jobs.find((j) => j.id === ex.id)
+      if (job) remove(A(c).jobs, job)
+      return remove(A(c).exports, ex)
+    },
   ],
 
   // --- tenants, plans, settings, secrets ---

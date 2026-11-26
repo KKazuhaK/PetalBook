@@ -7953,12 +7953,15 @@ administrator deletes is gone at once. An item is kept for `recycle.days`
  "space": {"id": "01JD3K8Q7Z", "name": "Team", "personal": false},
  "user": null, "with": [],
  "bytes": 18304211, "deletedAt": "2026-11-23T08:30:00Z", "deletedBy": {"id": "…", "username": "wu"},
- "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "state": "ready", "restorable": true, "problems": []}
+ "purgeAt": "2026-12-23T08:30:00Z", "reason": "", "state": "ready", "job": null, "restorable": true, "problems": []}
 ```
 
 `state` is `ready`, `moving`, `restoring` or `purging` (see "As built"), in the
 list, in the answers that return an item and in the purge's `202`: a page that
-shows an item being purged reads it here and needs no memory of its own.
+shows an item being purged reads it here and needs no memory of its own. It is
+derived from the job that holds the item (`recycle.move`, `recycle.restore` or
+`recycle.purge`), whose id is `job` (`null` for an item at rest): follow it with
+`GET /api/admin/jobs/{id}`.
 `kind` is `space` or `user`. A `user` item has `user` and lists in `with` the
 space items recycled with that person (their personal space and the spaces they
 owned alone); those spaces are restored with the person, and on their own only
@@ -8235,10 +8238,13 @@ covers ids, owners, members, heirs and states); `404 not_found` for an unknown,
 used or expired token. `202` with a job:
 
 ```json
-{"job": {"id": "01JDJB…", "action": "delete_spaces", "total": 2, "done": 0, "failed": [], "state": "running"}}
+{"job": {"id": "01JDJB…", "kind": "bulk", "subject": "", "action": "delete_spaces", "state": "running",
+         "total": 2, "done": 0, "bytesTotal": 0, "bytesDone": 0, "failed": [], "error": "",
+         "created": "2026-11-26T08:30:00Z", "updated": "2026-11-26T08:30:00Z", "expires": null,
+         "madeBy": {"id": "…", "username": "wu"}}}
 ```
 
-`GET /api/admin/jobs/{id}` follows it. A job runs the items one at a time,
+`GET /api/admin/jobs/{id}` follows it (see "Jobs" below). A job runs the items one at a time,
 in the background, each with the rules of its single action (so `409 busy` on
 one space fails that item, which is listed in `failed` with its error, and the
 rest go on). At most one bulk job per tenant and two on the server run at once;
@@ -8286,7 +8292,9 @@ recycle bin.
 
 `{"spaces": ["01JD3K8Q7Z"], "items": [], "user": null, "history": false}`: spaces,
 recycle items, or a user (their personal space and the spaces of rules 1 and 2).
-`202` with an export: `{"id", "state": "running", "bytes": 0, "expires"}`.
+`202` with `{"job": …}`: the export is a job of kind `export` (see "Jobs"),
+`queued` at first; `GET /api/admin/exports` lists it with its `bytes` and
+`expires`.
 
 - Each space is a folder: its files at the current commit (`git archive` from
   the clone, or from the recycle directory), `drafts.json` (every member's
@@ -8326,15 +8334,58 @@ either way; `open` says whether that space exists now and the caller may open it
 or whose item is still in the bin does not exist), so that the page links to it only
 then. One query answers it for a whole page.
 
-`GET /api/admin/exports`, `GET /api/admin/exports/{id}`, `DELETE /api/admin/exports/{id}`,
-and `GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
-`Range` supported). An export made by a tenant administrator is visible to that
-tenant's administrators and the site's.
+`GET /api/admin/exports`, `DELETE /api/admin/exports/{id}`, and
+`GET /api/admin/exports/{id}/download` (`Content-Disposition: attachment`,
+`Range` supported). `GET /api/admin/exports/{id}` is gone: `GET /api/admin/jobs/{id}`
+answers for one export. A row of the list is the export as before (`id`, `tenant`,
+`madeBy`, `spaces`, `history`, `state`, `error`, `warnings`, `bytes`, `created`,
+`expires`) with its job's progress: `total` (the spaces), `done` and `bytesDone`.
+An export made by a tenant administrator is visible to that tenant's
+administrators and the site's.
 
 **As built:** an export a site administrator made is the site's: only site
 administrators list, read, download or delete it, whatever spaces it holds. So is
 any export that holds a history bundle, a personal space or the spaces of more
 than one tenant (only a site administrator can make one).
+
+### Jobs
+
+Every background action is a row of `jobs`, run by one runner (`internal/jobs`):
+a bulk action (`bulk`), an export (`export`) and the actions of the recycle bin
+(`recycle.move`, `recycle.restore`, `recycle.purge`). One shape answers for each
+kind:
+
+```json
+{"id": "01JDJB…", "kind": "export", "subject": "", "state": "running",
+ "total": 3, "done": 1, "bytesTotal": 0, "bytesDone": 1048576,
+ "failed": [], "error": "", "created": "…", "updated": "…", "expires": "…",
+ "madeBy": {"id": "…", "username": "wu"}}
+```
+
+`state` is `queued`, `running`, `done`, `failed` (it broke: `error` says how),
+`interrupted` (the server stopped and the kind does not take it up again) or
+`cancelled` (reserved: no endpoint cancels a job yet). `subject` is what the job
+works on (a recycle item); `action` is added to a `bulk` job. `total` and `done`
+count the items (the spaces of an export), `bytesDone` the bytes written;
+`expires` is when an export's file goes (`null` for any other job).
+
+- `GET /api/admin/jobs/{id}`: one job, `404` outside the caller's scope or for a
+  kind their keys do not cover. While the job runs on this server the answer
+  comes from memory (progress is written at most once a second or every 100
+  items), so polling it reads no row.
+- `GET /api/admin/jobs?kind=&state=&cursor=&limit=&tenant=`: a page, newest first,
+  scoped like every administration list (a site administrator sees all, narrowed
+  by `tenant`; a tenant administrator their tenant's, never the site's). Which
+  kinds the caller sees follows their keys: `bulk` with `tenant.bulk.run`,
+  `export` with `tenant.data.export`, `recycle.*` with `tenant.recycle.read`.
+  `next` is the cursor of the following page.
+- Slots: `bulk` and `export` take one per tenant and two on the server; a
+  recycle action takes none but holds its item (one job at a time per item).
+  After a restart a running `export` or `bulk` job reads `failed` or
+  `interrupted`; a move or a purge is taken up again, a restore is undone (the
+  item is at rest again).
+- A job that ended is kept 30 days after its last change; an export is kept for
+  its days (`exports.days`), and its file with it.
 
 ### Viewing a space
 

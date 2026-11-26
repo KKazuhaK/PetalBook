@@ -734,7 +734,7 @@ func TestARestoreAndAPurgeOfAPersonThatWereCutShortAreFinished(t *testing.T) {
 		f.admin.do("DELETE", "/api/admin/recycle/"+item+"?confirm="+tok, nil).want(t, 202, "")
 		a.mgr.WaitPurges()
 		stop.Store("")
-		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`' AND state = 'purging'`); n != 1 {
+		if n := a.countRows(t, `SELECT COUNT(*) FROM recycle_items WHERE id = '`+item+`' AND job_id <> ''`); n != 1 {
 			t.Fatal("the item is not left purging")
 		}
 		if n := a.countRows(t, `SELECT COUNT(*) FROM passwords WHERE user_id = '`+f.ownerID+`'`); n != 1 {
@@ -761,24 +761,23 @@ func TestAnExportOfAPersonHoldsTheirPersonalSpaceAndTheSpacesNobodyElseIsIn(t *t
 		f := newUdFix(t, a)
 		personal := f.owner.personalSpace()
 		x := f.admin.do("POST", "/api/admin/exports", map[string]any{"user": f.ownerID}).want(t, 202, "")
+		done := waitExport(t, f.admin, exportJob(x))
+		if done["state"] != "ready" {
+			t.Fatalf("%v", done)
+		}
 		var names []string
-		for _, s := range x.body["spaces"].([]any) {
+		for _, s := range done["spaces"].([]any) {
 			names = append(names, s.(map[string]any)["space"].(string))
 		}
 		if len(names) != 2 || !hasID(names, personal) || !hasID(names, f.alone) {
-			t.Fatalf("%v", x.raw)
-		}
-		if done := waitExport(t, f.admin, x.body["id"].(string)); done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
 		f.admin.do("POST", "/api/admin/exports", map[string]any{"user": fakeID}).want(t, 404, "user_not_found")
 		// Once the person is in the bin the same call exports what went with them.
 		f.admin.do("DELETE", "/api/users/"+f.ownerID, map[string]any{"heir": f.viewerID}).want(t, 200, "")
 		y := f.admin.do("POST", "/api/admin/exports", map[string]any{"user": f.ownerID}).want(t, 202, "")
-		if n := len(y.body["spaces"].([]any)); n != 2 {
-			t.Fatalf("%v", y.raw)
-		}
-		if done := waitExport(t, f.admin, y.body["id"].(string)); done["state"] != "ready" {
+		done = waitExport(t, f.admin, exportJob(y))
+		if n := len(done["spaces"].([]any)); n != 2 || done["state"] != "ready" {
 			t.Fatalf("%v", done)
 		}
 	})

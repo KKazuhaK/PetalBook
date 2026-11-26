@@ -7,8 +7,8 @@ package spaces
 // (drafts.json), the addresses of its remotes without any credential
 // (REMOTE.txt), the files of its attachment repository, and with history a git
 // bundle. An export never changes the space: it reads a clone that has been
-// flushed, and it is made in the background, one at a time per tenant and two on
-// the server.
+// flushed, and it is made in the background by the jobs runner (a job of kind
+// "export", class jobs.IO: one at a time per tenant and two on the server).
 
 import (
 	"archive/tar"
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"petalbook.app/server/internal/gitstore"
+	"petalbook.app/server/internal/jobs"
 	"petalbook.app/server/internal/page"
 	"petalbook.app/server/internal/space"
 	"petalbook.app/server/internal/store"
@@ -39,7 +40,6 @@ var ErrExportsFull = errors.New("the exports are over the room they may take")
 const (
 	DefaultExportDays  = 7
 	DefaultExportBytes = 20 << 30
-	maxExportsAtOnce   = 2
 )
 
 // ExportLimits are exports.days and exports.maxBytes, read when they are used:
@@ -77,24 +77,43 @@ func (m *Manager) exportLimits(ctx context.Context, tenant string) ExportLimits 
 type exportState struct {
 	mu     sync.Mutex
 	limits func(context.Context, string) ExportLimits
-	tenant map[string]chan struct{}
-	global chan struct{}
-	wg     sync.WaitGroup
+}
+
+// exportKind runs the export jobs: a failure ends the job failed, and a
+// restart does not take one up again (what it wrote is removed).
+type exportKind struct{ m *Manager }
+
+func (exportKind) Class() jobs.Class { return jobs.IO }
+
+func (k exportKind) Recover(_ context.Context, j *store.Job) jobs.Outcome {
+	os.Remove(filepath.Join(k.m.exportsDir(), j.ID+".zip.tmp"))
+	return jobs.Fail
+}
+
+func (k exportKind) Run(ctx context.Context, j *store.Job, p *jobs.Progress) error {
+	return k.m.runExport(ctx, j, p)
 }
 
 func (m *Manager) exportsDir() string { return filepath.Join(m.opt.DataDir, "exports") }
 
-// ExportPath is where the file of a ready export is.
-func (m *Manager) ExportPath(e *store.Export) string {
-	if e.Path == "" {
+// ExportPath is where the file of an export job that is done is ("" for any
+// other).
+func (m *Manager) ExportPath(j *store.Job) string {
+	if j.State != store.JobDone {
 		return ""
 	}
-	return filepath.Join(m.opt.DataDir, filepath.FromSlash(e.Path))
+	r := store.ExportResultOf(j)
+	if r.Path == "" {
+		return ""
+	}
+	return filepath.Join(m.opt.DataDir, filepath.FromSlash(r.Path))
 }
 
 // ExportRequest says what to export and for whom.
 type ExportRequest struct {
 	TenantID, By, ByName string
+	// Capacity is the acting scope of the request (see store.Job).
+	Capacity string
 	// Sources are checked by the caller: spaces and recycle items that are in
 	// the caller's scope.
 	Sources []store.ExportSource
@@ -103,9 +122,10 @@ type ExportRequest struct {
 	SiteOnly bool
 }
 
-// StartExport records an export and makes it in the background. ErrExportsFull
-// when the exports already hold what they may (the export is not made).
-func (m *Manager) StartExport(ctx context.Context, req ExportRequest) (*store.Export, error) {
+// StartExport adds an export job and returns it, queued; the runner makes it in
+// the background. ErrExportsFull when the exports already hold what they may
+// (the export is not made).
+func (m *Manager) StartExport(ctx context.Context, req ExportRequest) (*store.Job, error) {
 	lim := m.exportLimits(ctx, req.TenantID)
 	used, err := store.ExportBytes(ctx, m.opt.Store.Q())
 	if err != nil {
@@ -115,78 +135,41 @@ func (m *Manager) StartExport(ctx context.Context, req ExportRequest) (*store.Ex
 		return nil, ErrExportsFull
 	}
 	now := m.opt.Now()
-	e := store.Export{ID: page.NewID(now), TenantID: req.TenantID, MadeBy: req.By, MadeByName: req.ByName, Spaces: req.Sources, History: req.History, SiteOnly: req.SiteOnly,
-		State: store.ExportQueued, Created: now, Expires: now.Add(time.Duration(lim.Days) * 24 * time.Hour)}
-	if err := store.InsertExport(ctx, m.opt.Store.Q(), e); err != nil {
+	params, err := json.Marshal(store.ExportParams{Spaces: req.Sources, History: req.History})
+	if err != nil {
 		return nil, err
 	}
-	m.exp.wg.Add(1)
-	go func() {
-		defer m.exp.wg.Done()
-		m.runExport(m.closedCtx(), e, lim.Bytes-used)
-	}()
-	return &e, nil
+	return m.runner().Enqueue(ctx, store.Job{ID: page.NewID(now), TenantID: req.TenantID, Kind: store.JobExport, MadeBy: req.By, MadeByName: req.ByName,
+		Capacity: req.Capacity, SiteOnly: req.SiteOnly, Params: params, Total: int64(len(req.Sources)), Expires: now.Add(time.Duration(lim.Days) * 24 * time.Hour)})
 }
 
-func (m *Manager) exportSlots(ctx context.Context, tenant string) (release func(), err error) {
-	m.exp.mu.Lock()
-	if m.exp.global == nil {
-		m.exp.global = make(chan struct{}, maxExportsAtOnce)
-		m.exp.tenant = map[string]chan struct{}{}
-	}
-	tc := m.exp.tenant[tenant]
-	if tc == nil {
-		tc = make(chan struct{}, 1)
-		m.exp.tenant[tenant] = tc
-	}
-	g := m.exp.global
-	m.exp.mu.Unlock()
-	select {
-	case tc <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	select {
-	case g <- struct{}{}:
-	case <-ctx.Done():
-		<-tc
-		return nil, ctx.Err()
-	}
-	return func() { <-g; <-tc }, nil
-}
-
-func (m *Manager) runExport(ctx context.Context, e store.Export, room int64) {
-	q := m.opt.Store.Q()
-	fail := func(err error) {
-		m.log.Warn("an export failed", "export", e.ID, "error", err)
-		msg := err.Error()
-		if len(msg) > 500 {
-			msg = msg[:500]
-		}
-		store.SetExportState(context.WithoutCancel(ctx), q, e.ID, store.ExportFailed, msg, 0, "")
-	}
-	release, err := m.exportSlots(ctx, e.TenantID)
+func (m *Manager) runExport(ctx context.Context, j *store.Job, p *jobs.Progress) error {
+	params := store.ExportParamsOf(j)
+	lim := m.exportLimits(ctx, j.TenantID)
+	used, err := store.ExportBytes(ctx, m.opt.Store.Q())
 	if err != nil {
-		fail(errors.New("the server stopped before the export was made"))
-		return
+		return err
 	}
-	defer release()
-	if err := store.SetExportState(ctx, q, e.ID, store.ExportRunning, "", 0, ""); err != nil {
-		return // deleted while it waited
+	if used >= lim.Bytes {
+		return ErrExportsFull
 	}
+	p.SetTotal(int64(len(params.Spaces)), 0)
 	if err := os.MkdirAll(m.exportsDir(), 0o755); err != nil {
-		fail(err)
-		return
+		return err
 	}
-	final := filepath.Join(m.exportsDir(), e.ID+".zip")
+	final := filepath.Join(m.exportsDir(), j.ID+".zip")
 	tmp := final + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		fail(err)
-		return
+		return err
 	}
-	cw := &countWriter{w: f, room: room}
-	warnings, err := m.writeExport(ctx, zip.NewWriter(cw), cw, e)
+	cw := &countWriter{w: f, room: lim.Bytes - used}
+	var sent int64
+	step := func(n int64) {
+		p.Step(n, cw.n-sent)
+		sent = cw.n
+	}
+	warnings, err := m.writeExport(ctx, zip.NewWriter(cw), cw, params, step)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -198,13 +181,13 @@ func (m *Manager) runExport(ctx context.Context, e store.Export, room int64) {
 		if cw.over {
 			err = ErrExportsFull
 		}
-		fail(err)
-		return
+		m.log.Warn("an export failed", "export", j.ID, "error", err)
+		return err
 	}
-	rel := path.Join("exports", e.ID+".zip")
-	if err := store.SetExportState(context.WithoutCancel(ctx), q, e.ID, store.ExportReady, strings.Join(warnings, "\n"), cw.n, rel); err != nil {
-		os.Remove(final) // the export was deleted while it was made
-	}
+	step(0)
+	res, _ := json.Marshal(store.ExportResult{Path: path.Join("exports", j.ID+".zip"), Warnings: strings.Join(warnings, "\n")})
+	p.SetResult(res)
+	return nil
 }
 
 // countWriter counts what is written and refuses what does not fit in room.
@@ -237,17 +220,18 @@ type exportedDraft struct {
 	Updated  time.Time       `json:"updated"`
 }
 
-func (m *Manager) writeExport(ctx context.Context, zw *zip.Writer, cw *countWriter, e store.Export) (warnings []string, err error) {
+func (m *Manager) writeExport(ctx context.Context, zw *zip.Writer, cw *countWriter, params store.ExportParams, step func(n int64)) (warnings []string, err error) {
 	used := map[string]bool{}
-	for _, src := range e.Spaces {
+	for _, src := range params.Spaces {
 		if err := ctx.Err(); err != nil {
 			return warnings, err
 		}
-		w, err := m.exportSource(ctx, zw, src, e.History, used)
+		w, err := m.exportSource(ctx, zw, src, params.History, used)
 		warnings = append(warnings, w...)
 		if err != nil {
 			return warnings, err
 		}
+		step(1)
 	}
 	return warnings, zw.Close()
 }
@@ -509,38 +493,21 @@ func (m *Manager) zipAssets(ctx context.Context, zw *zip.Writer, spaceID, folder
 }
 
 // DeleteExportFile removes the file of an export, if there is one.
-func (m *Manager) DeleteExportFile(e *store.Export) {
-	if p := m.ExportPath(e); p != "" {
+func (m *Manager) DeleteExportFile(j *store.Job) {
+	if p := m.ExportPath(j); p != "" {
 		os.Remove(p)
 	}
 }
 
-// ExpireExports deletes the exports whose days are over, and finds the ones a
-// restart left half made.
+// ExpireExports deletes the exports whose days are over: their files and rows.
 func (m *Manager) ExpireExports(ctx context.Context) error {
 	list, err := store.ExpiredExports(ctx, m.opt.Store.Q(), m.opt.Now(), 100)
 	if err != nil {
 		return err
 	}
-	for i := range list {
-		m.DeleteExportFile(&list[i])
-		if err := store.DeleteExport(ctx, m.opt.Store.Q(), list[i].ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-	}
-	return nil
-}
-
-// recoverExports marks the exports a restart interrupted as failed, and removes
-// what they wrote.
-func (m *Manager) recoverExports(ctx context.Context) error {
-	list, err := store.ExportsInFlight(ctx, m.opt.Store.Q())
-	if err != nil {
-		return err
-	}
-	for _, e := range list {
-		os.Remove(filepath.Join(m.exportsDir(), e.ID+".zip.tmp"))
-		if err := store.SetExportState(ctx, m.opt.Store.Q(), e.ID, store.ExportFailed, "the server restarted before the export was made", 0, ""); err != nil {
+	for _, j := range list {
+		m.DeleteExportFile(j)
+		if err := store.DeleteJob(ctx, m.opt.Store.Q(), j.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 	}

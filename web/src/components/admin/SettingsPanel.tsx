@@ -499,6 +499,7 @@ const GROUP_ORDER = [
   'recycle',
   'audit',
   'exports',
+  'jobs',
   'users',
   'accounts',
   'offline',

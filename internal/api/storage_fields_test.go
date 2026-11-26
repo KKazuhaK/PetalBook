@@ -39,6 +39,27 @@ func TestRecycleDaysIsInTheUserPlanAndTheStorageSummary(t *testing.T) {
 	})
 }
 
+// setItemState makes an item look as it does in a state: a job of the kind of
+// that state (one that failed, so nothing waits for it) holds it, or none does ("ready").
+func setItemState(t *testing.T, a *acc, id, state string) {
+	t.Helper()
+	q := a.st.Q()
+	if state == "ready" {
+		if _, err := q.Exec(context.Background(), `UPDATE recycle_items SET job_id = '' WHERE id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	kind := map[string]string{"moving": store.JobRecycleMove, "restoring": store.JobRecycleRestore, "purging": store.JobRecyclePurge}[state]
+	job := "J" + state + id
+	if _, err := q.Exec(context.Background(), `INSERT INTO jobs(id, tenant_id, kind, subject, state, created, updated) VALUES (?, ?, ?, ?, 'failed', 1, 1)`, job, store.DefaultTenantID, kind, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Exec(context.Background(), `UPDATE recycle_items SET job_id = ? WHERE id = ?`, job, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestARecycleItemSaysItsState(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
@@ -57,17 +78,13 @@ func TestARecycleItemSaysItsState(t *testing.T) {
 			t.Fatal(state())
 		}
 		for _, want := range []string{"moving", "restoring", "purging"} {
-			if _, err := a.st.Q().Exec(context.Background(), `UPDATE recycle_items SET state = ? WHERE id = ?`, want, id); err != nil {
-				t.Fatal(err)
-			}
+			setItemState(t, a, id, want)
 			if got := state(); got != want {
 				t.Fatalf("state %v, want %s", got, want)
 			}
 		}
 		// A purge answers with the item as it is now: purging.
-		if _, err := a.st.Q().Exec(context.Background(), `UPDATE recycle_items SET state = 'ready' WHERE id = ?`, id); err != nil {
-			t.Fatal(err)
-		}
+		setItemState(t, a, id, "ready")
 		tok := confirmFor(t, admin, "purge", "items", id)
 		r := admin.do("DELETE", "/api/admin/recycle/"+id+"?confirm="+tok, nil).want(t, 202, "")
 		if r.body["state"] != "purging" {
@@ -180,9 +197,7 @@ func TestARestoreOfAPersonNamesTheSpacesAndGroupsLeftOut(t *testing.T) {
 		if busy == "" {
 			t.Fatalf("%s", r.raw)
 		}
-		if _, err := a.st.Q().Exec(context.Background(), `UPDATE recycle_items SET state = 'purging' WHERE id = ?`, busy); err != nil {
-			t.Fatal(err)
-		}
+		setItemState(t, a, busy, "purging")
 		var space, name string
 		if err := a.st.Q().QueryRow(context.Background(), `SELECT space_id, name FROM recycle_items WHERE id = ?`, busy).Scan(&space, &name); err != nil {
 			t.Fatal(err)
@@ -213,15 +228,9 @@ func TestAnExportSaysWhichSpacesItHoldsAndWhetherTheyCanBeOpened(t *testing.T) {
 		gone := tang.do("POST", "/api/spaces", map[string]any{"name": "Gone"}).want(t, 201, "").body["id"].(string)
 		binned := admin.do("DELETE", "/api/admin/spaces/"+gone, nil).want(t, 200, "").body["id"].(string)
 		mk := func(body map[string]any) string {
-			id := admin.do("POST", "/api/admin/exports", body).want(t, 202, "").body["id"].(string)
-			for i := 0; i < 200; i++ {
-				if s := admin.do("GET", "/api/admin/exports/"+id, nil).want(t, 200, "").body["state"]; s != "running" && s != "queued" {
-					return id
-				}
-				time.Sleep(50 * time.Millisecond)
-			}
-			t.Fatal("the export did not finish")
-			return ""
+			id := exportJob(admin.do("POST", "/api/admin/exports", body).want(t, 202, ""))
+			waitExport(t, admin, id)
+			return id
 		}
 		one := mk(map[string]any{"spaces": []string{live}})
 		two := mk(map[string]any{"items": []string{binned}})
@@ -240,9 +249,6 @@ func TestAnExportSaysWhichSpacesItHoldsAndWhetherTheyCanBeOpened(t *testing.T) {
 		// A space in the bin has its id and cannot be opened; restored, it can.
 		if s := sources(two); s["item"] != binned || s["spaceId"] != gone || s["name"] != "Gone" || s["open"] != false {
 			t.Fatalf("%v", s)
-		}
-		if s := admin.do("GET", "/api/admin/exports/"+two, nil).want(t, 200, "").body["spaces"].([]any)[0].(map[string]any); s["open"] != false {
-			t.Fatalf("the single export disagrees: %v", s)
 		}
 		admin.do("POST", "/api/admin/recycle/"+binned+"/restore", map[string]any{}).want(t, 200, "")
 		if s := sources(two); s["open"] != true {
@@ -263,9 +269,9 @@ func TestAnExportOfAPersonalSpaceIsOpenOnlyToWhoMayOpenIt(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
 		personal := f.memA.personalSpace()
-		id := f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{personal}}).want(t, 202, "").body["id"].(string)
+		id := exportJob(f.root.do("POST", "/api/admin/exports", map[string]any{"spaces": []string{personal}}).want(t, 202, ""))
 		open := func(c *client) any {
-			return c.do("GET", "/api/admin/exports/"+id, nil).want(t, 200, "").body["spaces"].([]any)[0].(map[string]any)["open"]
+			return exportRow(t, c, id)["spaces"].([]any)[0].(map[string]any)["open"]
 		}
 		if open(f.root) != true {
 			t.Fatal("a site administrator may open it")

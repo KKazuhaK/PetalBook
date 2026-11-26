@@ -36,6 +36,7 @@ import { tg } from '@/i18n/manage'
 import { BulkBar } from './BulkBar'
 import { BulkDialog } from './BulkDialog'
 import { ExportDialog } from './ExportDialog'
+import { JobWatch } from './JobProgress'
 import { daysLeft, ListFooter, manageError, UserPicker, useIsSite, tapTarget, fitScreen } from './shared'
 
 const nameOf = (i: RecycleItem) => (i.kind === 'user' ? (i.user?.username ?? '') : (i.space?.name ?? ''))
@@ -181,6 +182,11 @@ function Bin({ initialKind = '' }: { initialKind?: '' | 'user' | 'space' }) {
                     {beingPurged && (
                       <div role="status" className="text-xs text-muted-foreground">
                         {tg.recycle.purging}
+                      </div>
+                    )}
+                    {i.job && i.state !== 'ready' && (
+                      <div className="mt-1 max-w-sm" data-slot="item-job">
+                        <JobWatch id={i.job} />
                       </div>
                     )}
                   </div>
@@ -535,6 +541,11 @@ function ExportsSection() {
                   <span data-slot="export-expires">{tg.exports.expires(daysLeft(e.expires))}</span> ·{' '}
                   {tg.exports.madeBy(e.madeBy.username, absoluteTime(e.created))}
                 </div>
+                {(e.state === 'queued' || e.state === 'running') && (
+                  <div className="mt-1 max-w-sm" data-slot="export-job">
+                    <JobWatch id={e.id} />
+                  </div>
+                )}
                 {e.state === 'failed' && e.error && <div className="text-xs text-destructive">{e.error}</div>}
                 {e.warnings.length > 0 && (
                   <div className="text-xs text-warning" data-slot="export-warnings">

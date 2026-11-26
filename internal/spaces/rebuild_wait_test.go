@@ -1,6 +1,7 @@
 package spaces
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -149,22 +150,13 @@ func TestBackgroundCallersWaitForARebuildLongerThanTheRequestsWait(t *testing.T)
 	if err := <-acquired; err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Minute)
-	for {
-		got, err := store.GetExport(ctx, r.st.Q(), store.AllTenants(), e.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.State == store.ExportReady {
-			break
-		}
-		if got.State == store.ExportFailed {
-			t.Fatalf("the export failed: %+v", got)
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the export did not finish: %s", got.State)
-		}
-		time.Sleep(50 * time.Millisecond)
+	ictx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := m.runner().WaitIdle(ictx); err != nil {
+		t.Fatalf("the export did not finish: %v", err)
+	}
+	if got, err := store.GetJob(ctx, r.st.Q(), store.AllTenants(), e.ID); err != nil || got.State != store.JobDone {
+		t.Fatalf("the export: %+v %v", got, err)
 	}
 }
 

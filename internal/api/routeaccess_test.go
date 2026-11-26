@@ -65,6 +65,9 @@ func init() {
 var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/permissions": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// The jobs list (consolidation 4b); GET /api/admin/exports/{id} is gone (GET /api/admin/jobs/{id} answers).
+	"GET /api/admin/jobs": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
 	// 3.6 part c1: the registry of audit kinds and the CSV of the log (with features.auditDownload).
 	"GET /api/admin/audit/kinds":    {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"GET /api/admin/audit/download": {"ok", "ok", "403 forbidden", "403 token_scope"},

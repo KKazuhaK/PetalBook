@@ -701,8 +701,8 @@ func GetStorageSummary(ctx context.Context, q Q, sc Scope) (StorageSummary, erro
 	if err := q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM recycle_items WHERE `+rc, ra...).Scan(&s.RecycleItems, &s.RecycleBytes); err != nil {
 		return s, err
 	}
-	ec, ea := exportCond(sc)
-	err = q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM exports WHERE state = 'ready' AND `+ec, ea...).Scan(&s.ExportItems, &s.ExportBytes)
+	ec, ea := jobCond(sc)
+	err = q.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(bytes_done), 0) FROM jobs WHERE kind = 'export' AND state = 'done' AND `+ec, ea...).Scan(&s.ExportItems, &s.ExportBytes)
 	return s, err
 }
 
