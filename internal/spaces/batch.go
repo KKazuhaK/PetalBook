@@ -72,8 +72,9 @@ type Resolved struct {
 
 // ResolveKeys looks the keys up (a key with an @ is an address, any other a
 // username) among the people of tenant: one statement per 200 keys of each
-// kind. A person of another tenant is "other_tenant", a disabled one is
-// "not_found" (nobody can be added who cannot sign in), a key that is
+// kind. A person of another tenant is "other_tenant", a disabled one of the
+// tenant "disabled" (nobody can be added who cannot sign in; hideOutside makes
+// both "not_found" for a space or group batch), a key that is
 // neither a username nor an address is "invalid". A key that repeats an
 // earlier one that named the same person is "duplicate".
 func ResolveKeys(ctx context.Context, q store.Q, tenant string, keys []string) ([]Resolved, error) {

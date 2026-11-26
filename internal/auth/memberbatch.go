@@ -107,10 +107,9 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, tenantID str
 			errs[i] = err
 			continue
 		}
-		// CleanInviteFill also refuses an address any account holds (409
-		// email_taken, a disabled or deleted one's too): the invite would make an
-		// account it cannot have, and its mail would go to someone else's address.
-		f, err := s.CleanInviteFill(ctx, InviteFill{Name: sp.Name, Email: sp.Email})
+		// The rules of CleanInviteFill; its look for an account holding the
+		// address is made for all rows at once below.
+		f, err := s.cleanInviteFillFor(ctx, InviteFill{Name: sp.Name, Email: sp.Email})
 		if err == nil && f.Email == "" {
 			err = errf(Invalid, "An invitation needs an email address.")
 		}
@@ -124,26 +123,37 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, tenantID str
 		out[i] = InviteOutcome{ID: invs[i].ID, Token: token, Link: s.inviteLink(token)}
 		made = append(made, i)
 	}
-	// An address with an open invite of the tenant is not invited (nor mailed)
-	// again: one lookup per 200 addresses.
+	// An address any account holds (a disabled or deleted one's too) is 409
+	// email_taken, as CleanInviteFill says: the invite would make an account it
+	// cannot have, and its mail would go to someone else's address. One with an
+	// open invite of the tenant is not invited (nor mailed) again. One lookup
+	// per 200 addresses for each.
 	mailKeys := make([]string, 0, len(made))
 	for _, i := range made {
 		if k, ok := store.EmailKey(invs[i].Email); ok {
 			mailKeys = append(mailKeys, k)
 		}
 	}
+	held, err := store.EmailsHeld(ctx, s.st.Q(), mailKeys)
+	if err != nil {
+		return nil, nil, err
+	}
 	open, err := store.OpenInviteEmails(ctx, s.st.Q(), store.InTenant(tenantID), mailKeys, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(open) > 0 {
+	if len(held) > 0 || len(open) > 0 {
 		kept := made[:0]
 		for _, i := range made {
-			if k, _ := store.EmailKey(invs[i].Email); open[k] {
+			k, _ := store.EmailKey(invs[i].Email)
+			switch {
+			case held[k]:
+				errs[i], out[i] = errEmailTaken(), InviteOutcome{}
+			case open[k]:
 				errs[i], out[i] = coded(409, CodeAlreadyInvited, "This address has an open invitation already."), InviteOutcome{}
-				continue
+			default:
+				kept = append(kept, i)
 			}
-			kept = append(kept, i)
 		}
 		made = kept
 	}
