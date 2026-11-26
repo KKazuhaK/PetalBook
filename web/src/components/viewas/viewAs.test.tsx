@@ -80,9 +80,16 @@ describe('a tab that views the app as a person', () => {
       () => request('/account'),
     ])
       await expect(call()).rejects.toMatchObject({ code: 'view_as_read_only' })
-    expect(
-      m!.requests.filter((r) => ['POST', 'GET'].includes(r.method) && r.viewAs !== view.id).length,
-    ).toBeGreaterThan(0)
+    // The three refused requests were made with the header, so the server knew whose view they were.
+    const refused = m!.requests.filter((r) =>
+      [
+        ['POST', '/api/spaces'],
+        ['GET', '/api/notifications'],
+        ['GET', '/api/account'],
+      ].some(([method, url]) => r.method === method && r.url === url),
+    )
+    expect(refused).toHaveLength(3)
+    expect(refused.map((r) => r.viewAs)).toEqual([view.id, view.id, view.id])
 
     // Leaving: the server is told without the header, and the tab leaves.
     let left = false
