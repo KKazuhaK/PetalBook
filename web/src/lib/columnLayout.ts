@@ -145,25 +145,48 @@ export interface FitColumn {
 }
 
 // The starting widths of columns nobody has resized: each as wide as its content, never below its least width nor
-// above its cap (a cap below the least width gives way to it). What is left of `room` is shared by the weights, and
-// when the content does not fit the columns keep their widths and the table scrolls in its own box. Whole pixels,
-// adding up to `total`, which is `room` or, when the content is wider than the room, the width of the content.
+// above its cap (a cap below the least width gives way to it). What is left of `room` is shared by the weights. When
+// the content is wider than the room the columns over their least width give up the difference in proportion to what
+// they have over it (their text ends in an ellipsis), so the table scrolls only when the least widths alone do not
+// fit. Whole pixels, adding up to `total`: `room`, or the least widths' sum when that is more.
 export function autoWidths(
   cols: readonly FitColumn[],
   room: number,
 ): { widths: Record<string, number>; total: number } {
   const base = cols.map((c) => Math.ceil(Math.min(Math.max(c.content, c.min), Math.max(c.max, c.min))))
   const used = base.reduce((n, w) => n + w, 0)
-  const left = Math.max(0, Math.floor(room) - used)
-  const weights = cols.reduce((n, c) => n + c.weight, 0) || 1
+  const whole = Math.floor(room)
   const widths: Record<string, number> = {}
+  if (used > whole) {
+    const least = cols.map((c) => Math.ceil(c.min))
+    const floor = least.reduce((n, w) => n + w, 0)
+    const target = Math.max(whole, floor)
+    const over = base.map((w, i) => Math.max(0, w - least[i]))
+    const spare = over.reduce((n, w) => n + w, 0) || 1
+    const out = base.map((w, i) => w - Math.floor(((used - target) * over[i]) / spare))
+    // What rounding left over comes off the widest of those still above their least width.
+    let rest = out.reduce((n, w) => n + w, 0) - target
+    while (rest > 0) {
+      let at = -1
+      out.forEach((w, i) => {
+        if (w > least[i] && (at < 0 || w > out[at])) at = i
+      })
+      if (at < 0) break
+      out[at]--
+      rest--
+    }
+    cols.forEach((c, i) => (widths[c.id] = out[i]))
+    return { widths, total: target }
+  }
+  const left = whole - used
+  const weights = cols.reduce((n, c) => n + c.weight, 0) || 1
   let given = 0
   cols.forEach((c, i) => {
     const extra = i === cols.length - 1 ? left - given : Math.floor((left * c.weight) / weights)
     given += extra
     widths[c.id] = base[i] + extra
   })
-  return { widths, total: used + left }
+  return { widths, total: whole }
 }
 
 // The shares after one column is set to `target` pixels of `room`: the others keep their proportions among

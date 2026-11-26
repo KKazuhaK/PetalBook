@@ -663,12 +663,24 @@ describe('fitting the columns to their content', () => {
     expect(saved()).toBeNull()
   })
 
-  it('scrolls inside its box, and not the page, when the content does not fit', async () => {
+  it('shrinks the long columns toward their least width before it scrolls', async () => {
     measure()
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700)
     m = await mount(<Probe rows={long} />)
-    expect(widths()).toEqual([120, 224, 320, 100])
-    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 224 + 320 + 100 + 196}px`)
+    // 504 of room against 764 of content: the least widths (480) fit, so the table does not overflow.
+    const w = widths()
+    expect(w.reduce((n, x) => n + x, 0)).toBe(504)
+    expect(w[0]).toBe(120)
+    expect(w[3]).toBe(100)
+    expect(w[2]).toBeGreaterThan(w[1])
+    expect(document.querySelector('table')!.style.minWidth).toBe(`${480 + 196}px`)
+  })
+
+  it('has no scrollbar of its own, and fades its edges instead, for a mouse as for a finger', async () => {
+    m = await mount(<Probe rows={long} />)
+    const box = document.querySelector<HTMLElement>('[data-slot="data-table"] > div')!
+    expect(box.className).toContain('[scrollbar-width:none]')
+    expect(box.className).not.toContain('pointer-coarse:[scrollbar-width:none]')
   })
 
   it('keeps a width the person set over the content, and goes back to it on reset', async () => {

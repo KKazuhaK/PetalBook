@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { scrollFadeTouchClass, useScrollFade } from '@/components/ui/scroll-fade'
+import { scrollFadeClass, useScrollFade } from '@/components/ui/scroll-fade'
 import {
   ArrowDown,
   ArrowUp,
@@ -552,7 +552,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       {selection && selection.selected.size > 0 && bulk}
       <div
         ref={box}
-        className={`${scrollFadeTouchClass} rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
+        className={`${scrollFadeClass} rounded-lg border transition-opacity duration-150 ${fetching ? 'opacity-60' : ''}`}
         aria-busy={fetching || loading || undefined}
       >
         <table

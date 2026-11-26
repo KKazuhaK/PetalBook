@@ -128,10 +128,20 @@ describe('auto fit', () => {
     expect(out.total).toBe(800)
     expect(Object.values(out.widths).reduce((n, w) => n + w, 0)).toBe(800)
   })
-  it('keeps the content widths, and reports the wider total, when they do not fit the room', () => {
-    const out = autoWidths([col('a', 250), col('b', 300)], 400)
-    expect(out.widths).toEqual({ a: 250, b: 300 })
-    expect(out.total).toBe(550)
+  it('shrinks the columns that are over their least width, the wider the more, when the content does not fit', () => {
+    const out = autoWidths([col('a', 250), col('b', 300), col('c', 100)], 500)
+    expect(out.total).toBe(500)
+    expect(Object.values(out.widths).reduce((n, w) => n + w, 0)).toBe(500)
+    // c is at its least width and stays; the other two give up in proportion to what they have over theirs.
+    expect(out.widths.c).toBe(100)
+    expect(out.widths.a).toBeGreaterThan(100)
+    expect(out.widths.b).toBeGreaterThan(out.widths.a)
+    expect(out.widths.b).toBeLessThan(300)
+  })
+  it('keeps the least widths, and reports their total, only when even those do not fit the room', () => {
+    const out = autoWidths([col('a', 250), col('b', 300)], 150)
+    expect(out.widths).toEqual({ a: 100, b: 100 })
+    expect(out.total).toBe(200)
   })
   it('lets a cap below the least width give way, and takes a column not measured as its least width', () => {
     const out = autoWidths([col('a', 500, { max: 50 }), col('b', 0)], 0)
