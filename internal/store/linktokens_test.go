@@ -284,3 +284,150 @@ func TestRemindersAreKeptPerPersonAndProviderNewestFirstAndCapped(t *testing.T) 
 		}
 	})
 }
+
+func TestConnectingAnotherAccountDropsTheSignInOfTheOldOne(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "U1", "u1", "member")
+		mkForge(t, st, "gt")
+		if err := store.InsertLink(ctx, st.Q(), store.Link{ID: "S1", ProviderID: "gt", UserID: "U1", Subject: "1", Email: "u1@example.com", EmailTrusted: true,
+			SignIn: true, Created: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		// The same account: the sign-in and its address stay.
+		if _, err := store.PutRepoLink(ctx, st.Q(), repoLink("X", "gt", "U1", "1", time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := store.FindLink(ctx, st.Q(), "gt", "1"); err != nil || !got.SignIn || got.Email != "u1@example.com" || !got.EmailTrusted {
+			t.Fatalf("%+v %v", got, err)
+		}
+		// Another account at the host: what signed in as account 1 does not sign in as account 2.
+		if _, err := store.PutRepoLink(ctx, st.Q(), repoLink("X", "gt", "U1", "2", time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.FindLink(ctx, st.Q(), "gt", "2")
+		if err != nil || got.SignIn || got.Email != "" || got.EmailTrusted {
+			t.Fatalf("%+v %v", got, err)
+		}
+		if _, err := store.FindLink(ctx, st.Q(), "gt", "1"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%v", err)
+		}
+		// Unlinking it now removes the row: there is no sign-in to keep.
+		if err := store.DeleteRepoLink(ctx, st.Q(), "gt", "U1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.FindUserLink(ctx, st.Q(), "gt", "U1"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+func TestReplacingAnApplicationTellsEachPersonWhoseLinkEndedOnce(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		for _, u := range []string{"U1", "U2", "U3", "U4"} {
+			mkUser(t, st, u, u, "member")
+		}
+		mkForge(t, st, "gt")
+		mkForge(t, st, "other")
+		for _, u := range []string{"U1", "U2", "U3"} {
+			if _, err := store.PutRepoLink(ctx, st.Q(), repoLink("L"+u, "gt", u, u, time.Time{})); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := store.PutRepoLink(ctx, st.Q(), repoLink("LU4", "other", "U4", "U4", time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		l3, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U3")
+		if ok, err := store.ExpireLink(ctx, st.Q(), l3.ID, l3.Version, time.Now()); err != nil || !ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+		notes := func(u string) []store.Notification {
+			t.Helper()
+			rows, err := store.ListNotifications(ctx, st.Q(), u, store.DefaultTenantID, store.NotifyFilter{Kind: store.NotifyLinkReauth, Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return rows
+		}
+		n, err := store.ExpireProviderLinks(ctx, st.Q(), "gt", "Our Gitea", time.Now())
+		if err != nil || n != 2 {
+			t.Fatalf("%d %v", n, err)
+		}
+		for _, u := range []string{"U1", "U2"} {
+			got := notes(u)
+			if want := `{"login":"` + u + `-login","name":"Our Gitea","provider":"gt"}`; len(got) != 1 || got[0].Ref != "gt" || got[0].Payload != want {
+				t.Fatalf("%s: %+v", u, got)
+			}
+		}
+		// A link that had ended already, and one at another provider, are not told.
+		if len(notes("U3")) != 0 || len(notes("U4")) != 0 {
+			t.Fatalf("%+v %+v", notes("U3"), notes("U4"))
+		}
+		// Again: nothing is in good standing, nobody is told twice.
+		if n, err := store.ExpireProviderLinks(ctx, st.Q(), "gt", "Our Gitea", time.Now()); err != nil || n != 0 || len(notes("U1")) != 1 {
+			t.Fatalf("%d %v", n, err)
+		}
+	})
+}
+
+func TestARenewalLeaseIsHeldByOneAtATimeAndEndsByItself(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "U1", "u1", "member")
+		mkForge(t, st, "gt")
+		if _, err := store.PutRepoLink(ctx, st.Q(), repoLink("L1", "gt", "U1", "1", time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().Truncate(time.Millisecond)
+		until := now.Add(2 * time.Minute)
+		claim := func(from int64, at, until time.Time) bool {
+			t.Helper()
+			ok, err := store.ClaimLinkRenewal(ctx, st.Q(), "L1", from, at, until)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ok
+		}
+		if claim(2, now, until) {
+			t.Fatal("a lease of a version the link is not at")
+		}
+		if !claim(1, now, until) {
+			t.Fatal("no lease of a free link")
+		}
+		if l, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U1"); !l.RenewingUntil.Equal(until) {
+			t.Fatalf("%v", l.RenewingUntil)
+		}
+		if claim(1, now.Add(time.Minute), now.Add(3*time.Minute)) {
+			t.Fatal("two leases at once")
+		}
+		// A lease that someone else's release does not match stays.
+		if err := store.ReleaseLinkRenewal(ctx, st.Q(), "L1", now.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if claim(1, now.Add(time.Minute), now.Add(3*time.Minute)) {
+			t.Fatal("a release of another lease freed this one")
+		}
+		// A lease whose holder died ends by itself.
+		later := until.Add(time.Millisecond)
+		if !claim(1, until, later.Add(2*time.Minute)) {
+			t.Fatal("an ended lease is still held")
+		}
+		if err := store.ReleaseLinkRenewal(ctx, st.Q(), "L1", later.Add(2*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if l, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U1"); !l.RenewingUntil.IsZero() {
+			t.Fatalf("%v", l.RenewingUntil)
+		}
+		// Connecting again drops a lease of the old pair.
+		if !claim(1, now, until) {
+			t.Fatal("no lease")
+		}
+		if _, err := store.PutRepoLink(ctx, st.Q(), repoLink("X", "gt", "U1", "1", time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		if l, _ := store.GetRepoLink(ctx, st.Q(), "gt", "U1"); !l.RenewingUntil.IsZero() || l.Version != 2 {
+			t.Fatalf("%+v", l)
+		}
+	})
+}

@@ -23,6 +23,11 @@ import (
 // The loop is driven by the database: it sleeps until the soonest renew_at of
 // any link, or until it is woken (a link was stored), and then renews what is
 // due, a few links at a time. Nothing polls.
+//
+// One renewal of a link at a time: in this process (renewing), and across
+// processes (the standby server) by a lease in the link's row that a renewal
+// claims before it hands the refresh token to the host. Some hosts (Gitea)
+// end a refresh token that is used twice, and the link with it.
 
 // Errors of using a person's tokens.
 var (
@@ -56,6 +61,10 @@ const (
 	purposeRefresh = "refresh"
 	renewBefore    = 5 * time.Minute
 	maxCached      = 10_000
+	// renewLease bounds how long a renewal holds a link's lease: a process that
+	// died with it does not keep the link from being renewed for longer. A
+	// renewal itself is bounded by 30 seconds (renew).
+	renewLease = 2 * time.Minute
 )
 
 // RenewWindow is how close to its end a refresh token must be for the loop to
@@ -94,6 +103,10 @@ type Tokens struct {
 	provGens map[string]uint64 // by provider
 	allGen   uint64
 	backoff  map[string]backoffEntry // by link id
+
+	// dueHook, when set, runs before each query for due links; an error it
+	// returns is that query's (tests).
+	dueHook func() error
 }
 
 type cachedToken struct {
@@ -111,6 +124,12 @@ type backoffEntry struct {
 	attempts int
 	retryAt  time.Time
 }
+
+// renewingElsewhere is the cause of the error a renewal answers when another
+// process holds the link's lease: it ends at until.
+type renewingElsewhere struct{ until time.Time }
+
+func (e *renewingElsewhere) Error() string { return "another process is renewing the authorisation" }
 
 // NewTokens returns a service. It renews nothing until Run is called.
 func NewTokens(opt TokenOptions) *Tokens {
@@ -364,7 +383,10 @@ func (t *Tokens) doRenew(ctx context.Context, providerID, userID string, force b
 				t.cacheToken(providerID, userID, gen, string(access), row.AccessExpires) // no refresh token: use it to the end
 				return string(access), nil
 			}
-			t.expire(ctx, row)
+			if t.expire(ctx, row) == expireMovedOn {
+				force = false // reconnected meanwhile: use what is there now
+				continue
+			}
 			return "", ErrAuthorizationExpired
 		}
 		prov, ok := t.opt.Registry.Get(providerID)
@@ -372,67 +394,124 @@ func (t *Tokens) doRenew(ctx context.Context, providerID, userID string, force b
 		if !ok || !isRefresher {
 			return "", Errorf(providerID, http.StatusConflict, CodeNotConfigured, "This provider is not set up.")
 		}
-		refresh, err := box.Open(bind, purposeRefresh, row.RefreshEnc)
+		// The lease first, then the host: of all the processes that share the
+		// database, one hands this refresh token to the host.
+		until := now.Add(renewLease)
+		claimed, err := store.ClaimLinkRenewal(ctx, db, row.ID, row.Version, now, until)
 		if err != nil {
 			return "", err
 		}
-		pair, err := rf.RefreshTokens(ctx, string(refresh))
-		if err != nil {
-			if errors.Is(err, ErrRevoked) {
-				t.log.Info("an authorisation expired or was revoked", "provider", providerID, "user", userID)
-				t.expire(ctx, row)
-				return "", ErrAuthorizationExpired
+		if !claimed {
+			cur, err := store.GetRepoLink(ctx, db, providerID, userID)
+			if err != nil || cur.Version != row.Version || cur.State != store.LinkOK || !cur.RenewingUntil.After(now) {
+				force = false // it moved on (or the lease ended) meanwhile: read it again
+				continue
 			}
-			return "", err
-		}
-		if pair.Refresh == "" { // a host that does not rotate: the refresh token stays
-			pair.Refresh, pair.RefreshExpires = string(refresh), row.RefreshExpires
-		}
-		accessEnc, err := box.Seal(bind, purposeAccess, []byte(pair.Access))
-		if err != nil {
-			return "", err
-		}
-		refreshEnc, err := box.Seal(bind, purposeRefresh, []byte(pair.Refresh))
-		if err != nil {
-			return "", err
-		}
-		// The new pair is saved before it is used, and replaces only the pair it
-		// was made from.
-		var replaced bool
-		for try := 0; try < 3; try++ {
-			if replaced, err = store.ReplaceLinkTokens(ctx, db, row.ID, row.Version, accessEnc, refreshEnc, pair.AccessExpires, pair.RefreshExpires,
-				RenewAt(t.opt.Now(), pair.RefreshExpires, t.opt.RenewWindow), t.opt.Now()); err == nil {
-				break
+			if !force && (row.AccessExpires.IsZero() || now.Before(row.AccessExpires)) {
+				return string(access), nil // still good for a few minutes, and renewed elsewhere meanwhile
 			}
-			time.Sleep(time.Duration(try+1) * 100 * time.Millisecond)
+			e := Errorf(providerID, http.StatusServiceUnavailable, CodeUnavailable, "The authorisation is being renewed; try again.")
+			e.RetryAfter, e.Err = cur.RenewingUntil.Sub(now), &renewingElsewhere{until: cur.RenewingUntil}
+			return "", e
 		}
-		if err != nil {
-			// The old refresh token is dead and the new one is not stored: this
-			// link cannot go on.
-			t.log.Error("could not store a renewed token", "provider", providerID, "user", userID, "error", err)
-			t.expire(ctx, row)
-			return "", ErrAuthorizationExpired
+		tok, again, err := t.refreshClaimed(ctx, rf, row, gen, until)
+		if again {
+			force = false
+			continue
 		}
-		if !replaced {
-			continue // reconnected or renewed elsewhere meanwhile: use what is there now
-		}
-		t.cacheToken(providerID, userID, gen, pair.Access, pair.AccessExpires)
-		return pair.Access, nil
+		return tok, err
 	}
 	return "", Errorf(providerID, http.StatusServiceUnavailable, CodeUnavailable, "The authorisation keeps changing; try again.")
 }
+
+// refreshClaimed asks the host for a new pair for the link as row read it,
+// whose lease (until) the caller holds, stores it and gives the lease back.
+// again: the link moved on meanwhile (reconnected), and what is there now is
+// to be read again.
+func (t *Tokens) refreshClaimed(ctx context.Context, rf Refresher, row *store.RepoLink, gen tokenGen, until time.Time) (_ string, again bool, _ error) {
+	db := t.opt.Store.Q()
+	box := t.opt.Secrets
+	providerID, userID := row.ProviderID, row.UserID
+	bind := Key(providerID, userID)
+	defer func() {
+		if err := store.ReleaseLinkRenewal(ctx, db, row.ID, until); err != nil {
+			t.log.Warn("could not give a renewal lease back; it ends by itself", "provider", providerID, "user", userID, "error", err)
+		}
+	}()
+	refresh, err := box.Open(bind, purposeRefresh, row.RefreshEnc)
+	if err != nil {
+		return "", false, err
+	}
+	pair, err := rf.RefreshTokens(ctx, string(refresh))
+	if err != nil {
+		if errors.Is(err, ErrRevoked) {
+			if t.expire(ctx, row) == expireMovedOn {
+				return "", true, nil // the person connected again meanwhile: that link is good
+			}
+			t.log.Info("an authorisation expired or was revoked", "provider", providerID, "user", userID)
+			return "", false, ErrAuthorizationExpired
+		}
+		return "", false, err
+	}
+	if pair.Refresh == "" { // a host that does not rotate: the refresh token stays
+		pair.Refresh, pair.RefreshExpires = string(refresh), row.RefreshExpires
+	}
+	accessEnc, err := box.Seal(bind, purposeAccess, []byte(pair.Access))
+	if err != nil {
+		return "", false, err
+	}
+	refreshEnc, err := box.Seal(bind, purposeRefresh, []byte(pair.Refresh))
+	if err != nil {
+		return "", false, err
+	}
+	// The new pair is saved before it is used, and replaces only the pair it
+	// was made from.
+	var replaced bool
+	for try := 0; try < 3; try++ {
+		if replaced, err = store.ReplaceLinkTokens(ctx, db, row.ID, row.Version, accessEnc, refreshEnc, pair.AccessExpires, pair.RefreshExpires,
+			RenewAt(t.opt.Now(), pair.RefreshExpires, t.opt.RenewWindow), t.opt.Now()); err == nil {
+			break
+		}
+		time.Sleep(time.Duration(try+1) * 100 * time.Millisecond)
+	}
+	if err != nil {
+		// The old refresh token is dead and the new one is not stored: this
+		// link cannot go on.
+		t.log.Error("could not store a renewed token", "provider", providerID, "user", userID, "error", err)
+		if t.expire(ctx, row) == expireMovedOn {
+			return "", true, nil
+		}
+		return "", false, ErrAuthorizationExpired
+	}
+	if !replaced {
+		return "", true, nil // reconnected or renewed elsewhere meanwhile: use what is there now
+	}
+	t.cacheToken(providerID, userID, gen, pair.Access, pair.AccessExpires)
+	return pair.Access, false, nil
+}
+
+// What expire did.
+type expireResult int
+
+const (
+	expireEnded   expireResult = iota // it marked the link (and told the person)
+	expireMovedOn                     // the link is not the one it was read as any more: nothing was done
+	expireFailed                      // the database could not be written
+)
 
 // expire marks a link as needing the person to authorise again, and tells the
 // person, once: the write that moves the link from ok is the one that notifies,
 // so however many callers give up on it together, one notification is made, in
 // the same transaction.
-func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) {
+func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) expireResult {
 	now := t.opt.Now()
+	ended := false
 	err := store.Atomically(ctx, t.opt.Store.Q(), func(q store.Q) error {
 		ok, err := store.ExpireLink(ctx, q, l.ID, l.Version, now)
 		if err != nil || !ok {
 			return err
 		}
+		ended = true
 		name := l.ProviderID
 		if p, found := t.opt.Registry.Get(l.ProviderID); found {
 			name = p.Descriptor().Name
@@ -440,10 +519,15 @@ func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) {
 		return store.NotifyUser(ctx, q, l.UserID, store.NotifyLinkReauth, l.ProviderID,
 			map[string]string{"provider": l.ProviderID, "name": name, "login": l.Login}, now)
 	})
-	if err != nil {
-		t.log.Error("could not mark an authorisation expired", "provider", l.ProviderID, "user", l.UserID, "error", err)
-	}
 	t.dropToken(l.ProviderID, l.UserID)
+	switch {
+	case err != nil:
+		t.log.Error("could not mark an authorisation expired", "provider", l.ProviderID, "user", l.UserID, "error", err)
+		return expireFailed
+	case ended:
+		return expireEnded
+	}
+	return expireMovedOn
 }
 
 // --- the loop ---------------------------------------------------------------------------
@@ -454,15 +538,28 @@ func (t *Tokens) expire(ctx context.Context, l *store.RepoLink) {
 // whose host could not be asked is tried again after a wait that doubles with
 // each failure, until its refresh token ends.
 func (t *Tokens) RenewDue(ctx context.Context) int {
-	now := t.opt.Now()
+	n, _ := t.renewDue(ctx, t.opt.Now())
+	return n
+}
+
+// renewDue is RenewDue of the links due at now; lookFailed: the links due
+// could not all be looked for (some may be due and not renewed).
+func (t *Tokens) renewDue(ctx context.Context, now time.Time) (renewed int, lookFailed bool) {
 	var cur store.DueLinkCursor
-	var renewed int
 	var mu sync.Mutex
 	sem := make(chan struct{}, t.opt.Concurrency)
 	for {
-		due, err := store.DueLinkRenewals(ctx, t.opt.Store.Q(), now, cur, 50)
+		var due []store.RepoLink
+		var err error
+		if t.dueHook != nil {
+			err = t.dueHook()
+		}
+		if err == nil {
+			due, err = store.DueLinkRenewals(ctx, t.opt.Store.Q(), now, cur, 50)
+		}
 		if err != nil {
 			t.log.Error("could not look for authorisations to renew", "error", err)
+			lookFailed = ctx.Err() == nil
 			break
 		}
 		var wg sync.WaitGroup
@@ -491,7 +588,7 @@ func (t *Tokens) RenewDue(ctx context.Context) int {
 		}
 	}
 	t.pruneBackoff(now)
-	return renewed
+	return renewed, lookFailed
 }
 
 func (t *Tokens) renewOne(ctx context.Context, l store.RepoLink, now time.Time) bool {
@@ -506,11 +603,17 @@ func (t *Tokens) renewOne(ctx context.Context, l store.RepoLink, now time.Time) 
 	case ctx.Err() != nil:
 		return false
 	}
+	if re := (*renewingElsewhere)(nil); errors.As(err, &re) {
+		// Another process is renewing it: look again when its lease ends (by
+		// then it is renewed, and not due, or that process died with it).
+		t.waitUntil(l.ID, re.until)
+		return false
+	}
 	if !l.RefreshExpires.IsZero() && !now.Before(l.RefreshExpires) {
-		// It ended while the host could not be asked: it is over.
-		if cur, gerr := store.GetRepoLink(ctx, t.opt.Store.Q(), l.ProviderID, l.UserID); gerr == nil {
-			t.expire(ctx, cur)
-		}
+		// It ended while the host could not be asked: it is over, unless it is
+		// not the link that was found due any more (the person connected again,
+		// or it was renewed elsewhere): expire ends only the version l is.
+		t.expire(ctx, &l)
 		t.clearBackoff(l.ID)
 		return false
 	}
@@ -541,6 +644,16 @@ func (t *Tokens) failed(id string, now time.Time) time.Time {
 	b.retryAt = now.Add(d)
 	t.backoff[id] = b
 	return b.retryAt
+}
+
+// waitUntil makes the loop leave a link alone until at, without counting a
+// failure.
+func (t *Tokens) waitUntil(id string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	b := t.backoff[id]
+	b.retryAt = at
+	t.backoff[id] = b
 }
 
 func (t *Tokens) clearBackoff(id string) {
@@ -576,6 +689,12 @@ func (t *Tokens) earliestRetry() (time.Time, bool) {
 // Run renews what is due, then sleeps until the soonest of the next renewal
 // time in the database and the soonest retry of a failed one, or until woken,
 // and does so again, until ctx ends.
+//
+// The next renewal time is the soonest after the time the pass looked for due
+// links at: a link that came due while the pass was renewing others is in it
+// (and the loop goes on at once), while one that was due and is waiting after
+// a failure is not (its retry is). When the due links could not be looked
+// for, it looks again after BackoffBase.
 func (t *Tokens) Run(ctx context.Context) {
 	for {
 		// A wake-up that came before this pass is answered by it: what it was
@@ -584,17 +703,22 @@ func (t *Tokens) Run(ctx context.Context) {
 		case <-t.wake:
 		default:
 		}
-		if n := t.RenewDue(ctx); n > 0 {
+		passStart := t.opt.Now()
+		n, lookFailed := t.renewDue(ctx, passStart)
+		if n > 0 {
 			t.log.Info("renewed authorisations", "count", n)
 		}
 		if ctx.Err() != nil {
 			return
 		}
 		now := t.opt.Now()
-		next, ok, err := store.NextLinkRenewal(ctx, t.opt.Store.Q(), now)
+		next, ok, err := store.NextLinkRenewal(ctx, t.opt.Store.Q(), passStart)
 		if err != nil {
 			t.log.Error("could not look for the next authorisation to renew", "error", err)
 			next, ok = now.Add(t.opt.BackoffBase), true
+		}
+		if retry := now.Add(t.opt.BackoffBase); lookFailed && (!ok || retry.Before(next)) {
+			next, ok = retry, true
 		}
 		if r, has := t.earliestRetry(); has && (!ok || r.Before(next)) {
 			next, ok = r, true

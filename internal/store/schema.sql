@@ -893,6 +893,9 @@ CREATE UNIQUE INDEX providers_owner_host ON providers(owner, kind, host) WHERE h
 -- state is ok, or expired: the tokens are gone and the person must authorise
 -- again. renew_at is when the one renewal loop next renews the refresh token (0:
 -- never); the partial index serves "the next one due" and "all due now".
+-- renewing_until is the lease of the one process asking the host for a new pair
+-- (0: none): a refresh token used twice is dead at some hosts, so a renewal
+-- claims the row first, and a lease left by a process that died ends by itself.
 CREATE TABLE linked_accounts (
   id              TEXT COLLATE "C" PRIMARY KEY,
   provider_id     TEXT COLLATE "C" NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
@@ -908,6 +911,7 @@ CREATE TABLE linked_accounts (
   refresh_expires BIGINT NOT NULL DEFAULT 0,
   scopes          TEXT COLLATE "C" NOT NULL DEFAULT '',
   renew_at        BIGINT NOT NULL DEFAULT 0,
+  renewing_until  BIGINT NOT NULL DEFAULT 0,
   state           TEXT COLLATE "C" NOT NULL DEFAULT 'ok',
   version         BIGINT NOT NULL DEFAULT 1,
   is_admin        BIGINT NOT NULL DEFAULT 0,

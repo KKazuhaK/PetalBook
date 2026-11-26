@@ -233,8 +233,11 @@ func TestTokensOfAReplacedApplicationAreNotUsed(t *testing.T) {
 	each(t, func(t *testing.T, h *harness) {
 		p := h.add("main").(*forge.Provider)
 		h.user("U1", "tang")
+		h.user("U2", "wu")
 		h.f.AddUser("tang-h")
+		h.f.AddUser("wu-h")
 		h.connect(p, "U1", "tang-h")
+		h.connect(p, "U2", "wu-h")
 		if _, err := p.UserToken(ctx, "U1"); err != nil {
 			t.Fatal(err)
 		}
@@ -250,18 +253,29 @@ func TestTokensOfAReplacedApplicationAreNotUsed(t *testing.T) {
 		if row.State != "expired" || row.AccessEnc != "" || row.RefreshEnc != "" {
 			t.Fatalf("%+v", row)
 		}
+		// Each person whose connection ended is told, once, as for any other ending.
+		for _, u := range []string{"U1", "U2"} {
+			notes := reauthNotes(t, h, u)
+			want := `{"login":"` + map[string]string{"U1": "tang-h", "U2": "wu-h"}[u] + `","name":"Test main","provider":"main"}`
+			if len(notes) != 1 || notes[0].Ref != "main" || notes[0].Payload != want {
+				t.Fatalf("%s: %+v", u, notes)
+			}
+		}
 		// The person connects again, to the new one.
 		h.connect(p, "U1", "tang-h")
 		if _, err := p.UserToken(ctx, "U1"); err != nil {
 			t.Fatal(err)
 		}
-		// A new secret of the same application keeps the connections.
+		// A new secret of the same application keeps the connections, and tells nobody.
 		h.f.ClientSecret = "rotated-client-secret-0123456789"
 		if _, err := p.AdminSave(ctx, []byte(`{"clientSecret":"rotated-client-secret-0123456789"}`)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := p.UserToken(ctx, "U1"); err != nil {
 			t.Fatalf("a new secret ended the connections: %v", err)
+		}
+		if n := len(reauthNotes(t, h, "U1")); n != 1 {
+			t.Fatalf("%d notifications", n)
 		}
 	})
 }

@@ -47,14 +47,21 @@ type RepoLink struct {
 	Admin     bool
 	Connected time.Time
 	Updated   time.Time
+	// RenewingUntil is the end of the lease of the renewal that is asking the
+	// host for a new pair (ClaimLinkRenewal); zero: none.
+	RenewingUntil time.Time
 }
 
 const repoLinkCols = `id, provider_id, user_id, subject, login, signin, access_enc, refresh_enc, access_expires, refresh_expires, renew_at, state, version, is_admin, created, updated`
 
+// repoLinkRead is what a read of a link selects: the columns that are written
+// with it, and its renewal lease.
+const repoLinkRead = repoLinkCols + `, renewing_until`
+
 func scanRepoLink(row interface{ Scan(...any) error }) (*RepoLink, error) {
 	var a RepoLink
-	var si, ae, re, ra, c, u, admin int64
-	if err := row.Scan(&a.ID, &a.ProviderID, &a.UserID, &a.Subject, &a.Login, &si, &a.AccessEnc, &a.RefreshEnc, &ae, &re, &ra, &a.State, &a.Version, &admin, &c, &u); err != nil {
+	var si, ae, re, ra, c, u, admin, lease int64
+	if err := row.Scan(&a.ID, &a.ProviderID, &a.UserID, &a.Subject, &a.Login, &si, &a.AccessEnc, &a.RefreshEnc, &ae, &re, &ra, &a.State, &a.Version, &admin, &c, &u, &lease); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -71,18 +78,24 @@ func scanRepoLink(row interface{ Scan(...any) error }) (*RepoLink, error) {
 		a.RenewAt = fromMS(ra)
 	}
 	a.Admin = admin != 0
+	if lease > 0 {
+		a.RenewingUntil = fromMS(lease)
+	}
 	a.Connected, a.Updated = fromMS(c), fromMS(u)
 	return &a, nil
 }
 
 // GetRepoLink returns a person's repository link at a provider, or ErrNotFound.
 func GetRepoLink(ctx context.Context, q Q, providerID, userID string) (*RepoLink, error) {
-	return scanRepoLink(q.QueryRow(ctx, `SELECT `+repoLinkCols+` FROM linked_accounts WHERE provider_id = ? AND user_id = ? AND `+repoLinkSQL, providerID, userID))
+	return scanRepoLink(q.QueryRow(ctx, `SELECT `+repoLinkRead+` FROM linked_accounts WHERE provider_id = ? AND user_id = ? AND `+repoLinkSQL, providerID, userID))
 }
 
 // PutRepoLink stores a repository link, replacing the person's earlier one at
 // the provider: the id of that one stays, the version goes up by one, and a
-// sign-in the link had stays. ErrExists when another person has the account.
+// sign-in the link had stays if the account is the same one (a sign-in, and
+// the address it brought, are not carried to another account at the host).
+// A renewal lease of the old pair is dropped. ErrExists when another person
+// has the account.
 // It returns the link's id.
 func PutRepoLink(ctx context.Context, q Q, a RepoLink) (string, error) {
 	var id string
@@ -93,9 +106,13 @@ func PutRepoLink(ctx context.Context, q Q, a RepoLink) (string, error) {
 			return err
 		}
 		if err := q.QueryRow(ctx, `INSERT INTO linked_accounts(`+repoLinkCols+`, last_used) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,0)
-			ON CONFLICT (provider_id, user_id) DO UPDATE SET subject = excluded.subject, login = excluded.login, access_enc = excluded.access_enc,
+			ON CONFLICT (provider_id, user_id) DO UPDATE SET
+			signin = CASE WHEN linked_accounts.subject = excluded.subject THEN linked_accounts.signin ELSE excluded.signin END,
+			email = CASE WHEN linked_accounts.subject = excluded.subject THEN linked_accounts.email ELSE '' END,
+			email_trusted = CASE WHEN linked_accounts.subject = excluded.subject THEN linked_accounts.email_trusted ELSE 0 END,
+			subject = excluded.subject, login = excluded.login, access_enc = excluded.access_enc,
 			refresh_enc = excluded.refresh_enc, access_expires = excluded.access_expires, refresh_expires = excluded.refresh_expires,
-			renew_at = excluded.renew_at, state = excluded.state, version = linked_accounts.version + 1, is_admin = excluded.is_admin,
+			renew_at = excluded.renew_at, renewing_until = 0, state = excluded.state, version = linked_accounts.version + 1, is_admin = excluded.is_admin,
 			created = excluded.created, updated = excluded.updated
 			RETURNING id`,
 			a.ID, a.ProviderID, a.UserID, a.Subject, a.Login, b2i(a.SignIn), a.AccessEnc, a.RefreshEnc, syncOrZero(a.AccessExpires), syncOrZero(a.RefreshExpires),
@@ -139,14 +156,65 @@ func ExpireLink(ctx context.Context, q Q, id string, from int64, now time.Time) 
 
 // ExpireProviderLinks ends every repository link at a provider that is in good
 // standing and drops its tokens (the provider's application was replaced: the
-// old one's tokens are not to be used). It returns how many it ended.
-func ExpireProviderLinks(ctx context.Context, q Q, providerID string, now time.Time) (int64, error) {
-	res, err := q.Exec(ctx, `UPDATE linked_accounts SET state = 'expired', access_enc = '', refresh_enc = '',
-		access_expires = 0, refresh_expires = 0, renew_at = 0, version = version + 1, updated = ? WHERE provider_id = ? AND state = 'ok' AND access_enc <> ''`, ms(now), providerID)
+// old one's tokens are not to be used), and tells each person whose link it
+// ended that they must authorise again (a NotifyLinkReauth, as ExpireLink's
+// callers do; name is the provider's name). Only the rows the write moved are
+// told, in the same transaction. It returns how many it ended.
+func ExpireProviderLinks(ctx context.Context, q Q, providerID, name string, now time.Time) (int64, error) {
+	var n int64
+	err := atomically(ctx, q, func(q Q) error {
+		rows, err := q.Query(ctx, `UPDATE linked_accounts SET state = 'expired', access_enc = '', refresh_enc = '',
+			access_expires = 0, refresh_expires = 0, renew_at = 0, renewing_until = 0, version = version + 1, updated = ?
+			WHERE provider_id = ? AND state = 'ok' AND access_enc <> '' RETURNING user_id, login`, ms(now), providerID)
+		if err != nil {
+			return err
+		}
+		type ended struct{ user, login string }
+		var all []ended
+		for rows.Next() {
+			var e ended
+			if err := rows.Scan(&e.user, &e.login); err != nil {
+				rows.Close()
+				return err
+			}
+			all = append(all, e)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, e := range all {
+			if err := NotifyUser(ctx, q, e.user, NotifyLinkReauth, providerID,
+				map[string]string{"provider": providerID, "name": name, "login": e.login}, now); err != nil {
+				return err
+			}
+		}
+		n = int64(len(all))
+		return nil
+	})
+	return n, err
+}
+
+// ClaimLinkRenewal takes the lease of renewing a link, until until: only if the
+// link is still at version from and in good standing, and nobody holds a lease
+// that has not ended by now. It reports whether it did. Of any number of
+// renewals in any number of processes, one holds a link's lease at a time, so
+// a refresh token is handed to the host once.
+func ClaimLinkRenewal(ctx context.Context, q Q, id string, from int64, now, until time.Time) (bool, error) {
+	res, err := q.Exec(ctx, `UPDATE linked_accounts SET renewing_until = ? WHERE id = ? AND version = ? AND state = 'ok' AND renewing_until <= ?`,
+		ms(until), id, from, ms(now))
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ReleaseLinkRenewal gives a lease that ClaimLinkRenewal took until until back
+// (a lease taken since by someone else, or a link replaced since, stays).
+func ReleaseLinkRenewal(ctx context.Context, q Q, id string, until time.Time) error {
+	_, err := q.Exec(ctx, `UPDATE linked_accounts SET renewing_until = 0 WHERE id = ? AND renewing_until = ?`, id, ms(until))
+	return err
 }
 
 // DeleteRepoLink removes a person's repository link at a provider; a link that
@@ -225,7 +293,7 @@ type DueLinkCursor struct {
 // them, after the cursor. One range scan of linked_accounts_renew.
 func DueLinkRenewals(ctx context.Context, q Q, now time.Time, after DueLinkCursor, limit int) ([]RepoLink, error) {
 	ra := syncOrZero(after.RenewAt)
-	rows, err := q.Query(ctx, `SELECT `+repoLinkCols+` FROM linked_accounts
+	rows, err := q.Query(ctx, `SELECT `+repoLinkRead+` FROM linked_accounts
 		WHERE refresh_enc <> '' AND state = 'ok' AND renew_at > 0 AND renew_at <= ?
 		AND (renew_at > ? OR (renew_at = ? AND id > ?))
 		ORDER BY renew_at, id LIMIT ?`, ms(now), ra, ra, after.ID, limit)
@@ -245,7 +313,8 @@ func DueLinkRenewals(ctx context.Context, q Q, now time.Time, after DueLinkCurso
 }
 
 // NextLinkRenewal is the soonest renewal time after t of a link in good
-// standing; false when there is none.
+// standing; false when there is none. The loop asks it with the time its pass
+// looked for due links at, so a link that came due during the pass is in it.
 func NextLinkRenewal(ctx context.Context, q Q, t time.Time) (time.Time, bool, error) {
 	var next sql.NullInt64
 	err := q.QueryRow(ctx, `SELECT MIN(renew_at) FROM linked_accounts WHERE refresh_enc <> '' AND state = 'ok' AND renew_at > ?`, ms(t)).Scan(&next)
