@@ -6,7 +6,7 @@ import type { LimitEntry, LimitSource, LimitValue, LimitWrite, Tenant } from '@/
 import { FormMessage } from '@/components/auth/Field'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { DataTable, type Column } from '@/components/ui/data-table'
+import { DataTable, RowAction, type Column } from '@/components/ui/data-table'
 import {
   Dialog,
   DialogContent,
@@ -80,10 +80,12 @@ function WindowLines({ e }: { e: LimitEntry }) {
 
 function EditButton({ e, onEdit }: { e: LimitEntry; onEdit: (e: LimitEntry) => void }) {
   return (
-    <Button type="button" variant="ghost" size="sm" aria-label={tx.editFor(e.key)} onClick={() => onEdit(e)}>
-      <Pencil aria-hidden="true" />
-      <span className="max-sm:sr-only">{tx.edit}</span>
-    </Button>
+    <RowAction
+      icon={<Pencil aria-hidden="true" />}
+      label={tx.edit}
+      ariaLabel={tx.editFor(e.key)}
+      onClick={() => onEdit(e)}
+    />
   )
 }
 

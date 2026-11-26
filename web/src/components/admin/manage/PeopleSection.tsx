@@ -5,8 +5,7 @@ import { usePeoplePage } from '@/api/manage'
 import type { ConfirmAction, PeopleParams, PeopleSort, StoragePerson } from '@/api/types'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { DataTable, type Column } from '@/components/ui/data-table'
+import { DataTable, RowAction, type Column } from '@/components/ui/data-table'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -227,15 +226,12 @@ export function PeopleSection() {
         }
         actions={(p) => (
           <>
-            <Button
-              variant="ghost"
-              className="h-10 px-3"
-              render={<Link to={adminUserPath(p.user.id, 'usage')} aria-label={tg.people.openFor(p.user.name)} />}
-              nativeButton={false}
-            >
-              <Eye aria-hidden="true" />
-              {tc.table.view}
-            </Button>
+            <RowAction
+              icon={<Eye aria-hidden="true" />}
+              label={tc.table.view}
+              ariaLabel={tg.people.openFor(p.user.name)}
+              render={<Link to={adminUserPath(p.user.id, 'usage')} />}
+            />
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={t.fmt.labelled(tc.table.more, p.user.name)}

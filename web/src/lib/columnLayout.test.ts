@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  autoWidths,
   clampShares,
   dropColumn,
   dropGap,
+  fitColumn,
+  leastWidths,
+  type FitColumn,
   moveColumn,
   pixelWidths,
   resetPair,
@@ -106,5 +110,65 @@ describe('clamping shares', () => {
     const have = { a: 0.5, b: 0.5 }
     expect(clampShares(have, { a: 100, b: 100 }, 1000)).toEqual(have)
     expect(clampShares(have, { a: 100, b: 100 }, 0)).toEqual(have)
+  })
+})
+
+describe('auto fit', () => {
+  const col = (id: string, content: number, over: Partial<FitColumn> = {}): FitColumn => ({
+    id,
+    content,
+    min: 100,
+    max: 320,
+    weight: 1,
+    ...over,
+  })
+  it('gives each column its content, within its least width and its cap, and shares what is left by weight', () => {
+    const out = autoWidths([col('a', 150), col('b', 40), col('c', 900, { weight: 3 })], 800)
+    // 150, 100 (the least) and 320 (the cap) leave 230: a quarter to each of the first two (57), the rest to c.
+    expect(out.widths).toEqual({ a: 150 + 46, b: 100 + 46, c: 320 + 138 })
+    expect(out.total).toBe(800)
+    expect(Object.values(out.widths).reduce((n, w) => n + w, 0)).toBe(800)
+  })
+  it('shrinks the columns that are over their least width, the wider the more, when the content does not fit', () => {
+    const out = autoWidths([col('a', 250), col('b', 300), col('c', 100)], 500)
+    expect(out.total).toBe(500)
+    expect(Object.values(out.widths).reduce((n, w) => n + w, 0)).toBe(500)
+    // c is at its least width and stays; the other two give up in proportion to what they have over theirs.
+    expect(out.widths.c).toBe(100)
+    expect(out.widths.a).toBeGreaterThan(100)
+    expect(out.widths.b).toBeGreaterThan(out.widths.a)
+    expect(out.widths.b).toBeLessThan(300)
+  })
+  it('keeps the least widths, and reports their total, only when even those do not fit the room', () => {
+    const out = autoWidths([col('a', 250), col('b', 300)], 150)
+    expect(out.widths).toEqual({ a: 100, b: 100 })
+    expect(out.total).toBe(200)
+  })
+  it('lets a cap below the least width give way, and takes a column not measured as its least width', () => {
+    const out = autoWidths([col('a', 500, { max: 50 }), col('b', 0)], 0)
+    expect(out.widths).toEqual({ a: 100, b: 100 })
+  })
+  it('sets one column to a width and the others keep their proportions, never below their least', () => {
+    const out = fitColumn({ a: 0.25, b: 0.25, c: 0.5 }, 'a', 400, 1000, { a: 100, b: 100, c: 100 })
+    expect(out.a).toBeCloseTo(0.4)
+    expect(out.c / out.b).toBeCloseTo(2)
+    expect(out.a + out.b + out.c).toBeCloseTo(1)
+    const tight = fitColumn({ a: 0.5, b: 0.25, c: 0.25 }, 'a', 900, 1000, { a: 100, b: 100, c: 100 })
+    expect(tight.a).toBeCloseTo(0.8)
+    expect(tight.b).toBeCloseTo(0.1)
+  })
+})
+
+describe('least widths in a narrow box', () => {
+  const cols = [
+    { id: 'a', min: 180, narrowMin: 140 },
+    { id: 'b', min: 100, narrowMin: 100 },
+  ]
+  it('keeps the declared least widths while they fit, narrow or not', () => {
+    expect(leastWidths(cols, 300, true)).toEqual({ a: 180, b: 100 })
+    expect(leastWidths(cols, 100, false)).toEqual({ a: 180, b: 100 })
+  })
+  it('takes the narrow ones only in a narrow box where the declared ones do not fit', () => {
+    expect(leastWidths(cols, 250, true)).toEqual({ a: 140, b: 100 })
   })
 })

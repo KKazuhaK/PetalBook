@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { act } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DataTable, type Column, type DataTableSort } from '@/components/ui/data-table'
+import { DataTable, RowAction, type Column, type DataTableSort } from '@/components/ui/data-table'
 import { readPrefs, shares, sanitize, useTablePrefs, orderIds, PAGE_SIZES } from '@/lib/tablePrefs'
 import { tc } from '@/i18n/console'
 import { click, installDomShims, mount, press, settle, type, type Mounted } from '@/testing/harness'
@@ -228,13 +228,13 @@ describe('the table', () => {
   })
 
   it('takes the least important columns away first when the box is narrow, and scrolls inside its own box', async () => {
-    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480)
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(660)
     m = await mount(<Probe />)
-    // 480 less the 148 + 48 of the actions and the settings leaves 284: the name (120) and one more of 100 fit.
-    expect(headers()).toEqual(['name', 'role'])
-    expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(2))
+    // 660 less the 148 + 48 of the actions and the settings leaves 464: the mail (160) is the one that does not fit.
+    expect(headers()).toEqual(['name', 'role', 'seen'])
+    expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(1))
     // What is left still has its least width, and the box is the one that scrolls.
-    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 100 + 148 + 48}px`)
+    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 100 + 100 + 148 + 48}px`)
     expect(document.querySelector('[data-slot="data-table"] > div.overflow-x-auto')).not.toBeNull()
     width.mockReturnValue(2000)
     window.dispatchEvent(new Event('resize'))
@@ -630,5 +630,202 @@ describe('no vertical lines', () => {
     expect(
       document.querySelector<HTMLElement>('[data-slot="data-table"] > div')!.style.getPropertyValue('--sticky-shade'),
     ).toBe('0')
+  })
+})
+
+describe('fitting the columns to their content', () => {
+  // A text is 10px a letter; the layout of jsdom has no widths of its own.
+  const measure = () => {
+    const real = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (!this.hasAttribute('data-fit')) return real.call(this)
+      return { width: (this.textContent?.length ?? 0) * 10, height: 0 } as DOMRect
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+  }
+  const long: Row[] = [
+    { id: 'a', name: 'Ann', role: 'r'.repeat(20), mail: 'm'.repeat(60), seen: 'today' },
+    { id: 'b', name: 'Bo', role: 'member', mail: 'bo@x.test', seen: 'never' },
+  ]
+  const widths = () => [...document.querySelectorAll('col')].slice(0, 4).map((c) => parseFloat(c.style.width))
+  const open = async () => {
+    await click(document.querySelector('[data-slot="table-settings"]'))
+    await settle(() => document.querySelector('[data-slot="popover-content"]') !== null, 'the settings')
+  }
+
+  it('starts each column at its content, cuts a long one at its cap, and shares the rest', async () => {
+    measure()
+    m = await mount(<Probe rows={long} />)
+    // Content with the padding: name and seen below their least (120, 100), role 224, mail 624 capped at 320.
+    // 804 of room less 764 leaves 40, ten to each column.
+    expect(widths()).toEqual([130, 234, 330, 110])
+    expect(widths().reduce((n, w) => n + w, 0)).toBe(804)
+    expect(saved()).toBeNull()
+  })
+
+  it('does not measure again for a new array of the same rows, nor at all while widths are saved', async () => {
+    let reads = 0
+    const real = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute('data-fit')) reads++
+      return real.call(this)
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    function Again() {
+      const [n, setN] = useState(0)
+      return (
+        <>
+          <button type="button" data-testid="again" onClick={() => setN(n + 1)}>
+            {n}
+          </button>
+          <Probe rows={long.map((r) => ({ ...r }))} />
+        </>
+      )
+    }
+    m = await mount(<Again />)
+    const first = reads
+    expect(first).toBeGreaterThan(0)
+    await click(document.querySelector('[data-testid="again"]'))
+    await click(document.querySelector('[data-testid="again"]'))
+    expect(reads).toBe(first)
+    await m.unmount()
+    m = undefined
+    reads = 0
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
+    )
+    m = await mount(<Probe rows={long} />)
+    expect(reads).toBe(0)
+  })
+
+  it('shrinks the long columns toward their least width before it scrolls', async () => {
+    measure()
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700)
+    m = await mount(<Probe rows={long} />)
+    // 504 of room against 764 of content: the least widths (480) fit, so the table does not overflow.
+    const w = widths()
+    expect(w.reduce((n, x) => n + x, 0)).toBe(504)
+    expect(w[0]).toBe(120)
+    expect(w[3]).toBe(100)
+    expect(w[2]).toBeGreaterThan(w[1])
+    expect(document.querySelector('table')!.style.minWidth).toBe(`${480 + 196}px`)
+  })
+
+  it('hides its scrollbar and fades its left edge on a touch screen only, and never fades over the sticky actions', async () => {
+    m = await mount(<Probe rows={long} />)
+    const box = document.querySelector<HTMLElement>('[data-slot="data-table"] > div')!
+    expect(box.className).toContain('pointer-coarse:[scrollbar-width:none]')
+    expect(box.className).not.toMatch(/(^|\s)\[scrollbar-width:none\]/)
+    // The fade never covers the sticky actions column at the right.
+    expect(box.className).toContain('[--fade-right:0px]!')
+  })
+
+  it('keeps a width the person set over the content, and goes back to it on reset', async () => {
+    measure()
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
+    )
+    m = await mount(<Probe rows={long} />)
+    expect(widths()).toEqual([201, 201, 201, 201])
+    await open()
+    await click(
+      [...document.querySelectorAll('[data-slot="popover-content"] button')].find(
+        (b) => b.textContent === tc.table.resetColumns,
+      ),
+    )
+    expect(widths()).toEqual([130, 234, 330, 110])
+    expect(saved().widths).toEqual({})
+  })
+
+  it('fits a column to its content on a double click of its edge, and on Enter', async () => {
+    measure()
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
+    )
+    m = await mount(<Probe rows={long} />)
+    const edges = () => document.querySelectorAll<HTMLElement>('[role="separator"]')
+    await act(async () => {
+      edges()[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(saved().widths.role * 804).toBeCloseTo(224, 0)
+    expect(widths()[1]).toBe(224)
+    await press(edges()[2], 'Enter')
+    // The mail is cut at its cap.
+    expect(saved().widths.mail * 804).toBeCloseTo(320, 0)
+  })
+
+  it('gives a cut cell its full text as a tooltip, once the pointer is on it', async () => {
+    measure()
+    m = await mount(<Probe rows={long} />)
+    const cell = document.querySelector<HTMLElement>('tbody td[data-column="mail"] > div')!
+    vi.spyOn(cell, 'scrollWidth', 'get').mockReturnValue(624)
+    vi.spyOn(cell, 'clientWidth', 'get').mockReturnValue(306)
+    expect(cell.title).toBe('')
+    await act(async () => {
+      cell.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+    })
+    expect(cell.title).toBe('m'.repeat(60))
+  })
+})
+
+describe('row actions in a narrow box', () => {
+  function Acting() {
+    const prefs = useTablePrefs('acting')
+    return (
+      <DataTable
+        prefs={prefs}
+        columns={COLUMNS}
+        rows={ROWS}
+        rowId={(r) => r.id}
+        rowLabel={(r) => r.name}
+        empty="Nobody."
+        actions={(r) => (
+          <RowAction icon={<i data-icon />} label="View" ariaLabel={`View ${r.name}`} onClick={() => {}} />
+        )}
+      />
+    )
+  }
+  const action = () => document.querySelector<HTMLElement>('tbody tr button[aria-label="View Ann"]')!
+
+  it('keeps the label of an action while the box is wide', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+    m = await mount(<Acting />)
+    expect(action().textContent).toBe('View')
+    expect(document.querySelectorAll('col')[4].style.width).toBe('196px')
+  })
+
+  it('shows only the icon, with its name and a tooltip and a 40px target, once the box is under 640px', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500)
+    m = await mount(<Acting />)
+    expect(action().textContent).toBe('')
+    expect(action().getAttribute('title')).toBe('View')
+    expect(action().className).toContain('size-10')
+    // The column of the actions shrinks with them.
+    expect(parseFloat(document.querySelector<HTMLElement>('colgroup > col:last-child')!.style.width)).toBeLessThan(120)
+  })
+
+  it('lets the first column go below its least width in a narrow box where it would not fit, rather than scroll', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(250)
+    function Wide() {
+      const prefs = useTablePrefs('wide')
+      return (
+        <DataTable
+          prefs={prefs}
+          columns={[{ id: 'name', header: 'Name', required: true, min: 200, cell: (r: Row) => r.name }]}
+          rows={ROWS}
+          rowId={(r) => r.id}
+          rowLabel={(r) => r.name}
+          empty="Nobody."
+          actions={(r) => <RowAction label="View" ariaLabel={`View ${r.name}`} onClick={() => {}} />}
+        />
+      )
+    }
+    m = await mount(<Wide />)
+    // 250 less the 96 of the actions leaves 154: the column takes its narrow least width, 140, and nothing scrolls.
+    expect(document.querySelector('table')!.style.minWidth).toBe('236px')
+    expect(parseFloat(document.querySelector('col')!.style.width)).toBe(154)
   })
 })
