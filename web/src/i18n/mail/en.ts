@@ -48,6 +48,7 @@ export const mailEn: MailMessages = {
     orgSlug: 'Organisation address',
     orgSlugHelp: 'Letters, digits and dashes, 2 to 32 characters. People use it to find your sign-in page.',
     orgSlugTaken: 'That organisation address is taken',
+    orgSlugReserved: 'That organisation address is reserved',
     orgSlugInvalid: 'Use 2 to 32 letters, digits or dashes, starting with a letter or digit',
     orgNameRequired: 'Give the organisation a name',
     orgSubmit: 'Create organisation',

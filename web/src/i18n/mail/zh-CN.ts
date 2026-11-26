@@ -41,6 +41,7 @@ export const mailZhCN = {
     orgSlug: '组织地址',
     orgSlugHelp: '字母、数字和短横线，2 到 32 个字符。别人用它找到你的登录页。',
     orgSlugTaken: '这个组织地址已被占用',
+    orgSlugReserved: '这个组织地址是保留的',
     orgSlugInvalid: '请用 2 到 32 个字母、数字或短横线，以字母或数字开头',
     orgNameRequired: '请给组织起个名字',
     orgSubmit: '创建组织',

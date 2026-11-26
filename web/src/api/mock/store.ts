@@ -1503,3 +1503,10 @@ export function createSpaceStore({
 }
 
 export type SpaceStore = ReturnType<typeof createSpaceStore>
+
+// Addresses no tenant may take (the server's store.SlugReserved).
+export const RESERVED_SLUGS = new Set(
+  'admin administrator api www app mail support help security status billing root system petalbook official staff team login signin register settings setup invite forgot oauth mcp notifications verify-email reset-password'.split(
+    ' ',
+  ),
+)

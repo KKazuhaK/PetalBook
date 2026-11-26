@@ -2,7 +2,7 @@
 // "Password reset"): the mail settings, registration, the verification and reset links. THE MOCK NEVER SENDS: a
 // message goes into `outbox`, which tests and the dev page read; nothing leaves the process.
 
-import { HttpError, isRecord } from './store.ts'
+import { HttpError, isRecord, RESERVED_SLUGS } from './store.ts'
 import type { MockResponse } from './server.ts'
 import type { MailSecurity, MailSettings, RegisteredOrg, RegisterInfo, User } from '../types.ts'
 
@@ -288,6 +288,7 @@ export function createMailBook(o: MailBookOptions) {
     const slug = typeof b.slug === 'string' ? b.slug : ''
     if (!name || name.length > 80 || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(slug))
       bad('slug is 2 to 32 characters of a-z, 0-9 and -; name is 1 to 80 characters')
+    if (RESERVED_SLUGS.has(slug)) err(409, 'slug_reserved', '这个组织地址是保留的')
     if (o.orgSlugTaken(slug) || [...pending.values()].some((p) => p.org?.slug === slug && p.expires > o.now()))
       err(409, 'slug_taken', '这个组织地址已被占用')
     return { name, slug }

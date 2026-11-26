@@ -145,6 +145,28 @@ func (t Tenant) IsDefault() bool { return t.ID == DefaultTenantID }
 // organisation follow the same rule.
 var TenantSlugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,31}$`)
 
+// reservedSlugs are addresses no tenant may take, whoever makes it: names that
+// would pass for the site's own (admin, support, official), and the first
+// segment of a route of the web app or the API.
+var reservedSlugs = map[string]bool{
+	"admin": true, "administrator": true, "api": true, "www": true, "app": true, "mail": true, "support": true,
+	"help": true, "security": true, "status": true, "billing": true, "root": true, "system": true,
+	"petalbook": true, "official": true, "staff": true, "team": true, "login": true, "signin": true,
+	"register": true, "settings": true, "setup": true, "invite": true, "forgot": true, "oauth": true,
+	"mcp": true, "notifications": true, "verify-email": true, "reset-password": true,
+}
+
+// SlugReserved says whether a slug may not be a tenant's.
+func SlugReserved(slug string) bool { return reservedSlugs[slug] }
+
+// TenantSlugClash says whether err is the unique violation of the tenants'
+// slug (tenants_slug_key on PostgreSQL, "tenants.slug" on SQLite), not of
+// another unique column.
+func TenantSlugClash(err error) bool {
+	on, ok := UniqueOn(err)
+	return ok && (on == "tenants_slug_key" || on == "tenants.slug")
+}
+
 // CleanTenantName trims a tenant's name and checks it: 1 to 80 characters, no
 // control characters.
 func CleanTenantName(in string) (string, bool) {
@@ -390,6 +412,13 @@ func CountTenantsCreatedBy(ctx context.Context, q Q, userID string) (n int, err 
 		return 0, nil
 	}
 	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM tenants WHERE created_by = ? AND origin = 'self'`, userID).Scan(&n)
+	return
+}
+
+// CountSelfTenantsSince is how many organisations people made themselves since
+// a moment (the hour's cap of orgCreation.perHour).
+func CountSelfTenantsSince(ctx context.Context, q Q, since time.Time) (n int, err error) {
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM tenants WHERE origin = 'self' AND created >= ?`, ms(since)).Scan(&n)
 	return
 }
 

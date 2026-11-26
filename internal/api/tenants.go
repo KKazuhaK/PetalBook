@@ -197,6 +197,10 @@ func (s *server) adminCreateTenant(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters.")
 		return
 	}
+	if store.SlugReserved(req.Slug) {
+		writeError(c.w, http.StatusConflict, "slug_reserved", "That organization address is reserved.")
+		return
+	}
 	// The first administrator's details are checked as the invite checks them,
 	// before the tenant is made, so a bad one makes nothing. Each may be "": the
 	// person fills it in when they accept (a username they must).
@@ -216,7 +220,7 @@ func (s *server) adminCreateTenant(c *call) {
 		writeError(c.w, http.StatusConflict, "tenant_limit", "A server has at most "+strconv.Itoa(store.MaxTenants)+" tenants.")
 		return
 	case store.IsUnique(err):
-		if on, _ := store.UniqueOn(err); strings.Contains(on, "slug") {
+		if store.TenantSlugClash(err) {
 			writeError(c.w, http.StatusConflict, "exists", "That slug is taken.")
 			return
 		}

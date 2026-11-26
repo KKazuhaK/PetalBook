@@ -516,6 +516,17 @@ func (s *Service) RegisterConfirm(ctx context.Context, token, ip string) (*Regis
 		if orules = s.OrgCreation(ctx); !orules.Open {
 			return nil, closedErr()
 		}
+		// The hour's cap again, now that the person has the link: the requests
+		// that were answered before it was lowered, or all at once, are counted.
+		if orules.PerHour > 0 {
+			n, err := store.CountSelfTenantsSince(ctx, s.st.Q(), s.now().Add(-time.Hour))
+			if err != nil {
+				return nil, err
+			}
+			if n >= orules.PerHour {
+				return nil, errOrgLimit
+			}
+		}
 	} else if rules, err := s.Registration(ctx, reg.TenantID); err != nil {
 		return nil, err
 	} else if !rules.Open {

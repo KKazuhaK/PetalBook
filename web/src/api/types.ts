@@ -830,6 +830,7 @@ export type ErrorCode =
   | 'needs_mail'
   | 'needs_tenancy'
   | 'slug_taken'
+  | 'slug_reserved'
   | 'org_limit'
   | 'mail_insecure'
   | 'mail_from_required'

@@ -71,6 +71,9 @@ func (s *Service) cleanOrg(ctx context.Context, o OrgParams) (name, slug string,
 	if !ok || !store.TenantSlugRE.MatchString(o.Slug) {
 		return "", "", errf(Invalid, "Slug is 2 to 32 characters of a-z, 0-9 and -, starting with a letter or digit; name is 1 to 80 characters.")
 	}
+	if store.SlugReserved(o.Slug) {
+		return "", "", errSlugReserved()
+	}
 	if _, taken := s.st.TenantIDBySlug(o.Slug); taken {
 		return "", "", errSlugTaken()
 	}
@@ -80,6 +83,10 @@ func (s *Service) cleanOrg(ctx context.Context, o OrgParams) (name, slug string,
 		return "", "", errSlugTaken()
 	}
 	return name, o.Slug, nil
+}
+
+func errSlugReserved() *Error {
+	return coded(409, "slug_reserved", "That organization address is reserved.")
 }
 
 func errSlugTaken() *Error { return coded(409, "slug_taken", "That organization address is taken.") }

@@ -101,6 +101,7 @@ export function TenantsPanel() {
 
 function TenantList({ enabled }: { enabled: boolean }) {
   const list = useTenants()
+  const selfList = useTenants(true, false, 'self')
   const [open, setOpen] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [made, setMade] = useState<CreatedTenant | null>(null)
@@ -108,8 +109,9 @@ function TenantList({ enabled }: { enabled: boolean }) {
   if (list.isPending) return <PageFallback />
   if (list.isError) return <ErrorState message={tl.loadFailed} onRetry={() => void list.refetch()} />
   // Organisations people made themselves can be told apart: a filter appears once there is one.
-  const selfMade = list.data.filter((tn) => tn.origin === 'self').length
-  const shown = onlySelf ? list.data.filter((tn) => tn.origin === 'self') : list.data
+  // The server filters (?origin=self); a failed or pending filter query shows nothing made rather than a guess.
+  const selfMade = selfList.data?.length ?? 0
+  const shown = onlySelf ? (selfList.data ?? []) : list.data
   return (
     <SettingsSection title={tl.title} id="tenants-heading">
       <div className="flex flex-wrap items-center gap-3">

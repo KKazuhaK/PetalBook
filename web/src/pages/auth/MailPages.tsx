@@ -159,6 +159,8 @@ function RegisterForm({ tenant, info, wantsOrg }: { tenant?: string; info: Regis
       else if (err instanceof ApiError && err.code === 'registration_closed') setError(tm.register.closedNow)
       else if (err instanceof ApiError && err.code === 'exists') setFields({ username: tm.register.taken })
       else if (err instanceof ApiError && err.code === 'slug_taken') setFields({ orgSlug: tm.register.orgSlugTaken })
+      else if (err instanceof ApiError && err.code === 'slug_reserved')
+        setFields({ orgSlug: tm.register.orgSlugReserved })
       else if (err instanceof ApiError && err.code === 'email_domain_not_allowed')
         setFields({ email: tm.register.domainNotAllowed })
       else if (err instanceof ApiError && err.code === 'terms_required') setFields({ terms: tm.register.termsRequired })

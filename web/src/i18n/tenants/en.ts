@@ -371,7 +371,7 @@ export const tenantsEn: TenantsMessages = {
       'features.orgCreation':
         'Off by default. On: the registration page offers "Create my organisation": a person gives a name and an address, confirms their email, and becomes the administrator of a new tenant (never a site administrator). Needs the tenants switch and mail. Site administrators only.',
       'orgCreation.perPerson':
-        'At most this many organisations one person may create; 0 allows none. Site administrators only.',
+        'At most this many organisations one account may create; 0 allows none. It counts the organisations an account created, and matters once signed-in people can create more (milestone 3.7): a registration creates at most one. Site administrators only.',
       'orgCreation.perHour':
         'Empty (the default) is no cap. Over it, a request is answered as usual and the message says that no organisation was made.',
       'orgCreation.plan':

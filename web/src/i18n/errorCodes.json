@@ -105,6 +105,7 @@
   "setting_rule_needs_max",
   "setting_until_past",
   "skip_too_large",
+  "slug_reserved",
   "slug_taken",
   "space_disabled",
   "space_full",

@@ -82,6 +82,7 @@ export const apiErrorsEn: ApiErrorTexts = {
   mail_not_configured: 'Mail is not set up, so that cannot be done.',
   needs_mail: 'Mail is not set up, so that cannot be turned on yet.',
   needs_tenancy: 'Multiple organisations are not turned on, so that cannot be turned on yet.',
+  slug_reserved: 'That organisation address is reserved. Choose another.',
   slug_taken: 'That organisation address is taken. Choose another.',
   org_limit: 'No more organisations can be made.',
   mail_insecure: 'The mail connection is not encrypted. Use an encrypted one.',

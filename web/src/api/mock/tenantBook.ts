@@ -14,7 +14,7 @@ import type {
   TenantSetting,
   TenantUsage,
 } from '../types.ts'
-import { HttpError } from './store.ts'
+import { HttpError, RESERVED_SLUGS } from './store.ts'
 import type { MockResponse } from './server.ts'
 
 export const DEFAULT_TENANT = '0000000000'
@@ -1126,6 +1126,8 @@ export function createTenantBook(o: TenantBookOptions) {
           const name = typeof body.name === 'string' ? body.name.trim() : ''
           if (!name || name.length > 80 || typeof body.slug !== 'string' || !SLUG.test(body.slug))
             bad('slug is 2 to 32 characters of a-z, 0-9 and -; name is 1 to 80 characters')
+          if (RESERVED_SLUGS.has(String(body.slug)))
+            throw new HttpError(409, 'slug_reserved', 'that address is reserved')
           if ([...tenants.values()].some((t) => t.slug === body.slug))
             throw new HttpError(409, 'exists', 'that slug is taken')
           if (tenants.size >= 1000) throw new HttpError(409, 'tenant_limit', 'a server has at most 1000 tenants')

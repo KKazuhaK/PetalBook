@@ -210,8 +210,15 @@ func TestTenantsTable(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := st.CreateTenant(ctx, store.Tenant{ID: "TX", Slug: "t-0", Name: "dup", Created: now, Updated: now}); !store.IsUnique(err) {
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "TX", Slug: "t-0", Name: "dup", Created: now, Updated: now}); !store.IsUnique(err) || !store.TenantSlugClash(err) {
 			t.Fatalf("a taken slug: %v", err)
+		}
+		// A taken id is a unique violation, but not of the slug.
+		if err := st.CreateTenant(ctx, store.Tenant{ID: "T000000002", Slug: "fresh", Name: "dup id", Created: now, Updated: now}); !store.IsUnique(err) || store.TenantSlugClash(err) {
+			t.Fatalf("a taken id: %v", err)
+		}
+		if n, err := store.CountSelfTenantsSince(ctx, st.Q(), now.Add(-time.Hour)); err != nil || n != 0 {
+			t.Fatalf("no tenant was self-made: %d %v", n, err)
 		}
 		var names []string
 		after := ""

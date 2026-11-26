@@ -451,7 +451,11 @@ func UniqueOn(err error) (string, bool) {
 	if errors.As(err, &se) || strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		msg := err.Error()
 		if i := strings.Index(msg, "UNIQUE constraint failed:"); i >= 0 {
-			return strings.ToLower(strings.TrimSpace(msg[i+len("UNIQUE constraint failed:"):])), true
+			on := msg[i+len("UNIQUE constraint failed:"):]
+			if j := strings.Index(on, " ("); j >= 0 { // the driver's "(2067)" code
+				on = on[:j]
+			}
+			return strings.ToLower(strings.TrimSpace(on)), true
 		}
 	}
 	return "", false

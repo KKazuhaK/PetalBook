@@ -74,6 +74,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   mail_not_configured: '还没有配置发信，所以不能这样做。',
   needs_mail: '还没有配置发信，所以现在不能开启。',
   needs_tenancy: '还没有开启多组织，所以现在不能开启。',
+  slug_reserved: '这个组织地址是保留的，换一个吧。',
   slug_taken: '这个组织地址已被占用，换一个吧。',
   org_limit: '不能再创建组织了。',
   mail_insecure: '发信连接没有加密，请换成加密的连接。',

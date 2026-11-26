@@ -605,9 +605,10 @@ export function useSetTenancy() {
 }
 // Every tenant, the default one first; there are at most 1,000, so the pages are followed to the end.
 // `fresh` asks again on mounting even when the list is cached: a dialog that offers tenants to pick must not miss a new one.
-export function useTenants(enabled = true, fresh = false) {
+// `origin` asks the server for one kind only (?origin=), so the pages are the server's, not a filter of what was loaded.
+export function useTenants(enabled = true, fresh = false, origin?: TenantOrigin) {
   return useQuery({
-    queryKey: keys.tenants,
+    queryKey: origin ? [...keys.tenants, origin] : keys.tenants,
     enabled,
     staleTime: 15_000,
     refetchOnMount: fresh ? 'always' : true,
@@ -615,7 +616,7 @@ export function useTenants(enabled = true, fresh = false) {
       const out: Tenant[] = []
       let cursor = ''
       do {
-        const page = await adminApi.tenants({ cursor, limit: 200 }, signal)
+        const page = await adminApi.tenants({ cursor, limit: 200, origin }, signal)
         out.push(...page.items)
         cursor = page.next
       } while (cursor)

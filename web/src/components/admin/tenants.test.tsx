@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Route, Routes } from 'react-router'
 import type { MockServer } from '@/api/mock/server'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { keys } from '@/api/hooks'
 import { tc } from '@/i18n/console'
 import { t } from '@/i18n'
 import { tt } from '@/i18n/tenants'
@@ -143,6 +144,8 @@ describe('the Tenants page', () => {
     await click(button(tt.list.filterSelf(1)))
     await settle(() => document.querySelectorAll('[data-slot="tenant-list"] li').length === 1, 'only the made ones')
     expect(text()).toContain('Bee Co')
+    // The server did the filtering: its own list is cached under the origin.
+    expect(m!.qc.getQueryData([...keys.tenants, 'self'])).toHaveLength(1)
   })
 
   it('nothing on it can be wider than a phone', async () => {

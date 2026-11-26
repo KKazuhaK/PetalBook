@@ -210,3 +210,36 @@ func TestTheCapIsCheckedAgainWhenTheLinkIsFollowedAndNothingIsHalfMade(t *testin
 		anon.do("POST", "/api/register/confirm", map[string]any{"token": tok}).want(t, 201, "")
 	})
 }
+
+func TestReservedSlugsAreRefusedForBothWaysOfMakingATenant(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root, _ := orgSetup(t, a)
+		anon := a.newClient("")
+		for _, slug := range []string{"admin", "support", "petalbook", "login"} {
+			regOrg(anon, "Acme", slug, nil).want(t, 409, "slug_reserved")
+			root.do("POST", "/api/admin/tenants", map[string]any{"slug": slug, "name": "Acme"}).want(t, 409, "slug_reserved")
+		}
+		root.do("POST", "/api/admin/tenants", map[string]any{"slug": "acme", "name": "Acme"}).want(t, 201, "")
+	})
+}
+
+func TestTheHourlyCapIsCheckedAgainWhenTheLinkIsFollowed(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		root, srv := orgSetup(t, a)
+		root.putSetting("orgCreation.perHour", 2).want(t, 200, "")
+		regOrg(a.newClient("203.0.113.1"), "One", "one", map[string]any{"username": "u1", "email": "u1@example.test"}).want(t, 202, "")
+		regOrg(a.newClient("203.0.113.2"), "Two", "two", map[string]any{"username": "u2", "email": "u2@example.test"}).want(t, 202, "")
+		mails := srv.Wait(2)
+		a.newClient("").do("POST", "/api/register/confirm", map[string]any{"token": mails[0].Token(t)}).want(t, 201, "")
+		root.putSetting("orgCreation.perHour", 1).want(t, 200, "")
+		c := a.newClient("")
+		c.do("POST", "/api/register/confirm", map[string]any{"token": mails[1].Token(t)}).want(t, 403, "org_limit")
+		if rowCount(t, a, `SELECT COUNT(*) FROM tenants WHERE slug = 'two'`) != 0 {
+			t.Fatal("a tenant was made over the cap")
+		}
+		a.clock.Advance(61 * time.Minute)
+		c.do("POST", "/api/register/confirm", map[string]any{"token": mails[1].Token(t)}).want(t, 201, "")
+	})
+}

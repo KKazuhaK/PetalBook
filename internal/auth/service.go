@@ -848,7 +848,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateParams) (*store.User, 
 		}
 		if on, ok := store.UniqueOn(err); ok {
 			switch {
-			case p.NewTenant != nil && strings.Contains(on, "slug") && attempt < 20:
+			case p.NewTenant != nil && store.TenantSlugClash(err) && attempt < 20:
 				// Someone took the slug since it was checked: a number is added.
 				p.NewTenant.Made.Slug = suffixedSlug(p.NewTenant.Slug, attempt)
 				continue
