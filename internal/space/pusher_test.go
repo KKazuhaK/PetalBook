@@ -444,3 +444,44 @@ func TestCloseWhileAChangeIsCommittedLeavesTheCloneClean(t *testing.T) {
 	}
 	consistent(t, f.s)
 }
+
+// A push whose answer was lost, with Close coming right then: the look at
+// the remote that tells it went through is not cut short, so the change is
+// answered as done and stays, instead of being taken back from the clone
+// while it is on the remote.
+func TestCloseAfterAPushWhoseAnswerWasLostAnswersItDone(t *testing.T) {
+	t.Parallel()
+	f := newRemoteSpace(t)
+	s := f.s
+	a := mustCreate(t, s, "", meta("title", "A"), "a1\n")
+	closed := make(chan error, 1)
+	var once sync.Once
+	f.net.mu.Lock()
+	f.net.losePush = true
+	f.net.afterPush = func() {
+		once.Do(func() {
+			go func() { closed <- s.Close() }()
+			select {
+			case <-s.ctx.Done(): // Close has begun
+			case <-time.After(10 * time.Second):
+				t.Error("Close did not begin")
+			}
+		})
+	}
+	f.net.mu.Unlock()
+	if _, err := s.Save(Author{}, a.ID, a.Rev, meta("title", "A"), "a2\n"); err != nil {
+		t.Errorf("the change on the remote was answered %v", err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if h, tip := git(t, f.root, "rev-parse", "HEAD"), f.tip(); h != tip {
+		t.Errorf("HEAD %s, the remote %s", h, tip)
+	}
+	if !containsLine(git(t, f.remote, "show", "main:"+a.Path), "a2") {
+		t.Error("the change is not on the remote")
+	}
+	if st := git(t, f.root, "status", "--porcelain"); st != "" {
+		t.Errorf("the clone: %q", st)
+	}
+}

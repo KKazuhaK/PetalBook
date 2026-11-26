@@ -276,6 +276,7 @@ func (m *Manager) openAssetRepo(ctx context.Context, id string, row *store.Asset
 		},
 		Runner: m.opt.RemoteRunner, AllowUnsafe: m.opt.RemotePolicy.AllowUnsafe,
 		NetTimeout: m.opt.NetTimeout, FetchFresh: m.opt.FetchFresh, Logger: m.log.With("space", id, "repository", "assets"),
+		ClearStaleLocks: m.opt.Serve, // the server holds serve.lock
 	})
 }
 

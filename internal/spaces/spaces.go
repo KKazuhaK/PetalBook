@@ -902,6 +902,8 @@ func (m *Manager) openSpace(ctx context.Context, id string, onRebuild func(phase
 		Root: root, Name: name, StateDir: state, Committer: m.opt.Committer, Author: author,
 		CommitIdle: m.opt.CommitIdle, CommitMax: m.opt.CommitMax, Logger: m.log.With("space", id), Remote: rem,
 		WriteGate: func() error { return m.CheckWritable(id) }, OnRebuild: onRebuild, SlotContext: m.closedCtx(),
+		// The server holds serve.lock: no other PetalBook process uses the clone.
+		ClearStaleGitLocks: m.opt.Serve,
 	})
 	if err != nil {
 		return nil, err
