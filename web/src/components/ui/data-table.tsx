@@ -25,8 +25,10 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { tc } from '@/i18n/console'
 import {
+  autoWidths,
   clampShares,
   dropColumn,
+  fitColumn,
   dropGap,
   pixelWidths,
   resetPair,
@@ -40,6 +42,9 @@ import { orderIds, PAGE_SIZES, shares, useTablePrefs, type Density } from '@/lib
 // does not have to:
 //  - the columns an administrator shows, hides and orders (by dragging a header, or Alt and an arrow on it), their widths (kept as shares of the table, never pixels,
 //    each at least its own least width), the density and the page size, all kept in this browser only;
+//  - until a width is set, each column is as wide as its content on the page shown (one measure of the visible cells
+//    after the rows or the columns change), up to a cap, the room left over shared by weight; a double click on a
+//    column's edge, or Enter on it, fits that column again;
 //  - columns of lower importance leave first when the table is narrow (`priority`), and what still does not fit
 //    scrolls inside the table's own box, never the page;
 //  - sorting by a header the server can sort by, a tick for each row, a row's common actions at its right end;
@@ -52,8 +57,11 @@ export interface Column<T> {
   cell: (row: T) => ReactNode
   // The least width, in pixels (default 96): the table never squeezes the column further, it scrolls.
   min?: number
-  // The share of the width the column starts with, against the others (default 1).
+  // The share of the room left over once every column has its content's width, against the others (default 1).
   weight?: number
+  // The most width the column takes to fit its content, in pixels (default 320): a longer text is cut there, ends in
+  // an ellipsis and shows in full as a tooltip. A column of badges or dates never reaches it.
+  maxAutoWidth?: number
   // 1 is kept longest; a higher number leaves earlier when the table is narrow (default 1).
   priority?: number
   // The name the server sorts by; the header is a button when it is set.
@@ -111,10 +119,21 @@ export interface DataTableProps<T> {
   defaultHidden?: string[]
 }
 
+// A cell cut short shows what it says in full as a tooltip, set when the pointer comes to it (never for every cell).
+function titleIfClipped(e: ReactPointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  if (el.scrollWidth > el.clientWidth + 1) el.title = el.textContent ?? ''
+  else el.removeAttribute('title')
+}
+
 const ROW_HEIGHT: Record<Density, string> = { compact: 'h-10', comfortable: 'h-14' }
 const SELECT_W = 40
 const ACTIONS_W = 148
 const SETTINGS_W = 48
+const AUTO_MAX = 320
+// The padding of a cell (px-3) and of a header's sort button (px-2 with a -mx-2), in pixels, added to what is measured.
+const CELL_PAD = 24
+const SORT_PAD = 8
 // A mouse starts a column drag after this many pixels; a finger after a press this long (milliseconds) without moving
 // further than the slop, so a tap still sorts and a swipe still scrolls.
 const DRAG_PX = 5
@@ -224,21 +243,76 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const [draft, setDraft] = useState<Record<string, number> | null>(null)
   const tableMin = shown.reduce((n, c) => n + minOf(c), fixed)
   const table = useRef<HTMLTableElement>(null)
+
+  // What each shown column's header and cells need to show in full, in pixels. The elements marked `data-fit` are
+  // given their natural width for the one read (all at once, so the browser lays out once) and put back.
+  const measureFit = () => {
+    const els = Array.from(table.current?.querySelectorAll<HTMLElement>('[data-fit]') ?? [])
+    const kept = els.map((e) => [e.style.width, e.style.maxWidth])
+    for (const e of els) {
+      e.style.width = 'max-content'
+      e.style.maxWidth = 'none'
+    }
+    const out: Record<string, number> = {}
+    for (const e of els) {
+      const id = e.closest<HTMLElement>('[data-column]')?.dataset.column
+      if (!id) continue
+      const w = Math.ceil(e.getBoundingClientRect().width) + (e.tagName === 'BUTTON' ? SORT_PAD : CELL_PAD)
+      out[id] = Math.max(out[id] ?? 0, w)
+    }
+    els.forEach((e, i) => {
+      e.style.width = kept[i][0]
+      e.style.maxWidth = kept[i][1]
+    })
+    return out
+  }
+  // Measured once after the rows, the shown columns or the density change; never in a box that has no width.
+  const [natural, setNatural] = useState<Record<string, number>>({})
+  const measurable = boxW > 0
+  const keepNatural = (next: Record<string, number>) =>
+    setNatural((prev) => {
+      const ids = Object.keys(next)
+      return ids.length === Object.keys(prev).length && ids.every((k) => prev[k] === next[k]) ? prev : next
+    })
+  const shownKey = shown.map((c) => c.id).join()
+  useLayoutEffect(() => {
+    if (!measurable) return
+    // Layout is read from the DOM after it is committed, before it is painted: the one place this can be known.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    keepNatural(measureFit())
+  }, [measurable, rows, shownKey, prefs.density, loading, error])
   // The columns' widths are whole pixels of the room they share. (A `calc()` with a percentage is not a width a
   // `<col>` understands: the browser took it for auto, every column came out the same and no drag changed anything.)
   // A box never measured (a test, a hidden tab) keeps plain percentages.
-  const room = roomOf(boxW > 0 ? Math.max(boxW, tableMin) : 0, fixed)
+  // Nobody has set a width (and none is being dragged): each column starts as wide as its content.
+  const auto =
+    boxW > 0 && !draft && Object.keys(prefs.widths).length === 0 && shown.length > 0
+      ? autoWidths(
+          shown.map((c) => ({
+            id: c.id,
+            content: natural[c.id] ?? 0,
+            min: minOf(c),
+            max: c.maxAutoWidth ?? AUTO_MAX,
+            weight: c.weight ?? 1,
+          })),
+          Math.max(0, boxW - fixed),
+        )
+      : null
+  const room = auto ? auto.total : roomOf(boxW > 0 ? Math.max(boxW, tableMin) : 0, fixed)
   const shownMins = Object.fromEntries(shown.map((c) => [c.id, minOf(c)]))
-  const have = clampShares(
-    shares(
-      shown.map((c) => ({ id: c.id, weight: c.weight ?? 1 })),
-      draft ?? prefs.widths,
-    ),
-    shownMins,
-    room,
-  )
-  const px =
-    boxW > 0
+  const have = auto
+    ? Object.fromEntries(shown.map((c) => [c.id, auto.widths[c.id] / (room || 1)]))
+    : clampShares(
+        shares(
+          shown.map((c) => ({ id: c.id, weight: c.weight ?? 1 })),
+          draft ?? prefs.widths,
+        ),
+        shownMins,
+        room,
+      )
+  const px = auto
+    ? auto.widths
+    : boxW > 0
       ? pixelWidths(
           shown.map((c) => c.id),
           have,
@@ -302,14 +376,27 @@ export function DataTable<T>(props: DataTableProps<T>) {
     window.addEventListener('pointercancel', cancel)
     dragEnd.current = stop
   }
-  // A double click on an edge puts the two columns beside it back to their usual proportion.
+  // A double click on an edge fits the column to its left to its content; in a table that was never measured (a test,
+  // a hidden tab) there is no content width, and it puts the two columns beside it back to their usual proportion.
   const resetEdge = (i: number) => {
     const left = shown[i]
     const right = shown[i + 1]
     if (!right) return
-    update({ widths: resetPair(have, left.id, right.id, left.weight ?? 1, right.weight ?? 1) })
+    if (boxW > 0) fitEdge(i)
+    else update({ widths: resetPair(have, left.id, right.id, left.weight ?? 1, right.weight ?? 1) })
+  }
+  const fitEdge = (i: number) => {
+    const c = shown[i]
+    const want = measureFit()[c.id] ?? 0
+    const target = Math.min(Math.max(want, minOf(c)), Math.max(c.maxAutoWidth ?? AUTO_MAX, minOf(c)))
+    update({ widths: fitColumn(have, c.id, target, room, shownMins) })
   }
   const nudge = (i: number, e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.altKey) {
+      e.preventDefault()
+      resetEdge(i)
+      return
+    }
     const step = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
     const left = shown[i]
     const right = shown[i + 1]
@@ -471,7 +558,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
         <table
           ref={table}
           className="w-full table-fixed border-collapse text-left text-sm"
-          style={{ minWidth: tableMin }}
+          style={{ minWidth: auto && auto.total > boxW - fixed ? fixed + auto.total : tableMin }}
           data-density={prefs.density}
         >
           <colgroup>
@@ -526,6 +613,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                       type="button"
                       onClick={() => clickSort(c)}
                       aria-label={tc.table.sortBy(c.header)}
+                      data-fit
                       className="-mx-2 inline-flex h-10 max-w-full items-center gap-1 rounded-md px-2 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
                     >
                       <span className="truncate">{c.header}</span>
@@ -538,7 +626,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                       )}
                     </button>
                   ) : (
-                    <span className="block truncate">{c.header}</span>
+                    <span data-fit className="block truncate">
+                      {c.header}
+                    </span>
                   )}
                   {i < shown.length - 1 && (
                     <span
@@ -644,7 +734,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           data-column={c.id}
                           className={`min-w-0 px-3 font-normal ${c.align === 'right' ? 'text-right' : ''}`}
                         >
-                          <div className="min-w-0 truncate">{c.cell(row)}</div>
+                          <div data-fit className="min-w-0 truncate" onPointerEnter={titleIfClipped}>
+                            {c.cell(row)}
+                          </div>
                         </th>
                       ) : (
                         <td
@@ -652,7 +744,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           data-column={c.id}
                           className={`min-w-0 px-3 ${c.align === 'right' ? 'text-right tabular-nums' : ''}`}
                         >
-                          <div className="min-w-0 truncate">{c.cell(row)}</div>
+                          <div data-fit className="min-w-0 truncate" onPointerEnter={titleIfClipped}>
+                            {c.cell(row)}
+                          </div>
                         </td>
                       ),
                     )}

@@ -109,7 +109,7 @@ export function UsersList() {
         priority: 2,
         cell: (u) => (
           <span className="flex items-center gap-1.5">
-            {isAdminAccount(u) ? t.roles.admin : t.roles.member}
+            <span className="min-w-0 truncate">{isAdminAccount(u) ? t.roles.admin : t.roles.member}</span>
             {isAdminAccount(u) && u.siteAdmin !== undefined && (
               <Badge variant="outline" data-slot="admin-kind">
                 {adminKindOf(u) === 'site' ? tc.users.adminKinds.site : tc.users.adminKinds.tenant}

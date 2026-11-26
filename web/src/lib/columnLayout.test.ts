@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  autoWidths,
   clampShares,
   dropColumn,
   dropGap,
+  fitColumn,
+  type FitColumn,
   moveColumn,
   pixelWidths,
   resetPair,
@@ -106,5 +109,41 @@ describe('clamping shares', () => {
     const have = { a: 0.5, b: 0.5 }
     expect(clampShares(have, { a: 100, b: 100 }, 1000)).toEqual(have)
     expect(clampShares(have, { a: 100, b: 100 }, 0)).toEqual(have)
+  })
+})
+
+describe('auto fit', () => {
+  const col = (id: string, content: number, over: Partial<FitColumn> = {}): FitColumn => ({
+    id,
+    content,
+    min: 100,
+    max: 320,
+    weight: 1,
+    ...over,
+  })
+  it('gives each column its content, within its least width and its cap, and shares what is left by weight', () => {
+    const out = autoWidths([col('a', 150), col('b', 40), col('c', 900, { weight: 3 })], 800)
+    // 150, 100 (the least) and 320 (the cap) leave 230: a quarter to each of the first two (57), the rest to c.
+    expect(out.widths).toEqual({ a: 150 + 46, b: 100 + 46, c: 320 + 138 })
+    expect(out.total).toBe(800)
+    expect(Object.values(out.widths).reduce((n, w) => n + w, 0)).toBe(800)
+  })
+  it('keeps the content widths, and reports the wider total, when they do not fit the room', () => {
+    const out = autoWidths([col('a', 250), col('b', 300)], 400)
+    expect(out.widths).toEqual({ a: 250, b: 300 })
+    expect(out.total).toBe(550)
+  })
+  it('lets a cap below the least width give way, and takes a column not measured as its least width', () => {
+    const out = autoWidths([col('a', 500, { max: 50 }), col('b', 0)], 0)
+    expect(out.widths).toEqual({ a: 100, b: 100 })
+  })
+  it('sets one column to a width and the others keep their proportions, never below their least', () => {
+    const out = fitColumn({ a: 0.25, b: 0.25, c: 0.5 }, 'a', 400, 1000, { a: 100, b: 100, c: 100 })
+    expect(out.a).toBeCloseTo(0.4)
+    expect(out.c / out.b).toBeCloseTo(2)
+    expect(out.a + out.b + out.c).toBeCloseTo(1)
+    const tight = fitColumn({ a: 0.5, b: 0.25, c: 0.25 }, 'a', 900, 1000, { a: 100, b: 100, c: 100 })
+    expect(tight.a).toBeCloseTo(0.8)
+    expect(tight.b).toBeCloseTo(0.1)
   })
 })

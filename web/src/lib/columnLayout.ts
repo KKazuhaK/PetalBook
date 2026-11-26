@@ -132,3 +132,55 @@ export function clampShares(
   for (const id of locked) out[id] = mins[id] / room
   return out
 }
+
+// A column as the auto fit sees it: `content` is the widest of its header and its cells on this page, in pixels with
+// the cell's padding (0 when not measured), `min` the least width, `max` the most an auto width gives (a long text is
+// cut there and ends in an ellipsis), `weight` its claim on whatever room is left over.
+export interface FitColumn {
+  id: string
+  content: number
+  min: number
+  max: number
+  weight: number
+}
+
+// The starting widths of columns nobody has resized: each as wide as its content, never below its least width nor
+// above its cap (a cap below the least width gives way to it). What is left of `room` is shared by the weights, and
+// when the content does not fit the columns keep their widths and the table scrolls in its own box. Whole pixels,
+// adding up to `total`, which is `room` or, when the content is wider than the room, the width of the content.
+export function autoWidths(
+  cols: readonly FitColumn[],
+  room: number,
+): { widths: Record<string, number>; total: number } {
+  const base = cols.map((c) => Math.ceil(Math.min(Math.max(c.content, c.min), Math.max(c.max, c.min))))
+  const used = base.reduce((n, w) => n + w, 0)
+  const left = Math.max(0, Math.floor(room) - used)
+  const weights = cols.reduce((n, c) => n + c.weight, 0) || 1
+  const widths: Record<string, number> = {}
+  let given = 0
+  cols.forEach((c, i) => {
+    const extra = i === cols.length - 1 ? left - given : Math.floor((left * c.weight) / weights)
+    given += extra
+    widths[c.id] = base[i] + extra
+  })
+  return { widths, total: used + left }
+}
+
+// The shares after one column is set to `target` pixels of `room`: the others keep their proportions among
+// themselves and pay (or take) the difference. A column that is alone keeps what it has.
+export function fitColumn(
+  have: Record<string, number>,
+  id: string,
+  target: number,
+  room: number,
+  mins: Record<string, number>,
+): Record<string, number> {
+  const others = Object.keys(have).filter((k) => k !== id)
+  if (room <= 0 || others.length === 0) return { ...have }
+  const keep = others.reduce((n, k) => n + mins[k], 0)
+  const px = Math.max(mins[id], Math.min(target, room - keep))
+  const rest = others.reduce((n, k) => n + have[k], 0) || 1
+  const out: Record<string, number> = { [id]: px / room }
+  for (const k of others) out[k] = (have[k] / rest) * (1 - px / room)
+  return clampShares(out, mins, room)
+}

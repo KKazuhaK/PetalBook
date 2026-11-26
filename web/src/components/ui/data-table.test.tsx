@@ -632,3 +632,91 @@ describe('no vertical lines', () => {
     ).toBe('0')
   })
 })
+
+describe('fitting the columns to their content', () => {
+  // A text is 10px a letter; the layout of jsdom has no widths of its own.
+  const measure = () => {
+    const real = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (!this.hasAttribute('data-fit')) return real.call(this)
+      return { width: (this.textContent?.length ?? 0) * 10, height: 0 } as DOMRect
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+  }
+  const long: Row[] = [
+    { id: 'a', name: 'Ann', role: 'r'.repeat(20), mail: 'm'.repeat(60), seen: 'today' },
+    { id: 'b', name: 'Bo', role: 'member', mail: 'bo@x.test', seen: 'never' },
+  ]
+  const widths = () => [...document.querySelectorAll('col')].slice(0, 4).map((c) => parseFloat(c.style.width))
+  const open = async () => {
+    await click(document.querySelector('[data-slot="table-settings"]'))
+    await settle(() => document.querySelector('[data-slot="popover-content"]') !== null, 'the settings')
+  }
+
+  it('starts each column at its content, cuts a long one at its cap, and shares the rest', async () => {
+    measure()
+    m = await mount(<Probe rows={long} />)
+    // Content with the padding: name and seen below their least (120, 100), role 224, mail 624 capped at 320.
+    // 804 of room less 764 leaves 40, ten to each column.
+    expect(widths()).toEqual([130, 234, 330, 110])
+    expect(widths().reduce((n, w) => n + w, 0)).toBe(804)
+    expect(saved()).toBeNull()
+  })
+
+  it('scrolls inside its box, and not the page, when the content does not fit', async () => {
+    measure()
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700)
+    m = await mount(<Probe rows={long} />)
+    expect(widths()).toEqual([120, 224, 320, 100])
+    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 224 + 320 + 100 + 196}px`)
+  })
+
+  it('keeps a width the person set over the content, and goes back to it on reset', async () => {
+    measure()
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
+    )
+    m = await mount(<Probe rows={long} />)
+    expect(widths()).toEqual([201, 201, 201, 201])
+    await open()
+    await click(
+      [...document.querySelectorAll('[data-slot="popover-content"] button')].find(
+        (b) => b.textContent === tc.table.resetColumns,
+      ),
+    )
+    expect(widths()).toEqual([130, 234, 330, 110])
+    expect(saved().widths).toEqual({})
+  })
+
+  it('fits a column to its content on a double click of its edge, and on Enter', async () => {
+    measure()
+    localStorage.setItem(
+      'pb.table.probe',
+      JSON.stringify({ widths: { name: 0.25, role: 0.25, mail: 0.25, seen: 0.25 }, custom: true }),
+    )
+    m = await mount(<Probe rows={long} />)
+    const edges = () => document.querySelectorAll<HTMLElement>('[role="separator"]')
+    await act(async () => {
+      edges()[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(saved().widths.role * 804).toBeCloseTo(224, 0)
+    expect(widths()[1]).toBe(224)
+    await press(edges()[2], 'Enter')
+    // The mail is cut at its cap.
+    expect(saved().widths.mail * 804).toBeCloseTo(320, 0)
+  })
+
+  it('gives a cut cell its full text as a tooltip, once the pointer is on it', async () => {
+    measure()
+    m = await mount(<Probe rows={long} />)
+    const cell = document.querySelector<HTMLElement>('tbody td[data-column="mail"] > div')!
+    vi.spyOn(cell, 'scrollWidth', 'get').mockReturnValue(624)
+    vi.spyOn(cell, 'clientWidth', 'get').mockReturnValue(306)
+    expect(cell.title).toBe('')
+    await act(async () => {
+      cell.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+    })
+    expect(cell.title).toBe('m'.repeat(60))
+  })
+})
