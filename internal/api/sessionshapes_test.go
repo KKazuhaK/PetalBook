@@ -36,9 +36,9 @@ func TestSignInFillsTheClientAndTheHomeProof(t *testing.T) {
 	})
 }
 
-// Requests add no query for the session and write nothing: the new fields are
-// written only with the hourly last_used update.
-func TestSessionShapesAddNoQueryPerRequestAndTravelWithLastUsed(t *testing.T) {
+// A change of proofs made through the service is not undone by the hourly
+// last_used update, which writes nothing else.
+func TestTheHourlyTouchWritesOnlyLastUsed(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{mod: func(c *auth.Config) { c.CacheTTL = 24 * time.Hour }}, func(t *testing.T, a *acc) {
 		a.setup("kazuha", pw)
@@ -48,29 +48,24 @@ func TestSessionShapesAddNoQueryPerRequestAndTravelWithLastUsed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id, tenant := p.SessionID, p.User.TenantID
-		// Change the stored proofs behind the cache's back: a request within the
-		// hour must neither read nor write them.
-		if err := store.UpdateSessionState(ctx, a.st.Q(), id, "", map[string]store.Proof{}); err != nil {
+		id := p.SessionID
+		before, _ := store.GetSessionState(ctx, a.st.Q(), id)
+		set := map[string]store.Proof{"T2": {Method: "sso", Provider: "corp", At: 5, Seen: 6}}
+		if err := a.auth.UpdateSessionState(ctx, id, "T2", set); err != nil {
 			t.Fatal(err)
 		}
-		for range 5 {
-			a.clock.Advance(time.Minute)
+		for range 3 {
+			a.clock.Advance(30 * time.Minute)
 			if _, err := a.auth.Authenticate(ctx, tang.session(t)); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if s, _ := store.GetSessionState(ctx, a.st.Q(), id); len(s.Proofs) != 0 {
-			t.Fatalf("a request wrote the proofs: %+v", s.Proofs)
-		}
-		// The hourly update writes them with last_used.
-		a.clock.Advance(61 * time.Minute)
-		if _, err := a.auth.Authenticate(ctx, tang.session(t)); err != nil {
-			t.Fatal(err)
-		}
 		s, _ := store.GetSessionState(ctx, a.st.Q(), id)
-		if _, ok := s.Proofs[tenant]; !ok || s.Client != "web" {
-			t.Fatalf("not written with last_used: %+v", s)
+		if !s.LastUsed.After(before.LastUsed) {
+			t.Fatal("last_used did not move")
+		}
+		if s.CurrentTenant != "T2" || len(s.Proofs) != 1 || s.Proofs["T2"] != set["T2"] {
+			t.Fatalf("the touch undid the change: %+v", s)
 		}
 	})
 }

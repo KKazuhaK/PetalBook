@@ -167,10 +167,10 @@ func UpdateSessionState(ctx context.Context, q Q, id, currentTenant string, proo
 }
 
 // TouchSession records use. Callers do it at most once an hour per session.
-// The context and proofs the caller holds for the session are written with it
-// and never on their own.
-func TouchSession(ctx context.Context, q Q, id string, at time.Time, currentTenant string, proofs map[string]Proof) error {
-	_, err := q.Exec(ctx, `UPDATE sessions SET last_used = ?, current_tenant = ?, proofs = ? WHERE id = ?`, ms(at), currentTenant, encodeProofs(proofs), id)
+// It writes last_used only: the context and proofs change through
+// UpdateSessionState, never from a copy that may be old.
+func TouchSession(ctx context.Context, q Q, id string, at time.Time) error {
+	_, err := q.Exec(ctx, `UPDATE sessions SET last_used = ? WHERE id = ?`, ms(at), id)
 	return err
 }
 

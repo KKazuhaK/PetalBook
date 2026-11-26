@@ -85,8 +85,6 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	}
 
 	touch := false
-	var curTenant string
-	var proofs map[string]store.Proof
 	s.cmu.Lock()
 	cur := s.sessions[id]
 	if cur == nil && s.gen != gen {
@@ -109,11 +107,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if now.Sub(cur.persisted) >= touchEvery {
 		cur.persisted = now
 		touch = true
-		curTenant, proofs = cur.currentTenant, cur.proofs
 	}
 	s.cmu.Unlock()
 	if touch {
-		if err := store.TouchSession(ctx, s.st.Q(), id, now, curTenant, proofs); err != nil {
+		if err := store.TouchSession(ctx, s.st.Q(), id, now); err != nil {
 			s.log.Warn("could not record session use", "error", err)
 		}
 	}
@@ -122,6 +119,18 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		s.log.Warn("could not record a person's last use", "error", err)
 	}
 	return &Principal{User: *u, Access: access, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
+}
+
+// UpdateSessionState sets the context a session is in and its proofs (3.7),
+// and forgets the cached copy of the session so that the next request reads
+// what was written.
+func (s *Service) UpdateSessionState(ctx context.Context, id, currentTenant string, proofs map[string]store.Proof) error {
+	err := store.UpdateSessionState(ctx, s.st.Q(), id, currentTenant, proofs)
+	s.cmu.Lock()
+	s.gen++
+	delete(s.sessions, id)
+	s.cmu.Unlock()
+	return err
 }
 
 // releaseHold forgets, in the cache, that a session was held.

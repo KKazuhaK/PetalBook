@@ -814,8 +814,10 @@ lifetime: app 30 days, web 7). An organization that enforces its SSO or verified
 domain gates only its own context: its spaces open only in a session that holds a
 live proof for it; switching between verified contexts is free. Sign-in fills
 `client` (`web` until a request says otherwise) and the home proof. The session
-cache keeps the fields and writes them only with the hourly `last_used` update, so
-a request adds no query and no write.
+cache keeps what it read, never writes it back, and the hourly update writes
+`last_used` only; `current_tenant` and `proofs` change only through
+`UpdateSessionState`, which drops the session's cache entry. A request adds no
+query and no write.
 
 Decided:
 
