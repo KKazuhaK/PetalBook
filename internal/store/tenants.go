@@ -486,8 +486,12 @@ func (s *Store) DeleteTenant(ctx context.Context, id string) error {
 		if _, err := q.Exec(ctx, `DELETE FROM registrations WHERE tenant_id = ?`, id); err != nil {
 			return err
 		}
-		// A provider that put new accounts here goes back to the default tenant.
-		if _, err := q.Exec(ctx, `UPDATE sign_in_providers SET tenant_id = ? WHERE tenant_id = ?`, DefaultTenantID, id); err != nil {
+		// The providers the tenant owns go (their linked accounts with them); one that
+		// put new accounts here goes back to the default tenant.
+		if err := deleteProviderRows(ctx, q, `owner = ?`, id); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `UPDATE providers SET jit_tenant = ? WHERE jit_tenant = ?`, DefaultTenantID, id); err != nil {
 			return err
 		}
 		for _, st := range []string{

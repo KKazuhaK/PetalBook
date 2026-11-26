@@ -49,6 +49,7 @@ import type {
   ConnectAssetsInput,
   ConnectRemoteInput,
   AuthProviders,
+  Link,
   CaptchaAnswer,
   CaptchaChallenge,
   CaptchaContext,
@@ -843,7 +844,14 @@ export const api = {
   // `current` is left out when the account has no password yet.
   changePassword: (input: { current?: string; new: string }) =>
     request<void>('/account/password', { method: 'POST', body: input }),
-  removeIdentity: (id: string) => request<void>(`/account/identities/${enc(id)}`, { method: 'DELETE' }),
+  // The sign-ins the person has linked, one per provider. `provider` is the provider's id (its slug, for a site provider).
+  accountLinks: (signal?: AbortSignal) => request<{ links: Link[] }>('/account/links', { signal }),
+  startLink: (provider: string, ret?: string) =>
+    request<{ url: string }>(`/account/links/${enc(provider)}/start`, {
+      method: 'POST',
+      body: { purpose: 'signin', ...(ret ? { return: ret } : {}) },
+    }),
+  removeLink: (id: string) => request<void>(`/account/links/${enc(id)}`, { method: 'DELETE' }),
   // Registering a passkey: a ceremony, the browser's credential, then the list as it is.
   passkeyRegisterBegin: (name: string) =>
     request<PasskeyCeremony>('/account/passkeys/begin', { method: 'POST', body: { name } }),

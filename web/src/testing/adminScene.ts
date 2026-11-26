@@ -164,7 +164,7 @@ export function asTenantAdmin(d: FixtureData) {
 
 // What a person holds, as the server measured it (the usage page lists people by it).
 export function measured(d: FixtureData, u: UserRec, usage: NonNullable<PersonRec['usage']>) {
-  ;(d.admin.people[u.id] ??= { sessions: [], identities: [], passkeys: [] }).usage = {
+  ;(d.admin.people[u.id] ??= { sessions: [], links: [], passkeys: [] }).usage = {
     measuredAt: '2026-11-20T08:00:00Z',
     ...usage,
   }

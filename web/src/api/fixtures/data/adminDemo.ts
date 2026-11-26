@@ -21,7 +21,7 @@ export function seedAdminDemo(d: FixtureData) {
   d.auth.users.push(carol, dave)
   d.admin.people[dave.id] = {
     sessions: [{ id: 's1', userAgent: 'Firefox on Linux', method: 'password', created: at, lastUsed: at }],
-    identities: [],
+    links: [],
     passkeys: [{ id: 'k1', name: '笔记本电脑', created: at, lastUsed: null, synced: false }],
   }
   d.admin.groups.push({

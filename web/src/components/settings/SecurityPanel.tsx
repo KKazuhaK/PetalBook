@@ -4,8 +4,8 @@ import { useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/api/client'
-import { keys, useAccount, useAuthProviders, useSession } from '@/api/hooks'
-import type { AccountInfo, Identity, PublicProvider } from '@/api/types'
+import { keys, useAccount, useAccountLinks, useAuthProviders, useSession } from '@/api/hooks'
+import type { AccountInfo, Link, PublicProvider } from '@/api/types'
 import { ProviderIcon } from '@/components/auth/ProviderIcon'
 import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { Field, FormMessage } from '@/components/auth/Field'
@@ -77,7 +77,7 @@ function Sections({ account }: { account: AccountInfo }) {
       )}
       <PasswordSection account={account} />
       <PasskeysSection account={account} />
-      <Identities account={account} />
+      <Links />
     </>
   )
 }
@@ -196,20 +196,22 @@ export function PasswordForm({ account, onDone }: { account: AccountInfo; onDone
   )
 }
 
-function Identities({ account }: { account: AccountInfo }) {
+function Links() {
   const qc = useQueryClient()
   const providers = useAuthProviders()
-  const [removing, setRemoving] = useState<Identity | null>(null)
+  const linksQuery = useAccountLinks()
+  const [removing, setRemoving] = useState<Link | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  // A button for each enabled provider the person has no identity from.
-  const linked = new Set(account.identities.map((i) => `${i.kind}/${i.providerSlug}`))
-  const linkable = (providers.data?.providers ?? []).filter((p) => !linked.has(`${p.kind}/${p.slug}`))
+  const links = linksQuery.data?.links ?? []
+  // A button for each enabled provider the person has no linked account at: one per provider.
+  const linked = new Set(links.map((l) => l.providerId))
+  const linkable = (providers.data?.providers ?? []).filter((p) => !linked.has(p.slug))
 
   const link = async (p: PublicProvider) => {
     setError('')
     try {
-      const { url } = await api.providerStart(p.kind, p.slug, { intent: 'link', return: '/settings' })
+      const { url } = await api.startLink(p.slug, '/settings')
       window.location.assign(url)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t.auth.failed)
@@ -220,30 +222,31 @@ function Identities({ account }: { account: AccountInfo }) {
     if (!removing) return
     setBusy(true)
     try {
-      await api.removeIdentity(removing.id)
-      qc.setQueryData<AccountInfo>(
-        keys.account,
-        (prev) => prev && { ...prev, identities: prev.identities.filter((i) => i.id !== removing.id) },
+      await api.removeLink(removing.id)
+      qc.setQueryData<{ links: Link[] }>(
+        keys.accountLinks,
+        (prev) => prev && { ...prev, links: prev.links.filter((l) => l.id !== removing.id) },
       )
+      void qc.invalidateQueries({ queryKey: keys.accountLinks })
       setRemoving(null)
     } catch (err) {
       setRemoving(null)
       // 409: it is the only way in.
-      if (err instanceof ApiError && err.code === 'conflict') setError(t.settings.onlyWay)
+      if (err instanceof ApiError && err.code === 'last_method') setError(t.settings.onlyWay)
       else toast.error(err instanceof ApiError ? err.message : t.auth.failed)
     }
     setBusy(false)
   }
 
   // Nothing to show where no provider is set up and nothing is linked.
-  if (linkable.length === 0 && account.identities.length === 0) return null
+  if (linkable.length === 0 && links.length === 0) return null
   return (
     <SettingsSection title={t.settings.identities}>
       <SettingsRows>
         {linkable.length > 0 && (
           <SettingsRow
             title={ts.identities.linkTo}
-            help={account.identities.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}
+            help={links.length === 0 ? t.settings.noIdentities : t.settings.identitiesHelp}
           >
             <div className="grid grid-cols-1 gap-2">
               {linkable.map((p) => (
@@ -261,10 +264,10 @@ function Identities({ account }: { account: AccountInfo }) {
             </div>
           </SettingsRow>
         )}
-        {account.identities.map((i) => (
+        {links.map((i) => (
           <SettingsRow
             key={i.id}
-            title={i.providerSlug ? i.provider : `${ts.identities.deleted}: ${i.provider}`}
+            title={i.provider}
             help={`${i.label} · ${t.settings.linkedOn(absoluteTime(i.created))}`}
           >
             <Button

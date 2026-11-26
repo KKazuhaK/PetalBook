@@ -39,7 +39,7 @@ func samlFixture(t *testing.T, a *acc, idp *fakeSAML, extra map[string]any) *cli
 	// The assertions are signed with the real time, which the service reads from its clock.
 	a.clock.Advance(time.Since(a.clock.Now()))
 	admin := a.setup("kazuha", pw)
-	p := admin.do("POST", "/api/admin/auth/providers", idp.body(samlSlug, extra)).want(t, 201, "")
+	p := admin.do("POST", "/api/admin/providers", idp.body(samlSlug, extra)).want(t, 201, "")
 	s := p.body["saml"].(map[string]any)
 	if s["acsUrl"] != testPublic+"/api/auth/saml/campus/acs" || s["entityId"] != testPublic+"/api/auth/saml/campus/metadata" || s["metadataPath"] != "/api/auth/saml/campus/metadata" ||
 		s["idpEntityId"] == "" || !strings.HasPrefix(s["certificate"].(string), "-----BEGIN CERTIFICATE-----") || s["certificateExpires"] == "" ||
@@ -81,7 +81,7 @@ func TestSAMLSignIn(t *testing.T) {
 			t.Fatal("the attempt cookie was not cleared")
 		}
 		// Making accounts from the mapped attributes.
-		admin.do("PATCH", "/api/admin/auth/providers/campus", map[string]any{"autoCreate": true}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"autoCreate": true}).want(t, 200, "")
 		c = a.newClient("")
 		at = idp.begin(t, c, samlSlug, map[string]any{"return": "/s/x"})
 		r = c.postACS(samlSlug, at.response, at.relay, at.cookie)
@@ -92,13 +92,13 @@ func TestSAMLSignIn(t *testing.T) {
 		if u["name"] != "Saml Person" || u["email"] != "saml.person@example.test" || u["emailVerified"] != false || u["role"] != "member" {
 			t.Fatal(u)
 		}
-		acct := c.do("GET", "/api/account", nil).want(t, 200, "")
-		id := acct.body["identities"].([]any)[0].(map[string]any)
-		if id["kind"] != "saml" || id["providerSlug"] != "campus" || id["label"] != "saml.person@example.test" {
+		acct := c.do("GET", "/api/account/links", nil).want(t, 200, "")
+		id := acct.body["links"].([]any)[0].(map[string]any)
+		if id["kind"] != "saml" || id["slug"] != "campus" || id["label"] != "saml.person@example.test" {
 			t.Fatal(acct.raw)
 		}
-		// The identity is the identity provider's entity ID and the NameID.
-		if _, err := store.FindIdentity(context.Background(), a.st.Q(), idp.idp.Metadata().EntityID, "subject-001"); err != nil {
+		// The linked account is the provider id and the NameID.
+		if _, err := store.FindLink(context.Background(), a.st.Q(), samlSlug, "subject-001"); err != nil {
 			t.Fatal(err)
 		}
 		// The same person signs in again and gets the same account; an attempt is used once.
@@ -132,7 +132,7 @@ func TestSAMLSignIn(t *testing.T) {
 		if lr := other.postACS(samlSlug, at.response, at.relay, at.cookie); lr.resp.Header.Get("Location") != "/settings?sso_error=expired" {
 			t.Fatalf("wrong binding: %s", lr.resp.Header.Get("Location"))
 		}
-		if ids := tang.do("GET", "/api/account", nil).body["identities"].([]any); len(ids) != 0 {
+		if ids := tang.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 0 {
 			t.Fatal(ids)
 		}
 		at = idp.begin(t, tang, samlSlug, map[string]any{"intent": "link", "return": "/settings"})
@@ -140,7 +140,7 @@ func TestSAMLSignIn(t *testing.T) {
 		if lr.resp.Header.Get("Location") != "/settings" {
 			t.Fatalf("%s", lr.resp.Header.Get("Location"))
 		}
-		if ids := tang.do("GET", "/api/account", nil).body["identities"].([]any); len(ids) != 1 {
+		if ids := tang.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 1 {
 			t.Fatal(ids)
 		}
 		// Which another account has.
@@ -309,7 +309,7 @@ func TestSAMLIdPInitiatedAndReplay(t *testing.T) {
 		if r.resp.Header.Get("Location") != "/login?sso_error=expired" {
 			t.Fatalf("%s", r.resp.Header.Get("Location"))
 		}
-		admin.do("PATCH", "/api/admin/auth/providers/campus", map[string]any{"saml": map[string]any{"allowIdpInitiated": true}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"saml": map[string]any{"allowIdpInitiated": true}}).want(t, 200, "")
 		c := a.newClient("")
 		resp := idp.idpInitiated(t)
 		r = c.postACS(samlSlug, resp, "", nil)
@@ -363,7 +363,7 @@ func TestSAMLEndpoints(t *testing.T) {
 		c.do("POST", "/api/auth/saml/campus/acs", map[string]any{"SAMLResponse": "x"}).want(t, 415, "invalid")
 		c.do("GET", "/api/auth/saml/campus/acs", nil).want(t, 405, "invalid")
 		// Garbage and over-large responses.
-		admin.do("PATCH", "/api/admin/auth/providers/campus", map[string]any{"enabled": true}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"enabled": true}).want(t, 200, "")
 		for _, body := range [][]byte{[]byte("not xml at all"), []byte(`<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><Response>&a;</Response>`), []byte(strings.Repeat("A", 1<<21))} {
 			r := a.newClient("").postACS(samlSlug, body, "", nil)
 			if loc := r.resp.Header.Get("Location"); r.code != 303 || !strings.HasPrefix(loc, "/login?sso_error=") {
@@ -389,39 +389,41 @@ func TestSAMLProviderFromMetadataAddress(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		b := idp.body("byurl", nil)
 		b["saml"] = map[string]any{"metadataUrl": idp.srv.URL + "/metadata"}
-		p := admin.do("POST", "/api/admin/auth/providers", b).want(t, 201, "")
+		p := admin.do("POST", "/api/admin/providers", b).want(t, 201, "")
 		if p.body["enabled"] != true || p.body["saml"].(map[string]any)["idpEntityId"] != idp.idp.Metadata().EntityID {
 			t.Fatal(p.raw)
 		}
-		// The same identity provider twice is refused.
+		// The same identity provider twice is allowed: accounts are found by the
+		// provider's own id, so a second provider with the same entity id reaches none of the first's.
 		b2 := idp.body("again", nil)
 		b2["saml"] = map[string]any{"metadataUrl": idp.srv.URL + "/metadata"}
-		admin.do("POST", "/api/admin/auth/providers", b2).want(t, 409, "provider_issuer_in_use")
+		admin.do("POST", "/api/admin/providers", b2).want(t, 201, "")
+		admin.do("DELETE", "/api/admin/providers/again", nil).want(t, 204, "")
 		// Metadata that cannot be used.
 		for name, xml := range map[string]string{"garbage": "nope", "no idp": `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://x.example"></EntityDescriptor>`,
 			"no certificate": regexp.MustCompile(`(?s)<KeyDescriptor.*?</KeyDescriptor>`).ReplaceAllString(other.metadata, "")} {
 			bb := other.body("bad", nil)
 			bb["saml"] = map[string]any{"metadataXml": xml}
-			admin.do("POST", "/api/admin/auth/providers", bb).want(t, 400, "saml_metadata_invalid")
+			admin.do("POST", "/api/admin/providers", bb).want(t, 400, "saml_metadata_invalid")
 			_ = name
 		}
 		both := other.body("both", nil)
 		both["saml"].(map[string]any)["metadataUrl"] = other.srv.URL + "/metadata"
-		admin.do("POST", "/api/admin/auth/providers", both).want(t, 400, "invalid")
+		admin.do("POST", "/api/admin/providers", both).want(t, 400, "invalid")
 		neither := other.body("neither", nil)
 		neither["saml"] = map[string]any{}
-		admin.do("POST", "/api/admin/auth/providers", neither).want(t, 400, "invalid")
+		admin.do("POST", "/api/admin/providers", neither).want(t, 400, "invalid")
 		// An address that cannot be reached is stored, disabled.
 		down := other.body("down", nil)
 		down["saml"] = map[string]any{"metadataUrl": "https://127.0.0.1:1/metadata"}
-		d := admin.do("POST", "/api/admin/auth/providers", down).want(t, 201, "")
+		d := admin.do("POST", "/api/admin/providers", down).want(t, 201, "")
 		if d.body["enabled"] != false || d.body["status"].(map[string]any)["ok"] != true && d.body["status"].(map[string]any)["message"] == "" {
 			t.Fatal(d.raw)
 		}
 		// Refresh fetches again; the stored metadata keeps serving when the address is down.
-		admin.do("POST", "/api/admin/auth/providers/byurl/refresh", nil).want(t, 200, "")
+		admin.do("POST", "/api/admin/providers/byurl/check", nil).want(t, 200, "")
 		idp.srv.Close()
-		r := admin.do("POST", "/api/admin/auth/providers/byurl/refresh", nil).want(t, 200, "")
+		r := admin.do("POST", "/api/admin/providers/byurl/check", nil).want(t, 200, "")
 		if r.body["status"].(map[string]any)["ok"] != false {
 			t.Fatal(r.raw)
 		}

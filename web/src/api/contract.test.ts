@@ -421,7 +421,7 @@ function suite(target: Target) {
         ['POST', '/api/auth/oidc/company/start', { intent: 'login' }],
         ['GET', '/api/account/passkeys'],
         ['GET', '/api/admin/security'],
-        ['GET', '/api/admin/auth/providers'],
+        ['GET', '/api/admin/providers'],
         ['GET', '/api/admin/audit'],
         ['GET', '/api/account'],
         ['GET', '/api/users'],
@@ -573,7 +573,8 @@ function suite(target: Target) {
           expect(r.status).toBe(200)
           expect(r.json.user.id).toBe(m.user.id)
           expect(r.json.hasPassword).toBe(true)
-          expect(r.json.identities).toEqual([])
+          expect(r.json).not.toHaveProperty('identities')
+          expect((await call(m.browser, 'GET', '/api/account/links')).json).toEqual({ links: [] })
         })
 
         it('PATCH changes the name and the email, each optional', async () => {
@@ -926,8 +927,8 @@ function suite(target: Target) {
             expect([r.status, r.json.reason]).toEqual([401, 'signed_out_elsewhere'])
           }
           // No connected account to list, and no such one to disconnect.
-          expect((await as(admin, () => adminApi.userIdentities(m.user.id))).identities).toEqual([])
-          const none = await call(admin, 'DELETE', `/api/users/${m.user.id}/identities/NOSUCHIDEN`)
+          expect((await as(admin, () => adminApi.userLinks(m.user.id))).links).toEqual([])
+          const none = await call(admin, 'DELETE', `/api/users/${m.user.id}/links/NOSUCHLINK`)
           expect([none.status, none.json.error]).toEqual([404, 'not_found'])
           // A member of any kind is refused, and a person who does not exist is none.
           const again = browser()
@@ -935,7 +936,7 @@ function suite(target: Target) {
           for (const [method, path] of [
             ['GET', `/api/users/${m.user.id}/sessions`],
             ['DELETE', `/api/users/${m.user.id}/sessions`],
-            ['GET', `/api/users/${m.user.id}/identities`],
+            ['GET', `/api/users/${m.user.id}/links`],
           ]) {
             const r = await call(again, method, path)
             expect([r.status, r.json?.error], `${method} ${path}`).toEqual([403, 'forbidden'])
@@ -2672,8 +2673,8 @@ function suite(target: Target) {
           ['GET', '/api/admin/status'],
           ['GET', '/api/admin/security'],
           ['PUT', '/api/admin/security', {}],
-          ['GET', '/api/admin/auth/providers'],
-          ['POST', '/api/admin/auth/providers', {}],
+          ['GET', '/api/admin/providers'],
+          ['POST', '/api/admin/providers', {}],
           ['GET', '/api/admin/audit'],
           ['GET', '/api/admin/spaces/01ZZZZZZZZ'],
           ['POST', '/api/admin/spaces/01ZZZZZZZZ/size'],

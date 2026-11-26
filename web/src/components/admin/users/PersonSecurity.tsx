@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { adminApi } from '@/api/admin'
 import { keys, useAuthProviders } from '@/api/hooks'
-import type { Passkey, PersonIdentity, User } from '@/api/types'
+import type { Passkey, Link, User } from '@/api/types'
 import { FormMessage } from '@/components/auth/Field'
 import { SettingsSection } from '@/components/settings/SettingsParts'
 import {
@@ -204,17 +204,17 @@ function ConnectedAccounts({ u }: { u: User }) {
   const qc = useQueryClient()
   const inScope = useInScope()
   const list = useQuery({
-    queryKey: [...keys.users, 'identities', u.id],
-    queryFn: ({ signal }) => adminApi.userIdentities(u.id, signal),
+    queryKey: [...keys.users, 'links', u.id],
+    queryFn: ({ signal }) => adminApi.userLinks(u.id, signal),
   })
-  const [removing, setRemoving] = useState<PersonIdentity | null>(null)
+  const [removing, setRemoving] = useState<Link | null>(null)
   const [error, setError] = useState('')
   const remove = async () => {
     if (!removing) return
     const target = removing
     setError('')
     try {
-      await inScope(() => adminApi.disconnectUserIdentity(u.id, target.id))
+      await inScope(() => adminApi.disconnectUserLink(u.id, target.id))
       void qc.invalidateQueries({ queryKey: keys.users })
       toast.success(tc.person.security.disconnected)
     } catch (e) {
@@ -222,7 +222,7 @@ function ConnectedAccounts({ u }: { u: User }) {
     }
     setRemoving(null)
   }
-  const label = (i: PersonIdentity) => [i.provider, i.label].filter(Boolean).join(' · ')
+  const label = (i: Link) => [i.provider, i.label].filter(Boolean).join(' · ')
   return (
     <SettingsSection
       title={tc.person.security.connected}
@@ -233,16 +233,12 @@ function ConnectedAccounts({ u }: { u: User }) {
         <div aria-busy="true" className="h-10 animate-pulse rounded-md bg-muted" />
       ) : list.isError ? (
         <FormMessage>{tc.person.security.failed}</FormMessage>
-      ) : list.data.identities.length === 0 ? (
+      ) : list.data.links.length === 0 ? (
         <p className="text-sm text-muted-foreground">{tc.person.security.noneConnected}</p>
       ) : (
-        <ul className="divide-y rounded-lg border" data-slot="identities">
-          {list.data.identities.map((i) => (
-            <li
-              key={i.id}
-              className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2"
-              data-identity={i.id}
-            >
+        <ul className="divide-y rounded-lg border" data-slot="links">
+          {list.data.links.map((i) => (
+            <li key={i.id} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" data-link={i.id}>
               <div className="min-w-0 flex-1 basis-40">
                 <div className="truncate text-sm">{label(i)}</div>
                 <div className="text-xs text-muted-foreground">{absoluteTime(i.created)}</div>

@@ -161,7 +161,7 @@ func ListUserRows(ctx context.Context, q Q, sc Scope, f UserFilter) (out []UserR
 	if err != nil {
 		return nil, "", err
 	}
-	idn, err := countByUser(ctx, q, `identities`, ids)
+	idn, err := countByUser(ctx, q, `linked_accounts`, ids, `signin = 1`)
 	if err != nil {
 		return nil, "", err
 	}
@@ -173,9 +173,9 @@ func ListUserRows(ctx context.Context, q Q, sc Scope, f UserFilter) (out []UserR
 
 // countByUser counts the rows of a table that hangs under users, for the given
 // ids only (by the table's index on user_id).
-func countByUser(ctx context.Context, q Q, table string, ids []any) (map[string]int, error) {
+func countByUser(ctx context.Context, q Q, table string, ids []any, and ...string) (map[string]int, error) {
 	marks := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
-	rows, err := q.Query(ctx, `SELECT user_id, COUNT(*) FROM `+table+` WHERE user_id IN (`+marks+`) GROUP BY user_id`, ids...)
+	rows, err := q.Query(ctx, `SELECT user_id, COUNT(*) FROM `+table+` WHERE user_id IN (`+marks+`)`+strings.Join(append([]string{""}, and...), " AND ")+` GROUP BY user_id`, ids...)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func GetUserRow(ctx context.Context, q Q, sc Scope, id string) (UserRow, error) 
 	if err != nil {
 		return UserRow{}, err
 	}
-	idn, err := countByUser(ctx, q, `identities`, ids)
+	idn, err := countByUser(ctx, q, `linked_accounts`, ids, `signin = 1`)
 	if err != nil {
 		return UserRow{}, err
 	}

@@ -40,6 +40,7 @@ export const signinEn: SigninMessages = {
     not_allowed: 'You are not in an organisation this sign-in method requires, so you cannot sign in.',
     disabled: 'This account is disabled.',
     identity_in_use: 'This identity already belongs to another account.',
+    already_linked: 'You already have an account linked at this provider; unlink it first to link another.',
     email_in_use:
       'Another account already has this email address. Sign in to that account, then link this sign-in method from your account settings.',
     invite_invalid: 'The invite is invalid, expired or already used.',
@@ -55,6 +56,8 @@ export const signinEn: SigninMessages = {
     saml_transient_nameid:
       'The SAML NameID is transient. Set the identity provider to persistent, emailAddress or unspecified.',
     saml_no_nameid: 'The SAML assertion has no NameID.',
+    saml_no_email:
+      'Sign-in was refused because the identity provider sent no email address. Ask your administrator to map an email attribute.',
     saml_assertion_rejected: 'The SAML response did not validate (signature, audience or time).',
     internal: 'Something failed on the server. The details are in its log.',
     unknown: 'Single sign-on did not work.',

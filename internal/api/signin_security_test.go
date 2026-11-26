@@ -145,12 +145,12 @@ func TestSSOOnlyKeepsAPasswordAdminWhileNotInEffect(t *testing.T) {
 		c.putSetting("signin.mode", "dual").want(t, 400, "local_admin_required")
 		// Enabling a provider would too.
 		setRole("admin")
-		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
+		c.do("PATCH", "/api/admin/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
 		c.putSetting("signin.mode", "dual").want(t, 200, "")
 		setRole("member")
-		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 400, "local_admin_required")
+		c.do("PATCH", "/api/admin/providers/sso", map[string]any{"enabled": true}).want(t, 400, "local_admin_required")
 		setRole("admin")
-		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 200, "")
+		c.do("PATCH", "/api/admin/providers/sso", map[string]any{"enabled": true}).want(t, 200, "")
 	})
 }
 
@@ -214,14 +214,14 @@ func TestSSOOnlyIsCheckedWhenSavedAndAfterThePassword(t *testing.T) {
 		boss.putSetting("signin.mode", "sso_redirect").want(t, 200, "")
 		a.newClient("203.0.113.7").do("POST", "/api/login", good("tang")).want(t, 403, "local_login_refused")
 		// No enabled provider: the page says local_only whatever is stored.
-		boss.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
+		boss.do("PATCH", "/api/admin/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
 		pub = a.newClient("").do("GET", "/api/auth/providers", nil).want(t, 200, "")
 		if pub.body["loginMode"] != "local_only" || pub.body["local"] != true || pub.body["sso"] != false || len(pub.body["providers"].([]any)) != 0 {
 			t.Fatal(pub.raw)
 		}
 		a.newClient("203.0.113.8").do("POST", "/api/login", good("tang")).want(t, 200, "")
 		// The four modes and what the page may draw.
-		boss.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 200, "")
+		boss.do("PATCH", "/api/admin/providers/sso", map[string]any{"enabled": true}).want(t, 200, "")
 		for mode, want := range map[string][2]bool{"dual": {true, true}, "sso_first": {true, true}, "sso_redirect": {false, true}, "local_only": {true, false}} {
 			boss.putSetting("signin.mode", mode).want(t, 200, "")
 			pub = a.newClient("").do("GET", "/api/auth/providers", nil).want(t, 200, "")

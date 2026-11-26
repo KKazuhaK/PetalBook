@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"strings"
@@ -32,14 +33,15 @@ const (
 // provider that said it.
 type emailSource struct {
 	template string
-	// org: the provider is an organisation's own SSO (OIDC or SAML); its
-	// addresses are trusted only on orgDomains, the domains the organisation
-	// verified. Until domain verification exists the list is empty, so an
-	// organisation's SSO vouches for nothing.
+	// org: the provider is owned by a tenant (an organisation's own SSO, OIDC
+	// or SAML); its addresses are trusted only on orgDomains, the domains the
+	// organisation verified. Until domain verification exists the list is
+	// empty, so an organisation's SSO vouches for nothing.
 	org        bool
 	orgDomains []string
 	// trustOptIn is a configured provider's "trust this provider's verified
-	// addresses" (its mergeVerifiedEmail switch, off by default).
+	// addresses" (its mergeVerifiedEmail switch, off by default). It counts for
+	// the site's own providers only, never for an organisation's.
 	trustOptIn bool
 	// publicGitHub: a GitHub provider is github.com itself. A GitHub
 	// Enterprise server's verified flag is its administrators' word (they can
@@ -74,11 +76,62 @@ func trustsEmail(src emailSource) bool {
 		return claimTrue(src.claims, "xms_edov") || inDomains(src.email, src.orgDomains)
 	case tmplOIDC:
 		return src.trustOptIn && src.verified
+	case tmplSAML:
+		// SAML has no verified-address claim: the site's own SAML provider
+		// vouches for its addresses only by the administrator's opt-in.
+		return src.trustOptIn
 	default:
-		// SAML has no verified-address claim: a configured SAML provider is
-		// an organisation's SSO and waits for verified domains.
 		return false
 	}
+}
+
+// samlDefaultEmailAttr is the attribute a SAML provider's address is read
+// from when none is configured.
+const samlDefaultEmailAttr = "mail"
+
+// orgDomains is the verified email domains of a tenant. It is the hook for
+// 3.6 (d): none until a domain source is configured.
+func (s *Service) orgDomains(ctx context.Context, tenantID string) []string {
+	if s.cfg.OrgDomains == nil || tenantID == "" || tenantID == store.ProviderSite {
+		return nil
+	}
+	return s.cfg.OrgDomains(ctx, tenantID)
+}
+
+// orgSignInGate refuses to turn on a sign-in provider owned by a tenant that
+// has no verified domain: an organisation's SSO may vouch only for its own
+// domains, so without one it has nothing to say. The site's own are not held.
+func (s *Service) orgSignInGate(ctx context.Context, owner string) error {
+	if owner == "" || owner == store.ProviderSite {
+		return nil
+	}
+	if len(s.orgDomains(ctx, owner)) == 0 {
+		return coded(409, "domain_required", "Verify a domain for this organisation first: its single sign-on can be turned on only once it has one.")
+	}
+	return nil
+}
+
+// signInOn says whether a provider may be used to sign in now: it is enabled,
+// and a tenant's also has a verified domain.
+func (s *Service) signInOn(ctx context.Context, rt *providerRT) bool {
+	if !rt.row.Enabled {
+		return false
+	}
+	return s.orgSignInGate(ctx, rt.row.Owner) == nil
+}
+
+// trustSource fills what the provider's own configuration says into what a
+// sign-in said: the organisation's verified domains for a tenant's provider,
+// the administrator's opt-in for the site's.
+func (s *Service) trustSource(ctx context.Context, rt *providerRT, src emailSource, email string) emailSource {
+	src.email = email
+	if rt.row.Owner != store.ProviderSite {
+		src.org, src.orgDomains = true, s.orgDomains(ctx, rt.row.Owner)
+		src.trustOptIn = false
+	} else {
+		src.trustOptIn = rt.row.MergeVerifiedEmail
+	}
+	return src
 }
 
 // isPublicGitHub says whether a GitHub provider's base URL is github.com, not

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,11 +24,11 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		member := a.addUser("tang", pw, "member")
-		member.do("GET", "/api/admin/auth/providers", nil).want(t, 403, "forbidden")
-		member.do("POST", "/api/admin/auth/providers", f.providerBody("one", nil)).want(t, 403, "forbidden")
+		member.do("GET", "/api/admin/providers", nil).want(t, 403, "forbidden")
+		member.do("POST", "/api/admin/providers", f.providerBody("one", nil)).want(t, 403, "forbidden")
 		a.newClient("").do("GET", "/api/admin/security", nil).want(t, 401, "unauthenticated")
 
-		r := admin.do("POST", "/api/admin/auth/providers", f.providerBody("one", map[string]any{"icon": "preset:microsoft", "order": 2})).want(t, 201, "")
+		r := admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"icon": "preset:microsoft", "order": 2})).want(t, 201, "")
 		if strings.Contains(r.raw, idpSecret) {
 			t.Fatal("the secret is in the answer")
 		}
@@ -42,75 +43,77 @@ func TestProviderCRUDAndRefusals(t *testing.T) {
 		}
 		// The secret is sealed in the database, and not the plain text.
 		var enc string
-		if err := a.st.Q().QueryRow(context.Background(), `SELECT secret_enc FROM sign_in_providers WHERE slug = 'one'`).Scan(&enc); err != nil || enc == "" || strings.Contains(enc, idpSecret) {
+		if err := a.st.Q().QueryRow(context.Background(), `SELECT secret_enc FROM providers WHERE id = 'one'`).Scan(&enc); err != nil || enc == "" || strings.Contains(enc, idpSecret) {
 			t.Fatalf("%q %v", enc, err)
 		}
-		if g := admin.do("GET", "/api/admin/auth/providers/one", nil).want(t, 200, ""); g.body["name"] != "Provider one" || strings.Contains(g.raw, idpSecret) {
+		if g := admin.do("GET", "/api/admin/providers/one", nil).want(t, 200, ""); g.body["name"] != "Provider one" || strings.Contains(g.raw, idpSecret) {
 			t.Fatal(g.raw)
 		}
-		l := admin.do("GET", "/api/admin/auth/providers", nil).want(t, 200, "")
+		l := admin.do("GET", "/api/admin/providers", nil).want(t, 200, "")
 		if n := len(l.body["providers"].([]any)); n != 1 {
 			t.Fatal(l.raw)
 		}
-		admin.do("GET", "/api/admin/auth/providers/nope", nil).want(t, 404, "not_found")
+		admin.do("GET", "/api/admin/providers/nope", nil).want(t, 404, "not_found")
 
 		// Refusals.
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("one", nil)).want(t, 409, "exists")
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("two", nil)).want(t, 409, "provider_issuer_in_use")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", nil)).want(t, 409, "exists")
+		// The same issuer twice is allowed (no account is found by it); this is the same provider under another slug.
+		admin.do("POST", "/api/admin/providers", f.providerBody("two", nil)).want(t, 201, "")
+		admin.do("DELETE", "/api/admin/providers/two", nil).want(t, 204, "")
 		for _, slug := range []string{"", "Bad", "-x", "has space", strings.Repeat("a", 33)} {
-			admin.do("POST", "/api/admin/auth/providers", f.providerBody(slug, nil)).want(t, 400, "invalid")
+			admin.do("POST", "/api/admin/providers", f.providerBody(slug, nil)).want(t, 400, "invalid")
 		}
 		other := newIDPFor(t, "other")
 		for _, extra := range []map[string]any{{"icon": "https://evil.example/x.png"}, {"icon": "preset:nothing"}, {"name": ""}, {"name": strings.Repeat("n", 61)}, {"kind": "ldap"}} {
-			admin.do("POST", "/api/admin/auth/providers", other.providerBody("other", extra)).want(t, 400, "invalid")
+			admin.do("POST", "/api/admin/providers", other.providerBody("other", extra)).want(t, 400, "invalid")
 		}
 		bad := other.providerBody("other", nil)
 		bad["oidc"].(map[string]any)["issuer"] = "http://insecure.example.test"
-		admin.do("POST", "/api/admin/auth/providers", bad).want(t, 400, "oidc_issuer_invalid")
+		admin.do("POST", "/api/admin/providers", bad).want(t, 400, "oidc_issuer_invalid")
 		bad["oidc"].(map[string]any)["issuer"] = other.srv.URL
 		bad["github"] = map[string]any{"clientId": "x"}
-		admin.do("POST", "/api/admin/auth/providers", bad).want(t, 400, "invalid") // the settings of another kind
+		admin.do("POST", "/api/admin/providers", bad).want(t, 400, "invalid") // the settings of another kind
 		// GitHub that creates accounts must name an organisation.
 		gh := newFakeGitHub(t)
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"autoCreate": true, "github": map[string]any{"baseUrl": gh.srv.URL, "clientId": "gh-client", "clientSecret": "gh-secret", "organizations": []string{"KazuhaHub"}}})).want(t, 201, "")
-		admin.do("PATCH", "/api/admin/auth/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 400, "auto_create_needs_org")
+		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true})).want(t, 400, "auto_create_needs_org")
+		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"autoCreate": true, "github": map[string]any{"baseUrl": gh.srv.URL, "clientId": "gh-client", "clientSecret": "gh-secret", "organizations": []string{"KazuhaHub"}}})).want(t, 201, "")
+		admin.do("PATCH", "/api/admin/providers/gh", map[string]any{"github": map[string]any{"organizations": []string{}}}).want(t, 400, "auto_create_needs_org")
 		// Only one provider has the legacy callback.
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"oidc": map[string]any{"legacyCallback": true}}).want(t, 200, "")
-		r = admin.do("POST", "/api/admin/auth/providers", other.providerBody("other", map[string]any{"oidc": map[string]any{"issuer": other.srv.URL, "clientId": idpClient, "legacyCallback": true}})).want(t, 409, "legacy_callback_in_use")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"oidc": map[string]any{"legacyCallback": true}}).want(t, 200, "")
+		r = admin.do("POST", "/api/admin/providers", other.providerBody("other", map[string]any{"oidc": map[string]any{"issuer": other.srv.URL, "clientId": idpClient, "legacyCallback": true}})).want(t, 409, "legacy_callback_in_use")
 		_ = r
 
 		// A change: only what is sent, the secret kept unless sent.
-		p := admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"name": "Renamed", "autoCreate": true, "mergeVerifiedEmail": true}).want(t, 200, "")
+		p := admin.do("PATCH", "/api/admin/providers/one", map[string]any{"name": "Renamed", "autoCreate": true, "mergeVerifiedEmail": true}).want(t, 200, "")
 		if p.body["name"] != "Renamed" || p.body["autoCreate"] != true || p.body["mergeVerifiedEmail"] != true || p.body["oidc"].(map[string]any)["hasSecret"] != true {
 			t.Fatal(p.raw)
 		}
-		p = admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"oidc": map[string]any{"clientSecret": ""}}).want(t, 200, "")
+		p = admin.do("PATCH", "/api/admin/providers/one", map[string]any{"oidc": map[string]any{"clientSecret": ""}}).want(t, 200, "")
 		if p.body["oidc"].(map[string]any)["hasSecret"] != false {
 			t.Fatal(p.raw)
 		}
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"slug": "other"}).want(t, 400, "invalid")
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"kind": "saml"}).want(t, 400, "invalid")
-		admin.do("PATCH", "/api/admin/auth/providers/nope", map[string]any{"name": "x"}).want(t, 404, "not_found")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"slug": "other"}).want(t, 400, "invalid")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"kind": "saml"}).want(t, 400, "invalid")
+		admin.do("PATCH", "/api/admin/providers/nope", map[string]any{"name": "x"}).want(t, 404, "not_found")
 
 		// A provider that cannot be reached is stored, disabled, and says why.
 		down := newIDPFor(t, "down")
 		down.srv.Close()
-		d := admin.do("POST", "/api/admin/auth/providers", down.providerBody("down", nil)).want(t, 201, "")
+		d := admin.do("POST", "/api/admin/providers", down.providerBody("down", nil)).want(t, 201, "")
 		if d.body["enabled"] != false || d.body["status"].(map[string]any)["ok"] != false {
 			t.Fatal(d.raw)
 		}
 		// Refresh on a reachable provider records the fetch.
-		rf := admin.do("POST", "/api/admin/auth/providers/gh/refresh", nil).want(t, 200, "")
+		rf := admin.do("POST", "/api/admin/providers/gh/check", nil).want(t, 200, "")
 		if rf.body["status"].(map[string]any)["ok"] != true || rf.body["status"].(map[string]any)["checked"] == "" {
 			t.Fatal(rf.raw)
 		}
-		admin.do("POST", "/api/admin/auth/providers/nope/refresh", nil).want(t, 404, "not_found")
+		admin.do("POST", "/api/admin/providers/nope/check", nil).want(t, 404, "not_found")
 
 		// Deleting.
-		admin.do("DELETE", "/api/admin/auth/providers/down?force=2", nil).want(t, 400, "invalid")
-		admin.do("DELETE", "/api/admin/auth/providers/down", nil).want(t, 204, "")
-		admin.do("DELETE", "/api/admin/auth/providers/down", nil).want(t, 404, "not_found")
+		admin.do("DELETE", "/api/admin/providers/down?force=2", nil).want(t, 400, "invalid")
+		admin.do("DELETE", "/api/admin/providers/down", nil).want(t, 204, "")
+		admin.do("DELETE", "/api/admin/providers/down", nil).want(t, 404, "not_found")
 		rows := admin.audit(t, "")
 		kinds := map[string]bool{}
 		for _, row := range rows {
@@ -132,10 +135,10 @@ func TestProviderLimitAndSAMLNeedsHTTPS(t *testing.T) {
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		for i := range 50 {
-			admin.do("POST", "/api/admin/auth/providers", map[string]any{"slug": fmt.Sprintf("g%d", i), "kind": "github", "name": "G",
+			admin.do("POST", "/api/admin/providers", map[string]any{"slug": fmt.Sprintf("g%d", i), "kind": "github", "name": "G",
 				"github": map[string]any{"baseUrl": fmt.Sprintf("https://ghe%d.example.test", i), "clientId": "c", "clientSecret": "s"}}).want(t, 201, "")
 		}
-		admin.do("POST", "/api/admin/auth/providers", map[string]any{"slug": "g50", "kind": "github", "name": "G",
+		admin.do("POST", "/api/admin/providers", map[string]any{"slug": "g50", "kind": "github", "name": "G",
 			"github": map[string]any{"baseUrl": "https://ghe50.example.test", "clientId": "c", "clientSecret": "s"}}).want(t, 409, "provider_limit")
 	})
 	idp := newFakeSAML(t, false)
@@ -143,7 +146,7 @@ func TestProviderLimitAndSAMLNeedsHTTPS(t *testing.T) {
 	o.public = "http://notes.example.test"
 	eachAccounts(t, o, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", idp.body("campus", nil)).want(t, 400, "saml_needs_https")
+		admin.do("POST", "/api/admin/providers", idp.body("campus", nil)).want(t, 400, "saml_needs_https")
 	})
 }
 
@@ -154,8 +157,8 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 	two.addUser("alice", testidp.Claims{"sub": "other-sub", "preferred_username": "alice", "email": "alice@example.test", "name": "Alice A"})
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", one.providerBody("one", map[string]any{"autoCreate": true, "order": 1})).want(t, 201, "")
-		admin.do("POST", "/api/admin/auth/providers", two.providerBody("two", map[string]any{"order": 0})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"autoCreate": true, "order": 1})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", two.providerBody("two", map[string]any{"order": 0})).want(t, 201, "")
 
 		pub := a.newClient("").do("GET", "/api/auth/providers", nil).want(t, 200, "")
 		list := pub.body["providers"].([]any)
@@ -202,9 +205,9 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 		if loc != "/s/here" || signedInAs(t, c) != "alice" {
 			t.Fatalf("%s %s", loc, signedInAs(t, c))
 		}
-		acct := c.do("GET", "/api/account", nil).want(t, 200, "")
-		ids := acct.body["identities"].([]any)
-		if len(ids) != 1 || ids[0].(map[string]any)["providerSlug"] != "one" || ids[0].(map[string]any)["kind"] != "oidc" || ids[0].(map[string]any)["provider"] != "Provider one" || ids[0].(map[string]any)["label"] != "alice@example.test" {
+		acct := c.do("GET", "/api/account/links", nil).want(t, 200, "")
+		ids := acct.body["links"].([]any)
+		if len(ids) != 1 || ids[0].(map[string]any)["slug"] != "one" || ids[0].(map[string]any)["kind"] != "oidc" || ids[0].(map[string]any)["provider"] != "Provider one" || ids[0].(map[string]any)["label"] != "alice@example.test" {
 			t.Fatal(acct.raw)
 		}
 		d := a.newClient("")
@@ -215,15 +218,15 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 		if loc := two.signIn2(t, c, "two", "alice", map[string]any{"intent": "link", "return": "/settings"}); loc != "/settings" {
 			t.Fatal(loc)
 		}
-		acct = c.do("GET", "/api/account", nil).want(t, 200, "")
-		if len(acct.body["identities"].([]any)) != 2 {
+		acct = c.do("GET", "/api/account/links", nil).want(t, 200, "")
+		if len(acct.body["links"].([]any)) != 2 {
 			t.Fatal(acct.raw)
 		}
 		e := a.newClient("")
 		if loc := two.signIn2(t, e, "two", "alice", map[string]any{}); loc != "/" || signedInAs(t, e) != "alice" {
 			t.Fatal(loc)
 		}
-		pl := admin.do("GET", "/api/admin/auth/providers", nil).want(t, 200, "")
+		pl := admin.do("GET", "/api/admin/providers", nil).want(t, 200, "")
 		for _, p := range pl.body["providers"].([]any) {
 			if p.(map[string]any)["people"] != float64(1) {
 				t.Fatalf("people: %s", pl.raw)
@@ -236,29 +239,29 @@ func TestTwoOpenIDConnectProvidersSignIn(t *testing.T) {
 		if loc := one.signIn2(t, f, "one", "zed", map[string]any{}); loc != "/" {
 			t.Fatal(loc)
 		}
-		r = admin.do("DELETE", "/api/admin/auth/providers/one", nil).want(t, 409, "provider_in_use")
+		r = admin.do("DELETE", "/api/admin/providers/one", nil).want(t, 409, "provider_in_use")
 		if r.body["accounts"] != float64(1) {
 			t.Fatal(r.raw)
 		}
-		admin.do("DELETE", "/api/admin/auth/providers/one?force=1", nil).want(t, 204, "")
-		// Identities stay; a provider added again with the same issuer brings them back.
-		if _, err := store.FindIdentity(context.Background(), a.st.Q(), one.srv.URL, "sub-alice"); err != nil {
+		admin.do("DELETE", "/api/admin/providers/one?force=1", nil).want(t, 204, "")
+		// The linked accounts go with the provider: a provider added again with
+		// the same issuer is another provider, and brings none of them back.
+		if _, err := store.FindLink(context.Background(), a.st.Q(), "one", "sub-alice"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
 		c.do("GET", "/api/auth/oidc/one/start", nil)
-		admin.do("POST", "/api/admin/auth/providers", one.providerBody("again", map[string]any{"order": 3})).want(t, 201, "")
-		pl = admin.do("GET", "/api/admin/auth/providers/again", nil).want(t, 200, "")
-		if pl.body["people"] != float64(2) {
+		admin.do("POST", "/api/admin/providers", one.providerBody("again", map[string]any{"order": 3})).want(t, 201, "")
+		pl = admin.do("GET", "/api/admin/providers/again", nil).want(t, 200, "")
+		if pl.body["people"] != float64(0) {
 			t.Fatal(pl.raw)
 		}
-		// Removing an identity is allowed while another way in is left, and not the last one.
-		acct = c.do("GET", "/api/account", nil).want(t, 200, "")
-		ids = acct.body["identities"].([]any)
-		if len(ids) != 2 {
+		// The last linked account of a person with no other way in cannot be removed.
+		acct = c.do("GET", "/api/account/links", nil).want(t, 200, "")
+		ids = acct.body["links"].([]any)
+		if len(ids) != 1 || ids[0].(map[string]any)["slug"] != "two" {
 			t.Fatal(acct.raw)
 		}
-		c.do("DELETE", "/api/account/identities/"+ids[0].(map[string]any)["id"].(string), nil).want(t, 204, "")
-		c.do("DELETE", "/api/account/identities/"+ids[1].(map[string]any)["id"].(string), nil).want(t, 409, "conflict")
+		c.do("DELETE", "/api/account/links/"+ids[0].(map[string]any)["id"].(string), nil).want(t, 409, "last_method")
 	})
 }
 
@@ -277,7 +280,7 @@ func TestFlagsBecomeTheProviderSsoWithoutLockingAnyoneOut(t *testing.T) {
 	eachAccounts(t, opts, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		// The provider is in the database with the old callback, enabled; nothing else changed.
-		p := admin.do("GET", "/api/admin/auth/providers/sso", nil).want(t, 200, "")
+		p := admin.do("GET", "/api/admin/providers/sso", nil).want(t, 200, "")
 		o := p.body["oidc"].(map[string]any)
 		if p.body["name"] != "Company SSO" || p.body["enabled"] != true || p.body["autoCreate"] != true || o["legacyCallback"] != true || o["hasSecret"] != true ||
 			o["issuer"] != f.srv.URL || o["redirectUrl"] != testPublic+"/api/auth/oidc/callback" || o["clientId"] != idpClient || strings.Contains(p.raw, idpSecret) {
@@ -332,7 +335,7 @@ func TestFlagsBecomeTheProviderSsoWithoutLockingAnyoneOut(t *testing.T) {
 			t.Fatalf("%+v", v.Notices)
 		}
 		// Deleting the provider and starting again with the flags does not bring it back; the notice says so.
-		admin.do("DELETE", "/api/admin/auth/providers/sso?force=1", nil).want(t, 204, "")
+		admin.do("DELETE", "/api/admin/providers/sso?force=1", nil).want(t, 204, "")
 		svc4, err := auth.New(ctx, auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, OIDC: &same, HTTPClient: f.srv.Client(), Password: fastPasswords, Now: a.clock.Now})
 		if err != nil {
 			t.Fatal(err)
@@ -340,8 +343,8 @@ func TestFlagsBecomeTheProviderSsoWithoutLockingAnyoneOut(t *testing.T) {
 		if v, _ := svc4.SecurityView(ctx); len(v.Notices) != 1 || v.Notices[0].Code != "flags_ignored" || len(svc4.PublicProviders()) != 0 {
 			t.Fatalf("%+v", v.Notices)
 		}
-		// The identities stay for a provider added later with the same issuer.
-		if _, err := store.FindIdentity(ctx, a.st.Q(), f.srv.URL, "sub-alice"); err != nil {
+		// The linked accounts went with it.
+		if _, err := store.FindLink(ctx, a.st.Q(), "sso", "sub-alice"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal(err)
 		}
 	})
@@ -367,7 +370,7 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 	set("owner", "s-owner", "owner@example.test", true)
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("m", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
 		ctx := context.Background()
 		mk := func(username, email string, verified bool) string {
 			u, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: username, Role: "member", Password: pw, Email: email, EmailVerified: verified})
@@ -437,7 +440,7 @@ func TestASignInNeverAttachesToAnAccountByItsAddress(t *testing.T) {
 			t.Fatal(u)
 		}
 		// The provider's trust is off: the same, whatever the claim says.
-		admin.do("PATCH", "/api/admin/auth/providers/m", map[string]any{"mergeVerifiedEmail": false}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/m", map[string]any{"mergeVerifiedEmail": false}).want(t, 200, "")
 		loc, c = try("off")
 		if who := signedInAs(t, c); loc != "/" || who == "off-local" {
 			t.Fatalf("%s %q", loc, who)
@@ -499,7 +502,7 @@ func TestADiscoveryDocumentIsKeptAndASignInDoesNotFetchIt(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		const doc = "/.well-known/openid-configuration"
 		before := counter.count(doc)
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", map[string]any{"autoCreate": true})).want(t, 201, "")
 		if counter.count(doc) != before+1 {
 			t.Fatalf("%d fetches to make a provider", counter.count(doc)-before)
 		}
@@ -522,7 +525,7 @@ func TestADiscoveryDocumentIsKeptAndASignInDoesNotFetchIt(t *testing.T) {
 			t.Fatalf("the restarted server fetched the discovery document: %d", counter.count(doc)-before)
 		}
 		// Refresh fetches it, with the stored secret.
-		r := admin.do("POST", "/api/admin/auth/providers/one/refresh", nil).want(t, 200, "")
+		r := admin.do("POST", "/api/admin/providers/one/check", nil).want(t, 200, "")
 		if r.body["status"].(map[string]any)["ok"] != true || counter.count(doc) != before+2 {
 			t.Fatalf("%s %d", r.raw, counter.count(doc)-before)
 		}
@@ -534,10 +537,10 @@ func TestASecretThatCannotBeOpenedMakesTheProviderUnavailableAndIsSaid(t *testin
 	f := newIDPFor(t, "one")
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.do("POST", "/api/admin/auth/providers", f.providerBody("one", nil)).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", f.providerBody("one", nil)).want(t, 201, "")
 		ctx := context.Background()
 		// The key of this server changed, or the row was copied from another one.
-		if _, err := a.st.Q().Exec(ctx, `UPDATE sign_in_providers SET secret_enc = 'bm90IHNlYWxlZCBieSB0aGlzIHNlcnZlcg==' WHERE slug = 'one'`); err != nil {
+		if _, err := a.st.Q().Exec(ctx, `UPDATE providers SET secret_enc = 'bm90IHNlYWxlZCBieSB0aGlzIHNlcnZlcg==' WHERE id = 'one'`); err != nil {
 			t.Fatal(err)
 		}
 		svc2, err := auth.New(ctx, auth.Config{Store: a.st, Spaces: a.mgr, PublicURL: testPublic, HTTPClient: anyTLSClient(), Password: fastPasswords, Now: a.clock.Now})

@@ -217,7 +217,7 @@ func TestOIDCSetupCreatesTheAdministrator(t *testing.T) {
 		if acct.body["hasPassword"] != false {
 			t.Fatal(acct.raw)
 		}
-		id := acct.body["identities"].([]any)[0].(map[string]any)
+		id := c.do("GET", "/api/account/links", nil).want(t, 200, "").body["links"].([]any)[0].(map[string]any)
 		if id["provider"] != "Company SSO" || id["label"] != "alice@example.test" {
 			t.Fatal(acct.raw)
 		}
@@ -308,7 +308,7 @@ func TestOIDCNeverMatchesAccountsByEmail(t *testing.T) {
 				t.Fatalf("%q", got)
 			}
 			// And the local account has no identity.
-			if ids := c.do("GET", "/api/account", nil).body["identities"].([]any); len(ids) != 0 {
+			if ids := c.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 0 {
 				t.Fatal(ids)
 			}
 		})
@@ -366,6 +366,7 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 	eachAccounts(t, f.opts(false), func(t *testing.T, a *acc) {
 		kazuha := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
+		wen := a.addUser("wen", pw, "member")
 
 		// Linking needs a session at the start ...
 		a.newClient("").do("POST", "/api/auth/oidc/start", map[string]any{"intent": "link"}).want(t, 401, "unauthenticated")
@@ -381,15 +382,15 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 				t.Fatal("linking replaced the session")
 			}
 		}
-		ids := kazuha.do("GET", "/api/account", nil).body["identities"].([]any)
+		ids := kazuha.do("GET", "/api/account/links", nil).body["links"].([]any)
 		if len(ids) != 1 || ids[0].(map[string]any)["label"] != "alice@example.test" {
 			t.Fatalf("%v", ids)
 		}
-		// Linking the same identity again changes nothing.
-		if loc := f.signIn(t, kazuha, "alice", map[string]any{"intent": "link", "return": "/settings"}); loc != "/settings" {
-			t.Fatal(loc)
-		}
-		if ids := kazuha.do("GET", "/api/account", nil).body["identities"].([]any); len(ids) != 1 {
+		// One account per provider: linking again (the same account or another) is
+		// refused up front, with its own code, until the first is unlinked.
+		kazuha.do("POST", "/api/auth/oidc/start", map[string]any{"intent": "link"}).want(t, 409, "already_linked")
+		kazuha.do("POST", "/api/account/links/sso/start", map[string]any{"purpose": "signin"}).want(t, 409, "already_linked")
+		if ids := kazuha.do("GET", "/api/account/links", nil).body["links"].([]any); len(ids) != 1 {
 			t.Fatal(ids)
 		}
 		// Someone else cannot take it.
@@ -408,16 +409,16 @@ func TestOIDCLinkAndUnlink(t *testing.T) {
 		if loc, _ := finish(t, tang, at.cb); loc != "/settings?sso_error=expired" {
 			t.Fatal(loc)
 		}
-		at = f.begin(t, kazuha, "bob", map[string]any{"intent": "link"})
+		at = f.begin(t, wen, "bob", map[string]any{"intent": "link"})
 		swap := a.newClient("")
 		swap.do("POST", "/api/login", map[string]any{"username": "tang", "password": pw}).want(t, 200, "")
-		swap.cookies["__Host-petalbook_oidc"] = kazuha.cookies["__Host-petalbook_oidc"] // the same browser binding, another account's session
+		swap.cookies["__Host-petalbook_oidc"] = wen.cookies["__Host-petalbook_oidc"] // the same browser binding, another account's session
 		if loc, _ := finish(t, swap, at.cb); loc != "/settings?sso_error=expired" {
 			t.Fatal(loc)
 		}
 		// Unlinking: the account has a password, so the identity can go.
-		idn := kazuha.do("GET", "/api/account", nil).body["identities"].([]any)[0].(map[string]any)["id"].(string)
-		kazuha.do("DELETE", "/api/account/identities/"+idn, nil).want(t, 204, "")
+		idn := kazuha.do("GET", "/api/account/links", nil).body["links"].([]any)[0].(map[string]any)["id"].(string)
+		kazuha.do("DELETE", "/api/account/links/"+idn, nil).want(t, 204, "")
 		d := a.newClient("")
 		if loc := f.signIn(t, d, "alice", map[string]any{}); loc != "/login?sso_error=no_account" {
 			t.Fatal(loc)

@@ -1,12 +1,14 @@
-import { useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Copy, Eraser, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Copy, Eraser, FlaskConical, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { adminApi, useAuthProviders, useSyncedGroups } from '@/api/admin'
 import { ApiError } from '@/api/client'
+import { useSearchParams } from 'react-router'
 import { keys } from '@/api/hooks'
-import type { AuthProvider, ProviderInput, ProviderKind } from '@/api/types'
+import type { AuthProvider, ProviderInput, ProviderKind, ProviderTestResult } from '@/api/types'
 import { Field, FormMessage } from '@/components/auth/Field'
+import { ssoErrorMessage } from '@/pages/auth/LoginPage'
 import { ProviderIcon } from '@/components/auth/ProviderIcon'
 import { ErrorState } from '@/components/common'
 import { SettingsSection } from '@/components/settings/SettingsParts'
@@ -73,7 +75,7 @@ export function ProvidersSection() {
       ) : (
         <ul className="divide-y rounded-lg border" data-slot="providers">
           {list.map((p) => (
-            <ProviderRow key={p.slug} p={p} onEdit={() => setEditing(p)} onDelete={() => setDeleting(p)} />
+            <ProviderRow key={p.id} p={p} onEdit={() => setEditing(p)} onDelete={() => setDeleting(p)} />
           ))}
         </ul>
       )}
@@ -87,7 +89,7 @@ export function ProvidersSection() {
           </DialogHeader>
           {editing !== null && (
             <ProviderForm
-              key={editing === 'new' ? 'new' : editing.slug}
+              key={editing === 'new' ? 'new' : editing.id}
               initial={editing === 'new' ? null : editing}
               onDone={() => setEditing(null)}
             />
@@ -95,7 +97,80 @@ export function ProvidersSection() {
         </DialogContent>
       </Dialog>
       <DeleteDialog provider={deleting} onClose={() => setDeleting(null)} />
+      <TestOutcome />
     </SettingsSection>
+  )
+}
+
+// Where a test sign-in comes back to: `?provider_test=<id>` (the result is read once) or `?sso_error=<code>`. Both are
+// shown, then taken out of the address.
+function TestOutcome() {
+  const [params, setParams] = useSearchParams()
+  const [arrival] = useState(() => ({ id: params.get('provider_test'), error: params.get('sso_error') }))
+  const [result, setResult] = useState<ProviderTestResult | null>(null)
+  const [message, setMessage] = useState(arrival.error ? ssoErrorMessage(arrival.error) : '')
+  const [open, setOpen] = useState(arrival.id !== null || arrival.error !== null)
+  const read = useRef(false)
+  useEffect(() => {
+    if (params.has('provider_test') || params.has('sso_error'))
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p)
+          next.delete('provider_test')
+          next.delete('sso_error')
+          return next
+        },
+        { replace: true },
+      )
+    if (arrival.id === null || arrival.error !== null) return
+    // Read once: the server forgets the result, so a second read (a remount) would find nothing.
+    if (read.current) return
+    read.current = true
+    adminApi
+      .authProviderTestResult(arrival.id)
+      .then((r) => (r.result ? setResult(r.result) : setMessage(tp.testNone)))
+      .catch((e) => setMessage(`${tp.testFailed}: ${refusal(e)}`))
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const rows: [string, ReactNode][] = result
+    ? [
+        [tp.testSubject, result.subject],
+        [
+          tp.testEmail,
+          result.email ? `${result.email} (${result.emailTrusted ? tp.testVerified : tp.testUnverified})` : '—',
+        ],
+        [tp.testName, result.name || '—'],
+        [tp.testUsername, result.username || '—'],
+      ]
+    : []
+  return (
+    <Dialog open={open && (result !== null || message !== '')} onOpenChange={setOpen}>
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-lg gap-4 sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{tp.testTitle}</DialogTitle>
+          <DialogDescription>{result ? tp.testHelp : message}</DialogDescription>
+        </DialogHeader>
+        {result && (
+          <dl
+            className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-[auto_1fr]"
+            data-slot="test-result"
+          >
+            {rows.map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="min-w-0 break-all">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            {tp.testClose}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -154,7 +229,7 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
             checked={p.enabled}
             disabled={busy}
             aria-label={t.fmt.labelled(p.enabled ? tp.enabled : tp.disabled, p.name)}
-            onCheckedChange={(on) => void run(() => adminApi.patchAuthProvider(p.slug, { enabled: on }))}
+            onCheckedChange={(on) => void run(() => adminApi.patchAuthProvider(p.id, { enabled: on }))}
           />
           <span className="text-xs text-muted-foreground">{p.enabled ? tp.enabled : tp.disabled}</span>
         </label>
@@ -177,10 +252,26 @@ function ProviderRow({ p, onEdit, onDelete }: { p: AuthProvider; onEdit: () => v
           size="sm"
           disabled={busy}
           aria-label={tp.refreshFor(p.name)}
-          onClick={() => void run(() => adminApi.refreshAuthProvider(p.slug), tp.refreshed)}
+          onClick={() => void run(() => adminApi.checkAuthProvider(p.id), tp.refreshed)}
         >
           <RefreshCw aria-hidden="true" />
           {busy ? tp.refreshing : tp.refresh}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          aria-label={tp.testFor(p.name)}
+          onClick={() =>
+            void run(async () => {
+              const { url } = await adminApi.testAuthProvider(p.id)
+              window.location.assign(url)
+            })
+          }
+        >
+          <FlaskConical aria-hidden="true" />
+          {tp.test}
         </Button>
         <Button
           type="button"
@@ -215,7 +306,7 @@ function DeleteDialog({ provider, onClose }: { provider: AuthProvider | null; on
     setBusy(true)
     setError('')
     try {
-      await adminApi.deleteAuthProvider(provider.slug, force)
+      await adminApi.deleteAuthProvider(provider.id, force)
       changed()
       toast.success(tp.deleted)
       close()
@@ -430,7 +521,7 @@ function ProviderForm({ initial, onDone }: { initial: AuthProvider | null; onDon
     setError('')
     try {
       const saved = edit
-        ? await adminApi.patchAuthProvider(initial.slug, input)
+        ? await adminApi.patchAuthProvider(initial.id, input)
         : await adminApi.createAuthProvider(input)
       changed()
       toast.success(edit ? tp.updated : tp.created)

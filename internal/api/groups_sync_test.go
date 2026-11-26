@@ -45,15 +45,15 @@ func TestProviderGroupsSetting(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		syn := admin.mkGroup(t, "Staff", "synced")
 		loc := admin.mkGroup(t, "Local", "local")
-		admin.do("POST", "/api/admin/auth/providers", one.providerBody("one", nil)).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", one.providerBody("one", nil)).want(t, 201, "")
 		// Off by default, with the defaults shown.
-		p := admin.do("GET", "/api/admin/auth/providers/one", nil).want(t, 200, "")
+		p := admin.do("GET", "/api/admin/providers/one", nil).want(t, 200, "")
 		g := p.body["groups"].(map[string]any)
 		if g["enabled"] != false || g["claim"] != "groups" || g["missing"] != "keep" || len(g["map"].([]any)) != 0 {
 			t.Fatal(p.raw)
 		}
 		patch := func(groups map[string]any) result {
-			return admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"groups": groups})
+			return admin.do("PATCH", "/api/admin/providers/one", map[string]any{"groups": groups})
 		}
 		patch(map[string]any{"enabled": true, "map": gmap("a", loc)}).want(t, 409, "group_not_synced")
 		patch(map[string]any{"map": gmap("a", "0000000000")}).want(t, 404, "group_not_found")
@@ -68,7 +68,7 @@ func TestProviderGroupsSetting(t *testing.T) {
 		}
 		patch(map[string]any{"map": big}).want(t, 400, "invalid")
 		// Nothing of the refused requests was kept.
-		if g := admin.do("GET", "/api/admin/auth/providers/one", nil).body["groups"].(map[string]any); g["enabled"] != false || len(g["map"].([]any)) != 0 {
+		if g := admin.do("GET", "/api/admin/providers/one", nil).body["groups"].(map[string]any); g["enabled"] != false || len(g["map"].([]any)) != 0 {
 			t.Fatal(g)
 		}
 		r := patch(map[string]any{"enabled": true, "claim": "roles", "missing": "clear", "map": gmap("a", syn, "b", syn)}).want(t, 200, "")
@@ -81,7 +81,7 @@ func TestProviderGroupsSetting(t *testing.T) {
 			t.Fatal(gr.raw)
 		}
 		// Changing something else keeps the mapping.
-		r = admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"name": "Renamed"}).want(t, 200, "")
+		r = admin.do("PATCH", "/api/admin/providers/one", map[string]any{"name": "Renamed"}).want(t, 200, "")
 		if len(r.body["groups"].(map[string]any)["map"].([]any)) != 2 {
 			t.Fatal(r.raw)
 		}
@@ -96,13 +96,13 @@ func TestProviderGroupsSetting(t *testing.T) {
 			t.Fatal(d.raw)
 		}
 		admin.do("DELETE", "/api/admin/groups/"+syn+"?force=1", nil).want(t, 204, "")
-		if g := admin.do("GET", "/api/admin/auth/providers/one", nil).body["groups"].(map[string]any); len(g["map"].([]any)) != 0 || g["enabled"] != true {
+		if g := admin.do("GET", "/api/admin/providers/one", nil).body["groups"].(map[string]any); len(g["map"].([]any)) != 0 || g["enabled"] != true {
 			t.Fatal(g)
 		}
 		// GitHub's claim is the organisations: not settable. SAML needs an attribute name.
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"groups": map[string]any{"enabled": true, "claim": "orgs"}})).want(t, 400, "invalid")
-		admin.do("POST", "/api/admin/auth/providers", gh.body("gh", map[string]any{"groups": map[string]any{"enabled": true}})).want(t, 201, "")
-		if g := admin.do("GET", "/api/admin/auth/providers/gh", nil).body["groups"].(map[string]any); g["claim"] != "" || g["enabled"] != true {
+		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"groups": map[string]any{"enabled": true, "claim": "orgs"}})).want(t, 400, "invalid")
+		admin.do("POST", "/api/admin/providers", gh.body("gh", map[string]any{"groups": map[string]any{"enabled": true}})).want(t, 201, "")
+		if g := admin.do("GET", "/api/admin/providers/gh", nil).body["groups"].(map[string]any); g["claim"] != "" || g["enabled"] != true {
 			t.Fatal(g)
 		}
 	})
@@ -115,9 +115,9 @@ func TestOIDCGroupsSyncAtSignIn(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		eng, staff, other := admin.mkGroup(t, "Engineering", "synced"), admin.mkGroup(t, "Staff", "synced"), admin.mkGroup(t, "Other", "synced")
 		hand := admin.mkGroup(t, "By hand", "local")
-		admin.do("POST", "/api/admin/auth/providers", one.providerBody("one", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true,
+		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true,
 			"map": gmap("5f1c-engineering", eng, "/staff", staff)}})).want(t, 201, "")
-		admin.do("POST", "/api/admin/auth/providers", two.providerBody("two", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "claim": "roles",
+		admin.do("POST", "/api/admin/providers", two.providerBody("two", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "claim": "roles",
 			"map": gmap("dev", eng, "x", other)}})).want(t, 201, "")
 		team := admin.do("POST", "/api/spaces", map[string]any{"name": "Team"}).want(t, 201, "").body["id"].(string)
 		admin.do("POST", spacePath(team)+"/groups", map[string]any{"groupId": eng, "role": "editor"}).want(t, 201, "")
@@ -216,7 +216,7 @@ func TestOIDCGroupsSyncAtSignIn(t *testing.T) {
 		if got := groupNames(t, ann); got != "By hand,Engineering,Other,Staff" {
 			t.Fatal(got)
 		}
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"groups": map[string]any{"missing": "clear"}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"groups": map[string]any{"missing": "clear"}}).want(t, 200, "")
 		one.signIn2(t, a.newClient(""), "one", "ann", nil)
 		if got := groupNames(t, ann); got != "By hand,Engineering,Other" { // provider one's Staff goes; two's stay
 			t.Fatal(got)
@@ -246,23 +246,23 @@ func TestOIDCGroupsSyncAtSignIn(t *testing.T) {
 		// A mapping entry taken out removes what it brought, at once, from everyone — not what another value brought.
 		set(one, map[string]any{"groups": []string{"5f1c-engineering", "/staff"}})
 		one.signIn2(t, a.newClient(""), "one", "ann", nil)
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"groups": map[string]any{"map": gmap("/staff", staff)}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"groups": map[string]any{"map": gmap("/staff", staff)}}).want(t, 200, "")
 		if got := groupNames(t, ann); got != "By hand,Engineering,Other,Staff" { // Engineering stays through provider two
 			t.Fatal(got)
 		}
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"groups": map[string]any{"map": gmap("/staff", other)}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"groups": map[string]any{"map": gmap("/staff", other)}}).want(t, 200, "")
 		if got := groupNames(t, ann); got != "By hand,Engineering,Other" { // pointed elsewhere: the old rows go, the new come at sign-in
 			t.Fatal(got)
 		}
 		// Turning the sync off changes nothing; the person keeps what they have.
-		admin.do("PATCH", "/api/admin/auth/providers/one", map[string]any{"groups": map[string]any{"enabled": false}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/one", map[string]any{"groups": map[string]any{"enabled": false}}).want(t, 200, "")
 		set(one, map[string]any{"groups": []string{}})
 		one.signIn2(t, a.newClient(""), "one", "ann", nil)
 		if got := groupNames(t, ann); got != "By hand,Engineering,Other" {
 			t.Fatal(got)
 		}
 		// Deleting a provider takes what it brought; the identities stay.
-		admin.do("DELETE", "/api/admin/auth/providers/two?force=1", nil).want(t, 204, "")
+		admin.do("DELETE", "/api/admin/providers/two?force=1", nil).want(t, 204, "")
 		if got := groupNames(t, ann); got != "By hand" {
 			t.Fatal(got)
 		}
@@ -276,7 +276,7 @@ func TestGroupsSyncAtInvite(t *testing.T) {
 	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		eng := admin.mkGroup(t, "Engineering", "synced")
-		admin.do("POST", "/api/admin/auth/providers", one.providerBody("one", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("eng", eng)}})).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", one.providerBody("one", map[string]any{"groups": map[string]any{"enabled": true, "map": gmap("eng", eng)}})).want(t, 201, "")
 		one.addUser("bob", testidp.Claims{"sub": "sub-bob", "preferred_username": "bob", "groups": []string{"eng"}})
 		token := admin.do("POST", "/api/invites", nil).want(t, 201, "").body["token"].(string)
 		c := a.newClient("")
@@ -304,9 +304,9 @@ func TestSAMLGroupsSyncAtSignIn(t *testing.T) {
 		admin := samlFixture(t, a, idp, map[string]any{"autoCreate": true})
 		eng, staff := admin.mkGroup(t, "Engineering", "synced"), admin.mkGroup(t, "Staff", "synced")
 		// An attribute name is needed to turn it on.
-		admin.do("PATCH", "/api/admin/auth/providers/campus", map[string]any{"groups": map[string]any{"enabled": true}}).want(t, 400, "invalid")
+		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"groups": map[string]any{"enabled": true}}).want(t, 400, "invalid")
 		const attr = "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
-		admin.do("PATCH", "/api/admin/auth/providers/campus", map[string]any{"groups": map[string]any{"enabled": true, "claim": attr, "map": gmap("g-eng", eng, "g-staff", staff)}}).want(t, 200, "")
+		admin.do("PATCH", "/api/admin/providers/campus", map[string]any{"groups": map[string]any{"enabled": true, "claim": attr, "map": gmap("g-eng", eng, "g-staff", staff)}}).want(t, 200, "")
 		with := func(values ...string) {
 			idp.setSession(func(x *crewjamsaml.Session) {
 				x.CustomAttributes = []crewjamsaml.Attribute{samlAttr("mail", "saml.person@example.test"), samlAttr("displayName", "Saml Person"), samlAttr("uid", "Saml.Person")}
@@ -366,7 +366,7 @@ func TestGitHubGroupsAreOrganisations(t *testing.T) {
 		hub, else_ := admin.mkGroup(t, "Hub", "synced"), admin.mkGroup(t, "Else", "synced")
 		body := gh.body("gh", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub, "Elsewhere", else_)}})
 		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
-		admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		c := a.newClient("")
 		if end, _ := gh.signIn(t, c, "gh", "m", nil); end != "/" {
 			t.Fatal(end)
@@ -402,7 +402,7 @@ func TestGitHubOrgsLaterPageFails(t *testing.T) {
 		hub := admin.mkGroup(t, "Hub", "synced")
 		body := gh.body("gh", map[string]any{"autoCreate": true, "groups": map[string]any{"enabled": true, "map": gmap("KazuhaHub", hub)}})
 		body["github"].(map[string]any)["organizations"] = []string{"KazuhaHub"}
-		admin.do("POST", "/api/admin/auth/providers", body).want(t, 201, "")
+		admin.do("POST", "/api/admin/providers", body).want(t, 201, "")
 		c := a.newClient("")
 		if end, _ := gh.signIn(t, c, "gh", "m", nil); end != "/" {
 			t.Fatal(end)

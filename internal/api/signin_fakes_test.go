@@ -46,7 +46,7 @@ func newIDPFor(t *testing.T, slug string) *fakeIDP {
 
 func (f *fakeIDP) addUser(key string, c testidp.Claims) { f.idp.Users[key] = c }
 
-// providerBody is a POST /api/admin/auth/providers body for this provider.
+// providerBody is a POST /api/admin/providers body for this provider.
 func (f *fakeIDP) providerBody(slug string, extra map[string]any) map[string]any {
 	b := map[string]any{"slug": slug, "kind": "oidc", "name": "Provider " + slug,
 		"oidc": map[string]any{"issuer": f.srv.URL, "clientId": idpClient, "clientSecret": idpSecret}}
@@ -283,8 +283,13 @@ type samlAttempt struct {
 
 // begin starts a sign-in (the browser's part) and lets the identity provider answer.
 func (s *fakeSAML) begin(t *testing.T, c *client, slug string, body map[string]any) samlAttempt {
+	return s.beginVia(t, c, slug, "/api/auth/saml/"+slug+"/start", body)
+}
+
+// beginVia is begin with the start at another path (a test sign-in).
+func (s *fakeSAML) beginVia(t *testing.T, c *client, slug, startPath string, body map[string]any) samlAttempt {
 	t.Helper()
-	r := c.do("POST", "/api/auth/saml/"+slug+"/start", body).want(t, 200, "")
+	r := c.do("POST", startPath, body).want(t, 200, "")
 	var ck *http.Cookie
 	for _, x := range r.resp.Cookies() {
 		if x.Name == "__Secure-petalbook_saml_"+slug {

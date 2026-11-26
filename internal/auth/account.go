@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"errors"
-	"net/url"
 	"strings"
 	"time"
 
@@ -16,20 +15,35 @@ import (
 type AccountView struct {
 	User        store.User
 	HasPassword bool
-	Identities  []IdentityView
 	Passkeys    []PasskeyView
 	// PasskeyRequired: the person must have a passkey (by themselves or by their role).
 	PasskeyRequired bool
 }
 
-// IdentityView is an attached identity as shown to its owner.
-type IdentityView struct {
-	ID       string
-	Provider string
-	Slug     string
-	Kind     string
-	Label    string
-	Created  time.Time
+// LinkView is a linked account (a sign-in link) as shown to its owner.
+type LinkView struct {
+	ID         string
+	ProviderID string
+	Provider   string
+	Slug       string
+	Kind       string
+	Label      string
+	SignIn     bool
+	Created    time.Time
+}
+
+// Links lists a person's linked accounts, oldest first.
+func (s *Service) Links(ctx context.Context, userID string) ([]LinkView, error) {
+	ids, err := store.ListLinks(ctx, s.st.Q(), userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LinkView, len(ids))
+	for i, l := range ids {
+		name, slug, kind := s.providerByID(l.ProviderID)
+		out[i] = LinkView{ID: l.ID, ProviderID: l.ProviderID, Provider: name, Slug: slug, Kind: kind, Label: l.Label, SignIn: l.SignIn, Created: l.Created}
+	}
+	return out, nil
 }
 
 // Account describes the signed-in user's sign-in methods.
@@ -40,33 +54,19 @@ func (s *Service) Account(ctx context.Context, u store.User) (*AccountView, erro
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	ids, err := store.ListIdentities(ctx, s.st.Q(), u.ID)
-	if err != nil {
-		return nil, err
-	}
-	v.Identities = make([]IdentityView, len(ids))
-	for i, id := range ids {
-		name, slug, kind := s.providerOf(id.Issuer)
-		v.Identities[i] = IdentityView{ID: id.ID, Provider: name, Slug: slug, Kind: kind, Label: id.Label, Created: id.Created}
-	}
+	var err error
 	if v.Passkeys, err = s.Passkeys(ctx, u.ID); err != nil {
 		return nil, err
 	}
 	return v, nil
 }
 
-// providerOf names the provider an issuer belongs to; for one that was deleted
-// it is the issuer's host, with no slug and no kind.
-func (s *Service) providerOf(issuer string) (name, slug, kind string) {
-	for _, rt := range s.provs.all() {
-		if rt.row.Issuer == issuer {
-			return rt.row.Name, rt.row.Slug, rt.row.Kind
-		}
+// providerByID names a provider by its id: from memory, no query.
+func (s *Service) providerByID(id string) (name, slug, kind string) {
+	if rt := s.provs.getID(id); rt != nil {
+		return rt.row.Name, rt.row.Slug, rt.row.Kind
 	}
-	if u, err := url.Parse(issuer); err == nil && u.Host != "" {
-		return u.Host, "", ""
-	}
-	return issuer, "", ""
+	return "", "", ""
 }
 
 // UpdateProfile changes the signed-in user's name, username and email; a nil
@@ -230,49 +230,49 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	return nil
 }
 
-// UnlinkIdentity removes one of the user's identities unless that would leave
-// no way to sign in.
-func (s *Service) UnlinkIdentity(ctx context.Context, userID, identityID string) error {
-	return s.unlinkIdentity(ctx, userID, identityID, userID, "user", "")
+// UnlinkAccount removes one of the user's linked accounts unless that would
+// leave no way to sign in (last_method).
+func (s *Service) UnlinkAccount(ctx context.Context, userID, linkID string) error {
+	return s.unlinkAccount(ctx, userID, linkID, userID, "user", "")
 }
 
-// unlinkIdentity is UnlinkIdentity done by actor (the person, or by "admin" a
+// unlinkAccount is UnlinkAccount done by actor (the person, or by "admin" a
 // site administrator).
-func (s *Service) unlinkIdentity(ctx context.Context, userID, identityID, actor, by, ip string) error {
+func (s *Service) unlinkAccount(ctx context.Context, userID, linkID, actor, by, ip string) error {
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
 	return s.st.Tx(ctx, func(q store.Q) error {
-		ids, err := store.ListIdentities(ctx, q, userID)
+		ids, err := store.ListLinks(ctx, q, userID)
 		if err != nil {
 			return err
 		}
 		found := false
 		for _, i := range ids {
-			found = found || i.ID == identityID
+			found = found || i.ID == linkID
 		}
 		if !found {
-			return errf(NotFound, "No such identity.")
+			return errf(NotFound, "No such linked account.")
 		}
 		// What is left must be a way the person can sign in with now: a
 		// password or a passkey that sign-in still accepts from them, or a
 		// connected account of a provider that is set up and on.
-		ways, err := s.waysToSignIn(ctx, q, userID, identityID, ids)
+		ways, err := s.waysToSignIn(ctx, q, userID, linkID, ids)
 		if err != nil {
 			return err
 		}
 		if ways == 0 {
 			if by != "user" {
-				return errf(Conflict, "This is the only way this person can sign in; they need a password or a passkey first.")
+				return coded(409, "last_method", "This is the only way this person can sign in; they need a password or a passkey first.")
 			}
-			return errf(Conflict, "This is the only way you can sign in; set a password or a passkey first.")
+			return coded(409, "last_method", "This is the only way you can sign in; set a password or a passkey first.")
 		}
 		for _, i := range ids {
-			if i.ID == identityID {
-				_, slug, _ := s.providerOf(i.Issuer)
+			if i.ID == linkID {
+				_, slug, _ := s.providerByID(i.ProviderID)
 				defer s.AuditIn(ctx, AuditEvent{Kind: "identity_unlinked", Actor: actor, User: userID, IP: ip, Detail: map[string]any{"provider": slug, "by": by}})
 			}
 		}
-		return store.DeleteIdentity(ctx, q, identityID, userID)
+		return store.DeleteLink(ctx, q, linkID, userID)
 	})
 }
 
@@ -762,7 +762,7 @@ func (s *Service) refreshSAMLMetadata(ctx context.Context) {
 	if changed {
 		var slugs []string
 		for _, rt := range s.provs.all() {
-			slugs = append(slugs, rt.row.Slug)
+			slugs = append(slugs, rt.row.ID)
 		}
 		if err := s.reloadProviders(ctx, slugs...); err != nil {
 			s.log.Warn("could not reload the providers", "error", err)
@@ -819,7 +819,7 @@ func (s *Service) UserCounts(ctx context.Context) (*Counts, error) {
 	if err != nil {
 		return nil, err
 	}
-	i, err := store.IdentityCounts(ctx, s.st.Q())
+	i, err := store.LinkCounts(ctx, s.st.Q())
 	if err != nil {
 		return nil, err
 	}
@@ -860,7 +860,7 @@ func (s *Service) PublicInfo(ctx context.Context) PublicInfo {
 // is gone, counting only those that work now: a password or a passkey when
 // password sign-in is not refused to them, and an identity of a provider that
 // is configured and enabled.
-func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without string, ids []store.Identity) (int, error) {
+func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without string, ids []store.Link) (int, error) {
 	u, err := store.GetUser(ctx, q, store.AllTenants(), userID)
 	if err != nil {
 		return 0, err
@@ -870,11 +870,8 @@ func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without s
 		if i.ID == without {
 			continue
 		}
-		for _, rt := range s.provs.all() {
-			if rt.row.Issuer == i.Issuer && rt.row.Enabled {
-				n++
-				break
-			}
+		if rt := s.provs.getID(i.ProviderID); rt != nil && s.signInOn(ctx, rt) {
+			n++
 		}
 	}
 	st := s.sec(ctx)

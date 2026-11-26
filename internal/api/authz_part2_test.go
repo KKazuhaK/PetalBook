@@ -256,7 +256,7 @@ func TestASiteAdministratorsSessionsNeedTheKey(t *testing.T) {
 		ops.do("GET", "/api/users/"+rootID+"/sessions", nil).want(t, 200, "")
 		ops.do("DELETE", "/api/users/"+rootID+"/sessions", nil).want(t, 403, "forbidden")
 		ops.do("DELETE", "/api/users/"+rootID+"/sessions/S1", nil).want(t, 403, "forbidden")
-		ops.do("DELETE", "/api/users/"+rootID+"/identities/I1", nil).want(t, 403, "forbidden")
+		ops.do("DELETE", "/api/users/"+rootID+"/links/I1", nil).want(t, 403, "forbidden")
 		ops.do("DELETE", "/api/users/"+mustUserID(t, a, "mem")+"/sessions", nil).want(t, 200, "")
 	})
 }

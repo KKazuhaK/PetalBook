@@ -1,9 +1,9 @@
 # route	site admin	tenant admin	member	token
+DELETE /api/account/emails/{email}	403 feature_off	403 feature_off	403 feature_off	403 token_scope
 DELETE /api/account/grants/{id}	ok	ok	ok	403 token_scope
-DELETE /api/account/identities/{id}	ok	ok	ok	403 token_scope
+DELETE /api/account/links/{id}	ok	ok	ok	403 token_scope
 DELETE /api/account/passkeys/{id}	ok	ok	ok	403 token_scope
 DELETE /api/account/tokens/{id}	ok	ok	ok	403 token_scope
-DELETE /api/admin/auth/providers/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/daily/apis/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
@@ -11,11 +11,16 @@ DELETE /api/admin/exports/{id}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/grants/{id}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/groups/{group}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/groups/{group}/members/{user}	ok	ok	403 forbidden	403 token_scope
+DELETE /api/admin/plans/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
+DELETE /api/admin/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/recycle/{item}	ok	403 forbidden	403 forbidden	403 token_scope
+DELETE /api/admin/secrets/{name}	ok	403 forbidden	403 forbidden	403 token_scope
 DELETE /api/admin/spaces/{space}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/spaces/{space}/view	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/tenants/{tenant}	ok	403 forbidden	403 forbidden	403 token_scope
+DELETE /api/admin/tenants/{tenant}/secrets/{name}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/admin/tokens/{id}	ok	ok	403 forbidden	403 token_scope
+DELETE /api/admin/users/{id}/view-as	ok	ok	403 forbidden	403 token_scope
 DELETE /api/connections/{provider}/authorization	ok	ok	ok	403 token_scope
 DELETE /api/connections/{provider}/leftovers/{repoId}	ok	ok	ok	403 token_scope
 DELETE /api/invites/{id}	ok	ok	403 forbidden	403 token_scope
@@ -25,23 +30,24 @@ DELETE /api/spaces/{space}/groups/{group}	ok	ok	403 no_permission	403 token_scop
 DELETE /api/spaces/{space}/members/{user}	ok	ok	403 no_permission	403 token_scope
 DELETE /api/spaces/{space}/pages/{id}	403 no_permission	403 no_permission	ok	ok
 DELETE /api/spaces/{space}/pages/{id}/draft	403 no_permission	403 no_permission	ok	403 token_scope
-DELETE /api/spaces/{space}/remote	ok	ok	403 no_permission	403 token_scope
-DELETE /api/spaces/{space}/remote/assets	ok	ok	403 no_permission	403 token_scope
+DELETE /api/spaces/{space}/remote	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
+DELETE /api/spaces/{space}/remote/assets	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
 DELETE /api/spaces/{space}/templates/{name}	ok	ok	403 no_permission	403 token_scope
 DELETE /api/spaces/{space}/types/{name}	ok	ok	403 no_permission	403 token_scope
 DELETE /api/users/{id}	ok	ok	403 forbidden	403 token_scope
-DELETE /api/users/{id}/identities/{identity}	ok	ok	403 forbidden	403 token_scope
+DELETE /api/users/{id}/links/{link}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/users/{id}/passkeys/{passkey}	ok	ok	403 forbidden	403 token_scope
 DELETE /api/users/{id}/sessions	ok	ok	403 forbidden	403 token_scope
 DELETE /api/users/{id}/sessions/{session}	ok	ok	403 forbidden	403 token_scope
 GET /api/account	ok	ok	ok	403 token_scope
 GET /api/account/grants	ok	ok	ok	403 token_scope
+GET /api/account/links	ok	ok	ok	403 token_scope
 GET /api/account/passkeys	ok	ok	ok	403 token_scope
 GET /api/account/tokens	ok	ok	ok	403 token_scope
 GET /api/account/usage	ok	ok	ok	403 token_scope
 GET /api/admin/audit	ok	ok	403 forbidden	403 token_scope
-GET /api/admin/auth/providers	ok	403 forbidden	403 forbidden	403 token_scope
-GET /api/admin/auth/providers/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
+GET /api/admin/audit/download	ok	ok	403 forbidden	403 token_scope
+GET /api/admin/audit/kinds	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/connections	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/connections/{provider}/installations	ok	403 forbidden	403 forbidden	403 token_scope
@@ -57,7 +63,14 @@ GET /api/admin/groups/{group}/members	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/groups/{group}/spaces	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/jobs/{id}	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/mail	ok	403 forbidden	403 forbidden	403 token_scope
+GET /api/admin/permissions	ok	ok	403 forbidden	403 token_scope
+GET /api/admin/plans	ok	403 forbidden	403 forbidden	403 token_scope
+GET /api/admin/plans/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
+GET /api/admin/providers	ok	403 forbidden	403 forbidden	403 token_scope
+GET /api/admin/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope
+GET /api/admin/providers/{id}/test	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/recycle	ok	ok	403 forbidden	403 token_scope
+GET /api/admin/secrets	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/security	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/settings	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/spaces	ok	ok	403 forbidden	403 token_scope
@@ -69,6 +82,8 @@ GET /api/admin/storage/people	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/storage/people/{user}	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/tenants	ok	403 forbidden	403 forbidden	403 token_scope
 GET /api/admin/tenants/{tenant}	ok	ok	403 forbidden	403 token_scope
+GET /api/admin/tenants/{tenant}/overview	ok	ok	403 forbidden	403 token_scope
+GET /api/admin/tenants/{tenant}/secrets	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/tenants/{tenant}/settings	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/tokens	ok	ok	403 forbidden	403 token_scope
 GET /api/admin/usage	ok	ok	403 forbidden	403 token_scope
@@ -91,6 +106,7 @@ GET /api/meta	ok	ok	ok	ok
 GET /api/notifications	ok	ok	ok	403 token_scope
 GET /api/notifications/unread	ok	ok	ok	403 token_scope
 GET /api/oauth/consent	ok	ok	ok	403 token_scope
+GET /api/people	ok	ok	ok	403 token_scope
 GET /api/prefs	ok	ok	ok	403 token_scope
 GET /api/register	ok	ok	ok	403 token_scope
 GET /api/session	ok	ok	ok	ok
@@ -113,6 +129,7 @@ GET /api/spaces/{space}/pages/{id}/backlinks	403 no_permission	403 no_permission
 GET /api/spaces/{space}/pages/{id}/history	403 no_permission	403 no_permission	ok	ok
 GET /api/spaces/{space}/pages/{id}/links	403 no_permission	403 no_permission	ok	ok
 GET /api/spaces/{space}/pages/{id}/versions/{commit}	403 no_permission	403 no_permission	ok	ok
+GET /api/spaces/{space}/people	ok	ok	403 no_permission	403 token_scope
 GET /api/spaces/{space}/remote	ok	ok	403 no_permission	403 token_scope
 GET /api/spaces/{space}/remote/assets	ok	ok	403 no_permission	403 token_scope
 GET /api/spaces/{space}/sources	403 no_permission	403 no_permission	ok	ok
@@ -127,15 +144,16 @@ GET /api/spaces/{space}/views	403 no_permission	403 no_permission	ok	ok
 GET /api/sync/heads	ok	ok	ok	ok
 GET /api/users	ok	ok	403 forbidden	403 token_scope
 GET /api/users/{id}	ok	ok	403 forbidden	403 token_scope
-GET /api/users/{id}/identities	ok	ok	403 forbidden	403 token_scope
+GET /api/users/{id}/links	ok	ok	403 forbidden	403 token_scope
 GET /api/users/{id}/memberships	ok	ok	403 forbidden	403 token_scope
 GET /api/users/{id}/passkeys	ok	ok	403 forbidden	403 token_scope
 GET /api/users/{id}/sessions	ok	ok	403 forbidden	403 token_scope
 PATCH /api/account	ok	ok	ok	403 token_scope
 PATCH /api/account/passkeys/{id}	ok	ok	ok	403 token_scope
-PATCH /api/admin/auth/providers/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
 PATCH /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 PATCH /api/admin/groups/{group}	ok	ok	403 forbidden	403 token_scope
+PATCH /api/admin/plans/{slug}	ok	403 forbidden	403 forbidden	403 token_scope
+PATCH /api/admin/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 PATCH /api/admin/tenants/{tenant}	ok	ok	403 forbidden	403 token_scope
 PATCH /api/prefs	ok	ok	ok	403 token_scope
 PATCH /api/spaces/{space}	ok	ok	403 no_permission	403 token_scope
@@ -144,12 +162,14 @@ PATCH /api/spaces/{space}/members/{user}	ok	ok	403 no_permission	403 token_scope
 PATCH /api/spaces/{space}/pages/{id}/props	403 no_permission	403 no_permission	ok	ok
 PATCH /api/users/{id}	ok	ok	403 forbidden	403 token_scope
 POST /api/account/email/verify	ok	ok	ok	403 token_scope
+POST /api/account/emails	403 feature_off	403 feature_off	403 feature_off	403 token_scope
+POST /api/account/emails/primary	403 feature_off	403 feature_off	403 feature_off	403 token_scope
+POST /api/account/emails/verify	403 feature_off	403 feature_off	403 feature_off	403 token_scope
+POST /api/account/links/{provider}/start	ok	ok	ok	403 token_scope
 POST /api/account/passkeys/begin	ok	ok	ok	403 token_scope
 POST /api/account/passkeys/finish	ok	ok	ok	403 token_scope
 POST /api/account/password	ok	ok	ok	403 token_scope
 POST /api/account/tokens	ok	ok	ok	403 token_scope
-POST /api/admin/auth/providers	ok	403 forbidden	403 forbidden	403 token_scope
-POST /api/admin/auth/providers/{slug}/refresh	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/bulk	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/confirm	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/connections	ok	403 forbidden	403 forbidden	403 token_scope
@@ -161,15 +181,23 @@ POST /api/admin/daily/try	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/exports	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/groups	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/groups/{group}/members	ok	ok	403 forbidden	403 token_scope
+POST /api/admin/groups/{group}/members/batch	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/mail/test	ok	403 forbidden	403 forbidden	403 token_scope
+POST /api/admin/members/batch	ok	ok	403 forbidden	403 token_scope
+POST /api/admin/plans	ok	403 forbidden	403 forbidden	403 token_scope
+POST /api/admin/providers	ok	403 forbidden	403 forbidden	403 token_scope
+POST /api/admin/providers/{id}/check	ok	403 forbidden	403 forbidden	403 token_scope
+POST /api/admin/providers/{id}/test	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/recycle/{item}/restore	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/disable	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/enable	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/evict	ok	403 forbidden	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/size	ok	ok	403 forbidden	403 token_scope
+POST /api/admin/spaces/{space}/takeover	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/transfer	ok	ok	403 forbidden	403 token_scope
 POST /api/admin/spaces/{space}/view	ok	ok	403 forbidden	403 token_scope
-POST /api/admin/tenants	ok	403 forbidden	403 forbidden	403 token_scope
+POST /api/admin/tenants	403 feature_off	403 forbidden	403 forbidden	403 token_scope
+POST /api/admin/users/{id}/view-as	ok	ok	403 forbidden	403 token_scope
 POST /api/auth/oidc/start	ok	ok	ok	403 token_scope
 POST /api/auth/passkey/begin	ok	ok	ok	403 token_scope
 POST /api/auth/passkey/finish	ok	ok	ok	403 token_scope
@@ -199,17 +227,19 @@ POST /api/spaces/{space}/folders/move	403 no_permission	403 no_permission	ok	ok
 POST /api/spaces/{space}/groups	ok	ok	403 no_permission	403 token_scope
 POST /api/spaces/{space}/import	403 no_permission	403 no_permission	ok	ok
 POST /api/spaces/{space}/members	ok	ok	403 no_permission	403 token_scope
+POST /api/spaces/{space}/members/batch	ok	ok	403 no_permission	403 token_scope
 POST /api/spaces/{space}/pages	403 no_permission	403 no_permission	ok	ok
 POST /api/spaces/{space}/pages/batch	403 no_permission	403 no_permission	ok	ok
 POST /api/spaces/{space}/pages/{id}/assets	403 no_permission	403 no_permission	ok	ok
 POST /api/spaces/{space}/pages/{id}/commit	403 no_permission	403 no_permission	ok	403 token_scope
 POST /api/spaces/{space}/pages/{id}/move	403 no_permission	403 no_permission	ok	ok
 POST /api/spaces/{space}/reindex	ok	ok	403 no_permission	403 token_scope
-POST /api/spaces/{space}/remote/accept	ok	ok	403 no_permission	403 token_scope
-POST /api/spaces/{space}/remote/assets/move	ok	ok	403 no_permission	403 token_scope
-POST /api/spaces/{space}/remote/key	ok	ok	403 no_permission	403 token_scope
+POST /api/spaces/{space}/remote/accept	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
+POST /api/spaces/{space}/remote/assets/move	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
+POST /api/spaces/{space}/remote/key	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
 POST /api/spaces/{space}/remote/sync	ok	ok	403 no_permission	403 token_scope
 POST /api/spaces/{space}/types/{name}/rename-field	ok	ok	403 no_permission	403 token_scope
+POST /api/users/{id}/password	ok	ok	403 forbidden	403 token_scope
 POST /api/users/{id}/password-reset	ok	ok	403 forbidden	403 token_scope
 PUT /api/admin/connections/{provider}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/connections/{provider}/installations/{id}	ok	403 forbidden	403 forbidden	403 token_scope
@@ -217,9 +247,12 @@ PUT /api/admin/daily/apis/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/lines	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/daily/providers/{id}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/mail	ok	403 forbidden	403 forbidden	403 token_scope
+PUT /api/admin/secrets/{name}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/security	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/settings/{key}	ok	403 forbidden	403 forbidden	403 token_scope
 PUT /api/admin/spaces/{space}/storage	ok	403 forbidden	403 forbidden	403 token_scope
+PUT /api/admin/tenants/{tenant}/plan	ok	403 forbidden	403 forbidden	403 token_scope
+PUT /api/admin/tenants/{tenant}/secrets/{name}	ok	ok	403 forbidden	403 token_scope
 PUT /api/admin/tenants/{tenant}/settings/{key}	ok	ok	403 forbidden	403 token_scope
 PUT /api/spaces/{space}/daily/prefs	ok	ok	403 no_permission	403 token_scope
 PUT /api/spaces/{space}/daily/settings	ok	ok	403 no_permission	403 token_scope
@@ -228,8 +261,8 @@ PUT /api/spaces/{space}/folders/style	403 no_permission	403 no_permission	ok	ok
 PUT /api/spaces/{space}/folders/type	ok	ok	403 no_permission	403 token_scope
 PUT /api/spaces/{space}/pages/{id}	403 no_permission	403 no_permission	ok	ok
 PUT /api/spaces/{space}/pages/{id}/draft	403 no_permission	403 no_permission	ok	403 token_scope
-PUT /api/spaces/{space}/remote	ok	ok	403 no_permission	403 token_scope
-PUT /api/spaces/{space}/remote/assets	ok	ok	403 no_permission	403 token_scope
+PUT /api/spaces/{space}/remote	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
+PUT /api/spaces/{space}/remote/assets	403 takeover_required	403 takeover_required	403 no_permission	403 token_scope
 PUT /api/spaces/{space}/sources/presets	ok	ok	403 no_permission	403 token_scope
 PUT /api/spaces/{space}/tags/{tag}	403 no_permission	403 no_permission	ok	ok
 PUT /api/spaces/{space}/templates/defaults	ok	ok	403 no_permission	403 token_scope

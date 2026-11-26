@@ -544,7 +544,8 @@ redirect (`303`) into the app, never JSON:
 - failure: to `/login?sso_error=<code>` (for `link`:
   `/settings?sso_error=<code>`).
 
-An OpenID Connect identity is the provider's issuer and the `sub` claim.
+An OpenID Connect linked account is the provider's own id (the provider row's
+id, never the issuer an administrator typed) and the `sub` claim.
 
 #### GitHub: `GET /api/auth/github/{slug}/callback`
 
@@ -616,8 +617,8 @@ first start of 2.8:
   scopes and `--oidc-auto-create` of the command line, the client secret sealed,
   `legacyCallback` on, enabled. The login mode stays `dual` (what the page was
   before) and `ssoOnly` off. It logs that it did so.
-- The identities people linked keep working without any change: an identity is
-  stored by issuer and subject, and the issuer is the same.
+- The provider has the id `sso` (its slug), and the accounts people link to it
+  are linked to that id.
 - From then on the state database is what counts. When `--oidc-*` is still given
   and differs from the stored provider (or that provider was deleted), the
   server logs a warning at start-up and the security settings show a notice
@@ -642,7 +643,9 @@ own.
 | `email_in_use` | from 3.6: nobody has this identity, the sign-in vouches for its address, and another account holds that address verified; sign in to that account and link the provider from its settings |
 | `not_allowed` | GitHub: the person is in none of the organisations the provider requires |
 | `disabled` | the account is disabled |
-| `identity_in_use` | `link`: another account has this identity |
+| `identity_in_use` | `link`: another person has linked this account at this provider |
+| `already_linked` | `link`: the person has an account linked at this provider already (one per provider per person; unlink it first to link another) |
+| `saml_no_email` | SAML: the assertion has no address, neither in the attribute the provider names for it (`mail` by default) nor, with a `NameID` in the `emailAddress` format, as the `NameID`; the administrator maps an email attribute |
 | `invite_invalid` | `invite`: the invite is unknown, used or expired |
 | `setup_invalid` | `setup`: setup is done, or the token is wrong |
 | `rate_limited` | the address made too many requests (SAML ACS, starts) |
@@ -664,7 +667,8 @@ Before 2.8 the parameter was `error=`; the web app shipped with 2.8 reads
 
 For `intent: login`, in this order:
 
-1. The account that has this identity (by issuer and subject: one query).
+1. The account linked to this subject at this provider (by the provider's id and
+   the subject: one query on the unique index).
 2. From 3.6, never an account found by its address. When the sign-in vouches
    for the address it sent (see "Which sign-ins vouch for an address" in
    "Signing in by email address") and another account holds that address
@@ -683,12 +687,15 @@ For `intent: login`, in this order:
 4. Otherwise `no_account`.
 
 An address alone never joins accounts: the same address signing in from two
-providers makes two identities, and they are on one account only if the person
-linked the second one from their account.
+providers makes two linked accounts, and they are on one account only if the
+person linked the second one from their account. A person has at most one
+linked account per provider (`already_linked`; to switch, unlink first).
 
-Two providers may not share an issuer (see "Sign-in providers"), so an identity
-belongs to exactly one provider, and deleting a provider and adding it again
-with the same issuer brings its people's identities back.
+A linked account belongs to one provider row. Two providers may have the same
+issuer string (an organisation can copy another's), and the same subject at
+each is two different linked accounts: nothing is ever found by the issuer.
+Deleting a provider deletes the accounts linked to it, and adding it again
+brings none of them back.
 
 ### Captcha
 
@@ -877,7 +884,6 @@ Accounts mode, signed in.
 {
   "user": {…},
   "hasPassword": true,
-  "identities": [{"id": "01JD3M2A4C", "provider": "Company SSO", "providerSlug": "company", "kind": "oidc", "label": "kazuha@example.com", "created": "2026-11-21T08:30:00Z"}],
   "passkeys": [{"id": "01JD3N7X2B", "name": "MacBook", "created": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "synced": true}],
   "emails": [{"email": "kazuha@example.com", "primary": true, "verified": true, "created": "2026-11-21T08:30:00Z"}]
 }
@@ -887,14 +893,12 @@ Accounts mode, signed in.
 email address"): its primary alone while the tenant's
 `accounts.multipleEmails` is off.
 
-`label` is the `email` or `preferred_username` claim (for SAML the mapped email
-or the `NameID`; for GitHub the login name) seen when the identity was attached,
-for display only. `providerSlug` and `kind` are `""` for an identity whose
-provider was deleted; `provider` is then the issuer's host. `synced` is whether
-the authenticator says the passkey is backed up (synced between devices).
+`synced` is whether the authenticator says the passkey is backed up (synced
+between devices). The accounts the person linked to sign in are at
+`GET /api/account/links`.
 
 The page offers "Link" for every enabled provider of `GET /api/auth/providers`
-that the user has no identity from.
+that the user has no linked account at.
 
 ### `PATCH /api/account`
 
@@ -916,18 +920,43 @@ below, ends those too). In a session held for a new password, `new` equal to
 passkey and has none of this host stays held, now with `hold: "passkey"`,
 instead of the hold being lifted.
 
-### Linking an identity
+### Linked accounts
 
-`POST /api/auth/{kind}/{slug}/start` with `{"intent": "link"}`, then the
-provider's callback, which returns to `/settings` (or
-`/settings?sso_error=<code>`). Linking an identity the user already has changes
-nothing; one another account has is `identity_in_use`. Linking ignores
-addresses: it attaches exactly the identity the person proved.
+#### `GET /api/account/links`
 
-### `DELETE /api/account/identities/{id}`
+```json
+{"links": [{"id": "01JD3M2A4C", "providerId": "company", "provider": "Company SSO", "slug": "company",
+            "kind": "oidc", "label": "kazuha@example.com", "signin": true, "created": "2026-11-21T08:30:00Z"}]}
+```
 
-`204`. Refused with `409 conflict` when it would leave the user with no way to
-sign in (no password, no other identity, no passkey).
+The accounts the person linked to sign in, oldest first. `provider` is the
+provider's name, `providerId` its own id (a site provider's is its slug).
+`label` is the `email` or `preferred_username` claim (for SAML the address; for
+GitHub the login name) seen at the last sign-in, for display only. `signin` is
+whether the link may sign in (always, until repository links join this list).
+
+#### `POST /api/account/links/{provider}/start`
+
+`{"purpose": "signin", "return": "/settings"}` (both optional; `purpose` is the
+only one there is for now). `200` with `{"url": "…"}`: where to send the browser
+(the provider's authorisation or SAML address); the attempt cookies are set.
+The provider's callback returns to `return` (default `/settings`), or to
+`/settings?sso_error=<code>`. `{provider}` is the provider's id (its slug, for
+the site's). `409 already_linked` when the person has an account linked at that
+provider already, one per provider per person: to switch, unlink first (the
+callback says the same when another tab got there first). `404 not_found` for an
+unknown, disabled or organisation-owned provider. `POST /api/auth/{kind}/{slug}/start`
+with `{"intent": "link"}` still starts the same attempt.
+
+Linking ignores addresses: it attaches exactly the account the person proved.
+Linking the account the person has linked already changes nothing; one another
+person has linked at that provider is `identity_in_use`.
+
+#### `DELETE /api/account/links/{id}`
+
+`204`. Refused with `409 last_method` when it would leave the user with no way
+to sign in (no password, no other linked account, no passkey). `404 not_found`
+for one the person does not have. Linking again afterwards works.
 
 ### Account passkeys
 
@@ -1045,14 +1074,14 @@ ends browser sessions only: API tokens and OAuth or MCP grants of the person kee
 working until they are revoked on their own page. This includes the caller's own
 sessions when the person is the caller.
 
-#### `GET /api/users/{id}/identities`
+#### `GET /api/users/{id}/links`
 
-`{"identities": [{"id", "provider", "slug", "kind", "label", "created"}]}`: the
-accounts they connected to sign in (the same as `GET /api/account` shows its owner).
+`{"links": [{"id", "providerId", "provider", "slug", "kind", "label", "signin", "created"}]}`: the
+accounts they linked to sign in (the same as `GET /api/account/links` shows its owner).
 
-#### `DELETE /api/users/{id}/identities/{identity}`
+#### `DELETE /api/users/{id}/links/{link}`
 
-`204`; `identity_unlinked` (`by: "admin"`) is written. `409 conflict` when it is
+`204`; `identity_unlinked` (`by: "admin"`) is written. `409 last_method` when it is
 the only way they can sign in now: what is left is counted only if it works today,
 that is a password or a passkey while password sign-in is not refused to them, and a
 connected account of a provider that is set up and enabled. `404 not_found` for one
@@ -1635,10 +1664,10 @@ keep the group's permissions. To take access away at once, disable the person,
 remove the group from the space, or remove the mapping entry. Removing an entry
 from `map` (or pointing it to another group) at once removes the memberships
 that entry brought, from everyone; deleting a provider removes every membership
-it brought (its identities are kept, as in 2.8). Disabling a provider changes
+it brought, and the accounts people linked to it. Disabling a provider changes
 nothing.
 
-**Refusals of the setting** (`POST`/`PATCH /api/admin/auth/providers`):
+**Refusals of the setting** (`POST`/`PATCH /api/admin/providers`):
 `400 invalid` for a bad `claim`, `missing` or value; `404 group_not_found` for an
 unknown group; `409 group_not_synced` for a local group; `409 exists` for a
 value given twice.
@@ -6544,7 +6573,7 @@ The User object gains:
 | `/api/admin/spaces…`, `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage` | their tenant | every tenant (`?tenant=`) |
 | `GET /api/admin/audit` | their tenant's rows, without the site's kinds (security, providers, mail, tenants, site settings) | every row (`?tenant=`) |
 | `GET /api/admin/tenants/{own}`, `PATCH` of its `name`, `…/settings` of their tenant | yes | every tenant |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer, which holds machine access, tenancy, the sign-in and storage policy), `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections/github…` (2.7), `/api/admin/status`, `/api/admin/settings…` (site layer, which holds machine access, tenancy, the sign-in and storage policy), `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `quota`, and 3.1's `/api/admin/storage`, `PUT /api/admin/spaces/{space}/storage`, `POST /api/admin/spaces/{space}/evict` and a user's `remoteExempt` | `403 forbidden` | yes |
 
 The daily text's tenant default is a tenant setting (see "Settings by layer"),
 not `/api/admin/daily`, which stays the site's.
@@ -9316,7 +9345,7 @@ The inventory's (a) items, and the reasons that matter for security:
 Every endpoint below exists as `/api/admin/tenants/{tenant}/…`, for the
 tenant's administrators and for site administrators. `{tenant}` is the id; a
 tenant administrator who names another answers `404 not_found`. The site's own
-counterparts keep their 2.x/3.x addresses (`/api/admin/auth/providers`,
+counterparts keep their 2.x/3.x addresses (`/api/admin/providers`,
 `/api/admin/mail`, …) and stay site administrators only.
 
 Each resource is gated by a feature (see "Rules for a tenant"; `403
@@ -9364,7 +9393,7 @@ removed in 3.6.
 
 - **Social sign-in** (`class: "social"`): consumer accounts (Google, GitHub,
   Microsoft personal accounts, Apple, GitLab.com and the like). **The site
-  configures them** (`/api/admin/auth/providers`, unchanged). Each is a
+  configures them** (`/api/admin/providers`). Each is a
   "Continue with Google" button on every sign-in page. It signs a person in to
   the account its identity is attached to, in any tenant, as today; with
   registration open for the page's tenant it can register (see below).
@@ -9374,7 +9403,7 @@ removed in 3.6.
   after it is resolved (`sso_error=not_allowed`, the same as for a GitHub
   organisation that does not match).
 - **SSO** (`class: "sso"`): enterprise OpenID Connect or SAML, owned by a
-  tenant with `signin.sso` (`/api/admin/tenants/{tenant}/auth/providers`, the same Provider
+  tenant with `signin.sso` (`/api/admin/providers` in the tenant's scope, the same Provider
   object and refusals as 2.8). It signs people in only to accounts of its
   tenant, makes accounts only there (`autoCreate`), and maps groups only to the
   tenant's groups. A site administrator may also own SSO providers and offer
@@ -9395,14 +9424,16 @@ The Provider object gains:
 (`"all"` or a list of ids; `null` for a tenant's); `domains` are the tenant's
 verified domains routed to this provider (below).
 
-**Identities.** An identity is keyed by (`owner`, issuer, subject), where the
-owner is `site` for site providers and the tenant for a tenant's SSO. So two
-tenants may both use the same identity provider (two companies on Microsoft
-Entra ID, or one issuer with two applications) without sharing identities, and
-the site's issuer uniqueness (`provider_issuer_in_use`) holds per owner. A
-tenant's SSO provider:
+**Linked accounts.** A linked account is keyed by (the provider's own id,
+subject): the provider row's id, never the issuer string an administrator
+typed. The provider's `owner` is `site` for the site's and the tenant for a
+tenant's SSO. So two tenants may both use the same identity provider (two
+companies on Microsoft Entra ID, or one issuer with two applications) without
+sharing accounts, and an organisation that copies another's issuer reaches none
+of its accounts: issuers may repeat. A person has one linked account per
+provider. A tenant's SSO provider:
 
-- finds accounts only by `(its tenant, issuer, subject)`, and the account must
+- finds accounts only by `(its provider id, subject)`, and the account must
   be of its tenant (checked again on the row, so a bad row cannot cross);
 - never attaches an identity to an account by its address (3.6, "Signing in
   by email address"), and vouches for an address only on its tenant's
@@ -9410,11 +9441,10 @@ tenant's SSO provider:
 - **never signs in a site administrator**, even one whose identity is linked:
   a tenant administrator controls that provider and could point it at an
   identity provider of their own (`sso_error=not_allowed`, audited);
-- when its issuer, SAML entity id or GitHub base address changes, its
-  identities are detached (they named a subject at the old issuer); the
-  answer says how many, and people sign in again by linking.
+- keeps its linked accounts when its issuer, SAML entity id or GitHub base
+  address changes: they belong to the provider row, not to the address.
 
-`POST`/`PATCH`/`DELETE /api/admin/tenants/{tenant}/auth/providers…` need the
+`POST`/`PATCH`/`DELETE /api/admin/providers…` in a tenant's scope need the
 tenant's feature `features.ownSso` (`403 feature_off` otherwise). Slugs stay
 unique on the server (they are in the callback addresses registered at the
 identity provider); `409 exists` says only that the slug is taken. `kind`
@@ -9423,8 +9453,8 @@ identity provider); `409 exists` says only that the slug is taken. `kind`
 **Several sign-in methods per account** (owner, 2026-11-23). An account may
 have a password and any number of identities (Google, GitHub, Microsoft, …) at
 once, and any of them signs in to the same account. Linking stays 2.8's
-(`POST /api/auth/{kind}/{slug}/start` with `intent: "link"`), unlinking stays
-`DELETE /api/account/identities/{id}` (`409 conflict` when it would leave no
+(`POST /api/account/links/{provider}/start`), unlinking is
+`DELETE /api/account/links/{id}` (`409 last_method` when it would leave no
 way to sign in), and an account without a password adds one with
 `POST /api/account/password` without `current`. 3.6 adds:
 
@@ -9439,9 +9469,9 @@ way to sign in), and an account without a password adds one with
   "canUnlink": true
   ```
 
-  `identities`, `passkeys` and `hasPassword` stay. `canUnlink` is whether
+  `passkeys` and `hasPassword` stay. `canUnlink` is whether
   removing one method would still leave one.
-- **Templates.** `GET /api/admin/auth/provider-templates` (site
+- **Templates.** `GET /api/admin/provider-templates` (site
   administrators): the presets shipped with the server (`google`, `microsoft`,
   `apple`, `github`, `gitlab-com`), each with its `kind`, issuer or addresses,
   scopes, `class: "social"` and icon (3.9):
@@ -9452,7 +9482,7 @@ way to sign in), and an account without a password adds one with
                   "icon": "preset:google"}]}
   ```
 
-  `POST /api/admin/auth/providers` takes `{"template": "google", "slug": "google",
+  `POST /api/admin/providers` takes `{"template": "google", "slug": "google",
   "clientId": "…", "clientSecret": "…"}`; the template fills the rest, and the
   provider is then an ordinary one (a template that changes in a later release
   does not change providers already made).
@@ -10063,7 +10093,7 @@ own organisation**.
 | Endpoints | Tenant administrator | Site administrator |
 |---|---|---|
 | `/api/users…`, `/api/invites…`, `DELETE /api/users/{id}`, `/api/admin/users/{id}/deletion` | their tenant | every tenant |
-| `/api/users/{id}/sessions…`, `/api/users/{id}/identities…` (3.10) | `404 not_found`, as for no one | every tenant |
+| `/api/users/{id}/sessions…`, `/api/users/{id}/links…` (3.10) | `404 not_found`, as for no one | every tenant |
 | `/api/admin/spaces…` (incl. 3.1's `…/storage` `exempt`, `…/evict`; `pin` within `storage.pinnedBytes`), `/api/admin/groups…`, `/api/admin/tokens…`, `/api/admin/grants…`, `/api/admin/usage`, `/api/admin/storage/people…` | their tenant | every tenant |
 | `GET /api/admin/storage` | their tenant's summary, settings read only | all, and `PUT` |
 | `/api/admin/recycle…` (list, restore), `/api/admin/confirm`, `/api/admin/bulk`, `/api/admin/jobs…` | their tenant | every tenant |
@@ -10075,7 +10105,7 @@ own organisation**.
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
 | `GET /api/admin/audit/download` | their tenant's rows, with `features.auditDownload` | every row |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
 
 The machine-access switches are the settings `features.tokens` and
 `features.mcp`: the site's layer is `/api/admin/settings`, the tenant's
@@ -10110,8 +10140,8 @@ held by the built-in site administrator only: no custom role may hold it.
 | `site.spaces.personal.content` | site | — | Open an audited view of a person's personal space and export it; held by the built-in site administrator only |
 | `tenant.settings.read` | tenant | — | Read the tenant and its settings |
 | `tenant.settings.write` | tenant | — | Change the tenant and its settings |
-| `tenant.users.read` | tenant | — | List people and read their accounts, memberships, sessions, identities and passkeys |
-| `tenant.users.manage` | tenant | — | Change people's accounts, end their sessions, remove identities and passkeys, send password resets |
+| `tenant.users.read` | tenant | — | List people and read their accounts, memberships, sessions, linked accounts and passkeys |
+| `tenant.users.manage` | tenant | — | Change people's accounts, end their sessions, remove linked accounts and passkeys, send password resets |
 | `tenant.users.delete` | tenant | — | Delete people |
 | `tenant.invites.manage` | tenant | — | Create, list and withdraw invitations |
 | `tenant.groups.read` | tenant | — | List groups, their members and their spaces |
@@ -10292,8 +10322,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
   namespace, installation, app, sealed token, prefix, state, in use), each with
   `updated_by` and `updated_at`; `site_records` key `publicMailDomains`.
   `github_apps` is the GitHub provider's table; 3.8's providers have their own.
-- Sign-in: `sign_in_providers.owner`, `.class`, `.tenants`; `identities.owner`
-  (unique `(owner, issuer, subject)`); `github_installations` name the App
+- Sign-in: `providers.owner` and `providers.signin`, one `linked_accounts` row per (provider, person) (unique `(provider_id, subject)` and `(provider_id, user_id)`); `github_installations` name the App
   they belong to; the sharing stays in 2.7's `github_installation_tenants`, and
   `"all"` is a flag on the installation. 2.8's
   `legacyCallback` and the `--oidc-*` import are removed.
@@ -10320,7 +10349,7 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `kind` | When | `detail` |
 |---|---|---|
 | `setting_changed` | as 3.3, plus `note` | `key`, `layer`, `from`, `to`; for a rule for a tenant also `source` and `window` |
-| `tenant_provider_created`, `…_changed`, `…_deleted` | a tenant's SSO provider changed | as `provider_*`, with `tenant`; `identitiesDetached` |
+| `tenant_provider_created`, `…_changed`, `…_deleted` | a tenant's SSO provider changed | as `provider_*`, with `tenant`|
 | `provider_assigned` | a site SSO provider was handed to a tenant | `slug`, `tenant` |
 | `domain_claimed`, `domain_verified`, `domain_lapsed`, `domain_removed`, `domain_assigned` | a domain claim changed | `domain`, `tenant` |
 | `tenant_mail_changed`, `tenant_captcha_changed`, `tenant_daily_changed`, `tenant_connection_changed` | a tenant-owned resource changed | the changed fields, secrets as `"changed"`; `provider` for a connection |
@@ -11179,14 +11208,18 @@ none. A change of `captcha.provider` clears both. `200` with the view as `GET`.
 
 ### Sign-in providers
 
-At most 50. Each has a `slug`: 1 to 32 characters of `a-z`, `0-9` and `-`,
-starting with a letter or digit, unique and fixed once made (it is in the
-addresses registered at the identity provider). All providers are read into
+At most 50, in the table `providers` (an `id`, an `owner`, flags `signin` and
+`repos` for what a row may be used for; this section is the sign-in rows).
+Each has a `slug`: 1 to 32 characters of `a-z`, `0-9` and `-`, starting with a
+letter or digit, unique per owner and fixed once made (it is in the addresses
+registered at the identity provider). The `id` of a site provider is its slug;
+a tenant's provider has a generated id, so its slug never meets another
+organisation's. Accounts are linked by the provider's `id`. All providers are read into
 memory once; a change re-reads them and rebuilds only the changed provider's
 client. OpenID Connect discovery documents and SAML metadata are kept in the
 state database and in memory, so a sign-in does not fetch them; SAML metadata
 given by address is fetched again every 24 hours in the background and on
-`refresh`.
+`check`.
 
 Secrets (an OpenID Connect or GitHub client secret, the SAML signing key) are
 sealed with the server's key (`secret.key`, as remote credentials are) and are
@@ -11196,6 +11229,7 @@ never returned: `hasSecret` says whether one is stored.
 
 ```json
 {
+  "id": "company", "owner": "site",
   "slug": "company", "kind": "oidc", "name": "Company SSO", "icon": "preset:microsoft",
   "enabled": true, "order": 0,
   "autoCreate": false, "mergeVerifiedEmail": false,
@@ -11208,6 +11242,14 @@ never returned: `hasSecret` says whether one is stored.
 }
 ```
 
+- `owner` is `site`, or the id of the tenant that owns the provider (an
+  organisation's own SSO); it is given when the provider is made (`owner` in the
+  body, site administrators only for now) and cannot change. A tenant's
+  provider puts new accounts in that tenant, is made `enabled: false`, and can
+  be turned on only once the tenant has a verified domain (`409
+  domain_required`): domain verification arrives with 3.6 (d), until then no
+  tenant has one, so none can be turned on. It is not reachable by a slug, and
+  its addresses are trusted only on the tenant's verified domains.
 - `kind` is fixed once made. Exactly one of `oidc`, `saml`, `github` is present,
   matching it.
 - `name` is 1 to 60 characters; `icon` as in `GET /api/auth/providers`.
@@ -11216,12 +11258,14 @@ never returned: `hasSecret` says whether one is stored.
   sign-in (see "Which account an identity signs in to"). Off by default.
 - `mergeVerifiedEmail`: from 3.6, "trust this provider's verified email
   addresses": an OpenID Connect provider's address with `email_verified: true`
-  counts as verified (see "Which sign-ins vouch for an address"). It never
-  signs anyone in to an existing account. It does nothing for SAML (no such
-  claim) or GitHub (trusted by its API). Off by default. The name stays for
-  the contract.
+  counts as verified (see "Which sign-ins vouch for an address"). For
+  SAML (no such claim) it is the administrator's word that the address is
+  verified. It never signs anyone in to an existing account. It does nothing
+  for GitHub (trusted by its API), and only the site's own providers may have
+  it (`400 invalid` for a tenant's). Off by default. The name stays for the
+  contract.
 - `status` is the last discovery or metadata fetch; `people` how many accounts
-  have an identity from this provider.
+  are linked to this provider.
 
 `oidc`: `issuer` (an `https` address), `clientId`, the secret (write-only
 `clientSecret`; may be empty for a public client: PKCE is always used),
@@ -11245,8 +11289,13 @@ from the metadata. `entityId` defaults to the metadata address shown. The
 signing key and certificate are made by the server when the provider is
 created (RSA 2048, 10 years); the key is never shown. `nameIdFormat` `""` lets
 the identity provider choose (transient is refused at sign-in). `attributes`
-name where the email, display name and username come from (empty: the
-`NameID`).
+name where the email, display name and username come from. The subject of the
+linked account is the `NameID`, which need not be an address (`persistent` is
+recommended: an address can change). The address is the account's UPN and is
+required: it is read from `attributes.email` (`mail` when empty), else taken
+from the `NameID` only when its format is `emailAddress`; with neither the
+sign-in is refused with `sso_error=saml_no_email`, which tells the administrator
+to map an email attribute. Use "Test sign-in" to see what the provider sends.
 
 `github`:
 
@@ -11262,11 +11311,11 @@ name where the email, display name and username come from (empty: the
 `groups` (any kind, from 3.2; absent or `{"enabled": false}` by default): how
 the provider's groups claim maps to synced groups; see "Groups from sign-in".
 
-#### `GET /api/admin/auth/providers`, `GET /api/admin/auth/providers/{slug}`
+#### `GET /api/admin/providers`, `GET /api/admin/providers/{id}`
 
-`{"providers": [{…}]}` in `order`, and one provider.
+`{"providers": [{…}]}` in `order`, and one provider (by its `id`).
 
-#### `POST /api/admin/auth/providers`
+#### `POST /api/admin/providers`
 
 A provider as above, with `slug`, `kind`, `name` and the kind's required
 fields; for `oidc` and `github` the secret as `clientSecret`. `201` with the
@@ -11274,22 +11323,35 @@ provider. The server fetches the discovery document or the metadata before it
 answers; a provider that cannot be reached is still stored, `enabled: false`
 unless asked otherwise, with `status.ok: false`.
 
-#### `PATCH /api/admin/auth/providers/{slug}`
+#### `PATCH /api/admin/providers/{id}`
 
-Any fields but `slug` and `kind`. `clientSecret` absent keeps the stored one,
+Any fields but `slug`, `kind` and `owner`. `clientSecret` absent keeps the stored one,
 `""` clears it. `200` with the provider.
 
-#### `DELETE /api/admin/auth/providers/{slug}?force=1`
+#### `DELETE /api/admin/providers/{id}?force=1`
 
-`204`. The identities of its people stay (they come back if a provider with the
-same issuer is added). Without `force=1`, refused with `409 provider_in_use`
-(and `{"accounts": n}`) when some account has no other way to sign in: no
-password, no passkey, no identity from another provider.
+`204`. The accounts its people linked to it go with it (a provider added again
+with the same issuer brings none of them back). Without `force=1`, refused with
+`409 provider_in_use` (and `{"accounts": n}`) when some account has no other way
+to sign in: no password, no passkey, no linked account at another provider.
 
-#### `POST /api/admin/auth/providers/{slug}/refresh`
+#### `POST /api/admin/providers/{id}/check`
 
 Fetches the discovery document or the metadata now. `200` with the provider
 (its `status` says how it went).
+
+#### `POST /api/admin/providers/{id}/test`, `GET /api/admin/providers/{id}/test`
+
+A test sign-in, for a site provider on or off. `POST` answers `{"url": "…"}`:
+send the browser there; the administrator signs in at the provider, and
+nothing is made, linked or signed in. The browser comes back to
+`/admin/security/providers?provider_test={id}`, or to
+`/admin/security/providers?sso_error=<code>` when the sign-in failed (for
+instance `saml_no_email`). `GET` answers what the provider said, once, to the
+administrator who ran it and for five minutes:
+`{"result": {"subject", "email", "emailTrusted", "name", "username", "at"}}`, or
+`{"result": null}`. `emailTrusted` is whether the trust rules would verify the
+address.
 
 #### Provider refusals
 
@@ -11297,7 +11359,7 @@ Fetches the discovery document or the metadata now. `200` with the provider
 |---|---|---|
 | `invalid` | 400 | a field is missing, too long or not of its form (the message names it) |
 | `exists` | 409 | the slug is taken |
-| `provider_issuer_in_use` | 409 | another provider has this issuer (OpenID Connect issuer, SAML entity ID, GitHub base URL) |
+| `domain_required` | 409 | turning on a provider owned by a tenant that has no verified domain |
 | `provider_limit` | 409 | there are 50 providers |
 | `legacy_callback_in_use` | 409 | another provider has `legacyCallback` |
 | `oidc_issuer_invalid` | 400 | the issuer is not an `https` address |

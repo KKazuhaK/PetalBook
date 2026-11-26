@@ -47,7 +47,7 @@ const page = <T>(c: Ctx, rows: T[]) => paged(rows, c.query, 50)
 // --- people ---------------------------------------------------------------------------------------------------------
 
 function person(c: Ctx, id: string): PersonRec {
-  return (A(c).people[id] ??= { sessions: [], identities: [], passkeys: [] })
+  return (A(c).people[id] ??= { sessions: [], links: [], passkeys: [] })
 }
 function userOf(c: Ctx, id: string): UserRec {
   return find(c.data.auth.users, (u) => u.id === id || u.username === id, 'the person')
@@ -61,7 +61,7 @@ function userView(c: Ctx, u: UserRec, shown: 'list' | 'one' | 'change' = 'list')
   return {
     ...rest,
     quota: rec.quota ?? { spaces: null, bytes: null, pages: null },
-    ...(shown !== 'change' ? { passkeys: passkeys ?? rec.passkeys.length, sso: rec.identities.length } : {}),
+    ...(shown !== 'change' ? { passkeys: passkeys ?? rec.passkeys.length, sso: rec.links.length } : {}),
     ...(shown === 'list' ? { lastActive: rec.lastActive ?? u.created } : {}),
   }
 }
@@ -364,13 +364,13 @@ export const adminRoutes: Route[] = [
       p.sessions = p.sessions.filter((s) => s.id !== c.params.session)
     },
   ],
-  ['GET', '/api/users/:id/identities', (c) => ({ identities: person(c, c.params.id).identities })],
+  ['GET', '/api/users/:id/links', (c) => ({ links: person(c, c.params.id).links })],
   [
     'DELETE',
-    '/api/users/:id/identities/:identity',
+    '/api/users/:id/links/:link',
     (c) => {
       const p = person(c, c.params.id)
-      p.identities = p.identities.filter((i) => i.id !== c.params.identity)
+      p.links = p.links.filter((l) => l.id !== c.params.link)
     },
   ],
   ['GET', '/api/users/:id/passkeys', (c) => ({ passkeys: person(c, c.params.id).passkeys })],
@@ -1146,38 +1146,63 @@ export const adminRoutes: Route[] = [
       return securityBody(c)
     },
   ],
-  ['GET', '/api/admin/auth/providers', (c) => ({ providers: A(c).providers })],
+  ['GET', '/api/admin/providers', (c) => ({ providers: A(c).providers })],
   [
     'POST',
-    '/api/admin/auth/providers',
+    '/api/admin/providers',
     (c) => reply(201, add(A(c).providers, makeProvider(c.body, now(c), A(c).providers.length + 1))),
   ],
   [
     'PATCH',
-    '/api/admin/auth/providers/:slug',
+    '/api/admin/providers/:id',
     (c) =>
       changeProvider(
-        find(A(c).providers, (p) => p.slug === c.params.slug, 'the provider'),
+        find(A(c).providers, (p) => p.id === c.params.id, 'the provider'),
         c.body,
         now(c),
       ),
   ],
   [
     'DELETE',
-    '/api/admin/auth/providers/:slug',
+    '/api/admin/providers/:id',
     (c) =>
       remove(
         A(c).providers,
-        find(A(c).providers, (p) => p.slug === c.params.slug, 'the provider'),
+        find(A(c).providers, (p) => p.id === c.params.id, 'the provider'),
       ),
   ],
   [
     'POST',
-    '/api/admin/auth/providers/:slug/refresh',
+    '/api/admin/providers/:id/check',
     (c) => {
-      const p = find(A(c).providers, (x) => x.slug === c.params.slug, 'the provider')
+      const p = find(A(c).providers, (x) => x.id === c.params.id, 'the provider')
       p.status = { ok: true, checked: now(c), message: '' }
       return p
+    },
+  ],
+  [
+    'POST',
+    '/api/admin/providers/:id/test',
+    (c) => {
+      const p = find(A(c).providers, (x) => x.id === c.params.id, 'the provider')
+      A(c).providerTests[p.id] = {
+        subject: `${p.slug}|subject-1`,
+        email: 'tester@example.test',
+        emailTrusted: true,
+        name: 'Test Person',
+        username: 'tester',
+        at: now(c),
+      }
+      return { url: `/admin/security/providers?provider_test=${p.id}` }
+    },
+  ],
+  [
+    'GET',
+    '/api/admin/providers/:id/test',
+    (c) => {
+      const result = A(c).providerTests[c.params.id] ?? null
+      delete A(c).providerTests[c.params.id]
+      return { result }
     },
   ],
 

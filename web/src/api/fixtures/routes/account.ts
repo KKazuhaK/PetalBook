@@ -53,7 +53,6 @@ export const accountRoutes: Route[] = [
       return {
         user,
         hasPassword: true,
-        identities: a.identities,
         passkeys,
         groups: c.data.admin.groups
           .filter((g) => g.members.includes(u.id))
@@ -76,10 +75,20 @@ export const accountRoutes: Route[] = [
   ['POST', '/api/account/password', () => undefined],
   [
     'DELETE',
-    '/api/account/identities/:id',
+    '/api/account/links/:id',
     (c) => {
       const a = c.data.area.account
-      a.identities = a.identities.filter((i) => i.id !== c.params.id)
+      a.links = a.links.filter((l) => l.id !== c.params.id)
+    },
+  ],
+  ['GET', '/api/account/links', (c) => ({ links: c.data.area.account.links })],
+  [
+    'POST',
+    '/api/account/links/:provider/start',
+    (c) => {
+      if (c.data.area.account.links.some((l) => l.providerId === c.params.provider))
+        throw new Refusal(409, 'already_linked', 'already linked at this provider')
+      return { url: `/api/auth/oidc/${c.params.provider}/callback?link=1` }
     },
   ],
 

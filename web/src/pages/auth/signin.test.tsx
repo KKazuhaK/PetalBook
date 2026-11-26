@@ -194,6 +194,8 @@ describe('a failed single sign-on says why', () => {
         'not_allowed',
         'disabled',
         'identity_in_use',
+        'already_linked',
+        'saml_no_email',
         'email_in_use',
         'invite_invalid',
         'setup_invalid',

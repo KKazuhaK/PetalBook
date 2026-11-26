@@ -230,7 +230,7 @@ describe('limits on a user, and the usage of a tenant', () => {
       const amy = addPerson(d, 'amy')
       d.admin.people[amy.id] = {
         sessions: [],
-        identities: [],
+        links: [],
         passkeys: [],
         quota: { spaces: 7, bytes: exact, pages: null },
       }

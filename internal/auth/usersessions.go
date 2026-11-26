@@ -108,28 +108,19 @@ func (s *Service) EndUserSessions(ctx context.Context, actor *Principal, userID,
 	return len(rows), nil
 }
 
-// UserIdentities lists the accounts a person has connected for signing in.
-func (s *Service) UserIdentities(ctx context.Context, actor *Principal, userID string) ([]IdentityView, error) {
+// UserLinks lists the accounts a person has linked for signing in.
+func (s *Service) UserLinks(ctx context.Context, actor *Principal, userID string) ([]LinkView, error) {
 	if _, err := s.siteTarget(ctx, actor, userID); err != nil {
 		return nil, err
 	}
-	ids, err := store.ListIdentities(ctx, s.st.Q(), userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]IdentityView, len(ids))
-	for i, id := range ids {
-		name, slug, kind := s.providerOf(id.Issuer)
-		out[i] = IdentityView{ID: id.ID, Provider: name, Slug: slug, Kind: kind, Label: id.Label, Created: id.Created}
-	}
-	return out, nil
+	return s.Links(ctx, userID)
 }
 
-// DisconnectIdentity removes one connected account of a person, unless it is the
+// DisconnectLink removes one linked account of a person, unless it is the
 // only way they can sign in.
-func (s *Service) DisconnectIdentity(ctx context.Context, actor *Principal, userID, identityID, ip string) error {
+func (s *Service) DisconnectLink(ctx context.Context, actor *Principal, userID, linkID, ip string) error {
 	if _, err := s.siteTargetToChange(ctx, actor, userID); err != nil {
 		return err
 	}
-	return s.unlinkIdentity(ctx, userID, identityID, actor.User.ID, "admin", ip)
+	return s.unlinkAccount(ctx, userID, linkID, actor.User.ID, "admin", ip)
 }

@@ -902,6 +902,9 @@ export type ErrorCode =
   | 'recent_login_required'
   | 'too_many_passkeys'
   | 'passkey_unavailable'
+  | 'last_method'
+  | 'already_linked'
+  | 'domain_required'
   | 'provider_in_use'
   | 'group_not_found'
   | 'group_synced'
@@ -1074,13 +1077,16 @@ export interface ConsentDecision {
 
 export type ProviderKind = 'oidc' | 'saml' | 'github'
 
-export interface Identity {
+// One sign-in the person has linked at a provider (GET /api/account/links, GET /api/users/{id}/links): one per provider.
+export interface Link {
   id: string
+  providerId: string
+  // The provider's display name.
   provider: string
-  // `''` for an identity whose provider was deleted.
-  providerSlug: string
+  slug: string
   kind: ProviderKind | ''
   label: string
+  signin: boolean
   created: string
 }
 export interface Passkey {
@@ -1093,7 +1099,6 @@ export interface Passkey {
 export interface AccountInfo {
   user: User
   hasPassword: boolean
-  identities: Identity[]
   passkeys: Passkey[]
   // The groups the person is in, by name.
   groups: GroupRef[]
@@ -1245,7 +1250,7 @@ export interface InviteCheck {
   email?: string
 }
 
-export type OidcIntent = 'login' | 'setup' | 'invite' | 'link'
+export type OidcIntent = 'login' | 'setup' | 'invite'
 export type ProviderIntent = OidcIntent
 
 export type BatchPagesInput = { op: 'move'; ids: string[]; folder: string } | { op: 'delete'; ids: string[] }
@@ -1784,6 +1789,10 @@ export interface GithubSettings {
   redirectUrl: string
 }
 export interface AuthProvider {
+  // A site provider's id is its slug.
+  id: string
+  // "site" or a tenant id.
+  owner: string
   slug: string
   kind: ProviderKind
   name: string
@@ -1804,6 +1813,7 @@ export interface AuthProvider {
 // What a create or a patch sends: the common fields and the kind's own block, with `clientSecret` where there is one.
 export interface ProviderInput {
   slug?: string
+  owner?: string
   kind?: ProviderKind
   name?: string
   icon?: string
@@ -2401,13 +2411,14 @@ export interface PersonSession {
   // The session of this very request: the signed-in administrator's own.
   current?: boolean
 }
-export interface PersonIdentity {
-  id: string
-  provider: string
-  slug: string
-  kind: string
-  label: string
-  created: string
+// What a provider's test sign-in found (read once).
+export interface ProviderTestResult {
+  subject: string
+  email: string
+  emailTrusted: boolean
+  name: string
+  username: string
+  at: string
 }
 export interface PersonMemberships {
   spaces: { id: string; name: string; role: string; personal: boolean }[]

@@ -363,7 +363,7 @@ func TestProvidersNameATenantForNewAccounts(t *testing.T) {
 		f := newTenFx(t, a)
 		body := map[string]any{"slug": "corp", "kind": "oidc", "name": "Corp", "tenant": f.tenB, "autoCreate": true,
 			"oidc": map[string]any{"issuer": "https://127.0.0.1:1/", "clientId": "x", "clientSecret": "y"}}
-		r := f.root.do("POST", "/api/admin/auth/providers", body)
+		r := f.root.do("POST", "/api/admin/providers", body)
 		// Discovery of the issuer may refuse; what matters is the field, so ask for it on a provider that exists.
 		if r.code != 201 {
 			t.Skipf("no provider could be made here: %d %s", r.code, r.raw)
@@ -371,8 +371,8 @@ func TestProvidersNameATenantForNewAccounts(t *testing.T) {
 		if r.body["tenant"] != f.tenB {
 			t.Fatal(r.raw)
 		}
-		f.root.do("PATCH", "/api/admin/auth/providers/corp", map[string]any{"tenant": fakeID}).want(t, 400, "invalid")
-		f.admB.do("GET", "/api/admin/auth/providers", nil).want(t, 403, "forbidden")
+		f.root.do("PATCH", "/api/admin/providers/corp", map[string]any{"tenant": fakeID}).want(t, 400, "invalid")
+		f.admB.do("GET", "/api/admin/providers", nil).want(t, 403, "forbidden")
 		// The sign-in page names a tenant by slug; an unknown one is not found.
 		a.newClient("").do("GET", "/api/auth/providers?tenant=acme", nil).want(t, 200, "")
 		a.newClient("").do("GET", "/api/auth/providers?tenant=nope", nil).want(t, 404, "not_found")
@@ -433,14 +433,14 @@ func TestAPuppetAccountNeverCatchesASignIn(t *testing.T) {
 		}
 		puppet("puppet-1")
 		// A provider of the default tenant: B's puppet is not in its tenant.
-		f.root.do("POST", "/api/admin/auth/providers", idp.providerBody("home", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
+		f.root.do("POST", "/api/admin/providers", idp.providerBody("home", map[string]any{"mergeVerifiedEmail": true, "autoCreate": true})).want(t, 201, "")
 		c := a.newClient("")
 		loc := idp.signIn2(t, c, "home", "victim", map[string]any{})
 		if who := signedInAs(t, c); who == "puppet-1" {
 			t.Fatalf("the sign-in of a default-tenant provider merged into tenant B's puppet (%s)", loc)
 		}
 		// A provider of B: the puppet is in its tenant, but only B's administrator vouched for the address.
-		f.root.do("POST", "/api/admin/auth/providers", idpB.providerBody("corp", map[string]any{"mergeVerifiedEmail": true, "tenant": f.tenB})).want(t, 201, "")
+		f.root.do("POST", "/api/admin/providers", idpB.providerBody("corp", map[string]any{"mergeVerifiedEmail": true, "tenant": f.tenB})).want(t, 201, "")
 		c = a.newClient("")
 		loc = idpB.signIn2(t, c, "corp", "victim", map[string]any{})
 		if who := signedInAs(t, c); who == "puppet-1" {
@@ -578,7 +578,7 @@ func TestAProviderOfADisabledTenantCreatesNoAccount(t *testing.T) {
 	idpB.addUser("newbie", testidp.Claims{"sub": "s-newbie", "preferred_username": "newbie", "name": "Newbie"})
 	eachAccounts(t, accOpts{httpc: anyTLSClient()}, func(t *testing.T, a *acc) {
 		f := newTenFx(t, a)
-		f.root.do("POST", "/api/admin/auth/providers", idpB.providerBody("corp", map[string]any{"autoCreate": true, "tenant": f.tenB})).want(t, 201, "")
+		f.root.do("POST", "/api/admin/providers", idpB.providerBody("corp", map[string]any{"autoCreate": true, "tenant": f.tenB})).want(t, 201, "")
 		f.root.do("PATCH", "/api/admin/tenants/"+f.tenB, map[string]any{"disabled": true}).want(t, 200, "")
 		c := a.newClient("")
 		if loc := idpB.signIn2(t, c, "corp", "newbie", map[string]any{}); loc != "/login?sso_error=no_account" || signedInAs(t, c) != "" {

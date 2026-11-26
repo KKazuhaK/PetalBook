@@ -596,6 +596,6 @@ func (s *Service) hasOtherWay(ctx context.Context, userID string) (bool, error) 
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return false, err
 	}
-	ids, err := store.ListIdentities(ctx, s.st.Q(), userID)
+	ids, err := store.ListLinks(ctx, s.st.Q(), userID)
 	return len(ids) > 0, err
 }

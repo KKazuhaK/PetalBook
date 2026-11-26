@@ -10,7 +10,9 @@ import (
 
 // The providers of milestone 3.8: an OAuth application on a GitLab or a Gitea
 // host, a person's connection to an account there, and the reminders of empty
-// repositories. GitHub keeps its own tables (github.go).
+// repositories. GitHub keeps its own tables (github.go). Their rows are rows of
+// providers (repos = 1, the id is the slug, state "ok" or "error" is status_ok);
+// the connections and reminders keep their own tables until 5b.
 
 // ConnProviderSite is the owner of a provider the whole server shares; any other
 // owner is a tenant's id.
@@ -28,18 +30,19 @@ type ConnProviderRow struct {
 	Created, Updated                    time.Time
 }
 
-const connProviderCols = `id, type, host, scheme, name, owner, client_id, secret_enc, state, platform_version, partial_sync, partial_checked, checked, updated_by, created, updated`
+const connProviderCols = `id, kind, host, scheme, name, owner, client_id, secret_enc, status_ok, platform_version, partial_sync, partial_checked, status_checked, updated_by, created, updated`
 
 func scanConnProvider(row interface{ Scan(...any) error }) (*ConnProviderRow, error) {
 	var p ConnProviderRow
-	var pc, ck, cr, up int64
-	if err := row.Scan(&p.ID, &p.Type, &p.Host, &p.Scheme, &p.Name, &p.Owner, &p.ClientID, &p.SecretEnc, &p.State, &p.PlatformVersion,
+	var ok, pc, ck, cr, up int64
+	if err := row.Scan(&p.ID, &p.Type, &p.Host, &p.Scheme, &p.Name, &p.Owner, &p.ClientID, &p.SecretEnc, &ok, &p.PlatformVersion,
 		&p.PartialSync, &pc, &ck, &p.UpdatedBy, &cr, &up); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	p.State = connStateOf(ok != 0)
 	if pc > 0 {
 		p.PartialChecked = fromMS(pc)
 	}
@@ -50,9 +53,20 @@ func scanConnProvider(row interface{ Scan(...any) error }) (*ConnProviderRow, er
 	return &p, nil
 }
 
+// connStateOf and connOK map a forge provider's state ("ok" or "error") to the
+// status_ok column and back.
+func connStateOf(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "error"
+}
+
+func connOK(state string) int64 { return b2i(state == "ok") }
+
 // ListConnProviderRows returns every provider, by id.
 func ListConnProviderRows(ctx context.Context, q Q) ([]ConnProviderRow, error) {
-	rows, err := q.Query(ctx, `SELECT `+connProviderCols+` FROM providers ORDER BY id`)
+	rows, err := q.Query(ctx, `SELECT `+connProviderCols+` FROM providers WHERE repos = 1 AND kind IN ('gitlab', 'gitea') ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -70,21 +84,21 @@ func ListConnProviderRows(ctx context.Context, q Q) ([]ConnProviderRow, error) {
 
 // GetConnProviderRow returns one provider, or ErrNotFound.
 func GetConnProviderRow(ctx context.Context, q Q, id string) (*ConnProviderRow, error) {
-	return scanConnProvider(q.QueryRow(ctx, `SELECT `+connProviderCols+` FROM providers WHERE id = ?`, id))
+	return scanConnProvider(q.QueryRow(ctx, `SELECT `+connProviderCols+` FROM providers WHERE id = ? AND repos = 1 AND kind IN ('gitlab', 'gitea')`, id))
 }
 
 // CountConnProviderRows is how many providers an owner ("site" or a tenant id) has.
 func CountConnProviderRows(ctx context.Context, q Q, owner string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM providers WHERE owner = ?`, owner).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(*) FROM providers WHERE owner = ? AND repos = 1 AND kind IN ('gitlab', 'gitea')`, owner).Scan(&n)
 	return
 }
 
 // InsertConnProviderRow adds a provider. ErrExists when the id, or the owner's
 // host, is taken.
 func InsertConnProviderRow(ctx context.Context, q Q, p ConnProviderRow) error {
-	_, err := q.Exec(ctx, `INSERT INTO providers(`+connProviderCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		p.ID, p.Type, p.Host, p.Scheme, p.Name, p.Owner, p.ClientID, p.SecretEnc, p.State, p.PlatformVersion, p.PartialSync,
-		syncOrZero(p.PartialChecked), syncOrZero(p.Checked), p.UpdatedBy, ms(p.Created), ms(p.Updated))
+	_, err := q.Exec(ctx, `INSERT INTO providers(`+connProviderCols+`, slug, repos, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, 1, 1)`,
+		p.ID, p.Type, p.Host, p.Scheme, p.Name, p.Owner, p.ClientID, p.SecretEnc, connOK(p.State), p.PlatformVersion, p.PartialSync,
+		syncOrZero(p.PartialChecked), syncOrZero(p.Checked), p.UpdatedBy, ms(p.Created), ms(p.Updated), p.ID)
 	if _, ok := UniqueOn(err); ok {
 		return ErrExists
 	}
@@ -94,8 +108,8 @@ func InsertConnProviderRow(ctx context.Context, q Q, p ConnProviderRow) error {
 // UpdateConnProviderRow replaces what an administrator can change of a provider
 // (its id, type, host and owner are fixed) and what a check found.
 func UpdateConnProviderRow(ctx context.Context, q Q, p ConnProviderRow) error {
-	res, err := q.Exec(ctx, `UPDATE providers SET name = ?, client_id = ?, secret_enc = ?, state = ?, platform_version = ?, checked = ?, updated_by = ?, updated = ? WHERE id = ?`,
-		p.Name, p.ClientID, p.SecretEnc, p.State, p.PlatformVersion, syncOrZero(p.Checked), p.UpdatedBy, ms(p.Updated), p.ID)
+	res, err := q.Exec(ctx, `UPDATE providers SET name = ?, client_id = ?, secret_enc = ?, status_ok = ?, platform_version = ?, status_checked = ?, updated_by = ?, updated = ? WHERE id = ? AND repos = 1`,
+		p.Name, p.ClientID, p.SecretEnc, connOK(p.State), p.PlatformVersion, syncOrZero(p.Checked), p.UpdatedBy, ms(p.Updated), p.ID)
 	if err != nil {
 		return err
 	}
@@ -112,8 +126,8 @@ func UpdateConnProviderRow(ctx context.Context, q Q, p ConnProviderRow) error {
 // about another application and is dropped (it reports whether it was written).
 // Nothing else of the row, the secret least, is written from a copy.
 func SetConnProviderState(ctx context.Context, q Q, id, clientID, secretEnc, state, version string, checked time.Time) (bool, error) {
-	res, err := q.Exec(ctx, `UPDATE providers SET state = ?, platform_version = CASE WHEN ? = '' THEN platform_version ELSE ? END, checked = ?
-		WHERE id = ? AND client_id = ? AND secret_enc = ?`, state, version, version, syncOrZero(checked), id, clientID, secretEnc)
+	res, err := q.Exec(ctx, `UPDATE providers SET status_ok = ?, platform_version = CASE WHEN ? = '' THEN platform_version ELSE ? END, status_checked = ?
+		WHERE id = ? AND repos = 1 AND client_id = ? AND secret_enc = ?`, connOK(state), version, version, syncOrZero(checked), id, clientID, secretEnc)
 	if err != nil {
 		return false, err
 	}
@@ -123,13 +137,13 @@ func SetConnProviderState(ctx context.Context, q Q, id, clientID, secretEnc, sta
 
 // SetConnProviderPartial records whether the provider's host can filter a fetch.
 func SetConnProviderPartial(ctx context.Context, q Q, id, partial string, at time.Time) error {
-	_, err := q.Exec(ctx, `UPDATE providers SET partial_sync = ?, partial_checked = ? WHERE id = ?`, partial, ms(at), id)
+	_, err := q.Exec(ctx, `UPDATE providers SET partial_sync = ?, partial_checked = ? WHERE id = ? AND repos = 1`, partial, ms(at), id)
 	return err
 }
 
 // DeleteConnProviderRow removes a provider; its connections and reminders go with it.
 func DeleteConnProviderRow(ctx context.Context, q Q, id string) error {
-	return deleteProviderRows(ctx, q, `id = ?`, id)
+	return deleteProviderRows(ctx, q, `id = ? AND repos = 1`, id)
 }
 
 // DeleteTenantConnProviderRows removes the providers of a tenant (it is being deleted).

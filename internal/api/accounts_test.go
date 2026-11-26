@@ -294,7 +294,7 @@ func TestAccountProfile(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
 		r := c.do("GET", "/api/account", nil).want(t, 200, "")
-		if r.body["hasPassword"] != true || len(r.body["identities"].([]any)) != 0 {
+		if r.body["hasPassword"] != true || len(c.do("GET", "/api/account/links", nil).want(t, 200, "").body["links"].([]any)) != 0 {
 			t.Fatal(r.raw)
 		}
 		r = c.do("PATCH", "/api/account", map[string]any{"name": "Kazuha Z", "email": "k@example.test"}).want(t, 200, "")
@@ -515,10 +515,13 @@ func TestConcurrentDemotionsKeepAnAdministrator(t *testing.T) {
 
 func TestIdentityUnlinkRefusedWhenItIsTheOnlyWayIn(t *testing.T) {
 	t.Parallel()
-	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+	idp := newIDPFor(t, "one")
+	eachAccounts(t, providersOpts(), func(t *testing.T, a *acc) {
 		ctx := context.Background()
-		// An SSO-only account: one identity, no password.
-		u, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: "sso", Role: "member", Identity: &auth.IdentityParams{Issuer: "https://idp.example", Subject: "s1", Label: "sso@example.test"}})
+		admin := a.setup("root", pw)
+		admin.do("POST", "/api/admin/providers", idp.providerBody("one", nil)).want(t, 201, "")
+		// An SSO-only account: one linked account, no password.
+		u, err := a.auth.CreateUser(ctx, auth.CreateParams{Username: "sso", Role: "member", Identity: &auth.IdentityParams{ProviderID: "one", Subject: "s1", Label: "sso@example.test"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -530,17 +533,17 @@ func TestIdentityUnlinkRefusedWhenItIsTheOnlyWayIn(t *testing.T) {
 		tok := mustSession(t, a, u.ID)
 		c := a.newClient("")
 		c.cookies[a.auth.SessionCookieName()] = tok
-		r := c.do("GET", "/api/account", nil).want(t, 200, "")
-		ids := r.body["identities"].([]any)
-		if len(ids) != 1 || r.body["hasPassword"] != false {
+		r := c.do("GET", "/api/account/links", nil).want(t, 200, "")
+		ids := r.body["links"].([]any)
+		if len(ids) != 1 || c.do("GET", "/api/account", nil).want(t, 200, "").body["hasPassword"] != false {
 			t.Fatal(r.raw)
 		}
 		idn := ids[0].(map[string]any)
-		if idn["label"] != "sso@example.test" || idn["provider"] != "idp.example" {
+		if idn["label"] != "sso@example.test" || idn["provider"] != "Provider one" || idn["providerId"] != "one" || idn["signin"] != true {
 			t.Fatal(r.raw)
 		}
-		path := "/api/account/identities/" + idn["id"].(string)
-		c.do("DELETE", path, nil).want(t, 409, "conflict")
+		path := "/api/account/links/" + idn["id"].(string)
+		c.do("DELETE", path, nil).want(t, 409, "last_method")
 		// Someone else's identity id is not found.
 		pwc := a.newClient("")
 		pwc.do("POST", "/api/login", map[string]any{"username": "pw", "password": pw}).want(t, 200, "")
@@ -549,7 +552,7 @@ func TestIdentityUnlinkRefusedWhenItIsTheOnlyWayIn(t *testing.T) {
 		c.do("POST", "/api/account/password", map[string]any{"current": "x", "new": "a first password"}).want(t, 400, "invalid")
 		c.do("POST", "/api/account/password", map[string]any{"new": "a first password"}).want(t, 204, "")
 		c.do("DELETE", path, nil).want(t, 204, "")
-		if r := c.do("GET", "/api/account", nil).want(t, 200, ""); len(r.body["identities"].([]any)) != 0 || r.body["hasPassword"] != true {
+		if r := c.do("GET", "/api/account/links", nil).want(t, 200, ""); len(r.body["links"].([]any)) != 0 || c.do("GET", "/api/account", nil).want(t, 200, "").body["hasPassword"] != true {
 			t.Fatal(r.raw)
 		}
 	})
