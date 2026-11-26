@@ -12,6 +12,9 @@ export const DEFAULT_PAGE_SIZE = 50
 export interface TablePrefs {
   // Columns the administrator hid, and the order of the ones they moved (a column not listed follows in its own place).
   hidden: string[]
+  // Columns the person switched on in the table settings: a narrow box scrolls to keep them, and only the columns that
+  // are shown by default are taken away when they do not fit.
+  shown: string[]
   order: string[]
   // The width of a column as a part of the table's width (0 to 1), never pixels: the same share fits any screen.
   widths: Record<string, number>
@@ -23,6 +26,7 @@ export interface TablePrefs {
 
 export const defaultPrefs = (): TablePrefs => ({
   hidden: [],
+  shown: [],
   order: [],
   widths: {},
   density: 'comfortable',
@@ -40,6 +44,7 @@ export function sanitize(raw: unknown): TablePrefs {
   if (!raw || typeof raw !== 'object') return out
   const r = raw as Record<string, unknown>
   if (isStrings(r.hidden)) out.hidden = r.hidden
+  if (isStrings(r.shown)) out.shown = r.shown
   if (isStrings(r.order)) out.order = r.order
   if (r.widths && typeof r.widths === 'object') {
     for (const [k, v] of Object.entries(r.widths)) {
@@ -72,7 +77,7 @@ export function useTablePrefs(id: string) {
   const update = useCallback(
     (patch: Partial<TablePrefs>) =>
       setPrefs((prev) => {
-        const touches = 'hidden' in patch || 'order' in patch || 'widths' in patch
+        const touches = 'hidden' in patch || 'shown' in patch || 'order' in patch || 'widths' in patch
         // `custom` may be given outright: putting the columns back to how they were is not a choice of the person's.
         const next = { ...prev, ...patch, ...(touches && !('custom' in patch) ? { custom: true } : {}) }
         writePrefs(id, next)

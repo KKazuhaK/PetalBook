@@ -160,6 +160,11 @@ export function autoWidths(
   if (used > whole) {
     const least = cols.map((c) => Math.ceil(c.min))
     const floor = least.reduce((n, w) => n + w, 0)
+    // The least widths alone do not fit: the table scrolls anyway, so each column keeps its whole content (up to its cap).
+    if (floor > whole) {
+      cols.forEach((c, i) => (widths[c.id] = base[i]))
+      return { widths, total: used }
+    }
     const target = Math.max(whole, floor)
     const over = base.map((w, i) => Math.max(0, w - least[i]))
     const spare = over.reduce((n, w) => n + w, 0) || 1
@@ -216,7 +221,10 @@ export function leastWidths(
   narrow: boolean,
 ): Record<string, number> {
   const fits = cols.reduce((n, c) => n + c.min, 0) <= room
+  // The narrow least widths are for fitting without a scroll: when even they do not fit, the table scrolls anyway and
+  // nothing is cut below its declared least width.
+  const narrowFits = cols.reduce((n, c) => n + Math.min(c.min, c.narrowMin), 0) <= room
   const out: Record<string, number> = {}
-  for (const c of cols) out[c.id] = narrow && !fits ? Math.min(c.min, c.narrowMin) : c.min
+  for (const c of cols) out[c.id] = narrow && !fits && narrowFits ? Math.min(c.min, c.narrowMin) : c.min
   return out
 }

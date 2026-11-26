@@ -240,6 +240,39 @@ describe('the table', () => {
     window.dispatchEvent(new Event('resize'))
   })
 
+  it('keeps a column the person switched on and scrolls, squeezes the default ones, and brings squeezing back on reset', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(660)
+    localStorage.setItem('pb.table.probe', JSON.stringify({ hidden: [], shown: ['mail'], custom: true }))
+    m = await mount(<Probe />)
+    // The mail (160) was chosen: it stays, and the seen (priority 3) leaves instead; the box scrolls.
+    expect(headers()).toEqual(['name', 'role', 'mail'])
+    expect(document.querySelector('[data-slot="columns-hidden"]')!.textContent).toBe(tc.table.hiddenNarrow(1))
+    expect(document.querySelector('table')!.style.minWidth).toBe(`${120 + 100 + 160 + 148 + 48}px`)
+    expect(document.querySelector('[data-slot="data-table"] > div.overflow-x-auto')).not.toBeNull()
+    await open()
+    await click(
+      [...document.querySelectorAll('[data-slot="popover-content"] button')].find(
+        (b) => b.textContent === tc.table.resetColumns,
+      ),
+    )
+    expect(saved()).toMatchObject({ shown: [], custom: false })
+    expect(headers()).toEqual(['name', 'role', 'seen'])
+  })
+
+  it('records a column switched on in the settings as chosen, and one switched off as not', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(2000)
+    m = await mount(<Probe />)
+    await open()
+    const box = (label: string) =>
+      [...document.querySelectorAll<HTMLInputElement>('[data-slot="popover-content"] input[type="checkbox"]')].find(
+        (i) => i.closest('label')?.textContent === label,
+      )!
+    await click(box('Mail'))
+    expect(saved()).toMatchObject({ hidden: ['mail'], shown: [] })
+    await click(box('Mail'))
+    expect(saved()).toMatchObject({ hidden: [], shown: ['mail'] })
+  })
+
   it('sorts by a header that can be sorted by, and says which way', async () => {
     const seen: DataTableSort[] = []
     m = await mount(<Probe onSort={(s) => seen.push(s)} />)
