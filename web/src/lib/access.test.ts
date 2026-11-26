@@ -70,7 +70,7 @@ describe('can', () => {
 // A check of the caller's role name or site-administrator flag anywhere but this helper (and the fixture server, which
 // plays the server) would decide in the app what the server's keys decide: it fails here. Read from the syntax, so
 // a copy of the field ({ siteAdmin: on }, checked={u.siteAdmin}) or a presence check (!== undefined) is not one.
-const allowed = ['src/lib/access.ts', 'src/api/fixtures/', 'src/api/mock/']
+const allowed = ['src/lib/access.ts', 'src/api/fixtures/']
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir, { withFileTypes: true }) as { name: string; isDirectory(): boolean }[]) {

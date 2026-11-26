@@ -1,4 +1,4 @@
-// Shared pieces for the rendering tests: a mock server behind `fetch`, the
+// Shared pieces for the rendering tests: a fixture server behind `fetch`, the
 // providers the app wraps its pages in, and a router whose location can be read.
 
 import { act, type ReactNode } from 'react'
@@ -15,16 +15,16 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { api, markSignedIn } from '@/api/client'
-import { mockFetch } from '@/api/mock/fetch'
-import { createMockServer, MOCK_ADMIN, type MockOptions, type MockServer } from '@/api/mock/server'
+import { MOCK_ADMIN } from '@/api/fixtures/data/people'
 import type { FixtureOptions } from '@/api/fixtures/data/model'
 import { fixtureFetch } from '@/api/fixtures/fetch'
 import { createFixtureServer, type FixtureServer } from '@/api/fixtures/server'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/providers/theme'
 
-// What a mounted page was given: the mock server, or (with `fixtures`) a fixture server (src/api/fixtures).
-export interface MountedBase {
+// What a mounted page was given: the fixture server (src/api/fixtures).
+export interface Mounted {
+  fx: FixtureServer
   host: HTMLElement
   root: Root
   qc: QueryClient
@@ -38,12 +38,7 @@ export interface MountedBase {
   }[]
   unmount: () => Promise<void>
 }
-export interface Mounted extends MountedBase {
-  server: MockServer
-}
-export interface FxMounted extends MountedBase {
-  fx: FixtureServer
-}
+export type FxMounted = Mounted
 
 // jsdom has no media queries, resize observers or scrolling; the components ask for them.
 export function installDomShims() {
@@ -79,30 +74,25 @@ export const locationText = () => document.querySelector('[data-testid="location
 export const locationState = () =>
   JSON.parse(document.querySelector('[data-testid="location"]')?.getAttribute('data-state') ?? 'null')
 
-interface MountOptions<S> {
-  // Where to start; a function is given the server, for a scene made first (see `shareSpace`).
-  entries?: InitialEntry[] | ((server: S) => InitialEntry[])
+interface MountOptions {
+  // Where to start; a function is given the server, for a scene made first.
+  entries?: InitialEntry[] | ((server: FixtureServer) => InitialEntry[])
   index?: number
   signIn?: boolean
   delay?: (method: string, url: string) => number
   // A data router with these routes, for what needs one (`useBlocker`); `ui` is then not used.
   routes?: RouteObject[]
+  // What the fixture server plays; `true` for the defaults.
+  fixtures: FixtureOptions | true
 }
-type MockMount = MountOptions<MockServer> & { server?: MockOptions; fixtures?: undefined }
-type FixtureMount = MountOptions<FixtureServer> & { fixtures: FixtureOptions | true; server?: undefined }
 
-export async function mount(ui: ReactNode, options: FixtureMount): Promise<FxMounted>
-export async function mount(ui: ReactNode, options?: MockMount): Promise<Mounted>
-export async function mount(ui: ReactNode, options: MockMount | FixtureMount = {}): Promise<Mounted | FxMounted> {
+export async function mount(ui: ReactNode, options: MountOptions): Promise<Mounted> {
   const now = () => Date.now()
-  const fx = options.fixtures
-    ? createFixtureServer({ now, ...(options.fixtures === true ? {} : options.fixtures) })
-    : null
-  const server = fx ? null : createMockServer({ now, ...options.server })
-  const scene = (options.entries ?? ['/']) as InitialEntry[] | ((s: MockServer & FixtureServer) => InitialEntry[])
-  const requests: MountedBase['requests'] = []
+  const fx = createFixtureServer({ now, ...(options.fixtures === true ? {} : options.fixtures) })
+  const scene = options.entries ?? ['/']
+  const requests: Mounted['requests'] = []
   const real = globalThis.fetch
-  const mocked = fx ? fixtureFetch(fx) : mockFetch(server!)
+  const mocked = fixtureFetch(fx)
   // Every request is noted when it is made; some can be held back, so one can
   // be seen to be cancelled while it is on its way.
   globalThis.fetch = async (input, init) => {
@@ -126,7 +116,7 @@ export async function mount(ui: ReactNode, options: MockMount | FixtureMount = {
   document.body.appendChild(host)
   const root = createRoot(host)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const entries = typeof scene === 'function' ? scene((fx ?? server) as MockServer & FixtureServer) : scene
+  const entries = typeof scene === 'function' ? scene(fx) : scene
   const router = options.routes
     ? createMemoryRouter(
         [
@@ -165,7 +155,7 @@ export async function mount(ui: ReactNode, options: MockMount | FixtureMount = {
   return {
     host,
     root,
-    ...(fx ? { fx } : { server: server! }),
+    fx,
     qc,
     requests,
     unmount: async () => {
@@ -231,77 +221,6 @@ export async function startView(reason = '检查一个举报') {
 export const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 export const byText = (selector: string, text: string) =>
   [...document.querySelectorAll<HTMLElement>(selector)].find((e) => e.textContent?.trim() === text) ?? null
-
-// --- people and shared spaces, made behind the app's back ----------------------------
-//
-// The tests drive the mock server directly (the way another person's browser
-// would) to set a scene: a second person, a space they own, the signed-in
-// administrator a member of it in some role.
-
-export const WRITE_HEADERS = 'application/json'
-
-// One request to the server as the person holding `cookie` (a Set-Cookie value's
-// `name=value`, or null for no session).
-export function asPerson(server: MockServer, cookie: string | null) {
-  return (method: string, path: string, body?: unknown) => {
-    const r = server.handle(method, path, body === undefined ? undefined : JSON.stringify(body), WRITE_HEADERS, cookie)
-    if (r.status >= 400) throw new Error(`${method} ${path}: ${r.status} ${JSON.stringify(r.body)}`)
-    return r
-  }
-}
-const cookieOf = (setCookie: string | undefined) => setCookie?.split(';')[0] ?? null
-
-// Writes site settings, one request each (PUT /api/admin/settings/{key}): the policy that once had endpoints of its own.
-export function putSettings(
-  call: (method: string, path: string, body?: unknown) => unknown,
-  values: Record<string, unknown>,
-) {
-  for (const [key, value] of Object.entries(values)) call('PUT', `/api/admin/settings/${key}`, { value })
-}
-
-export const adminRequests = (server: MockServer) => {
-  const login = server.handle(
-    'POST',
-    '/api/login',
-    JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
-    WRITE_HEADERS,
-    null,
-  )
-  return asPerson(server, cookieOf(login.headers?.['Set-Cookie']))
-}
-
-export const PERSON_PASSWORD = 'a-long-password'
-
-// An account made through an invite. `request` acts as that person.
-export function makePerson(server: MockServer, username: string, role: 'member' | 'admin' = 'member') {
-  const invite = adminRequests(server)('POST', '/api/invites', { role }).body as { token: string }
-  const r = asPerson(server, null)('POST', '/api/invites/accept', {
-    token: invite.token,
-    username,
-    name: `名 ${username}`,
-    password: PERSON_PASSWORD,
-  })
-  const user = (r.body as { user: { id: string } }).user
-  return {
-    id: user.id,
-    username,
-    password: PERSON_PASSWORD,
-    request: asPerson(server, cookieOf(r.headers?.['Set-Cookie'])),
-  }
-}
-
-// A space that `owner` made, which the signed-in administrator belongs to in `role`.
-export function shareSpace(
-  server: MockServer,
-  role: 'owner' | 'editor' | 'viewer',
-  name = '团队',
-  ownerName = 'sharer',
-): { space: string; owner: ReturnType<typeof makePerson> } {
-  const owner = makePerson(server, ownerName)
-  const space = (owner.request('POST', '/api/spaces', { name }).body as { id: string }).id
-  owner.request('POST', `/api/spaces/${space}/members`, { username: MOCK_ADMIN.username, role })
-  return { space, owner }
-}
 
 // Opens a tenant's own page from the Tenants list (the link named after it), and one of its tabs (by the tab's label).
 export async function openTenantPage(openLabel: string, tabLabel?: string) {

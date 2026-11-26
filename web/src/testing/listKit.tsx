@@ -3,7 +3,6 @@
 
 import { Route, Routes } from 'react-router'
 import type { FixtureServer } from '@/api/fixtures/server'
-import type { MockServer } from '@/api/mock/server'
 import { FolderList, TagList } from '@/pages/Lists'
 import { FileOpsProvider } from '@/components/files/FileOps'
 import { QuickCaptureProvider } from '@/components/layout/QuickCapture'
@@ -35,18 +34,14 @@ export const listShell = (
 )
 
 export type Send = (method: string, path: string, body?: unknown) => { status: number; body: any }
-// Requests to the single-user space, as another browser would make them (to the mock or the fixture server).
+// Requests to the single-user space, as another browser would make them (to the fixture server).
 export const sender =
-  (server: MockServer | FixtureServer, space = 'default'): Send =>
+  (server: FixtureServer, space = 'default'): Send =>
   (method, path, body) =>
-    'on' in server
-      ? server.on(space)(method, path, body)
-      : (server.handle(
-          method,
-          `/api/spaces/${space}${path}`,
-          body === undefined ? undefined : JSON.stringify(body),
-          'application/json',
-        ) as { status: number; body: any })
+    server.handle(method, `/api/spaces/${space}${path}`, body === undefined ? undefined : JSON.stringify(body)) as {
+      status: number
+      body: any
+    }
 
 export const TASK = {
   title: '任务',
@@ -60,7 +55,7 @@ export const TASK = {
 }
 
 // A typed folder `Work` with four pages (one in each column of a board, and one with no status).
-export function seedWork(server: MockServer | FixtureServer, space = 'default', send: Send = sender(server, space)) {
+export function seedWork(server: FixtureServer, space = 'default', send: Send = sender(server, space)) {
   send('PUT', '/types/task', TASK)
   send('POST', '/folders', { path: 'Work' })
   send('PUT', '/folders/type', { folder: 'Work', type: 'task' })
