@@ -164,6 +164,10 @@ type cachedSession struct {
 	persisted time.Time // the last_used the database has
 	held      bool
 	loaded    time.Time
+	// The context and the proofs reserved for 3.7. Read with the session and
+	// written back only with last_used (store.TouchSession).
+	currentTenant string
+	proofs        map[string]store.Proof
 }
 
 type cachedUser struct {

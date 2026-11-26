@@ -61,7 +61,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		if err != nil {
 			return nil, err
 		}
-		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now, held: row.Held}
+		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now, held: row.Held,
+			currentTenant: row.CurrentTenant, proofs: row.Proofs}
 	}
 	sec := s.sec(ctx)
 	if now.Sub(snap.lastUsed) > sec.idle || now.Sub(snap.created) > sec.max {
@@ -84,6 +85,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	}
 
 	touch := false
+	var curTenant string
+	var proofs map[string]store.Proof
 	s.cmu.Lock()
 	cur := s.sessions[id]
 	if cur == nil && s.gen != gen {
@@ -106,10 +109,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if now.Sub(cur.persisted) >= touchEvery {
 		cur.persisted = now
 		touch = true
+		curTenant, proofs = cur.currentTenant, cur.proofs
 	}
 	s.cmu.Unlock()
 	if touch {
-		if err := store.TouchSession(ctx, s.st.Q(), id, now); err != nil {
+		if err := store.TouchSession(ctx, s.st.Q(), id, now, curTenant, proofs); err != nil {
 			s.log.Warn("could not record session use", "error", err)
 		}
 	}
@@ -354,14 +358,51 @@ func WithUserAgent(ctx context.Context, ua string) context.Context {
 	return context.WithValue(ctx, userAgentKey{}, ua)
 }
 
+type clientKey struct{}
+
+// WithClient says, for the sessions that start under ctx, which client signs
+// in: "app" or (the default) "web". It picks the site-set session lifetime in 3.7.
+func WithClient(ctx context.Context, client string) context.Context {
+	return context.WithValue(ctx, clientKey{}, client)
+}
+
+// proofMethod is the kind of proof a sign-in method makes (sso, domain,
+// password, passkey or social). A person who set a password, accepted an
+// invitation or reset it has proved it as a password is.
+func proofMethod(method string) string {
+	switch {
+	case strings.HasPrefix(method, "sso:"):
+		return "sso"
+	case method == "passkey":
+		return "passkey"
+	default:
+		return "password"
+	}
+}
+
 // issueSession starts a session for a user and returns the cookie value. method
 // is how they signed in (see the sessions table).
 func (s *Service) issueSession(ctx context.Context, userID string, held bool, method string) (string, error) {
 	token := randomToken()
 	now := s.now().UTC()
 	ua, _ := ctx.Value(userAgentKey{}).(string)
+	client, _ := ctx.Value(clientKey{}).(string)
+	if client != "app" {
+		client = "web"
+	}
 	err := s.st.Tx(ctx, func(q store.Q) error {
-		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held, UserAgent: ua, Method: method}); err != nil {
+		// The person's own context is proved by the way they signed in.
+		var tenant string
+		if err := q.QueryRow(ctx, `SELECT tenant_id FROM users WHERE id = ?`, userID).Scan(&tenant); err != nil {
+			return err
+		}
+		at := now.UnixMilli()
+		proof := store.Proof{Method: proofMethod(method), At: at, Seen: at}
+		if slug, ok := strings.CutPrefix(method, "sso:"); ok {
+			proof.Provider = slug
+		}
+		if err := store.InsertSession(ctx, q, store.Session{ID: hashToken(token), UserID: userID, Created: now, LastUsed: now, Held: held, UserAgent: ua, Method: method,
+			Client: client, Proofs: map[string]store.Proof{tenant: proof}}); err != nil {
 			return err
 		}
 		return store.TrimSessions(ctx, q, userID, maxSessionsPerUser)
