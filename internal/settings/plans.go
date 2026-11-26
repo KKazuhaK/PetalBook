@@ -63,9 +63,17 @@ func (s *Service) SetBilling(ctx context.Context, tenant, by string, rules map[s
 	return err
 }
 
-// checkRuleMax refuses a rule whose value is above the maximum the rule itself
-// holds the tenant to.
+// checkRuleMax checks a plan's or billing's rule: a limit with a tenant layer
+// needs a maximum or a lock (setting_rule_needs_max), and a value above the
+// maximum the rule itself holds the tenant to is refused.
 func (s *Service) checkRuleMax(d *Def, r *Rule) error {
+	// A limit the tenant also sets: a plan's or billing's value alone would be
+	// a default the tenant's own value ranks above, so it must cap (as the
+	// limits sheet's storage.maxFileBytes and storage.perPerson.* did). A
+	// manual rule may still be a default.
+	if r != nil && r.Value != nil && d.Kind == Limit && d.Has(Tenant) && (r.Lower == nil || r.Lower.Mode == Allow) {
+		return &Error{Code: CodeRuleNeedsMax, Msg: "A plan or billing rule for " + d.Key + " must set a maximum or a lock."}
+	}
 	if r != nil && r.Value != nil && r.Lower != nil {
 		l, err := d.CheckLower(*r.Lower)
 		if err != nil {

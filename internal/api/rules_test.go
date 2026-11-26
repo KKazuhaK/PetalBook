@@ -121,6 +121,7 @@ func TestAPlanRestrictsAndAChangeOfPlanClearsTheManualRules(t *testing.T) {
 		f.admB.do("GET", "/api/admin/plans", nil).want(t, 403, "forbidden")
 		f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "Bad Slug", "name": "x"}).want(t, 400, "invalid")
 		f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "team", "name": "Team", "rules": map[string]any{"quota.people": map[string]any{"value": "many"}}}).want(t, 400, "invalid")
+		f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "team", "name": "Team", "rules": map[string]any{"quota.spacesPerPerson": map[string]any{"value": 5}}}).want(t, 400, "setting_rule_needs_max")
 		f.root.do("GET", "/api/admin/plans/team", nil).want(t, 404, "not_found") // the refused plan was not made
 		f.root.do("POST", "/api/admin/plans", map[string]any{"slug": "team", "name": "Team", "rules": map[string]any{
 			"quota.people": map[string]any{"value": 50, "lower": map[string]any{"mode": "restrict", "max": 10}}}}).want(t, 400, "setting_above_max")

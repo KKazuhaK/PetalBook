@@ -98,6 +98,7 @@
   "setting_above_max",
   "setting_locked",
   "setting_restricted",
+  "setting_rule_needs_max",
   "setting_until_past",
   "skip_too_large",
   "space_disabled",

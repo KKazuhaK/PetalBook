@@ -7155,6 +7155,7 @@ not fill the log).
 | `setting_restricted` | 409 | a value outside the layer above's options or `max`, or a `lower` looser than it |
 | `setting_above_max` | 400 | a site value (or the value of the site's rule for a tenant) above the `max` it is held to |
 | `setting_until_past` | 400 | a rule for a tenant whose `until` has already passed (it would never count) |
+| `setting_rule_needs_max` | 400 | a plan's or billing's rule with a value but no maximum or lock, for a limit the tenant also sets (`quota.*PerPerson`, `files.maxBytes`, `registration.perHour`): it would not cap the tenant |
 | `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
@@ -8606,7 +8607,10 @@ internal billing module's unit; the site's administrators define them.
 - `GET`, `POST /api/admin/plans`, `GET`, `PATCH`, `DELETE /api/admin/plans/{slug}`
   (`site.tenants.manage`): `{slug, name, description, rules: {key: {value?,
   lower?}}, tenants}`. A plan's rules have no dates and are checked as a rule
-  for one tenant is. In `PATCH`, a key with `null` leaves the plan.
+  for one tenant is. For a limit the tenant also sets (`quota.*PerPerson`,
+  `files.maxBytes`, `registration.perHour`) a plan's or billing's rule with a
+  value must also set a maximum (`restrict`) or a `lock`, so a plan always caps
+  (`400 setting_rule_needs_max`); a manual rule may still be a default. In `PATCH`, a key with `null` leaves the plan.
   `409 plan_in_use` (with `tenants`) when a tenant has a plan being deleted,
   `409 plan_limit` at 100 plans, `409 exists` for a slug in use. `PATCH`
   answers `affected`, the tenants that have the plan.

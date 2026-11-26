@@ -600,6 +600,11 @@ run on SQLite and PostgreSQL (`PETALBOOK_TEST_POSTGRES`).
   `daily.*`, `legal.*`, `storage.assets`. For these a site rule that should hold
   must be a lock or a restriction; a value alone is a default the tenant may
   change, by design ("default or forced").
+- **A plan or billing caps.** For a Limit with a tenant layer (`quota.*PerPerson`,
+  `files.maxBytes`, `registration.perHour`), a plan's or billing's rule that
+  gives a value must also give a maximum or a lock (`400
+  setting_rule_needs_max`), as `storage.maxFileBytes` and `storage.perPerson.*`
+  were hard ceilings on main. Manual rules keep the default-or-forced model.
 - **Who set a rule** (`setBy`, a site administrator's id) is shown to site
   administrators only.
 - **The boundary timer** tries again after `settings.BoundaryRetry` (1 minute)

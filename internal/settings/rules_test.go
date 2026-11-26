@@ -428,6 +428,46 @@ func TestARuleThatHasAlreadyEndedIsRefused(t *testing.T) {
 	})
 }
 
+// A limit a tenant also sets is a ceiling when a plan or billing gives it: a
+// rule of theirs with a value alone would be a default the tenant raises, so it
+// is refused; with a maximum or a lock it is taken. A manual rule may still be
+// a default.
+func TestAPlanOrBillingRuleForALimitWithATenantLayerMustCap(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s, _ := withClock(t, st)
+		if err := store.InsertPlan(ctx, st.Q(), store.Plan{ID: "P1", Slug: "team", Name: "Team"}); err != nil {
+			t.Fatal(err)
+		}
+		plain := &settings.Rule{Value: int64(5)}
+		allow := &settings.Rule{Value: int64(5), Lower: lower("allow")}
+		for _, key := range []string{settings.QuotaSpacesPerPerson, settings.QuotaBytesPerPerson, settings.FilesMaxBytes, settings.RegistrationPerHour} {
+			for _, r := range []*settings.Rule{plain, allow} {
+				if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{key: r}); code(err) != settings.CodeRuleNeedsMax {
+					t.Fatalf("a plan's %s without a maximum: %v", key, err)
+				}
+				if err := s.SetBilling(ctx, ten, "billing", map[string]*settings.Rule{key: r}); code(err) != settings.CodeRuleNeedsMax {
+					t.Fatalf("billing's %s without a maximum: %v", key, err)
+				}
+			}
+		}
+		capped := &settings.Rule{Value: int64(5), Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(8))}}
+		locked := &settings.Rule{Value: int64(5), Lower: lower("lock")}
+		if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpacesPerPerson: capped, settings.QuotaPagesPerPerson: locked}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetBilling(ctx, ten, "billing", map[string]*settings.Rule{settings.QuotaSpacesPerPerson: locked, settings.FilesMaxBytes: {Lower: capped.Lower}}); err != nil {
+			t.Fatal(err)
+		}
+		// A key with no tenant layer, and a manual rule, may give a value alone.
+		if err := s.SetPlanRules(ctx, "P1", "U1", map[string]*settings.Rule{settings.QuotaSpaces: plain}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetTenant(ctx, ten, settings.QuotaBytesPerPerson, settings.Change{Site: true, HasSiteRule: true, SiteRule: plain}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestAChangeByAnotherProcessIsSeenAfterTheRevisionCheck(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		a, c := withClock(t, st)
