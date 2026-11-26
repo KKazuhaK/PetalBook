@@ -17,29 +17,29 @@ func TestTheEndpointsOfTheFoldedSettingsAreGone(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		root.doRaw("GET", "/api/admin/access", nil).want(t, 404, "not_found")
-		root.doRaw("PUT", "/api/admin/access", map[string]any{"tokens": false}).want(t, 404, "not_found")
-		root.doRaw("GET", "/api/admin/tenancy", nil).want(t, 404, "not_found")
-		root.doRaw("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 404, "not_found")
+		root.do("GET", "/api/admin/access", nil).want(t, 404, "not_found")
+		root.do("PUT", "/api/admin/access", map[string]any{"tokens": false}).want(t, 404, "not_found")
+		root.do("GET", "/api/admin/tenancy", nil).want(t, 404, "not_found")
+		root.do("PUT", "/api/admin/tenancy", map[string]any{"enabled": true}).want(t, 404, "not_found")
 		// The paths that still have a GET answer 405 to the writes that went.
-		root.doRaw("PUT", "/api/admin/daily", map[string]any{"languages": []string{"en"}}).want(t, 405, "")
-		root.doRaw("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"minIdleHours": 5}}).want(t, 405, "")
+		root.do("PUT", "/api/admin/daily", map[string]any{"languages": []string{"en"}}).want(t, 405, "")
+		root.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"minIdleHours": 5}}).want(t, 405, "")
 		// What they kept holds no setting.
-		d := root.doRaw("GET", "/api/admin/daily", nil).want(t, 200, "")
+		d := root.do("GET", "/api/admin/daily", nil).want(t, 200, "")
 		for _, k := range []string{"default", "languages", "allow"} {
 			if _, ok := d.body[k]; ok {
 				t.Errorf("/api/admin/daily still has %s", k)
 			}
 		}
-		st := root.doRaw("GET", "/api/admin/storage", nil).want(t, 200, "")
+		st := root.do("GET", "/api/admin/storage", nil).want(t, 200, "")
 		for _, k := range []string{"hosts", "localSpaces", "cache"} {
 			if _, ok := st.body[k]; ok {
 				t.Errorf("/api/admin/storage still has %s", k)
 			}
 		}
 		// The security endpoint takes the captcha's keys and nothing else.
-		root.doRaw("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"mode": "dual"}}).want(t, 400, "invalid")
-		sec := root.doRaw("GET", "/api/admin/security", nil).want(t, 200, "")
+		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"mode": "dual"}}).want(t, 400, "invalid")
+		sec := root.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		for _, k := range []string{"lockout", "limits"} {
 			if _, ok := sec.body[k]; ok {
 				t.Errorf("/api/admin/security still has %s", k)
@@ -95,7 +95,7 @@ func TestTheRemoteRequirementKeepsItsSince(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
 		since := func() any {
-			return root.doRaw("GET", "/api/admin/storage", nil).want(t, 200, "").body["remotes"].(map[string]any)["since"]
+			return root.do("GET", "/api/admin/storage", nil).want(t, 200, "").body["remotes"].(map[string]any)["since"]
 		}
 		if since() != nil {
 			t.Fatalf("since with nothing required: %v", since())
@@ -132,13 +132,13 @@ func TestTheDailyTextsLanguagesAndDefaultAreSettings(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		root := a.setup("root", pw)
-		r := root.doRaw("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": []string{"zh", "pt-br", "en", "EN"}}).want(t, 200, "")
-		if got := lgJSON(r.body["site"].(map[string]any)["value"]); got != `["zh-Hans","pt-BR","en"]` {
+		r := root.do("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": []string{"zh", "pt-br", "en", "EN"}}).want(t, 200, "")
+		if got := jsonText(r.body["site"].(map[string]any)["value"]); got != `["zh-Hans","pt-BR","en"]` {
 			t.Fatalf("not canonical: %s", got)
 		}
-		root.doRaw("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": []string{"zz zz"}}).want(t, 400, "bad_language")
-		root.doRaw("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "bogus"}}).want(t, 400, "")
-		root.doRaw("PUT", "/api/admin/settings/daily.own", map[string]any{"value": false}).want(t, 200, "")
+		root.do("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": []string{"zz zz"}}).want(t, 400, "bad_language")
+		root.do("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "bogus"}}).want(t, 400, "")
+		root.do("PUT", "/api/admin/settings/daily.own", map[string]any{"value": false}).want(t, 200, "")
 		raw, _, err := store.GetSiteRecord(context.Background(), a.st.Q(), "daily")
 		if err == nil && (strings.Contains(raw, "languages") || strings.Contains(raw, `"allow"`)) {
 			t.Fatalf("the daily record holds settings: %s", raw)
@@ -242,7 +242,9 @@ func TestTheCaptchaSecretStaysWhileTheCaptchaIsOn(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		on := map[string]any{"login": map[string]any{"on": true, "when": "always"}}
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "turnstile", "siteKey": "1x00", "secret": "s3cret-value", "contexts": on}})
+		admin.putSetting("captcha.provider", "turnstile").want(t, 200, "")
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"siteKey": "1x00", "secret": "s3cret-value"}}).want(t, 200, "")
+		admin.putSetting("captcha.contexts", on).want(t, 200, "")
 		admin.do("DELETE", "/api/admin/secrets/captcha.secret", nil).want(t, 400, "captcha_secret_required")
 		admin.do("PUT", "/api/admin/secrets/captcha.secret", map[string]any{"value": ""}).want(t, 400, "invalid")
 		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["captcha"].(map[string]any)["hasSecret"] != true {
@@ -250,7 +252,7 @@ func TestTheCaptchaSecretStaysWhileTheCaptchaIsOn(t *testing.T) {
 		}
 		// Replacing it is fine; with the captcha off, so is clearing it.
 		admin.do("PUT", "/api/admin/secrets/captcha.secret", map[string]any{"value": "another"}).want(t, 200, "")
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": false}}}})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": false}}).want(t, 200, "")
 		admin.do("DELETE", "/api/admin/secrets/captcha.secret", nil).want(t, 200, "")
 		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["captcha"].(map[string]any)["hasSecret"] != false {
 			t.Fatal(g.raw)
@@ -265,20 +267,21 @@ func TestTheCaptchaAndItsSecretAreNotChangedAtOnce(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"provider": "turnstile", "siteKey": "1x00", "secret": "s3cret-value"}})
+		admin.putSetting("captcha.provider", "turnstile").want(t, 200, "")
+		admin.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"siteKey": "1x00", "secret": "s3cret-value"}}).want(t, 200, "")
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			admin.doRaw("PUT", "/api/admin/settings/captcha.contexts", map[string]any{"value": map[string]any{"login": map[string]any{"on": true, "when": "always"}}})
+			admin.do("PUT", "/api/admin/settings/captcha.contexts", map[string]any{"value": map[string]any{"login": map[string]any{"on": true, "when": "always"}}})
 		}()
 		go func() {
 			defer wg.Done()
-			admin.doRaw("DELETE", "/api/admin/secrets/captcha.secret", nil)
+			admin.do("DELETE", "/api/admin/secrets/captcha.secret", nil)
 		}()
 		wg.Wait()
 		g := admin.do("GET", "/api/admin/security", nil).want(t, 200, "").body["captcha"].(map[string]any)
-		login := g["contexts"].(map[string]any)["login"].(map[string]any)
+		login := admin.siteValue("captcha.contexts").(map[string]any)["login"].(map[string]any)
 		if login["on"] == true && g["hasSecret"] != true {
 			t.Fatalf("a captcha is on without its secret: %v", g)
 		}

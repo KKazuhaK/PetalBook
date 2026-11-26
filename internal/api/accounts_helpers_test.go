@@ -267,9 +267,8 @@ type result struct {
 	resp *http.Response
 }
 
-// doRaw sends a request as it is: do (legacy_helpers_test.go) answers the requests
-// to the endpoints that settings replaced.
-func (c *client) doRaw(method, path string, body any, extra ...string) result {
+// do sends a request as it is.
+func (c *client) do(method, path string, body any, extra ...string) result {
 	c.a.t.Helper()
 	var rdr io.Reader
 	switch b := body.(type) {
@@ -407,3 +406,68 @@ func (a *acc) restart(t *testing.T) {
 	a.h = api.New(a.apiOpts)
 	t.Cleanup(a.h.Close)
 }
+
+// putSetting writes a site setting: PUT /api/admin/settings/{key}.
+func (c *client) putSetting(key string, value any) result {
+	c.a.t.Helper()
+	return c.do("PUT", "/api/admin/settings/"+key, map[string]any{"value": value})
+}
+
+// siteValue is the value of one site setting in GET /api/admin/settings.
+func (c *client) siteValue(key string) any {
+	c.a.t.Helper()
+	r := c.do("GET", "/api/admin/settings", nil).want(c.a.t, 200, "")
+	for _, it := range r.body["settings"].([]any) {
+		if m := it.(map[string]any); m["key"] == key {
+			return m["site"].(map[string]any)["value"]
+		}
+	}
+	c.a.t.Fatalf("no site setting %s", key)
+	return nil
+}
+
+// setSetting writes a site setting through the service, before anyone can
+// sign in to do it through the API.
+func (a *acc) setSetting(t *testing.T, key string, v any) {
+	t.Helper()
+	if _, err := settings.Of(a.st).SetSite(t.Context(), key, settings.Change{HasValue: true, Value: v}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// jsonText is v as JSON text, for comparing what a response holds.
+func jsonText(v any) string {
+	raw, _ := json.Marshal(v)
+	return string(raw)
+}
+
+// switchFeature turns a feature (features.tokens, features.mcp) off for every
+// organisation, which is the value off and a lock, or back to on with nothing
+// locked: PUT /api/admin/settings/{key}.
+func (c *client) switchFeature(key string, on bool) result {
+	c.a.t.Helper()
+	lower := any(nil)
+	if !on {
+		lower = map[string]any{"mode": "lock"}
+	}
+	return c.do("PUT", "/api/admin/settings/"+key, map[string]any{"value": on, "lower": lower})
+}
+
+// siteSettingOf is the value of one site setting (GET /api/admin/settings), read by a caller that may.
+func siteSettingOf(t *testing.T, c caller, key string) any {
+	t.Helper()
+	code, r := c("GET", "/api/admin/settings", nil)
+	if code != 200 {
+		t.Fatalf("GET /api/admin/settings: %d %v", code, r)
+	}
+	for _, it := range r["settings"].([]any) {
+		if m := it.(map[string]any); m["key"] == key {
+			return m["site"].(map[string]any)["value"]
+		}
+	}
+	t.Fatalf("no site setting %s", key)
+	return nil
+}
+
+// valueOf is the site value in the answer to a write of a setting.
+func valueOf(r map[string]any) any { return asMap(r["site"])["value"] }

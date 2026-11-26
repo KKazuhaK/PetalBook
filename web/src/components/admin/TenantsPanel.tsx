@@ -17,11 +17,10 @@ import { Field, FormMessage } from '@/components/auth/Field'
 import { ErrorState, PageFallback } from '@/components/common'
 import { AdminPageActions } from './AdminPageHeader'
 import { SettingsSection } from '@/components/settings/SettingsParts'
-import { TenantRulesBlock, lowerText, showValue } from './TenantRules'
+import { TenantRulesBlock, lowerText, showValue, windowText } from './TenantRules'
 import { nameOf } from './RuleDialog'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Label } from '@/components/ui/label'
-import { absoluteTime } from '@/lib/time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -493,8 +492,7 @@ function TenantPlanBlock({ tenant }: { tenant: Tenant }) {
                         {[
                           rule!.value === null || rule!.value === undefined ? '' : showValue(s, rule!.value),
                           lowerText(s, rule!.lower),
-                          rule!.from ? `${absoluteTime(rule!.from)} →` : '',
-                          rule!.until ? `→ ${absoluteTime(rule!.until)}` : '',
+                          windowText(rule!.from, rule!.until),
                         ]
                           .filter(Boolean)
                           .join(' · ')}

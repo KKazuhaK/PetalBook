@@ -17,7 +17,7 @@ func (x *extFixture) putLines(lang, text, format string) {
 }
 
 func (x *extFixture) setSources(sources map[string]any) (int, map[string]any) {
-	return x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "sources", "sources": sources}})
+	return x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "sources", "sources": sources}})
 }
 
 func TestLinesKeepTheirAuthorAndSource(t *testing.T) {
@@ -51,7 +51,7 @@ func TestLinesKeepTheirAuthorAndSource(t *testing.T) {
 		if code, r := x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": "", "lines": []any{map[string]any{"text": "He said — no", "author": "Someone", "source": "Somewhere"}}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "list"}})
 		q := asMap(quoteOf(t, x.own, x.base, "date=2026-11-23&lang=en")["quote"])
 		if q["text"] != "He said — no" || q["author"] != "Someone" || q["source"] != "Somewhere" {
 			t.Fatalf("%v", q)
@@ -174,8 +174,7 @@ func TestSourcesAreChecked(t *testing.T) {
 		if code, r := x.setSources(map[string]any{"": []any{map[string]any{"kind": "list"}}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
-		_, r := x.adm("GET", "/api/admin/daily", nil)
-		if got := fmt.Sprint(asMap(r["default"])["sources"]); got != "map[:[map[kind:list]]]" {
+		if got := fmt.Sprint(asMap(siteSettingOf(t, x.adm, "daily.default"))["sources"]); got != "map[:[map[kind:list]]]" {
 			t.Fatalf("%s", got)
 		}
 		// One alone is used as it is.
@@ -191,7 +190,7 @@ func TestSourcesAreChecked(t *testing.T) {
 			}
 		}
 		// Options belong to a source, not to the default: a top-level one is refused, not stored.
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "sources", "sources": map[string]any{"": []any{map[string]any{"kind": "list"}}},
+		if code, r := x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "sources", "sources": map[string]any{"": []any{map[string]any{"kind": "list"}}},
 			"options": map[string]any{"hitokoto": map[string]any{"categories": []any{"z"}}}}}); code != 400 || r["error"] != "invalid" {
 			t.Errorf("%d %v", code, r)
 		}
@@ -201,8 +200,8 @@ func TestSourcesAreChecked(t *testing.T) {
 		}
 		// Options go with their interface in the list.
 		code, r := x.setSources(map[string]any{"zh-Hans": []any{map[string]any{"kind": "api", "id": "hitokoto", "options": map[string]any{"categories": []any{"k", "d"}}}}})
-		if code != 200 || fmt.Sprint(asMap(asMap(r["default"])["sources"])) != "map[zh-Hans:[map[id:hitokoto kind:api options:map[categories:[d k]]]]]" {
-			t.Fatalf("%d %v", code, r["default"])
+		if code != 200 || fmt.Sprint(asMap(asMap(valueOf(r))["sources"])) != "map[zh-Hans:[map[id:hitokoto kind:api options:map[categories:[d k]]]]]" {
+			t.Fatalf("%d %v", code, valueOf(r))
 		}
 	})
 }
@@ -266,17 +265,19 @@ func TestASpaceListsSourcesOfSeveralKinds(t *testing.T) {
 		}
 		svc.fail("favqs.com", false)
 		// The locks: with interfaces locked, the list that remains is used; both locked, the default.
-		x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false}})
+		x.adm("PUT", "/api/admin/settings/daily.api", map[string]any{"value": false})
 		x.now = x.now.Add(time.Hour)
 		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en")); got != "Ours" {
 			t.Errorf("locked interfaces: %q", got)
 		}
-		x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false, "own": false}})
+		x.adm("PUT", "/api/admin/settings/daily.api", map[string]any{"value": false})
+		x.adm("PUT", "/api/admin/settings/daily.own", map[string]any{"value": false})
 		if r := quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=en"); quoteText(r) != "Ours" {
 			t.Errorf("%v", r)
 		}
 		// Old prefs, a list of ids, read as before and are returned without sources.
-		x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": true, "own": true}})
+		x.adm("PUT", "/api/admin/settings/daily.api", map[string]any{"value": true})
+		x.adm("PUT", "/api/admin/settings/daily.own", map[string]any{"value": true})
 		x.choose("favqs")
 		_, p := x.own("GET", x.base+"/daily/prefs", nil)
 		if fmt.Sprint(p["apis"]) != "[favqs]" || p["sources"] != nil {
@@ -368,7 +369,7 @@ func TestAChosenInterfaceThatIsGoneIsToldAndNothingElseIsPicked(t *testing.T) {
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
 		x.putLines("", "Ours", "lines")
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "list"}})
 		ctx := context.Background()
 		// What the space chose: an interface that is not set up any more.
 		for name, raw := range map[string]string{"ids": `{"apis":["retired"]}`, "sources": `{"apis":[],"sources":{"":[{"kind":"api","id":"retired"}]}}`} {
@@ -450,7 +451,7 @@ func TestNoTextInAnotherLanguage(t *testing.T) {
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
 		x.putLines("zh-Hans", "中文的一行", "lines")
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "list"}})
 		none := func(what, query string) {
 			t.Helper()
 			if r := quoteOf(t, x.viewer, x.base, query); r["quote"] != nil {
@@ -472,10 +473,10 @@ func TestNoTextInAnotherLanguage(t *testing.T) {
 		}
 		x.adm("DELETE", "/api/admin/daily/lines?lang=", nil)
 		// Sources by language: a list for zh is not given to en, but one under "" is.
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "sources", "sources": map[string]any{"zh-Hans": []any{map[string]any{"kind": "list"}}}}})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "sources", "sources": map[string]any{"zh-Hans": []any{map[string]any{"kind": "list"}}}}})
 		none("a zh list given to en", "date=2026-11-23&lang=en")
 		// A space that chose an interface made for Chinese gives an English reader nothing of it.
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": nil})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": nil})
 		x.choose("hitokoto")
 		none("an interface for zh chosen by the space, given to en", "date=2026-11-23&lang=en")
 		if got := quoteText(quoteOf(t, x.viewer, x.base, "date=2026-11-23&lang=zh-CN")); got != "hito" {
@@ -497,7 +498,7 @@ func TestHitokotoIsNeverUsedForEnglish(t *testing.T) {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"en": []any{"hitokoto"}}}}); code != 400 {
+		if code, r := x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "api", "apis": map[string]any{"en": []any{"hitokoto"}}}}); code != 400 {
 			t.Errorf("the earlier kind: %d %v", code, r)
 		}
 		for _, lang := range []string{"zh-Hans", "zh-Hant"} {

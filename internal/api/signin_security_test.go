@@ -17,48 +17,53 @@ func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		sec := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
-		if sec.body["login"].(map[string]any)["mode"] != "dual" || sec.body["login"].(map[string]any)["ssoAvailable"] != false || sec.body["login"].(map[string]any)["effectiveMode"] != "local_only" ||
-			sec.body["lockout"].(map[string]any)["minutes"] != float64(15) || sec.body["lockout"].(map[string]any)["scope"] != "ip_account" || sec.body["passwordAdmins"] != float64(1) ||
-			sec.body["limits"].(map[string]any)["maxFailures"] != float64(10) || sec.body["limits"].(map[string]any)["windowMinutes"] != float64(15) ||
-			sec.body["limits"].(map[string]any)["sessionIdleDays"] != float64(30) || sec.body["limits"].(map[string]any)["sessionMaxDays"] != float64(90) {
-			t.Fatal(sec.raw)
-		}
-		ctxs := sec.body["captcha"].(map[string]any)["contexts"].(map[string]any)
-		if len(ctxs) != 5 || ctxs["login"].(map[string]any)["when"] != "after_failures" || ctxs["login"].(map[string]any)["failures"] != float64(3) || ctxs["login"].(map[string]any)["on"] != false {
-			t.Fatal(sec.raw)
-		}
-		// Everything is checked first: one bad field refuses the whole request, and a value out of range is not clamped.
-		for name, body := range map[string]map[string]any{
-			"mode":        {"login": map[string]any{"mode": "magic"}},
-			"scope":       {"lockout": map[string]any{"scope": "world"}},
-			"minutes":     {"lockout": map[string]any{"minutes": 0}},
-			"minutes max": {"lockout": map[string]any{"minutes": 10081}},
-			"failures":    {"limits": map[string]any{"maxFailures": 0}},
-			"perMinute":   {"limits": map[string]any{"perMinute": -1}},
-			"window":      {"limits": map[string]any{"windowMinutes": 99999}},
-			"idle":        {"limits": map[string]any{"sessionIdleDays": 366}},
-			"max < idle":  {"limits": map[string]any{"sessionIdleDays": 60, "sessionMaxDays": 30}},
-			"context":     {"captcha": map[string]any{"contexts": map[string]any{"nowhere": map[string]any{"on": true}}}},
-			"unknown ctx": {"captcha": map[string]any{"contexts": map[string]any{"reset": map[string]any{"on": true}}}},
-			"when":        {"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"when": "sometimes"}}}},
-			"n failures":  {"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"failures": 101}}}},
-			"role":        {"passkeys": map[string]any{"requireRoles": []string{"root"}}},
+		// The defaults: the policy is the site's settings, and what is derived from it
+		// (the mode in effect, whether single sign-on is there) is GET /api/admin/security.
+		for key, want := range map[string]any{
+			"signin.mode": "dual", "signin.lockout.minutes": float64(15), "signin.lockout.scope": "ip_account", "signin.lockout.enabled": false,
+			"signin.maxFailures": float64(10), "signin.windowMinutes": float64(15), "sessions.idleDays": float64(30), "sessions.maxDays": float64(90),
 		} {
-			r := admin.do("PUT", "/api/admin/security", body)
-			if r.code != 400 || r.body["error"] != "invalid" {
-				t.Errorf("%s: %d %s", name, r.code, r.raw)
+			if got := admin.siteValue(key); got != want {
+				t.Errorf("%s: %v, want %v", key, got, want)
 			}
 		}
-		if g := admin.do("GET", "/api/admin/security", nil).want(t, 200, ""); g.body["lockout"].(map[string]any)["enabled"] != false || g.body["limits"].(map[string]any)["sessionIdleDays"] != float64(30) {
-			t.Fatalf("a refused request changed something: %s", g.raw)
+		sec := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
+		if sec.body["login"].(map[string]any)["ssoAvailable"] != false || sec.body["login"].(map[string]any)["effectiveMode"] != "local_only" || sec.body["passwordAdmins"] != float64(1) {
+			t.Fatal(sec.raw)
 		}
-		// A partial update keeps the rest; every setting written is audited.
+		ctxs := admin.siteValue("captcha.contexts").(map[string]any)
+		if len(ctxs) != 5 || ctxs["login"].(map[string]any)["when"] != "after_failures" || ctxs["login"].(map[string]any)["failures"] != float64(3) || ctxs["login"].(map[string]any)["on"] != false {
+			t.Fatal(jsonText(ctxs))
+		}
+		// A value out of range or not allowed is refused, and not clamped.
+		for _, bad := range []struct {
+			key   string
+			value any
+		}{
+			{"signin.mode", "magic"}, {"signin.lockout.scope", "world"}, {"signin.lockout.minutes", 0}, {"signin.lockout.minutes", 10081},
+			{"signin.maxFailures", 0}, {"signin.perMinute", -1}, {"signin.windowMinutes", 99999}, {"sessions.idleDays", 366},
+			{"sessions.idleDays", 100}, // above the longest a session lasts (90)
+			{"captcha.contexts", map[string]any{"nowhere": map[string]any{"on": true}}},
+			{"captcha.contexts", map[string]any{"reset": map[string]any{"on": true}}},
+			{"captcha.contexts", map[string]any{"login": map[string]any{"when": "sometimes"}}},
+			{"captcha.contexts", map[string]any{"login": map[string]any{"failures": 101}}},
+			{"signin.passkeyRoles", []string{"root"}},
+		} {
+			r := admin.putSetting(bad.key, bad.value)
+			if r.code != 400 {
+				t.Errorf("%s = %v: %d %s", bad.key, bad.value, r.code, r.raw)
+			}
+		}
+		if admin.siteValue("signin.lockout.enabled") != false || admin.siteValue("sessions.idleDays") != float64(30) {
+			t.Fatal("a refused request changed something")
+		}
+		// Each setting written is audited.
 		before := len(admin.audit(t, "setting_changed"))
-		r := admin.putSecurity(t, map[string]any{"lockout": map[string]any{"enabled": true, "minutes": 5, "scope": "account"}})
-		lk := r.body["lockout"].(map[string]any)
-		if lk["enabled"] != true || lk["minutes"] != float64(5) || lk["scope"] != "account" || r.body["limits"].(map[string]any)["maxFailures"] != float64(10) {
-			t.Fatal(r.raw)
+		admin.putSetting("signin.lockout.enabled", true).want(t, 200, "")
+		admin.putSetting("signin.lockout.minutes", 5).want(t, 200, "")
+		admin.putSetting("signin.lockout.scope", "account").want(t, 200, "")
+		if admin.siteValue("signin.lockout.scope") != "account" || admin.siteValue("signin.maxFailures") != float64(10) {
+			t.Fatal("a write changes its own setting and no other")
 		}
 		rows := admin.audit(t, "setting_changed")
 		if len(rows) != before+3 {
@@ -74,7 +79,7 @@ func TestSecuritySettingsAreValidatedBeforeAnythingIsStored(t *testing.T) {
 		if !found {
 			t.Fatalf("no row for the scope: %v", rows)
 		}
-		a.newClient("").do("PUT", "/api/admin/security", map[string]any{}).want(t, 401, "unauthenticated")
+		a.newClient("").do("PUT", "/api/admin/settings/signin.lockout.scope", map[string]any{"value": "ip"}).want(t, 401, "unauthenticated")
 	})
 }
 
@@ -98,7 +103,8 @@ func TestSessionLifetimeIsASecuritySetting(t *testing.T) {
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"sessionIdleDays": 2, "sessionMaxDays": 5}})
+		admin.putSetting("sessions.idleDays", 2).want(t, 200, "")
+		admin.putSetting("sessions.maxDays", 5).want(t, 200, "")
 		a.clock.Advance(49 * time.Hour)
 		tang.do("GET", "/api/account", nil).want(t, 401, "unauthenticated") // applies to sessions that exist already
 		admin.do("POST", "/api/login", good("kazuha")).want(t, 200, "")
@@ -122,7 +128,8 @@ func TestSSOOnlyKeepsAPasswordAdminWhileNotInEffect(t *testing.T) {
 		finish(t, c, at.cb)
 		boss := a.addUser("boss", pw, "admin")
 		bossID := mustUserID(t, a, "boss")
-		c.putSecurity(t, map[string]any{"login": map[string]any{"ssoOnly": true, "mode": "local_only"}})
+		c.putSetting("signin.ssoOnly", true).want(t, 200, "")
+		c.putSetting("signin.mode", "local_only").want(t, 200, "")
 		// Not in effect, but the only administrator with a password stays one.
 		boss.do("PATCH", "/api/users/"+bossID, map[string]any{"role": "member"}).want(t, 409, "conflict")
 		c.do("PATCH", "/api/users/"+bossID, map[string]any{"disabled": true}).want(t, 409, "conflict")
@@ -135,11 +142,11 @@ func TestSSOOnlyKeepsAPasswordAdminWhileNotInEffect(t *testing.T) {
 		}
 		setRole("member")
 		// Leaving local_only would put ssoOnly in effect: refused.
-		c.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"mode": "dual"}}).want(t, 400, "local_admin_required")
+		c.putSetting("signin.mode", "dual").want(t, 400, "local_admin_required")
 		// Enabling a provider would too.
 		setRole("admin")
 		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
-		c.putSecurity(t, map[string]any{"login": map[string]any{"mode": "dual"}})
+		c.putSetting("signin.mode", "dual").want(t, 200, "")
 		setRole("member")
 		c.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 400, "local_admin_required")
 		setRole("admin")
@@ -155,14 +162,15 @@ func TestSSOOnlyIsCheckedWhenSavedAndAfterThePassword(t *testing.T) {
 		c := a.newClient("")
 		at := f.begin(t, c, "alice", map[string]any{"intent": "setup", "token": a.auth.SetupToken()})
 		finish(t, c, at.cb)
-		c.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 400, "local_admin_required")
+		c.putSetting("signin.ssoOnly", true).want(t, 400, "local_admin_required")
 		// A second administrator with a password makes it possible.
 		boss := a.addUser("boss", pw, "admin")
 		tang := a.addUser("tang", pw, "member")
 		_ = tang
-		sec := c.putSecurity(t, map[string]any{"login": map[string]any{"ssoOnly": true}})
+		c.putSetting("signin.ssoOnly", true).want(t, 200, "")
+		sec := c.do("GET", "/api/admin/security", nil).want(t, 200, "")
 		lg := sec.body["login"].(map[string]any)
-		if lg["ssoOnly"] != true || lg["ssoOnlyInEffect"] != true || lg["effectiveMode"] != "dual" || sec.body["passwordAdmins"] != float64(1) {
+		if c.siteValue("signin.ssoOnly") != true || lg["ssoOnlyInEffect"] != true || lg["effectiveMode"] != "dual" || sec.body["passwordAdmins"] != float64(1) {
 			t.Fatal(sec.raw)
 		}
 		// Public answers never mention it.
@@ -197,13 +205,13 @@ func TestSSOOnlyIsCheckedWhenSavedAndAfterThePassword(t *testing.T) {
 		boss.do("PATCH", "/api/users/"+bossID, map[string]any{"role": "member"}).want(t, 409, "conflict")
 		c.do("PATCH", "/api/users/"+bossID, map[string]any{"disabled": true}).want(t, 409, "conflict")
 		// With the sign-in page not offering the provider the setting means nothing, so passwords work again.
-		boss.putSecurity(t, map[string]any{"login": map[string]any{"mode": "local_only"}})
+		boss.putSetting("signin.mode", "local_only").want(t, 200, "")
 		sec = boss.do("GET", "/api/admin/security", nil).want(t, 200, "")
-		if lg := sec.body["login"].(map[string]any); lg["ssoOnly"] != true || lg["ssoOnlyInEffect"] != false || lg["effectiveMode"] != "local_only" || lg["mode"] != "local_only" {
+		if lg := sec.body["login"].(map[string]any); boss.siteValue("signin.ssoOnly") != true || lg["ssoOnlyInEffect"] != false || lg["effectiveMode"] != "local_only" || boss.siteValue("signin.mode") != "local_only" {
 			t.Fatal(sec.raw)
 		}
 		a.newClient("203.0.113.6").do("POST", "/api/login", good("tang")).want(t, 200, "")
-		boss.putSecurity(t, map[string]any{"login": map[string]any{"mode": "sso_redirect"}})
+		boss.putSetting("signin.mode", "sso_redirect").want(t, 200, "")
 		a.newClient("203.0.113.7").do("POST", "/api/login", good("tang")).want(t, 403, "local_login_refused")
 		// No enabled provider: the page says local_only whatever is stored.
 		boss.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": false}).want(t, 200, "")
@@ -215,7 +223,7 @@ func TestSSOOnlyIsCheckedWhenSavedAndAfterThePassword(t *testing.T) {
 		// The four modes and what the page may draw.
 		boss.do("PATCH", "/api/admin/auth/providers/sso", map[string]any{"enabled": true}).want(t, 200, "")
 		for mode, want := range map[string][2]bool{"dual": {true, true}, "sso_first": {true, true}, "sso_redirect": {false, true}, "local_only": {true, false}} {
-			boss.putSecurity(t, map[string]any{"login": map[string]any{"mode": mode}})
+			boss.putSetting("signin.mode", mode).want(t, 200, "")
 			pub = a.newClient("").do("GET", "/api/auth/providers", nil).want(t, 200, "")
 			if pub.body["loginMode"] != mode || pub.body["local"] != want[0] || pub.body["sso"] != want[1] {
 				t.Errorf("%s: %s", mode, pub.raw)
@@ -241,12 +249,12 @@ func TestSSOOnlyRefusesPasskeysOfMembers(t *testing.T) {
 		tk, ak := newVKey(mustUserID(t, a, "tang")), newVKey(mustUserID(t, a, "kazuha"))
 		tang.register(t, tk, "k").want(t, 201, "")
 		admin.register(t, ak, "k").want(t, 201, "")
-		admin.putSecurity(t, map[string]any{"login": map[string]any{"ssoOnly": true}})
+		admin.putSetting("signin.ssoOnly", true).want(t, 200, "")
 		tk.cred.Counter++
 		a.newClient("").signInWithPasskey(t, tk, "", "").want(t, 403, "local_login_refused")
 		ak.cred.Counter++
 		a.newClient("").signInWithPasskey(t, ak, "", "").want(t, 200, "") // administrators are not refused
-		admin.putSecurity(t, map[string]any{"login": map[string]any{"ssoOnly": false}})
+		admin.putSetting("signin.ssoOnly", false).want(t, 200, "")
 		tk.cred.Counter++
 		a.newClient("").signInWithPasskey(t, tk, "", "").want(t, 200, "")
 	})
@@ -257,7 +265,7 @@ func TestSignInRequiresNoCaptchaForSingleSignOn(t *testing.T) {
 	f := newFakeIDP(t)
 	eachAccounts(t, f.opts(true), func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"captcha": map[string]any{"contexts": map[string]any{"login": map[string]any{"on": true, "when": "always"}}}})
+		admin.putSetting("captcha.contexts", map[string]any{"login": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
 		c := a.newClient("")
 		if loc := f.signIn(t, c, "alice", map[string]any{}); loc != "/" || signedInAs(t, c) != "alice" {
 			t.Fatal(loc)
@@ -328,7 +336,9 @@ func TestSettingsChangedByAnotherProcessReachTheRunningServer(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
 		admin := a.setup("kazuha", pw)
-		admin.putSecurity(t, map[string]any{"limits": map[string]any{"maxFailures": 3}, "lockout": map[string]any{"enabled": true}, "login": map[string]any{"mode": "sso_first"}})
+		admin.putSetting("signin.mode", "sso_first").want(t, 200, "")
+		admin.putSetting("signin.lockout.enabled", true).want(t, 200, "")
+		admin.putSetting("signin.maxFailures", 3).want(t, 200, "")
 		// "petalbook security reset" is a second process writing the same rows: its
 		// own settings service, which the running server learns of through
 		// settings_rev, at most once a minute.
@@ -341,18 +351,16 @@ func TestSettingsChangedByAnotherProcessReachTheRunningServer(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		g := admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
-		if g.body["lockout"].(map[string]any)["enabled"] != true {
+		if admin.siteValue("signin.lockout.enabled") != true {
 			t.Fatal("the change arrived before the revision was looked at")
 		}
 		a.clock.Advance(settings.RevCheck + time.Second)
-		g = admin.do("GET", "/api/admin/security", nil).want(t, 200, "")
-		if g.body["lockout"].(map[string]any)["enabled"] != false || g.body["login"].(map[string]any)["mode"] != "dual" {
-			t.Fatal(g.raw)
+		if admin.siteValue("signin.lockout.enabled") != false || admin.siteValue("signin.mode") != "dual" {
+			t.Fatal("the change of the other process was not seen")
 		}
 		// Limits stay as they were.
-		if g.body["limits"].(map[string]any)["maxFailures"] != float64(3) {
-			t.Fatal(g.raw)
+		if admin.siteValue("signin.maxFailures") != float64(3) {
+			t.Fatal("a setting the other process did not write moved")
 		}
 	})
 }

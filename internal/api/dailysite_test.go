@@ -91,7 +91,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 			t.Fatalf("%v", r)
 		}
 		// Only administrators reach the settings.
-		for _, rt := range [][3]string{{"GET", "/api/admin/daily", ""}, {"PUT", "/api/admin/daily", "{}"}, {"PUT", "/api/admin/daily/lines", "{}"}, {"DELETE", "/api/admin/daily/lines", ""}, {"PUT", "/api/admin/daily/apis/x", "{}"}, {"DELETE", "/api/admin/daily/apis/x", ""}, {"POST", "/api/admin/daily/try", "{}"}} {
+		for _, rt := range [][3]string{{"GET", "/api/admin/daily", ""}, {"PUT", "/api/admin/settings/daily.default", "{}"}, {"PUT", "/api/admin/daily/lines", "{}"}, {"DELETE", "/api/admin/daily/lines", ""}, {"PUT", "/api/admin/daily/apis/x", "{}"}, {"DELETE", "/api/admin/daily/apis/x", ""}, {"POST", "/api/admin/daily/try", "{}"}} {
 			for name, c := range map[string]*client{"owner": tm.owner, "viewer": tm.viewer} {
 				if r := c.do(rt[0], rt[1], rt[2]); r.code != 403 {
 					t.Errorf("%s %v: %d %s", name, rt, r.code, r.raw)
@@ -99,23 +99,23 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 			}
 		}
 		code, r := adm("GET", "/api/admin/daily", nil)
-		if code != 200 || r["default"] != nil || r["hosts"] != nil || len(r["apis"].([]any)) != 0 || r["lines"].(map[string]any)["total"] != float64(0) {
+		if code != 200 || siteSettingOf(t, adm, "daily.default") != nil || r["hosts"] != nil || len(r["apis"].([]any)) != 0 || r["lines"].(map[string]any)["total"] != float64(0) {
 			t.Fatalf("%d %v", code, r)
 		}
 
 		// --- the settings are checked
-		for name, body := range map[string]map[string]any{
-			"an unknown key":                 {"extra": 1},
-			"hosts, which is no setting":     {"hosts": []any{}},
-			"notices, which are none":        {"notices": []any{}},
-			"a language that is none":        {"languages": []any{"cn"}},
-			"a default of nowhere":           {"default": map[string]any{"kind": "space", "space": "0000000000", "source": map[string]any{"tag": "x"}}},
-			"a default with no kind":         {"default": map[string]any{}},
-			"a space default with no source": {"default": map[string]any{"kind": "space", "space": tm.sid}},
-			"a list with a space":            {"default": map[string]any{"kind": "list", "space": tm.sid}},
-			"a default of a bad source":      {"default": map[string]any{"kind": "space", "space": tm.sid, "source": map[string]any{"folder": "Nowhere"}}},
+		for name, bad := range map[string][2]any{
+			"an unknown setting":             {"daily.extra", 1},
+			"hosts, which is no setting":     {"daily.hosts", []any{}},
+			"notices, which are none":        {"daily.notices", []any{}},
+			"a language that is none":        {"daily.languages", []any{"cn"}},
+			"a default of nowhere":           {"daily.default", map[string]any{"kind": "space", "space": "0000000000", "source": map[string]any{"tag": "x"}}},
+			"a default with no kind":         {"daily.default", map[string]any{}},
+			"a space default with no source": {"daily.default", map[string]any{"kind": "space", "space": tm.sid}},
+			"a list with a space":            {"daily.default", map[string]any{"kind": "list", "space": tm.sid}},
+			"a default of a bad source":      {"daily.default", map[string]any{"kind": "space", "space": tm.sid, "source": map[string]any{"folder": "Nowhere"}}},
 		} {
-			if code, r := adm("PUT", "/api/admin/daily", body); code != 400 && code != 404 {
+			if code, r := adm("PUT", "/api/admin/settings/"+bad[0].(string), map[string]any{"value": bad[1]}); code != 400 && code != 404 {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
@@ -132,7 +132,7 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 				t.Errorf("%v: %d", bad, code)
 			}
 		}
-		if code, r := adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}}); code != 200 {
+		if code, r := adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "list"}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
 		put("zh", "山色空蒙雨亦奇\t苏轼\n\n行到水穷处\n", "lines")
@@ -213,8 +213,8 @@ func TestDailyFromTheAdministrators(t *testing.T) {
 			}
 		}
 		sitePage("One", "From the site space\n")
-		if code, r := adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "space", "space": tm.sid,
-			"source": map[string]any{"en": map[string]any{"folder": "Site"}, "zh": map[string]any{"tag": "nothing"}}}}); code != 200 || r["default"].(map[string]any)["kind"] != "space" {
+		if code, r := adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "space", "space": tm.sid,
+			"source": map[string]any{"en": map[string]any{"folder": "Site"}, "zh": map[string]any{"tag": "nothing"}}}}); code != 200 || asMap(valueOf(r))["kind"] != "space" {
 			t.Fatalf("%d %v", code, r)
 		}
 		other := a.addUser("otto", pw, "member")
@@ -488,26 +488,26 @@ func TestAdministratorsConfigureExternalInterfaces(t *testing.T) {
 			t.Fatalf("%d", code)
 		}
 		// The list of languages is the administrators' own: BCP 47 tags in canonical form.
-		code, r = x.adm("GET", "/api/admin/daily", nil)
-		if fmt.Sprint(r["languages"]) != "[zh-Hans en]" {
-			t.Fatalf("%v", r["languages"])
+		if got := siteSettingOf(t, x.adm, "daily.languages"); fmt.Sprint(got) != "[zh-Hans en]" {
+			t.Fatalf("%v", got)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "en", "ja", "EN", "pt-br", "ZH-hant"}}); code != 200 || fmt.Sprint(r["languages"]) != "[zh-Hans en ja pt-BR zh-Hant]" {
-			t.Fatalf("%d %v", code, r["languages"])
+		if code, r := x.adm("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": []any{"zh", "en", "ja", "EN", "pt-br", "ZH-hant"}}); code != 200 || fmt.Sprint(asMap(r["site"])["value"]) != "[zh-Hans en ja pt-BR zh-Hant]" {
+			t.Fatalf("%d %v", code, r["site"])
 		}
 		if _, pr := x.own("GET", x.base+"/daily/prefs", nil); fmt.Sprint(pr["languages"]) != "[zh-Hans en ja pt-BR zh-Hant]" {
 			t.Fatalf("%v", pr["languages"])
 		}
 		for _, bad := range []any{[]any{"chinese!"}, []any{"cn"}, []any{"english"}, []any{"zh_CN"}, []any{"en", ""}} {
-			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": bad}); code != 400 || r["error"] != "bad_language" {
+			if code, r := x.adm("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": bad}); code != 400 || r["error"] != "bad_language" {
 				t.Errorf("%v: %d %v", bad, code, r)
 			}
 		}
 		for _, bad := range []any{"zh", nil} {
-			if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": bad}); code != 400 {
+			if code, _ := x.adm("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": bad}); code != 400 {
 				t.Errorf("%v: %d", bad, code)
 			}
 		}
+		code, r = x.adm("GET", "/api/admin/daily", nil)
 		if fmt.Sprint(r["knownLanguages"].([]any)[0]) != "map[english:Chinese (Simplified) name:中文（简体） tag:zh-Hans]" {
 			t.Errorf("%v", r["knownLanguages"].([]any)[0])
 		}
@@ -664,14 +664,14 @@ func TestAdministratorsSaveAtOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"languages": []any{"zh", "en", "ja"}}); code != 200 {
+			if code, r := x.adm("PUT", "/api/admin/settings/daily.languages", map[string]any{"value": []any{"zh", "en", "ja"}}); code != 200 {
 				t.Errorf("%d %v", code, r)
 			}
 		}()
 		wg.Wait()
 		_, r := x.adm("GET", "/api/admin/daily", nil)
-		if len(r["apis"].([]any)) != n || fmt.Sprint(r["languages"]) != "[zh-Hans en ja]" {
-			t.Fatalf("changes were lost: %d interfaces, languages %v", len(r["apis"].([]any)), r["languages"])
+		if langs := siteSettingOf(t, x.adm, "daily.languages"); len(r["apis"].([]any)) != n || fmt.Sprint(langs) != "[zh-Hans en ja]" {
+			t.Fatalf("changes were lost: %d interfaces, languages %v", len(r["apis"].([]any)), langs)
 		}
 	})
 }
@@ -690,7 +690,7 @@ func TestDailyDefaultChangeIsSeenThroughTheETag(t *testing.T) {
 			}
 		}
 		setDefault := func(folder string) {
-			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "space", "space": x.tm.sid,
+			if code, r := x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "space", "space": x.tm.sid,
 				"source": map[string]any{"folder": folder}}}); code != 200 {
 				t.Fatalf("%d %v", code, r)
 			}
@@ -987,11 +987,12 @@ func TestDailyAdminLocks(t *testing.T) {
 		origin := func() string { return quoteOf(t, x.viewer, x.base, day)["origin"].(string) }
 		allow := func(body map[string]any) map[string]any {
 			t.Helper()
-			code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": body})
-			if code != 200 {
-				t.Fatalf("%v: %d %v", body, code, r)
+			for k, v := range body {
+				if code, r := x.adm("PUT", "/api/admin/settings/daily."+k, map[string]any{"value": v}); code != 200 {
+					t.Fatalf("%v: %d %v", body, code, r)
+				}
 			}
-			return r["allow"].(map[string]any)
+			return map[string]any{"own": siteSettingOf(t, x.adm, "daily.own"), "api": siteSettingOf(t, x.adm, "daily.api")}
 		}
 		inEffect := func() (bool, map[string]any) {
 			code, r := x.own("GET", x.base+"/daily/settings", nil)
@@ -1009,26 +1010,26 @@ func TestDailyAdminLocks(t *testing.T) {
 		}
 
 		// Everything is allowed until it is said otherwise.
-		if _, r := x.adm("GET", "/api/admin/daily", nil); fmt.Sprint(r["allow"]) != "map[api:true own:true]" {
-			t.Fatalf("%v", r["allow"])
+		if got := allow(map[string]any{}); fmt.Sprint(got) != "map[api:true own:true]" {
+			t.Fatalf("%v", got)
 		}
 		if a := prefs()["allowed"]; fmt.Sprint(a) != "map[api:true own:true]" {
 			t.Fatalf("%v", a)
 		}
 		// Only the administrators change it, and it is checked.
 		for name, c := range map[string]caller{"owner": x.own, "viewer": x.viewer} {
-			if code, _ := c("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"own": false}}); code != 403 {
+			if code, _ := c("PUT", "/api/admin/settings/daily.own", map[string]any{"value": false}); code != 403 {
 				t.Errorf("%s: %d", name, code)
 			}
 		}
-		for name, bad := range map[string]any{"empty": map[string]any{}, "a string": "no", "not a boolean": map[string]any{"own": "no"}, "null": nil} {
-			if code, _ := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": bad}); code != 400 {
+		for name, bad := range map[string]any{"a string": "no", "a number": 1, "null": nil} {
+			if code, _ := x.adm("PUT", "/api/admin/settings/daily.own", map[string]any{"value": bad}); code != 400 {
 				t.Errorf("%s: %d", name, code)
 			}
 		}
 
 		// Three sources: the space's own, an interface, the default.
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "list"}})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "list"}})
 		x.adm("PUT", "/api/admin/daily/lines", map[string]any{"lang": "en", "text": "From the list"})
 		if code, r := x.putAPI("q1", x.qs.api("q1", "en")); code != 200 {
 			t.Fatalf("%d %v", code, r)

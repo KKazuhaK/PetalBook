@@ -111,7 +111,7 @@ func TestBuiltInOptionsAreListedAndChecked(t *testing.T) {
 		}
 		// The same in the site default.
 		def := func(opts any) (int, map[string]any) {
-			return x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"zh-Hans": []any{"hitokoto"}}, "options": opts}})
+			return x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "api", "apis": map[string]any{"zh-Hans": []any{"hitokoto"}}, "options": opts}})
 		}
 		if code, r := def(map[string]any{"hitokoto": map[string]any{"categories": []any{"zz"}}}); code != 400 {
 			t.Errorf("%d %v", code, r)
@@ -119,7 +119,7 @@ func TestBuiltInOptionsAreListedAndChecked(t *testing.T) {
 		if code, r := def(map[string]any{"zenquotes": map[string]any{"categories": []any{"a"}}}); code != 400 {
 			t.Errorf("%d %v", code, r)
 		}
-		if code, r := def(map[string]any{"hitokoto": map[string]any{"categories": []any{"k", "a"}}}); code != 200 || fmt.Sprint(asMap(r["default"])["options"]) != "map[hitokoto:map[categories:[a k]]]" {
+		if code, r := def(map[string]any{"hitokoto": map[string]any{"categories": []any{"k", "a"}}}); code != 200 || fmt.Sprint(asMap(valueOf(r))["options"]) != "map[hitokoto:map[categories:[a k]]]" {
 			t.Fatalf("%d %v", code, r)
 		}
 	})
@@ -208,7 +208,7 @@ func TestBuiltInOptionsFollowTheLayers(t *testing.T) {
 		t := x.t
 		x.fetcher.SetTransport(&categoryServices{})
 		x.adm("PUT", "/api/admin/daily/providers/hitokoto", map[string]any{"enabled": true, "rps": 20})
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"": []any{"hitokoto"}},
+		if code, r := x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "api", "apis": map[string]any{"": []any{"hitokoto"}},
 			"options": map[string]any{"hitokoto": map[string]any{"categories": []any{"k", "a"}}}}}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
@@ -227,7 +227,7 @@ func TestBuiltInOptionsFollowTheLayers(t *testing.T) {
 		}
 		// Locked: what the space chose is kept and not used.
 		x.choose2(x.base, []any{"hitokoto"}, map[string]any{"hitokoto": map[string]any{"categories": []any{"i"}}})
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false}}); code != 200 {
+		if code, r := x.adm("PUT", "/api/admin/settings/daily.api", map[string]any{"value": false}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
 		if got := q(); got != "c=a,k" {

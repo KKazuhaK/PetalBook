@@ -129,7 +129,9 @@ func TestAdminSpaceListDeadlineFilters(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		tang := a.addUser("tang", pw, "member")
 		old := tang.do("POST", "/api/spaces", map[string]any{"name": "Old"}).want(t, 201, "").body["id"].(string)
-		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "any", "scope": "all", "graceDays": 10}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": "any"}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.scope", map[string]any{"value": "all"}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.graceDays", map[string]any{"value": 10}).want(t, 200, "")
 		a.clock.Advance(3 * 24 * time.Hour)
 		// The API refuses a new space without a remote now; one made some other way (an import, a restore) is what the deadline is about.
 		fresh := "FRESH00001"
@@ -239,7 +241,7 @@ func TestStorageSummaryIsStoredNumbersPerTenant(t *testing.T) {
 		}
 		f.admA.do("GET", "/api/admin/storage?tenant="+f.tenB, nil).want(t, 404, "not_found")
 		// Writing the settings is still the site's.
-		f.admA.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"minIdleHours": 5}}).want(t, 403, "forbidden")
+		f.admA.do("PUT", "/api/admin/settings/cache.minIdleHours", map[string]any{"value": 5}).want(t, 403, "forbidden")
 		f.memA.do("GET", "/api/admin/storage", nil).want(t, 403, "forbidden")
 		f.memA.do("GET", "/api/admin/storage/people", nil).want(t, 403, "forbidden")
 		f.tokA.do("GET", "/api/admin/storage/people", nil).want(t, 403, "token_scope")
@@ -391,7 +393,7 @@ func TestStorageDetailsOfTheServerAreForSiteAdministrators(t *testing.T) {
 		f := newTenFx(t, a)
 		tenant := f.admA.do("GET", "/api/admin/storage", nil).want(t, 200, "")
 		site := f.root.do("GET", "/api/admin/storage", nil).want(t, 200, "")
-		for _, key := range []string{`"version"`, `"fromFlag"`, `"minFreeBytes"`, `"restoring"`} {
+		for _, key := range []string{`"version"`, `"restoring"`} {
 			if strings.Contains(tenant.raw, key) {
 				t.Errorf("a tenant administrator is told %s: %s", key, tenant.raw)
 			}
@@ -399,8 +401,13 @@ func TestStorageDetailsOfTheServerAreForSiteAdministrators(t *testing.T) {
 				t.Errorf("a site administrator is not told %s: %s", key, site.raw)
 			}
 		}
-		// The policy is settings now, which a tenant administrator does not read
-		// here: since, what the requirement asks of spaces, and the summary stay.
+		// The policy is settings, which only a site administrator reads (the disk
+		// floor among them); here since, what the requirement asks of spaces and
+		// the summary stay.
+		f.admA.do("GET", "/api/admin/settings", nil).want(t, 403, "forbidden")
+		if st := f.root.do("GET", "/api/admin/settings", nil).want(t, 200, ""); !strings.Contains(st.raw, `"cache.minFreeBytes"`) {
+			t.Errorf("a site administrator is not told the disk floor: %s", st.raw)
+		}
 		if tenant.body["remotes"] == nil || tenant.body["cache"] != nil {
 			t.Fatalf("a tenant administrator reads more or less than since and the summary: %s", tenant.raw)
 		}

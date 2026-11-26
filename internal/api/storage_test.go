@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"strings"
 	"sync"
@@ -65,14 +64,7 @@ func TestStorageSettingsEndpoint(t *testing.T) {
 		m := a.addUser("mia", pw, "member")
 		m.do("GET", "/api/admin/storage", nil).want(t, 403, "forbidden")
 		g := c.do("GET", "/api/admin/storage", nil).want(t, 200, "")
-		rem := g.body["remotes"].(map[string]any)
-		cache := g.body["cache"].(map[string]any)
-		if rem["require"] != nil || rem["scope"] != "new" || rem["graceDays"] != float64(30) || rem["since"] != nil ||
-			cache["evictAfterDays"] != float64(14) || cache["minIdleHours"] != float64(24) || cache["clonesBytes"] != nil || cache["minFreeBytes"] != float64(10<<30) ||
-			g.body["localSpaces"].(map[string]any)["maxBytes"] != nil {
-			t.Fatal(g.raw)
-		}
-		if hosts := g.body["hosts"].(map[string]any); hosts["fromFlag"] != false {
+		if g.body["remotes"].(map[string]any)["since"] != nil {
 			t.Fatal(g.raw)
 		}
 		git := g.body["git"].(map[string]any)
@@ -83,46 +75,41 @@ func TestStorageSettingsEndpoint(t *testing.T) {
 		if aff["inGrace"] != float64(0) || aff["overdue"] != float64(0) || aff["exempt"] != float64(0) {
 			t.Fatal(g.raw)
 		}
-		// A part is changed; the rest stays, and the answer is the new state.
-		p := c.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"minIdleHours": 48, "evictAfterDays": nil}, "localSpaces": map[string]any{"maxBytes": 5 << 20}}).want(t, 200, "")
-		cache = p.body["cache"].(map[string]any)
-		if cache["minIdleHours"] != float64(48) || cache["evictAfterDays"] != nil || cache["minFreeBytes"] != float64(10<<30) || p.body["localSpaces"].(map[string]any)["maxBytes"] != float64(5<<20) {
-			t.Fatal(p.raw)
+		// The policy is the site's settings.
+		for key, want := range map[string]any{
+			"storage.remotes.require": "", "storage.remotes.scope": "new", "storage.remotes.graceDays": float64(30),
+			"cache.evictAfterDays": float64(14), "cache.minIdleHours": float64(24), "cache.clonesBytes": nil, "cache.minFreeBytes": float64(10 << 30),
+			"storage.localSpaces.maxBytes": nil,
+		} {
+			if got := c.siteValue(key); got != want {
+				t.Errorf("%s: %v, want %v", key, got, want)
+			}
 		}
-		g2 := c.do("GET", "/api/admin/storage", nil).want(t, 200, "")
-		if g2.body["summary"] == nil || p.body["summary"] != nil {
-			t.Fatalf("GET has the summary and PUT does not:\n%s\n%s", g2.raw, p.raw)
-		}
-		delete(g2.body, "summary")
-		gj, _ := json.Marshal(g2.body)
-		pj, _ := json.Marshal(p.body)
-		if string(gj) != string(pj) {
-			t.Fatalf("GET differs from PUT:\n%s\n%s", gj, pj)
+		// A setting is changed and the rest stays.
+		c.putSetting("cache.minIdleHours", 48).want(t, 200, "")
+		c.putSetting("cache.evictAfterDays", nil).want(t, 200, "")
+		c.putSetting("storage.localSpaces.maxBytes", 5<<20).want(t, 200, "")
+		if c.siteValue("cache.minIdleHours") != float64(48) || c.siteValue("cache.evictAfterDays") != nil || c.siteValue("cache.minFreeBytes") != float64(10<<30) || c.siteValue("storage.localSpaces.maxBytes") != float64(5<<20) {
+			t.Fatal("the changes were not kept, or something else moved")
 		}
 		// Ranges.
-		for _, bad := range []map[string]any{
-			{"remotes": map[string]any{"graceDays": 400}},
-			{"remotes": map[string]any{"require": "gitlab"}},
-			{"remotes": map[string]any{"scope": "most"}},
-			{"localSpaces": map[string]any{"maxBytes": 1000}},
-			{"cache": map[string]any{"evictAfterDays": 0}},
-			{"cache": map[string]any{"minIdleHours": 0}},
-			{"cache": map[string]any{"clonesBytes": 1 << 20}},
-			{"cache": map[string]any{"minFreeBytes": -1}},
-			{"cache": map[string]any{"nope": 1}},
-			{"hosts": map[string]any{"allowed": []string{}}},
-			{"hosts": map[string]any{"allowed": []string{"a b"}}},
-			{"remotes": "x"},
-			{"cache": map[string]any{"assetsBytes": 1 << 20}},
+		for _, bad := range []struct {
+			key   string
+			value any
+		}{
+			{"storage.remotes.graceDays", 400}, {"storage.remotes.require", "gitlab"}, {"storage.remotes.scope", "most"},
+			{"storage.localSpaces.maxBytes", 1000}, {"cache.evictAfterDays", 0}, {"cache.minIdleHours", 0}, {"cache.clonesBytes", 1 << 20},
+			{"cache.minFreeBytes", -1}, {"storage.hosts", []string{}}, {"storage.hosts", []string{"a b"}}, {"cache.assetsBytes", 1 << 20},
 		} {
-			c.do("PUT", "/api/admin/storage", bad).want(t, 400, "invalid")
+			c.putSetting(bad.key, bad.value).want(t, 400, "invalid")
 		}
+		c.do("PUT", "/api/admin/settings/cache.nope", map[string]any{"value": 1}).want(t, 404, "not_found")
 		// A provider this server does not have cannot be required (one it has but
 		// has not set up answers 409 provider_not_configured; see internal/spaces).
-		c.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 400, "invalid")
-		c.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "git"}}).want(t, 400, "invalid")
+		c.putSetting("storage.remotes.require", "github").want(t, 400, "invalid")
+		c.putSetting("storage.remotes.require", "git").want(t, 400, "invalid")
 		// Hosts are stored and apply to the next request.
-		c.do("PUT", "/api/admin/storage", map[string]any{"hosts": map[string]any{"allowed": []string{"git.example.test"}}}).want(t, 200, "")
+		c.putSetting("storage.hosts", []string{"git.example.test"}).want(t, 200, "")
 		sid := c.personalSpace()
 		c.do("PUT", "/api/spaces/"+sid+"/remote", connectBody("https://github.com/a/b.git")).want(t, 403, "forbidden")
 	})
@@ -132,14 +119,19 @@ func TestTheHostsFlagWinsAndThePageIsReadOnly(t *testing.T) {
 	t.Parallel()
 	eachAccounts(t, storageOpts(&netSwitch{}, func(o *spaces.Options) { o.HostsFromFlag = true }), func(t *testing.T, a *acc) {
 		c := a.setup("kazuha", pw)
-		g := c.do("GET", "/api/admin/storage", nil).want(t, 200, "")
-		h := g.body["hosts"].(map[string]any)
-		if h["fromFlag"] != true || h["allowed"].([]any)[0] != "*" {
-			t.Fatal(g.raw)
+		hosts := c.do("GET", "/api/admin/settings", nil).want(t, 200, "")
+		var h map[string]any
+		for _, it := range hosts.body["settings"].([]any) {
+			if it.(map[string]any)["key"] == "storage.hosts" {
+				h = it.(map[string]any)["site"].(map[string]any)
+			}
 		}
-		c.do("PUT", "/api/admin/storage", map[string]any{"hosts": map[string]any{"allowed": []string{"x.test"}}}).want(t, 409, "conflict")
+		if h["fromFlag"] != true || h["value"].([]any)[0] != "*" {
+			t.Fatal(hosts.raw)
+		}
+		c.do("PUT", "/api/admin/settings/storage.hosts", map[string]any{"value": []string{"x.test"}}).want(t, 409, "conflict")
 		// The other settings still change.
-		c.do("PUT", "/api/admin/storage", map[string]any{"cache": map[string]any{"minIdleHours": 30}}).want(t, 200, "")
+		c.do("PUT", "/api/admin/settings/cache.minIdleHours", map[string]any{"value": 30}).want(t, 200, "")
 	})
 }
 
@@ -154,8 +146,10 @@ func TestRemoteRequiredEverywhereTheContractLists(t *testing.T) {
 		pid := page.body["id"].(string)
 		rev := page.body["rev"].(string)
 		// Require a remote of every space, with a grace period.
-		p := admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "any", "scope": "all", "graceDays": 10}}).want(t, 200, "")
-		if p.body["remotes"].(map[string]any)["since"] == nil || p.body["affected"].(map[string]any)["inGrace"] != float64(1) {
+		admin.putSetting("storage.remotes.require", "any").want(t, 200, "")
+		admin.putSetting("storage.remotes.scope", "all").want(t, 200, "")
+		p := admin.putSetting("storage.remotes.graceDays", 10).want(t, 200, "")
+		if p.body["remotes"].(map[string]any)["InGrace"] != float64(1) || admin.do("GET", "/api/admin/storage", nil).body["remotes"].(map[string]any)["since"] == nil {
 			t.Fatal(p.raw)
 		}
 		// The notice is in the space, for every member.
@@ -232,7 +226,7 @@ func TestRemoteRequiredEverywhereTheContractLists(t *testing.T) {
 		admin.do("PATCH", "/api/users/"+uid, map[string]any{"remoteExempt": false}).want(t, 200, "")
 		admin.do("POST", "/api/spaces", map[string]any{"name": "Again"}).want(t, 409, "remote_required")
 		// Relaxing the requirement clears the notices at once.
-		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": nil}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": ""}).want(t, 200, "")
 		admin.do("POST", "/api/spaces", map[string]any{"name": "Free"}).want(t, 201, "")
 	})
 }
@@ -243,7 +237,8 @@ func TestASpaceCanBeMadeWithARemoteAndOverdueSpacesAreWritableAfterAnExemption(t
 		admin := a.setup("kazuha", pw)
 		remote := filterRemote(t)
 		pushVersions(t, remote, 2)
-		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "any", "scope": "new"}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": "any"}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.scope", map[string]any{"value": "new"}).want(t, 200, "")
 		// remote and storage.sync together are a mistake.
 		admin.do("POST", "/api/spaces", map[string]any{"name": "X", "remote": connectBody("file://" + remote), "storage": map[string]any{"sync": map[string]any{"provider": "github", "owner": "o", "name": "n"}}}).want(t, 400, "invalid")
 		r := admin.do("POST", "/api/spaces", map[string]any{"name": "Followed", "remote": connectBody("file://" + remote)}).want(t, 201, "")
@@ -471,7 +466,7 @@ func TestALimitOnLocalSpacesRefusesUploadsAndImportsButNotText(t *testing.T) {
 		admin := a.setup("kazuha", pw)
 		sid := admin.personalSpace()
 		base := "/api/spaces/" + sid
-		admin.do("PUT", "/api/admin/storage", map[string]any{"localSpaces": map[string]any{"maxBytes": 1 << 20}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.localSpaces.maxBytes", map[string]any{"value": 1 << 20}).want(t, 200, "")
 		pg := admin.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "T"}, "body": "x\n"}).want(t, 201, "")
 		pid := pg.body["id"].(string)
 		admin.upload(base, pid, "small.png", []byte("12345")).want(t, 201, "")
@@ -480,7 +475,7 @@ func TestALimitOnLocalSpacesRefusesUploadsAndImportsButNotText(t *testing.T) {
 		// Saving text is never refused.
 		text := strings.Repeat("word ", 300000)
 		admin.do("POST", base+"/pages", map[string]any{"meta": map[string]any{"title": "Long"}, "body": text}).want(t, 201, "")
-		admin.do("PUT", "/api/admin/storage", map[string]any{"localSpaces": map[string]any{"maxBytes": nil}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.localSpaces.maxBytes", map[string]any{"value": nil}).want(t, 200, "")
 		admin.upload(base, pid, "big.png", big).want(t, 201, "")
 	})
 }
@@ -672,21 +667,21 @@ func TestRequiringAProviderThatIsNotSetUpIsRefusedAndASetUpOneCannotBeRemovedWhi
 	t.Parallel()
 	eachAccounts(t, ghOpts, func(t *testing.T, a *acc) {
 		admin := a.setup("root", pw)
-		r := admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 409, "provider_not_configured")
+		r := admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": "github"}).want(t, 409, "provider_not_configured")
 		if r.body["provider"] != "github" {
 			t.Fatal(r.raw)
 		}
-		if g := admin.do("GET", "/api/admin/storage", nil).want(t, 200, ""); g.body["remotes"].(map[string]any)["require"] != nil {
-			t.Fatal(g.raw)
+		if admin.siteValue("storage.remotes.require") != "" {
+			t.Fatal("a provider that is not set up was required")
 		}
 		admin.do("PUT", "/api/admin/connections/github", map[string]any{"appId": "424242", "privateKey": a.fake.KeyPEM(),
 			"clientId": a.fake.ClientID, "clientSecret": a.fake.ClientSecret}).want(t, 200, "")
-		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": "github"}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": "github"}).want(t, 200, "")
 		d := admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 409, "provider_in_use")
 		if d.body["provider"] != "github" || !strings.Contains(d.body["message"].(string), "remotes.require") {
 			t.Fatal(d.raw)
 		}
-		admin.do("PUT", "/api/admin/storage", map[string]any{"remotes": map[string]any{"require": nil}}).want(t, 200, "")
+		admin.do("PUT", "/api/admin/settings/storage.remotes.require", map[string]any{"value": ""}).want(t, 200, "")
 		admin.do("DELETE", "/api/admin/connections/github", nil).want(t, 204, "")
 	})
 }

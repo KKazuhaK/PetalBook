@@ -526,8 +526,8 @@ function Grouped<T extends { key: string }>({
   const jump = (g: string) =>
     document.getElementById(`${idPrefix}-${g}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   return (
-    <div className="grid min-w-0 gap-6">
-      <nav aria-label={ts.groupsLabel} data-slot="setting-groups">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
+      <nav aria-label={ts.groupsLabel} data-slot="setting-groups" className="min-w-0">
         <div ref={strip} className={`${scrollFadeClass} -mx-1 flex gap-2 px-1 py-1`}>
           {order.map((g) => (
             <Button

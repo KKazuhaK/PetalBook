@@ -100,10 +100,10 @@ func TestRegistrationRefusalsComeInTheContractsOrder(t *testing.T) {
 		// Closed: 403 before anything else, even with garbage fields.
 		reg(anon, map[string]any{"username": "!"}).want(t, 403, "registration_closed")
 		openRegistration(t, root, srv)
-		root.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"contexts": map[string]any{"register": map[string]any{"on": true, "when": "always"}}}}).want(t, 200, "")
+		root.putSetting("captcha.contexts", map[string]any{"register": map[string]any{"on": true, "when": "always"}}).want(t, 200, "")
 		// The captcha comes before the fields.
 		reg(anon, map[string]any{"username": "!"}).want(t, 400, "captcha_failed")
-		root.do("PUT", "/api/admin/security", map[string]any{"captcha": map[string]any{"contexts": map[string]any{"register": map[string]any{"on": false}}}}).want(t, 200, "")
+		root.putSetting("captcha.contexts", map[string]any{"register": map[string]any{"on": false}}).want(t, 200, "")
 		for name, body := range map[string]map[string]any{
 			"username": {"username": "!"}, "name": {"name": strings.Repeat("n", 81)}, "email": {"email": "not-an-address"}, "name-in-address": {"email": "Tang <t@example.test>"},
 			"long email": {"email": strings.Repeat("a", 250) + "@example.test"}, "password": {"password": "short"}, "no email": {"email": ""},
@@ -263,9 +263,9 @@ func TestRegistrationNeedsMailAndSSOOnlyExcludesIt(t *testing.T) {
 		a.setSetting(t, "signin.ssoOnly", false)
 		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": true}).want(t, 200, "")
 		// The other direction: with registration open, ssoOnly cannot be switched on.
-		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 400, "sso_only_with_registration")
+		root.putSetting("signin.ssoOnly", true).want(t, 400, "sso_only_with_registration")
 		root.do("PUT", "/api/admin/settings/features.registration", map[string]any{"value": false}).want(t, 200, "")
-		root.do("PUT", "/api/admin/security", map[string]any{"login": map[string]any{"ssoOnly": true}}).want(t, 200, "")
+		root.putSetting("signin.ssoOnly", true).want(t, 200, "")
 	})
 }
 

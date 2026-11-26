@@ -53,7 +53,7 @@ func (x *extFixture) setDefault(apis map[string]any, options map[string]any) {
 	if options != nil {
 		d["options"] = options
 	}
-	if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": d}); code != 200 {
+	if code, r := x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": d}); code != 200 {
 		x.t.Fatalf("%d %v", code, r)
 	}
 }
@@ -135,7 +135,7 @@ func TestAnInterfaceThatFailsIsPassedOverForTheNext(t *testing.T) {
 		if q := asMap(r["quote"]); q != nil && q["stale"] != true {
 			t.Fatalf("%v", r)
 		}
-		x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": map[string]any{"": []any{"zenquotes"}}}})
+		x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "api", "apis": map[string]any{"": []any{"zenquotes"}}}})
 		svc.fail("zenquotes.io", true)
 		if r := quoteOf(t, x.own, x.base, "date=2026-11-25&lang=en"); r["quote"] != nil || r["reason"] != "unavailable" {
 			t.Fatalf("%v", r)
@@ -150,8 +150,7 @@ func TestADefaultOfOneInterfaceIsAListOfOne(t *testing.T) {
 		x.fetcher.SetTransport(&twoServices{})
 		x.enableAll()
 		x.setDefault(map[string]any{"": []any{"zenquotes"}, "zh-Hans": []any{"hitokoto"}}, nil)
-		_, r := x.adm("GET", "/api/admin/daily", nil)
-		if got := fmt.Sprint(asMap(r["default"])["apis"]); got != "map[:[zenquotes] zh-Hans:[hitokoto]]" {
+		if got := fmt.Sprint(asMap(siteSettingOf(t, x.adm, "daily.default"))["apis"]); got != "map[:[zenquotes] zh-Hans:[hitokoto]]" {
 			t.Fatalf("%s", got)
 		}
 		if got := quoteText(quoteOf(t, x.own, x.base, "date=2026-11-23&lang=en")); got != "zen" {
@@ -159,7 +158,7 @@ func TestADefaultOfOneInterfaceIsAListOfOne(t *testing.T) {
 		}
 		for name, apis := range map[string]any{"an empty list": map[string]any{"": []any{}}, "too many": map[string]any{"": []any{"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
 			"an unknown id": map[string]any{"": []any{"zenquotes", "nothing"}}, "a number": map[string]any{"": 3}, "an id that is no list": map[string]any{"": "zenquotes"}} {
-			if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"default": map[string]any{"kind": "api", "apis": apis}}); code != 400 {
+			if code, r := x.adm("PUT", "/api/admin/settings/daily.default", map[string]any{"value": map[string]any{"kind": "api", "apis": apis}}); code != 400 {
 				t.Errorf("%s: %d %v", name, code, r)
 			}
 		}
@@ -182,7 +181,7 @@ func TestSeveralInterfacesInASpaceAndTheLock(t *testing.T) {
 		if d22 == d23 || (d22 != "zen" && d22 != "fav") || (d23 != "zen" && d23 != "fav") {
 			t.Fatalf("%q %q", d22, d23)
 		}
-		if code, r := x.adm("PUT", "/api/admin/daily", map[string]any{"allow": map[string]any{"api": false}}); code != 200 {
+		if code, r := x.adm("PUT", "/api/admin/settings/daily.api", map[string]any{"value": false}); code != 200 {
 			t.Fatalf("%d %v", code, r)
 		}
 		if got := quoteText(quoteOf(t, x.own, x.base, "date=2026-11-23&lang=en")); got != "dummy" {

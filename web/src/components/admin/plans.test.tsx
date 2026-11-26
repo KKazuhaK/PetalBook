@@ -50,11 +50,6 @@ async function open(path: string, scene: (server: MockServer) => void = () => {}
     },
   })
 }
-const field = (label: string) =>
-  [...dlg().querySelectorAll<HTMLInputElement>('input')].find(
-    (i) => i.closest('div')?.textContent?.includes(label) ?? false,
-  )!
-
 describe('the plans page', () => {
   it('lists the plans, makes one, and opens it', async () => {
     await open('/admin/tenants/plans', (server) => {

@@ -42,7 +42,7 @@ export function showValue(s: Pick<TenantSetting, 'key' | 'kind'>, value: unknown
 }
 
 // "from 1 Dec to 1 Jan", "until 1 Jan", "from 1 Dec"; empty for no window.
-function windowText(from?: string | null, until?: string | null): string {
+export function windowText(from?: string | null, until?: string | null): string {
   if (from && until) return tx.window.both(absoluteTime(from), absoluteTime(until))
   if (from) return tx.window.from(absoluteTime(from))
   if (until) return tx.window.until(absoluteTime(until))

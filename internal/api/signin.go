@@ -99,7 +99,7 @@ func (s *server) getAuthProviders(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	info := s.auth.PublicInfo()
+	info := s.auth.PublicInfo(c.r.Context())
 	writeJSON(c.w, http.StatusOK, struct {
 		Providers []auth.PublicProvider `json:"providers"`
 		LoginMode string                `json:"loginMode"`
