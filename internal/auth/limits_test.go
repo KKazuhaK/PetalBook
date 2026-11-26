@@ -11,12 +11,12 @@ import (
 func TestTheAuditQueueDropsWhenFullAndSaysSo(t *testing.T) {
 	s := &Service{audit: newAuditLog(), now: time.Now}
 	for range auditQueueSize + 25 {
-		s.Audit(AuditEvent{Kind: "login", Username: "u"})
+		s.Audit(AuditEvent{Kind: "login_failed", Username: "u"})
 	}
 	if n := len(s.audit.ch); n != auditQueueSize {
 		t.Fatalf("%d queued, want a full queue of %d", n, auditQueueSize)
 	}
-	if n := s.audit.dropped.Load(); n != 25 {
+	if n, _ := s.audit.dropped.load(); n != 25 {
 		t.Fatalf("%d dropped, want 25", n)
 	}
 	// Ids sort by arrival, so the log reads in order.
@@ -24,6 +24,57 @@ func TestTheAuditQueueDropsWhenFullAndSaysSo(t *testing.T) {
 	b, _ := s.audit.row(AuditEvent{Kind: "x"}, time.Unix(1_000_000, 0))
 	if !(a.ID < b.ID) {
 		t.Fatalf("%s %s", a.ID, b.ID)
+	}
+}
+
+// Past 80% of the queue only core rows get in: optional ones (reads, downloads,
+// API calls, sign-ins) are dropped and counted, so a flood of them never
+// crowds out a security or admin row.
+func TestTheAuditQueueDropsOptionalRowsBeforeCoreOnes(t *testing.T) {
+	s := &Service{audit: newAuditLog(), now: time.Now}
+	for range auditQueueSize {
+		s.Audit(AuditEvent{Kind: "login"})
+	}
+	if n := len(s.audit.ch); n != auditOptionalLimit {
+		t.Fatalf("%d optional rows queued, want %d", n, auditOptionalLimit)
+	}
+	if d, o := s.audit.dropped.load(); d != auditQueueSize-auditOptionalLimit || o != d {
+		t.Fatalf("dropped %d, of which optional %d", d, o)
+	}
+	// Core rows still fit in the rest of the queue.
+	for range auditQueueSize - auditOptionalLimit {
+		s.Audit(AuditEvent{Kind: "login_failed"})
+	}
+	if n := len(s.audit.ch); n != auditQueueSize {
+		t.Fatalf("%d queued, want a full queue", n)
+	}
+	before, _ := s.audit.dropped.load()
+	s.Audit(AuditEvent{Kind: "login_failed"})
+	s.Audit(AuditEvent{Kind: "login"})
+	if d, o := s.audit.dropped.load(); d != before+2 || o != d-1 {
+		t.Fatalf("dropped %d, optional %d", d, o)
+	}
+	// The counts are read and reset together.
+	if d, o := s.audit.dropped.take(); d != before+2 || o != d-1 {
+		t.Fatalf("took %d, optional %d", d, o)
+	}
+	if d, o := s.audit.dropped.load(); d != 0 || o != 0 {
+		t.Fatalf("after take: %d, %d", d, o)
+	}
+}
+
+// A category that is off for the tenant is not wanted, so its caller does no work.
+func TestAuditWantedFollowsTheCategorySetting(t *testing.T) {
+	s := &Service{audit: newAuditLog(), now: time.Now}
+	// Without settings the defaults hold: sign-ins on, the rest off, core always.
+	for kind, want := range map[string]bool{"login": true, "page_read": false, "file_read": false, "file_downloaded": false, "api_call": false, "login_failed": true, "dropped": true} {
+		if got := s.AuditWanted("t", kind); got != want {
+			t.Errorf("%s: %v, want %v", kind, got, want)
+		}
+	}
+	// A category that is off costs a request nothing it must allocate.
+	if n := testing.AllocsPerRun(100, func() { s.AuditWanted("t", "page_read") }); n != 0 {
+		t.Errorf("%v allocations asking about a category that is off", n)
 	}
 }
 

@@ -48,6 +48,7 @@ type spaceCell struct {
 
 type spaceMeta struct {
 	id, name, inbox string
+	tenant          string
 	personal        bool
 }
 
@@ -125,7 +126,7 @@ func findCell(cells []spaceCell, id string) (spaceCell, bool) {
 
 func (cl spaceCell) info(mt *spaceMeta) Info {
 	return Info{ID: mt.id, Name: mt.name, Role: perm.RoleFor(cl.perms), Perms: cl.perms, DirectRole: perm.RoleFor(cl.direct), ViaGroups: cl.flags&cellGroup != 0,
-		Personal: mt.personal, Inbox: mt.inbox}
+		Personal: mt.personal, Inbox: mt.inbox, TenantID: mt.tenant}
 }
 
 // cellsOf returns a person's cells, from the cache or, on a miss, from the
@@ -156,7 +157,7 @@ func (m *Manager) cellsOf(ctx context.Context, userID string) ([]spaceCell, erro
 			if mt := m.cache.meta[id]; mt != nil {
 				id = mt.id
 			} else if cur {
-				id = m.cache.putMeta(spaceMeta{id: id, name: r.Name, inbox: r.Inbox, personal: r.Personal}).id
+				id = m.cache.putMeta(spaceMeta{id: id, name: r.Name, inbox: r.Inbox, tenant: r.TenantID, personal: r.Personal}).id
 			}
 			i = len(cells)
 			byID[r.SpaceID] = i
@@ -177,7 +178,7 @@ func (m *Manager) cellsOf(ctx context.Context, userID string) ([]spaceCell, erro
 		if cur {
 			// Names read now are as current as the list (no change happened meanwhile).
 			if mt := m.cache.meta[r.SpaceID]; mt == nil {
-				m.cache.putMeta(spaceMeta{id: r.SpaceID, name: r.Name, inbox: r.Inbox, personal: r.Personal})
+				m.cache.putMeta(spaceMeta{id: r.SpaceID, name: r.Name, inbox: r.Inbox, tenant: r.TenantID, personal: r.Personal})
 			}
 		}
 	}
@@ -205,7 +206,7 @@ func (m *Manager) metaFor(ctx context.Context, id string) (*spaceMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	mt := spaceMeta{id: sp.ID, name: sp.Name, inbox: sp.Inbox, personal: sp.Personal}
+	mt := spaceMeta{id: sp.ID, name: sp.Name, inbox: sp.Inbox, tenant: sp.TenantID, personal: sp.Personal}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.listGen == gen {

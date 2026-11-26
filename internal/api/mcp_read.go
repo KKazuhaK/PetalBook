@@ -499,6 +499,7 @@ func (t *mcpTools) pageGet(c *mcpCall, in getIn) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.activity(&h.Info, "page_read", "page", id)
 	meta := p.Meta
 	if meta == nil {
 		meta = page.Meta{}

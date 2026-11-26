@@ -68,7 +68,7 @@ func scanKinds(t *testing.T, root string) map[string]string {
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(string(src), "udit") {
+		if !strings.Contains(string(src), "udit") && !strings.Contains(string(src), ".activity(") {
 			return nil
 		}
 		f, err := parser.ParseFile(fset, path, src, 0)
@@ -107,7 +107,7 @@ func scanKinds(t *testing.T, root string) map[string]string {
 					}
 				case *ast.CallExpr:
 					switch callName(n.Fun) {
-					case "auditRow", "by":
+					case "auditRow", "by", "activity":
 						i := 1
 						if callName(n.Fun) == "by" {
 							i = 0

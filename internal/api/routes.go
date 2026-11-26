@@ -481,6 +481,13 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			}
 			c.p = p
 			c.r = r.WithContext(space.ContextWithVia(r.Context(), space.ViaToken))
+			// The api category: the call is recorded when it is over, if its
+			// person's tenant has it on.
+			var done func()
+			if w, done = s.apiCalls(w, c, rt.pattern, p.User.TenantID); done != nil {
+				c.w = w
+				defer done()
+			}
 		} else if rt.access.kind != kindPublic || rt.optionalUser {
 			p, err := s.principal(r)
 			switch {

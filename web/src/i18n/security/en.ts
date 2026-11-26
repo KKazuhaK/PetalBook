@@ -328,6 +328,10 @@ export const securityEn: SecurityMessages = {
     >,
     kinds: {
       login: 'Signed in',
+      page_read: 'Page read',
+      file_read: 'File read',
+      file_downloaded: 'File downloaded',
+      api_call: 'API call',
       login_failed: 'Sign-in refused',
       rate_limited: 'Over a limit',
       lockout: 'Lockout',

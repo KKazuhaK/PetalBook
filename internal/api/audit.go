@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -80,6 +81,56 @@ func auditTime(v string) (t time.Time, day bool, err error) {
 	return t.UTC(), false, err
 }
 
+// pathKinds are the kinds whose detail names a file by its path, a name the
+// person who uploaded it chose.
+var pathKinds = map[string]bool{"file_read": true, "file_downloaded": true, "page_viewed": true}
+
+// pathRedactor returns the function that makes a row's detail safe for this
+// reader: a row that names a file by its path says "a file in <space>" instead
+// unless the reader could open that space themselves: a member (directly or
+// through a group), someone with a view of it open, or a server administrator
+// who holds the data-view key across the site. A tenant's administrator who is
+// none of these, and has no view, learns that a file was read, not what it is
+// called. The row keeps the path; only what is shown changes. The answer for a
+// space is asked once for the whole list or download.
+func (s *server) pathRedactor(c *call) func(kind string, detail json.RawMessage) json.RawMessage {
+	open := map[string]bool{}
+	canOpen := func(space string) bool {
+		if v, ok := open[space]; ok {
+			return v
+		}
+		v := c.siteWide(authz.TenantDataView) || s.viewing(c, space)
+		if !v {
+			_, err := s.spaces.OpenMembership(c.r.Context(), c.user(), space)
+			v = err == nil
+		}
+		open[space] = v
+		return v
+	}
+	return func(kind string, detail json.RawMessage) json.RawMessage {
+		if !pathKinds[kind] || len(detail) == 0 {
+			return detail
+		}
+		var d map[string]any
+		if json.Unmarshal(detail, &d) != nil {
+			return detail
+		}
+		if _, ok := d["path"].(string); !ok {
+			return detail
+		}
+		space, _ := d["space"].(string)
+		if canOpen(space) {
+			return detail
+		}
+		d["path"] = "a file in " + space
+		out, err := json.Marshal(d)
+		if err != nil {
+			return json.RawMessage(`{}`)
+		}
+		return out
+	}
+}
+
 func (s *server) adminAudit(c *call) {
 	q := c.r.URL.Query()
 	limit := 50
@@ -118,9 +169,10 @@ func (s *server) adminAudit(c *call) {
 		}
 		return v
 	}
+	redact := s.pathRedactor(c)
 	items := make([]item, len(rows))
 	for i, r := range rows {
-		items[i] = item{r.ID, rfc3339(r.At), r.Kind, r.Category, nullable(r.Capacity), nullable(r.Actor), nullable(r.User), r.Username, r.IP, r.Detail}
+		items[i] = item{r.ID, rfc3339(r.At), r.Kind, r.Category, nullable(r.Capacity), nullable(r.Actor), nullable(r.User), r.Username, r.IP, redact(r.Kind, r.Detail)}
 	}
 	var nx any
 	if next != "" {
@@ -211,11 +263,12 @@ func (s *server) adminAuditDownload(c *call) {
 		_ = w.Write([]string{"id", "time", "category", "kind", "capacity", "tenant", "actor", "user", "username", "ip", "detail"})
 	}
 	flusher, _ := c.w.(http.Flusher)
+	redact := s.pathRedactor(c)
 	rows := 0
 	n, more, err := s.auth.StreamAudit(c.r.Context(), sc, f, auditDownloadMax, func(e auth.AuditEntry) error {
 		start()
 		if err := w.Write([]string{csvCell(e.ID), rfc3339(e.At), csvCell(e.Category), csvCell(e.Kind), csvCell(e.Capacity), csvCell(e.Tenant),
-			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(e.Detail))}); err != nil {
+			csvCell(e.Actor), csvCell(e.User), csvCell(e.Username), csvCell(e.IP), csvCell(string(redact(e.Kind, e.Detail)))}); err != nil {
 			return err
 		}
 		if rows++; rows%store.AuditStreamPage == 0 {

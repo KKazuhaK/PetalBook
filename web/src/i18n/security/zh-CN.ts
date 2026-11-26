@@ -290,6 +290,10 @@ export const securityZhCN = {
     capacities: { site_admin: '以全站管理员身份', tenant_admin: '以组织管理员身份' } as Record<string, string>,
     kinds: {
       login: '登录',
+      page_read: '阅读页面',
+      file_read: '阅读文件',
+      file_downloaded: '下载文件',
+      api_call: 'API 调用',
       login_failed: '登录被拒',
       rate_limited: '超过限制',
       lockout: '锁定',
