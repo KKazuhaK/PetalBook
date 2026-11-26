@@ -462,14 +462,14 @@ func TestGitTokenOfASpace(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		w := newWorld(t, st)
 		repo := w.f.AddRepo("kazuhahub", "wiki", true)
-		w.space("S1", store.Remote{GHVia: "app", GHInstallationID: w.kazuhahub, GHRepoID: repo.ID})
-		w.space("S2", store.Remote{GHVia: "user", GHUserID: "U1", GHRepoID: repo.ID})
+		w.space("S1", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
+		w.space("S2", store.Remote{Via: "user", CredUserID: "U1", RepoID: repo.ID})
 		if err := store.AddMember(ctx, st.Q(), "S2", "U1", "owner", w.now); err != nil {
 			t.Fatal(err)
 		}
 		get := func(id string) (string, *gitstore.CredentialError) {
 			t.Helper()
-			r, err := store.GetRemote(ctx, st.Q(), id)
+			r, err := store.GetRemote(ctx, st.Q(), id, store.RoleContent)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -543,8 +543,8 @@ func TestGitTokenOfASpace(t *testing.T) {
 		if _, ce := get("S1"); ce == nil || ce.Code != "provider_not_configured" {
 			t.Fatalf("%v", ce)
 		}
-		store.DeleteRemote(ctx, st.Q(), "S2")
-		store.DeleteRemote(ctx, st.Q(), "S1")
+		store.DeleteRemote(ctx, st.Q(), "S2", store.RoleContent)
+		store.DeleteRemote(ctx, st.Q(), "S1", store.RoleContent)
 		w.mustNotLeak()
 	})
 }
@@ -721,9 +721,9 @@ func TestMissingPermissionIsToldApartFromANotReachedRepository(t *testing.T) {
 		}
 		// A space's own credential: the remote shows the code.
 		repo := w.f.AddRepo("kazuhahub", "docs", true)
-		w.space("S1", store.Remote{GHVia: "app", GHInstallationID: w.kazuhahub, GHRepoID: repo.ID})
+		w.space("S1", store.Remote{Via: "app", InstallationID: w.kazuhahub, RepoID: repo.ID})
 		w.f.AppPerms = map[string]string{"administration": "write", "metadata": "read"}
-		rem, _ := store.GetRemote(ctx, st.Q(), "S1")
+		rem, _ := store.GetRemote(ctx, st.Q(), "S1", store.RoleContent)
 		_, err = w.svc.GitToken(ctx, rem, false)
 		var ce *gitstore.CredentialError
 		if !errors.As(err, &ce) || ce.Code != "app_missing_permission" {

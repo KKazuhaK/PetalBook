@@ -17,7 +17,8 @@
 // At Start the runner reads the active jobs once and asks each one's kind what
 // a restart makes of it (Recover): taken up again, or ended interrupted,
 // failed or done. Close stops the running jobs through their contexts and
-// waits for them, within a bound.
+// waits for them, within a bound; a stopped job gets its kind's restart
+// outcome then (one that resumes is queued again, not ended interrupted).
 //
 // runner and lease_until are written for a standby server's leases (phase 5)
 // but not read yet: today a start recovers every active row, as the single
@@ -81,6 +82,8 @@ type Handler interface {
 	// (the server is stopping) or cancelled.
 	Run(ctx context.Context, j *store.Job, p *Progress) error
 	// Recover says what a restart makes of a job that was queued or running.
+	// It is also asked when Close stops a running job: Resume queues it again
+	// for the next start, any other outcome ends it so at once.
 	Recover(ctx context.Context, j *store.Job) Outcome
 }
 
@@ -673,8 +676,27 @@ func (r *Runner) run(ctx context.Context, h Handler, j *store.Job, p *Progress) 
 		end.State = store.JobFailed
 	case err != nil && ctx.Err() != nil && p.cancelled:
 		end.State = store.JobCancelled
-	case err != nil && ctx.Err() != nil:
+	case err != nil && ctx.Err() != nil && r.ctx.Err() != nil:
+		// Close stopped it: what a restart makes of it, now (as Close does for
+		// the jobs it had queued). A kind that resumes is queued again and
+		// taken up by the next start; the others end as their kind says.
 		end.State = store.JobInterrupted
+		p.mu.Unlock()
+		out := r.recoverOf(context.WithoutCancel(ctx), h, &end)
+		p.mu.Lock()
+		if out == Resume {
+			p.mu.Unlock()
+			if werr := r.write(&end, store.JobQueued, func() error {
+				return store.RequeueJob(context.Background(), r.opt.Store.Q(), j.ID, r.opt.Now())
+			}); werr != nil {
+				r.log.Error("a job stopped by the close could not be queued again; the next start recovers it", "job", j.ID, "kind", j.Kind, "error", werr)
+			}
+			r.mu.Lock()
+			delete(r.live, j.ID)
+			r.mu.Unlock()
+			return // it has not ended: no Ended
+		}
+		end.State = string(out)
 	case err != nil:
 		end.State, end.Error = store.JobFailed, err.Error()
 	case p.broken:

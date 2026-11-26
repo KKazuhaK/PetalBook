@@ -251,7 +251,6 @@ func DeleteSpace(ctx context.Context, q Q, sc Scope, id string) (members []strin
 	for _, stmt := range []string{
 		`DELETE FROM drafts WHERE space_id = ?`,
 		`DELETE FROM remotes WHERE space_id = ?`,
-		`DELETE FROM asset_remotes WHERE space_id = ?`,
 		`DELETE FROM favorites WHERE space_id = ?`,
 		`DELETE FROM space_daily WHERE space_id = ?`,
 		`DELETE FROM space_members WHERE space_id = ?`,

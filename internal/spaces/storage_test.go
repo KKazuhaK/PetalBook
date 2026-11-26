@@ -389,7 +389,7 @@ func TestNothingIsEvictedThatTheRemoteDoesNotHave(t *testing.T) {
 			}
 		}, "draft"},
 		{"a remote that is not ok", func(t *testing.T, st *store.Store, remote string, f *rm, in Info, root string) {
-			if err := store.UpdateRemoteStatus(ctx, st.Q(), in.ID, store.RemoteStatus{State: store.RemoteError, ErrorKind: "auth", LastError: "refused"}, f.clk.Now()); err != nil {
+			if err := store.UpdateRemoteStatus(ctx, st.Q(), in.ID, store.RoleContent, store.RemoteStatus{State: store.RemoteError, ErrorKind: "auth", LastError: "refused"}, f.clk.Now()); err != nil {
 				t.Fatal(err)
 			}
 		}, "remote repository is error"},

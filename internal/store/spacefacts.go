@@ -54,11 +54,11 @@ func locationOf(remoteVia string) string {
 // provider of a connection, or "git" for a plain address. It is the SQL of
 // spaces.remote_via, with the space's id column at id.
 func remoteViaSQL(id string) string {
-	return `COALESCE((SELECT CASE WHEN r.cred_type = 'connection' THEN r.provider ELSE 'git' END FROM remotes r WHERE r.space_id = ` + id + ` AND r.url <> ''), '')`
+	return `COALESCE((SELECT CASE WHEN r.cred_type = 'connection' THEN r.provider ELSE 'git' END FROM remotes r WHERE r.space_id = ` + id + ` AND r.role = 'content' AND r.url <> ''), '')`
 }
 
 func remoteStateSQL(id string) string {
-	return `COALESCE((SELECT r.state FROM remotes r WHERE r.space_id = ` + id + ` AND r.url <> ''), '')`
+	return `COALESCE((SELECT r.state FROM remotes r WHERE r.space_id = ` + id + ` AND r.role = 'content' AND r.url <> ''), '')`
 }
 
 // settleDerived sets the columns of a space that follow its remote (remote_via,

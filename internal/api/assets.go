@@ -138,7 +138,7 @@ func (s *server) deleteAssetsRemote(c *call) {
 }
 
 func (s *server) moveAssets(c *call) {
-	v, started, err := s.spaces.StartMove(c.r.Context(), c.sp)
+	v, started, err := s.spaces.StartMove(c.r.Context(), c.sp, c.user().ID, c.user().Username)
 	if err != nil {
 		s.fail(c.w, err)
 		return

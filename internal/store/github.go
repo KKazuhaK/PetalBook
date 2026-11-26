@@ -244,12 +244,10 @@ func CountGitHubAuthorizations(ctx context.Context, q Q) (n int, err error) {
 }
 
 // CountGitHubSpaces is how many spaces sync through GitHub, for their own
-// repository or their attachment repository (milestone 3.1). The counts below
-// read both tables; the union is written out in each query so that the scope
-// test sees the tables they touch.
+// repository or their attachment repository (milestone 3.1): the counts below
+// read both roles of remotes in one scan, a space counted once.
 func CountGitHubSpaces(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
-		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE cred_type = 'connection' AND provider = 'github'`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM remotes WHERE url <> '' AND cred_type = 'connection' AND provider = 'github'`).Scan(&n)
 	return
 }
 
@@ -257,15 +255,14 @@ func CountGitHubSpaces(ctx context.Context, q Q) (n int, err error) {
 // or a token), for the provider "git": their own repository or their
 // attachment repository.
 func CountGitSpaces(ctx context.Context, q Q) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
-		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE provider = 'git'`).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM remotes WHERE url <> '' AND provider = 'git'`).Scan(&n)
 	return
 }
 
 // CountUserGitHubSpaces is how many spaces sync through a user's authorisation.
 func CountUserGitHubSpaces(ctx context.Context, q Q, userID string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
-		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE cred_type = 'connection' AND provider = 'github' AND gh_via = 'user' AND gh_user_id = ?`, userID).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM remotes
+		WHERE cred_user_id = ? AND cred_user_id <> '' AND url <> '' AND cred_type = 'connection' AND provider = 'github' AND via = 'user'`, userID).Scan(&n)
 	return
 }
 
@@ -280,9 +277,9 @@ func GitHubSpaceCounts(ctx context.Context, q Q, ids []int64) (map[int64]int, er
 	for i, id := range ids {
 		args[i], marks[i] = id, "?"
 	}
-	rows, err := q.Query(ctx, `SELECT gh_installation_id, COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
-		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g
-		WHERE cred_type = 'connection' AND provider = 'github' AND gh_via = 'app' AND gh_installation_id IN (`+strings.Join(marks, ",")+`) GROUP BY gh_installation_id`, args...)
+	rows, err := q.Query(ctx, `SELECT installation_id, COUNT(DISTINCT space_id) FROM remotes
+		WHERE installation_id IN (`+strings.Join(marks, ",")+`) AND installation_id <> 0 AND url <> '' AND cred_type = 'connection' AND provider = 'github' AND via = 'app'
+		GROUP BY installation_id`, args...)
 	if err != nil {
 		return nil, err
 	}

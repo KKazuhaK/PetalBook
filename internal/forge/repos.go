@@ -403,7 +403,7 @@ func (p *Provider) offlineErr(err error) *gitstore.CredentialError {
 // staging is a space that is being made: it has no member yet (it is made for
 // the user the remote names), so that is not asked.
 func (p *Provider) GitToken(ctx context.Context, r *store.Remote, staging bool) (string, error) {
-	if r.GHVia != connections.ViaUser || r.GHUserID == "" {
+	if r.Via != connections.ViaUser || r.CredUserID == "" {
 		return "", credErr(connections.CodeNotConfigured, "this space's credential is not understood by this server", nil)
 	}
 	if !p.configured() {
@@ -412,7 +412,7 @@ func (p *Provider) GitToken(ctx context.Context, r *store.Remote, staging bool) 
 	name := p.name()
 	if !staging {
 		// Manage may come directly or through a group: the union counts.
-		roles, disabled, err := store.MemberStanding(ctx, p.m.opt.Store.Q(), r.SpaceID, r.GHUserID)
+		roles, disabled, err := store.MemberStanding(ctx, p.m.opt.Store.Q(), r.SpaceID, r.CredUserID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return "", p.offlineErr(err)
 		}
@@ -425,7 +425,7 @@ func (p *Provider) GitToken(ctx context.Context, r *store.Remote, staging bool) 
 			return "", credErr(connections.CodeConnectionMissing, "the "+name+" connection this space syncs with belongs to someone who can no longer manage it; connect another", nil)
 		}
 	}
-	tok, err := p.UserToken(ctx, r.GHUserID)
+	tok, err := p.UserToken(ctx, r.CredUserID)
 	switch {
 	case err == nil:
 		return tok, nil

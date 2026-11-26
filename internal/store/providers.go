@@ -372,16 +372,14 @@ func CountProviderAuthorizations(ctx context.Context, q Q, provider string) (n i
 // CountProviderSpaces is how many spaces sync through a provider, for their
 // own repository or their attachment repository.
 func CountProviderSpaces(ctx context.Context, q Q, provider string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
-		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g WHERE cred_type = 'connection' AND provider = ?`, provider).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM remotes WHERE url <> '' AND cred_type = 'connection' AND provider = ?`, provider).Scan(&n)
 	return
 }
 
 // CountUserProviderSpaces is how many spaces sync through a user's connection to a provider.
 func CountUserProviderSpaces(ctx context.Context, q Q, provider, userID string) (n int, err error) {
-	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM (SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM remotes WHERE url <> ''
-		UNION ALL SELECT space_id, cred_type, provider, gh_via, gh_installation_id, gh_user_id FROM asset_remotes WHERE url <> '') g
-		WHERE cred_type = 'connection' AND provider = ? AND gh_via = 'user' AND gh_user_id = ?`, provider, userID).Scan(&n)
+	err = q.QueryRow(ctx, `SELECT COUNT(DISTINCT space_id) FROM remotes
+		WHERE cred_user_id = ? AND cred_user_id <> '' AND url <> '' AND cred_type = 'connection' AND provider = ? AND via = 'user'`, userID, provider).Scan(&n)
 	return
 }
 

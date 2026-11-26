@@ -162,6 +162,10 @@ var scopeAllowlist = map[string]string{
 	"UpdateRemoteStatus":               "the remote of an open space, by its id",
 	"DeleteRemote":                     "the remote of a space already opened by the caller",
 	"RemoteStates":                     "the server's map of sync states, read by space id",
+	"MarkAssetsUsed":                   "the attachment repository of an open space, by its id",
+	"MarkAssetsMoved":                  "the attachment repository of a space whose move the server runs, by its id",
+	"SetAssetsMoveJob":                 "the attachment repository of a space already opened by the caller",
+	"AssetRepositories":                "the server's map of spaces with an attachment repository, read by space id",
 	// --- 3.1: server storage. The disk, its policy and the cache of clones are the
 	// server's own (site administrators only, docs/design/milestones/phase-3-tenants.md, the 3.3 table); a space's
 	// records are reached by the id of a space already found ---
@@ -181,7 +185,6 @@ var scopeAllowlist = map[string]string{
 	"CloneBytesOfRemoteSpaces": "background job: the server's disk budget for clones",
 	"SpaceTenants":             "the tenant of each space an in-memory cache names, by id",
 	"PinnedSpaceIDs":           "background job: the spaces kept on the server's disk, of every tenant",
-	"PutAssetRemote":           "the attachment repository of a space already opened, or one being made in the caller's tenant",
 }
 
 func TestEveryStoreMethodThatTouchesTenantTablesTakesAScope(t *testing.T) {

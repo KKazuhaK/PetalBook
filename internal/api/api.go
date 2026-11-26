@@ -288,6 +288,9 @@ func New(opt Options) *Handler {
 	s.bindDraftFileLimit()
 	s.jobs = jobs.New(jobs.Options{Store: opt.Store, Logger: s.log, Now: now, WriteFault: jobWriteFault})
 	s.jobs.Register(bulkKindName, bulkKind{s})
+	if s.spaces != nil && !s.single {
+		s.spaces.UseJobs(s.jobs) // the moves of attachments
+	}
 	s.jobs.Start()
 	s.bindDailySettings()
 	if s.auth != nil {

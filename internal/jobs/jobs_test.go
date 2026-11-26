@@ -521,6 +521,48 @@ func TestCloseStopsTheJobsAndWaitsForThem(t *testing.T) {
 	f.r.Close()
 }
 
+// A running job of a kind that resumes is queued again when Close stops it,
+// not ended (no Ended), and the next start runs it.
+func TestCloseQueuesAgainAJobWhoseKindResumes(t *testing.T) {
+	t.Parallel()
+	st := storetest.Open(t, "sqlite")
+	f := newFix(t, st, IO, nil)
+	started := make(chan struct{})
+	f.r.Register("slow", &stepKind{kind: f.k, run: func(ctx context.Context, p *Progress) error {
+		p.Step(1, 0)
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	f.r.Start()
+	if _, err := f.r.Enqueue(context.Background(), store.Job{ID: "M", TenantID: store.DefaultTenantID, Kind: "slow", LockKey: "space:S", Total: 2}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	f.r.Close()
+	if j := f.state("M"); j.State != store.JobQueued || j.Done != 1 {
+		t.Fatalf("%+v", j)
+	}
+	select {
+	case j := <-f.k.ended:
+		t.Fatalf("Ended was called for a job that goes on: %+v", j)
+	default:
+	}
+	// The next start takes it up.
+	g := newFix(t, st, IO, nil)
+	g.r.Register("slow", g.k)
+	g.r.Start()
+	close(g.k.gate("M"))
+	select {
+	case j := <-g.k.ended:
+		if j.ID != "M" || j.State != store.JobDone {
+			t.Fatalf("%+v", j)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the next start did not run it")
+	}
+}
+
 // A job that does not stop when asked holds Close up for StopWait at most.
 func TestCloseWaitsForAStuckJobWithinABound(t *testing.T) {
 	t.Parallel()

@@ -611,7 +611,7 @@ func (m *Manager) restore(ctx context.Context, id string, op *restoreOp) error {
 	if err := m.evictHook("restore:start"); err != nil {
 		return err
 	}
-	rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id)
+	rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent)
 	if err != nil || !rem.Connected() {
 		return &RestoreFailed{Msg: "The space has no remote repository to restore it from.", Err: err}
 	}
@@ -806,8 +806,8 @@ func (m *Manager) restoreFailure(id string, err error) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if cur, gerr := store.GetRemote(ctx, m.opt.Store.Q(), id); gerr == nil && cur.State != store.RemoteRewritten && !(cur.State == store.RemoteError && cur.ErrorKind == space.KindRescued) {
-		store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RemoteStatus{State: state, ErrorKind: kind, LastError: msg, LastGood: cur.LastGood, RemoteTip: cur.RemoteTip}, m.opt.Now())
+	if cur, gerr := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent); gerr == nil && cur.State != store.RemoteRewritten && !(cur.State == store.RemoteError && cur.ErrorKind == space.KindRescued) {
+		store.UpdateRemoteStatus(ctx, m.opt.Store.Q(), id, store.RoleContent, store.RemoteStatus{State: state, ErrorKind: kind, LastError: msg, LastGood: cur.LastGood, RemoteTip: cur.RemoteTip}, m.opt.Now())
 		m.setSync(id, state)
 	}
 	return &RestoreFailed{Msg: msg, Code: code, Err: err}
@@ -845,7 +845,7 @@ func (m *Manager) Evict(ctx context.Context, id string, o EvictOptions) error {
 	if err != nil {
 		return err
 	}
-	rem, err := store.GetRemote(ctx, q, id)
+	rem, err := store.GetRemote(ctx, q, id, store.RoleContent)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !rem.Connected()) {
 		return fmt.Errorf("%w: it does not follow a remote repository, so it is the only copy of its pages", ErrNotEvictable)
 	}
@@ -1238,7 +1238,7 @@ func (m *Manager) SetPinned(ctx context.Context, id string, pinned bool) error {
 	}
 	m.notePinned(id, pinned)
 	if pinned {
-		if rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id); err == nil && rem.Connected() {
+		if rem, err := store.GetRemote(ctx, m.opt.Store.Q(), id, store.RoleContent); err == nil && rem.Connected() {
 			m.makeFullSoon(id)
 		}
 	}

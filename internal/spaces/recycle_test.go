@@ -164,7 +164,7 @@ func (f *rbFix) fullSpace(owner, editor, member string) Info {
 		Username: "x", TokenEnc: "sealed-token", State: "ok", Updated: f.clock()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutAssetRemote(ctx, q, store.Remote{SpaceID: info.ID, URL: "https://git.example.test/team-assets.git", Branch: "main", CredType: "token", Provider: "git",
+	if err := store.PutRemote(ctx, q, store.Remote{SpaceID: info.ID, Role: store.RoleAssets, URL: "https://git.example.test/team-assets.git", Branch: "main", CredType: "token", Provider: "git",
 		Username: "x", TokenEnc: "sealed-assets-token", State: "ok", Updated: f.clock()}); err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestRecycleKeepsEverythingAndRestoreGivesItBack(t *testing.T) {
 		// And it opens, with its page. (Its attachment repository, on a host that does
 		// not exist, is taken away first: opening would start probing it in the
 		// background, after the test.)
-		if _, err := st.Q().Exec(ctx, `DELETE FROM asset_remotes WHERE space_id = ?`, info.ID); err != nil {
+		if _, err := st.Q().Exec(ctx, `DELETE FROM remotes WHERE space_id = ? AND role = 'assets'`, info.ID); err != nil {
 			t.Fatal(err)
 		}
 		h, err := f.m.Open(ctx, store.User{ID: "olive", Role: "member"}, info.ID)

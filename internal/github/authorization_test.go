@@ -135,7 +135,7 @@ func TestAuthorizationFailures(t *testing.T) {
 			t.Fatalf("%q", to)
 		}
 		// Another account while spaces sync through this one.
-		h.space("S1", store.Remote{GHVia: "user", GHUserID: "U1", GHRepoID: 1})
+		h.space("S1", store.Remote{Via: "user", CredUserID: "U1", RepoID: 1})
 		authURL, binding, _ = h.svc.StartAuthorization(ctx, "U1", "/")
 		back, _ = url.Parse(h.f.Authorize(authURL, "gh-b"))
 		if to, _ := h.svc.CompleteAuthorization(ctx, binding, "U1", back.Query()); to != "/settings?provider=github&connection_error=different_account" {
