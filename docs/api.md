@@ -188,7 +188,8 @@ Never an error; no session needed. `Cache-Control: no-store`.
 - `hold`: `null`, or `"passkey"` when the signed-in user must register a passkey
   before they can do anything else (see "When a passkey is required"), or
   `"password"` when they signed in with a temporary password and must choose a
-  new one (`POST /api/users/{id}/password`).
+  new one (`POST /api/account/password`; an administrator set it with
+  `POST /api/users/{id}/password`).
 - `endedReason`: only when there is no `user` and the request's session cookie
   belonged to a session that ended (the same values as `reason` of a 401, below);
   absent for everyone else, so a cookie that never was a session learns nothing.
@@ -451,6 +452,12 @@ The administrators can require a passkey of chosen people
   `GET /api/session`, `GET /api/meta`, `GET /api/auth/providers`,
   `GET /api/account`, the account's passkey endpoints and `POST /api/logout`.
   The first registered passkey lifts the hold for the session at once.
+- A temporary password (`POST /api/users/{id}/password`) does not skip this:
+  with a passkey registered, signing in with it is `403 passkey_required` like
+  any password; without one, the session is held for a new password first
+  (`hold: "password"`), and choosing it turns the hold into `hold: "passkey"`.
+  A session held for a new password may not use the passkey endpoints
+  (`403 password_change_required`), so registering a passkey never lifts it.
 - A held session makes no API token and approves no OAuth consent: those
   endpoints answer `403 passkey_required` like the rest (see "Held sessions,
   API tokens and OAuth grants").
@@ -845,7 +852,13 @@ in no more. Each change is audited as `user_changed` with `old`.
 
 `{"current": "…", "new": "…"}`. `current` is required when the user has a
 password and must be left out when they have none (an account made through
-single sign-on). Wrong `current`: `403 forbidden`. `204`.
+single sign-on). Wrong `current`: `403 forbidden`. `204`. The person's other
+sessions end; their API tokens and OAuth grants stay (they changed it
+themselves and still hold the account; an administrator's temporary password,
+below, ends those too). In a session held for a new password, `new` equal to
+`current` (the temporary password) is `400 invalid`; a person who must have a
+passkey and has none of this host stays held, now with `hold: "passkey"`,
+instead of the hold being lifted.
 
 ### Linking an identity
 
@@ -1030,12 +1043,18 @@ same way and notifies nobody.
 `{"password": "…"}`: a temporary password an administrator chose, for who may
 change the person as above. `204`. The administrator never sees a password
 afterwards; it is in no audit row (`password_set_by_admin` has `temporary`). It
-ends every session the person has and any reset link, and the person gets a
+ends every session the person has, any reset link, their personal API tokens
+(revoked) and their OAuth grants (ended), and the person gets a
 notification (`event: "password_set"`). The next sign-in with it succeeds, but
 that session is held: `GET /api/session` has `hold: "password"`, every route but
 `POST /api/account/password` (the new password, with the temporary one as
-`current`), the session, meta and sign-out answers `403 password_change_required`.
-Choosing a password lifts the hold; so does any other way of setting one (a
+`current`; the same one again is `400 invalid`), the session, meta, account and
+sign-out answers `403 password_change_required`, the passkey endpoints included.
+A passkey sign-in while the temporary password is in force is held the same
+way, and a person who must use a passkey and has one is refused with it (see
+"When a passkey is required").
+Choosing a password lifts the hold (or makes it a passkey hold, for someone who
+must have a passkey and has none); so does any other way of setting one (a
 reset link). To send a reset link instead, use `POST /api/users/{id}/password-reset`.
 
 Until 3.5 an administrator could not read another user's space through the API;

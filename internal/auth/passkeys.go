@@ -381,7 +381,15 @@ func (s *Service) PasskeyFinish(ctx context.Context, ceremony, ip string, r *htt
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "passkey", "reason": "local_login_refused"}})
 		return nil, "", errLocalRefused()
 	}
-	tok, err := s.issueSession(ctx, u.ID, false, "passkey")
+	// A temporary password an administrator chose is replaced at the next
+	// sign-in whatever its way: a passkey's session is held for it too.
+	held, method := false, "passkey"
+	if must, err := store.PasswordMustChange(ctx, s.st.Q(), u.ID); err != nil {
+		return nil, "", err
+	} else if must {
+		held, method = true, holdMethodPassword
+	}
+	tok, err := s.issueSession(ctx, u.ID, held, method)
 	if err != nil {
 		return nil, "", err
 	}
@@ -486,8 +494,10 @@ func (s *Service) PasskeyRegisterFinish(ctx context.Context, p *Principal, cerem
 		return nil, err
 	}
 	_ = cred
-	// The first passkey of someone whose session was held lifts the hold.
-	if p.Held {
+	// The first passkey of someone whose session was held for one lifts the
+	// hold; a hold for a new password is lifted only by choosing one (the
+	// routes refuse a passkey in it already; this is the second lock).
+	if p.Held && p.HeldBy == "" {
 		if err := store.ReleaseSession(ctx, s.st.Q(), p.SessionID); err != nil {
 			return nil, err
 		}

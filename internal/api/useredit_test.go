@@ -3,6 +3,8 @@ package api_test
 import (
 	"strings"
 	"testing"
+
+	"petalbook.app/server/internal/store"
 )
 
 // Who may edit whom, and what an edit leaves behind: the audit row with what it
@@ -92,8 +94,17 @@ func TestTemporaryPasswordForcesAChangeAtTheNextSignIn(t *testing.T) {
 		const temp = "temporary-pass-1"
 		f.admB.do("POST", url, map[string]any{"password": "short"}).want(t, 400, "invalid")
 		f.admB.do("POST", url, map[string]any{"password": temp}).want(t, 204, "")
-		// Every session of theirs ended.
+		// Every session of theirs ended, and so did their API tokens and OAuth grants.
 		f.memB.do("GET", "/api/spaces", nil).want(t, 401, "")
+		tok := a.newClient("")
+		tok.headers["Authorization"] = "Bearer " + f.secretB
+		tok.do("GET", "/api/spaces", nil).want(t, 401, "")
+		if n := rowCount(t, a, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ? AND revoked = 0`, f.userB); n != 0 {
+			t.Fatalf("%d live tokens", n)
+		}
+		if n := rowCount(t, a, `SELECT COUNT(*) FROM oauth_grants WHERE user_id = ?`, f.userB); n != 0 {
+			t.Fatalf("%d grants", n)
+		}
 		// Signing in with it works but is held: nothing else, until a new password is chosen.
 		c := a.newClient("")
 		c.do("POST", "/api/login", map[string]any{"username": "mem-b", "password": temp}).want(t, 200, "")
@@ -102,6 +113,8 @@ func TestTemporaryPasswordForcesAChangeAtTheNextSignIn(t *testing.T) {
 		}
 		c.do("GET", "/api/spaces", nil).want(t, 403, "password_change_required")
 		c.do("POST", "/api/account/password", map[string]any{"current": "wrong", "new": "my-own-password-2"}).want(t, 403, "forbidden")
+		// The temporary password again is no password of their own.
+		c.do("POST", "/api/account/password", map[string]any{"current": temp, "new": temp}).want(t, 400, "invalid")
 		c.do("POST", "/api/account/password", map[string]any{"current": temp, "new": "my-own-password-2"}).want(t, 204, "")
 		c.do("GET", "/api/spaces", nil).want(t, 200, "")
 		if r := c.do("GET", "/api/session", nil).want(t, 200, ""); r.body["hold"] != nil {
@@ -146,5 +159,97 @@ func TestAPersonChangesTheirOwnUsername(t *testing.T) {
 		if d["username"] != "bee.two" || d["old"].(map[string]any)["username"] != "mem-b" {
 			t.Fatalf("%v", d)
 		}
+	})
+}
+
+// A session held for a new password is not a passkey hold: the passkey routes
+// are refused in it (registering one would lift the hold and keep the password
+// the administrator knows), and a passkey sign-in is held the same way.
+func TestAPasswordHoldIsNotLiftedByAPasskey(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		tang := a.addUser("tang", pw, "member")
+		tid := mustUserID(t, a, "tang")
+		key := newVKey(tid)
+		pk := tang.register(t, key, "laptop").want(t, 201, "").body["passkeys"].([]any)[0].(map[string]any)["id"].(string)
+		const temp = "temporary-pass-1"
+		admin.do("POST", "/api/users/"+tid+"/password", map[string]any{"password": temp}).want(t, 204, "")
+
+		c := a.newClient("")
+		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": temp}).want(t, 200, "")
+		c.do("GET", "/api/account/passkeys", nil).want(t, 403, "password_change_required")
+		c.do("POST", "/api/account/passkeys/begin", map[string]any{"name": "new"}).want(t, 403, "password_change_required")
+		c.do("POST", "/api/account/passkeys/finish?ceremony=x", map[string]any{}).want(t, 403, "password_change_required")
+		c.do("PATCH", "/api/account/passkeys/"+pk, map[string]any{"name": "x"}).want(t, 403, "password_change_required")
+		c.do("DELETE", "/api/account/passkeys/"+pk, nil).want(t, 403, "password_change_required")
+		if h := c.do("GET", "/api/session", nil).want(t, 200, "").body["hold"]; h != "password" {
+			t.Fatalf("hold %v", h)
+		}
+
+		// Signing in with the passkey does not skip the change either.
+		key.cred.Counter++
+		d := a.newClient("")
+		d.signInWithPasskey(t, key, "tang", "").want(t, 200, "")
+		if h := d.do("GET", "/api/session", nil).want(t, 200, "").body["hold"]; h != "password" {
+			t.Fatalf("hold after a passkey sign-in %v", h)
+		}
+		d.do("GET", "/api/spaces", nil).want(t, 403, "password_change_required")
+		d.do("POST", "/api/account/password", map[string]any{"current": temp, "new": "my-own-password-2"}).want(t, 204, "")
+		d.do("GET", "/api/spaces", nil).want(t, 200, "")
+	})
+}
+
+// Someone who must have a passkey: with one, a temporary password opens no
+// session at all (as any password); without one, choosing a new password turns
+// the hold into a passkey hold instead of lifting it.
+func TestATemporaryPasswordDoesNotSkipARequiredPasskey(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		admin := a.setup("kazuha", pw)
+		a.addUser("tang", pw, "member")
+		tid := mustUserID(t, a, "tang")
+		admin.do("PATCH", "/api/users/"+tid, map[string]any{"passkeyRequired": true}).want(t, 200, "")
+		const temp = "temporary-pass-1"
+		admin.do("POST", "/api/users/"+tid+"/password", map[string]any{"password": temp}).want(t, 204, "")
+
+		c := a.newClient("")
+		c.do("POST", "/api/login", map[string]any{"username": "tang", "password": temp}).want(t, 200, "")
+		if h := c.do("GET", "/api/session", nil).want(t, 200, "").body["hold"]; h != "password" {
+			t.Fatalf("hold %v", h)
+		}
+		c.do("POST", "/api/account/password", map[string]any{"current": temp, "new": "my-own-password-2"}).want(t, 204, "")
+		if h := c.do("GET", "/api/session", nil).want(t, 200, "").body["hold"]; h != "passkey" {
+			t.Fatalf("hold after the change %v", h)
+		}
+		c.do("GET", "/api/spaces", nil).want(t, 403, "passkey_required")
+		c.register(t, newVKey(tid), "laptop").want(t, 201, "")
+		c.do("GET", "/api/spaces", nil).want(t, 200, "")
+
+		admin.do("POST", "/api/users/"+tid+"/password", map[string]any{"password": temp}).want(t, 204, "")
+		d := a.newClient("")
+		d.do("POST", "/api/login", map[string]any{"username": "tang", "password": temp}).want(t, 403, "passkey_required")
+		if u := d.do("GET", "/api/session", nil).want(t, 200, "").user(); u != nil {
+			t.Fatal("a session was started")
+		}
+	})
+}
+
+// Managing people does not reach an administrator of the whole server:
+// someone given the keys to edit people, without site.admins.manage, edits an
+// ordinary person but not a site administrator's name, username or password.
+func TestEditingASiteAdministratorNeedsSiteAdminsManage(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		a.setup("root", pw)
+		helper := a.addUser("helper", pw, "member")
+		a.addUser("other", pw, "member")
+		grantRole(t, a, "PEOPLE", store.RoleScopeSite, "", store.GrantToUser, mustUserID(t, a, "helper"), "tenant.users.read", "tenant.users.manage")
+		helper.do("PATCH", "/api/users/"+mustUserID(t, a, "other"), map[string]any{"name": "Other One"}).want(t, 200, "")
+		rootID := mustUserID(t, a, "root")
+		helper.do("PATCH", "/api/users/"+rootID, map[string]any{"name": "x"}).want(t, 403, "forbidden")
+		helper.do("PATCH", "/api/users/"+rootID, map[string]any{"username": "not-root"}).want(t, 403, "forbidden")
+		helper.do("POST", "/api/users/"+rootID+"/password", map[string]any{"password": "temporary-pass-1"}).want(t, 403, "forbidden")
+		a.newClient("").do("POST", "/api/login", map[string]any{"username": "root", "password": pw}).want(t, 200, "")
 	})
 }

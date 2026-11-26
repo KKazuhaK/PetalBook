@@ -283,6 +283,13 @@ func ReleaseSession(ctx context.Context, q Q, id string) error {
 	return err
 }
 
+// HoldSessionForPasskey keeps a session held, now for a passkey: its method
+// becomes "password" (the sign-in it was), which is no hold for a new password.
+func HoldSessionForPasskey(ctx context.Context, q Q, id string) error {
+	_, err := q.Exec(ctx, `UPDATE sessions SET held = 1, method = 'password' WHERE id = ?`, id)
+	return err
+}
+
 // ReleaseUserSessions lifts the hold of every session of the user.
 func ReleaseUserSessions(ctx context.Context, q Q, userID string) error {
 	_, err := q.Exec(ctx, `UPDATE sessions SET held = 0 WHERE user_id = ?`, userID)

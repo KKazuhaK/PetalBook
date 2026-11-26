@@ -461,7 +461,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 				return
 			}
 		}
-		if c.p != nil && c.p.Held && !heldAllowed[rt.method+" "+rt.pattern] && !(c.p.HeldBy == auth.HoldPassword && rt.method+" "+rt.pattern == "POST /api/account/password") {
+		if c.p != nil && c.p.Held && !heldAllowed(c.p.HeldBy, rt.method+" "+rt.pattern) {
 			if c.p.HeldBy == auth.HoldPassword {
 				writeError(w, http.StatusForbidden, "password_change_required", "Choose a new password to continue.")
 				return

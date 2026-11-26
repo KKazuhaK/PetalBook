@@ -1061,7 +1061,11 @@ export function createMockServer(options: MockOptions = {}) {
     if (!temporary.has(u.id)) return res
     const cookie = res.headers?.['Set-Cookie'] ?? ''
     const token = new RegExp(`${SESSION_COOKIE}=([^;]+)`).exec(cookie)?.[1]
-    if (token) heldPassword.add(token)
+    if (token) {
+      // The new password comes first; a passkey hold, if one is required, after it (changePassword).
+      heldPassword.add(token)
+      held.delete(token)
+    }
     return res
   }
 
@@ -1476,12 +1480,19 @@ export function createMockServer(options: MockOptions = {}) {
     } else if (body.current !== undefined) {
       throw new HttpError(400, 'invalid', '这个账号还没有密码，不需要当前密码')
     }
+    const wasHeld = !!ctx.token && heldPassword.has(ctx.token)
+    if (wasHeld && next === body.current)
+      throw new HttpError(400, 'invalid', 'Choose a new password, not the temporary one.')
     u.passwordHash = hashOf(next)
     mailBook.cleanUserTokens(u.id, 'reset')
-    // Other sessions end; this one stays. Choosing a password lifts the hold of a temporary one.
+    // Other sessions end; this one stays. Choosing a password lifts the hold of a temporary one, or makes it a
+    // passkey hold for someone who must have a passkey and has none.
     endSessions(u.id, ctx.token, 'password_changed')
     temporary.delete(u.id)
-    if (ctx.token) heldPassword.delete(ctx.token)
+    if (ctx.token && wasHeld) {
+      heldPassword.delete(ctx.token)
+      if (book.requiredOf(u) && u.passkeys.length === 0 && book.passkeyOn()) held.add(ctx.token)
+    }
   }
 
   const removeIdentity = (u: UserRec, id: string) => {
@@ -4273,11 +4284,11 @@ export function createMockServer(options: MockOptions = {}) {
       if (!allowed) throw new HttpError(403, 'passkey_required', '请先设置一个 passkey')
     }
 
-    // A session that signed in with a temporary password may only choose a new one, and sign out.
+    // A session that signed in with a temporary password may only choose a new one, and sign out: not even the
+    // passkey endpoints, since a passkey would not replace the password the administrator knows.
     if (accounts && ctx.user && ctx.token && heldPassword.has(ctx.token)) {
       const allowed =
-        (method === 'GET' &&
-          ['/session', '/meta', '/auth/providers', '/account', '/account/passkeys'].includes(path)) ||
+        (method === 'GET' && ['/session', '/meta', '/auth/providers', '/account'].includes(path)) ||
         (method === 'POST' && (path === '/logout' || path === '/account/password'))
       if (!allowed) throw new HttpError(403, 'password_change_required', 'Choose a new password to continue.')
     }
@@ -4457,7 +4468,11 @@ export function createMockServer(options: MockOptions = {}) {
     }
     if (path === '/auth/passkey/finish' && method === 'POST') {
       accountsOnly()
-      return passkeyFinish(url.searchParams, body)
+      // A temporary password is replaced at the next sign-in, a passkey's too.
+      const res = passkeyFinish(url.searchParams, body)
+      const id = (res.body as { user?: { id?: string } } | undefined)?.user?.id
+      const who = id ? users.get(id) : undefined
+      return who ? holdForTemporary(res, who) : res
     }
     // The endpoints from before 2.8 serve the provider marked `legacyCallback`.
     const legacy = [...book.providers.values()].find((p) => p.view.oidc?.legacyCallback)

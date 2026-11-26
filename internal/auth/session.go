@@ -145,6 +145,16 @@ func holdOf(method string) string {
 	return ""
 }
 
+// holdForPasskey makes, in the cache, a session held for a passkey (no longer
+// for a new password).
+func (s *Service) holdForPasskey(id string) {
+	s.cmu.Lock()
+	if cs := s.sessions[id]; cs != nil {
+		cs.held, cs.holdBy = true, ""
+	}
+	s.cmu.Unlock()
+}
+
 // releaseHold forgets, in the cache, that a session was held.
 func (s *Service) releaseHold(id string) {
 	s.cmu.Lock()

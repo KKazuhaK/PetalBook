@@ -159,14 +159,11 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 		s.Audit(AuditEvent{Kind: "login_failed", User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"method": "password", "reason": "local_login_refused"}})
 		return nil, errLocalRefused()
 	}
+	// The passkey requirement comes first: someone who must sign in with a
+	// passkey and has one gets no password session, a temporary password
+	// included.
 	held, holdBy := false, ""
-	if must, err := store.PasswordMustChange(ctx, s.st.Q(), u.ID); err != nil {
-		return nil, err
-	} else if must {
-		// A temporary password only opens a session that may choose a new one.
-		held, holdBy = true, HoldPassword
-	}
-	if holdBy == "" && s.passkeyRequiredOf(st, *u) {
+	if s.passkeyRequiredOf(st, *u) {
 		// Only a passkey of this host can be used; one made for an old host leaves the person to register a new one.
 		n, err := store.CountPasskeysForRP(ctx, s.st.Q(), u.ID, s.pk.rpID)
 		if err != nil {
@@ -177,6 +174,13 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 			return nil, coded(403, "passkey_required", "Your account signs in with a passkey.")
 		}
 		held = true
+	}
+	if must, err := store.PasswordMustChange(ctx, s.st.Q(), u.ID); err != nil {
+		return nil, err
+	} else if must {
+		// A temporary password only opens a session that may choose a new
+		// one; ChangePassword then holds it for a passkey if one is required.
+		held, holdBy = true, HoldPassword
 	}
 	method := "password"
 	if holdBy == HoldPassword {

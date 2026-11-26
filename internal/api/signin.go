@@ -14,19 +14,36 @@ import (
 
 const samlACSPattern = "/api/auth/saml/{slug}/acs"
 
-// heldAllowed are the routes a session that must register a passkey may still
-// use (docs/api.md, "When a passkey is required"); everything else is refused.
-var heldAllowed = map[string]bool{
-	"GET /api/session":                  true,
-	"GET /api/meta":                     true,
-	"GET /api/auth/providers":           true,
-	"GET /api/account":                  true,
+// heldAllowed are the routes a held session may still use, by what it waits
+// for (docs/api.md, "When a passkey is required", and the temporary password
+// of POST /api/users/{id}/password); everything else is refused. The passkey
+// routes are a passkey hold's only: registering one lifts that hold, and must
+// not lift a hold for a new password (the administrator would still know the
+// password in use).
+func heldAllowed(holdBy, route string) bool {
+	if heldAlways[route] {
+		return true
+	}
+	if holdBy == auth.HoldPassword {
+		return route == "POST /api/account/password"
+	}
+	return heldForPasskey[route]
+}
+
+var heldAlways = map[string]bool{
+	"GET /api/session":        true,
+	"GET /api/meta":           true,
+	"GET /api/auth/providers": true,
+	"GET /api/account":        true,
+	"POST /api/logout":        true,
+}
+
+var heldForPasskey = map[string]bool{
 	"GET /api/account/passkeys":         true,
 	"POST /api/account/passkeys/begin":  true,
 	"POST /api/account/passkeys/finish": true,
 	"PATCH /api/account/passkeys/{id}":  true,
 	"DELETE /api/account/passkeys/{id}": true,
-	"POST /api/logout":                  true,
 }
 
 // signinRoutes are the routes of milestone 2.8, joined to the table at start-up.

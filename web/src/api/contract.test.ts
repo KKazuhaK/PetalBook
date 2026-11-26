@@ -812,6 +812,12 @@ function suite(target: Target) {
           expect((await call(again, 'GET', '/api/session')).json.hold).toBe('password')
           const held = await call(again, 'GET', '/api/spaces')
           expect([held.status, held.json.error]).toEqual([403, 'password_change_required'])
+          // A passkey would not replace the password the administrator knows: its endpoints are not for this hold.
+          const keys = await call(again, 'GET', '/api/account/passkeys')
+          expect([keys.status, keys.json.error]).toEqual([403, 'password_change_required'])
+          // Nor is the temporary password a new one.
+          const same = await call(again, 'POST', '/api/account/password', { current: temp, new: temp })
+          expect([same.status, same.json.error]).toEqual([400, 'invalid'])
           expect(
             (await call(again, 'POST', '/api/account/password', { current: temp, new: 'my-own-password-2' })).status,
           ).toBe(204)

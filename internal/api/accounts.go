@@ -599,10 +599,16 @@ func (s *server) setTemporaryPassword(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
-	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), req.Password); err != nil {
+	id := c.r.PathValue("id")
+	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), id, req.Password); err != nil {
 		s.fail(c.w, err)
 		return
 	}
+	// The account is taken back by an administrator: what it handed out to
+	// programs (personal API tokens, OAuth grants) ends too, as its sessions
+	// did. A change of one's own password (POST /api/account/password) keeps
+	// them: the person chose to change it and still holds the account.
+	s.revokeTokensAndGrants(c.r.Context(), id, "an administrator set a temporary password")
 	c.w.WriteHeader(http.StatusNoContent)
 }
 

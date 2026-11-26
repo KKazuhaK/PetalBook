@@ -176,6 +176,11 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 			return errf(Forbidden, "The current password is wrong.")
 		}
 		s.refundIP(ip)
+		// The temporary password again is not a password of one's own: the
+		// administrator who chose it would still know it.
+		if p.Held && p.HeldBy == HoldPassword && newPassword == *current {
+			return errf(Invalid, "Choose a new password, not the temporary one.")
+		}
 	} else if current != nil && *current != "" {
 		return errf(Invalid, "This account has no password yet; leave current out.")
 	}
@@ -196,12 +201,29 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	if err != nil {
 		return err
 	}
-	// Choosing a password of one's own ends the hold a temporary one put on this session.
+	// Choosing a password of one's own ends the hold a temporary one put on
+	// this session, unless the person must have a passkey and has none of this
+	// host: then the session is held for one, as a password sign-in would be.
 	if p.Held && p.HeldBy == HoldPassword {
-		if err := store.ReleaseSession(ctx, s.st.Q(), p.SessionID); err != nil {
-			return err
+		needKey := false
+		if s.passkeyRequiredOf(s.sec(ctx), p.User) {
+			n, err := store.CountPasskeysForRP(ctx, s.st.Q(), p.User.ID, s.pk.rpID)
+			if err != nil {
+				return err
+			}
+			needKey = n == 0
 		}
-		s.releaseHold(p.SessionID)
+		if needKey {
+			if err := store.HoldSessionForPasskey(ctx, s.st.Q(), p.SessionID); err != nil {
+				return err
+			}
+			s.holdForPasskey(p.SessionID)
+		} else {
+			if err := store.ReleaseSession(ctx, s.st.Q(), p.SessionID); err != nil {
+				return err
+			}
+			s.releaseHold(p.SessionID)
+		}
 	}
 	s.evictUser(p.User.ID, p.SessionID)
 	return nil
