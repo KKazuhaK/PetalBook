@@ -149,6 +149,7 @@ export const tenantsZhCN = {
     errors: {
       setting_locked: '上一层锁住了这一项，要先在那一层解锁。',
       setting_restricted: '这个值超出了上一层的限制。',
+      setting_above_max: '这个值超过了上限；请先提高上限。',
       mail_not_configured: '开放注册要靠邮件验证地址，现在还没有启用发信。',
       sso_only_with_registration: '只允许单点登录时不能开放注册。',
       conflict: '这一项由命令行参数设定。',

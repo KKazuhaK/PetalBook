@@ -42,26 +42,28 @@ const (
 	maxExportsAtOnce   = 2
 )
 
-// ExportLimits are exports.days and exports.maxBytes, read when they are used.
+// ExportLimits are exports.days and exports.maxBytes, read when they are used:
+// Days as the export's tenant has it (a site administrator may force it for
+// one tenant), Bytes the room of every export on the server.
 type ExportLimits struct {
 	Days  int
 	Bytes int64
 }
 
 // SetExportLimits gives the manager the settings of the exports.
-func (m *Manager) SetExportLimits(f func(context.Context) ExportLimits) {
+func (m *Manager) SetExportLimits(f func(ctx context.Context, tenant string) ExportLimits) {
 	m.exp.mu.Lock()
 	m.exp.limits = f
 	m.exp.mu.Unlock()
 }
 
-func (m *Manager) exportLimits(ctx context.Context) ExportLimits {
+func (m *Manager) exportLimits(ctx context.Context, tenant string) ExportLimits {
 	m.exp.mu.Lock()
 	f := m.exp.limits
 	m.exp.mu.Unlock()
 	l := ExportLimits{}
 	if f != nil {
-		l = f(ctx)
+		l = f(ctx, tenant)
 	}
 	if l.Days <= 0 {
 		l.Days = DefaultExportDays
@@ -74,7 +76,7 @@ func (m *Manager) exportLimits(ctx context.Context) ExportLimits {
 
 type exportState struct {
 	mu     sync.Mutex
-	limits func(context.Context) ExportLimits
+	limits func(context.Context, string) ExportLimits
 	tenant map[string]chan struct{}
 	global chan struct{}
 	wg     sync.WaitGroup
@@ -104,7 +106,7 @@ type ExportRequest struct {
 // StartExport records an export and makes it in the background. ErrExportsFull
 // when the exports already hold what they may (the export is not made).
 func (m *Manager) StartExport(ctx context.Context, req ExportRequest) (*store.Export, error) {
-	lim := m.exportLimits(ctx)
+	lim := m.exportLimits(ctx, req.TenantID)
 	used, err := store.ExportBytes(ctx, m.opt.Store.Q())
 	if err != nil {
 		return nil, err

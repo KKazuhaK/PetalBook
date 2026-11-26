@@ -25,8 +25,14 @@ func TestReadingAStoredRuleLeavesTheDefaultRuleAlone(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if e.Value != int64(1000) {
-				t.Fatalf("the ceiling became %v", e.Value)
+			if e.Value != int64(500) { // the site's 1000, held to its rule for tenants
+				t.Fatalf("the tenant's: %v", e.Value)
+			}
+			if d, _ := s.Def(settings.FilesMaxBytes); *d.Lower.Max != 1000 {
+				t.Fatalf("the ceiling became %v", *d.Lower.Max)
+			}
+			if e, _ := s.Get(ctx, "", settings.FilesMaxBytes); e.Value != int64(1000) {
+				t.Fatalf("the site's: %v", e.Value)
 			}
 		}
 	})

@@ -95,6 +95,7 @@
   "restoring",
   "saml_metadata_invalid",
   "saml_needs_https",
+  "setting_above_max",
   "setting_locked",
   "setting_restricted",
   "skip_too_large",

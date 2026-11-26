@@ -70,6 +70,7 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   // Settings.
   setting_locked: '这项设置被上一级锁定，不能修改。',
   setting_restricted: '这项设置超出了上一级允许的范围。',
+  setting_above_max: '这个值超过了上限；请先提高上限。',
   mail_not_configured: '还没有配置发信，所以不能这样做。',
   mail_insecure: '发信连接没有加密，请换成加密的连接。',
   mail_from_required: '请填写发件人地址。',
