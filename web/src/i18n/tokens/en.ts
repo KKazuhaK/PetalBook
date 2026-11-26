@@ -3,7 +3,7 @@ import type { TokensMessages } from '../tokensTypes.ts'
 export const tokensEn: TokensMessages = {
   title: 'API tokens',
   help: 'Let a script or another program read and write the spaces you choose as you, without giving away your password. A token can never do more than you can in that space now: if you are removed or demoted, it follows at once.',
-  off: 'API tokens are turned off for your organisation, so none can be made or used.',
+  off: 'New API tokens are turned off for your organisation. The ones you have are refused, and you can still revoke them.',
   loadFailed: 'Could not load the tokens',
   create: 'New token',
   createTitle: 'Make a token',

@@ -55,7 +55,24 @@ func (s *server) featureGate(c *call, rt route) bool {
 	if f == "" || c.p == nil || (rt.access.kind == kindKey && rt.access.key.Feature() == f) {
 		return true
 	}
-	if feats := s.features(); feats == nil || feats.On(c.r.Context(), c.p.User.TenantID, f) {
+	if s.single || s.settings == nil {
+		return true
+	}
+	tenant := c.p.User.TenantID
+	var on bool
+	var err error
+	if s.featureFault != nil {
+		err = s.featureFault(tenant, f)
+	}
+	if err == nil {
+		on, err = s.settings.Feature(c.r.Context(), tenant, f)
+	}
+	if err != nil {
+		// Not knowing is not "on": the handler does not run (as the hand checks it replaced answered).
+		s.fail(c.w, err)
+		return false
+	}
+	if on {
 		return true
 	}
 	s.refuse(c.w, featureOffError(f, ""))

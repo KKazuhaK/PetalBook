@@ -75,7 +75,7 @@ const DEFS: Def[] = [
     lower: { mode: 'allow' },
     bound: true,
   },
-  // Whether people may keep offline copies on a device (4.1); the sync endpoints answer 403 offline_off when it is off.
+  // Whether people may keep offline copies on a device (4.1); the sync endpoints answer 403 feature_off (features.offline) when it is off.
   { key: 'features.offline', kind: 'boolean', layers: ['site', 'tenant'], def: true, lower: { mode: 'allow' } },
   { key: 'daily.default', kind: 'doc', layers: ['site', 'tenant'], def: null, lower: { mode: 'allow' }, bound: true },
   // What one person may use: only the number of spaces is refused (0 is none); bytes and pages warn (null is none).

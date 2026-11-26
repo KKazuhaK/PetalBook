@@ -33,20 +33,21 @@ const EXPIRY_CHOICES = [30, 90, 365, 0] as const
 // API tokens (accounts mode): make one, see the ones there are, revoke one. The
 // secret of a new token is shown here once, from the response that made it.
 export default function TokensPanel() {
-  // Tokens and MCP are features an administrator may have switched off: what needs one that is off is not shown.
+  // Tokens and MCP are features an administrator may have switched off: what makes a new one is not shown, but the
+  // person's own are still listed and can be revoked (those endpoints stay on).
   return (
     <div className="grid w-full min-w-0 grid-cols-1 gap-8">
-      <Feature name="features.tokens" fallback={<p className="text-sm text-muted-foreground">{tk.off}</p>}>
+      <Feature name="features.tokens" fallback={<TokensBlock off />}>
         <TokensBlock />
       </Feature>
-      <Feature name="features.mcp">
+      <Feature name="features.mcp" fallback={<GrantsSection off />}>
         <GrantsSection />
       </Feature>
     </div>
   )
 }
 
-function TokensBlock() {
+function TokensBlock({ off = false }: { off?: boolean }) {
   const qc = useQueryClient()
   const list = useQuery({ queryKey: keys.tokens, queryFn: ({ signal }) => api.tokens(signal), staleTime: 15_000 })
   const [making, setMaking] = useState(false)
@@ -72,9 +73,9 @@ function TokensBlock() {
   return (
     <div className="grid w-full min-w-0 grid-cols-1 gap-8">
       <div className="grid w-full min-w-0 gap-3">
-        <p className="text-sm text-muted-foreground">{tk.help}</p>
+        <p className="text-sm text-muted-foreground">{off ? tk.off : tk.help}</p>
         {fresh && <FreshToken created={fresh} onDone={() => setFresh(null)} />}
-        {making ? (
+        {off ? null : making ? (
           <MakeForm
             onCancel={() => setMaking(false)}
             onMade={(c) => {

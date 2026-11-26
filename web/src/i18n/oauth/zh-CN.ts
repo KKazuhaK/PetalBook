@@ -34,6 +34,7 @@ export const oauthZhCN = {
   yours: {
     title: '已连接的应用',
     help: '通过授权页连接上你账号的应用（比如 MCP 客户端）。它们和 API 令牌一样，不会超过你自己能做的事。',
+    off: '你的组织关闭了连接新应用。已连接的应用仍可以断开。',
     loadFailed: '读不出已连接的应用',
     none: '还没有应用连接到你的账号。',
     createdOn: (when: string) => `连接于 ${when}`,

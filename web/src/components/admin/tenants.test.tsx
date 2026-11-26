@@ -141,7 +141,7 @@ describe('the Settings page', () => {
     expect(rows[0].textContent).toContain(tt.settings.names['features.offline'])
     expect(rows[0].textContent).toContain(tt.settings.helps['features.offline'])
     expect(rows[0].querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
-    expect(tt.settings.helps['features.offline']).toMatch(/offline_off/)
+    expect(tt.settings.helps['features.offline']).toMatch(/feature_off/)
     await click(rows[1].querySelector('[role="switch"][aria-label$="' + tt.settings.follow + '"]'))
     await click(rows[1].querySelector(`[role="switch"][aria-label="${tt.settings.names['features.offline']}"]`))
     await click(button(tt.settings.save, rows[1]))

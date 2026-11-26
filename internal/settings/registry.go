@@ -16,7 +16,7 @@ const (
 	DailyAPI            = "daily.api"
 	DailyDefault        = "daily.default"
 	// OfflineCopies is whether a person may keep offline copies of spaces on a
-	// device (4.1): the four sync endpoints answer 403 offline_off when it is off.
+	// device (4.1): the four sync endpoints answer 403 feature_off (features.offline) when it is off.
 	OfflineCopies = "features.offline"
 
 	// FilesMaxBytes is the largest file a write may create or replace (3.5):

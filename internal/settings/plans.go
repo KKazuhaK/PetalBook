@@ -230,10 +230,17 @@ func (s *Service) keyed(rows []store.LayeredRow) []KeyedRule {
 // setting, or a setting that cannot be read, is on: only what a feature gates
 // can be switched off.
 func (s *Service) On(ctx context.Context, tenant, feature string) bool {
+	on, err := s.Feature(ctx, tenant, feature)
+	return on || err != nil
+}
+
+// Feature is On with the failure of the read told: a caller that must not run
+// what is off when it cannot know (a route's gate) refuses on the error.
+func (s *Service) Feature(ctx context.Context, tenant, feature string) (bool, error) {
 	e, err := s.Get(ctx, tenant, feature)
 	if err != nil {
-		return true
+		return true, err
 	}
 	on, ok := e.Value.(bool)
-	return on || !ok
+	return on || !ok, nil
 }

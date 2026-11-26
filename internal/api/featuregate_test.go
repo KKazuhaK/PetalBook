@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -86,5 +87,20 @@ func TestTheSettingsAnswerSaysWhichFeaturesTheTenantHasAndIsRevalidated(t *testi
 		if get(f.memA, tagA).code != 304 {
 			t.Fatal("a neighbour's change does not move this tenant's version")
 		}
+	})
+}
+
+// When the feature cannot be read the gate refuses (500) and the handler does
+// not run: not knowing is not "on".
+func TestAFeatureGateThatCannotReadFailsClosed(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		create := func() result { return f.memB.do("POST", "/api/account/tokens", map[string]any{}) }
+		create().want(t, 400, "invalid")
+		a.h.SetFeatureFault(func(string, string) error { return errors.New("settings read failed") })
+		create().want(t, 500, "internal")
+		a.h.SetFeatureFault(nil)
+		create().want(t, 400, "invalid")
 	})
 }
