@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
@@ -74,20 +73,20 @@ func TestBindingsSharingALockAreCheckedOneAtATime(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := settings.New(st)
 		var mu sync.Mutex
-		// Each check waits for the other to have started (or, serialised, for
-		// a short while): unserialised, both read the other's old value.
-		var entered atomic.Int32
-		both := make(chan struct{})
+		// Each check proves it holds the binding's lock and that no other check
+		// runs at the same time: no timing, only the lock decides the order.
+		var inFlight atomic.Int32
 		// At most one of mode=local_only and ssoOnly=true may hold.
 		other := func(key string, bad any) func(ctx context.Context, _ string, v any) (any, error) {
 			return func(ctx context.Context, _ string, v any) (any, error) {
-				if entered.Add(1) == 2 {
-					close(both)
+				if mu.TryLock() {
+					mu.Unlock()
+					t.Error("a check ran without the binding's lock")
 				}
-				select {
-				case <-both:
-				case <-time.After(100 * time.Millisecond):
+				if inFlight.Add(1) != 1 {
+					t.Error("two checks ran at once")
 				}
+				defer inFlight.Add(-1)
 				e, err := s.Get(ctx, "", key)
 				if err != nil {
 					return nil, err
