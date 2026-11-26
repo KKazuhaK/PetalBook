@@ -353,6 +353,7 @@ var routeTable = []route{
 	{"DELETE", "/api/spaces/{space}/groups/{group}", inSpace(perm.Members), true, false, false, (*server).deleteSpaceGroup},
 	{"POST", "/api/spaces/{space}/members", inSpace(perm.Members), true, false, false, (*server).addMember},
 	{"POST", "/api/spaces/{space}/members/batch", inSpace(perm.Members), true, false, false, (*server).addMembersBatch},
+	{"GET", "/api/spaces/{space}/people", inSpace(perm.Members), true, false, false, (*server).findSpacePeople},
 	{"PATCH", "/api/spaces/{space}/members/{user}", inSpace(perm.Members), true, false, false, (*server).patchMember},
 	{"DELETE", "/api/spaces/{space}/members/{user}", inSpaceOrSelf(perm.Members), true, false, false, (*server).removeMember},
 
@@ -515,6 +516,8 @@ var indexOnlyRoutes = map[string]bool{
 	"GET /api/spaces/{space}/pages/{id}/backlinks": true,
 	"GET /api/spaces/{space}/pages/{id}/links":     true,
 	"GET /api/spaces/{space}/checks":               true,
+	// The people search of a space's dialog of members reads no content.
+	"GET /api/spaces/{space}/people": true,
 	// The offline sync's catalogue and changes (4.1); its page bodies
 	// (sync/pages) read files and restore the space as other content reads do.
 	"GET /api/spaces/{space}/sync/catalog": true,

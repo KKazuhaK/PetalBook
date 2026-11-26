@@ -10,8 +10,14 @@ import type { BatchAnswer, BatchRowIn, PersonRef } from './peopleTypes'
 export { MAX_BATCH_ROWS } from './peopleTypes'
 
 export const peopleApi = {
-  search: (q: string, signal?: AbortSignal) =>
-    request<{ people: PersonRef[] }>(`/people?q=${enc(q)}&limit=20`, { signal }),
+  // The people of the caller's own tenant, or of the space or group being managed (its tenant's).
+  search: (q: string, signal?: AbortSignal, scope?: PeopleScope) =>
+    request<{ people: PersonRef[] }>(
+      scope?.space
+        ? `/spaces/${enc(scope.space)}/people?q=${enc(q)}&limit=20`
+        : `/people?q=${enc(q)}&limit=20${scope?.group ? `&group=${enc(scope.group)}` : ''}`,
+      { signal },
+    ),
   spaceBatch: (space: string, rows: BatchRowIn[], dryRun: boolean) =>
     request<BatchAnswer>(`/spaces/${enc(space)}/members/batch`, { method: 'POST', body: { rows, dryRun } }),
   groupBatch: (group: string, rows: BatchRowIn[], dryRun: boolean) =>
@@ -20,12 +26,18 @@ export const peopleApi = {
     request<BatchAnswer>('/admin/members/batch', { method: 'POST', body: { rows, dryRun, tenant } }),
 }
 
+// Where a picker searches: a space's dialog of members, a group's dialog, or else the caller's own tenant.
+export interface PeopleScope {
+  space?: string
+  group?: string
+}
+
 // The people of the tenant whose username or name matches (two characters at least).
-export function usePeopleSearch(q: string, enabled = true) {
+export function usePeopleSearch(q: string, enabled = true, scope?: PeopleScope) {
   const text = q.trim()
   return useQuery({
-    queryKey: ['people', 'search', text] as const,
-    queryFn: ({ signal }) => peopleApi.search(text, signal),
+    queryKey: ['people', 'search', scope?.space ?? '', scope?.group ?? '', text] as const,
+    queryFn: ({ signal }) => peopleApi.search(text, signal, scope),
     enabled: enabled && [...text].length >= 2,
     staleTime: 15_000,
     placeholderData: (prev) => prev,

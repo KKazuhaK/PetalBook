@@ -181,6 +181,37 @@ func TestInviteIsUsedOnce(t *testing.T) {
 	})
 }
 
+// The addresses with an open invite are found by their key (any case), in the
+// scope only, and neither a used nor an expired invite counts.
+func TestOpenInviteEmails(t *testing.T) {
+	t.Parallel()
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		mkUser(t, st, "A", "a", "admin")
+		now := time.Now()
+		for _, i := range []store.Invite{
+			{ID: "I1", TokenHash: "h1", Email: "Open@Example.test", Expires: now.Add(time.Hour)},
+			{ID: "I2", TokenHash: "h2", Email: "old@example.test", Expires: now.Add(-time.Minute)},
+			{ID: "I3", TokenHash: "h3", Email: "used@example.test", Expires: now.Add(time.Hour)},
+		} {
+			i.Role, i.CreatedBy, i.Created = "member", "A", now
+			if err := store.InsertInvite(ctx, st.Q(), i); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if ok, err := store.UseInvite(ctx, st.Q(), "I3", "A", now); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+		keys := []string{"open@example.test", "old@example.test", "used@example.test", "none@example.test"}
+		got, err := store.OpenInviteEmails(ctx, st.Q(), store.InTenant(store.DefaultTenantID), keys, now)
+		if err != nil || len(got) != 1 || !got["open@example.test"] {
+			t.Fatal(got, err)
+		}
+		if got, err := store.OpenInviteEmails(ctx, st.Q(), store.InTenant("OTHER00000"), keys, now); err != nil || len(got) != 0 {
+			t.Fatal(got, err)
+		}
+	})
+}
+
 func TestSpacesAndMembership(t *testing.T) {
 	t.Parallel()
 	storetest.Each(t, func(t *testing.T, st *store.Store) {

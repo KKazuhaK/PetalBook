@@ -491,6 +491,7 @@ function AddPeopleDialogFor({
       description={tp.addHelp}
       kind="people"
       excluded={members}
+      scope={{ group: group.id }}
       pick={pick}
       csvRun={run}
       csvHelp={tp.csv.help}

@@ -151,8 +151,9 @@ type server struct {
 	jobs *jobRunner
 	// prefs holds the preferences written and not committed yet (see prefs.go).
 	prefs prefsHub
-	// peopleGate limits the people search per person (see batch.go).
-	peopleGate peopleGate
+	// peopleGate limits the people search per person, batchGate the rows of
+	// batches per person (see batch.go).
+	peopleGate, batchGate rateGate
 	// Background work (the bulk jobs) is started with goBg: it runs with bgCtx,
 	// which Close cancels, and Close waits for it on bg.
 	bgCtx    context.Context

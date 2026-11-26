@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"petalbook.app/server/internal/auth"
+	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/spaces"
 	"petalbook.app/server/internal/store"
 )
@@ -22,47 +24,104 @@ const (
 	// peopleWindow and peoplePerWindow are the rate of the people search, per person.
 	peopleWindow    = 10 * time.Second
 	peoplePerWindow = 20
+	// batchWindow and batchRowsPerWindow are the rows of batches (dry runs
+	// too, all three kinds together) one person may send: a file of 1,000
+	// checked and applied a few times over, never a sweep of the site.
+	batchWindow        = 10 * time.Minute
+	batchRowsPerWindow = 5000
 )
 
-// peopleGate counts searches per person in a sliding window. It holds the
-// recent times of those who searched lately, and drops the rest as it goes.
-type peopleGate struct {
+// rateGate counts what a person spends in a sliding window. It holds the
+// recent spending of those who spent lately, and drops the rest as it goes.
+type rateGate struct {
 	mu   sync.Mutex
-	seen map[string][]time.Time
+	seen map[string][]spent
 }
 
-// take spends one search of id's allowance; false: wait (the time given).
-func (g *peopleGate) take(id string, now time.Time) (time.Duration, bool) {
+type spent struct {
+	at time.Time
+	n  int
+}
+
+// take spends n of id's allowance of per in window; false: wait (the time given).
+func (g *rateGate) take(id string, now time.Time, n, per int, window time.Duration) (time.Duration, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.seen == nil {
-		g.seen = map[string][]time.Time{}
+		g.seen = map[string][]spent{}
 	}
 	if len(g.seen) > 10_000 {
 		for k, l := range g.seen {
-			if now.Sub(l[len(l)-1]) >= peopleWindow {
+			if now.Sub(l[len(l)-1].at) >= window {
 				delete(g.seen, k)
 			}
 		}
 	}
 	l := g.seen[id]
 	cut := 0
-	for cut < len(l) && now.Sub(l[cut]) >= peopleWindow {
+	for cut < len(l) && now.Sub(l[cut].at) >= window {
 		cut++
 	}
 	l = l[cut:]
-	if len(l) >= peoplePerWindow {
-		g.seen[id] = l
-		return l[0].Add(peopleWindow).Sub(now), false
+	sum := 0
+	for _, e := range l {
+		sum += e.n
 	}
-	g.seen[id] = append(l, now)
+	if sum+n > per {
+		g.seen[id] = l
+		// The wait is until enough of the oldest has left the window.
+		for _, e := range l {
+			sum -= e.n
+			if sum+n <= per {
+				return e.at.Add(window).Sub(now), false
+			}
+		}
+		return window, false
+	}
+	g.seen[id] = append(l, spent{now, n})
 	return 0, true
 }
 
-// findPeople is the picker's search: the enabled people of the caller's own
-// tenant whose username starts with, or whose name holds, the query. It gives
-// the id, username and name of at most 20, and nothing else (no address).
+// findPeople is the picker's search: the enabled people of a tenant whose
+// username starts with, or whose name holds, the query. It gives the id,
+// username and name of at most 20, and nothing else (no address). The tenant
+// is the caller's own, which any member may search (the people they could
+// share a space with); with ?group= it is that group's, for who manages it.
 func (s *server) findPeople(c *call) {
+	sc := c.ownScope()
+	if id := c.r.URL.Query().Get("group"); id != "" && !s.single {
+		g, err := store.GetGroup(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && !c.p.Access.Can(authz.TenantGroupsManage, g.TenantID)) {
+			writeError(c.w, http.StatusNotFound, "not_found", "No such group.")
+			return
+		}
+		if err != nil {
+			s.fail(c.w, err)
+			return
+		}
+		sc = store.InTenant(g.TenantID)
+	}
+	s.searchPeople(c, sc)
+}
+
+// findSpacePeople is the search of a space's dialog of members: the people of
+// the space's tenant, for who may manage its members (a site administrator
+// managing another tenant's space finds that tenant's people).
+func (s *server) findSpacePeople(c *call) {
+	t, err := store.SpaceTenants(c.r.Context(), s.opt.Store.Q(), []string{c.sp.Info.ID})
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	tenant, ok := t[c.sp.Info.ID]
+	if !ok {
+		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
+		return
+	}
+	s.searchPeople(c, store.InTenant(tenant))
+}
+
+func (s *server) searchPeople(c *call, sc store.Scope) {
 	q := strings.TrimSpace(c.r.URL.Query().Get("q"))
 	if n := utf8.RuneCountInString(q); n < 2 || n > 80 {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Q is 2 to 80 characters.")
@@ -76,12 +135,12 @@ func (s *server) findPeople(c *call) {
 		writeError(c.w, http.StatusNotFound, "not_found", "There are no other people.")
 		return
 	}
-	if wait, ok := s.peopleGate.take(c.user().ID, s.now()); !ok {
+	if wait, ok := s.peopleGate.take(c.user().ID, s.now(), 1, peoplePerWindow, peopleWindow); !ok {
 		c.w.Header().Set("Retry-After", retrySeconds(wait))
 		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Searching too often; wait a moment.")
 		return
 	}
-	l, err := store.SearchPeople(c.r.Context(), s.opt.Store.Q(), c.ownScope(), q, limit)
+	l, err := store.SearchPeople(c.r.Context(), s.opt.Store.Q(), sc, q, limit)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -181,6 +240,11 @@ func (s *server) readBatch(c *call) (batchReq, bool) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Rows holds 1 to "+itoa(spaces.MaxBatchRows)+" rows.")
 		return req, false
 	}
+	if wait, ok := s.batchGate.take(c.user().ID, s.now(), len(req.Rows), batchRowsPerWindow, batchWindow); !ok {
+		c.w.Header().Set("Retry-After", retrySeconds(wait))
+		writeError(c.w, http.StatusTooManyRequests, "rate_limited", "Too many rows in a short time; wait a moment.")
+		return req, false
+	}
 	return req, true
 }
 
@@ -221,13 +285,14 @@ func (s *server) addMembersBatch(c *call) {
 				s.log.Warn("could not write a notification", "error", err)
 			}
 		}
-		tenant := ""
-		if t, err := store.SpaceTenants(c.r.Context(), s.opt.Store.Q(), []string{c.sp.Info.ID}); err == nil {
-			tenant = t[c.sp.Info.ID]
-		}
-		s.audit(c, auth.AuditEvent{Kind: "members_batch", Actor: c.user().ID, Tenant: tenant,
-			Detail: batchDetail(map[string]any{"space": c.sp.Info.ID, "name": c.sp.Info.Name}, out)})
 	}
+	// A dry run is audited too: it looks people up as the applied batch does.
+	tenant := ""
+	if t, err := store.SpaceTenants(c.r.Context(), s.opt.Store.Q(), []string{c.sp.Info.ID}); err == nil {
+		tenant = t[c.sp.Info.ID]
+	}
+	s.audit(c, auth.AuditEvent{Kind: "members_batch", Actor: c.user().ID, Tenant: tenant,
+		Detail: batchDetail(map[string]any{"space": c.sp.Info.ID, "name": c.sp.Info.Name, "dryRun": req.DryRun}, out)})
 	writeBatch(c, req.DryRun, out, nil)
 }
 
@@ -248,9 +313,7 @@ func (s *server) adminAddGroupMembersBatch(c *call) {
 		return
 	}
 	out := fromSpaceResults(res)
-	if !req.DryRun {
-		s.auditGroup(c, tenant, "group_members_batch", "", batchDetail(map[string]any{"group": id}, out))
-	}
+	s.auditGroup(c, tenant, "group_members_batch", "", batchDetail(map[string]any{"group": id, "dryRun": req.DryRun}, out))
 	writeBatch(c, req.DryRun, out, nil)
 }
 
@@ -277,6 +340,13 @@ func (s *server) adminAddMembersBatch(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	// Putting people into groups (now, or when an invite is accepted) is
+	// managing the groups: without that key, a row that names one is refused
+	// and no group is looked up.
+	mayGroup := c.p.Access.Can(authz.TenantGroupsManage, tenant)
+	if !mayGroup {
+		groupNames = nil
+	}
 	res, err := spaces.ResolveKeys(ctx, s.opt.Store.Q(), tenant, keys)
 	if err != nil {
 		s.fail(c.w, err)
@@ -296,20 +366,30 @@ func (s *server) adminAddMembersBatch(c *call) {
 		o := batchRowResp{Row: i + 1, User: strings.TrimSpace(r.User), Role: r.Role, Status: res[i].Status}
 		var gids []string
 		for _, name := range r.Groups {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			if !mayGroup {
+				o.Status, o.Detail = spaces.BatchForbidden, "Putting people into groups needs the permission to manage groups."
+				break
+			}
 			g, ok := groups[store.FoldName(strings.TrimSpace(name))]
-			if !ok && strings.TrimSpace(name) != "" {
+			if !ok {
 				o.Status, o.Detail = spaces.BatchInvalid, "No group is called "+strings.TrimSpace(name)+"."
 				break
 			}
-			if ok {
-				gids = append(gids, g)
-			}
+			gids = append(gids, g)
 		}
 		switch {
-		case o.Status == spaces.BatchInvalid && o.Detail != "":
+		case o.Detail != "":
 		case res[i].Hit != nil:
 			h := res[i].Hit
 			o.UserID, o.Username, o.Name = h.ID, h.Username, h.Name
+			// A person already in the tenant keeps their role: changing it is
+			// managing people, on their own page, not something a file does.
+			if r.Role != "" && r.Role != h.Role {
+				o.Detail = "The role is not changed for someone already in the organization; change it on their page."
+			}
 			switch {
 			case len(gids) == 0:
 				o.Status = spaces.BatchAlready
@@ -344,6 +424,12 @@ func (s *server) adminAddMembersBatch(c *call) {
 	for j, i := range specRow {
 		if errs[j] != nil {
 			out[i].Status, out[i].Detail = spaces.BatchInvalid, errs[j].Error()
+			// An address another account holds, or that has an open invite
+			// already, has its own status.
+			var ae *auth.Error
+			if errors.As(errs[j], &ae) && (ae.Code == auth.CodeEmailTaken || ae.Code == auth.CodeAlreadyInvited) {
+				out[i].Status = ae.Code
+			}
 			continue
 		}
 		if req.DryRun {
@@ -362,7 +448,7 @@ func (s *server) adminAddMembersBatch(c *call) {
 		for g, all := range addTo {
 			for start := 0; start < len(all); start += spaces.MaxAddPeople {
 				ids := all[start:min(start+spaces.MaxAddPeople, len(all))]
-				if _, _, _, _, err := s.spaces.AddGroupPeople(ctx, store.ScopeOf(c.user()), g, ids, spaces.GroupJoin{By: c.user().ID}); err != nil {
+				if _, _, _, _, err := s.spaces.AddGroupPeople(ctx, store.InTenant(tenant), g, ids, spaces.GroupJoin{By: c.user().ID}); err != nil {
 					for i := range out {
 						if out[i].Status == "added" && slices.Contains(ids, out[i].UserID) {
 							out[i].Status, out[i].Detail = "failed", err.Error()
@@ -371,8 +457,8 @@ func (s *server) adminAddMembersBatch(c *call) {
 				}
 			}
 		}
-		s.audit(c, auth.AuditEvent{Kind: "invites_batch", Actor: c.user().ID, Tenant: tenant,
-			Detail: batchDetail(map[string]any{"tenant": tenant, "sender": sender}, out)})
 	}
+	s.audit(c, auth.AuditEvent{Kind: "invites_batch", Actor: c.user().ID, Tenant: tenant,
+		Detail: batchDetail(map[string]any{"tenant": tenant, "sender": sender, "dryRun": req.DryRun}, out)})
 	writeBatch(c, req.DryRun, out, map[string]any{"mail": map[string]any{"configured": sender != "", "sender": sender}})
 }

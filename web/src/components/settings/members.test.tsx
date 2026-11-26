@@ -133,6 +133,8 @@ describe('the members section: an owner', () => {
     expect(adder()!.textContent).toContain(tp.minChars)
     await type(adder()!.querySelector<HTMLInputElement>('#add-people-search')!, MOCK_ADMIN.username)
     await settle(() => adder()!.textContent!.includes(tp.alreadyIn), 'the member marked')
+    // The picker searches as the space (its tenant's people), not the caller's own tenant.
+    expect(m!.requests.some((r) => /\/api\/spaces\/[^/]+\/people\?q=/.test(r.url))).toBe(true)
     expect(adder()!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true)
     // Nothing is picked, so there is nothing to add.
     expect(adderButton(tp.addPeople)!.disabled).toBe(true)
@@ -149,7 +151,8 @@ describe('the members section: an owner', () => {
     await settle(() => adder()!.textContent!.includes(tp.status.not_found), 'the check')
     const text = adder()!.textContent!
     expect(text).toContain(tp.status.ok)
-    expect(text).toContain(tp.status.other_tenant)
+    // Another organization's person is nobody to a space's batch, as with a single add.
+    expect(text).not.toContain(tp.status.other_tenant)
     expect(text).toContain(tp.status.invalid)
     // A check writes nothing.
     expect(rows()).toHaveLength(1)

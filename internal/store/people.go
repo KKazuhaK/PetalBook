@@ -44,6 +44,8 @@ type PersonHit struct {
 	Username string
 	Name     string
 	Disabled bool
+	// Role is their role in their tenant (admin or member).
+	Role string
 }
 
 // FindPeople looks up accounts that are not deleted by username (already
@@ -68,7 +70,7 @@ func FindPeople(ctx context.Context, q Q, usernames, emailKeys []string) (byUser
 				var h PersonHit
 				var key string
 				var disabled int64
-				if err := rows.Scan(&key, &h.ID, &h.TenantID, &h.Username, &h.Name, &disabled); err != nil {
+				if err := rows.Scan(&key, &h.ID, &h.TenantID, &h.Username, &h.Name, &disabled, &h.Role); err != nil {
 					rows.Close()
 					return err
 				}
@@ -82,10 +84,10 @@ func FindPeople(ctx context.Context, q Q, usernames, emailKeys []string) (byUser
 		}
 		return nil
 	}
-	if err = scan(`SELECT username, id, tenant_id, username, name, disabled FROM users WHERE deleted_at IS NULL AND username IN (?)`, usernames, byUsername); err != nil {
+	if err = scan(`SELECT username, id, tenant_id, username, name, disabled, role FROM users WHERE deleted_at IS NULL AND username IN (?)`, usernames, byUsername); err != nil {
 		return nil, nil, err
 	}
-	err = scan(`SELECT e.email_key, u.id, u.tenant_id, u.username, u.name, u.disabled FROM user_emails e JOIN users u ON u.id = e.user_id
+	err = scan(`SELECT e.email_key, u.id, u.tenant_id, u.username, u.name, u.disabled, u.role FROM user_emails e JOIN users u ON u.id = e.user_id
 		WHERE u.deleted_at IS NULL AND e.email_key <> '' AND e.email_key IN (?)`, emailKeys, byEmail)
 	if err != nil {
 		return nil, nil, err
