@@ -21,9 +21,11 @@ import (
 // the functions of this file write that copy (SetPrimaryEmail and the ones it
 // shares its transaction with), and the purge clears both.
 //
-// An account has one address today. The shape already allows several (one
-// primary, any number of others, each verified or not): the lookups that sign
-// in or reset by address read a verified row of user_emails, never users.email.
+// An account has one address, or several when its tenant's
+// accounts.multipleEmails is on (one primary, any number of others, each
+// verified or not): the lookups that sign in or reset by address read a
+// verified row of user_emails, never users.email, and the caller decides
+// whether a row that is not the primary counts (the switch may be off again).
 
 // ErrEmailTaken: another account holds the address (verified or not, and also
 // a deleted account that was not purged yet).
@@ -32,6 +34,10 @@ var ErrEmailTaken = errors.New("the address belongs to another account")
 // ErrPrimaryEmail: a primary address cannot be removed on its own; another
 // must be made primary first (or the primary set to "").
 var ErrPrimaryEmail = errors.New("the primary address cannot be removed")
+
+// ErrEmailUnverified: only an address the account holds (EmailRow.Holds) may
+// become its primary one.
+var ErrEmailUnverified = errors.New("the address is not verified")
 
 // EmailKey is the form addresses are compared in, and what user_emails.email_key
 // holds:
@@ -508,6 +514,39 @@ func SetEmailRowVerified(ctx context.Context, q Q, userID, email string, verifie
 			return nil
 		}
 		res, err := q.Exec(ctx, `UPDATE users SET email_verified = ?, email_verified_by = ? WHERE id = ?`, b2i(verified), by, userID)
+		return oneRow(res, err)
+	})
+}
+
+// MakePrimaryEmail makes an address the account already has its primary one,
+// keeping the old primary as another address, and copies it to users: one
+// transaction. ErrNotFound when the account does not have the address;
+// ErrEmailUnverified when it does not hold it (EmailRow.Holds: verified, and
+// not by a tenant administrator's mark alone). The primary already is nothing.
+func MakePrimaryEmail(ctx context.Context, q Q, userID, email string) error {
+	return atomically(ctx, q, func(q Q) error {
+		var primary, verified int64
+		var key, by string
+		err := q.QueryRow(ctx, `SELECT is_primary, verified, verified_by, email_key FROM user_emails WHERE user_id = ? AND email = ?`, userID, email).Scan(&primary, &verified, &by, &key)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if primary != 0 {
+			return nil
+		}
+		if !(EmailRow{Verified: verified != 0, VerifiedBy: by}).Holds() {
+			return ErrEmailUnverified
+		}
+		// The old primary first: the partial unique index allows one per account.
+		if _, err := q.Exec(ctx, `UPDATE user_emails SET is_primary = 0 WHERE user_id = ? AND is_primary = 1`, userID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `UPDATE user_emails SET is_primary = 1 WHERE user_id = ? AND email = ?`, userID, email); err != nil {
+			return err
+		}
+		res, err := q.Exec(ctx, `UPDATE users SET email = ?, email_key = ?, email_verified = 1, email_verified_by = ? WHERE id = ?`, email, key, by, userID)
 		return oneRow(res, err)
 	})
 }

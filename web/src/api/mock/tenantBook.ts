@@ -139,6 +139,14 @@ const DEFS: Def[] = [
   { key: 'recycle.days', kind: 'limit', layers: ['site'], def: 30, lower: { mode: 'allow' }, min: 1, max: 365 },
   // Whether addresses outside ASCII may be set (3.6); the site's alone.
   { key: 'users.emailNonAscii', kind: 'boolean', layers: ['site'], def: false, lower: { mode: 'allow' } },
+  // Whether a person may have more than one address (3.6): off by default; site and tenant. A feature.
+  {
+    key: 'accounts.multipleEmails',
+    kind: 'boolean',
+    layers: ['site', 'tenant'],
+    def: false,
+    lower: { mode: 'allow' },
+  },
   // The features (3.1): on unless a rule for one tenant turns them off (mail.ownSender: off unless).
   ...(
     [
@@ -943,12 +951,16 @@ export function createTenantBook(o: TenantBookOptions) {
     return { items: items.map(tenantOut), next: from + limit < all.length ? items[items.length - 1].id : '' }
   }
 
-  // Every feature (a boolean named features.*, and mail.ownSender) as it stands for a tenant (GET /api/settings).
+  // Every feature (a boolean named features.*, and mail.ownSender and accounts.multipleEmails) as it stands for a
+  // tenant (GET /api/settings).
+  const isFeature = (key: string) =>
+    key.startsWith('features.') || key === 'mail.ownSender' || key === 'accounts.multipleEmails'
   const features = (tenant: string) =>
     Object.fromEntries(
-      DEFS.filter((d) => d.kind === 'boolean' && (d.key.startsWith('features.') || d.key === 'mail.ownSender')).map(
-        (d) => [d.key, effectiveOf(tenant, d).effective === true],
-      ),
+      DEFS.filter((d) => d.kind === 'boolean' && isFeature(d.key)).map((d) => [
+        d.key,
+        effectiveOf(tenant, d).effective === true,
+      ]),
     )
 
   // The settings of one person's layers (GET /api/settings).

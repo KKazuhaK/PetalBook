@@ -248,6 +248,7 @@ export const tenantsZhCN = {
       recycle: '回收站',
       exports: '导出',
       users: '用户',
+      accounts: '账号',
       offline: '离线',
       other: '其他',
     } as Record<string, string>,
@@ -280,6 +281,7 @@ export const tenantsZhCN = {
       'files.maxBytes': '单个文件的大小上限（字节）',
       'recycle.days': '回收站保留的天数',
       'users.emailNonAscii': '允许含非 ASCII 字符的邮箱',
+      'accounts.multipleEmails': '一个账号可以有多个邮箱',
       'storage.assets': '附件放在哪里',
       'storage.assets.ownStorageExempt': '使用自己存储的组织不受此限制',
       'features.ownSso': '租户自己的单点登录提供方',
@@ -355,6 +357,8 @@ export const tenantsZhCN = {
       'files.maxBytes':
         '一次写入最大能有多大，页面、附件和导入里的每个文件都算，图片也算。站点的值来自 --max-upload，不能在这里改；组织可以设一个不超过它的值。超过时保存会被拒绝，你写的内容会留在原处，不会丢。',
       'recycle.days': '删除的空间和人先在回收站保留多少天，之后才真正清除。只有全站管理员能设。',
+      'accounts.multipleEmails':
+        '默认关。开启后，一个人可以给账号添加更多邮箱（点开发给它的链接后才生效），把验证过的邮箱设为主邮箱，删除其他邮箱；任何验证过的邮箱都能登录。每个邮箱在整个服务器上仍然唯一。再关掉时，多出的邮箱会保留，但不显示，也不能用来登录。全站可以允许、限制或锁定它；组织在此范围内自己决定。',
       'users.emailNonAscii':
         '默认关闭：含非 ASCII 字符的邮箱（@ 前是 Unicode 名字，或国际化域名）会被拒绝。开启后可以使用，并按统一的形式比较（域名转成 punycode，名字规范化并忽略大小写），所以仍然不会重复。给这类邮箱发信需要支持 SMTPUTF8 的邮件中继。只有全站管理员能设。',
       'storage.assets':

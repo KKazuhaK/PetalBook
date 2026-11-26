@@ -91,6 +91,12 @@ var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/tenants/{tenant}/secrets":           {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"PUT /api/admin/tenants/{tenant}/secrets/{name}":    {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"DELETE /api/admin/tenants/{tenant}/secrets/{name}": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
+	// More than one address per account: accounts.multipleEmails, off by default.
+	"POST /api/account/emails":           {"403 feature_off", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"POST /api/account/emails/verify":    {"403 feature_off", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"POST /api/account/emails/primary":   {"403 feature_off", "403 feature_off", "403 feature_off", "403 token_scope"},
+	"DELETE /api/account/emails/{email}": {"403 feature_off", "403 feature_off", "403 feature_off", "403 token_scope"},
 }
 
 type routeAccessFx struct {

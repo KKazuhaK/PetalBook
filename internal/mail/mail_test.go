@@ -235,16 +235,18 @@ func TestRenderAndPickLang(t *testing.T) {
 		t.Fatal("PickLang")
 	}
 	for _, lang := range mail.Langs {
-		for _, k := range []string{mail.KindVerify, mail.KindRegister, mail.KindRegisterDup, mail.KindReset, mail.KindResetSSO, mail.KindEmailChanged, mail.KindInvite, mail.KindTest} {
+		for _, k := range []string{mail.KindVerify, mail.KindRegister, mail.KindRegisterDup, mail.KindReset, mail.KindResetSSO, mail.KindEmailChanged, mail.KindEmailAdded, mail.KindEmailRemoved, mail.KindEmailPrimary, mail.KindInvite, mail.KindTest} {
 			m := mail.Render(k, lang, mail.Vars{Site: "notes.example.test", Username: "tang", Email: "t@example.test", Link: "https://notes.example.test/x#tok", Provider: "Okta", Hours: 24})
 			if m.Subject == "" || m.Text == "" || !strings.Contains(m.HTML, "<p>") {
 				t.Fatal(k, lang)
 			}
 		}
 	}
-	m := mail.Render(mail.KindEmailChanged, "en", mail.Vars{Site: "x", Link: "https://x/y#t"})
-	if strings.Contains(m.Text, "https://") {
-		t.Fatal("the change note must have no link")
+	for _, k := range []string{mail.KindEmailChanged, mail.KindEmailAdded, mail.KindEmailRemoved, mail.KindEmailPrimary} {
+		m := mail.Render(k, "en", mail.Vars{Site: "x", Email: "t@example.test", Link: "https://x/y#t"})
+		if strings.Contains(m.Text, "https://") {
+			t.Fatal("a note about the addresses must have no link:", k)
+		}
 	}
 	h := mail.Render(mail.KindRegister, "en", mail.Vars{Username: "<b>x</b>", Link: "https://x/y#t&z"})
 	if strings.Contains(h.HTML, "<b>x</b>") {

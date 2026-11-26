@@ -99,7 +99,22 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 			s.refundIP(ip)
 		}
 	}()
+	// An address (it has an @) finds the account that holds it verified, its
+	// primary or, while the tenant's accounts.multipleEmails is on, another of
+	// its addresses; the failures then count against the account's username,
+	// so an address and the username share one count. An address that finds
+	// nobody counts as typed, and is answered as a wrong username is.
+	var byEmail *store.User
 	ukey := userKey(p.Username)
+	if strings.Contains(p.Username, "@") && len(p.Username) <= 254 && (store.EmailIsASCII(p.Username) || s.nonASCIIEmail(ctx)) {
+		switch u, _, err := s.userBySignInEmail(ctx, strings.TrimSpace(p.Username)); {
+		case err == nil:
+			byEmail = u
+			ukey = userKey(u.Username)
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, err
+		}
+	}
 	pkey := pairKey(ip, ukey)
 	if st.Lockout.Enabled {
 		key, table := "", (*ratelimit.Lockout)(nil)
@@ -121,7 +136,14 @@ func (s *Service) Login(ctx context.Context, p LoginParams) (*LoginResult, error
 	}
 	var u *store.User
 	hash := s.hasher.dummy
-	if un, err := NormalizeUsername(p.Username); err == nil {
+	if byEmail != nil {
+		u = byEmail
+		if h, err := store.GetPasswordHash(ctx, s.st.Q(), u.ID); err == nil {
+			hash = h
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+	} else if un, err := NormalizeUsername(p.Username); err == nil {
 		switch row, err := store.GetUserByUsername(ctx, s.st.Q(), un); {
 		case err == nil:
 			u = row

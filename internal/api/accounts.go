@@ -356,13 +356,19 @@ func (s *server) getAccount(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	emails, err := s.auth.Emails(c.r.Context(), c.user())
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
 	writeJSON(c.w, http.StatusOK, struct {
 		User        userResp      `json:"user"`
 		HasPassword bool          `json:"hasPassword"`
 		Identities  []ident       `json:"identities"`
 		Passkeys    []passkeyResp `json:"passkeys"`
 		Groups      []groupRef    `json:"groups"`
-	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys), toGroupRefs(groups)})
+		Emails      []emailResp   `json:"emails"`
+	}{s.toUser(v.User), v.HasPassword, ids, toPasskeys(v.Passkeys), toGroupRefs(groups), toEmails(emails)})
 }
 
 func (s *server) patchAccount(c *call) {
@@ -514,9 +520,19 @@ func (s *server) getUser(c *call) {
 		s.fail(c.w, err)
 		return
 	}
+	emails, err := s.auth.Emails(c.r.Context(), e.User)
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	// One person's page: their addresses, read-only (the lists have none).
+	type withEmails struct {
+		userEx
+		Emails []emailResp `json:"emails"`
+	}
 	writeJSON(c.w, http.StatusOK, struct {
-		User userEx `json:"user"`
-	}{s.userEx(e)})
+		User withEmails `json:"user"`
+	}{withEmails{s.userEx(e), toEmails(emails)}})
 }
 
 func (s *server) patchUser(c *call) {

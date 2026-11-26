@@ -97,6 +97,8 @@ export const apiErrorsZhCN: ApiErrorTexts = {
   email_domain_not_allowed: '这个邮箱的域名不在允许的范围内。',
   email_unverified: '这个邮箱还没有验证。',
   email_verified: '这个邮箱已经验证过了。',
+  email_limit: '一个账号最多 10 个邮箱。',
+  primary_email: '主邮箱不能删除；先把另一个邮箱设为主邮箱。',
   email_taken: '另一个账号已经在用这个邮箱。',
   email_not_ascii: '这个服务器不接受含非 ASCII 字符的邮箱。',
   terms_required: '请先同意服务条款。',

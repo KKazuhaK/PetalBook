@@ -107,10 +107,38 @@ function seedNotifications(server: ReturnType<typeof createMockServer>) {
     })
 }
 
+// MOCK_EMAILS=1 (accounts mode) starts with mail on, more than one address per account allowed, and the administrator
+// holding three addresses: a verified primary, a verified second one and one that waits for its link.
+function seedEmails(server: ReturnType<typeof createMockServer>) {
+  const login = server.handle(
+    'POST',
+    '/api/login',
+    JSON.stringify({ username: MOCK_ADMIN.username, password: MOCK_ADMIN.password }),
+    'application/json',
+    null,
+  )
+  const cookie = login.headers?.['Set-Cookie']?.split(';')[0] ?? null
+  const call = (method: string, path: string, body: unknown) =>
+    server.handle(method, path, JSON.stringify(body), 'application/json', cookie)
+  const confirm = (to: string) => {
+    const token = server.mail.outbox.filter((m) => m.to === to && m.kind === 'verify').at(-1)?.token
+    if (token) call('POST', '/api/email/confirm', { token })
+  }
+  call('PUT', '/api/admin/mail', { enabled: true, host: 'smtp.example.test', from: 'notes@example.test' })
+  call('PUT', '/api/admin/settings/accounts.multipleEmails', { value: true })
+  call('PATCH', '/api/account', { email: 'admin@example.com' })
+  call('POST', '/api/account/email/verify', {})
+  confirm('admin@example.com')
+  call('POST', '/api/account/emails', { email: 'kazuha.mo@university-of-a-long-name.example.edu' })
+  confirm('kazuha.mo@university-of-a-long-name.example.edu')
+  call('POST', '/api/account/emails', { email: 'personal@example.org' })
+}
+
 export function mockApi(): Plugin {
   const options = optionsFromEnv()
   const server = createMockServer(options)
   if (options.mode === 'accounts' && options.admin !== false) seedNotifications(server)
+  if (options.mode === 'accounts' && options.admin !== false && process.env.MOCK_EMAILS === '1') seedEmails(server)
   const delay = Number(process.env.MOCK_DELAY_MS ?? 0)
   return {
     name: 'petalbook-mock-api',

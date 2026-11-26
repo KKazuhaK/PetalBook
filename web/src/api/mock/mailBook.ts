@@ -8,7 +8,17 @@ import type { MailSecurity, MailSettings, RegisterInfo, User } from '../types.ts
 
 export interface OutboxMessage {
   to: string
-  kind: 'verify' | 'register' | 'register_exists' | 'reset' | 'reset_sso' | 'email_changed' | 'test'
+  kind:
+    | 'verify'
+    | 'register'
+    | 'register_exists'
+    | 'reset'
+    | 'reset_sso'
+    | 'email_changed'
+    | 'email_added'
+    | 'email_removed'
+    | 'email_primary'
+    | 'test'
   // The link of the message (absent for a note with no link).
   link?: string
   token?: string
@@ -55,6 +65,8 @@ export interface MailBookOptions {
   // The effective rules of the default tenant (the mock has one world).
   rules: () => { open: boolean; domains: string[]; termsUrl: string; privacyUrl: string; perHour: number }
   record: (kind: string, o: { user?: string; detail?: Record<string, unknown> }) => void
+  // The account a verified address other than a primary signs in or resets (accounts.multipleEmails), if any.
+  byOtherAddress?: (login: string) => MailUser | undefined
 }
 
 interface Pending {
@@ -123,7 +135,9 @@ export function createMailBook(o: MailBookOptions) {
   }
   const link = (path: string, token: string) => `${(o.publicUrl ?? '').replace(/\/+$/, '')}${path}#${token}`
   const newToken = (kind: Token['kind'], userId: string, email: string, ttl: number): string => {
-    for (const [h, t] of tokens) if (t.userId === userId && t.kind === kind) tokens.delete(h)
+    // A verification link replaces the earlier links of its own address only (an account may have several).
+    for (const [h, t] of tokens)
+      if (t.userId === userId && t.kind === kind && (kind !== 'verify' || t.email === email)) tokens.delete(h)
     const raw = o.random(43)
     tokens.set(o.hash(raw), { kind, userId, email, expires: o.now() + ttl, used: false })
     return raw
@@ -323,14 +337,45 @@ export function createMailBook(o: MailBookOptions) {
     return { status: 202, body: { sent: true } }
   }
 
-  const confirmEmail = (body: Record<string, unknown>, apply: (id: string) => void): MockResponse => {
+  // `other` confirms an address that is not the account's primary one (accounts.multipleEmails); it throws when it
+  // cannot (the switch is off: a bad link; another account proved it first: 409 email_taken).
+  const confirmEmail = (
+    body: Record<string, unknown>,
+    apply: (id: string) => void,
+    other?: (id: string, email: string) => void,
+  ): MockResponse => {
     const f = find('verify', body.token)
     const u = f ? o.user(f.t.userId) : undefined
-    if (!f || !u || u.disabled || u.email !== f.t.email) return badLink()
+    if (!f || !u || u.disabled) return badLink()
+    const primary = u.email === f.t.email
+    if (!primary && !other) return badLink()
+    if (primary) apply(u.id)
+    else other!(u.id, f.t.email)
     f.t.used = true
-    apply(u.id)
-    o.record('email_verified', { user: u.id, detail: { email: f.t.email } })
+    o.record('email_verified', { user: u.id, detail: { email: f.t.email, primary } })
     return { status: 204 }
+  }
+  // A verification link to an address of the account that is not its primary one, held to the address's cap.
+  const verifyOther = (u: MailUser, email: string): MockResponse => {
+    if (!ready()) err(409, 'mail_not_configured', '没有启用发信')
+    if (!take(`to:${email.toLowerCase()}`, 3))
+      throw new HttpError(429, 'rate_limited', '发得太多了', { __retryAfter: 600 })
+    const raw = newToken('verify', u.id, email, 24 * HOUR)
+    post({ to: email, kind: 'verify', link: link('/verify-email', raw), token: raw })
+    return { status: 202, body: { sent: true } }
+  }
+  // A note with no link about one of the addresses, to each of `to` that has room under its cap.
+  const noteAddress = (kind: 'email_added' | 'email_removed' | 'email_primary', to: string[]) => {
+    const seen = new Set<string>()
+    for (const addr of to) {
+      const k = addr.toLowerCase()
+      if (addr === '' || seen.has(k) || !ready()) continue
+      seen.add(k)
+      if (take(`to:${k}`, 3)) post({ to: addr, kind })
+    }
+  }
+  const dropTokensTo = (userId: string, email: string) => {
+    for (const [h, t] of tokens) if (t.userId === userId && t.email === email) tokens.delete(h)
   }
 
   const forgot = (body: Record<string, unknown>): MockResponse => {
@@ -344,11 +389,14 @@ export function createMailBook(o: MailBookOptions) {
     const login = typeof body.login === 'string' ? body.login.trim() : ''
     if (login === '' || login.length > 254) bad('login 是用户名或邮箱')
     const all = [...o.users()].filter((u) => !u.disabled && u.emailVerified && u.email !== '')
-    const accounts = (
+    let accounts = (
       login.includes('@')
         ? all.filter((u) => u.email.toLowerCase() === login.toLowerCase())
         : all.filter((u) => u.username === login.toLowerCase())
     ).slice(0, 5)
+    // Another verified address of an account: the mail goes to that address.
+    const other = accounts.length === 0 && login.includes('@') ? o.byOtherAddress?.(login) : undefined
+    if (other && !other.disabled) accounts = [{ ...other, email: login.trim() }]
     const ok = { status: 202, body: { sent: true } }
     if (accounts.length === 0 || !take(`to:${accounts[0].email.toLowerCase()}`, 3)) return ok
     const links = accounts.filter(canUsePassword)
@@ -417,6 +465,9 @@ export function createMailBook(o: MailBookOptions) {
     registerConfirm,
     requestVerify,
     confirmEmail,
+    verifyOther,
+    noteAddress,
+    dropTokensTo,
     forgot,
     resetCheck,
     reset,

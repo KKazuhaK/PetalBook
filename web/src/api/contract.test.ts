@@ -563,6 +563,38 @@ function suite(target: Target) {
           expect((await call(a.browser, 'PATCH', '/api/account', { email: addr.toUpperCase() })).status).toBe(200)
         })
 
+        it('more than one address is off by default (403 feature_off); on, the primary is never removed and a link needs mail', async () => {
+          const m = await newMember(uniq('mx'))
+          const addr = `${uniq('mxp')}@example.com`
+          expect((await call(m.browser, 'PATCH', '/api/account', { email: addr })).status).toBe(200)
+          const acc = await call(m.browser, 'GET', '/api/account')
+          expect(acc.json.emails).toEqual([
+            { email: addr, primary: true, verified: false, created: expect.any(String) },
+          ])
+          expect((await call(m.browser, 'GET', '/api/settings')).json.features['accounts.multipleEmails']).toBe(false)
+          const off = await call(m.browser, 'POST', '/api/account/emails', { email: `${uniq('mxt')}@example.com` })
+          expect([off.status, off.json.error, off.json.feature]).toEqual([
+            403,
+            'feature_off',
+            'accounts.multipleEmails',
+          ])
+          expect(
+            (await call(admin, 'PUT', '/api/admin/settings/accounts.multipleEmails', { value: true })).status,
+          ).toBe(200)
+          try {
+            const add = await call(m.browser, 'POST', '/api/account/emails', { email: `${uniq('mxt')}@example.com` })
+            expect([add.status, add.json.error]).toEqual([409, 'mail_not_configured'])
+            const primary = await call(m.browser, 'DELETE', `/api/account/emails/${encodeURIComponent(addr)}`)
+            expect([primary.status, primary.json.error]).toEqual([409, 'primary_email'])
+            const none = await call(m.browser, 'POST', '/api/account/emails/primary', { email: 'nobody@example.com' })
+            expect([none.status, none.json.error]).toEqual([404, 'not_found'])
+            const same = await call(m.browser, 'POST', '/api/account/emails/primary', { email: addr })
+            expect([same.status, same.json.user.email]).toEqual([200, addr])
+          } finally {
+            await call(admin, 'PUT', '/api/admin/settings/accounts.multipleEmails', { value: false })
+          }
+        })
+
         it('changing the password: wrong current is 403 forbidden, a short new one 400, the right one 204 and ends the other sessions', async () => {
           const m = await newMember(uniq('pw'))
           const other = browser()

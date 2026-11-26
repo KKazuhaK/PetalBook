@@ -42,6 +42,14 @@ const (
 	// such an address is refused (400 email_not_ascii); on, it is compared in
 	// store.EmailKey form. Mail to one needs a relay with SMTPUTF8.
 	UsersEmailNonASCII = "users.emailNonAscii"
+	// AccountsMultipleEmails is whether a person may have more than one address
+	// on their account (3.6): add one (it counts once its link is followed),
+	// make a verified one primary, remove one that is not. Off by default; the
+	// site allows, restricts or locks it and a tenant decides inside. Off
+	// again, the extra addresses are kept but neither shown nor used to sign
+	// in. A feature: the routes that add, verify, make primary and remove
+	// another address belong to it.
+	AccountsMultipleEmails = "accounts.multipleEmails"
 
 	// StorageAssets is where the attachments of a new space on a provider go:
 	// "space" (its own repository) or "repository" (<name>-assets). Site and
@@ -187,6 +195,7 @@ func Definitions() []*Def {
 			ServerWide: "the room all exports take together on the server's disk"},
 		{Key: UsersEmailNonASCII, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow},
 			ServerWide: "addresses are unique on the whole server"},
+		{Key: AccountsMultipleEmails, Kind: Bool, Layers: []Layer{Site, Tenant}, Default: false, Lower: Lower{Mode: Allow}},
 		{Key: UsersReuseUsernames, Kind: Choice, Layers: []Layer{Site}, Default: "after_purge", Choices: []string{"after_purge", "never"}, Lower: Lower{Mode: Allow},
 			ServerWide: "usernames are unique on the whole server"},
 		// What one person may use. Only the number of spaces is refused (0 is no

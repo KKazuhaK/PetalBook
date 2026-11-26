@@ -17,6 +17,8 @@ import { tt } from '@/i18n/tenants'
 import { adminKindOf, isAdminAccount } from '@/lib/access'
 import { OwnLimits } from '../OwnLimits'
 import { ChangePersonEmailDialog, EditPersonDialog, isManaged } from './PersonEditDialogs'
+import { EmailList } from '@/components/settings/EmailsSection'
+import { tm } from '@/i18n/mail'
 import type { UserPatch } from './useUserChange'
 
 // What an administrator may change about who a person is: their address, their role and their own limits.
@@ -57,6 +59,12 @@ export function PersonProfile({
             )}
           </dd>
         </dl>
+        {u.emails && u.emails.length > 1 && (
+          <div className="grid min-w-0 gap-2" data-slot="person-emails">
+            <h3 className="text-sm font-medium">{tm.emails.title}</h3>
+            <EmailList emails={u.emails} />
+          </div>
+        )}
         {canEdit && (
           <div>
             <Button type="button" variant="outline" className="h-10" disabled={busy} onClick={() => setEditing(true)}>

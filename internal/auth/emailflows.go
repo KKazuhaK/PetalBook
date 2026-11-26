@@ -521,27 +521,39 @@ func (s *Service) ConfirmEmail(ctx context.Context, token, ip string) error {
 		return err
 	}
 	u, err := store.GetUser(ctx, s.st.Q(), store.AllTenants(), t.UserID)
-	if errors.Is(err, store.ErrNotFound) || err == nil && (u.Disabled || s.st.TenantDisabled(u.TenantID) || u.Email != t.Email || !s.mailable(ctx, t.Email) || !ctEqual(t.Hash, hash)) {
+	if errors.Is(err, store.ErrNotFound) || err == nil && (u.Disabled || s.st.TenantDisabled(u.TenantID) || !s.mailable(ctx, t.Email) || !ctEqual(t.Hash, hash)) {
 		return errBadLink()
 	} else if err != nil {
 		return err
 	}
-	err = s.st.Tx(ctx, func(q store.Q) error {
-		if ok, err := store.UseEmailToken(ctx, q, hash, s.now()); err != nil {
-			return err
-		} else if !ok {
-			return errBadLink()
+	primary := u.Email == t.Email
+	if primary {
+		err = s.st.Tx(ctx, func(q store.Q) error {
+			if ok, err := store.UseEmailToken(ctx, q, hash, s.now()); err != nil {
+				return err
+			} else if !ok {
+				return errBadLink()
+			}
+			return store.SetEmailRowVerified(ctx, q, u.ID, t.Email, true, "")
+		})
+	} else {
+		// Another address of the account (accounts.multipleEmails), or one it
+		// claimed from an account that held it unverified.
+		var released *store.Released
+		if released, err = s.confirmOtherEmail(ctx, *u, *t, hash); err == nil && released != nil {
+			defer s.emailReleased(ctx, *released, *u)
 		}
-		return store.SetEmailRowVerified(ctx, q, u.ID, t.Email, true, "")
-	})
+	}
 	if err != nil {
 		return err
 	}
 	s.refundIP(ip)
 	s.dropUser(u.ID)
-	u.EmailVerified = true
-	s.cfg.Spaces.UserChanged(ctx, *u)
-	s.Audit(AuditEvent{Kind: "email_verified", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": t.Email}})
+	if primary {
+		u.EmailVerified = true
+		s.cfg.Spaces.UserChanged(ctx, *u)
+	}
+	s.Audit(AuditEvent{Kind: "email_verified", Actor: u.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"email": t.Email, "primary": primary}})
 	return nil
 }
 
@@ -591,11 +603,12 @@ func (s *Service) Forgot(ctx context.Context, p ForgotParams) error {
 	var accounts []store.User
 	if strings.Contains(login, "@") {
 		// By a verified address of an account, on the whole server (an
-		// address belongs to one account); the mail goes to that address as
-		// stored. An address outside ASCII finds nobody while the site does
+		// address belongs to one account; one that is not the primary while
+		// the tenant's accounts.multipleEmails is on); the mail goes to that
+		// address as stored. An address outside ASCII finds nobody while the site does
 		// not accept them.
 		if store.EmailIsASCII(login) || s.nonASCIIEmail(ctx) {
-			u, row, err := store.UserByVerifiedEmail(ctx, s.st.Q(), login)
+			u, row, err := s.userBySignInEmail(ctx, login)
 			switch {
 			case err == nil:
 				if !u.Disabled && !s.st.TenantDisabled(u.TenantID) && s.rowMailable(ctx, *row) {
@@ -735,10 +748,19 @@ func (s *Service) findReset(ctx context.Context, token string) (*store.EmailToke
 	} else if err != nil {
 		return nil, nil, err
 	}
-	// The link is for the address it was sent to: once the address changes it
-	// is no good, however the change was made.
-	if u.Disabled || s.st.TenantDisabled(u.TenantID) || t.Email != u.Email {
+	// The link is for the address it was sent to: once the account no longer
+	// signs in by that address (it was changed or removed, or it is not the
+	// primary and the switch is off) it is no good, however that came about.
+	if u.Disabled || s.st.TenantDisabled(u.TenantID) {
 		return nil, nil, errBadLink()
+	}
+	if t.Email != u.Email {
+		owner, _, err := s.userBySignInEmail(ctx, t.Email)
+		if errors.Is(err, store.ErrNotFound) || err == nil && owner.ID != u.ID {
+			return nil, nil, errBadLink()
+		} else if err != nil {
+			return nil, nil, err
+		}
 	}
 	if ok, err := s.canUsePassword(ctx, s.st.Q(), *u); err != nil {
 		return nil, nil, err

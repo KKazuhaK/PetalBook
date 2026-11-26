@@ -828,9 +828,14 @@ Accounts mode, signed in.
   "user": {…},
   "hasPassword": true,
   "identities": [{"id": "01JD3M2A4C", "provider": "Company SSO", "providerSlug": "company", "kind": "oidc", "label": "kazuha@example.com", "created": "2026-11-21T08:30:00Z"}],
-  "passkeys": [{"id": "01JD3N7X2B", "name": "MacBook", "created": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "synced": true}]
+  "passkeys": [{"id": "01JD3N7X2B", "name": "MacBook", "created": "2026-11-21T08:30:00Z", "lastUsed": "2026-11-22T09:10:00Z", "synced": true}],
+  "emails": [{"email": "kazuha@example.com", "primary": true, "verified": true, "created": "2026-11-21T08:30:00Z"}]
 }
 ```
+
+`emails` are the account's addresses, the primary first (see "More than one
+email address"): its primary alone while the tenant's
+`accounts.multipleEmails` is off.
 
 `label` is the `email` or `preferred_username` claim (for SAML the mapped email
 or the `NameID`; for GitHub the login name) seen when the identity was attached,
@@ -944,8 +949,10 @@ activity, written at most every few minutes).
 
 ### `GET /api/users/{id}`
 
-`{"user": {…}}` as one row of the list has it. `404 not_found` for a person who
-does not exist, is deleted, or is of another tenant than a tenant administrator's.
+`{"user": {…}}` as one row of the list has it, with `emails`, the person's
+addresses as `GET /api/account` shows them (read-only here). `404 not_found`
+for a person who does not exist, is deleted, or is of another tenant than a
+tenant administrator's.
 
 ### `GET /api/users/{id}/memberships`
 
@@ -6585,8 +6592,8 @@ tenants.
 ### Features
 
 A **feature** is a whole thing a tenant may or may not have: a boolean setting
-named `features.*` (and `mail.ownSender`), on unless a rule, a plan or the
-tenant says otherwise (see "Settings by layer"). Every route of the API says in
+named `features.*` (and `mail.ownSender` and `accounts.multipleEmails`, which
+are off by default), on unless a rule, a plan or the tenant says otherwise (see "Settings by layer"). Every route of the API says in
 the server's route table which feature it belongs to, or that it belongs to
 none, and one check answers for all of them: **while the caller's tenant does
 not have the feature, the route is `403 feature_off` before its handler runs**
@@ -6610,6 +6617,9 @@ not have the feature, the route is `403 feature_off` before its handler runs**
   (`features.tokens`); `GET`/`POST /api/oauth/consent` (`features.mcp`);
   `GET /api/sync/heads`, `…/sync/catalog`, `…/changes`, `…/sync/pages`
   (`features.offline`); `POST /api/admin/tenants` (`features.tenancy`);
+  `POST /api/account/emails`, `…/emails/verify`, `…/emails/primary` and
+  `DELETE /api/account/emails/{email}` (`accounts.multipleEmails`, a feature
+  that is off by default);
   `POST`/`DELETE /api/admin/spaces/{space}/view` (`features.adminView`, through
   its key). Checks that depend on more than the switch stay where they are: a
   token or an OAuth access token is refused with `tokens_off` or `404` at `/mcp`
@@ -7014,6 +7024,60 @@ Any change of an account's `email` (the person's `PATCH /api/account`, an
 administrator's `PATCH /api/users/{id}`) makes every verification and reset
 link sent before it unusable; a reset link also answers `404 not_found` once
 the account's `email` is no longer the one it was sent to.
+
+#### More than one email address
+
+Behind the layered setting `accounts.multipleEmails` (a feature, off by
+default: the site allows, restricts or locks it, and a tenant decides inside).
+While it is on, a person may have up to 10 addresses on their account. One is
+the **primary**: the UPN, shown as the account's `email`, where notices go.
+Every address is unique on the server (the key of "Signing in by email
+address"), and the rule of who holds an address applies to each.
+
+- **Add, then confirm.** `POST /api/account/emails` with
+  `{"email": "…", "lang": "zh-Hans"}` sends the address a verification link
+  (`/verify-email#<token>`, 24 hours) and the primary a note with no link.
+  `202 {"sent": true}`. An address nobody has becomes an unverified address of
+  the account at once; it counts (signs in, resets, meets a domain
+  requirement) only once its link is followed (`POST /api/email/confirm`). An
+  address another account holds unverified (or only a tenant administrator
+  marked) is not shown until it is proved: the link then moves it to this
+  account (that account is told, as `email_released`). Whoever proves an
+  address first has it; a later link is `409 email_taken`. `409 email_taken`
+  for an address another account holds verified, or a deleted account keeps;
+  `409 exists` for one already on the account; `409 email_limit` at 10
+  addresses; `400 invalid`, `400 email_not_ascii`, `409 mail_not_configured`;
+  `429 rate_limited` by the mail caps (3 messages an hour to an address, 5 an
+  hour from one caller).
+- **Verify again.** `POST /api/account/emails/verify` with `{"email", "lang"}`
+  sends a new link (the earlier link of that address stops working; links of
+  the account's other addresses keep working). `202`. The primary is
+  `POST /api/account/email/verify`'s. `409 email_verified` when the person
+  holds the address already; `404 not_found` for an address the account does
+  not have; the same caps.
+- **Make primary.** `POST /api/account/emails/primary` with `{"email"}`:
+  `200 {"user": {…}}`. Only an address the person holds verified (not one only
+  a tenant administrator marked): `409 email_unverified` otherwise. The old
+  primary stays as another address. The new and the old primary are told.
+- **Remove.** `DELETE /api/account/emails/{email}`: `204`, with the links sent
+  to it. Never the primary: `409 primary_email` (make another primary first).
+  The primary is told, and the removed address when it was verified.
+- Every add, confirmation, primary change and removal is audited:
+  `email_added`, `email_verified` (with `primary`), `email_primary_changed`
+  (with `old`), `email_removed`. The notes have no link and are held to the
+  cap of the address they go to, not the caller's; one over the cap is left
+  out.
+- **Signing in and resetting** take any address the account holds verified,
+  the primary or another (`POST /api/login`'s `username` may be an address;
+  `POST /api/password/forgot`'s `login`). A reset link sent to an address
+  stops working once the account no longer signs in by it.
+- **An organisation's domain requirement** is met by any address the account
+  holds verified in one of its domains (or below one), not only the primary.
+- **Off** (the default, or turned off later): the account has its primary
+  address only, as before. Addresses added while it was on are kept, but not
+  shown (`GET /api/account`, `GET /api/users/{id}`), not used to sign in or
+  reset, and their links do not confirm them; the four routes above answer
+  `403 feature_off`. Turned on again, they are back as they were.
 
 #### Email addresses are ASCII
 
@@ -9552,9 +9616,10 @@ From 3.6 the email address is the main way in; the username stays.
   (account, address, key, primary, verified, who vouched, created) with a
   unique index on the key, so finding an account by address is one index
   lookup. There are no exceptions: two accounts never share an address. An
-  account has one address today, its primary one (the UPN), copied to
-  `users.email` so that lists and search need no join; the shape allows
-  several, and **signing in or resetting by address reads a verified row of
+  account has one address, its primary one (the UPN), copied to
+  `users.email` so that lists and search need no join, or several while its
+  tenant's `accounts.multipleEmails` is on (see "More than one email
+  address"); **signing in or resetting by address reads a verified row of
   `user_emails`**, never `users.email`.
 - **How addresses are compared** (the key): the domain in its ASCII form
   (lower case; a domain outside ASCII, or one with an `xn--` label, through

@@ -881,6 +881,15 @@ export const api = {
     markSignedIn()
     return r
   },
+  // More than one address (accounts.multipleEmails): add one (a link is sent to it), send its link again, make a
+  // verified one primary, remove one that is not.
+  addEmail: (email: string, lang?: string) =>
+    request<{ sent: boolean }>('/account/emails', { method: 'POST', body: lang ? { email, lang } : { email } }),
+  resendEmailVerify: (email: string, lang?: string) =>
+    request<{ sent: boolean }>('/account/emails/verify', { method: 'POST', body: lang ? { email, lang } : { email } }),
+  makePrimaryEmail: (email: string) =>
+    request<{ user: User }>('/account/emails/primary', { method: 'POST', body: { email } }),
+  removeEmail: (email: string) => request<void>(`/account/emails/${enc(email)}`, { method: 'DELETE' }),
   requestEmailVerify: (lang?: string) =>
     request<{ sent: boolean }>('/account/email/verify', { method: 'POST', body: lang ? { lang } : {} }),
   confirmEmail: (token: string) => request<void>('/email/confirm', { method: 'POST', body: { token } }),

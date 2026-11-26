@@ -6,6 +6,7 @@ import (
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/mail"
+	"petalbook.app/server/internal/settings"
 	"petalbook.app/server/internal/store"
 )
 
@@ -22,6 +23,11 @@ var mailRoutes = []route{
 	{"POST", "/api/register/confirm", public.always(), true, false, false, (*server).registerConfirm},
 
 	{"POST", "/api/account/email/verify", signedIn.always(), true, false, false, (*server).accountEmailVerify},
+	// More than one address (accounts.multipleEmails): the list is GET /api/account's.
+	{"POST", "/api/account/emails", signedIn.on(settings.AccountsMultipleEmails), true, false, false, (*server).accountEmailAdd},
+	{"POST", "/api/account/emails/verify", signedIn.on(settings.AccountsMultipleEmails), true, false, false, (*server).accountEmailResend},
+	{"POST", "/api/account/emails/primary", signedIn.on(settings.AccountsMultipleEmails), true, false, false, (*server).accountEmailPrimary},
+	{"DELETE", "/api/account/emails/{email}", signedIn.on(settings.AccountsMultipleEmails), true, false, false, (*server).accountEmailRemove},
 	{"POST", "/api/email/confirm", public.always(), true, false, false, (*server).emailConfirm},
 
 	{"POST", "/api/password/forgot", public.always(), true, false, false, (*server).passwordForgot},
@@ -234,6 +240,78 @@ func (s *server) accountEmailVerify(c *call) {
 		return
 	}
 	writeJSON(c.w, http.StatusAccepted, map[string]bool{"sent": true})
+}
+
+// emailReq is the body of the routes about one of the person's addresses.
+type emailReq struct {
+	Email string `json:"email"`
+	Lang  string `json:"lang"`
+}
+
+// emailResp is one address of an account as the API shows it (docs/api.md,
+// "More than one email address"). MarkedByAdmin: verified by a tenant
+// administrator's mark alone, which the person may still confirm.
+type emailResp struct {
+	Email         string `json:"email"`
+	Primary       bool   `json:"primary"`
+	Verified      bool   `json:"verified"`
+	MarkedByAdmin bool   `json:"markedByAdmin,omitempty"`
+	Created       string `json:"created"`
+}
+
+func toEmails(rows []store.EmailRow) []emailResp {
+	out := make([]emailResp, len(rows))
+	for i, r := range rows {
+		out[i] = emailResp{r.Email, r.Primary, r.Verified, r.Verified && r.VerifiedBy == store.VerifiedByTenantAdmin, rfc3339(r.Created)}
+	}
+	return out
+}
+
+func (s *server) accountEmailAdd(c *call) {
+	var req emailReq
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	if err := s.auth.AddEmail(c.r.Context(), c.user(), req.Email, langOf(c, req.Lang), s.auth.ClientAddr(c.r)); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusAccepted, map[string]bool{"sent": true})
+}
+
+func (s *server) accountEmailResend(c *call) {
+	var req emailReq
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	if err := s.auth.ResendEmailVerify(c.r.Context(), c.user(), req.Email, langOf(c, req.Lang), s.auth.ClientAddr(c.r)); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusAccepted, map[string]bool{"sent": true})
+}
+
+func (s *server) accountEmailPrimary(c *call) {
+	var req emailReq
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	u, err := s.auth.MakePrimaryEmail(c.r.Context(), c.user(), req.Email, langOf(c, req.Lang), s.auth.ClientAddr(c.r))
+	if err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	writeJSON(c.w, http.StatusOK, struct {
+		User userResp `json:"user"`
+	}{s.toUser(*u)})
+}
+
+func (s *server) accountEmailRemove(c *call) {
+	if err := s.auth.RemoveEmail(c.r.Context(), c.user(), c.r.PathValue("email"), langOf(c, ""), s.auth.ClientAddr(c.r)); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	c.w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) emailConfirm(c *call) {
