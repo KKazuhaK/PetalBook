@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Save } from 'lucide-react'
 import { toast } from 'sonner'
-import { useSaveAdminStorage, useStoragePolicy } from '@/api/admin'
+import { useSaveAdminStorage, useSiteSettings, useStoragePolicy } from '@/api/admin'
+import { K } from '@/api/settingsFold'
 import { useConnections } from '@/api/hooks'
 import { ApiError } from '@/api/client'
 import type { AdminStorage, PutAdminStorage } from '@/api/types'
@@ -14,6 +15,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { absoluteTime } from '@/lib/time'
+import { SiteRow } from './SettingsPanel'
 import { t } from '@/i18n'
 import { ts } from '@/i18n/storage'
 
@@ -81,6 +83,26 @@ function explain(e: unknown): string {
   if (!(e instanceof ApiError)) return ts.admin.errors.failed
   const known = ts.admin.errors.codes as Record<string, string>
   return Object.hasOwn(known, e.code) ? known[e.code] : e.message || ts.admin.errors.failed
+}
+
+// Whether spaces on their own storage are exempt from the site's rule for where attachments go: a layered setting
+// like any other, so it keeps its own value and rule (allow, restrict, lock) and its own save, apart from this form.
+function OwnExemptRow() {
+  const q = useSiteSettings()
+  const s = q.data?.settings.find((x) => x.key === K.assetsOwnExempt)
+  if (!s) return null
+  const a = ts.admin.assets
+  return (
+    <ul className="divide-y overflow-hidden rounded-lg border">
+      <SiteRow
+        key={JSON.stringify(s.site)}
+        s={s}
+        title={a.ownExemptTitle}
+        help={a.ownExemptHelp}
+        label={a.ownExemptLabel}
+      />
+    </ul>
+  )
 }
 
 function StorageForm({
@@ -338,6 +360,7 @@ function StorageForm({
             />
           </SettingsRow>
         </SettingsRows>
+        <OwnExemptRow />
       </SettingsSection>
 
       <FormMessage focusRef={messageRef}>{error}</FormMessage>

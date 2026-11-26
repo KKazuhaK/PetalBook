@@ -40,6 +40,18 @@ SQLite，设置 `PETALBOOK_DATABASE` 可以换成 PostgreSQL。`petalbook serve 
 ./petalbook serve --data ~/petalbook-data --public-url https://notes.example.com
 ```
 
+**第一次启动的预设 / First-start profile.** `--profile cn` 只在状态库为空（第一次启动）时写入一组更严格的站点默认值：
+对外共享（API 令牌、MCP 等让内容离开组织的功能）默认关闭，GitHub 保持开启（国内可访问，只是慢）。
+这些只是普通的站点默认值，管理员之后可以逐项修改；之后不能切换预设，状态库已建好时同样的 `--profile` 只记一行日志，不同的会被拒绝。
+`--profile cn` writes a stricter set of site defaults once, when the state database is empty (the first start):
+sharing that lets content leave the organisation (API tokens, MCP) is off by default, and GitHub stays on (reachable
+from China, only slow). They are ordinary site values that administrators can change one by one; profiles cannot be
+switched later: on a database that is already set up the same `--profile` is ignored with a log line, a different one is refused.
+
+```bash
+./petalbook serve --data ~/petalbook-data --public-url https://notes.example.com --profile cn
+```
+
 **PostgreSQL.** 给 PetalBook 单独建一个库，用内置的 `C.UTF-8` 区域（PostgreSQL 17 起），
 这样排序和大小写都不随操作系统的区域走，和 SQLite 一致；库的区域不是 C 时启动日志会警告
 （表里的文本列都声明了 `COLLATE "C"`，数据照样对，但别的地方会受区域影响）。
