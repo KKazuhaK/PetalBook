@@ -21,6 +21,19 @@ import (
 // check of a capability or a limit is a map read (internal/limits); what is
 // here runs when an administrator looks at or changes the sheet.
 
+// withSheet answers 503 for a handler of the limits sheet when the sheet could
+// not be read at start (s.limits is nil): nothing here can be told or changed
+// then, and every capability stays on.
+func withSheet(h func(*server, *call)) func(*server, *call) {
+	return func(s *server, c *call) {
+		if s.limits == nil {
+			writeError(c.w, http.StatusServiceUnavailable, "unavailable", "The limits sheet could not be read when the server started: restart it once the state database is reachable.")
+			return
+		}
+		h(s, c)
+	}
+}
+
 // MaxPlans is how many plans there may be.
 const MaxPlans = 100
 
@@ -281,6 +294,10 @@ func (s *server) auditBoundary(tenant string, a sheets.Applied) {
 	}
 	s.auth.Audit(auth.AuditEvent{Kind: "tenant_limit_changed", Tenant: tenant,
 		Detail: map[string]any{"tenant": tenant, "key": a.Key, "from": a.From, "to": a.To, "source": string(a.Source), "window": nil}})
+	// A limit that started or ended moves the line the totals are held to.
+	if d, _ := sheets.Lookup(a.Key); !d.Capability {
+		s.evaluateQuotas(s.bgCtx, []string{tenant})
+	}
 }
 
 // --- the site's defaults ----------------------------------------------------
@@ -304,6 +321,27 @@ func (s *server) siteDefaults() []capabilityDefResp {
 			Default: d.Default, Value: e.Value, Capability: d.Capability})
 	}
 	return out
+}
+
+func siteValueMap(es []sheets.Entry) map[string]any {
+	m := make(map[string]any, len(es))
+	for _, e := range es {
+		m[e.Key] = e.Value
+	}
+	return m
+}
+
+// evaluateQuotas looks again at the totals of tenants whose limits moved, so an
+// over-quota notice (and its audit row) does not wait for the next write.
+func (s *server) evaluateQuotas(ctx context.Context, tenants []string) {
+	if s.quota == nil || len(tenants) == 0 {
+		return
+	}
+	t := make([]store.Touched, len(tenants))
+	for i, id := range tenants {
+		t[i] = store.Touched{TenantID: id}
+	}
+	_ = s.quota.Evaluate(ctx, t)
 }
 
 func (s *server) adminGetCapabilities(c *call) {
@@ -334,6 +372,7 @@ func (s *server) adminPutCapabilities(c *call) {
 			changes[k] = ch.Value
 		}
 	}
+	before := siteValueMap(s.limits.SiteValues())
 	affected, err := s.limits.SetSite(c.r.Context(), changes)
 	var ve *sheets.ValueError
 	if errors.As(err, &ve) {
@@ -344,7 +383,13 @@ func (s *server) adminPutCapabilities(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.audit(c, auth.AuditEvent{Kind: "capabilities_default_changed", Actor: c.user().ID, Detail: map[string]any{"values": req.Values, "affected": affected}})
+	after := siteValueMap(s.limits.SiteValues())
+	from, to := map[string]any{}, map[string]any{}
+	for k := range req.Values {
+		from[k], to[k] = before[k], after[k]
+	}
+	s.audit(c, auth.AuditEvent{Kind: "capabilities_default_changed", Actor: c.user().ID, Detail: map[string]any{"values": req.Values, "from": from, "to": to, "affected": affected}})
+	s.evaluateQuotas(c.r.Context(), affected)
 	writeJSON(c.w, http.StatusOK, map[string]any{"affected": affected, "capabilities": s.siteDefaults()})
 }
 
@@ -497,6 +542,7 @@ func (s *server) adminPatchPlan(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "A plan's name is 1 to 80 characters and its description at most 500.")
 		return
 	}
+	planFrom, planTo := map[string]any{}, map[string]any{}
 	if req.Name != nil {
 		p.Name = name
 	}
@@ -507,6 +553,10 @@ func (s *server) adminPatchPlan(c *call) {
 		// The keys given are set; a key with null leaves the plan.
 		cur := map[string]json.RawMessage{}
 		_ = json.Unmarshal([]byte(p.Values), &cur)
+		old, _ := sheets.PlanValues(p.Values)
+		for k := range req.Values {
+			planFrom[k] = old[k]
+		}
 		for k, raw := range req.Values {
 			if string(bytes.TrimSpace(raw)) == "null" {
 				if _, known := sheets.Lookup(k); !known {
@@ -529,6 +579,10 @@ func (s *server) adminPatchPlan(c *call) {
 			return
 		}
 		p.Values = v
+		now, _ := sheets.PlanValues(v)
+		for k := range req.Values {
+			planTo[k] = now[k]
+		}
 	}
 	ctx := c.r.Context()
 	if err := store.UpdatePlan(ctx, s.opt.Store.Q(), *p); err != nil {
@@ -540,12 +594,8 @@ func (s *server) adminPatchPlan(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	s.audit(c, auth.AuditEvent{Kind: "plan_changed", Actor: c.user().ID, Detail: map[string]any{"plan": p.Slug, "values": req.Values, "affected": affected}})
-	if s.quota != nil && len(affected) > 0 {
-		for _, id := range affected {
-			_ = s.quota.Evaluate(ctx, []store.Touched{{TenantID: id}})
-		}
-	}
+	s.audit(c, auth.AuditEvent{Kind: "plan_changed", Actor: c.user().ID, Detail: map[string]any{"plan": p.Slug, "values": req.Values, "from": planFrom, "to": planTo, "affected": affected}})
+	s.evaluateQuotas(ctx, affected)
 	writeJSON(c.w, http.StatusOK, struct {
 		planResp
 		Affected []string `json:"affected"`
@@ -631,10 +681,8 @@ func (s *server) adminPutTenantPlan(c *call) {
 		Until *string `json:"until"`
 	}
 	list := make([]clearedResp, 0, len(cleared))
-	keys := make([]string, 0, len(cleared))
 	for _, x := range cleared {
 		list = append(list, clearedResp{x.Key, x.Value, optTime(x.From), optTime(x.Until)})
-		keys = append(keys, x.Key)
 	}
 	var from, to any
 	if before != nil {
@@ -643,7 +691,7 @@ func (s *server) adminPutTenantPlan(c *call) {
 	if plan != nil {
 		to = plan.Slug
 	}
-	s.audit(c, auth.AuditEvent{Kind: "tenant_plan_changed", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "from": from, "to": to, "cleared": keys}})
+	s.audit(c, auth.AuditEvent{Kind: "tenant_plan_changed", Actor: c.user().ID, Tenant: t.ID, Detail: map[string]any{"tenant": t.ID, "from": from, "to": to, "cleared": list}})
 	if s.quota != nil {
 		_ = s.quota.Evaluate(ctx, []store.Touched{{TenantID: t.ID}})
 	}

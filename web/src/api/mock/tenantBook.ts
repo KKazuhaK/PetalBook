@@ -430,7 +430,7 @@ export function createTenantBook(o: TenantBookOptions) {
       (d) => {
         const e = effectiveOf(tenant, d)
         if (d.key === 'storage.assets') {
-          const r = assetsRule()
+          const r = assetsRule(tenant)
           return { key: d.key, effective: r.default, allowed: r.allowed, locked: r.locked }
         }
         // Not the person's to change: a client only reads whether it may keep offline copies.
@@ -459,9 +459,9 @@ export function createTenantBook(o: TenantBookOptions) {
   const quotaOf = (id: string) => tenants.get(id)?.quota ?? { people: null, spaces: null, bytes: null, pages: null }
   // Where the attachments of a new space of the default tenant go, and what its owner may ask for (the server's
   // AssetsRule): the site's lock, the site's lock for the tenant, the site's value, the tenant's value, in that order.
-  const assetsRule = () => {
+  const assetsRule = (tenant: string) => {
     const d = DEFS.find((x) => x.key === 'storage.assets')!
-    const e = tenantView(DEFAULT_TENANT, d)
+    const e = tenantView(tenant, d)
     const sl = siteLower(d)
     const below =
       sl.mode === 'lock' || (e.tenant?.siteLocked && e.tenant.inEffect)
@@ -472,8 +472,8 @@ export function createTenantBook(o: TenantBookOptions) {
     let value = e.effective as string
     let allowed = choices.filter((c) => merged.mode === 'allow' || (merged.mode === 'restrict' && allows(merged, d, c)))
     // The limits sheet turns the attachment repository off (sync.assetsRepository): only the space is possible.
-    if (sheets.value(DEFAULT_TENANT, 'sync.assetsRepository') === false) {
-      return { default: 'space', allowed: ['space'], locked: merged.mode === 'lock' }
+    if (sheets.value(tenant, 'sync.assetsRepository') === false) {
+      return { default: 'space', allowed: ['space'], locked: false }
     }
     if (merged.mode === 'lock') allowed = [value]
     else if (!allowed.includes(value)) value = allowed[0]

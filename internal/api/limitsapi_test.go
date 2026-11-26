@@ -164,6 +164,25 @@ func TestPlansAreSetsOfValuesAndAChangeOfPlanReplacesTheOverrides(t *testing.T) 
 				t.Fatalf("no %s row", kind)
 			}
 		}
+		// The rows carry what a value was and what it became.
+		d := f.root.audit(t, "plan_changed")[0]["detail"].(map[string]any)
+		from, to := d["from"].(map[string]any), d["to"].(map[string]any)
+		if from["other.people"] != float64(10) || to["other.people"] != float64(20) || from["signin.sso"] != false || to["signin.sso"] != nil {
+			t.Fatalf("plan_changed: %v", d)
+		}
+		rows := f.root.audit(t, "tenant_plan_changed")
+		var clearedRows []any
+		for _, row := range rows { // the row that gave the plan "team" is the one that cleared the overrides
+			if c, _ := row["detail"].(map[string]any)["cleared"].([]any); len(c) > 0 {
+				clearedRows = c
+			}
+		}
+		if len(clearedRows) != 2 {
+			t.Fatalf("tenant_plan_changed: %v", rows)
+		}
+		if c := clearedRows[0].(map[string]any); c["key"] != "other.people" || c["value"] != float64(99) {
+			t.Fatalf("the cleared override has no value: %v", c)
+		}
 	})
 }
 
@@ -186,8 +205,17 @@ func TestTheSiteDefaultsAreTheBottomOfEverySheet(t *testing.T) {
 		}
 		f.root.do("PUT", "/api/admin/capabilities", map[string]any{"values": map[string]any{"signin.idpAdmins": nil}}).want(t, 200, "")
 		a.auth.FlushAudit(context.Background())
-		if len(f.root.audit(t, "capabilities_default_changed")) != 2 {
+		rows := f.root.audit(t, "capabilities_default_changed")
+		if len(rows) != 2 {
 			t.Fatal("audit")
+		}
+		// Newest first: the second write took the value away, the first set it.
+		for i, want := range [][2]any{{true, false}, {false, true}} {
+			d := rows[i]["detail"].(map[string]any)
+			from, to := d["from"].(map[string]any), d["to"].(map[string]any)
+			if from["signin.idpAdmins"] != want[0] || to["signin.idpAdmins"] != want[1] {
+				t.Fatalf("row %d: %v", i, d)
+			}
 		}
 	})
 }

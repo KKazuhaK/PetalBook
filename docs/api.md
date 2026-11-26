@@ -8370,7 +8370,7 @@ a limit), the built-in `default` and the site's `value`. `PUT` takes
 `{"values": {"signin.idpAdmins": true}}` (only the keys that change; `null`
 goes back to the built-in default; no dates) and answers `200` with `affected`
 (the tenants whose effective set changed, sorted) and the registry again. It is
-audited (`capabilities_default_changed`). The confirmation rule below is not
+audited (`capabilities_default_changed`, with each key's value before and after). Tenants whose limits moved have their totals looked at again at once, so an over-quota notice does not wait. The confirmation rule below is not
 built yet: see "Confirmation" under "Plans".
 
 #### `GET /api/admin/tenants/{tenant}/capabilities`
@@ -8395,10 +8395,15 @@ Site administrators only (`403 forbidden` otherwise).
 `{"values": {"data.adminView": false, "storage.pinnedBytes": null}, "confirm": "c_…"}`;
 `null` removes the tenant's override.
 
-- **Confirmation: not built in 3.6 part 4.** `confirm` is accepted and not
-  asked for: the things it guards (tenant providers, domains, managed accounts,
-  storage targets) do not exist yet, so nothing can be in use. It comes with
-  them, and with `change_capabilities` in `POST /api/admin/confirm`.
+- **Confirmation: not built in 3.6 part 4 (a known gap).** `confirm` is
+  accepted and not asked for, and `change_capabilities` is not an action of
+  `POST /api/admin/confirm` yet. Two of the guarded cases do exist now, and
+  neither has the preview: turning off `sync.assetsRepository` while spaces of
+  the tenant have an attachment repository (they keep it and keep working; only
+  a new one is refused with `setting_restricted`, as at space creation), and turning off a `storage.modes` entry (no space records its mode
+  yet, so there is nothing to count). The rest (tenant providers, domains,
+  managed accounts, storage targets) do not exist yet. The preview and token come
+  with them.
 - A change that turns off something **in use** (a capability with stored items,
   a storage mode that spaces use, managed accounts that are on) needs a
   confirmation token: `POST /api/admin/confirm` (3.5) with
@@ -8452,7 +8457,9 @@ the effective settings that depend on a capability are computed again.
 ### The limits sheet
 
 Owner, 2026-11-23. Every tenant has one **limits sheet**, set by hand by site
-administrators. It holds the capabilities above (same keys) and these limits:
+administrators. It holds the capabilities above (same keys) and these limits.
+If the server could not read the sheet when it started, every capability stays
+on and the endpoints of the sheet and the plans answer `503 unavailable`.
 
 | Key | Kind | Site default | What it limits |
 |---|---|---|---|
@@ -8811,8 +8818,10 @@ a name that is already taken is not adopted (`409 name_taken`, or the fallback
 above under an unlocked default).
 
 When the tenant's limits table turns `sync.assetsRepository` off, only `space`
-is possible, whatever the layers say.
-
+is possible, whatever the layers say. That includes attaching a repository to an
+existing space (`PUT /api/spaces/{space}/remote/assets`): `409 setting_restricted`
+when the space has none; a space that already
+has one keeps it and may reconnect it.
 `storage.assets.ownStorageExempt` (site only, default `true`): when on, a tenant
 that stores on a target of its own (its own organisation or host connection,
 `storage.modes` `tenant`, 3.6) is not bound by the site's value or lock for
@@ -9753,10 +9762,10 @@ keeps it and the others' `email` is cleared, so the unique index can be made).
 | `joined_by_domain`, `joined_by_sso` | an account joined by (b) or (d) | `user`, `domain` or `provider`, `role` |
 | `role_from_idp` | `groups.admins` promoted or demoted a person, or skipped a demotion | `user`, `provider`, `from`, `to`, `skipped` |
 | `email_released` | an unverified address moved to the account that confirmed it | `user` (the one cleared), `to` |
-| `capabilities_default_changed` | the site's default capabilities changed | `values`, `affected` |
+| `capabilities_default_changed` | the site's default capabilities changed | `values`, `from` and `to` (each key's value before and after), `affected` |
 | `capability_changed` | a tenant's override set or removed | `tenant`, `key`, `from`, `to` |
-| `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `values`, `affected` |
-| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (overrides) |
+| `plan_created`, `plan_changed`, `plan_deleted` | a plan | `plan`, `values`, `affected`; `plan_changed` also `from` and `to` (each key's value before and after, `null` for none) |
+| `tenant_plan_changed` | a tenant's plan changed | `tenant`, `from`, `to`, `cleared` (the overrides, each `{key, value, from, until}`) |
 | `storage_target_changed` | a tenant's storage target made, changed or removed | `tenant`, `kind`, `owner` or `host` and `namespace`, secrets as `"changed"` |
 | `storage_repository_created` | a repository made at a tenant's target for a space | `space`, `repository` |
 | `space_storage_moved` | a space moved between modes or targets | `space`, `from`, `to`, `job` |
