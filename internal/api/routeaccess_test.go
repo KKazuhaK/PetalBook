@@ -63,6 +63,9 @@ var routeAccessAdded = map[string][4]string{
 	"GET /api/admin/permissions":              {"ok", "ok", "403 forbidden", "403 token_scope"},
 	"POST /api/admin/spaces/{space}/takeover": {"ok", "ok", "403 forbidden", "403 token_scope"},
 
+	// A temporary password for a person.
+	"POST /api/users/{id}/password": {"ok", "ok", "403 forbidden", "403 token_scope"},
+
 	// 3.6 part 4: the limits sheet. Reading is the tenant's administrators' too.
 	"GET /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},
 	"PUT /api/admin/capabilities":                  {"ok", "403 forbidden", "403 forbidden", "403 token_scope"},

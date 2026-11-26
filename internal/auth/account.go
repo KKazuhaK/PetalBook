@@ -68,10 +68,24 @@ func (s *Service) providerOf(issuer string) (name, slug, kind string) {
 	return issuer, "", ""
 }
 
-// UpdateProfile changes the signed-in user's name and email; a nil field is left alone.
-func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *string) (*store.User, error) {
+// UpdateProfile changes the signed-in user's name, username and email; a nil
+// field is left alone. A change is audited with what it replaced.
+func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, username, email *string, ip string) (*store.User, error) {
 	n, e := u.Name, u.Email
+	un := u.Username
 	var err error
+	if username != nil {
+		if un, err = NormalizeUsername(*username); err != nil {
+			return nil, err
+		}
+		if un != u.Username {
+			if barred, err := s.retiredName(ctx, s.st.Q(), un); err != nil {
+				return nil, err
+			} else if barred {
+				return nil, errf(Exists, "That username is taken.")
+			}
+		}
+	}
 	if name != nil {
 		if n, err = cleanDisplayName(*name); err != nil {
 			return nil, err
@@ -88,8 +102,35 @@ func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *
 	}
 	// Another account holding the address, verified or not, is 409
 	// email_taken: an address held unverified moves only to who proves it.
-	if err := store.UpdateProfile(ctx, s.st.Q(), u.ID, n, e, verified); err != nil {
-		return nil, emailErr(err)
+	err = s.st.Tx(ctx, func(q store.Q) error {
+		if err := store.UpdateProfile(ctx, q, u.ID, n, e, verified); err != nil {
+			return emailErr(err)
+		}
+		if un != u.Username {
+			if err := store.SetUsername(ctx, q, u.ID, un); store.IsUnique(err) {
+				return errf(Exists, "That username is taken.")
+			} else if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	old, changed := map[string]any{}, map[string]any{}
+	if n != u.Name {
+		old["name"], changed["name"] = u.Name, n
+	}
+	if un != u.Username {
+		old["username"], changed["username"] = u.Username, un
+	}
+	if e != u.Email {
+		old["email"], changed["email"] = u.Email, e
+	}
+	if len(changed) > 0 {
+		changed["old"] = old
+		s.Audit(AuditEvent{Kind: "user_changed", Actor: u.ID, User: u.ID, Username: un, IP: ip, Detail: changed})
 	}
 	if e != u.Email {
 		// A link sent to the old address neither confirms the new one nor resets the password.
@@ -98,7 +139,7 @@ func (s *Service) UpdateProfile(ctx context.Context, u store.User, name, email *
 		}
 	}
 	s.dropUser(u.ID)
-	u.Name, u.Email, u.EmailVerified = n, e, verified
+	u.Name, u.Username, u.Email, u.EmailVerified = n, un, e, verified
 	s.cfg.Spaces.UserChanged(ctx, u)
 	return &u, nil
 }
@@ -155,6 +196,13 @@ func (s *Service) ChangePassword(ctx context.Context, p *Principal, current *str
 	if err != nil {
 		return err
 	}
+	// Choosing a password of one's own ends the hold a temporary one put on this session.
+	if p.Held && p.HeldBy == HoldPassword {
+		if err := store.ReleaseSession(ctx, s.st.Q(), p.SessionID); err != nil {
+			return err
+		}
+		s.releaseHold(p.SessionID)
+	}
 	s.evictUser(p.User.ID, p.SessionID)
 	return nil
 }
@@ -207,6 +255,10 @@ func (s *Service) unlinkIdentity(ctx context.Context, userID, identityID, actor,
 
 // UserPatch is a change an administrator makes to another account.
 type UserPatch struct {
+	// Name and Username change how the person is shown and signs in. Both are
+	// the person's own to change as well; an administrator may too.
+	Name            *string
+	Username        *string
 	Role            *string
 	Disabled        *bool
 	PasskeyRequired *bool
@@ -251,6 +303,21 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		}
 		email = e
 	}
+	var name, username string
+	if patch.Name != nil {
+		n, err := cleanDisplayName(*patch.Name)
+		if err != nil {
+			return nil, err
+		}
+		name = n
+	}
+	if patch.Username != nil {
+		u, err := NormalizeUsername(*patch.Username)
+		if err != nil {
+			return nil, err
+		}
+		username = u
+	}
 	st := s.sec(ctx)
 	if patch.PasskeyRequired != nil && *patch.PasskeyRequired && !s.passkeysOn(st) {
 		return nil, coded(400, "passkey_unavailable", "Passkeys cannot be used here: they need a --public-url that is https, and passkeys switched on.")
@@ -259,6 +326,8 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 	defer s.adminMu.Unlock()
 	var out *store.User
 	changed := map[string]any{}
+	// old holds what each changed field was, for the audit row (never a password).
+	old := map[string]any{}
 	exemptChanged := false
 	err = s.st.Tx(ctx, func(q store.Q) error {
 		// A person of another tenant is no person at all.
@@ -277,6 +346,27 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		}
 		if patch.RemoteExempt != nil && !storage {
 			return errf(Forbidden, "Only a site administrator may exempt a person from the site's requirement of a remote.")
+		}
+		if patch.Name != nil && name != u.Name {
+			if err := store.UpdateProfile(ctx, q, u.ID, name, u.Email, u.EmailVerified); err != nil {
+				return err
+			}
+			old["name"], changed["name"] = u.Name, name
+			u.Name = name
+		}
+		if patch.Username != nil && username != u.Username {
+			if barred, err := s.retiredName(ctx, q, username); err != nil {
+				return err
+			} else if barred {
+				return errf(Exists, "That username is taken.")
+			}
+			if err := store.SetUsername(ctx, q, u.ID, username); store.IsUnique(err) {
+				return errf(Exists, "That username is taken.")
+			} else if err != nil {
+				return err
+			}
+			old["username"], changed["username"] = u.Username, username
+			u.Username = username
 		}
 		role, disabled := u.Role, u.Disabled
 		if patch.Role != nil {
@@ -328,13 +418,13 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			if err := store.SetRole(ctx, q, u.ID, role); err != nil {
 				return err
 			}
-			changed["role"] = role
+			old["role"], changed["role"] = u.Role, role
 		}
 		if site != u.IsSiteAdmin() {
 			if err := store.SetSiteAdmin(ctx, q, u.ID, site); err != nil {
 				return err
 			}
-			changed["siteAdmin"] = site
+			old["siteAdmin"], changed["siteAdmin"] = u.IsSiteAdmin(), site
 			u.SiteAdmin = site
 		}
 		if disabled != u.Disabled {
@@ -351,14 +441,14 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 					return err
 				}
 			}
-			changed["disabled"] = disabled
+			old["disabled"], changed["disabled"] = u.Disabled, disabled
 		}
 		if patch.PasskeyRequired != nil && *patch.PasskeyRequired != u.PasskeyRequired {
 			if err := store.SetPasskeyRequired(ctx, q, u.ID, *patch.PasskeyRequired); err != nil {
 				return err
 			}
+			old["passkeyRequired"], changed["passkeyRequired"] = u.PasskeyRequired, *patch.PasskeyRequired
 			u.PasskeyRequired = *patch.PasskeyRequired
-			changed["passkeyRequired"] = u.PasskeyRequired
 		}
 		if patch.Email != nil || patch.EmailVerified != nil {
 			newEmail, verified := u.Email, u.EmailVerified
@@ -396,14 +486,14 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 					return emailErr(err)
 				}
 				if newEmail != u.Email {
-					changed["email"] = newEmail
+					old["email"], changed["email"] = u.Email, newEmail
 					// Links sent to the old address stop working.
 					if err := store.DeleteEmailTokens(ctx, q, u.ID, ""); err != nil {
 						return err
 					}
 				}
 				if verified != u.EmailVerified {
-					changed["emailVerified"] = verified
+					old["emailVerified"], changed["emailVerified"] = u.EmailVerified, verified
 				}
 				u.Email, u.EmailVerified = newEmail, verified
 			}
@@ -412,9 +502,9 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 			if err := store.SetRemoteExempt(ctx, q, u.ID, *patch.RemoteExempt); err != nil {
 				return err
 			}
+			old["remoteExempt"], changed["remoteExempt"] = u.RemoteExempt, *patch.RemoteExempt
 			u.RemoteExempt = *patch.RemoteExempt
 			exemptChanged = true
-			changed["remoteExempt"] = u.RemoteExempt
 		}
 		u.Role, u.Disabled = role, disabled
 		out = u
@@ -434,7 +524,13 @@ func (s *Service) UpdateUser(ctx context.Context, actor store.User, ip, targetID
 		s.cfg.Spaces.PolicyChanged()
 	}
 	if len(changed) > 0 {
-		s.Audit(AuditEvent{Kind: "user_changed", Actor: actorID, User: out.ID, Username: out.Username, IP: ip, Detail: changed})
+		// The new values are the keys of the detail; `old` holds the ones they replaced.
+		detail := map[string]any{"old": old}
+		for k, v := range changed {
+			detail[k] = v
+		}
+		s.Audit(AuditEvent{Kind: "user_changed", Actor: actorID, User: out.ID, Username: out.Username, IP: ip, Detail: detail})
+		s.noteAccountChange(ctx, actor, *out, changed)
 	}
 	return out, nil
 }
@@ -768,4 +864,73 @@ func (s *Service) waysToSignIn(ctx context.Context, q store.Q, userID, without s
 		n += c
 	}
 	return n, nil
+}
+
+// noteAccountChange tells a person that someone else changed how they are
+// known or reached (name, username, address): a notification, with the fields
+// and who did it, never the values. Nothing is said of what they did themselves.
+func (s *Service) noteAccountChange(ctx context.Context, actor, target store.User, changed map[string]any) {
+	if actor.ID == target.ID {
+		return
+	}
+	var fields []string
+	for _, k := range []string{"name", "username", "email", "emailVerified"} {
+		if _, ok := changed[k]; ok {
+			fields = append(fields, k)
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	if err := store.NotifyUser(ctx, s.st.Q(), target.ID, store.NotifySystem, "", map[string]any{"event": "account_changed", "fields": fields, "by": actor.Name}, s.now()); err != nil {
+		s.log.Warn("could not write a notification", "error", err)
+	}
+}
+
+// SetTemporaryPassword gives a person a password an administrator chose. It
+// is replaced at their next sign-in (the session that signs in with it may only
+// choose a new one), and every session they have ends now. The administrator
+// never sees a password after this: it is the one they typed. Who may change
+// whom is as for UpdateUser: a site administrator's password needs
+// site.admins.manage, and a tenant's administrator reaches their own tenant.
+func (s *Service) SetTemporaryPassword(ctx context.Context, actor store.User, ip, targetID, password string) error {
+	if err := CheckPassword(password); err != nil {
+		return err
+	}
+	access, err := s.SubjectOf(ctx, actor)
+	if err != nil {
+		return err
+	}
+	u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor), targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return errf(NotFound, "No such user.")
+	} else if err != nil {
+		return err
+	}
+	if u.IsSiteAdmin() && !access.Can(authz.SiteAdminsManage, "") {
+		return errf(Forbidden, "Only a site administrator may change a site administrator.")
+	}
+	hash, err := s.hasher.hash(ctx, password)
+	if err != nil {
+		return err
+	}
+	err = s.st.Tx(ctx, func(q store.Q) error {
+		if err := store.SetTemporaryPassword(ctx, q, u.ID, hash, s.now()); err != nil {
+			return err
+		}
+		// A reset link made before this stops working, and so does every session.
+		if err := store.DeleteEmailTokens(ctx, q, u.ID, store.TokenReset); err != nil {
+			return err
+		}
+		return store.DeleteUserSessions(ctx, q, u.ID, "", store.EndPassword, s.now())
+	})
+	if err != nil {
+		return err
+	}
+	s.evictUser(u.ID, "")
+	s.Audit(AuditEvent{Kind: "password_set_by_admin", Actor: actor.ID, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"temporary": true}})
+	if err := store.NotifyUser(ctx, s.st.Q(), u.ID, store.NotifySystem, "", map[string]any{"event": "password_set", "by": actor.Name}, s.now()); err != nil {
+		s.log.Warn("could not write a notification", "error", err)
+	}
+	return nil
 }

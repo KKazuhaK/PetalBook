@@ -61,7 +61,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		if err != nil {
 			return nil, err
 		}
-		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now, held: row.Held,
+		snap = cachedSession{userID: row.UserID, created: row.Created, lastUsed: row.LastUsed, persisted: row.LastUsed, loaded: now, held: row.Held, holdBy: holdOf(row.Method),
 			currentTenant: row.CurrentTenant, proofs: row.Proofs}
 	}
 	sec := s.sec(ctx)
@@ -118,7 +118,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if err := s.st.NoteActive(ctx, u.ID, now); err != nil {
 		s.log.Warn("could not record a person's last use", "error", err)
 	}
-	return &Principal{User: *u, Access: access, SessionID: id, SessionCreated: snap.created, Held: snap.held}, nil
+	return &Principal{User: *u, Access: access, SessionID: id, SessionCreated: snap.created, Held: snap.held, HeldBy: snap.holdBy}, nil
 }
 
 // UpdateSessionState sets the context a session is in and its proofs (3.7),
@@ -131,6 +131,18 @@ func (s *Service) UpdateSessionState(ctx context.Context, id, currentTenant stri
 	delete(s.sessions, id)
 	s.cmu.Unlock()
 	return err
+}
+
+// HoldPassword is what a session waits for after a sign-in with a temporary
+// password: the person's choice of a new one. The session's method says so.
+const HoldPassword = "password"
+const holdMethodPassword = "password_change"
+
+func holdOf(method string) string {
+	if method == holdMethodPassword {
+		return HoldPassword
+	}
+	return ""
 }
 
 // releaseHold forgets, in the cache, that a session was held.

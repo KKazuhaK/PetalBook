@@ -259,9 +259,41 @@ func GetPasswordHash(ctx context.Context, q Q, userID string) (string, error) {
 
 // SetPasswordHash stores or replaces a user's password hash.
 func SetPasswordHash(ctx context.Context, q Q, userID, hash string, now time.Time) error {
-	_, err := q.Exec(ctx, `INSERT INTO passwords(user_id, hash, updated) VALUES (?, ?, ?)
-		ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, updated = excluded.updated`, userID, hash, ms(now))
+	_, err := q.Exec(ctx, `INSERT INTO passwords(user_id, hash, updated, must_change) VALUES (?, ?, ?, 0)
+		ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, updated = excluded.updated, must_change = 0`, userID, hash, ms(now))
 	return err
+}
+
+// SetTemporaryPassword stores a password an administrator chose: the person
+// must replace it at the next sign-in (PasswordMustChange).
+func SetTemporaryPassword(ctx context.Context, q Q, userID, hash string, now time.Time) error {
+	_, err := q.Exec(ctx, `INSERT INTO passwords(user_id, hash, updated, must_change) VALUES (?, ?, ?, 1)
+		ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, updated = excluded.updated, must_change = 1`, userID, hash, ms(now))
+	return err
+}
+
+// RehashPassword replaces the hash of the same password by one with newer
+// parameters; it changes nothing else, so a temporary password stays one.
+func RehashPassword(ctx context.Context, q Q, userID, hash string) error {
+	_, err := q.Exec(ctx, `UPDATE passwords SET hash = ? WHERE user_id = ?`, hash, userID)
+	return err
+}
+
+// PasswordMustChange says whether the person's password is a temporary one.
+func PasswordMustChange(ctx context.Context, q Q, userID string) (bool, error) {
+	var n int64
+	err := q.QueryRow(ctx, `SELECT must_change FROM passwords WHERE user_id = ?`, userID).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return n != 0, err
+}
+
+// SetUsername renames an account. The unique key on usernames refuses one that
+// is taken (IsUnique).
+func SetUsername(ctx context.Context, q Q, userID, username string) error {
+	res, err := q.Exec(ctx, `UPDATE users SET username = ? WHERE id = ? AND deleted_at IS NULL`, username, userID)
+	return oneRow(res, err)
 }
 
 // --- identities --------------------------------------------------------------

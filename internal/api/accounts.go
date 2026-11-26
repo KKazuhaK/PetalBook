@@ -173,6 +173,9 @@ func (s *server) getSession(c *call) {
 		out.User = &sessionUser{s.toUser(c.user()), permissionsOf(c)}
 		if c.p.Held {
 			h := "passkey"
+			if c.p.HeldBy == auth.HoldPassword {
+				h = "password"
+			}
 			out.Hold = &h
 		}
 		if g := c.p.Grant; g != nil {
@@ -364,14 +367,15 @@ func (s *server) getAccount(c *call) {
 
 func (s *server) patchAccount(c *call) {
 	var req struct {
-		Name  *string `json:"name"`
-		Email *string `json:"email"`
+		Name     *string `json:"name"`
+		Username *string `json:"username"`
+		Email    *string `json:"email"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
 	}
 	old := c.user()
-	u, err := s.auth.UpdateProfile(c.r.Context(), old, req.Name, req.Email)
+	u, err := s.auth.UpdateProfile(c.r.Context(), old, req.Name, req.Username, req.Email, s.auth.ClientAddr(c.r))
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -517,14 +521,21 @@ func (s *server) getUser(c *call) {
 
 func (s *server) patchUser(c *call) {
 	var req struct {
-		Role            *string         `json:"role"`
-		Disabled        *bool           `json:"disabled"`
-		PasskeyRequired *bool           `json:"passkeyRequired"`
-		Email           *string         `json:"email"`
-		EmailVerified   *bool           `json:"emailVerified"`
-		SiteAdmin       *bool           `json:"siteAdmin"`
-		Quota           json.RawMessage `json:"quota"`
-		RemoteExempt    *bool           `json:"remoteExempt"`
+		Name            *string `json:"name"`
+		Username        *string `json:"username"`
+		Role            *string `json:"role"`
+		Disabled        *bool   `json:"disabled"`
+		PasskeyRequired *bool   `json:"passkeyRequired"`
+		Email           *string `json:"email"`
+		EmailVerified   *bool   `json:"emailVerified"`
+		// EmailMode says what to do with a new address: "verify" (the default)
+		// sends the person a link that proves it, "mark" says it is verified
+		// (by a tenant administrator that does not make it hold the address on
+		// the server, see "Email as the unique UPN").
+		EmailMode    string          `json:"emailMode"`
+		SiteAdmin    *bool           `json:"siteAdmin"`
+		Quota        json.RawMessage `json:"quota"`
+		RemoteExempt *bool           `json:"remoteExempt"`
 	}
 	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
 		return
@@ -537,11 +548,34 @@ func (s *server) patchUser(c *call) {
 			return
 		}
 	}
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Role: req.Role, Disabled: req.Disabled,
+	if req.EmailMode != "" && req.EmailMode != "verify" && req.EmailMode != "mark" {
+		writeError(c.w, http.StatusBadRequest, "invalid", "EmailMode is verify or mark.")
+		return
+	}
+	if req.EmailMode == "mark" && req.Email != nil && req.EmailVerified == nil {
+		yes := true
+		req.EmailVerified = &yes
+	}
+	before, _ := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("id"))
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Name: req.Name, Username: req.Username, Role: req.Role, Disabled: req.Disabled,
 		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, MakeSiteAdmin: req.SiteAdmin, RemoteExempt: req.RemoteExempt})
 	if err != nil {
 		s.fail(c.w, err)
 		return
+	}
+	// A new address: the old one is told (it holds no link), and unless the
+	// administrator vouched for it the new one is sent the link that proves it.
+	verification := ""
+	if before != nil && u.Email != before.Email {
+		s.auth.NoteEmailChange(*before, langOf(c, ""), s.auth.ClientAddr(c.r))
+		if u.Email != "" && !u.EmailVerified {
+			switch err := s.auth.RequestEmailVerify(c.r.Context(), *u, langOf(c, ""), s.auth.ClientAddr(c.r)); {
+			case err == nil:
+				verification = "sent"
+			default:
+				verification = "not_sent"
+			}
+		}
 	}
 	if applyQuota != nil && !applyQuota() {
 		return
@@ -551,8 +585,25 @@ func (s *server) patchUser(c *call) {
 		out.Quota = toOwnQuota(raw)
 	}
 	writeJSON(c.w, http.StatusOK, struct {
-		User userResp `json:"user"`
-	}{out})
+		User         userResp `json:"user"`
+		Verification string   `json:"verification,omitempty"`
+	}{out, verification})
+}
+
+// setTemporaryPassword gives a person a password the administrator typed:
+// they must replace it at their next sign-in, and their sessions end.
+func (s *server) setTemporaryPassword(c *call) {
+	var req struct {
+		Password string `json:"password"`
+	}
+	if !s.readJSONMax(c.w, c.r, &req, false, authBodyLimit) {
+		return
+	}
+	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), req.Password); err != nil {
+		s.fail(c.w, err)
+		return
+	}
+	c.w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) createInvite(c *call) {

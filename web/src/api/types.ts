@@ -1811,6 +1811,7 @@ export type AuditKind =
   | 'provider_changed'
   | 'provider_deleted'
   | 'user_changed'
+  | 'password_set_by_admin'
   | 'token_created'
   | 'token_revoked'
   | 'grant_revoked'

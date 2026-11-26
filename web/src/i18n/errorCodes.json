@@ -67,6 +67,7 @@
   "passkey_required",
   "passkey_requirement_unsatisfiable",
   "passkey_unavailable",
+  "password_change_required",
   "password_reset_off",
   "path_error",
   "path_reveals_secret",

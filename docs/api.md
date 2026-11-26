@@ -186,7 +186,9 @@ Never an error; no session needed. `Cache-Control: no-store`.
 - `setup`: `true` while there is no user at all; the app then shows the
   first-run page.
 - `hold`: `null`, or `"passkey"` when the signed-in user must register a passkey
-  before they can do anything else (see "When a passkey is required").
+  before they can do anything else (see "When a passkey is required"), or
+  `"password"` when they signed in with a temporary password and must choose a
+  new one (`POST /api/users/{id}/password`).
 - `endedReason`: only when there is no `user` and the request's session cookie
   belonged to a session that ended (the same values as `reason` of a 401, below);
   absent for everyone else, so a cookie that never was a session learns nothing.
@@ -833,8 +835,11 @@ that the user has no identity from.
 
 ### `PATCH /api/account`
 
-`{"name": "…", "email": "…"}`, each optional. `200` with `{"user": {…}}`. A
-changed `email` makes `emailVerified` `false`.
+`{"name": "…", "username": "…", "email": "…"}`, each optional. `200` with
+`{"user": {…}}`. A changed `email` makes `emailVerified` `false` (ask for the
+link with `POST /api/account/email/verify`); the old address is sent a note. A
+changed `username` is as at sign-up (`409 exists` when taken); the old one signs
+in no more. Each change is audited as `user_changed` with `old`.
 
 ### `POST /api/account/password`
 
@@ -1000,6 +1005,38 @@ address (see "Which account an identity signs in to") until a site
 administrator confirms it or the person does. From milestone 3.1 the body may also have `remoteExempt`
 (site administrators only, `403 forbidden` for a tenant administrator; see
 "Server storage", "Exemptions").
+
+Editing a person (an administrator's page of them). The body may also have
+`name` (1 to 100 characters) and `username` (as at sign-up; `409 exists` when
+taken, also by a retired name). A site administrator edits anyone; changing
+another site administrator needs `site.admins.manage`; a tenant administrator
+edits only the people of their own tenant (`404` for another tenant's) and never
+a site administrator (`403 forbidden`). `emailMode` says what to do with a new
+`email`: `"verify"` (the default) sends the person a link that proves it (when
+the server's mail is on) and `"mark"` says it is verified, which counts as
+verified for a site administrator and, for a tenant administrator, is stored
+and shown but does not hold the address (see "Email as the unique UPN"); any
+other value is `400 invalid`. The address stays unique on the whole server
+(`409 email_taken`). When the address changes the old one is sent a note (if it
+was verified and mail is on), and the answer has `"verification"`: `"sent"` or
+`"not_sent"` (mail is off or capped). Every change writes `user_changed` with
+the new values as keys and `old`, the values they replaced, and the person gets
+a notification (`kind: "system"`, `event: "account_changed"`, `fields`, `by`:
+never the values). A change a person makes to their own profile is audited the
+same way and notifies nobody.
+
+### `POST /api/users/{id}/password`
+
+`{"password": "…"}`: a temporary password an administrator chose, for who may
+change the person as above. `204`. The administrator never sees a password
+afterwards; it is in no audit row (`password_set_by_admin` has `temporary`). It
+ends every session the person has and any reset link, and the person gets a
+notification (`event: "password_set"`). The next sign-in with it succeeds, but
+that session is held: `GET /api/session` has `hold: "password"`, every route but
+`POST /api/account/password` (the new password, with the temporary one as
+`current`), the session, meta and sign-out answers `403 password_change_required`.
+Choosing a password lifts the hold; so does any other way of setting one (a
+reset link). To send a reset link instead, use `POST /api/users/{id}/password-reset`.
 
 Until 3.5 an administrator could not read another user's space through the API;
 from 3.5 they may, in a view that is recorded each time (see "Viewing a space").
@@ -6913,6 +6950,7 @@ the site's own kinds):
 | `mail_changed`, `mail_test` | the mail settings changed; a test was sent | the changed fields (password as `"changed"`); `to`, `ok` |
 | `registered` | a registration was confirmed | `email` |
 | `email_verified` | an address was verified | `email` |
+| `password_set_by_admin` | an administrator gave a person a temporary password | `temporary` |
 | `password_reset_requested`, `password_reset` | a reset link was sent; a password was reset | `by` (`user`, `admin`) |
 | `quota_exceeded` | a person or a tenant went over a quota (once per crossing) | `quota` (`spaces`, `bytes`, `pages`, `people`), `limit`, `used`, `scope` (`person`, `tenant`); the row's `user` is the person, and for a tenant's total the `tenant` is the one |
 

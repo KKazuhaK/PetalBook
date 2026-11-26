@@ -163,6 +163,7 @@ type cachedSession struct {
 	lastUsed  time.Time
 	persisted time.Time // the last_used the database has
 	held      bool
+	holdBy    string // what a held session waits for: "" a passkey, HoldPassword a new password
 	loaded    time.Time
 	// The context and the proofs reserved for 3.7, as read with the session.
 	// Never written back; the map is replaced whole (UpdateSessionState drops
@@ -184,8 +185,10 @@ type Principal struct {
 	SessionID string // hash of the session cookie; "" for the built-in user
 	// SessionCreated is when the session began (the sign-in).
 	SessionCreated time.Time
-	// Held: the session may only register a passkey and sign out.
-	Held bool
+	// Held: the session may only register a passkey (HeldBy "") or choose a
+	// new password (HoldPassword), and sign out.
+	Held   bool
+	HeldBy string
 	// Access is what the person holds outside the content of spaces: their
 	// permission keys (internal/authz). A grant never widens it, and no route
 	// outside a space takes a grant.
