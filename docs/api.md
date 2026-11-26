@@ -1052,7 +1052,9 @@ that session is held: `GET /api/session` has `hold: "password"`, every route but
 sign-out answers `403 password_change_required`, the passkey endpoints included.
 A passkey sign-in while the temporary password is in force is held the same
 way, and a person who must use a passkey and has one is refused with it (see
-"When a passkey is required").
+"When a passkey is required"). Someone who signs in with a passkey while a
+temporary password is in force is asked to change their password, and needs the
+temporary password from their administrator to do it (it is `current`).
 Choosing a password lifts the hold (or makes it a passkey hold, for someone who
 must have a passkey and has none); so does any other way of setting one (a
 reset link). To send a reset link instead, use `POST /api/users/{id}/password-reset`.
