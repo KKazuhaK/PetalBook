@@ -6653,23 +6653,69 @@ makes tenants' values ineffective answers `affected: n` (how many tenants).
 #### `GET /api/admin/tenants/{tenant}/settings`, `PUT /api/admin/tenants/{tenant}/settings/{key}`
 
 A site administrator or the tenant's administrator. `GET` answers every setting
-that has a tenant layer, with the site's part and the tenant's:
+that can differ between tenants, with the site's part and the tenant's: those
+that have a tenant layer, and those with layers `["site"]` that a site
+administrator may set for one tenant (`forTenant: true` in `GET
+/api/admin/settings`: `storage.assets.ownStorageExempt`, `exports.days`). A
+site-only setting that must be the same for every tenant says why in
+`serverWide` there (`recycle.days`, `exports.maxBytes`, `users.reuseUsernames`,
+`users.emailNonAscii`) and is not in this list.
 
 ```json
-{"settings": [{"key": "registration.open", "kind": "boolean", "layers": ["site", "tenant"],
-               "site": {"value": false, "lower": {"mode": "allow"}},
-               "tenant": {"value": true, "lower": null, "inEffect": true},
-               "effective": true}]}
+{"settings": [{"key": "offline.copies", "kind": "boolean", "layers": ["site", "tenant"],
+               "site": {"value": true, "lower": {"mode": "allow"}},
+               "tenant": {"value": true, "lower": null, "inEffect": false, "siteLocked": true,
+                          "siteRule": {"value": false, "lower": {"mode": "lock"}, "inEffect": true}},
+               "effective": false},
+              {"key": "quota.spacesPerPerson", "kind": "limit", "layers": ["site", "tenant", "person"],
+               "site": {"value": 20, "lower": {"mode": "allow"}},
+               "tenant": {"value": 15, "lower": null, "inEffect": false, "siteLocked": false,
+                          "siteRule": {"value": null, "lower": {"mode": "restrict", "max": 10}, "inEffect": true}},
+               "effective": 10}]}
 ```
 
-`PUT` takes `{"value": …, "lower": {…}}`; `value: null` follows the site. A
-site administrator may also give `"siteLock": true` (or `false`): the value is
-then set for this tenant and its own administrators cannot change it (see
-"Where attachments go"); the tenant's part of the answer has `siteLocked`.
-`409 setting_locked` when the site locks the setting (a site administrator is
-refused too: unlock at the site first); `409 setting_restricted` for a value
-outside the site's `options` or above its `max`, or a `lower` looser than the
-site's.
+`tenant.value` and `tenant.lower` are the tenant's own. `tenant.siteRule` is the
+**site's rule for this one tenant**, absent when the site has none: a `value` in
+place of the site's (`null`: the site's), and a `lower` the tenant's layer is
+held to in place of the site's (`null`: the site's). It is the site's own
+choice for that tenant, so it is not held to the site's `lower` for tenants;
+only the site's lock over everyone beats it (`siteRule.inEffect: false`, kept).
+This is how the site decides what one organisation may have: "Acme has no
+offline copies" is `offline.copies` locked to `false` for Acme, "at most 10
+spaces a person in Acme" is `quota.spacesPerPerson` restricted to `max: 10` for
+Acme. `siteLocked` says the rule is a lock. Strongest first: the site's lock
+over everyone > the site's rule for the tenant > the tenant's value > the site's
+value for the tenant > the site's value.
+
+A restriction bounds `effective`, not only what the tenant may store: when the
+value in effect would be one the restriction the tenant's layer is held to
+forbids (the site's `lower`, or the rule's), it is the nearest one allowed. For
+a limit that is `max` (also in place of `null`, no limit); for a boolean,
+`false`; for a choice, the next stricter allowed choice (`choices` are loosest
+first), or the strictest allowed when every allowed one is looser. Above, the
+site's 20 for a tenant held to `max: 10` is 10, and the tenant's own 15 is kept,
+not in effect.
+
+`PUT` takes `{"value": …, "lower": {…}}` for the tenant's own layer; `value:
+null` follows the site. A site administrator may also give `"siteRule":
+{"value": …, "lower": {…}}` (either or both; `null` removes the rule), or its
+short form `"siteLock": true` (the rule becomes a lock of `value`, or without
+one of `effective` as it is then, so locking never changes what the tenant
+sees) or `"siteLock": false` (the rule is removed). The tenant's own value stays as it was beside the rule. A tenant
+administrator giving either gets `409 setting_locked`, and so does its write
+while the site's rule for the tenant is a lock. `409 setting_locked` when the
+rule the tenant's layer is held to locks (a site administrator is refused too:
+lift it first); `409 setting_restricted` for a value outside its `options` or
+above its `max`, or a `lower` looser than it. A `siteRule` whose `value` is
+above the `max` it is held to (its own `lower`, else the site's) is `400
+setting_above_max`, not stored and capped; so is a site `value` above the
+site's own `max` in `PUT /api/admin/settings/{key}` (raise the maximum first).
+Lowering a `max` alone below a value still bounds `effective` as above.
+
+A setting with layers `["site"]` and `forTenant` has only the site's rule: a
+site administrator's `value` there is the site's value for the tenant (the
+rule's), `lower` is `400 invalid`, and the tenant's administrator gets `409
+setting_locked`. A server-wide setting is `404 not_found` here.
 
 #### `GET /api/settings?space={space}`
 
@@ -7106,6 +7152,7 @@ not fill the log).
 | `default_tenant` | 409 | disabling or deleting the default tenant |
 | `setting_locked` | 409 | setting a value the layer above locks |
 | `setting_restricted` | 409 | a value outside the layer above's options or `max`, or a `lower` looser than it |
+| `setting_above_max` | 400 | a site value (or the value of the site's rule for a tenant) above the `max` it is held to |
 | `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |
@@ -8397,9 +8444,10 @@ Owner, 2026-11-23. 3.1's `cache.partial` is removed: there is no switch.
 | Key | Kind | Layers | Site default | Site's `lower` by default |
 |---|---|---|---|---|
 | `files.maxBytes` | limit in bytes | site, tenant | `--max-upload` (10 MiB) | `restrict`, `max` = the site value |
-| `recycle.days` | limit, 1 to 365 | site | 30 | — |
-| `exports.days`, `exports.maxBytes` | limits | site | 7, 20 GiB | — |
-| `users.reuseUsernames` | choice `after_purge`, `never` | site | `after_purge` | — |
+| `recycle.days` | limit, 1 to 365 | site (server-wide) | 30 | — |
+| `exports.days` | limit, 1 to 365 | site (a site administrator may set it for one tenant: an export keeps the days of the tenant that made it) | 7 | — |
+| `exports.maxBytes` | limit | site (server-wide: the room of every export) | 20 GiB | — |
+| `users.reuseUsernames` | choice `after_purge`, `never` | site (server-wide) | `after_purge` | — |
 | `storage.siteBudget` | bytes or `null` (80% of the disk) | site | `null` | — |
 | `storage.advanced.*` | see "Settings: `storage.siteBudget`, `storage.advanced`" | site; tenant for the evict and archive days and prefetch | balanced | `tighten` for the tenant fields |
 
@@ -8839,11 +8887,13 @@ applies to every layered (b) key of the inventory:
 - Values that a change makes ineffective are kept, `inEffect: false`, as in
   3.3; `affected` counts the tenants.
 
-**Cost.** The effective values stay computed once per (tenant, settings
-generation, space settings version) and cached (3.3); a request does a map
-lookup. Each layered key has one entry in that map; the inventory adds about
-thirty keys, so a tenant's map is a few kilobytes, and a thousand tenants a few
-megabytes.
+**Cost.** The effective values are computed once per tenant and cached; a
+request does one map lookup and reads two counters, with no lock and no query.
+A site write makes every tenant compute again, a tenant's write only that
+tenant. A setting a tenant has no row for shares the one entry computed with
+the site's layer, so a tenant's map is the map itself (about 1 KB at 20 keys,
+about 3 KB at 60) and some 300 bytes for each key it sets: ten thousand tenants
+take about 30 MB. There is no cap on the number of tenants cached.
 
 ### What a tenant administrator sees of a site rule
 
@@ -8900,7 +8950,7 @@ key protects.
 | `storage.hosts` | list, `subset` | site, tenant | — | 3.1's `hosts.allowed` (or `--remote-host`) | `restrict` to the site's list, always |
 | `storage.localSpaces.maxBytes` | limit, `lower` | site, tenant | — | 3.1's | `tighten` |
 | `storage.assets` | choice `space` < `repository` | site, tenant, space (the owner's request when the space is made) | `sync.assetsRepository` (off: `space` only) | `repository` | `allow` (the site may `lock` to force, or leave it a default; and force a value for one tenant, below) |
-| `storage.assets.ownStorageExempt` | boolean | site | — | `true` | `allow` |
+| `storage.assets.ownStorageExempt` | boolean | site (a site administrator may set it for one tenant) | — | `true` | `allow` |
 | `storage.partial.unsupported` | choice `allow` < `refuse`: remotes that cannot sync partially | site, tenant | — | `allow` | `allow` |
 | `files.maxBytes` | limit (3.5) | site, tenant | — (at most `storage.maxFileBytes`) | `--max-upload` | `restrict`, `max` = the site value |
 | `offline.copies` | boolean, `false` stricter (4.1, as built: no space or person layer) | site, tenant | `other.offline` | `true` | `allow` (4.1's; the site may `lock` it or `restrict` it to `[false]`) |

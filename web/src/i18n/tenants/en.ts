@@ -160,6 +160,7 @@ export const tenantsEn: TenantsMessages = {
     errors: {
       setting_locked: 'The layer above locks this; unlock it there first.',
       setting_restricted: 'That value is outside the limit of the layer above.',
+      setting_above_max: 'The value is above the maximum; raise the maximum first.',
       mail_not_configured: 'Registration verifies addresses by mail, and sending mail is not enabled yet.',
       sso_only_with_registration: 'Registration cannot be open while only single sign-on is allowed.',
       conflict: 'This one is set by a command-line flag.',

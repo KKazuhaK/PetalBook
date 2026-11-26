@@ -99,6 +99,7 @@ func TestOfflineCopiesSwitchRefusesTheSyncEndpoints(t *testing.T) {
 		f.admB.do("PUT", ten(f.tenB, key), map[string]any{"value": false}).want(t, 200, "")
 		refused(t, f.memB, inB["heads"])
 		f.admB.do("PUT", ten(f.tenB, key), map[string]any{"value": true}).want(t, 409, "setting_restricted")
-		allowed(t, f.memA, inA["heads"])
+		// A tenant that says nothing gets the site's on held to the restriction: off.
+		refused(t, f.memA, inA["heads"])
 	})
 }

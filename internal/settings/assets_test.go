@@ -30,9 +30,10 @@ func TestAttachmentsAreSeparateByDefault(t *testing.T) {
 		if err != nil || e.Value != "repository" || e.Site.Lower.Mode != settings.Allow || e.Tenant == nil {
 			t.Fatalf("%+v %v", e, err)
 		}
-		// The switch is the site's only, and on until the site turns it off.
+		// The switch is the site's (it may force it for one tenant), and on until
+		// the site turns it off.
 		x, err := s.Get(ctx, ten, settings.StorageAssetsOwnExempt)
-		if err != nil || x.Value != true || x.Tenant != nil {
+		if err != nil || x.Value != true || x.Tenant == nil || x.Tenant.Value != nil {
 			t.Fatalf("%+v %v", x, err)
 		}
 		r := rule(t, s, settings.AssetsInput{})
@@ -95,8 +96,9 @@ func TestTheLayersOfWhereAttachmentsGoAreAppliedInTheOwnersOrder(t *testing.T) {
 		if r := rule(t, s, settings.AssetsInput{}); r.Default != "space" || !slices.Equal(r.Allowed, []string{"space"}) || r.LockedBy != settings.Site {
 			t.Fatalf("site lock: %+v", r)
 		}
-		if e, _ := s.Get(ctx, ten, settings.StorageAssets); e.Tenant.InEffect || e.Tenant.Value != "repository" {
-			t.Fatalf("the tenant's value is kept, not in effect: %+v", e.Tenant)
+		if e, _ := s.Get(ctx, ten, settings.StorageAssets); e.Tenant.InEffect || e.Tenant.Value != "space" ||
+			e.Tenant.SiteRule.InEffect || e.Tenant.SiteRule.Value != "repository" {
+			t.Fatalf("the tenant's value and the site's rule for it are kept, not in effect: %+v %+v", e.Tenant, e.Tenant.SiteRule)
 		}
 		// Lifting the site's lock brings the one for the tenant back; lifting that one frees the tenant's own value.
 		s.SetSite(ctx, settings.StorageAssets, settings.Change{HasLower: true, Lower: lower("allow")})
@@ -106,8 +108,8 @@ func TestTheLayersOfWhereAttachmentsGoAreAppliedInTheOwnersOrder(t *testing.T) {
 		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{Site: true, HasSiteLock: true, SiteLock: false}); err != nil {
 			t.Fatal(err)
 		}
-		// The tenant's own rule (a lock to its value) was there all along and counts again.
-		if r := rule(t, s, settings.AssetsInput{}); r.Default != "repository" || len(r.Allowed) != 1 || r.LockedBy != settings.Tenant {
+		// The tenant's own value and rule (a lock to it) were there all along and count again.
+		if r := rule(t, s, settings.AssetsInput{}); r.Default != "space" || len(r.Allowed) != 1 || r.LockedBy != settings.Tenant {
 			t.Fatalf("the tenant's own lock comes back: %+v", r)
 		}
 		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: nil, HasLower: true, Lower: lower("allow")}); err != nil {
@@ -119,50 +121,56 @@ func TestTheLayersOfWhereAttachmentsGoAreAppliedInTheOwnersOrder(t *testing.T) {
 	})
 }
 
-func TestASiteLockForOneTenantNeedsAValueAndTheSitesHand(t *testing.T) {
+// A site lock for one tenant with no value locks the site's value for it; only
+// the site's administrators lock.
+func TestASiteLockForOneTenantNeedsTheSitesHand(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
-		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{Site: true, HasSiteLock: true, SiteLock: true}); code(err) != settings.CodeInvalid {
-			t.Fatalf("a lock on nothing: %v", err)
-		}
 		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasSiteLock: true, SiteLock: true, HasValue: true, Value: "space"}); code(err) != settings.CodeLocked {
 			t.Fatalf("a tenant administrator locked: %v", err)
+		}
+		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{Site: true, HasSiteLock: true, SiteLock: true}); err != nil {
+			t.Fatal(err)
+		}
+		if r := rule(t, s, settings.AssetsInput{}); r.Default != "repository" || len(r.Allowed) != 1 || r.LockedBy != settings.Site {
+			t.Fatalf("the site's value locked: %+v", r)
 		}
 	})
 }
 
-// A tenant administrator's write that was checked against a stale cache (the site's lock was written a moment
-// before, by another request or another server) is refused when the row is read in the transaction, and the
-// lock is never cleared by a tenant-layer write.
-func TestATenantWriteThatRacesASiteLockIsRefusedAndKeepsTheLock(t *testing.T) {
+// The site's rule for a tenant is a row of its own: a tenant administrator's
+// write checked against a stale cache (the rule written a moment before, by
+// another request or another server) writes the tenant's row only, and the
+// rule wins as soon as it is read.
+func TestATenantWriteThatRacesASiteLockNeverClearsIt(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
 		if _, err := s.Get(ctx, ten, settings.StorageAssets); err != nil { // the cache is warm and says "not locked"
 			t.Fatal(err)
 		}
-		row := store.LayeredRow{Layer: "tenant", LayerID: ten, Key: settings.StorageAssets, Value: `"repository"`, SiteLocked: true, Updated: time.Now()}
+		row := store.LayeredRow{Layer: "site", LayerID: ten, Key: settings.StorageAssets, Value: `"repository"`, Lower: `{"mode":"lock"}`, Updated: time.Now()}
 		if err := store.PutLayered(ctx, st.Q(), row); err != nil { // behind the cache's back
 			t.Fatal(err)
 		}
-		for _, ch := range []settings.Change{
-			{HasValue: true, Value: "space"},
-			{HasValue: true, Value: nil},
-			{HasLower: true, Lower: lower("lock")},
-		} {
-			if err := s.SetTenant(ctx, ten, settings.StorageAssets, ch); code(err) != settings.CodeLocked {
-				t.Fatalf("%+v: %v", ch, err)
-			}
+		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"}); err != nil {
+			t.Fatal(err)
 		}
-		got, err := store.GetLayered(ctx, st.Q(), "tenant", ten, settings.StorageAssets)
-		if err != nil || !got.SiteLocked || got.Value != `"repository"` || got.Lower != "" {
+		// That write dropped the stale view: the next one sees the lock.
+		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasLower: true, Lower: lower("allow")}); code(err) != settings.CodeLocked {
+			t.Fatalf("after the stale write: %v", err)
+		}
+		got, err := store.GetLayered(ctx, st.Q(), "site", ten, settings.StorageAssets)
+		if err != nil || got.Value != `"repository"` || got.Lower != `{"mode":"lock"}` {
 			t.Fatalf("%+v %v", got, err)
+		}
+		if r := rule(t, s, settings.AssetsInput{}); r.Default != "repository" || len(r.Allowed) != 1 || r.LockedBy != settings.Site {
+			t.Fatalf("the rule does not win: %+v", r)
 		}
 	})
 }
 
-// A site lock committed while a tenant administrator's write is in its transaction (on PostgreSQL after any
-// read that write could make; on SQLite, with one writer, it waits for the tenant's commit) must survive: the
-// tenant's write lands before the lock or is refused with setting_locked, never after it with the lock undone.
+// A site lock committed while a tenant administrator's write is in its
+// transaction survives it, and refuses the next one.
 func TestASiteLockCommittedDuringATenantWriteSurvives(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, st *store.Store) {
 		s := setup(t, st)
@@ -183,16 +191,15 @@ func TestASiteLockCommittedDuringATenantWriteSurvives(t *testing.T) {
 			case <-time.After(300 * time.Millisecond):
 			}
 		})
-		err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"})
-		if c := code(err); c != "" && c != settings.CodeLocked {
+		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"}); err != nil {
 			t.Fatalf("tenant write: %v", err)
 		}
 		if err := <-lockErr; err != nil {
 			t.Fatalf("site lock: %v", err)
 		}
-		got, gerr := store.GetLayered(ctx, st.Q(), "tenant", ten, settings.StorageAssets)
-		if gerr != nil || !got.SiteLocked || got.Value != `"repository"` {
-			t.Fatalf("the lock did not survive (tenant write: %v): %+v %v", err, got, gerr)
+		got, gerr := store.GetLayered(ctx, st.Q(), "site", ten, settings.StorageAssets)
+		if gerr != nil || got.Value != `"repository"` || got.Lower != `{"mode":"lock"}` {
+			t.Fatalf("the lock did not survive: %+v %v", got, gerr)
 		}
 		if err := s.SetTenant(ctx, ten, settings.StorageAssets, settings.Change{HasValue: true, Value: "space"}); code(err) != settings.CodeLocked {
 			t.Fatalf("after the lock: %v", err)

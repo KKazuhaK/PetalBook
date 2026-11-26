@@ -66,6 +66,12 @@ func PutLayered(ctx context.Context, q Q, r LayeredRow) error {
 	return err
 }
 
+// DeleteLayered removes a layer's record of a key; none is not an error.
+func DeleteLayered(ctx context.Context, q Q, layer, layerID, key string) error {
+	_, err := q.Exec(ctx, `DELETE FROM layered_settings WHERE layer = ? AND layer_id = ? AND key = ?`, layer, layerID, key)
+	return err
+}
+
 // PutLayeredUnlocked writes a tenant administrator's change to a tenant's
 // record: the value when setValue, the rule when setLower, never site_locked.
 // It is one statement, so a site lock committed by another transaction at any

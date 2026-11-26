@@ -8,15 +8,15 @@ import (
 )
 
 // bindRecycle gives the manager the settings it reads when it purges and
-// exports: recycle.days, exports.days and exports.maxBytes (site only). The
+// exports: recycle.days, exports.days and exports.maxBytes. The
 // export settings fall back to their defaults when they cannot be read.
 func (s *server) bindRecycle() {
 	if s.opt.Spaces == nil {
 		return
 	}
-	siteInt := func(key string, def int64) func(context.Context) int64 {
-		return func(ctx context.Context) int64 {
-			e, err := s.settings.Get(ctx, "", key)
+	tenantInt := func(key string, def int64) func(context.Context, string) int64 {
+		return func(ctx context.Context, tenant string) int64 {
+			e, err := s.settings.Get(ctx, tenant, key)
 			if err != nil {
 				return def
 			}
@@ -38,8 +38,10 @@ func (s *server) bindRecycle() {
 		}
 		return spaces.DefaultRecycleDays, nil
 	})
-	expDays, expBytes := siteInt(settings.ExportsDays, spaces.DefaultExportDays), siteInt(settings.ExportsMaxBytes, spaces.DefaultExportBytes)
-	s.opt.Spaces.SetExportLimits(func(ctx context.Context) spaces.ExportLimits {
-		return spaces.ExportLimits{Days: int(expDays(ctx)), Bytes: expBytes(ctx)}
+	// exports.days as the export's tenant has it (the site may force it for one
+	// tenant); exports.maxBytes is the server's.
+	expDays, expBytes := tenantInt(settings.ExportsDays, spaces.DefaultExportDays), tenantInt(settings.ExportsMaxBytes, spaces.DefaultExportBytes)
+	s.opt.Spaces.SetExportLimits(func(ctx context.Context, tenant string) spaces.ExportLimits {
+		return spaces.ExportLimits{Days: int(expDays(ctx, tenant)), Bytes: expBytes(ctx, "")}
 	})
 }

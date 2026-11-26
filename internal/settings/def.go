@@ -78,10 +78,24 @@ type Def struct {
 	// domain list, an address); nil accepts what the kind accepts.
 	Check func(v any) (any, error)
 	// Doc is true when the layers' values are validated elsewhere (Kind Doc).
+
+	// A setting with no tenant layer says one of two things. ForTenant: a site
+	// administrator may still set it for one tenant, as the site's rule for that
+	// tenant (see Rule and Service.SetTenant); the tenant's administrators only
+	// see it. ServerWide: why it must be the same for every tenant (usernames
+	// unique on the whole server, one purge job over the server's disk). Every
+	// definition has exactly one of a tenant layer, ForTenant and ServerWide;
+	// the registry's test checks it.
+	ForTenant  bool
+	ServerWide string
 }
 
 // Has reports whether the setting exists in layer l.
 func (d *Def) Has(l Layer) bool { return slices.Contains(d.Layers, l) }
+
+// PerTenant reports whether the setting can differ between tenants: it has a
+// tenant layer, or a site administrator may force it for one tenant.
+func (d *Def) PerTenant() bool { return d.Has(Tenant) || d.ForTenant }
 
 // Error is a refusal; Code is the API's error code.
 type Error struct {
@@ -98,9 +112,25 @@ const (
 	CodeConflict   = "conflict"
 	CodeLocked     = "setting_locked"
 	CodeRestricted = "setting_restricted"
+	// CodeAboveMax: a value the site gives above the maximum it holds that
+	// value to (its own restriction, or its rule's for one tenant), which
+	// would only be capped.
+	CodeAboveMax = "setting_above_max"
 )
 
-func bad(format string, a ...any) *Error { return &Error{CodeInvalid, fmt.Sprintf(format, a...)} }
+// aboveMax refuses a site value over the restriction it is held to; a value
+// a restriction would cap is refused instead of stored and silently capped.
+// Only a limit has a maximum; nil is no limit, above any.
+func aboveMax(d *Def, l Lower, v any) error {
+	if d.Kind != Limit || l.Mode != Restrict || l.Allows(d, v) {
+		return nil
+	}
+	return &Error{Code: CodeAboveMax, Msg: "The value is above the maximum; raise the maximum first."}
+}
+
+func bad(format string, a ...any) *Error {
+	return &Error{Code: CodeInvalid, Msg: fmt.Sprintf(format, a...)}
+}
 
 // Value checks a value against the kind and range of the definition and
 // returns it in its normal form (a number as int64, a list as []string).
@@ -242,6 +272,46 @@ func (l Lower) Allows(d *Def, v any) bool {
 		return false
 	}
 	return true
+}
+
+// Nearest is v when the Lower allows it, else the value it allows nearest to
+// v: what a restriction makes of a value in effect it forbids (the site's
+// value, or the site's value for the tenant), so "at most 10" means at most
+// 10 whatever the layers above hold. By kind:
+//
+//   - a limit: the max (also for null, no limit);
+//   - a boolean: false, the only value a boolean may be restricted to;
+//   - a choice: the next stricter allowed choice (Choices are loosest first),
+//     or, when every allowed one is looser, the strictest allowed.
+//
+// A lock or allow, and a kind that cannot be restricted, leave v as it is.
+func (l Lower) Nearest(d *Def, v any) any {
+	if l.Mode != Restrict || l.Allows(d, v) {
+		return v
+	}
+	switch d.Kind {
+	case Limit:
+		if l.Max != nil {
+			return *l.Max
+		}
+	case Bool:
+		return false
+	case Choice:
+		opts := optStrings(l.Options)
+		s, _ := v.(string)
+		at := slices.Index(d.Choices, s)
+		for i := at + 1; i < len(d.Choices); i++ {
+			if slices.Contains(opts, d.Choices[i]) {
+				return d.Choices[i]
+			}
+		}
+		for i := min(at, len(d.Choices)) - 1; i >= 0; i-- {
+			if slices.Contains(opts, d.Choices[i]) {
+				return d.Choices[i]
+			}
+		}
+	}
+	return v
 }
 
 func optStrings(o []any) []string {

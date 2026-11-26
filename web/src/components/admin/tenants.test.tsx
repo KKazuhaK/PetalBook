@@ -272,6 +272,79 @@ describe('the Settings page', () => {
       'the badge',
     )
   })
+
+  it("forces the tenant's saved value as it is: forcing alone names the value and changes nothing the tenant gets", async () => {
+    await open('settings')
+    await settle(
+      () => document.querySelectorAll('[data-slot="setting-row"][data-key="storage.assets"]').length === 2,
+      'both layers',
+    )
+    const name = tt.settings.names['storage.assets']
+    const row = () => document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="storage.assets"]')[1]
+    const puts = () =>
+      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/storage.assets')
+    await click(switchOf(`${name}: ${tt.settings.follow}`))
+    await type(row().querySelector<HTMLSelectElement>(`select[aria-label="${name}"]`)!, 'space')
+    await click(button(tt.settings.save, row()))
+    await settle(() => puts().length === 1, 'the value saved')
+    await click(switchOf(`${name}: ${tt.settings.siteLock}`))
+    await click(button(tt.settings.save, row()))
+    await settle(() => puts().length === 2, 'forced')
+    expect(JSON.parse(puts()[1].body!)).toEqual({ value: 'space', siteLock: true })
+    const got = await fetch('/api/admin/tenants/0000000000/settings').then((r) => r.json())
+    const s = (got.settings as { key: string; effective: unknown }[]).find((x) => x.key === 'storage.assets')!
+    expect(s.effective).toBe('space')
+  })
+
+  it('keeps a forced value forced when its row is switched to follow: the save names the value in effect', async () => {
+    await open('settings', (server) => {
+      adminRequests(server)('PUT', '/api/admin/tenants/0000000000/settings/storage.assets', {
+        value: 'space',
+        siteLock: true,
+      })
+    })
+    await settle(
+      () => document.querySelectorAll('[data-slot="setting-row"][data-key="storage.assets"]').length === 2,
+      'both layers',
+    )
+    const name = tt.settings.names['storage.assets']
+    const row = () => document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="storage.assets"]')[1]
+    const puts = () =>
+      m!.requests.filter((r) => r.method === 'PUT' && r.url === '/api/admin/tenants/0000000000/settings/storage.assets')
+    await click(switchOf(`${name}: ${tt.settings.follow}`))
+    await click(button(tt.settings.save, row()))
+    await settle(() => puts().length === 1, 'saved')
+    expect(JSON.parse(puts()[0].body!)).toEqual({ value: 'space', siteLock: true })
+    const got = await fetch('/api/admin/tenants/0000000000/settings').then((r) => r.json())
+    const s = (got.settings as { key: string; effective: unknown; tenant: { siteLocked?: boolean } }[]).find(
+      (x) => x.key === 'storage.assets',
+    )!
+    expect([s.effective, s.tenant.siteLocked]).toEqual(['space', true])
+  })
+
+  it('starts the editor of a value not in effect from the value in effect, with nothing to save', async () => {
+    await open('settings', (server) => {
+      const admin = adminRequests(server)
+      admin('PUT', '/api/admin/tenants/0000000000/settings/registration.perHour', { value: 30 })
+      admin('PUT', '/api/admin/settings/registration.perHour', { lower: { mode: 'restrict', max: 10 } })
+    })
+    await settle(() => document.querySelector('[data-slot="not-in-effect"]') !== null, 'the kept value')
+    const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.perHour"]')[1]
+    const name = tt.settings.names['registration.perHour']
+    expect(row.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!.value).toBe('10')
+    expect(button(tt.settings.save, row)!.disabled).toBe(true)
+  })
+
+  it('refuses a site value above its own maximum and says so in the row', async () => {
+    await open('settings')
+    await settle(() => rowOf('registration.perHour') != null, 'the settings')
+    const row = document.querySelectorAll<HTMLElement>('[data-slot="setting-row"][data-key="registration.perHour"]')[0]
+    const name = tt.settings.names['registration.perHour']
+    // The site's own rule for perHour is at most 50 by default.
+    await type(row.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!, '80')
+    await click(button(tt.settings.save, row))
+    await settle(() => row.textContent!.includes(tt.settings.errors.setting_above_max), 'the refusal')
+  })
 })
 
 describe('administrators and tenants in the Users page and the navigation', () => {

@@ -936,6 +936,61 @@ exist (the tenant follows the layer above), and the item of (c) is stored but
 has no effect. Those marked "—" always exist. Capabilities themselves and plans
 are (a).
 
+**Default, forced, or forced for one organisation (3.6 part 7, built).** Every
+setting in the registry (`internal/settings/registry.go`) has exactly one of
+three things, and a test fails when one has none: a tenant layer; `ForTenant`,
+for a site-only setting a site administrator may still set for one tenant
+(`storage.assets.ownStorageExempt`, `exports.days`); or `ServerWide` with its
+reason, for one that must be the same everywhere (`users.reuseUsernames` and
+`users.emailNonAscii`: uniqueness over the whole server; `recycle.days`: one
+purge job over the server's disk; `exports.maxBytes`: the room of every export
+together).
+
+**The site's rule for one tenant is the one model of "what an organisation may
+have".** It is a row of the site's layer whose `layer_id` is the tenant
+(`layered_settings`: `site`, the tenant, the key), holding a value in place of
+the site's and a `lower` the tenant's layer is held to in place of the site's
+(`settings.Rule`). A lock forces a value for that tenant ("Acme has no offline
+copies": `offline.copies` locked to `false` for Acme); a restriction bounds it
+("at most 10 spaces a person": `quota.spacesPerPerson` restricted to `max: 10`
+for Acme); a value alone is the site's default for that tenant. It is the
+site's own choice for that tenant, so the site's `lower` for tenants does not
+hold it; only the site's lock over everyone beats it (kept, not in effect). The
+tenant's own row is separate and is kept beside it, so no tenant write can
+clear a rule, whatever its cache said; the `site_locked` column of the tenant's
+row is no longer written (v0: it goes with the next schema change). Strongest
+first: the site's lock over everyone > the site's rule for the tenant > the
+tenant's value > the site's value for the tenant > the site's value > the
+space's owner. A restriction bounds the value in effect, not only the tenant's
+own: a value in effect it forbids (the site's, or the site's for the tenant)
+becomes the nearest allowed one (`Lower.Nearest`: a limit's `max`, a boolean's
+`false`, a choice's next stricter allowed choice, else the strictest allowed),
+so "at most 10 spaces" is at most 10 whatever the site's value. The API's
+`siteLock` is the short form of a locking rule; without a value it locks the
+value in effect then, so locking never changes what the tenant sees. Removing
+a rule deletes its row.
+
+This replaces the limits sheet's capabilities for settings: nothing in
+`internal/settings` reads `internal/limits`. The next part folds the sheet in:
+the rule row gains a source (manual > billing > plan) and a window (starts,
+ends, with one timer), plans become bundles of rules, and `internal/limits`,
+`tenant_limits` and the `/capabilities` and `/limits` endpoints go, their keys
+moving into this registry. `settings.siteRuleOf` is the one place that picks
+the rule in effect from a tenant's site rows, so that is where source and
+window are added; the precedence above and the resolver do not change.
+
+The cache is per tenant: a site write bumps a site generation that every
+tenant's snapshot is checked against, a tenant write bumps only that tenant's.
+Warm, `For` is one `sync.Map` read and two atomic loads, no lock and no query.
+The 2,000-tenant cap is gone; memory is bounded by sharing instead: a setting
+a tenant has no row for points at the one entry computed with the site's
+layer, so a tenant costs its map (about 1 KB at 20 keys, about 3 KB at 60) and
+some 300 bytes for each key it sets or has a rule for, about 30 MB for ten
+thousand tenants. A cold tenant reads its two kinds of rows (its own and the
+site's for it) over the site's snapshot. A deleted tenant's entry and rows are
+dropped. A change of the limits sheet still bumps the site generation (it is
+rare, and goes with the sheet).
+
 (a) Site only, 26 items:
 
 | Item | Reason |
@@ -958,7 +1013,7 @@ are (a).
 | Audit log retention (100,000 rows / 90 days) | One site-wide table |
 | The site-wide mail sending cap (queue 1000, 3 per hour per address) | The in-memory site-wide queue and abuse prevention |
 | 3.5 recycle bin retention days `recycle.days` | The recycle bin takes site disk. What the owner wanted is a uniform 30 days |
-| 3.5 export retention and total `exports.*` | Takes site disk |
+| 3.5 export total `exports.maxBytes` | Takes site disk. (Export retention `exports.days` moved to (b) in 3.6 part 7: an export keeps the days of the tenant that made it, and the site may set them for one tenant) |
 | The total outbound cap `outbound.perMinute`, per-tenant share `outbound.tenantPerMinute` | The site's outbound capacity and its outside reputation |
 | The table of public email domains (domains that cannot be claimed) | Prevents claiming things like `gmail.com` |
 | Arbitration of verified domains (handing over to another tenant) | A matter between two tenants, which only the level above can decide |
@@ -995,7 +1050,7 @@ become capabilities (`signin.sso`, `signin.idpAdmins`, `storage.quota`,
 | `storage.hosts` (`--remote-host`) | site, tenant | — | Which hosts the server connects to. A tenant can only cut down from the site's table |
 | `storage.localSpaces.maxBytes` | site, tenant | — | Local-only spaces take site disk, and the site sets the cap |
 | `storage.assets` (attachments in the space repository or the attachments repository) | site, tenant, space (owner) | `sync.assetsRepository` of the limits table (when off it can only be the space repository) | Three layers decided by the owner: the site can enforce (`lock`), or only give a default (`allow`). Separate (`repository`) is the default since round 2; see "Where attachments go" below |
-| `storage.assets.ownStorageExempt` | site | — | Whether a tenant on its own storage target is left out of the site's `storage.assets` value and locks. Default on; reserved until 3.6 makes tenant targets |
+| `storage.assets.ownStorageExempt` | site, or set for one tenant by the site (3.6 part 7) | — | Whether a tenant on its own storage target is left out of the site's `storage.assets` value and locks. Default on; reserved until 3.6 makes tenant targets |
 | `storage.partial.unsupported` (remotes that cannot sync partially: allow (full clone) / refuse, 3.6) | site, tenant | — | The single partial-sync policy decided by the owner, default allow |
 | The tenant-adjustable values of storage pressure (in `storage.advanced`, evicting this tenant's spaces, days before archiving, the login prefetch switch and "people active in the last N days", 3.5) | site, tenant | — | A tenant can only adjust within the site's range. Tiers, reserve and budget are site only |
 | Exempting from the remote requirement (3.1's `remoteExempt`, a space's `exempt`) | site, tenant | — | An exemption only removes the requirement added by the layer that grants it |
@@ -1021,10 +1076,11 @@ one tenant > the site's default > the tenant's default > the space's owner**.
 Locks go down from the widest layer; for plain defaults the nearer layer
 overrides the wider one, as every layered setting does. This reuses the layered
 settings (the site's `lower`, the tenant's value and `lower`) and adds one thing
-they lacked, the lock for one tenant: a tenant row a site administrator wrote and
-marked `site_locked`. The tenant's administrators cannot change its value or its
-rule; the site's lock over everyone still beats it (the value is kept, not in
-effect). The space layer is the owner's request at creation, not a stored
+they lacked, the lock for one tenant: since 3.6 part 7, the site's rule for that
+tenant (a site-layer row for the tenant, see "Default, forced, or forced for one
+organisation" above; before, a tenant row marked `site_locked`). The tenant's
+administrators cannot change its value or its rule; the site's lock over
+everyone still beats it (the value is kept, not in effect). The space layer is the owner's request at creation, not a stored
 setting.
 
 The tenant's limits table (`sync.assetsRepository`, 3.6) is the last word: when

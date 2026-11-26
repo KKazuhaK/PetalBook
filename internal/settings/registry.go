@@ -26,7 +26,9 @@ const (
 
 	// RecycleDays is how long an item stays in the recycle bin (3.5); ExportsDays
 	// and ExportsMaxBytes how long an export is kept and how much room all of them
-	// may take. Site only: they use the server's disk.
+	// may take. Site only: they use the server's disk. ExportsDays may be forced
+	// for one tenant (an export's expiry is set for the tenant that made it);
+	// RecycleDays and ExportsMaxBytes are server-wide.
 	RecycleDays     = "recycle.days"
 	ExportsDays     = "exports.days"
 	ExportsMaxBytes = "exports.maxBytes"
@@ -46,7 +48,8 @@ const (
 	// tenant; the space's owner chooses inside what is left (see AssetsRule).
 	StorageAssets = "storage.assets"
 	// StorageAssetsOwnExempt is whether a tenant that stores on its own target is
-	// left out of the site's StorageAssets default and lock. Site only.
+	// left out of the site's StorageAssets default and lock. Site only; a site
+	// administrator may force it for one tenant.
 	StorageAssetsOwnExempt = "storage.assets.ownStorageExempt"
 
 	QuotaSpacesPerPerson = "quota.spacesPerPerson"
@@ -93,12 +96,21 @@ func Definitions() []*Def {
 		// request when the space is made, read by AssetsRule, not a stored
 		// setting. A site administrator may also lock the value for one tenant.
 		{Key: StorageAssets, Kind: Choice, Layers: []Layer{Site, Tenant}, Default: "repository", Choices: []string{"space", "repository"}, Lower: Lower{Mode: Allow}},
-		{Key: StorageAssetsOwnExempt, Kind: Bool, Layers: []Layer{Site}, Default: true, Lower: Lower{Mode: Allow}},
-		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
-		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
-		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow}},
-		{Key: UsersEmailNonASCII, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow}},
-		{Key: UsersReuseUsernames, Kind: Choice, Layers: []Layer{Site}, Default: "after_purge", Choices: []string{"after_purge", "never"}, Lower: Lower{Mode: Allow}},
+		{Key: StorageAssetsOwnExempt, Kind: Bool, Layers: []Layer{Site}, ForTenant: true, Default: true, Lower: Lower{Mode: Allow}},
+		// The same for every tenant: one purge job keeps every tenant's items on
+		// the server's disk for the same number of days.
+		{Key: RecycleDays, Kind: Limit, Layers: []Layer{Site}, Default: int64(30), Min: 1, Max: 365, Lower: Lower{Mode: Allow},
+			ServerWide: "one purge job keeps every tenant's recycled items on the server's disk"},
+		// How long one export is kept is set when it is made, for the tenant that
+		// asked: a site administrator may force it for one tenant. The room of all
+		// exports together is the server's disk.
+		{Key: ExportsDays, Kind: Limit, Layers: []Layer{Site}, ForTenant: true, Default: int64(7), Min: 1, Max: 365, Lower: Lower{Mode: Allow}},
+		{Key: ExportsMaxBytes, Kind: Limit, Layers: []Layer{Site}, Default: int64(20 << 30), Min: 1 << 20, Max: 1 << 50, Lower: Lower{Mode: Allow},
+			ServerWide: "the room all exports take together on the server's disk"},
+		{Key: UsersEmailNonASCII, Kind: Bool, Layers: []Layer{Site}, Default: false, Lower: Lower{Mode: Allow},
+			ServerWide: "addresses are unique on the whole server"},
+		{Key: UsersReuseUsernames, Kind: Choice, Layers: []Layer{Site}, Default: "after_purge", Choices: []string{"after_purge", "never"}, Lower: Lower{Mode: Allow},
+			ServerWide: "usernames are unique on the whole server"},
 		// What one person may use. Only the number of spaces is refused (0 is no
 		// limit, as --max-spaces 0 was); bytes and pages warn. null is no limit.
 		{Key: QuotaSpacesPerPerson, Kind: Limit, Layers: []Layer{Site, Tenant, Person}, Default: int64(20), Min: 0, Max: 10000, Lower: Lower{Mode: Allow}},

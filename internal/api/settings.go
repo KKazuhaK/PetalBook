@@ -39,6 +39,11 @@ type siteSettingResp struct {
 	Site   settings.SiteView `json:"site"`
 	// Choices are the values of a choice setting, loosest first.
 	Choices []string `json:"choices,omitempty"`
+	// A setting with no tenant layer has one of these: ForTenant, a site
+	// administrator may set it for one tenant (siteRule or siteLock on the
+	// tenant's settings); ServerWide, why it is the same for every tenant.
+	ForTenant  bool   `json:"forTenant,omitempty"`
+	ServerWide string `json:"serverWide,omitempty"`
 }
 
 type tenantSettingResp struct {
@@ -50,6 +55,11 @@ type tenantSettingResp struct {
 	Effective any                  `json:"effective"`
 	// Choices are the values of a choice setting, loosest first.
 	Choices []string `json:"choices,omitempty"`
+}
+
+func tenantSettingOf(e *settings.Effective) tenantSettingResp {
+	d := e.Def
+	return tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, e.Tenant, e.Value, d.Choices}
 }
 
 // tenantSiteView is what a tenant is shown of the site's layer: the value and
@@ -68,7 +78,7 @@ func (s *server) adminGetSettings(c *call) {
 	out := []siteSettingResp{}
 	for _, d := range s.settings.Defs() {
 		e := eff[d.Key]
-		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices})
+		out = append(out, siteSettingResp{d.Key, d.Kind, d.Layers, e.Site, d.Choices, d.ForTenant, d.ServerWide})
 	}
 	writeJSON(c.w, http.StatusOK, struct {
 		Settings []siteSettingResp `json:"settings"`
@@ -84,7 +94,7 @@ func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
 	}
 	var ch settings.Change
 	for k := range req {
-		if k != "value" && k != "lower" && !(tenantLayer && k == "siteLock") {
+		if k != "value" && k != "lower" && !(tenantLayer && (k == "siteLock" || k == "siteRule")) {
 			writeError(c.w, http.StatusBadRequest, "invalid", "Unknown field "+k+".")
 			return ch, false
 		}
@@ -110,8 +120,16 @@ func (s *server) readChange(c *call, tenantLayer bool) (settings.Change, bool) {
 			return ch, false
 		}
 	}
-	if !ch.HasValue && !ch.HasLower && !ch.HasSiteLock {
-		writeError(c.w, http.StatusBadRequest, "invalid", "Give value, lower, siteLock or any of them.")
+	if raw, ok := req["siteRule"]; ok {
+		// {"value": …, "lower": {…}}, either or both; null removes the rule.
+		ch.HasSiteRule = true
+		if err := json.Unmarshal(raw, &ch.SiteRule); err != nil {
+			writeError(c.w, http.StatusBadRequest, "invalid", "SiteRule is {\"value\": …, \"lower\": {…}} or null.")
+			return ch, false
+		}
+	}
+	if !ch.HasValue && !ch.HasLower && !ch.HasSiteLock && !ch.HasSiteRule {
+		writeError(c.w, http.StatusBadRequest, "invalid", "Give value, lower, siteLock, siteRule or any of them.")
 		return ch, false
 	}
 	return ch, true
@@ -124,14 +142,17 @@ func (s *server) beforeOpening(ctx context.Context, key string, ch settings.Chan
 	if key != settings.RegistrationOpen {
 		return nil
 	}
-	opens := ch.HasValue && ch.Value == true
+	opens := ch.HasValue && ch.Value == true || ch.HasSiteRule && ch.SiteRule != nil && ch.SiteRule.Value == true
 	if !opens && site && ch.HasLower && ch.Lower != nil && ch.Lower.Mode != settings.Lock {
-		// Unlocking lets a tenant's stored true take effect.
-		on, err := store.AnyLayeredValue(ctx, s.opt.Store.Q(), string(settings.Tenant), key, "true")
-		if err != nil {
-			return err
+		// Unlocking lets a tenant's stored true take effect, or the site's for
+		// one tenant.
+		for _, l := range []settings.Layer{settings.Tenant, settings.Site} {
+			on, err := store.AnyLayeredValue(ctx, s.opt.Store.Q(), string(l), key, "true")
+			if err != nil {
+				return err
+			}
+			opens = opens || on
 		}
-		opens = on
 	}
 	if !opens {
 		return nil
@@ -194,7 +215,7 @@ func (s *server) adminPutSetting(c *call) {
 	out := struct {
 		siteSettingResp
 		Affected *int `json:"affected,omitempty"`
-	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices}}
+	}{siteSettingResp: siteSettingResp{d.Key, d.Kind, d.Layers, after.Site, d.Choices, d.ForTenant, d.ServerWide}}
 	if ch.HasLower {
 		out.Affected = &affected
 	}
@@ -208,11 +229,11 @@ func (s *server) tenantSettingsOf(ctx context.Context, tenant string) ([]tenantS
 	}
 	out := []tenantSettingResp{}
 	for _, d := range s.settings.Defs() {
-		if !d.Has(settings.Tenant) {
+		if !d.PerTenant() {
 			continue
 		}
 		e := eff[d.Key]
-		out = append(out, tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{e.Site.Value, e.Site.Lower}, e.Tenant, e.Value, d.Choices})
+		out = append(out, tenantSettingOf(e))
 	}
 	return out, nil
 }
@@ -269,8 +290,7 @@ func (s *server) adminPutTenantSetting(c *call) {
 	}
 	s.audit(c, auth.AuditEvent{Kind: "setting_changed", Actor: c.user().ID, Tenant: t.ID,
 		Detail: map[string]any{"key": key, "layer": "tenant", "from": before.Tenant, "to": after.Tenant}})
-	d, _ := s.settings.Def(key)
-	writeJSON(c.w, http.StatusOK, tenantSettingResp{d.Key, d.Kind, d.Layers, tenantSiteView{after.Site.Value, after.Site.Lower}, after.Tenant, after.Value, d.Choices})
+	writeJSON(c.w, http.StatusOK, tenantSettingOf(after))
 }
 
 // mySettings is GET /api/settings: what each setting that has a space or
