@@ -9763,7 +9763,7 @@ own organisation**.
 | `POST /api/admin/spaces/{space}/view`, `/api/admin/exports…` (3.5) | their tenant's organisation spaces, with `features.adminView` | every space |
 | `GET /api/admin/audit/download` | their tenant's rows, with `data.auditDownload` | every row |
 | `POST /api/spaces/{space}/storage/move` | their tenant's spaces (and owners their own) | every space |
-| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/tenancy`, the tenant list, create, delete, `disabled`, `slug`, `PUT /api/admin/storage`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
+| `/api/admin/security`, `/api/admin/auth/providers…`, `/api/admin/mail…`, `/api/admin/daily…`, `/api/admin/connections…` (the site's providers; a tenant administrator may `GET` the list), `/api/admin/settings…`, `/api/admin/domains…`, `/api/admin/status`, `/api/admin/secrets…`, the tenant list, create, delete, `disabled`, `slug`, `GET /api/admin/storage/pressure` | `403 forbidden` | yes |
 
 The machine-access switches are the settings `features.tokens` and
 `features.mcp`: the site's layer is `/api/admin/settings`, the tenant's
