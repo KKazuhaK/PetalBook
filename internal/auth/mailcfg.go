@@ -248,7 +248,7 @@ func (s *Service) UpdateMail(ctx context.Context, actorID, ip string, p MailPatc
 			return nil, err
 		}
 		s.applyMail(ctx, next)
-		s.Audit(AuditEvent{Kind: "mail_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: changed})
+		s.AuditIn(ctx, AuditEvent{Kind: "mail_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: changed})
 	}
 	return s.GetMail(ctx)
 }
@@ -288,7 +288,7 @@ func (s *Service) TestMail(ctx context.Context, actorID, ip, to, lang string) (*
 	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	err = s.mail.Test(tctx, cfg, msg)
-	s.Audit(AuditEvent{Kind: "mail_test", Actor: actorID, IP: ip, Tenant: "-", Detail: map[string]any{"to": to, "ok": err == nil}})
+	s.AuditIn(ctx, AuditEvent{Kind: "mail_test", Actor: actorID, IP: ip, Tenant: "-", Detail: map[string]any{"to": to, "ok": err == nil}})
 	if err != nil {
 		return &MailTestResult{false, mail.Describe(err, &cfg)}, nil
 	}

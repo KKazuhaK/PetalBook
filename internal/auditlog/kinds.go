@@ -51,6 +51,7 @@ var registered = []Kind{
 	{Name: "tenant_created", Category: Admin},
 	{Name: "tenant_changed", Category: Admin},
 	{Name: "tenant_deleted", Category: Admin},
+	{Name: "tenant_console_opened", Category: Admin},
 	{Name: "registered", Category: Admin},
 	{Name: "user_changed", Category: Admin},
 	{Name: "user_deleted", Category: Admin},

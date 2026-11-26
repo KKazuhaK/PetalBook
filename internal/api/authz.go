@@ -117,7 +117,7 @@ func permissionsOf(c *call) []string {
 	if c.p.Grant != nil {
 		return []string{}
 	}
-	return c.p.Access.In(c.user().TenantID).Names()
+	return c.p.Access.In(c.tenant()).Names()
 }
 
 type permissionResp struct {
@@ -166,10 +166,16 @@ func (s *server) transferSpace(c *call, userID, reason, kind string) {
 	var t *spaces.Transferred
 	var err error
 	if userID == "" {
+		if c.inOtherTenant() {
+			// A takeover in another tenant makes a member across tenants, which
+			// only a site administrator's key allows: in the site's scope.
+			writeError(c.w, http.StatusForbidden, "forbidden", "A space of another tenant is taken over in the whole site's scope, not in the tenant's.")
+			return
+		}
 		userID = c.user().ID
-		t, err = s.spaces.TakeOver(c.r.Context(), store.AdminScopeOf(c.user()), id, c.user(), c.p.Access)
+		t, err = s.spaces.TakeOver(c.r.Context(), c.adminReach(), id, c.user(), c.p.Access)
 	} else {
-		t, err = s.spaces.Transfer(c.r.Context(), store.AdminScopeOf(c.user()), id, userID)
+		t, err = s.spaces.Transfer(c.r.Context(), c.adminReach(), id, userID)
 	}
 	if err != nil {
 		s.fail(c.w, err)

@@ -50,7 +50,7 @@ func (s *server) exportsOf(c *call, rows []store.Export) ([]exportResp, error) {
 			ids = append(ids, sourceSpace(src))
 		}
 	}
-	open, err := store.OpenableSpaces(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), ids)
+	open, err := store.OpenableSpaces(c.r.Context(), s.opt.Store.Q(), c.adminReach(), ids)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (s *server) adminCreateExport(c *call) {
 		writeError(c.w, http.StatusForbidden, "forbidden", "Only an administrator of the whole server may export the history.")
 		return
 	}
-	sc := store.AdminScopeOf(c.user())
+	sc := c.adminReach()
 	var sources []store.ExportSource
 	tenants := map[string]bool{}
 	personal := false
@@ -137,7 +137,7 @@ func (s *server) adminCreateExport(c *call) {
 		tenants[it.TenantID] = true
 		personal = personal || it.Personal
 	}
-	tenant := c.user().TenantID
+	tenant := c.tenant()
 	if len(tenants) == 1 {
 		for t := range tenants {
 			tenant = t
@@ -212,7 +212,7 @@ func (s *server) adminListExports(c *call) {
 }
 
 func (s *server) exportFound(c *call) (*store.Export, bool) {
-	e, err := store.GetExport(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("id"))
+	e, err := store.GetExport(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such export.")
 		return nil, false
@@ -289,7 +289,7 @@ func (s *server) adminDownloadExport(c *call) {
 func (s *server) exportUserSources(c *call, spaceIDs, itemIDs *[]string, user string) bool {
 	ctx := c.r.Context()
 	q := s.opt.Store.Q()
-	sc := store.AdminScopeOf(c.user())
+	sc := c.adminReach()
 	st, err := store.GetUserState(ctx, q, user)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !sc.All() && sc.Tenant() != st.Tenant) {
 		writeError(c.w, http.StatusNotFound, "user_not_found", "There is no such user.")

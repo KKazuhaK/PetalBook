@@ -127,6 +127,9 @@ type call struct {
 	// ended is why the session of the request's cookie ended, on a public
 	// route reached with such a cookie ("" otherwise).
 	ended string
+	// scope is the tenant the request acts in and the capacity it acts with
+	// (scope.go); p is narrowed to it when the scope header named a tenant.
+	scope actingScope
 }
 
 func (c *call) user() store.User { return c.p.User }
@@ -503,9 +506,13 @@ func (s *server) handle(rt route) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "passkey_required", "Register a passkey to continue.")
 			return
 		}
+		if !s.enterScope(c, rt) {
+			return
+		}
 		if rt.access.kind == kindKey {
-			// A route outside spaces acts in the caller's own tenant.
-			if err := s.allow(c, rt.access.key, c.p.User.TenantID); err != nil {
+			// A route outside spaces acts in the acting tenant: the caller's
+			// own, or the one the scope header names.
+			if err := s.allow(c, rt.access.key, c.tenant()); err != nil {
 				s.refuse(w, err)
 				return
 			}
@@ -516,6 +523,7 @@ func (s *server) handle(rt route) http.HandlerFunc {
 		if !s.featureGate(c, rt) {
 			return
 		}
+		s.consoleOpened(c)
 		if rt.access.kind == kindSpace {
 			if !s.openSpace(c, rt) {
 				return

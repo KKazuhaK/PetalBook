@@ -584,7 +584,7 @@ func (s *Service) DeletePasskey(ctx context.Context, actor *Principal, userID, i
 	if u != nil {
 		ev.Username = u.Username
 	}
-	s.Audit(ev)
+	s.AuditIn(ctx, ev)
 	return nil
 }
 

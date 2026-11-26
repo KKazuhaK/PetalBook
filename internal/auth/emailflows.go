@@ -805,7 +805,7 @@ func (s *Service) resetLinks(ctx context.Context, accounts []store.User, by, act
 			return nil, nil, err
 		}
 		links = append(links, mail.Link{Username: u.Username, URL: s.link("/reset-password", tok)})
-		s.Audit(AuditEvent{Kind: "password_reset_requested", Actor: actor, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": by}})
+		s.AuditIn(ctx, AuditEvent{Kind: "password_reset_requested", Actor: actor, User: u.ID, Username: u.Username, IP: ip, Detail: map[string]any{"by": by}})
 	}
 	return links, sso, nil
 }
@@ -933,19 +933,15 @@ func (s *Service) ResetPassword(ctx context.Context, token, password, ip string)
 }
 
 // AdminPasswordReset sends a reset link to a person's verified address.
-func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, ip, targetID, lang string) error {
+func (s *Service) AdminPasswordReset(ctx context.Context, actor store.User, access authz.Subject, ip, targetID, lang string) error {
 	u, err := store.GetUser(ctx, s.st.Q(), store.ScopeOf(actor), targetID)
 	if errors.Is(err, store.ErrNotFound) {
 		return errf(NotFound, "No such user.")
 	} else if err != nil {
 		return err
 	}
-	if u.IsSiteAdmin() {
-		if access, err := s.SubjectOf(ctx, actor); err != nil {
-			return err
-		} else if !access.Can(authz.SiteAdminsManage, "") {
-			return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
-		}
+	if u.IsSiteAdmin() && !access.Can(authz.SiteAdminsManage, "") {
+		return errf(Forbidden, "Only a site administrator may reset a site administrator's password.")
 	}
 	if err := s.needMail(); err != nil {
 		return err

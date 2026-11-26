@@ -402,7 +402,7 @@ func (s *server) mySettings(c *call) {
 		}
 		h.Release()
 	}
-	tenant := c.user().TenantID
+	tenant := c.tenant()
 	ver, err := s.settings.Version(ctx, tenant)
 	if err != nil {
 		s.fail(c.w, err)
@@ -449,7 +449,7 @@ func (s *server) mySettings(c *call) {
 			features[d.Key] = on || s.single
 		}
 		if d.Key == settings.StorageAssets {
-			r, err := s.assetsRule(ctx, c.user().TenantID)
+			r, err := s.assetsRule(ctx, c.tenant())
 			if err != nil {
 				s.fail(c.w, err)
 				return

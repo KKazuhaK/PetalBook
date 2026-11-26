@@ -38,6 +38,16 @@ func (s Subject) SiteWide(k Key) bool { return s.Site.Has(k) }
 // and its tenant keys there.
 func (s Subject) In(tenant string) Set { return s.Site.Union(s.Tenant[tenant]) }
 
+// NarrowTo is the subject cut to the tenant keys it holds in tenant, held
+// there only: what it may do acting as that tenant's administrator. Site keys
+// are set aside, and no key is held across the site, so the tenant's features
+// bind it (Decide). It never holds more than s. s is not changed.
+// It costs one intersection of bit sets: the tenant keys are built once.
+func (s Subject) NarrowTo(tenant string) Subject {
+	buildRoles()
+	return Subject{Tenant: map[string]Set{tenant: s.In(tenant).Intersect(tenantAdminSet)}}
+}
+
 // Grant is a custom role a person holds, directly or through a group, as the
 // subject is built from it: the role's scope and keys, and where it is held
 // (Tenant "" is across the site).

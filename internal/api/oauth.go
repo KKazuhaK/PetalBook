@@ -313,7 +313,7 @@ func (s *server) revokeGrant(c *call, owner string) {
 		return
 	}
 	id := c.r.PathValue("id")
-	rows, err := s.oauth.List(c.r.Context(), store.ScopeOf(c.user()), store.GrantFilter{ID: id, Limit: 1})
+	rows, err := s.oauth.List(c.r.Context(), c.reach(), store.GrantFilter{ID: id, Limit: 1})
 	if err != nil {
 		s.fail(c.w, err)
 		return

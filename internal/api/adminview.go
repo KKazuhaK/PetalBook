@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/perm"
 	"petalbook.app/server/internal/store"
@@ -36,11 +37,11 @@ type viewTable struct {
 	until map[viewKey]time.Time
 	// seen is when each (administrator, space, page or path) was last audited as
 	// opened: at most one row an hour.
-	seen map[string]time.Time
+	seen *onceAnHour
 }
 
 func newViewTable() *viewTable {
-	return &viewTable{until: map[viewKey]time.Time{}, seen: map[string]time.Time{}}
+	return &viewTable{until: map[viewKey]time.Time{}, seen: newOnceAnHour(maxViewAudit)}
 }
 
 // open starts or extends a view and returns when it ends.
@@ -106,24 +107,48 @@ type adminViewResp struct {
 // firstOpen says whether (who, space, what) has not been audited in the last
 // hour, and notes that it is now.
 func (v *viewTable) firstOpen(who, space, what string, now time.Time) bool {
-	key := who + "\x00" + space + "\x00" + what
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if t, ok := v.seen[key]; ok && now.Sub(t) < time.Hour {
+	return v.seen.first(who+"\x00"+space+"\x00"+what, now)
+}
+
+// onceAnHour is a bounded table of when each key was last noted: what is
+// audited at most once an hour. At its cap the keys older than an hour are
+// dropped, and if none are, all of them (a burst of new keys then gets a row
+// each again, which is the safe side for an audit).
+type onceAnHour struct {
+	mu   sync.Mutex
+	max  int
+	seen map[string]time.Time
+}
+
+func newOnceAnHour(limit int) *onceAnHour {
+	return &onceAnHour{max: limit, seen: map[string]time.Time{}}
+}
+
+// first says whether key has not been noted in the last hour, and notes it.
+func (o *onceAnHour) first(key string, now time.Time) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if t, ok := o.seen[key]; ok && now.Sub(t) < time.Hour {
 		return false
 	}
-	if len(v.seen) >= maxViewAudit {
-		for k, t := range v.seen {
+	if len(o.seen) >= o.max {
+		for k, t := range o.seen {
 			if now.Sub(t) >= time.Hour {
-				delete(v.seen, k)
+				delete(o.seen, k)
 			}
 		}
-		if len(v.seen) >= maxViewAudit {
-			v.seen = map[string]time.Time{}
+		if len(o.seen) >= o.max {
+			o.seen = map[string]time.Time{}
 		}
 	}
-	v.seen[key] = now
+	o.seen[key] = now
 	return true
+}
+
+func (o *onceAnHour) len() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.seen)
 }
 
 // viewing says whether the caller's session has a view of the space open.
@@ -144,7 +169,8 @@ func (s *server) viewedWhat(c *call, what string, detail map[string]any) {
 		return
 	}
 	detail["space"] = c.sp.Info.ID
-	s.auditRow(c, "page_viewed", s.spaceTenant(c), detail)
+	// A view is administration even on a space route: the row says as what.
+	s.audit(c, auth.AuditEvent{Kind: "page_viewed", Actor: c.user().ID, Tenant: s.spaceTenant(c), Detail: detail, Capacity: capacityFor(c.p.Access, authz.TenantDataView)})
 }
 
 func (s *server) viewedPage(c *call, id string) {
@@ -158,7 +184,7 @@ func (s *server) spaceTenant(c *call) string {
 	if sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), store.AllTenants(), c.sp.Info.ID); err == nil {
 		return sp.TenantID
 	}
-	return c.user().TenantID
+	return c.tenant()
 }
 
 // adminMeta are the routes an administrator who is not a member and has no view
@@ -172,7 +198,7 @@ var adminMetaRoutes = map[string]bool{
 // scope, and not a personal space unless they are a site administrator (a tenant
 // administrator never sees a person's own space). It answers 404 otherwise.
 func (s *server) adminSpaceFor(c *call, id string) (*store.SpaceInfo, bool) {
-	sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id)
+	sp, err := store.GetSpace(c.r.Context(), s.opt.Store.Q(), c.adminReach(), id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && sp.Personal && !c.can(authz.SiteSpacesPersonalContent)) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such space.")
 		return nil, false

@@ -517,11 +517,11 @@ func (s *Service) UpdateCaptchaKeys(ctx context.Context, actorID, ip string, sit
 	s.settings.Load().Invalidate()
 	detail := map[string]any{"layer": "site"}
 	if siteKey != nil && key != st.Captcha.SiteKey {
-		s.Audit(AuditEvent{Kind: "setting_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: map[string]any{"key": "captcha.siteKey", "layer": "site", "from": st.Captcha.SiteKey, "to": key}})
+		s.AuditIn(ctx, AuditEvent{Kind: "setting_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: map[string]any{"key": "captcha.siteKey", "layer": "site", "from": st.Captcha.SiteKey, "to": key}})
 	}
 	if secret != nil {
 		detail["key"], detail["to"] = "captcha.secret", "changed"
-		s.Audit(AuditEvent{Kind: "setting_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: detail})
+		s.AuditIn(ctx, AuditEvent{Kind: "setting_changed", Actor: actorID, IP: ip, Tenant: "-", Detail: detail})
 	}
 	return nil
 }

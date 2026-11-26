@@ -257,7 +257,7 @@ func (s *server) adminListPeople(c *call) {
 // quotas read, and is shown as it is.
 func (s *server) adminGetPerson(c *call) {
 	ctx := c.r.Context()
-	e, err := store.GetPerson(ctx, s.opt.Store.Q(), s.opt.Store.Dialect(), store.AdminScopeOf(c.user()), c.r.PathValue("user"))
+	e, err := store.GetPerson(ctx, s.opt.Store.Q(), s.opt.Store.Dialect(), c.adminReach(), c.r.PathValue("user"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
 		return
@@ -266,7 +266,7 @@ func (s *server) adminGetPerson(c *call) {
 		s.fail(c.w, err)
 		return
 	}
-	rows, _, err := store.ListAllSpaces(ctx, s.opt.Store.Q(), store.AdminScopeOf(c.user()), store.SpaceFilter{Owner: e.ID, Sort: "lastUsed", Limit: maxAdminLimit})
+	rows, _, err := store.ListAllSpaces(ctx, s.opt.Store.Q(), c.adminReach(), store.SpaceFilter{Owner: e.ID, Sort: "lastUsed", Limit: maxAdminLimit})
 	if err != nil {
 		s.fail(c.w, err)
 		return

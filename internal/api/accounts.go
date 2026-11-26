@@ -516,7 +516,7 @@ func (s *server) listUsers(c *call) {
 
 // getUser is one person as the list shows them.
 func (s *server) getUser(c *call) {
-	e, err := store.GetUserRow(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), c.r.PathValue("id"))
+	e, err := store.GetUserRow(c.r.Context(), s.opt.Store.Q(), c.adminReach(), c.r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such user.")
 		return
@@ -577,8 +577,8 @@ func (s *server) patchUser(c *call) {
 		yes := true
 		req.EmailVerified = &yes
 	}
-	before, _ := store.GetUser(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("id"))
-	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Name: req.Name, Username: req.Username, Role: req.Role, Disabled: req.Disabled,
+	before, _ := store.GetUser(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
+	u, err := s.auth.UpdateUser(c.r.Context(), c.user(), c.p.Access, s.auth.ClientAddr(c.r), c.r.PathValue("id"), auth.UserPatch{Name: req.Name, Username: req.Username, Role: req.Role, Disabled: req.Disabled,
 		PasskeyRequired: req.PasskeyRequired, Email: req.Email, EmailVerified: req.EmailVerified, MakeSiteAdmin: req.SiteAdmin, RemoteExempt: req.RemoteExempt})
 	if err != nil {
 		s.fail(c.w, err)
@@ -621,7 +621,7 @@ func (s *server) setTemporaryPassword(c *call) {
 		return
 	}
 	id := c.r.PathValue("id")
-	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), s.auth.ClientAddr(c.r), id, req.Password); err != nil {
+	if err := s.auth.SetTemporaryPassword(c.r.Context(), c.user(), c.p.Access, s.auth.ClientAddr(c.r), id, req.Password); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -643,7 +643,7 @@ func (s *server) createInvite(c *call) {
 	if !s.readJSONMax(c.w, c.r, &req, true, authBodyLimit) {
 		return
 	}
-	inv, err := s.auth.CreateInvite(c.r.Context(), c.user(), req.Tenant, req.Role, req.Days, req.SiteAdmin)
+	inv, err := s.auth.CreateInvite(c.r.Context(), c.user(), c.p.Access, req.Tenant, req.Role, req.Days, req.SiteAdmin)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -687,7 +687,7 @@ func (s *server) listInvites(c *call) {
 }
 
 func (s *server) deleteInvite(c *call) {
-	if err := s.auth.DeleteInvite(c.r.Context(), store.ScopeOf(c.user()), c.r.PathValue("id")); err != nil {
+	if err := s.auth.DeleteInvite(c.r.Context(), c.reach(), c.r.PathValue("id")); err != nil {
 		s.fail(c.w, err)
 		return
 	}

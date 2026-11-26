@@ -7,6 +7,7 @@
 package auditlog
 
 import (
+	"context"
 	"sort"
 	"time"
 )
@@ -103,6 +104,20 @@ const (
 	CapacitySiteAdmin   = "site_admin"
 	CapacityTenantAdmin = "tenant_admin"
 )
+
+type capacityKey struct{}
+
+// WithCapacity is ctx carrying the capacity a request acts in: every audit row
+// written for the request records it (internal/api sets it once per request).
+func WithCapacity(ctx context.Context, c string) context.Context {
+	return context.WithValue(ctx, capacityKey{}, c)
+}
+
+// CapacityOf is the capacity ctx carries; "" for none.
+func CapacityOf(ctx context.Context) string {
+	c, _ := ctx.Value(capacityKey{}).(string)
+	return c
+}
 
 // ValidCapacity says whether c is a capacity a filter may name.
 func ValidCapacity(c string) bool {

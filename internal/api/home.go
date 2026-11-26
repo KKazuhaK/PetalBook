@@ -29,7 +29,7 @@ func (s *server) getDailySettings(c *call) {
 func (s *server) answerDailySettings(c *call, d *space.DailyConfig) {
 	inEffect := true
 	if !s.single {
-		allow, err := s.dailyAllowFor(c.r.Context(), c.user().TenantID)
+		allow, err := s.dailyAllowFor(c.r.Context(), c.tenant())
 		if err != nil {
 			s.fail(c.w, err)
 			return
@@ -136,7 +136,7 @@ func (s *server) getDaily(c *call) {
 	var why space.DailyNone
 	allowOwn := true
 	if !s.single {
-		allow, err := s.dailyAllowFor(c.r.Context(), c.user().TenantID)
+		allow, err := s.dailyAllowFor(c.r.Context(), c.tenant())
 		if err != nil {
 			s.fail(c.w, err)
 			return

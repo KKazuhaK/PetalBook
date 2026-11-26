@@ -222,9 +222,15 @@ func AccessOf(u store.User) authz.Subject {
 // SubjectOf is what an account holds outside spaces: its built-in role and
 // the custom roles given to it or to its groups. The grants are read only
 // while some custom role exists (store.Store.CustomRoles, one atomic load), so
-// a server without any pays nothing. The session cache keeps the result; a
-// rule about an actor that is not a request's (a bulk job, the account
-// functions given a store.User) asks here.
+// a server without any pays nothing. The session cache keeps the result.
+//
+// It builds a principal's subject (a session or token as it is loaded) and an
+// actor's outside any request (a bulk job's actor as they are now, the CLI);
+// never a request's. A request's subject may be narrowed to a tenant's scope,
+// which rebuilding it from the user would undo (a custom site role would bring
+// site keys back, and the home role would be held in the narrowed tenant), so
+// the account functions take the caller's subject as a parameter and never
+// rebuild it.
 func (s *Service) SubjectOf(ctx context.Context, u store.User) (authz.Subject, error) {
 	sub := AccessOf(u)
 	if !s.st.CustomRoles() {

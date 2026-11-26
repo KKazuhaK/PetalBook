@@ -57,8 +57,15 @@ func TestAuditFiltersCategoriesAndVisibility(t *testing.T) {
 		if got := auditCounts(t, f.root, "&category=admin&kind=tenant_changed&actor="+rootID); len(got) != 1 {
 			t.Fatalf("kind and actor: %v", got)
 		}
-		if got := auditCounts(t, f.root, "&capacity=site_admin"); len(got) != 1 || got["setting_changed"] != 1 {
+		// The fixture's own administration records its capacity too (the site
+		// administrator's setting and new tenant; B's administrator's invites).
+		if got := auditCounts(t, f.root, "&capacity=site_admin"); got["setting_changed"] != 2 || got["tenant_created"] != 1 || got["invites_batch"] != 0 || got["tenant_changed"] != 0 {
 			t.Fatalf("capacity: %v", got)
+		}
+		for _, it := range f.root.do("GET", "/api/admin/audit?limit=200&capacity=tenant_admin", nil).want(t, 200, "").body["items"].([]any) {
+			if it.(map[string]any)["capacity"] != "tenant_admin" {
+				t.Fatalf("capacity=tenant_admin: %v", it)
+			}
 		}
 		if got := auditCounts(t, f.root, "&tenant="+f.tenB+"&category=data"); got["space_deleted"] < 1 || got["login_failed"] != 0 {
 			t.Fatalf("tenant: %v", got)

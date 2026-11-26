@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/store"
 )
 
@@ -55,7 +56,8 @@ func WithAudit(ctx context.Context, q store.Q, ev Event, e Entry) error {
 		detail = string(b)
 	}
 	return store.Atomically(ctx, q, func(q store.Q) error {
-		row := store.AuditRow{ID: store.NewAuditID(e.Now), At: e.Now.UTC(), Kind: ev.Audit, Actor: e.Actor, UserID: e.User, Username: e.Username, IP: e.IP, Detail: detail, TenantID: e.Tenant}
+		row := store.AuditRow{ID: store.NewAuditID(e.Now), At: e.Now.UTC(), Kind: ev.Audit, Actor: e.Actor, UserID: e.User, Username: e.Username, IP: e.IP, Detail: detail, TenantID: e.Tenant,
+			Capacity: auditlog.CapacityOf(ctx)}
 		if err := store.InsertAudit(ctx, q, []store.AuditRow{row}); err != nil {
 			return err
 		}

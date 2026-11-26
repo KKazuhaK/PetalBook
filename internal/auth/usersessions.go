@@ -87,7 +87,7 @@ func (s *Service) EndUserSession(ctx context.Context, actor *Principal, userID, 
 	s.gen++
 	delete(s.sessions, id)
 	s.cmu.Unlock()
-	s.Audit(AuditEvent{Kind: "sessions_ended", Actor: actor.User.ID, User: userID, Username: u.Username, IP: ip, Detail: map[string]any{"by": "admin", "count": 1}})
+	s.AuditIn(ctx, AuditEvent{Kind: "sessions_ended", Actor: actor.User.ID, User: userID, Username: u.Username, IP: ip, Detail: map[string]any{"by": "admin", "count": 1}})
 	return nil
 }
 
@@ -104,7 +104,7 @@ func (s *Service) EndUserSessions(ctx context.Context, actor *Principal, userID,
 	if err := s.SignOutEverywhere(ctx, userID, ""); err != nil {
 		return 0, err
 	}
-	s.Audit(AuditEvent{Kind: "sessions_ended", Actor: actor.User.ID, User: userID, Username: u.Username, IP: ip, Detail: map[string]any{"by": "admin", "count": len(rows)}})
+	s.AuditIn(ctx, AuditEvent{Kind: "sessions_ended", Actor: actor.User.ID, User: userID, Username: u.Username, IP: ip, Detail: map[string]any{"by": "admin", "count": len(rows)}})
 	return len(rows), nil
 }
 

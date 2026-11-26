@@ -302,7 +302,7 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 	if err != nil {
 		return nil, "", err
 	}
-	allow, err := s.dailyAllowFor(ctx, c.user().TenantID)
+	allow, err := s.dailyAllowFor(ctx, c.tenant())
 	if err != nil {
 		return nil, "", err
 	}
@@ -335,7 +335,7 @@ func (s *server) siteDaily(c *call, site siteDaily, date string, skip int, lang 
 		return s.dailyFromSources(c, site, srcs, "space:"+c.sp.Info.ID, date, skip, lang, tz)
 	}
 	// The default of the person's tenant comes between the space's and the site's.
-	def, scope, err := s.dailyDefaultFor(ctx, c.user().TenantID, site.Default)
+	def, scope, err := s.dailyDefaultFor(ctx, c.tenant(), site.Default)
 	if err != nil {
 		return nil, "", err
 	}

@@ -60,7 +60,7 @@ func (s *server) registry() *connections.Registry { return s.opt.Connections }
 // provider is the {provider} of the path, or a 404.
 func (s *server) provider(c *call) (connections.Provider, bool) {
 	// A provider of another tenant is as good as not there.
-	p, ok := s.registry().GetFor(c.r.PathValue("provider"), c.user().TenantID)
+	p, ok := s.registry().GetFor(c.r.PathValue("provider"), c.tenant())
 	if !ok {
 		s.connError(c, c.r.PathValue("provider"), http.StatusNotFound, connections.CodeNotFound, "No such provider.")
 		return nil, false
@@ -153,7 +153,7 @@ func toProvider(d connections.Descriptor, in *connections.Info) providerResp {
 }
 
 func (s *server) listConnections(c *call) {
-	list := s.registry().ListFor(c.user().TenantID)
+	list := s.registry().ListFor(c.tenant())
 	out := make([]providerResp, 0, len(list))
 	for _, p := range list {
 		in, err := p.Info(c.r.Context(), c.user().ID)

@@ -287,7 +287,7 @@ type mcpCall struct {
 func (c *mcpCall) author() space.Author {
 	a := c.s.spaces.AuthorOf(c.p.User)
 	a.Via = space.ViaMCP
-	a.MaxFile = c.s.fileLimitFor(c.ctx, c.p.User.TenantID)
+	a.MaxFile = c.s.fileLimitFor(c.ctx, c.tenant())
 	return a
 }
 

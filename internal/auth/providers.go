@@ -934,7 +934,7 @@ func (s *Service) CreateProvider(ctx context.Context, actorID, ip string, in Pro
 	if err := s.reloadProviders(ctx, b.row.Slug); err != nil {
 		return nil, err
 	}
-	s.Audit(AuditEvent{Kind: "provider_created", Actor: actorID, IP: ip, Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
+	s.AuditIn(ctx, AuditEvent{Kind: "provider_created", Actor: actorID, IP: ip, Detail: map[string]any{"slug": b.row.Slug, "kind": b.row.Kind, "name": b.row.Name}})
 	return s.Provider(ctx, b.row.Slug)
 }
 
@@ -1016,7 +1016,7 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID, ip, slug string, 
 		for _, f := range b.changed {
 			d[f] = changedValue(b, f)
 		}
-		s.Audit(AuditEvent{Kind: "provider_changed", Actor: actorID, IP: ip, Detail: d})
+		s.AuditIn(ctx, AuditEvent{Kind: "provider_changed", Actor: actorID, IP: ip, Detail: d})
 	}
 	return s.Provider(ctx, slug)
 }
@@ -1104,7 +1104,7 @@ func (s *Service) DeleteProvider(ctx context.Context, actorID, ip, slug string, 
 	if err := s.reloadProviders(ctx); err != nil {
 		return err
 	}
-	s.Audit(AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": slug, "kind": cur.row.Kind}})
+	s.AuditIn(ctx, AuditEvent{Kind: "provider_deleted", Actor: actorID, IP: ip, Detail: map[string]any{"slug": slug, "kind": cur.row.Kind}})
 	return nil
 }
 

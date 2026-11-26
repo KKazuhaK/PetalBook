@@ -45,7 +45,7 @@ const maxGateKeys = 10_000
 func (s *server) findPeople(c *call) {
 	sc := c.ownScope()
 	if id := c.r.URL.Query().Get("group"); id != "" && !s.single {
-		g, err := store.GetGroup(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id)
+		g, err := store.GetGroup(c.r.Context(), s.opt.Store.Q(), c.adminReach(), id)
 		if errors.Is(err, store.ErrNotFound) || (err == nil && !c.p.Access.Can(authz.TenantGroupsManage, g.TenantID)) {
 			writeError(c.w, http.StatusNotFound, "not_found", "No such group.")
 			return
@@ -262,7 +262,7 @@ func (s *server) adminAddGroupMembersBatch(c *call) {
 		keys[i] = r.User
 	}
 	id := c.r.PathValue("group")
-	res, tenant, err := s.spaces.AddGroupPeopleBatch(c.r.Context(), store.ScopeOf(c.user()), id, c.user().ID, keys, req.DryRun)
+	res, tenant, err := s.spaces.AddGroupPeopleBatch(c.r.Context(), c.reach(), id, c.user().ID, keys, req.DryRun)
 	if err != nil {
 		s.failAdminGroup(c.w, err)
 		return
@@ -282,7 +282,7 @@ func (s *server) adminAddMembersBatch(c *call) {
 	ctx := c.r.Context()
 	tenant := req.Tenant
 	if tenant == "" {
-		tenant = c.user().TenantID
+		tenant = c.tenant()
 	}
 	keys := make([]string, len(req.Rows))
 	var groupNames []string
@@ -291,7 +291,7 @@ func (s *server) adminAddMembersBatch(c *call) {
 		groupNames = append(groupNames, r.Groups...)
 	}
 	// What the caller may do in the tenant is decided before anything is read of it.
-	if _, _, err := s.auth.InviteMany(ctx, c.user(), tenant, nil, true); err != nil {
+	if _, _, err := s.auth.InviteMany(ctx, c.user(), c.p.Access, tenant, nil, true); err != nil {
 		s.fail(c.w, err)
 		return
 	}
@@ -370,7 +370,7 @@ func (s *server) adminAddMembersBatch(c *call) {
 		}
 		out[i] = o
 	}
-	made, errs, err := s.auth.InviteMany(ctx, c.user(), tenant, specs, req.DryRun)
+	made, errs, err := s.auth.InviteMany(ctx, c.user(), c.p.Access, tenant, specs, req.DryRun)
 	if err != nil {
 		s.fail(c.w, err)
 		return

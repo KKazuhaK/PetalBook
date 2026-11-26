@@ -65,6 +65,7 @@ export const AUDIT_CATEGORIES: MockAuditCategory[] = [
       { name: 'tenant_created', site: false },
       { name: 'tenant_changed', site: false },
       { name: 'tenant_deleted', site: false },
+      { name: 'tenant_console_opened', site: false },
       { name: 'registered', site: false },
       { name: 'user_changed', site: false },
       { name: 'user_deleted', site: false },

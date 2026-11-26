@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"petalbook.app/server/internal/store"
 )
 
 // Confirmations (docs/api.md, "Confirmations and bulk actions"). A token says
@@ -261,7 +259,7 @@ func (s *server) useConfirm(c *call, tok string, req confirmRequest) bool {
 // planFor makes the plan of an action over the ids of the request, all of which
 // must be in the caller's scope (404 for any that is not, and nothing is made).
 func (s *server) planFor(c *call, req confirmRequest) (confirmPlan, bool) {
-	sc := store.AdminScopeOf(c.user())
+	sc := c.adminReach()
 	switch confirmActions[req.Action] {
 	case "spaces":
 		return s.planSpaces(c, sc, req)

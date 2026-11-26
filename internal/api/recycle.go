@@ -95,7 +95,7 @@ func (s *server) recycleDays(c *call) int { return s.spaces.RecycleDays(c.r.Cont
 // recycleItemFound answers an item that is not in the caller's scope as one
 // that does not exist.
 func (s *server) recycleItemFound(c *call, id string) (*store.RecycleItem, bool) {
-	it, err := store.GetRecycleItem(c.r.Context(), s.opt.Store.Q(), store.AdminScopeOf(c.user()), id, false)
+	it, err := store.GetRecycleItem(c.r.Context(), s.opt.Store.Q(), c.adminReach(), id, false)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such item in the recycle bin.")
 		return nil, false
@@ -169,7 +169,7 @@ func (s *server) adminRestoreItem(c *call) {
 		s.restoreUserItem(c, it, req.Owner)
 		return
 	}
-	res, err := s.spaces.RestoreSpace(c.r.Context(), store.AdminScopeOf(c.user()), it.ID, req.Owner)
+	res, err := s.spaces.RestoreSpace(c.r.Context(), c.adminReach(), it.ID, req.Owner)
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -201,10 +201,10 @@ func (s *server) adminPurgeItem(c *call) {
 	// A purge is paced and may take long: it runs in the background and is
 	// audited when it is over. The item is purging meanwhile (a restore of it
 	// is busy); one that fails stays purging and the hourly job finishes it.
-	actor, ip := c.user().ID, s.auth.ClientAddr(c.r)
-	started, err := s.spaces.StartPurge(c.r.Context(), store.AdminScopeOf(c.user()), it.ID, func(done *store.RecycleItem, err error) {
+	actor, ip, capacity := c.user().ID, s.auth.ClientAddr(c.r), c.scope.capacity
+	started, err := s.spaces.StartPurge(c.r.Context(), c.adminReach(), it.ID, func(done *store.RecycleItem, err error) {
 		if err == nil {
-			s.auditPurged(actor, ip, done, "")
+			s.auditPurged(actor, ip, capacity, done, "")
 		}
 	})
 	if err != nil {
@@ -216,11 +216,11 @@ func (s *server) adminPurgeItem(c *call) {
 }
 
 // auditPurged records that an item was purged.
-func (s *server) auditPurged(actor, ip string, it *store.RecycleItem, bulk string) {
+func (s *server) auditPurged(actor, ip, capacity string, it *store.RecycleItem, bulk string) {
 	if s.auth == nil {
 		return
 	}
-	ev := auth.AuditEvent{Kind: "space_purged", Actor: actor, Tenant: it.TenantID, IP: ip,
+	ev := auth.AuditEvent{Kind: "space_purged", Actor: actor, Tenant: it.TenantID, IP: ip, Capacity: capacity,
 		Detail: map[string]any{"item": it.ID, "space": it.SpaceID, "name": it.Name, "bytes": it.Bytes, "reason": it.Reason, "bulk": bulk}}
 	if it.Kind == store.RecycleUser {
 		ev.Kind, ev.Detail = "user_purged", map[string]any{"item": it.ID, "user": it.UserID, "username": it.Name, "bulk": bulk}
@@ -246,7 +246,7 @@ func (s *server) adminDeleteSpace(c *call) {
 		writeError(c.w, http.StatusBadRequest, "invalid", "Reason is at most 500 characters.")
 		return
 	}
-	it, err := s.spaces.RecycleSpace(c.r.Context(), store.AdminScopeOf(c.user()), c.r.PathValue("space"), spaces.RecycleOptions{By: c.user().ID, ByName: c.user().Username, Reason: req.Reason})
+	it, err := s.spaces.RecycleSpace(c.r.Context(), c.adminReach(), c.r.PathValue("space"), spaces.RecycleOptions{By: c.user().ID, ByName: c.user().Username, Reason: req.Reason})
 	if err != nil {
 		s.fail(c.w, err)
 		return
@@ -318,7 +318,7 @@ func (s *server) deletionOf(c *call, sc store.Scope, id string) (deletionResp, b
 }
 
 func (s *server) adminSpaceDeletion(c *call) {
-	out, ok := s.deletionOf(c, store.AdminScopeOf(c.user()), c.r.PathValue("space"))
+	out, ok := s.deletionOf(c, c.adminReach(), c.r.PathValue("space"))
 	if !ok {
 		return
 	}

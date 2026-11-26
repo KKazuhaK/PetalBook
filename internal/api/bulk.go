@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"petalbook.app/server/internal/auditlog"
 	"petalbook.app/server/internal/auth"
 	"petalbook.app/server/internal/authz"
 	"petalbook.app/server/internal/page"
@@ -163,8 +164,9 @@ func (s *server) jobTenants(ctx context.Context, req confirmRequest, caller stor
 
 // jobActor is the administrator who started a job as they are now: each item
 // is done with their rights of the moment, and one who is no longer an
-// administrator (or is disabled or deleted) is not obeyed any more.
-func (s *server) jobActor(ctx context.Context, id string) (store.User, authz.Subject, error) {
+// administrator (or is disabled or deleted) is not obeyed any more. A job
+// started in a tenant's scope keeps to it (narrowTo), as its request did.
+func (s *server) jobActor(ctx context.Context, id string, sc actingScope) (store.User, authz.Subject, error) {
 	gone := &auth.Error{Kind: auth.Forbidden, Msg: "The administrator who started the job may not do this any more."}
 	u, err := store.GetUser(ctx, s.opt.Store.Q(), store.AllTenants(), id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && u.Disabled) {
@@ -177,10 +179,14 @@ func (s *server) jobActor(ctx context.Context, id string) (store.User, authz.Sub
 	if err != nil {
 		return store.User{}, authz.Subject{}, err
 	}
-	if !access.Can(authz.TenantBulkRun, u.TenantID) {
+	actor := *u
+	if sc.narrowed {
+		actor, access = narrowTo(actor, access, sc.tenant)
+	}
+	if !access.Can(authz.TenantBulkRun, actor.TenantID) {
 		return store.User{}, authz.Subject{}, gone
 	}
-	return *u, access, nil
+	return actor, access, nil
 }
 
 type jobResp struct {
@@ -246,7 +252,7 @@ func (s *server) adminBulk(c *call) {
 	}
 	// The row is the tenant's it works on; a site administrator's job is the
 	// site's (its tenant's administrators do not see it).
-	tenant := c.user().TenantID
+	tenant := c.tenant()
 	if len(queue) == 1 {
 		tenant = queue[0]
 	}
@@ -257,7 +263,7 @@ func (s *server) adminBulk(c *call) {
 		return
 	}
 	actor, ip := c.user(), s.auth.ClientAddr(c.r)
-	if !s.goBg(func(ctx context.Context) { s.runJob(ctx, job, e.req, actor, ip, queue) }) {
+	if !s.goBg(func(ctx context.Context) { s.runJob(ctx, job, e.req, actor, ip, queue, c.scope) }) {
 		// The server is stopping: the job never starts, and reads as a restart
 		// leaves it.
 		s.writeJob(&job, store.JobInterrupted, 0, nil)
@@ -271,7 +277,7 @@ func (s *server) adminBulk(c *call) {
 }
 
 func (s *server) adminGetJob(c *call) {
-	j, err := store.GetBulkJob(c.r.Context(), s.opt.Store.Q(), store.ScopeOf(c.user()), c.r.PathValue("id"))
+	j, err := store.GetBulkJob(c.r.Context(), s.opt.Store.Q(), c.reach(), c.r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(c.w, http.StatusNotFound, "not_found", "No such job.")
 		return
@@ -292,7 +298,9 @@ func (s *server) adminGetJob(c *call) {
 // (the handler is closed) the job stops before its next item, or with the item
 // it was on cut short as a request whose client went away is, and ends
 // interrupted with what was done: as a restart leaves it.
-func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmRequest, actor store.User, ip string, queue []string) {
+func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmRequest, actor store.User, ip string, queue []string, sc actingScope) {
+	// Its rows record the capacity of the request that started it.
+	ctx = auditlog.WithCapacity(ctx, sc.capacity)
 	defer jobHook(ctx, &job, "end", "")
 	if !s.jobs.acquire(ctx, queue...) {
 		s.writeJob(&job, store.JobInterrupted, 0, nil)
@@ -316,7 +324,7 @@ func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmReque
 		// An interrupted job did not finish (as after a restart, nothing says so
 		// but its row).
 		if s.auth != nil && state != store.JobInterrupted {
-			s.auth.Audit(auth.AuditEvent{Kind: "bulk_finished", Actor: actor.ID, Tenant: job.TenantID, IP: ip,
+			s.auth.AuditIn(ctx, auth.AuditEvent{Kind: "bulk_finished", Actor: actor.ID, Tenant: job.TenantID, IP: ip,
 				Detail: map[string]any{"job": job.ID, "action": job.Action, "count": job.Total, "failed": len(failed)}})
 		}
 	}
@@ -344,7 +352,7 @@ func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmReque
 		if err == nil {
 			var cur store.User
 			var access authz.Subject
-			if cur, access, err = s.jobActor(ctx, actor.ID); err == nil {
+			if cur, access, err = s.jobActor(ctx, actor.ID, sc); err == nil {
 				err = s.bulkExport(ctx, req, cur, access)
 			}
 		}
@@ -367,7 +375,7 @@ func (s *server) runJob(ctx context.Context, job store.BulkJob, req confirmReque
 				finish(store.JobInterrupted)
 				return
 			}
-			cur, access, err := s.jobActor(ctx, actor.ID)
+			cur, access, err := s.jobActor(ctx, actor.ID, sc)
 			if err == nil {
 				err = s.bulkItem(ctx, req, id, cur, access, ip, job.ID)
 			}
@@ -409,7 +417,7 @@ func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, ac
 			return
 		}
 		detail["bulk"] = job
-		s.auth.Audit(auth.AuditEvent{Kind: kind, Actor: actor.ID, Tenant: tenant, Detail: detail, IP: ip})
+		s.auth.AuditIn(ctx, auth.AuditEvent{Kind: kind, Actor: actor.ID, Tenant: tenant, Detail: detail, IP: ip})
 	}
 	switch req.Action {
 	case "delete_spaces":
@@ -438,7 +446,7 @@ func (s *server) bulkItem(ctx context.Context, req confirmRequest, id string, ac
 		return err
 	case "disable_users", "enable_users":
 		off := req.Action == "disable_users"
-		_, err := s.auth.UpdateUser(ctx, actor, ip, id, auth.UserPatch{Disabled: &off})
+		_, err := s.auth.UpdateUser(ctx, actor, access, ip, id, auth.UserPatch{Disabled: &off})
 		return err
 	case "purge":
 		if !can(authz.SiteRecyclePurge) {

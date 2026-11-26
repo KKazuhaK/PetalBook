@@ -365,6 +365,7 @@ export const securityEn: SecurityMessages = {
       tenant_created: 'Organization made',
       tenant_changed: 'Organization changed',
       tenant_deleted: 'Organization deleted',
+      tenant_console_opened: 'Organization managed as its administrator',
       registered: 'Registered',
       user_changed: 'User changed',
       user_deleted: 'User deleted',
