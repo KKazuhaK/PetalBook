@@ -81,15 +81,16 @@ func trustsEmail(src emailSource) bool {
 	}
 }
 
-// isPublicGitHub says whether a GitHub provider's base URL is github.com (or
-// its API host), not a GitHub Enterprise server.
+// isPublicGitHub says whether a GitHub provider's base URL is github.com, not
+// a GitHub Enterprise server.
 func isPublicGitHub(baseURL string) bool {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return false
 	}
-	h := strings.ToLower(u.Hostname())
-	return h == "github.com" || h == "api.github.com"
+	// The same test as githubAPIBase's: only github.com is the public
+	// service (its API host is not a base URL).
+	return strings.EqualFold(u.Hostname(), "github.com")
 }
 
 // claimTrue reads a boolean claim, true or "true".

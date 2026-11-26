@@ -6670,8 +6670,9 @@ Signed in. `{"lang": "zh-Hans"}`. Sends a link
 `<public url>/verify-email#<token>` (valid 24 hours) to the account's current
 `email`. `202 {"sent": true}`. `409 mail_not_configured`; `400 invalid` when
 the account has no email; `400 email_not_ascii` (from 3.6) for one stored with characters outside ASCII while
-`users.emailNonAscii` is off; `409 email_verified` when it is verified already;
-`429 rate_limited` after 3 in an hour.
+`users.emailNonAscii` is off; `409 email_verified` when it is verified already
+(not when only a tenant administrator marked it: the person may confirm it,
+which clears the mark); `429 rate_limited` after 3 in an hour.
 
 #### `POST /api/email/confirm`
 

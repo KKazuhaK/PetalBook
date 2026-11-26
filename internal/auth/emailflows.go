@@ -476,8 +476,16 @@ func (s *Service) RequestEmailVerify(ctx context.Context, u store.User, lang, ip
 		}
 		return errf(Invalid, "This address cannot be used; set it again.")
 	}
+	// Already verified, unless only a tenant administrator marked it: the
+	// person confirms it themself, which clears the mark (store.EmailRow.Holds).
 	if u.EmailVerified {
-		return coded(409, "email_verified", "This address is already verified.")
+		by, err := store.EmailVerifiedBy(ctx, s.st.Q(), u.ID)
+		if err != nil {
+			return err
+		}
+		if by != store.VerifiedByTenantAdmin {
+			return coded(409, "email_verified", "This address is already verified.")
+		}
 	}
 	if wait, ok := s.mailSlot(u.Email, ip); !ok {
 		return retryAfter(wait)

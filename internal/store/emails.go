@@ -278,16 +278,17 @@ func EmailOwner(ctx context.Context, q Q, email string) (*EmailRow, error) {
 }
 
 // UserByVerifiedEmail is the account that signs in or resets by an address:
-// the one that holds it verified (any of its addresses, primary or not), and
-// is not deleted. row is the address that matched, as stored: account mail
-// goes to it, never to what was typed. ErrNotFound when there is none (an
-// address held unverified finds nobody). It is one lookup by the unique key.
+// the one that holds it verified (EmailRow.Holds; any of its addresses,
+// primary or not), and is not deleted. row is the address that matched, as
+// stored: account mail goes to it, never to what was typed. ErrNotFound when
+// there is none (an address held unverified, or marked by a tenant
+// administrator alone, finds nobody). It is one lookup by the unique key.
 func UserByVerifiedEmail(ctx context.Context, q Q, email string) (*User, *EmailRow, error) {
 	row, err := EmailOwner(ctx, q, email)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !row.Verified || row.UserDeleted {
+	if !row.Holds() || row.UserDeleted {
 		return nil, nil, ErrNotFound
 	}
 	u, err := GetUser(ctx, q, AllTenants(), row.UserID)
@@ -449,11 +450,17 @@ func AddEmail(ctx context.Context, q Q, userID, email string, verified bool, by 
 			return err
 		}
 		released = r
+		if testHookBeforeEmailInsert != nil {
+			testHookBeforeEmailInsert(q)
+		}
 		_, err = q.Exec(ctx, `INSERT INTO user_emails(user_id, email, email_key, is_primary, verified, verified_by, created) VALUES (?, ?, ?, 0, ?, ?, ?)`,
 			userID, email, key, b2i(verified), by, ms(now))
 		return emailErr(err)
 	})
-	return released, err
+	if err != nil {
+		return nil, err
+	}
+	return released, nil
 }
 
 // SetEmailRowVerified marks one address of an account verified or not, and who

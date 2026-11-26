@@ -506,7 +506,9 @@ Decided:
     - **Which sign-ins vouch for an address** is one function, `trustsEmail`;
       the address is then verified with `verified_by = provider:<slug>`. Google
       and Apple: `email_verified=true`. GitHub: an address its API lists as
-      verified. Microsoft: only `xms_edov`, or an address on a verified domain;
+      verified, on github.com only (a GitHub Enterprise server needs the
+      provider's trust switch: its administrators can mark any address
+      verified). Microsoft: only `xms_edov`, or an address on a verified domain;
       never its plain `email` claim (the "nOAuth" takeover). An organisation's
       SSO (OIDC or SAML): only addresses on its verified domains, so nothing
       until domain verification exists (a configured SAML provider is treated
@@ -515,11 +517,17 @@ Decided:
       verified email addresses", default off) and `email_verified`. Google,
       Apple and Microsoft arrive with step (d)'s templates; the rule is wired
       for the kinds of today.
-    - **Gap left on purpose:** `PATCH /api/account` to an address another
-      account holds unverified is `409 email_taken`, not a pending change: the
-      address moves only through a registration's confirmation or a trusted
-      sign-in, or an administrator clears it first. The follow-up with several
-      addresses per account adds "add, then verify" and removes the gap.
+    - **A tenant administrator's "mark verified"** (`verified_by = tenant_admin`)
+      shows as verified but holds the address no more than an unverified one
+      (`store.EmailRow.Holds`): whoever proves the address takes it, it finds
+      nobody for a reset, and the member may confirm it themself, which clears
+      the mark. A site administrator's mark counts as verified.
+    - **Known issue after 3.6 part 5:** an existing account cannot claim an
+      address another account holds unverified just by setting it
+      (`PATCH /api/account` is `409 email_taken`, not a pending change); only a
+      new registration's confirmation or a trusted SSO sign-in takes it, or an
+      administrator clears it first. Follow-up, with the several-addresses PR:
+      "add email, then confirm" takes an unverified address.
   - Together with "ask for the email first" above: the first step of the sign-in
     page asks for an email or username, `discover` looks only at the domain, if
     there is SSO it goes to SSO, and otherwise the second step asks for the

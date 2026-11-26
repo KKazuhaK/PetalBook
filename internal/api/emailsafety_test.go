@@ -288,3 +288,28 @@ func TestATenantAdministratorsMarkGetsNoResetLink(t *testing.T) {
 		f.root.do("POST", "/api/users/"+f.userA+"/password-reset", map[string]any{}).want(t, 202, "")
 	})
 }
+
+// A member whose address only a tenant administrator marked may confirm it
+// themself; that clears the mark, and the address then gets a reset link.
+func TestAMemberConfirmsAnAddressATenantAdministratorMarked(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		srv := fakeMail(t)
+		f := newTenFx(t, a)
+		enableMail(t, f.root, srv)
+		f.admA.do("PATCH", "/api/users/"+f.userA, map[string]any{"email": "mem@example.test", "emailVerified": true}).want(t, 200, "")
+		before := len(srv.Messages())
+		f.memA.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 202, "")
+		tok := srv.Wait(before + 1)[before].Token(t)
+		a.newClient("").do("POST", "/api/email/confirm", map[string]any{"token": tok}).want(t, 204, "")
+		if by, _ := store.EmailVerifiedBy(context.Background(), a.st.Q(), f.userA); by != "" {
+			t.Fatalf("by %q", by)
+		}
+		f.memA.do("POST", "/api/account/email/verify", map[string]any{}).want(t, 409, "email_verified")
+		before = len(srv.Messages())
+		forgot(a.newClient("203.0.113.4"), "mem@example.test").want(t, 202, "")
+		if m := srv.Wait(before + 1)[before]; !contains(m.Text, "/reset-password#") {
+			t.Fatal("no reset link")
+		}
+	})
+}

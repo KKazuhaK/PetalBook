@@ -159,6 +159,14 @@ func TestSignInAndResetFindAVerifiedRowOnly(t *testing.T) {
 		if err := store.RemoveEmail(ctx, q, "A", "a@example.test"); err != nil {
 			t.Fatal(err)
 		}
+		// A tenant administrator's mark alone finds nobody either.
+		addPerson(t, q, "MARKED", store.DefaultTenantID, "", false)
+		if err := store.SetEmail(ctx, q, "MARKED", "marked@example.test", true, store.VerifiedByTenantAdmin); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.UserByVerifiedEmail(ctx, q, "marked@example.test"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a tenant administrator's mark found someone: %v", err)
+		}
 		assertCopies(t, st)
 	})
 }
@@ -208,6 +216,32 @@ func TestEmailKey(t *testing.T) {
 	if k, ok := store.EmailExactKey("a@xn--.com"); ok {
 		t.Errorf("the exact form keyed an empty label: %q", k)
 	}
+}
+
+// AddEmail that fails after it took the address from its holder says nobody
+// lost it: the take is rolled back with the rest.
+func TestAFailedAddEmailReleasesNobody(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		q := st.Q()
+		addPerson(t, q, "HOLDER", store.DefaultTenantID, "add@example.test", false)
+		addPerson(t, q, "OTHER", store.DefaultTenantID, "", false)
+		addPerson(t, q, "ADDER", store.DefaultTenantID, "adder@example.test", true)
+		store.SetEmailInsertRaceHook(func(q store.Q) {
+			store.SetEmailInsertRaceHook(nil)
+			if err := store.SetEmail(ctx, q, "OTHER", "add@example.test", false, ""); err != nil {
+				t.Error(err)
+			}
+		})
+		t.Cleanup(func() { store.SetEmailInsertRaceHook(nil) })
+		r, err := store.AddEmail(ctx, q, "ADDER", "add@example.test", true, "", true, time.Now())
+		if !errors.Is(err, store.ErrEmailTaken) || r != nil {
+			t.Fatalf("%+v %v", r, err)
+		}
+		if row, err := store.EmailOwner(ctx, q, "add@example.test"); err != nil || row.UserID != "HOLDER" {
+			t.Fatalf("%+v %v", row, err)
+		}
+		assertCopies(t, st)
+	})
 }
 
 // Another writer may take the address between SetPrimaryEmail's check and its

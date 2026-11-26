@@ -51,7 +51,7 @@ func TestIsPublicGitHub(t *testing.T) {
 	for in, want := range map[string]bool{
 		"https://github.com":         true,
 		"https://GitHub.com/":        true,
-		"https://api.github.com":     true,
+		"https://api.github.com":     false, // not a base URL: githubAPIBase would make it .../api/v3
 		"https://ghe.example.test":   false,
 		"https://github.com.evil":    false,
 		"https://evilgithub.com":     false,
