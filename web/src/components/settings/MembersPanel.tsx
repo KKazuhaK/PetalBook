@@ -313,6 +313,7 @@ function AddMemberDialog({
       roles={ROLES.map((r) => ({ value: r, label: t.roles[r] }))}
       defaultRole="editor"
       excluded={new Set(members.map((m) => m.userId))}
+      scope={{ space }}
       pick={pick}
       csvRun={run}
       csvHelp={tp.csv.help}

@@ -29,6 +29,13 @@ type InviteSpec struct {
 	Groups []string // ids of local groups of the tenant
 }
 
+// The codes of a spec InviteMany refuses that a batch reports as their own
+// status: an address an account holds, and one with an open invite already.
+const (
+	CodeEmailTaken     = "email_taken"
+	CodeAlreadyInvited = "already_invited"
+)
+
 // How an invitation reached (or did not reach) its person.
 const (
 	MailSent    = "sent"    // queued on the server's mail
@@ -100,12 +107,12 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, tenantID str
 			errs[i] = err
 			continue
 		}
-		f, err := cleanInviteFill(InviteFill{Name: sp.Name, Email: sp.Email})
+		// CleanInviteFill also refuses an address any account holds (409
+		// email_taken, a disabled or deleted one's too): the invite would make an
+		// account it cannot have, and its mail would go to someone else's address.
+		f, err := s.CleanInviteFill(ctx, InviteFill{Name: sp.Name, Email: sp.Email})
 		if err == nil && f.Email == "" {
 			err = errf(Invalid, "An invitation needs an email address.")
-		}
-		if err == nil {
-			_, err = s.cleanEmailFor(ctx, f.Email)
 		}
 		if err != nil {
 			errs[i] = err
@@ -116,6 +123,29 @@ func (s *Service) InviteMany(ctx context.Context, actor store.User, tenantID str
 			Expires: now.Add(inviteDays * 24 * time.Hour), Name: f.Name, Email: f.Email, Groups: sp.Groups}
 		out[i] = InviteOutcome{ID: invs[i].ID, Token: token, Link: s.inviteLink(token)}
 		made = append(made, i)
+	}
+	// An address with an open invite of the tenant is not invited (nor mailed)
+	// again: one lookup per 200 addresses.
+	mailKeys := make([]string, 0, len(made))
+	for _, i := range made {
+		if k, ok := store.EmailKey(invs[i].Email); ok {
+			mailKeys = append(mailKeys, k)
+		}
+	}
+	open, err := store.OpenInviteEmails(ctx, s.st.Q(), store.InTenant(tenantID), mailKeys, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(open) > 0 {
+		kept := made[:0]
+		for _, i := range made {
+			if k, _ := store.EmailKey(invs[i].Email); open[k] {
+				errs[i], out[i] = coded(409, CodeAlreadyInvited, "This address has an open invitation already."), InviteOutcome{}
+				continue
+			}
+			kept = append(kept, i)
+		}
+		made = kept
 	}
 	if dry {
 		return out, errs, nil

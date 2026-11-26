@@ -529,7 +529,7 @@ func TestEveryIndexOnlyRouteAnswersOnAnEvictedSpace(t *testing.T) {
 		admin.do("GET", base+"/pages/NOSUCHPAGE/links", nil).want(t, 404, "not_found")
 		admin.do("GET", base+"/pages/NOSUCHPAGE/backlinks", nil).want(t, 404, "not_found")
 
-		query := map[string]string{"GET /api/spaces/{space}/pages/groups": "?key=title&tag=a", "GET /api/spaces/{space}/changes": "?since=" + head}
+		query := map[string]string{"GET /api/spaces/{space}/pages/groups": "?key=title&tag=a", "GET /api/spaces/{space}/changes": "?since=" + head, "GET /api/spaces/{space}/people": "?q=ad"}
 		for _, rt := range api.IndexOnlyRoutes() {
 			method, pattern, _ := strings.Cut(rt, " ")
 			p := strings.ReplaceAll(pattern, "{space}", sid)

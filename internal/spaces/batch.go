@@ -30,7 +30,21 @@ const (
 	BatchInvalid     = "invalid"
 	BatchDuplicate   = "duplicate"
 	BatchForbidden   = "forbidden"
+	// BatchDisabled: a disabled account of the tenant, which nobody may add and
+	// whose address is never invited (it still holds it).
+	BatchDisabled = "disabled"
 )
+
+// hideOutside is what a batch that is not the tenant administrator's tells of a
+// row: a person of another tenant, and a disabled one of the tenant, are
+// "not_found", as the single add tells them, so that a space owner cannot
+// learn which usernames and addresses the site has.
+func hideOutside(status string) string {
+	if status == BatchOtherTenant || status == BatchDisabled {
+		return BatchNotFound
+	}
+	return status
+}
 
 // BatchRow is one line of a batch: who (a username or an address) and in which role.
 type BatchRow struct {
@@ -102,10 +116,12 @@ func ResolveKeys(ctx context.Context, q store.Q, tenant string, keys []string) (
 			h, ok = byName[norm[i]]
 		}
 		switch {
-		case !ok || (h.Disabled && h.TenantID == tenant):
+		case !ok:
 			out[i].Status = BatchNotFound
 		case h.TenantID != tenant:
 			out[i].Status = BatchOtherTenant
+		case h.Disabled:
+			out[i].Status = BatchDisabled
 		case seen[h.ID]:
 			out[i].Status = BatchDuplicate
 		default:
@@ -121,6 +137,7 @@ func ResolveKeys(ctx context.Context, q store.Q, tenant string, keys []string) (
 // nothing is written. It costs one lookup per 200 rows for the people, one
 // for who is a member already, and one insert by key per added person, in
 // one transaction per 200 rows (under the space lock like a single add).
+// Another tenant's person and a disabled one are "not_found" (hideOutside).
 func (m *Manager) AddMembersBatch(ctx context.Context, h *Handle, actorID string, rows []BatchRow, dry bool) ([]BatchResult, error) {
 	if err := m.needMembers(h); err != nil {
 		return nil, err
@@ -150,7 +167,7 @@ func (m *Manager) AddMembersBatch(ctx context.Context, h *Handle, actorID string
 	out := make([]BatchResult, len(rows))
 	var todo []int
 	for i, r := range rows {
-		out[i] = BatchResult{Row: i + 1, Key: strings.TrimSpace(r.Key), Role: r.Role, Status: res[i].Status}
+		out[i] = BatchResult{Row: i + 1, Key: strings.TrimSpace(r.Key), Role: r.Role, Status: hideOutside(res[i].Status)}
 		if hit := res[i].Hit; hit != nil {
 			out[i].UserID, out[i].Username, out[i].Name = hit.ID, hit.Username, hit.Name
 			switch {
@@ -230,6 +247,7 @@ func (m *Manager) AddMembersBatch(ctx context.Context, h *Handle, actorID string
 // the rules of AddGroupPeople (at most 500 per call, so a batch is two). The
 // caller's own row is "forbidden": joining a group is a takeover of what it
 // reaches when it gives more, which the single add asks a reason for.
+// Another tenant's person and a disabled one are "not_found" (hideOutside).
 // It returns the group's tenant for the audit row.
 func (m *Manager) AddGroupPeopleBatch(ctx context.Context, sc store.Scope, id, actorID string, keys []string, dry bool) ([]BatchResult, string, error) {
 	if err := m.needAccounts(); err != nil {
@@ -255,7 +273,7 @@ func (m *Manager) AddGroupPeopleBatch(ctx context.Context, sc store.Scope, id, a
 	out := make([]BatchResult, len(keys))
 	var ids []string
 	for i, k := range keys {
-		out[i] = BatchResult{Row: i + 1, Key: strings.TrimSpace(k), Status: res[i].Status}
+		out[i] = BatchResult{Row: i + 1, Key: strings.TrimSpace(k), Status: hideOutside(res[i].Status)}
 		if hit := res[i].Hit; hit != nil {
 			out[i].UserID, out[i].Username, out[i].Name = hit.ID, hit.Username, hit.Name
 			if hit.ID == actorID {

@@ -508,7 +508,7 @@ func errNotASCII() *Error {
 
 // errEmailTaken is an address another account holds.
 func errEmailTaken() *Error {
-	return coded(409, "email_taken", "Another account has that email address.")
+	return coded(409, CodeEmailTaken, "Another account has that email address.")
 }
 
 // emailErr turns store.ErrEmailTaken into its answer.

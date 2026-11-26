@@ -2025,6 +2025,14 @@ function suite(target: Target) {
           )
           expect(hit).toEqual({ id: guest.user.id, username: guest.user.username, name: guest.user.name })
           expect(Object.keys(hit!).sort()).toEqual(['id', 'name', 'username'])
+          // The space's own search, for who manages its members, finds the people of its tenant.
+          const inSpace = await call(
+            owner.browser,
+            'GET',
+            `/api/spaces/${sp.id}/people?q=${encodeURIComponent(guest.user.username)}`,
+          )
+          expect(inSpace.status).toBe(200)
+          expect((inSpace.json.people as { id: string }[]).map((p) => p.id)).toContain(guest.user.id)
           const short = await call(owner.browser, 'GET', '/api/people?q=a')
           expect([short.status, short.json.error]).toEqual([400, 'invalid'])
           const url = `/api/spaces/${sp.id}/members/batch`
@@ -2048,8 +2056,9 @@ function suite(target: Target) {
           expect((await call(owner.browser, 'GET', `/api/spaces/${sp.id}/members`)).json.members).toHaveLength(2)
           const none = await call(owner.browser, 'POST', url, { rows: [] })
           expect([none.status, none.json.error]).toEqual([400, 'invalid'])
-          // A member who may not manage the space cannot add.
+          // A member who may not manage the space cannot add, nor search as the space.
           expect((await call(guest.browser, 'POST', url, { rows })).status).toBe(403)
+          expect((await call(guest.browser, 'GET', `/api/spaces/${sp.id}/people?q=ab`)).status).toBe(403)
         })
 
         it("adds a member by username with a role; lists owners first with `you`; the role and its permissions show in the member's own list", async () => {

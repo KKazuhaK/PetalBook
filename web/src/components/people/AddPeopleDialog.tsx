@@ -1,7 +1,14 @@
 import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { useGroupSearch } from '@/api/hooks'
-import { useBatchRunner, usePeopleSearch, type BatchAnswer, type BatchRunner, type PersonRef } from '@/api/people'
+import {
+  useBatchRunner,
+  usePeopleSearch,
+  type BatchAnswer,
+  type BatchRunner,
+  type PeopleScope,
+  type PersonRef,
+} from '@/api/people'
 import { FormMessage } from '@/components/auth/Field'
 import { Spinner } from '@/components/common'
 import { Button } from '@/components/ui/button'
@@ -24,9 +31,9 @@ export interface Pick {
 
 export type Tab = 'pick' | 'csv' | 'extra'
 
-function usePicks(kind: 'people' | 'groups', q: string) {
+function usePicks(kind: 'people' | 'groups', q: string, scope?: PeopleScope) {
   const text = useDebounced(q.trim(), 250)
-  const people = usePeopleSearch(text, kind === 'people')
+  const people = usePeopleSearch(text, kind === 'people', scope)
   const groups = useGroupSearch(text, kind === 'groups')
   const enough = [...text].length >= (kind === 'people' ? 2 : 1)
   const query = kind === 'people' ? people : groups
@@ -48,14 +55,16 @@ function PickBody({
   selected,
   setSelected,
   excluded,
+  scope,
 }: {
   kind: 'people' | 'groups'
   selected: Map<string, Pick>
   setSelected: (m: Map<string, Pick>) => void
   excluded: ReadonlySet<string>
+  scope?: PeopleScope
 }) {
   const [q, setQ] = useState('')
-  const found = usePicks(kind, q)
+  const found = usePicks(kind, q, scope)
   const toggle = (p: Pick) => {
     const next = new Map(selected)
     if (next.has(p.id)) next.delete(p.id)
@@ -150,6 +159,8 @@ interface AddPeopleProps {
   roles?: RoleOption[]
   defaultRole?: string
   excluded?: ReadonlySet<string>
+  // Where the picker searches people (the space or group being managed; the caller's own tenant by default).
+  scope?: PeopleScope
   // Adds the picked ones with the chosen role; a refusal is thrown and shown in the dialog.
   pick?: (picks: Pick[], role: string) => Promise<void>
   csvRun?: BatchRunner
@@ -170,6 +181,7 @@ function AddPeopleInner({
   roles,
   defaultRole = '',
   excluded = new Set<string>(),
+  scope,
   pick,
   csvRun,
   csvHelp,
@@ -259,7 +271,7 @@ function AddPeopleInner({
         {tabs.length > 1 && <DialogTabs tabs={tabs} value={tab} onChange={setTab} />}
         {tab === 'pick' && (
           <>
-            <PickBody kind={kind} selected={selected} setSelected={setSelected} excluded={excluded} />
+            <PickBody kind={kind} selected={selected} setSelected={setSelected} excluded={excluded} scope={scope} />
             {roles && (
               <div className="grid gap-1.5 sm:max-w-56">
                 <Label htmlFor="add-people-role">{tp.role}</Label>

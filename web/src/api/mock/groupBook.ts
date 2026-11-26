@@ -14,6 +14,7 @@ import type {
 } from '../types.ts'
 import type { BatchAnswer, BatchRowOut, BatchStatus } from '../peopleTypes.ts'
 import { HttpError, compareCodePoints } from './store.ts'
+import { hideOutside } from './peopleBook.ts'
 import type { SignInBook } from './signInBook.ts'
 import type { MockResponse } from './server.ts'
 
@@ -247,7 +248,7 @@ export function createGroupBook(o: GroupBookOptions) {
       const keys = rows.map((r) => (typeof r.user === 'string' ? r.user : ''))
       const res = o.resolve!(keys)
       const out: BatchRowOut[] = res.map((r, i) => {
-        const row: BatchRowOut = { row: i + 1, user: keys[i].trim(), status: r.status }
+        const row: BatchRowOut = { row: i + 1, user: keys[i].trim(), status: hideOutside(r.status) }
         if (r.hit) {
           row.userId = r.hit.id
           row.username = r.hit.username

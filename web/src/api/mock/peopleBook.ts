@@ -11,6 +11,7 @@ export interface PeopleUser {
   name: string
   email: string
   disabled: boolean
+  role?: string
 }
 
 export const MAX_ROWS = 1000
@@ -62,7 +63,7 @@ export function createPeopleBook(o: { users: () => Map<string, PeopleUser> }) {
         ? all.find((u) => u.email.toLowerCase() === key)
         : all.find((u) => u.username === key)
       if (!hit) return { status: foreign(key) ? 'other_tenant' : 'not_found' }
-      if (hit.disabled) return { status: 'not_found' }
+      if (hit.disabled) return { status: 'disabled' }
       if (seen.has(hit.id)) return { status: 'duplicate' }
       seen.add(hit.id)
       return { status: 'ok', hit }
@@ -80,4 +81,10 @@ export function createPeopleBook(o: { users: () => Map<string, PeopleUser> }) {
   }
 
   return { search, resolve, answer, foreign }
+}
+
+// What a space or group batch tells of a row (as the server's hideOutside): another tenant's person and a disabled one
+// are nobody, so that such a batch cannot ask the site which accounts exist.
+export function hideOutside(s: BatchStatus): BatchStatus {
+  return s === 'other_tenant' || s === 'disabled' ? 'not_found' : s
 }

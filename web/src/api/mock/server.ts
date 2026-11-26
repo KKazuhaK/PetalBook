@@ -54,7 +54,7 @@ import { createFileStore, DEFAULT_MAX_UPLOAD, type FileStore } from './files.ts'
 import { DEFAULT_MAX_IMPORT, runImport } from './importer.ts'
 import { folderRuleMessage } from '../../lib/folderRules.ts'
 import { createGroupBook } from './groupBook.ts'
-import { createPeopleBook, readBatch, type PeopleUser } from './peopleBook.ts'
+import { createPeopleBook, hideOutside, readBatch, type PeopleUser } from './peopleBook.ts'
 import type { BatchRowOut } from '../peopleTypes.ts'
 import { createTenantBook, DEFAULT_TENANT } from './tenantBook.ts'
 import { sha256Hex } from './sha256.ts'
@@ -1897,7 +1897,7 @@ export function createMockServer(options: MockOptions = {}) {
       return rest.startsWith('/favorites') ? 'read' : 'manage'
     if ((rest === '' && method === 'PATCH') || rest === '/reindex' || rest === '/remote' || rest.startsWith('/remote/'))
       return 'manage'
-    if (rest === '/groups' || rest.startsWith('/groups/')) return 'members'
+    if (rest === '/groups' || rest.startsWith('/groups/') || rest === '/people') return 'members'
     if (rest === '/members' || rest.startsWith('/members/')) {
       if (method === 'GET') return 'read'
       // Anyone may leave: removing yourself needs no more than being a member.
@@ -3101,7 +3101,12 @@ export function createMockServer(options: MockOptions = {}) {
       const input = readBatch(body)
       const res = peopleBook.resolve(input.rows.map((r) => r.user))
       const out: BatchRowOut[] = res.map((r, i) => {
-        const row: BatchRowOut = { row: i + 1, user: input.rows[i].user, role: input.rows[i].role, status: r.status }
+        const row: BatchRowOut = {
+          row: i + 1,
+          user: input.rows[i].user,
+          role: input.rows[i].role,
+          status: hideOutside(r.status),
+        }
         if (!r.hit) return row
         row.userId = r.hit.id
         row.username = r.hit.username
@@ -4840,6 +4845,8 @@ export function createMockServer(options: MockOptions = {}) {
           row.userId = r.hit.id
           row.username = r.hit.username
           row.name = r.hit.name
+          if (inRow.role && r.hit.role !== inRow.role)
+            row.detail = 'The role is not changed for someone already in the organization; change it on their page.'
           if (found.length === 0) row.status = 'already_member'
           else if (r.hit.id === me.id) row.status = 'forbidden'
           else {
@@ -5159,6 +5166,11 @@ export function createMockServer(options: MockOptions = {}) {
         s.name = name
         s.inbox = inbox
         return j(spaceInfo(s, me))
+      }
+      if (rest === '/people' && method === 'GET') {
+        // The picker of the space's dialog of members: the people of the space's tenant (the mock has one).
+        const limit = Number(url.searchParams.get('limit') ?? 20)
+        return j({ people: peopleBook.search(url.searchParams.get('q') ?? '', Math.min(Math.max(limit || 20, 1), 20)) })
       }
       if (rest === '/members' || rest.startsWith('/members/')) {
         // Leaving needs no more than being a member: the permission check above is waived for it.

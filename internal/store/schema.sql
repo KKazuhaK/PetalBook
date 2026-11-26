@@ -215,10 +215,14 @@ CREATE TABLE invites (
   email      TEXT COLLATE "C" NOT NULL DEFAULT '',
   -- The ids of the local groups of the tenant the account joins when the invite
   -- is accepted (a batch of new people by file names them), comma separated.
-  groups     TEXT COLLATE "C" NOT NULL DEFAULT ''
+  groups     TEXT COLLATE "C" NOT NULL DEFAULT '',
+  -- email_key is email in EmailKey form ('' without one): a batch of new
+  -- people does not invite an address that has an open invite of the tenant.
+  email_key  TEXT COLLATE "C" NOT NULL DEFAULT ''
 );
 CREATE INDEX invites_expires ON invites(expires);
 CREATE INDEX invites_tenant ON invites(tenant_id);
+CREATE INDEX invites_email ON invites(tenant_id, email_key) WHERE email_key <> '';
 -- Deleting a person deletes their invites (the foreign key's cascade).
 CREATE INDEX invites_created_by ON invites(created_by);
 
