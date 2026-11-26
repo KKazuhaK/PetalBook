@@ -264,9 +264,9 @@ func TestARestrictionBoundsTheValueInEffect(t *testing.T) {
 		if e, _ := s.Get(ctx, "", settings.QuotaSpacesPerPerson); e.Value != int64(20) {
 			t.Errorf("the site's own: %v", e.Value)
 		}
-		// The site's rule for one tenant, looser than the site's, bounds that tenant alone.
+		// The site's rule for one tenant, looser than the site's, bounds that tenant alone: the site's 20 is 12.
 		if err := s.SetTenant(ctx, ten, settings.QuotaSpacesPerPerson, settings.Change{Site: true, HasSiteRule: true,
-			SiteRule: &settings.Rule{Value: int64(30), Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(12))}}}); err != nil {
+			SiteRule: &settings.Rule{Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(12))}}}); err != nil {
 			t.Fatal(err)
 		}
 		if e, _ := s.Get(ctx, ten, settings.QuotaSpacesPerPerson); e.Value != int64(12) {
@@ -371,6 +371,48 @@ func TestTheCacheIsPerTenant(t *testing.T) {
 		read() // no query: a closed database would fail it
 		if e, _ := s.Get(ctx, ten, settings.LegalTermsURL); e.Value != "https://acme.example/t" {
 			t.Fatalf("%v", e.Value)
+		}
+	})
+}
+
+// A site value above the maximum it is held to is refused, not capped: the
+// site's value against the site's own restriction, and the value of the site's
+// rule for one tenant against that rule's. Lowering a maximum alone still
+// bounds the value in effect (TestARestrictionBoundsTheValueInEffect).
+func TestASiteValueAboveItsOwnMaxIsRefused(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, st *store.Store) {
+		s := setup(t, st)
+		k := settings.QuotaSpacesPerPerson
+		max10 := &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(10))}
+		refused := func(name string, err error) {
+			t.Helper()
+			var se *settings.Error
+			if !errors.As(err, &se) || se.Code != settings.CodeAboveMax || se.Msg == "" || se.Msg[0] < 'A' || se.Msg[0] > 'Z' {
+				t.Fatalf("%s: %v, want %s with a sentence", name, err, settings.CodeAboveMax)
+			}
+		}
+		if _, err := s.SetSite(ctx, k, settings.Change{HasLower: true, Lower: max10}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := s.SetSite(ctx, k, settings.Change{HasValue: true, Value: int64(20)})
+		refused("the site's value", err)
+		_, err = s.SetSite(ctx, k, settings.Change{HasValue: true, Value: int64(12), HasLower: true, Lower: max10})
+		refused("the value and the max together", err)
+		if e, _ := s.Get(ctx, "", k); e.Value != int64(20) {
+			t.Fatalf("a refused write changed the site's value: %v", e.Value)
+		}
+		if _, err := s.SetSite(ctx, k, settings.Change{HasValue: true, Value: int64(10)}); err != nil {
+			t.Fatalf("at the max: %v", err)
+		}
+
+		refused("the rule for one tenant", s.SetTenant(ctx, ten, k, settings.Change{Site: true, HasSiteRule: true,
+			SiteRule: &settings.Rule{Value: int64(30), Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(12))}}}))
+		if e, _ := s.Get(ctx, ten, k); e.Tenant.SiteRule != nil {
+			t.Fatalf("a refused rule was kept: %+v", e.Tenant.SiteRule)
+		}
+		if err := s.SetTenant(ctx, ten, k, settings.Change{Site: true, HasSiteRule: true,
+			SiteRule: &settings.Rule{Value: int64(12), Lower: &settings.Lower{Mode: settings.Restrict, Max: ptr(int64(12))}}}); err != nil {
+			t.Fatalf("the rule at its max: %v", err)
 		}
 	})
 }

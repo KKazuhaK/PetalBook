@@ -112,7 +112,21 @@ const (
 	CodeConflict   = "conflict"
 	CodeLocked     = "setting_locked"
 	CodeRestricted = "setting_restricted"
+	// CodeAboveMax: a value the site gives above the maximum it holds that
+	// value to (its own restriction, or its rule's for one tenant), which
+	// would only be capped.
+	CodeAboveMax = "setting_above_max"
 )
+
+// aboveMax refuses a site value over the restriction it is held to; a value
+// a restriction would cap is refused instead of stored and silently capped.
+// Only a limit has a maximum; nil is no limit, above any.
+func aboveMax(d *Def, l Lower, v any) error {
+	if d.Kind != Limit || l.Mode != Restrict || l.Allows(d, v) {
+		return nil
+	}
+	return &Error{Code: CodeAboveMax, Msg: "The value is above the maximum; raise the maximum first."}
+}
 
 func bad(format string, a ...any) *Error {
 	return &Error{Code: CodeInvalid, Msg: fmt.Sprintf(format, a...)}

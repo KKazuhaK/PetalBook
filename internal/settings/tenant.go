@@ -273,6 +273,12 @@ func (s *Service) SetTenant(ctx context.Context, tenant, key string, ch Change) 
 			}
 		}
 		above = tenantEffective(d, eff.Site, r, nil).Above
+		// The rule's value is held to the restriction it sets for the tenant.
+		if r != nil && r.Value != nil {
+			if err := aboveMax(d, above, r.Value); err != nil {
+				return err
+			}
+		}
 	}
 	var rawValue, rawLower string
 	if ch.HasValue && ch.Value != nil {

@@ -6695,7 +6695,11 @@ administrator giving either gets `409 setting_locked`, and so does its write
 while the site's rule for the tenant is a lock. `409 setting_locked` when the
 rule the tenant's layer is held to locks (a site administrator is refused too:
 lift it first); `409 setting_restricted` for a value outside its `options` or
-above its `max`, or a `lower` looser than it.
+above its `max`, or a `lower` looser than it. A `siteRule` whose `value` is
+above the `max` it is held to (its own `lower`, else the site's) is `400
+setting_above_max`, not stored and capped; so is a site `value` above the
+site's own `max` in `PUT /api/admin/settings/{key}` (raise the maximum first).
+Lowering a `max` alone below a value still bounds `effective` as above.
 
 A setting with layers `["site"]` and `forTenant` has only the site's rule: a
 site administrator's `value` there is the site's value for the tenant (the
@@ -7137,6 +7141,7 @@ not fill the log).
 | `default_tenant` | 409 | disabling or deleting the default tenant |
 | `setting_locked` | 409 | setting a value the layer above locks |
 | `setting_restricted` | 409 | a value outside the layer above's options or `max`, or a `lower` looser than it |
+| `setting_above_max` | 400 | a site value (or the value of the site's rule for a tenant) above the `max` it is held to |
 | `registration_closed` | 403 | registering or confirming while registration is not open for the tenant |
 | `password_reset_off` | 403 | asking for a reset while mail is not enabled |
 | `mail_not_configured` | 409 | opening registration, asking for a verification, or sending a reset while mail is not enabled |

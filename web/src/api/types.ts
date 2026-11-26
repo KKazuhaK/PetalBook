@@ -826,6 +826,7 @@ export type ErrorCode =
   | 'default_tenant'
   | 'setting_locked'
   | 'setting_restricted'
+  | 'setting_above_max'
   | 'mail_not_configured'
   | 'mail_insecure'
   | 'mail_from_required'

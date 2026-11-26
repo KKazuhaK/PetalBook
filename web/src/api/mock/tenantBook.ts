@@ -161,6 +161,8 @@ function checkLower(d: Def, l: unknown): SettingLower {
       : bad(`${d.key}: max is out of range`)
   return bad(`${d.key} cannot be restricted, only allowed or locked`)
 }
+const aboveMax = () =>
+  new HttpError(400, 'setting_above_max', 'The value is above the maximum; raise the maximum first.')
 const allows = (l: SettingLower, d: Def, v: unknown): boolean =>
   l.mode === 'lock'
     ? false
@@ -379,6 +381,9 @@ export function createTenantBook(o: TenantBookOptions) {
             ? d.def
             : checkValue(d, body.value)
       if (key === 'registration.open' && v === true) checkOpening()
+      // The server's aboveMax: a site value over its own maximum is refused, not capped.
+      const l = 'lower' in body ? (body.lower === null ? d.lower : checkLower(d, body.lower)) : (row.lower ?? d.lower)
+      if (d.kind === 'limit' && l.mode === 'restrict' && !allows(l, d, v)) throw aboveMax()
       if (key === 'daily.own') o.daily.set({ own: v as boolean })
       else if (key === 'daily.api') o.daily.set({ api: v as boolean })
       else row.value = v
@@ -456,6 +461,14 @@ export function createTenantBook(o: TenantBookOptions) {
       throw new HttpError(409, 'setting_locked', `${key} is locked for this tenant by the site's administrators`)
     const next = hasRule ? rule : cur
     const above = next?.lower && sl.mode !== 'lock' ? next.lower : sl
+    if (
+      hasRule &&
+      rule?.value != null &&
+      d.kind === 'limit' &&
+      above.mode === 'restrict' &&
+      !allows(above, d, rule.value)
+    )
+      throw aboveMax()
     const rows = tenantRows.get(tenant) ?? new Map<string, TenantRow>()
     const row = rows.get(key) ?? {}
     if (hasValue && value !== null) {

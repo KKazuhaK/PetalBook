@@ -316,8 +316,11 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   const mine = s.tenant
   // A value the site locked for this tenant lives in the site's rule for it; the tenant's own is kept beside it.
   const shown = mine?.siteLocked ? (mine.siteRule?.value ?? null) : (mine?.value ?? null)
-  const [follow, setFollow] = useState(shown == null)
-  const [value, setValue] = useState<unknown>(shown ?? s.site.value)
+  // A stored value a rule above beats is kept, not in effect: the editor starts from what the tenant gets.
+  const inEffect = mine?.siteLocked ? mine.siteRule?.inEffect !== false : mine?.inEffect !== false
+  const start = shown != null && !inEffect ? s.effective : shown
+  const [follow, setFollow] = useState(start == null)
+  const [value, setValue] = useState<unknown>(start ?? s.site.value)
   const [lower, setLower] = useState<SettingLower>(mine?.lower ?? { mode: 'allow' })
   const [siteLock, setSiteLock] = useState(mine?.siteLocked === true)
   const [message, setMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null)
@@ -329,8 +332,11 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
   const frozen = forcedForTenant && !isSite
   const canForce = isSite && !doc
   const dirtySiteLock = canForce && siteLock !== forcedForTenant
-  const dirtyValue = !doc && !same(follow ? null : value, shown)
+  const dirtyValue = !doc && !same(follow ? null : value, start)
   const dirtyLower = !same(lower, mine?.lower ?? { mode: 'allow' })
+  // A lock always names a value: following, while forced, forces the value in effect, never null.
+  const forcing = canForce && siteLock
+  const sent = follow ? (forcing ? s.effective : null) : value
   const save = () => {
     setMessage(null)
     put.mutate(
@@ -338,10 +344,10 @@ function TenantRow({ tenant, s, isSite }: { tenant: string; s: TenantSetting; is
         tenant,
         key: s.key,
         // Forcing always names the value it forces (what the row shows), so a lock never changes what the tenant gets.
-        ...(dirtyValue || (canForce && siteLock && dirtySiteLock) ? { value: follow ? null : value } : {}),
+        ...(dirtyValue || (forcing && dirtySiteLock) ? { value: sent } : {}),
         ...(dirtyLower ? { lower } : {}),
         // While locked for the tenant, a new value is the locked one: it goes with siteLock.
-        ...(dirtySiteLock || (canForce && siteLock && dirtyValue) ? { siteLock } : {}),
+        ...(dirtySiteLock || (forcing && dirtyValue) ? { siteLock } : {}),
       },
       {
         onSuccess: () => setMessage({ tone: 'info', text: ts.saved }),

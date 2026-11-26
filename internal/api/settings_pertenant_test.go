@@ -35,3 +35,20 @@ func TestTheSitesRuleForOneTenant(t *testing.T) {
 		f.root.do("PUT", path("users.reuseUsernames"), map[string]any{"value": "never"}).want(t, 404, "not_found")
 	})
 }
+
+// A site value above its own max is 400 setting_above_max with a sentence,
+// for the site's layer and for the site's rule for one tenant.
+func TestASiteValueAboveItsMaxIsRefused(t *testing.T) {
+	t.Parallel()
+	eachAccounts(t, accOpts{}, func(t *testing.T, a *acc) {
+		f := newTenFx(t, a)
+		site := "/api/admin/settings/quota.spacesPerPerson"
+		f.root.do("PUT", site, map[string]any{"lower": map[string]any{"mode": "restrict", "max": 10}}).want(t, 200, "")
+		r := f.root.do("PUT", site, map[string]any{"value": 20}).want(t, 400, "setting_above_max")
+		if m, _ := r.body["message"].(string); m != "The value is above the maximum; raise the maximum first." {
+			t.Fatal(r.raw)
+		}
+		f.root.do("PUT", "/api/admin/tenants/"+f.tenB+"/settings/quota.spacesPerPerson",
+			map[string]any{"siteRule": map[string]any{"value": 30, "lower": map[string]any{"mode": "restrict", "max": 12}}}).want(t, 400, "setting_above_max")
+	})
+}

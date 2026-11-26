@@ -406,6 +406,29 @@ func (s *Service) SetSite(ctx context.Context, key string, ch Change) (affected 
 		if err != nil {
 			return err
 		}
+		// The value is held to the site's own restriction as it will be.
+		if ch.HasValue {
+			l := d.Lower
+			switch {
+			case ch.HasLower && lower != nil:
+				l = *lower
+			case !ch.HasLower && row.Lower != "":
+				// Into a value of its own, as in siteView: d.Lower's Max is shared.
+				var rl Lower
+				if err := json.Unmarshal([]byte(row.Lower), &rl); err != nil {
+					return err
+				}
+				l = rl
+			}
+			// null is no limit where a limit may be none, else the default.
+			cmp := val
+			if cmp == nil && !d.Nullable {
+				cmp = d.Default
+			}
+			if err := aboveMax(d, l, cmp); err != nil {
+				return err
+			}
+		}
 		if ch.HasValue {
 			if b, bound := s.bind[key]; bound {
 				if err := b.Set(ctx, q, val); err != nil {
